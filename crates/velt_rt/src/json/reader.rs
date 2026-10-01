@@ -8,7 +8,9 @@
 
 use super::error::{mismatch_message, reader_syntax_message};
 use super::scan::{number_f64, number_i64, NumTok, Scanner, StrTok, SyntaxError};
+use super::value::{read, Value};
 use super::walk::{walk, SkipSink};
+use std::sync::Arc;
 use crate::str::VeltStr;
 
 /// `peek` results.
@@ -247,6 +249,18 @@ impl Reader {
         }
         let r = walk(&mut self.sc, &mut SkipSink);
         self.syntax(r)
+    }
+
+    /// One complete value of any kind, built as a `json.Value` tree.
+    pub fn value(&mut self) -> Option<Arc<Value>> {
+        self.value_start(|_| true)?;
+        match read(&mut self.sc) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                self.fail(ReadError::Syntax(e));
+                None
+            }
+        }
     }
 
     /// Only whitespace may follow the top-level value.

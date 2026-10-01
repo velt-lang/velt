@@ -3,6 +3,8 @@
 //! `array_next` (0 = end, 1 = more, 2 = error) and `peek` (a `TOKEN_*` kind).
 
 use super::reader::{Reader, STEP_END, STEP_ERROR, STEP_MORE};
+use super::value_abi::ValueHandle;
+use crate::handle::Handle;
 use crate::str::VeltStr;
 
 /// `new Reader(src)`: never null. `src` must stay alive and unchanged until `reader_free`.
@@ -111,6 +113,19 @@ pub unsafe extern "C" fn velt_rt_json_reader_read_null(r: *mut Reader) -> u8 {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_skip_value(r: *mut Reader) -> u8 {
     (*r).skip()
+}
+
+/// Read one value of any kind into `*out` (an owned `json.Value` handle): 1 = ok, 0 = error
+/// (`out` untouched).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_json_reader_read_value(
+    r: *mut Reader,
+    out: *mut ValueHandle,
+) -> u8 {
+    (*r).value().map_or(0, |v| {
+        out.write(Handle::from_arc(v));
+        1
+    })
 }
 
 /// After the top-level value: 1 if only whitespace remains, else 0 (error recorded).

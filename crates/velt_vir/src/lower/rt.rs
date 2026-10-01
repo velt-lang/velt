@@ -92,6 +92,7 @@ pub(super) enum Rt {
     JsonReadBool,
     JsonReadNull,
     JsonSkipValue,
+    JsonReadValue,
     JsonEnd,
     JsonError,
 }
@@ -202,6 +203,7 @@ impl Rt {
             Rt::JsonReadBool => f("velt_rt_json_reader_read_bool", vec![Ptr, Ptr], U8),
             Rt::JsonReadNull => f("velt_rt_json_reader_read_null", vec![Ptr], U8),
             Rt::JsonSkipValue => f("velt_rt_json_reader_skip_value", vec![Ptr], U8),
+            Rt::JsonReadValue => f("velt_rt_json_reader_read_value", vec![Ptr, Ptr], U8),
             Rt::JsonEnd => f("velt_rt_json_reader_end", vec![Ptr], U8),
             Rt::JsonError => f("velt_rt_json_error", vec![Ptr, Ptr, Ptr, Ptr], Unit),
             other => crate::lower::ice(format_args!("no signature for {other:?}")),

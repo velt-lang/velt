@@ -445,6 +445,7 @@ typedef struct VeltJsonReader VeltJsonReader;   // opaque
 | `velt_rt_json_reader_read_bool` | `(r, u8* out) -> u8` | |
 | `velt_rt_json_reader_read_null` | `(r) -> u8` | optional fields: `if (peek(r) == 1) read_null(r); else read the T` |
 | `velt_rt_json_reader_skip_value` | `(r) -> u8` | skips (and validates) any value — unknown keys; iterative, no depth limit |
+| `velt_rt_json_reader_read_value` | `(r, VeltJson* out) -> u8` | any one value as a `json.Value` tree (§12.5), an owned handle: a typed decoder's `JsonValue` target. Iterative, no depth limit. |
 | `velt_rt_json_reader_end` | `(r) -> u8` | after the top-level value: 1 if only whitespace remains |
 | `velt_rt_json_error` | `(const VeltJsonReader* r, const VeltStr* expected, const VeltStr* path, VeltStr* out)` | builds the owned `JsonError.message` (§12.4) |
 
@@ -490,7 +491,7 @@ Paths only need to be built on the failure path (e.g. append segments while retu
 ### 12.5 `json.Value` (`JSON.parseValue`)
 
 An immutable tree of reference-counted nodes behind opaque handles (`VeltJson`). Every
-handle the runtime returns (`parse_value`, `get`, `at`, `clone`) is its own reference and must be
+handle the runtime returns (`parse_value`, `get`, `at`, `clone`, `reader_read_value`) is its own reference and must be
 released with `velt_rt_json_value_free`; a child handle stays valid after its parent's handles are
 freed. All accessors accept a null handle (what a failed `get`/`at` returns), so `v.get("a")?.at(2)`
 chains need no checks until the end. Parsing, stringify and freeing are iterative (no depth limit).

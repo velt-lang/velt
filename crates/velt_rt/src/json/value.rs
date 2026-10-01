@@ -163,15 +163,21 @@ impl Sink for Builder {
     }
 }
 
+/// Build the tree of the one value starting at the scanner's position.
+pub fn read(sc: &mut Scanner) -> Result<Arc<Value>, SyntaxError> {
+    let mut builder = Builder::default();
+    walk(sc, &mut builder)?;
+    Ok(builder.root.expect("ICE: JSON walk produced no value"))
+}
+
 /// Parse a whole document (one value, surrounded only by whitespace).
 pub fn parse(src: &[u8]) -> Result<Arc<Value>, SyntaxError> {
     let mut sc = Scanner::new(src);
-    let mut builder = Builder::default();
-    walk(&mut sc, &mut builder)?;
+    let root = read(&mut sc)?;
     if sc.peek_non_ws().is_some() {
         return Err(sc.error("unexpected trailing characters"));
     }
-    Ok(builder.root.expect("ICE: JSON walk produced no value"))
+    Ok(root)
 }
 
 /// A value being written with the index of its next child.

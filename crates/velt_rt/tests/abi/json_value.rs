@@ -241,3 +241,33 @@ fn builder_embeds_values() {
     );
     free(v);
 }
+
+#[test]
+fn reader_reads_values_as_trees() {
+    use crate::json::reader_abi::*;
+    // A typed decoder's `JsonValue` field: any value, never the class's `handle` field.
+    let src = r#"{"a":[1,{"handle":4096}],"b":"s","c":[1,}"#;
+    unsafe {
+        let r = velt_rt_json_reader_new(&borrow(src));
+        assert_eq!(velt_rt_json_reader_expect_object_start(r), 1);
+        let mut key = MaybeUninit::uninit();
+        let mut values = Vec::new();
+        while velt_rt_json_reader_next_key(r, key.as_mut_ptr()) == 1 {
+            let mut h = MaybeUninit::uninit();
+            if velt_rt_json_reader_read_value(r, h.as_mut_ptr()) == 0 {
+                break;
+            }
+            let h = h.assume_init();
+            values.push(stringify(h));
+            free(h);
+        }
+        assert_eq!(values, [r#"[1,{"handle":4096}]"#, r#""s""#]);
+        let mut msg = MaybeUninit::uninit();
+        velt_rt_json_error(r, &borrow("value"), &borrow("$.c"), msg.as_mut_ptr());
+        assert_eq!(
+            owned_text(msg.assume_init()),
+            "invalid JSON at $.c: unexpected character '}' (byte 40)"
+        );
+        velt_rt_json_reader_free(r);
+    }
+}

@@ -137,6 +137,17 @@ impl FnLower<'_, '_> {
         self.switch_to(next);
     }
 
+    /// A `JsonValue`: the object is allocated with a null handle, then the runtime builds the
+    /// tree into its handle field.
+    fn json_read_value(&mut self, r: Local, place: &Place, ctx: Local, ty: TyId, fail: BlockId) {
+        let obj = self.alloc_object_raw(ty);
+        self.assign(place.clone(), Rvalue::Use(Operand::Copy(obj)));
+        let h = self.field_place(place, ty, 0);
+        let ha = self.addr(h);
+        let ro = Operand::Copy(Place::local(r));
+        self.json_expect(Rt::JsonReadValue, vec![ro, ha], ctx, "value", fail);
+    }
+
     /// Numbers, bools, strings, `void`, options and C-like enums are decoded inline.
     fn json_read_inline(&mut self, ty: TyId) -> bool {
         match self.cx.kind(ty) {
@@ -203,6 +214,10 @@ impl FnLower<'_, '_> {
             TyKind::Array(e) => self.json_read_array(r, place, ctx, e, fail),
             TyKind::Adt(d, _) if self.json_read_inline(ty) => {
                 self.json_read_enum(r, place, ctx, d, fail)
+            }
+            // `JsonValue` takes any value as a tree, never its private `handle` field.
+            TyKind::Adt(..) if self.cx.is_json_value(ty) => {
+                self.json_read_value(r, place, ctx, ty, fail)
             }
             TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => {
                 self.json_read_object(r, place, ctx, ty, fail)
