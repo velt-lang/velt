@@ -85,8 +85,9 @@ The time includes a 30 ms settle delay after the last write.
 - Edits to functions that only ran during startup are swapped, but they don't run again.
 - After 200 hot swaps the host restarts to reclaim the memory of old code.
 - JIT code has no line-level debug information; use `--exe` or a normal build to debug.
-- On macOS and Linux, JIT frames have no registered unwind information yet; on musl (Alpine)
-  the JIT host is unavailable, so use `--exe`. Hot swap is tested end to end on Windows x64 and
+- JIT code registers its unwind information on Windows x64, macOS and Linux, so debuggers and
+  backtraces walk through it; on Windows arm64 it does not yet. On musl (Alpine) the JIT host
+  is unavailable, so use `--exe`. Hot swap is tested end to end on Windows x64 and
   Linux x86_64; macOS builds the same code, but the reload tests have not been run there yet.
 
 How it works: [the hot reload design](../internals/design/hot-reload.md).

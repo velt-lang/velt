@@ -1,7 +1,7 @@
 //! Unwind tables for emitted objects. `cranelift-object` writes none, so without these,
 //! unwinder-based tools (debuggers, profilers, `std::backtrace`, crash reporters) stop at the
 //! first generated frame:
-//! - `windows`: `.pdata`/`.xdata` for x86_64 COFF;
+//! - `windows`: `.pdata`/`.xdata` for x86_64 and arm64 COFF;
 //! - `eh_frame`: DWARF CFI in `.eh_frame` (ELF) or `__TEXT,__eh_frame` (Mach-O; ld64 derives
 //!   the compact unwind table from it);
 //! - `jit_windows`: the same Windows x64 records for JIT code, registered at run time;
