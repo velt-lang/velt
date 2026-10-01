@@ -84,6 +84,8 @@ Decisions and their rationale, including what is still planned:
 - [TSX for server-side rendering](design/tsx.md): the planned JSX support.
 - [Native code in packages](design/native-packages.md): a `native/` Rust crate in a package, prebuilt
   per-target binaries and the runtime function table.
+- [A package manifest written in Velt](design/package-manifest.md): `package.vlt`, data-only and
+  typed, replacing `velt.toml` (decided, issue #128).
 
 ## Testing
 
