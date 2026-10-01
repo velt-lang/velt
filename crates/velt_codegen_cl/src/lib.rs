@@ -10,7 +10,7 @@
 //! - `abi`: VIR type → Cranelift type / C-ABI signature mapping, layout lookups.
 //! - `function`: per-function translation (places, operands, ops, casts, terminators).
 //! - `entry`: the `main` of executables linked against the shared runtime ([`emit_entry_object`]).
-//! - `unwind`: unwind tables (Windows x64 `.pdata`/`.xdata`, ELF/Mach-O eh_frame), and their
+//! - `unwind`: unwind tables (Windows x64/arm64 `.pdata`/`.xdata`, ELF/Mach-O eh_frame), and their
 //!   run-time registration for JIT code.
 
 use cranelift_object::{ObjectBuilder, ObjectModule};

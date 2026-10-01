@@ -368,16 +368,18 @@ fn errors_are_reported_not_panics() {
     assert!(emit_object(&p, &opts).is_err());
 }
 
+/// COFF objects carry one `.pdata` entry per function: `{ begin, end, unwind }` on x64,
+/// `{ begin, unwind }` on arm64; other formats have none.
 #[test]
-fn windows_x64_unwind_tables() {
+fn windows_unwind_tables() {
     use object::ObjectSection;
     let tp = programs::fib();
     let cases = [
-        ("x86_64-pc-windows-msvc", true),
-        ("aarch64-pc-windows-msvc", false),
-        ("x86_64-unknown-linux-gnu", false),
+        ("x86_64-pc-windows-msvc", Some(3)),
+        ("aarch64-pc-windows-msvc", Some(2)),
+        ("x86_64-unknown-linux-gnu", None),
     ];
-    for (triple, expect) in cases {
+    for (triple, fields) in cases {
         let bytes = emit_object(
             &tp.program,
             &CodegenOptions {
@@ -388,14 +390,42 @@ fn windows_x64_unwind_tables() {
         .unwrap();
         let file = object::File::parse(&*bytes).unwrap();
         let pdata = file.section_by_name(".pdata");
-        assert_eq!(pdata.is_some(), expect, "{triple}");
-        if let Some(pdata) = pdata {
-            let entries = pdata.size() / 12;
-            assert!(entries >= 1, "{triple}");
-            assert_eq!(pdata.relocations().count() as u64, entries * 3, "{triple}");
-            assert!(file.section_by_name(".xdata").is_some());
+        assert_eq!(pdata.is_some(), fields.is_some(), "{triple}");
+        let (Some(pdata), Some(fields)) = (pdata, fields) else {
+            continue;
+        };
+        let entries = pdata.size() / (fields * 4);
+        assert_eq!(entries as usize, tp.program.funcs.len(), "{triple}");
+        assert_eq!(
+            pdata.relocations().count() as u64,
+            entries * fields,
+            "{triple}"
+        );
+        let xdata = file.section_by_name(".xdata").unwrap();
+        if fields == 2 {
+            assert_eq!(arm64_records(xdata.data().unwrap()), entries, "{triple}");
         }
     }
+}
+
+/// Walk arm64 `.xdata` records (header word, then unwind codes) and check each: a function
+/// length, no epilogue scopes, and codes that finish with `end` followed only by `nop` padding.
+fn arm64_records(mut data: &[u8]) -> u64 {
+    let mut records = 0;
+    while !data.is_empty() {
+        let header = u32::from_le_bytes(data[..4].try_into().unwrap());
+        assert!(header & 0x3FFFF > 0, "function length");
+        assert_eq!((header >> 18) & 0xF, 0, "version, X and E bits");
+        assert_eq!((header >> 22) & 0x1F, 0, "epilogue scopes");
+        let words = (header >> 27) as usize;
+        assert!(words > 0, "code words");
+        let codes = &data[4..4 + words * 4];
+        let last = codes.iter().rposition(|&c| c != 0xE3).unwrap();
+        assert_eq!(codes[last], 0xE4, "codes end with `end`: {codes:x?}");
+        data = &data[4 + words * 4..];
+        records += 1;
+    }
+    records
 }
 
 /// ELF and Mach-O objects carry one eh_frame FDE per function, each with a relocation for its
