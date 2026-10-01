@@ -56,6 +56,9 @@ impl WasmFlavor {
 
 /// Link a WebAssembly module (see the module docs).
 pub fn link(req: &LinkRequest, flavor: WasmFlavor) -> Result<(), String> {
+    if !req.native.is_empty() {
+        return Err("native libraries of packages cannot be linked into WebAssembly".into());
+    }
     if !req.runtime_lib.is_file() {
         return Err(format!(
             "runtime library not found: {}",
@@ -262,6 +265,7 @@ mod tests {
             runtime_lib: Path::new("rt.a"),
             output: Path::new("p.wasm"),
             release: true,
+            native: &[],
         };
         let args: Vec<String> = args(&req, WasmFlavor::Browser)
             .unwrap()

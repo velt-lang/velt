@@ -9,6 +9,11 @@
 //! - Debug builds may link the runtime as a shared library instead ([`shared`]): the
 //!   `runtime_lib` of a [`LinkRequest`] then names it (see [`find_shared_runtime_lib`]).
 //!
+//! - Native libraries of packages ([`NativeLink`], docs/internals/contracts/native_abi.md
+//!   "Linking"): a prelinked object linked like the program's own objects, or a shared library
+//!   (`-l` + rpath on Unix; the import library plus a copy of the DLL beside the executable on
+//!   Windows).
+//!
 //! `$VELT_LINKER` overrides the linker program on every platform (the argument style stays the same).
 //! Cross-linking (target OS != host OS) is not supported, except for the WebAssembly targets
 //! (`wasm`: `wasm-ld`, the same on every host).
@@ -38,6 +43,20 @@ pub struct LinkRequest<'a> {
     pub output: &'a Path,
     /// Link with release settings (strip debug info, etc.).
     pub release: bool,
+    /// Native libraries of packages (empty for most programs).
+    pub native: &'a [NativeLink],
+}
+
+/// One package's native library in a link.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeLink {
+    /// The shared library (`.so`, `.dylib`, `.dll`).
+    pub shared: PathBuf,
+    /// Windows: the import library of `shared`.
+    pub import_lib: Option<PathBuf>,
+    /// Link this prelinked object statically instead of `shared` (Linux and macOS release
+    /// builds; `None` links `shared`).
+    pub static_obj: Option<PathBuf>,
 }
 
 /// Operating-system family a target triple links for.
@@ -185,14 +204,23 @@ pub fn link(req: &LinkRequest) -> Result<(), String> {
         std::fs::create_dir_all(dir)
             .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     }
+    for n in req.native {
+        let file = n.static_obj.as_ref().unwrap_or(&n.shared);
+        if !file.is_file() {
+            return Err(format!("native library not found: {}", file.display()));
+        }
+    }
     let shared = shared::is_shared(req.runtime_lib, os);
     match os {
         TargetOs::Windows => {
             let mut cmd = msvc_linker(req.target)?;
-            cmd.args(msvc_args(req));
+            cmd.args(msvc_args(req)?);
             run_linker(cmd)?;
             if shared {
                 shared::place_dll(req.runtime_lib, req.output)?;
+            }
+            for n in req.native {
+                shared::place_file(&n.shared, req.output)?;
             }
             Ok(())
         }
@@ -242,7 +270,7 @@ pub fn find_linker(target: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(cmd.get_program()))
 }
 
-fn msvc_args(req: &LinkRequest) -> Vec<OsString> {
+fn msvc_args(req: &LinkRequest) -> Result<Vec<OsString>, String> {
     let p = &WINDOWS;
     let mut args: Vec<OsString> = p.base_args.iter().map(OsString::from).collect();
     let extra = if req.release {
@@ -255,9 +283,18 @@ fn msvc_args(req: &LinkRequest) -> Vec<OsString> {
     out.push(req.output);
     args.push(out);
     args.extend(req.objects.iter().map(OsString::from));
+    for n in req.native {
+        let import = n.import_lib.as_ref().ok_or_else(|| {
+            format!(
+                "native library {} has no import library",
+                n.shared.display()
+            )
+        })?;
+        args.push(import.into());
+    }
     args.push(req.runtime_lib.into());
     args.extend(p.native_libs.iter().map(OsString::from));
-    args
+    Ok(args)
 }
 
 fn unix_args(req: &LinkRequest, os: TargetOs) -> Vec<OsString> {
@@ -274,10 +311,15 @@ fn unix_args(req: &LinkRequest, os: TargetOs) -> Vec<OsString> {
     };
     args.extend(extra.iter().map(OsString::from));
     args.extend(req.objects.iter().map(OsString::from));
+    let statics = req.native.iter().filter_map(|n| n.static_obj.as_ref());
+    args.extend(statics.map(OsString::from));
     if shared::is_shared(req.runtime_lib, os) {
         args.extend(shared::unix_args(req.runtime_lib));
     } else {
         args.push(req.runtime_lib.into());
+    }
+    for n in req.native.iter().filter(|n| n.static_obj.is_none()) {
+        args.extend(shared::unix_lib_args(&n.shared));
     }
     args.extend(p.native_libs.iter().map(OsString::from));
     args.push("-o".into());
@@ -507,6 +549,7 @@ mod tests {
                 runtime_lib: Path::new("rt"),
                 output: Path::new("out"),
                 release: false,
+                native: &[],
             };
             let os = TargetOs::from_triple(target).unwrap();
             unix_args(&req, os)
@@ -536,6 +579,7 @@ mod tests {
                 runtime_lib: Path::new("rt"),
                 output: Path::new("out"),
                 release: false,
+                native: &[],
             };
             let a = unix_args(&req, TargetOs::from_triple(target).unwrap());
             let i = a.iter().position(|s| s == "-arch")?;
@@ -559,6 +603,7 @@ mod tests {
             runtime_lib: Path::new("x"),
             output: Path::new("y"),
             release: false,
+            native: &[],
         })
         .unwrap_err();
         assert!(err.contains("cross-OS linking"), "{err}");
@@ -620,6 +665,61 @@ mod tests {
     }
 
     #[test]
+    fn native_libraries_in_unix_and_msvc_args() {
+        let objs = [PathBuf::from("p.o")];
+        let native = [
+            NativeLink {
+                shared: PathBuf::from("/c/a/libvelt_native_a.so"),
+                import_lib: None,
+                static_obj: Some(PathBuf::from("/c/a/a.o")),
+            },
+            NativeLink {
+                shared: PathBuf::from("/c/b/libvelt_native_b.so"),
+                import_lib: None,
+                static_obj: None,
+            },
+        ];
+        let req = LinkRequest {
+            target: "x86_64-unknown-linux-gnu",
+            objects: &objs,
+            runtime_lib: Path::new("libvelt_rt.a"),
+            output: Path::new("out"),
+            release: true,
+            native: &native,
+        };
+        let a: Vec<String> = unix_args(&req, TargetOs::Linux)
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        let pos = |s: &str| a.iter().position(|x| x == s).unwrap();
+        // The prelinked object goes with the program's objects; the shared one by `-l` name.
+        assert!(pos("p.o") < pos("/c/a/a.o") && pos("/c/a/a.o") < pos("libvelt_rt.a"));
+        assert!(pos("-lvelt_native_b") > pos("libvelt_rt.a"));
+        assert!(!a.iter().any(|x| x.contains("velt_native_a.so")));
+
+        let dll = [NativeLink {
+            shared: PathBuf::from("C:/c/b/b.dll"),
+            import_lib: Some(PathBuf::from("C:/c/b/b.dll.lib")),
+            static_obj: None,
+        }];
+        let req = LinkRequest {
+            target: "x86_64-pc-windows-msvc",
+            runtime_lib: Path::new("velt_rt.lib"),
+            native: &dll,
+            ..req
+        };
+        let a: Vec<String> = msvc_args(&req)
+            .unwrap()
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            a.iter().position(|x| x == "C:/c/b/b.dll.lib")
+                < a.iter().position(|x| x == "velt_rt.lib")
+        );
+    }
+
+    #[test]
     fn shared_runtime_lookup() {
         let tmp = std::env::temp_dir().join(format!("velt_link_shared_{}", std::process::id()));
         let deps = tmp.join("debug").join("deps");
@@ -646,8 +746,10 @@ mod tests {
             runtime_lib: Path::new("velt_rt.lib"),
             output: Path::new("out.exe"),
             release: false,
+            native: &[],
         };
         let a: Vec<String> = msvc_args(&req)
+            .unwrap()
             .iter()
             .map(|s| s.to_string_lossy().into_owned())
             .collect();
@@ -659,6 +761,7 @@ mod tests {
 
         let req = LinkRequest {
             release: true,
+            native: &[],
             target: "x86_64-unknown-linux-gnu",
             runtime_lib: Path::new("libvelt_rt.a"),
             output: Path::new("out"),

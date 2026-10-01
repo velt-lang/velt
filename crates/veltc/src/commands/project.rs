@@ -16,14 +16,16 @@ pub struct Project {
 }
 
 impl Project {
-    /// The package enclosing `start`, installed; `Ok(None)` if `start` is not inside a package.
-    pub fn find(start: &Path, locked: bool) -> Result<Option<Project>, String> {
+    /// The package enclosing `start`, installed with the native libraries for `target`;
+    /// `Ok(None)` if `start` is not inside a package.
+    pub fn find(start: &Path, locked: bool, target: &str) -> Result<Option<Project>, String> {
         match vpm::manifest::find_package_root(start) {
             Some(root) => Project::open(
                 &root,
                 InstallOptions {
                     locked,
                     update: false,
+                    target: Some(target.to_string()),
                 },
             )
             .map(Some),

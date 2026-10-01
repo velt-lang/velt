@@ -1,4 +1,5 @@
-//! The contents of a package as distributed: `velt.toml` plus everything under `src/`.
+//! The contents of a package as distributed: `velt.toml`, everything under `src/`, and for a
+//! package with a `[native]` table the sources of its crate (without `target/` and `.git/`).
 //! Listing, copying and content-hashing all use the same file set so a checksum computed on a
 //! source tree matches the one computed on its registry or cache copy.
 
@@ -19,9 +20,33 @@ pub fn list_files(root: &Path) -> Result<Vec<String>, String> {
     if src.is_dir() {
         collect(&src, SRC_DIR, &mut files)?;
     }
+    if let Some(dir) = native_dir(root) {
+        let native = root.join(&dir);
+        if native.is_dir() {
+            collect(&native, &dir, &mut files)?;
+        }
+    }
     files.sort();
     Ok(files)
 }
+
+/// The `[native] path` of the package at `root`, if its manifest has one (an unreadable manifest
+/// has none here; it is reported where it is parsed).
+fn native_dir(root: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(root.join(MANIFEST_FILE)).ok()?;
+    native_dir_of(&text)
+}
+
+/// The `[native] path` of manifest text.
+pub fn native_dir_of(manifest: &str) -> Option<String> {
+    crate::manifest::Manifest::parse(manifest)
+        .ok()?
+        .native
+        .map(|n| n.path)
+}
+
+/// Directories never distributed inside a native crate.
+const SKIPPED_DIRS: &[&str] = &["target", ".git"];
 
 fn collect(dir: &Path, rel: &str, out: &mut Vec<String>) -> Result<(), String> {
     let entries =
@@ -32,6 +57,9 @@ fn collect(dir: &Path, rel: &str, out: &mut Vec<String>) -> Result<(), String> {
         let path = entry.path();
         let child = format!("{rel}/{name}");
         if path.is_dir() {
+            if SKIPPED_DIRS.contains(&name.as_str()) {
+                continue;
+            }
             collect(&path, &child, out)?;
         } else {
             out.push(child);
@@ -109,6 +137,26 @@ mod tests {
 
         write(&b, "src/lib.vlt", "export function g() {}");
         assert_ne!(checksum(&b).unwrap(), sum);
+    }
+
+    #[test]
+    fn native_crate_sources_are_included() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path();
+        write(
+            a,
+            "velt.toml",
+            "[package]\nname = \"a\"\nversion = \"1.0.0\"\n[native]\npath = \"rs\"\n",
+        );
+        write(a, "src/lib.vlt", "");
+        write(a, "rs/Cargo.toml", "");
+        write(a, "rs/src/lib.rs", "");
+        write(a, "rs/target/release/libx.so", "");
+        write(a, "native/ignored.rs", "");
+        assert_eq!(
+            list_files(a).unwrap(),
+            ["rs/Cargo.toml", "rs/src/lib.rs", "src/lib.vlt", "velt.toml"]
+        );
     }
 
     #[test]

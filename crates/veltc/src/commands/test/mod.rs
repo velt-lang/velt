@@ -65,7 +65,11 @@ pub fn test_command(path: Option<&Path>, release: bool, locked: bool, watch: boo
 pub fn run_all(path: Option<&Path>, release: bool, locked: bool) -> Result<Outcome, String> {
     let cwd =
         std::env::current_dir().map_err(|e| format!("cannot read the current directory: {e}"))?;
-    let project = Project::find(path.unwrap_or(&cwd), locked)?;
+    let project = Project::find(
+        path.unwrap_or(&cwd),
+        locked,
+        &velt_codegen_cl::host_triple(),
+    )?;
     let base = project.as_ref().map_or(cwd.clone(), |p| p.root.clone());
     let search = path.map_or(base.clone(), Path::to_path_buf);
     let files = discover::find_test_files(&search)?;

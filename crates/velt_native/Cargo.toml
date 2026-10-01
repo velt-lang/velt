@@ -1,0 +1,9 @@
+[package]
+name = "velt_native"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Write the native (Rust) half of a Velt package"
+
+[dependencies]
+velt_native_macros = { path = "../velt_native_macros", version = "0.1.0" }

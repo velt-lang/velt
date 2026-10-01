@@ -3,6 +3,10 @@
 //! `Uncaught <Type>` (plus `: <message>` when the type has a `message: string` field) to stderr,
 //! is dropped, and makes the process exit with 1. An `async main` runs its state machine with
 //! `velt_rt_block_on` (state on `velt_main`'s stack) and reads the result at `state + 0`.
+//!
+//! Before anything else, `velt_main` initializes the native libraries of packages
+//! (native_abi.md "Start-up"): for each, `rc = velt_native_init_<pkg>(velt_rt_native_api())`
+//! then `velt_rt_native_check(rc, &"<pkg>")`, which stops the program when `rc != 0`.
 
 use velt_sema::hir::{self, TyId, TyKind};
 
@@ -14,6 +18,7 @@ use crate::vir::{self, BinOp, Function, Linkage, Operand, Place, Proj, Rvalue, T
 impl<'c, 'h> FnLower<'c, 'h> {
     pub(super) fn build_main(cx: &'c mut super::Cx<'h>) -> Function {
         let mut lw = FnLower::bare(cx, vec![]);
+        lw.init_natives();
         let Some(def) = lw.cx.hir.entry else {
             lw.terminate(Terminator::Return(cint(0, Ty::I32)));
             return lw.finish_export();
@@ -74,6 +79,42 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
             None if info.result == Ty::I32 => Operand::Copy(res),
             None => cint(0, Ty::I32),
+        }
+    }
+
+    /// Call every native library's init with the runtime table, checking each result.
+    fn init_natives(&mut self) {
+        let inits = self.cx.native_inits.clone();
+        if inits.is_empty() {
+            return;
+        }
+        let api_fn = self
+            .cx
+            .extern_sym("velt_rt_native_api", vec![], Ty::Ptr, false);
+        let check = self.cx.extern_sym(
+            "velt_rt_native_check",
+            vec![Ty::I32, Ty::Ptr],
+            Ty::Unit,
+            false,
+        );
+        for init in inits {
+            let api = self.temp(Ty::Ptr);
+            self.call(
+                vir::Callee::Extern(api_fn),
+                vec![],
+                Some(Place::local(api)),
+                false,
+            );
+            let f = self
+                .cx
+                .extern_sym(&init.symbol, vec![Ty::Ptr], Ty::I32, false);
+            let rc = self.temp(Ty::I32);
+            let args = vec![Operand::Copy(Place::local(api))];
+            self.call(vir::Callee::Extern(f), args, Some(Place::local(rc)), false);
+            let name = self.cx.static_str_object(&init.package);
+            let name = Operand::Const(vir::Const::Static(name), Ty::Ptr);
+            let args = vec![Operand::Copy(Place::local(rc)), name];
+            self.call(vir::Callee::Extern(check), args, None, false);
         }
     }
 

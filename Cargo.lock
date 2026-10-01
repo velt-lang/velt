@@ -2095,6 +2095,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "velt_native"
+version = "0.1.0"
+dependencies = [
+ "velt_native_macros",
+]
+
+[[package]]
+name = "velt_native_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "velt_opt"
 version = "0.1.0"
 dependencies = [
@@ -2144,6 +2160,7 @@ dependencies = [
  "tokio-postgres",
  "tokio-rustls",
  "tokio-tungstenite",
+ "velt_native",
  "webpki-roots",
  "windows-sys 0.61.2",
 ]
@@ -2178,6 +2195,7 @@ dependencies = [
  "tokio-postgres",
  "tokio-rustls",
  "tokio-tungstenite",
+ "velt_native",
  "webpki-roots",
  "windows-sys 0.61.2",
 ]
@@ -2212,6 +2230,7 @@ dependencies = [
  "tokio-postgres",
  "tokio-rustls",
  "tokio-tungstenite",
+ "velt_native",
  "webpki-roots",
  "windows-sys 0.61.2",
 ]
@@ -2290,8 +2309,10 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vpm"
 version = "0.1.0"
 dependencies = [
+ "object",
  "semver",
  "serde",
+ "serde_json",
  "sha2 0.10.9",
  "tempfile",
  "toml",

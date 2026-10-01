@@ -59,3 +59,7 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Netwo
 # mimalloc is the global allocator by default; build with --no-default-features for the system allocator.
 default = ["mimalloc"]
 mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
+
+[dev-dependencies]
+# velt_rt's unit tests compare the SDK's layouts (clippy --all-targets builds them here too).
+velt_native = { path = "../velt_native" }

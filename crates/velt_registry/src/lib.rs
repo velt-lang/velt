@@ -4,13 +4,16 @@
 //!
 //! Uploads are verified before they are stored: the archive must be well-formed, its content
 //! hash must equal the `X-Velt-Checksum` header, its `velt.toml` must name the package and
-//! version of the URL, and versions are immutable. When a token is configured, uploads need
-//! `Authorization: Bearer <token>`; downloads are always public.
+//! version of the URL, and versions are immutable. Native bundles (`vpm::native`) are uploaded per
+//! target to a published version: verified the same way (checksum, metadata naming the package,
+//! version and target), and a published target is never replaced. When a token is configured,
+//! uploads need `Authorization: Bearer <token>`; downloads are always public.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use velt_http::{Handler, Request, Response};
+use vpm::native::bundle;
 use vpm::{archive, Locations, Manifest};
 
 /// Largest accepted upload.
@@ -44,6 +47,12 @@ impl Registry {
             ("GET", ["api", "v1", name, "index"]) => self.index(name),
             ("GET", ["api", "v1", name, version]) => self.download(name, version),
             ("PUT", ["api", "v1", name, version]) => self.upload(req, name, version),
+            ("GET", ["api", "v1", name, version, "native", target]) => {
+                self.download_native(name, version, target)
+            }
+            ("PUT", ["api", "v1", name, version, "native", target]) => {
+                self.upload_native(req, name, version, target)
+            }
             _ => Response::text(404, "not found"),
         }
     }
@@ -85,6 +94,85 @@ impl Registry {
         match archive::pack(&dir) {
             Ok(bytes) => Response::bytes(200, "application/octet-stream", bytes),
             Err(e) => Response::text(500, e),
+        }
+    }
+
+    fn loc(&self, cache: PathBuf) -> Locations {
+        Locations {
+            registry: self.root.clone(),
+            cache,
+            remote: None,
+        }
+    }
+
+    fn native_dir(&self, name: &str, version: &str, target: &str) -> Option<PathBuf> {
+        let v = semver::Version::parse(version).ok()?;
+        let ok = vpm::manifest::is_valid_package_name(name)
+            && vpm::manifest::NATIVE_TARGETS.contains(&target);
+        ok.then(|| self.loc(PathBuf::new()).registry_native(name, &v, target))
+    }
+
+    fn download_native(&self, name: &str, version: &str, target: &str) -> Response {
+        let Some(dir) = self.native_dir(name, version, target) else {
+            return Response::text(400, "invalid package name, version or target");
+        };
+        if !dir.is_dir() {
+            return Response::text(
+                404,
+                format!("no {target} native library for `{name}` {version}"),
+            );
+        }
+        match bundle::pack(&dir) {
+            Ok(bytes) => Response::bytes(200, "application/octet-stream", bytes),
+            Err(e) => Response::text(500, e),
+        }
+    }
+
+    fn upload_native(&self, req: &Request, name: &str, version: &str, target: &str) -> Response {
+        if let Some(token) = &self.token {
+            if req.header("authorization") != Some(&format!("Bearer {token}")) {
+                return Response::text(401, "a valid `Authorization: Bearer <token>` is required");
+            }
+        }
+        if self.native_dir(name, version, target).is_none() {
+            return Response::text(400, "invalid package name, version or target");
+        }
+        let Some(sum) = req.header("x-velt-checksum").map(str::to_string) else {
+            return Response::text(400, "missing X-Velt-Checksum");
+        };
+        let staging = match staging_dir(&self.root) {
+            Ok(d) => d,
+            Err(e) => return Response::text(500, e),
+        };
+        let bundle_dir = staging.join("bundle");
+        let result = bundle::unpack_verified(
+            &req.body,
+            &sum,
+            (name, version, target),
+            &bundle_dir,
+            "the upload",
+        )
+        .map_err(|e| (400, e))
+        .and_then(|()| {
+            let loc = self.loc(staging.join(".cache"));
+            vpm::registry::add_native_local(&loc, name, version, target, &bundle_dir).map_err(|e| {
+                let status = if e.contains("never replaced") {
+                    409
+                } else if e.contains("is not published") {
+                    404
+                } else {
+                    400
+                };
+                (status, e)
+            })
+        });
+        let _ = std::fs::remove_dir_all(&staging);
+        match result {
+            Ok(_) => Response::text(
+                201,
+                format!("published the {target} native library of `{name}` {version}\n"),
+            ),
+            Err((status, msg)) => Response::text(status, msg),
         }
     }
 
@@ -145,11 +233,7 @@ impl Registry {
                 ),
             ));
         }
-        let loc = Locations {
-            registry: self.root.clone(),
-            cache: staging.join(".cache"),
-            remote: None,
-        };
+        let loc = self.loc(staging.join(".cache"));
         vpm::registry::publish_local(staging, &loc).map_err(|e| {
             let status = if e.contains("already published") {
                 409

@@ -18,6 +18,7 @@ mod interrupt;
 #[cfg(windows)]
 mod job;
 mod listeners;
+mod native;
 mod supervisor;
 mod swap;
 mod versions;

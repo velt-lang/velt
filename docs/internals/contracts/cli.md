@@ -14,7 +14,8 @@ velt help  [<command>]                 # = velt <command> --help
 velt add   <pkg>[@<req>] [--path <dir>]
 velt install [--locked]
 velt update
-velt publish
+velt publish [--native-artifacts <dir>] [--native-only]
+velt native build [--target <triple>]
 velt fmt [<file|dir>...] [--check]
 velt lsp [--stdio]                     # language server (VS Code extension: editors/vscode)
 velt playground [--port <n>] [--host <addr>]   # browser playground (default 127.0.0.1:8090)
@@ -158,12 +159,21 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - `add` edits `[dependencies]` preserving formatting (latest published version if no req) and installs.
 - `install` resolves + fetches deps and writes `velt.lock`; `--locked` fails if the lock would change.
   `update` re-resolves ignoring the lock. `publish` copies the package into the local registry.
+- Native libraries (additive, native_abi.md): `build`, `run`, `check`, `dev`, `test` and the LSP
+  install the packages' native libraries for the target (prebuilt and verified, or built with
+  cargo for path packages and missing targets); `add`/`install`/`update` print one
+  `Native: `<pkg>` <ver> runs native code (prebuilt, checksum verified, <triple>)` (or
+  `built from source`) line per such package. `native build` writes the current package's bundle
+  to `<pkg>/target/velt-native/<triple>/` (default: the host). `publish` adds a bundle for every
+  `[native] targets` entry, from `--native-artifacts <dir>/<triple>/` or
+  `target/velt-native/<triple>/` (the host's is (re)built), and fails if one is missing;
+  `--native-only` adds bundles for targets not yet published to the published version.
 - `fmt` formats in place (no paths: package `src/` or all `.vlt` under cwd; skips `target/`, hidden
   dirs). `--check` writes nothing, lists unformatted files, exit 1 if any. Unparsable files → exit 1.
 - Imports: `velt:x` → `<std root>/x.vlt` or `x/index.vlt`; `./x`, `../x` → relative `x.vlt` or
   folder module `x/index.vlt`; bare names → `[paths]` aliases of the importing package first,
   then packages via `velt.toml` (`pkg/sub` → `src/sub.vlt` or `src/sub/index.vlt`). `std/prelude/*.vlt` is loaded implicitly before everything else.
-- Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.vlt`), `VELT_REGISTRY`
+- Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.velt`), `VELT_REGISTRY`
   (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (linker override), `VELT_CLANG` (clang for the LLVM backend).
   Set by `velt dev` for the program (not for users): `VELT_DEV_SOCKET` (a Unix socket path, or a
   named pipe `\\.\pipe\velt-dev-<pid>-<n>` on Windows).

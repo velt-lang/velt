@@ -237,11 +237,31 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "publish",
         summary: "Publish the package to the registry",
-        usage: &["publish"],
+        usage: &["publish [--native-artifacts <dir>] [--native-only]"],
         about: "Publishes to the package's `registry`, else $VELT_REGISTRY, else the local \
-                registry (~/.vlt/registry).",
-        options: &[],
-        examples: &[("velt publish", "publish the current package")],
+                registry (~/.velt/registry). A package with a [native] table also publishes a \
+                prebuilt native library for every target it lists: from <dir>/<triple>/, else \
+                target/velt-native/<triple>/ (the host's is built if missing).",
+        options: &[
+            ("--native-artifacts <dir>", "native libraries built elsewhere (`velt native build` on each OS)"),
+            ("--native-only", "add libraries for new targets to the published version"),
+        ],
+        examples: &[
+            ("velt publish", "publish the current package"),
+            ("velt publish --native-artifacts dist", "with libraries built by CI for each target"),
+        ],
+    },
+    CommandHelp {
+        name: "native",
+        summary: "Build the package's native library",
+        usage: &["native build [--target <triple>]"],
+        about: "Builds the [native] crate with cargo and writes the bundle `velt publish` uploads \
+                to target/velt-native/<triple>/ (needs Rust; users of the package do not).",
+        options: &[("--target <triple>", "the target to build for (default: this machine)")],
+        examples: &[(
+            "velt native build --target aarch64-apple-darwin",
+            "the macOS arm64 library",
+        )],
     },
     CommandHelp {
         name: "doc",
@@ -334,7 +354,7 @@ pub fn command_names() -> Vec<&'static str> {
 
 const ENVIRONMENT: &[(&str, &str)] = &[
     ("VELT_STD", "standard library directory"),
-    ("VELT_HOME", "vpm home (default ~/.vlt: cache/, registry/)"),
+    ("VELT_HOME", "vpm home (default ~/.velt: cache/, registry/)"),
     (
         "VELT_REGISTRY",
         "package registry: a directory (default $VELT_HOME/registry) or an http(s):// URL",

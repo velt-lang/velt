@@ -80,12 +80,18 @@ pub fn execute(cmd: Command) -> ExitCode {
         Command::Install { locked } => package::install(vpm::InstallOptions {
             locked,
             update: false,
+            target: Some(velt_codegen_cl::host_triple()),
         }),
         Command::Update => package::install(vpm::InstallOptions {
             locked: false,
             update: true,
+            target: Some(velt_codegen_cl::host_triple()),
         }),
-        Command::Publish => package::publish(),
+        Command::Publish {
+            native_artifacts,
+            native_only,
+        } => package::publish(native_artifacts.as_deref(), native_only),
+        Command::NativeBuild { target } => package::native_build(target),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

@@ -17,6 +17,7 @@ pub mod install;
 pub mod locations;
 pub mod lockfile;
 pub mod manifest;
+pub mod native;
 pub mod paths;
 pub mod registry;
 pub mod relpath;

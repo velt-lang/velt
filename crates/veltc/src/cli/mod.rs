@@ -39,7 +39,7 @@ pub struct DocArgs {
 /// `velt registry serve` arguments.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegistryArgs {
-    /// Registry directory (`None`: the local registry, `$VELT_REGISTRY` / `~/.vlt/registry`).
+    /// Registry directory (`None`: the local registry, `$VELT_REGISTRY` / `~/.velt/registry`).
     pub dir: Option<PathBuf>,
     /// Address to listen on.
     pub addr: String,
@@ -164,8 +164,15 @@ pub enum Command {
     Install { locked: bool },
     /// `velt update`: re-resolve ignoring the lockfile.
     Update,
-    /// `velt publish`.
-    Publish,
+    /// `velt publish [--native-artifacts <dir>] [--native-only]`.
+    Publish {
+        /// Where prebuilt native bundles are collected from (`<dir>/<triple>/`).
+        native_artifacts: Option<PathBuf>,
+        /// Add native libraries for new targets to the already published version.
+        native_only: bool,
+    },
+    /// `velt native build [--target <triple>]`: build the package's native library bundle.
+    NativeBuild { target: Option<String> },
     /// `velt --version`.
     Version,
     /// `velt --help` or no arguments (`None`), `velt help <cmd>` / `velt <cmd> --help` (`Some`).
@@ -213,7 +220,7 @@ fn parse_command(sub: &str, rest: Vec<OsString>) -> Result<Command, String> {
         "help" => parse_help(rest),
         "--version" | "-V" | "version" => Ok(Command::Version),
         "--help" | "-h" => Ok(Command::Help(None)),
-        "test" | "new" | "init" | "add" | "install" | "update" | "publish" => {
+        "test" | "new" | "init" | "add" | "install" | "update" | "publish" | "native" => {
             package::parse(sub, rest)
         }
         _ => Err(unknown_command(sub)),

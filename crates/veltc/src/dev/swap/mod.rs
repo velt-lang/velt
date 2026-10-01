@@ -12,16 +12,26 @@ use velt_rt_host::dev::handover::Stream;
 use velt_rt_host::http::handler::{update_handlers, InitFn, VeltHandler};
 use velt_rt_host::task::{DropFn, PollFn};
 
+use super::native::{source_files, Fingerprint};
 use crate::commands::{failure_code, report};
 use crate::driver::{self, BuildOptions, Session};
 
 /// Answer reload requests on `channel` on a background thread for the life of the program.
 pub fn serve_reloads(channel: Stream, opts: BuildOptions, mut session: DevSession, verbose: bool) {
+    let natives = Fingerprint::of(opts.packages.as_ref());
     let spawned = std::thread::Builder::new()
         .name("velt-dev-reload".into())
         .spawn(move || {
             while wait_reload(&channel).is_ok() {
-                let reply = reload(&mut session, &opts, verbose);
+                let reply = if Fingerprint::of(opts.packages.as_ref()) != natives {
+                    // Native libraries are never swapped (or unloaded): start over.
+                    Reloaded::Restart {
+                        reason: "a native library changed".into(),
+                        files: source_files(opts.packages.as_ref()),
+                    }
+                } else {
+                    reload(&mut session, &opts, verbose)
+                };
                 if reply_reload(&channel, &reply).is_err() {
                     break;
                 }
@@ -37,7 +47,8 @@ pub fn serve_reloads(channel: Stream, opts: BuildOptions, mut session: DevSessio
 fn reload(session: &mut DevSession, opts: &BuildOptions, verbose: bool) -> Reloaded {
     let mut sess = Session::new();
     let program = driver::compile(&mut sess, opts);
-    let files = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
+    let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
+    files.extend(source_files(opts.packages.as_ref()));
     let program = match program {
         Ok(program) => program,
         Err(err) => {

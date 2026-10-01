@@ -82,6 +82,8 @@ Decisions and their rationale, including what is still planned:
   errors, `extend`.
 - [Hot reload](design/hot-reload.md): `velt dev`'s supervisor, JIT host and hot swap.
 - [TSX for server-side rendering](design/tsx.md): the planned JSX support.
+- [Native code in packages](design/native-packages.md): a `native/` Rust crate in a package, prebuilt
+  per-target binaries and the runtime function table.
 
 ## Testing
 

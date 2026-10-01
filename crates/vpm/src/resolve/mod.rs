@@ -22,10 +22,14 @@ use candidates::{Candidate, Provider};
 /// Where a resolved package comes from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
-    /// The local registry; `checksum` from its index.
+    /// The registry; `checksum` and the native libraries from its index.
     Registry {
         /// `sha256:<hex>` of the published contents.
         checksum: String,
+        /// Target triple → checksum of the prebuilt native library (packages with native code).
+        native: BTreeMap<String, String>,
+        /// The runtime table version those libraries need.
+        native_abi: Option<u32>,
     },
     /// A local directory (absolute, normalized).
     Path {
