@@ -298,6 +298,18 @@ fn run(cmd: &mut Command) -> Result<(), String> {
     }
 }
 
+/// `-platform_version` for `ld -r` on Apple targets: Xcode 15's linker refuses to link without it.
+/// The object gets the runtime's minimum macOS (11.0 on arm64, 10.12 on x86_64), never newer than
+/// the executable's deployment target, so the final link neither warns nor raises the minimum.
+fn apple_platform_version(target: &str) -> [&'static str; 4] {
+    let min = if target.starts_with("x86_64") {
+        "10.12"
+    } else {
+        "11.0"
+    };
+    ["-platform_version", "macos", min, min]
+}
+
 /// Prelink `staticlib` into `out`: the members `keep` needs, one object, only `keep` global.
 fn prelink(staticlib: &Path, keep: &[String], target: &str, out: &Path) -> Result<(), String> {
     let ld = tool("VELT_NATIVE_LD", "ld");
@@ -318,7 +330,9 @@ fn prelink(staticlib: &Path, keep: &[String], target: &str, out: &Path) -> Resul
             None => "x86_64",
         };
         run(Command::new(&ld)
-            .args(["-r", "-arch", arch, "-exported_symbols_list"])
+            .args(["-r", "-arch", arch])
+            .args(apple_platform_version(target))
+            .arg("-exported_symbols_list")
             .arg(&list)
             .args(undefined)
             .arg("-o")
@@ -351,6 +365,18 @@ fn prelink(staticlib: &Path, keep: &[String], target: &str, out: &Path) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apple_prelinks_name_the_runtimes_minimum_macos() {
+        assert_eq!(
+            apple_platform_version("aarch64-apple-darwin"),
+            ["-platform_version", "macos", "11.0", "11.0"]
+        );
+        assert_eq!(
+            apple_platform_version("x86_64-apple-darwin"),
+            ["-platform_version", "macos", "10.12", "10.12"]
+        );
+    }
 
     #[test]
     fn library_names() {
