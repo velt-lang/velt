@@ -33,8 +33,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - **WebAssembly** (additive): `--target wasm32-wasip1` (alias `wasm32-wasi`)
   and `--target wasm32-unknown-unknown` build `./target/velt/<stem>.wasm` (object `<stem>.o`) with
   the LLVM backend (always; `--backend cranelift` is an error) using LLVM's `opt`/`llc`
-  (`$VELT_LLVM_BIN`, else rustup's `llvm-tools`), `wasm-ld` (`$VELT_LINKER`, `wasm-ld`, rustup's
-  `rust-lld`) and `libvelt_rt_wasm.a` (`$VELT_RT_LIB`, else cargo's `target/<triple>/<profile>/`,
+  (`$VELT_LLVM_BIN`, else rustup's `llvm-tools`), `wasm-ld` (`$VELT_LINKER`, rustup's `rust-lld`,
+  `wasm-ld` on PATH) and `libvelt_rt_wasm.a` (`$VELT_RT_LIB`, else cargo's `target/<triple>/<profile>/`,
   else `<prefix>/lib/<triple>/`). WASI builds also need wasi-libc (`$VELT_WASI_SYSROOT`, else
   rustup's `wasm32-wasip1` target). `run` executes WASI modules with `$VELT_WASM_RUNNER <module>
   <args>` or `wasmtime run --dir=. <module> <args>`; browser builds also write the JS glue

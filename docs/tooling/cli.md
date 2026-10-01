@@ -103,7 +103,8 @@ the standard library. The output has one page per module and a client-side searc
 
 ## `velt doctor`
 
-Checks the runtime library, the standard library, the system linker, clang, and that
+Checks the runtime library, the standard library, the system linker, the WebAssembly linker
+(the Rust toolchain's `rust-lld` when Rust is installed), clang, and that
 `VELT_HOME` is writable, then compiles and runs a hello world (debug, plus release through LLVM
 when clang is found). Problems are marked `✗` (required) or `!` (optional) with a `fix:` hint.
 It exits with 0 when every required check passes.
@@ -114,6 +115,7 @@ $ velt doctor
 ✓ runtime lib      C:\Users\me\AppData\Local\velt\lib\velt_rt.lib
 ✓ std              C:\Users\me\AppData\Local\velt\std
 ✓ linker           C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\...\link.exe
+✓ wasm linker      C:\Users\me\.rustup\toolchains\...\bin\rust-lld.exe
 ✓ clang            C:\Program Files\LLVM\bin\clang.exe
 ✓ velt home        registry C:\Users\me\.velt\registry, cache C:\Users\me\.velt\cache
 ✓ hello (debug)    built with Cranelift and ran

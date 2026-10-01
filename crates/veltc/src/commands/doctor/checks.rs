@@ -1,5 +1,5 @@
 //! Environment checks for `velt doctor`: version, runtime libraries (static, shared), std, system
-//! linker, clang and the vpm home directory. Each returns a [`Check`] with a fix hint when something is missing.
+//! linker, WebAssembly linker, clang and the vpm home directory. Each returns a [`Check`] with a fix hint when something is missing.
 
 use std::path::Path;
 
@@ -18,6 +18,7 @@ pub fn environment() -> Vec<Check> {
         shared_runtime_lib(&host),
         std_lib(),
         linker(&host),
+        wasm_linker(),
         clang(),
         velt_home(),
     ]
@@ -96,6 +97,20 @@ fn linker(host: &str) -> Check {
     match velt_link::find_linker(host) {
         Ok(path) => Check::ok("linker", path.display().to_string()),
         Err(msg) => Check::bad("linker", Status::Fail, "no usable system linker", msg),
+    }
+}
+
+/// WebAssembly is optional: without a linker only `--target wasm32-*` builds fail.
+fn wasm_linker() -> Check {
+    const LABEL: &str = "wasm linker";
+    match velt_link::find_linker("wasm32-wasip1") {
+        Ok(path) => Check::ok(LABEL, path.display().to_string()),
+        Err(msg) => Check::bad(
+            LABEL,
+            Status::Warn,
+            format!("{msg} (optional: only `--target wasm32-*` builds need it)"),
+            "install Rust (`rustup`): its rust-lld links WebAssembly",
+        ),
     }
 }
 

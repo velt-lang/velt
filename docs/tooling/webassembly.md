@@ -16,7 +16,8 @@ velt run --target wasm32-unknown-unknown hello.vlt    # runs it with node and th
 ## Setup
 
 WebAssembly builds go through LLVM's `opt` and `llc` (Apple's clang has no WebAssembly backend,
-so clang is not used) and `wasm-ld`. With rustup, everything comes from the Rust toolchain:
+so clang is not used) and a WebAssembly linker. With rustup, everything comes from the Rust
+toolchain:
 
 ```sh
 rustup component add llvm-tools                            # opt, llc
@@ -25,6 +26,10 @@ cargo build -p velt_rt_wasm --target wasm32-wasip1          # the runtime, per t
 cargo build -p velt_rt_wasm --target wasm32-unknown-unknown
 brew install wasmtime                                      # or https://wasmtime.dev
 ```
+
+The linker is the Rust toolchain's `rust-lld`, which matches the wasi-libc rustup installs (an
+older LLVM `wasm-ld` can fail on it with undefined symbols such as `__wasm_first_page_end`);
+without Rust, `wasm-ld` on `PATH`. `velt doctor` shows which one is used.
 
 Overrides: `VELT_LLVM_BIN` (a directory with `opt` and `llc`), `VELT_LINKER` (`wasm-ld`),
 `VELT_WASI_SYSROOT` (a directory with wasi-libc's `crt1-command.o` and `libc.a`), `VELT_RT_LIB`

@@ -11,12 +11,9 @@ runs:
       with:
         shared-key: gate
         cache-on-failure: true
-    # wasmtime and node enable the WebAssembly and playground tests. Not on Windows yet:
-    # #99 (playground path) and #100 (wasm linker) fail there; Linux and macOS run them.
-    - if: runner.os != 'Windows'
-      uses: bytecodealliance/actions/wasmtime/setup@v1
-    - if: runner.os != 'Windows'
-      uses: actions/setup-node@v4
+    # wasmtime and node enable the WebAssembly and playground tests.
+    - uses: bytecodealliance/actions/wasmtime/setup@v1
+    - uses: actions/setup-node@v4
       with:
         node-version: 22
     # The LLVM backend (--release goldens) needs clang 16 or newer; Apple's clang can be older.
