@@ -2,6 +2,9 @@
 //! into `node`, so the rest of its block must not modify or move `node.left` or anything that
 //! owns it (`node.left = …`, `node = …`, `node.reset()`), which could free what `x` points to.
 //! Changing `x`'s own contents (`x.v = 1`) or unrelated fields (`node.right = …`) is fine.
+//! When the block does change it, `x` becomes a share of the value instead (semantics stage 2:
+//! `x` keeps referring to the object, like in JS); only values that cannot be shared (promises)
+//! report the conflict.
 
 use velt_common::{Diagnostic, Span};
 
@@ -15,10 +18,16 @@ use super::uses::{Access, Collector};
 pub(super) fn check_body(
     col: &Collector,
     locals: &[LocalDef],
+    shared: &[bool],
     body: &mut Block,
     out: &mut Vec<Diagnostic>,
 ) {
-    let mut v = Lets { col, locals, out };
+    let mut v = Lets {
+        col,
+        locals,
+        shared,
+        out,
+    };
     v.scan(body);
     visit::block(body, &mut v);
 }
@@ -27,6 +36,8 @@ pub(super) fn check_body(
 struct Lets<'c, 'a, 'm> {
     col: &'c Collector<'a, 'm>,
     locals: &'c [LocalDef],
+    /// Per local: is its value shared (`Ctx::is_shared_value`)?
+    shared: &'c [bool],
     out: &'c mut Vec<Diagnostic>,
 }
 
@@ -36,7 +47,10 @@ impl Lets<'_, '_, '_> {
             let (head, rest) = b.stmts.split_at_mut(i + 1);
             let value = b.value.as_deref_mut();
             if let Some(d) = check_let(self.col, self.locals, &mut head[i], rest, value) {
-                self.out.push(d);
+                match share_binding(&mut head[i], self.shared) {
+                    true => {}
+                    false => self.out.push(d),
+                }
             }
         }
     }
@@ -102,6 +116,27 @@ fn check_let(
     Some(changed_while_borrowed(
         &hit.text, hit.access, hit.span, name, &text, at,
     ))
+}
+
+/// Turn the by-reference `const` `s` into an owned share of the place it referred to; false
+/// when its value cannot be shared.
+fn share_binding(s: &mut Stmt, shared: &[bool]) -> bool {
+    let S::LetPat { pat, init } = &mut s.kind else {
+        return false;
+    };
+    let PatKind::Binding(l, UseMode::Borrow) = pat.kind else {
+        return false;
+    };
+    if !shared[l.0 as usize] {
+        return false;
+    }
+    let mut init = init.clone();
+    super::super::soft::make_share(&mut init);
+    s.kind = S::Let {
+        local: l,
+        init: Some(init),
+    };
+    true
 }
 
 fn changed_while_borrowed(

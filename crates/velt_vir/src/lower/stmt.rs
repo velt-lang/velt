@@ -89,11 +89,21 @@ impl FnLower<'_, '_> {
     }
 
     fn let_stmt(&mut self, local: LocalId, init: Option<&hir::Expr>) {
+        let cell = self.info[local.0 as usize].cell;
+        if cell && !self.dead() {
+            self.new_cell(local);
+        }
         if let Some(e) = init {
             self.push_scope(ScopeKind::Temps);
             let v = self.consume(e);
             if let Some(l) = self.info[local.0 as usize].vir {
-                self.store(Place::local(l), v);
+                match cell {
+                    true => {
+                        let p = self.local_place(local);
+                        self.store(p, v);
+                    }
+                    false => self.store(Place::local(l), v),
+                }
             }
             self.pop_scope();
         }

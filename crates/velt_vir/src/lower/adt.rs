@@ -32,7 +32,10 @@ impl FnLower<'_, '_> {
 
     /// Aggregate value of concrete type `ty` from owned field operands (registered as a temp).
     fn build_agg(&mut self, ty: TyId, ops: Vec<Operand>) -> Operand {
-        let Ty::Agg(a) = self.cx.ty(ty) else {
+        let Ty::Agg(a) = (match self.cx.boxed(ty) {
+            true => self.cx.payload_ty(ty),
+            false => self.cx.ty(ty),
+        }) else {
             ice("aggregate literal of a non-aggregate type")
         };
         if self.dead() {
@@ -41,6 +44,10 @@ impl FnLower<'_, '_> {
         let ops = self.stored_fields(ty, ops);
         let t = self.temp(Ty::Agg(a));
         self.assign(Place::local(t), Rvalue::Aggregate(a, ops));
+        if self.cx.boxed(ty) {
+            let v = self.box_value(Operand::Copy(Place::local(t)), ty);
+            return self.own_value(v, ty);
+        }
         self.own_temp(t, ty);
         Operand::Copy(Place::local(t))
     }
@@ -70,7 +77,7 @@ impl FnLower<'_, '_> {
     pub(super) fn alloc_object_raw(&mut self, ty: TyId) -> Place {
         let oa = self.cx.obj_agg(ty);
         let size = self.cx.size_align(Ty::Agg(oa)).0;
-        let ptr = self.alloc(Ty::Agg(oa));
+        let ptr = self.object_alloc(ty);
         self.mem_set(ptr.clone(), cint(0, Ty::U8), cint(size as i128, Ty::U64));
         let obj = self.temp(Ty::Ptr);
         self.assign(Place::local(obj), Rvalue::Use(ptr));
@@ -154,15 +161,15 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// Concrete value → interface value `{ data, vtable }`. Class objects are their own data
-    /// pointer; other values are moved into a heap box.
+    /// Concrete value → interface value `{ data, vtable }`. Class objects and boxed values are
+    /// their own data pointer; other values are moved into a heap box.
     pub(super) fn make_dyn(&mut self, e: &hir::Expr, impl_index: u32, ty: TyId) -> Operand {
         let cty = self.sub(e.ty);
         let v = self.consume(e);
         if self.dead() {
             return unit();
         }
-        let data = if self.cx.is_class(cty) {
+        let data = if self.cx.is_class(cty) || self.cx.boxed(cty) {
             v
         } else {
             let vt = self.cx.ty(cty);

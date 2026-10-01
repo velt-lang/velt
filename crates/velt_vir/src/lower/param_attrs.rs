@@ -3,8 +3,11 @@
 //! access"): during a call, memory reachable through a `BorrowMut` param is reachable through
 //! no other param, and `Borrow` params never alias a `BorrowMut` or `Owned` one.
 //!
-//! - `BorrowMut` (inferred modified) aggregate or class object → `noalias`;
-//! - `Borrow` aggregate or class object → `readonly`, unless the value holds a `Mutex` inline
+//! - `BorrowMut` (inferred modified) aggregate or class object → `noalias`, unless the type is
+//!   counted or borrowed inside counted objects (semantics stage 2: other references may reach
+//!   the value, `Cx::unique_refs`);
+//! - `Borrow` aggregate or class object → `readonly` (again only for unique types), unless the
+//!   value holds a `Mutex` inline
 //!   (`m.with(...)` writes its lock word through a shared borrow) or the body writes the param
 //!   (`LocalDef::mutable`: closure params, params handed to function values). Not `noalias`:
 //!   two `Borrow` params may point to the same value;
@@ -23,8 +26,10 @@
 //! mutable module state, and no function can return a reference into its arguments (moving
 //! out of a field or element is an error). So during the call, the object behind a `BorrowMut`
 //! param is reached through that param only (`noalias`), and nothing writes the object behind
-//! a `Borrow` param (`readonly`). This is the argument that already covered `this`; it would
-//! no longer hold if objects became shared references (docs/internals/design/semantics.md, stage 2).
+//! a `Borrow` param (`readonly`). This is the argument that already covered `this`. With shared
+//! references (semantics stage 2) it holds exactly for the classes the program never shares:
+//! counted ones (and values borrowed inside counted objects) get neither attribute
+//! (`Cx::unique_refs`).
 //!
 //! `Owned` / `Copy` aggregates get no `noalias`: calls through the borrow ABI (thunks, vtables)
 //! may hand the callee the caller's own value instead of a copy.
@@ -70,8 +75,12 @@ impl Cx<'_> {
             ..ParamAttrs::default()
         };
         match mode {
-            Some(PassMode::BorrowMut) => attrs.noalias = true,
-            Some(PassMode::Borrow) => attrs.readonly = !written && !self.holds_mutex(ty, 0),
+            Some(PassMode::BorrowMut) => attrs.noalias = self.unique_refs(ty),
+            // A counted object may be written through a share of the param (`const o = p;
+            // o.x = 1`), a pointer derived from it: not read-only then.
+            Some(PassMode::Borrow) => {
+                attrs.readonly = !written && !self.holds_mutex(ty, 0) && self.unique_refs(ty)
+            }
             _ => {}
         }
         attrs
@@ -103,7 +112,7 @@ impl Cx<'_> {
     /// Does a value of `ty` (a class: its object) contain a `Mutex` in its own memory? Values
     /// behind pointers (arrays, other objects, `shared`) don't count: writes to them are not
     /// writes through the param. `depth` guards against pathological nesting.
-    fn holds_mutex(&mut self, ty: TyId, depth: u32) -> bool {
+    pub(super) fn holds_mutex(&mut self, ty: TyId, depth: u32) -> bool {
         if depth > 32 {
             return true;
         }

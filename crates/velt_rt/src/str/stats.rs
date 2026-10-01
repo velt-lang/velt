@@ -7,6 +7,9 @@
 //! string copied while its source stays alive), `release` decrements of a *shared* buffer (count
 //! above 1; dropping the only reference is a plain `free`), `alloc`/`free` heap string buffers
 //! (`alloc - free` = buffers still alive at exit). Refcount operations = `retain + release`.
+//! `blocks=<allocated>/<freed>` counts every `velt_rt_alloc` / `velt_rt_free` of a non-empty
+//! block (objects, array buffers, counted boxes, closure environments): equal numbers at exit
+//! mean compiled code freed everything it allocated (leak checks, semantics stage 2).
 
 #[cfg(debug_assertions)]
 mod counters {
@@ -17,6 +20,8 @@ mod counters {
     pub static RELEASE: AtomicU64 = AtomicU64::new(0);
     pub static ALLOC: AtomicU64 = AtomicU64::new(0);
     pub static FREE: AtomicU64 = AtomicU64::new(0);
+    pub static BLOCK_ALLOC: AtomicU64 = AtomicU64::new(0);
+    pub static BLOCK_FREE: AtomicU64 = AtomicU64::new(0);
 
     pub fn enabled() -> bool {
         static ON: OnceLock<bool> = OnceLock::new();
@@ -33,7 +38,7 @@ mod counters {
 macro_rules! hook {
     ($name:ident, $counter:ident) => {
         #[inline(always)]
-        pub(super) fn $name() {
+        pub(crate) fn $name() {
             #[cfg(debug_assertions)]
             counters::bump(&counters::$counter);
         }
@@ -44,6 +49,8 @@ hook!(retain, RETAIN);
 hook!(release, RELEASE);
 hook!(alloc, ALLOC);
 hook!(free, FREE);
+hook!(block_alloc, BLOCK_ALLOC);
+hook!(block_free, BLOCK_FREE);
 
 /// Print the counters (debug runtime with `VELT_RC_STATS=1` only). Called at process exit.
 pub fn report() {
@@ -52,11 +59,13 @@ pub fn report() {
         use counters::*;
         use std::sync::atomic::Ordering::Relaxed;
         eprintln!(
-            "rc stats: retain={} release={} alloc={} free={}",
+            "rc stats: retain={} release={} alloc={} free={} blocks={}/{}",
             RETAIN.load(Relaxed),
             RELEASE.load(Relaxed),
             ALLOC.load(Relaxed),
-            FREE.load(Relaxed)
+            FREE.load(Relaxed),
+            BLOCK_ALLOC.load(Relaxed),
+            BLOCK_FREE.load(Relaxed)
         );
     }
 }

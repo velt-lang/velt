@@ -1,9 +1,7 @@
 //! Place expressions (`Local`, `Field`, `Index`, `UnwrapSome`, `UnwrapVariant`, `Global`): use-mode adjustment
 //! after the consumer is known, and mutability of the place's root.
 
-use velt_common::Diagnostic;
-
-use super::{FnCx, LocalKind};
+use super::FnCx;
 use crate::hir::{self, ExprKind as H, LocalId, UseMode};
 
 pub(crate) fn is_place(e: &hir::Expr) -> bool {
@@ -96,37 +94,11 @@ impl FnCx<'_, '_> {
         let Some(l) = place_root(e) else {
             return true;
         };
-        let name = self.f.locals[l.0 as usize].name.clone();
         let span = root_expr(e).span;
-        // Params and `this` may always be modified: whether the caller's value is (a mutable
-        // borrow) is inferred afterwards (`crate::ownership`).
-        let (ok, note): (bool, String) = match self.local_kind(l) {
-            LocalKind::Let
-            | LocalKind::Const
-            | LocalKind::Using
-            | LocalKind::Temp
-            | LocalKind::Capture
-            | LocalKind::Param
-            | LocalKind::This => (true, String::new()),
-            LocalKind::Bind if self.f.const_refs.contains(&l) => (
-                false,
-                format!("`{name}` refers to a class field or array element in place and is read-only; modify that place directly"),
-            ),
-            LocalKind::Bind => (
-                self.f.locals[l.0 as usize].mutable,
-                "pattern bindings of a `match` are read-only".to_string(),
-            ),
-            LocalKind::Elem => (
-                self.f.locals[l.0 as usize].mutable,
-                "`for...of` borrows the array's elements; index the array to modify them"
-                    .to_string(),
-            ),
-        };
-        if !ok {
-            self.cx
-                .error(Diagnostic::error(format!("cannot {what} `{name}`"), span).with_note(note));
-            return false;
-        }
+        // Every binding may be modified through, like in JS (semantics stage 2): params and
+        // `this` (whether the caller's value is modified is inferred afterwards,
+        // `crate::ownership`), and pattern / `for...of` / by-reference `const` bindings, which
+        // point into the place they were bound from (`crate::ownership::evidence`).
         self.mark_mutated(l, span);
         true
     }

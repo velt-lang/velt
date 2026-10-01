@@ -1,0 +1,27 @@
+// check: no leaks
+// Semantics stage 2: `==` / `===` compare objects (arrays, object types, class instances) by
+// identity, like JS; `deepEqual` compares contents.
+class P {
+  x: i64 = 0;
+}
+
+function same<T>(a: T, b: T): bool {
+  return a === b;
+}
+
+function main() {
+  const a = [1, 2];
+  const b = a;
+  const c = [1, 2];
+  console.log(a == b, a == c, a != c, deepEqual(a, c));
+  const p = { x: 1 };
+  const q = p;
+  console.log(p == q, p == { x: 1 }, deepEqual(p, { x: 1 }));
+  const o1 = new P();
+  const o2 = new P();
+  console.log(o1 == o1, o1 == o2, same(o1, o2), same(a, b), same("s", "s"));
+  const xs = [p, q];
+  console.log(xs.indexOf({ x: 1 }), xs.indexOf(q), xs.includes(p));
+  const ys = [[1], [1]];
+  console.log(ys[0] == ys[1], deepEqual(ys[0], ys[1]));
+}

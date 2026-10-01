@@ -1,5 +1,4 @@
-borrowed_fn_copy.vlt:20:18: error: cannot move out of `f`, which is borrowed
-parameters of closures and of overridden or interface methods are always borrowed
+borrowed_fn_copy.vlt:20:18: error: cannot keep a copy of `f`, a borrowed function parameter
 borrowed_fn_copy.vlt:27:15: error: cannot keep a copy of `g`, a borrowed function parameter
 a closure passed as `g` may point into its caller's variables
 borrowed_fn_copy.vlt:30:17: error: cannot keep a copy of `g`, a borrowed function parameter

@@ -50,7 +50,7 @@ pub(super) fn field_getter(cx: &mut Ctx, d: DefId, self_ty: TyId, index: usize, 
     } else {
         hir::Expr {
             kind: H::Call {
-                callee: Callee::Intrinsic(Intrinsic::Clone),
+                callee: Callee::Intrinsic(Intrinsic::Share),
                 args: vec![field(UseMode::Borrow)],
             },
             ty,
@@ -93,6 +93,7 @@ fn getter_def(
                 name: "this".into(),
                 ty: self_ty,
                 mutable: false,
+                boxed: false,
                 span,
             }],
             block: hir::Block {

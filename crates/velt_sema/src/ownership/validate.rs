@@ -3,7 +3,7 @@
 //! and captured variables (each with a `.clone()` hint), and functions used as values whose
 //! parameters are owned (a function value's ABI borrows).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -33,11 +33,13 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         let kinds = cx.fn_info(d).local_kinds.clone();
         let fixed = cx.fn_info(d).fixed_modes;
         let soft: HashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
+        let shared = shared_captures_in(cx, &mut f.body.block);
         let v = Validator {
             cx,
             f: &f,
             kinds: &kinds,
             fixed,
+            shared: &shared,
         };
         let mut block = f.body.block.clone();
         visit::exprs_mut(&mut block, &mut |e: &mut Expr| {
@@ -47,13 +49,16 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
                 if !invalid.is_empty() {
                     match super::fn_values::borrowed_fn_copy(v.cx, v.f, v.kinds, e) {
                         Some(err) => errors.push(err),
-                        None => soft::make_clone(e),
+                        // An async closure may run on several threads at once (an http
+                        // handler) and counts are not atomic: it copies what it captured.
+                        None if v.f.is_async && v.captured(e) => soft::make_deep_copy(e),
+                        None => soft::make_share(e),
                     }
                     return;
                 }
             }
             if let (E::Closure(c), true) = (&e.kind, soft.contains(&e.span)) {
-                if v.string_captures_pinned(*c) {
+                if v.shared_captures_pinned(*c) {
                     copied_captures.push(*c);
                 }
             }
@@ -63,16 +68,32 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         f.body.block = block;
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
         for c in copied_captures {
-            super::strings::copy_string_captures(cx, c);
+            super::shares::share_captures(cx, c);
         }
     }
     fn_values(cx);
+}
+
+/// The shared captures (`super::shares::shared_captures`) of every closure created in `b`.
+fn shared_captures_in(cx: &mut Ctx, b: &mut crate::hir::Block) -> HashMap<DefId, Vec<LocalId>> {
+    let mut closures = vec![];
+    visit::exprs_mut(b, &mut |e: &mut Expr| {
+        if let E::Closure(c) = e.kind {
+            closures.push(c);
+        }
+    });
+    closures
+        .into_iter()
+        .map(|c| (c, super::shares::shared_captures(cx, c)))
+        .collect()
 }
 
 struct Validator<'a, 'c, 'm> {
     cx: &'c Ctx<'m>,
     f: &'a FnDef,
     kinds: &'a [LocalKind],
+    /// Shared captures per closure created in the body.
+    shared: &'a HashMap<DefId, Vec<LocalId>>,
     fixed: bool,
 }
 
@@ -96,7 +117,7 @@ impl Validator<'_, '_, '_> {
                 ..
             } => errors.push(array_move(e.span)),
             E::Call {
-                callee: Callee::Intrinsic(Intrinsic::Clone),
+                callee: Callee::Intrinsic(Intrinsic::Clone | Intrinsic::Share),
                 args,
             } => {
                 if let [a] = args.as_slice() {
@@ -107,11 +128,9 @@ impl Validator<'_, '_, '_> {
             }
             E::Closure(def) => {
                 if let Some(Def::Fn(c)) = &self.cx.defs[def.0 as usize] {
-                    let strings: Vec<LocalId> = super::strings::string_captures(self.cx, *def)
-                        .map(|cap| cap.outer)
-                        .collect();
+                    let shared = self.shared.get(def).cloned().unwrap_or_default();
                     for cap in c.captures.iter().filter(|c| c.mode == PassMode::Owned) {
-                        if !strings.contains(&cap.outer) {
+                        if !shared.contains(&cap.outer) {
                             self.root(cap.outer, None, e.span, errors);
                         }
                     }
@@ -152,14 +171,21 @@ impl Validator<'_, '_, '_> {
         }
     }
 
-    /// Does closure `c` capture by value a string variable it may not move (then its string
-    /// captures become copies)?
-    fn string_captures_pinned(&self, c: DefId) -> bool {
-        super::strings::string_captures(self.cx, c).any(|cap| {
+    /// Does closure `c` capture by value a shared variable it may not move (then its shared
+    /// captures become shares)?
+    fn shared_captures_pinned(&self, c: DefId) -> bool {
+        let shared = self.shared.get(&c).cloned().unwrap_or_default();
+        shared.into_iter().any(|outer| {
             let mut invalid = vec![];
-            self.root(cap.outer, None, Span::default(), &mut invalid);
+            self.root(outer, None, Span::default(), &mut invalid);
             !invalid.is_empty()
         })
+    }
+
+    /// Is the place `e` rooted at a captured variable?
+    fn captured(&self, e: &Expr) -> bool {
+        crate::body::places::place_root(e)
+            .is_some_and(|l| matches!(self.kinds.get(l.0 as usize), Some(LocalKind::Capture)))
     }
 
     fn param_mode(&self, l: LocalId) -> Option<PassMode> {

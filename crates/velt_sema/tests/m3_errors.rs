@@ -42,11 +42,11 @@ fn async_methods_own_this() {
         "class C { n: i64 = 1; async get(): Promise<i64> { return this.n; } }
          async function main() { const c = new C(); console.log(await c.get()); }",
     );
-    let r = err_src(
+    // Semantics stage 2: the receiver is shared with the promise when it is used again.
+    ok_src(
         "class C { n: i64 = 1; async get(): Promise<i64> { return this.n; } }
          async function main() { const c = new C(); await c.get(); await c.get(); }",
     );
-    assert!(r.contains("use of moved value `c`"), "{r}");
 }
 
 #[test]
@@ -92,11 +92,8 @@ fn mutex_with_gets_the_value_mutably_and_is_synchronous() {
         "async function main() { const m = new Mutex<i64[]>([]); m.with(async (v) => { v.push(1); }); }",
     );
     assert!(r.contains("cannot be async"), "{r}");
-    let r = err_src("function main() { const m = new Mutex<i64>(1); const k = m; console.log(m.with((v) => v)); }");
-    assert!(
-        r.contains("use of moved value `m`"),
-        "a Mutex is never Copy: {r}"
-    );
+    // A Mutex is never Copy: a second name shares the same mutex (semantics stage 2).
+    ok_src("function main() { const m = new Mutex<i64>(1); const k = m; console.log(m.with((v) => v), k.with((v) => v)); }");
 }
 
 #[test]
@@ -157,17 +154,16 @@ fn moves_into_call_arguments_happen_at_the_call() {
         "struct P { s: string; n: usize; }
          function main() { const s = \"ab\"; const p = P { s: s, n: s.length }; console.log(p.n); }",
     );
-    let r = err_src(
+    // Semantics stage 2: the first argument shares the array.
+    ok_src(
         "function keep(a: i64[], b: i64[]): i64[][] { return [a, b]; }
          function main() { const s = [1]; console.log(keep(s, s)); }",
     );
-    assert!(r.contains("use of moved value `s`"), "{r}");
-    let r = err_src(
+    ok_src(
         "function keep(a: i64[]): i64[][] { return [a]; }
          function both(a: i64[][], b: i64[][]): usize { return a.length + b.length; }
          function main() { const s = [1]; console.log(both(keep(s), keep(s))); }",
     );
-    assert!(r.contains("use of moved value `s`"), "{r}");
     // The same with strings: the first argument is a copy.
     ok_src(
         "function keep(a: string, b: string): string[] { return [a, b]; }

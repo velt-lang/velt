@@ -1,0 +1,21 @@
+// check: no leaks
+// Semantics stage 2: `==` compares objects by identity, but `Map` (and `Set`) keys of struct,
+// object-literal and tuple type keep comparing by content, matching their structural hash.
+// Regression: a lookup with an equal but distinct struct key missed.
+struct P {
+  x: i64;
+  y: i64;
+}
+
+function main() {
+  const byPoint = new Map<P, string>();
+  byPoint.set(P { x: 1, y: 2 }, "a");
+  byPoint.set(P { x: 1, y: 2 }, "b");
+  console.log(byPoint.get(P { x: 1, y: 2 }), byPoint.has(P { x: 2, y: 1 }), byPoint.size);
+  const byObject = new Map<{ name: string }, i64>();
+  byObject.set({ name: "ann" }, 1);
+  console.log(byObject.get({ name: "ann" }), byObject.delete({ name: "ann" }), byObject.size);
+  const byPair = new Map<[i64, string], bool>();
+  byPair.set([1, "x"], true);
+  console.log(byPair.has([1, "x"]), byPair.has([1, "y"]));
+}

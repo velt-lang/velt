@@ -48,6 +48,29 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
         let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
             continue;
         };
+        // By-reference `const`s that the rest of their block would invalidate become shares
+        // first, so the call checks below see what lowering will do.
+        let mut errors = vec![];
+        let shared: Vec<bool> = f
+            .body
+            .locals
+            .clone()
+            .iter()
+            .map(|l| cx.is_shared_value(l.ty))
+            .collect();
+        let aliases = aliasing_params(cx, d, &f);
+        let col = Collector {
+            cx,
+            locals: &f.body.locals,
+            aliases: &aliases,
+        };
+        let_borrow::check_body(
+            &col,
+            &f.body.locals,
+            &shared,
+            &mut f.body.block,
+            &mut errors,
+        );
         let aliases = aliasing_params(cx, d, &f);
         let mut checker = Checker {
             cx,
@@ -56,14 +79,7 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
             errors: vec![],
         };
         visit::block(&mut f.body.block, &mut checker);
-        let mut errors = checker.errors;
-        let aliases = aliasing_params(cx, d, &f);
-        let col = Collector {
-            cx,
-            locals: &f.body.locals,
-            aliases: &aliases,
-        };
-        let_borrow::check_body(&col, &f.body.locals, &mut f.body.block, &mut errors);
+        errors.extend(checker.errors);
         cx.diags.extend(errors);
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
     }

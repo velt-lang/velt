@@ -225,7 +225,7 @@ pub(super) fn tasks() -> Program {
             outer: l,
             inner: lin,
             mode: PassMode::Owned,
-            clone: false,
+            share: false,
         });
         let with = intr(
             I::MutexWith,
@@ -497,7 +497,7 @@ pub(super) fn tcp_echo() -> Program {
             outer: server,
             inner: srv,
             mode: PassMode::Copy,
-            clone: false,
+            share: false,
         });
         let conn = c.local("conn", u64t);
         let data = c.local("data", t.str);

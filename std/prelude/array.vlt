@@ -5,11 +5,11 @@
 //   iterating never copies non-Copy elements. A callback may throw: the method throws what its
 //   callback throws (`E`, inferred per call; `never` when the callback cannot throw).
 // - Methods that return elements *out of* the array (`find`, `filter`, `slice`, `concat`) return
-//   clones: the array keeps ownership of its elements. For Copy element types (numbers, bool,
-//   Copy structs) a clone is a plain copy, so this costs nothing extra.
+//   the elements themselves, like JS: objects are shared (another reference to the same object,
+//   a count increment), numbers, bool and strings are copied.
 // - Indices are `usize` internally; positions reported to users (`indexOf`, `findIndex`) are
 //   `i64` with -1 for "absent", like JS.
-// - Sorting (`sort()`, `sort(cmp)`) lives in sort.vlt. `clone()` is compiler-provided.
+// - Sorting (`sort()`, `sort(cmp)`) lives in sort.vlt. `clone()` (a deep copy) is compiler-provided.
 
 extend<T> Array<T> {
   forEach<E>(f: (x: T) => void throws E) throws E {
@@ -30,7 +30,7 @@ extend<T> Array<T> {
     const out: T[] = [];
     for (let i: usize = 0; i < this.length; i++) {
       if (keep(this[i])) {
-        out.push(this[i].clone());
+        out.push(__intrinsic_share(this[i]));
       }
     }
     return out;
@@ -44,17 +44,17 @@ extend<T> Array<T> {
     return acc;
   }
 
-  // First element matching `pred`, cloned (see header), or null.
+  // First element matching `pred` (see header), or null.
   find<E>(pred: (x: T) => bool throws E): T | null throws E {
     for (let i: usize = 0; i < this.length; i++) {
       if (pred(this[i])) {
-        return this[i].clone();
+        return __intrinsic_share(this[i]);
       }
     }
     return null;
   }
 
-  // Index of the first element matching `pred`, or -1. Use with `xs[i]` to avoid a clone.
+  // Index of the first element matching `pred`, or -1.
   findIndex<E>(pred: (x: T) => bool throws E): i64 throws E {
     for (let i: usize = 0; i < this.length; i++) {
       if (pred(this[i])) {
@@ -64,10 +64,10 @@ extend<T> Array<T> {
     return -1;
   }
 
-  // Last element matching `pred`, cloned (see header), or null.
+  // Last element matching `pred` (see header), or null.
   findLast<E>(pred: (x: T) => bool throws E): T | null throws E {
     const i = this.findLastIndex(pred);
-    return i < 0 ? null : this[i as usize].clone();
+    return i < 0 ? null : __intrinsic_share(this[i as usize]);
   }
 
   // Index of the last element matching `pred`, or -1.
@@ -82,22 +82,22 @@ extend<T> Array<T> {
     return -1;
   }
 
-  // The element at `index` (negative counts from the end), cloned (see header), or null when
+  // The element at `index` (negative counts from the end; see header), or null when
   // out of range.
   at(index: i64): T | null {
     const i = index < 0 ? index + (this.length as i64) : index;
     if (i < 0 || i >= (this.length as i64)) {
       return null;
     }
-    return this[i as usize].clone();
+    return __intrinsic_share(this[i as usize]);
   }
 
-  // Sets the elements in [start, end) to clones of `value` (positions as in `slice`). JS also
+  // Sets the elements in [start, end) to `value` (positions as in `slice`). JS also
   // returns the array; here the result is `void`, like `reverse`.
   fill(value: T, start: i64 = 0, end: i64 = 9223372036854775807) {
     const hi = clampPosition(end, this.length);
     for (let i = clampPosition(start, this.length); i < hi; i++) {
-      this[i] = value.clone();
+      this[i] = __intrinsic_share(value);
     }
   }
 
@@ -154,19 +154,19 @@ extend<T> Array<T> {
     }
     const out: T[] = __intrinsic_array_with_capacity(hi - lo);
     for (let i = lo; i < hi; i++) {
-      out.push(this[i].clone());
+      out.push(__intrinsic_share(this[i]));
     }
     return out;
   }
 
-  // New array with clones of this array's elements followed by `other`'s.
+  // New array with this array's elements followed by `other`'s.
   concat(other: T[]): T[] {
     const out: T[] = __intrinsic_array_with_capacity(this.length + other.length);
     for (let i: usize = 0; i < this.length; i++) {
-      out.push(this[i].clone());
+      out.push(__intrinsic_share(this[i]));
     }
     for (let i: usize = 0; i < other.length; i++) {
-      out.push(other[i].clone());
+      out.push(__intrinsic_share(other[i]));
     }
     return out;
   }
@@ -189,12 +189,12 @@ extend<T> Array<T> {
     return this.length == 0;
   }
 
-  // `[index, element]` pairs, elements cloned (see header). JS returns an iterator; an array
+  // `[index, element]` pairs (see header). JS returns an iterator; an array
   // serves the same `for (const [i, x] of xs.entries())` loops.
   entries(): [usize, T][] {
     const out: [usize, T][] = __intrinsic_array_with_capacity(this.length);
     for (let i: usize = 0; i < this.length; i++) {
-      out.push([i, this[i].clone()]);
+      out.push([i, __intrinsic_share(this[i])]);
     }
     return out;
   }
@@ -339,7 +339,7 @@ export function __arrayFilled<T>(n: i64, v: T): T[] {
   const len: usize = n > 0 ? n as usize : 0;
   const out: T[] = __intrinsic_array_with_capacity(len);
   for (let i: usize = 0; i < len; i++) {
-    out.push(v.clone());
+    out.push(__intrinsic_share(v));
   }
   return out;
 }

@@ -18,7 +18,7 @@ function add(a: Point, b: Point): Point {
 
 function main() {
   let p = Point { x: 3.0, y: 4.0 };
-  const q = p; // Copy struct: p stays usable
+  const q = p; // the same object (JS)
   console.log(p.len(), q.x);
   p.scale(2.0);
   console.log(p.x, p.y, q.x);

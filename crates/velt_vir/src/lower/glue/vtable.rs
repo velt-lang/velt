@@ -1,17 +1,17 @@
 //! Vtables as read-only tables of function addresses (static data with relocations). Slot `k`
-//! lives at byte offset `8 * (k + 3)`: the three negative slots are format / clone / drop of the
-//! concrete value (glue/mod.rs `SLOT_*`), then the class's virtual methods (`AdtDef::vtable`)
+//! lives at byte offset `8 * (k + 4)`: the four negative slots are share / format / clone / drop
+//! of the concrete value (glue/mod.rs `SLOT_*`; share only in interface tables), then the class's virtual methods (`AdtDef::vtable`)
 //! or the interface's methods. A virtual/interface call loads the entry and calls it: no
 //! dispatcher call in between.
 
 use velt_sema::hir::{DefId, TyId, TyKind};
 
-use super::{Glue, SLOT_CLONE, SLOT_DROP, SLOT_FORMAT};
+use super::{Glue, SLOT_CLONE, SLOT_DROP, SLOT_FORMAT, SLOT_SHARE};
 use crate::lower::{cint, ice, Cx, FnLower, Work};
 use crate::vir::{BinOp, Const, FuncId, Operand, Place, Proj, Rvalue, StaticData, StaticId, Ty};
 
 /// Number of negative slots in front of slot 0.
-const HIDDEN: i128 = 3;
+const HIDDEN: i128 = 4;
 
 /// Memo key of a vtable: the class itself, or `Program::impls[i]` for a concrete type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -96,6 +96,7 @@ impl Cx<'_> {
         entries.push((SLOT_DROP, self.func(Work::Glue(Glue::DynDrop, ty))));
         entries.push((SLOT_CLONE, self.func(Work::Glue(Glue::DynClone, ty))));
         entries.push((SLOT_FORMAT, self.func(Work::Glue(Glue::DynFormat, ty))));
+        entries.push((SLOT_SHARE, self.func(Work::Glue(Glue::DynShare, ty))));
         entries
     }
 }

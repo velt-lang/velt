@@ -56,6 +56,16 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 | `velt_rt_str_cmp` | `(const VeltStr* a, const VeltStr* b) -> int32_t` | bytewise: -1 / 0 / 1 |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> uint64_t` | hash of the bytes (`Map`/`Set` keys; fixed seed) |
 
+## Counted objects [semantics stage 2]
+Compiled code only (no runtime functions): values the program shares
+([semantics-stage2.md](../design/semantics-stage2.md)) live in heap blocks `[count: u64][value]`
+allocated with `velt_rt_alloc(8 + size, 8)`; the value pointer is the block address + 8, so it is
+also what a borrow of the value passes (`T*`). Counts are plain (non-atomic) — counted objects never
+cross threads — and are updated inline. The runtime only ever sees values in their unboxed layout:
+an extern parameter or result whose type holds boxed values crosses as an unboxed view (arguments)
+or is boxed after the call (results). Closure environments on the heap are counted blocks too; the
+drop function in their header releases one reference.
+
 ## Output [M1]
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`), 2 = stderr.
 

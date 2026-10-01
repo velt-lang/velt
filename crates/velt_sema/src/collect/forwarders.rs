@@ -134,6 +134,7 @@ fn forward_body(
         name: name.to_string(),
         ty,
         mutable: false,
+        boxed: false,
         span,
     };
     let mut locals = vec![local("this", self_ty)];

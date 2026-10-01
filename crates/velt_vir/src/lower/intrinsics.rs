@@ -65,10 +65,21 @@ impl FnLower<'_, '_> {
                 let c = self.clone_value(v, t);
                 self.own_value(c, t)
             }
+            (I::Share, [a]) => {
+                let v = self.expr(a);
+                let t = self.sub(a.ty);
+                let c = self.share_value(v, t);
+                self.own_value(c, t)
+            }
             (I::Eq, [a, b]) => {
                 let t = self.sub(a.ty);
                 let (pa, pb) = self.two_places(a, b);
                 self.eq_values(&pa, &pb, t)
+            }
+            (I::Same, [a, b]) => {
+                let t = self.sub(a.ty);
+                let (pa, pb) = self.two_places(a, b);
+                self.same_values(&pa, &pb, t)
             }
             (I::Hash, [a]) => {
                 let t = self.sub(a.ty);
@@ -100,8 +111,10 @@ impl FnLower<'_, '_> {
             (I::Attempt, [f]) => self.attempt(f, ty),
             (I::ArrayDataPtr, [xs]) => {
                 let v = self.expr(xs);
-                let arr = self.cx.array_agg();
-                let p = self.operand_place(v, Ty::Agg(arr));
+                let aty = self.sub(xs.ty);
+                let avt = self.cx.ty(aty);
+                let p = self.operand_place(v, avt);
+                let p = self.content(&p, aty);
                 let data = Operand::Copy(proj(&p, Proj::Field(0)));
                 self.cast_to(data, Ty::Ptr, Ty::U64)
             }

@@ -250,9 +250,8 @@ impl FnLower<'_, '_> {
         err: Option<TyId>,
     ) -> Operand {
         let n = cint(children.len() as i128, Ty::U64);
-        let arr = self.array_with_len(n, arr_ty);
-        let at = Ty::Agg(self.cx.array_agg());
-        let ap = self.operand_place(arr.clone(), at);
+        let arr = self.inline_array_with_len(n, elem);
+        let ap = Place::local(arr);
         let vt = self.cx.ty(elem);
         for (i, c) in children.iter().enumerate() {
             if vt != Ty::Unit {
@@ -275,6 +274,6 @@ impl FnLower<'_, '_> {
                 self.call_rt(Rt::FutDrop, vec![Operand::Copy(Place::local(*f))], None);
             }
         }
-        arr
+        self.own_array(arr, arr_ty)
     }
 }

@@ -17,6 +17,9 @@ const FX_K: i128 = 0x517c_c1b7_2722_0a95;
 impl FnLower<'_, '_> {
     /// `a == b` for values of concrete type `ty` at two places (Bool operand).
     pub(in crate::lower) fn eq_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        if self.same_mode && self.cx.is_object(ty) {
+            return self.same_values(a, b, ty);
+        }
         let vt = self.cx.ty(ty);
         match self.cx.kind(ty) {
             TyKind::Str => {
@@ -31,7 +34,7 @@ impl FnLower<'_, '_> {
                 let (x, y) = (Operand::Copy(proj(a, f.clone())), Operand::Copy(proj(b, f)));
                 self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
             }
-            _ if vt.is_scalar() => {
+            _ if vt.is_scalar() && !self.boxed_content(ty) => {
                 let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
                 self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
             }
@@ -62,7 +65,7 @@ impl FnLower<'_, '_> {
                 let x = self.float_bits(Operand::Copy(place.clone()), vt);
                 self.fx_combine(cint(0, Ty::U64), x)
             }
-            _ if vt.is_scalar() => {
+            _ if vt.is_scalar() && !self.boxed_content(ty) => {
                 let x = self.cast_to(Operand::Copy(place.clone()), vt, Ty::U64);
                 self.fx_combine(cint(0, Ty::U64), x)
             }
@@ -70,6 +73,15 @@ impl FnLower<'_, '_> {
                 let a = self.addr(place.clone());
                 self.call_glue(Glue::Hash, ty, vec![a])
             }
+        }
+    }
+
+    /// A pointer-sized value that still compares and hashes by content: a boxed array / object
+    /// (or a nullable one), whose pointer is only its representation (semantics stage 2).
+    fn boxed_content(&mut self, ty: TyId) -> bool {
+        match self.cx.kind(ty) {
+            TyKind::Option(e) => self.cx.boxed(e),
+            _ => self.cx.boxed(ty),
         }
     }
 
@@ -128,7 +140,7 @@ impl FnLower<'_, '_> {
         out
     }
 
-    pub(super) fn eq_body(&mut self, pa: vir::Local, pb: vir::Local, ty: TyId) {
+    pub(in crate::lower) fn eq_body(&mut self, pa: vir::Local, pb: vir::Local, ty: TyId) {
         let a = self.deref_param(pa, ty);
         let b = self.deref_param(pb, ty);
         let no = self.new_block();
@@ -158,7 +170,10 @@ impl FnLower<'_, '_> {
                 });
             }
             TyKind::Option(e) => self.eq_option(&a, &b, ty, e, no),
-            TyKind::Array(e) => self.eq_array(&a, &b, e, no),
+            TyKind::Array(e) => {
+                let (ca, cb) = (self.content(&a, ty), self.content(&b, ty));
+                self.eq_array(&ca, &cb, e, no)
+            }
             TyKind::Shared(e) => {
                 let bx = self.cx.shared_box(e);
                 let inner = |p: &Place| proj(&proj(p, Proj::Deref(Ty::Agg(bx))), Proj::Field(1));
@@ -247,6 +262,7 @@ impl FnLower<'_, '_> {
                 self.switch_to(done);
             }
             TyKind::Array(e) => {
+                let place = self.content(&place, ty);
                 let len = self.rvalue_temp(
                     Ty::U64,
                     Rvalue::Use(Operand::Copy(proj(&place, Proj::Field(1)))),

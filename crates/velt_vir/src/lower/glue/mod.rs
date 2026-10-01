@@ -5,13 +5,16 @@
 //! |-----------|------------------------------------|------------------------------------------|
 //! | Drop      | `(p: ptr)`                         | release the value at `p`                 |
 //! | Clone     | `(src: ptr, dst: ptr)`             | deep copy `*src` into uninit `*dst`      |
+//! | Share     | `(src: ptr, dst: ptr)`             | copy of a value type sharing its parts (share.rs) |
 //! | Format    | `(buf: ptr, p: ptr)`               | append console.log text (nested style)   |
 //! | Eq        | `(a: ptr, b: ptr) -> bool`         | structural equality                      |
+//! | Same      | `(a: ptr, b: ptr) -> bool`         | JS `===`: objects inside by identity (same.rs) |
 //! | Hash      | `(p: ptr) -> u64`                  | FxHash-style combine                     |
 //! | ObjDrop   | `(obj: ptr)`                       | drop a class object's fields and free it |
 //! | ObjClone  | `(obj: ptr) -> ptr`                | deep copy of a class object              |
 //! | ObjFormat | `(buf: ptr, obj: ptr)`             | append `Name { field: value, … }`        |
 //! | DynDrop/DynClone/DynFormat | as Obj*, on the data pointer of an interface value |
+//! | DynShare  | `(data: ptr) -> ptr`               | data of another reference (share.rs)     |
 //! | JsonWrite | `(buf: ptr, p: ptr)`               | append `JSON.stringify(*p)` to a builder |
 //! | JsonRead  | `(r: ptr, out: ptr, ctx: ptr) -> bool` | decode one value (json/read.rs)      |
 //! | JsonParse | `(src: ptr, out: ptr, err: ptr) -> bool` | whole-document `JSON.parse<T>`     |
@@ -43,8 +46,10 @@ use crate::vir::{self, Function, Operand, Place, Proj, Ty};
 pub(crate) enum Glue {
     Drop,
     Clone,
+    Share,
     Format,
     Eq,
+    Same,
     Hash,
     ObjDrop,
     ObjClone,
@@ -52,6 +57,7 @@ pub(crate) enum Glue {
     DynDrop,
     DynClone,
     DynFormat,
+    DynShare,
     JsonWrite,
     JsonRead,
     JsonParse,
@@ -61,14 +67,17 @@ pub(crate) enum Glue {
 pub(super) const SLOT_DROP: i128 = -1;
 pub(super) const SLOT_CLONE: i128 = -2;
 pub(super) const SLOT_FORMAT: i128 = -3;
+pub(super) const SLOT_SHARE: i128 = -4;
 
 impl Glue {
     fn name(self) -> &'static str {
         match self {
             Glue::Drop => "drop",
             Glue::Clone => "clone",
+            Glue::Share => "share",
             Glue::Format => "format",
             Glue::Eq => "eq",
+            Glue::Same => "same",
             Glue::Hash => "hash",
             Glue::ObjDrop => "objdrop",
             Glue::ObjClone => "objclone",
@@ -76,6 +85,7 @@ impl Glue {
             Glue::DynDrop => "dyndrop",
             Glue::DynClone => "dynclone",
             Glue::DynFormat => "dynformat",
+            Glue::DynShare => "dynshare",
             Glue::JsonWrite => "jsonwrite",
             Glue::JsonRead => "jsonread",
             Glue::JsonParse => "jsonparse",
@@ -87,10 +97,10 @@ impl Glue {
         use Ty::*;
         match self {
             Glue::Drop | Glue::ObjDrop | Glue::DynDrop => (vec![Ptr], Unit),
-            Glue::Clone => (vec![Ptr, Ptr], Unit),
-            Glue::ObjClone | Glue::DynClone => (vec![Ptr], Ptr),
+            Glue::Clone | Glue::Share => (vec![Ptr, Ptr], Unit),
+            Glue::ObjClone | Glue::DynClone | Glue::DynShare => (vec![Ptr], Ptr),
             Glue::Format | Glue::ObjFormat | Glue::DynFormat => (vec![Ptr, Ptr], Unit),
-            Glue::Eq => (vec![Ptr, Ptr], Bool),
+            Glue::Eq | Glue::Same => (vec![Ptr, Ptr], Bool),
             Glue::Hash => (vec![Ptr], U64),
             Glue::JsonWrite => (vec![Ptr, Ptr], Unit),
             Glue::JsonRead | Glue::JsonParse => (vec![Ptr, Ptr, Ptr], Bool),
@@ -107,8 +117,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         match g {
             Glue::Drop => lw.drop_body(args[0], ty),
             Glue::Clone => lw.clone_body(args[0], args[1], ty),
+            Glue::Share => lw.share_body(args[0], args[1], ty),
             Glue::Format => lw.format_body(a(0), args[1], ty),
             Glue::Eq => lw.eq_body(args[0], args[1], ty),
+            Glue::Same => lw.same_body(args[0], args[1], ty),
             Glue::Hash => lw.hash_body(args[0], ty),
             Glue::ObjDrop => lw.obj_drop_body(args[0], ty),
             Glue::ObjClone => lw.obj_clone_body(args[0], ty),
@@ -116,6 +128,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::DynDrop => lw.dyn_drop_body(args[0], ty),
             Glue::DynClone => lw.dyn_clone_body(args[0], ty),
             Glue::DynFormat => lw.dyn_format_body(a(0), args[1], ty),
+            Glue::DynShare => lw.dyn_share_body(args[0], ty),
             Glue::JsonWrite => lw.json_write_body(a(0), args[1], ty),
             Glue::JsonRead => lw.json_read_body(args[0], args[1], args[2], ty),
             Glue::JsonParse => lw.json_parse_body(args[0], args[1], args[2], ty),

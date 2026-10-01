@@ -1,0 +1,36 @@
+// check: no leaks
+// Semantics stage 2: elements and map values handed out by the prelude are the stored objects
+// themselves (JS), not copies — changing one through the result changes the original.
+class Item {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+function main() {
+  const items = [new Item(1), new Item(2), new Item(3)];
+  const big = items.filter((x) => x.n > 1);
+  big[0].n = 20;
+  console.log(items[1].n, big.length);
+  const found = items.find((x) => x.n == 3);
+  if (found != null) {
+    found.n = 30;
+  }
+  console.log(items[2].n);
+  const m = new Map<string, Item>();
+  m.set("a", new Item(5));
+  const a = m.get("a");
+  if (a != null) {
+    a.n += 1;
+  }
+  console.log(m.get("a")?.n);
+  const both = items.slice(0, 2).concat(big);
+  both[3].n = 300;
+  console.log(items[2].n, both.length);
+  for (const v of m.values()) {
+    v.n = 7;
+  }
+  console.log(m.get("a")?.n);
+}

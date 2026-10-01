@@ -2,14 +2,14 @@
 
 JavaScript runtimes reclaim memory with a garbage collector: objects live until the collector
 finds them unreachable, which costs memory headroom and pauses. Velt has **no garbage
-collector**. Memory is freed at a known point, when its owner goes away, so there are no
-collection pauses, no heap to tune, and cleanup code runs exactly when you expect.
+collector**. Memory is freed at a known point, when its last reference goes away, so there are
+no collection pauses, no heap to tune, and cleanup code runs exactly when you expect.
 
 You don't manage memory by hand either: there is no `free`, no lifetime annotation, no `mut`,
-no borrow syntax. The compiler infers all of it. This page explains the model as it is today
-and what changes next.
+no borrow syntax. The compiler infers all of it, and the code you write behaves as it does in
+JavaScript.
 
-## Values: numbers, strings and Copy structs
+## Values: numbers and strings
 
 Numbers, booleans and strings behave exactly as in JavaScript: assigning one copies it, and the
 copy is independent.
@@ -23,13 +23,30 @@ console.log(a, b);    // tea tea with milk
 
 Strings are immutable values. Short ones (up to 23 bytes) live inline with no allocation;
 longer ones share one reference-counted buffer, so a copy is cheap and never duplicates the
-text. Structs whose fields are all numbers, booleans or other such structs are copied too.
+text.
 
-## Objects have one owner (today)
+## Objects are references
 
-Arrays, maps, class instances and object literals live on the heap and have **one owner**: the
-variable, field or array element that holds them. When the owner goes out of scope, the object
-is freed, together with everything it owns.
+Arrays, maps, class instances, object literals and closures are **references**, as in
+JavaScript: assigning an object to a second variable, storing it in another object or returning
+it refers to the same object. `.clone()` makes an independent deep copy, like
+`structuredClone`, and `==` compares objects by identity (`deepEqual` compares contents).
+
+```ts
+class Box {
+  v: i64 = 1;
+}
+
+const a = new Box();
+const b = a;          // the same object
+b.v = 2;
+const c = a.clone();  // an independent deep copy
+c.v = 3;
+console.log(a.v, c.v, a == b, a == c);   // 2 3 true false
+```
+
+An object is freed the moment its last reference goes, together with everything only it
+refers to:
 
 ```ts
 class Order {
@@ -37,14 +54,14 @@ class Order {
 }
 
 function main() {
-  const order = new Order();       // `order` owns the object
+  const order = new Order();       // the only reference
   order.items.push("tea");
   console.log(order.items.length); // 1
 }                                  // freed here, deterministically
 ```
 
-**Calls borrow.** Passing an object to a function lends it for the duration of the call, so the
-usual JavaScript code just works:
+**Calls borrow.** Passing an object to a function lends it for the duration of the call, and the
+function sees the same object, so changes are visible to the caller:
 
 ```ts
 class User {
@@ -67,28 +84,13 @@ recordVisit(user);
 console.log(user.visits);          // 2
 ```
 
-The compiler infers, for every parameter, whether the function only reads it, modifies it, or
-keeps it (stores or returns it). Only a function that keeps a parameter takes ownership.
-
-**Assigning moves.** Where this model differs from JavaScript today: assigning an object to a
-second variable, storing it in another object, or returning it **moves** it. The old variable
-can't be used afterwards.
-
-```ts error
-class Box {
-  v: i64 = 1;
-}
-
-function main() {
-  const a = new Box();
-  const b = a;              // ownership moves to b
-  console.log(a.v);         // error: use of moved value `a`
-}
-```
-
-The error shows where the value moved and lists the fixes: pass `a` to a function instead
-(calls borrow), copy it with `a.clone()` (an independent deep copy), or share it with
-`shared(a)`.
+**What it costs.** The compiler infers, for every parameter, whether the function only reads
+it, modifies it, or keeps it (stores or returns it), and for every value whether it ever has
+more than one owner. A value with a single owner, the common case and every hot loop in the
+benchmark suite, is moved with no reference count, exactly like Rust code. Only types whose
+values the program actually shares get a reference count: one word in front of the object and
+an increment when it is shared. Closures work the same way: a variable that a stored closure
+and its enclosing function both change lives in a small shared cell, so both see every change.
 
 ## Mutation is inferred
 
@@ -110,8 +112,10 @@ function main() {
 }
 ```
 
-That rule is what lets the compiler assume no aliasing, as Rust does, and generate code that
-keeps values in registers.
+That rule is what lets the compiler assume no aliasing for values with one owner, as Rust does,
+and generate code that keeps values in registers. Two variables that refer to the same array
+(`const ys = xs; append(xs, ys)`) are fine and behave as in JavaScript: that array type is then
+reference-counted and the compiler makes no such assumption for it.
 
 ## Sharing across tasks
 
@@ -153,24 +157,16 @@ console.log(ping("db:5432"));
 
 `await using` does the same with an async `[Symbol.asyncDispose]()`.
 
-## Coming next: JavaScript's object semantics
+## Reference cycles
 
-The move rule is the one place where today's Velt asks TypeScript developers to think
-differently. The next stage of the memory model removes it:
+Reference counting can't free a cycle: if `a.next = b` and `b.next = a`, neither count reaches
+zero, and both objects stay allocated until the program exits. Break the cycle by hand (set one
+link to `null`) when you are done with such a structure. **Planned**
+([semantics stage 3](../internals/design/semantics.md#reference-cycles--without-a-collector)):
+`weak` references for back-pointers (`parent: weak Node | null`) and a compile-time warning
+when a type can form a reference cycle. There is still no cycle collector.
 
-- **Semantics stage 2** (planned): objects, arrays, maps and closures become **shared
-  references**, exactly like in JavaScript: `const b = a; b.push(1)` changes `a`, and "use of
-  moved value" disappears. `.clone()` becomes an explicit deep copy, like `structuredClone`.
-  Closures may modify the variables they capture even when they escape. Values that the
-  compiler can prove have a single owner (the common case, and every hot loop in the benchmark
-  suite) keep today's code with no reference counting; only values that are actually shared get
-  a reference count. Each stage must keep every benchmark within 3% of the previous compiler.
-- **Semantics stage 3** (planned): `weak` references for back-pointers (`parent: weak Node |
-  null`) and a compile-time warning when a type can form a reference cycle. There is still no
-  cycle collector.
-
-What does not change: no garbage collector, no pauses, deterministic cleanup, compile-time
-thread safety. The design and its rationale are in
+The design and its rationale are in
 [JavaScript semantics without a GC](../internals/design/semantics.md).
 
 ## Performance

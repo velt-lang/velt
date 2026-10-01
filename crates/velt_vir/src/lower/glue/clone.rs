@@ -18,6 +18,9 @@ impl FnLower<'_, '_> {
     }
 
     fn clone_expand(&mut self, s: &Place, d: &Place, ty: TyId) {
+        if self.cx.boxed(ty) {
+            return self.clone_boxed(s, d, ty, |lw, sv, dv| lw.clone_inline(sv, dv, ty));
+        }
         match self.cx.kind(ty) {
             TyKind::Str => {
                 let (a, b) = (self.addr(s.clone()), self.addr(d.clone()));
@@ -62,7 +65,7 @@ impl FnLower<'_, '_> {
                 }
             }
             TyKind::Option(e) => self.clone_option(s, d, ty, e),
-            TyKind::Array(e) => self.clone_array(s, d, ty, e),
+            TyKind::Array(e) => self.clone_array(s, d, e),
             TyKind::Shared(_) => {
                 self.assign(d.clone(), Rvalue::Use(Operand::Copy(s.clone())));
                 let ptr = Operand::Copy(s.clone());
@@ -86,6 +89,21 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// Deep copy of the inline value of a boxed array / object type.
+    fn clone_inline(&mut self, s: &Place, d: &Place, ty: TyId) {
+        if let TyKind::Array(e) = self.cx.kind(ty) {
+            return self.clone_array(s, d, e);
+        }
+        self.assign(d.clone(), Rvalue::Use(Operand::Copy(s.clone())));
+        let tys = self.cx.part_types(ty);
+        for (i, t) in tys.into_iter().enumerate() {
+            if !self.cx.is_unit(t) && self.cx.needs_drop(t) {
+                let f = Proj::Field(self.cx.vir_field(ty, i as u32));
+                self.clone_into(proj(s, f.clone()), proj(d, f), t);
+            }
+        }
+    }
+
     fn clone_option(&mut self, s: &Place, d: &Place, ty: TyId, e: TyId) {
         if self.cx.ty(ty) == Ty::Ptr {
             self.clone_into(s.clone(), d.clone(), e);
@@ -100,7 +118,7 @@ impl FnLower<'_, '_> {
         self.switch_to(done);
     }
 
-    fn clone_array(&mut self, s: &Place, d: &Place, ty: TyId, e: TyId) {
+    fn clone_array(&mut self, s: &Place, d: &Place, e: TyId) {
         let len = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(proj(s, Proj::Field(1)))));
         let a = self.cx.array_agg();
         let empty = self.rvalue_temp(
@@ -114,13 +132,10 @@ impl FnLower<'_, '_> {
         self.assign(d.clone(), Rvalue::Aggregate(a, zero));
         self.goto(done);
         self.switch_to(full_bb);
-        self.push_scope(crate::lower::ScopeKind::Temps);
-        let fresh = self.array_with_len(len.clone(), ty);
-        let fp = self.operand_place(fresh.clone(), Ty::Agg(a));
-        self.take_temp(&fp);
-        self.pop_scope();
-        self.copy_elems(s, cint(0, Ty::U64), &fp, len, e);
-        self.assign(d.clone(), Rvalue::Use(fresh));
+        let fresh = self.inline_array_with_len(len.clone(), e);
+        let fp = Place::local(fresh);
+        self.copy_elems(s, cint(0, Ty::U64), &fp, len, e, false);
+        self.assign(d.clone(), Rvalue::Use(Operand::Copy(fp)));
         self.goto(done);
         self.switch_to(done);
     }
@@ -164,7 +179,7 @@ impl FnLower<'_, '_> {
 
     pub(super) fn obj_clone_body(&mut self, obj: vir::Local, ty: TyId) {
         let oa = self.cx.obj_agg(ty);
-        let new = self.alloc(Ty::Agg(oa));
+        let new = self.object_alloc(ty);
         let src = proj(&Place::local(obj), Proj::Deref(Ty::Agg(oa)));
         let np = self.operand_place(new.clone(), Ty::Ptr);
         let dst = proj(&np, Proj::Deref(Ty::Agg(oa)));
@@ -180,7 +195,7 @@ impl FnLower<'_, '_> {
 
     pub(super) fn dyn_clone_body(&mut self, data: vir::Local, ty: TyId) {
         let out = self.temp(Ty::Ptr);
-        if self.cx.is_class(ty) {
+        if self.cx.is_class(ty) || self.cx.boxed(ty) {
             self.clone_into(Place::local(data), Place::local(out), ty);
         } else {
             let vt = self.cx.ty(ty);

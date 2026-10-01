@@ -108,8 +108,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
             } if self.cx.is_async_fn(*d) => {
                 let targs: Vec<TyId> = targs.iter().map(|&t| self.sub(t)).collect();
                 if self.cx.async_info(*d, &targs).is_some() {
-                    self.state_from_call(*d, &targs, args)
-                        .map(|(info, s)| self.value_future(*d, &targs, &info, s, detached))
+                    // The task may run on another thread: its arguments are transferred.
+                    self.transfer_args = true;
+                    let state = self.state_from_call(*d, &targs, args);
+                    self.transfer_args = false;
+                    state.map(|(info, s)| self.value_future(*d, &targs, &info, s, detached))
                 } else {
                     None
                 }
@@ -298,6 +301,19 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.terminate(Terminator::Return(cint(0, Ty::U32)));
         lw.switch_to(ready);
         lw.call_rt(Rt::FutDrop, vec![inner], None);
+        let aty = lw.cx.intern(TyKind::Array(elem));
+        if lw.cx.boxed(aty) {
+            // The awaiter reads a boxed array: replace the header by a box holding it.
+            let hdr = proj(
+                &proj(&Place::local(st), Proj::Deref(Ty::Agg(wa))),
+                Proj::Field(0),
+            );
+            let v = lw.box_value(Operand::Copy(hdr), aty);
+            lw.assign(
+                proj(&Place::local(st), Proj::Deref(Ty::Ptr)),
+                Rvalue::Use(v),
+            );
+        }
         lw.terminate(Terminator::Return(cint(1, Ty::U32)));
         let sym = format!("_Gall_poll_{}", lw.cx.type_symbol(elem));
         lw.finish(sym, vec![Ty::Ptr, Ty::Ptr], Ty::U32)

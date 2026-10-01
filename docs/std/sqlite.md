@@ -11,7 +11,7 @@ pool and back would cost. Run a long query inside `spawn(...)`.
 - `open(path, opts = {}): Database`. `path` can be a file, `":memory:"` or a `file:` URI.
   Options: `readonly`, `fileMustExist` (throws `SQLITE_CANTOPEN` instead of creating the file),
   `timeout` (busy timeout in ms, default 5000) and `wal` (`journal_mode = WAL`).
-- `Database` is a Copy handle, so you can pass it around and capture it in handlers and tasks.
+- `Database` is a handle, so you can pass it around and capture it in handlers and tasks.
   Methods: `exec(sql)` (a script, no parameters), `prepare(sql): Statement`,
   `pragma(source): string` (first value, for example `"wal"`), `inTransaction`,
   `transaction(fn)`, `begin(): Transaction` and `close()`.

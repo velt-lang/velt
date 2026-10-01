@@ -131,6 +131,7 @@ impl FB {
             name: name.into(),
             ty,
             mutable: true,
+            boxed: false,
             span: SP,
         });
         LocalId(self.locals.len() as u32 - 1)

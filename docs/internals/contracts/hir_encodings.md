@@ -21,8 +21,9 @@ Maintainer-owned, like hir.rs.
 - Function values (`TyKind::FnPtr`) are closures: `{ code: Ptr, env: Ptr }`; `env` is null for
   named functions. `ExprKind::Closure(def)` captures per `FnDef::captures`: Borrow/BorrowMut
   captures store pointers (non-escaping closures), Copy/Owned captures store values (escaping).
-  An Owned capture with `Capture::clone` stores a copy (clone glue) and leaves the enclosing
-  local initialized (strings still used after the closure is created; semantics stage 1).
+  An Owned capture with `Capture::share` stores a share (`Intrinsic::Share` semantics) and
+  leaves the enclosing local initialized (a shared value still used after the closure is created;
+  see "Sharing"). A capture whose local is `LocalDef::boxed` stores the cell pointer instead.
   Closure bodies take the env pointer as a hidden first param; `code` has that signature.
 - Errors: see "Errors" below.
 - `x ?? d`, `a?.b`, `if (x != null)` narrowing are desugared by sema into `Match` with
@@ -147,7 +148,7 @@ Maintainer-owned, like hir.rs.
   `void` members are rejected. Exactly one non-null member is that type itself (`T | null` stays
   `Option<T>`); `null` plus several members is `Option<union>`.
 - Widening a member value: `ExprKind::Variant { def, type_args, variant, args: [value] }`; the
-  value keeps its use mode (a borrowed place is deep-copied by lowering, as for `WrapSome`).
+  value keeps its use mode (a borrowed place is shared by lowering, as for `WrapSome`).
   Union → union with more members, and `T | null` → `U | null`: a `Match` re-tagging each variant
   (`Variant(b) => Wider.Variant(b)`); variants ruled out by flow narrowing get an arm
   `_ => panic("unreachable union member")`.
@@ -188,7 +189,7 @@ Maintainer-owned, like hir.rs.
 - `x.kind == "lit"` is a bool `Match` on `x` with `Variant { args: [Wildcard] }` arms for the
   members with that discriminant; `x.kind` as a value (and any field all members have) is a
   `Match` on `x` reading each member's field (`Variant(v, [Binding b]) => b.field`, a literal
-  field as its constant, a non-Copy field as `Intrinsic::Clone` of it), typed as the union of the
+  field as its constant, a non-Copy field as `Intrinsic::Share` of it), typed as the union of the
   field types.
 
 ## switch
@@ -263,3 +264,29 @@ Maintainer-owned, like hir.rs.
   for `E | null`.
 - Uncaught errors in `main` (or a detached task) print `Uncaught <Type>` (+ `: <message>` if the
   type has a `message: string` field; for a union, of the member it holds) to stderr and exit 1.
+
+## Sharing (semantics stage 2, docs/internals/design/semantics-stage2.md)
+- `Intrinsic::Share(place)` (place borrowed, result owned, same type): another reference to the
+  same value — what JS does when a value is assigned, passed on or stored again. Sema emits it
+  wherever a non-Copy place of a *shared value* (`Ctx::is_shared_value`: everything that is not
+  Copy and holds no promise) would be moved but is used again or cannot be moved from (a
+  borrowed param, an array element, a class field, a capture, a by-reference `const` whose place
+  the block replaces); implicit copies (spread fields, interface field getters, discriminated
+  field reads, async-call arguments used again) are shares too. `Intrinsic::Clone` is a deep copy
+  (`x.clone()`, and in async closures for their captures, which several threads may read).
+- Lowering's representation (counted objects, boxed arrays/objects, stabilized borrows) is its
+  own business (docs/internals/design/semantics-stage2.md §3); it may turn a move out of a part of a
+  counted value into a share.
+- `LocalDef::boxed`: a variable living in a counted cell shared by the enclosing function and the
+  escaping closures capturing it (set on both the enclosing local and the closures' capture
+  locals, transitively). It is never moved from (sema turns such moves into shares or copies);
+  its captures (any by-value mode) hold the cell; borrowed captures point into it as usual.
+- `AdtDef::assigned`: a field of the object type is assigned somewhere; such a type is shared as
+  one counted object, others may be shared by copying their fields.
+- Modifying through a pattern / `for...of` / by-reference `const` binding is allowed (JS):
+  mutation inference counts it against the place the binding points into.
+- `==` / `!=` on non-primitive types are `Intrinsic::Same` (JS `===`: objects — class instances,
+  arrays, structs, object literals, interface and function values — by identity; `T | null`,
+  unions and tuples part by part; `!=` wraps it in `Not`). `Intrinsic::Eq` is structural
+  (`__intrinsic_eq`, `deepEqual`, `assertEq`, `Map` keys). Structs are never Copy
+  (`AdtDef::is_copy` is false for every struct and object type).
