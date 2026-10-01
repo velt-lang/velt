@@ -13,7 +13,7 @@ use std::task::{Context, Poll, Waker};
 use super::all::ResultDropFn;
 use super::boxed::{self, state, trailer};
 use super::leaf::new_leaf;
-use super::{context, executor, raw_cx, VeltFut, PENDING, READY};
+use super::{context, executor, raw_cx, VeltFut, Wide, PENDING, READY};
 
 /// What a started promise's owner and its driving task share.
 pub struct Started {
@@ -82,6 +82,27 @@ unsafe fn drive(f: *mut VeltFut, st: &RefCell<Started>, cx: &mut Context<'_>) ->
         executor::wake_next(w);
     }
     Poll::Ready(())
+}
+
+/// The futures are handed to a combinator, which handles their rejections like JS: a started
+/// promise among them that finishes after it was dropped disposes of its result with
+/// `quiet_drop` instead of its `result_drop` (rt_abi_async.md §1). `futs` points to the 8-byte
+/// [`Wide`] slots of a Velt array.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_futs_handled(
+    futs: *const Wide<*mut VeltFut>,
+    n: u64,
+    quiet_drop: Option<ResultDropFn>,
+) {
+    for i in 0..n as usize {
+        let f = (*futs.add(i)).0;
+        if std::ptr::fn_addr_eq(
+            (*f).poll.0,
+            started_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32,
+        ) {
+            shared(f).borrow_mut().result_drop = quiet_drop;
+        }
+    }
 }
 
 unsafe extern "C" fn started_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {

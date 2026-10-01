@@ -1,0 +1,7 @@
+race: fast work
+timer fired after 50 ms
+timer fired after 100 ms
+race rejected: timed out after 100 ms
+any: any work
+timer fired after 250 ms
+exits normally

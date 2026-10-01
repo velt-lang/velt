@@ -1,0 +1,14 @@
+// A `Promise.race` kept as a value that nobody awaits reports its own rejection as uncaught,
+// like any stored promise (and an unhandled rejection in Node): exit code 1.
+class Boom extends Error {}
+
+async function failSoon(ms: i64): Promise<i64> throws Boom {
+  await sleep(ms);
+  throw new Boom(`failed after ${ms} ms`);
+}
+
+async function main() {
+  const first = Promise.race([failSoon(10), failSoon(20)]);
+  console.log("stored, never awaited");
+  await sleep(100);
+}

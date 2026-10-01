@@ -181,6 +181,10 @@ enum Work {
     /// Poll / drop of the heap future wrapping `velt_rt_all` for `Promise.all` with element `T`.
     AllPoll(TyId),
     AllDrop(TyId),
+    /// Poll / drop of the wrapper that boxes a kept `Promise.race` over results of type `T`
+    /// so it can be started (async_fn/kept.rs).
+    RaceBoxPoll(TyId),
+    RaceBoxDrop(TyId),
     /// `(slot: ptr)`: disposes of the unclaimed result of a started promise of a rejecting
     /// promise type (async_fn/start.rs).
     Unclaimed(TyId),

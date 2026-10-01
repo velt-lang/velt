@@ -118,6 +118,7 @@ impl Interp<'_> {
                 f
             }
             "velt_rt_fut_start" => return Some(self.fut_start(a[0], a[1])),
+            "velt_rt_futs_handled" => return Some(self.futs_handled(a[0], a[1], a[2]).map(|_| 0)),
             "velt_rt_race" => self.rt_race(a, None),
             "velt_rt_race_ok" => self.rt_race(a, Some(a[3])),
             "velt_rt_yield_now" => {
