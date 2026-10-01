@@ -117,6 +117,9 @@ something that is not TypeScript only where TypeScript can't express it at nativ
    updates (the Reference marks unbuilt parts **Planned**), and a migration note if existing code
    breaks.
 
+Maintainers: how pull requests are reviewed, queued and planned is in
+[docs/internals/maintaining.md](docs/internals/maintaining.md).
+
 ## Working on several things at once
 
 Keep one checkout of `main` and a **git worktree per task**, side by side:
