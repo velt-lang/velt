@@ -85,8 +85,9 @@ unsafe fn drive(f: *mut VeltFut, st: &RefCell<Started>, cx: &mut Context<'_>) ->
 }
 
 /// The futures are handed to a combinator, which handles their rejections like JS: a started
-/// promise among them (8-byte [`Wide`] slots of a Velt array) that finishes after it was dropped disposes of its result with
-/// `quiet_drop` instead of its `result_drop` (rt_abi_async.md §1).
+/// promise among them that finishes after it was dropped disposes of its result with
+/// `quiet_drop` instead of its `result_drop` (rt_abi_async.md §1). `futs` points to the 8-byte
+/// [`Wide`] slots of a Velt array.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_futs_handled(
     futs: *const Wide<*mut VeltFut>,

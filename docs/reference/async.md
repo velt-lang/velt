@@ -44,7 +44,11 @@ Promises behave like JavaScript's, at Rust's cost:
 All promises in one call must have the same type. Like in JS, every promise passed to a
 combinator is *handled*: one that loses (or is left behind) and rejects later has its error
 dropped, not reported as uncaught, so a timeout written as a rejecting promise in a
-`Promise.race` is fine once the work won.
+`Promise.race` is fine once the work won (`Promise.allSettled` awaits every promise itself).
+Losing promises that already started, such as calls of async functions, run to completion;
+a runtime operation that loses, such as `sleep(ms)` or an I/O call, is cancelled. A combinator
+kept as a value is itself a stored promise: if nobody awaits it, its own rejection is reported
+as uncaught.
 
 ## Tasks
 

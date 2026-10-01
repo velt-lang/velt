@@ -39,6 +39,8 @@ pub(super) struct Layouts {
     pub(super) all_wrap: Option<AggId>,
     /// State of the settling `Promise.all` wrapper per child result type (all_settle.rs).
     pub(super) settle_wraps: HashMap<TyId, AggId>,
+    /// State of the wrapper boxing a kept `Promise.race` per result slot type (kept.rs).
+    pub(super) race_boxes: HashMap<TyId, AggId>,
     /// Failure context of JSON decoders (json/).
     pub(super) json_ctx: Option<AggId>,
     /// Promise-value wrappers of throwing async functions: layout and inner-state field.
