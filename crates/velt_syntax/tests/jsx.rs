@@ -1,6 +1,7 @@
-//! JSX: context-sensitive `<`, tags and names, attributes, children text with React's whitespace
-//! rules and HTML entities, expression containers (with regex and template literals inside),
-//! fragments, spreads, generic arrows `<T,>`, the `@jsxImportSource` pragma, and diagnostics.
+//! JSX: where `<` starts an element (decided by the parser), tags and names, attributes,
+//! children text with React's whitespace rules and HTML entities, expression containers (with
+//! regex and template literals inside), fragments, spreads, generic arrows `<T>` / `<T,>`,
+//! keywords as member names before `<`, the `@jsxImportSource` pragma, and diagnostics.
 
 mod common;
 
@@ -192,14 +193,122 @@ fn generic_arrows() {
 }
 
 #[test]
-fn generic_arrow_without_comma_is_jsx() {
-    // As in `.tsx`: `<T>(x: T) => x` starts an element `T`.
-    let errs = errors("const f = <T>(x: T) => x;");
-    assert!(
-        errs.iter()
-            .any(|e| e == "JSX element 'T' has no corresponding closing tag."),
-        "{errs:?}"
+fn ts_style_generic_arrows() {
+    // Written as in `.ts` files: no trailing comma needed (#111).
+    assert_eq!(init("<T>(x: T) => x"), "(arrow <T>(x: T) x)");
+    assert_eq!(init("<T>(x: T): T => x"), "(arrow <T>(x: T): T x)");
+    assert_eq!(init("<T>(): T => f()"), "(arrow <T>(): T (call f []))");
+    assert_eq!(
+        init("<T extends Map<K, V[]>>(m: T): Array<T> => [m]"),
+        "(arrow <T extends Map<K, V[]>>(m: T): Array<T> [m])"
     );
+    assert_eq!(
+        init("<T>(x: T): { a: T } => ({ a: x })"),
+        "(arrow <T>(x: T): {a: T} (paren {a: x}))"
+    );
+    assert_eq!(
+        init("<T>(x: T): (y: T) => T => (y) => y"),
+        "(arrow <T>(x: T): fn(T) => T (arrow (y) y))"
+    );
+    assert_eq!(
+        init("<T>(x: T) => { return x; }"),
+        "(arrow <T>(x: T) {1 stmts})"
+    );
+    assert_eq!(init("async <T>(x: T) => x"), "(async arrow <T>(x: T) x)");
+    assert_eq!(j("f(<T>(x: T) => x)"), "(call f [(arrow <T>(x: T) x)])");
+    assert_eq!(j("c ? <T>(x: T) => x : g"), "(? c (arrow <T>(x: T) x) g)");
+}
+
+#[test]
+fn type_parameter_defaults_are_reported() {
+    let errs = errors("const f = <T = string>(x: T) => x;");
+    assert_eq!(errs, vec!["type parameter defaults are not supported"]);
+    let errs = errors("function f<T, U = T>(x: T): T { return x; }");
+    assert_eq!(errs, vec!["type parameter defaults are not supported"]);
+}
+
+#[test]
+fn elements_named_like_type_parameters_stay_jsx() {
+    assert_eq!(init("<T>text</T>"), r#"<T>["text"]"#);
+    assert_eq!(init("<T>(hello)</T>"), r#"<T>["(hello)"]"#);
+    assert_eq!(init("<T>{x}</T>"), "<T>[{x}]");
+    assert_eq!(init(r#"<T a="1">(x)</T>"#), r#"<T a="1">["(x)"]"#);
+    assert_eq!(init("<T />"), "<T/>");
+    assert_eq!(init("<>(x)</>"), r#"<>["(x)"]"#);
+}
+
+#[test]
+fn broken_generic_arrow_gets_a_hint() {
+    let (_, d) = parse("const f = <T>(x: T => x;");
+    let unclosed = d
+        .iter()
+        .find(|d| d.message == "JSX element 'T' has no corresponding closing tag.")
+        .unwrap_or_else(|| panic!("{d:?}"));
+    assert!(
+        unclosed.notes.iter().any(|n| n.contains("generic arrow")),
+        "{unclosed:?}"
+    );
+    // A committed head (`<T,`) reports the arrow's own error instead.
+    let errs = errors("const f = <T,>(x: T => x;");
+    assert!(errs.iter().all(|e| !e.contains("JSX")), "{errs:?}");
+}
+
+#[test]
+fn keywords_as_member_names_before_type_arguments() {
+    // A keyword after `.` / `?.` or as a member name is a name: `<` after it is not JSX (#111).
+    assert_eq!(j("v.as<User>()"), "(call (. v as)<User> [])");
+    assert_eq!(j("v?.as<User>()"), "(call (?. v as)<User> [])");
+    assert_eq!(j("x.new<T>()"), "(call (. x new)<T> [])");
+    assert_eq!(j("x.delete<T>(k)"), "(call (. x delete)<T> [k])");
+    assert_eq!(j("x.return < y"), "(< (. x return) y)");
+    for name in ["as", "get", "set", "type", "from", "of", "new", "in"] {
+        parse_ok(&format!(
+            "class C {{ {name}<T>(x: T): T {{ return x; }} }}\n\
+             interface I {{ {name}<T>(x: T): T; }}"
+        ));
+    }
+}
+
+#[test]
+fn type_after_as_is_never_jsx() {
+    // Generic function types are not supported, but `<` after `as` is a type, not JSX.
+    let errs = errors("const f = x as <T>(y: T) => y;");
+    assert!(errs.iter().all(|e| !e.contains("JSX")), "{errs:?}");
+    assert_eq!(j("x as Array<T>"), "(as x Array<T>)");
+}
+
+#[test]
+fn elements_start_wherever_an_expression_does() {
+    let m = parse_ok(
+        "async function f(x: number) {\n\
+           const a = await <x />;\n\
+           switch (x) { case <a />: break; }\n\
+           const h = () => <a />;\n\
+           let y = <a />;\n\
+           y = <b />;\n\
+           f(1, <b />);\n\
+           [<a />, <b />];\n\
+           return <p>{xs.map((i) => <li>{i}</li>)}</p>;\n\
+         }",
+    );
+    assert_eq!(m.items.len(), 1);
+    assert_eq!(
+        init("c ? <a>{d ? <b /> : <i />}</a> : <>{e}</>"),
+        "(? c <a>[{(? d <b/> <i/>)}] <>[{e}])"
+    );
+}
+
+#[test]
+fn jsx_text_is_not_lexed_as_code() {
+    // An apostrophe, a backtick or `//` in JSX text: no string, template or comment.
+    let src = "const a = <p>don't `x` // y /* z</p>;\nconst b = 1; // real\n";
+    let (_, d) = parse(src);
+    assert!(d.is_empty(), "{d:?}");
+    let comments: Vec<&str> = velt_syntax::comment_ranges(src)
+        .into_iter()
+        .map(|r| &src[r.start as usize..r.end as usize])
+        .collect();
+    assert_eq!(comments, vec!["// real"]);
 }
 
 #[test]

@@ -304,7 +304,7 @@ impl<'a> Lexer<'a> {
                 b'$' if self.at(1) == b'{' => {
                     out.push_str(&self.text[run..self.pos]);
                     self.pos += 2;
-                    self.modes.push(Mode::TemplateSub);
+                    self.push_mode(Mode::TemplateSub);
                     break if first {
                         TplPart::Head
                     } else {

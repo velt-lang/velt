@@ -536,7 +536,7 @@ pub enum ExprKind {
         optional: bool,
     },
     Arrow {
-        /// `<T,>(x: T) => x`: type parameters (empty for an ordinary arrow).
+        /// `<T>(x: T) => x`: type parameters (empty for an ordinary arrow).
         type_params: Vec<GenericParam>,
         params: Vec<ArrowParam>,
         ret: Option<TypeExpr>,
