@@ -34,13 +34,17 @@ Promises behave like JavaScript's, at Rust's cost:
 ## Combinators
 
 - `Promise.all(ps: Promise<T, E>[]): Promise<T[], E>`: the results, in order.
-- `Promise.race(ps): Promise<T, E>`: the first to settle; the others keep running.
+- `Promise.race(ps): Promise<T, E>`: the first to settle; the others keep running to
+  completion.
 - `Promise.allSettled(ps)`: a `PromiseSettledResult<T, E>[]`, where each element is
   `{ status: "fulfilled"; value: T } | { status: "rejected"; reason: E }`.
 - `Promise.any(ps): Promise<T>`: the first to fulfill; `AggregateError` when all of them reject
   (or the array is empty).
 
-All promises in one call must have the same type.
+All promises in one call must have the same type. Like in JS, every promise passed to a
+combinator is *handled*: one that loses (or is left behind) and rejects later has its error
+dropped, not reported as uncaught, so a timeout written as a rejecting promise in a
+`Promise.race` is fine once the work won.
 
 ## Tasks
 
@@ -77,7 +81,7 @@ can reject with: `Promise<T, E>` (a `Promise<T>` never rejects).
   `{ status: "rejected"; reason: E }`.
 - A promise nobody can await reports its error as uncaught (`Uncaught <Type>: <message>`, exit
   code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`), and a
-  stored promise that rejects after it was dropped unawaited.
+  stored promise that rejects after it was dropped unawaited (unless a combinator handled it).
 
 **Planned** ([semantics — promises](../internals/design/semantics.md#promises)): a stored
 promise may borrow its arguments instead of owning them when it provably finishes before they

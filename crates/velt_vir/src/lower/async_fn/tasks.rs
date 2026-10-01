@@ -167,6 +167,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let buf = self.results_buffer(n.clone(), stride, align);
         let inner = self.temp(Ty::Ptr);
         let futs = Operand::Copy(proj(&ap, Proj::Field(0)));
+        self.mark_handled(futs.clone(), n.clone(), pel, elem);
         let mut args = vec![futs, n.clone(), cint(stride as i128, Ty::U64), buf.clone()];
         let rt = match self.result_drop_fn(elem) {
             Some(d) => {
@@ -223,6 +224,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let n = Operand::Copy(proj(&ap, Proj::Field(1)));
         let et = self.cx.ty(elem);
         let size = cint(self.cx.size_align(et).0 as i128, Ty::U64);
+        self.mark_handled(futs.clone(), n.clone(), pel, elem);
         let d = self.temp(Ty::Ptr);
         if first_ok {
             let drop = self
@@ -236,6 +238,19 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.free_buffer(&ap, pel);
         let ty = self.sub(ty);
         self.owned_result(Some(d), ty)
+    }
+
+    /// The combinator handles the rejections of the `n` promises at `futs` (element type
+    /// `pel`, slot type `slot`): one that loses or is left behind and rejects later is dropped
+    /// quietly, not reported as uncaught (JS attaches handlers to every input).
+    fn mark_handled(&mut self, futs: Operand, n: Operand, pel: TyId, slot: TyId) {
+        if self.cx.promise_error(pel).is_none() {
+            return;
+        }
+        let drop = self
+            .result_drop_fn(slot)
+            .unwrap_or_else(|| cint(0, Ty::Ptr));
+        self.call_rt(Rt::FutsHandled, vec![futs, n, drop], None);
     }
 
     /// Address of a `(slot: ptr)` function dropping a `T` in place, if `T` needs dropping (the
