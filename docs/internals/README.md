@@ -82,6 +82,8 @@ Decisions and their rationale, including what is still planned:
   errors, `extend`.
 - [Hot reload](design/hot-reload.md): `velt dev`'s supervisor, JIT host and hot swap.
 - [TSX for server-side rendering](design/tsx.md): the planned JSX support.
+- [A package manifest written in Velt](design/package-manifest.md): `package.vlt`, data-only and
+  typed, replacing `velt.toml` (decided, issue #128).
 
 ## Testing
 
