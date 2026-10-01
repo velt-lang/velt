@@ -17,6 +17,9 @@ pub(super) struct Reader {
     first: Vec<bool>,
     /// Positions saved by `mark` (the mark is the index).
     marks: Vec<(usize, Vec<bool>)>,
+    /// `reader_new_with` flag: unknown keys fail (`unknown`). The depth limit is not emulated.
+    reject_unknown: bool,
+    unknown: bool,
 }
 
 #[derive(Default)]
@@ -221,8 +224,9 @@ impl Interp<'_> {
     /// JSON reader functions; `None` if `sym` is not one of them.
     pub(super) fn rt_json(&mut self, sym: &str, a: &[u64]) -> Option<u64> {
         Some(match sym {
-            "velt_rt_json_reader_new" => {
+            "velt_rt_json_reader_new" | "velt_rt_json_reader_new_with" => {
                 let src = self.str_bytes(a[0]);
+                let reject_unknown = sym.ends_with("_with") && a[1] & 1 == 1;
                 let rs = &mut self.exec.json;
                 rs.next += 1;
                 let h = HANDLE_BASE + rs.next * 16;
@@ -233,6 +237,8 @@ impl Interp<'_> {
                     syntax: None,
                     first: vec![],
                     marks: vec![],
+                    reject_unknown,
+                    unknown: false,
                 };
                 rs.open.insert(h, r);
                 h
@@ -279,6 +285,16 @@ impl Interp<'_> {
                     r.mismatch()
                 }
             }
+            "velt_rt_json_reader_skip_unknown" => {
+                let r = self.reader(a[0]);
+                if r.reject_unknown && !r.failed {
+                    r.failed = true;
+                    r.unknown = true;
+                    0
+                } else {
+                    (!r.failed && r.skip()) as u64
+                }
+            }
             "velt_rt_json_reader_skip_value" => {
                 let r = self.reader(a[0]);
                 (!r.failed && r.skip()) as u64
@@ -295,6 +311,7 @@ impl Interp<'_> {
                 r.first = first;
                 r.failed = false;
                 r.syntax = None;
+                r.unknown = false;
                 0
             }
             "velt_rt_json_reader_end" => {
@@ -308,8 +325,10 @@ impl Interp<'_> {
             "velt_rt_json_error" => {
                 let expected = self.str_text(a[1]);
                 let path = self.str_text(a[2]);
-                let msg = match &self.reader(a[0]).syntax {
+                let r = self.reader(a[0]);
+                let msg = match &r.syntax {
                     Some((d, off)) => format!("invalid JSON at {path}: {d} (byte {off})"),
+                    None if r.unknown => format!("unknown field at {path}"),
                     None => format!("expected {expected} at {path}"),
                 };
                 self.new_str(a[3], msg.as_bytes());

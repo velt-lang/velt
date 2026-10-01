@@ -45,15 +45,39 @@ export class JsonError extends Error {
   }
 }
 
+// Options of `JSON.parse<T>(text, options)`; every field may be left out.
+export type JsonParseOptions = {
+  // "reject": an object key the target type has no field for is an error, `unknown field at
+  // $.key` (default "ignore": it is skipped).
+  unknownKeys?: "ignore" | "reject";
+  // The deepest nesting of arrays and objects allowed (default: no limit).
+  maxDepth?: i64;
+};
+
 export class JSON {
   // JS `JSON.stringify`: no whitespace, fields in declaration order, null optional fields omitted.
   static stringify<T>(value: T): string {
     return __intrinsic_json_stringify(value);
   }
 
-  // Decodes `text` into a `T` (throws `JsonError`); unknown object keys are skipped.
-  static parse<T>(text: string): T {
-    return __intrinsic_json_parse<T>(text);
+  // Decodes `text` into a `T` (throws `JsonError`); unknown object keys are skipped unless
+  // `options.unknownKeys` is "reject".
+  static parse<T>(text: string, options: JsonParseOptions | null = null): T {
+    let flags: i64 = 0;
+    let depth: i64 = 0;
+    if (options != null) {
+      if (options.unknownKeys == "reject") {
+        flags = 1;
+      }
+      const d = options.maxDepth;
+      if (d != null) {
+        if (d < 1 || d > 4294967295) {
+          throw new JsonError(`maxDepth must be between 1 and 4294967295, got ${d}`);
+        }
+        depth = d;
+      }
+    }
+    return __intrinsic_json_parse<T>(text, flags, depth);
   }
 
   // Parses any JSON document (throws `JsonError`).

@@ -5,7 +5,7 @@
 //! arbitrarily deep documents cannot overflow the stack.
 
 use super::scan::{number_f64, Scanner, StrTok, SyntaxError};
-use super::walk::{walk, Scalar, Sink};
+use super::walk::{walk, walk_limited, Scalar, Sink};
 use crate::fmt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -180,10 +180,11 @@ impl Sink for Builder {
     }
 }
 
-/// Build the tree of the one value starting at the scanner's position.
-pub fn read(sc: &mut Scanner) -> Result<Arc<Value>, SyntaxError> {
+/// Build the tree of the one value starting at the scanner's position, nested at most
+/// `limit` deep.
+pub fn read_limited(sc: &mut Scanner, limit: usize) -> Result<Arc<Value>, SyntaxError> {
     let mut builder = Builder::default();
-    walk(sc, &mut builder)?;
+    walk_limited(sc, &mut builder, limit)?;
     Ok(builder.root.expect("ICE: JSON walk produced no value"))
 }
 

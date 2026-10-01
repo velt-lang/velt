@@ -209,9 +209,10 @@ impl FnLower<'_, '_> {
             self.switch_to(miss);
         }
         self.goto(unknown);
-        // Not one of the keys: skip the value (a malformed one fails at `.<key>`).
+        // Not one of the keys: skip the value (a malformed one fails at `.<key>`; with unknown
+        // keys rejected, any does).
         self.switch_to(unknown);
-        let ok = self.rt_u8(Rt::JsonSkipValue, vec![Operand::Copy(Place::local(r))]);
+        let ok = self.rt_u8(Rt::JsonSkipUnknown, vec![Operand::Copy(Place::local(r))]);
         let (next, bad) = (self.new_block(), self.new_block());
         self.branch(ok, next, bad);
         self.switch_to(bad);

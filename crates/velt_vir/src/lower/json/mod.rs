@@ -124,13 +124,24 @@ impl FnLower<'_, '_> {
         self.owned_result(Some(out), ty)
     }
 
-    /// `JSON.parse<T>(a)`: the decoded value, or a thrown `JsonError`.
-    pub(super) fn json_parse(&mut self, a: &hir::Expr, ty: TyId) -> Operand {
+    /// `JSON.parse<T>(a)` with reader options `flags` / `depth` (`i64`s): the decoded value,
+    /// or a thrown `JsonError`.
+    pub(super) fn json_parse(
+        &mut self,
+        a: &hir::Expr,
+        flags: &hir::Expr,
+        depth: &hir::Expr,
+        ty: TyId,
+    ) -> Operand {
         let t = self.sub(ty);
         let v = self.expr(a);
+        let flags = self.expr(flags);
+        let depth = self.expr(depth);
         if self.dead() {
             return unit();
         }
+        let flags = self.cast_to(flags, Ty::I64, Ty::U32);
+        let depth = self.cast_to(depth, Ty::I64, Ty::U32);
         // A zero-sized target (`null`, a literal type) is only checked: decode into a dummy.
         let vt = self.cx.ty(t);
         let zero_sized = vt == Ty::Unit;
@@ -142,7 +153,7 @@ impl FnLower<'_, '_> {
         let err = self.temp(STR);
         let oa = self.addr(Place::local(out));
         let ea = self.addr(Place::local(err));
-        let ok = self.call_glue(Glue::JsonParse, t, vec![src, oa, ea]);
+        let ok = self.call_glue(Glue::JsonParse, t, vec![src, flags, depth, oa, ea]);
         let (err_bb, ok_bb) = (self.new_block(), self.new_block());
         self.branch(ok, ok_bb, err_bb);
         self.switch_to(err_bb);

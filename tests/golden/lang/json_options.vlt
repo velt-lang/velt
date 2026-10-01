@@ -1,0 +1,31 @@
+// JSON.parse<T>(text, options) (issue #20): unknownKeys "reject" and maxDepth (arrays and
+// objects, counted from the top-level value; the default is no limit).
+type User = { name: string; tags: string[] };
+
+class Tree {
+  v: i64 = 0;
+  kids: Tree[] = [];
+}
+
+function show<T>(f: () => T throws JsonError) {
+  try {
+    console.log(f());
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+
+function main() {
+  const text = '{"name":"a","tags":[],"extra":{"x":1}}';
+  show(() => JSON.parse<User>(text));
+  show(() => JSON.parse<User>(text, { unknownKeys: "reject" }));
+  show(() => JSON.parse<User>('{"name":"a","tags":[]}', { unknownKeys: "reject" }));
+  show(() => JSON.parse<Record<"a" | "b", i64>>('{"a":1,"b":2,"c":3}', { unknownKeys: "reject" }));
+  const deep = '{"v":1,"kids":[{"v":2,"kids":[{"v":3,"kids":[]}]}]}';
+  show(() => JSON.stringify(JSON.parse<Tree>(deep, { maxDepth: 6 })));
+  show(() => JSON.parse<Tree>(deep, { maxDepth: 5 }));
+  show(() => JSON.parse<User>('{"name":"a","tags":[],"extra":[[[1]]]}', { maxDepth: 3 }));
+  show(() => JSON.parse<JsonValue>("[[[]]]", { maxDepth: 2 }).stringify());
+  show(() => JSON.parse<User>(text, { maxDepth: 0 }));
+  show(() => JSON.parse<User>(text, { unknownKeys: "ignore" }));
+}

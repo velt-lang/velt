@@ -1,7 +1,8 @@
-//! Iterative (no recursion, no depth limit) walk over one JSON value, reporting structure to a
-//! [`Sink`]. Used by `skip_value` (a no-op sink) and by the `json.Value` parser (a tree builder).
+//! Iterative (no recursion) walk over one JSON value, reporting structure to a [`Sink`], with
+//! an optional limit on nesting. Used by `skip_value` (a no-op sink) and by the `json.Value`
+//! parser (a tree builder).
 
-use super::scan::{NumTok, Scanner, StrTok, SyntaxError};
+use super::scan::{NumTok, Scanner, StrTok, SyntaxError, TOO_DEEP};
 
 /// A scalar JSON value.
 #[derive(Debug)]
@@ -99,6 +100,15 @@ fn key_colon<S: Sink>(sc: &mut Scanner, sink: &mut S) -> Result<(), SyntaxError>
 
 /// Walk exactly one value starting at the current position (leading whitespace allowed).
 pub fn walk<S: Sink>(sc: &mut Scanner, sink: &mut S) -> Result<(), SyntaxError> {
+    walk_limited(sc, sink, usize::MAX)
+}
+
+/// [`walk`] failing with [`TOO_DEEP`] at an array/object nested more than `limit` deep.
+pub fn walk_limited<S: Sink>(
+    sc: &mut Scanner,
+    sink: &mut S,
+    limit: usize,
+) -> Result<(), SyntaxError> {
     let mut stack = ContainerStack {
         inline: 0,
         spill: Vec::new(),
@@ -108,6 +118,9 @@ pub fn walk<S: Sink>(sc: &mut Scanner, sink: &mut S) -> Result<(), SyntaxError> 
         // At a value position.
         match sc.peek_non_ws() {
             Some(open @ (b'{' | b'[')) => {
+                if stack.depth >= limit {
+                    return Err(sc.error(TOO_DEEP));
+                }
                 sc.pos += 1;
                 let object = open == b'{';
                 if object {

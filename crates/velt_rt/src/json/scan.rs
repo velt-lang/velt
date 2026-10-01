@@ -13,6 +13,8 @@ pub struct SyntaxError {
 
 /// Detail for a byte that cannot start/continue the construct (the message adds the character).
 pub const UNEXPECTED_CHAR: &str = "unexpected character";
+/// More nested arrays/objects than a decoder's `maxDepth` allows.
+pub const TOO_DEEP: &str = "nested too deeply";
 /// Detail for input that ends inside a value.
 pub const UNEXPECTED_EOF: &str = "unexpected end of input";
 

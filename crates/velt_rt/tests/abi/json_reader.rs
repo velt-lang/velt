@@ -444,3 +444,42 @@ fn mark_and_reset_look_ahead() {
         velt_rt_json_reader_free(r);
     }
 }
+
+#[test]
+fn options_reject_unknown_keys_and_limit_depth() {
+    let msg = |r: *const Reader, path: &str| unsafe {
+        let mut out = MaybeUninit::uninit();
+        velt_rt_json_error(r, &lit("value"), &borrow(path), out.as_mut_ptr());
+        owned_text(out.assume_init())
+    };
+    let src = lit(r#"{"a":1,"b":2}"#);
+    unsafe {
+        // Unknown keys skipped by default, an error when rejected.
+        for (flags, want) in [(0, 1), (FLAG_REJECT_UNKNOWN, 0)] {
+            let r = velt_rt_json_reader_new_with(&src, flags, 0);
+            assert_eq!(velt_rt_json_reader_expect_object_start(r), 1);
+            let mut key = MaybeUninit::uninit();
+            assert_eq!(velt_rt_json_reader_next_key(r, key.as_mut_ptr()), STEP_MORE);
+            assert_eq!(velt_rt_json_reader_skip_unknown(r), want);
+            if want == 0 {
+                assert_eq!(msg(r, "$.a"), "unknown field at $.a");
+            }
+            velt_rt_json_reader_free(r);
+        }
+    }
+    // Depth counts the reader's own containers and those inside skipped values.
+    let src = lit(r#"[[1],{"x":[[2]]}]"#);
+    unsafe {
+        let r = velt_rt_json_reader_new_with(&src, 0, 3);
+        assert_eq!(velt_rt_json_reader_expect_array_start(r), 1);
+        assert_eq!(velt_rt_json_reader_array_next(r), STEP_MORE);
+        assert_eq!(velt_rt_json_reader_skip_value(r), 1); // [1]: depth 2
+        assert_eq!(velt_rt_json_reader_array_next(r), STEP_MORE);
+        assert_eq!(velt_rt_json_reader_skip_value(r), 0); // {"x":[[2]]}: depth 4
+        assert_eq!(
+            msg(r, "$[1]"),
+            "JSON nested deeper than 3 levels at $[1] (byte 11)"
+        );
+        velt_rt_json_reader_free(r);
+    }
+}

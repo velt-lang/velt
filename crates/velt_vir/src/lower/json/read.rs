@@ -20,14 +20,19 @@ impl FnLower<'_, '_> {
     pub(in crate::lower) fn json_parse_body(
         &mut self,
         src: Local,
+        (flags, depth): (Local, Local),
         out: Local,
         err: Local,
         ty: TyId,
     ) {
         let r = self.temp(Ty::Ptr);
         self.call_rt(
-            Rt::JsonReaderNew,
-            vec![Operand::Copy(Place::local(src))],
+            Rt::JsonReaderNewWith,
+            vec![
+                Operand::Copy(Place::local(src)),
+                Operand::Copy(Place::local(flags)),
+                Operand::Copy(Place::local(depth)),
+            ],
             Some(Place::local(r)),
         );
         let ca = self.cx.json_ctx_agg();

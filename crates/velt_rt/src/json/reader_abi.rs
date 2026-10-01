@@ -16,6 +16,18 @@ pub unsafe extern "C" fn velt_rt_json_reader_new(src: *const VeltStr) -> *mut Re
     Box::into_raw(Box::new(Reader::new(bytes)))
 }
 
+/// `new Reader(src)` with options: `flags` (1 = fail on object keys the target type does
+/// not have) and the deepest nesting allowed (`max_depth`, 0 = no limit).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_json_reader_new_with(
+    src: *const VeltStr,
+    flags: u32,
+    max_depth: u32,
+) -> *mut Reader {
+    let bytes: &'static [u8] = std::mem::transmute::<&[u8], &'static [u8]>((*src).as_bytes());
+    Box::into_raw(Box::new(Reader::with_options(bytes, flags, max_depth)))
+}
+
 /// Free the reader (not the source).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_free(r: *mut Reader) {
@@ -138,6 +150,13 @@ pub unsafe extern "C" fn velt_rt_json_reader_read_value(
         out.write(Handle::from_arc(v));
         1
     })
+}
+
+/// Skip the value of an object key the target type does not have: 1 = ok, 0 = error (also
+/// when the reader rejects unknown keys: then the message is `unknown field at <path>`).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_json_reader_skip_unknown(r: *mut Reader) -> u8 {
+    (*r).skip_unknown()
 }
 
 /// After the top-level value: 1 if only whitespace remains, else 0 (error recorded).

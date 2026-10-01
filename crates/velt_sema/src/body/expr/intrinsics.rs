@@ -158,7 +158,8 @@ impl FnCx<'_, '_> {
             }
             I::MutexWith => (vec![(t, B)], ty.error, true),
             I::JsonStringify => (vec![(t, B)], str_, true),
-            I::JsonParse => (vec![(str_, B)], t, true),
+            // `(text, flags, max_depth)`: the options as std's `JSON.parse` encodes them.
+            I::JsonParse => (vec![(str_, B), (ty.i64, C), (ty.i64, C)], t, true),
             I::HttpHandler => {
                 let f = http_handler_fn(ty);
                 (vec![(f, O)], ty.intern(TyKind::Tuple(vec![u64_; 6])), false)

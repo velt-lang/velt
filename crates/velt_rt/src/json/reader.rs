@@ -7,9 +7,9 @@
 //! an opening bracket.
 
 use super::error::{mismatch_message, syntax_message};
-use super::scan::{number_f64, number_i64, NumTok, Scanner, StrTok, SyntaxError};
-use super::value::{read, Value};
-use super::walk::{walk, SkipSink};
+use super::scan::{number_f64, number_i64, NumTok, Scanner, StrTok, SyntaxError, TOO_DEEP};
+use super::value::{read_limited, Value};
+use super::walk::{walk_limited, SkipSink};
 use crate::str::VeltStr;
 use std::sync::Arc;
 
@@ -36,6 +36,8 @@ pub const STEP_ERROR: u8 = 2;
 pub enum ReadError {
     /// Well-formed so far, but not the kind the decoder asked for.
     Mismatch,
+    /// An object key the target type does not have, with unknown keys rejected.
+    Unknown,
     Syntax(SyntaxError),
 }
 
@@ -46,16 +48,44 @@ pub struct Reader {
     /// The last consumed token was `{` or `[` (so no comma is expected before the next item).
     after_open: bool,
     error: Option<ReadError>,
+    /// Options (`JSON.parse` options): fail on unknown object keys; the deepest nesting allowed
+    /// (`usize::MAX`: no limit), and the containers open now.
+    reject_unknown: bool,
+    max_depth: usize,
+    depth: usize,
 }
+
+/// `velt_rt_json_reader_new_with` flags.
+pub const FLAG_REJECT_UNKNOWN: u32 = 1;
+
+/// Bits of a mark: position, open containers, `after_open`.
+const MARK_DEPTH_BITS: u32 = 21;
 
 impl Reader {
     /// Reader over `src`, which must outlive it.
     pub fn new(src: &'static [u8]) -> Reader {
+        Reader::with_options(src, 0, 0)
+    }
+
+    /// Reader with `FLAG_*` options and a maximum nesting depth (0: no limit).
+    pub fn with_options(src: &'static [u8], flags: u32, max_depth: u32) -> Reader {
         Reader {
             sc: Scanner::new(src),
             after_open: false,
             error: None,
+            reject_unknown: flags & FLAG_REJECT_UNKNOWN != 0,
+            max_depth: if max_depth == 0 {
+                usize::MAX
+            } else {
+                max_depth as usize
+            },
+            depth: 0,
         }
+    }
+
+    /// How many more levels a value at the current position may nest.
+    fn depth_left(&self) -> usize {
+        self.max_depth.saturating_sub(self.depth)
     }
 
     /// The sticky error, if any.
@@ -117,8 +147,13 @@ impl Reader {
         if self.value_start(|b| b == bracket).is_none() {
             return 0;
         }
+        if self.depth >= self.max_depth {
+            let e = self.sc.error(TOO_DEEP);
+            return self.fail(ReadError::Syntax(e));
+        }
         self.sc.pos += 1;
         self.after_open = true;
+        self.depth += 1;
         1
     }
 
@@ -128,6 +163,7 @@ impl Reader {
         match self.sc.peek_non_ws() {
             Some(b) if b == close => {
                 self.sc.pos += 1;
+                self.depth = self.depth.saturating_sub(1);
                 Ok(STEP_END)
             }
             Some(b',') if !first => {
@@ -247,19 +283,31 @@ impl Reader {
         if self.value_start(|_| true).is_none() {
             return 0;
         }
-        let r = walk(&mut self.sc, &mut SkipSink);
+        let limit = self.depth_left();
+        let r = walk_limited(&mut self.sc, &mut SkipSink, limit);
         self.syntax(r)
+    }
+
+    /// Skip the value of an object key the target type does not have (fails when unknown keys
+    /// are rejected).
+    pub fn skip_unknown(&mut self) -> u8 {
+        if self.reject_unknown {
+            return self.fail(ReadError::Unknown);
+        }
+        self.skip()
     }
 
     /// The current position, to come back to with `reset` (a decoder looking ahead, e.g. for
     /// a union's discriminant).
     pub fn mark(&self) -> u64 {
-        ((self.sc.pos as u64) << 1) | self.after_open as u64
+        let depth = self.depth.min((1 << MARK_DEPTH_BITS) - 1) as u64;
+        ((self.sc.pos as u64) << (MARK_DEPTH_BITS + 1)) | (depth << 1) | self.after_open as u64
     }
 
     /// Go back to `mark` and forget any error since.
     pub fn reset(&mut self, mark: u64) {
-        self.sc.pos = (mark >> 1) as usize;
+        self.sc.pos = (mark >> (MARK_DEPTH_BITS + 1)) as usize;
+        self.depth = ((mark >> 1) & ((1 << MARK_DEPTH_BITS) - 1)) as usize;
         self.after_open = mark & 1 == 1;
         self.error = None;
     }
@@ -267,7 +315,8 @@ impl Reader {
     /// One complete value of any kind, built as a `json.Value` tree.
     pub fn value(&mut self) -> Option<Arc<Value>> {
         self.value_start(|_| true)?;
-        match read(&mut self.sc) {
+        let limit = self.depth_left();
+        match read_limited(&mut self.sc, limit) {
             Ok(v) => Some(v),
             Err(e) => {
                 self.fail(ReadError::Syntax(e));
@@ -291,7 +340,12 @@ impl Reader {
     /// The `JsonError.message` for the current state (see error.rs for the formats).
     pub fn message(&self, expected: &str, path: &str) -> String {
         match self.error {
+            Some(ReadError::Syntax(e)) if e.what == TOO_DEEP => format!(
+                "JSON nested deeper than {} levels at {path} (byte {})",
+                self.max_depth, e.at
+            ),
             Some(ReadError::Syntax(e)) => syntax_message(self.sc.src, e, path),
+            Some(ReadError::Unknown) => format!("unknown field at {path}"),
             _ => mismatch_message(expected, path),
         }
     }

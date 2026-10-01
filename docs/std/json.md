@@ -26,6 +26,17 @@
   number types, two array types, a `Map`/`Record` beside another object, or object members
   without a discriminant or distinguishing field is a compile error that explains which
   members clash.
+- `JSON.parse<T>(text, options)` takes optional `JsonParseOptions`:
+  - `unknownKeys: "reject"` makes an object key the target type has no field for an error
+    (`unknown field at $.extra`); the default `"ignore"` skips it.
+  - `maxDepth: n` limits how deeply arrays and objects nest, counting from the top-level
+    value (`JSON nested deeper than 64 levels at $.a (byte 812)`); the default is no limit.
+    Use it for documents from untrusted sources.
+
+  Integers stay exact without an option: an integer field reads the digits exactly, also
+  beyond 2^53 (up to the `i64` range). There is no `Date` type to decode dates into: dates stay strings.
+- Syntax errors read the same from `JSON.parse<T>` and `JSON.parseValue`:
+  `invalid JSON at $.items[2]: unexpected character '}' (byte 41)`.
 - `JSON.parse<T>` treats an absent key and an explicit `null` alike: a `T | null` field
   (including `a?: T`) may be missing and is then `null`; every other field is required.
   `JSON.stringify` omits a `null` optional class field (`a?: T`) and writes other `null`s.

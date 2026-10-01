@@ -47,7 +47,9 @@ pub(super) fn stringify(e: Expr, t: T) -> Expr {
 }
 
 pub(super) fn parse(src: &str, ty: TyId, t: T) -> Expr {
-    intr(I::JsonParse, vec![s(src, t)], ty)
+    // `(text, flags, max_depth)`: no options.
+    let none = || int(0, t.i64);
+    intr(I::JsonParse, vec![s(src, t), none(), none()], ty)
 }
 
 pub(super) fn json_golden() -> Program {
