@@ -7,10 +7,14 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Not `canonicalize`: on Windows that returns a `\\?\` path, which node 22 cannot load a
-/// module from (`EISDIR: lstat 'C:'`).
+// Not `canonicalize()`: on Windows that yields a verbatim `\\?\D:\…` path, from which Node
+// cannot load a main script (`EISDIR: lstat 'D:'`).
 fn root() -> PathBuf {
-    std::path::absolute(Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")).expect("repo root")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("repo root")
+        .to_path_buf()
 }
 
 /// The `"Name": \`source\`` entries of the page's `EXAMPLES` table, unescaped.
