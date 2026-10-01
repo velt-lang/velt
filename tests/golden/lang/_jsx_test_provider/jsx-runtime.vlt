@@ -1,0 +1,41 @@
+// The generic test JSX runtime: `jsx`, `Fragment`, `jsxComponent`, `jsxAsyncComponent`.
+// Components run when the element is rendered (parent first); their boundaries are marked with
+// `<!--name-->`.
+
+import { Child, AttrValue, Element, Later, LaterAsync, element, fragment } from "./render";
+import * as render from "./render";
+
+export { Child, AttrValue, Element } from "./render";
+export { IntrinsicElements, ElementChildrenAttribute } from "./types";
+
+export function jsx(
+  tag: string,
+  names: string[],
+  values: AttrValue[],
+  children: Child[],
+  key: string | null,
+): Element {
+  return element(tag, names, values, children, key);
+}
+
+export function Fragment(children: Child[], key: string | null): Element {
+  return fragment(children);
+}
+
+export function jsxComponent<P>(
+  component: (props: P) => Element,
+  props: P,
+  key: string | null,
+  name: string,
+): Element {
+  return render.component(name, key, new Later(() => component(props)));
+}
+
+export function jsxAsyncComponent<P>(
+  component: (props: P) => Promise<Element>,
+  props: P,
+  key: string | null,
+  name: string,
+): Element {
+  return render.component(name, key, new LaterAsync(() => component(props)));
+}

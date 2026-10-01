@@ -36,8 +36,7 @@ on every save, which forces a restart.
 
 ## Phase 3 on Apple silicon (Apple M4, macOS 26.6, 2026-10-01)
 
-The same three runs on arm64 macOS (`stream/platform-perf`, the merge of phase 3 with the
-compile-speed stream). Another session was compiling on the machine (load average 9–17).
+The same three runs on arm64 macOS (hot swap together with the shared debug runtime). Another session was compiling on the machine (load average 9–17).
 
 | run | median | min–max |
 |---|---|---|

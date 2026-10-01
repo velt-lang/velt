@@ -247,6 +247,9 @@ typedef struct {
 The runtime stores each request's state inline in the request future (no extra allocation for
 states ≤ 1 KiB) and polls it on a worker. The request body is fully read before `init` runs.
 The handler must `velt_rt_http_req_drop(req)` when done with it (typically before returning).
+`VeltReq` is a registry key (`crate::registry`, like the database handles): every accessor checks
+it, and using a request after it was dropped stops the program with a clear message instead of
+reading freed memory.
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -957,6 +960,34 @@ against the client.
 | `velt_rt_prng_f64` | `() -> f64` | uniform `[0, 1)`, 53 bits; per-thread wyrand seeded from §14.1 |
 | `velt_rt_prng_range` | `(i64 min, i64 max) -> i64` | uniform `[min, max)` (unbiased); `min` if `max <= min` |
 
+
+### 14.17 Streamed response bodies (`Response.stream`; stream tsx, additive)
+A `VeltResp` body is now either complete (the §7 setters: unchanged, still sent with an exact
+`Content-Length`, no extra allocation) or **streamed**: `velt_rt_http_resp_stream_open` replaces
+the body with the receiving end of a bounded channel (8 chunks) and returns a writer,
+`VeltRespWriter`, a registry key (§3.2, `u64`). A streamed body has no known length, so hyper
+sends it with chunked transfer encoding (HTTP/1.1) or DATA frames (HTTP/2) and never computes a
+`Content-Length`; the status and headers go out when the handler returns the response, before
+the first chunk. The writer is filled by Velt code that keeps running after the handler returned
+(std starts it as a stored promise of the handler's task, §1.1); no code pointers are stored
+(§13.5).
+
+Writes append a copy to the writer's buffer (`BytesMut`) and never wait; a flush hands the
+buffer to the body as one chunk, waiting for channel room (**backpressure**: a producer faster
+than its client waits in `flush`). A buffer that reaches 16 KiB is also handed over by a write
+when the channel has room. Chunks keep their write order even when copies of the handle flush
+concurrently. Once the client has gone away (hyper dropped the body) or the writer ended, writes
+and flushes return 0 and discard their data. A writer that is neither closed nor aborted keeps
+its response open.
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_http_resp_stream_open` | `(VeltResp r) -> VeltRespWriter` | body becomes a stream; default `content-type: text/plain; charset=utf-8` unless one is set; opening again detaches the earlier writer (its writes return 0) |
+| `velt_rt_http_resp_stream_write` | `(VeltRespWriter w, const VeltStr* text) -> u8` | buffers a copy; 0 once ended, client gone, or `w` released |
+| `velt_rt_http_resp_stream_write_bytes` | `(VeltRespWriter w, const VeltBytes* data) -> u8` | the same for `u8[]` |
+| `velt_rt_http_resp_stream_flush` | `(VeltRespWriter w) -> VeltFut*` | result `u8`: 1 = the buffer was handed to the body (nothing buffered: 1 while the client is there); 0 = client gone / ended. Cancel-safe: the buffer is taken only once there is room |
+| `velt_rt_http_resp_stream_close` | `(VeltRespWriter w) -> VeltFut*` | result `u8` as `flush`; sends the rest, ends the body normally (final chunk) and releases `w`; 0 on a released handle |
+| `velt_rt_http_resp_stream_abort` | `(VeltRespWriter w)` | ends the body with an error (HTTP/1.1: the connection is closed without the final chunk; HTTP/2: `RST_STREAM`), discarding the buffer, and releases `w`; no-op on a released handle |
 
 ### 14.17 PostgreSQL batches (`std/postgres`; stream platform-perf, additive)
 One prepared statement run with N parameter sets in one message group — `Bind` + `Execute` per

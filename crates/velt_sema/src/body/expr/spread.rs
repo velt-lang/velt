@@ -87,7 +87,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `{ stmts; value }` (or just `value` when there are no statements).
-    fn with_lets(&mut self, lets: Vec<hir::Stmt>, value: hir::Expr) -> hir::Expr {
+    pub(super) fn with_lets(&mut self, lets: Vec<hir::Stmt>, value: hir::Expr) -> hir::Expr {
         if lets.is_empty() {
             return value;
         }
@@ -115,7 +115,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The accessible fields of spread source `e`, each read per the module docs.
-    fn spread_source(
+    pub(super) fn spread_source(
         &mut self,
         e: &ast::Expr,
         lets: &mut Vec<hir::Stmt>,

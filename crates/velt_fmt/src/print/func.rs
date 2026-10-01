@@ -102,9 +102,11 @@ impl<'a> Printer<'a> {
         cat!["<", join(&text(", "), docs), ">"]
     }
 
-    /// `[async ](params)[: R [throws E]] => body`.
+    /// `[async ][<T,>](params)[: R [throws E]] => body`. A single unbounded type parameter
+    /// keeps its trailing comma (`<T,>`): without it `<T>` would start a JSX element.
     pub(super) fn arrow(
         &mut self,
+        type_params: &[GenericParam],
         params: &[ArrowParam],
         (ret, throws): (Option<&TypeExpr>, Option<&TypeExpr>),
         body: &ArrowBody,
@@ -130,10 +132,15 @@ impl<'a> Printer<'a> {
             },
         );
         let asyncness = if is_async { "async " } else { "" };
+        let type_params = match type_params {
+            [only] if only.bounds.is_empty() => cat!["<", only.name.name.clone(), ",>"],
+            _ => self.generic_params(type_params),
+        };
         let ret = self.return_type(ret);
         let throws = self.throws_clause(throws);
         let head = cat![
             asyncness,
+            type_params,
             delimited("(", list, ")", false),
             ret,
             throws,
@@ -148,6 +155,9 @@ impl<'a> Printer<'a> {
     /// `head body` where `body` is an expression after `=>`: on the same line if it breaks
     /// nicely by itself (calls, literals, blocks...), else indented on the next line when long.
     pub(super) fn body_after(&mut self, head: Doc, body: &Expr) -> Doc {
+        if super::jsx::is_jsx_layout(body) {
+            return cat![head, " ", self.expr_jsx_parens(body)];
+        }
         if breaks_itself(body) {
             return cat![head, " ", self.expr(body)];
         }

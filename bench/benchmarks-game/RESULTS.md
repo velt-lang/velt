@@ -2,7 +2,7 @@
 
 Machine: Apple M4 (4 performance + 6 efficiency cores), 32 GB, macOS 26.6.2, and nothing else
 running. Toolchains:
-- Velt 0.1.0 at `8f35554` (origin/main `5b61103` plus `stream/std-net`), `--release`. The LLVM
+- Velt 0.1.0 (pre-release development build, with the std networking modules), `--release`. The LLVM
   backend goes through Apple clang 21.0.0.
 - rustc 1.98.1: release, LTO, 1 codegen unit, `-C target-cpu=native`.
 - Go 1.27.1, Node 24.11.1, Bun 1.4.2.

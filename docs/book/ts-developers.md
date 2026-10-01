@@ -194,8 +194,8 @@ move rule disappears ([Memory without a garbage collector](memory.md)).
 `var`, `eval`, prototypes, `delete`, `for...in`, `with`, getters on object literals,
 decorators, generators (`function*`, `yield`), `Symbol` (other than `Symbol.dispose` and
 `Symbol.asyncDispose`), `BigInt` literals (use [`velt:bigint`](../std/bigint.md)), Unicode
-identifiers, the logical assignments `&&=`, `||=`, `??=` (planned), and JSX (**planned** for
-server-side rendering).
+identifiers, and the logical assignments `&&=`, `||=`, `??=` (planned). JSX is supported for
+server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `children` yet.
 
 ## Quick reference
 
@@ -220,4 +220,4 @@ server-side rendering).
 | `export default` | named exports only | — |
 | string length in UTF-16 units | length and offsets in UTF-8 bytes | — |
 | (no equivalent) | `extend` adds members to any type | module-scoped extensions, retroactive `implements` |
-| JSX | not yet | TSX for server-side rendering |
+| JSX | server-side rendering through a `jsxImportSource` provider ([`velt:jsx`](../std/jsx.md)) | no client-side DOM; `children` props arrive with semantics stage 2 |

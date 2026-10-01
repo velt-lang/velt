@@ -1,0 +1,28 @@
+// @jsxImportSource ../_jsx_test_provider
+
+// Component props are checked against the component's props type, with TypeScript's wording.
+
+type CardProps = { title: string; count?: i64; children: JSX.Element };
+
+function Card(props: CardProps): JSX.Element {
+  return <div class="card">{props.title}{props.children}</div>;
+}
+
+function Badge(props: { tone: string }): JSX.Element {
+  return <span class={props.tone}>!</span>;
+}
+
+function Count(props: { n: i64 }): string {
+  return `${props.n}`;
+}
+
+function main() {
+  const missing = <Card count={1}><p>x</p></Card>;
+  const unknown = <Card title="t" titel="typo"><p>x</p></Card>;
+  const wrongType = <Card title={5}><p>x</p></Card>;
+  const noChildren = <Badge tone="ok">text</Badge>;
+  const twoChildren = <Card title="t"><p>a</p><p>b</p></Card>;
+  const notComponent = <Count n={1} />;
+  const unknownComponent = <Missing />;
+  const twice = <Badge tone="a" tone="b" />;
+}

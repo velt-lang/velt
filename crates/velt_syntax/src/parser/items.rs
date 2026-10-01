@@ -32,6 +32,7 @@ impl<'a> Parser<'a> {
         Module {
             items,
             span: Span::new(self.file, 0, self.src.len() as u32),
+            jsx_import_source: self.jsx_import_source.take(),
         }
     }
 

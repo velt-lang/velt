@@ -2,9 +2,10 @@
 //! corpus file must not change the formatted output.
 //!
 //! Whitespace is only added where it cannot change what the formatter keeps from the layout:
-//! never inside literals or comments, never on a line that has a comment after the insertion
-//! point (a comment's line decides whether it trails the code before it), and no newline into
-//! whitespace that already holds one (that would create blank lines, which are preserved).
+//! never inside literals, comments, JSX text or JSX attribute strings, never on a line that has a
+//! comment after the insertion point (a comment's line decides whether it trails the code before
+//! it), and no newline into whitespace that already holds one (that would create blank lines,
+//! which are preserved).
 
 mod common;
 
@@ -52,11 +53,20 @@ fn insertion_points(src: &str) -> Vec<(usize, bool)> {
     out
 }
 
-/// Marks bytes that are plain code (not inside strings, templates, regular expressions or
-/// comments).
+/// Where the scanner is: inside braces in code, a JSX tag or JSX children.
+#[derive(Clone, Copy, PartialEq)]
+enum Ctx {
+    Brace,
+    JsxTag { closing: bool },
+    JsxChildren,
+}
+
+/// Marks bytes that are plain code (not inside strings, templates, regular expressions,
+/// comments, JSX text or JSX attribute strings).
 fn mark_code(bytes: &[u8], code: &mut [bool], comment_start: &mut [bool]) {
     let mut i = 0;
     let mut template_depth = 0usize;
+    let mut stack: Vec<Ctx> = vec![];
     while i < bytes.len() {
         let c = bytes[i];
         if template_depth > 0 {
@@ -68,6 +78,17 @@ fn mark_code(bytes: &[u8], code: &mut [bool], comment_start: &mut [bool]) {
             }
             i += 1;
             continue;
+        }
+        match stack.last() {
+            Some(Ctx::JsxChildren) => {
+                i = jsx_children_byte(bytes, i, code, &mut stack);
+                continue;
+            }
+            Some(&Ctx::JsxTag { closing }) if !is_comment_start(bytes, i) => {
+                i = jsx_tag_byte(bytes, i, closing, code, &mut stack);
+                continue;
+            }
+            _ => {}
         }
         match c {
             b'"' | b'\'' => {
@@ -81,7 +102,7 @@ fn mark_code(bytes: &[u8], code: &mut [bool], comment_start: &mut [bool]) {
                 template_depth += 1;
                 i += 1;
             }
-            b'/' if matches!(bytes.get(i + 1), Some(b'/') | Some(b'*')) => {
+            b'/' if is_comment_start(bytes, i) => {
                 comment_start[i] = true;
                 let (close, extra): (&[u8], usize) = if bytes[i + 1] == b'*' {
                     (b"*/", 2)
@@ -95,10 +116,102 @@ fn mark_code(bytes: &[u8], code: &mut [bool], comment_start: &mut [bool]) {
             b'/' if regex_may_start(bytes, i) => i = regex_end(bytes, i),
             _ => {
                 code[i] = true;
+                match c {
+                    b'{' => stack.push(Ctx::Brace),
+                    b'}' if stack.last() == Some(&Ctx::Brace) => {
+                        stack.pop();
+                    }
+                    b'<' if jsx_may_start(bytes, i) => stack.push(Ctx::JsxTag { closing: false }),
+                    _ => {}
+                }
                 i += 1;
             }
         }
     }
+}
+
+fn is_comment_start(bytes: &[u8], i: usize) -> bool {
+    bytes[i] == b'/' && matches!(bytes.get(i + 1), Some(b'/' | b'*'))
+}
+
+/// One step between JSX tags: text is not code; `{`, `<` and `</` are.
+fn jsx_children_byte(bytes: &[u8], i: usize, code: &mut [bool], stack: &mut Vec<Ctx>) -> usize {
+    match bytes[i] {
+        b'{' => {
+            code[i] = true;
+            stack.push(Ctx::Brace);
+            i + 1
+        }
+        b'<' => {
+            code[i] = true;
+            let closing = bytes.get(i + 1) == Some(&b'/');
+            stack.push(Ctx::JsxTag { closing });
+            i + 1 + usize::from(closing)
+        }
+        _ => i + 1,
+    }
+}
+
+/// One step inside a JSX tag: attribute strings are not code; `{` opens an expression, `<` an
+/// element as an attribute value, and `>` / `/>` end the tag.
+fn jsx_tag_byte(
+    bytes: &[u8],
+    i: usize,
+    closing: bool,
+    code: &mut [bool],
+    stack: &mut Vec<Ctx>,
+) -> usize {
+    let c = bytes[i];
+    match c {
+        b'"' | b'\'' => (i + 1..bytes.len())
+            .find(|&k| bytes[k] == c)
+            .map_or(bytes.len(), |k| k + 1),
+        b'/' | b'>' => {
+            let self_closing = c == b'/' && bytes.get(i + 1) == Some(&b'>');
+            if c == b'>' || self_closing {
+                stack.pop();
+                if closing && stack.last() == Some(&Ctx::JsxChildren) {
+                    stack.pop();
+                } else if !closing && !self_closing {
+                    stack.push(Ctx::JsxChildren);
+                }
+            }
+            code[i] = true;
+            i + 1 + usize::from(self_closing)
+        }
+        _ => {
+            code[i] = true;
+            match c {
+                b'{' => stack.push(Ctx::Brace),
+                b'<' => stack.push(Ctx::JsxTag { closing: false }),
+                _ => {}
+            }
+            i + 1
+        }
+    }
+}
+
+/// Does a `<` at `i` start a JSX element (the lexer's rule: an operand is expected and a name
+/// or `>` follows, but not the type parameters `<T,` / `<T extends` of a generic arrow)?
+fn jsx_may_start(bytes: &[u8], i: usize) -> bool {
+    let next = bytes.get(i + 1).copied().unwrap_or(0);
+    if !(next.is_ascii_alphabetic() || matches!(next, b'_' | b'$' | b'>')) {
+        return false;
+    }
+    let before = std::str::from_utf8(&bytes[..i]).unwrap_or("").trim_end();
+    let operand_expected = before.ends_with("return")
+        || matches!(
+            before.bytes().last(),
+            None | Some(
+                b'(' | b',' | b'=' | b':' | b'[' | b'!' | b'&' | b'|' | b'?' | b'{' | b';' | b'>'
+            )
+        );
+    let rest = std::str::from_utf8(&bytes[i + 1..]).unwrap_or("");
+    let after_name = rest.trim_start_matches(|c: char| c.is_ascii_alphanumeric() || c == '_');
+    let after_name = after_name.trim_start();
+    let generic = after_name.len() < rest.len()
+        && (after_name.starts_with(',') || after_name.starts_with("extends "));
+    operand_expected && !generic
 }
 
 /// Does a `/` at `i` start a regular expression literal (no operand before it)?
@@ -180,4 +293,20 @@ fn extra_whitespace_does_not_change_the_output() {
         }
     }
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n"));
+}
+
+#[test]
+fn jsx_text_and_attribute_strings_are_not_perturbed() {
+    let src = "const a = <p t='x, y'>Hello, world ( {f(b, c)} </p>;\nconst g = <T,>(x: T) => x;\n";
+    let points: Vec<usize> = insertion_points(src)
+        .into_iter()
+        .map(|(at, _)| at)
+        .collect();
+    let after = |needle: &str| src.find(needle).unwrap() + needle.len();
+    assert!(!points.contains(&after("x,")), "{points:?}");
+    assert!(!points.contains(&after("Hello,")), "{points:?}");
+    assert!(!points.contains(&after("world (")), "{points:?}");
+    assert!(points.contains(&after("{f(")), "{points:?}");
+    assert!(points.contains(&after("(b,")), "{points:?}");
+    assert!(points.contains(&after("<T,")), "{points:?}");
 }

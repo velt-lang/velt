@@ -77,6 +77,7 @@ fn parse(
         file,
         ast,
         imports: vec![],
+        jsx_runtime: None,
     }
 }
 

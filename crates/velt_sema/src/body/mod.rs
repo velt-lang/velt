@@ -37,7 +37,7 @@ mod assigned;
 mod const_borrow;
 mod defaults;
 mod driver;
-mod expr;
+pub(crate) mod expr;
 mod field_narrow;
 mod locals;
 mod loops;

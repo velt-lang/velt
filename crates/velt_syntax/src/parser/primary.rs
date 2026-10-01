@@ -1,5 +1,6 @@
 //! Primary (atomic) expressions: literals, identifiers, `this`, `super`, `new`, parenthesized
 //! expressions, array/object/struct literals, template literals and regular expression literals.
+//! JSX elements are parsed in `jsx`.
 
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
@@ -15,6 +16,7 @@ impl<'a> Parser<'a> {
         }
         let kind = match self.peek() {
             Tok::Template(..) => self.parse_template()?,
+            Tok::JsxLt => ExprKind::Jsx(Box::new(self.parse_jsx_element()?)),
             Tok::Regex(i) => {
                 self.bump();
                 self.regex_literal(i, span)
@@ -38,6 +40,11 @@ impl<'a> Parser<'a> {
                 self.bump();
                 let inner = self.parse_expr()?;
                 self.expect(Tok::RParen)?;
+                // Parentheses around a JSX element are layout only (a formatter adds them to
+                // multi-line elements), so they leave no `Paren` node.
+                if matches!(inner.kind, ExprKind::Jsx(_)) {
+                    return Ok(inner);
+                }
                 ExprKind::Paren(Box::new(inner))
             }
             Tok::LBracket => {

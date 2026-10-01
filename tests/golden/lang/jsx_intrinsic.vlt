@@ -1,0 +1,44 @@
+// @jsxImportSource ./_jsx_test_provider
+
+// Intrinsic elements through a generic JSX provider: string, expression, bare, spread and
+// data-* attributes, children, entities, escaping, void elements and fragments. The runtime
+// spells numbers `i64 | f64`: declared integers and float literals both fit.
+
+import { render } from "./_jsx_test_provider/render";
+
+async function main() {
+  const name = "Ada & <Bob>";
+  const count = 3;
+  const big: i64 = 9007199254740993;
+  const extra = { class: "box", title: "a \"quoted\" title" };
+  console.log(await render(<p class="greeting">Hello, {name}!</p>));
+  console.log(
+    await render(
+      <div id="x" hidden data-count={count} {...extra}>
+        a &amp; b &lt; c&nbsp;&copy;
+      </div>,
+    ),
+  );
+  console.log(await render(<input name="q" value={name} checked={false} tabindex={2} />));
+  console.log(
+    await render(
+      <ul>
+        <li>one</li>
+        <li class={count > 2 ? "many" : "few"}>{count}</li>
+        {null}
+        {true}
+        {/* nothing */}
+      </ul>,
+    ),
+  );
+  console.log(
+    await render(
+      <>
+        <br />
+        <span>{1.5}</span>
+        <span data-big={big}>{big}</span>
+        <img src="a.png" alt="it's" />
+      </>,
+    ),
+  );
+}

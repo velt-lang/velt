@@ -1,6 +1,6 @@
 //! Lays out a [`Doc`] within a line width: a port of prettier's `printDocToString` / `fits`
-//! (command stack, flat/break modes, re-measuring after hard lines, conditional groups, line
-//! suffixes). Trailing spaces are trimmed at every newline.
+//! (command stack, flat/break modes, re-measuring after hard lines, conditional groups, fills,
+//! line suffixes). Trailing spaces are trimmed at every newline.
 
 use super::{Doc, LineKind, Node};
 
@@ -18,6 +18,8 @@ struct Cmd<'d> {
     indent: usize,
     mode: Mode,
     doc: &'d Doc,
+    /// For a [`Node::Fill`]: the index of the part to print next.
+    fill_at: usize,
 }
 
 impl<'d> Cmd<'d> {
@@ -26,6 +28,7 @@ impl<'d> Cmd<'d> {
             indent: self.indent,
             mode,
             doc,
+            fill_at: 0,
         }
     }
 }
@@ -40,6 +43,7 @@ pub(crate) fn render(doc: &Doc, width: usize) -> String {
             indent: 0,
             mode: Mode::Break,
             doc,
+            fill_at: 0,
         }],
         suffixes: vec![],
         remeasure: false,
@@ -83,9 +87,11 @@ impl<'d> Renderer<'d> {
                 indent: cmd.indent + INDENT_WIDTH,
                 mode: cmd.mode,
                 doc: d,
+                fill_at: 0,
             }),
             Node::Group { contents, broken } => self.group(cmd, contents, *broken),
             Node::Conditional(states) => self.conditional(cmd, states),
+            Node::Fill(parts) => self.fill(cmd, parts),
             Node::Line(kind) => self.line(cmd, *kind),
             Node::IfBreak { broken, flat } => {
                 let d = if cmd.mode == Mode::Break {
@@ -143,6 +149,50 @@ impl<'d> Renderer<'d> {
         self.cmds.push(cmd.with(Mode::Break, last));
     }
 
+    /// One content of a fill and the separator after it (prettier's algorithm): the content
+    /// breaks if it does not fit by itself; the separator breaks if the next content does not
+    /// fit after it on the same line. The rest of the fill is pushed as a continuation.
+    fn fill(&mut self, cmd: Cmd<'d>, parts: &'d [Doc]) {
+        let at = cmd.fill_at;
+        if cmd.mode == Mode::Flat && !self.remeasure {
+            let rest = parts.get(at..).unwrap_or_default();
+            self.cmds
+                .extend(rest.iter().rev().map(|p| cmd.with(Mode::Flat, p)));
+            return;
+        }
+        let Some(content) = parts.get(at) else {
+            return;
+        };
+        let rem = self.width - self.pos;
+        let content_fits = fits_flat(&[content], rem);
+        let content_mode = if content_fits {
+            Mode::Flat
+        } else {
+            Mode::Break
+        };
+        let Some(separator) = parts.get(at + 1) else {
+            self.cmds.push(cmd.with(content_mode, content));
+            return;
+        };
+        let separator_flat = match parts.get(at + 2) {
+            Some(_) => {
+                self.cmds.push(Cmd {
+                    fill_at: at + 2,
+                    ..cmd
+                });
+                fits_flat(&glued_run(parts, at), rem)
+            }
+            None => content_fits,
+        };
+        let separator_mode = if separator_flat {
+            Mode::Flat
+        } else {
+            Mode::Break
+        };
+        self.cmds.push(cmd.with(separator_mode, separator));
+        self.cmds.push(cmd.with(content_mode, content));
+    }
+
     fn line(&mut self, cmd: Cmd<'d>, kind: LineKind) {
         if cmd.mode == Mode::Flat {
             match kind {
@@ -168,11 +218,37 @@ impl<'d> Renderer<'d> {
     }
 }
 
+/// `parts[at]`, the separator after it and the next content, extended over the contents that
+/// follow behind text separators: text never breaks, so such a run must fit on the line as a
+/// whole (a space that has to stay next to a JSX tag, say).
+fn glued_run(parts: &[Doc], at: usize) -> Vec<&Doc> {
+    let mut end = (at + 3).min(parts.len());
+    while end + 1 < parts.len() && matches!(parts[end].node(), Node::Text(_)) {
+        end += 2;
+    }
+    parts[at..end].iter().collect()
+}
+
 /// Does `next` fit in `width` columns, up to the first line break (continuing into the `rest` of
 /// the command stack, in their own modes, when `next` ends first)?
-fn fits(next: Cmd<'_>, rest: &[Cmd<'_>], mut width: isize) -> bool {
+fn fits(next: Cmd<'_>, rest: &[Cmd<'_>], width: isize) -> bool {
+    fits_stack(vec![(next.mode, next.doc)], rest, width, false)
+}
+
+/// Do `docs`, laid out flat one after the other, fit in `width` columns? A content with a
+/// forced break never does (prettier's `mustBeFlat`), so a fill puts it on its own line.
+fn fits_flat(docs: &[&Doc], width: isize) -> bool {
+    let stack = docs.iter().rev().map(|d| (Mode::Flat, *d)).collect();
+    fits_stack(stack, &[], width, true)
+}
+
+fn fits_stack<'d>(
+    mut stack: Vec<(Mode, &'d Doc)>,
+    rest: &[Cmd<'d>],
+    mut width: isize,
+    must_be_flat: bool,
+) -> bool {
     let mut rest_idx = rest.len();
-    let mut stack: Vec<(Mode, &Doc)> = vec![(next.mode, next.doc)];
     while width >= 0 {
         let Some((mode, doc)) = stack.pop() else {
             if rest_idx == 0 {
@@ -191,9 +267,13 @@ fn fits(next: Cmd<'_>, rest: &[Cmd<'_>], mut width: isize) -> bool {
             Node::Concat(parts) => stack.extend(parts.iter().rev().map(|p| (mode, p))),
             Node::Indent(d) => stack.push((mode, d)),
             Node::Group { contents, broken } => {
+                if must_be_flat && *broken {
+                    return false;
+                }
                 let mode = if *broken { Mode::Break } else { mode };
                 stack.push((mode, contents));
             }
+            Node::Fill(parts) => stack.extend(parts.iter().rev().map(|p| (mode, p))),
             Node::Conditional(states) => {
                 let state = if mode == Mode::Break {
                     states.last()

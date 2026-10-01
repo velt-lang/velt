@@ -53,6 +53,6 @@ Decided direction that is not implemented yet. Each chapter says where it applie
 | Semantics stage 3: `weak` references and a compile-time warning for reference cycles | [semantics — cycles](../internals/design/semantics.md#reference-cycles--without-a-collector) |
 | Objects compared by identity; the `struct` keyword removed | [semantics — JS fidelity](../internals/design/semantics.md#js-fidelity-decisions) |
 | `extend`: retroactive `implements`, module scoping | [TypeScript alignment §4](../internals/design/ts-alignment.md#4-extend--full-power-zero-cost-module-scoped) |
-| TSX for server-side rendering | [TSX](../internals/design/tsx.md) |
+| TSX: `children` and other element-typed props, faster templates (syntax, providers, `velt:jsx` and streaming already work) | [TSX](../internals/design/tsx.md) |
 | `JSON.parse` into unions and literal types | [roadmap](../../ROADMAP.md) |
 | `new Promise((resolve, reject) => …)` | [semantics — promises](../internals/design/semantics.md#promises) |

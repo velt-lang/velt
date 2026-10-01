@@ -1,0 +1,109 @@
+// std/jsx/render: turns an Element into HTML, as one string or into a streamed response.
+//
+// A complete element already is its HTML (node.vlt). Otherwise the renderer walks the node's
+// pieces in document order with an explicit stack (no async recursion): `html`, then the
+// awaited async component, then the other parts. Every async component started when its node was
+// created, so awaiting them one after the other still lets them load concurrently.
+
+import { Element, RenderError } from "velt:jsx/node";
+import { ResponseWriter } from "velt:http";
+
+// The HTML of `el`, after awaiting its async components. Throws the `RenderError` of the
+// first (in document order) component that threw or rejected.
+export async function renderToString(el: Element): Promise<string> throws RenderError {
+  if (el.isComplete) {
+    return el.html;
+  }
+  let out = "";
+  const stack: Element[] = [el];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node == null) {
+      break;
+    }
+    out += node.html;
+    const pending = pushParts(node, stack);
+    if (pending != null) {
+      stack.push(await pending);
+    }
+  }
+  return out;
+}
+
+// The HTML of `el` when it has no async component (no await needed). Throws the `RenderError`
+// of the first component that threw, or one saying the tree has an async component.
+export function renderToStringSync(el: Element): string throws RenderError {
+  if (el.isComplete) {
+    return el.html;
+  }
+  const pieces: string[] = [];
+  collect(el, pieces);
+  return pieces.join("");
+}
+
+// `renderToStringSync` for an incomplete node, depth first.
+function collect(node: Element, pieces: string[]) throws RenderError {
+  pieces.push(node.html);
+  if (node.rest == null) {
+    return;
+  }
+  if (node.rest.failure != null) {
+    throw node.rest.failure.clone();
+  }
+  if (node.rest.pending.length > 0) {
+    throw new RenderError("", "the element has an async component: use `await renderToString`");
+  }
+  for (const part of node.rest.parts) {
+    collect(part, pieces);
+  }
+}
+
+// Writes `el` into a streamed response body (`Response.stream`, std/http), flushing before each
+// pending async component so the markup above it reaches the client while it loads. Returns
+// false, and stops rendering, once the client has gone away. Throws like `renderToString`;
+// thrown from the `Response.stream` producer, that cuts the response off.
+export async function renderToStream(
+  el: Element,
+  w: ResponseWriter,
+): Promise<bool> throws RenderError {
+  const stack: Element[] = [el];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node == null) {
+      break;
+    }
+    if (node.html != "" && !w.write(node.html)) {
+      return false;
+    }
+    const pending = pushParts(node, stack);
+    if (pending != null) {
+      if (!(await w.flush())) {
+        return false;
+      }
+      stack.push(await pending);
+    }
+  }
+  return true;
+}
+
+// Pushes the node's parts onto the stack so that they pop in document order, and returns its
+// async component's promise, whose element goes on top once awaited. Throws the error of a
+// component that threw.
+function pushParts(
+  node: Element,
+  stack: Element[],
+): Promise<Element, RenderError> | null throws RenderError {
+  if (node.rest == null) {
+    return null;
+  }
+  if (node.rest.failure != null) {
+    throw node.rest.failure.clone();
+  }
+  while (node.rest.parts.length > 0) {
+    const part = node.rest.parts.pop();
+    if (part != null) {
+      stack.push(part);
+    }
+  }
+  return node.rest.pending.pop();
+}

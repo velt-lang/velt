@@ -14,11 +14,11 @@ pub fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Every `.vlt` file under `tests/golden` and `std` (whatever exists), plus the directories
-/// listed in `VELT_FMT_EXTRA_CORPUS` (separated like `PATH`), sorted.
+/// Every `.vlt` file under `tests/golden`, `std` and `fuzz/seeds` (whatever exists), plus the
+/// directories listed in `VELT_FMT_EXTRA_CORPUS` (separated like `PATH`), sorted.
 pub fn corpus() -> Vec<PathBuf> {
     let mut out = vec![];
-    for dir in ["tests/golden", "std"] {
+    for dir in ["tests/golden", "std", "fuzz/seeds"] {
         collect(&root().join(dir), &mut out);
     }
     if let Some(extra) = std::env::var_os("VELT_FMT_EXTRA_CORPUS") {

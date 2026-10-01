@@ -128,7 +128,10 @@ fn huggable(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Object(props) | ExprKind::StructLit { props, .. } => !props.is_empty(),
         ExprKind::Array(elems) => !elems.is_empty(),
-        ExprKind::Arrow { body, .. } => matches!(body, ArrowBody::Block(_)),
+        ExprKind::Arrow { body, .. } => match body {
+            ArrowBody::Block(_) => true,
+            ArrowBody::Expr(e) => super::jsx::is_jsx_layout(e),
+        },
         _ => false,
     }
 }

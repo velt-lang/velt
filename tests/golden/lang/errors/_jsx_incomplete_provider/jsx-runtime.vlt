@@ -1,0 +1,9 @@
+// A JSX runtime that only has the types: every use of JSX reports the missing functions.
+
+export class Element {
+  html: string = "";
+}
+
+export type Child = Element | string | null;
+export type AttrValue = string | null;
+export type IntrinsicElements = { p: {} };
