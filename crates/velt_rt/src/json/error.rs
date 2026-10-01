@@ -1,7 +1,7 @@
 //! `JsonError.message` texts. Formats (documented in rt_abi_async.md §12.4):
 //! - type mismatch (decoder wanted another kind): `expected <expected> at <path>`
-//! - syntax error while decoding: `invalid JSON at <path>: <detail> (byte <offset>)`
-//! - syntax error in `JSON.parseValue`: `invalid JSON: <detail> (byte <offset>)`
+//! - syntax error (typed decoding and `JSON.parseValue` alike):
+//!   `invalid JSON at <path>: <detail> (byte <offset>)`
 
 use super::scan::{SyntaxError, UNEXPECTED_CHAR};
 
@@ -23,14 +23,9 @@ fn detail(src: &[u8], e: SyntaxError) -> String {
     }
 }
 
-/// Message for a syntax error found by the pull reader at `path`.
-pub fn reader_syntax_message(src: &[u8], e: SyntaxError, path: &str) -> String {
+/// Message for a syntax error found at `path` (by the pull reader or `JSON.parseValue`).
+pub fn syntax_message(src: &[u8], e: SyntaxError, path: &str) -> String {
     format!("invalid JSON at {path}: {} (byte {})", detail(src, e), e.at)
-}
-
-/// Message for a syntax error found by `JSON.parseValue`.
-pub fn value_syntax_message(src: &[u8], e: SyntaxError) -> String {
-    format!("invalid JSON: {} (byte {})", detail(src, e), e.at)
 }
 
 /// Message for a decoder type mismatch.

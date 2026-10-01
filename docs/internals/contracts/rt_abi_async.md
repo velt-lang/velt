@@ -482,8 +482,7 @@ Paths only need to be built on the failure path (e.g. append segments while retu
 | Situation | Message |
 |---|---|
 | well-formed, but a different kind than the decoder asked for (incl. non-integral / out-of-range for `read_i64`), or no reader error at all (e.g. missing field) | `expected <expected> at <path>` — e.g. `expected string at $.name` (golden) |
-| syntax error seen by the reader | `invalid JSON at <path>: <detail> (byte <offset>)` |
-| syntax error in `JSON.parseValue` | `invalid JSON: <detail> (byte <offset>)` |
+| syntax error (seen by the reader, or by `JSON.parseValue`) | `invalid JSON at <path>: <detail> (byte <offset>)`; for `parseValue` the path is that of the value being read when the error occurred (`$[1]`, `$.a`) |
 
 `<detail>` is one of `unexpected end of input`, `unexpected character 'c'` (control characters as
 `U+XXXX`), `expected ':'`, `expected ',' or '}'`, `expected ',' or ']'`, `expected string key`,

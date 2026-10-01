@@ -120,6 +120,23 @@ struct Builder {
 }
 
 impl Builder {
+    /// Where the builder is: `$` and a segment per open container (`.key` while a member's
+    /// value is being read, `[i]` for the next element), like the typed decoders' paths.
+    fn path(&self) -> String {
+        let mut p = String::from("$");
+        for f in &self.stack {
+            match f {
+                Frame::Array(items) => p.push_str(&format!("[{}]", items.len())),
+                Frame::Object(_, Some(key)) => {
+                    p.push('.');
+                    p.push_str(key);
+                }
+                Frame::Object(_, None) => {}
+            }
+        }
+        p
+    }
+
     fn add(&mut self, value: Value) {
         let value = Arc::new(value);
         match self.stack.last_mut() {
@@ -170,14 +187,18 @@ pub fn read(sc: &mut Scanner) -> Result<Arc<Value>, SyntaxError> {
     Ok(builder.root.expect("ICE: JSON walk produced no value"))
 }
 
-/// Parse a whole document (one value, surrounded only by whitespace).
-pub fn parse(src: &[u8]) -> Result<Arc<Value>, SyntaxError> {
+/// Parse a whole document (one value, surrounded only by whitespace). An error comes with the
+/// path of the value it is in.
+pub fn parse(src: &[u8]) -> Result<Arc<Value>, (SyntaxError, String)> {
     let mut sc = Scanner::new(src);
-    let root = read(&mut sc)?;
-    if sc.peek_non_ws().is_some() {
-        return Err(sc.error("unexpected trailing characters"));
+    let mut builder = Builder::default();
+    if let Err(e) = walk(&mut sc, &mut builder) {
+        return Err((e, builder.path()));
     }
-    Ok(root)
+    if sc.peek_non_ws().is_some() {
+        return Err((sc.error("unexpected trailing characters"), "$".into()));
+    }
+    Ok(builder.root.expect("ICE: JSON walk produced no value"))
 }
 
 /// A value being written with the index of its next child.

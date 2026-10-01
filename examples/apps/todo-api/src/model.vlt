@@ -4,8 +4,8 @@ export type Priority = "low" | "normal" | "high";
 
 export type Todo = { id: i64; title: string; done: bool; priority: Priority; tags: string[] };
 
-// A todo as JSON gives it back: `JSON.parse` can't decode literal unions, so `priority` is a
-// plain string here and checked by `fromStored`.
+// A todo with `priority` as plain text, as SQLite stores it; `fromStored` checks it, so a bad
+// priority in a row or a snapshot is a `ValidationError`.
 export type StoredTodo = { id: i64; title: string; done: bool; priority: string; tags: string[] };
 
 // Body of `POST /todos` (fields may be absent, so a class with optional fields).

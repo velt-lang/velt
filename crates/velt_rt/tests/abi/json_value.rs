@@ -172,26 +172,26 @@ fn large_objects_use_the_index() {
 #[test]
 fn syntax_errors() {
     let cases = [
-        ("[1,]", "invalid JSON: unexpected character ']' (byte 3)"),
-        ("", "invalid JSON: unexpected end of input (byte 0)"),
+        ("[1,]", "invalid JSON at $[1]: unexpected character ']' (byte 3)"),
+        ("", "invalid JSON at $: unexpected end of input (byte 0)"),
         (
             "{} x",
-            "invalid JSON: unexpected trailing characters (byte 3)",
+            "invalid JSON at $: unexpected trailing characters (byte 3)",
         ),
-        (r#"{"a" 1}"#, "invalid JSON: expected ':' (byte 5)"),
-        ("[1 2]", "invalid JSON: expected ',' or ']' (byte 3)"),
-        ("{\"a\":1,}", "invalid JSON: expected string key (byte 7)"),
-        ("[\"\\x\"]", "invalid JSON: invalid escape (byte 3)"),
-        ("[01]", "invalid JSON: expected ',' or ']' (byte 2)"),
-        ("[1.]", "invalid JSON: invalid number (byte 3)"),
-        ("[.5]", "invalid JSON: unexpected character '.' (byte 1)"),
-        ("[+1]", "invalid JSON: unexpected character '+' (byte 1)"),
-        ("[nul]", "invalid JSON: unexpected character ']' (byte 4)"),
-        ("[NaN]", "invalid JSON: unexpected character 'N' (byte 1)"),
-        ("\"abc", "invalid JSON: unexpected end of input (byte 4)"),
+        (r#"{"a" 1}"#, "invalid JSON at $.a: expected ':' (byte 5)"),
+        ("[1 2]", "invalid JSON at $[1]: expected ',' or ']' (byte 3)"),
+        ("{\"a\":1,}", "invalid JSON at $: expected string key (byte 7)"),
+        ("[\"\\x\"]", "invalid JSON at $[0]: invalid escape (byte 3)"),
+        ("[01]", "invalid JSON at $[1]: expected ',' or ']' (byte 2)"),
+        ("[1.]", "invalid JSON at $[0]: invalid number (byte 3)"),
+        ("[.5]", "invalid JSON at $[0]: unexpected character '.' (byte 1)"),
+        ("[+1]", "invalid JSON at $[0]: unexpected character '+' (byte 1)"),
+        ("[nul]", "invalid JSON at $[0]: unexpected character ']' (byte 4)"),
+        ("[NaN]", "invalid JSON at $[0]: unexpected character 'N' (byte 1)"),
+        ("\"abc", "invalid JSON at $: unexpected end of input (byte 4)"),
         (
             "[\"\t\"]",
-            "invalid JSON: control character in string (byte 2)",
+            "invalid JSON at $[0]: control character in string (byte 2)",
         ),
     ];
     for (doc, want) in cases {

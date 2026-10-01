@@ -7,7 +7,7 @@
 //! `velt_rt_json_value_free`; freeing a parent never invalidates handles to its children.
 //! All accessors accept a null handle (the result of a failed `get`/`at`).
 
-use super::error::value_syntax_message;
+use super::error::syntax_message;
 use super::value::{parse, stringify_into, Value};
 use crate::handle::Handle;
 use crate::str::VeltStr;
@@ -30,7 +30,7 @@ fn new_handle(v: &Arc<Value>) -> ValueHandle {
 }
 
 /// `JSON.parseValue(src)`: 1 = ok (`*out_handle` set); 0 = syntax error (`*out_handle` = null,
-/// `*out_err` = owned message `invalid JSON: <detail> (byte <offset>)`).
+/// `*out_err` = owned message `invalid JSON at <path>: <detail> (byte <offset>)`).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_parse_value(
     src: *const VeltStr,
@@ -43,10 +43,10 @@ pub unsafe extern "C" fn velt_rt_json_parse_value(
             out_handle.write(Handle::from_arc(root));
             1
         }
-        Err(e) => {
+        Err((e, path)) => {
             out_handle.write(Handle::NULL);
             out_err.write(VeltStr::from_vec(
-                value_syntax_message(bytes, e).into_bytes(),
+                syntax_message(bytes, e, &path).into_bytes(),
             ));
             0
         }

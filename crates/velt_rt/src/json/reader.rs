@@ -6,7 +6,7 @@
 //! `next_key` / `array_next`: the reader only needs to know whether the last consumed token was
 //! an opening bracket.
 
-use super::error::{mismatch_message, reader_syntax_message};
+use super::error::{mismatch_message, syntax_message};
 use super::scan::{number_f64, number_i64, NumTok, Scanner, StrTok, SyntaxError};
 use super::value::{read, Value};
 use super::walk::{walk, SkipSink};
@@ -291,7 +291,7 @@ impl Reader {
     /// The `JsonError.message` for the current state (see error.rs for the formats).
     pub fn message(&self, expected: &str, path: &str) -> String {
         match self.error {
-            Some(ReadError::Syntax(e)) => reader_syntax_message(self.sc.src, e, path),
+            Some(ReadError::Syntax(e)) => syntax_message(self.sc.src, e, path),
             _ => mismatch_message(expected, path),
         }
     }
