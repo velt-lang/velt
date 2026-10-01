@@ -206,6 +206,8 @@ pub(crate) struct FnCx<'a, 'm> {
     pub f: Frame,
     /// Enclosing frames of the closure being checked (innermost last).
     pub outer: Vec<Frame>,
+    /// The span of a `new Promise` that is the operand of the `await` being checked.
+    pub direct_await: Option<Span>,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -220,6 +222,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             enclosing_locals: vec![],
             f: frame,
             outer: vec![],
+            direct_await: None,
         }
     }
 

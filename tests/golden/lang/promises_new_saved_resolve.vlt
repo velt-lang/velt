@@ -1,0 +1,14 @@
+// check: no leaks
+// The executor is released before the promise waits: `resolve`, kept in an array the executor
+// captured, settles the promise later (no cycle keeps it pending).
+async function main() {
+  const saved: ((v: i64) => void)[] = [];
+  const p = new Promise<i64>((resolve) => {
+    saved.push(resolve);
+  });
+  await sleep(5);
+  for (const r of saved) {
+    r(7);
+  }
+  console.log("settled with", await p);
+}

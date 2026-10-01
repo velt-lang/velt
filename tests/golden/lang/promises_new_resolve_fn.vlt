@@ -1,0 +1,31 @@
+// check: no leaks
+// A promise can resolve to a function, and a closure handed to a function value is kept safely:
+// a closure literal passed to a callee whose parameters are fixed (a function value) owns a heap
+// environment, so keeping it is fine.
+class Box {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+function makeAdder<T>(items: T[]): (x: T) => void {
+  return (x: T) => {
+    items.push(x);
+  };
+}
+
+async function main() {
+  const f = await new Promise<() => i64>((resolve) => {
+    const b = new Box(40);
+    resolve(() => b.n + 2);
+  });
+  console.log(f());
+
+  const fns: (() => i64)[] = [];
+  const add = makeAdder(fns);
+  const b = new Box(1);
+  add(() => b.n + 99);
+  console.log(fns.length, fns[0]());
+}

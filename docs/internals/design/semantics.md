@@ -143,7 +143,11 @@ captured). Such a promise would be cancelled at scope end on an early exit (`ret
 before its `await`) instead of running to completion, the one observable difference, so sema
 must also prove it is awaited before every exit.
 
-Planned: `new Promise((resolve, reject) => …)`, for wrapping callback-style APIs.
+`new Promise((resolve, reject) => …)` compiles to the prelude's `promiseNew`: a settle-once
+slot in `shared<Mutex<…>>` plus a runtime latch. `resolve`/`reject` are heap closures over it,
+and sema lets a literal executor keep them (`FnInfo::keeps_fn_params`). A guard both hold
+marks a promise abandoned unsettled: it never settles, and a direct `await` of it is reported
+with the `new Promise` site (`Intrinsic::SourceLocation`).
 
 ## JS fidelity decisions
 
