@@ -77,12 +77,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
             (I::PromiseAny, [ps]) => self.promise_race(ps, ty, true),
             (I::PerfNow, []) => self.rt_value(Rt::PerfNow, vec![], ty),
             (I::DateNow, []) => self.rt_value(Rt::DateNow, vec![], ty),
+            (I::ChanSend | I::ChanReceive | I::ChanTryReceive, _) => {
+                self.chan_intrinsic(i, args, ty)
+            }
             _ => self.sync_intrinsic(i, args, ty),
         }
     }
 
     /// Call an rt function returning a scalar; the result is an owned value of type `ty`.
-    fn rt_value(&mut self, r: Rt, args: Vec<Operand>, ty: TyId) -> Operand {
+    pub(super) fn rt_value(&mut self, r: Rt, args: Vec<Operand>, ty: TyId) -> Operand {
         let d = self.temp(r.sig().2);
         self.call_rt(r, args, Some(Place::local(d)));
         let ty = self.sub(ty);

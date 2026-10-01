@@ -59,6 +59,9 @@ as uncaught.
 `f` as a task of its own on any core, and a spawned task runs even if nobody awaits it. A
 promise that already started stays on the task that started it.
 
+Tasks exchange values through channels ([`velt:channel`](../std/channel.md)): typed,
+bounded or unbounded queues where `send` waits while a bounded channel is full.
+
 Built-ins: `sleep(ms)`, `yieldNow()`, `performance.now(): f64` (monotonic milliseconds) and
 `Date.now(): i64`. Timers and intervals are in [`velt:timers`](../std/timers.md).
 

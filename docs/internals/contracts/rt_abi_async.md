@@ -114,6 +114,29 @@ Allocation per task: states ≤ 1 KiB (align ≤ 16) live inline in tokio's task
 64/256/1024), so a detached spawn is 1 allocation and a joinable one 2 (task + join handle).
 Panics inside tasks print `panic: <msg>` and exit 101 (same hook as sync code).
 
+### 2.2 Channels (`velt:channel`)
+
+`Channel<T>` (std/channel.vlt) is a Copy struct around a `u64` handle, a key into a runtime table
+like the socket handles (§3.2): a channel leaves the table once it is closed and drained, and any
+later use of a copy sees a closed, empty channel. The runtime never sees a `T`, only its bytes:
+every call passes the item size (align <= 16). `receive` results are a `T | null` in the
+compiler's layout: `payload` is the offset of the value after the `bool` present flag, or 0 when
+`T` is pointer-like and null is the zero pointer. `send`, `receive` and `tryReceive` are reached
+through the std-only intrinsics `__intrinsic_chan_{send,receive,try_receive}<T>` (lowering knows
+`T`'s size, layout and drop glue; it transfers the value first, like a `spawn` argument: a value the
+sender still shares is deep-copied). No code pointers are stored, except the `item_drop` a pending
+`send` future owns (§13.5).
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_chan_new` | `(u64 capacity) -> u64` | a new channel; `capacity == 0` is unbounded |
+| `velt_rt_chan_close` | `(u64 ch)` | closes it: sends fail (pending ones too), receivers drain then get null; idempotent |
+| `velt_rt_chan_closed` | `(u64 ch) -> bool` | |
+| `velt_rt_chan_len` | `(u64 ch) -> u64` | queued items |
+| `velt_rt_chan_send` | `(u64 ch, const void* src, u64 size, void (*item_drop)(void*)) -> VeltFut*` | moves the item's bytes (and ownership) into the future at the call; `bool` result: queued (after waiting for space), or false when closed. An item not queued is dropped with `item_drop` (null: nothing to drop) |
+| `velt_rt_chan_receive` | `(u64 ch, u64 size, u64 payload, u64 slot_size) -> VeltFut*` | result: a `slot_size`-byte `T \| null` (see above), null once closed and drained |
+| `velt_rt_chan_try_receive` | `(u64 ch, void* dst, u64 size, u64 payload)` | writes the oldest item, or null, as a `T \| null` at `dst` |
+
 ## 3. Results and errors
 
 ```c
