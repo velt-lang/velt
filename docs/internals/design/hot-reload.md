@@ -70,6 +70,10 @@ point directly.
   supervisor starts a new one on the next save.
 - On Windows, JIT code registers its unwind information (`RtlAddFunctionTable`), so debuggers and
   backtraces walk through it.
+- JIT code is not position independent. Each module (each loaded version) allocates its code
+  and data from one contiguous arena, so references inside it fit 32-bit PC-relative
+  relocations. References to anything outside it (the runtime, C library functions, earlier
+  versions) use absolute 64-bit addresses, because the host's own code can be gigabytes away.
 
 ### Phase 3: hot swap while the program runs (state survives)
 
