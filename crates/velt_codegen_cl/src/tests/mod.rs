@@ -4,6 +4,7 @@
 mod entry;
 mod hot_swap;
 mod jit;
+mod jit_relocs;
 mod link;
 mod objects;
 
