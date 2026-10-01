@@ -86,8 +86,9 @@ All implementations follow the same shape, so the comparison is about the stack:
 
 - `/db` and `/queries` read one row per query with a prepared
   `SELECT id, randomnumber FROM world WHERE id = $1`. The N queries of a request run
-  concurrently: pipelined on one pooled connection where the client can (Velt: a dedicated
-  `pool.connect()` client with the queries joined by `Promise.all`; Go: a `pgx.Batch`; Rust:
+  concurrently: pipelined on one pooled connection where the client can (Velt: from N = 5 a
+  `pool.batchQueryOne` batch with one `Sync`, like pgx's; below, a dedicated `pool.connect()`
+  client with the queries joined by `Promise.all`; Go: a `pgx.Batch`; Rust:
   `try_join_all` on one deadpool client), or spread over the pool (`pg` has no pipelining, so
   Node's `Promise.all` uses up to N connections; Bun.SQL distributes and pipelines by itself).
 - `/updates` reads N rows as above, gives each a new random number, and writes them with **one**

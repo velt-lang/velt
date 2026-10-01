@@ -1,0 +1,8 @@
+// std/jsx/generic/jsx-runtime: std/jsx without the SSR precompile exports, so the compiler
+// lowers every element to `jsx`/`Fragment` calls. Used to check that both lowerings render
+// byte-identical HTML (`// @jsxImportSource std/jsx/generic`).
+
+export { Element, RenderError } from "velt:jsx/node";
+export type { Child, AttrValue } from "velt:jsx/node";
+export type { IntrinsicElements, ElementChildrenAttribute } from "velt:jsx/intrinsic";
+export { jsx, Fragment, jsxComponent, jsxAsyncComponent } from "velt:jsx/factory";

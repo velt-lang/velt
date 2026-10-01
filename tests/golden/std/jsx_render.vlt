@@ -1,0 +1,84 @@
+// std/jsx rendering through the factory calls compiled JSX makes (docs/contracts/jsx.md):
+// elements and attributes, text and attribute escaping (XSS payloads stay inert), void
+// elements, fragments, arrays, numbers, `true`/`false`/`null` children and attributes, keys,
+// components (nested, throwing) and `raw`.
+import { jsx, Fragment, jsxComponent } from "velt:jsx/jsx-runtime";
+import { Element, raw, renderToStringSync } from "velt:jsx";
+
+type CardProps = { title: string; lines: string[] };
+
+// Compiled JSX passes components uncalled; a component passed as a value borrows its props
+// (until objects are shared references, docs/contracts/jsx.md), so it reads them and copies.
+// Props holding an Element (`children`) cannot be copied for an adapter yet.
+function Card(props: CardProps): Element {
+  const body = props.lines.map((l) => jsx("p", [], [], [l], null));
+  return jsx("section", ["class"], ["card"], [jsx("h2", [], [], [props.title], null), body], null);
+}
+
+function Page(props: { user: string }): Element {
+  const greeting = jsxComponent(
+    Card,
+    { title: "Hi " + props.user, lines: ["a < b", "c"] },
+    null,
+    "jsx_render#Card",
+  );
+  const other = jsxComponent(Card, { title: "2nd", lines: [] }, "k2", "jsx_render#Card");
+  return jsx("main", [], [], [greeting, other], null);
+}
+
+class BadInput extends Error {}
+
+// A component that throws makes rendering fail with a `RenderError` naming it.
+function Strict(props: { n: i64 }): Element throws BadInput {
+  if (props.n < 0) {
+    throw new BadInput(`negative: ${props.n}`);
+  }
+  return jsx("span", [], [], [props.n], null);
+}
+
+function show(el: Element) {
+  console.log(renderToStringSync(el));
+}
+
+function main() {
+  // <a href="/x" class="link" title={t}>go</a>
+  show(
+    jsx("a", ["href", "class", "title"], ["/x", "link", "a \"quoted\" & 'single'"], ["go"], null),
+  );
+  // Text: & < > escaped, quotes kept.
+  show(jsx("p", [], [], [`<script>alert("x")</script> & 'q'`], null));
+  // Attribute injection attempts stay inside the quoted value.
+  show(jsx("img", ["src", "alt"], ["x\" onerror=\"alert(1)", "'><script>"], [], null));
+  // Void elements have no end tag and drop children; other empty elements get one.
+  show(
+    Fragment(
+      [
+        jsx("br", [], [], [], null),
+        jsx("hr", ["id"], ["h"], ["ignored"], null),
+        jsx("div", [], [], [], null),
+      ],
+      null,
+    ),
+  );
+  // Booleans and null: `true` renders the bare name, `false`/`null` omit the attribute; as
+  // children they render nothing.
+  show(jsx("input", ["disabled", "checked", "value"], [true, false, null], [], null));
+  show(jsx("p", [], [], [true, false, null, "after"], null));
+  // Numbers.
+  show(jsx("td", ["colspan", "data-ratio"], [2, 0.5], [42, " / ", 1.5], null));
+  // Nested elements, arrays (from map) and fragments; keys are not rendered.
+  const items = ["a", "<b>", "c"].map((s) => jsx("li", [], [], [s], s));
+  show(jsx("ul", [], [], [items, Fragment(["x", jsx("li", [], [], ["y"], null)], "k")], null));
+  // Components, nested.
+  show(jsxComponent(Page, { user: "<ann>" }, null, "jsx_render#Page"));
+  try {
+    show(jsx("div", [], [], [jsxComponent(Strict, { n: 1 }, null, "jsx_render#Strict")], null));
+    show(jsx("div", [], [], [jsxComponent(Strict, { n: -1 }, null, "jsx_render#Strict")], null));
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+  // raw: markup inserted unescaped, only when asked for.
+  show(jsx("div", [], [], [raw("<b>bold</b>"), "<b>escaped</b>"], null));
+  // Custom elements and namespaced names.
+  show(jsx("my-widget", ["some-attr"], ["v"], [jsx("svg:rect", ["width"], [10], [], null)], null));
+}

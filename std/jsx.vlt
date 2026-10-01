@@ -1,0 +1,13 @@
+// std/jsx: server-side rendering of JSX to HTML (the default JSX provider, docs/contracts/jsx.md).
+//
+// JSX in a module compiles to calls into std/jsx/jsx-runtime; this module is what programs
+// import to render the result: `renderToString`, `renderToStringSync`, `renderToStream` (into a
+// std/http `Response.stream` body), `raw` (unescaped markup), `Fragment`, and the `JSX` types.
+// Internals: node.vlt (the Element), factory.vlt (what compiled JSX calls), escape.vlt,
+// void_elements.vlt, render.vlt, intrinsic*.vlt (the HTML tags and attributes).
+
+export { Element, RenderError } from "velt:jsx/node";
+export type { Child, AttrValue, Text } from "velt:jsx/node";
+export type { IntrinsicElements, ElementChildrenAttribute } from "velt:jsx/intrinsic";
+export { Fragment, raw } from "velt:jsx/factory";
+export { renderToString, renderToStringSync, renderToStream } from "velt:jsx/render";

@@ -1,0 +1,5 @@
+velt-golden /a GET /a q=x=1 probe=yes has=true body=[]
+velt-golden /b GET /b q= probe=yes has=true body=[]
+velt-golden /c GET /c q= probe=yes has=true body=[]
+POST /post q= probe=none has=false body=[payload]
+POST /empty q= probe=none has=false body=[]

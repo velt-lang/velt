@@ -143,7 +143,16 @@ mod tests {
     fn bad_specs() {
         let dir = Path::new(".");
         for bad in [
-            "", "std/fs", "velt:", "velt:../x", "/abs", "C:\\x", "Bad", "./x.vlt", "./", "pkg/../x",
+            "",
+            "std/fs",
+            "velt:",
+            "velt:../x",
+            "/abs",
+            "C:\\x",
+            "Bad",
+            "./x.vlt",
+            "./",
+            "pkg/../x",
         ] {
             assert!(
                 resolve_spec(bad, dir).is_err(),

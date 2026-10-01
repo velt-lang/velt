@@ -12,6 +12,7 @@
 //!   package graph).
 //!
 //! Local export lists (`export { a, b };`, an import item with an empty specifier) load nothing.
+//! A module containing JSX also imports its JSX runtime ([`jsx`]).
 //!
 //! Modules are deduplicated by canonical file path, so import cycles simply reuse the already
 //! loaded module (sema handles cyclic references between functions and types).
@@ -19,6 +20,7 @@
 //! An optional in-memory overlay (the language server's unsaved editor buffers) takes precedence
 //! over the file system for every read, including files that do not exist on disk yet.
 
+mod jsx;
 mod locate;
 mod spec;
 mod std_root;
@@ -164,6 +166,7 @@ impl Loader<'_, '_> {
             file,
             ast,
             imports: vec![],
+            jsx_runtime: None,
         });
         self.origins.push((path.to_path_buf(), origin));
         index
@@ -189,6 +192,38 @@ impl Loader<'_, '_> {
             if let Some(target) = self.import(index, &spec, span, queue) {
                 let canonical = self.modules[target].path.clone();
                 self.modules[index].imports.push((spec, canonical));
+            }
+        }
+        self.jsx_runtime(index, queue);
+    }
+
+    /// Load the JSX runtime of module `index` if it contains JSX.
+    fn jsx_runtime(&mut self, index: usize, queue: &mut VecDeque<usize>) {
+        let Some(span) = jsx::first_jsx(&self.modules[index].ast) else {
+            return;
+        };
+        let (source, from) = match &self.modules[index].ast.jsx_import_source {
+            Some(s) => (s.clone(), "its `// @jsxImportSource` comment"),
+            None => match self
+                .opts
+                .packages
+                .and_then(|p| p.jsx_import_source(&self.origins[index].0))
+            {
+                Some(s) => (s, "`[jsx] importSource` in velt.toml"),
+                None => (jsx::DEFAULT_IMPORT_SOURCE.to_string(), "the default"),
+            },
+        };
+        let spec = jsx::runtime_spec(&source);
+        match self.import(index, &spec, span, queue) {
+            Some(target) => {
+                self.modules[index].jsx_runtime = Some(self.modules[target].path.clone())
+            }
+            None => {
+                if let Some(d) = self.diags.pop() {
+                    let note =
+                        format!("this module contains JSX: its runtime is `{spec}`, from {from}");
+                    self.diags.push(d.with_note(note));
+                }
             }
         }
     }

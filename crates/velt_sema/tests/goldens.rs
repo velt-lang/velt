@@ -644,6 +644,7 @@ fn goldens_with_real_parser() {
             file: FileId(0),
             ast,
             imports: vec![],
+            jsx_runtime: None,
         };
         let (p, d) = velt_sema::check(&[m], 0);
         let err_file = f.with_extension("err");

@@ -106,7 +106,7 @@ pub unsafe extern "C" fn velt_rt_pg_pool_new(
 }
 
 /// A leaf future running `op` on one of `pool`'s connections.
-unsafe fn pool_op<R, F, Fut>(pool: PoolHandle, op: F) -> *mut VeltFut
+pub(super) unsafe fn pool_op<R, F, Fut>(pool: PoolHandle, op: F) -> *mut VeltFut
 where
     R: Send + 'static,
     F: FnOnce(Arc<Conn>) -> Fut + Send + 'static,

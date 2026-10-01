@@ -1,5 +1,7 @@
 //! Load real `.vlt` programs for tests: the std prelude (`std/prelude/*.vlt`), the root file
 //! and every module it imports (`./relative` and `std/x` specifiers), parsed with the real parser.
+//! A module with a `// @jsxImportSource <source>` comment also loads `<source>/jsx-runtime` as
+//! its JSX runtime (like the driver's loader; tests always name the source).
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -55,6 +57,7 @@ impl Loader {
             file: FileId(id.0),
             ast,
             imports: vec![],
+            jsx_runtime: None,
         });
         self.files.push(file.to_path_buf());
         self.modules.len() - 1
@@ -65,7 +68,7 @@ impl Loader {
         let std_dir = repo_root().join("std");
         let mut queue: VecDeque<usize> = (0..self.modules.len()).collect();
         while let Some(m) = queue.pop_front() {
-            let specs: Vec<String> = self.modules[m]
+            let mut specs: Vec<String> = self.modules[m]
                 .ast
                 .items
                 .iter()
@@ -74,12 +77,16 @@ impl Loader {
                     _ => None,
                 })
                 .collect();
+            let runtime = (self.modules[m].ast.jsx_import_source.as_ref())
+                .map(|s| format!("{s}/jsx-runtime"));
+            specs.extend(runtime.clone());
             let dir = self.files[m].parent().unwrap().to_path_buf();
             for spec in specs {
                 let (canonical, file) = if let Some(rest) = spec.strip_prefix("velt:") {
                     (format!("std/{rest}"), std_dir.join(format!("{rest}.vlt")))
                 } else {
-                    let file = dir.join(format!("{}.vlt", spec.trim_start_matches("./")));
+                    let file =
+                        normalize(&dir.join(format!("{}.vlt", spec.trim_start_matches("./"))));
                     let rel = file
                         .strip_prefix(root_dir)
                         .unwrap_or(&file)
@@ -96,10 +103,28 @@ impl Loader {
                     let i = self.add(&canonical, &file, src);
                     queue.push_back(i);
                 }
+                if runtime.as_ref() == Some(&spec) {
+                    self.modules[m].jsx_runtime = Some(canonical.clone());
+                }
                 self.modules[m].imports.push((spec.clone(), canonical));
             }
         }
     }
+}
+
+/// `p` without `.` / `..` components (so `a/../b` and `b` are the same module).
+fn normalize(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 fn prelude(l: &mut Loader) {
@@ -143,7 +168,7 @@ fn load_with(file: &Path, src: &str, lenient: bool) -> Loaded {
     prelude(&mut l);
     l.lenient = lenient;
     let root = l.add("main", file, src.to_string());
-    let root_dir = file.parent().unwrap().to_path_buf();
+    let root_dir = normalize(file.parent().unwrap());
     l.resolve(&root_dir);
     Loaded {
         modules: l.modules,

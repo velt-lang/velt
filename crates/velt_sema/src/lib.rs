@@ -1,7 +1,7 @@
 //! Semantic analysis: name resolution, type checking/inference, ownership analysis → [`hir::Program`].
 //! `hir.rs` and the `check` signature are contracts (maintainer-owned).
 //!
-//! Pipeline inside `check`:
+//! Pipeline inside `check` (after [`generic_arrows`] rewrites module-level generic arrows):
 //! 1. [`collect`]: a definition per module-level item of every module (prelude modules'
 //!    exports are visible everywhere), type shapes, signatures, vtables, interface impls.
 //! 2. [`body`]: module constants, defaults, then every function body: resolve names, type-check
@@ -32,6 +32,7 @@ mod defs;
 mod discriminants;
 mod finalize;
 mod flow;
+mod generic_arrows;
 pub mod ide;
 mod infer;
 mod json;
@@ -62,6 +63,10 @@ pub struct SourceModule {
     /// For each `import ... from "<spec>"` in this module: spec string → canonical path of the
     /// module it resolved to (the driver already loaded it into `modules`).
     pub imports: Vec<(String, String)>,
+    /// Canonical path of the JSX runtime (`<jsxImportSource>/jsx-runtime`, see
+    /// docs/internals/contracts/jsx.md) the driver loaded because this module contains JSX; `None` when it
+    /// has none. Sema binds it as the namespace `JSX` and lowers JSX to calls of its exports.
+    pub jsx_runtime: Option<String>,
 }
 
 /// Stack for the checking thread: the passes recurse over the AST/HIR (bounded by the parser's
@@ -89,6 +94,8 @@ fn check_on_current_thread(
     modules: &[SourceModule],
     root: usize,
 ) -> (Option<hir::Program>, Diagnostics) {
+    let lifted = generic_arrows::lift(modules);
+    let modules = lifted.as_deref().unwrap_or(modules);
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return (None, vec![d]);
@@ -126,6 +133,7 @@ fn analyze(cx: &mut ctx::Ctx) {
     collect::collect(cx);
     body::check_bodies(cx);
     ownership::infer_modes(cx);
+    body::expr::jsx::check_prop_copies(cx);
     throws::infer_all(cx);
     json::check_json_types(cx);
     void_fields::check_instantiations(cx);

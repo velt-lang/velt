@@ -20,6 +20,13 @@ pub trait PackageResolver {
         let _ = (importer, spec);
         None
     }
+
+    /// The `[jsx] importSource` of the package containing `importer`, as a specifier
+    /// `importer` can import from.
+    fn jsx_import_source(&self, importer: &Path) -> Option<String> {
+        let _ = importer;
+        None
+    }
 }
 
 impl PackageResolver for vpm::PackageGraph {
@@ -29,6 +36,10 @@ impl PackageResolver for vpm::PackageGraph {
 
     fn path_alias(&self, importer: &Path, spec: &str) -> Option<PathBuf> {
         vpm::PackageGraph::path_alias(self, importer, spec)
+    }
+
+    fn jsx_import_source(&self, importer: &Path) -> Option<String> {
+        vpm::PackageGraph::jsx_import_source(self, importer)
     }
 }
 
@@ -95,7 +106,7 @@ pub fn target(
             let Some(root) = std_root else {
                 let note = "the standard library was not found (set VELT_STD to its directory)"
                     .to_string();
-                return Err((format!("cannot find module `std/{rel}`"), vec![note]));
+                return Err((format!("cannot find module `velt:{rel}`"), vec![note]));
             };
             Ok(Target {
                 candidates: module_files(root, &rel),

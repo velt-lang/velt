@@ -86,12 +86,19 @@ impl<'a> Printer<'a> {
                 cat![object, self.index_suffix(index, *optional)]
             }
             ExprKind::Arrow {
+                type_params,
                 params,
                 ret,
                 throws,
                 body,
                 is_async,
-            } => self.arrow(params, (ret.as_ref(), throws.as_ref()), body, *is_async),
+            } => self.arrow(
+                type_params,
+                params,
+                (ret.as_ref(), throws.as_ref()),
+                body,
+                *is_async,
+            ),
             ExprKind::Array(elems) => self.array(elems, e.span.hi),
             ExprKind::Object(props) => self.object(props, e.span.hi),
             ExprKind::StructLit { name, props } => self.struct_lit(name, props, e.span.hi),
@@ -106,6 +113,7 @@ impl<'a> Printer<'a> {
                 cat![inner, " instanceof ", self.ty(ty)]
             }
             ExprKind::Paren(inner) => self.paren(inner),
+            ExprKind::Jsx(element) => self.jsx_element(element),
         }
     }
 
@@ -128,6 +136,9 @@ impl<'a> Printer<'a> {
     }
 
     fn conditional(&mut self, cond: &Expr, then: &Expr, els: &Expr) -> Doc {
+        if super::jsx::is_jsx_conditional(then, els) {
+            return self.jsx_conditional(cond, then, els);
+        }
         let cond = self.expr(cond);
         let then = self.expr(then);
         let els = self.expr(els);
@@ -151,6 +162,10 @@ impl<'a> Printer<'a> {
     /// leading space, e.g. `" ="` or `":"`): the value starts on the same line when it breaks
     /// well by itself, else it moves to an indented next line when too long.
     pub(super) fn assignment(&mut self, lhs: Doc, op: &str, value: &Expr) -> Doc {
+        if super::jsx::is_jsx_layout(value) {
+            let value = self.expr_jsx_parens(value);
+            return group(cat![lhs, op.to_string(), " ", value]);
+        }
         if breaks_itself(value) {
             let value = self.expr(value);
             return group(cat![lhs, op.to_string(), " ", value]);

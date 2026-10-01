@@ -50,6 +50,7 @@ fn host_triple() -> String {
     match std::env::consts::OS {
         "windows" => format!("{arch}-pc-windows-msvc"),
         "macos" => format!("{arch}-apple-darwin"),
+        _ if cfg!(target_env = "musl") => format!("{arch}-unknown-linux-musl"),
         _ => format!("{arch}-unknown-linux-gnu"),
     }
 }

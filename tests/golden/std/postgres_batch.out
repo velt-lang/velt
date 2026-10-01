@@ -1,0 +1,22 @@
+rows [1:a] [1:a 2:b 3:c] []
+first 2:b null 1:a
+named [3:c] [1:a]
+empty 0
+one set [1:a 2:b]
+affected 1,0,3
+after [1:a+] [3:c!+]
+inserted 1 4
+dup 23505 items_pkey
+count after dup 4
+division 22012 division by zero
+params EINVAL the statement takes 1 parameter(s) but 2 were given
+syntax 42601
+again [2:b+]
+mixed a+ | [2:b+] [3:c!+] | b+ | [4:d] | c!+
+in tx tx1 tx2
+rolled back a+ b+
+copied 2
+after copy [20:t] [21:u]
+closed ECLOSED
+pool 4,9,16
+pool counts 2,5

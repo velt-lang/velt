@@ -7,6 +7,10 @@
 
 use velt_common::Span;
 
+mod jsx;
+
+pub use jsx::*;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(pub u32);
 
@@ -28,6 +32,9 @@ pub struct Ident {
 pub struct Module {
     pub items: Vec<Item>,
     pub span: Span,
+    /// `// @jsxImportSource pkg` in the comments before the first token: the module whose
+    /// `jsx-runtime` provides the JSX factories for this file.
+    pub jsx_import_source: Option<String>,
 }
 
 // ───────────────────────────── Items ─────────────────────────────
@@ -530,6 +537,8 @@ pub enum ExprKind {
         optional: bool,
     },
     Arrow {
+        /// `<T,>(x: T) => x`: type parameters (empty for an ordinary arrow).
+        type_params: Vec<GenericParam>,
         params: Vec<ArrowParam>,
         ret: Option<TypeExpr>,
         /// `(x: T): R throws E => ...` (only after a return type).
@@ -561,6 +570,9 @@ pub enum ExprKind {
     },
     /// `(a, b)` is not a tuple; tuples use `[a, b]` with a tuple type context.
     Paren(Box<Expr>),
+    /// A JSX element or fragment: `<div class="a">{x}</div>`, `<></>`. Parentheses around an
+    /// element are not kept (`(<a />)` is just the element).
+    Jsx(Box<JsxElement>),
 }
 
 // ──────────────────────────── Patterns ────────────────────────────

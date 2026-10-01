@@ -34,6 +34,27 @@ on every save, which forces a restart.
   decide, then the new host builds it again. Overlapping the two is a known follow-up.
 - The machine was shared with other agents' builds, so treat these numbers as indicative.
 
+## Phase 3 on Apple silicon (Apple M4, macOS 26.6, 2026-10-01)
+
+The same three runs on arm64 macOS (hot swap together with the shared debug runtime). Another session was compiling on the machine (load average 9–17).
+
+| run | median | min–max |
+|---|---|---|
+| JIT, body edit → **hot swap** (state kept) | **56.7 ms** | 53.4–68.0 |
+| JIT, body + `main` edit → restart | 90.9 ms | 84.1–98.2 |
+| `--exe`, body edit → restart | 419.1 ms | 371.8–427.4 |
+
+- The swap is about the same as on Windows (63.9 ms): the 30 ms settle delay plus front end,
+  diff and JIT of the changed functions.
+- A JIT restart costs much less here than on Windows (378 ms); process start-up on macOS was
+  ~25 ms in the phase 2 breakdown below, against ~150 ms on Windows.
+- `--exe` is 2× faster than phase 2's 842 ms, thanks to the compile-speed stream (debug builds
+  link the shared runtime in milliseconds). Most of what is left is macOS's first-launch check
+  of each new executable.
+- The aarch64 trampolines, slot loads and icache flush worked without changes. The phase 3
+  tests (`cargo test -p velt_codegen_cl hot_swap`, all reload goldens in both modes) pass on
+  macOS arm64, Debian 12 arm64 and Alpine arm64 (static musl `velt`).
+
 ## Where the time goes (Windows, JIT, release `velt dev -v`, 3 reloads)
 
 | step | ms |

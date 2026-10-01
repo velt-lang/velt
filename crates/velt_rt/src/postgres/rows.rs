@@ -50,20 +50,34 @@ pub fn to_json(columns: &[Column], rows: &[Row], first_only: bool) -> Result<Vec
     let mut w = RowWriter::new(columns.iter().map(Column::name));
     let take = if first_only { 1 } else { rows.len() };
     for row in rows.iter().take(take) {
-        w.begin_row();
-        for (i, column) in columns.iter().enumerate() {
-            let raw = row.try_get::<_, Raw>(i).map_err(PgError::from)?;
-            match raw.0 {
-                None => w.null(),
-                Some(bytes) => push_value(w.raw_value(), column.type_(), bytes)
-                    .map_err(|e| unsupported(column, &e))?,
-            }
-        }
-        w.end_row();
+        let values = (0..columns.len()).map(|i| {
+            row.try_get::<_, Raw>(i)
+                .map(|raw| raw.0)
+                .map_err(PgError::from)
+        });
+        push_row(&mut w, columns, values)?;
     }
     Ok(if first_only {
         w.into_rows()
     } else {
         w.into_array()
     })
+}
+
+/// One row: each column's raw binary value (`None` = NULL), in column order.
+pub fn push_row<'v>(
+    w: &mut RowWriter,
+    columns: &[Column],
+    values: impl Iterator<Item = Result<Option<&'v [u8]>, PgError>>,
+) -> Result<(), PgError> {
+    w.begin_row();
+    for (column, raw) in columns.iter().zip(values) {
+        match raw? {
+            None => w.null(),
+            Some(bytes) => push_value(w.raw_value(), column.type_(), bytes)
+                .map_err(|e| unsupported(column, &e))?,
+        }
+    }
+    w.end_row();
+    Ok(())
 }

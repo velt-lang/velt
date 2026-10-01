@@ -114,9 +114,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            find_test_files(&tmp.path().join("main.vlt"))
-                .unwrap()
-                .len(),
+            find_test_files(&tmp.path().join("main.vlt")).unwrap().len(),
             1
         );
         assert!(find_test_files(&tmp.path().join("nope")).is_err());

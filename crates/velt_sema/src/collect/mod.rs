@@ -33,6 +33,7 @@ use crate::hir::DefId;
 
 pub(crate) use declare::fn_placeholder;
 pub(crate) use declare::{ASYNC_DISPOSE, DISPOSE};
+pub(crate) use exports::export_of;
 pub(crate) use lookup::{lookup_method, Found};
 pub(crate) use nested::NestedItem;
 pub(crate) use shapes::self_type;

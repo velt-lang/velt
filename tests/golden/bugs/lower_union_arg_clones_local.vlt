@@ -1,0 +1,27 @@
+// Passing a local, at its last use, to a parameter of a wider union type copies it instead of
+// moving it, so a value holding a promise panics with "a promise cannot be copied" (and other
+// values are cloned for nothing). Declaring the local with the union type first moves as
+// expected. Found through std/jsx: compiled JSX passes `{items}` to `jsxEscape(value: Child)`.
+class Task {
+  pending: Promise<i64>[] = [];
+}
+
+type Slot = Task | string;
+
+function keep(slot: Slot, into: Slot[]) {
+  into.push(slot);
+}
+
+async function one(): Promise<i64> {
+  return 1;
+}
+
+async function main() {
+  const kept: Slot[] = [];
+  const declared: Slot = new Task();
+  keep(declared, kept);
+  const t = new Task();
+  t.pending.push(one());
+  keep(t, kept);
+  console.log(kept.length);
+}

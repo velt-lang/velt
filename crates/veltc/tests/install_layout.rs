@@ -127,4 +127,22 @@ fn installed_prefix_runs_doctor_and_programs() {
         .join("target/velt")
         .join(if cfg!(windows) { "hello.exe" } else { "hello" })
         .is_file());
+
+    // The runtime's build profile: doctor names it, and a release build warns about a debug one
+    // (cargo's debug runtime here, unless the tests run with `--release`).
+    let debug_runtime = cfg!(debug_assertions);
+    let profile = if debug_runtime {
+        "(debug build"
+    } else {
+        "(release build)"
+    };
+    assert!(report.contains(profile), "no `{profile}` in:\n{report}");
+    let o = velt(&prefix, &work, &home, &["run", "--release", "hello.vlt"]);
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "installed ok\n");
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(
+        stderr.contains("linked a debug build of the runtime"),
+        debug_runtime,
+        "{stderr}"
+    );
 }

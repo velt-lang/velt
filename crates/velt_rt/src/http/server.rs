@@ -13,6 +13,7 @@
 //! `serve_tls` terminates TLS first (rustls, ALPN h2/http1.1). HTTP/1.1 connections support
 //! upgrades: a request asking for one parks its `OnUpgrade` (`upgrade.rs`) for std/websocket.
 
+use super::body::RespBody;
 use super::handler::Shared;
 pub use super::handler::{InitFn, VeltHandler};
 use super::request::ReqObj;
@@ -26,7 +27,6 @@ use crate::task::compiled::{with_state_store, Compiled, OwnedStore};
 use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use bytes::Bytes;
-use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::header::UPGRADE;
 use hyper::{Request, Response, StatusCode};
@@ -71,13 +71,14 @@ struct HandlerFut<S: OwnedStore> {
 }
 
 impl<S: OwnedStore> HandlerFut<S> {
-    fn new(shared: &Arc<Shared>, req: ReqObj) -> Self {
+    fn new(shared: &Arc<Shared>, req: Box<ReqObj>) -> Self {
         let d = &shared.handler();
-        let req = Handle::from_box(Box::new(req));
+        let req = super::request::register(req);
         let (size, align) = (d.state_size as usize, d.state_align as usize);
         let inner = Compiled::<S>::with_init(d.poll, d.drop, size, align, |st| {
-            // SAFETY: generated init writes a fresh state; ownership of `req` moves to it.
-            unsafe { (d.init)(d.env, req.ptr() as *mut ReqObj, st) }
+            // SAFETY: generated init writes a fresh state; ownership of the request key (passed
+            // in the pointer-sized slot) moves to it.
+            unsafe { (d.init)(d.env, req.bits() as usize as *mut ReqObj, st) }
         });
         HandlerFut {
             inner: Some(Box::pin(inner)),
@@ -95,7 +96,7 @@ unsafe fn take_response<S: OwnedStore>(inner: Pin<&mut Compiled<S>>) -> Handle<R
 }
 
 impl<S: OwnedStore> Future for HandlerFut<S> {
-    type Output = Response<Full<Bytes>>;
+    type Output = Response<RespBody>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let Some(inner) = self.inner.as_mut() else {
@@ -136,9 +137,9 @@ async fn finish_detached<S: OwnedStore>(mut inner: Pin<Box<Compiled<S>>>, _share
     }
 }
 
-fn status_only(status: StatusCode) -> Response<Full<Bytes>> {
+fn status_only(status: StatusCode) -> Response<RespBody> {
     let reason = status.canonical_reason().unwrap_or("");
-    let mut r = Response::new(Full::new(Bytes::from_static(reason.as_bytes())));
+    let mut r = Response::new(RespBody::full(Bytes::from_static(reason.as_bytes())));
     *r.status_mut() = status;
     r
 }
@@ -156,7 +157,7 @@ impl Drop for ParkedUpgrade {
 async fn handle<S: OwnedStore>(
     shared: Arc<Shared>,
     mut req: Request<Incoming>,
-) -> Result<Response<Full<Bytes>>, Infallible> {
+) -> Result<Response<RespBody>, Infallible> {
     let parked = ParkedUpgrade(if req.headers().contains_key(UPGRADE) {
         upgrade::park(hyper::upgrade::on(&mut req))
     } else {

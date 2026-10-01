@@ -12,12 +12,13 @@
 //! - [`DevSession::reload`] compares the new version with the running one per function key
 //!   (`facts`, `fingerprint`, `classify`): either it compiles the changed functions into a new
 //!   module and swaps them in, or it reports why the program must restart.
-//! - On Windows x64 each version's unwind info is registered with the system
-//!   (`unwind::jit_windows`), so stack walks get through JIT frames; elsewhere JIT code has no
-//!   registered unwind info yet.
+//! - Each version's unwind info is registered with the system (`unwind::jit_windows` on
+//!   Windows x64, `unwind::jit_systemv` on macOS and Linux), so stack walks get through JIT
+//!   frames; Windows arm64 has none yet.
 //!
 //! Runtime functions resolve through the symbol table the host passes in (`velt_rt`'s
-//! `ABI_SYMBOLS`); anything else (`memcpy`, `fmod`, ...) through the process's dynamic symbols.
+//! `ABI_SYMBOLS`); C library functions (`memcpy`, `fmod`, ...) through `c_symbols` on Unix (no
+//! dynamic loader needed: a static musl `velt` has none) and the loaded CRT on Windows.
 
 mod classify;
 mod facts;

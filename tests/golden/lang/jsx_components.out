@@ -1,0 +1,6 @@
+<!--main#Card--><div class="card"><h1>Hello</h1><p>Body</p></div>
+<!--main#Card--><div class="card"><h1>From a spread</h1><p>Spread</p></div>
+<!--main#Card--><div class="card"><h1>* Bare</h1><!--main#Divider--><br></div>
+<!--main#List--><ul><!--key=a--><li>a</li><!--key=b--><li>b</li><span>tail</span><!--main#Label--><span>[x]</span>42</ul>
+<!--_jsx_ui#Badge--><span class="badge-ok">ready</span>
+<!--key=label--><!--main#Label--><span>[keyed]</span><!--key=7--><span>number key</span><!--key=10.5--><span>float key</span>

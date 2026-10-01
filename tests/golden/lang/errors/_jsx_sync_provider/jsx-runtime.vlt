@@ -1,0 +1,12 @@
+// The generic test runtime without `jsxAsyncComponent`.
+
+export {
+  AttrValue,
+  Child,
+  Element,
+  ElementChildrenAttribute,
+  Fragment,
+  IntrinsicElements,
+  jsx,
+  jsxComponent,
+} from "../../_jsx_test_provider/jsx-runtime";

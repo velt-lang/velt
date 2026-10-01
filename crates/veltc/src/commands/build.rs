@@ -80,8 +80,27 @@ fn build(args: &BuildArgs) -> Result<Artifact, ExitCode> {
             crate::style::error(&msg);
             ExitCode::from(1)
         })?;
+        if opts.release {
+            warn_debug_runtime(&opts.target());
+        }
     }
     Ok(artifact)
+}
+
+/// A release build linked against a debug runtime is several times slower with no other sign
+/// (a debug `velt` finds the debug runtime next to it), so say so.
+fn warn_debug_runtime(target: &str) {
+    let Ok(runtime_lib) = velt_link::find_runtime_lib(target) else {
+        return;
+    };
+    if velt_link::runtime_lib_is_debug(&runtime_lib) == Some(true) {
+        crate::style::warning(&format!(
+            "`--release` linked a debug build of the runtime ({}), which makes programs much \
+             slower; use a release `velt` (`cargo build --release -p veltc -p velt_rt`) or point \
+             $VELT_RT_LIB at a release runtime",
+            runtime_lib.display()
+        ));
+    }
 }
 
 /// Print a session's diagnostics (and timings with `-v`) to stderr.

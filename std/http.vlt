@@ -6,10 +6,11 @@
 // the closure's own state machine is the per-request state (result at offset 0), `init` writes its
 // initial state from `(env, req)`, `poll`/`drop` are the closure's `$poll`/`$drop`, and `env` is
 // the closure's heap environment (shared with in-flight requests; the runtime drops it once the
-// server is closed and its last request finished, so captured values' `[Symbol.dispose]()` hooks run).
-// `serve` wraps the user handler in such a closure, which converts the raw request into a
-// `Request` (copying its fields, then releasing it) and the returned `Response` back to its raw
-// pointer, so the intrinsic only ever sees one closure type.
+// server is closed and its last request finished, so captured values' `[Symbol.dispose]()`
+// hooks run). `serve` wraps the user handler in such a closure, which hands it the raw request as
+// a `Request` view (read lazily), releases the raw request once the handler settled, and turns
+// the returned `Response` back into its raw pointer, so the intrinsic only ever sees one closure
+// type.
 //
 // Handles (`VeltServer`, `VeltResp`, `VeltFetchResp`: `u64`s, rt_abi_async.md §3.2) are
 // released by the owning value's `[Symbol.dispose]()` drop hook, which zeroes the handle so it runs at
@@ -18,6 +19,10 @@
 // dropping it releases the handle but keeps it serving (like Node).
 
 import { IoResult, unwrapIo } from "velt:io";
+import { ResponseWriter as Writer_, openStream } from "velt:http/stream";
+
+// A streamed response's body (`Response.stream`; std/http/stream.vlt).
+export type ResponseWriter = Writer_;
 
 // `VeltHandler` field by field: init, poll, drop, state_size, state_align, env (48 bytes).
 type RtHandler = [u64, u64, u64, u64, u64, u64];
@@ -38,6 +43,7 @@ declare function velt_rt_http_req_method(r: u64): string;
 declare function velt_rt_http_req_path(r: u64): string;
 declare function velt_rt_http_req_query(r: u64): string;
 declare function velt_rt_http_req_body(r: u64): string;
+declare function velt_rt_http_req_header(r: u64, name: string, out: string): bool;
 declare function velt_rt_http_req_header_names(r: u64): string[];
 declare function velt_rt_http_req_header_values(r: u64): string[];
 declare function velt_rt_http_req_upgrade(r: u64): u64;
@@ -84,7 +90,7 @@ export struct ServeOptions {
   tls?: TlsOptions;
 }
 
-// Request headers, copied out of the runtime request; names are lowercase.
+// Request headers, copied out of the runtime request (`req.headers`); names are lowercase.
 export class Headers {
   names: string[];
   values: string[];
@@ -110,18 +116,62 @@ export class Headers {
   }
 }
 
-// An incoming request; the body has been read completely (decoded as UTF-8, lossily). A plain
-// value owned by the handler, so its fields can be moved out (`{ path: req.path }`).
-export struct Request {
-  method: string;
+// An incoming request; the body has been read completely (decoded as UTF-8, lossily). A view of
+// the runtime request (`VeltReq`) that reads each property on access, so a handler pays only for
+// what it looks at; every read is an owned copy (`{ path: req.path }`). Valid until the handler's
+// promise settles (`serve` then releases the runtime request): keep copies of the properties, not
+// the `Request`, in anything that outlives the handler. Reading it afterwards is a runtime error
+// (the runtime checks every request handle), never a read of freed memory.
+//
+// Not a `[Symbol.dispose]()` owner: calling the handler (an async closure value) copies its class
+// arguments, so each copy would release the request (tests/golden/bugs/
+// lower_async_closure_call_clones_class_arg.vlt).
+export class Request {
+  private raw: u64;
+
+  constructor(raw: u64) {
+    this.raw = raw;
+  }
+
+  get method(): string {
+    return velt_rt_http_req_method(this.raw);
+  }
+
   // Without the query string.
-  path: string;
+  get path(): string {
+    return velt_rt_http_req_path(this.raw);
+  }
+
   // Without the leading `?`.
-  query: string;
-  headers: Headers;
-  body: string;
+  get query(): string {
+    return velt_rt_http_req_query(this.raw);
+  }
+
+  get body(): string {
+    return velt_rt_http_req_body(this.raw);
+  }
+
+  // Every header, copied; `header(name)` looks up one without copying the rest.
+  get headers(): Headers {
+    return new Headers(
+      velt_rt_http_req_header_names(this.raw),
+      velt_rt_http_req_header_values(this.raw),
+    );
+  }
+
   // Runtime key of a requested protocol upgrade (0 = none); consumed by std/websocket.
-  upgrade: u64;
+  get upgrade(): u64 {
+    return velt_rt_http_req_upgrade(this.raw);
+  }
+
+  // The first value of header `name` (case-insensitive), or null.
+  header(name: string): string | null {
+    let out = "";
+    if (velt_rt_http_req_header(this.raw, name, out)) {
+      return out;
+    }
+    return null;
+  }
 }
 
 // An outgoing response (a runtime `VeltResp` handle), built by the static constructors.
@@ -162,6 +212,17 @@ export class Response {
     const r = velt_rt_http_resp_new(status as u32);
     let owned = body;
     velt_rt_http_resp_body_bytes(r, owned);
+    return new Response(r);
+  }
+
+  // A body produced while it is sent (server-side rendering, long reports): `body` starts at
+  // once and keeps running after the handler returned the response, which sends the status and
+  // headers first (set them before returning), then each flushed chunk (HTTP/1.1 chunked
+  // transfer, no `content-length`). The response ends when `body` returns; if it throws, the
+  // error is printed and the response is cut off. Default `text/plain; charset=utf-8`.
+  static stream<E>(body: (w: ResponseWriter) => Promise<void, E>, status: i64 = 200): Response {
+    const r = velt_rt_http_resp_new(status as u32);
+    openStream(r, body);
     return new Response(r);
   }
 
@@ -232,22 +293,6 @@ export class Server {
   }
 }
 
-// Copies a runtime request into a `Request` and releases the runtime request.
-function requestFromRaw(raw: u64): Request {
-  const names = velt_rt_http_req_header_names(raw);
-  const values = velt_rt_http_req_header_values(raw);
-  const req = Request {
-    method: velt_rt_http_req_method(raw),
-    path: velt_rt_http_req_path(raw),
-    query: velt_rt_http_req_query(raw),
-    headers: new Headers(names, values),
-    body: velt_rt_http_req_body(raw),
-    upgrade: velt_rt_http_req_upgrade(raw),
-  };
-  velt_rt_http_req_drop(raw);
-  return req;
-}
-
 // Binds `host:port` (default host 127.0.0.1; port 0 = any free port) and serves `handler` in the
 // background. Handlers run concurrently, so like spawned tasks they must not mutate captured
 // variables (use `shared`). A handler that throws (rejects with `E`) gets a 500 response, and
@@ -258,14 +303,17 @@ export async function serve<E>(
 ): Promise<Server> {
   const addr = `${opts.host ?? DEFAULT_HOST}:${opts.port}`;
   const h: RtHandler = __intrinsic_http_handler(async (raw: u64): Promise<u64> => {
+    let out: u64 = 0;
     try {
-      let resp = await handler(requestFromRaw(raw));
-      return resp.intoRaw();
+      let resp = await handler(new Request(raw));
+      out = resp.intoRaw();
     } catch (e) {
       console.error("request handler failed:", e);
       let failed = Response.text("Internal Server Error", 500);
-      return failed.intoRaw();
+      out = failed.intoRaw();
     }
+    velt_rt_http_req_drop(raw);
+    return out;
   });
   const tls = opts.tls;
   const handle =

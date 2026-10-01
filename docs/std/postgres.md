@@ -17,6 +17,11 @@ to the server is async.
   - the same without parameters: `select<T>(sql)`, `selectOne<T>(sql)`, `run(sql)` (passing
     `{}` as `params` also works);
   - `batch(sql)` runs a script of `;`-separated statements (no parameters, not prepared);
+  - `batchQuery<T, P>(sql, paramSets: P[]): T[][]`, `batchQueryOne<T, P>(sql, paramSets): (T | null)[]`
+    and `batchExecute<P>(sql, paramSets): i64[]` run one statement with many parameter sets in
+    one round trip (one message group with a single Sync, like pgx's `Batch`): the server runs
+    them as one implicit transaction, so if one execution fails the whole batch throws that
+    error and, outside a transaction, none of its writes are kept;
   - `begin(): Transaction`, `transaction(fn)`, `inTransaction`, and `close()`.
 - **Prepared statements** are cached per connection (256 per connection, least recently used
   evicted), so repeating a query costs one round trip.

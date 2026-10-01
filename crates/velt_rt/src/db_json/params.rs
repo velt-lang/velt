@@ -7,6 +7,9 @@
 //! `false` → [`DbValue::Bool`]; `null` → [`DbValue::Null`]; an array of integers 0–255 (what
 //! `JSON.stringify` makes of a `u8[]`) → [`DbValue::Bytes`]. Nested objects are rejected.
 //!
+//! A batch (one statement run several times) takes a JSON array of such parameter sets
+//! ([`parse_param_list`]): `[[1,"a"],[2,"b"]]` or `[{"id":1},{"id":2}]`.
+//!
 //! Strings without escapes borrow the source; only escaped strings allocate.
 
 use crate::json::scan::{number_f64, number_i64, Scanner, StrTok, SyntaxError};
@@ -63,6 +66,42 @@ pub fn parse_params(src: &[u8]) -> Result<Params<'_>, String> {
         return Err(syntax(sc.error("unexpected trailing characters")));
     }
     Ok(params)
+}
+
+/// Parse a JSON array of parameter sets, one per execution of a batch (each element as
+/// [`parse_params`] reads a whole input; a scalar element is one positional parameter).
+pub fn parse_param_list(src: &[u8]) -> Result<Vec<Params<'_>>, String> {
+    let mut sc = Scanner::new(src);
+    if sc.peek_non_ws() != Some(b'[') {
+        return Err("batch parameters must be an array of parameter sets".to_string());
+    }
+    sc.pos += 1;
+    let mut sets = Vec::new();
+    if sc.peek_non_ws() == Some(b']') {
+        sc.pos += 1;
+    } else {
+        loop {
+            let i = sets.len();
+            let set = match sc.peek_non_ws() {
+                Some(b'{') => object(&mut sc).map(Params::Named),
+                Some(b'[') => array(&mut sc).map(Params::Positional),
+                _ => value(&mut sc).map(|v| Params::Positional(vec![v])),
+            };
+            sets.push(set.map_err(|e| format!("parameter set {}: {e}", i + 1))?);
+            match sc.peek_non_ws() {
+                Some(b',') => sc.pos += 1,
+                Some(b']') => {
+                    sc.pos += 1;
+                    break;
+                }
+                _ => return Err(syntax(sc.error("expected ',' or ']'"))),
+            }
+        }
+    }
+    if sc.peek_non_ws().is_some() {
+        return Err(syntax(sc.error("unexpected trailing characters")));
+    }
+    Ok(sets)
 }
 
 fn syntax(e: SyntaxError) -> String {

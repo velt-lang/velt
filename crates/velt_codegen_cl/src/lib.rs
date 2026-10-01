@@ -5,11 +5,13 @@
 //! - `isa`: target triple → configured Cranelift ISA (PIC, stack probes, frame pointers).
 //! - `module`: `build_module<M: Module>` declares/defines a whole program in any Cranelift
 //!   module (the object backend and the JIT share the exact same path).
-//! - `dev`: [`DevSession`], the in-process JIT behind `velt dev`, with hot swap.
+//! - `dev`: [`DevSession`], the in-process JIT behind `velt dev`, with hot swap; `c_symbols`:
+//!   the C library functions it resolves by address.
 //! - `abi`: VIR type → Cranelift type / C-ABI signature mapping, layout lookups.
 //! - `function`: per-function translation (places, operands, ops, casts, terminators).
 //! - `entry`: the `main` of executables linked against the shared runtime ([`emit_entry_object`]).
-//! - `unwind`: unwind tables (Windows x64 `.pdata`/`.xdata`, ELF/Mach-O eh_frame).
+//! - `unwind`: unwind tables (Windows x64 `.pdata`/`.xdata`, ELF/Mach-O eh_frame), and their
+//!   run-time registration for JIT code.
 
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use velt_vir::vir;
@@ -20,6 +22,8 @@ macro_rules! bail {
 }
 
 mod abi;
+#[cfg(unix)]
+mod c_symbols;
 mod dev;
 mod entry;
 mod function;
@@ -73,12 +77,15 @@ pub fn emit_entry_object(target: &str) -> Result<Vec<u8>, String> {
     entry::emit_entry_object(target)
 }
 
-/// CONTRACT: the triple of the machine the compiler runs on.
+/// CONTRACT: the triple of the machine the compiler runs on. On Linux the C library is the one
+/// `velt` itself was built for (`-musl` for a static Alpine build, `-gnu` otherwise): programs
+/// link against the runtime library shipped next to it, built for the same environment.
 pub fn host_triple() -> String {
     let arch = std::env::consts::ARCH;
     match std::env::consts::OS {
         "windows" => format!("{arch}-pc-windows-msvc"),
         "macos" => format!("{arch}-apple-darwin"),
+        _ if cfg!(target_env = "musl") => format!("{arch}-unknown-linux-musl"),
         _ => format!("{arch}-unknown-linux-gnu"),
     }
 }

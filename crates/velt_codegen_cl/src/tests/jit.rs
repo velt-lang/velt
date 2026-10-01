@@ -259,7 +259,7 @@ fn dev_session_runs_programs() {
 
 /// Stack walks get through JIT frames: a backtrace taken inside a runtime call made by JIT code
 /// reaches the Rust frame that called `velt_main` (needs the registered unwind info).
-#[cfg(all(windows, target_arch = "x86_64"))]
+#[cfg(any(unix, all(windows, target_arch = "x86_64")))]
 #[test]
 fn backtrace_walks_through_jit_frames() {
     thread_local! {

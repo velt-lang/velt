@@ -62,6 +62,7 @@ impl FnCx<'_, '_> {
         escaping: bool,
     ) -> hir::Expr {
         let ast::ExprKind::Arrow {
+            type_params,
             params,
             ret,
             throws,
@@ -71,6 +72,16 @@ impl FnCx<'_, '_> {
         else {
             unreachable!("ICE: closure of a non-arrow expression")
         };
+        if !type_params.is_empty() {
+            self.cx.error(
+                velt_common::Diagnostic::error(
+                    "a generic arrow function must be a module-level constant with typed parameters and a return type",
+                    e.span,
+                )
+                .with_note("a function value has one type; write `const id = <T,>(x: T): T => x;` at module level, or a generic `function`"),
+            );
+            return self.error_expr(e.span);
+        }
         let (ret, is_async, span) = (ret.as_ref(), *is_async, e.span);
         let Expected {
             params: exp_params,

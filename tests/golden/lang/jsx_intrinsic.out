@@ -1,0 +1,5 @@
+<p class="greeting">Hello, Ada &amp; &lt;Bob&gt;!</p>
+<div id="x" hidden data-count="3" class="box" title="a &quot;quoted&quot; title">a &amp; b &lt; c ©</div>
+<input name="q" value="Ada &amp; &lt;Bob&gt;" tabindex="2">
+<ul><li>one</li><li class="many">3</li></ul>
+<br><span>1.5</span><span data-big="9007199254740993">9007199254740993</span><img src="a.png" alt="it&#39;s">

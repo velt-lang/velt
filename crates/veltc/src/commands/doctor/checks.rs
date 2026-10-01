@@ -25,7 +25,14 @@ pub fn environment() -> Vec<Check> {
 
 fn runtime_lib(host: &str) -> Check {
     match velt_link::find_runtime_lib(host) {
-        Ok(path) => Check::ok("runtime lib", path.display().to_string()),
+        Ok(path) => {
+            let profile = match velt_link::runtime_lib_is_debug(&path) {
+                Some(true) => " (debug build: `--release` programs run slowly with it)",
+                Some(false) => " (release build)",
+                None => "",
+            };
+            Check::ok("runtime lib", format!("{}{profile}", path.display()))
+        }
         Err(msg) => Check::bad(
             "runtime lib",
             Status::Fail,

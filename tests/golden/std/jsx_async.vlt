@@ -1,0 +1,132 @@
+// std/jsx async components through the factory calls compiled JSX makes: each starts when it
+// is called (so siblings load concurrently: both start before either finishes), the
+// renderer awaits them in document order, components nest (an async component returning a tree
+// with async components), and a rejection or a sync component's throw surfaces from rendering as
+// a `RenderError` naming the component.
+import { jsx, Fragment, jsxAsyncComponent, jsxComponent, jsxTemplate } from "velt:jsx/jsx-runtime";
+import { Element, renderToString, renderToStringSync } from "velt:jsx";
+
+class NotFound extends Error {}
+
+type PostProps = { id: i64; delay: i64 };
+
+async function Post(props: PostProps): Promise<Element> throws NotFound {
+  console.log(`start post ${props.id}`);
+  await sleep(props.delay);
+  console.log(`end post ${props.id}`);
+  if (props.id < 0) {
+    throw new NotFound(`no post ${props.id}`);
+  }
+  return jsx("article", ["id"], [`post-${props.id}`], [`Post #${props.id}`], null);
+}
+
+// An async component whose output contains more async components (the later ones load faster).
+async function Feed(props: { ids: i64[] }): Promise<Element> {
+  await sleep(5);
+  const posts = props.ids.map(
+    (id) => jsxAsyncComponent(
+      (p: PostProps) => Post(p),
+      { id: id, delay: (5 - id) * 20 },
+      `${id}`,
+      "jsx_async#Post",
+    ),
+  );
+  return jsx("section", [], [], [posts], null);
+}
+
+// A sync component that throws: rendering fails like an async rejection.
+function Broken(props: { why: string }): Element throws NotFound {
+  throw new NotFound(props.why);
+}
+
+function Layout(props: { title: string }): Element {
+  return jsx("h1", [], [], [props.title], null);
+}
+
+function page(): Element {
+  // The slow post comes first in the document but finishes last.
+  return Fragment(
+    [
+      jsxComponent(Layout, { title: "Posts" }, null, "jsx_async#Layout"),
+      jsx(
+        "div",
+        [],
+        [],
+        [
+          jsxAsyncComponent(
+            (p: PostProps) => Post(p),
+            { id: 1, delay: 60 },
+            null,
+            "jsx_async#Post",
+          ),
+          " | ",
+          jsxAsyncComponent(
+            (p: PostProps) => Post(p),
+            { id: 2, delay: 10 },
+            null,
+            "jsx_async#Post",
+          ),
+        ],
+        null,
+      ),
+      jsx("footer", [], [], ["end"], null),
+    ],
+    null,
+  );
+}
+
+async function main() {
+  const el = page();
+  console.log("tree built");
+  console.log(await renderToString(el));
+  console.log(
+    await renderToString(
+      jsxAsyncComponent((p: { ids: i64[] }) => Feed(p), { ids: [3, 4] }, null, "jsx_async#Feed"),
+    ),
+  );
+  // An async component inside an array inside a template: the compiler passes a non-text child
+  // as a `Fragment([v], null)` slot.
+  const items = [
+    jsx("li", [], [], ["a"], null),
+    jsxAsyncComponent((p: PostProps) => Post(p), { id: 6, delay: 1 }, null, "jsx_async#Post"),
+    jsx("li", [], [], ["b"], null),
+  ];
+  const list = jsxTemplate(["<ol>", "</ol>"], [Fragment([items], null)]);
+  console.log(await renderToString(list));
+  try {
+    const broken = jsx(
+      "p",
+      [],
+      [],
+      [jsxAsyncComponent((p: PostProps) => Post(p), { id: -1, delay: 1 }, null, "jsx_async#Post")],
+      null,
+    );
+    console.log(await renderToString(broken));
+  } catch (e) {
+    console.log("RenderError:", e.component, "|", e.message);
+  }
+  try {
+    const failing = jsx(
+      "p",
+      [],
+      [],
+      ["before", jsxComponent(Broken, { why: "sync failure" }, null, "jsx_async#Broken")],
+      null,
+    );
+    console.log(await renderToString(failing));
+  } catch (e) {
+    console.log("RenderError:", e.component, "|", e.message);
+  }
+  try {
+    console.log(
+      renderToStringSync(
+        jsxAsyncComponent((p: PostProps) => Post(p), { id: 5, delay: 1 }, null, "jsx_async#Post"),
+      ),
+    );
+  } catch (e) {
+    console.log("sync:", e.message);
+  }
+  // A tree without async components renders the same either way.
+  const plain = jsx("p", [], [], ["sync"], null);
+  console.log(renderToStringSync(plain), await renderToString(plain));
+}

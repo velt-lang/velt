@@ -1,0 +1,10 @@
+jsx_components.vlt:20:20: error: Property 'title' is missing in type '{ count: i64; children: Element }' but required in type 'CardProps'.
+jsx_components.vlt:21:35: error: Property 'titel' does not exist on type 'CardProps'. Did you mean 'title'?
+jsx_components.vlt:22:34: error: Type 'i64' is not assignable to type 'string'.
+in the props of type 'CardProps'
+jsx_components.vlt:23:39: error: Property 'children' does not exist on type '{ tone: string }'.
+<Badge> does not accept children: its props type has no `children` field
+jsx_components.vlt:24:39: error: This JSX tag's 'children' prop expects a single child of type 'Element', but multiple children were provided.
+jsx_components.vlt:25:25: error: 'Count' cannot be used as a JSX component.
+jsx_components.vlt:26:29: error: cannot find `Missing` in this scope
+jsx_components.vlt:27:33: error: JSX elements cannot have multiple attributes with the same name.

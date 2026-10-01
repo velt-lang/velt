@@ -88,9 +88,10 @@ fn debug_links_are_skipped_when_nothing_changed() {
     let (skipped, err) = build(dir, &[]);
     assert!(skipped, "unchanged rebuild must not link:\n{err}");
 
-    // Another runtime (the static one) is a different link.
+    // Another runtime (the static one) is a different link; without a shared runtime (musl
+    // targets cannot build one) the default already is the static one, still up to date.
     let (skipped, err) = build(dir, &[("VELT_RT_LINK", "static")]);
-    assert!(!skipped, "{err}");
+    assert_eq!(skipped, !shared_runtime_built(), "{err}");
     let run = Command::new(&exe).output().unwrap();
     assert_eq!(text(&run.stdout), "hi\n");
 
@@ -105,12 +106,20 @@ fn debug_links_are_skipped_when_nothing_changed() {
     assert_eq!(text(&run.stdout), "ho\n");
 }
 
+/// Whether the shared runtime sits next to the `velt` under test (debug links then use it).
+fn shared_runtime_built() -> bool {
+    let built = Path::new(env!("CARGO_BIN_EXE_velt")).parent().unwrap();
+    built
+        .join(velt_link::shared_runtime_lib_name(
+            velt_link::TargetOs::host(),
+        ))
+        .is_file()
+}
+
 #[test]
 fn debug_builds_use_the_shared_runtime_when_built() {
-    let built = Path::new(env!("CARGO_BIN_EXE_velt")).parent().unwrap();
-    let shared = velt_link::shared_runtime_lib_name(velt_link::TargetOs::host());
-    if !built.join(shared).is_file() {
-        eprintln!("skipping: {shared} not built (cargo build -p velt_rt_shared)");
+    if !shared_runtime_built() {
+        eprintln!("skipping: the shared runtime is not built (cargo build -p velt_rt_shared)");
         return;
     }
     let tmp = tempfile::tempdir().unwrap();

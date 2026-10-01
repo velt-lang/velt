@@ -9,7 +9,7 @@ Rust's).
   syscall- and round-trip-bound workloads; best-of-5 interleaved rounds hide most of that, but
   treat differences under ~20% as noise.
 - **Servers** (local, TCP on localhost): PostgreSQL 17.11 (Homebrew), Redis 8.8.1.
-- **Toolchains**: rustc 1.98.1; Velt at `2b01113` (stream/db with std/postgres), `velt build
+- **Toolchains**: rustc 1.98.1; Velt pre-release (with the Postgres driver), `velt build
   --release` on LLVM and Cranelift; Node 24.11.1.
 - **Libraries**: rusqlite 0.40.2 (bundled SQLite, the same crate and version as the Velt
   runtime), redis 1.7.1 (tokio-comp, `MultiplexedConnection`), tokio-postgres 0.7.18 +

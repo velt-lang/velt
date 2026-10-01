@@ -9,6 +9,47 @@ Raw data: `results/*.jsonl`; the tables come from `summarize.py` (each cell is t
 over the measured connection levels, with that level's p99 and the server's peak RSS during the
 test; ratios are to Rust).
 
+## Lazy `Request` and Postgres batches — not re-run yet
+
+The lazy Request and Postgres batch changes were measured while they were written, but the full suite has
+**not** been re-run since: the machine was shared with other work (load average 10–38), and the
+same route swung up to 2.4× between back-to-back wrk runs. The tables below are therefore still
+the round 9 numbers. Re-run `run.sh` and `linux.sh` on a quiet machine before quoting them.
+
+What was measured, interleaved (A/B/A/B) to cancel out the load:
+- **Lazy `Request`** (`std/http` reads method/path/query/body/headers from the runtime on
+  access; static per-thread `Server` header bytes): server CPU per request, `wrk -t4 -c64`,
+  3 rounds. Raw req/s was too noisy to use.
+
+  | test | Velt before | Velt after | Rust axum |
+  |---|---|---|---|
+  | JSON | 14.2–16.4 µs | 13.6–15.2 µs | 15.0–15.8 µs |
+  | plaintext | 14.0–16.4 µs | 12.9–15.4 µs | 13.9–15.6 µs |
+  | JSON, pipelined 16 deep | 2.22–2.39 µs | 1.90–2.07 µs | 8.4–8.9 µs |
+  | plaintext, pipelined 16 deep | 2.21–2.31 µs | 1.82–1.94 µs | 8.5–8.75 µs |
+
+  Per request, Velt is now at or below Rust on JSON (the brief's goal, in CPU terms).
+- **Postgres batches with one `Sync`** (`batchQueryOne` in `/queries` and `/updates` from N ≥ 5),
+  macOS, 512 connections, 6 interleaved 5 s rounds with the servers in rotated order, median
+  req/s:
+
+  | test | N | Velt | Velt before | Go (pgx) | Rust | Velt/Go |
+  |---|---|---|---|---|---|---|
+  | queries | 1 | 35100 | 35089 | 29116 | 35832 | 1.21 |
+  | queries | 5 | 30796 | 23166 | 23438 | 23631 | 1.31 |
+  | queries | 10 | 25757 | 15783 | 21509 | 16826 | 1.20 |
+  | queries | 15 | 23766 | 12940 | 19985 | 13652 | 1.19 |
+  | queries | 20 | 22330 | 10844 | 17251 | 11765 | 1.29 |
+  | updates | 1 | 17184 | 17064 | 14614 | 17156 | 1.18 |
+  | updates | 5 | 16685 | 13808 | 14499 | 14419 | 1.15 |
+  | updates | 10 | 15710 | 11168 | 13778 | 11664 | 1.14 |
+  | updates | 15 | 14480 | 9033 | 12545 | 9919 | 1.15 |
+  | updates | 20 | 11812 | 7591 | 10876 | 7467 | 1.09 |
+
+  Before, Go led at N ≥ 10 by 1.4–1.6×; now Velt leads Go at every N (goal: match or beat Go).
+  At one connection a batch of 20 costs one round trip (215 µs vs 145 µs for N = 5).
+- Linux arm64 was not measured for either change.
+
 ## Linux arm64 (Docker on Apple M4) — 2026-10-01
 
 `bench/web/linux.sh --platform linux/arm64` at `a65d126`: Debian 12 containers in OrbStack's
@@ -82,8 +123,8 @@ were fixed on this branch, so none of the final numbers is more than 1.3× behin
    `libvelt_rt.a` next to its own executable, so a server built by `target/debug/velt` runs on
    the debug runtime (debug assertions, the checked `DebugAlloc` wrapper; it showed up in a
    `sample` profile). All final numbers use a release `velt`; run.sh now warns about a debug
-   one. *Integrator:* consider making `velt build --release` refuse (or warn about) a debug
-   runtime library.
+   one. Since round 11, `velt build --release` / `velt run --release` warn when they link a debug
+   runtime library, and `velt doctor` says which build it found.
 2. **A handler whose client hung up was cancelled, leaking pooled connections** (found by the
    benchmark agent: after the first wrk run the pool was empty and every DB route hung). hyper
    drops a request's future when its connection closes; a `pool.connect()` client held by that

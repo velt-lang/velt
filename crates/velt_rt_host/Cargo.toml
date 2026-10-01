@@ -32,6 +32,7 @@ lock_api = "0.4.14"
 memchr = "2.8.3"
 mimalloc = { version = "0.1.52", default-features = false, optional = true }
 parking_lot = "0.12.5"
+postgres-protocol = "0.6.12"
 regex = "1.13.1"
 rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }

@@ -251,12 +251,29 @@ pub fn sx(e: &Expr) -> String {
         }
         ExprKind::Index { object, index, .. } => format!("([] {} {})", sx(object), sx(index)),
         ExprKind::Arrow {
+            type_params,
             params,
             ret,
             throws,
             body,
             is_async,
         } => {
+            let tps = type_params
+                .iter()
+                .map(|g| match g.bounds.as_slice() {
+                    [] => g.name.name.clone(),
+                    bs => format!(
+                        "{} extends {}",
+                        g.name.name,
+                        bs.iter().map(ty).collect::<Vec<_>>().join(" & ")
+                    ),
+                })
+                .collect::<Vec<_>>();
+            let tps = if tps.is_empty() {
+                String::new()
+            } else {
+                format!("<{}>", tps.join(", "))
+            };
             let ps = params
                 .iter()
                 .map(|p| match &p.ty {
@@ -278,8 +295,9 @@ pub fn sx(e: &Expr) -> String {
                 ArrowBody::Block(b) => format!("{{{} stmts}}", b.stmts.len()),
             };
             format!(
-                "({}arrow ({}){} {})",
+                "({}arrow {}({}){} {})",
                 if *is_async { "async " } else { "" },
+                tps,
                 ps,
                 r,
                 b
@@ -293,7 +311,45 @@ pub fn sx(e: &Expr) -> String {
         ExprKind::Cast { expr, ty: t } => format!("(as {} {})", sx(expr), ty(t)),
         ExprKind::InstanceOf { expr, ty: t } => format!("(instanceof {} {})", sx(expr), ty(t)),
         ExprKind::Paren(e) => format!("(paren {})", sx(e)),
+        ExprKind::Jsx(el) => jsx(el),
     }
+}
+
+/// Compact rendering of a JSX element: `<div a="v" b={x} {...p}>["text" {y} {} <br/>]`
+/// (fragments have an empty name; no children = `/>`).
+pub fn jsx(el: &JsxElement) -> String {
+    let name = el.name.as_ref().map(JsxName::to_source).unwrap_or_default();
+    let attrs: String = el
+        .attrs
+        .iter()
+        .map(|a| match a {
+            JsxAttr::Spread { expr, .. } => format!(" {{...{}}}", sx(expr)),
+            JsxAttr::Named { name, value, .. } => {
+                let v = match value {
+                    None => String::new(),
+                    Some(JsxAttrValue::Str { value, .. }) => format!("={value:?}"),
+                    Some(JsxAttrValue::Expr { expr, .. }) => format!("={{{}}}", sx(expr)),
+                    Some(JsxAttrValue::Element(inner)) => format!("={}", jsx(inner)),
+                };
+                format!(" {}{v}", name.to_source())
+            }
+        })
+        .collect();
+    if el.children.is_empty() {
+        return format!("<{name}{attrs}/>");
+    }
+    let kids: Vec<String> = el
+        .children
+        .iter()
+        .map(|c| match c {
+            JsxChild::Text { value, .. } => format!("{value:?}"),
+            JsxChild::Expr { expr: None, .. } => "{}".into(),
+            JsxChild::Expr { expr: Some(e), .. } => format!("{{{}}}", sx(e)),
+            JsxChild::Spread { expr, .. } => format!("{{...{}}}", sx(expr)),
+            JsxChild::Element(inner) => jsx(inner),
+        })
+        .collect();
+    format!("<{name}{attrs}>[{}]", kids.join(" "))
 }
 
 pub fn check(src: &str, expected: &str) {
@@ -382,6 +438,16 @@ function main(): i32 {
   struct Local { v: i32 }
   type L = i32;
   ;
+  const id = <T,>(x: T): T => x;
+  const page = (
+    <>
+      <ui.Card title="a &amp; b" data-id={id(1)} {...rest} svg:x="1" disabled>
+        Hello, {name}! {/* note */}
+        {...items}
+        <br />
+      </ui.Card>
+    </>
+  );
   return c ? 1 : 2;
 }
 "#;

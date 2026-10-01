@@ -357,8 +357,11 @@ fn link_and_run(rustc: &str, dir: &Path, harness: &Path, objects: &[PathBuf]) ->
     }
     if cfg!(target_os = "linux") {
         // Link args come after rustc's libraries, so libm must follow the objects for `fmod`
-        // (glibc on aarch64 has it only in libm).
+        // (glibc on aarch64 has it only in libm; static musl has it in libc, already scanned).
         args.push_str("-Clink-arg=-lm\n");
+        if cfg!(target_env = "musl") {
+            args.push_str("-Clink-arg=-lc\n");
+        }
     }
     let argfile = dir.join("link.args");
     std::fs::write(&argfile, args).expect("write argfile");

@@ -44,6 +44,13 @@ fn parse_on_current_thread(file: FileId, src: &str) -> (ast::Module, Diagnostics
     (module, diags)
 }
 
+/// Byte ranges of the comments in `src`, in source order, exactly as the lexer sees them: `//`
+/// and `/*` inside strings, templates, regular expressions and JSX text are not comments. A line
+/// comment's range stops before its line break. For tools that keep comments (`velt fmt`).
+pub fn comment_ranges(src: &str) -> Vec<std::ops::Range<u32>> {
+    lexer::lex(FileId(0), src).comments
+}
+
 /// Debug dump of a module for snapshot tests.
 pub fn dump(module: &ast::Module) -> String {
     format!("{:#?}", module)

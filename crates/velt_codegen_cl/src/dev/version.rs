@@ -1,6 +1,7 @@
 //! One program version in its own `JITModule`: compiles the functions the version defines,
 //! resolves everything else to code that is already loaded (trampolines, pinned code of earlier
-//! versions, runtime symbols), and registers the new code's unwind info on Windows x64.
+//! versions, runtime symbols, C library functions), and registers the new code's unwind info
+//! with the system (Windows x64, macOS, Linux).
 
 use cranelift_jit::{JITBuilder, JITModule};
 use velt_vir::vir;
@@ -40,6 +41,8 @@ pub(crate) fn compile(
     for (name, address) in runtime.iter().chain(imports) {
         builder.symbol(name.clone(), *address as *const u8);
     }
+    #[cfg(unix)]
+    builder.symbol_lookup_fn(Box::new(crate::c_symbols::lookup));
     #[cfg(all(windows, target_arch = "x86_64"))]
     builder.memory_provider(crate::unwind::jit_windows::arena(arena_size(
         program, names, first,
@@ -55,6 +58,8 @@ pub(crate) fn compile(
         .map_err(|e| format!("codegen: finalizing JIT code: {e}"))?;
     #[cfg(all(windows, target_arch = "x86_64"))]
     unwind.register(&module)?;
+    #[cfg(unix)]
+    crate::unwind::jit_systemv::register(&module, &built.unwind)?;
     let address = |id| module.get_finalized_function(id) as usize;
     let code = built.funcs.iter().map(|id| id.map(address)).collect();
     let trampolines = names

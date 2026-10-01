@@ -183,7 +183,12 @@ impl FnCx<'_, '_> {
     }
 
     /// Unknown slots are errors; check bounds of the known ones.
-    fn solve_slots(&mut self, c: &Callable, slots: &[Option<TyId>], span: Span) -> Vec<TyId> {
+    pub(super) fn solve_slots(
+        &mut self,
+        c: &Callable,
+        slots: &[Option<TyId>],
+        span: Span,
+    ) -> Vec<TyId> {
         let mut out = vec![];
         for (k, s) in slots.iter().enumerate() {
             let name = c
