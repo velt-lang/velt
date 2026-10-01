@@ -239,7 +239,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         summary: "Publish the package to the registry",
         usage: &["publish"],
         about: "Publishes to the package's `registry`, else $VELT_REGISTRY, else the local \
-                registry (~/.vlt/registry).",
+                registry (~/.velt/registry).",
         options: &[],
         examples: &[("velt publish", "publish the current package")],
     },
@@ -334,7 +334,7 @@ pub fn command_names() -> Vec<&'static str> {
 
 const ENVIRONMENT: &[(&str, &str)] = &[
     ("VELT_STD", "standard library directory"),
-    ("VELT_HOME", "vpm home (default ~/.vlt: cache/, registry/)"),
+    ("VELT_HOME", "vpm home (default ~/.velt: cache/, registry/)"),
     (
         "VELT_REGISTRY",
         "package registry: a directory (default $VELT_HOME/registry) or an http(s):// URL",

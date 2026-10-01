@@ -2,7 +2,7 @@
 # Install a Velt dist directory (from scripts/package.sh, or an unpacked release .tar.gz) into a
 # prefix. Does not modify PATH; prints the command to do so.
 #
-# Usage: scripts/install.sh <dist dir> [<prefix>]     (prefix default: ~/.vlt/toolchain)
+# Usage: scripts/install.sh <dist dir> [<prefix>]     (prefix default: ~/.velt/toolchain)
 set -eu
 
 if [ $# -lt 1 ]; then
@@ -10,7 +10,7 @@ if [ $# -lt 1 ]; then
     exit 2
 fi
 dist=$(cd "$1" && pwd)
-prefix=${2:-"$HOME/.vlt/toolchain"}
+prefix=${2:-"$HOME/.velt/toolchain"}
 
 for f in bin/velt lib/libvelt_rt.a; do
     [ -f "$dist/$f" ] || { echo "error: $dist is not a Velt dist directory (missing $f)" >&2; exit 1; }
