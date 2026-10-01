@@ -265,7 +265,8 @@ fn unix_args(req: &LinkRequest, os: TargetOs) -> Vec<OsString> {
     let mut args: Vec<OsString> = p.base_args.iter().map(OsString::from).collect();
     if os == TargetOs::MacOs {
         args.extend(["-arch", macos_arch(req.target)].map(OsString::from));
-        args.push(macos_version_min(req.target).into());
+        let requested = std::env::var("MACOSX_DEPLOYMENT_TARGET").ok();
+        args.push(macos_version_min(req.target, requested.as_deref()).into());
     }
     let extra = if req.release {
         p.release_args
@@ -295,15 +296,30 @@ fn macos_arch(target: &str) -> &'static str {
     }
 }
 
-/// Oldest macOS the executable runs on. Without it `cc` stamps the build machine's OS version
-/// into `LC_BUILD_VERSION`, and programs refuse to start on older systems. Same minimums as rustc
-/// (so the runtime library) and the Cranelift objects: 11.0 on arm64, 10.12 on x86_64.
-fn macos_version_min(target: &str) -> &'static str {
-    if target.starts_with("x86_64") {
-        "-mmacosx-version-min=10.12"
+/// Oldest macOS the executable runs on: `$MACOSX_DEPLOYMENT_TARGET` (as for rustc and clang),
+/// raised to the runtime's minimum, else that minimum. Without the flag `cc` stamps the build
+/// machine's OS version into `LC_BUILD_VERSION`, and programs refuse to start on older systems.
+/// The minimums are rustc's (so the runtime library's) and the Cranelift objects': 11.0 on
+/// arm64, 10.12 on x86_64. An unparsable value is ignored, like a missing one.
+fn macos_version_min(target: &str, requested: Option<&str>) -> String {
+    let (floor, floor_text) = if target.starts_with("x86_64") {
+        ((10, 12, 0), "10.12")
     } else {
-        "-mmacosx-version-min=11.0"
-    }
+        ((11, 0, 0), "11.0")
+    };
+    let version = requested
+        .map(str::trim)
+        .filter(|v| parse_macos_version(v).is_some_and(|v| v > floor))
+        .unwrap_or(floor_text);
+    format!("-mmacosx-version-min={version}")
+}
+
+/// `major[.minor[.patch]]`.
+fn parse_macos_version(text: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = text.split('.');
+    let mut next = || parts.next().map(str::parse::<u32>).transpose().ok();
+    let version = (next()??, next()?.unwrap_or(0), next()?.unwrap_or(0));
+    parts.next().is_none().then_some(version)
 }
 
 pub(crate) fn linker_override() -> Option<Command> {
@@ -525,6 +541,40 @@ mod tests {
             Some("-mmacosx-version-min=10.12".into())
         );
         assert_eq!(min("aarch64-unknown-linux-gnu"), None);
+    }
+
+    #[test]
+    fn macos_deployment_target_is_honored_above_the_minimum() {
+        let min = macos_version_min;
+        assert_eq!(
+            min("aarch64-apple-darwin", Some("13.4")),
+            "-mmacosx-version-min=13.4"
+        );
+        assert_eq!(
+            min("x86_64-apple-darwin", Some("10.15")),
+            "-mmacosx-version-min=10.15"
+        );
+        // Older than the runtime supports, or not a version: the runtime's minimum.
+        assert_eq!(
+            min("aarch64-apple-darwin", Some("10.15")),
+            "-mmacosx-version-min=11.0"
+        );
+        assert_eq!(
+            min("x86_64-apple-darwin", Some("10.9")),
+            "-mmacosx-version-min=10.12"
+        );
+        assert_eq!(
+            min("aarch64-apple-darwin", Some("latest")),
+            "-mmacosx-version-min=11.0"
+        );
+        assert_eq!(
+            min("aarch64-apple-darwin", Some("")),
+            "-mmacosx-version-min=11.0"
+        );
+        assert_eq!(parse_macos_version("12"), Some((12, 0, 0)));
+        assert_eq!(parse_macos_version("12.3.1"), Some((12, 3, 1)));
+        assert_eq!(parse_macos_version("12.3.1.4"), None);
+        assert_eq!(parse_macos_version("12."), None);
     }
 
     #[test]

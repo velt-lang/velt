@@ -11,7 +11,7 @@ use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::{CodegenError, Context};
 use cranelift_frontend::FunctionBuilderContext;
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module, ModuleError};
-use target_lexicon::{Architecture, BinaryFormat};
+use target_lexicon::BinaryFormat;
 use velt_vir::vir;
 
 use crate::abi::{make_signature, validate_aggregates};
@@ -69,9 +69,6 @@ pub(crate) fn build_module<M: Module>(
 ) -> CodegenResult<Built> {
     validate_aggregates(program)?;
     let (decls, defs) = declare_all(module, program, naming)?;
-    let triple = module.isa().triple();
-    let collect_unwind =
-        triple.binary_format != BinaryFormat::Coff || triple.architecture == Architecture::X86_64;
 
     let mut unwind = Vec::new();
     let mut libs = LibFunctions::default();
@@ -93,9 +90,7 @@ pub(crate) fn build_module<M: Module>(
         )
         .map_err(|e| format!("codegen: in function `{}`: {e}", func.symbol))?;
         define(module, id, &mut ctx, &func.symbol)?;
-        if collect_unwind {
-            unwind.extend(unwind_info(module, id, &ctx, &func.symbol)?);
-        }
+        unwind.extend(unwind_info(module, id, &ctx, &func.symbol)?);
     }
     module.clear_context(&mut ctx);
     Ok(Built {
