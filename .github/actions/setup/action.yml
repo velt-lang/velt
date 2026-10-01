@@ -6,7 +6,7 @@ runs:
     # The toolchain, components and targets come from rust-toolchain.toml.
     - name: rust (pinned)
       shell: bash
-      run: rustup show active-toolchain || rustup toolchain install
+      run: rustup toolchain install && rustc --version
     - uses: Swatinem/rust-cache@v2
       with:
         shared-key: gate
