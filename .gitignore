@@ -6,6 +6,8 @@ target/
 *.o
 *.exe
 /tests/golden/**/*.actual
-/.claude/
+# Local Claude Code state; shared slash commands are committed.
+/.claude/*
+!/.claude/commands/
 *.stackdump
 /dist/
