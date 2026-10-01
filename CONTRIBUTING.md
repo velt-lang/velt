@@ -151,8 +151,10 @@ Reference the issue it resolves (`Closes #123`) and say which gate you ran.
   the **merge queue**: the queue runs the full gate on Linux, Windows and macOS against the pull
   request merged with the latest `main`, and merges it when all three pass. A nightly run adds
   PostgreSQL and Redis so the database tests run too.
-- Pull requests are **squash-merged**: write the pull request title and description as the final
-  commit message (`sema: infer throws through closures in recursive functions`).
+- Pull requests are **squash-merged**: the pull request **title and description become the commit
+  message** on `main` (`sema: infer throws through closures in recursive functions`). Keep the
+  description to what changed, why, and how it was tested: no tool-generated footers, session
+  links or co-author trailers, in the description or in your commits.
 - Changes to the contracts (`ast.rs`, `hir`, `vir.rs`, `docs/internals/contracts/**`) or to
   language semantics need a maintainer's review (see `.github/CODEOWNERS`).
 
