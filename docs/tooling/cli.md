@@ -82,11 +82,22 @@ existing `README.md`, and names the package after the directory unless `--name` 
 velt doc [<file|dir>...] [--std] [-o <dir>]
 ```
 
-Generates HTML documentation for exported items: their signatures as written and the `///`
-comment block right above each declaration (a comment block at the top of a file documents the
-module). Without paths, it documents the package's `src/` into `<package>/target/doc`;
-`--std` documents the standard library. The output has one page per module and a client-side
-search.
+Generates HTML documentation for exported items: their signatures and the `///` comment block
+right above each declaration (a comment block at the top of a file documents the module).
+Without paths, it documents the package's `src/` into `<package>/target/doc`; `--std` documents
+the standard library. The output has one page per module and a client-side search.
+
+- **Signatures** are shown in one canonical form whatever the source's layout:
+  `function pick<T extends Comparable<T>, U>(items: T[], limit?: i64): U | null`, with
+  `static`, `async`, `get`/`set` on members and the type's `extends`/`implements`.
+- **Type names link** to their documentation: types the module declares, imports (also
+  `ns.Type` through `import * as ns`) or re-exports, and the prelude's. Type parameters and
+  parameter names never link.
+- **Re-exports** are documented under the re-exporting module: `export { x as y } from "…"`
+  shows `x`'s documentation as `y`, `export * from "…"` every export the module doesn't
+  declare or list itself, each with a link to where it is declared. A re-export from a module
+  that isn't documented alongside (another package; std when documenting a package) is listed
+  as one line. Names in a local `export { a, b as c };` list are documented too.
 
 ## `velt doctor`
 

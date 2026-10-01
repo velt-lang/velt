@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::html::{self, NavLink};
-use crate::{extract, inputs_from_dir, module_nav, write, write_assets, write_module_pages};
+use crate::{extract_all, inputs_from_dir, module_nav, write, write_assets, write_module_pages};
 
 /// One page of the site.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,10 +79,7 @@ pub fn build_site(pages_file: &Path, std_dir: &Path, out: &Path) -> Result<usize
         .map_err(|e| format!("cannot read `{}`: {e}", pages_file.display()))?;
     let base = pages_file.parent().unwrap_or(Path::new("."));
     let pages = parse_pages(&text, base)?;
-    let modules: Vec<_> = inputs_from_dir(std_dir, "std")?
-        .iter()
-        .map(|i| extract(&i.module, &i.source))
-        .collect();
+    let modules = extract_all(&inputs_from_dir(std_dir, "std")?);
     let mut nav: Vec<NavLink> = pages
         .iter()
         .map(|p| NavLink {
