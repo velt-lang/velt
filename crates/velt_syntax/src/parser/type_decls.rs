@@ -128,7 +128,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Is the cursor at an `extend` block? `extend` is contextual: a type name or `<` must follow.
-    pub(super) fn at_extend(&self) -> bool {
+    pub(super) fn at_extend(&mut self) -> bool {
         self.at_word("extend") && (self.nth(1) == Tok::Lt || Self::is_ident_like(self.nth(1)))
     }
 

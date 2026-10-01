@@ -62,12 +62,12 @@ impl<'a> Parser<'a> {
     }
 
     /// Is there a run of `n` directly adjacent `>` tokens at the cursor, followed by an adjacent `=`?
-    fn at_glued_gt(&self, n: usize, then_eq: bool) -> bool {
+    fn at_glued_gt(&mut self, n: usize, then_eq: bool) -> bool {
         let gts = (0..n).all(|i| self.nth(i) == Tok::Gt && (i == 0 || self.adjacent(i - 1)));
         gts && then_eq == (self.nth(n) == Tok::Eq && self.adjacent(n - 1))
     }
 
-    fn peek_assign_op(&self) -> Option<(Option<BinaryOp>, usize)> {
+    fn peek_assign_op(&mut self) -> Option<(Option<BinaryOp>, usize)> {
         use BinaryOp::*;
         let op = match self.peek() {
             Tok::Eq => None,
@@ -113,7 +113,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Returns (operator, precedence, number of tokens).
-    fn peek_binop(&self) -> Option<(BinTok, u8, usize)> {
+    fn peek_binop(&mut self) -> Option<(BinTok, u8, usize)> {
         use BinaryOp::*;
         let (op, prec, n) = match self.peek() {
             Tok::PipePipe => (Or, PREC_OR, 1),
@@ -142,7 +142,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `>`, `>=`, `>>`, `>>>` from adjacent single `>` tokens (`>>=`/`>>>=` are assignments).
-    fn peek_gt_binop(&self) -> Option<(BinTok, u8, usize)> {
+    fn peek_gt_binop(&mut self) -> Option<(BinTok, u8, usize)> {
         use BinaryOp::*;
         let (op, prec, n) = if self.at_glued_gt(3, true) || self.at_glued_gt(2, true) {
             return None;

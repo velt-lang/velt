@@ -32,7 +32,7 @@ impl<'a> Parser<'a> {
         Module {
             items,
             span: Span::new(self.file, 0, self.src.len() as u32),
-            jsx_import_source: self.jsx_import_source.take(),
+            jsx_import_source: self.lx.jsx_import_source.take(),
         }
     }
 
@@ -182,6 +182,7 @@ impl<'a> Parser<'a> {
                     bounds.push(self.parse_type_no_union()?);
                 }
             }
+            self.reject_type_param_default()?;
             out.push(GenericParam { name, bounds });
             if !self.eat(Tok::Comma) {
                 break;
@@ -213,6 +214,22 @@ impl<'a> Parser<'a> {
             );
             self.bump();
         }
+    }
+
+    /// `<T = Default>`: type parameter defaults are not supported. Reported (even while
+    /// speculating: a failed attempt rewinds it) and the default type skipped.
+    fn reject_type_param_default(&mut self) -> PResult<()> {
+        if !self.at(Tok::Eq) {
+            return Ok(());
+        }
+        let span = self.cur_span();
+        self.diags.push(
+            velt_common::Diagnostic::error("type parameter defaults are not supported", span)
+                .with_note("remove the default and pass the type argument explicitly"),
+        );
+        self.bump();
+        self.parse_type()?;
+        Ok(())
     }
 
     /// `( name: Type [= default], ... )`
@@ -296,9 +313,10 @@ impl<'a> Parser<'a> {
 
     /// Is the cursor at `using x` or `await using x` (a declaration, not an expression that
     /// mentions a variable named `using`)?
-    pub(super) fn at_using_decl(&self) -> bool {
-        let at = |n: usize| self.nth_word(n, "using") && Self::is_ident_like(self.nth(n + 1));
-        at(0) || (self.at_kw(Kw::Await) && at(1))
+    pub(super) fn at_using_decl(&mut self) -> bool {
+        let at =
+            |p: &mut Self, n: usize| p.nth_word(n, "using") && Self::is_ident_like(p.nth(n + 1));
+        at(self, 0) || (self.at_kw(Kw::Await) && at(self, 1))
     }
 
     /// `[await] using name [: T] = init` (without the trailing `;`; the caller checked
