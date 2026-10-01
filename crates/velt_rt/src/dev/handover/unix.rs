@@ -52,6 +52,55 @@ impl Drop for Server {
     }
 }
 
+/// Supervisor side: the process id of the program on the other end of `stream` (Linux,
+/// Android and Apple platforms; elsewhere an `Unsupported` error).
+pub fn peer_pid(stream: &Stream) -> io::Result<u32> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        // SAFETY: `ucred` is plain data that the call fills in; `len` is its size.
+        let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        // SAFETY: a connected Unix socket and out-pointers of the sizes passed.
+        let rc = unsafe {
+            libc::getsockopt(
+                stream.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                (&mut cred as *mut libc::ucred).cast(),
+                &mut len,
+            )
+        };
+        if rc != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        u32::try_from(cred.pid).map_err(io::Error::other)
+    }
+    #[cfg(target_vendor = "apple")]
+    {
+        let mut pid: libc::pid_t = 0;
+        let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+        // SAFETY: a connected Unix socket and out-pointers of the sizes passed.
+        let rc = unsafe {
+            libc::getsockopt(
+                stream.as_raw_fd(),
+                libc::SOL_LOCAL,
+                libc::LOCAL_PEERPID,
+                (&mut pid as *mut libc::pid_t).cast(),
+                &mut len,
+            )
+        };
+        if rc != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        u32::try_from(pid).map_err(io::Error::other)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
+    {
+        let _ = stream;
+        Err(io::ErrorKind::Unsupported.into())
+    }
+}
+
 /// Supervisor side: reply `ok` and pass `listener`'s descriptor (the supervisor keeps its own).
 pub fn reply_ok(stream: &Stream, listener: &TcpListener) -> io::Result<()> {
     send_with_fd(stream, b"ok\n", listener.as_raw_fd())

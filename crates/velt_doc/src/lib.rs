@@ -1,8 +1,11 @@
 //! API documentation for Velt code, and the docs website.
 //!
 //! - [`extract`]: exported items, public members, signatures and doc comments of a module;
+//! - [`resolve`]: re-exports across modules (`export { x } from`, `export * from`);
+//! - `sig`: signatures in one canonical form, however the source is laid out;
 //! - [`markdown`]: the Markdown subset doc comments and the docs are written in;
-//! - [`html`]: page layout, module pages, index and the client-side search index;
+//! - [`html`]: page layout, module pages (type names in signatures link to their types),
+//!   index and the client-side search index;
 //! - [`site`]: the website (the pages in `docs/site/pages.txt` + std API reference) built by
 //!   `velt-site`.
 //!
@@ -11,6 +14,8 @@
 pub mod extract;
 pub mod html;
 pub mod markdown;
+pub mod resolve;
+mod sig;
 pub mod site;
 
 use std::path::{Path, PathBuf};
@@ -80,10 +85,7 @@ pub fn write_api_docs(
     inputs: &[Input],
     out: &Path,
 ) -> Result<PathBuf, String> {
-    let modules: Vec<DocModule> = inputs
-        .iter()
-        .map(|i| extract(&i.module, &i.source))
-        .collect();
+    let modules = extract_all(inputs);
     let nav = module_nav(&modules, "");
     write_module_pages(title, &modules, &nav, out, "")?;
     let index = html::layout(
@@ -96,6 +98,16 @@ pub fn write_api_docs(
     write(&out.join("index.html"), &index)?;
     write_assets(out, &html::search_index(&modules, "", &[]))?;
     Ok(out.join("index.html"))
+}
+
+/// The documentation of `inputs`, with re-exports resolved among them.
+pub fn extract_all(inputs: &[Input]) -> Vec<DocModule> {
+    let mut modules: Vec<DocModule> = inputs
+        .iter()
+        .map(|i| extract(&i.module, &i.source))
+        .collect();
+    resolve::resolve(&mut modules);
+    modules
 }
 
 /// Sidebar links to every module page (`prefix`: the pages' directory relative to the root).
@@ -117,8 +129,10 @@ pub fn write_module_pages(
     dir: &Path,
     root: &str,
 ) -> Result<(), String> {
+    let links = html::Links::new(modules);
     for m in modules {
-        let page = html::layout(&m.name, site, nav, root, &html::module_body(m));
+        let body = html::module_body(m, &links.scope(modules, m));
+        let page = html::layout(&m.name, site, nav, root, &body);
         write(&dir.join(html::module_file(&m.name)), &page)?;
     }
     Ok(())

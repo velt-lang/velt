@@ -22,6 +22,9 @@ pub struct Built {
     pub files: Vec<PathBuf>,
     /// The host's connection, waiting for `go`.
     pub stream: Stream,
+    /// The host's process id, where the platform tells (to ignore a report from a host the
+    /// supervisor has given up on).
+    pub pid: Option<u32>,
 }
 
 /// The dev channel server, running on a background thread for the session.
@@ -105,7 +108,13 @@ fn serve(stream: Stream, state: &State) {
     match handover::read_request(&stream) {
         Ok(Request::Listen(addr)) => hand_over(&stream, &addr, &state.sockets),
         Ok(Request::Built { ok, files }) => {
-            let _ = state.reports.send(Built { ok, files, stream });
+            let pid = handover::peer_pid(&stream).ok();
+            let _ = state.reports.send(Built {
+                ok,
+                files,
+                stream,
+                pid,
+            });
         }
         Ok(Request::WatchStop) => keep_stop_channel(stream, &state.stop_channels),
         Err(e) => {

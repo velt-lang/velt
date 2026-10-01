@@ -7,13 +7,13 @@
 //! - [`listeners`]: the dev channel; the supervisor owns listening sockets and hands them to every
 //!   version, so a restart refuses no connection.
 //! - [`versions`]: one executable per version in `--exe` mode, deleted once it has exited.
-//! - [`child`], [`watch`]: process control and change detection, shared with
-//!   `velt test --watch` ([`test_watch`]); on Windows `job` ties programs to the supervisor
-//!   and `interrupt` lets Ctrl-C clean up.
+//! - [`child`], [`watch`]: process control and change detection (OS notifications, polling as
+//!   the fallback), shared with `velt test --watch` ([`test_watch`]);
+//! - `interrupt`: Ctrl-C, SIGTERM and friends let the supervisor stop the program and wait for
+//!   it before exiting; on Windows `job` also ties programs to the supervisor.
 
 mod child;
 mod host;
-#[cfg(windows)]
 mod interrupt;
 #[cfg(windows)]
 mod job;

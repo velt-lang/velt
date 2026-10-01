@@ -74,6 +74,40 @@ impl Dev {
         Dev { child, log }
     }
 
+    /// Send `signal` to the supervisor alone (as a process manager would).
+    #[cfg(unix)]
+    pub fn signal(&self, signal: i32) {
+        let pid = i32::try_from(self.child.id()).expect("pid");
+        // SAFETY: plain syscall on our own child's pid (not yet reaped, so not reused).
+        unsafe { libc::kill(pid, signal) };
+    }
+
+    /// The supervisor's child processes (Linux: `/proc/<pid>/task/<pid>/children`).
+    #[cfg(target_os = "linux")]
+    pub fn children(&self) -> Vec<u32> {
+        let pid = self.child.id();
+        std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children"))
+            .unwrap_or_default()
+            .split_whitespace()
+            .filter_map(|p| p.parse().ok())
+            .collect()
+    }
+
+    /// Wait up to `limit` for the supervisor to exit; its exit code (128 + signal if a signal
+    /// ended it).
+    #[cfg(unix)]
+    pub fn wait_exit(&mut self, limit: Duration) -> Option<i32> {
+        use std::os::unix::process::ExitStatusExt;
+        let deadline = Instant::now() + limit;
+        while Instant::now() < deadline {
+            if let Ok(Some(status)) = self.child.try_wait() {
+                return status.code().or(status.signal().map(|s| 128 + s));
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        None
+    }
+
     /// The current end of both streams.
     pub fn mark(&self) -> Mark {
         let log = self.log.lock().unwrap();
@@ -100,6 +134,16 @@ impl Dev {
         })
         .map_err(|log| format!("no {needles:?} on stderr:\n{log}"))?;
         Ok(found.unwrap_or_else(Instant::now))
+    }
+
+    /// The stderr lines after `mark`.
+    #[allow(dead_code)]
+    pub fn stderr_since(&self, mark: Mark) -> Vec<String> {
+        let log = self.log.lock().unwrap();
+        log.stderr[mark.stderr..]
+            .iter()
+            .map(|(_, l)| l.clone())
+            .collect()
     }
 
     /// Wait for the stdout line `line` after `mark`.

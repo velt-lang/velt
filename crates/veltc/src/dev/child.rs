@@ -31,6 +31,14 @@ pub struct Running {
     output: Option<PathBuf>,
 }
 
+impl Drop for Running {
+    /// A version given up on without [`Running::stop`] (it exits by itself) is no longer
+    /// killed on a second interrupt: once it is reaped elsewhere its pid may be reused.
+    fn drop(&mut self) {
+        super::interrupt::untrack(self.id());
+    }
+}
+
 impl Running {
     /// Start `launch` with inherited stdio. On Windows the program joins the supervisor's job, so
     /// it cannot outlive the supervisor (Unix: the terminal's process group does that).
@@ -42,6 +50,7 @@ impl Running {
             .map_err(|e| format!("cannot start `{}`: {e}", launch.program.display()))?;
         #[cfg(windows)]
         super::job::kill_with_supervisor(&child);
+        super::interrupt::track(child.id());
         Ok(Running {
             child,
             output: launch.output.clone(),
@@ -49,18 +58,20 @@ impl Running {
     }
 
     /// The program's process id (Windows: the key of its stop channel).
-    #[cfg(windows)]
-    fn id(&self) -> u32 {
+    pub fn id(&self) -> u32 {
         self.child.id()
     }
 
     /// `Some(exit code)` once the program has exited (signals map to 128 + signal).
     pub fn exited(&mut self) -> Option<i32> {
-        match self.child.try_wait() {
-            Ok(Some(status)) => Some(crate::commands::exit_code(status)),
-            Ok(None) => None,
-            Err(_) => Some(-1),
-        }
+        let code = match self.child.try_wait() {
+            Ok(Some(status)) => crate::commands::exit_code(status),
+            Ok(None) => return None,
+            Err(_) => -1,
+        };
+        // Reaped: the pid may be reused from now on.
+        super::interrupt::untrack(self.id());
+        Some(code)
     }
 
     /// Stop the program: ask it to stop (SIGTERM on Unix, `stop` on its stop channel on
@@ -73,10 +84,24 @@ impl Running {
                 let _ = self.child.kill();
             }
         }
+        // Before reaping: until then the pid cannot be reused.
+        super::interrupt::untrack(self.id());
         let _ = self.child.wait();
         #[cfg(windows)]
         handover.forget(self.id());
-        self.output
+        self.output.take()
+    }
+
+    /// End a program that has not started running user code (a JIT host before `go`): no
+    /// graceful stop needed.
+    pub fn kill(mut self, handover: &Handover) {
+        let _ = self.child.kill();
+        super::interrupt::untrack(self.id());
+        let _ = self.child.wait();
+        #[cfg(windows)]
+        handover.forget(self.id());
+        #[cfg(not(windows))]
+        let _ = handover;
     }
 
     #[cfg(unix)]

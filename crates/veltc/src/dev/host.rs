@@ -5,7 +5,8 @@
 //! Under the supervisor (`VELT_DEV_SOCKET` set) the host reports its build (ok or failed, plus
 //! the files it read) and, after a good build, waits for `go`: the previous version keeps
 //! serving until the new one is ready to start. It then keeps the connection as its reload
-//! channel and takes later versions in place (`swap`), while the program runs.
+//! channel and takes later versions in place (`swap`), while the program runs. With
+//! [`QUIET_ENV`] set it prints nothing about its build.
 
 use std::process::ExitCode;
 use std::time::Instant;
@@ -15,6 +16,10 @@ use velt_codegen_cl::{DevSession, JitProgram};
 use crate::cli::DevArgs;
 use crate::commands::{build_options, failure_code, report};
 use crate::driver::{self, BuildError, BuildOptions, Session};
+
+/// Set for a host the supervisor starts while the running one is still deciding whether it can
+/// take the change: its build output would repeat the running host's.
+pub const QUIET_ENV: &str = "VELT_DEV_QUIET";
 
 /// Run the program; exits the process with the program's exit code.
 pub fn host_command(args: &DevArgs) -> ExitCode {
@@ -28,9 +33,12 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
     let mut sess = Session::new();
     let mut session = DevSession::new(&velt_rt_host::abi_symbols::symbol_table());
     let loaded = compile_and_load(&mut sess, &opts, &mut session);
-    report(&sess, args.build.verbose);
-    if let Err(ref err) = loaded {
-        failure_code(err);
+    // A host started ahead of need stays quiet: the running version reports the same build.
+    if std::env::var_os(QUIET_ENV).is_none() {
+        report(&sess, args.build.verbose);
+        if let Err(ref err) = loaded {
+            failure_code(err);
+        }
     }
     if let Some(socket) = std::env::var_os(velt_rt_host::dev::SOCKET_ENV) {
         let files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
