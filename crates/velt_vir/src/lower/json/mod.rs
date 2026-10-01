@@ -17,6 +17,7 @@
 
 mod dynamic;
 mod literal;
+mod map;
 mod object;
 mod read;
 mod write;

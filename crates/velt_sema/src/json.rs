@@ -106,8 +106,11 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) {
         };
         let mut d =
             Diagnostic::error(format!("cannot convert to or from JSON: {what}"), span).with_note(
-                "JSON supports numbers, bool, string, arrays, `T | null`, structs, classes and object literals of those, and `json.Value`",
+                "JSON supports numbers, bool, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `json.Value`",
             );
+        if matches!(cx.ty.kind(bad), TyKind::Adt(d, _) if Some(*d) == cx.prelude_adt("Map")) {
+            d = d.with_note("a `Map` converts to a JSON object only with `string` keys");
+        }
         if cx.union_def(bad).is_some() {
             d = d.with_note("unions can be written with `JSON.stringify` but not decoded by `JSON.parse`; parse a `json.Value` and build the union from it");
         }
@@ -115,23 +118,35 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) {
     }
 }
 
+/// Lowering (`velt_vir` lower/json read.rs and write.rs) handles exactly what this accepts:
+/// keep them in sync, or a type let through here is an internal error there.
 /// The first part of `t` without a JSON form, if any (`stack`: ADTs being visited, so recursive
 /// types terminate). Unions can be written (as their active member); only unions of literal
 /// types can be decoded.
 fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> Option<TyId> {
     let fields: Vec<TyId> = match cx.ty.kind(t).clone() {
         TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str => return None,
+        // Already reported.
+        TyKind::Error => return None,
         // Literal types are their value (decoding checks it).
         TyKind::Literal(_) => return None,
         // Elements of `never[]` (`JSON.stringify([])`) never exist.
         TyKind::Never if !parse => return None,
         TyKind::Array(e) | TyKind::Option(e) => vec![e],
+        // Tuples are fixed-length arrays.
+        TyKind::Tuple(es) => es,
         TyKind::Adt(d, args) => {
             if stack.contains(&t) || cx.is_json_value(d) {
                 return None;
             }
+            // `Map<string, V>` is an object; other keys have no JSON form.
             if Some(d) == cx.prelude_adt("Map") {
-                return Some(t);
+                return match args.as_slice() {
+                    [k, v] if matches!(cx.ty.kind(*k), TyKind::Str) => {
+                        unserializable(cx, *v, stack, parse)
+                    }
+                    _ => Some(t),
+                };
             }
             let tys: Vec<TyId> = match &cx.info[d.0 as usize] {
                 DefInfo::Adt(a)

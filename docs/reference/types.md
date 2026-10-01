@@ -321,7 +321,8 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   callback gets the stored value itself) and `getOrInsert(k, () => v)`. Keys: numbers, `bool`,
   `string`, Copy structs. Iteration follows insertion order, like JS.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,
-  strings, arrays, enums, nullable values, structs, classes and anonymous objects
+  strings, literal types, arrays, tuples, enums, nullable values, `Map<string, V>`, structs,
+  classes and anonymous objects
   ([`velt:json`](../std/json.md)).
 
 ```ts

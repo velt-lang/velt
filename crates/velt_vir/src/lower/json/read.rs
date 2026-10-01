@@ -111,6 +111,55 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// A tuple from an array of exactly its length. Elements are decoded in place; a failure
+    /// drops the whole tuple (its undecoded elements are still zero).
+    fn json_read_tuple(
+        &mut self,
+        r: Local,
+        place: &Place,
+        ctx: Local,
+        ty: TyId,
+        es: &[TyId],
+        fail: BlockId,
+    ) {
+        let expected = format!("array of length {}", es.len());
+        let ro = Operand::Copy(Place::local(r));
+        self.json_expect(Rt::JsonArrayStart, vec![ro.clone()], ctx, &expected, fail);
+        for (i, &e) in es.iter().enumerate() {
+            let more = self.temp(Ty::U8);
+            self.call_rt(Rt::JsonArrayNext, vec![ro.clone()], Some(Place::local(more)));
+            let (body, bad) = (self.new_block(), self.new_block());
+            self.terminate(Terminator::Switch {
+                value: Operand::Copy(Place::local(more)),
+                cases: vec![(1, body)],
+                default: bad,
+            });
+            self.switch_to(bad);
+            self.json_fail(ctx, &expected, fail);
+            self.switch_to(body);
+            let fp = self.field_place(place, ty, i as u32);
+            let elem_fail = self.new_block();
+            self.json_read(r, &fp, ctx, e, elem_fail);
+            let next = self.new_block();
+            self.goto(next);
+            self.switch_to(elem_fail);
+            self.json_prepend(ctx, Seg::Index(cint(i as i128, Ty::U64)));
+            self.goto(fail);
+            self.switch_to(next);
+        }
+        let end = self.temp(Ty::U8);
+        self.call_rt(Rt::JsonArrayNext, vec![ro], Some(Place::local(end)));
+        let (done, bad) = (self.new_block(), self.new_block());
+        self.terminate(Terminator::Switch {
+            value: Operand::Copy(Place::local(end)),
+            cases: vec![(0, done)],
+            default: bad,
+        });
+        self.switch_to(bad);
+        self.json_fail(ctx, &expected, fail);
+        self.switch_to(done);
+    }
+
     /// Make a fresh decode target all-zero. A target that needs no drop is assigned a zero
     /// value too: once a decoder is inlined, its stores on the success path are all the
     /// (path-insensitive) definite-assignment check can see.
@@ -229,6 +278,7 @@ impl FnLower<'_, '_> {
             TyKind::Unit => self.json_expect(Rt::JsonReadNull, vec![ro], ctx, "null", fail),
             TyKind::Option(e) => self.json_read_option(r, place, ctx, ty, e, fail),
             TyKind::Array(e) => self.json_read_array(r, place, ctx, e, fail),
+            TyKind::Tuple(es) => self.json_read_tuple(r, place, ctx, ty, &es, fail),
             // Literal types, literal unions and C-like enums: one of a fixed set of scalars.
             TyKind::Literal(_) | TyKind::Adt(..) if self.json_choices(ty).is_some() => {
                 self.json_read_choice(r, place, ctx, ty, fail)
@@ -237,9 +287,15 @@ impl FnLower<'_, '_> {
             TyKind::Adt(..) if self.cx.is_json_value(ty) => {
                 self.json_read_value(r, place, ctx, ty, fail)
             }
+            TyKind::Adt(..) if self.prelude_map(ty).is_some() => {
+                let (_, vt) = self.prelude_map(ty).unwrap_or_else(|| ice("not a Map"));
+                self.json_read_map(r, place, ctx, ty, vt, fail)
+            }
             TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => {
                 self.json_read_object(r, place, ctx, ty, fail)
             }
+            // Unreachable while this match accepts everything `velt_sema::json::unserializable`
+            // lets through for parse: keep the two in sync.
             k => ice(format_args!(
                 "JSON.parse into a non-deserializable type {k:?}"
             )),

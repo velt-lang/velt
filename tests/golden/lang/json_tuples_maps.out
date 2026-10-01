@@ -1,0 +1,15 @@
+[ [ 'a', 1 ], [ 'b', 2 ] ] b [["a",1],["b",2]]
+{ id: 1, at: [ 1.5, 2 ], tag: [ 't', 'x', true ] } {"id":1,"at":[1.5,2],"tag":["t","x",true]}
+expected array of length 2 at $.at
+expected array of length 2 at $.at
+expected number at $.at[1]
+expected "x" at $.tag[1]
+expected array of length 2 at $.at
+Map(2) { 'a' => 3, 'b' => 2 } Map(2) { 'k' => [ 'v', 'w' ], 'e"q' => [] } 2
+{"name":"x","counts":{"a":3,"b":2},"nested":{"k":["v","w"],"e\"q":[]}}
+Map(0) {} Map(0) {} null
+{"name":"x","counts":{},"nested":{}}
+expected i64 at $.counts.b
+expected object at $.counts
+expected string at $.nested.k[0]
+{"y":2,"x":3} {"y":2,"x":3}

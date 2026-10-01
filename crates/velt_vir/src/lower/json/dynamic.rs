@@ -76,14 +76,15 @@ impl Cx<'_> {
     }
 
     /// Does `t` have a JSON form? The lowering-side mirror of sema's stringify check
-    /// (`velt_sema::json`): numbers, bool, string, literals, arrays, `T | null`, C-like enums,
-    /// unions of writable members, `json.Value`, and structs/classes/object literals (not `Map`)
+    /// (`velt_sema::json`): numbers, bool, string, literals, arrays, tuples, `T | null`, C-like enums,
+    /// unions of writable members, `json.Value`, `Map<string, V>`, and structs/classes/object literals
     /// whose fields are writable. `stack` holds the ADTs being visited (recursive types).
     fn json_writable(&mut self, t: TyId, stack: &mut Vec<TyId>) -> bool {
         match self.kind(t) {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str => true,
             TyKind::Literal(_) => true,
             TyKind::Array(e) | TyKind::Option(e) => self.json_writable(e, stack),
+            TyKind::Tuple(es) => es.into_iter().all(|e| self.json_writable(e, stack)),
             TyKind::Adt(d, args) => {
                 if stack.contains(&t) || self.is_json_value(t) {
                     return true;
@@ -101,10 +102,15 @@ impl Cx<'_> {
     }
 
     /// The parts of ADT `d<args>` that must be writable: fields, union members' payloads, or
-    /// nothing for C-like enums. `None`: no JSON form (`Map`, payload enums).
+    /// the value type of a `Map<string, V>`, or nothing for C-like enums. `None`: no JSON form
+    /// (other maps, payload enums).
     fn json_members(&mut self, d: DefId, args: &[TyId]) -> Option<Vec<TyId>> {
         let tys: Vec<TyId> = match self.hir.def(d) {
-            hir::Def::Adt(a) if is_map(&a.name) => return None,
+            // `Map<string, V>` is an object.
+            hir::Def::Adt(a) if is_map(&a.name) => match args {
+                [k, v] if matches!(self.kind(*k), TyKind::Str) => return Some(vec![*v]),
+                _ => return None,
+            },
             hir::Def::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
             hir::Def::Enum(e) if e.variants.iter().all(|v| v.payload.is_empty()) => vec![],
             hir::Def::Enum(e) if e.is_union => e

@@ -15,7 +15,7 @@ const VALUES: u32 = 2;
 
 impl FnLower<'_, '_> {
     /// `(K, V)` if `ty` is the prelude `Map<K, V>` class.
-    fn prelude_map(&mut self, ty: TyId) -> Option<(TyId, TyId)> {
+    pub(in crate::lower) fn prelude_map(&mut self, ty: TyId) -> Option<(TyId, TyId)> {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             return None;
         };
