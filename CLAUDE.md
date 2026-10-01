@@ -21,6 +21,10 @@ follow it. The essentials for agents:
 - Try a program: `cargo run -p veltc --bin velt -- run tests/golden/m1/hello.vlt`
 
 ## Rules for agents
+0. Work in your own git worktree, never in the main checkout: `velt/main` stays on `main`, and each
+   task gets `velt/branches/<task>` (`git worktree add ../branches/<task> -b <task> origin/main`;
+   CONTRIBUTING.md "Working on several things at once"). If you find yourself in `main/`, create
+   your worktree first. Use a build directory of your own for that worktree.
 1. Stay within the crates your task owns. Treat the contracts as fixed (`ast.rs`, `hir`,
    `vir.rs` types, `velt_common`, public API signatures, `docs/internals/contracts/*`,
    `tests/golden/**`); if one must change, say so in your report and work around it meanwhile.

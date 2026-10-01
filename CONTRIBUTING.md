@@ -117,6 +117,31 @@ something that is not TypeScript only where TypeScript can't express it at nativ
    updates (the Reference marks unbuilt parts **Planned**), and a migration note if existing code
    breaks.
 
+## Working on several things at once
+
+Keep one checkout of `main` and a **git worktree per task**, side by side:
+
+```
+velt/
+  main/                 git clone https://github.com/velt-lang/velt main   (stays on main)
+  branches/
+    json-unions/        one worktree per task or agent
+    windows-wasm/
+```
+
+```sh
+cd velt/main && git pull
+git worktree add ../branches/<task> -b <task> origin/main   # start a task
+# ... work, commit, push, open a pull request ...
+git worktree remove ../branches/<task> && git branch -d <task>   # after it merged
+```
+
+Worktrees share one `.git`, so they are cheap and every branch is visible from every checkout.
+Never edit `main/` itself; it only ever fast-forwards. Give each worktree its own build
+directory (the default `target/` inside it, or `CARGO_TARGET_DIR` and `VELT_GOLDEN_WORK` on a
+bigger disk), so parallel builds never wait on each other's locks. Agents follow the same layout:
+one worktree per agent, created from `origin/main`.
+
 ## Commits and pull requests
 
 Work on a branch and open a pull request against `main`; nothing is pushed to `main` directly.
