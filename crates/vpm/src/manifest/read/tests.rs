@@ -59,6 +59,7 @@ fn full_manifest_matches_the_toml_one() {
           },
           paths: { "@app/*": "src/*", "@cfg": "src/config" },
           jsx: { importSource: "sigx" },
+          native: { path: "rust", targets: ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"], wasm: false },
         };
         "#,
     );
@@ -82,10 +83,16 @@ fn full_manifest_matches_the_toml_one() {
 
         [jsx]
         importSource = "sigx"
+
+        [native]
+        path = "rust"
+        targets = ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]
+        wasm = false
         "#,
     )
     .unwrap();
     assert_eq!(m, toml);
+    assert!(m.native.is_some());
 }
 
 #[test]
@@ -95,6 +102,7 @@ fn minimal_manifest_uses_defaults() {
     assert_eq!(m.registry, None);
     assert!(m.dependencies.is_empty() && m.paths.is_empty());
     assert_eq!(m.jsx, None);
+    assert_eq!(m.native, None);
     assert_eq!(read(&with("jsx: {}")).jsx, Some(JsxConfig::default()));
 }
 
@@ -343,4 +351,98 @@ fn many_distinct_keys_are_read() {
     let src = with(&format!("paths: {{ {keys} }}"));
     assert!(src.len() <= MAX_BYTES);
     assert_eq!(read(&src).paths.len(), 4_000);
+}
+
+#[test]
+fn native_object_matches_the_toml_table() {
+    let m = read(&with("native: { targets: [\"x86_64-pc-windows-msvc\"] }"));
+    let native = m.native.expect("native is decoded");
+    assert_eq!(native.path, "native");
+    assert_eq!(native.targets, ["x86_64-pc-windows-msvc"]);
+    assert!(!native.wasm);
+    let empty = read(&with("native: {}")).native.expect("native is decoded");
+    let toml = Manifest::parse(
+        "[package]
+name = \"app\"
+version = \"1.0.0\"
+[native]
+",
+    )
+    .unwrap()
+    .native
+    .unwrap();
+    assert_eq!(empty, toml);
+}
+
+#[test]
+fn native_keys_are_checked() {
+    let (message, covered) = error(&with("native: { target: [] }"));
+    assert_eq!(message, "unknown key `target` in the manifest");
+    assert_eq!(covered, "target");
+    let diags = Manifest::read(FILE, &with("native: { target: [] }")).unwrap_err();
+    assert_eq!(diags[0].notes, ["did you mean `targets`?"]);
+    let diags = Manifest::read(FILE, &with("natve: {}")).unwrap_err();
+    assert_eq!(diags[0].notes, ["did you mean `native`?"]);
+}
+
+#[test]
+fn native_rules_point_at_the_value() {
+    let (message, covered) = error(&with(
+        "native: { targets: [\"x86_64-unknown-linux-gnu\", \"sparc-sun-solaris\"] }",
+    ));
+    assert!(
+        message.starts_with("target `sparc-sun-solaris` is not supported (supported: "),
+        "{message}"
+    );
+    assert_eq!(covered, "\"sparc-sun-solaris\"");
+    for path in ["../x", "src", "target", ""] {
+        let (message, covered) = error(&with(&format!("native: {{ path: \"{path}\" }}")));
+        assert!(
+            message.contains("must be the name of a directory in the package root"),
+            "{path}: {message}"
+        );
+        assert_eq!(covered, format!("\"{path}\""));
+    }
+    let (message, covered) = error(&with("native: { wasm: true }"));
+    assert_eq!(
+        message,
+        "`wasm: true` is not supported yet: packages with native code cannot target WebAssembly"
+    );
+    assert_eq!(covered, "true");
+}
+
+#[test]
+fn native_values_have_the_right_kind() {
+    let cases = [
+        (
+            "native: true",
+            "`native` must be an object, not a boolean",
+            "true",
+        ),
+        (
+            "native: { path: 1 }",
+            "`path` must be a string, not a number",
+            "1",
+        ),
+        (
+            "native: { targets: \"x86_64-pc-windows-msvc\" }",
+            "`targets` must be an array, not a string",
+            "\"x86_64-pc-windows-msvc\"",
+        ),
+        (
+            "native: { targets: [1] }",
+            "`targets` entries must be strings, not a number",
+            "1",
+        ),
+        (
+            "native: { wasm: \"no\" }",
+            "`wasm` must be a boolean, not a string",
+            "\"no\"",
+        ),
+    ];
+    for (fields, message, text) in cases {
+        let (got, covered) = error(&with(fields));
+        assert_eq!(got, message, "{fields}");
+        assert_eq!(covered, text, "{fields}");
+    }
 }

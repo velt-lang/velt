@@ -10,6 +10,7 @@
 //!   dependencies: { json: "1.2", util: { path: "../util" } },
 //!   paths: { "@app/*": "src/*" },
 //!   jsx: { importSource: "sigx" },
+//!   native: { targets: ["x86_64-unknown-linux-gnu"] },
 //! };
 //! ```
 //!
@@ -84,8 +85,8 @@ struct Value {
 enum ValueKind {
     Str(String),
     Num,
-    Bool,
-    Array,
+    Bool(bool),
+    Array(Vec<Value>),
     Object(Vec<(ast::Ident, Value)>),
 }
 
@@ -94,8 +95,8 @@ impl ValueKind {
         match self {
             ValueKind::Str(_) => "a string",
             ValueKind::Num => "a number",
-            ValueKind::Bool => "a boolean",
-            ValueKind::Array => "an array",
+            ValueKind::Bool(_) => "a boolean",
+            ValueKind::Array(_) => "an array",
             ValueKind::Object(_) => "an object",
         }
     }
@@ -168,20 +169,24 @@ impl Reader<'_> {
         let kind = match &expr.kind {
             ExprKind::Lit(Lit::Str(s)) => ValueKind::Str(s.clone()),
             ExprKind::Lit(Lit::Int { .. } | Lit::Float { .. }) => ValueKind::Num,
-            ExprKind::Lit(Lit::Bool(_)) => ValueKind::Bool,
+            ExprKind::Lit(Lit::Bool(b)) => ValueKind::Bool(*b),
             ExprKind::Lit(Lit::Null) => {
                 self.error("`null` is not allowed; leave the key out", expr.span);
                 return None;
             }
             ExprKind::Array(elems) => {
+                let mut values = Vec::with_capacity(elems.len());
                 let mut ok = true;
                 for elem in elems {
-                    ok &= self.value(elem).is_some();
+                    match self.value(elem) {
+                        Some(v) => values.push(v),
+                        None => ok = false,
+                    }
                 }
                 if !ok {
                     return None;
                 }
-                ValueKind::Array
+                ValueKind::Array(values)
             }
             ExprKind::Object(props) => ValueKind::Object(self.props(props)?),
             other => {
@@ -291,6 +296,7 @@ impl Reader<'_> {
                 "dependencies" => manifest.dependencies = self.dependencies(v),
                 "paths" => manifest.paths = self.paths(v),
                 "jsx" => manifest.jsx = self.jsx(v),
+                "native" => manifest.native = self.native(v),
                 _ => self.unknown_key(key, &MANIFEST_KEYS),
             }
         }
@@ -421,7 +427,7 @@ impl Reader<'_> {
     }
 }
 
-const MANIFEST_KEYS: [&str; 7] = [
+const MANIFEST_KEYS: [&str; 8] = [
     "name",
     "version",
     "entry",
@@ -429,6 +435,7 @@ const MANIFEST_KEYS: [&str; 7] = [
     "dependencies",
     "paths",
     "jsx",
+    "native",
 ];
 const DEPENDENCY_KEYS: [&str; 2] = ["version", "path"];
 const JSX_KEYS: [&str; 1] = ["importSource"];
@@ -483,5 +490,6 @@ fn edit_distance(a: &str, b: &str) -> usize {
     row[b.len()]
 }
 
+mod native;
 #[cfg(test)]
 mod tests;
