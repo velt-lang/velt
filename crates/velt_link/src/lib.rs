@@ -23,10 +23,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod fast_ld;
+mod native;
 mod runtime_profile;
 mod shared;
 pub mod wasm;
 
+pub use native::NativeLink;
 pub use runtime_profile::runtime_lib_is_debug;
 pub use shared::shared_runtime_lib_name;
 
@@ -45,18 +47,6 @@ pub struct LinkRequest<'a> {
     pub release: bool,
     /// Native libraries of packages (empty for most programs).
     pub native: &'a [NativeLink],
-}
-
-/// One package's native library in a link.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NativeLink {
-    /// The shared library (`.so`, `.dylib`, `.dll`).
-    pub shared: PathBuf,
-    /// Windows: the import library of `shared`.
-    pub import_lib: Option<PathBuf>,
-    /// Link this prelinked object statically instead of `shared` (Linux and macOS release
-    /// builds; `None` links `shared`).
-    pub static_obj: Option<PathBuf>,
 }
 
 /// Operating-system family a target triple links for.
@@ -204,12 +194,7 @@ pub fn link(req: &LinkRequest) -> Result<(), String> {
         std::fs::create_dir_all(dir)
             .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     }
-    for n in req.native {
-        let file = n.static_obj.as_ref().unwrap_or(&n.shared);
-        if !file.is_file() {
-            return Err(format!("native library not found: {}", file.display()));
-        }
-    }
+    native::check_files(req.native)?;
     let shared = shared::is_shared(req.runtime_lib, os);
     match os {
         TargetOs::Windows => {
@@ -219,10 +204,7 @@ pub fn link(req: &LinkRequest) -> Result<(), String> {
             if shared {
                 shared::place_dll(req.runtime_lib, req.output)?;
             }
-            for n in req.native {
-                shared::place_file(&n.shared, req.output)?;
-            }
-            Ok(())
+            native::place_dlls(req.native, req.output)
         }
         TargetOs::Linux | TargetOs::MacOs => {
             let args = unix_args(req, os);
@@ -270,7 +252,7 @@ pub fn find_linker(target: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(cmd.get_program()))
 }
 
-fn msvc_args(req: &LinkRequest) -> Result<Vec<OsString>, String> {
+pub(crate) fn msvc_args(req: &LinkRequest) -> Result<Vec<OsString>, String> {
     let p = &WINDOWS;
     let mut args: Vec<OsString> = p.base_args.iter().map(OsString::from).collect();
     let extra = if req.release {
@@ -283,21 +265,13 @@ fn msvc_args(req: &LinkRequest) -> Result<Vec<OsString>, String> {
     out.push(req.output);
     args.push(out);
     args.extend(req.objects.iter().map(OsString::from));
-    for n in req.native {
-        let import = n.import_lib.as_ref().ok_or_else(|| {
-            format!(
-                "native library {} has no import library",
-                n.shared.display()
-            )
-        })?;
-        args.push(import.into());
-    }
+    args.extend(native::msvc_args(req.native)?);
     args.push(req.runtime_lib.into());
     args.extend(p.native_libs.iter().map(OsString::from));
     Ok(args)
 }
 
-fn unix_args(req: &LinkRequest, os: TargetOs) -> Vec<OsString> {
+pub(crate) fn unix_args(req: &LinkRequest, os: TargetOs) -> Vec<OsString> {
     let p = platform(os);
     let mut args: Vec<OsString> = p.base_args.iter().map(OsString::from).collect();
     if os == TargetOs::MacOs {
@@ -311,16 +285,13 @@ fn unix_args(req: &LinkRequest, os: TargetOs) -> Vec<OsString> {
     };
     args.extend(extra.iter().map(OsString::from));
     args.extend(req.objects.iter().map(OsString::from));
-    let statics = req.native.iter().filter_map(|n| n.static_obj.as_ref());
-    args.extend(statics.map(OsString::from));
+    args.extend(native::static_objects(req.native));
     if shared::is_shared(req.runtime_lib, os) {
         args.extend(shared::unix_args(req.runtime_lib));
     } else {
         args.push(req.runtime_lib.into());
     }
-    for n in req.native.iter().filter(|n| n.static_obj.is_none()) {
-        args.extend(shared::unix_lib_args(&n.shared));
-    }
+    args.extend(native::unix_shared_args(req.native));
     args.extend(p.native_libs.iter().map(OsString::from));
     args.push("-o".into());
     args.push(req.output.into());
@@ -662,61 +633,6 @@ mod tests {
         assert!(find_runtime_lib_in(target, Some(tmp.join("missing.a")), Some(&exe)).is_err());
 
         let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn native_libraries_in_unix_and_msvc_args() {
-        let objs = [PathBuf::from("p.o")];
-        let native = [
-            NativeLink {
-                shared: PathBuf::from("/c/a/libvelt_native_a.so"),
-                import_lib: None,
-                static_obj: Some(PathBuf::from("/c/a/a.o")),
-            },
-            NativeLink {
-                shared: PathBuf::from("/c/b/libvelt_native_b.so"),
-                import_lib: None,
-                static_obj: None,
-            },
-        ];
-        let req = LinkRequest {
-            target: "x86_64-unknown-linux-gnu",
-            objects: &objs,
-            runtime_lib: Path::new("libvelt_rt.a"),
-            output: Path::new("out"),
-            release: true,
-            native: &native,
-        };
-        let a: Vec<String> = unix_args(&req, TargetOs::Linux)
-            .iter()
-            .map(|s| s.to_string_lossy().into_owned())
-            .collect();
-        let pos = |s: &str| a.iter().position(|x| x == s).unwrap();
-        // The prelinked object goes with the program's objects; the shared one by `-l` name.
-        assert!(pos("p.o") < pos("/c/a/a.o") && pos("/c/a/a.o") < pos("libvelt_rt.a"));
-        assert!(pos("-lvelt_native_b") > pos("libvelt_rt.a"));
-        assert!(!a.iter().any(|x| x.contains("velt_native_a.so")));
-
-        let dll = [NativeLink {
-            shared: PathBuf::from("C:/c/b/b.dll"),
-            import_lib: Some(PathBuf::from("C:/c/b/b.dll.lib")),
-            static_obj: None,
-        }];
-        let req = LinkRequest {
-            target: "x86_64-pc-windows-msvc",
-            runtime_lib: Path::new("velt_rt.lib"),
-            native: &dll,
-            ..req
-        };
-        let a: Vec<String> = msvc_args(&req)
-            .unwrap()
-            .iter()
-            .map(|s| s.to_string_lossy().into_owned())
-            .collect();
-        assert!(
-            a.iter().position(|x| x == "C:/c/b/b.dll.lib")
-                < a.iter().position(|x| x == "velt_rt.lib")
-        );
     }
 
     #[test]
