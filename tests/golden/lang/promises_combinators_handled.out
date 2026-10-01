@@ -3,6 +3,6 @@ all lost the race: [ 7 ]
 rejects after 150 ms
 allSettled lost the race: 0
 kept race: 3
-rejects after 250 ms
-rejects after 300 ms
+rejects after 400 ms
+rejects after 600 ms
 exits normally

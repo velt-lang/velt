@@ -32,15 +32,15 @@ async function main() {
     return [7];
   };
   console.log("all lost the race:", await Promise.race([all, fallback()]));
-  const settled = Promise.allSettled([valueAfter(10, 1), failLoudly(250)]);
+  const settled = Promise.allSettled([valueAfter(10, 1), failLoudly(400)]);
   const nothing = async (): Promise<PromiseSettledResult<i64, Boom>[]> => {
     await sleep(200);
     return [];
   };
   const r = await Promise.race([settled, nothing()]);
   console.log("allSettled lost the race:", r.length);
-  const kept = Promise.race([valueAfter(10, 3), failLoudly(300)]);
+  const kept = Promise.race([valueAfter(10, 3), failLoudly(600)]);
   console.log("kept race:", await kept);
-  await sleep(400);
+  await sleep(800);
   console.log("exits normally");
 }
