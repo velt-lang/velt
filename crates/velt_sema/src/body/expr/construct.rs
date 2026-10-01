@@ -63,6 +63,12 @@ impl FnCx<'_, '_> {
             bounds: names.bounds,
         };
         let ck = self.check_call(&c, slots, args, self.hint(exp), span);
+        if Some(d) == self.cx.prelude_adt("Record") && self.owner != Some(d) {
+            let rec = self.cx.ty.intern(TyKind::Adt(d, ck.type_args.clone()));
+            if !self.check_new_record(rec, span) {
+                return self.error_expr(span);
+            }
+        }
         if let Some(c) = ctor {
             self.throw_src(ThrowSrc::Call(c, ck.type_args.clone(), span));
         }

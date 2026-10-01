@@ -106,6 +106,11 @@ impl Cx<'_> {
     /// (other maps, payload enums).
     fn json_members(&mut self, d: DefId, args: &[TyId]) -> Option<Vec<TyId>> {
         let tys: Vec<TyId> = match self.hir.def(d) {
+            // `Record<K, V>` is an object (sema checked its keys).
+            hir::Def::Adt(a) if is_record(&a.name) => match args {
+                [_, v] => return Some(vec![*v]),
+                _ => return None,
+            },
             // `Map<string, V>` is an object.
             hir::Def::Adt(a) if is_map(&a.name) => match args {
                 [k, v] if matches!(self.kind(*k), TyKind::Str) => return Some(vec![*v]),
@@ -122,6 +127,11 @@ impl Cx<'_> {
         };
         Some(tys.into_iter().map(|f| self.subst(f, args)).collect())
     }
+}
+
+/// The prelude's `Record`.
+fn is_record(name: &str) -> bool {
+    name == "Record" || name.ends_with("::Record") || name.ends_with(".Record")
 }
 
 /// The prelude's `Map` (serialized by sema's rules as having no JSON form).

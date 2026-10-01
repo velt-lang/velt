@@ -288,8 +288,12 @@ impl FnLower<'_, '_> {
                 self.json_read_value(r, place, ctx, ty, fail)
             }
             TyKind::Adt(..) if self.prelude_map(ty).is_some() => {
-                let (_, vt) = self.prelude_map(ty).unwrap_or_else(|| ice("not a Map"));
-                self.json_read_map(r, place, ctx, ty, vt, fail)
+                let kv = self.prelude_map(ty).unwrap_or_else(|| ice("not a Map"));
+                self.json_read_map(r, place, ctx, ty, kv, fail)
+            }
+            TyKind::Adt(..) if self.prelude_record(ty).is_some() => {
+                let kv = self.prelude_record(ty).unwrap_or_else(|| ice("not a Record"));
+                self.json_read_record(r, place, ctx, ty, kv, fail)
             }
             TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => {
                 self.json_read_object(r, place, ctx, ty, fail)

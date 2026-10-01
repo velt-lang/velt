@@ -196,6 +196,7 @@ pub fn sx(e: &Expr) -> String {
                 UnaryOp::Not => "!",
                 UnaryOp::BitNot => "~",
                 UnaryOp::TypeOf => "typeof",
+                UnaryOp::Delete => "delete",
             };
             format!("({} {})", o, sx(expr))
         }

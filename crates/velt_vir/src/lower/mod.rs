@@ -74,7 +74,7 @@ pub(crate) use cfg::successors;
 pub(crate) use glue::Glue;
 // The VIR interpreter (tests) formats like the runtime.
 #[cfg(test)]
-pub(crate) use glue::inspect_quote;
+pub(crate) use glue::{inspect_key, inspect_quote};
 use glue::VtableKey;
 
 /// Lower a whole checked program (see [`crate::lower`]).

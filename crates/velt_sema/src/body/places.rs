@@ -72,6 +72,10 @@ impl FnCx<'_, '_> {
     /// assignment through it):
     /// checks that its root may be mutated and marks the place `BorrowMut`.
     pub fn use_mutably(&mut self, e: &mut hir::Expr, what: &str) {
+        if self.is_record_read(e) {
+            self.record_copy_error(e.span);
+            return;
+        }
         if !is_place(e) {
             return;
         }
@@ -81,6 +85,10 @@ impl FnCx<'_, '_> {
 
     /// Can the value behind place `e` be modified? Reports an error if not.
     pub fn require_mutable(&mut self, e: &hir::Expr, what: &str) -> bool {
+        if self.is_record_read(root_expr(e)) {
+            self.record_copy_error(e.span);
+            return false;
+        }
         if let H::Global(d) = root_expr(e).kind {
             let name = self
                 .cx
@@ -96,6 +104,10 @@ impl FnCx<'_, '_> {
         let Some(l) = place_root(e) else {
             return true;
         };
+        if self.f.record_copies.contains(&l) {
+            self.record_copy_error(e.span);
+            return false;
+        }
         let name = self.f.locals[l.0 as usize].name.clone();
         let span = root_expr(e).span;
         // Params and `this` may always be modified: whether the caller's value is (a mutable

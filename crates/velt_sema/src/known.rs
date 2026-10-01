@@ -93,6 +93,24 @@ impl Ctx<'_> {
             .any(|p| self.owns_resource_depth(p, depth + 1))
     }
 
+    /// Is `e` a read of a `Record` value (`r[k]`: a call of `Record.__get` / `__at`)? It
+    /// yields a copy, so modifying it is an error.
+    pub fn is_record_read(&self, e: &crate::hir::Expr) -> bool {
+        let crate::hir::ExprKind::Call {
+            callee: crate::hir::Callee::Def(d, _),
+            ..
+        } = &e.kind
+        else {
+            return false;
+        };
+        if self.prelude_adt("Record").is_none() {
+            return false;
+        }
+        let name = &self.fn_info(*d).name;
+        name.starts_with("std/prelude/")
+            && (name.ends_with("::Record.__get") || name.ends_with("::Record.__at"))
+    }
+
     /// The dynamic JSON value class (`JsonValue` = std/prelude/json's private `Value`),
     /// recognized by name like the lowering's JSON glue does.
     pub fn is_json_value(&self, d: DefId) -> bool {

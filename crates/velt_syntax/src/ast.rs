@@ -408,6 +408,7 @@ pub enum UnaryOp {
     Not,    // !x
     BitNot, // ~x
     TypeOf, // typeof x
+    Delete, // delete r[k] (only on `Record`s; sema checks)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

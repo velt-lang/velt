@@ -30,6 +30,7 @@ mod numbers;
 mod object;
 mod ops;
 mod ordering;
+mod record;
 mod setters;
 mod spread;
 mod std_glue;

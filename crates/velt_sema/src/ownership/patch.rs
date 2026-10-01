@@ -142,6 +142,16 @@ fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
         E::Upcast(inner) => &mut **inner,
         _ => e,
     };
+    if cx.is_record_read(projection_root(target)) {
+        errors.push(
+            Diagnostic::error(
+                "cannot modify a value read from a `Record`: it is a copy",
+                target.span,
+            )
+            .with_note("assign the changed value back with `r[k] = ...`"),
+        );
+        return false;
+    }
     if !is_place(target) || outer_mode(target) != Some(UseMode::Borrow) {
         return false;
     }
@@ -157,6 +167,17 @@ fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
     }
     set_place_mode(target, UseMode::BorrowMut);
     true
+}
+
+/// The expression a chain of field/element/unwrap projections starts from.
+fn projection_root(e: &Expr) -> &Expr {
+    match &e.kind {
+        E::Field { base, .. }
+        | E::Index { base, .. }
+        | E::UnwrapSome(base, _)
+        | E::UnwrapVariant { expr: base, .. } => projection_root(base),
+        _ => e,
+    }
 }
 
 fn outer_mode(e: &Expr) -> Option<UseMode> {

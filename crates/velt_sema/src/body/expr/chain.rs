@@ -33,6 +33,9 @@ impl FnCx<'_, '_> {
         }
         let payload = self.cx.ty.opt_payload(s.ty);
         let (l, mode) = self.option_binding(&s, payload.unwrap_or(s.ty), &name, false);
+        if self.is_record_read(&s) {
+            self.f.record_copies.insert(l);
+        }
         self.push_scope();
         if let Some(scope) = self.f.scopes.last_mut() {
             scope.names.insert(name, l);

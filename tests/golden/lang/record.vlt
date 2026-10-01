@@ -1,0 +1,68 @@
+// Record<K, V> (docs/internals/design/record.md, issue #17): TypeScript object syntax over an
+// insertion-ordered dictionary; open (`string` keys, reads are `V | null`) and closed
+// (literal keys, every key present) records, Object.keys/values/entries, delete, JSON.
+type Limit = "cpu" | "mem";
+
+function syntax() {
+  const env: Record<string, string> = { HOME: "/home/a", SHELL: "zsh" };
+  const home = env["HOME"] ?? "/";
+  env["PATH"] = "/bin";
+  env.EDITOR = "vi";
+  console.log(home, env.PATH, env["nope"], Object.keys(env));
+  delete env["SHELL"];
+  for (const [k, v] of Object.entries(env)) {
+    console.log(k, v);
+  }
+  const l: Record<Limit, i64> = { cpu: 2, mem: 512 };
+  l.cpu += 1;
+  l["mem"]++;
+  const k: Limit = "mem";
+  console.log(l.cpu, l[k], Object.values(l));
+  const more: Record<string, string> = { ...env, X: "1" };
+  console.log(Object.keys(more));
+}
+
+function formatting() {
+  const r: Record<string, i64[]> = { a: [1], "b c": [], _x: [2] };
+  const e: Record<string, string> = {};
+  const l: Record<"cpu" | "mem limit", i64> = { cpu: 1, "mem limit": 2 };
+  console.log(r, e, l);
+  console.log([r]);
+}
+
+enum Tier {
+  Free = "free",
+  Pro = "pro",
+}
+
+type Config = {
+  env: Record<string, string>;
+  limits: Record<Limit, i64>;
+  prices: Record<Tier, f64>;
+};
+
+function show(text: string) {
+  try {
+    const c = JSON.parse<Config>(text);
+    console.log(c);
+    console.log(JSON.stringify(c));
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+
+function json() {
+  show(
+    '{"env":{"HOME":"/h","A B":"x"},"limits":{"mem":512,"cpu":2,"gpu":1},"prices":{"pro":9.5,"free":0}}',
+  );
+  show('{"env":{},"limits":{"cpu":2},"prices":{"pro":9.5,"free":0}}');
+  show('{"env":{"a":1},"limits":{"cpu":2,"mem":1},"prices":{"pro":9.5,"free":0}}');
+  show('{"env":{},"limits":{"cpu":"x","mem":1},"prices":{}}');
+  show('{"env":{},"limits":{"cpu":1,"mem":1,"gpu":[1,}],"prices":{}}');
+}
+
+function main() {
+  syntax();
+  formatting();
+  json();
+}

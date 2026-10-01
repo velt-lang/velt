@@ -104,6 +104,19 @@ impl FnLower<'_, '_> {
     }
 }
 
+/// An object key as `console.log` shows it: bare when it is an identifier, else quoted
+/// (the runtime's `velt_rt_strbuf_push_inspect_key` does the same at run time).
+pub(crate) fn inspect_key(s: &str) -> String {
+    let b = s.as_bytes();
+    let ident = b.first().is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_' || *c == b'$')
+        && b.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_' || *c == b'$');
+    if ident {
+        s.to_string()
+    } else {
+        inspect_quote(s)
+    }
+}
+
 /// `s` quoted and escaped the way `console.log` shows a string inside a container (node's
 /// `util.inspect`; the runtime's `velt_rt_strbuf_push_inspect_str` does the same at run time).
 pub(crate) fn inspect_quote(s: &str) -> String {

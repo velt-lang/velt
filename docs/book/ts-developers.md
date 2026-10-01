@@ -191,7 +191,7 @@ move rule disappears ([Memory without a garbage collector](memory.md)).
 
 ## Not supported
 
-`var`, `eval`, prototypes, `delete`, `for...in`, `with`, getters on object literals,
+`var`, `eval`, prototypes, `delete` (other than on a `Record`), `for...in`, `with`, getters on object literals,
 decorators, generators (`function*`, `yield`), `Symbol` (other than `Symbol.dispose` and
 `Symbol.asyncDispose`), `BigInt` literals (use [`velt:bigint`](../std/bigint.md)), Unicode
 identifiers, the logical assignments `&&=`, `||=`, `??=` (planned), and JSX (**planned** for

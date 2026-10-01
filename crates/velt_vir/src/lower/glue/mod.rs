@@ -29,7 +29,7 @@ mod thunk;
 mod vtable;
 
 #[cfg(test)]
-pub(crate) use literals::inspect_quote;
+pub(crate) use literals::{inspect_key, inspect_quote};
 pub(super) use vtable::VtableKey;
 
 use velt_sema::hir::{TyId, TyKind};

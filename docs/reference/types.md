@@ -297,7 +297,7 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
 - **Object literals** `{ name: "a", n: 1 }` have anonymous object types
   `{ name: string; n: i64 }` with a fixed layout (a field access is one load). An object type
   accepts exactly its fields: extra fields are a type error, and adding a property later is an
-  error (use a `Map`).
+  error (use a `Map` or a `Record`).
 - **Spread**: `{ ...a, b: 1 }` builds a merged object at compile time (later keys win);
   `[x, ...xs]` builds a new array. Spread arguments, `f(...xs)`, are not supported.
 - **Destructuring**: `const [a, b] = pair;`, `const [head, ...rest] = xs;`,
@@ -320,9 +320,20 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   updates: `upsert(k, init, (v) => v + 1)`, `update(k, (v) => { v.push(x); }): bool` (the
   callback gets the stored value itself) and `getOrInsert(k, () => v)`. Keys: numbers, `bool`,
   `string`, Copy structs. Iteration follows insertion order, like JS.
+- **`Record<K, V>`**: a dictionary written with object syntax, like TypeScript's `Record`.
+  `K` is `string`, a union of string literal types, or a string enum. With `string` keys a
+  record is *open*: `r[k]` and `r.name` are `V | null`, `r[k] = v` inserts or replaces, and
+  `delete r[k]` removes. With literal keys it is *closed*: it always holds every key, so
+  `r.cpu` is `V`, a typo is an error, and `delete` is not allowed. Build a record from an
+  object literal where a record is expected (`const r: Record<string, i64> = {}`; a closed
+  record's literal must list every key) or with `new Record<string, V>()`. A literal may
+  spread another record (`{ ...r, x: 1 }`). `Object.keys(r)`, `Object.values(r)` and
+  `Object.entries(r)` return arrays in insertion order. Reads return a copy, so modifying
+  `r[k].push(x)` is an error: assign the changed value back. `console.log` and `JSON` treat a
+  record as an object. A literal for an enum-keyed record is not supported yet.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,
-  strings, literal types, arrays, tuples, enums, nullable values, `Map<string, V>`, structs,
-  classes and anonymous objects
+  strings, literal types, arrays, tuples, enums, nullable values, `Map<string, V>`,
+  `Record<K, V>`, structs, classes and anonymous objects
   ([`velt:json`](../std/json.md)).
 
 ```ts

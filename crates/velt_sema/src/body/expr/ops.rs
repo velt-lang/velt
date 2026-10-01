@@ -114,6 +114,7 @@ impl FnCx<'_, '_> {
         let num_exp = exp.filter(|t| self.cx.ty.is_numeric(*t));
         let (uop, inner) = match op {
             ast::UnaryOp::TypeOf => return self.typeof_value(operand, span),
+            ast::UnaryOp::Delete => return self.delete_expr(operand, span),
             ast::UnaryOp::Neg => {
                 let inner = match &operand.kind {
                     ast::ExprKind::Lit(l @ ast::Lit::Int { .. }) => {

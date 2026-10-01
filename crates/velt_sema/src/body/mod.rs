@@ -163,6 +163,8 @@ pub(crate) struct Frame {
     pub field_tokens: Vec<field_narrow::FieldToken>,
     /// `const`s bound by reference (`const_borrow`).
     pub const_refs: std::collections::HashSet<LocalId>,
+    /// Bindings of a value read from a `Record` (`r[k]?.f()`): copies, so never mutated.
+    pub record_copies: std::collections::HashSet<LocalId>,
 }
 
 impl Frame {
@@ -186,6 +188,7 @@ impl Frame {
             super_called: false,
             field_tokens: vec![],
             const_refs: Default::default(),
+            record_copies: Default::default(),
         }
     }
 }

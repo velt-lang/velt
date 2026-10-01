@@ -78,6 +78,11 @@ impl FnLower<'_, '_> {
             .json_choices(ty)
             .unwrap_or_else(|| ice("JSON choice of a type without fixed values"));
         let idx = self.json_match_choice(r, ctx, &alts, fail);
+        self.json_store_choice(place, ty, idx);
+    }
+
+    /// Store choice `idx` (a `U32` local, see `json_choices`) of `ty` into `place`.
+    pub(super) fn json_store_choice(&mut self, place: &Place, ty: TyId, idx: Local) {
         match self.cx.kind(ty) {
             TyKind::Literal(_) => {}
             TyKind::Adt(..) if self.cx.is_union(ty) => {

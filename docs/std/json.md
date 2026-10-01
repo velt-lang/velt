@@ -7,8 +7,9 @@
   `expected string at $.name`), `JSON.parseValue(text): Value`.
 - `JSON.parse<T>` decodes numbers, `bool`, `string`, arrays, `T | null`, structs, classes, object
   literals and `Value` (any JSON value, kept as a tree). A tuple (`[string, f64]`) is an array
-  of exactly its length. A `Map<string, V>` is an object with any keys, written in insertion
-  order (a repeated key keeps the last value). Unlike JavaScript, which writes a `Map` as `{}`,
+  of exactly its length. A `Map<string, V>` or a `Record<string, V>` is an object with any keys,
+  written in insertion order (a repeated key keeps the last value). A record with literal keys
+  (`Record<"cpu" | "mem", i64>`) needs every key and skips other members. Unlike JavaScript, which writes a `Map` as `{}`,
   Velt writes its entries. Maps with other key types, functions, interfaces, promises and
   `shared` values have no JSON form; using them is a compile error. Values from a fixed set are checked:
   literal types (`kind: "task"`), unions of literal types (`"low" | "normal" | "high"`), string
