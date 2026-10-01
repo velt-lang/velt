@@ -1,0 +1,410 @@
+// std/cli: command-line argument parsing (Node's `util.parseArgs` rules, commander-style API).
+//
+// Build a parser, then parse an argv array (usually `args()` from std/process):
+//
+//   const p = new ArgParser("tool", "Does things")
+//     .flag("verbose", { short: "v", help: "Chatty output" })
+//     .option("out", { short: "o", default: "out.txt", help: "Output file" })
+//     .positional("input", "File to read");
+//   const a = p.parse(args());
+//   if (a.flag("help")) { console.log(p.help()); return; }
+//
+// Builder methods consume the parser and return it (chain them, or `p = p.flag(...)`).
+// Accepted syntax: `--name`, `--name=value`, `--name value`, `--no-name` (flag set to false),
+// `-v`, `-abc` (short flags clustered), `-o value` / `-ovalue` (short option, value attached or
+// next), `--` (everything after is positional) and `-` (a positional). An option's value is
+// taken verbatim even if it starts with `-`. Repeated options keep every value (`getAll`).
+// Every parser has `-h, --help`.
+
+// A usage error: unknown option, missing or unexpected value, bad integer.
+export class CliError extends Error {}
+
+// Settings of a boolean flag.
+export struct FlagSpec {
+  // One-character alias (`v` for `-v`).
+  short?: string;
+  help?: string;
+}
+
+// Settings of an option that takes a value.
+export struct OptionSpec {
+  // One-character alias (`o` for `-o`).
+  short?: string;
+  // Value when the option is absent.
+  default?: string;
+  help?: string;
+  // Placeholder shown in `help()` (default `value`).
+  valueName?: string;
+}
+
+// One declared flag or option.
+class ArgSpec {
+  name: string;
+  short: string;
+  help: string;
+  takesValue: bool;
+  hasDefault: bool = false;
+  defaultValue: string = "";
+  valueName: string = "value";
+
+  constructor(name: string, short: string, help: string, takesValue: bool) {
+    this.name = name;
+    this.short = short;
+    this.help = help;
+    this.takesValue = takesValue;
+  }
+}
+
+// The result of `ArgParser.parse` (constructed by it).
+export class ParsedArgs {
+  // Arguments that are not options, in order (including those after `--`).
+  positionals: string[];
+  private flagNames: string[];
+  private flagValues: bool[];
+  private values: Map<string, string[]>;
+  private defaults: Map<string, string>;
+  private positionalNames: string[];
+
+  constructor(
+    positionals: string[],
+    flagNames: string[],
+    flagValues: bool[],
+    values: Map<string, string[]>,
+    defaults: Map<string, string>,
+    positionalNames: string[],
+  ) {
+    this.positionals = positionals;
+    this.flagNames = flagNames;
+    this.flagValues = flagValues;
+    this.values = values;
+    this.defaults = defaults;
+    this.positionalNames = positionalNames;
+  }
+
+  // Whether flag `name` was given (the last `--name` / `--no-name` wins).
+  flag(name: string): bool {
+    for (let i = this.flagNames.length; i > 0; i--) {
+      if (this.flagNames[i - 1] == name) {
+        return this.flagValues[i - 1];
+      }
+    }
+    return false;
+  }
+
+  // The last value of option `name`, else its default, else the declared positional of that
+  // name, else null.
+  get(name: string): string | null {
+    const all = this.values.get(name);
+    if (all != null && all.length > 0) {
+      return all[all.length - 1].clone();
+    }
+    const d = this.defaults.get(name);
+    if (d != null) {
+      return d;
+    }
+    const p = this.positionalNames.indexOf(name);
+    if (p >= 0 && (p as usize) < this.positionals.length) {
+      return this.positionals[p as usize].clone();
+    }
+    return null;
+  }
+
+  // `get(name)`, or `fallback` when it is null.
+  getOr(name: string, fallback: string): string {
+    return this.get(name) ?? fallback;
+  }
+
+  // Every value given for option `name`, in order (the default is not included).
+  getAll(name: string): string[] {
+    return this.values.get(name) ?? [];
+  }
+
+  // Whether option or flag `name` was given explicitly.
+  has(name: string): bool {
+    return this.values.has(name) || this.flagNames.includes(name);
+  }
+
+  // `get(name)` as an integer (decimal digits with an optional sign), or null when absent;
+  // throws `CliError` if the value is not an integer.
+  getInt(name: string): i64 | null {
+    const v = this.get(name);
+    if (v == null) {
+      return null;
+    }
+    const n = parseInteger(v);
+    if (n == null) {
+      throw new CliError(`Option '${name}' expects an integer, got '${v}'`);
+    }
+    return n;
+  }
+}
+
+// `[+-]digits` as an i64, or null (also on overflow).
+function parseInteger(s: string): i64 | null {
+  const len = s.length as i64;
+  const sign = s.charCodeAt(0);
+  let i: i64 = sign == 43 || sign == 45 ? 1 : 0;
+  if (i >= len) {
+    return null;
+  }
+  let v: i64 = 0;
+  for (; i < len; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 48 || c > 57 || v > (9223372036854775807 - (c - 48)) / 10) {
+      return null;
+    }
+    v = v * 10 + (c - 48);
+  }
+  return sign == 45 ? -v : v;
+}
+
+// What `ArgParser.parse` collects before building a ParsedArgs.
+class ArgRun {
+  positionals: string[] = [];
+  flagNames: string[] = [];
+  flagValues: bool[] = [];
+  values: Map<string, string[]> = new Map<string, string[]>();
+
+  setFlag(name: string, value: bool) {
+    this.flagNames.push(name);
+    this.flagValues.push(value);
+  }
+
+  addValue(name: string, value: string) {
+    const added = this.values.update(name, (vs) => {
+      vs.push(value.clone());
+    });
+    if (!added) {
+      this.values.set(name, [value]);
+    }
+  }
+}
+
+// A command-line parser declared with `flag`, `option` and `positional` (see the header).
+export class ArgParser {
+  private program: string;
+  private description: string;
+  private specs: ArgSpec[] = [];
+  private positionalNames: string[] = [];
+  private positionalHelp: string[] = [];
+
+  // `program` is the name shown in `help()`; `description` is printed under the usage line.
+  constructor(program: string, description: string = "") {
+    this.program = program;
+    this.description = description;
+    this.specs.push(new ArgSpec("help", "h", "Show this help", false));
+  }
+
+  // Declares boolean flag `--name` (also `--no-name`).
+  flag(name: string, spec: FlagSpec = {}): ArgParser {
+    this.add(new ArgSpec(name, spec.short ?? "", spec.help ?? "", false));
+    return this;
+  }
+
+  // Declares option `--name <value>`.
+  option(name: string, spec: OptionSpec = {}): ArgParser {
+    const s = new ArgSpec(name, spec.short ?? "", spec.help ?? "", true);
+    const d = spec.default;
+    if (d != null) {
+      s.hasDefault = true;
+      s.defaultValue = d.clone();
+    }
+    s.valueName = spec.valueName ?? "value";
+    this.add(s);
+    return this;
+  }
+
+  // Appends `s`, or replaces the spec of the same name (so `help` can be redeclared).
+  private add(s: ArgSpec) {
+    const k = this.find(s.name);
+    if (k >= 0) {
+      this.specs[k as usize] = s;
+    } else {
+      this.specs.push(s);
+    }
+  }
+
+  // Names the next positional argument (for `help()` and `ParsedArgs.get(name)`); positionals
+  // are optional and extra ones are allowed — check `positionals.length` yourself.
+  positional(name: string, help: string = ""): ArgParser {
+    this.positionalNames.push(name);
+    this.positionalHelp.push(help);
+    return this;
+  }
+
+  // Parses `args` (without the program path). Throws `CliError` on unknown options, missing
+  // option values and values given to flags.
+  parse(args: string[]): ParsedArgs {
+    const run = new ArgRun();
+    let i: usize = 0;
+    while (i < args.length) {
+      i++;
+      if (args[i - 1] == "--") {
+        for (; i < args.length; i++) {
+          run.positionals.push(args[i].clone());
+        }
+      } else if (args[i - 1].startsWith("--")) {
+        i = this.parseLong(run, args[i - 1], args, i);
+      } else if (args[i - 1].startsWith("-") && args[i - 1].length > 1) {
+        i = this.parseShort(run, args[i - 1], args, i);
+      } else {
+        run.positionals.push(args[i - 1].clone());
+      }
+    }
+    const defaults = new Map<string, string>();
+    for (const s of this.specs) {
+      if (s.hasDefault) {
+        defaults.set(s.name.clone(), s.defaultValue.clone());
+      }
+    }
+    return new ParsedArgs(
+      // A class's fields can't be moved out; argv-sized copies are cheap.
+      run.positionals.clone(),
+      run.flagNames.clone(),
+      run.flagValues.clone(),
+      run.values.clone(),
+      defaults,
+      this.positionalNames.clone(),
+    );
+  }
+
+  // `a` (= `args[i - 1]`) is `--name`, `--name=value` or `--no-name`; returns the next index.
+  private parseLong(run: ArgRun, a: string, args: string[], i: usize): usize {
+    const eq = a.indexOf("=");
+    const name = eq < 0 ? a.slice(2) : a.slice(2, eq);
+    const k = this.find(name);
+    if (k < 0) {
+      if (eq < 0 && name.startsWith("no-")) {
+        const neg = this.find(name.slice(3));
+        if (neg >= 0 && !this.specs[neg as usize].takesValue) {
+          run.setFlag(name.slice(3), false);
+          return i;
+        }
+      }
+      throw new CliError(`Unknown option '--${name}'`);
+    }
+    if (!this.specs[k as usize].takesValue) {
+      if (eq >= 0) {
+        throw new CliError(`Option '--${name}' does not take a value`);
+      }
+      run.setFlag(name, true);
+      return i;
+    }
+    if (eq >= 0) {
+      run.addValue(name, a.slice(eq + 1));
+      return i;
+    }
+    if (i >= args.length) {
+      throw new CliError(`Option '--${name}' requires a value`);
+    }
+    run.addValue(name, args[i].clone());
+    return i + 1;
+  }
+
+  // `a` (= `args[i - 1]`) is a cluster of short flags, possibly ending in an option; returns
+  // the next index.
+  private parseShort(run: ArgRun, a: string, args: string[], i: usize): usize {
+    const len = a.length as i64;
+    for (let j: i64 = 1; j < len; j++) {
+      const ch = a.slice(j, j + 1);
+      const k = this.findShort(ch);
+      if (k < 0) {
+        throw new CliError(`Unknown option '-${ch}'`);
+      }
+      if (!this.specs[k as usize].takesValue) {
+        run.setFlag(this.specs[k as usize].name.clone(), true);
+        continue;
+      }
+      if (j + 1 < len) {
+        run.addValue(this.specs[k as usize].name.clone(), a.slice(j + 1));
+        return i;
+      }
+      if (i >= args.length) {
+        throw new CliError(`Option '-${ch}' (--${this.specs[k as usize].name}) requires a value`);
+      }
+      run.addValue(this.specs[k as usize].name.clone(), args[i].clone());
+      return i + 1;
+    }
+    return i;
+  }
+
+  private find(name: string): i64 {
+    for (let k: usize = 0; k < this.specs.length; k++) {
+      if (this.specs[k].name == name) {
+        return k as i64;
+      }
+    }
+    return -1;
+  }
+
+  private findShort(ch: string): i64 {
+    for (let k: usize = 0; k < this.specs.length; k++) {
+      if (this.specs[k].short == ch) {
+        return k as i64;
+      }
+    }
+    return -1;
+  }
+
+  // Usage text: the usage line, description, arguments and options with help and defaults.
+  help(): string {
+    const lines: string[] = [];
+    let usage = `Usage: ${this.program} [options]`;
+    for (const p of this.positionalNames) {
+      usage = `${usage} [${p}]`;
+    }
+    lines.push(usage);
+    if (this.description.length > 0) {
+      lines.push("");
+      lines.push(this.description.clone());
+    }
+    const left: string[] = [];
+    const right: string[] = [];
+    for (let k: usize = 0; k < this.specs.length; k++) {
+      left.push(optionLabel(this.specs[k]));
+      right.push(optionHelp(this.specs[k]));
+    }
+    let width: usize = 0;
+    for (const l of left) {
+      width = l.length > width ? l.length : width;
+    }
+    for (const p of this.positionalNames) {
+      width = p.length > width ? p.length : width;
+    }
+    if (this.positionalNames.length > 0) {
+      lines.push("");
+      lines.push("Arguments:");
+      for (let k: usize = 0; k < this.positionalNames.length; k++) {
+        lines.push(helpLine(this.positionalNames[k], this.positionalHelp[k], width));
+      }
+    }
+    lines.push("");
+    lines.push("Options:");
+    for (let k: usize = 0; k < left.length; k++) {
+      lines.push(helpLine(left[k], right[k], width));
+    }
+    return lines.join("\n");
+  }
+}
+
+// `-o, --out <file>` / `    --verbose`.
+function optionLabel(s: ArgSpec): string {
+  const short = s.short.length > 0 ? `-${s.short}, ` : "    ";
+  return s.takesValue ? `${short}--${s.name} <${s.valueName}>` : `${short}--${s.name}`;
+}
+
+function optionHelp(s: ArgSpec): string {
+  if (!s.hasDefault) {
+    return s.help.clone();
+  }
+  const sep = s.help.length > 0 ? " " : "";
+  return `${s.help}${sep}(default: ${s.defaultValue})`;
+}
+
+// Two-space indent, the label padded to `width`, two spaces, the help (no trailing spaces).
+function helpLine(label: string, help: string, width: usize): string {
+  if (help.length == 0) {
+    return `  ${label}`;
+  }
+  return `  ${label.padEnd(width as i64)}  ${help}`;
+}

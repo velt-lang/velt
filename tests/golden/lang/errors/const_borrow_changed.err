@@ -1,0 +1,5 @@
+const_borrow_changed.vlt:35:5: error: cannot assign to a field of `left`
+`left` refers to a class field or array element in place and is read-only; modify that place directly
+const_borrow_changed.vlt:16:3: error: cannot modify `node.left` while `left` refers to `node.left`
+const_borrow_changed.vlt:22:3: error: cannot modify `node` while `left` refers to `node.left`
+const_borrow_changed.vlt:28:3: error: cannot modify `rows` while `row` refers to `rows[..]`

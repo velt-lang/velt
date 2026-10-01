@@ -1,0 +1,25 @@
+struct User {
+  name: string;
+  age: i64;
+  tags: string[];
+  email?: string;
+}
+
+function main() {
+  const u = User { name: "ann", age: 30, tags: ["a", "b"] };
+  console.log(JSON.stringify(u));
+
+  const back = JSON.parse<User>(`{"name":"bob","age":41,"tags":[],"email":"b@x.io"}`);
+  console.log(back.name, back.age, back.tags.length, back.email ?? "none");
+
+  try {
+    JSON.parse<User>(`{"name": 1, "age": 2, "tags": []}`);
+  } catch (e) {
+    console.log("json error:", e.message);
+  }
+
+  const v = JSON.parseValue(`{"a":[1,2.5,{"b":null}],"c":true,"s":"x\\ny"}`);
+  console.log(v.get("a")?.at(2)?.get("b")?.isNull() ?? false);
+  console.log(JSON.stringify(v));
+  console.log(JSON.stringify([1, 2, 3]), JSON.stringify("q\"uote"));
+}

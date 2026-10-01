@@ -1,0 +1,4 @@
+removed_syntax.vlt:3:9: error: enum members cannot have payloads
+use a discriminated union: `type Shape = { kind: "circle"; r: f64 } | { kind: "empty" };`
+removed_syntax.vlt:8:10: error: `match` is not supported
+use `switch` (it narrows discriminated unions and `typeof` tests) or `if`

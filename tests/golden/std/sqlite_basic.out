@@ -1,0 +1,14 @@
+insert 1 1
+insert 1 2
+positional 4
+1 Ann ann@example.com 41
+2 Bob bob@example.com 29
+3 Cy cy@example.com null
+4 Dee dee@example.com null
+found Bob 29
+missing true
+older 1 Ann
+count 4
+updated 2
+Dee,Cy,Bob,Ann
+0 false

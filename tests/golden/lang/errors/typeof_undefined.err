@@ -1,0 +1,2 @@
+typeof_undefined.vlt:4:7: error: `typeof` never returns "undefined" in Velt
+`undefined` is not part of Velt: test for `null` (`x === null`)

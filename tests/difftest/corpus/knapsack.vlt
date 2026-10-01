@@ -1,0 +1,24 @@
+// 0/1 knapsack by dynamic programming over capacities.
+function best(weights: i64[], values: i64[], cap: i64): i64 {
+  const dp: i64[] = [];
+  for (let c = 0; c <= cap; c++) {
+    dp.push(0);
+  }
+  for (let i: usize = 0; i < weights.length; i++) {
+    for (let c = cap; c >= weights[i]; c--) {
+      const take = dp[(c - weights[i]) as usize] + values[i];
+      if (take > dp[c as usize]) {
+        dp[c as usize] = take;
+      }
+    }
+  }
+  return dp[cap as usize];
+}
+
+function main() {
+  const w = [12, 7, 11, 8, 9];
+  const v = [24, 13, 23, 15, 16];
+  for (const cap of [0, 7, 20, 26, 47]) {
+    console.log(cap, best(w, v, cap));
+  }
+}

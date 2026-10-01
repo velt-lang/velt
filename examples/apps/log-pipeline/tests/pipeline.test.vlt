@@ -1,0 +1,79 @@
+// Generator determinism, line splitting, aggregation and report formatting.
+import { Random, logLine } from "../src/generate";
+import { LineSplitter } from "../src/lines";
+import { LineParser } from "../src/parse";
+import { Stats } from "../src/stats";
+import { addLine } from "../src/analyze";
+import { report, fixed1, percentile } from "../src/report";
+
+export function test_random_matches_node() {
+  // node -e 'let s=42;for(let i=0;i<3;i++){s=(Math.imul(s,1664525)+1013904223)>>>0;console.log((s>>>8)%1000)}'
+  const r = new Random(42u32);
+  assertEq([r.next(1000), r.next(1000), r.next(1000)], [649, 492, 171]);
+}
+
+export function test_generated_lines_parse() {
+  const r = new Random(7u32);
+  const p = new LineParser();
+  const templates = ["/api/users/{id}"];
+  let parsed = 0;
+  for (let i: i64 = 0; i < 200; i++) {
+    if (p.parse(logLine(r, templates, i, 200)) != null) {
+      parsed++;
+    }
+  }
+  assert(parsed >= 198, `only ${parsed} of 200 generated lines parse`);
+}
+
+export function test_line_splitter_joins_chunks() {
+  const s = new LineSplitter();
+  const out: string[] = [];
+  for (const chunk of ["ab", "c\nde", "f\n\ng", "h"]) {
+    s.feed(chunk);
+    let l = s.next();
+    while (l != null) {
+      out.push(l);
+      l = s.next();
+    }
+  }
+  s.finish();
+  const last = s.next();
+  if (last != null) {
+    out.push(last);
+  }
+  assertEq(out, ["abc", "def", "", "gh"]);
+}
+
+export function test_numbers() {
+  assertEq(fixed1(12.25), "12.3");
+  assertEq(fixed1(0.04), "0.0");
+  assertEq(fixed1(1999.96), "2000.0");
+  const xs = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+  assertEq(percentile(xs, 50.0), 5.0);
+  assertEq(percentile(xs, 95.0), 10.0);
+  assertEq(percentile([], 50.0), 0.0);
+}
+
+export function test_report() {
+  const stats = new Stats();
+  const p = new LineParser();
+  addLine(stats, p, `1.1.1.1 - - [30/Sep/2026:01:00:00 +0000] "GET /a/1 HTTP/1.1" 200 10 5.0`);
+  addLine(stats, p, `1.1.1.1 - - [30/Sep/2026:01:30:00 +0000] "GET /a/2 HTTP/1.1" 500 20 15.0`);
+  addLine(stats, p, `2.2.2.2 - - [30/Sep/2026:02:00:00 +0000] "POST /b HTTP/1.1" 404 30 1.0`);
+  addLine(stats, p, "junk");
+  assertEq(report(stats), [
+    "lines: 4  parsed: 3  malformed: 1  bytes: 60",
+    "routes: 2  clients: 2  hours: 2",
+    "status: 2xx 1 (33.3%)  4xx 1 (33.3%)  5xx 1 (33.3%)",
+    "top 10 routes:",
+    "   count   err%     p50      p95      p99  route (ms)",
+    "       2   50.0      5.0     15.0     15.0  GET /a/:id",
+    "       1    0.0      1.0      1.0      1.0  POST /b",
+    "top 5 clients:",
+    "       2  1.1.1.1",
+    "       1  2.2.2.2",
+    "top 3 hours by 5xx:",
+    "       1  30/Sep/2026:01:00",
+    "       0  30/Sep/2026:02:00",
+  ]);
+}

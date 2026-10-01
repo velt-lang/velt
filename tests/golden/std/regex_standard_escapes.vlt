@@ -1,0 +1,19 @@
+// Regression (difftest regex-standard-escapes): `\0`, `\cA`, and (Annex B) a lone `{` / `}` or
+// `a{,3}` as literal text are accepted, as in JS.
+import { RegExp } from "velt:regex";
+
+function check(p: string, s: string) {
+  try {
+    console.log(JSON.stringify(p), new RegExp(p).test(s));
+  } catch (e) {
+    console.log(JSON.stringify(p), "rejected");
+  }
+}
+
+function main() {
+  check("\\0", "\u0000");
+  check("\\cA", "\u0001");
+  check("x{", "x{");
+  check("{}", "{}");
+  check("a{,3}", "a{,3}");
+}

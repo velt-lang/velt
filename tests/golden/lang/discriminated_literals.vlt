@@ -1,0 +1,70 @@
+// Literal types: `"up"`, `1`, `true` as types. A literal takes a literal type only where one is
+// expected (else its base type: `let s = "up"` is a `string`); a literal-typed value converts to
+// its base type (and a union of literals to the base they share). A union of literals is a tag
+// only (no string is stored); switching on it is exhaustive.
+
+type Dir = "up" | "down" | "left" | "right";
+type Digit = 0 | 1 | 2;
+
+function turn(d: Dir): Dir {
+  switch (d) {
+    case "up":
+      return "right";
+    case "right":
+      return "down";
+    case "down":
+      return "left";
+    case "left":
+      return "up";
+  }
+}
+
+function isVertical(d: Dir): bool {
+  return d === "up" || d == "down";
+}
+
+function next(n: Digit): Digit {
+  switch (n) {
+    case 0:
+      return 1;
+    case 1:
+      return 2;
+    default:
+      return 0;
+  }
+}
+
+function describe(flag: true | "maybe"): string {
+  if (flag === "maybe") {
+    return "not sure";
+  }
+  return `sure: ${flag}`;
+}
+
+// A literal-typed field: every value of this struct has it.
+struct Version {
+  major: 1;
+  minor: i64;
+}
+
+function main() {
+  let d: Dir = "up";
+  for (let i = 0; i < 5; i++) {
+    console.log(d, isVertical(d));
+    d = turn(d);
+  }
+  const name: string = d;
+  console.log(name.length, `dir=${d}`, d + "!");
+  const dirs: Dir[] = ["left", "up"];
+  console.log(dirs, dirs.length);
+  let n: Digit = 2;
+  n = next(n);
+  const asInt: i64 = n;
+  console.log(n, asInt + 10);
+  console.log(describe(true), describe("maybe"));
+  const v: Version = { major: 1, minor: 4 };
+  console.log(v, v.major + v.minor, JSON.stringify(v));
+  const words = ["a", "b"];
+  words.push(d);
+  console.log(words);
+}

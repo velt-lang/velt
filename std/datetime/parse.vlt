@@ -1,0 +1,206 @@
+// std/datetime/parse (std-internal): ISO 8601 / RFC 3339 and HTTP-date parsers for std/datetime.
+//
+// Both return epoch ms, or null where std/datetime throws `DateTimeError`.
+
+import { daysInMonth, epochMsOf, monthFromShort, MS_PER_MINUTE } from "velt:datetime/civil";
+
+// The value of the `n` ASCII digits at `s[i..]`, or -1.
+function digits(s: string, i: i64, n: i64): i64 {
+  if (i + n > (s.length as i64)) {
+    return -1;
+  }
+  let v: i64 = 0;
+  for (let k = i; k < i + n; k++) {
+    const c = s.charCodeAt(k);
+    if (c < 48 || c > 57) {
+      return -1;
+    }
+    v = v * 10 + c - 48;
+  }
+  return v;
+}
+
+// Fields of an ISO 8601 string, filled left to right; `pos` is the next byte.
+class IsoFields {
+  pos: i64 = 0;
+  year: i64 = 0;
+  month: i64 = 1;
+  day: i64 = 1;
+  hour: i64 = 0;
+  minute: i64 = 0;
+  second: i64 = 0;
+  ms: i64 = 0;
+  offset: i64 = 0;
+
+  // `YYYY`, `±YYYYYY`, then optional `-MM` and `-DD`.
+  date(s: string): bool {
+    const c = s.charCodeAt(0);
+    if (c == 43 || c == 45) {
+      const y = digits(s, 1, 6);
+      if (y < 0 || (c == 45 && y == 0)) {
+        return false;
+      }
+      this.year = c == 45 ? -y : y;
+      this.pos = 7;
+    } else {
+      this.year = digits(s, 0, 4);
+      this.pos = 4;
+      if (this.year < 0) {
+        return false;
+      }
+    }
+    if (s.charCodeAt(this.pos) == 45) {
+      this.month = digits(s, this.pos + 1, 2);
+      this.pos += 3;
+      if (s.charCodeAt(this.pos) == 45) {
+        this.day = digits(s, this.pos + 1, 2);
+        this.pos += 3;
+      }
+    }
+    return this.month >= 1 &&
+      this.month <= 12 &&
+      this.day >= 1 &&
+      this.day <= daysInMonth(this.year, this.month);
+  }
+
+  // `THH:mm`, optional `:ss`, optional `.fraction` (1-9 digits, truncated to ms).
+  time(s: string): bool {
+    this.hour = digits(s, this.pos + 1, 2);
+    if (s.charCodeAt(this.pos + 3) != 58) {
+      return false;
+    }
+    this.minute = digits(s, this.pos + 4, 2);
+    this.pos += 6;
+    if (s.charCodeAt(this.pos) == 58) {
+      this.second = digits(s, this.pos + 1, 2);
+      this.pos += 3;
+      const dot = s.charCodeAt(this.pos);
+      if (dot == 46 || dot == 44) {
+        return this.fraction(s) && this.validTime();
+      }
+    }
+    return this.validTime();
+  }
+
+  private fraction(s: string): bool {
+    this.pos++;
+    let n: i64 = 0;
+    let scale: i64 = 100;
+    while (n < 9 && digits(s, this.pos, 1) >= 0) {
+      this.ms += digits(s, this.pos, 1) * scale;
+      scale /= 10;
+      this.pos++;
+      n++;
+    }
+    return n > 0;
+  }
+
+  private validTime(): bool {
+    return this.hour >= 0 &&
+      this.hour <= 23 &&
+      this.minute >= 0 &&
+      this.minute <= 59 &&
+      this.second >= 0 &&
+      this.second <= 59;
+  }
+
+  // Nothing (UTC), `Z`, or `±HH:mm` / `±HHmm` / `±HH`.
+  zone(s: string): bool {
+    const c = s.charCodeAt(this.pos);
+    if (c == -1 || c == 90 || c == 122) {
+      this.pos += c == -1 ? 0 : 1;
+      return true;
+    }
+    if (c != 43 && c != 45) {
+      return false;
+    }
+    const h = digits(s, this.pos + 1, 2);
+    this.pos += 3;
+    if (s.charCodeAt(this.pos) == 58) {
+      this.pos++;
+    }
+    let m: i64 = 0;
+    if (this.pos < (s.length as i64)) {
+      m = digits(s, this.pos, 2);
+      this.pos += 2;
+    }
+    if (h < 0 || h > 23 || m < 0 || m > 59) {
+      return false;
+    }
+    this.offset = (c == 45 ? -1 : 1) * (h * 60 + m);
+    return true;
+  }
+}
+
+// Epoch ms of an ISO 8601 / RFC 3339 date or date-time (see `DateTime.parse`), or null.
+export function parseIso(s: string): i64 | null {
+  const f = new IsoFields();
+  if (!f.date(s)) {
+    return null;
+  }
+  const t = s.charCodeAt(f.pos);
+  if (t == 84 || t == 116 || t == 32) {
+    if (!f.time(s) || !f.zone(s)) {
+      return null;
+    }
+  }
+  if (f.pos != (s.length as i64)) {
+    return null;
+  }
+  const local = epochMsOf(f.year, f.month, f.day, f.hour, f.minute, f.second, f.ms);
+  return local - f.offset * MS_PER_MINUTE;
+}
+
+// Epoch ms of an HTTP date in any of RFC 7231's three formats (IMF-fixdate
+// `Sun, 06 Nov 1994 08:49:37 GMT`, RFC 850 `Sunday, 06-Nov-94 08:49:37 GMT`, asctime
+// `Sun Nov  6 08:49:37 1994`), or null. The weekday name is not checked.
+export function parseHttp(s: string): i64 | null {
+  const words = s
+    .replaceAll(",", " ")
+    .split(" ")
+    .filter((w) => w.length > 0);
+  if (words.length == 6 && words[5] == "GMT") {
+    return httpFields(words[3], words[2], words[1], words[4]);
+  }
+  if (words.length == 4 && words[3] == "GMT") {
+    const dmy = words[1].split("-");
+    if (dmy.length != 3 || dmy[2].length != 2) {
+      return null;
+    }
+    const yy = digits(dmy[2], 0, 2);
+    const year = yy < 0 ? "" : `${yy < 70 ? 2000 + yy : 1900 + yy}`;
+    return httpFields(year, dmy[1], dmy[0], words[2]);
+  }
+  if (words.length == 5) {
+    return httpFields(words[4], words[1], words[2], words[3]);
+  }
+  return null;
+}
+
+// Validates and combines the textual fields of an HTTP date.
+function httpFields(year: string, month: string, day: string, time: string): i64 | null {
+  const y = year.length == 4 ? digits(year, 0, 4) : -1;
+  const m = monthFromShort(month);
+  const d = day.length <= 2 ? digits(day, 0, day.length as i64) : -1;
+  if (time.length != 8 || time.charCodeAt(2) != 58 || time.charCodeAt(5) != 58) {
+    return null;
+  }
+  const h = digits(time, 0, 2);
+  const mi = digits(time, 3, 2);
+  const sec = digits(time, 6, 2);
+  if (
+    y < 0 ||
+    m == 0 ||
+    d < 1 ||
+    d > daysInMonth(y, m) ||
+    h < 0 ||
+    h > 23 ||
+    mi < 0 ||
+    mi > 59 ||
+    sec < 0 ||
+    sec > 59
+  ) {
+    return null;
+  }
+  return epochMsOf(y, m, d, h, mi, sec, 0);
+}

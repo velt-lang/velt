@@ -1,0 +1,103 @@
+// std/crypto: SHA-256 / SHA-1 NIST vectors, HMAC (RFC 4231, RFC 2202), randomness properties,
+// timingSafeEqual.
+
+import {
+  sha256,
+  sha1,
+  sha256Hex,
+  sha1Hex,
+  hmacSha256,
+  hmacSha1,
+  randomBytes,
+  randomInt,
+  timingSafeEqual,
+} from "velt:crypto";
+import { hexEncode, hexDecode, utf8Encode } from "velt:encoding";
+
+function repeated(b: u8, n: usize): u8[] {
+  const out: u8[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    out.push(b);
+  }
+  return out;
+}
+
+function digests() {
+  const msgs = [
+    "",
+    "abc",
+    "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+    "The quick brown fox jumps over the lazy dog",
+    "héllo wörld",
+  ];
+  for (const m of msgs) {
+    console.log(sha256Hex(m));
+    console.log(sha1Hex(m));
+  }
+  // Lengths around the padding boundary (55, 56, 63, 64, 65 bytes).
+  const sizes: usize[] = [55, 56, 63, 64, 65, 119, 120];
+  for (const n of sizes) {
+    const data = repeated(0x61, n);
+    console.log(n, hexEncode(sha256(data)).slice(0, 16), hexEncode(sha1(data)).slice(0, 16));
+  }
+  const million = repeated(0x61, 1000000);
+  console.log(hexEncode(sha256(million)));
+  console.log(hexEncode(sha1(million)));
+}
+
+function hmacVectors() {
+  const key1 = repeated(0x0b, 20);
+  console.log(hexEncode(hmacSha256(key1, utf8Encode("Hi There"))));
+  const jefe = utf8Encode("Jefe");
+  const q = utf8Encode("what do ya want for nothing?");
+  console.log(hexEncode(hmacSha256(jefe, q)));
+  console.log(hexEncode(hmacSha256(repeated(0xaa, 20), repeated(0xdd, 50))));
+  const key4 = hexDecode("0102030405060708090a0b0c0d0e0f10111213141516171819");
+  console.log(hexEncode(hmacSha256(key4, repeated(0xcd, 50))));
+  const longKey = repeated(0xaa, 131);
+  const msg6 = utf8Encode("Test Using Larger Than Block-Size Key - Hash Key First");
+  console.log(hexEncode(hmacSha256(longKey, msg6)));
+  console.log(hexEncode(hmacSha1(key1, utf8Encode("Hi There"))));
+  console.log(hexEncode(hmacSha1(jefe, q)));
+  console.log(hexEncode(hmacSha1(repeated(0xaa, 80), msg6)));
+  console.log(hexEncode(hmacSha256([], [])));
+}
+
+function randomness() {
+  const a = randomBytes(32);
+  const b = randomBytes(32);
+  console.log(a.length, b.length, timingSafeEqual(a, b), randomBytes(0).length);
+  let inRange = true;
+  const seen: bool[] = [false, false, false, false, false, false];
+  for (let i = 0; i < 2000; i++) {
+    const r = randomInt(-3, 3);
+    inRange = inRange && r >= -3 && r < 3;
+    if (r >= -3 && r < 3) {
+      seen[(r + 3) as usize] = true;
+    }
+  }
+  console.log("randomInt in range:", inRange, "all values seen:", seen.every((s) => s));
+  console.log(randomInt(7, 8));
+  const wide = randomInt(-9223372036854775807 - 1, 9223372036854775807);
+  console.log(wide >= -9223372036854775807 - 1);
+  try {
+    console.log(randomInt(5, 5));
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+
+function comparisons() {
+  const x = utf8Encode("secret-token");
+  const y = utf8Encode("secret-token");
+  const z = utf8Encode("secret-tokem");
+  console.log(timingSafeEqual(x, y), timingSafeEqual(x, z), timingSafeEqual(x, utf8Encode("s")));
+  console.log(timingSafeEqual([], []));
+}
+
+function main() {
+  digests();
+  hmacVectors();
+  randomness();
+  comparisons();
+}

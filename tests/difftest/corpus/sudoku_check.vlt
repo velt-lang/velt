@@ -1,0 +1,38 @@
+// Sudoku validity check for rows, columns and boxes.
+function valid(grid: i64[][]): bool {
+  for (let i: usize = 0; i < 9; i++) {
+    const row: bool[] = [false, false, false, false, false, false, false, false, false, false];
+    const col: bool[] = [false, false, false, false, false, false, false, false, false, false];
+    const box: bool[] = [false, false, false, false, false, false, false, false, false, false];
+    for (let j: usize = 0; j < 9; j++) {
+      const r = grid[i][j] as usize;
+      const c = grid[j][i] as usize;
+      const b = grid[i - (i % 3) + (j - (j % 3)) / 3][(i % 3) * 3 + (j % 3)] as usize;
+      if (row[r] || col[c] || box[b]) {
+        return false;
+      }
+      row[r] = true;
+      col[c] = true;
+      box[b] = true;
+    }
+  }
+  return true;
+}
+
+function main() {
+  const g = [
+    [5, 3, 4, 6, 7, 8, 9, 1, 2],
+    [6, 7, 2, 1, 9, 5, 3, 4, 8],
+    [1, 9, 8, 3, 4, 2, 5, 6, 7],
+    [8, 5, 9, 7, 6, 1, 4, 2, 3],
+    [4, 2, 6, 8, 5, 3, 7, 9, 1],
+    [7, 1, 3, 9, 2, 4, 8, 5, 6],
+    [9, 6, 1, 5, 3, 7, 2, 8, 4],
+    [2, 8, 7, 4, 1, 9, 6, 3, 5],
+    [3, 4, 5, 2, 8, 6, 1, 7, 9],
+  ];
+  console.log(valid(g));
+  g[0][0] = 3;
+  g[0][1] = 5;
+  console.log(valid(g));
+}

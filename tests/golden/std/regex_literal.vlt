@@ -1,0 +1,13 @@
+// Regular expression literals (`/a[NSt]|BY/g`) are the existing `RegExp` (imported from
+// std/regex); a `/` after an operand stays division. Regression (benchmarks-game): a parse error
+// ("expected expression, found `/`").
+import { RegExp } from "velt:regex";
+
+function main() {
+  const re = /a[NSt]|BY/g;
+  console.log(re.source, re.flags);
+  console.log(re.replace("aNtBYc", "<2>"));
+  console.log(new RegExp("a[NSt]|BY", "g").replace("aNtBYc", "<2>"));
+  const half = 10 / 2 / 5;
+  console.log(/x\/y[/]/.test("x/y/"), half);
+}

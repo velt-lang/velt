@@ -1,0 +1,2 @@
+removed_question.vlt:7:19: error: the `?` operator was removed
+= note: a call that throws propagates its error automatically: remove the `?`

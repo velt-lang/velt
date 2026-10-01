@@ -1,0 +1,71 @@
+// Interface default methods, bounded generics (`T extends I`) and generic classes throw typed
+// errors too: a default method's error type joins its interface slot's.
+class Bad extends Error {}
+
+class Worse extends Error {}
+
+interface Shape {
+  area(): f64;
+  describe(): string {
+    if (this.area() < 0.0) {
+      throw new Bad("negative area");
+    }
+    return `area ${this.area()}`;
+  }
+}
+
+class Sq implements Shape {
+  s: f64;
+  constructor(s: f64) {
+    this.s = s;
+  }
+  area(): f64 {
+    if (this.s > 100.0) {
+      throw new Worse("huge");
+    }
+    return this.s * this.s * (this.s < 0.0 ? -1.0 : 1.0);
+  }
+}
+
+function total<T extends Shape>(xs: T[]): f64 {
+  let t = 0.0;
+  for (const x of xs) {
+    t += x.area();
+  }
+  return t;
+}
+
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+  fail(): i64 {
+    throw this.v.clone();
+  }
+}
+
+function main() {
+  const shapes: Shape[] = [new Sq(2.0), new Sq(-1.0), new Sq(200.0)];
+  for (const s of shapes) {
+    try {
+      console.log(s.describe());
+    } catch (e) {
+      if (e instanceof Bad) {
+        console.log("bad:", e.message);
+      } else {
+        console.log("worse:", e.message);
+      }
+    }
+  }
+  try {
+    console.log(total([new Sq(1.0), new Sq(3.0)]), total([new Sq(500.0)]));
+  } catch (e) {
+    console.log("total:", e.message);
+  }
+  try {
+    new Box<string>("boxed").fail();
+  } catch (e) {
+    console.log("box:", e.toUpperCase());
+  }
+}

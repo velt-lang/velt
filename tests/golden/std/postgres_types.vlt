@@ -1,0 +1,190 @@
+// std/postgres type mapping: integers (exact int8), floats, numeric as a string, bool, text,
+// uuid, dates and timestamps as ISO strings, json/jsonb decoded into nested types, bytea as
+// u8[], arrays, NULL, domains and enums; parameters converted for their types.
+// requires-env: VELT_TEST_PG_URL
+import { env } from "velt:process";
+import { connect } from "velt:postgres";
+
+class Numbers {
+  small: i64;
+  big: i64;
+  real: f64;
+  exact: string;
+  flag: bool;
+  nothing: i64 | null;
+
+  constructor(small: i64, big: i64, real: f64, exact: string, flag: bool, nothing: i64 | null) {
+    this.small = small;
+    this.big = big;
+    this.real = real;
+    this.exact = exact;
+    this.flag = flag;
+    this.nothing = nothing;
+  }
+}
+
+class Decimal {
+  d: string;
+
+  constructor(d: string) {
+    this.d = d;
+  }
+}
+
+class Point {
+  x: i64;
+  y: i64;
+
+  constructor(x: i64, y: i64) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+class Shape {
+  name: string;
+  points: Point[];
+
+  constructor(name: string, points: Point[]) {
+    this.name = name;
+    this.points = points;
+  }
+}
+
+class Texts {
+  id: string;
+  day: string;
+  at: string;
+  local: string;
+  clock: string;
+  mood: string;
+  code: string;
+  label: string;
+
+  constructor(
+    id: string,
+    day: string,
+    at: string,
+    local: string,
+    clock: string,
+    mood: string,
+    code: string,
+    label: string,
+  ) {
+    this.id = id;
+    this.day = day;
+    this.at = at;
+    this.local = local;
+    this.clock = clock;
+    this.mood = mood;
+    this.code = code;
+    this.label = label;
+  }
+}
+
+class Doc {
+  shape: Shape;
+  meta: Point | null;
+
+  constructor(shape: Shape, meta: Point | null) {
+    this.shape = shape;
+    this.meta = meta;
+  }
+}
+
+class Lists {
+  ints: i64[];
+  names: (string | null)[];
+  grid: i64[][];
+  data: u8[];
+  empty: i64[];
+
+  constructor(ints: i64[], names: (string | null)[], grid: i64[][], data: u8[], empty: i64[]) {
+    this.ints = ints;
+    this.names = names;
+    this.grid = grid;
+    this.data = data;
+    this.empty = empty;
+  }
+}
+
+class Echo {
+  i: i64;
+  f: f64;
+  n: string;
+  t: string;
+  b: bool;
+  u: string;
+
+  constructor(i: i64, f: f64, n: string, t: string, b: bool, u: string) {
+    this.i = i;
+    this.f = f;
+    this.n = n;
+    this.t = t;
+    this.b = b;
+    this.u = u;
+  }
+}
+
+async function main() {
+  const db = await connect(env("VELT_TEST_PG_URL") ?? "");
+  const n: Numbers | null = await db.selectOne(`
+    SELECT 7::int2 AS small, 9007199254740993::int8 AS big, 0.1::float8 + 0.2 AS real,
+      12345678901234567890.0100::numeric AS exact, true AS flag, NULL::int AS nothing
+  `);
+  console.log(n);
+  const decimals: Decimal[] = await db.select(
+    "SELECT unnest(ARRAY[0.00012, -5.100, 0, 100000000, 'NaN', 1e-20]::numeric[]) AS d",
+  );
+  console.log(decimals.map((x) => x.d));
+  const t: Texts | null = await db.selectOne(`
+    SELECT 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid AS id, '2024-02-29'::date AS day,
+      '2024-02-29 13:45:00.5+02'::timestamptz AS at, '1999-12-31 23:59:59'::timestamp AS local,
+      '08:30:00.123456'::time AS clock, 'ok'::varchar AS mood, 'x'::char(3) AS code,
+      (-0.5)::numeric(6, 3)::text AS label
+  `);
+  console.log(t);
+  const d: Doc | null = await db.selectOne(`
+    SELECT '{"name":"tri","points":[{"x":0,"y":0},{"x":4,"y":0},{"x":0,"y":3}]}'::jsonb AS shape,
+      '{"x": 1, "y": 2}'::json AS meta
+  `);
+  if (d != null) {
+    console.log(d.shape.name, d.shape.points.length, d.shape.points[2].y, d.meta?.x);
+  }
+  const l: Lists | null = await db.selectOne(`
+    SELECT ARRAY[1, 2, 3]::int8[] AS ints, ARRAY['a', NULL, 'c'] AS names,
+      ARRAY[[1, 2], [3, 4]] AS grid, '\\x00ff10'::bytea AS data, '{}'::int[] AS empty
+  `);
+  console.log(l);
+
+  // Parameters are converted for the types the server inferred.
+  const e: Echo | null = await db.queryOne(
+    "SELECT $i::int4 + 1 AS i, $f::float4 * 2 AS f, $n::numeric * 2 AS n, $t::text AS t, " +
+      "NOT $b::bool AS b, $u::uuid AS u",
+    { i: 41, f: 1.25, n: 0.1, t: 5, b: false, u: "A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11" },
+  );
+  console.log(e);
+  const blob: Lists | null = await db.queryOne(
+    "SELECT :ints::int8[] AS ints, ARRAY[]::text[] AS names, ARRAY[[0]] AS grid, " +
+      ":data::bytea AS data, '{}'::int[] AS empty",
+    { ints: "{5,6}", data: [1, 2, 3] },
+  );
+  console.log(blob?.ints, blob?.data);
+
+  // Domains decode as their base type, enums as strings.
+  await db.batch(`
+    CREATE TYPE pg_temp.mood AS ENUM ('sad', 'happy');
+    CREATE DOMAIN pg_temp.positive AS int CHECK (VALUE > 0);
+    CREATE TEMP TABLE feelings (m pg_temp.mood, p pg_temp.positive);
+    INSERT INTO feelings VALUES ('happy', 3);
+  `);
+  const f: Point | null = await db.selectOne("SELECT p AS x, p * 2 AS y FROM feelings");
+  console.log(f);
+  const moods: Texts[] = await db.query(
+    "SELECT m::text AS id, m AS mood, '' AS day, '' AS at, '' AS local, '' AS clock, " +
+      "'' AS code, '' AS label FROM feelings WHERE m = $1",
+    ["happy"],
+  );
+  console.log(moods[0].mood);
+  db.close();
+}

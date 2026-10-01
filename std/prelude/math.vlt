@@ -1,0 +1,131 @@
+// Prelude: the JS `Math` object as a class of static constants and methods on f64.
+//
+// Rounding and `sqrt`/`abs` map to single compiler intrinsics (one machine instruction on
+// x86_64/aarch64). `min`/`max` follow JS exactly: NaN if either operand is NaN, and
+// -0 < +0 (`Math.max(-0, 0)` is +0, `Math.min(0, -0)` is -0).
+
+export class Math {
+  static readonly PI: f64 = 3.141592653589793;
+  static readonly E: f64 = 2.718281828459045;
+
+  static sqrt(x: f64): f64 {
+    return __intrinsic_sqrt(x);
+  }
+
+  static floor(x: f64): f64 {
+    return __intrinsic_floor(x);
+  }
+
+  static ceil(x: f64): f64 {
+    return __intrinsic_ceil(x);
+  }
+
+  // JS rounding: halves go toward +Infinity (`Math.round(-2.5)` is -2).
+  static round(x: f64): f64 {
+    return __intrinsic_round(x);
+  }
+
+  static trunc(x: f64): f64 {
+    return __intrinsic_trunc(x);
+  }
+
+  static abs(x: f64): f64 {
+    return __intrinsic_f_abs(x);
+  }
+
+  // -1, 0 or 1 with the sign of `x`; keeps -0 and NaN as they are, like JS.
+  static sign(x: f64): f64 {
+    if (x > 0.0) {
+      return 1.0;
+    }
+    if (x < 0.0) {
+      return -1.0;
+    }
+    return x;
+  }
+
+  static max(a: f64, b: f64): f64 {
+    if (a > b) {
+      return a;
+    }
+    if (b > a) {
+      return b;
+    }
+    // Equal or unordered. For zeros `a + b` is +0 unless both are -0; for NaN it is NaN.
+    return a == b && a != 0.0 ? a : a + b;
+  }
+
+  static min(a: f64, b: f64): f64 {
+    if (a < b) {
+      return a;
+    }
+    if (b < a) {
+      return b;
+    }
+    // Mirror of `max`: -(-a + -b) is -0 unless both are +0, and NaN for NaN.
+    return a == b && a != 0.0 ? a : -(-a + -b);
+  }
+
+  static pow(base: f64, exponent: f64): f64 {
+    return base ** exponent;
+  }
+
+  // sqrt(a² + b² + c² + d²) without overflow or underflow: operands far from 1 are scaled by an
+  // exact power of two (2^±600) first, so ordinary inputs stay correctly rounded. Takes up to
+  // four values (JS takes any number; there are no rest parameters): `Math.hypot(dx, dy, dz)`.
+  // Infinity wins over NaN, like JS.
+  static hypot(a: f64 = 0.0, b: f64 = 0.0, c: f64 = 0.0, d: f64 = 0.0): f64 {
+    const x = __intrinsic_f_abs(a);
+    const y = __intrinsic_f_abs(b);
+    const z = __intrinsic_f_abs(c);
+    const w = __intrinsic_f_abs(d);
+    const inf = 1.0 / 0.0;
+    if (x == inf || y == inf || z == inf || w == inf) {
+      return inf;
+    }
+    const big = Math.max(Math.max(x, y), Math.max(z, w));
+    if (big > 3.273390607896142e+150) {
+      return hypotScaled(x, y, z, w, 2.409919865102884e-181) * 4.149515568880993e+180;
+    }
+    if (big < 3.054936363499605e-151) {
+      return hypotScaled(x, y, z, w, 4.149515568880993e+180) * 2.409919865102884e-181;
+    }
+    return hypotScaled(x, y, z, w, 1.0);
+  }
+
+  // High 64 bits of the 128-bit product `a * b`, for 64-bit limb arithmetic (the low bits are
+  // `a * b`, which wraps). Not in JS; like C#'s `Math.BigMul` / Rust's widening multiply.
+  static umulh(a: u64, b: u64): u64 {
+    return velt_rt_math_umulh(a, b);
+  }
+}
+
+declare function velt_rt_math_umulh(a: u64, b: u64): u64;
+
+// sqrt of the sum of the squares of the scaled values; `scale` is a power of two, so the scaling
+// itself is exact (and zero terms add nothing: two values give the two-value result exactly).
+function hypotScaled(x: f64, y: f64, z: f64, w: f64, scale: f64): f64 {
+  const sx = x * scale;
+  const sy = y * scale;
+  const sz = z * scale;
+  const sw = w * scale;
+  return __intrinsic_sqrt(sx * sx + sy * sy + sz * sz + sw * sw);
+}
+
+// JS `ToInt32`: what a bitwise operator does to a float operand (`x | 0`, `f >> 1`; the compiler
+// inserts the call, `sema` `numbers.rs`). Truncates, wraps modulo 2^32 into the signed 32-bit
+// range; NaN and ±Infinity give 0.
+export function __toInt32(x: f64): i64 {
+  // `x - x` is 0 for every finite `x`, NaN for NaN and ±Infinity.
+  if (x - x != 0.0) {
+    return 0;
+  }
+  let m = __intrinsic_trunc(x) % 4294967296.0;
+  if (m < 0.0) {
+    m += 4294967296.0;
+  }
+  if (m >= 2147483648.0) {
+    m -= 4294967296.0;
+  }
+  return m as i64;
+}

@@ -1,0 +1,16 @@
+// Regression (benchmarks-game gap, ts-alignment §5): `sort(compareFn)`, stable, on number arrays
+// and on any element type.
+function main() {
+  const xs = [3, 1, 2];
+  xs.sort((a, b) => b - a);
+  console.log(xs);
+  const pairs: [string, i64][] = [
+    ["b", 2],
+    ["a", 2],
+    ["c", 5],
+  ];
+  pairs.sort((x, y) => (x[1] != y[1] ? y[1] - x[1] : x[0] < y[0] ? -1 : 1));
+  for (const [k, v] of pairs) {
+    console.log(k, v);
+  }
+}

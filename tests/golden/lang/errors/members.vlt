@@ -1,0 +1,36 @@
+class Box {
+  static readonly MAX: i64 = 10;
+  readonly id: i64;
+  private secret: i64 = 1;
+  constructor(id: i64) {
+    this.id = id;
+  }
+  get double(): i64 {
+    return this.id * 2;
+  }
+  private hidden(): i64 {
+    return this.secret;
+  }
+  reset() {
+    this.id = 0;
+  }
+}
+
+class Sub extends Box {
+  peek(): i64 {
+    return this.secret;
+  }
+}
+
+function main() {
+  let b = new Box(1);
+  console.log(b.secret);
+  console.log(b.hidden());
+  b.id = 5;
+  b.double = 3;
+  console.log(b.double());
+  Box.MAX = 11;
+  const m = new Map<string, i64>();
+  console.log(m.entryKeys.length);
+  m.size = 3;
+}

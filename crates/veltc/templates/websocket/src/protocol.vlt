@@ -1,0 +1,86 @@
+// The wire protocol: one JSON object per WebSocket text message.
+//   client -> server: { "type": "join", "name" } | { "type": "say", "text" } | { "type": "leave" }
+//   server -> client: { "type": "joined", "name" } | { "type": "message", "from", "text" }
+//                   | { "type": "left", "name" } | { "type": "error", "message" }
+
+/// What a client sends.
+export type ClientMessage =
+  | { type: "join"; name: string }
+  | { type: "say"; text: string }
+  | { type: "leave" };
+
+/// What the server sends.
+export type ServerMessage =
+  | { type: "joined"; name: string }
+  | { type: "message"; from: string; text: string }
+  | { type: "left"; name: string }
+  | { type: "error"; message: string };
+
+/// A message that is not valid JSON or not part of the protocol.
+export class ProtocolError extends Error {}
+
+// `JSON.parse` can't decode unions, so the decoders read the `type` from a `JsonValue` and
+// build the member by hand.
+function parse(text: string): JsonValue {
+  try {
+    return JSON.parseValue(text);
+  } catch (e) {
+    throw new ProtocolError(e.message.clone());
+  }
+}
+
+function field(v: JsonValue, name: string): string {
+  const s = v.get(name)?.asString();
+  if (s == null) {
+    throw new ProtocolError(`"${name}" must be a string`);
+  }
+  return s;
+}
+
+/// A client message (throws `ProtocolError`).
+export function decodeClient(text: string): ClientMessage {
+  const v = parse(text);
+  const type = v.get("type")?.asString();
+  switch (type) {
+    case "join":
+      return { type: "join", name: field(v, "name") };
+    case "say":
+      return { type: "say", text: field(v, "text") };
+    case "leave":
+      return { type: "leave" };
+    default:
+      throw new ProtocolError(`unknown message type ${type ?? "(none)"}`);
+  }
+}
+
+/// A server message (throws `ProtocolError`).
+export function decodeServer(text: string): ServerMessage {
+  const v = parse(text);
+  const type = v.get("type")?.asString();
+  switch (type) {
+    case "joined":
+      return { type: "joined", name: field(v, "name") };
+    case "message":
+      return { type: "message", from: field(v, "from"), text: field(v, "text") };
+    case "left":
+      return { type: "left", name: field(v, "name") };
+    case "error":
+      return { type: "error", message: field(v, "message") };
+    default:
+      throw new ProtocolError(`unknown message type ${type ?? "(none)"}`);
+  }
+}
+
+/// How a client shows a server message.
+export function describe(msg: ServerMessage): string {
+  switch (msg.type) {
+    case "joined":
+      return `* ${msg.name} joined`;
+    case "message":
+      return `<${msg.from}> ${msg.text}`;
+    case "left":
+      return `* ${msg.name} left`;
+    case "error":
+      return `! ${msg.message}`;
+  }
+}

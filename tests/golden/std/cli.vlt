@@ -1,0 +1,74 @@
+// std/cli: flags, options (long/short, `=`/separate/attached values, defaults, repeats),
+// short clusters, `--no-*`, `--`, positionals, integer values, errors and help text.
+import { ArgParser, CliError, ParsedArgs } from "velt:cli";
+import { args } from "velt:process";
+
+function parser(): ArgParser {
+  return new ArgParser("tool", "Converts things.")
+    .flag("verbose", { short: "v", help: "Print more" })
+    .flag("dry-run", { help: "Do nothing" })
+    .flag("x", { short: "x" })
+    .option("out", { short: "o", default: "out.txt", help: "Output file", valueName: "file" })
+    .option("level", { short: "l", help: "Level 0-9" })
+    .option("tag", { short: "t" })
+    .positional("input", "File to read")
+    .positional("extra");
+}
+
+function dump(a: ParsedArgs) {
+  console.log(
+    "verbose:",
+    a.flag("verbose"),
+    "dry-run:",
+    a.flag("dry-run"),
+    "x:",
+    a.flag("x"),
+    "help:",
+    a.flag("help"),
+  );
+  console.log("out:", a.get("out"), "has out:", a.has("out"), "level:", a.get("level"));
+  console.log("tags:", a.getAll("tag"), "input:", a.get("input"), "extra:", a.getOr("extra", "-"));
+  console.log("positionals:", a.positionals, "missing:", a.get("nope"), a.flag("nope"));
+}
+
+function run(argv: string[]) {
+  console.log(`$ tool ${argv.join(" ")}`);
+  try {
+    dump(parser().parse(argv));
+  } catch (e) {
+    console.log("error:", e.message);
+  }
+}
+
+function main() {
+  run([]);
+  run(["a.txt", "b.txt", "c.txt"]);
+  run(["-v", "--out", "x.bin", "in.txt"]);
+  run(["--out=y.bin", "--level=3", "--verbose", "--no-verbose"]);
+  run(["-vx", "-o", "z", "-l5", "-t", "a", "--tag", "b", "-vtc"]);
+  run(["--", "--verbose", "-x", "--"]);
+  run(["-", "--dry-run", "-o", "-weird-value"]);
+  run(["--out="]);
+  run(["-h"]);
+  run(["--nope"]);
+  run(["-vq"]);
+  run(["--verbose=yes"]);
+  run(["--out"]);
+  run(["-o"]);
+  run(["--no-out"]);
+  run(["--no-dry-run", "--dry-run"]);
+  const ints = parser().parse(["-l", "42", "-t", "-7", "--out", "4x"]);
+  console.log(ints.getInt("level"), ints.getInt("tag"), ints.getInt("extra"));
+  try {
+    ints.getInt("out");
+  } catch (e) {
+    console.log(e instanceof CliError, e.message);
+  }
+  console.log(parser().help());
+  console.log("---");
+  console.log(new ArgParser("bare").help());
+  const custom = new ArgParser("custom").flag("help", { short: "?", help: "Usage" });
+  console.log(custom.help());
+  console.log(custom.parse(["-?"]).flag("help"));
+  console.log(parser().parse(args()).positionals.length);
+}

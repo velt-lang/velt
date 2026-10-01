@@ -1,0 +1,60 @@
+// Who is connected: client ids, names and sockets. Plain synchronous state that the server keeps
+// behind a `Mutex`. Methods return errors as values (`string | null`) because they run inside
+// `Mutex.with` callbacks, which cannot throw (the lock is held).
+import { WebSocket } from "velt:websocket";
+
+type Member = { name: string; socket: WebSocket };
+
+const MAX_NAME: usize = 20;
+
+export class Room {
+  private members: Map<i64, Member> = new Map<i64, Member>();
+
+  /// Adds client `id` as `name` (trimmed); returns why it can't, or null.
+  join(id: i64, name: string, socket: WebSocket): string | null {
+    const clean = name.trim();
+    if (clean === "" || clean.length > MAX_NAME) {
+      return `name must be 1-${MAX_NAME} characters`;
+    }
+    if (this.members.has(id)) {
+      return "already joined";
+    }
+    for (const m of this.members.values()) {
+      if (m.name === clean) {
+        return `name ${clean} is taken`;
+      }
+    }
+    this.members.set(id, { name: clean, socket });
+    return null;
+  }
+
+  /// Removes client `id`; returns its name if it had joined.
+  leave(id: i64): string | null {
+    const name = this.nameOf(id);
+    this.members.delete(id);
+    return name;
+  }
+
+  nameOf(id: i64): string | null {
+    const m = this.members.get(id);
+    return m == null ? null : m.name.clone();
+  }
+
+  /// Names in join order.
+  names(): string[] {
+    const out: string[] = [];
+    for (const m of this.members.values()) {
+      out.push(m.name);
+    }
+    return out;
+  }
+
+  /// Every member's socket.
+  sockets(): WebSocket[] {
+    const out: WebSocket[] = [];
+    for (const m of this.members.values()) {
+      out.push(m.socket);
+    }
+    return out;
+  }
+}

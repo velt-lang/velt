@@ -1,0 +1,19 @@
+// Union of scalars narrowed with typeof.
+function describe(x: i64 | string | bool): string {
+  if (typeof x === "number") {
+    return `num ${x * 2}`;
+  }
+  if (typeof x === "string") {
+    return `str ${x.toUpperCase()}`;
+  }
+  return x ? "yes" : "no";
+}
+
+function main() {
+  const xs: (i64 | string | bool)[] = [1, "a", true, 7, "bc", false];
+  for (const x of xs) {
+    console.log(describe(x));
+  }
+  const maybe: string | null = null;
+  console.log(maybe ?? "fallback");
+}

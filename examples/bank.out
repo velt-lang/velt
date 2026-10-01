@@ -1,0 +1,5 @@
+ann:
+  rejected: need 80, have 50
+bob:
+balances: ann=20 bob=-60, failures 1
+richest: <ann>

@@ -1,0 +1,64 @@
+// requires-env: VELT_TEST_REDIS_URL
+// std/redis: RedisError codes for server errors, bad URLs and failed connections.
+import { connect, RedisError, RedisClient } from "velt:redis";
+import { redisUrl, redisHostPort, freshPrefix, cleanup } from "./_redis";
+
+async function tryConnect(url: string): Promise<string> {
+  try {
+    const c = await connect(url);
+    c.close();
+    return "connected";
+  } catch (e) {
+    return e.code;
+  }
+}
+
+async function tryGet(c: RedisClient, key: string): Promise<string> {
+  try {
+    return (await c.get(key)) ?? "null";
+  } catch (e) {
+    return `${e.code}: ${e.message.slice(0, 40)}`;
+  }
+}
+
+async function main() {
+  const p = freshPrefix();
+  const url = redisUrl();
+  const c = await connect(url);
+
+  // Error replies: the code is the reply's first word.
+  await c.rpush(`${p}list`, ["x"]);
+  console.log("get on a list:", await tryGet(c, `${p}list`));
+  try {
+    await c.call(["NOSUCHCOMMAND", "x"]);
+  } catch (e) {
+    console.log("unknown command:", e.code, e instanceof RedisError);
+  }
+  await c.set(`${p}text`, "abc");
+  try {
+    await c.incr(`${p}text`);
+  } catch (e) {
+    console.log("incr on text:", e.code, e.message);
+  }
+  try {
+    await c.call([]);
+  } catch (e) {
+    console.log("empty command:", e.code);
+  }
+  // The connection stays usable after error replies.
+  console.log("still usable:", await c.ping());
+
+  // Connection failures.
+  console.log("refused:", await tryConnect("redis://127.0.0.1:1"));
+  console.log("bad scheme:", await tryConnect("http://127.0.0.1:6379"));
+  console.log("bad port:", await tryConnect("redis://127.0.0.1:99999"));
+  console.log("bad db index:", await tryConnect(`${url}/100000`));
+  console.log("bad password:", await tryConnect(`redis://nobody:wrong@${redisHostPort()}`));
+  console.log(
+    "TLS to a plain server fails:",
+    await tryConnect(`rediss://${redisHostPort()}`) != "connected",
+  );
+
+  console.log("cleanup:", await cleanup(c, p));
+  c.close();
+}

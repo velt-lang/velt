@@ -1,0 +1,41 @@
+// Closing a server drops its handler closure once in-flight requests finish, so a captured
+// resource's [Symbol.dispose]() runs (a store captured by the handler used to leak). The store is shared
+// (`shared(new Mutex(...))`) because calling an async closure currently clones its captured
+// class instances per call (tests/golden/bugs/async_closure_call_clones_class_capture.vlt).
+import { serve, fetch, Request, Response } from "velt:http";
+
+class Store {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  [Symbol.dispose]() {
+    console.log(`${this.name} disposed`);
+  }
+}
+
+async function get(url: string): Promise<string> {
+  return await (await fetch(url)).text();
+}
+
+async function main() {
+  const store = shared(new Mutex<Store>(new Store("store")));
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    if (req.path == "/slow") {
+      await sleep(200);
+    }
+    return Response.text(`${store.with((s) => s.name)} ${req.path}`);
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  console.log(await get(`${base}/fast`));
+  // A request still running when shutdown() starts finishes before the handler is dropped.
+  const slow = spawn(get(`${base}/slow`));
+  await sleep(50);
+  console.log("shutting down");
+  await server.shutdown();
+  console.log("shut down");
+  console.log(await slow);
+  console.log("done");
+}

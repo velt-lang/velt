@@ -1,0 +1,7 @@
+// `new Array<T>(n)` alone would hold `n` holes (`undefined`), and the element argument of an
+// `Array.from({ length: n }, …)` callback is always `undefined`: both are errors with the fix.
+function main() {
+  const a = new Array<i64>(3);
+  const b = Array.from({ length: 2 }, (v, i) => i);
+  console.log(a, b);
+}

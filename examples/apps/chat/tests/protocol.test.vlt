@@ -1,0 +1,51 @@
+// Decoding client and server messages and how the client shows them.
+import { decodeClient, decodeServer, describe, encode } from "../src/protocol";
+
+function clientError(text: string): string {
+  try {
+    decodeClient(text);
+  } catch (e) {
+    return e.message.clone();
+  }
+  return "";
+}
+
+export function test_client_messages() {
+  const join = decodeClient(`{"type":"join","name":"ann"}`);
+  assertEq(join.type, "join");
+  if (join.type === "join") {
+    assertEq(join.name, "ann");
+  }
+  const say = decodeClient(`{"text":"hi","type":"say","extra":1}`);
+  if (say.type === "say") {
+    assertEq(say.text, "hi");
+  }
+  assertEq(decodeClient(`{"type":"leave"}`).type, "leave");
+}
+
+export function test_bad_client_messages() {
+  assertEq(clientError(`{"type":"dance"}`), "unknown message type dance");
+  assertEq(clientError(`{}`), "unknown message type (none)");
+  assertEq(clientError(`{"type":"join","name":5}`), `"name" must be a string`);
+  assertEq(clientError(`[`), "invalid JSON: unexpected end of input (byte 1)");
+}
+
+export function test_server_messages_round_trip() {
+  const lines = [
+    encode({ type: "welcome", name: "ann", users: ["bo", "ann"] }),
+    encode({ type: "joined", name: "bo" }),
+    encode({ type: "message", from: "bo", text: "hey" }),
+    encode({ type: "left", name: "bo" }),
+    encode({ type: "error", message: "nope" }),
+  ];
+  assertEq(lines[2], `{"type":"message","from":"bo","text":"hey"}`);
+  // `map` rethrows what `decodeServer` throws.
+  const shown = lines.map((l) => describe(decodeServer(l)));
+  assertEq(shown, [
+    "* you are ann; online: bo, ann",
+    "* bo joined",
+    "<bo> hey",
+    "* bo left",
+    "! nope",
+  ]);
+}

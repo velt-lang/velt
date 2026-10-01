@@ -1,0 +1,13 @@
+function main() {
+  let total = 0;
+  function add(n: i64) {
+    total += n;
+  }
+  add(1);
+  if (true) {
+    struct Local {
+      a: i64;
+    }
+  }
+  const x = Local { a: 1 };
+}

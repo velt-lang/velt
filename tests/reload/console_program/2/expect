@@ -1,0 +1,3 @@
+action: restart
+stdout: count 2
+action: exit

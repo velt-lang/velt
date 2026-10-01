@@ -1,0 +1,8 @@
+[package]
+name = "velt_sema"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+velt_common.workspace = true
+velt_syntax.workspace = true

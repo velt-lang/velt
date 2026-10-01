@@ -1,0 +1,186 @@
+// Discriminated unions: object types (anonymous, structs, classes) sharing a literal-typed
+// field. The literal is the tag (not a stored string): an object literal typed by the union
+// picks its member at compile time, `switch (x.kind)` / `x.kind === "..."` dispatch on the tag
+// and narrow `x`, fields every member has can be read without narrowing.
+
+type Shape =
+  | { kind: "circle"; r: f64 }
+  | { kind: "rect"; w: f64; h: f64 }
+  | { kind: "square"; side: f64 };
+
+function area(s: Shape): f64 {
+  switch (s.kind) {
+    case "circle":
+      return 3.0 * s.r * s.r;
+    case "rect":
+      return s.w * s.h;
+    case "square":
+      return s.side * s.side;
+  }
+}
+
+function make(n: i64): Shape {
+  if (n == 0) {
+    return { kind: "circle", r: 1.0 };
+  }
+  if (n == 1) {
+    return { kind: "rect", w: 2.0, h: 3.0 };
+  }
+  return { kind: "square", side: n as f64 };
+}
+
+// Narrowing by comparison, also through early exits.
+function width(s: Shape): f64 {
+  if (s.kind === "circle") {
+    return 2.0 * s.r;
+  }
+  if (s.kind !== "rect") {
+    return s.side;
+  }
+  return s.w;
+}
+
+// Several labels share one body: the value is narrowed to those members.
+function sides(s: Shape): i64 {
+  switch (s.kind) {
+    case "rect":
+    case "square":
+      return 4;
+    default:
+      return 0;
+  }
+}
+
+// Struct and class members work the same way.
+struct Ok {
+  kind: "ok";
+  value: i64;
+}
+
+struct Fail {
+  kind: "fail";
+  code: i32;
+  reason: string;
+}
+
+type Outcome = Ok | Fail;
+
+class Cat {
+  kind: "cat" = "cat";
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+class Dog {
+  kind: "dog" = "dog";
+  name: string;
+  tricks: i64 = 0;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+type Pet = Cat | Dog;
+
+function report(o: Outcome): string {
+  switch (o.kind) {
+    case "ok":
+      return `ok ${o.value}`;
+    case "fail":
+      return `fail ${o.code}: ${o.reason}`;
+  }
+}
+
+function greet(p: Pet): string {
+  switch (p.kind) {
+    case "cat":
+      return `${p.name} meows`;
+    case "dog":
+      p.tricks += 1;
+      return `${p.name} knows ${p.tricks} tricks`;
+  }
+}
+
+// Members may hold owned data; a narrowed local can be changed in place.
+type Node = { kind: "leaf"; value: i64 } | { kind: "list"; items: i64[] };
+
+function total(n: Node): i64 {
+  switch (n.kind) {
+    case "leaf":
+      return n.value;
+    case "list": {
+      let sum = 0;
+      for (const x of n.items) {
+        sum += x;
+      }
+      return sum;
+    }
+  }
+}
+
+// Moving a field out of a narrowed member consumes the value (the rest is dropped).
+function items(n: Node): i64[] {
+  switch (n.kind) {
+    case "list":
+      return n.items;
+    default:
+      return [];
+  }
+}
+
+// Generic discriminated unions; type arguments are inferred through the members.
+type Opt<T> = { kind: "some"; value: T } | { kind: "none" };
+
+function orElse<T>(o: Opt<T>, fallback: T): T {
+  switch (o.kind) {
+    case "some":
+      return o.value;
+    case "none":
+      return fallback;
+  }
+}
+
+function main() {
+  const shapes: Shape[] = [make(0), make(1), make(2), { kind: "circle", r: 0.5 }];
+  for (const s of shapes) {
+    console.log(s.kind, area(s), width(s), sides(s));
+  }
+  console.log(shapes[1]);
+  console.log(`${shapes[2]}`);
+  console.log(JSON.stringify(shapes));
+
+  const outcomes: Outcome[] = [
+    Ok { kind: "ok", value: 7 },
+    { kind: "fail", code: 404, reason: "missing" },
+  ];
+  for (const o of outcomes) {
+    console.log(report(o));
+  }
+
+  const pets: Pet[] = [new Cat("tom"), new Dog("rex")];
+  for (const p of pets) {
+    console.log(p.name, p.kind);
+  }
+  let d: Pet = new Dog("fido");
+  console.log(greet(d));
+  console.log(greet(d));
+
+  let n: Node = { kind: "list", items: [1, 2] };
+  if (n.kind === "list") {
+    n.items.push(3);
+  }
+  const copy = n.clone();
+  console.log(total(n), total(copy), total({ kind: "leaf", value: 5 }));
+  console.log(copy);
+  console.log(items({ kind: "list", items: [4, 5] }), items({ kind: "leaf", value: 1 }));
+  const name: Opt<string> = { kind: "some", value: "ann" };
+  console.log(
+    orElse(name, "?"),
+    orElse({ kind: "none" }, 0),
+    orElse({ kind: "some", value: 2.5 }, 0.0),
+  );
+}

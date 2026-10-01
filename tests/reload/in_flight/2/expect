@@ -1,0 +1,4 @@
+action: swap
+get /: v2
+jit await /slow: slow v1
+jit get /slow: slow v2

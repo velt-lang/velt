@@ -1,0 +1,13 @@
+// `panic(msg)` prints `panic: <msg> at <file>:<line>:<col>` to stderr and exits with 101.
+function check(n: i64): void {
+  if (n > 2) {
+    panic(`too big: ${n}`);
+  }
+  console.log(`ok ${n}`);
+}
+
+function main(): void {
+  for (let i: i64 = 1; i < 5; i++) {
+    check(i);
+  }
+}

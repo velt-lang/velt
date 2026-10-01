@@ -1,0 +1,61 @@
+// Errors as values: `attempt(() => f())` returns `f`'s result or its error as a union
+// (`T | E`), or `E | null` when `f` returns nothing; narrow it like any union.
+class NotFound extends Error {
+  id: string;
+
+  constructor(id: string) {
+    super(`no user ${id}`);
+    this.id = id;
+  }
+}
+
+class Forbidden extends Error {}
+
+function load(id: string): string {
+  if (id == "404") {
+    throw new NotFound(id);
+  }
+  if (id == "403") {
+    throw new Forbidden("admins only");
+  }
+  return `user ${id}`;
+}
+
+function save(ok: bool) {
+  if (!ok) {
+    throw new Forbidden("read-only");
+  }
+}
+
+// Returning errors as values is a union return type.
+function find(id: string): string | NotFound {
+  return id == "404" ? new NotFound(id) : `user ${id}`;
+}
+
+function show(id: string): string {
+  const r = attempt(() => load(id));
+  if (r instanceof NotFound) {
+    return `missing ${r.id}`;
+  }
+  if (r instanceof Forbidden) {
+    return `forbidden: ${r.message}`;
+  }
+  return r;
+}
+
+function main() {
+  console.log(show("404"), "|", show("403"), "|", show("1"));
+  for (const ok of [true, false]) {
+    const err = attempt(() => save(ok));
+    console.log(err == null ? "saved" : `not saved: ${err.message}`);
+  }
+  // A function that cannot throw just gives its result.
+  const n = attempt(() => 40 + 2);
+  console.log(n + 1);
+  const found = find("404");
+  console.log(found instanceof NotFound ? `absent ${found.id}` : found);
+  const results = ["1", "404"].map((id) => attempt(() => load(id)));
+  for (const r of results) {
+    console.log(typeof r === "string" ? r : `error: ${r.message}`);
+  }
+}

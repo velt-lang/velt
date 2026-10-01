@@ -1,0 +1,94 @@
+// A small JSON REST API with file persistence: HTTP server, JSON encode/decode, fs, shared state.
+//   velt run --release examples/todo_api.vlt
+//   curl -X POST localhost:8090/todos -d '{"title":"write docs"}'
+//   curl localhost:8090/todos
+// Stops after VELT_TODO_SECONDS seconds if that variable is set.
+import { serve, Request, Response } from "velt:http";
+import { writeFile, readFile, exists } from "velt:fs";
+import { env } from "velt:process";
+
+struct Todo {
+  id: i64;
+  title: string;
+  done: bool;
+}
+
+struct NewTodo {
+  title: string;
+}
+
+class Store {
+  todos: Todo[] = [];
+  nextId: i64 = 1;
+
+  add(title: string): Todo {
+    const todo = Todo { id: this.nextId, title: title, done: false };
+    this.nextId += 1;
+    this.todos.push(todo.clone());
+    return todo;
+  }
+
+  complete(id: i64): bool {
+    for (let i: usize = 0; i < this.todos.length; i++) {
+      if (this.todos[i].id == id) {
+        this.todos[i].done = true;
+        return true;
+      }
+    }
+    return false;
+  }
+}
+
+const DB = "todos.json";
+
+async function load(): Promise<Todo[]> {
+  if (!(await exists(DB))) {
+    return [];
+  }
+  return JSON.parse<Todo[]>(await readFile(DB));
+}
+
+async function handle(req: Request, store: shared<Mutex<Store>>): Promise<Response> {
+  if (req.method == "GET" && req.path == "/todos") {
+    const json = store.with((s) => JSON.stringify(s.todos));
+    return Response.text(json);
+  }
+  if (req.method == "POST" && req.path == "/todos") {
+    try {
+      const input = JSON.parse<NewTodo>(req.body);
+      const todo = store.with((s) => s.add(input.title));
+      const snapshot = store.with((s) => JSON.stringify(s.todos));
+      await writeFile(DB, snapshot);
+      return Response.json(todo, 201);
+    } catch (e) {
+      return Response.text(`bad request: ${e.message}`, 400);
+    }
+  }
+  if (req.method == "POST" && req.path.startsWith("/todos/") && req.path.endsWith("/done")) {
+    const id = parseInt(req.path.slice(7, -5), 10) as i64;
+    const ok = store.with((s) => s.complete(id));
+    if (!ok) {
+      return Response.text("not found", 404);
+    }
+    await writeFile(DB, store.with((s) => JSON.stringify(s.todos)));
+    return Response.text("ok");
+  }
+  return Response.text("not found", 404);
+}
+
+async function main() {
+  let initial = new Store();
+  for (const t of await load()) {
+    initial.nextId = Math.max(initial.nextId as f64, (t.id + 1) as f64) as i64;
+    initial.todos.push(t);
+  }
+  const store = shared(new Mutex<Store>(initial));
+  const s2 = store.clone();
+  const server = await serve({ port: 8090 }, async (req: Request): Promise<Response> => {
+    return await handle(req, s2.clone());
+  });
+  console.log(`todo api on http://127.0.0.1:${server.port}`);
+  const seconds = parseInt(env("VELT_TODO_SECONDS") ?? "0", 10);
+  await sleep(seconds > 0.0 ? (seconds * 1000.0) as i64 : 1000000000);
+  server.close();
+}

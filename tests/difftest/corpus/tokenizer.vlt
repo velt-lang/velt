@@ -1,0 +1,69 @@
+// A tokenizer for a tiny language: identifiers, numbers, strings, operators; counts per kind.
+class Token {
+  kind: string;
+  text: string;
+  constructor(kind: string, text: string) {
+    this.kind = kind;
+    this.text = text;
+  }
+}
+
+function isDigit(c: i64): bool {
+  return c >= 48 && c <= 57;
+}
+
+function isAlpha(c: i64): bool {
+  return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95;
+}
+
+function tokenize(src: string): Token[] {
+  const out: Token[] = [];
+  let i = 0;
+  const n = src.length as i64;
+  while (i < n) {
+    const c = src.charCodeAt(i);
+    if (c == 32) {
+      i++;
+    } else if (isDigit(c)) {
+      const s = i;
+      while (i < n && isDigit(src.charCodeAt(i))) {
+        i++;
+      }
+      out.push(new Token("num", src.slice(s, i)));
+    } else if (isAlpha(c)) {
+      const s = i;
+      while (i < n && (isAlpha(src.charCodeAt(i)) || isDigit(src.charCodeAt(i)))) {
+        i++;
+      }
+      out.push(new Token("id", src.slice(s, i)));
+    } else if (c == 34) {
+      const s = i;
+      i++;
+      while (i < n && src.charCodeAt(i) != 34) {
+        i++;
+      }
+      i++;
+      out.push(new Token("str", src.slice(s, i)));
+    } else {
+      const two = src.slice(i, i + 2);
+      if (two == "==" || two == "<=" || two == ">=" || two == "=>") {
+        out.push(new Token("op", two));
+        i += 2;
+      } else {
+        out.push(new Token("op", src.slice(i, i + 1)));
+        i++;
+      }
+    }
+  }
+  return out;
+}
+
+function main() {
+  const toks = tokenize('let x1 = 42 + y_2 * (7 >= 3) => "hi there" == z');
+  console.log(toks.map((t) => `${t.kind}:${t.text}`).join(" "));
+  const counts = new Map<string, i64>();
+  for (const t of toks) {
+    counts.set(`${t.kind}`, (counts.get(t.kind) ?? 0) + 1);
+  }
+  console.log(JSON.stringify([...counts.keys()]), JSON.stringify([...counts.values()]));
+}

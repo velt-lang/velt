@@ -1,0 +1,73 @@
+// Tagged data is a discriminated union (the `kind` literal is the tag); `switch` dispatches on
+// it and narrows each case. Enums are TS-style: numeric (C-like) or string.
+type Shape = { kind: "circle"; r: f64 } | { kind: "rect"; w: f64; h: f64 } | { kind: "empty" };
+
+function area(s: Shape): f64 {
+  switch (s.kind) {
+    case "circle":
+      return 3.0 * s.r * s.r;
+    case "rect":
+      return s.w * s.h;
+    case "empty":
+      return 0.0;
+  }
+}
+
+enum Color {
+  Red,
+  Green = 5,
+  Blue,
+}
+
+function grade(n: i64): string {
+  if (n >= 90 && n <= 100) {
+    return "A";
+  }
+  if (n >= 80 && n <= 89) {
+    return "B";
+  }
+  switch (n) {
+    case 0:
+    case 1:
+      return "zero-ish";
+    default:
+      return "C";
+  }
+}
+
+type Token = { kind: "num"; n: i64 } | { kind: "word"; w: string };
+
+function show(t: Token): string {
+  switch (t.kind) {
+    case "num":
+      if (t.n < 0) {
+        return `negative ${t.n}`;
+      }
+      return `num ${t.n}`;
+    case "word":
+      return `word ${t.w}`;
+  }
+}
+
+function main() {
+  const shapes: Shape[] = [
+    { kind: "circle", r: 2.0 },
+    { kind: "rect", w: 3.0, h: 4.0 },
+    { kind: "empty" },
+  ];
+  let total = 0.0;
+  for (const s of shapes) {
+    total += area(s);
+  }
+  console.log(total);
+  console.log(Color.Green as i64, Color.Blue as i64, Color.Red == Color.Red);
+  console.log(grade(95), grade(85), grade(1), grade(50));
+  const tokens: Token[] = [
+    { kind: "num", n: -3 },
+    { kind: "num", n: 7 },
+    { kind: "word", w: "hi" },
+  ];
+  for (const t of tokens) {
+    console.log(show(t));
+  }
+}

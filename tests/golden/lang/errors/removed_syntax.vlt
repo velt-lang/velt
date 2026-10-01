@@ -1,0 +1,14 @@
+// Payload enums and `match` were replaced by discriminated unions and `switch`.
+enum Shape {
+  Circle(f64),
+  Empty,
+}
+
+function area(s: i64): i64 {
+  return match (s) {
+    0 => 1,
+    _ => 2,
+  };
+}
+
+function main() {}

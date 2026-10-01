@@ -1,0 +1,16 @@
+// `stdout.write` (std/process): raw bytes to stdout in order with `console.log`, small writes
+// through the output buffer and large ones (64 KiB and up) straight from the array.
+import { stdout } from "velt:process";
+
+function main() {
+  console.log("first");
+  const line: u8[] = [104, 105, 10];
+  stdout.write(line);
+  stdout.writeString("no newline;");
+  const big = Buffer.alloc(70000);
+  big.fill(65);
+  big[69999] = 10;
+  stdout.write(big);
+  stdout.write(line);
+  console.log("last", line.length);
+}

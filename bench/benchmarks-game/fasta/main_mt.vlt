@@ -1,0 +1,167 @@
+// fasta, multi-threaded: main.vlt with the random sections split into blocks. The random
+// numbers must come from one generator in order, so main draws each block's numbers and a
+// spawned task turns them into letters (like the Go #2 and Node #5 programs); every round runs
+// one block per core and `Promise.all` returns the blocks in order for writing.
+
+import { args, stdout } from "velt:process";
+import { availableParallelism } from "velt:os";
+
+const LINE_LENGTH: i64 = 60;
+// Characters generated per write (a whole number of lines).
+const BLOCK_SIZE: i64 = 60 * 1024;
+
+const IM: i64 = 139968;
+const IA: i64 = 3877;
+const IC: i64 = 29573;
+
+const ALU =
+  "GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCAGCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA";
+
+// The benchmark's linear congruential generator.
+class Random {
+  seed: i64 = 42;
+
+  next(): f64 {
+    this.seed = (this.seed * IA + IC) % IM;
+    return (this.seed as f64) / (IM as f64);
+  }
+
+  // The next `count` numbers.
+  block(count: i64): f64[] {
+    const out: f64[] = [];
+    for (let i = 0; i < count; i++) {
+      out.push(this.next());
+    }
+    return out;
+  }
+}
+
+// Copies `text` over and over.
+class Repeat {
+  text: u8[] = [];
+  pos: usize = 0;
+
+  constructor(text: string) {
+    for (let i: usize = 0; i < text.length; i++) {
+      this.text.push(text.charCodeAt(i as i64) as u8);
+    }
+  }
+
+  // The next `count` characters, folded into lines.
+  next(count: i64): u8[] {
+    const out: u8[] = [];
+    for (let i = 0; i < count; i++) {
+      out.push(this.text[this.pos]);
+      this.pos++;
+      if (this.pos == this.text.length) {
+        this.pos = 0;
+      }
+      if ((i + 1) % LINE_LENGTH == 0 || i + 1 == count) {
+        out.push(10);
+      }
+    }
+    return out;
+  }
+}
+
+// Picks characters with the given probabilities.
+class Alphabet {
+  codes: u8[] = [];
+  cumulative: f64[] = [];
+
+  constructor(table: { c: string; p: f64 }[]) {
+    let total = 0.0;
+    for (const entry of table) {
+      total += entry.p;
+      this.codes.push(entry.c.charCodeAt(0) as u8);
+      this.cumulative.push(total);
+    }
+  }
+
+  pick(r: f64): u8 {
+    for (let i: usize = 0; i < this.cumulative.length; i++) {
+      if (r < this.cumulative[i]) {
+        return this.codes[i];
+      }
+    }
+    return this.codes[this.codes.length - 1];
+  }
+
+  // The letters picked by `randoms`, folded into lines.
+  letters(randoms: f64[]): u8[] {
+    const out: u8[] = [];
+    for (let i: usize = 0; i < randoms.length; i++) {
+      out.push(this.pick(randoms[i]));
+      if ((i + 1) % (LINE_LENGTH as usize) == 0 || i + 1 == randoms.length) {
+        out.push(10);
+      }
+    }
+    return out;
+  }
+}
+
+async function pickLetters(alphabet: Alphabet, randoms: f64[]): Promise<u8[]> {
+  return alphabet.letters(randoms);
+}
+
+async function main() {
+  const argv = args();
+  const n = argv.length > 0 ? parseInt(argv[0]) as i64 : 1000;
+
+  stdout.writeString(">ONE Homo sapiens alu\n");
+  const alu = new Repeat(ALU);
+  for (let left = 2 * n; left > 0; left -= BLOCK_SIZE) {
+    stdout.write(alu.next(left < BLOCK_SIZE ? left : BLOCK_SIZE));
+  }
+
+  const workers = availableParallelism();
+  const rng = new Random();
+  const sections = [
+    {
+      title: ">TWO IUB ambiguity codes\n",
+      count: 3 * n,
+      alphabet: new Alphabet([
+        { c: "a", p: 0.27 },
+        { c: "c", p: 0.12 },
+        { c: "g", p: 0.12 },
+        { c: "t", p: 0.27 },
+        { c: "B", p: 0.02 },
+        { c: "D", p: 0.02 },
+        { c: "H", p: 0.02 },
+        { c: "K", p: 0.02 },
+        { c: "M", p: 0.02 },
+        { c: "N", p: 0.02 },
+        { c: "R", p: 0.02 },
+        { c: "S", p: 0.02 },
+        { c: "V", p: 0.02 },
+        { c: "W", p: 0.02 },
+        { c: "Y", p: 0.02 },
+      ]),
+    },
+    {
+      title: ">THREE Homo sapiens frequency\n",
+      count: 5 * n,
+      alphabet: new Alphabet([
+        { c: "a", p: 0.302954942668 },
+        { c: "c", p: 0.1979883004921 },
+        { c: "g", p: 0.1975473066391 },
+        { c: "t", p: 0.3015094502008 },
+      ]),
+    },
+  ];
+  for (const section of sections) {
+    stdout.writeString(section.title);
+    let left = section.count;
+    while (left > 0) {
+      const tasks: Promise<u8[]>[] = [];
+      for (let w = 0; w < workers && left > 0; w++) {
+        const size = left < BLOCK_SIZE ? left : BLOCK_SIZE;
+        tasks.push(spawn(pickLetters(section.alphabet, rng.block(size))));
+        left -= size;
+      }
+      for (const block of await Promise.all(tasks)) {
+        stdout.write(block);
+      }
+    }
+  }
+}

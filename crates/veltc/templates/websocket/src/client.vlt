@@ -1,0 +1,64 @@
+// The terminal client: joins under a name, prints what the server broadcasts, and sends each
+// line typed on stdin (`/quit` or end of input leaves).
+//
+// `WebSocket` is a Copy handle that `close()` releases, so only the receiving task closes it,
+// after the server has ended the conversation: leaving sends `{"type":"leave"}`, the server
+// closes, `receive` returns null, then the receiver closes.
+import { WebSocket, connectWebSocket } from "velt:websocket";
+import { readLine } from "velt:stdin";
+import { decodeServer, describe } from "./protocol";
+
+/// The next server message as the client shows it, or null once the connection has ended.
+export async function nextLine(ws: WebSocket): Promise<string | null> {
+  try {
+    const m = await ws.receive();
+    if (m == null) {
+      return null;
+    }
+    return describe(decodeServer(m.text));
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function sendJoin(ws: WebSocket, name: string) {
+  await ws.send(JSON.stringify({ type: "join", name }));
+}
+
+export async function sendSay(ws: WebSocket, text: string) {
+  await ws.send(JSON.stringify({ type: "say", text }));
+}
+
+export async function sendLeave(ws: WebSocket) {
+  await ws.send(`{"type":"leave"}`);
+}
+
+// Prints server messages until the server closes, then releases the socket.
+async function printIncoming(ws: WebSocket) {
+  let line = await nextLine(ws);
+  while (line != null) {
+    console.log(line);
+    line = await nextLine(ws);
+  }
+  try {
+    await ws.close();
+  } catch (e) {
+    return;
+  }
+}
+
+/// Runs an interactive session against `url` as `name`.
+export async function runClient(url: string, name: string) {
+  const ws = await connectWebSocket(url);
+  const incoming = spawn(printIncoming(ws));
+  await sendJoin(ws, name);
+  let line = await readLine();
+  while (line != null && line != "/quit") {
+    if (line.trim() != "") {
+      await sendSay(ws, line);
+    }
+    line = await readLine();
+  }
+  await sendLeave(ws);
+  await incoming;
+}

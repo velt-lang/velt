@@ -1,0 +1,36 @@
+function fib(n: i64): i64 {
+  if (n < 2) {
+    return n;
+  }
+  return fib(n - 1) + fib(n - 2);
+}
+
+function gcd(a: i64, b: i64): i64 {
+  while (b != 0) {
+    const t = b;
+    b = a % b;
+    a = t;
+  }
+  return a;
+}
+
+// Mutual recursion + forward references.
+function isEven(n: i64): bool {
+  return n == 0 ? true : isOdd(n - 1);
+}
+
+function isOdd(n: i64): bool {
+  return n == 0 ? false : isEven(n - 1);
+}
+
+function square(x: f64): f64 {
+  return x * x;
+}
+
+function main(): i32 {
+  console.log(fib(30));
+  console.log(gcd(1071, 462));
+  console.log(isEven(10), isOdd(7));
+  console.log(square(1.5));
+  return 3;
+}

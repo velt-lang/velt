@@ -1,0 +1,122 @@
+// Getters and setters (plain, compound `+=`, `++`, overridden through a subclass and an
+// interface), object and array spread, `for` with comma lists, array `entries()`, `join` on
+// numbers and bools, and `Math.hypot` on exact inputs.
+interface Sized {
+  get size(): i64;
+}
+
+class Temp implements Sized {
+  private c: f64 = 0.0;
+  get celsius(): f64 {
+    return this.c;
+  }
+  set celsius(v: f64) {
+    this.c = v;
+  }
+  get fahrenheit(): f64 {
+    return this.c * 1.8 + 32.0;
+  }
+  set fahrenheit(f: f64) {
+    this.c = (f - 32.0) / 1.8;
+  }
+  get size(): i64 {
+    return 1;
+  }
+}
+
+class Counter implements Sized {
+  n: i64 = 0;
+  get size(): i64 {
+    return this.n;
+  }
+  get double(): i64 {
+    return this.n * 2;
+  }
+  set double(v: i64) {
+    this.n = (v - (v % 2)) / 2;
+  }
+}
+
+class Clamped extends Counter {
+  override get size(): i64 {
+    return this.n > 10 ? 10 : this.n;
+  }
+}
+
+function total(xs: Sized[]): i64 {
+  let t = 0;
+  for (const x of xs) {
+    t += x.size;
+  }
+  return t;
+}
+
+function main() {
+  const t = new Temp();
+  t.celsius = 100.0;
+  console.log(`${t.fahrenheit}`);
+  t.fahrenheit = 212.0 - 180.0;
+  console.log(`${t.celsius} ${t.fahrenheit}`);
+  t.celsius += 37.5;
+  t.celsius += 1.0;
+  console.log(`${t.celsius}`);
+  const c = new Counter();
+  c.double = 21;
+  c.double += 10;
+  c.double++;
+  console.log(c.n, c.double, c.size);
+  const k = new Clamped();
+  k.n = 25;
+  console.log(k.size, k.double, total([t, c, k]));
+
+  const base = { x: 1, y: 2, name: "p" };
+  const moved = { ...base, x: 10 };
+  console.log(JSON.stringify(moved));
+  const named = { name: "q", ...moved, y: 20 };
+  console.log(JSON.stringify(named));
+  let acc = { total: 0, label: "sum" };
+  for (let i = 1; i <= 4; i++) {
+    acc = { ...acc, total: acc.total + i };
+  }
+  console.log(acc.total, acc.label);
+  const xs: i64[] = [3, 1, 4];
+  const ys = [0, ...xs, ...xs.map((x) => x * 10), 99];
+  const rev = [...ys];
+  rev.reverse();
+  console.log(ys.join(), ys.length, rev.join(" "));
+
+  for (let i = 0, j = 10; i < j; i += 3, j -= 2) {
+    console.log(`i=${i} j=${j}`);
+  }
+  let lo = 0;
+  let hi = 7;
+  const order: string[] = [];
+  for (; lo < hi; lo++, hi--) {
+    order.push(`${lo}:${hi}`);
+  }
+  console.log(order.join(" "));
+
+  const words: string[] = ["a", "bb", "ccc"];
+  for (const [i, w] of words.entries()) {
+    console.log(i, w, w.repeat((i as i64) + 1));
+  }
+  const fs: f64[] = [1.5, -0.25, 1e21, 1e-7, 100.0, 0.1 + 0.2];
+  const bs: bool[] = [true, false, true];
+  console.log(fs.join(";"), bs.join("|"), [10, -20, 30].join(", "));
+  const pairs: string[] = [];
+  for (const [i, f] of fs.entries()) {
+    if (f > 1.0) {
+      pairs.push(`${i}=${f}`);
+    }
+  }
+  console.log(pairs.join(","));
+
+  console.log(
+    Math.hypot(3.0, 4.0),
+    Math.hypot(-5.0, 12.0),
+    Math.hypot(0.0, -7.0),
+    Math.hypot(6.0 * 4.149515568880993e180, 8.0 * 4.149515568880993e180),
+    Math.hypot(3.0 * 9.332636185032189e-302, 4.0 * 9.332636185032189e-302),
+  );
+  console.log(Math.hypot(1.0 / 0.0, 0.0 / 0.0), Math.hypot(0.0 / 0.0, 1.0), Math.hypot(0.0, 0.0));
+}

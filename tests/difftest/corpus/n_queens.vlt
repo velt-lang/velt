@@ -1,0 +1,44 @@
+// N-queens: count solutions for n = 1..8 by backtracking; print the first 6-queens board.
+function safe(cols: i64[], col: i64): bool {
+  const row = cols.length as i64;
+  for (let r = 0; r < row; r++) {
+    const c = cols[r as usize];
+    if (c == col || c - col == r - row || c - col == row - r) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function solve(n: i64, cols: i64[], found: string[]): i64 {
+  if (cols.length as i64 == n) {
+    if (found.length == 0) {
+      found.push(cols.map((c) => `${c}`).join(""));
+    }
+    return 1;
+  }
+  let count = 0;
+  for (let c = 0; c < n; c++) {
+    if (safe(cols, c)) {
+      cols.push(c);
+      count += solve(n, cols, found);
+      cols.pop();
+    }
+  }
+  return count;
+}
+
+function main() {
+  const counts: string[] = [];
+  for (let n = 1; n <= 8; n++) {
+    counts.push(`${n}:${solve(n, [], [])}`);
+  }
+  console.log(counts.join(" "));
+  const first: string[] = [];
+  solve(6, [], first);
+  const cols = `${first[0]}`;
+  for (let r = 0; r < 6; r++) {
+    const c = cols.charCodeAt(r) - 48;
+    console.log(".".repeat(c) + "Q" + ".".repeat(5 - c));
+  }
+}

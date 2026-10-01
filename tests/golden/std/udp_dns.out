@@ -1,0 +1,8 @@
+true true
+4
+ping true
+[ 1, 2 ] true
+true true
+127.0.0.1
+ENOENT
+EADDRINUSE

@@ -1,0 +1,33 @@
+// Perfect, abundant and deficient numbers; sum of proper divisors.
+function divisorSum(n: i64): i64 {
+  if (n < 2) {
+    return 0;
+  }
+  let s = 1;
+  for (let d = 2; d * d <= n; d++) {
+    if (n % d == 0) {
+      s += d;
+      if (d * d != n) {
+        s += n / d;
+      }
+    }
+  }
+  return s;
+}
+
+function main() {
+  const perfect: i64[] = [];
+  let abundant = 0;
+  let deficient = 0;
+  for (let n = 1; n <= 10000; n++) {
+    const s = divisorSum(n);
+    if (s == n) {
+      perfect.push(n);
+    } else if (s > n) {
+      abundant++;
+    } else {
+      deficient++;
+    }
+  }
+  console.log(perfect, abundant, deficient);
+}

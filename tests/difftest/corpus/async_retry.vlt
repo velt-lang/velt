@@ -1,0 +1,33 @@
+// Async retries with a failure budget, sequential awaits, try/catch per attempt.
+class Flaky {
+  calls: i64 = 0;
+  failUntil: i64;
+  constructor(failUntil: i64) {
+    this.failUntil = failUntil;
+  }
+}
+
+async function attempt(n: i64, failUntil: i64): Promise<string> {
+  if (n < failUntil) {
+    throw new Error(`attempt ${n} failed`);
+  }
+  return `ok on ${n}`;
+}
+
+async function withRetry(failUntil: i64, max: i64): Promise<string> {
+  for (let n = 0; n < max; n++) {
+    try {
+      return await attempt(n, failUntil);
+    } catch (e) {
+      console.log(`  ${e.message}`);
+    }
+  }
+  return "gave up";
+}
+
+async function main() {
+  const f = new Flaky(2);
+  console.log(await withRetry(f.failUntil, 5));
+  console.log(await withRetry(0, 3));
+  console.log(await withRetry(9, 3));
+}

@@ -1,0 +1,97 @@
+// N-body simulation (same algorithm and operation order as nbody.vlt).
+const SOLAR_MASS = 4.0 * Math.PI * Math.PI;
+const DAYS_PER_YEAR = 365.24;
+
+class Vec3 {
+  constructor(x, y, z) {
+    this.x = x;
+    this.y = y;
+    this.z = z;
+  }
+  add(o) {
+    return new Vec3(this.x + o.x, this.y + o.y, this.z + o.z);
+  }
+  sub(o) {
+    return new Vec3(this.x - o.x, this.y - o.y, this.z - o.z);
+  }
+  scale(k) {
+    return new Vec3(this.x * k, this.y * k, this.z * k);
+  }
+  dot(o) {
+    return this.x * o.x + this.y * o.y + this.z * o.z;
+  }
+}
+
+function body(x, y, z, vx, vy, vz, mass) {
+  return {
+    pos: new Vec3(x, y, z),
+    vel: new Vec3(vx * DAYS_PER_YEAR, vy * DAYS_PER_YEAR, vz * DAYS_PER_YEAR),
+    mass: mass * SOLAR_MASS,
+  };
+}
+
+function makeBodies() {
+  return [
+    body(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
+    body(4.84143144246472090e+00, -1.16032004402742839e+00, -1.03622044471123109e-01,
+      1.66007664274403694e-03, 7.69901118419740425e-03, -6.90460016972063023e-05,
+      9.54791938424326609e-04),
+    body(8.34336671824457987e+00, 4.12479856412430479e+00, -4.03523417114321381e-01,
+      -2.76742510726862411e-03, 4.99852801234917238e-03, 2.30417297573763929e-05,
+      2.85885980666130812e-04),
+    body(1.28943695621391310e+01, -1.51111514016986312e+01, -2.23307578892655734e-01,
+      2.96460137564761618e-03, 2.37847173959480950e-03, -2.96589568540237556e-05,
+      4.36624404335156298e-05),
+    body(1.53796971148509165e+01, -2.59193146099879641e+01, 1.79258772950371181e-01,
+      2.68067772490389322e-03, 1.62824170038242295e-03, -9.51592254519715870e-05,
+      5.15138902046611451e-05),
+  ];
+}
+
+function offsetMomentum(bodies) {
+  let p = new Vec3(0.0, 0.0, 0.0);
+  for (const b of bodies) {
+    p = p.add(b.vel.scale(b.mass));
+  }
+  bodies[0].vel = p.scale(-1.0 / SOLAR_MASS);
+}
+
+function energy(bodies) {
+  let e = 0.0;
+  const n = bodies.length;
+  for (let i = 0; i < n; i++) {
+    const b = bodies[i];
+    e += 0.5 * b.mass * b.vel.dot(b.vel);
+    for (let j = i + 1; j < n; j++) {
+      const d = b.pos.sub(bodies[j].pos);
+      e -= (b.mass * bodies[j].mass) / Math.sqrt(d.dot(d));
+    }
+  }
+  return e;
+}
+
+function advance(bodies, dt) {
+  const n = bodies.length;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const d = bodies[i].pos.sub(bodies[j].pos);
+      const d2 = d.dot(d);
+      const mag = dt / (d2 * Math.sqrt(d2));
+      const mi = bodies[i].mass;
+      const mj = bodies[j].mass;
+      bodies[i].vel = bodies[i].vel.sub(d.scale(mj * mag));
+      bodies[j].vel = bodies[j].vel.add(d.scale(mi * mag));
+    }
+  }
+  for (let i = 0; i < n; i++) {
+    bodies[i].pos = bodies[i].pos.add(bodies[i].vel.scale(dt));
+  }
+}
+
+const bodies = makeBodies();
+offsetMomentum(bodies);
+console.log(energy(bodies));
+for (let step = 0; step < 5000000; step++) {
+  advance(bodies, 0.01);
+}
+console.log(energy(bodies));

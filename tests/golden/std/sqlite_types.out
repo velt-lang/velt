@@ -1,0 +1,7 @@
+9223372036854775807 0.1 "tab\tquote\"é😀" [ 0, 1, 127, 128, 255 ] x true
+-9007199254740993 1e+21 "" [] null false
+0 -2.5e-7 "line\nbreak" [ 7 ] null true
+integer real text blob text null
+3 3 real integer
+true/1 false/0 true/1
+42 1

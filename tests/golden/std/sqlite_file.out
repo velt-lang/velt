@@ -1,0 +1,5 @@
+journal wal
+reader 1000 note 999
+journal after reopen wal
+[ 'note 249', 'note 499', 'note 749', 'note 999' ]
+cleaned true

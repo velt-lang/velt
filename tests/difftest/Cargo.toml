@@ -1,0 +1,15 @@
+[package]
+name = "velt_difftest"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Differential tester: runs programs under Node and velt and compares their output"
+
+# Standalone on purpose: not a member of the compiler workspace (it drives the `velt` binary as a
+# black box and must not slow down or constrain the workspace gates).
+[workspace]
+
+[[bin]]
+name = "difftest"
+path = "src/main.rs"

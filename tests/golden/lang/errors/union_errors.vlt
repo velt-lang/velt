@@ -1,0 +1,76 @@
+class Cat {
+  meow(): string {
+    return "meow";
+  }
+}
+class Animal {}
+class Dog extends Animal {}
+
+function f(v: i64 | string): usize {
+  return v.length;
+}
+
+function g(v: Cat | string): string {
+  return v.meow();
+}
+
+function h(v: i64 | string | bool): string {
+  switch (typeof v) {
+    case "number":
+      return "int";
+    case "string":
+      return v;
+  }
+}
+
+function k(v: i64 | string): bool {
+  return typeof v === "boolean";
+}
+
+function m(v: i64 | string): bool {
+  return typeof v === "strng";
+}
+
+function n(v: Animal | string): bool {
+  return v instanceof Dog;
+}
+
+function o(v: i64 | string): void {
+  const x: i64 = v;
+}
+
+function p(v: i64 | string): string {
+  switch (v) {
+    case true:
+      return "b";
+    default:
+      return "x";
+  }
+}
+
+function q(v: i32 | i64 | string): bool {
+  return v == 5;
+}
+
+function r(v: i64 | string): void {
+  if (typeof v === "string") {
+    v = 5;
+    console.log(v.length);
+  }
+}
+
+// A loop body may run again after the assignment: the narrowing does not hold inside it.
+function loopReassign(start: Cat | null): void {
+  let x = start;
+  if (x != null) {
+    while (true) {
+      console.log(x.meow());
+      x = null;
+    }
+  }
+}
+
+function main() {
+  const j = JSON.parse<i64 | string>("1");
+  const bad: i64 | void = 1;
+}

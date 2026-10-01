@@ -1,0 +1,15 @@
+// Byte arrays (std/prelude/bytes.vlt): `Buffer.alloc`, and `indexOf` (memchr), `lastIndexOf`,
+// `set`, `copyWithin`, `fill` on `u8[]` with JS positions. Expected output is Node's (Uint8Array).
+function main() {
+  const b = Buffer.alloc(8);
+  console.log(b.length, b.join(","));
+  const src: u8[] = [65, 10, 66];
+  b.set(src, 2);
+  b.fill(7, -2);
+  console.log(b.join(","), b.indexOf(10), b.indexOf(10, 4), b.lastIndexOf(7), b.includes(66));
+  console.log(b.indexOf(7, -1), b.lastIndexOf(10, 2), b.lastIndexOf(66, -9));
+  b.copyWithin(0, 2, 5);
+  console.log(b.join(","));
+  b.copyWithin(1, 0, -2);
+  console.log(b.join(","));
+}

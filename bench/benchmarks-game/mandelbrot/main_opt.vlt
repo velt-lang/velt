@@ -1,0 +1,174 @@
+// The Computer Language Benchmarks Game: mandelbrot, optimized variant
+// https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/mandelbrot.html
+//
+// The Rust #4 program's shape (Matt Watson, TeXitoi, Volodymyr M. Lisivka, Michael Cicotti,
+// Ryohei Machida) on one thread: eight pixels at a time in a Copy struct of eight f64 lanes,
+// no per-pixel exit (the escape test runs every 4 iterations and only stops when all 8 lanes
+// escaped, and only when the previous byte was all-escaped too). Tests whether struct-of-lanes
+// code gets vectorized like Rust's `[f64; 8]`.
+import { argv, stdout } from "velt:process";
+
+struct F64x8 {
+  l0: f64;
+  l1: f64;
+  l2: f64;
+  l3: f64;
+  l4: f64;
+  l5: f64;
+  l6: f64;
+  l7: f64;
+
+  add(o: F64x8): F64x8 {
+    return F64x8 {
+      l0: this.l0 + o.l0,
+      l1: this.l1 + o.l1,
+      l2: this.l2 + o.l2,
+      l3: this.l3 + o.l3,
+      l4: this.l4 + o.l4,
+      l5: this.l5 + o.l5,
+      l6: this.l6 + o.l6,
+      l7: this.l7 + o.l7,
+    };
+  }
+
+  sub(o: F64x8): F64x8 {
+    return F64x8 {
+      l0: this.l0 - o.l0,
+      l1: this.l1 - o.l1,
+      l2: this.l2 - o.l2,
+      l3: this.l3 - o.l3,
+      l4: this.l4 - o.l4,
+      l5: this.l5 - o.l5,
+      l6: this.l6 - o.l6,
+      l7: this.l7 - o.l7,
+    };
+  }
+
+  mul(o: F64x8): F64x8 {
+    return F64x8 {
+      l0: this.l0 * o.l0,
+      l1: this.l1 * o.l1,
+      l2: this.l2 * o.l2,
+      l3: this.l3 * o.l3,
+      l4: this.l4 * o.l4,
+      l5: this.l5 * o.l5,
+      l6: this.l6 * o.l6,
+      l7: this.l7 * o.l7,
+    };
+  }
+
+  addScalar(k: f64): F64x8 {
+    return F64x8 {
+      l0: this.l0 + k,
+      l1: this.l1 + k,
+      l2: this.l2 + k,
+      l3: this.l3 + k,
+      l4: this.l4 + k,
+      l5: this.l5 + k,
+      l6: this.l6 + k,
+      l7: this.l7 + k,
+    };
+  }
+
+  mulScalar(k: f64): F64x8 {
+    return F64x8 {
+      l0: this.l0 * k,
+      l1: this.l1 * k,
+      l2: this.l2 * k,
+      l3: this.l3 * k,
+      l4: this.l4 * k,
+      l5: this.l5 * k,
+      l6: this.l6 * k,
+      l7: this.l7 * k,
+    };
+  }
+
+  // True when every lane is > 4 (all eight points escaped).
+  allAbove4(): bool {
+    return this.l0 > 4.0 &&
+      this.l1 > 4.0 &&
+      this.l2 > 4.0 &&
+      this.l3 > 4.0 &&
+      this.l4 > 4.0 &&
+      this.l5 > 4.0 &&
+      this.l6 > 4.0 &&
+      this.l7 > 4.0;
+  }
+
+  // One bit per lane (lane 0 = most significant): 1 while the point has not escaped.
+  toBits(): i64 {
+    return (
+      (this.l0 <= 4.0 ? 128 : 0) |
+      (this.l1 <= 4.0 ? 64 : 0) |
+      (this.l2 <= 4.0 ? 32 : 0) |
+      (this.l3 <= 4.0 ? 16 : 0) |
+      (this.l4 <= 4.0 ? 8 : 0) |
+      (this.l5 <= 4.0 ? 4 : 0) |
+      (this.l6 <= 4.0 ? 2 : 0) |
+      (this.l7 <= 4.0 ? 1 : 0)
+    );
+  }
+}
+
+function splat(x: f64): F64x8 {
+  return F64x8 { l0: x, l1: x, l2: x, l3: x, l4: x, l5: x, l6: x, l7: x };
+}
+
+// The byte for 8 points c = cr + ci·i after 50 iterations; `lastByte` 0 allows the early exit.
+function mand8(cr: F64x8, ci: f64, lastByte: i64): i64 {
+  let zr = cr;
+  let zi = splat(ci);
+  let tr = zr.mul(zr);
+  let ti = zi.mul(zi);
+  for (let block = 0; block < 12; block++) {
+    for (let k = 0; k < 4; k++) {
+      zi = zr.add(zr).mul(zi).addScalar(ci);
+      zr = tr.sub(ti).add(cr);
+      tr = zr.mul(zr);
+      ti = zi.mul(zi);
+    }
+    if (lastByte == 0 && tr.add(ti).allAbove4()) {
+      return 0;
+    }
+  }
+  zi = zr.add(zr).mul(zi).addScalar(ci);
+  zr = tr.sub(ti).add(cr);
+  tr = zr.mul(zr);
+  ti = zi.mul(zi);
+  return tr.add(ti).toBits();
+}
+
+function main() {
+  const args = argv();
+  const size = ((args.length > 1 ? Number(args[1]) as i64 : 200) / 8) * 8;
+  const inv = 2.0 / (size as f64);
+  const xs: F64x8[] = [];
+  for (let i = 0; i < size / 8; i++) {
+    const x = (i * 8) as f64;
+    xs.push(
+      F64x8 {
+        l0: x,
+        l1: x + 1.0,
+        l2: x + 2.0,
+        l3: x + 3.0,
+        l4: x + 4.0,
+        l5: x + 5.0,
+        l6: x + 6.0,
+        l7: x + 7.0,
+      }
+        .mulScalar(inv)
+        .addScalar(-1.5),
+    );
+  }
+  const bitmap: u8[] = [];
+  for (let y = 0; y < size; y++) {
+    const ci = (y as f64) * inv - 1.0;
+    let last = 0;
+    for (const cr of xs) {
+      last = mand8(cr, ci, last);
+      bitmap.push(last as u8);
+    }
+  }
+  stdout.writeString(`P4\n${size} ${size}\n`);
+  stdout.write(bitmap);
+}

@@ -1,0 +1,8 @@
+// Entry point: `velt run` builds and runs this.
+import { args } from "velt:process";
+import { greet } from "./greet";
+
+function main() {
+  const argv = args();
+  console.log(greet(argv.length > 0 ? argv[0] : "world"));
+}

@@ -1,0 +1,27 @@
+hset: 1 0
+hmset: 2
+hget: Ada L. null
+hincrBy: 5
+  lang = en
+  name = Ada L.
+  visits = 5
+hlen: 3 hdel: 1
+hgetall missing: 0
+rpush: 2 lpush: 4
+lrange: [ 'z', 'a', 'b', 'c' ] [ 'a', 'b' ]
+lpop: z rpop: c llen: 2
+pop missing: null
+sadd: 3
+smembers: [ 'x', 'y', 'z' ] scard: 3
+sismember: true false
+srem: 1 scard: 2
+zadd: 3 0
+zrange: [ 'alice', 'bob', 'carol' ]
+  alice: 1
+  bob: 2.25
+zscore: 2.25 null
+zincrby: 11 -0.5
+zrange: [ 'dave', 'bob', 'carol', 'alice' ]
+zrem: 1 zcard: 3
+infinite score: Infinity [ 'top' ]
+cleanup: 4

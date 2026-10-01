@@ -1,0 +1,72 @@
+// binary-trees (Benchmarks Game): single-threaded Velt on `std/arena`, the shape of the Rust
+// programs that use bumpalo (Rust #5): every tree's nodes live in one pool that is reset, not
+// freed node by node, before the next tree; nodes are Copy structs linked by `u32` index.
+import { args } from "velt:process";
+import { Arena } from "velt:arena";
+
+const MIN_DEPTH = 4;
+
+// No child: index 0 is never a child (the root of a tree is allocated last).
+const NONE: u32 = 0;
+
+struct TreeNode {
+  left: u32;
+  right: u32;
+}
+
+// Builds a tree bottom-up; returns its root.
+function bottomUpTree(arena: Arena<TreeNode>, depth: i64): u32 {
+  if (depth > 0) {
+    const left = bottomUpTree(arena, depth - 1);
+    const right = bottomUpTree(arena, depth - 1);
+    return arena.alloc({ left: left, right: right });
+  }
+  return arena.alloc({ left: NONE, right: NONE });
+}
+
+function check(arena: Arena<TreeNode>, node: u32): i64 {
+  const n = arena.get(node);
+  if (n.left == NONE) {
+    return 1;
+  }
+  return 1 + check(arena, n.left) + check(arena, n.right);
+}
+
+// A tree of `depth` in a fresh pool, counted.
+function treeCheck(arena: Arena<TreeNode>, depth: i64): i64 {
+  arena.reset();
+  // Index 0 is a placeholder, so NONE never names a real node.
+  arena.alloc({ left: NONE, right: NONE });
+  const root = bottomUpTree(arena, depth);
+  return check(arena, root);
+}
+
+function work(arena: Arena<TreeNode>, iterations: i64, depth: i64): string {
+  let sum = 0;
+  for (let i = 0; i < iterations; i++) {
+    sum += treeCheck(arena, depth);
+  }
+  return `${iterations}\t trees of depth ${depth}\t check: ${sum}`;
+}
+
+function main() {
+  const argv = args();
+  const n = argv.length > 0 ? parseInt(argv[0]) as i64 : 10;
+  const maxDepth = n > MIN_DEPTH + 2 ? n : MIN_DEPTH + 2;
+  const nodes = (1 << (maxDepth + 2)) as usize;
+
+  const stretchDepth = maxDepth + 1;
+  const scratch = new Arena<TreeNode>(nodes);
+  console.log(`stretch tree of depth ${stretchDepth}\t check: ${treeCheck(scratch, stretchDepth)}`);
+
+  const longLived = new Arena<TreeNode>(nodes / 2);
+  longLived.alloc({ left: NONE, right: NONE });
+  const longLivedRoot = bottomUpTree(longLived, maxDepth);
+
+  for (let depth = MIN_DEPTH; depth <= maxDepth; depth += 2) {
+    const iterations = 1 << (maxDepth - depth + MIN_DEPTH);
+    console.log(work(scratch, iterations, depth));
+  }
+
+  console.log(`long lived tree of depth ${maxDepth}\t check: ${check(longLived, longLivedRoot)}`);
+}

@@ -1,0 +1,132 @@
+// switch control flow: fallthrough chains, default in the middle, string and negative-number
+// cases, `continue` from a switch inside a loop, labelled switch left from nested loops,
+// `typeof` switches, returns and throws out of cases, and a switch evaluated once.
+class Counter {
+  calls: i64 = 0;
+}
+
+function pick(c: Counter, n: i64): i64 {
+  c.calls += 1;
+  return n % 7;
+}
+
+function fallthrough(n: i64): string {
+  const out: string[] = [];
+  switch (n) {
+    case 0:
+      out.push("zero");
+    case 1:
+      out.push("one");
+    default:
+      out.push("dflt");
+    case -3:
+      out.push("minus3");
+      break;
+    case 5:
+      out.push("five");
+  }
+  return out.join("+");
+}
+
+function daysIn(month: string, leap: bool): i64 {
+  switch (month.toLowerCase()) {
+    case "feb":
+      return leap ? 29 : 28;
+    case "apr":
+    case "jun":
+    case "sep":
+    case "nov":
+      return 30;
+    case "":
+      throw new Error("no month");
+    default:
+      return 31;
+  }
+}
+
+function kindOf(v: i64 | string | bool): string {
+  switch (typeof v) {
+    case "number":
+      return `num ${v + 1}`;
+    case "string":
+      return `str ${v.length}`;
+    case "boolean":
+      return v ? "yes" : "no";
+  }
+}
+
+function grid(): string {
+  const hits: string[] = [];
+  search: switch (hits.length) {
+    case 0:
+      for (let i = 0; i < 4; i++) {
+        for (let j = 0; j < 4; j++) {
+          if (i * j == 6) {
+            hits.push(`${i}${j}`);
+            break search;
+          }
+          if (j > i) {
+            break;
+          }
+        }
+      }
+      hits.push("never");
+      break;
+    default:
+      hits.push("other");
+  }
+  return hits.join(",");
+}
+
+function main() {
+  for (let n = -4; n <= 6; n++) {
+    console.log(n, fallthrough(n));
+  }
+  const months: string[] = ["Jan", "FEB", "apr", "Sep", "dec", ""];
+  for (const m of months) {
+    try {
+      console.log(m, daysIn(m, false), daysIn(m, true));
+    } catch (e) {
+      console.log("error:", e.message);
+    }
+  }
+  const counter = new Counter();
+  let evens = 0;
+  let odds = 0;
+  for (let i = 0; i < 20; i++) {
+    switch (pick(counter, i)) {
+      case 0:
+        continue;
+      case 2:
+      case 4:
+      case 6:
+        evens++;
+        break;
+      default:
+        odds++;
+    }
+    if (i > 15) {
+      break;
+    }
+  }
+  console.log(evens, odds, counter.calls);
+  const vals: (i64 | string | bool)[] = [41, "four", true, false, -1, ""];
+  console.log(vals.map((v) => kindOf(v)).join(" | "));
+  console.log(grid());
+  let state = "start";
+  let steps = 0;
+  while (state != "done" && steps < 10) {
+    steps++;
+    switch (state) {
+      case "start":
+        state = "a";
+        break;
+      case "a":
+        state = steps > 3 ? "b" : "a";
+        break;
+      case "b":
+        state = "done";
+    }
+  }
+  console.log(state, steps);
+}

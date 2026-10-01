@@ -1,0 +1,6 @@
+ plain text フレームワーク — ok
+&amp; &lt; &gt; &quot; &#39;
+&lt;script&gt;alert(&quot;This should not be displayed in a browser alert box.&quot;);&lt;/script&gt;
+a &amp;&amp; b &lt; c &gt; d &amp;amp;
+<td title="&lt;b&gt;&quot;Tom&quot; &amp; &#39;Jerry&#39;&lt;/b&gt;">&lt;b&gt;&quot;Tom&quot; &amp; &#39;Jerry&#39;&lt;/b&gt;</td>
+x < y | x &lt; y

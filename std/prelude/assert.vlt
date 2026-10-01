@@ -1,0 +1,17 @@
+// Prelude: runtime assertions for tests and invariants. Failures panic (exit code 101).
+
+export function assert(cond: bool, msg: string = "assertion failed") {
+  if (!cond) {
+    panic(msg);
+  }
+}
+
+// Structural equality (`==`). On failure prints both values to stderr, then panics.
+export function assertEq<T>(left: T, right: T, msg: string = "assertEq failed") {
+  if (left != right) {
+    console.error("assertion `left == right` failed");
+    console.error("  left:", left);
+    console.error(" right:", right);
+    panic(msg);
+  }
+}

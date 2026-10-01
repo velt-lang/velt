@@ -1,0 +1,70 @@
+// Recursive-descent parser and evaluator for + - * / ( ) over floats.
+class Parser {
+  src: string;
+  pos: i64 = 0;
+  constructor(src: string) {
+    this.src = src;
+  }
+  peek(): string {
+    while (this.pos < (this.src.length as i64) && this.src.slice(this.pos, this.pos + 1) == " ") {
+      this.pos++;
+    }
+    return this.src.slice(this.pos, this.pos + 1);
+  }
+  expr(): f64 {
+    let v = this.term();
+    while (this.peek() == "+" || this.peek() == "-") {
+      const op = this.peek();
+      this.pos++;
+      const r = this.term();
+      v = op == "+" ? v + r : v - r;
+    }
+    return v;
+  }
+  term(): f64 {
+    let v = this.factor();
+    while (this.peek() == "*" || this.peek() == "/") {
+      const op = this.peek();
+      this.pos++;
+      const r = this.factor();
+      v = op == "*" ? v * r : v / r;
+    }
+    return v;
+  }
+  factor(): f64 {
+    const c = this.peek();
+    if (c == "(") {
+      this.pos++;
+      const v = this.expr();
+      this.pos++;
+      return v;
+    }
+    if (c == "-") {
+      this.pos++;
+      return -this.factor();
+    }
+    const start = this.pos;
+    while (
+      this.pos < (this.src.length as i64) &&
+      "0123456789.".includes(this.src.slice(this.pos, this.pos + 1))
+    ) {
+      this.pos++;
+    }
+    return parseFloat(this.src.slice(start, this.pos));
+  }
+}
+
+function main() {
+  for (const e of [
+    "1 + 2 * 3",
+    "(1 + 2) * 3",
+    "10 / 4 - 1.5",
+    "-(2 + 3) * -2",
+    "1 / 3",
+    "2 * (3 + (4 - 1)) / 0.5",
+    "1 / 0",
+    "0 / 0",
+  ]) {
+    console.log(`${e} = ${new Parser(e).expr()}`);
+  }
+}

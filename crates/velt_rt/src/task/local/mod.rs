@@ -1,0 +1,238 @@
+//! Eager ("hybrid") promises: `velt_rt_fut_start` runs a stored promise's compiled state until
+//! its first suspension right away, like calling an async function in JS, and from then on the
+//! task that started it drives it as a *local* promise (docs/reference/async.md).
+//!
+//! Every task root (`block_on`, spawned tasks, HTTP handlers) polls through [`Locals`], which
+//! makes the task's local set current (a thread-local pointer, valid only during the poll) and
+//! first polls the local promises that were woken. A task that never starts a promise has no set
+//! and pays two thread-local writes per poll. When the root finishes while local promises are
+//! still running, the set moves to an *orphan* task that drives them to completion and keeps the
+//! process alive meanwhile (a JS program also waits for its pending work).
+//!
+//! Directly awaited calls never get here: `await f()` embeds `f`'s state in the caller's (no
+//! allocation), and `spawn(f())` gives `f` its own task.
+
+mod node;
+mod set;
+
+use std::cell::Cell;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll, Waker};
+
+use self::set::LocalSet;
+use super::all::ResultDropFn;
+use super::{DropFn, PollFn, VeltFut};
+
+/// What `velt_rt_fut_start` needs from the task being polled.
+struct TaskCx {
+    /// The task's set (null until the first start). Raw pointers throughout: compiled code
+    /// reached from the task's poll uses it re-entrantly.
+    set: *mut *mut LocalSet,
+    waker: *const Waker,
+}
+
+thread_local! {
+    static CURRENT: Cell<*const TaskCx> = const { Cell::new(std::ptr::null()) };
+}
+
+/// The set of the task being polled (null outside a task or before its first started promise).
+fn current_set() -> *mut LocalSet {
+    let tcx = CURRENT.with(Cell::get);
+    if tcx.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
+    unsafe { *(*tcx).set }
+}
+
+/// Makes a task's set current for the duration of a poll (restores the previous one on drop).
+struct Enter(*const TaskCx);
+
+impl Enter {
+    fn new(cx: &TaskCx) -> Enter {
+        Enter(CURRENT.with(|c| c.replace(cx)))
+    }
+}
+
+impl Drop for Enter {
+    fn drop(&mut self) {
+        CURRENT.with(|c| c.set(self.0));
+    }
+}
+
+/// Owned pointer to a task's local set (null = none yet).
+struct SetPtr(*mut LocalSet);
+
+// SAFETY: the set moves with its task between workers and is only used by that task's polls.
+unsafe impl Send for SetPtr {}
+
+impl SetPtr {
+    const NONE: SetPtr = SetPtr(std::ptr::null_mut());
+
+    /// Poll with this set current: drain its woken promises (resuming the task's root with
+    /// `root` when a promise it awaits finishes), then poll the root once more if a promise ran
+    /// after its last poll.
+    ///
+    /// # Safety
+    /// `waker` must stay valid during the call.
+    unsafe fn enter(&mut self, waker: *const Waker, root: &mut dyn FnMut()) {
+        let tcx = TaskCx {
+            set: &mut self.0,
+            waker,
+        };
+        let _enter = Enter::new(&tcx);
+        if !self.0.is_null() {
+            // A live set owned by this task; compiled code run from the drain reaches it only
+            // through `tcx`.
+            set::drain(&mut set::Driver {
+                set: self.0,
+                task: &*waker,
+                root,
+            });
+        }
+        root();
+    }
+
+    /// Hand the set over if promises in it are still running (it is dropped otherwise).
+    fn take_busy(&mut self) -> Option<SetPtr> {
+        let set = std::mem::replace(self, SetPtr::NONE);
+        (!set.is_idle()).then_some(set)
+    }
+
+    fn is_idle(&self) -> bool {
+        // SAFETY: null or a live set owned by `self`.
+        unsafe { self.0.as_ref() }.is_none_or(LocalSet::is_idle)
+    }
+}
+
+impl Drop for SetPtr {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: created by `Box::into_raw` in `velt_rt_fut_start`, owned by `self`.
+            drop(unsafe { Box::from_raw(self.0) });
+        }
+    }
+}
+
+/// The local promises of one task root (see the module docs).
+pub struct Locals {
+    set: SetPtr,
+}
+
+impl Default for Locals {
+    fn default() -> Self {
+        Locals { set: SetPtr::NONE }
+    }
+}
+
+impl Locals {
+    /// Poll the task: its woken local promises, then `root` (with the set current). Local
+    /// promises still running when `root` finishes move to an orphan task.
+    pub fn poll_root(
+        &mut self,
+        cx: &mut Context<'_>,
+        mut root: impl FnMut(&mut Context<'_>) -> Poll<()>,
+    ) -> Poll<()> {
+        let waker: *const Waker = cx.waker();
+        let mut r = Poll::Pending;
+        let mut poll = || {
+            if r.is_pending() {
+                r = root(cx);
+            }
+        };
+        // SAFETY: `cx`'s waker outlives this call.
+        unsafe { self.set.enter(waker, &mut poll) };
+        if r.is_ready() {
+            if let Some(set) = self.set.take_busy() {
+                Orphan::spawn(set);
+            }
+        }
+        r
+    }
+}
+
+/// Local promises that outlived their task's root: driven to completion by a task of their own,
+/// which keeps the process alive meanwhile.
+struct Orphan {
+    set: SetPtr,
+}
+
+impl Orphan {
+    fn spawn(set: SetPtr) {
+        super::runtime::keep_alive_acquire();
+        super::runtime::handle().spawn(Orphan { set });
+    }
+}
+
+impl Future for Orphan {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let this = self.get_mut();
+        // SAFETY: `cx`'s waker outlives the call.
+        unsafe { this.set.enter(cx.waker(), &mut || ()) };
+        crate::io::publish_thread_output();
+        if this.set.is_idle() {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
+impl Drop for Orphan {
+    fn drop(&mut self) {
+        drop(std::mem::replace(&mut self.set, SetPtr::NONE));
+        super::runtime::keep_alive_release();
+    }
+}
+
+/// Move the compiled state at `state_ptr` (`state_size` bytes, align <= 16) into a new heap
+/// `VeltFut`. The caller gives up ownership of the state's contents. Its result (state offset 0)
+/// appears at the future's result slot, offset 16. The future is lazy: it runs when polled, or
+/// from its first suspension on after `velt_rt_fut_start`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fut_box(
+    poll: PollFn,
+    drop: DropFn,
+    state_ptr: *const u8,
+    state_size: u64,
+    state_align: u64,
+) -> *mut VeltFut {
+    if state_align > 16 {
+        crate::panic::fatal("velt_rt_fut_box: state alignment above 16");
+    }
+    node::alloc_node(poll, drop, state_ptr, state_size)
+}
+
+/// Start the promise `f` now (a stored promise, `const p = f()`): run its state until its first
+/// suspension, then let the current task drive it as a local promise. `result_drop` drops a
+/// result nobody claims (null if the result needs no drop). Only futures from `velt_rt_fut_box`
+/// are started; anything else (runtime leaves, join handles, promises already started) is left
+/// as it is, as is every future when no task is running (a promise created by synchronous `main`
+/// runs when it is awaited or spawned).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<ResultDropFn>) {
+    if !node::is_lazy(f) {
+        return;
+    }
+    let tcx = CURRENT.with(Cell::get);
+    if tcx.is_null() {
+        return;
+    }
+    let tcx = &*tcx;
+    if (*tcx.set).is_null() {
+        *tcx.set = Box::into_raw(LocalSet::new(&*tcx.waker));
+    }
+    let set = *tcx.set;
+    node::mark_started(f, &(*set).shared, result_drop);
+    if node::poll_first(f) {
+        // Finished before its first suspension: nobody awaits it yet, nothing to resume.
+        node::finish_first(f);
+    } else {
+        // A wake during the first poll was queued; the next drain runs it as a member.
+        node::count_set(f);
+        set::add_member(set, f);
+    }
+}

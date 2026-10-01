@@ -1,0 +1,13 @@
+// Folder module (imported as "./_modules_shapes"): a barrel of re-exports plus a local list.
+export { Circle, describe as describeShape } from "../_modules_geo";
+export type { Shape, Pair } from "../_modules_geo";
+export * from "./square";
+import { square } from "./square";
+
+const SIDES: i64 = 4;
+
+function unitSquare(): f64 {
+  return square(1.0);
+}
+
+export { SIDES, unitSquare as unit };

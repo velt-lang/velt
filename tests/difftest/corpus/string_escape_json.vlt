@@ -1,0 +1,21 @@
+// Strings with escapes through templates, JSON.stringify and console.log of arrays.
+function main() {
+  const tricky = [
+    "tab\there",
+    "new\nline",
+    "quote\"d",
+    "back\\slash",
+    "single'q",
+    "nul\u0000x",
+    "bell\u0007",
+    "del\u007f",
+    "",
+  ];
+  for (const s of tricky) {
+    console.log(JSON.stringify(s), s.length);
+  }
+  console.log(JSON.stringify(tricky));
+  // console.log(array) of these would hit bug console-log-string-escapes; JSON shows them.
+  console.log(JSON.stringify(tricky.slice(0, 5)));
+  console.log(`[${tricky[1]}]`);
+}

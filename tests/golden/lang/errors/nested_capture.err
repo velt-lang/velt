@@ -1,0 +1,3 @@
+nested_capture.vlt:4:5: error: `total` cannot be captured by a nested function
+use an arrow function instead
+nested_capture.vlt:12:13: error: cannot find struct `Local` in this scope

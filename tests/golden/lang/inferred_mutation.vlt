@@ -1,0 +1,163 @@
+// Mutation is inferred: no `mut` anywhere. A method that may modify `this` on any path (one
+// branch, a loop body, a closure, a helper, an override) mutates its receiver; a param whose
+// contents the body modifies is shared with the caller (JS object semantics); reassigning a
+// param, or modifying a Copy param, is local to the callee.
+
+class Counter {
+  n: i64 = 0;
+  log: string[] = [];
+
+  // Mutates only in one branch.
+  bumpIf(cond: bool) {
+    if (cond) {
+      this.n += 1;
+    }
+  }
+
+  // Mutates only through a helper called from one branch.
+  maybeNote(cond: bool, what: string) {
+    if (cond) {
+      this.note(what);
+    }
+  }
+
+  note(what: string) {
+    this.log.push(what);
+  }
+
+  // Mutates inside a loop body and inside a closure.
+  addAll(xs: i64[]) {
+    for (const x of xs) {
+      this.n += x;
+    }
+    xs.forEach((x) => {
+      this.n += x;
+    });
+  }
+
+  // Reads only.
+  get total(): i64 {
+    return this.n;
+  }
+}
+
+// Mutual recursion: `even` mutates through `odd`.
+function even(c: Counter, k: i64) {
+  if (k > 0) {
+    odd(c, k - 1);
+  }
+}
+
+function odd(c: Counter, k: i64) {
+  c.n += 1;
+  if (k > 0) {
+    even(c, k - 1);
+  }
+}
+
+class Shape {
+  size: i64 = 1;
+  grow() {}
+}
+
+class Square extends Shape {
+  override grow() {
+    this.size *= 2;
+  }
+}
+
+interface Resettable {
+  reset(): void;
+}
+
+class Box implements Resettable {
+  items: i64[] = [1, 2, 3];
+  reset() {
+    this.items = [];
+  }
+}
+
+function resetAll(rs: Resettable[]) {
+  for (let i: usize = 0; i < rs.length; i++) {
+    rs[i].reset();
+  }
+}
+
+// Modifies the caller's array.
+function append(xs: i64[]) {
+  xs.push(99);
+}
+
+// Rebinds the local name only: the caller's array is unchanged.
+function rebind(xs: i64[]): usize {
+  xs = [0];
+  xs.push(1);
+  return xs.length;
+}
+
+// Reassigning a string param is local; the caller keeps its string.
+function shout(s: string): i64 {
+  s = s + "!";
+  return s.length as i64;
+}
+
+struct Point {
+  x: i64;
+  y: i64;
+}
+
+// Copy params are values: changes stay here.
+function moved(p: Point, n: i64): i64 {
+  p.x += 10;
+  n += 1;
+  return p.x + n;
+}
+
+class Item {
+  done: bool = false;
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+function main() {
+  const c = new Counter();
+  c.bumpIf(false);
+  c.bumpIf(true);
+  c.maybeNote(false, "no");
+  c.maybeNote(true, "yes");
+  c.addAll([1, 2]);
+  even(c, 3);
+  console.log(c.total, c.log);
+
+  const shapes: Shape[] = [new Shape(), new Square()];
+  for (let i: usize = 0; i < shapes.length; i++) {
+    shapes[i].grow();
+  }
+  console.log(shapes[0].size, shapes[1].size);
+
+  const boxes: Resettable[] = [new Box()];
+  resetAll(boxes);
+  const b = new Box();
+  b.reset();
+  console.log(b.items.length);
+
+  const xs = [1, 2];
+  append(xs);
+  console.log(rebind(xs), xs);
+
+  const name = "hey";
+  console.log(shout(name), name);
+
+  const p = Point { x: 1, y: 2 };
+  let n = 5;
+  console.log(moved(p, n), p.x, n);
+
+  // Callbacks may modify object arguments (JS semantics).
+  const items = [new Item("a"), new Item("b")];
+  items.forEach((it) => {
+    it.done = true;
+  });
+  console.log(items[0].done, items[1].done);
+}

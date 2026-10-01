@@ -1,0 +1,33 @@
+// JSON.stringify of nested classes, arrays of records, nullable and boolean fields, escapes.
+class Address {
+  street: string;
+  zip: string | null;
+  constructor(street: string, zip: string | null) {
+    this.street = street;
+    this.zip = zip;
+  }
+}
+
+class Person {
+  name: string;
+  age: i64;
+  admin: bool;
+  tags: string[];
+  address: Address;
+  constructor(name: string, age: i64, admin: bool, tags: string[], address: Address) {
+    this.name = name;
+    this.age = age;
+    this.admin = admin;
+    this.tags = tags;
+    this.address = address;
+  }
+}
+
+function main() {
+  const people = [
+    new Person("Ann \"A\" Lee", 31, true, ["x", "y"], new Address("1 Main St", "12345")),
+    new Person("Bob\\Bee", -4, false, [], new Address("tab\there", null)),
+  ];
+  console.log(JSON.stringify(people));
+  console.log(JSON.stringify(people[1].address), JSON.stringify(people[0].tags));
+}

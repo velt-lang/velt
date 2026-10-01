@@ -1,0 +1,21 @@
+[package]
+name = "velt_codegen_cl"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+cranelift-codegen = { version = "0.132.3", features = ["x86", "arm64"] }
+cranelift-frontend = "0.132.3"
+cranelift-jit = "0.132.3"
+cranelift-module = "0.132.3"
+cranelift-native = "0.132.3"
+cranelift-object = "0.132.3"
+target-lexicon = "0.13.5"
+velt_vir.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# Registering unwind info for JIT code (RtlAddFunctionTable).
+windows-sys = { version = "0.61.2", features = ["Win32_System_Diagnostics_Debug"] }
+
+[dev-dependencies]
+object = { version = "0.39", default-features = false, features = ["read"] }

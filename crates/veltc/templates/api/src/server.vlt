@@ -1,0 +1,17 @@
+// The HTTP side: one store shared by every request, `route` behind std/http.
+import { serve, Response, Server } from "velt:http";
+import { ItemStore } from "./store";
+import { route } from "./api";
+
+/// Serves the API on `port` (0 = any free port; read the chosen one from `server.port`).
+export async function startServer(port: i64): Promise<Server> {
+  const store = shared(new Mutex<ItemStore>(new ItemStore()));
+  return await serve({ port }, async (req) => {
+    const out = store.with((s) => route(s, req.method, req.path, req.body));
+    const res = Response.text(out.body.clone(), out.status);
+    if (out.status !== 204) {
+      res.setHeader("content-type", "application/json");
+    }
+    return res;
+  });
+}

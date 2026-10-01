@@ -1,0 +1,4 @@
+exclusive_nested.vlt:18:35: error: cannot modify `xs` here: it is already borrowed by this call
+exclusive_nested.vlt:18:21: borrowed here
+exclusive_nested.vlt:19:20: error: cannot use `xs` here: this call may modify it through another argument
+exclusive_nested.vlt:21:27: error: cannot move `names` here: it is already borrowed by this call

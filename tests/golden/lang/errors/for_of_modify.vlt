@@ -1,0 +1,45 @@
+// A `for...of` loop over a place points into the array until it ends: the body must not modify
+// or move the array (or what owns it). Changing elements in place is fine.
+class Box {
+  items: string[][] = [];
+
+  reset() {
+    this.items = [];
+  }
+
+  each() {
+    for (const t of this.items) {
+      this.reset();
+      console.log(t.length);
+    }
+  }
+}
+
+function take(xs: string[][]): i64 {
+  const ys = xs;
+  return ys.length as i64;
+}
+
+function main() {
+  const xs = [["a"], ["b"]];
+  for (const x of xs) {
+    xs.push([`${x[0]}!`]);
+  }
+  for (const x of xs) {
+    console.log(x.length);
+    xs[0].push("also fine");
+  }
+  let ys = [["c"]];
+  for (const y of ys) {
+    ys = [];
+  }
+  const b = new Box();
+  for (const t of b.items) {
+    b.items.pop();
+  }
+  b.each();
+  for (const x of xs) {
+    take(xs);
+    break;
+  }
+}

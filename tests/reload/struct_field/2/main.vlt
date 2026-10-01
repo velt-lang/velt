@@ -1,0 +1,25 @@
+// A field added to a class restarts: objects already in memory have the old shape.
+import { serve, Request, Response } from "velt:http";
+
+class Point {
+  x: number;
+  y: number;
+
+  constructor(x: number) {
+    this.x = x;
+    this.y = 2;
+  }
+
+  describe(): string {
+    return `x=${this.x} y=${this.y}`;
+  }
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const p = new Point(1);
+    return Response.text(p.describe());
+  });
+  console.log(`listening on ${server.port}`);
+  await sleep(1000000000);
+}

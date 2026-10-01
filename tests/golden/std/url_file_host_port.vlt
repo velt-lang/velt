@@ -1,0 +1,23 @@
+// Regression (difftest url-file-host-port): a `file:` URL has no port or credentials (`:` and `@`
+// are forbidden host code points), in the constructor and in the `host` setter.
+import { URL } from "velt:url";
+
+function main() {
+  const inputs: string[] = [
+    "file://h:0/x",
+    "file://u@h/x",
+    "file://example.com:65535/a",
+    "file://h/x",
+  ];
+  for (const s of inputs) {
+    try {
+      const u = new URL(s);
+      console.log(u.href, u.host, u.port, u.username);
+    } catch (e) {
+      console.log("invalid", e.message);
+    }
+  }
+  const f = new URL("file://a/x");
+  f.host = "h:";
+  console.log(f.href);
+}

@@ -1,0 +1,135 @@
+// fasta: generate DNA sequences by copying a repeat and by weighted random selection.
+// https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/fasta.html
+// Written the way a TypeScript developer would: classes, arrays and a buffered stdout writer.
+
+import { args, stdout } from "velt:process";
+
+const LINE_LENGTH: i64 = 60;
+// Characters generated per write (a whole number of lines).
+const BLOCK_SIZE: i64 = 60 * 1024;
+
+const IM: i64 = 139968;
+const IA: i64 = 3877;
+const IC: i64 = 29573;
+
+const ALU =
+  "GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCAGCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA";
+
+// The benchmark's linear congruential generator.
+class Random {
+  seed: i64 = 42;
+
+  next(): f64 {
+    this.seed = (this.seed * IA + IC) % IM;
+    return (this.seed as f64) / (IM as f64);
+  }
+}
+
+// Copies `text` over and over.
+class Repeat {
+  text: u8[] = [];
+  pos: usize = 0;
+
+  constructor(text: string) {
+    for (let i: usize = 0; i < text.length; i++) {
+      this.text.push(text.charCodeAt(i as i64) as u8);
+    }
+  }
+
+  // The next `count` characters, folded into lines.
+  next(count: i64): u8[] {
+    const out: u8[] = [];
+    for (let i = 0; i < count; i++) {
+      out.push(this.text[this.pos]);
+      this.pos++;
+      if (this.pos == this.text.length) {
+        this.pos = 0;
+      }
+      if ((i + 1) % LINE_LENGTH == 0 || i + 1 == count) {
+        out.push(10);
+      }
+    }
+    return out;
+  }
+}
+
+// Picks characters with the given probabilities.
+class Alphabet {
+  codes: u8[] = [];
+  cumulative: f64[] = [];
+
+  constructor(table: { c: string; p: f64 }[]) {
+    let total = 0.0;
+    for (const entry of table) {
+      total += entry.p;
+      this.codes.push(entry.c.charCodeAt(0) as u8);
+      this.cumulative.push(total);
+    }
+  }
+
+  pick(r: f64): u8 {
+    for (let i: usize = 0; i < this.cumulative.length; i++) {
+      if (r < this.cumulative[i]) {
+        return this.codes[i];
+      }
+    }
+    return this.codes[this.codes.length - 1];
+  }
+
+  // The next `count` random characters, folded into lines.
+  next(rng: Random, count: i64): u8[] {
+    const out: u8[] = [];
+    for (let i = 0; i < count; i++) {
+      out.push(this.pick(rng.next()));
+      if ((i + 1) % LINE_LENGTH == 0 || i + 1 == count) {
+        out.push(10);
+      }
+    }
+    return out;
+  }
+}
+
+function main() {
+  const argv = args();
+  const n = argv.length > 0 ? parseInt(argv[0]) as i64 : 1000;
+
+  stdout.writeString(">ONE Homo sapiens alu\n");
+  const alu = new Repeat(ALU);
+  for (let left = 2 * n; left > 0; left -= BLOCK_SIZE) {
+    stdout.write(alu.next(left < BLOCK_SIZE ? left : BLOCK_SIZE));
+  }
+
+  const rng = new Random();
+  stdout.writeString(">TWO IUB ambiguity codes\n");
+  const iub = new Alphabet([
+    { c: "a", p: 0.27 },
+    { c: "c", p: 0.12 },
+    { c: "g", p: 0.12 },
+    { c: "t", p: 0.27 },
+    { c: "B", p: 0.02 },
+    { c: "D", p: 0.02 },
+    { c: "H", p: 0.02 },
+    { c: "K", p: 0.02 },
+    { c: "M", p: 0.02 },
+    { c: "N", p: 0.02 },
+    { c: "R", p: 0.02 },
+    { c: "S", p: 0.02 },
+    { c: "V", p: 0.02 },
+    { c: "W", p: 0.02 },
+    { c: "Y", p: 0.02 },
+  ]);
+  for (let left = 3 * n; left > 0; left -= BLOCK_SIZE) {
+    stdout.write(iub.next(rng, left < BLOCK_SIZE ? left : BLOCK_SIZE));
+  }
+
+  stdout.writeString(">THREE Homo sapiens frequency\n");
+  const homoSapiens = new Alphabet([
+    { c: "a", p: 0.302954942668 },
+    { c: "c", p: 0.1979883004921 },
+    { c: "g", p: 0.1975473066391 },
+    { c: "t", p: 0.3015094502008 },
+  ]);
+  for (let left = 5 * n; left > 0; left -= BLOCK_SIZE) {
+    stdout.write(homoSapiens.next(rng, left < BLOCK_SIZE ? left : BLOCK_SIZE));
+  }
+}

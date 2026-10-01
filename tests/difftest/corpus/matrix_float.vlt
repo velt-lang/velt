@@ -1,0 +1,57 @@
+// Gaussian elimination solving a small linear system in floats.
+function solve(a: f64[][], b: f64[]): f64[] {
+  const n = a.length;
+  for (let col: usize = 0; col < n; col++) {
+    let pivot = col;
+    for (let r = col + 1; r < n; r++) {
+      if (Math.abs(a[r][col]) > Math.abs(a[pivot][col])) {
+        pivot = r;
+      }
+    }
+    if (pivot != col) {
+      for (let k: usize = 0; k < n; k++) {
+        const t = a[col][k];
+        a[col][k] = a[pivot][k];
+        a[pivot][k] = t;
+      }
+      const tb = b[col];
+      b[col] = b[pivot];
+      b[pivot] = tb;
+    }
+    for (let r = col + 1; r < n; r++) {
+      const f = a[r][col] / a[col][col];
+      for (let k = col; k < n; k++) {
+        a[r][k] -= f * a[col][k];
+      }
+      b[r] -= f * b[col];
+    }
+  }
+  const x: f64[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    x.push(0.0);
+  }
+  for (let i = n as i64 - 1; i >= 0; i--) {
+    let s = b[i as usize];
+    for (let k = (i + 1) as usize; k < n; k++) {
+      s -= a[i as usize][k] * x[k];
+    }
+    x[i as usize] = s / a[i as usize][i as usize];
+  }
+  return x;
+}
+
+function main() {
+  const a: f64[][] = [
+    [2.0, 1.0, -1.0],
+    [-3.0, -1.0, 2.0],
+    [-2.0, 1.0, 2.0],
+  ];
+  const b: f64[] = [8.0, -11.0, -3.0];
+  console.log(JSON.stringify(solve(a, b)));
+  const h: f64[][] = [
+    [1.0, 0.5, 1.0 / 3.0],
+    [0.5, 1.0 / 3.0, 0.25],
+    [1.0 / 3.0, 0.25, 0.2],
+  ];
+  console.log(JSON.stringify(solve(h, [1.0, 0.0, 0.0])));
+}

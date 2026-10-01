@@ -1,0 +1,32 @@
+// `import * as ns`: functions, constants, classes (`new`, statics, generics), enums, interfaces
+// and type aliases through the namespace, in expressions and in types; a local shadows it.
+import * as geo from "./_modules_geo";
+
+function total(shapes: geo.Shape[]): f64 {
+  let sum = 0.0;
+  for (const s of shapes) {
+    sum += s.area();
+  }
+  return sum;
+}
+
+function shadowed(geo: string): string {
+  return geo.toUpperCase();
+}
+
+function main() {
+  const c: geo.Circle = new geo.Circle(2.0);
+  console.log(geo.describe(new geo.Circle(1.0)));
+  const shapes: geo.Shape[] = [c, geo.Circle.unit()];
+  console.log(total(shapes));
+  const p: geo.Pair = geo.scale([1.0, 2.0], geo.UNIT * 3.0);
+  console.log(p[0], p[1]);
+  const color = geo.Color.Green;
+  console.log(color == geo.Color.Green, geo.Color.Red as i64, color as i64);
+  const b = new geo.Box<string>("boxed");
+  const b2: geo.Box<i64> = new geo.Box(7);
+  console.log(b.value, b2.value);
+  const f = geo.scale;
+  console.log(f([1.0, 1.0], 2.0)[1]);
+  console.log(shadowed("local"));
+}

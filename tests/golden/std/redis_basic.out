@@ -1,0 +1,32 @@
+ping: PONG
+get missing: null
+set: true
+get: Ada
+set nx on existing: false
+set xx on missing: false
+set xx on existing: true
+value: Grace
+unicode: true héllo ✓
+exists: 2
+ttl in (90, 100]: true
+ttl without expiry: -1 missing: -2
+pexpire: true
+pttl in (40000, 50000]: true
+persist: true -1
+expire missing: false
+after px expiry: null
+incr: 1 2
+incrBy: 42
+decr: 41 31
+mget: [ '1', null, '2' ]
+call ECHO: string hi
+call TYPE: status string
+call GET missing: nil true
+call STRLEN: int 5
+db1 sees db0 key: null
+db0 sees db1 key: null
+db1 cleanup: 1
+duplicate: 1
+del: 2
+cleanup: true
+left: 0

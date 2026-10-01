@@ -1,0 +1,25 @@
+// An error escaping `main` reports `Uncaught <Type>: <message> at <throw location>` (exit 1).
+class ParseError {
+  message: string;
+  constructor(message: string) {
+    this.message = message;
+  }
+}
+
+function digit(s: string): i64 {
+  if (s == "1") {
+    return 1;
+  }
+  throw new ParseError(`bad digit: ${s}`);
+}
+
+function main(): void {
+  try {
+    digit("q");
+  } catch (e) {
+    console.log(`caught: ${e.message}`);
+  }
+  console.log(digit("1"));
+  console.log(digit("x"));
+  console.log("unreachable");
+}

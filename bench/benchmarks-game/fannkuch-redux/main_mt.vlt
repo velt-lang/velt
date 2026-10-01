@@ -1,0 +1,136 @@
+// The Computer Language Benchmarks Game: fannkuch-redux, multi-threaded
+// https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/fannkuchredux.html
+//
+// The n! permutations are split into blocks of consecutive permutation indices (like the Rust #4
+// program by the Rust Project Developers, TeXitoi and Cristi Cobzarenco); each block is a spawned
+// task that starts from the permutation with its first index, and `Promise.all` combines the
+// blocks' checksums and maximum flip counts.
+import { argv } from "velt:process";
+
+const BLOCKS = 24;
+
+class BlockResult {
+  checksum: i64;
+  maxFlips: i64;
+
+  constructor(checksum: i64, maxFlips: i64) {
+    this.checksum = checksum;
+    this.maxFlips = maxFlips;
+  }
+}
+
+function factorials(n: i64): i64[] {
+  const f = [1];
+  for (let i = 1; i <= n; i++) {
+    f.push(f[i - 1] * i);
+  }
+  return f;
+}
+
+// The number of flips that sort `perm` (a scratch copy of the permutation) to start with 0.
+// The flip loop of the Rust #4 program: instead of reversing the whole prefix each time, it
+// writes the old first value to its final place and reverses only the elements in between.
+function countFlips(perm: i64[]): i64 {
+  let flips = 1;
+  let first = perm[0];
+  while (perm[first] != 0) {
+    const next = perm[first];
+    perm[first] = first;
+    if (first > 2) {
+      let lo = 1;
+      let hi = first - 1;
+      while (lo < hi) {
+        const t = perm[lo];
+        perm[lo] = perm[hi];
+        perm[hi] = t;
+        lo++;
+        hi--;
+      }
+    }
+    first = next;
+    flips++;
+  }
+  return flips;
+}
+
+async function fannkuchBlock(n: i64, start: i64, end: i64): Promise<BlockResult> {
+  const fact = factorials(n);
+  const perm: i64[] = [];
+  const current: i64[] = [];
+  const count: i64[] = [];
+  for (let i = 0; i < n; i++) {
+    perm.push(0);
+    current.push(i);
+    count.push(0);
+  }
+
+  // The permutation with index `start`, from its factorial-base digits.
+  let index = start;
+  for (let i = n - 1; i > 0; i--) {
+    const d = index / fact[i];
+    index = index % fact[i];
+    count[i] = d;
+    for (let j = 0; j <= i; j++) {
+      perm[j] = current[j];
+    }
+    for (let j = 0; j <= i; j++) {
+      current[j] = j + d <= i ? perm[j + d] : perm[j + d - i - 1];
+    }
+  }
+
+  let checksum = 0;
+  let maxFlips = 0;
+  for (let p = start; p < end; p++) {
+    if (current[0] > 0) {
+      for (let i = 0; i < n; i++) {
+        perm[i] = current[i];
+      }
+      const flips = countFlips(perm);
+      if (flips > maxFlips) {
+        maxFlips = flips;
+      }
+      checksum += p % 2 == 0 ? flips : -flips;
+    }
+
+    if (p + 1 == end) {
+      break;
+    }
+    // Next permutation: rotate the first i + 1 elements until a counter has turns left.
+    let i = 1;
+    while (true) {
+      const first = current[0];
+      for (let j = 0; j < i; j++) {
+        current[j] = current[j + 1];
+      }
+      current[i] = first;
+      count[i]++;
+      if (count[i] <= i) {
+        break;
+      }
+      count[i] = 0;
+      i++;
+    }
+  }
+  return new BlockResult(checksum, maxFlips);
+}
+
+async function main() {
+  const args = argv();
+  const n = args.length > 1 ? Number(args[1]) as i64 : 7;
+  const total = factorials(n)[n];
+  const blockSize = total < BLOCKS ? total : total / BLOCKS;
+  const tasks: Promise<BlockResult>[] = [];
+  for (let start = 0; start < total; start += blockSize) {
+    const end = start + blockSize < total ? start + blockSize : total;
+    tasks.push(spawn(fannkuchBlock(n, start, end)));
+  }
+  let checksum = 0;
+  let maxFlips = 0;
+  for (const block of await Promise.all(tasks)) {
+    checksum += block.checksum;
+    if (block.maxFlips > maxFlips) {
+      maxFlips = block.maxFlips;
+    }
+  }
+  console.log(`${checksum}\nPfannkuchen(${n}) = ${maxFlips}`);
+}

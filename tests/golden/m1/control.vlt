@@ -1,0 +1,44 @@
+function main() {
+  let i = 0;
+  let sum = 0;
+  while (i < 10) {
+    i = i + 1;
+    if (i % 2 == 0) {
+      continue;
+    }
+    sum += i;
+  }
+  console.log("sum odd", sum);
+  for (let j = 0; j < 5; j++) {
+    if (j == 3) {
+      break;
+    }
+    console.log("j", j);
+  }
+  let n = 15;
+  if (n % 15 == 0) {
+    console.log("FizzBuzz");
+  } else if (n % 3 == 0) {
+    console.log("Fizz");
+  } else {
+    console.log(n);
+  }
+  const kind = n > 10 ? "big" : "small";
+  console.log(kind);
+  let k = 3;
+  do {
+    k--;
+  } while (k > 0);
+  console.log(k);
+  outer: for (let a = 0; a < 3; a++) {
+    for (let b = 0; b < 3; b++) {
+      if (b == 2) {
+        continue outer;
+      }
+      if (a == 2) {
+        break outer;
+      }
+      console.log(a, b);
+    }
+  }
+}

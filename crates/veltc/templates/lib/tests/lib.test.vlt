@@ -1,0 +1,23 @@
+// The public API, as a user of the package sees it.
+import { slugify, truncate, WordCounter } from "../src/lib";
+
+export function test_slugify() {
+  assertEq(slugify("Hello, World!"), "hello-world");
+  assertEq(slugify("  Velt 1.0 -- release notes "), "velt-1-0-release-notes");
+  assertEq(slugify("!!!"), "");
+}
+
+export function test_truncate() {
+  assertEq(truncate("short", 10), "short");
+  assertEq(truncate("a longer sentence", 8), "a longe…");
+  assertEq(truncate("abc", 0), "");
+}
+
+export function test_word_counter() {
+  const words = new WordCounter();
+  words.add("The cat saw the dog.");
+  words.add("THE END");
+  assertEq(words.count("the"), 3);
+  assertEq(words.count("bird"), 0);
+  assertEq(words.top(2), ["the", "cat"]);
+}

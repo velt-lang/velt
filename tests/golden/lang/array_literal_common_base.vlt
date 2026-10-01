@@ -1,0 +1,24 @@
+// An array literal of class instances is typed by the class every element extends (`[new B(),
+// new A()]` is `A[]`, TS infers the common base). Regression (difftest): it was typed by the first
+// element ("mismatched types").
+class A {
+  n: i64 = 1;
+  who(): string {
+    return "a";
+  }
+}
+
+class B extends A {
+  m: i64 = 2;
+  override who(): string {
+    return "b";
+  }
+}
+
+class C extends A {}
+
+function main() {
+  const xs = [new B(), new A(), new C()];
+  const ys = [new B(), new B()];
+  console.log(xs.map((x) => x.who()).join(","), ys[1].m);
+}

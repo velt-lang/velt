@@ -1,0 +1,70 @@
+// `instanceof` on unions with class members (subclasses included), interface members and
+// generic code over unions.
+
+interface Named {
+  name(): string;
+}
+
+class Animal {
+  sound: string;
+  constructor(sound: string) {
+    this.sound = sound;
+  }
+  speak(): string {
+    return this.sound;
+  }
+}
+
+class Dog extends Animal {
+  constructor() {
+    super("woof");
+  }
+  fetch(): string {
+    return "fetching";
+  }
+}
+
+class Robot implements Named {
+  name(): string {
+    return "robo";
+  }
+}
+
+function react(x: Dog | Robot | string): string {
+  if (x instanceof Animal) {
+    return `animal says ${x.speak()}`;
+  }
+  if (x instanceof Robot) {
+    return `robot ${x.name()}`;
+  }
+  return `text ${x}`;
+}
+
+function describe(x: Named | i64): string {
+  switch (typeof x) {
+    case "number":
+      return `${x}`;
+    default:
+      return x.name();
+  }
+}
+
+function firstOr<T>(xs: T[], fallback: string): T | string {
+  if (xs.length > 0) {
+    return xs[0].clone();
+  }
+  return fallback;
+}
+
+function main() {
+  const d = new Dog();
+  console.log(react(new Dog()), react(new Robot()), react("hi"));
+  const pet: Dog | string = d;
+  if (pet instanceof Dog) {
+    console.log(pet.fetch(), pet.speak());
+  }
+  const r: Named = new Robot();
+  console.log(describe(r), describe(42));
+  console.log(firstOr([1, 2], "empty"), firstOr<i64>([], "empty"));
+  console.log(firstOr(["a"], "empty"));
+}

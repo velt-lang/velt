@@ -1,0 +1,9 @@
+committed 100 100 false
+  failed: SQLITE_CONSTRAINT_PRIMARYKEY
+rolled back: SQLITE_CONSTRAINT_PRIMARYKEY 100
+  failed: SQLITE_CONSTRAINT_PRIMARYKEY
+inner rolled back: UNIQUE constraint failed: t.n true
+after nested [ 300, 302 ]
+in tx true 103
+after rollback false 102
+explicit [ 401 ] false

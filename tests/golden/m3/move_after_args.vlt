@@ -1,0 +1,10 @@
+// Moves into call arguments take effect when the call happens, after all arguments are evaluated
+// (so the common JS pattern `m.set(k, f(k))` works without clones).
+function main() {
+  const counts = new Map<string, i64>();
+  for (const w of ["a", "b", "a"]) {
+    const word = w;
+    counts.set(word, (counts.get(word) ?? 0) + 1);
+  }
+  console.log(counts.get("a") ?? 0, counts.get("b") ?? 0);
+}

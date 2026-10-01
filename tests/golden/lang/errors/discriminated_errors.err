@@ -1,0 +1,16 @@
+discriminated_errors.vlt:7:3: error: member `Slow` of a string enum needs a string value (`Slow = "..."`)
+discriminated_errors.vlt:12:12: error: no field `r` on type `Shape`
+`Shape` is a union: narrow it to one member first with `switch`, `typeof`, `instanceof` or `==`
+discriminated_errors.vlt:17:5: error: cannot assign `kind` of a union value `Shape`
+narrow it to one member first (`switch`, `if (x.kind === ...)`)
+discriminated_errors.vlt:25:27: error: mismatched types
+expected never, found { kind: "rect"; w: f64; h: f64 }
+discriminated_errors.vlt:31:10: error: this comparison is always false: `"square"` is not a possible value of `s.kind`
+possible values: "circle", "rect"
+discriminated_errors.vlt:35:30: error: `"square"` is not a valid `kind` for `Shape`
+expected one of "circle", "rect"
+discriminated_errors.vlt:36:28: error: mismatched types
+expected "up" | "down", found "left"
+discriminated_errors.vlt:37:20: error: mismatched types
+expected 1 | 2, found 3
+discriminated_errors.vlt:38:13: error: cannot cast `Mode` as `i64`

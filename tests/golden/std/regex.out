@@ -1,0 +1,28 @@
+true false 4
+9 16 2024-02 [ '2024', '02', null, null ]
+2024 - unmatched
+21 31 2025-01-07 [ '2025', '01', '-07', '07' ]
+no match
+false true
+0: hello
+6: big
+10: world
+[ 'o', 'o' ]
+0
+Hello Big World
+mail example at ann [ann@example.com] now
+bonono bonana
+b$n$n$
+x<1>y -a-b-c-
+true true
+true false
+cafe!
+[ 'a', 'b', 'c', 'd' ]
+[ '1', '-', '2', '-', '3' ] [ 'a', 'b', 'c' ]
+[ 'a', 'b' ] [ '' ]
+1\+1=2\? \(yes\)
+true false
+true
+Invalid flags supplied to RegExp constructor 'gz'
+lookahead unsupported
+[a-z]+ gi true false [ 'Ab', 'Cd' ]

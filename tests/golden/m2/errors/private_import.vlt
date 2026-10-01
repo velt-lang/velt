@@ -1,0 +1,5 @@
+import { hidden } from "./_private";
+
+function main() {
+  console.log(hidden());
+}

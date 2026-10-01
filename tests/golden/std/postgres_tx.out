@@ -1,0 +1,12 @@
+committed 100 100 false
+  failed: 23505
+  failed: 25P02
+rolled back: 23505 t_pkey 100 false
+  failed: 23505
+inner rolled back: 23505 true
+after nested [ 300, 302 ]
+in tx true 103
+after rollback false 102
+out of order: EINVAL an inner transaction is still open; end it first
+twice: EINVAL the transaction has already ended
+explicit [ 401 ] false

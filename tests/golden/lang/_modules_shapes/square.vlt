@@ -1,0 +1,16 @@
+// Part of the `_modules_shapes` folder module, re-exported with `export *`.
+import type { Shape } from "../_modules_geo";
+
+export function square(side: f64): f64 {
+  return side * side;
+}
+
+export class Square implements Shape {
+  side: f64;
+  constructor(side: f64) {
+    this.side = side;
+  }
+  area(): f64 {
+    return square(this.side);
+  }
+}

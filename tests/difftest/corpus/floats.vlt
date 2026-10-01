@@ -1,0 +1,21 @@
+// Float formatting and arithmetic, including values JS prints specially.
+function main() {
+  const xs: f64[] = [
+    0.1 + 0.2,
+    1.0 / 3.0,
+    1e21,
+    1e-7,
+    123456789.125,
+    -2.5,
+    100.0,
+    0.0 / 0.0,
+    1.0 / 0.0,
+  ];
+  for (const x of xs) {
+    console.log(x, `${x}`, Math.floor(x), Math.round(x), Math.sqrt(Math.abs(x)));
+  }
+  console.log(xs.slice(0, 6));
+  console.log(xs.map((x) => `${x}`).join(" "));
+  console.log(JSON.stringify([1.5, 2.0, 0.1]));
+  console.log(Math.max(3.0, 4.5), Math.min(3.0, 4.5), Math.pow(2.0, 10.0), Math.trunc(-3.7));
+}

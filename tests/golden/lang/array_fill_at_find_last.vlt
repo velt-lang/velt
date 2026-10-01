@@ -1,0 +1,16 @@
+// Array `fill(value, start, end)`, `at(index)`, `findLast` and `findLastIndex`, with JS positions
+// (negative ones count from the end; `at` out of range is null where JS says undefined).
+function main() {
+  const xs: i64[] = [1, 2, 3, 4, 5];
+  xs.fill(0, 1, -1);
+  console.log(xs.join(","));
+  console.log(xs.at(-1), xs.at(9), xs.findLast((x) => x == 0), xs.findLastIndex((x) => x > 7));
+  const ss: string[] = ["a", "b", "c"];
+  ss.fill("z", -2);
+  console.log(
+    ss.join(","),
+    ss.at(0),
+    ss.findLast((s) => s != "a"),
+    ss.findLastIndex((s) => s == "a"),
+  );
+}

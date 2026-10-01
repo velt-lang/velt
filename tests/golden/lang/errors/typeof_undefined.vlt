@@ -1,0 +1,7 @@
+// `typeof` never returns "undefined" in Velt: test for `null` instead.
+function main() {
+  const x: string | null = null;
+  if (typeof x === "undefined") {
+    console.log("absent");
+  }
+}

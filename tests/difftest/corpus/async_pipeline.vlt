@@ -1,0 +1,27 @@
+// Async functions awaited in sequence and in Promise.all; errors propagate through awaits.
+async function fetchValue(key: string): Promise<i64> {
+  if (key == "bad") {
+    throw new Error(`no value for ${key}`);
+  }
+  return key.length as i64;
+}
+
+async function sumKeys(keys: string[]): Promise<i64> {
+  let total = 0;
+  for (const k of keys) {
+    total += await fetchValue(k);
+  }
+  return total;
+}
+
+async function main() {
+  console.log(await sumKeys(["a", "bb", "ccc"]));
+  const all = await Promise.all([fetchValue("x"), fetchValue("yy"), sumKeys(["zzz", "w"])]);
+  console.log(all);
+  try {
+    console.log(await sumKeys(["ok", "bad", "never"]));
+  } catch (e) {
+    console.log(`failed: ${e.message}`);
+  }
+  console.log("done");
+}

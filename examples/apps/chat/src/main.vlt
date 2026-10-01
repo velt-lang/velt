@@ -1,0 +1,39 @@
+// chat: a WebSocket chat server and a terminal client (see README.md).
+//   chat serve [--port 8080]
+//   chat connect <name> [--url ws://127.0.0.1:8080/chat]
+import { ArgParser } from "velt:cli";
+import { args, exit } from "velt:process";
+import { startChat } from "./server";
+import { runClient } from "./client";
+
+function parser(): ArgParser {
+  return new ArgParser("chat", "WebSocket chat server and client.")
+    .option("port", { short: "p", default: "8080", help: "Port to serve on" })
+    .option("url", { default: "ws://127.0.0.1:8080/chat", help: "Server to connect to" })
+    .positional("command", "serve | connect")
+    .positional("name", "Your name (connect)");
+}
+
+async function main() {
+  const opts = parser().parse(args());
+  switch (opts.getOr("command", "")) {
+    case "serve": {
+      const server = await startChat(opts.getInt("port") ?? 8080);
+      console.log(`chat on ws://127.0.0.1:${server.port}/chat`);
+      await sleep(1000000000);
+      break;
+    }
+    case "connect": {
+      const name = opts.get("name");
+      if (name == null) {
+        console.error("chat connect needs a name");
+        exit(2);
+        return;
+      }
+      await runClient(opts.getOr("url", ""), name);
+      break;
+    }
+    default:
+      console.log(parser().help());
+  }
+}

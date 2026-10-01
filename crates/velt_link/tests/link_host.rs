@@ -1,0 +1,213 @@
+//! Real link on the host: a Cranelift-built object exporting `velt_main` + a stand-in runtime
+//! staticlib (compiled here with `rustc`, implementing the few rt_abi.md symbols we call) → exe → run.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use cranelift_codegen::ir::{types, AbiParam, InstBuilder};
+use cranelift_codegen::settings::{self, Configurable};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+use cranelift_module::{Linkage, Module};
+use cranelift_object::{ObjectBuilder, ObjectModule};
+
+const STANDIN_RT: &str = r#"
+use std::io::Write;
+use std::sync::Mutex;
+
+static OUT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+
+extern "C" { fn velt_main() -> i32; }
+
+#[no_mangle]
+pub extern "C" fn velt_rt_write_i64(_stream: u32, v: i64) {
+    write!(OUT.lock().unwrap(), "{v}").unwrap();
+}
+
+#[no_mangle]
+pub extern "C" fn velt_rt_write_byte(_stream: u32, b: u8) {
+    OUT.lock().unwrap().push(b);
+}
+
+#[no_mangle]
+pub extern "C" fn velt_rt_flush() {
+    let mut buf = OUT.lock().unwrap();
+    let mut out = std::io::stdout().lock();
+    out.write_all(&buf).unwrap();
+    out.flush().unwrap();
+    buf.clear();
+}
+
+#[no_mangle]
+pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
+    let code = unsafe { velt_main() };
+    velt_rt_flush();
+    code
+}
+"#;
+
+fn host_triple() -> String {
+    let arch = std::env::consts::ARCH;
+    match std::env::consts::OS {
+        "windows" => format!("{arch}-pc-windows-msvc"),
+        "macos" => format!("{arch}-apple-darwin"),
+        _ => format!("{arch}-unknown-linux-gnu"),
+    }
+}
+
+/// Triple for the hand-built object. Apple's linker rejects Mach-O objects without a platform,
+/// and Cranelift only records one for `macosx` triples (`velt_codegen_cl` normalizes the same way).
+fn object_triple(triple: &str) -> String {
+    match triple.strip_suffix("-apple-darwin") {
+        Some("x86_64") => "x86_64-apple-macosx10.12".to_string(),
+        Some(arch) => format!("{arch}-apple-macosx11.0"),
+        None => triple.to_string(),
+    }
+}
+
+/// `int32_t velt_main(void) { write_i64(1, 42); write_byte(1, '\n'); flush(); return 7; }`
+fn build_object(triple: &str) -> Vec<u8> {
+    let mut flags = settings::builder();
+    flags.set("is_pic", "true").unwrap();
+    let isa = cranelift_codegen::isa::lookup_by_name(triple)
+        .unwrap()
+        .finish(settings::Flags::new(flags))
+        .unwrap();
+    let builder =
+        ObjectBuilder::new(isa, "main", cranelift_module::default_libcall_names()).unwrap();
+    let mut module = ObjectModule::new(builder);
+    let cc = module.isa().default_call_conv();
+
+    let mut sig_i64 = module.make_signature();
+    sig_i64.params.push(AbiParam::new(types::I32));
+    sig_i64.params.push(AbiParam::new(types::I64));
+    let write_i64 = module
+        .declare_function("velt_rt_write_i64", Linkage::Import, &sig_i64)
+        .unwrap();
+
+    let mut sig_byte = module.make_signature();
+    sig_byte.params.push(AbiParam::new(types::I32));
+    sig_byte.params.push(AbiParam::new(types::I8).uext());
+    let write_byte = module
+        .declare_function("velt_rt_write_byte", Linkage::Import, &sig_byte)
+        .unwrap();
+
+    let sig_flush = module.make_signature();
+    let flush = module
+        .declare_function("velt_rt_flush", Linkage::Import, &sig_flush)
+        .unwrap();
+
+    let mut sig_main = module.make_signature();
+    sig_main.returns.push(AbiParam::new(types::I32));
+    let main = module
+        .declare_function("velt_main", Linkage::Export, &sig_main)
+        .unwrap();
+
+    let mut ctx = module.make_context();
+    ctx.func.signature = sig_main;
+    ctx.func.signature.call_conv = cc;
+    let mut fctx = FunctionBuilderContext::new();
+    {
+        let mut b = FunctionBuilder::new(&mut ctx.func, &mut fctx);
+        let block = b.create_block();
+        b.switch_to_block(block);
+        b.seal_block(block);
+        let fi = module.declare_func_in_func(write_i64, b.func);
+        let fb = module.declare_func_in_func(write_byte, b.func);
+        let ff = module.declare_func_in_func(flush, b.func);
+        let one = b.ins().iconst(types::I32, 1);
+        let v = b.ins().iconst(types::I64, 42);
+        b.ins().call(fi, &[one, v]);
+        let nl = b.ins().iconst(types::I8, 10);
+        b.ins().call(fb, &[one, nl]);
+        b.ins().call(ff, &[]);
+        let seven = b.ins().iconst(types::I32, 7);
+        b.ins().return_(&[seven]);
+        b.finalize();
+    }
+    module.define_function(main, &mut ctx).unwrap();
+    module.finish().emit().unwrap()
+}
+
+fn build_standin_rt(dir: &Path, triple: &str) -> PathBuf {
+    let src = dir.join("standin_rt.rs");
+    std::fs::write(&src, STANDIN_RT).unwrap();
+    let out = dir.join(velt_link::runtime_lib_name(triple));
+    let st = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+        .args([
+            "--edition",
+            "2021",
+            "--crate-type",
+            "staticlib",
+            "--crate-name",
+            "velt_rt",
+            "-O",
+            "-o",
+        ])
+        .arg(&out)
+        .arg(&src)
+        .status()
+        .expect("run rustc");
+    assert!(st.success(), "rustc failed to build the stand-in runtime");
+    out
+}
+
+#[test]
+fn link_and_run_on_host() {
+    let triple = host_triple();
+    let dir = std::env::temp_dir().join(format!("velt_link_host_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let rt = build_standin_rt(&dir, &triple);
+    // $VELT_RT_LIB is the first place find_runtime_lib looks (only this test in this binary sets it).
+    std::env::set_var("VELT_RT_LIB", &rt);
+    let found = velt_link::find_runtime_lib(&triple).unwrap();
+    assert_eq!(found, rt);
+
+    let obj_ext = if cfg!(windows) { "obj" } else { "o" };
+    let obj = dir.join(format!("main.{obj_ext}"));
+    std::fs::write(&obj, build_object(&object_triple(&triple))).unwrap();
+
+    for release in [false, true] {
+        let exe = dir.join(format!("prog_{release}{}", std::env::consts::EXE_SUFFIX));
+        let objects = [obj.clone()];
+        velt_link::link(&velt_link::LinkRequest {
+            target: &triple,
+            objects: &objects,
+            runtime_lib: &found,
+            output: &exe,
+            release,
+        })
+        .unwrap_or_else(|e| panic!("link failed (release={release}):\n{e}"));
+
+        let o = Command::new(&exe).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&o.stdout), "42\n");
+        assert_eq!(o.status.code(), Some(7));
+    }
+
+    // A missing symbol must surface the linker's own error text.
+    let bad_rt_src = dir.join("empty_rt.rs");
+    std::fs::write(&bad_rt_src, "#[no_mangle] pub extern \"C\" fn unused() {}").unwrap();
+    let bad_rt = dir.join(format!("bad_{}", velt_link::runtime_lib_name(&triple)));
+    let st = Command::new("rustc")
+        .args(["--crate-type", "staticlib", "--crate-name", "bad", "-o"])
+        .arg(&bad_rt)
+        .arg(&bad_rt_src)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    let objects = [obj.clone()];
+    let err = velt_link::link(&velt_link::LinkRequest {
+        target: &triple,
+        objects: &objects,
+        runtime_lib: &bad_rt,
+        output: &dir.join(format!("bad{}", std::env::consts::EXE_SUFFIX)),
+        release: false,
+    })
+    .unwrap_err();
+    assert!(
+        err.contains("velt_rt_write_i64"),
+        "linker error should name the missing symbol:\n{err}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

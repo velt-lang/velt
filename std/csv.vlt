@@ -1,0 +1,229 @@
+// std/csv: RFC 4180 CSV parsing and writing.
+//
+// The parser scans the UTF-8 bytes once; unquoted fields are slices of the input, quoted fields
+// are slices with `""` unescaped. Records end at LF, CRLF or a lone CR; a final line break does
+// not start another record, and a leading UTF-8 BOM is skipped. Quoted fields may contain
+// delimiters and line breaks. Fields are strings; no type inference.
+
+declare function velt_rt_bytes_from_str(s: string): u8[];
+
+// A malformed CSV input or a bad option; `line` is the 1-based line where the problem starts
+// (0 for option errors).
+export class CsvError extends Error {
+  line: i64;
+
+  constructor(message: string, line: i64) {
+    super(message);
+    this.line = line;
+  }
+}
+
+// Options for `parseCsv` / `parseCsvRecords`.
+export struct CsvOptions {
+  // One ASCII character (default `,`; e.g. `;` or `\t`).
+  delimiter?: string;
+  // Strip spaces and tabs around every field, quoted or not (default false).
+  trim?: bool;
+  // Drop records that are one empty field, i.e. blank lines (default false).
+  skipEmptyLines?: bool;
+}
+
+// Options for `stringifyCsv`.
+export struct CsvWriteOptions {
+  // One ASCII character (default `,`).
+  delimiter?: string;
+  // End records with `\r\n` as RFC 4180 says (default false: `\n`).
+  crlf?: bool;
+}
+
+// Byte values used by the scanner.
+const QUOTE: u8 = 34;
+const LF: u8 = 10;
+const CR: u8 = 13;
+const SPACE: u8 = 32;
+const TAB: u8 = 9;
+
+// The delimiter byte of `d`; throws `CsvError` unless it is one ASCII character.
+function delimiterByte(d: string): u8 {
+  const c = d.charCodeAt(0);
+  if (d.length != 1 || c >= 128 || c == 34 || c == 10 || c == 13) {
+    throw new CsvError(`Invalid CSV delimiter: ${JSON.stringify(d)}`, 0);
+  }
+  return c as u8;
+}
+
+// Scanner state over the input bytes.
+class CsvScanner {
+  b: u8[];
+  pos: usize = 0;
+  line: i64 = 1;
+  delim: u8;
+  trim: bool;
+
+  constructor(b: u8[], delim: u8, trim: bool) {
+    // Skip a UTF-8 byte order mark.
+    if (b.length >= 3 && b[0] == (0xef as u8) && b[1] == (0xbb as u8) && b[2] == (0xbf as u8)) {
+      this.pos = 3;
+    }
+    this.b = b;
+    this.delim = delim;
+    this.trim = trim;
+  }
+
+  private skipBlanks() {
+    while (this.pos < this.b.length && (this.b[this.pos] == SPACE || this.b[this.pos] == TAB)) {
+      this.pos++;
+    }
+  }
+
+  // The next field of `text`; leaves `pos` on the delimiter / line break / end after it.
+  field(text: string): string {
+    if (this.trim) {
+      this.skipBlanks();
+    }
+    if (this.pos < this.b.length && this.b[this.pos] == QUOTE) {
+      return this.quoted(text);
+    }
+    const start = this.pos;
+    while (this.pos < this.b.length) {
+      const c = this.b[this.pos];
+      if (c == this.delim || c == LF || c == CR) {
+        break;
+      }
+      this.pos++;
+    }
+    const raw = text.slice(start as i64, this.pos as i64);
+    return this.trim ? raw.trimEnd() : raw;
+  }
+
+  private quoted(text: string): string {
+    const startLine = this.line;
+    const start = this.pos + 1;
+    let escaped = false;
+    let j = start;
+    while (true) {
+      if (j >= this.b.length) {
+        throw new CsvError(`Unterminated quoted field starting on line ${startLine}`, startLine);
+      }
+      const c = this.b[j];
+      if (c == QUOTE) {
+        if (j + 1 < this.b.length && this.b[j + 1] == QUOTE) {
+          escaped = true;
+          j += 2;
+          continue;
+        }
+        break;
+      }
+      if (c == LF || (c == CR && (j + 1 >= this.b.length || this.b[j + 1] != LF))) {
+        this.line++;
+      }
+      j++;
+    }
+    const inner = text.slice(start as i64, j as i64);
+    this.pos = j + 1;
+    if (this.trim) {
+      this.skipBlanks();
+    }
+    if (this.pos < this.b.length) {
+      const c = this.b[this.pos];
+      if (c != this.delim && c != LF && c != CR) {
+        throw new CsvError(
+          `Unexpected character after closing quote on line ${this.line}`,
+          this.line,
+        );
+      }
+    }
+    return escaped ? inner.replaceAll("\"\"", "\"") : inner;
+  }
+
+  // Consumes the delimiter after a field; false (consuming the line break, if any) at the end
+  // of a record.
+  next(): bool {
+    if (this.pos >= this.b.length) {
+      return false;
+    }
+    const c = this.b[this.pos];
+    this.pos++;
+    if (c == this.delim) {
+      return true;
+    }
+    if (c == CR && this.pos < this.b.length && this.b[this.pos] == LF) {
+      this.pos++;
+    }
+    this.line++;
+    return false;
+  }
+
+  done(): bool {
+    return this.pos >= this.b.length;
+  }
+}
+
+// Parses CSV text into records of fields. Throws `CsvError` on an unterminated quoted field or
+// text after a closing quote.
+export function parseCsv(text: string, opts: CsvOptions = {}): string[][] {
+  const s = new CsvScanner(
+    velt_rt_bytes_from_str(text),
+    delimiterByte(opts.delimiter ?? ","),
+    opts.trim ?? false,
+  );
+  const skipEmpty = opts.skipEmptyLines ?? false;
+  const rows: string[][] = [];
+  while (!s.done()) {
+    const row: string[] = [];
+    row.push(s.field(text));
+    while (s.next()) {
+      row.push(s.field(text));
+    }
+    if (!(skipEmpty && row.length == 1 && row[0].length == 0)) {
+      rows.push(row);
+    }
+  }
+  return rows;
+}
+
+// Parses CSV whose first record is a header: one map per following record, keyed by header
+// names in header order. Missing trailing fields are "", extra fields are ignored, and a
+// repeated header name keeps its last value.
+export function parseCsvRecords(text: string, opts: CsvOptions = {}): Map<string, string>[] {
+  const rows = parseCsv(text, opts);
+  const out: Map<string, string>[] = [];
+  if (rows.length == 0) {
+    return out;
+  }
+  for (let r: usize = 1; r < rows.length; r++) {
+    const m = new Map<string, string>();
+    for (let c: usize = 0; c < rows[0].length; c++) {
+      m.set(rows[0][c].clone(), c < rows[r].length ? rows[r][c].clone() : "");
+    }
+    out.push(m);
+  }
+  return out;
+}
+
+// Whether `field` must be quoted: it contains the delimiter, a quote or a line break.
+function needsQuotes(field: string, delim: string): bool {
+  return field.includes(delim) ||
+    field.includes("\"") ||
+    field.includes("\n") ||
+    field.includes("\r");
+}
+
+// Writes records as CSV, quoting only fields that need it; every record ends with a line break.
+export function stringifyCsv(rows: string[][], opts: CsvWriteOptions = {}): string {
+  const delim = opts.delimiter ?? ",";
+  delimiterByte(delim);
+  const eol = (opts.crlf ?? false) ? "\r\n" : "\n";
+  const lines: string[] = __intrinsic_array_with_capacity(rows.length + 1);
+  for (const row of rows) {
+    const fields: string[] = __intrinsic_array_with_capacity(row.length);
+    for (const f of row) {
+      fields.push(needsQuotes(f, delim) ? `"${f.replaceAll("\"", "\"\"")}"` : f.clone());
+    }
+    lines.push(fields.join(delim));
+  }
+  if (lines.length > 0) {
+    lines.push("");
+  }
+  return lines.join(eol);
+}

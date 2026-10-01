@@ -1,0 +1,35 @@
+// Two clients on a real server (port 0 = any free port). Each step waits for the broadcasts it
+// caused, so the order is deterministic.
+import { connectWebSocket } from "velt:websocket";
+import { startChat } from "../src/server";
+import { nextLine, sendJoin, sendSay, sendLeave } from "../src/client";
+
+export async function test_join_say_leave() {
+  const server = await startChat(0);
+  const url = `ws://127.0.0.1:${server.port}/chat`;
+  const ann = await connectWebSocket(url);
+  await sendJoin(ann, "ann");
+  assertEq(await nextLine(ann), "* ann joined");
+
+  const bo = await connectWebSocket(url);
+  await sendSay(bo, "anyone?");
+  assertEq(await nextLine(bo), "! join first");
+  await sendJoin(bo, "ann");
+  assertEq(await nextLine(bo), "! name ann is taken");
+  await sendJoin(bo, "bo");
+  assertEq(await nextLine(bo), "* bo joined");
+  assertEq(await nextLine(ann), "* bo joined");
+
+  await sendSay(ann, "hello");
+  assertEq(await nextLine(ann), "<ann> hello");
+  assertEq(await nextLine(bo), "<ann> hello");
+
+  await sendLeave(bo);
+  assertEq(await nextLine(bo), null);
+  await bo.close();
+  assertEq(await nextLine(ann), "* bo left");
+  await sendLeave(ann);
+  assertEq(await nextLine(ann), null);
+  await ann.close();
+  server.close();
+}

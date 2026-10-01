@@ -1,0 +1,100 @@
+// std/regex (Rust regex engine with JS syntax) against JS RegExp: test/exec with offsets,
+// sticky, captures (named, optional), matchAll with empty matches, replace templates, split.
+import { RegExp, RegExpMatch, RegExpError } from "velt:regex";
+
+function showMatch(m: RegExpMatch | null): string {
+  if (m == null) {
+    return "no match";
+  }
+  const groups: string[] = [];
+  for (let i: usize = 0; i <= m.captures.length; i++) {
+    groups.push(m.group(i) ?? "<null>");
+  }
+  return `${m.index}..${m.end} [${groups.join("|")}]`;
+}
+
+function main() {
+  const re = new RegExp("(\\d+)-(\\d+)?", "g");
+  const s = "a 12-34 b 5- c 678-9";
+  console.log(re.test(s), re.test(s, 18), re.groupCount, re.source, re.flags, re.global, re.sticky);
+  console.log(showMatch(re.exec(s)), showMatch(re.exec(s, 3)), showMatch(re.exec(s, 19)));
+  for (const m of re.matchAll(s)) {
+    console.log(showMatch(m));
+  }
+  console.log(JSON.stringify(re.matches(s)));
+  console.log(
+    re.replace(s, "<$2:$1>"),
+    "|",
+    re.replace(s, "[$&|$`|$']"),
+    "|",
+    re.replace(s, "$$ $3 $0 $10"),
+  );
+  const once = new RegExp("o");
+  console.log(once.replace("foo boo", "0"), once.replaceAll("foo boo", "0"));
+  console.log(re.replaceWith(s, (m: RegExpMatch): string => `${(m.group(1) ?? "").length}`));
+  const named = new RegExp("(?<year>\\d{4})-(?<month>\\d{2})(?:-(?<day>\\d{2}))?");
+  const nm = named.exec("on 2024-02 and 2025-12-31");
+  if (nm != null) {
+    console.log(
+      nm.named("year"),
+      nm.named("month"),
+      nm.named("day") ?? "<null>",
+      nm.named("nope") ?? "<none>",
+    );
+  }
+  console.log(named.replace("2024-02-29", "$<day>/$<month>/$<year>"));
+  const sticky = new RegExp("[a-z]+", "y");
+  console.log(sticky.test("ab cd", 0), sticky.test("ab cd", 2), showMatch(sticky.exec("ab cd", 3)));
+  const ci = new RegExp("^hello$", "im");
+  console.log(
+    ci.test("x\nHeLLo\ny"),
+    new RegExp("^hello$").test("x\nhello"),
+    new RegExp("a.b", "s").test("a\nb"),
+    new RegExp("a.b").test("a\nb"),
+  );
+  // Empty matches right after a non-empty one: bug regex-empty-after-match (golden in bugs/).
+  const empty = new RegExp("x*", "g");
+  console.log(
+    JSON.stringify(empty.matches("abc")),
+    empty.replace("abc", "-"),
+    JSON.stringify(empty.split("axxb")),
+  );
+  const splitters: string[] = [",", "\\s*;\\s*", "(,)", "", "([-+])"];
+  for (const p of splitters) {
+    const r = new RegExp(p);
+    console.log(JSON.stringify(r.split("a,b ; c,,d-e+f")), JSON.stringify(r.split("a,b,c", 2)));
+  }
+  console.log(JSON.stringify(new RegExp(",").split("")), JSON.stringify(new RegExp("").split("")));
+  const classes = new RegExp("\\b\\w+\\b", "g");
+  console.log(JSON.stringify(classes.matches("it's a dog-eat-dog_world 42")));
+  console.log(
+    new RegExp("[^\\d\\s]+", "g").replace("ab 12 cd3", "#"),
+    new RegExp("a{2,3}", "g").replace("aaaaaaa", "X"),
+  );
+  console.log(
+    new RegExp("(a)|(b)", "g").replace("ab", "[$1,$2]"),
+    new RegExp("(a)?b").replace("b", "[$1]"),
+  );
+  const lazy = new RegExp("<.+?>", "g");
+  console.log(
+    JSON.stringify(lazy.matches("<a><bb></c>")),
+    new RegExp("\\u0041\\x42\\t", "").test("AB\t"),
+  );
+  const raw = "1+1=2? (yes) [a] {b} ^$|\\.*";
+  const esc = new RegExp(RegExp.escape(raw));
+  console.log(esc.test(`x${raw}y`), esc.test("1+1=2"));
+  const bad: string[] = ["(", "[a-", "a{2,1}", "?"];
+  for (const p of bad) {
+    try {
+      new RegExp(p);
+      console.log("compiled", p);
+    } catch (e) {
+      console.log("invalid", p, e instanceof RegExpError);
+    }
+  }
+  try {
+    new RegExp("a", "q");
+  } catch (e) {
+    console.log("bad flags", e instanceof RegExpError);
+  }
+}

@@ -1,0 +1,22 @@
+// A value narrowed to `never` (every member ruled out) can still be read in the unreachable
+// branch: its fields and methods are unreachable too, and the read panics if ever reached.
+// (Regression: `v.x` there was an ICE, "type Error cannot be lowered".)
+type Sh = { kind: "pt"; x: i64 } | { kind: "box"; x: i64 };
+
+function f(v: Sh): i64 {
+  if (v.kind === "box") {
+    if (v.kind === "box") {
+      return 1;
+    } else {
+      return v.x;
+    }
+  }
+  if (v.kind !== "pt") {
+    return v.x;
+  }
+  return 0;
+}
+
+function main() {
+  console.log(f({ kind: "box", x: 2 }), f({ kind: "pt", x: 3 }));
+}

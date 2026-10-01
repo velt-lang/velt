@@ -1,0 +1,1 @@
+narrowed_capture_assign.vlt:8:7: error: cannot assign to `u` here: it is narrowed where the closure is created

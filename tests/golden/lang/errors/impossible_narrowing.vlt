@@ -1,0 +1,24 @@
+// Comparing a value with a literal it can never equal is an error (TypeScript's TS2367), also
+// when narrowing made the value a single literal: inside `v.kind === "box"`, `v.kind != "pt"`
+// can't be false. (Regression: the else branch saw `v` as `never` and reading `v.x` there was
+// an ICE, "type Error cannot be lowered".)
+type Sh = { kind: "pt"; x: i64 } | { kind: "box"; x: i64 };
+
+function f(v: Sh): i64 {
+  if (v.kind === "box") {
+    if (v.kind != "pt") {
+      return 1;
+    } else {
+      return v.x;
+    }
+  }
+  return 0;
+}
+
+function g(k: "box"): bool {
+  return k == "pt";
+}
+
+function main() {
+  console.log(f({ kind: "box", x: 2 }), g("box"));
+}

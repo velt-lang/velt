@@ -1,0 +1,84 @@
+// Map.upsert / update / getOrInsert: single-lookup read-modify-write, checked against the
+// equivalent get + set code.
+class Group {
+  name: string;
+  members: string[] = [];
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+function main() {
+  // Word count with upsert vs get + set.
+  const a = new Map<string, i64>();
+  const b = new Map<string, i64>();
+  let x = 3;
+  for (let i = 0; i < 5000; i++) {
+    x = (x * 48271) % 2147483647;
+    const w = `w${x % 300}`;
+    a.upsert(w, 1, (n) => n + 1);
+    b.set(w, (b.get(w) ?? 0) + 1);
+  }
+  let same = a.size == b.size;
+  a.forEach((n, w) => {
+    if ((b.get(w) ?? -1) != n) {
+      same = false;
+    }
+  });
+  const ak = a.keys();
+  const bk = b.keys();
+  for (let i: usize = 0; i < ak.length; i++) {
+    if (ak[i] != bk[i]) {
+      same = false;
+    }
+  }
+  console.log(a.size, same, a.get("w7") ?? 0);
+
+  // Non-Copy values: grouping into arrays in place.
+  const groups = new Map<i64, string[]>();
+  for (let i = 0; i < 20; i++) {
+    const k = i % 3;
+    if (
+      !groups.update(k, (xs) => {
+        xs.push(`n${i}`);
+      })
+    ) {
+      groups.set(k, [`n${i}`]);
+    }
+  }
+  console.log(
+    groups.get(0),
+    groups.get(2),
+    groups.update(5, (xs) => {
+      xs.push("never");
+    }),
+  );
+  groups.upsert(1, ["fresh"], (xs) => xs.slice(0, 2));
+  groups.upsert(9, ["fresh"], (xs) => xs.slice(0, 2));
+  console.log(groups.entries());
+
+  // getOrInsert: `make` runs only for absent keys.
+  const cache = new Map<string, Group>();
+  let made = 0;
+  for (const name of ["x", "y", "x", "z", "y", "x"]) {
+    const g = cache.getOrInsert(name, () => {
+      made++;
+      return new Group(name);
+    });
+    cache.update(name, (grp) => {
+      grp.members.push(`${grp.name}${grp.members.length}`);
+    });
+    console.log(g.name, g.members.length);
+  }
+  console.log(made, cache.size, cache.get("x")?.members ?? []);
+
+  // Delete then upsert re-inserts at the end with the init value.
+  const c = new Map<string, i64>();
+  c.upsert("a", 1, (n) => n + 1);
+  c.upsert("b", 1, (n) => n + 1);
+  c.upsert("a", 1, (n) => n + 1);
+  c.delete("a");
+  c.upsert("a", 10, (n) => n + 1);
+  c.upsert("b", 10, (n) => n * 5);
+  console.log(c.entries());
+}

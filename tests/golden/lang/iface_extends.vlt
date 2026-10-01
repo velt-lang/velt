@@ -1,0 +1,86 @@
+// Interface inheritance: fields, methods and default methods are inherited.
+
+interface Named {
+  name: string;
+  greet(): string {
+    return `hi ${this.name}`;
+  }
+}
+
+interface Pet extends Named {
+  sound(): string;
+  intro(): string {
+    return `${this.greet()}, I say ${this.sound()}`;
+  }
+}
+
+interface Container<T> {
+  get(i: usize): T;
+  first(): T {
+    return this.get(0);
+  }
+}
+
+interface Stack<T> extends Container<T> {
+  push(x: T);
+}
+
+class Dog implements Pet {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  sound(): string {
+    return "woof";
+  }
+}
+
+class Cat implements Pet {
+  name: string = "tom";
+
+  sound(): string {
+    return "meow";
+  }
+
+  greet(): string {
+    return `purr, ${this.name}`;
+  }
+}
+
+class Ints implements Stack<i64> {
+  items: i64[] = [];
+
+  get(i: usize): i64 {
+    return this.items[i];
+  }
+
+  push(x: i64) {
+    this.items.push(x);
+  }
+}
+
+function hello<T extends Named>(x: T): string {
+  return x.greet();
+}
+
+function introduce<T extends Pet>(x: T): string {
+  return `${hello(x)} / ${x.intro()}`;
+}
+
+function main() {
+  const d = new Dog("rex");
+  console.log(d.greet(), d.intro());
+  console.log(introduce(new Cat()));
+  const pets: Pet[] = [new Dog("fido"), new Cat()];
+  for (const p of pets) {
+    console.log(p.name, p.intro());
+  }
+  const named: Named = new Dog("max");
+  console.log(named.greet());
+  let s = new Ints();
+  s.push(7);
+  s.push(8);
+  console.log(s.first());
+}

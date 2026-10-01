@@ -1,0 +1,99 @@
+// Async errors are typed: a promise's type carries what it can reject with
+// (`Promise<T, E>`), so awaiting a direct call, a stored promise, a spawned task, or
+// `Promise.all` rethrows the error with its type.
+class Timeout extends Error {
+  ms: i64;
+
+  constructor(ms: i64) {
+    super(`timed out after ${ms}ms`);
+    this.ms = ms;
+  }
+}
+
+class Refused extends Error {}
+
+async function fetchValue(ms: i64): Promise<i64> {
+  await sleep(ms);
+  if (ms > 30) {
+    throw new Timeout(ms);
+  }
+  if (ms == 7) {
+    throw new Refused("connection refused");
+  }
+  return ms * 2;
+}
+
+// A written clause on an async function: the promise rejects only with `Timeout`.
+async function slow(ms: i64): Promise<string> throws Timeout {
+  try {
+    return `slow ${await fetchValue(ms)}`;
+  } catch (e) {
+    if (e instanceof Refused) {
+      return "slow refused";
+    }
+    throw e;
+  }
+}
+
+async function report(p: Promise<i64, Timeout | Refused>): Promise<string> {
+  try {
+    return `value ${await p}`;
+  } catch (e) {
+    if (e instanceof Timeout) {
+      return `timeout ${e.ms}`;
+    }
+    return `refused: ${e.message}`;
+  }
+}
+
+async function main() {
+  try {
+    console.log("direct", await fetchValue(5));
+    console.log("direct", await fetchValue(40));
+  } catch (e) {
+    if (e instanceof Timeout) {
+      console.log("direct timeout", e.ms);
+    } else {
+      console.log("direct refused");
+    }
+  }
+  console.log(await report(fetchValue(2)), "|", await report(fetchValue(7)));
+  console.log(await report(fetchValue(35)));
+  try {
+    console.log("slow", await slow(3), await slow(7), await slow(50));
+  } catch (e) {
+    console.log("slow failed:", e.ms);
+  }
+  try {
+    const both = await Promise.all([fetchValue(1), fetchValue(2)]);
+    console.log("all", both);
+    await Promise.all([fetchValue(3), fetchValue(50), fetchValue(4)]);
+  } catch (e) {
+    console.log("all failed:", e.message);
+  }
+  const tasks: Promise<i64, Timeout | Refused>[] = [];
+  for (let i = 1; i <= 3; i++) {
+    tasks.push(spawn(fetchValue(i * 20)));
+  }
+  try {
+    console.log(await Promise.all(tasks));
+  } catch (e) {
+    console.log("joined failed:", e.message);
+  }
+  const ok: Promise<i64, Timeout | Refused>[] = [spawn(fetchValue(1)), fetchValue(3)];
+  console.log("joined", await Promise.all(ok));
+  const job = async (): Promise<i64> => {
+    await sleep(1);
+    throw new Refused("from a closure");
+  };
+  try {
+    await job();
+  } catch (e) {
+    console.log("closure:", e.message);
+  }
+  try {
+    await spawn(job());
+  } catch (e) {
+    console.log("spawned closure:", e.message);
+  }
+}

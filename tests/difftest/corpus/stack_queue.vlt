@@ -1,0 +1,37 @@
+// A stack and a queue as classes around arrays; balanced-brackets check.
+class Stack {
+  items: string[] = [];
+  push(s: string) {
+    this.items.push(s);
+  }
+  pop(): string {
+    return this.items.pop() ?? "";
+  }
+  get size(): usize {
+    return this.items.length;
+  }
+}
+
+function balanced(s: string): bool {
+  const st = new Stack();
+  const open = "([{";
+  const close = ")]}";
+  for (let i = 0; i < (s.length as i64); i++) {
+    const c = s.slice(i, i + 1);
+    if (open.includes(c)) {
+      st.push(c);
+    } else if (close.includes(c)) {
+      const want = open.slice(close.indexOf(c), close.indexOf(c) + 1);
+      if (st.pop() != want) {
+        return false;
+      }
+    }
+  }
+  return st.size == 0;
+}
+
+function main() {
+  for (const s of ["()", "([]{})", "(]", "((", "", "{[()()]}x", "}{"]) {
+    console.log(`"${s}" ${balanced(s)}`);
+  }
+}

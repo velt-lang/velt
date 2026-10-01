@@ -1,0 +1,40 @@
+// Word frequency table with Map, sorted by count then word (hand-written insertion sort).
+class Entry {
+  word: string;
+  count: i64;
+  constructor(word: string, count: i64) {
+    this.word = word;
+    this.count = count;
+  }
+}
+
+function before(a: Entry, b: Entry): bool {
+  return a.count > b.count || (a.count == b.count && a.word < b.word);
+}
+
+function main() {
+  const text = "it was the best of times it was the worst of times it was the age of wisdom";
+  const counts = new Map<string, i64>();
+  for (const w of text.split(" ")) {
+    counts.set(w, (counts.get(w) ?? 0) + 1);
+  }
+  const entries: Entry[] = [];
+  for (const [w, n] of counts) {
+    entries.push(new Entry(w, n));
+  }
+  for (let i: usize = 1; i < entries.length; i++) {
+    let j = i;
+    while (j > 0 && before(entries[j], entries[j - 1])) {
+      const t = `${entries[j].word}`;
+      const tc = entries[j].count;
+      entries[j].word = `${entries[j - 1].word}`;
+      entries[j].count = entries[j - 1].count;
+      entries[j - 1].word = t;
+      entries[j - 1].count = tc;
+      j--;
+    }
+  }
+  for (const e of entries) {
+    console.log(`${e.word}: ${e.count}`);
+  }
+}

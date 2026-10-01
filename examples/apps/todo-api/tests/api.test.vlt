@@ -1,0 +1,149 @@
+// The router end to end, without sockets: status codes, bodies and error mapping. Every check
+// runs against both stores (JSON in memory and SQLite in memory), which must behave the same.
+import { route, queryParam } from "../src/api";
+import { TodoRepository, JsonRepository, SqliteRepository, must } from "../src/repository";
+import { TodoStore } from "../src/store";
+import { SqliteTodoStore } from "../src/sqlite_store";
+import { Todo } from "../src/model";
+
+function call<S extends TodoRepository>(
+  store: S,
+  method: string,
+  path: string,
+  body: string = "",
+): string {
+  const q = path.indexOf("?");
+  const r =
+    q < 0
+      ? route(store, method, path, "", body)
+      : route(store, method, path.slice(0, q), path.slice(q + 1), body);
+  return `${r.status} ${r.body}`;
+}
+
+function seed<S extends TodoRepository>(s: S) {
+  call(s, "POST", "/todos", `{"title":"write docs","tags":["work"]}`);
+  call(s, "POST", "/todos", `{"title":"ship it","priority":"high"}`);
+}
+
+function jsonStore(): JsonRepository {
+  return new JsonRepository(new TodoStore());
+}
+
+function sqliteStore(): SqliteRepository {
+  return new SqliteRepository(new SqliteTodoStore(":memory:"));
+}
+
+function checkCreateAndGet<S extends TodoRepository>(s: S) {
+  assertEq(
+    call(s, "POST", "/todos", `{"title":"  a  ","tags":["X","x"]}`),
+    `201 {"id":1,"title":"a","done":false,"priority":"normal","tags":["x"]}`,
+  );
+  assertEq(
+    call(s, "GET", "/todos/1"),
+    `200 {"id":1,"title":"a","done":false,"priority":"normal","tags":["x"]}`,
+  );
+}
+
+function checkListFilters<S extends TodoRepository>(s: S) {
+  seed(s);
+  call(s, "PATCH", "/todos/2", `{"done":true}`);
+  assertEq(
+    call(s, "GET", "/todos?done=true"),
+    `200 [{"id":2,"title":"ship it","done":true,"priority":"high","tags":[]}]`,
+  );
+  assertEq(call(s, "GET", "/todos?tag=work").startsWith(`200 [{"id":1,`), true);
+  assertEq(call(s, "GET", "/todos?done=false&tag=nope"), "200 []");
+}
+
+function checkPatchValidatesFirst<S extends TodoRepository>(s: S) {
+  seed(s);
+  assertEq(
+    call(s, "PATCH", "/todos/1", `{"title":"new","priority":"asap"}`),
+    `400 {"error":{"code":"invalid","message":"priority must be low, normal or high (got \\"asap\\")"}}`,
+  );
+  assertEq(must<Todo>(s.get(1)).title, "write docs");
+  assertEq(
+    call(s, "PATCH", "/todos/9", `{"priority":"asap"}`),
+    `404 {"error":{"code":"not_found","message":"todo 9 not found"}}`,
+  );
+}
+
+function checkDelete<S extends TodoRepository>(s: S) {
+  seed(s);
+  assertEq(call(s, "DELETE", "/todos/1"), "204 ");
+  assertEq(
+    call(s, "DELETE", "/todos/1"),
+    `404 {"error":{"code":"not_found","message":"todo 1 not found"}}`,
+  );
+  assertEq(must<Todo[]>(s.list(null, null)).length, 1);
+}
+
+function checkErrors<S extends TodoRepository>(s: S) {
+  seed(s);
+  assertEq(
+    call(s, "POST", "/todos", "{"),
+    `400 {"error":{"code":"bad_json","message":"invalid JSON at $: unexpected end of input (byte 1)"}}`,
+  );
+  assertEq(
+    call(s, "POST", "/todos", "{}"),
+    `400 {"error":{"code":"invalid","message":"title is required"}}`,
+  );
+  assertEq(
+    call(s, "GET", "/todos/x"),
+    `404 {"error":{"code":"not_found","message":"no todo 'x'"}}`,
+  );
+  assertEq(
+    call(s, "PUT", "/todos"),
+    `405 {"error":{"code":"method_not_allowed","message":"PUT is not allowed here"}}`,
+  );
+  assertEq(call(s, "GET", "/"), `404 {"error":{"code":"not_found","message":"no route for /"}}`);
+}
+
+export function test_create_and_get() {
+  checkCreateAndGet(jsonStore());
+  checkCreateAndGet(sqliteStore());
+}
+
+export function test_list_filters() {
+  checkListFilters(jsonStore());
+  checkListFilters(sqliteStore());
+}
+
+export function test_patch_validates_before_changing() {
+  checkPatchValidatesFirst(jsonStore());
+  checkPatchValidatesFirst(sqliteStore());
+}
+
+export function test_delete() {
+  checkDelete(jsonStore());
+  checkDelete(sqliteStore());
+}
+
+export function test_errors() {
+  checkErrors(jsonStore());
+  checkErrors(sqliteStore());
+}
+
+export function test_only_the_json_store_writes_a_file() {
+  const json = jsonStore();
+  seed(json);
+  assertEq(json.fileSnapshot() != null, true);
+  const sqlite = sqliteStore();
+  seed(sqlite);
+  assertEq(sqlite.fileSnapshot(), null);
+}
+
+export function test_snapshot_round_trip() {
+  const s = jsonStore();
+  seed(s);
+  const back = TodoStore.fromSnapshot(s.store.snapshot());
+  assertEq(back.snapshot(), s.store.snapshot());
+  assertEq(back.nextId, 3);
+}
+
+export function test_query_params() {
+  assertEq(queryParam("a=1&tag=two%20words", "tag"), "two words");
+  assertEq(queryParam("flag&a=1", "flag"), "");
+  assertEq(queryParam("a=%zz", "a"), "%zz");
+  assertEq(queryParam("a=1", "b"), null);
+}

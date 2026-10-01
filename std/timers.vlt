@@ -1,0 +1,149 @@
+// std/timers: one-shot timers that run a promise later (`setTimeout`, `setImmediate`) and a
+// pull-based interval (`Ticker`, like Go's `time.Ticker` / tokio's `interval`).
+//
+// A timer takes a callback returning the promise to run, like JS: `setTimeout(() => save(doc),
+// 100)` or `setTimeout(async () => { ... }, 10)` (a promise can't be passed: promises start
+// when created). The callback owns what it captures, so it outlives the frame that scheduled
+// it. The task runs as its own spawned task on the multi-threaded runtime; an error it throws is
+// uncaught (the process exits like on an unhandled rejection), so catch inside it.
+// Timers are ordinary compiled Velt tasks built on `sleep`: no code pointer is cached anywhere,
+// so `velt dev` hot reload needs no special handling.
+//
+// An interval can't re-create its promise every tick without a stored closure, so it is pulled:
+// `const t = new Ticker(100); while (await t.tick()) { ... }`.
+
+// Timer state in the shared flag.
+const PENDING: i64 = 0;
+const CLEARED: i64 = 1;
+const STARTED: i64 = 2;
+
+// Handle of a pending `setTimeout` / `setImmediate` task.
+export class Timer {
+  private state: shared<i64>;
+
+  // Wraps the task's state flag (use `setTimeout` to create timers).
+  constructor(state: shared<i64>) {
+    this.state = state;
+  }
+
+  // Cancels the task if it has not started yet (a no-op afterwards, like JS `clearTimeout`).
+  // Dropping the handle does not cancel.
+  clear() {
+    if (this.state.get() == PENDING) {
+      this.state.set(CLEARED);
+    }
+  }
+
+  // Whether `clear()` cancelled the task before it started.
+  get cleared(): bool {
+    return this.state.get() == CLEARED;
+  }
+
+  // Whether the task has started (its delay elapsed and it was not cleared).
+  get started(): bool {
+    return this.state.get() == STARTED;
+  }
+}
+
+// Calls `task` after at least `ms` milliseconds unless the returned timer is cleared first.
+export function setTimeout(task: () => Promise<void>, ms: i64): Timer {
+  const state = shared(PENDING);
+  spawn(fire(ms, task, state.clone()));
+  return new Timer(state);
+}
+
+// Calls `task` as soon as possible on its own task (after the current task yields).
+export function setImmediate(task: () => Promise<void>): Timer {
+  return setTimeout(task, 0);
+}
+
+// Cancels `t` if its task has not started (same as `t.clear()`).
+export function clearTimeout(t: Timer) {
+  t.clear();
+}
+
+// Resolves after `ms` milliseconds (same as the built-in `sleep`).
+export async function delay(ms: i64): Promise<void> {
+  await sleep(ms);
+}
+
+async function fire(ms: i64, task: () => Promise<void>, state: shared<i64>): Promise<void> {
+  if (ms > 0) {
+    await sleep(ms);
+  } else {
+    await yieldNow();
+  }
+  if (state.get() != PENDING) {
+    return;
+  }
+  state.set(STARTED);
+  await task();
+}
+
+// Stops a `Ticker` from any task: `const stop = t.stopper(); spawn(later(stop));`.
+export class TickerStop {
+  private stopped: shared<i64>;
+
+  // Wraps a ticker's stop flag (use `Ticker.stopper()`).
+  constructor(stopped: shared<i64>) {
+    this.stopped = stopped;
+  }
+
+  // Makes the ticker's pending and future `tick()`s resolve to false.
+  stop() {
+    this.stopped.set(1);
+  }
+}
+
+// A drift-free periodic schedule: tick `k` is due `k * periodMs` after construction (measured
+// with `performance.now()`), independent of how long the loop body takes. Missed ticks are
+// skipped, not burst: a `tick()` that is already late resolves at once, and the next one is
+// the first schedule point after that. A stop takes effect when the pending tick is due (at
+// most one period later; there is no way to interrupt a sleep).
+export class Ticker {
+  private periodMs: f64;
+  private nextDue: f64;
+  private stopped: shared<i64> = shared(0);
+
+  // A ticker whose first tick is due `periodMs` (>= 1) from now.
+  constructor(periodMs: i64) {
+    this.periodMs = (periodMs < 1 ? 1 : periodMs) as f64;
+    this.nextDue = performance.now() + this.periodMs;
+  }
+
+  // Resolves when the next tick is due: true, or false once the ticker is stopped.
+  tick(): Promise<bool> {
+    const now = performance.now();
+    const due = this.nextDue;
+    let next = due + this.periodMs;
+    if (next <= now) {
+      next = due + Math.ceil((now - due) / this.periodMs) * this.periodMs;
+      if (next <= now) {
+        next = next + this.periodMs;
+      }
+    }
+    this.nextDue = next;
+    const waitMs = due > now ? Math.ceil(due - now) as i64 : 0;
+    return waitTick(waitMs, this.stopped.clone());
+  }
+
+  // Stops the ticker (see `TickerStop.stop`).
+  stop() {
+    this.stopped.set(1);
+  }
+
+  // A handle that stops this ticker from another task.
+  stopper(): TickerStop {
+    return new TickerStop(this.stopped.clone());
+  }
+}
+
+async function waitTick(ms: i64, stopped: shared<i64>): Promise<bool> {
+  if (stopped.get() != 0) {
+    return false;
+  }
+  if (ms > 0) {
+    await sleep(ms);
+  }
+  return stopped.get() == 0;
+}

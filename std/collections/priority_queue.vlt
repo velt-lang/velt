@@ -1,0 +1,107 @@
+// std/collections/priority_queue: `PriorityQueue<T>`, a binary heap ordered by a comparator.
+//
+// `cmp(a, b) < 0` means `a` comes out first, so `(a, b) => a - b` is a min-heap and
+// `(a, b) => b - a` a max-heap (the `sort(cmp)` convention). Elements are only swapped inside the
+// heap array, never cloned; `pop` moves the top element out by swapping it to the end.
+// Elements that compare equal come out in unspecified order (a heap is not stable).
+// Known issue: a comparator that captures variables must not outlive the function that created
+// it (tests/golden/bugs/sema_closure_param_stored_in_field.vlt); non-capturing comparators are fine.
+
+// A priority queue (binary heap); `pop` returns the element that `cmp` orders first.
+export class PriorityQueue<T> {
+  private heap: T[] = [];
+  private cmp: (a: T, b: T) => i64;
+
+  // An empty queue ordered by `cmp` (negative: `a` first).
+  constructor(cmp: (a: T, b: T) => i64) {
+    this.cmp = cmp;
+  }
+
+  // Number of queued elements.
+  get size(): usize {
+    return this.heap.length;
+  }
+
+  // Number of queued elements (same as `size`).
+  get length(): usize {
+    return this.heap.length;
+  }
+
+  // Whether the queue is empty.
+  isEmpty(): bool {
+    return this.heap.length == 0;
+  }
+
+  // Adds `value` (O(log n)).
+  push(value: T) {
+    this.heap.push(value);
+    this.siftUp(this.heap.length - 1);
+  }
+
+  // Removes and returns the first element in `cmp` order, or null if empty (O(log n)).
+  pop(): T | null {
+    const n = this.heap.length;
+    if (n == 0) {
+      return null;
+    }
+    __intrinsic_array_swap(this.heap, 0, n - 1);
+    const top = this.heap.pop();
+    this.siftDown(0);
+    return top;
+  }
+
+  // A clone of the first element in `cmp` order, or null if empty.
+  peek(): T | null {
+    if (this.heap.length == 0) {
+      return null;
+    }
+    return this.heap[0].clone();
+  }
+
+  // Removes every element.
+  clear() {
+    __intrinsic_array_truncate(this.heap, 0);
+  }
+
+  // Clones of the elements in `cmp` order (stable for equal elements); the queue is unchanged.
+  toSortedArray(): T[] {
+    const out = this.heap.clone();
+    out.sort(this.cmp);
+    return out;
+  }
+
+  // Clones of the elements in heap (unspecified) order.
+  toArray(): T[] {
+    return this.heap.clone();
+  }
+
+  private siftUp(i: usize) {
+    while (i > 0) {
+      const parent = (i - 1) / 2;
+      if (this.cmp(this.heap[i], this.heap[parent]) >= 0) {
+        return;
+      }
+      __intrinsic_array_swap(this.heap, i, parent);
+      i = parent;
+    }
+  }
+
+  private siftDown(i: usize) {
+    const n = this.heap.length;
+    while (true) {
+      const left = 2 * i + 1;
+      if (left >= n) {
+        return;
+      }
+      let child = left;
+      if (left + 1 < n && this.cmp(this.heap[left + 1], this.heap[left]) < 0) {
+        child = left + 1;
+      }
+      if (this.cmp(this.heap[child], this.heap[i]) >= 0) {
+        return;
+      }
+      __intrinsic_array_swap(this.heap, i, child);
+      i = child;
+    }
+  }
+}

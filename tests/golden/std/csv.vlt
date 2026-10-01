@@ -1,0 +1,88 @@
+// std/csv: RFC 4180 parsing (quotes, escaped quotes, embedded delimiters and line breaks,
+// CRLF / LF / CR), options, header records, writing and round trips, error lines.
+import { parseCsv, parseCsvRecords, stringifyCsv, CsvError } from "velt:csv";
+
+function show(label: string, text: string) {
+  try {
+    console.log(label, JSON.stringify(parseCsv(text)));
+  } catch (e) {
+    console.log(label, "error:", e.message, e.line);
+  }
+}
+
+function parsing() {
+  show("simple", "a,b,c\n1,2,3\n");
+  show("no final newline", "a,b\n1,2");
+  show("crlf", "a,b\r\n1,2\r\n");
+  show("lone cr", "a\rb\r");
+  show("empty", "");
+  show("one newline", "\n");
+  show("blank line", "a\n\nb\n");
+  show("empty fields", ",a,,\n,\n");
+  show("quoted", "\"a,b\",\"say \"\"hi\"\"\",\"\"\n");
+  show("multiline", "id,text\n1,\"line one\nline two\r\nline three\"\n2,x\n");
+  show("utf8", "namn,stad\nÅsa,Göteborg\n\"日本\",😀\n");
+  show("bom", "\u{FEFF}h1,h2\nv1,v2\n");
+  show("spaces kept", " a , b \n");
+  show("quote inside unquoted", "a\"b,c\n");
+  show("unterminated", "a,b\n1,\"open\nstill open\n");
+  show("unterminated line 1", "\"x");
+  show("junk after quote", "x\ny\n\"a\"b,c\n");
+}
+
+function options() {
+  console.log(JSON.stringify(parseCsv("a;b;\"c;d\"\n1;2;3", { delimiter: ";" })));
+  console.log(JSON.stringify(parseCsv("a\tb\n1\t2\n", { delimiter: "\t" })));
+  console.log(JSON.stringify(parseCsv(" a , \"b, c\" ,d\t\n", { trim: true })));
+  console.log(JSON.stringify(parseCsv("a\n\nb\n\n", { skipEmptyLines: true })));
+  try {
+    parseCsv("a", { delimiter: "::" });
+  } catch (e) {
+    console.log(e.message, e.line);
+  }
+  try {
+    stringifyCsv([["a"]], { delimiter: "\"" });
+  } catch (e) {
+    console.log(e.message, e.line);
+  }
+}
+
+function records() {
+  const text =
+    "name,age,city\nAda,36,London\nLinus,28\n\"Grace, Rear Adm.\",85,\"New York\",extra\n";
+  const recs = parseCsvRecords(text);
+  console.log(recs.length);
+  for (const r of recs) {
+    console.log(r.get("name"), r.get("age"), r.get("city"), r.size, r.keys());
+  }
+  console.log(parseCsvRecords("").length, parseCsvRecords("only,header\n").length);
+}
+
+function writing() {
+  const rows = [
+    ["id", "text", "note"],
+    ["1", "plain", ""],
+    ["2", "with, comma", "say \"hi\""],
+    ["3", "two\nlines", "cr\rhere"],
+    ["4", " spaced ", "ünïcode"],
+  ];
+  const out = stringifyCsv(rows);
+  console.log(JSON.stringify(out));
+  console.log(JSON.stringify(parseCsv(out)) == JSON.stringify(rows));
+  console.log(JSON.stringify(stringifyCsv([["a", "b;c"], ["d"]], { delimiter: ";", crlf: true })));
+  console.log(JSON.stringify(stringifyCsv([])), JSON.stringify(stringifyCsv([[""]])));
+  const back = parseCsv(stringifyCsv([["x", "a\r\nb"]], { crlf: true }));
+  console.log(JSON.stringify(back));
+}
+
+function main() {
+  parsing();
+  options();
+  records();
+  writing();
+  try {
+    parseCsv("ok\n\"bad");
+  } catch (e) {
+    console.log(e instanceof CsvError, e.line);
+  }
+}

@@ -1,0 +1,11 @@
+// Regression (difftest regex-line-terminators): JS line terminators are \n, \r, U+2028 and
+// U+2029: `.` matches none of them, and with `m` `^`/`$` also stop at "\r" (CRLF text).
+import { RegExp } from "velt:regex";
+
+function main() {
+  console.log(new RegExp("a.b").test("a\rb"));
+  console.log(new RegExp("a.b").test("a b"));
+  console.log(new RegExp("^b", "m").test("a\rb"));
+  console.log(new RegExp("a$", "m").test("a\r\nb"));
+  console.log(JSON.stringify(new RegExp("^\\w+$", "gm").matches("one\r\ntwo\r\n")));
+}

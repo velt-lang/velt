@@ -1,0 +1,32 @@
+// A bitset over 32-bit words used as a prime sieve.
+class BitSet {
+  words: i64[] = [];
+  constructor(n: i64) {
+    for (let i = 0; i < (n >> 5) + 1; i++) {
+      this.words.push(0);
+    }
+  }
+  set(i: i64) {
+    this.words[(i >> 5) as usize] |= 1 << (i & 31);
+  }
+  has(i: i64): bool {
+    return ((this.words[(i >> 5) as usize] >> (i & 31)) & 1) == 1;
+  }
+}
+
+function main() {
+  const n = 500;
+  const composite = new BitSet(n);
+  let count = 0;
+  let last = 0;
+  for (let i = 2; i < n; i++) {
+    if (!composite.has(i)) {
+      count++;
+      last = i;
+      for (let j = i * i; j < n; j += i) {
+        composite.set(j);
+      }
+    }
+  }
+  console.log(count, last, composite.words.length, composite.has(9), composite.has(97));
+}

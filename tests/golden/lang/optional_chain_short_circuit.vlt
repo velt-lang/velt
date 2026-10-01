@@ -1,0 +1,44 @@
+// Optional chaining short-circuits the rest of the chain, as in TS: `u?.name.length` is null when
+// `u` is null and `.length` is never evaluated; also through calls, indexes and a second `?.`.
+// Parentheses end the chain. An untyped default after `??` takes the payload's type (`usize`).
+// Regression (docs agent): "value of type `string | null` may be null", asking for
+// `u?.name?.length`.
+class Inner {
+  vals: i64[] = [1, 2, 3];
+  label(): string {
+    return "in";
+  }
+}
+
+class User {
+  name: string = "ann";
+  inner: Inner | null = new Inner();
+  tag(): string {
+    return "t";
+  }
+}
+
+function f(u: User | null): string {
+  const a = u?.name.length ?? 0;
+  const b = u?.name.toUpperCase() ?? "-";
+  const c = u?.inner?.vals[1] ?? -1;
+  const d = u?.inner?.label().length ?? 0;
+  const e = u?.tag().toUpperCase() ?? "-";
+  const g = (u?.name ?? "x").length;
+  return `${a} ${b} ${c} ${d} ${e} ${g}`;
+}
+
+function nameLength(u: User | null): usize {
+  return u?.name.length ?? 0;
+}
+
+function main() {
+  console.log(nameLength(null), nameLength(new User()));
+  const u = new User();
+  console.log(f(u), f(null));
+  const v = new User();
+  v.inner = null;
+  console.log(f(v));
+  const w = new User();
+  console.log(w?.name.length);
+}

@@ -1,0 +1,20 @@
+// 1000 rounds of Promise.all over 1000 small async tasks.
+// Each call starts when it is created (like JS: `task` finishes at once, before the join).
+async function task(round: i64, i: i64): Promise<i64> {
+  return (round * 1000 + i) % 7919;
+}
+
+async function main() {
+  let total = 0;
+  for (let round = 0; round < 1000; round++) {
+    const ps: Promise<i64>[] = [];
+    for (let i = 0; i < 1000; i++) {
+      ps.push(task(round, i));
+    }
+    const rs = await Promise.all(ps);
+    for (const r of rs) {
+      total += r;
+    }
+  }
+  console.log(total);
+}

@@ -1,0 +1,39 @@
+import {
+  readFile,
+  writeFile,
+  appendFile,
+  mkdir,
+  readDir,
+  stat,
+  remove,
+  exists,
+  readFileSync,
+} from "velt:fs";
+
+async function main() {
+  const dir = "velt_fs_golden_tmp";
+  await mkdir(dir, { recursive: true });
+  await writeFile(`${dir}/a.txt`, "hello");
+  await writeFile(`${dir}/b.txt`, "world");
+  await appendFile(`${dir}/b.txt`, "!");
+
+  const a = await readFile(`${dir}/a.txt`);
+  console.log(a, a.length);
+  console.log(readFileSync(`${dir}/b.txt`));
+
+  const names = await readDir(dir);
+  names.sort();
+  console.log(names.join(","));
+
+  const st = await stat(`${dir}/b.txt`);
+  console.log(st.size, st.isFile, st.isDir);
+
+  try {
+    await readFile(`${dir}/missing.txt`);
+  } catch (e) {
+    console.log("error:", e.code);
+  }
+
+  await remove(dir, { recursive: true });
+  console.log(await exists(dir));
+}

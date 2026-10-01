@@ -1,0 +1,14 @@
+// `undefined` (as a value or a type) and `void expr` are not part of Velt: each use is an
+// error with the fix "use `null`".
+type Maybe = string | undefined;
+
+function find(name: string, fallback?: string = "none"): string | null {
+  return undefined;
+}
+
+function main() {
+  const x: string | null = void 0;
+  if (x === undefined) {
+    console.log("absent");
+  }
+}

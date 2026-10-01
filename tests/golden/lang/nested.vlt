@@ -1,0 +1,74 @@
+// Nested declarations are hoisted within their block and may shadow module-level items.
+
+struct Point {
+  x: i64;
+  y: i64;
+}
+
+function describe(): string {
+  return "module-level";
+}
+
+function main() {
+  // Used before its declaration: function declarations are hoisted.
+  console.log(square(7));
+
+  function square(n: i64): i64 {
+    return n * n;
+  }
+
+  struct Point {
+    x: f64;
+    y: f64;
+    label: string = "nested";
+  }
+
+  class Counter {
+    n: i64 = 0;
+
+    tick(): i64 {
+      this.n += 1;
+      return this.n;
+    }
+  }
+
+  enum Dir {
+    Up,
+    Down,
+  }
+
+  const p: Point = { x: 1.5, y: 2.5 };
+  console.log(p);
+  let c = new Counter();
+  c.tick();
+  console.log(c.tick());
+  const d = Dir.Down;
+  switch (d) {
+    case Dir.Up:
+      console.log("up");
+      break;
+    case Dir.Down:
+      console.log("down");
+      break;
+  }
+  if (p.x > 1.0) {
+    function describe(): string {
+      return "inner";
+    }
+    console.log(describe());
+  }
+  console.log(describe());
+  console.log(outer().x);
+  const add = (a: i64) => a + square(2);
+  console.log(add(1));
+}
+
+function outer(): Point {
+  function make(x: i64): Point {
+    function double(v: i64): i64 {
+      return v * 2;
+    }
+    return Point { x: double(x), y: 0 };
+  }
+  return make(21);
+}

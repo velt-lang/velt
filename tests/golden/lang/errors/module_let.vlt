@@ -1,0 +1,6 @@
+let requestCount = 0;
+
+function main() {
+  requestCount += 1;
+  console.log(requestCount);
+}

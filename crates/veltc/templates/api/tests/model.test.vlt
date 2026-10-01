@@ -1,0 +1,22 @@
+// Validation rules, without a server.
+import { validName, validQuantity } from "../src/model";
+
+// The message `validName(name)` fails with, or "".
+function nameError(name: string): string {
+  try {
+    validName(name);
+  } catch (e) {
+    return e.message.clone();
+  }
+  return "";
+}
+
+export function test_names_are_trimmed_and_bounded() {
+  assertEq(validName("  apples "), "apples");
+  assertEq(nameError("   "), "name must not be empty");
+  assertEq(nameError("x".repeat(101)), "name is longer than 100 characters");
+}
+
+export function test_quantities() {
+  assertEq(validQuantity(0), 0);
+}

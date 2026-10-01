@@ -1,0 +1,10 @@
+// `velt test` runs every exported `test_*` function in `*.test.vlt` files.
+import { greet } from "../src/greet";
+
+export function test_greets_by_name() {
+  assertEq(greet("Ada"), "Hello, Ada!");
+}
+
+export function test_blank_name_greets_the_world() {
+  assertEq(greet("  "), "Hello, world!");
+}

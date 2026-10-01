@@ -1,0 +1,38 @@
+# Diagnostics
+
+The compiler reports errors as `path:line:col: error: message`, followed by notes
+(`= note: …`) and related locations (`--> path:line:col`). Compilation stops with exit code 1;
+nothing is run. An internal compiler error exits with code 101 and starts with
+`internal compiler error`; please [report it](../../CONTRIBUTING.md#reporting-bugs).
+
+The wording below is stable: tests, editors and tools rely on it.
+
+| Situation | Message |
+|---|---|
+| parse | `expected expression`, ``expected `;` ``, `expected <token>, found <token>` |
+| unknown name or type | ``cannot find `name` in this scope``, ``cannot find type `T` in this scope`` |
+| types | `mismatched types` + note `expected i64, found string` |
+| conditions | `mismatched types` + note `expected bool, found i64` + the comparison to write; ``` `\|\|` needs a `bool` or nullable left side, found `T` ``` (+ "use `??` for a default") |
+| moves | ``use of moved value `name` `` (+ where it moved, and the fixes) |
+| const | ``cannot assign twice to const `name` `` |
+| members | ``no field `x` on type `T` ``, ``` `x` is private ```, ``cannot assign to `x`: it is a readonly field``, ``cannot assign to `x`: it is a getter`` |
+| unions | ``no field `r` on type `Shape` `` + "narrow it to one member first …" |
+| switch | ``non-exhaustive switch on `s.kind` `` + `missing cases: …`, `duplicate case value` |
+| exclusive access | ``cannot use `xs` here: this call may modify it through another argument`` |
+| threads | "cannot mutate captured variable `n` in a spawned task" (+ `shared` hint) |
+| modules | ``` `x` is not exported ```, "mutable module-level state is not allowed", ``` `export default` is not supported: Velt has named exports only ```, ``` `T` is imported with `import type` and cannot be used as a value ```, ``` namespace `ns` has no exported member `x` ``` |
+| async | ``` `await` is only allowed inside async functions ```, `floating promise: this promise is neither awaited nor spawned` (+ the `await` / `spawn` fixes) |
+| errors | ``` `f` throws `E`, which its `throws` clause does not allow ```, ``` `C.m` throws `E`, but `I.m` does not allow it ```, "this function throws `E`, but the function type it is used as does not allow throwing", "the error type of this function is not known yet" |
+| removed syntax | ``` `mut` is not needed: mutation is inferred ```, ``` `match` is not supported ```, "enum members cannot have payloads", ``` the `?` operator was removed ```, ``` `Result` was removed ```, ``` `undefined` is not part of Velt ``` (+ note ``use `null` ``) |
+
+At run time:
+
+| Situation | Output | Exit code |
+|---|---|---|
+| panic | `panic: <message> at file:line:col` | 101 |
+| uncaught error | `Uncaught <Type>: <message> at file:line:col` | 1 |
+
+The language server turns many of these diagnostics into quick fixes: removing `mut`,
+replacing `undefined` with `null`, converting a `+` chain to a template literal, writing the
+comparison a condition needs, and adding `await` or `spawn(...)` to a floating promise
+([Editors](../tooling/editors.md)).

@@ -1,0 +1,91 @@
+$ tool 
+verbose: false dry-run: false x: false help: false
+out: out.txt has out: false level: null
+tags: [] input: null extra: -
+positionals: [] missing: null false
+$ tool a.txt b.txt c.txt
+verbose: false dry-run: false x: false help: false
+out: out.txt has out: false level: null
+tags: [] input: a.txt extra: b.txt
+positionals: [ 'a.txt', 'b.txt', 'c.txt' ] missing: null false
+$ tool -v --out x.bin in.txt
+verbose: true dry-run: false x: false help: false
+out: x.bin has out: true level: null
+tags: [] input: in.txt extra: -
+positionals: [ 'in.txt' ] missing: null false
+$ tool --out=y.bin --level=3 --verbose --no-verbose
+verbose: false dry-run: false x: false help: false
+out: y.bin has out: true level: 3
+tags: [] input: null extra: -
+positionals: [] missing: null false
+$ tool -vx -o z -l5 -t a --tag b -vtc
+verbose: true dry-run: false x: true help: false
+out: z has out: true level: 5
+tags: [ 'a', 'b', 'c' ] input: null extra: -
+positionals: [] missing: null false
+$ tool -- --verbose -x --
+verbose: false dry-run: false x: false help: false
+out: out.txt has out: false level: null
+tags: [] input: --verbose extra: -x
+positionals: [ '--verbose', '-x', '--' ] missing: null false
+$ tool - --dry-run -o -weird-value
+verbose: false dry-run: true x: false help: false
+out: -weird-value has out: true level: null
+tags: [] input: - extra: -
+positionals: [ '-' ] missing: null false
+$ tool --out=
+verbose: false dry-run: false x: false help: false
+out:  has out: true level: null
+tags: [] input: null extra: -
+positionals: [] missing: null false
+$ tool -h
+verbose: false dry-run: false x: false help: true
+out: out.txt has out: false level: null
+tags: [] input: null extra: -
+positionals: [] missing: null false
+$ tool --nope
+error: Unknown option '--nope'
+$ tool -vq
+error: Unknown option '-q'
+$ tool --verbose=yes
+error: Option '--verbose' does not take a value
+$ tool --out
+error: Option '--out' requires a value
+$ tool -o
+error: Option '-o' (--out) requires a value
+$ tool --no-out
+error: Unknown option '--no-out'
+$ tool --no-dry-run --dry-run
+verbose: false dry-run: true x: false help: false
+out: out.txt has out: false level: null
+tags: [] input: null extra: -
+positionals: [] missing: null false
+42 -7 null
+true Option 'out' expects an integer, got '4x'
+Usage: tool [options] [input] [extra]
+
+Converts things.
+
+Arguments:
+  input                File to read
+  extra
+
+Options:
+  -h, --help           Show this help
+  -v, --verbose        Print more
+      --dry-run        Do nothing
+  -x, --x
+  -o, --out <file>     Output file (default: out.txt)
+  -l, --level <value>  Level 0-9
+  -t, --tag <value>
+---
+Usage: bare [options]
+
+Options:
+  -h, --help  Show this help
+Usage: custom [options]
+
+Options:
+  -?, --help  Usage
+true
+0

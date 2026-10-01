@@ -1,0 +1,63 @@
+// demo.vlt on the SQLite store (golden: demo_sqlite.out): the same HTTP session, then a restart
+// on the same database file to show the data persisted, and a look at the database itself.
+import { fetch } from "velt:http";
+import { removeSync, existsSync } from "velt:fs";
+import { open } from "velt:sqlite";
+import { startServer } from "./src/server";
+
+const DB = "todo-demo.sqlite";
+
+async function request(port: i64, method: string, path: string, body: string = "") {
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: method.clone(), body });
+  const status = res.status;
+  const type = res.headers.get("content-type") ?? "-";
+  const text = await res.text();
+  console.log(`${method} ${path} -> ${status} (${type}) ${text}`);
+}
+
+// The database and the files WAL mode keeps next to it.
+function removeDb() {
+  for (const suffix of ["", "-wal", "-shm"]) {
+    if (existsSync(DB + suffix)) {
+      removeSync(DB + suffix);
+    }
+  }
+}
+
+async function main() {
+  removeDb();
+  const server = await startServer(DB, 0);
+  const port = server.port;
+  await request(port, "POST", "/todos", `{"title":"  Write docs ","tags":["Work","docs","work"]}`);
+  await request(port, "POST", "/todos", `{"title":"Ship v1","priority":"high"}`);
+  await request(port, "POST", "/todos", `{"title":""}`);
+  await request(port, "POST", "/todos", `{"title":"x","priority":"asap"}`);
+  await request(port, "POST", "/todos", `{"title":42}`);
+  await request(port, "POST", "/todos", `not json`);
+  await request(port, "PATCH", "/todos/1", `{"done":true}`);
+  await request(port, "GET", "/todos?done=true");
+  await request(port, "GET", "/todos?tag=docs");
+  await request(port, "GET", "/todos/7");
+  await request(port, "DELETE", "/todos/2");
+  await request(port, "PUT", "/todos/1");
+  await server.shutdown();
+
+  const again = await startServer(DB, 0);
+  console.log("-- restarted --");
+  await request(again.port, "GET", "/todos");
+  await request(again.port, "POST", "/todos", `{"title":"after restart"}`);
+  await request(again.port, "GET", "/todos?tag=work");
+  await again.shutdown();
+
+  // Another connection sees every change, straight from SQL.
+  const db = open(DB, { readonly: true, fileMustExist: true });
+  console.log("journal", db.pragma("journal_mode"));
+  const rows: { id: i64; title: string; tags: string }[] = db
+    .prepare("SELECT id, title, tags FROM todos ORDER BY id")
+    .all();
+  for (const row of rows) {
+    console.log(row.id, row.title, row.tags);
+  }
+  db.close();
+  removeDb();
+}

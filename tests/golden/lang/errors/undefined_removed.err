@@ -1,0 +1,6 @@
+undefined_removed.vlt:3:23: error: `undefined` is not part of Velt
+= note: use `null`
+undefined_removed.vlt:5:49: error: parameter `fallback` cannot be optional and have a default value
+undefined_removed.vlt:6:10: error: `undefined` is not part of Velt
+undefined_removed.vlt:10:28: error: `void` expressions are `undefined`, which is not part of Velt
+undefined_removed.vlt:11:13: error: `undefined` is not part of Velt

@@ -1,0 +1,192 @@
+// The todo list in a SQLite database: the same operations and rules as `TodoStore`, but every
+// change is its own committed statement, so there is no snapshot file to write. The schema is
+// created on open, the database runs in WAL mode and each query is a statement prepared once.
+import { open, Database, Statement, SqliteError } from "velt:sqlite";
+import {
+  Todo,
+  NewTodoBody,
+  TodoPatchBody,
+  ApiError,
+  ValidationError,
+  NotFoundError,
+  validTitle,
+  validTags,
+  parsePriority,
+  fromStored,
+} from "./model";
+
+// `tags` is a JSON array in a TEXT column: it is only read whole or searched with `json_each`.
+// `id INTEGER PRIMARY KEY` hands out max(id) + 1, like the JSON store after a restart.
+const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS todos (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    done BOOLEAN NOT NULL DEFAULT 0,
+    priority TEXT NOT NULL CHECK (priority IN ('low', 'normal', 'high')),
+    tags TEXT NOT NULL DEFAULT '[]'
+  )`;
+
+const SELECT_ONE = "SELECT * FROM todos WHERE id = ?";
+
+// Null parameters switch a filter off.
+const SELECT_MATCHING = `
+  SELECT * FROM todos
+  WHERE (:done IS NULL OR done = :done)
+    AND (:tag IS NULL OR EXISTS (SELECT 1 FROM json_each(todos.tags) WHERE value = :tag))
+  ORDER BY id`;
+
+const INSERT = `
+  INSERT INTO todos (title, priority, tags) VALUES (:title, :priority, :tags) RETURNING *`;
+
+// Null fields keep the stored value.
+const UPDATE = `
+  UPDATE todos
+  SET title = coalesce(:title, title),
+      done = coalesce(:done, done),
+      priority = coalesce(:priority, priority)
+  WHERE id = :id
+  RETURNING *`;
+
+const DELETE = "DELETE FROM todos WHERE id = ?";
+
+// A row of `todos` as SQLite returns it.
+type TodoRow = { id: i64; title: string; done: bool; priority: string; tags: string };
+
+type Filter = { done: bool | null; tag: string | null };
+type NewRow = { title: string; priority: string; tags: string };
+type RowPatch = { id: i64; title: string | null; done: bool | null; priority: string | null };
+
+// A database failure is the server's fault (500); the router only catches `ApiError`s.
+function dbError(e: SqliteError): ApiError {
+  return new ApiError(500, "db_error", `${e.code}: ${e.message}`);
+}
+
+function toTodo(row: TodoRow): Todo {
+  let tags: string[] = [];
+  try {
+    tags = JSON.parse<string[]>(row.tags);
+  } catch (e) {
+    throw new ApiError(500, "db_error", `todo ${row.id} has malformed tags: ${e.message}`);
+  }
+  return fromStored({
+    id: row.id,
+    title: row.title.clone(),
+    done: row.done,
+    priority: row.priority.clone(),
+    tags,
+  });
+}
+
+export class SqliteTodoStore {
+  private db: Database;
+  private selectOne: Statement;
+  private selectMatching: Statement;
+  private insert: Statement;
+  private updateOne: Statement;
+  private deleteOne: Statement;
+
+  // Opens (creating if needed) the database at `path`, or ":memory:". Throws `SqliteError`.
+  constructor(path: string) {
+    this.db = open(path, { wal: true });
+    this.db.exec(SCHEMA);
+    this.selectOne = this.db.prepare(SELECT_ONE);
+    this.selectMatching = this.db.prepare(SELECT_MATCHING);
+    this.insert = this.db.prepare(INSERT);
+    this.updateOne = this.db.prepare(UPDATE);
+    this.deleteOne = this.db.prepare(DELETE);
+  }
+
+  list(done: bool | null, tag: string | null): Todo[] {
+    const filter: Filter = { done, tag: tag?.clone() ?? null };
+    let rows: TodoRow[] = [];
+    try {
+      rows = this.selectMatching.allWith(filter);
+    } catch (e) {
+      throw dbError(e);
+    }
+    const todos: Todo[] = [];
+    for (const row of rows) {
+      todos.push(toTodo(row));
+    }
+    return todos;
+  }
+
+  get(id: i64): Todo {
+    let row: TodoRow | null = null;
+    try {
+      row = this.selectOne.getWith(id);
+    } catch (e) {
+      throw dbError(e);
+    }
+    if (row == null) {
+      throw new NotFoundError(id);
+    }
+    return toTodo(row);
+  }
+
+  create(body: NewTodoBody): Todo {
+    const title = body.title?.clone();
+    if (title == null) {
+      throw new ValidationError("title is required");
+    }
+    const values: NewRow = {
+      title: validTitle(title),
+      priority: parsePriority(body.priority?.clone() ?? "normal"),
+      tags: JSON.stringify(validTags(body.tags?.clone() ?? [])),
+    };
+    let row: TodoRow | null = null;
+    try {
+      row = this.insert.getWith(values);
+    } catch (e) {
+      throw dbError(e);
+    }
+    if (row == null) {
+      throw new ApiError(500, "db_error", "INSERT returned no row");
+    }
+    return toTodo(row);
+  }
+
+  update(id: i64, patch: TodoPatchBody): Todo {
+    // An unknown id is a 404 even when the patch is invalid, as in `TodoStore`.
+    this.get(id);
+    const title = patch.title?.clone();
+    const priority = patch.priority?.clone();
+    const values: RowPatch = {
+      id,
+      title: title != null ? validTitle(title) : null,
+      done: patch.done,
+      priority: priority != null ? parsePriority(priority) : null,
+    };
+    let row: TodoRow | null = null;
+    try {
+      row = this.updateOne.getWith(values);
+    } catch (e) {
+      throw dbError(e);
+    }
+    if (row == null) {
+      throw new NotFoundError(id);
+    }
+    return toTodo(row);
+  }
+
+  delete(id: i64) {
+    let changes = 0;
+    try {
+      changes = this.deleteOne.runWith(id).changes;
+    } catch (e) {
+      throw dbError(e);
+    }
+    if (changes === 0) {
+      throw new NotFoundError(id);
+    }
+  }
+
+  // Drop hook: closes the connection, which also checkpoints the WAL into the database file.
+  [Symbol.dispose]() {
+    try {
+      this.db.close();
+    } catch (e) {
+      console.error(`closing the todo database: ${e.message}`);
+    }
+  }
+}

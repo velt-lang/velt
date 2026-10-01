@@ -1,0 +1,39 @@
+// A nullable class field narrows like a local (`if (node.left === null) return 1; …
+// itemCheck(node.left)`, TS narrows property accesses), and `const left = node.left` refers to
+// the field's object in place instead of moving it. Regression (benchmarks-game binary-trees):
+// "expected TreeNode, found TreeNode | null" and "cannot move a field out of a class instance".
+class TreeNode {
+  left: TreeNode | null;
+  right: TreeNode | null;
+
+  constructor(left: TreeNode | null, right: TreeNode | null) {
+    this.left = left;
+    this.right = right;
+  }
+}
+
+function itemCheck(node: TreeNode): i64 {
+  if (node.left === null || node.right === null) {
+    return 1;
+  }
+  return 1 + itemCheck(node.left) + itemCheck(node.right);
+}
+
+function leftDepth(node: TreeNode): i64 {
+  const left = node.left;
+  if (left === null) {
+    return 0;
+  }
+  return 1 + leftDepth(left);
+}
+
+function bottomUpTree(depth: i64): TreeNode {
+  return depth > 0
+    ? new TreeNode(bottomUpTree(depth - 1), bottomUpTree(depth - 1))
+    : new TreeNode(null, null);
+}
+
+function main() {
+  const tree = bottomUpTree(3);
+  console.log(itemCheck(tree), leftDepth(tree));
+}

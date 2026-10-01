@@ -1,0 +1,95 @@
+// Member rules: `private`, `readonly`, getters, `static readonly` constants.
+
+class Account {
+  static readonly LIMIT: i64 = 1000;
+  private static readonly FEE: i64 = 2;
+  readonly owner: string;
+  private balance: i64 = 0;
+  private history: i64[] = [];
+
+  constructor(owner: string) {
+    this.owner = owner;
+  }
+
+  get total(): i64 {
+    return this.balance;
+  }
+
+  get count(): usize {
+    return this.history.length;
+  }
+
+  deposit(amount: i64): bool {
+    if (!this.allowed(amount)) {
+      return false;
+    }
+    this.balance += amount - Account.FEE;
+    this.history.push(amount);
+    return true;
+  }
+
+  private allowed(amount: i64): bool {
+    return amount > 0 && this.balance + amount <= Account.LIMIT;
+  }
+
+  // Private members are visible in closures inside the class body.
+  largest(): i64 {
+    return this.history.reduce((m, x) => (x > m ? x : m), 0);
+  }
+}
+
+struct Temperature {
+  private kelvin: f64;
+
+  static readonly ZERO_C: f64 = 273.15;
+
+  get celsius(): f64 {
+    return this.kelvin - Temperature.ZERO_C;
+  }
+
+  static fromCelsius(c: f64): Temperature {
+    return Temperature { kelvin: c + Temperature.ZERO_C };
+  }
+}
+
+interface Shape {
+  get area(): f64;
+  get label(): string {
+    return `shape of area ${this.area}`;
+  }
+}
+
+class Square implements Shape {
+  side: f64;
+
+  constructor(side: f64) {
+    this.side = side;
+  }
+
+  get area(): f64 {
+    return this.side * this.side;
+  }
+}
+
+function describe<T extends Shape>(s: T): string {
+  return `${s.label} (${s.area})`;
+}
+
+function main() {
+  let a = new Account("ada");
+  console.log(a.deposit(100), a.deposit(-5), a.deposit(2000), a.deposit(50));
+  console.log(a.owner, a.total, a.count, a.largest(), Account.LIMIT);
+  const t = Temperature.fromCelsius(21.5);
+  console.log(t.celsius);
+  const sq = new Square(3.0);
+  console.log(sq.area, sq.label);
+  console.log(describe(new Square(2.0)));
+  const shapes: Shape[] = [new Square(1.5)];
+  console.log(shapes[0].area, shapes[0].label);
+  const m = new Map<string, i64>();
+  m.set("a", 1);
+  m.set("b", 2);
+  m.delete("a");
+  console.log(m.size, m.get("b") ?? 0);
+  console.log(Math.PI, Math.E, Math.floor(Math.PI * 100.0));
+}

@@ -1,0 +1,55 @@
+// Typed rejections through started promises: a stored promise that rejects rethrows at its
+// `await`; `Promise.race` settles with the first promise to settle, rejection included;
+// `Promise.any` skips rejections (and throws `AggregateError` when every promise rejects);
+// `Promise.allSettled` reports each rejection with its type. Timers are >= 40 ms apart.
+class Timeout extends Error {
+  ms: i64;
+
+  constructor(ms: i64) {
+    super(`timed out after ${ms} ms`);
+    this.ms = ms;
+  }
+}
+
+async function load(name: string, ms: i64, fail: bool): Promise<string> throws Timeout {
+  await sleep(ms);
+  if (fail) {
+    throw new Timeout(ms);
+  }
+  return name;
+}
+
+async function main() {
+  const p = load("stored", 40, true);
+  console.log("stored promise started");
+  try {
+    console.log(await p);
+  } catch (e) {
+    console.log("stored rejected:", e.message, e.ms);
+  }
+
+  try {
+    console.log(await Promise.race([load("slow", 200, false), load("fast", 10, true)]));
+  } catch (e) {
+    console.log("race rejected:", e.ms);
+  }
+
+  console.log("any:", await Promise.any([load("a", 10, true), load("b", 60, false)]));
+  try {
+    await Promise.any([load("c", 10, true), load("d", 50, true)]);
+  } catch (e) {
+    console.log("any rejected:", e.message);
+  }
+
+  const settled = await Promise.allSettled([load("e", 10, false), load("f", 50, true)]);
+  for (const s of settled) {
+    switch (s.status) {
+      case "fulfilled":
+        console.log("fulfilled", s.value);
+        break;
+      case "rejected":
+        console.log("rejected", s.reason.ms);
+        break;
+    }
+  }
+}

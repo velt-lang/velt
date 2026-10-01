@@ -1,0 +1,2 @@
+modules_export_default.vlt:1:8: error: `export default` is not supported: Velt has named exports only
+use a named export: `export function main`

@@ -1,0 +1,117 @@
+// std/redis/pubsub: `RedisSubscriber` and `RedisMessage` (rt_abi_async.md §14.12). Internal:
+// import the public names and `subscribe` / `psubscribe` from "velt:redis".
+//
+// A subscriber owns its own connection in subscribed mode. Messages are pulled (there is no
+// `for await` and the runtime stores no callbacks):
+//   let m = await sub.next();
+//   while (m != null) { ...; m = await sub.next(); }
+// `close()` (from any task) makes pending and later `next()` calls return null.
+
+import { IoResult, IoStatus } from "velt:io";
+import { redisError } from "velt:redis/reply";
+
+// The runtime's `VeltRedisMessage`: kind 0 = closed, 1 = message, 2 = pattern message.
+struct RawMessage {
+  kind: u32;
+  channel: string;
+  message: string;
+  pattern: string;
+}
+
+declare async function velt_rt_redis_subscribe(
+  c: u64,
+  url: string,
+  ca: string,
+  names: string[],
+  patterns: bool,
+): Promise<IoResult<u64>>;
+declare async function velt_rt_redis_sub_next(s: u64): Promise<IoResult<RawMessage>>;
+declare async function velt_rt_redis_sub_change(
+  s: u64,
+  names: string[],
+  patterns: bool,
+  subscribe: bool,
+): Promise<IoStatus>;
+declare function velt_rt_redis_sub_close(s: u64);
+
+// A published message.
+export class RedisMessage {
+  // The channel it was published to.
+  channel: string;
+  // The payload.
+  message: string;
+  // The pattern that matched, for `psubscribe` subscribers; null for channel subscriptions.
+  pattern: string | null;
+
+  constructor(channel: string, message: string, pattern: string | null) {
+    this.channel = channel;
+    this.message = message;
+    this.pattern = pattern;
+  }
+}
+
+function check(s: IoStatus) {
+  if (s.code != 0) {
+    throw redisError(s.code, s.message);
+  }
+}
+
+// A subscribed connection (a Copy handle like `RedisClient`; release it with `close()`).
+export struct RedisSubscriber {
+  handle: u64;
+
+  // The next message; null once `close()` was called. Throws `RedisError` ("ECONNRESET") if
+  // the server closes the connection.
+  async next(): Promise<RedisMessage | null> {
+    const r = await velt_rt_redis_sub_next(this.handle);
+    if (r.code != 0) {
+      throw redisError(r.code, r.message);
+    }
+    const m = r.value;
+    if (m.kind == 0) {
+      return null;
+    }
+    return new RedisMessage(m.channel, m.message, m.kind == 2 ? m.pattern : null);
+  }
+
+  // Also listens to `channels`; resolves once the server confirmed them.
+  async subscribe(channels: string[]): Promise<void> {
+    check(await velt_rt_redis_sub_change(this.handle, channels, false, true));
+  }
+
+  // Stops listening to `channels` (an empty list does nothing; use `close()` to stop entirely).
+  async unsubscribe(channels: string[]): Promise<void> {
+    check(await velt_rt_redis_sub_change(this.handle, channels, false, false));
+  }
+
+  // Also listens to channels matching the glob `patterns`.
+  async psubscribe(patterns: string[]): Promise<void> {
+    check(await velt_rt_redis_sub_change(this.handle, patterns, true, true));
+  }
+
+  // Stops listening to `patterns`.
+  async punsubscribe(patterns: string[]): Promise<void> {
+    check(await velt_rt_redis_sub_change(this.handle, patterns, true, false));
+  }
+
+  // Ends the subscription: `next()` returns null, the connection closes, and the handle is
+  // released (call it once).
+  close() {
+    velt_rt_redis_sub_close(this.handle);
+  }
+}
+
+// Opens a subscriber to `url` (or to where client handle `client` is connected, when non-zero).
+export async function openSubscriber(
+  client: u64,
+  url: string,
+  ca: string,
+  names: string[],
+  patterns: bool,
+): Promise<RedisSubscriber> {
+  const r = await velt_rt_redis_subscribe(client, url, ca, names, patterns);
+  if (r.code != 0) {
+    throw redisError(r.code, r.message);
+  }
+  return RedisSubscriber { handle: r.value };
+}

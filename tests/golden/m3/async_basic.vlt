@@ -1,0 +1,31 @@
+async function delayed(ms: i64, v: i64): Promise<i64> {
+  await sleep(ms);
+  return v;
+}
+
+async function sumAll(xs: i64[]): Promise<i64> {
+  let total = 0;
+  for (const x of xs) {
+    total += await delayed(1, x);
+  }
+  return total;
+}
+
+async function main() {
+  const a = await delayed(10, 1);
+  console.log("a", a);
+
+  // Both calls start at once and run concurrently (a literal array is joined in place).
+  const [x, y] = await Promise.all([delayed(30, 2), delayed(10, 3)]);
+  console.log(x, y);
+
+  const start = performance.now();
+  // Concurrent: ~200 ms total; sequential would be 600 ms. Wide margins for loaded machines.
+  await Promise.all([sleep(200), sleep(200), sleep(200)]);
+  const elapsed = performance.now() - start;
+  console.log(elapsed >= 190.0, elapsed < 450.0);
+
+  const h = spawn(delayed(5, 42));
+  console.log(await h);
+  console.log(await sumAll([1, 2, 3, 4]));
+}

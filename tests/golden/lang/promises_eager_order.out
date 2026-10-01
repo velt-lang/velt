@@ -1,0 +1,30 @@
+a 0
+b 0
+main: started a and b
+a 1
+b 1
+a 2
+b done
+a done
+main got a
+main got b
+chain start
+inner 0
+d 0
+e 0
+main: started c, d and w
+inner 1
+d done
+e done
+wrap got e
+inner done
+chain got inner
+main got chain(inner)
+main got wrap(e)
+main got d
+quick done
+quick created
+main got quick
+direct 0
+direct done
+main got direct

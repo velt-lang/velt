@@ -1,0 +1,4 @@
+unit interval: true mean near 0.5: true
+every face seen often: true
+empty range: 5 5
+tasks: [ 1000, 1000, 1000 ]

@@ -1,0 +1,167 @@
+# `velt` CLI — CONTRACT
+
+```
+velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple>] [--emit vir|llvm|obj|exe] [--locked] [-v] [--timings]
+velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm] [--locked] [-- <program args>...]
+velt check [<file.vlt>] [--json] [--locked] [-v]
+velt dev   [<file.vlt>] [--exe] [--locked] [-v] [-- <program args>...]
+velt test  [<file|dir>] [--release] [--locked] [--watch]
+velt new   <name> [--template app|cli|api|websocket|lib] [--lib]
+velt init  [--template <t>] [--name <name>] [--force]
+velt clean
+velt completions bash|zsh|fish|powershell
+velt help  [<command>]                 # = velt <command> --help
+velt add   <pkg>[@<req>] [--path <dir>]
+velt install [--locked]
+velt update
+velt publish
+velt fmt [<file|dir>...] [--check]
+velt lsp [--stdio]                     # language server (VS Code extension: editors/vscode)
+velt playground [--port <n>] [--host <addr>]   # browser playground (default 127.0.0.1:8090)
+velt doc [<file|dir>...] [--std] [-o <dir>]     # HTML API docs
+velt registry serve [--dir <d>] [--port <n>] [--host <addr>]   # package registry server (default 127.0.0.1:8091)
+velt doctor                            # checks toolchain setup + smoke test
+velt --version                         # velt <ver> (<git hash> <host triple>)
+```
+- **Single file**: `build <file>` writes `./target/velt/<stem>` (`.exe` on Windows) relative to the
+  current dir, object file next to it. If the file lives inside a package, its deps are installed first.
+- **Package mode** (no file argument): finds `velt.toml` upward from the cwd, builds its entry, output
+  `<pkg>/target/velt/<name>[.exe]`. Library-only packages can't be run.
+- Backends: default `llvm` for `--release` when clang is found (`$VELT_CLANG`, PATH, standard install
+  dirs), else `cranelift` (with a one-line stderr note). `--emit llvm` prints LLVM IR (no clang needed).
+  Release builds run `velt_opt` (Speed) before either backend.
+- **WebAssembly** (additive): `--target wasm32-wasip1` (alias `wasm32-wasi`)
+  and `--target wasm32-unknown-unknown` build `./target/velt/<stem>.wasm` (object `<stem>.o`) with
+  the LLVM backend (always; `--backend cranelift` is an error) using LLVM's `opt`/`llc`
+  (`$VELT_LLVM_BIN`, else rustup's `llvm-tools`), `wasm-ld` (`$VELT_LINKER`, `wasm-ld`, rustup's
+  `rust-lld`) and `libvelt_rt_wasm.a` (`$VELT_RT_LIB`, else cargo's `target/<triple>/<profile>/`,
+  else `<prefix>/lib/<triple>/`). WASI builds also need wasi-libc (`$VELT_WASI_SYSROOT`, else
+  rustup's `wasm32-wasip1` target). `run` executes WASI modules with `$VELT_WASM_RUNNER <module>
+  <args>` or `wasmtime run --dir=. <module> <args>`; browser builds also write the JS glue
+  `velt_web.mjs` next to the module, and `run` executes them with `node velt_web.mjs <module>`.
+  No TCP/HTTP/child processes on WebAssembly (link error with a note).
+- `playground` (additive): serves a page where programs are edited, compiled
+  on the server to `wasm32-unknown-unknown` (`POST /api/compile[?release=1]`, body = source →
+  `200 application/wasm` or `422` diagnostics text with paths as `main.vlt`) and run in the
+  browser (Web Worker + `velt_web.mjs`). Only `std/…` imports are accepted. Needs the browser
+  runtime (`cargo build -p velt_rt_wasm --target wasm32-unknown-unknown`).
+- `doc` (additive): HTML API docs from exported items, their public members,
+  their signatures as written and the `///`/`//` comment block right above each declaration (a
+  comment block at the top of a file documents the module). No paths: the package's `src/`
+  (`src/lib.vlt` is named after the package) into `<pkg>/target/doc`; paths: those files and
+  directories into `./target/doc`; `--std`: the standard library. `-o` overrides the output
+  directory. Writes `index.html`, one page per module, and a client-side search index.
+- `registry serve` (additive): serves a registry directory (default: the
+  local registry) over HTTP (protocol in velt_toml.md "Remote registries"); uploads need
+  `Authorization: Bearer $VELT_REGISTRY_TOKEN` when that variable is set for the server. `publish`
+  uploads when the package's `registry` (or `$VELT_REGISTRY`) is a URL.
+- `check` (additive): parse + sema of a file or the current package (same
+  input resolution as `build`, package dependencies installed), every diagnostic the front end
+  reports (all files' syntax errors; if there are none, all type errors), no lowering, codegen or
+  link. Exit 0 without errors (warnings allowed), 1 with errors, 101 on an internal error.
+  Diagnostics go to stderr as for `build`; `--json` prints instead one JSON document on stdout:
+  `{"diagnostics": [{"severity": "error"|"warning"|"note", "message", "location", "labels":
+  [{"location", "message"}], "notes": [string]}], "errors": n, "warnings": n}` where a
+  `location` is `{"file", "line", "column", "endLine", "endColumn"}` (1-based; columns count
+  bytes, as in the text output) or `null`. A non-source failure (unreadable input, broken
+  package) is an error diagnostic with `location: null`. `-v` prints stage timings to stderr.
+- Linking (additive): debug builds (no `--release`) link the runtime as a
+  shared library (`libvelt_rt_shared.so` / `.dylib`, `velt_rt_shared.dll` + `.dll.lib`) found
+  next to `velt`, its parent directory or `<prefix>/lib`, with an rpath to it (Windows: the DLL is
+  copied next to the executable), plus a generated `<stem>.entry.<o|obj>` holding `main`.
+  Release builds, `$VELT_RT_LIB` and `$VELT_RT_LINK=static` link the static runtime; so do debug
+  builds when no shared runtime is installed. Linux static links use `-fuse-ld=mold`/`lld` when
+  `mold`/`ld.lld` is on `PATH` (falling back to the default linker if that link fails). A link
+  whose inputs (objects, runtime library, settings, `$VELT_LINKER`) are unchanged since the
+  executable was last linked is skipped (`<exe>.link-stamp` beside it).
+- `--emit vir` prints VIR (`Display`) to stdout and stops. `-v` prints per-stage timings;
+  `--timings` adds each optimizer pass and, with the LLVM backend, IR printing and clang.
+- Debug info: debug builds always carry it; `-g` keeps it in a `--release` build (and links with
+  debug settings: PDB on Windows, no `-s` strip on Linux). With the LLVM backend it is full line
+  info (`.vlt` file:line in debuggers and symbolizers); with Cranelift, function symbols only.
+- Panics print `panic: <msg> at <path>:<line>:<col>` (path as given to the compiler) and exit 101;
+  an uncaught error prints `Uncaught <Type>[: <message>] at <throw location>` and exits 1.
+- `run` builds then executes the program with inherited stdio and **exits with the program's exit
+  code**. Compiler errors → exit code 1, nothing executed. Internal compiler errors → 101.
+- Diagnostics go to stderr as `Diagnostic::render` output.
+- `dev` (docs/internals/design/hot-reload.md, phases 1–2): builds and runs like `run`, then stays up as a
+  supervisor. It watches every file the build read (std and path dependencies included) plus
+  `velt.toml`/`velt.lock` (mtime polling, 30 ms settle). On a change it builds the new version
+  while the old one keeps running: a failed build prints its diagnostics and
+  `velt dev: build failed (the previous version keeps running); waiting for changes`; a good one
+  stops the old version (a stop request: SIGTERM on Unix, `stop` on the dev channel on Windows;
+  drain up to 1 s, then kill) and starts the new one: `velt dev: reloaded in <n> ms` (from the
+  first file change). A program that exits prints
+  `velt dev: program exited with code <n>; waiting for changes`. Status lines go to stderr; the
+  program's stdio is inherited. Runs until interrupted (Ctrl-C stops the supervisor and program;
+  on Windows programs run in a job object that ends them with the supervisor).
+  - Default mode (every platform): each version is a `velt dev --host` child (**internal**, not for
+    users) that compiles to VIR, JIT-compiles it with Cranelift (debug settings, no link, no new
+    executable) and runs it in-process with the runtime linked into `velt`; it reports its build
+    over the dev channel and starts only after the old version stopped (rt_abi_async.md §13).
+  - Hot swap (default mode, docs/internals/design/hot-reload.md phase 3): while a host runs, a change goes
+    to it first. It builds the new version beside the running program and swaps the changed
+    functions in, so in-memory state, open connections and running tasks survive: new calls and
+    requests run the new code, work already in flight finishes on the old code. Printed:
+    `velt dev: hot-swapped <n> function(s) in <ms> ms`. Edits that live state could not survive
+    (a struct/class layout or a closure's captures changed, a function's signature changed,
+    `main` changed, a function live values may still call was removed, closures were reordered)
+    start a new host instead: `velt dev: restarted (<reason>) in <ms> ms`, e.g.
+    `restarted (Point gained a field)`. A failed build keeps the program running, as above.
+  - `--exe`: each version is a linked debug executable with its own file
+    (`<target dir>/dev/<stem>-<n>`, numbered per session), so a running (on Windows: locked)
+    executable is never overwritten; a version's files are deleted once its process has exited,
+    leftovers of an earlier session at the start. `--release`, `-g` and `--backend` are accepted
+    only with `--exe`.
+  - Listening sockets survive restarts: the supervisor owns them and hands them to each version
+    (`VELT_DEV_SOCKET`), so no connection is refused during a reload and port 0 keeps its port.
+- `test --watch`: runs the tests, then again after every change to a file the test builds read,
+  a test file or the manifest/lockfile (each run discovers test files anew). Runs until
+  interrupted.
+- `test`: finds `*.test.vlt`; every `export function test_*()` (no params) is a test
+  (additive: `export async function test_*()` too; the harness awaits it). Prints
+  `ok <name>` / `FAILED <name>` and a summary; exit 1 on any failure. Test binaries in
+  `<pkg or cwd>/target/velt/test/`.
+- `new` creates `<name>/velt.toml`, `src/main.vlt` (or `src/lib.vlt` with `--lib`), `.gitignore`.
+- **Templates** (additive, tooling): `new --template <t>` (default `app`; `--lib` = `--template
+  lib`) also writes `README.md` and `tests/*.test.vlt`; every template builds, passes `velt test`
+  and is `velt fmt`-clean. `app`: hello world with a module and a test. `cli`: std/cli argument
+  parsing, subcommands, `--help`, usage errors → exit 2. `api`: JSON HTTP API (routes,
+  validation, `ApiError` subclasses → status codes, `shared<Mutex<…>>` state), tests with `fetch`
+  against a server on port 0. `websocket`: chat server + terminal client (`serve`/`connect`).
+  `lib`: `src/lib.vlt` exports with `///` docs for `velt doc`. Templates are embedded in the
+  binary (`crates/veltc/templates/`); `{{name}}` in them becomes the package name.
+- `init` (additive): the same files in the current directory; the package is named after the
+  directory (lower-cased, other characters → `-`) unless `--name`. Files the template would
+  create that already exist are a conflict: nothing is written and the error lists them, unless
+  `--force` (overwrites them). An existing `README.md` is always kept; `target/` is appended to an
+  existing `.gitignore`. Refuses (without `--force`) inside another package.
+- `clean` (additive): removes `<package>/target` (found upward from the cwd like `build`) and
+  prints `Removed <dir> (<n> files, <size>)`; no `target/` → `Clean nothing to remove`.
+- `completions <shell>` (additive): prints a completion script for bash, zsh, fish or PowerShell
+  (`pwsh` accepted) covering commands, options, `--template`/`--backend`/`--emit` values and files.
+- Help (additive): `velt --help` lists commands, templates and environment variables;
+  `velt <command> --help` / `-h` (anywhere before `--`) and `velt help <command>` print usage,
+  options and examples, exit 0. Usage errors exit 2 and end with
+  `For more information, try `velt <command> --help`.`; an unknown command or option names the
+  closest match (`did you mean `velt build`?`).
+- Colors (additive): `error:`/`warning:`, status verbs, help headings and test `ok`/`FAILED` are
+  colored when the stream is a terminal, unless `NO_COLOR` is set (non-empty) or `TERM=dumb`;
+  `CLICOLOR_FORCE=1` forces colors.
+- Errors for common mistakes (additive): a package command outside any package names the
+  `.vlt` files in the cwd (`velt run <file>`) and `velt init`; a missing input file suggests
+  `<name>.vlt` or a similarly named file; a directory input says to build the package inside it.
+- `add` edits `[dependencies]` preserving formatting (latest published version if no req) and installs.
+- `install` resolves + fetches deps and writes `velt.lock`; `--locked` fails if the lock would change.
+  `update` re-resolves ignoring the lock. `publish` copies the package into the local registry.
+- `fmt` formats in place (no paths: package `src/` or all `.vlt` under cwd; skips `target/`, hidden
+  dirs). `--check` writes nothing, lists unformatted files, exit 1 if any. Unparsable files → exit 1.
+- Imports: `velt:x` → `<std root>/x.vlt` or `x/index.vlt`; `./x`, `../x` → relative `x.vlt` or
+  folder module `x/index.vlt`; bare names → `[paths]` aliases of the importing package first,
+  then packages via `velt.toml` (`pkg/sub` → `src/sub.vlt` or `src/sub/index.vlt`). `std/prelude/*.vlt` is loaded implicitly before everything else.
+- Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.vlt`), `VELT_REGISTRY`
+  (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (linker override), `VELT_CLANG` (clang for the LLVM backend).
+  Set by `velt dev` for the program (not for users): `VELT_DEV_SOCKET` (a Unix socket path, or a
+  named pipe `\\.\pipe\velt-dev-<pid>-<n>` on Windows).
+- Lockfile: `version = 1` + `[[package]]` entries with `name`, `version`, `source`
+  (`"registry"` | `"path+<rel>"`), `checksum`, `dependencies`.

@@ -1,0 +1,104 @@
+// Todos, the JSON bodies clients send, and their validation.
+
+export type Priority = "low" | "normal" | "high";
+
+export type Todo = { id: i64; title: string; done: bool; priority: Priority; tags: string[] };
+
+// A todo as JSON gives it back: `JSON.parse` can't decode literal unions, so `priority` is a
+// plain string here and checked by `fromStored`.
+export type StoredTodo = { id: i64; title: string; done: bool; priority: string; tags: string[] };
+
+// Body of `POST /todos` (fields may be absent, so a class with optional fields).
+export class NewTodoBody {
+  title?: string;
+  priority?: string;
+  tags?: string[];
+}
+
+// Body of `PATCH /todos/:id`.
+export class TodoPatchBody {
+  title?: string;
+  done?: bool;
+  priority?: string;
+}
+
+// Every error the API turns into a JSON error response. One base class, so code that only needs
+// `status` and `code` can declare `throws ApiError` instead of listing every subclass.
+export class ApiError extends Error {
+  status: i64;
+  code: string;
+
+  constructor(status: i64, code: string, message: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+// A request that is well-formed but breaks a rule (400).
+export class ValidationError extends ApiError {
+  constructor(message: string) {
+    super(400, "invalid", message);
+  }
+}
+
+// No todo has the requested id (404).
+export class NotFoundError extends ApiError {
+  constructor(id: i64) {
+    super(404, "not_found", `todo ${id} not found`);
+  }
+}
+
+const MAX_TITLE: usize = 200;
+const MAX_TAGS: usize = 10;
+
+export function validTitle(title: string): string {
+  const t = title.trim();
+  if (t.length === 0) {
+    throw new ValidationError("title must not be empty");
+  }
+  if (t.length > MAX_TITLE) {
+    throw new ValidationError(`title is longer than ${MAX_TITLE} characters`);
+  }
+  return t;
+}
+
+export function parsePriority(p: string): Priority {
+  switch (p) {
+    case "low":
+      return "low";
+    case "normal":
+      return "normal";
+    case "high":
+      return "high";
+    default:
+      throw new ValidationError(`priority must be low, normal or high (got "${p}")`);
+  }
+}
+
+export function validTags(tags: string[]): string[] {
+  if (tags.length > MAX_TAGS) {
+    throw new ValidationError(`at most ${MAX_TAGS} tags are allowed`);
+  }
+  const out: string[] = [];
+  for (const t of tags) {
+    const tag = t.trim().toLowerCase();
+    if (tag === "") {
+      throw new ValidationError("tags must not be empty");
+    }
+    if (!out.includes(tag)) {
+      out.push(tag);
+    }
+  }
+  return out;
+}
+
+export function fromStored(s: StoredTodo): Todo {
+  return {
+    id: s.id,
+    title: s.title,
+    done: s.done,
+    priority: parsePriority(s.priority),
+    tags: s.tags,
+  };
+}

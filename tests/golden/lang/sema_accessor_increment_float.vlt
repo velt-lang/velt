@@ -1,0 +1,20 @@
+// Bug accessor-increment-float (difftest corpus): `x.g++` / `x.g--` through a getter/setter
+// pair of type f64 is "mismatched types: expected f64, found i64" (the desugaring adds an
+// integer 1). `++` on an f64 local or field, and `x.g += 1.0`, work.
+class T {
+  private c: f64 = 1.5;
+  get g(): f64 {
+    return this.c;
+  }
+  set g(x: f64) {
+    this.c = x;
+  }
+}
+
+function main() {
+  const t = new T();
+  t.g++;
+  t.g++;
+  t.g--;
+  console.log(`${t.g}`);
+}

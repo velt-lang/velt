@@ -1,0 +1,55 @@
+// The API over real HTTP: a server on port 0 (any free port) and `fetch` requests against it.
+import { fetch } from "velt:http";
+import { startServer } from "../src/server";
+
+// `METHOD path` with an optional JSON body, as `<status> <body>`.
+async function call(
+  base: string,
+  method: string,
+  path: string,
+  body: string = "",
+): Promise<string> {
+  const res = await fetch(`${base}${path}`, { method, body });
+  return `${res.status} ${await res.text()}`;
+}
+
+export async function test_create_get_list_delete() {
+  const server = await startServer(0);
+  const base = `http://127.0.0.1:${server.port}`;
+  assertEq(
+    await call(base, "POST", "/items", `{"name":"  apples ","quantity":3}`),
+    `201 {"id":1,"name":"apples","quantity":3}`,
+  );
+  assertEq(
+    await call(base, "POST", "/items", `{"name":"pears"}`),
+    `201 {"id":2,"name":"pears","quantity":1}`,
+  );
+  assertEq(await call(base, "GET", "/items/1"), `200 {"id":1,"name":"apples","quantity":3}`);
+  assertEq(await call(base, "DELETE", "/items/1"), "204 ");
+  assertEq(await call(base, "GET", "/items"), `200 [{"id":2,"name":"pears","quantity":1}]`);
+  server.close();
+}
+
+export async function test_errors_map_to_status_codes() {
+  const server = await startServer(0);
+  const base = `http://127.0.0.1:${server.port}`;
+  assertEq(
+    await call(base, "POST", "/items", `{"quantity":2}`),
+    `400 {"error":{"code":"invalid","message":"name is required"}}`,
+  );
+  assertEq(
+    await call(base, "POST", "/items", `{"name":"x","quantity":-1}`),
+    `400 {"error":{"code":"invalid","message":"quantity must not be negative"}}`,
+  );
+  assert((await call(base, "POST", "/items", "{")).startsWith(`400 {"error":{"code":"bad_json"`));
+  assertEq(
+    await call(base, "GET", "/items/7"),
+    `404 {"error":{"code":"not_found","message":"item 7 not found"}}`,
+  );
+  assertEq(
+    await call(base, "PUT", "/items"),
+    `405 {"error":{"code":"method_not_allowed","message":"PUT is not allowed here"}}`,
+  );
+  assertEq(await call(base, "GET", "/health"), `200 {"ok":true}`);
+  server.close();
+}

@@ -1,0 +1,38 @@
+$ notes add Buy milk -b oat, 2 liters -t home -t shop
+added 1
+$ notes add Write the ergonomics report --tag work
+added 2
+$ notes add Call Anna -t home
+added 3
+$ notes list
+1  Buy milk  #home #shop
+2  Write the ergonomics report  #work
+3  Call Anna  #home
+$ notes list --tag home
+1  Buy milk  #home #shop
+3  Call Anna  #home
+$ notes search MILK
+1  Buy milk  #home #shop
+$ notes tag 2 urgent
+2  Write the ergonomics report  #work #urgent
+$ notes show 1
+1  Buy milk  #home #shop
+created 2026-01-01T00:00:00.000Z
+
+oat, 2 liters
+$ notes tags
+home: 2
+shop: 1
+work: 1
+urgent: 1
+$ notes rm 1
+removed 1
+$ notes list
+2  Write the ergonomics report  #work #urgent
+3  Call Anna  #home
+$ notes show 1
+notes: no note with id 1
+$ notes show one
+notes: 'one' is not a note id
+$ notes frob
+notes: unknown command 'frob' (try --help)

@@ -1,0 +1,60 @@
+[package]
+name = "velt_rt_shared"
+version.workspace = true
+edition.workspace = true
+# The runtime's own sources (crates/velt_rt/src) built a third time as a shared library without
+# the C `main` (libvelt_rt_shared.so / .dylib, velt_rt_shared.dll): debug builds of Velt programs
+# link against it, which takes milliseconds instead of the seconds a static link of the whole
+# runtime takes. The executable gets a small generated `main` that calls `velt_rt_start`. A
+# separate package for the same reason as velt_rt_host (cargo unifies features, and one rustc
+# invocation builds every crate type of a package from the same cfg). The [dependencies] and
+# [features] below must match crates/velt_rt/Cargo.toml (tests/manifest.rs checks).
+build = "../velt_rt/build.rs"
+
+[lib]
+path = "../velt_rt/src/lib.rs"
+crate-type = ["cdylib"]
+# velt_rt runs the runtime's unit tests; here they would only run twice.
+test = false
+doctest = false
+
+[dependencies]
+bytes = "1.12.1"
+dashu-int = "0.6.1"
+futures-util = { version = "0.3.34", default-features = false, features = ["std", "sink"] }
+getrandom = "0.4.3"
+http-body-util = "0.1.5"
+hyper = { version = "1.11.1", features = ["http1", "http2", "server", "client"] }
+hyper-rustls = { version = "0.27.10", default-features = false, features = ["http1", "http2", "ring", "tls12"] }
+hyper-util = { version = "0.1.21", features = ["tokio", "server", "server-auto", "client-legacy", "http1", "http2", "server-graceful"] }
+itoa = "1.0.18"
+libm = "0.2.16"
+# The same C library mimalloc wraps, called directly by mem.rs for the small-alignment fast path.
+libmimalloc-sys = { version = "0.1.49", default-features = false, optional = true }
+lock_api = "0.4.14"
+memchr = "2.8.3"
+mimalloc = { version = "0.1.52", default-features = false, optional = true }
+parking_lot = "0.12.5"
+regex = "1.13.1"
+rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+ryu = "1.0.23"
+socket2 = "0.6.5"
+tokio = { version = "1.53.1", default-features = false, features = ["rt-multi-thread", "net", "fs", "time", "io-util", "sync", "signal", "process"] }
+tokio-postgres = { version = "0.7.18", default-features = false, features = ["runtime"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+webpki-roots = "1.0.9"
+
+[target.'cfg(unix)'.dependencies]
+# Listener handover in dev mode (SCM_RIGHTS over a Unix socket).
+libc = "0.2.189"
+
+[target.'cfg(windows)'.dependencies]
+# Listener handover in dev mode (named pipe + WSADuplicateSocketW).
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes"] }
+
+[features]
+# mimalloc is the global allocator by default; build with --no-default-features for the system allocator.
+default = ["mimalloc"]
+mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]

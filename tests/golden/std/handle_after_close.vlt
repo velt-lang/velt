@@ -1,0 +1,141 @@
+// Copy handles (TCP, UDP, file streams, WebSocket) after `close()` through another copy: every
+// copy is dead, operations throw `IoError` `EBADF` ("handle is closed") instead of touching
+// freed memory, and closing again is a no-op (apps ergonomics #4: a WebSocket receiver task kept
+// using a handle the stdin loop had closed).
+import { serve, Request, Response } from "velt:http";
+import { WebSocket, upgradeWebSocket, connectWebSocket } from "velt:websocket";
+import { listen, connect } from "velt:net";
+import { bindUdp } from "velt:udp";
+import { openRead, openWrite } from "velt:fs_stream";
+import { removeSync } from "velt:fs";
+import { IoError } from "velt:io";
+
+async function session(ws: WebSocket): Promise<void> {
+  let m = await ws.receive();
+  while (m != null) {
+    await ws.send(`echo ${m.text}`);
+    m = await ws.receive();
+  }
+  await ws.close();
+}
+
+// Receives through its own copy until the connection ends (the peer may reset it instead of
+// completing the closing handshake).
+async function receive(ws: WebSocket): Promise<string | null> {
+  try {
+    const m = await ws.receive();
+    return m == null ? null : m.text;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function receiver(ws: WebSocket): Promise<void> {
+  let m = await receive(ws);
+  while (m != null) {
+    console.log("received", m);
+    m = await receive(ws);
+  }
+  console.log("receiver: connection closed");
+}
+
+function report(what: string, e: IoError) {
+  console.log(what, e.code, e.message);
+}
+
+async function websocket() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const up = upgradeWebSocket(req);
+    spawn(session(up.socket));
+    return up.response;
+  });
+  const ws = await connectWebSocket(`ws://127.0.0.1:${server.port}/`);
+  const task = spawn(receiver(ws));
+  await ws.send("hi");
+  await sleep(50);
+  const copy = ws;
+  await ws.close();
+  await task;
+  try {
+    await copy.send("after close");
+  } catch (e) {
+    report("ws send:", e);
+  }
+  try {
+    await copy.receive();
+  } catch (e) {
+    report("ws receive:", e);
+  }
+  await copy.close();
+  console.log("ws: closed twice");
+  server.close();
+}
+
+async function tcp() {
+  const l = await listen("127.0.0.1:0");
+  const lcopy = l;
+  const c = await connect(`127.0.0.1:${l.port}`);
+  const s = await l.accept();
+  l.close();
+  try {
+    await lcopy.accept();
+  } catch (e) {
+    report("tcp accept:", e);
+  }
+  const scopy = s;
+  s.close();
+  try {
+    await scopy.write("x");
+  } catch (e) {
+    report("tcp write:", e);
+  }
+  try {
+    await scopy.readString();
+  } catch (e) {
+    report("tcp read:", e);
+  }
+  scopy.close();
+  c.close();
+}
+
+async function udp() {
+  const u = await bindUdp("127.0.0.1:0");
+  const copy = u;
+  u.close();
+  try {
+    await copy.sendTextTo("x", "127.0.0.1:9");
+  } catch (e) {
+    report("udp send:", e);
+  }
+  copy.close();
+}
+
+async function files() {
+  const path = "handle_after_close.tmp";
+  const w = await openWrite(path);
+  await w.write("line\n");
+  const wcopy = w;
+  await w.close();
+  try {
+    await wcopy.write("more");
+  } catch (e) {
+    report("file write:", e);
+  }
+  await wcopy.close();
+  const r = await openRead(path);
+  const rcopy = r;
+  r.close();
+  try {
+    await rcopy.readLine();
+  } catch (e) {
+    report("file read:", e);
+  }
+  removeSync(path);
+}
+
+async function main() {
+  await websocket();
+  await tcp();
+  await udp();
+  await files();
+}

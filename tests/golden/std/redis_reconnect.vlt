@@ -1,0 +1,28 @@
+// requires-env: VELT_TEST_REDIS_URL
+// std/redis: a client whose connection was killed reconnects on its next command instead of
+// failing with ECONNRESET from then on.
+import { connect } from "velt:redis";
+import { redisUrl, freshPrefix, cleanup } from "./_redis";
+
+async function main() {
+  const url = redisUrl();
+  const p = freshPrefix();
+  const c = await connect(url);
+  const admin = await connect(url);
+  await c.set(`${p}k`, "before");
+  const id = await c.call(["CLIENT", "ID"]);
+  const killed = await admin.call(["CLIENT", "KILL", "ID", `${id.int}`]);
+  console.log("killed:", killed.int);
+  await sleep(100);
+  console.log("after the kill:", await c.get(`${p}k`));
+  const newId = await c.call(["CLIENT", "ID"]);
+  console.log("new connection:", newId.int != id.int);
+  // Several tasks on the reconnected client still share one pipelined connection.
+  await admin.call(["CLIENT", "KILL", "ID", `${newId.int}`]);
+  await sleep(100);
+  const all = await Promise.all([c.incr(`${p}n`), c.incr(`${p}n`), c.incr(`${p}n`)]);
+  console.log("incr after a second kill:", all.length, await c.get(`${p}n`));
+  console.log("cleaned:", await cleanup(c, p));
+  admin.close();
+  c.close();
+}

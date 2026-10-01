@@ -1,0 +1,26 @@
+function twice(f: () => void, g: () => i64): i64 {
+  f();
+  return g();
+}
+
+function main() {
+  const xs: i64[] = [1, 2];
+  let total = 0;
+  xs.forEach((x) => {
+    total += x;
+  });
+  xs.forEach((x) => {
+    xs.push(x);
+  });
+  const ys: i64[] = [];
+  console.log(twice(() => {
+    ys.push(1);
+  }, () => ys.length as i64));
+  const m = new Mutex<i64[]>([1]);
+  m.with((v) => {
+    v.push(2);
+  });
+  m.with((v) => {
+    v.push(m.with((w) => w.length as i64));
+  });
+}

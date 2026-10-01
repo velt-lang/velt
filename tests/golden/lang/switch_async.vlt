@@ -1,0 +1,55 @@
+// `switch` in async functions: cases may await (the state machine keeps the case's position),
+// fall through and break.
+
+type Job = { kind: "wait"; ms: i64 } | { kind: "sum"; values: i64[] } | { kind: "stop" };
+
+async function double(x: i64): Promise<i64> {
+  await sleep(1);
+  return x * 2;
+}
+
+async function run(job: Job): Promise<string> {
+  switch (job.kind) {
+    case "wait":
+      await sleep(job.ms);
+      return `waited ${job.ms}`;
+    case "sum": {
+      let total = 0;
+      for (const v of job.values) {
+        total += await double(v);
+      }
+      return `sum ${total}`;
+    }
+    case "stop":
+      return "stop";
+  }
+}
+
+async function steps(k: string): Promise<i64> {
+  let r = 0;
+  switch (k) {
+    case "a":
+      r = await double(1);
+      break;
+    case "b":
+      r = await double(2);
+    case "c":
+      r += await double(10);
+      break;
+    default:
+      r = -1;
+  }
+  return r;
+}
+
+async function main() {
+  const jobs: Job[] = [
+    { kind: "wait", ms: 2 },
+    { kind: "sum", values: [1, 2, 3] },
+    { kind: "stop" },
+  ];
+  for (const j of jobs) {
+    console.log(await run(j));
+  }
+  console.log(await steps("a"), await steps("b"), await steps("c"), await steps("z"));
+}

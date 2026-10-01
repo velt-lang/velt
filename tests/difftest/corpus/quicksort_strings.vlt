@@ -1,0 +1,20 @@
+// Recursive quicksort on strings (new arrays via filter), compared with the built-in sort.
+function quicksort(xs: string[]): string[] {
+  if (xs.length <= 1) {
+    return xs.slice(0);
+  }
+  const pivot = `${xs[0]}`;
+  const rest = xs.slice(1);
+  const less = quicksort(rest.filter((x) => x < pivot));
+  const more = quicksort(rest.filter((x) => x >= pivot));
+  return [...less, `${pivot}`, ...more];
+}
+
+function main() {
+  const words = "the quick brown fox jumps over the lazy dog and runs away".split(" ");
+  const sorted = quicksort(words);
+  console.log(sorted.join(","));
+  const builtin = words.slice(0);
+  builtin.sort();
+  console.log(builtin.join(",") == sorted.join(","), words.length);
+}

@@ -1,0 +1,116 @@
+// `catch (e)` gets the exact union of what the `try` block can throw; `instanceof`, `typeof`
+// and `switch` narrow it, and a chain that handles every member needs no fallthrough.
+class NotFound extends Error {
+  id: string;
+
+  constructor(id: string) {
+    super(`no user ${id}`);
+    this.id = id;
+  }
+}
+
+class Forbidden extends Error {}
+
+type Oops = { kind: "timeout"; ms: i64 } | { kind: "closed" };
+
+function load(id: string): string {
+  if (id == "404") {
+    throw new NotFound(id);
+  }
+  if (id == "403") {
+    throw new Forbidden("admins only");
+  }
+  return `user ${id}`;
+}
+
+function connect(n: i64): i64 {
+  if (n == 1) {
+    const e: Oops = { kind: "timeout", ms: 30 };
+    throw e;
+  }
+  if (n == 2) {
+    const e: Oops = { kind: "closed" };
+    throw e;
+  }
+  return n * 10;
+}
+
+function code(n: i64): i64 {
+  if (n < 0) {
+    throw "negative";
+  }
+  if (n > 99) {
+    throw n;
+  }
+  return n;
+}
+
+// Every member handled by a returning branch: no return needed after the chain.
+function describe(id: string): string {
+  try {
+    return load(id);
+  } catch (e) {
+    if (e instanceof NotFound) {
+      return `missing ${e.id}`;
+    } else if (e instanceof Forbidden) {
+      return `forbidden: ${e.message}`;
+    }
+  }
+}
+
+function status(n: i64): string {
+  try {
+    return `ok ${connect(n)}`;
+  } catch (e) {
+    switch (e.kind) {
+      case "timeout":
+        return `timeout after ${e.ms}ms`;
+      case "closed":
+        return "closed";
+    }
+  }
+}
+
+function checked(n: i64): string {
+  try {
+    return `code ${code(n)}`;
+  } catch (e) {
+    if (typeof e === "string") {
+      return `text: ${e}`;
+    } else if (typeof e === "number") {
+      return `too big: ${e}`;
+    }
+  }
+}
+
+// Rethrowing a narrowed catch variable throws just that member.
+function onlyForbidden(id: string): string {
+  try {
+    return load(id);
+  } catch (e) {
+    if (e instanceof NotFound) {
+      return "fallback";
+    }
+    throw e;
+  }
+}
+
+function main() {
+  console.log(describe("404"), "|", describe("403"), "|", describe("7"));
+  console.log(status(1), "|", status(2), "|", status(4));
+  console.log(checked(-1), "|", checked(500), "|", checked(5));
+  try {
+    console.log(onlyForbidden("404"));
+    console.log(onlyForbidden("403"));
+  } catch (e) {
+    // `e` is `Forbidden` only.
+    console.log("rethrown", e.message);
+  }
+  try {
+    load("404");
+  } catch {
+    console.log("caught without a binding");
+  } finally {
+    console.log("finally");
+  }
+}

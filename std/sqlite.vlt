@@ -1,0 +1,287 @@
+// std/sqlite: embedded SQLite (compiled into the runtime; rt_abi_async.md §14.11), with an API
+// close to better-sqlite3.
+//
+// Synchronous by design: a typical query takes microseconds, less than handing it to a
+// blocking thread pool and back would cost, and SQLite serializes writers anyway. Run a long
+// query in `spawn(...)` to keep it off the current task.
+//
+// Parameters are a value `P` that std turns into JSON (`JSON.stringify`): an object binds by
+// name (`:id`, `@id`, `$id` all take the field `id`), an array (or a single number or string)
+// binds `?` by position. int → INTEGER, float → REAL, string → TEXT, bool → 0/1, null → NULL,
+// `u8[]` → BLOB. Rows come back as JSON and are decoded with `JSON.parse<T[]>`: each column
+// fills the field of the same name (rename with `AS`). INTEGER decodes into integer fields
+// exactly (all of i64) and into `f64` fields; REAL into `f64`; TEXT into `string`; BLOB into
+// `u8[]`; NULL into `T | null` fields. SQLite has no booleans: a column declared `BOOLEAN`
+// decodes into `bool`, any other 0/1 value (an expression) needs an integer field.
+//
+// `Database` is a Copy handle like std/net's sockets: pass and capture it freely and release it
+// with `close()` (closing it through a second copy is a double free). A `Statement` owns its
+// handle and releases it when dropped, so `db.prepare(sql).all()` leaks nothing. Closing the
+// database while statements exist is safe: they then throw "SQLITE_MISUSE".
+
+import { IoResult, IoStatus } from "velt:io";
+
+// `RunResult` in the runtime's layout (`{ i64 changes; i64 last_insert_rowid; }`).
+struct RunSlot {
+  changes: i64;
+  lastInsertRowid: i64;
+}
+
+declare function velt_rt_sqlite_open(
+  path: string,
+  readonly: bool,
+  create: bool,
+  timeoutMs: u32,
+): IoResult<u64>;
+declare function velt_rt_sqlite_close(db: u64): IoStatus;
+declare function velt_rt_sqlite_exec(db: u64, sql: string): IoStatus;
+declare function velt_rt_sqlite_pragma(db: u64, source: string): IoResult<string>;
+declare function velt_rt_sqlite_in_transaction(db: u64): bool;
+declare function velt_rt_sqlite_error_count(db: u64): u64;
+declare function velt_rt_sqlite_reset_error_count(db: u64, count: u64);
+declare function velt_rt_sqlite_last_error(db: u64): IoStatus;
+declare function velt_rt_sqlite_prepare(db: u64, sql: string): IoResult<u64>;
+declare function velt_rt_sqlite_run(stmt: u64, params: string): IoResult<RunSlot>;
+declare function velt_rt_sqlite_query(stmt: u64, params: string, firstOnly: bool): IoResult<string>;
+declare function velt_rt_sqlite_note_error(stmt: u64, code: i32, message: string);
+declare function velt_rt_sqlite_stmt_free(stmt: u64);
+declare function velt_rt_sqlite_error_name(code: i32): string;
+
+// SQLite's `SQLITE_MISMATCH`: a row that does not decode into the requested type.
+const SQLITE_MISMATCH: i32 = 20;
+
+// A failed SQLite operation. `code` is SQLite's result code name, e.g. "SQLITE_ERROR" (bad
+// SQL), "SQLITE_CONSTRAINT_UNIQUE", "SQLITE_BUSY", "SQLITE_CANTOPEN", "SQLITE_RANGE" (wrong
+// parameters), "SQLITE_MISUSE" (closed handle, several statements in `prepare`) or
+// "SQLITE_MISMATCH" (a row that does not fit the requested type).
+export class SqliteError extends Error {
+  code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+// What `run` did.
+export class RunResult {
+  // Rows inserted, updated or deleted.
+  changes: i64;
+  // Rowid of the most recent successful INSERT on this connection.
+  lastInsertRowid: i64;
+
+  constructor(changes: i64, lastInsertRowid: i64) {
+    this.changes = changes;
+    this.lastInsertRowid = lastInsertRowid;
+  }
+}
+
+// `open` options.
+export struct OpenOptions {
+  // Open without write access (default false).
+  readonly?: bool;
+  // Fail with "SQLITE_CANTOPEN" instead of creating a missing file (default false).
+  fileMustExist?: bool;
+  // Milliseconds to wait for another connection's lock before "SQLITE_BUSY" (default 5000).
+  timeout?: i64;
+  // Switch to write-ahead logging (`PRAGMA journal_mode = WAL`; default false).
+  wal?: bool;
+}
+
+function sqliteError(code: i32, message: string): SqliteError {
+  return new SqliteError(velt_rt_sqlite_error_name(code), message);
+}
+
+function check(s: IoStatus) {
+  if (s.code != 0) {
+    throw sqliteError(s.code, s.message);
+  }
+}
+
+function unwrap<T>(r: IoResult<T>): T {
+  if (r.code != 0) {
+    throw sqliteError(r.code, r.message);
+  }
+  return r.value;
+}
+
+// An open connection (see the header for handle rules).
+export struct Database {
+  handle: u64;
+
+  // Runs one or more `;`-separated statements without parameters (schema scripts).
+  exec(sql: string) {
+    check(velt_rt_sqlite_exec(this.handle, sql));
+  }
+
+  // Compiles one statement (throws for bad SQL).
+  prepare(sql: string): Statement {
+    return new Statement(unwrap(velt_rt_sqlite_prepare(this.handle, sql)));
+  }
+
+  // `PRAGMA <source>`: the first column of the first row as text ("" if none):
+  // `pragma("journal_mode = WAL")` is "wal", `pragma("user_version")` "0".
+  pragma(source: string): string {
+    return unwrap(velt_rt_sqlite_pragma(this.handle, source));
+  }
+
+  // Whether a transaction is open.
+  get inTransaction(): bool {
+    return velt_rt_sqlite_in_transaction(this.handle);
+  }
+
+  // Starts a transaction (a savepoint when one is already open); end it with `commit()` or
+  // `rollback()`.
+  begin(): Transaction {
+    const nested = this.inTransaction;
+    this.exec(nested ? "SAVEPOINT velt_tx" : "BEGIN");
+    return Transaction { handle: this.handle, nested: nested };
+  }
+
+  // Runs `fn` in a transaction and commits it. If `fn` throws, or any operation on this
+  // connection failed meanwhile (even one `fn` caught), everything `fn` did is rolled back and
+  // the error is thrown here: the transaction is all-or-nothing. Nested calls use a savepoint:
+  // a failed inner transaction undoes only its own work, and the outer one continues if `fn`
+  // catches its error. Use `begin()` to decide about commit or rollback yourself.
+  transaction<T, E>(fn: () => T throws E): T throws SqliteError | E {
+    const tx = this.begin();
+    const failures = velt_rt_sqlite_error_count(this.handle);
+    try {
+      const result = fn();
+      if (velt_rt_sqlite_error_count(this.handle) != failures) {
+        const s = velt_rt_sqlite_last_error(this.handle);
+        throw sqliteError(s.code, s.message);
+      }
+      tx.commit();
+      return result;
+    } catch (e) {
+      if (this.inTransaction) {
+        tx.rollback();
+      }
+      velt_rt_sqlite_reset_error_count(this.handle, failures);
+      throw e;
+    }
+  }
+
+  // Closes the connection and releases the handle (later calls throw "SQLITE_MISUSE").
+  close() {
+    const s = velt_rt_sqlite_close(this.handle);
+    this.handle = 0;
+    check(s);
+  }
+}
+
+// A transaction from `Database.begin()`.
+export struct Transaction {
+  handle: u64;
+  // A savepoint inside an outer transaction.
+  nested: bool;
+
+  commit() {
+    check(velt_rt_sqlite_exec(this.handle, this.nested ? "RELEASE velt_tx" : "COMMIT"));
+  }
+
+  // Undoes everything since `begin()`.
+  rollback() {
+    const sql = this.nested ? "ROLLBACK TO velt_tx; RELEASE velt_tx" : "ROLLBACK";
+    check(velt_rt_sqlite_exec(this.handle, sql));
+  }
+}
+
+// A prepared statement (compiled once per connection and cached, so preparing the same SQL
+// again is cheap). Released when dropped, or earlier with `close()`. `...With(params)` binds
+// parameters (see the header); the variants without them are for statements without any.
+export class Statement {
+  private handle: u64;
+
+  constructor(handle: u64) {
+    this.handle = handle;
+  }
+
+  // Executes the statement (rows it returns are discarded).
+  run(): RunResult {
+    return this.runJson("");
+  }
+
+  runWith<P>(params: P): RunResult {
+    return this.runJson(JSON.stringify(params));
+  }
+
+  // The first row, or null if there is none.
+  get<T>(): T | null {
+    return this.first(unwrap(velt_rt_sqlite_query(this.handle, "", true)));
+  }
+
+  getWith<T, P>(params: P): T | null {
+    return this.first(unwrap(velt_rt_sqlite_query(this.handle, JSON.stringify(params), true)));
+  }
+
+  // Every row.
+  all<T>(): T[] {
+    return this.rows(unwrap(velt_rt_sqlite_query(this.handle, "", false)));
+  }
+
+  allWith<T, P>(params: P): T[] {
+    return this.rows(unwrap(velt_rt_sqlite_query(this.handle, JSON.stringify(params), false)));
+  }
+
+  // Releases the statement now (later calls throw "SQLITE_MISUSE").
+  close() {
+    velt_rt_sqlite_stmt_free(this.handle);
+    this.handle = 0;
+  }
+
+  // Drop hook: releases the statement.
+  [Symbol.dispose]() {
+    velt_rt_sqlite_stmt_free(this.handle);
+    this.handle = 0;
+  }
+
+  private runJson(params: string): RunResult {
+    const r = unwrap(velt_rt_sqlite_run(this.handle, params));
+    return new RunResult(r.changes, r.lastInsertRowid);
+  }
+
+  private first<T>(json: string): T | null {
+    if (json == "") {
+      return null;
+    }
+    try {
+      return JSON.parse<T>(json);
+    } catch (e) {
+      throw this.decodeError(e.message);
+    }
+  }
+
+  private rows<T>(json: string): T[] {
+    try {
+      return JSON.parse<T[]>(json);
+    } catch (e) {
+      throw this.decodeError(e.message);
+    }
+  }
+
+  // A row did not fit the requested type; counted against the connection so an enclosing
+  // `transaction` rolls back.
+  private decodeError(detail: string): SqliteError {
+    const message = `row does not match the requested type: ${detail}`;
+    velt_rt_sqlite_note_error(this.handle, SQLITE_MISMATCH, message);
+    return sqliteError(SQLITE_MISMATCH, message);
+  }
+}
+
+// Opens (by default creating) the database file at `path`; ":memory:" is a private in-memory
+// database. Throws `SqliteError`.
+export function open(path: string, opts: OpenOptions = {}): Database {
+  const r = velt_rt_sqlite_open(
+    path,
+    opts.readonly ?? false,
+    !(opts.fileMustExist ?? false),
+    (opts.timeout ?? 5000) as u32,
+  );
+  const db = Database { handle: unwrap(r) };
+  if (opts.wal ?? false) {
+    db.pragma("journal_mode = WAL");
+  }
+  return db;
+}

@@ -1,0 +1,35 @@
+// A bank-queue simulation with a deterministic pseudo-random generator.
+class Lcg {
+  state: i64;
+  constructor(seed: i64) {
+    this.state = seed;
+  }
+  next(): i64 {
+    this.state = (this.state * 48271) % 2147483647;
+    return this.state;
+  }
+  below(n: i64): i64 {
+    return this.next() % n;
+  }
+}
+
+function main() {
+  const rng = new Lcg(42);
+  const queue: i64[] = [];
+  let served = 0;
+  let waitTotal = 0;
+  for (let t = 0; t < 60; t++) {
+    if (rng.below(10) < 4) {
+      queue.push(t);
+    }
+    if (t % 3 == 0 && queue.length > 0) {
+      const arrived = queue[0];
+      queue.reverse();
+      queue.pop();
+      queue.reverse();
+      waitTotal += t - arrived;
+      served++;
+    }
+  }
+  console.log(served, queue.length, waitTotal, rng.next());
+}

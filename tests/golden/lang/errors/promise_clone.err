@@ -1,0 +1,3 @@
+promise_clone.vlt:9:15: error: a promise cannot be copied
+it runs once and has one owner
+promise_clone.vlt:11:17: error: `Promise<i64>[]` owns a resource (a `[Symbol.dispose]` drop hook or a promise), so it has no automatic `clone()`

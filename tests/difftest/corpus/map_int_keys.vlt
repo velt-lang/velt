@@ -1,0 +1,35 @@
+// Map with integer keys: memoized partition numbers and sparse vectors.
+function partitions(n: i64, max: i64, memo: Map<i64, i64>): i64 {
+  if (n == 0) {
+    return 1;
+  }
+  if (n < 0 || max == 0) {
+    return 0;
+  }
+  const key = n * 1000 + max;
+  const hit = memo.get(key);
+  if (hit != null) {
+    return hit;
+  }
+  const v = partitions(n - max, max, memo) + partitions(n, max - 1, memo);
+  memo.set(key, v);
+  return v;
+}
+
+function main() {
+  const memo = new Map<i64, i64>();
+  const ps: i64[] = [];
+  for (let n = 1; n <= 12; n++) {
+    ps.push(partitions(n, n, memo));
+  }
+  console.log(JSON.stringify(ps), partitions(60, 60, memo), memo.size > 100);
+  const sparse = new Map<i64, f64>();
+  sparse.set(3, 1.5);
+  sparse.set(1000000, -2.0);
+  sparse.set(-7, 0.25);
+  let dot = 0.0;
+  for (const [k, v] of sparse) {
+    dot += (k as f64) * v;
+  }
+  console.log(`${dot}`, [...sparse.keys()].map((k) => `${k}`).join(","));
+}

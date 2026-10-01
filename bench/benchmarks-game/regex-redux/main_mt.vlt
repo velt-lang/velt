@@ -1,0 +1,57 @@
+// regex-redux, multi-threaded: main.vlt with each variant count and the substitution chain in
+// its own spawned task (like the Rust #6 program's rayon join / par_iter); `Promise.all` keeps
+// the counts in order. Async parameters are owned, so every task gets its own copy of the
+// sequence (see NOTES.md).
+
+import { readAll } from "velt:stdin";
+import { RegExp } from "velt:regex";
+
+async function countMatches(pattern: string, sequence: string): Promise<string> {
+  return `${pattern} ${new RegExp(pattern, "g").matches(sequence).length}`;
+}
+
+// Length of `sequence` after the magic substitutions, applied one at a time.
+async function substitutedLength(sequence: string): Promise<usize> {
+  const substitutions = [
+    { pattern: "tHa[Nt]", replacement: "<4>" },
+    { pattern: "aND|caN|Ha[DS]|WaS", replacement: "<3>" },
+    { pattern: "a[NSt]|BY", replacement: "<2>" },
+    { pattern: "<[^>]*>", replacement: "|" },
+    { pattern: "\\|[^|][^|]*\\|", replacement: "-" },
+  ];
+  let replaced = sequence;
+  for (const s of substitutions) {
+    replaced = new RegExp(s.pattern, "g").replace(replaced, s.replacement);
+  }
+  return replaced.length;
+}
+
+async function main() {
+  const variants = [
+    "agggtaaa|tttaccct",
+    "[cgt]gggtaaa|tttaccc[acg]",
+    "a[act]ggtaaa|tttacc[agt]t",
+    "ag[act]gtaaa|tttac[agt]ct",
+    "agg[act]taaa|ttta[agt]cct",
+    "aggg[acg]aaa|ttt[cgt]ccct",
+    "agggt[cgt]aa|tt[acg]accct",
+    "agggta[cgt]a|t[acg]taccct",
+    "agggtaa[cgt]|[acg]ttaccct",
+  ];
+
+  const input = await readAll();
+  const initialLength = input.length;
+  const sequence = new RegExp(">.*\n|\n", "g").replace(input, "");
+  const cleanedLength = sequence.length;
+
+  // The substitution chain takes longest: start it first.
+  const substituted = spawn(substitutedLength(sequence.clone()));
+  const counts: Promise<string>[] = [];
+  for (const pattern of variants) {
+    counts.push(spawn(countMatches(pattern, sequence.clone())));
+  }
+  for (const line of await Promise.all(counts)) {
+    console.log(line);
+  }
+  console.log(`\n${initialLength}\n${cleanedLength}\n${await substituted}`);
+}

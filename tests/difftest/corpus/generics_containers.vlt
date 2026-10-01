@@ -1,0 +1,34 @@
+// A generic stack class and generic helper functions over Comparable.
+class Stack<T> {
+  items: T[] = [];
+  push(x: T) {
+    this.items.push(x);
+  }
+  size(): usize {
+    return this.items.length;
+  }
+}
+
+// Returns an index: assigning an element (`best = x`) would move it out of the array when T
+// isn't Copy, and generic bodies are checked as if it never is.
+function largest<T extends Comparable<T>>(xs: T[]): i64 {
+  let best = 0;
+  for (let i: usize = 1; i < xs.length; i++) {
+    if (xs[i] > xs[best as usize]) {
+      best = i as i64;
+    }
+  }
+  return best;
+}
+
+function main() {
+  const s = new Stack<string>();
+  s.push("a");
+  s.push("b");
+  const n = new Stack<i64>();
+  for (let i = 0; i < 5; i++) {
+    n.push(i * i);
+  }
+  console.log(s.size(), n.size(), n.items, s.items);
+  console.log(largest([3, 9, 2]), largest([1.5, -2.0]), largest(["pear", "fig", "zoo"]));
+}

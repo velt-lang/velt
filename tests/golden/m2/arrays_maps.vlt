@@ -1,0 +1,43 @@
+function sum(xs: i64[]): i64 {
+  let s = 0;
+  for (const x of xs) {
+    s += x;
+  }
+  return s;
+}
+
+function main() {
+  let xs: i64[] = [];
+  for (let i = 0; i < 5; i++) {
+    xs.push(i * i);
+  }
+  console.log(xs.length, sum(xs), xs[4]);
+
+  xs[0] = 100;
+  const last = xs.pop();
+  console.log(xs[0], last ?? -1, xs.length);
+
+  const words = ["b", "a", "c"];
+  console.log(words.join("-"), words.indexOf("c"), words.includes("z"));
+
+  let m = new Map<string, i64>();
+  m.set("one", 1);
+  m.set("two", 2);
+  m.set("one", 11);
+  console.log(m.size, m.get("one") ?? 0, m.get("three") ?? 0, m.has("two"));
+  m.delete("two");
+  console.log(m.has("two"), m.size);
+
+  let big = new Map<i64, i64>();
+  for (let i = 0; i < 10000; i++) {
+    big.set(i, i * 2);
+  }
+  console.log(big.size, big.get(9999) ?? 0);
+
+  const [first, second] = [10, 20];
+  const { x, y } = { x: 1.5, y: 2.5 };
+  console.log(first + second, x + y);
+
+  const nested: i64[][] = [[1, 2], [3]];
+  console.log(nested[0][1] + nested[1][0], nested.length);
+}

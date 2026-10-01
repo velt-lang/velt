@@ -1,0 +1,71 @@
+// std/crypto against node:crypto: SHA-256, SHA-1 and HMAC on the RFC test vectors and on
+// lengths around the 64-byte block boundary; contracts of the random functions.
+import {
+  sha256,
+  sha256Hex,
+  sha1,
+  sha1Hex,
+  hmacSha256,
+  hmacSha1,
+  randomBytes,
+  randomInt,
+  timingSafeEqual,
+  CryptoError,
+} from "velt:crypto";
+import { hexEncode, utf8Encode } from "velt:encoding";
+
+function filled(n: i64, v: i64): u8[] {
+  const out: u8[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push(((v + i * 31) % 256) as u8);
+  }
+  return out;
+}
+
+function main() {
+  const texts: string[] = [
+    "",
+    "abc",
+    "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+    "The quick brown fox jumps over the lazy dog",
+    "héllo",
+  ];
+  for (const t of texts) {
+    console.log(sha256Hex(t), sha1Hex(t));
+  }
+  const lengths: i64[] = [0, 1, 54, 55, 56, 57, 63, 64, 65, 119, 120, 127, 128, 129, 1000];
+  for (const n of lengths) {
+    const d = filled(n, n);
+    console.log(n, hexEncode(sha256(d)).slice(0, 16), hexEncode(sha1(d)).slice(0, 16));
+  }
+  const keys: u8[][] = [
+    filled(0, 1),
+    filled(20, 11),
+    utf8Encode("Jefe"),
+    filled(64, 3),
+    filled(131, 170),
+  ];
+  for (const k of keys) {
+    const data = utf8Encode("what do ya want for nothing?");
+    console.log(k.length, hexEncode(hmacSha256(k, data)), hexEncode(hmacSha1(k, data)));
+  }
+  const r = randomBytes(33);
+  console.log(r.length, randomBytes(0).length);
+  let inRange = true;
+  for (let i = 0; i < 200; i++) {
+    const v = randomInt(-3, 4);
+    inRange = inRange && v >= -3 && v < 4;
+  }
+  console.log("randomInt in range:", inRange, randomInt(5, 6));
+  try {
+    randomInt(3, 3);
+  } catch (e) {
+    console.log(e instanceof CryptoError, e.message);
+  }
+  console.log(
+    timingSafeEqual(filled(5, 1), filled(5, 1)),
+    timingSafeEqual(filled(5, 1), filled(5, 2)),
+    timingSafeEqual(filled(4, 1), filled(5, 1)),
+    timingSafeEqual([], []),
+  );
+}

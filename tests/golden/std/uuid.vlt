@@ -1,0 +1,89 @@
+// std/uuid: v4/v7 generation (format, version and variant bits, v7 time prefix), parse /
+// stringify round trips, validation and error paths.
+
+import {
+  uuidv4,
+  uuidv7,
+  uuidParse,
+  uuidStringify,
+  uuidValidate,
+  uuidVersion,
+  NIL_UUID,
+} from "velt:uuid";
+
+function generated() {
+  const a = uuidv4();
+  const b = uuidv4();
+  console.log(a.length, uuidValidate(a), uuidVersion(a), a != b, a == a.toLowerCase());
+  console.log("variant ok:", "89ab".includes(a.slice(19, 20)));
+  const before = Date.now();
+  const v = uuidv7();
+  const after = Date.now();
+  console.log(v.length, uuidValidate(v), uuidVersion(v), "89ab".includes(v.slice(19, 20)));
+  const ms = parseInt(v.slice(0, 8) + v.slice(9, 13), 16) as i64;
+  console.log("v7 timestamp in range:", ms >= before && ms <= after);
+  const bytes = uuidParse(v);
+  console.log(bytes.length, uuidStringify(bytes) == v);
+  let sorted = true;
+  let prev = uuidv7();
+  for (let i = 0; i < 50; i++) {
+    const next = uuidv7();
+    sorted = sorted && prev.slice(0, 13) <= next.slice(0, 13);
+    prev = next;
+  }
+  console.log("v7 time prefixes ordered:", sorted);
+}
+
+function parsing() {
+  const s = "F81D4FAE-7DEC-11D0-A765-00A0C91E6BF6";
+  const b = uuidParse(s);
+  console.log(b);
+  console.log(uuidStringify(b), uuidVersion(s), uuidValidate(s));
+  console.log(uuidParse(NIL_UUID), uuidValidate(NIL_UUID), uuidVersion(NIL_UUID));
+  console.log(uuidValidate("ffffffff-ffff-ffff-ffff-ffffffffffff"));
+  console.log(uuidValidate("017f22e2-79b0-7cc3-98c4-dc0c0c07398f"));
+  const invalid = [
+    "",
+    "f81d4fae7dec11d0a76500a0c91e6bf6",
+    "f81d4fae-7dec-01d0-a765-00a0c91e6bf6",
+    "f81d4fae-7dec-91d0-a765-00a0c91e6bf6",
+    "f81d4fae-7dec-11d0-c765-00a0c91e6bf6",
+    "f81d4fae-7dec-11d0-a765-00a0c91e6bfg",
+    "f81d4fae-7dec-11d0-a765_00a0c91e6bf6",
+  ];
+  for (const x of invalid) {
+    console.log(`"${x}"`, uuidValidate(x));
+  }
+}
+
+function errors() {
+  const bad = [
+    "f81d4fae-7dec-11d0-a765-00a0c91e6bf",
+    "f81d4fae-7dec-11d0-a765+00a0c91e6bf6",
+    "f81d4fae-7dec-11d0-a765-00a0c91e6bfx",
+    "g81d4fae-7dec-11d0-a765-00a0c91e6bf6",
+  ];
+  for (const s of bad) {
+    try {
+      console.log(uuidParse(s));
+    } catch (e) {
+      console.log(e.message);
+    }
+  }
+  try {
+    console.log(uuidStringify([1, 2, 3]));
+  } catch (e) {
+    console.log(e.message);
+  }
+  try {
+    console.log(uuidVersion("nope"));
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+
+function main() {
+  generated();
+  parsing();
+  errors();
+}

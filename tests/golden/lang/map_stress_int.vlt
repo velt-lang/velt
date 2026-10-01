@@ -1,0 +1,178 @@
+// Map<i64, i64> under random set / delete / get / clear, checked op by op against a
+// reference model built on plain arrays (insertion-ordered, linear search), including
+// iteration order after deletes and re-inserts (JS semantics: re-setting keeps the position,
+// delete + set moves the key to the end).
+class RefMap {
+  keys: i64[] = [];
+  vals: i64[] = [];
+  live: bool[] = [];
+
+  find(k: i64): i64 {
+    for (let i: usize = 0; i < this.keys.length; i++) {
+      if (this.live[i] && this.keys[i] == k) {
+        return i as i64;
+      }
+    }
+    return -1;
+  }
+
+  set(k: i64, v: i64) {
+    const i = this.find(k);
+    if (i >= 0) {
+      this.vals[i as usize] = v;
+      return;
+    }
+    this.keys.push(k);
+    this.vals.push(v);
+    this.live.push(true);
+  }
+
+  delete(k: i64): bool {
+    const i = this.find(k);
+    if (i < 0) {
+      return false;
+    }
+    this.live[i as usize] = false;
+    return true;
+  }
+
+  clear() {
+    this.keys = [];
+    this.vals = [];
+    this.live = [];
+  }
+
+  size(): usize {
+    let n: usize = 0;
+    for (const l of this.live) {
+      if (l) {
+        n++;
+      }
+    }
+    return n;
+  }
+
+  liveKeys(): i64[] {
+    const out: i64[] = [];
+    for (let i: usize = 0; i < this.keys.length; i++) {
+      if (this.live[i]) {
+        out.push(this.keys[i]);
+      }
+    }
+    return out;
+  }
+
+  liveVals(): i64[] {
+    const out: i64[] = [];
+    for (let i: usize = 0; i < this.keys.length; i++) {
+      if (this.live[i]) {
+        out.push(this.vals[i]);
+      }
+    }
+    return out;
+  }
+}
+
+function sameArrays(a: i64[], b: i64[]): bool {
+  if (a.length != b.length) {
+    return false;
+  }
+  for (let i: usize = 0; i < a.length; i++) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Compares everything observable; returns the number of mismatches.
+function check(m: Map<i64, i64>, r: RefMap): i64 {
+  let bad = 0;
+  if (m.size != r.size()) {
+    bad++;
+  }
+  if (!sameArrays(m.keys(), r.liveKeys())) {
+    bad++;
+  }
+  if (!sameArrays(m.values(), r.liveVals())) {
+    bad++;
+  }
+  const seen: i64[] = [];
+  m.forEach((v, k) => {
+    seen.push(k);
+    seen.push(v);
+  });
+  const fromEntries: i64[] = [];
+  for (const [k, v] of m) {
+    fromEntries.push(k);
+    fromEntries.push(v);
+  }
+  if (!sameArrays(seen, fromEntries)) {
+    bad++;
+  }
+  return bad;
+}
+
+// Runs `ops` random operations on keys in [0, universe); `deletePct` percent are deletes.
+function run(seed: i64, ops: i64, universe: i64, deletePct: i64): i64 {
+  const m = new Map<i64, i64>();
+  const r = new RefMap();
+  let x = seed;
+  let bad = 0;
+  let hits = 0;
+  for (let i = 0; i < ops; i++) {
+    x = (x * 48271) % 2147483647;
+    const k = (x >> 3) % universe;
+    x = (x * 48271) % 2147483647;
+    const op = x % 100;
+    if (op < deletePct) {
+      if (m.delete(k) != r.delete(k)) {
+        bad++;
+      }
+    } else if (op < deletePct + 30) {
+      const got = m.get(k);
+      const i2 = r.find(k);
+      if (i2 >= 0) {
+        hits++;
+        if ((got ?? -1) != r.vals[i2 as usize] || !m.has(k)) {
+          bad++;
+        }
+      } else if (got != null || m.has(k)) {
+        bad++;
+      }
+    } else if (op == 99 && i % 40 == 0) {
+      m.clear();
+      r.clear();
+    } else {
+      m.set(k, i);
+      r.set(k, i);
+    }
+    if (i % 97 == 0) {
+      bad += check(m, r);
+    }
+  }
+  bad += check(m, r);
+  console.log(`seed ${seed}: size ${m.size}, hits ${hits}, mismatches ${bad}`);
+  return bad;
+}
+
+function main() {
+  // Few keys, many deletes: lots of tombstones, compactions and re-inserts.
+  run(1, 20000, 64, 45);
+  // Mid-size working set that grows and shrinks.
+  run(2, 20000, 700, 30);
+  // Mostly inserts: several index doublings.
+  run(3, 20000, 3000, 10);
+  // Deletes only of recently inserted keys hit the "pop the newest entry" path.
+  const m = new Map<i64, i64>();
+  for (let i = 0; i < 100; i++) {
+    m.set(i, i);
+    m.delete(i);
+    m.set(i, i * 2);
+  }
+  m.delete(99);
+  m.delete(98);
+  m.set(0, 7);
+  m.set(98, 1);
+  console.log(m.size, m.get(0) ?? -1, m.get(99) ?? -1, m.keys().slice(96));
+}

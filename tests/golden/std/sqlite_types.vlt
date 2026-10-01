@@ -1,0 +1,81 @@
+// std/sqlite type mapping: exact i64, REAL, TEXT escapes, BLOB as u8[], NULL, BOOLEAN columns.
+import { open } from "velt:sqlite";
+
+class Value {
+  i: i64;
+  f: f64;
+  t: string;
+  b: u8[];
+  n: string | null;
+  ok: bool;
+
+  constructor(i: i64, f: f64, t: string, b: u8[], n: string | null, ok: bool) {
+    this.i = i;
+    this.f = f;
+    this.t = t;
+    this.b = b;
+    this.n = n;
+    this.ok = ok;
+  }
+}
+
+class Typed {
+  i: string;
+  f: string;
+  t: string;
+  b: string;
+  n: string;
+
+  constructor(i: string, f: string, t: string, b: string, n: string) {
+    this.i = i;
+    this.f = f;
+    this.t = t;
+    this.b = b;
+    this.n = n;
+  }
+}
+
+function main() {
+  const db = open(":memory:");
+  db.exec("CREATE TABLE v (i INTEGER, f REAL, t TEXT, b BLOB, n TEXT, ok BOOLEAN)");
+  const ins = db.prepare("INSERT INTO v VALUES (:i, :f, :t, :b, :n, :ok)");
+  const bytes: u8[] = [0, 1, 127, 128, 255];
+  const empty: u8[] = [];
+  // `i64 | null` is Copy, so one null works for several calls.
+  const none: i64 | null = null;
+  ins.runWith({ i: 9223372036854775807, f: 0.1, t: "tab\tquote\"é😀", b: bytes, n: "x", ok: true });
+  ins.runWith({ i: -9007199254740993, f: 1e21, t: "", b: empty, n: none, ok: false });
+  ins.runWith({ i: 0, f: -2.5e-7, t: "line\nbreak", b: [7u8], n: none, ok: true });
+
+  const rows: Value[] = db.prepare("SELECT * FROM v ORDER BY rowid").all();
+  for (const r of rows) {
+    console.log(r.i, r.f, JSON.stringify(r.t), r.b, r.n, r.ok);
+  }
+
+  // What SQLite stored: typeof() of each column.
+  const types: Typed[] = db
+    .prepare(
+      "SELECT typeof(i) AS i, typeof(f) AS f, typeof(t) AS t, typeof(b) AS b, typeof(n) AS n FROM v",
+    )
+    .all();
+  console.log(types[0].i, types[0].f, types[0].t, types[0].b, types[0].n, types[1].n);
+
+  // A whole-number float is bound as INTEGER; a REAL column converts it back.
+  db.exec("CREATE TABLE nums (r REAL, any)");
+  db.prepare("INSERT INTO nums VALUES (?, ?)").runWith([3.0, 3.0]);
+  const kinds: { r: f64; any: f64; tr: string; ta: string }[] = db
+    .prepare("SELECT r, any, typeof(r) AS tr, typeof(any) AS ta FROM nums")
+    .all();
+  console.log(kinds[0].r, kinds[0].any, kinds[0].tr, kinds[0].ta);
+
+  // Booleans from expressions are integers (only BOOLEAN columns decode as bool).
+  const flags: { ok: bool; expr: i64 }[] = db
+    .prepare("SELECT ok, ok = 1 AS expr FROM v ORDER BY rowid")
+    .all();
+  console.log(flags.map((f) => `${f.ok}/${f.expr}`).join(" "));
+
+  // Integers decode into f64 fields too; bool params bind as 0/1.
+  const mixed: { a: f64; b: i64 } | null = db.prepare("SELECT 42 AS a, ? AS b").getWith([true]);
+  console.log(mixed?.a, mixed?.b);
+  db.close();
+}

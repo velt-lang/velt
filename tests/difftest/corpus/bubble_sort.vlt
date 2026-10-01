@@ -1,0 +1,52 @@
+// Bubble sort, insertion sort and selection sort on copies of the same data.
+function bubble(xs: i64[]) {
+  const n = xs.length;
+  for (let i: usize = 0; i < n; i++) {
+    for (let j: usize = 0; j + 1 < n - i; j++) {
+      if (xs[j] > xs[j + 1]) {
+        const t = xs[j];
+        xs[j] = xs[j + 1];
+        xs[j + 1] = t;
+      }
+    }
+  }
+}
+
+function insertion(xs: i64[]) {
+  for (let i: usize = 1; i < xs.length; i++) {
+    const v = xs[i];
+    let j = i;
+    while (j > 0 && xs[j - 1] > v) {
+      xs[j] = xs[j - 1];
+      j--;
+    }
+    xs[j] = v;
+  }
+}
+
+function selection(xs: i64[]) {
+  for (let i: usize = 0; i < xs.length; i++) {
+    let m = i;
+    for (let j = i + 1; j < xs.length; j++) {
+      if (xs[j] < xs[m]) {
+        m = j;
+      }
+    }
+    const t = xs[i];
+    xs[i] = xs[m];
+    xs[m] = t;
+  }
+}
+
+function main() {
+  const data = [29, -3, 100, 7, 7, 0, 55, -40, 12, 3];
+  const a = data.slice(0);
+  const b = data.slice(0);
+  const c = data.slice(0);
+  bubble(a);
+  insertion(b);
+  selection(c);
+  console.log(JSON.stringify(a));
+  console.log(JSON.stringify(b) == JSON.stringify(a), JSON.stringify(c) == JSON.stringify(a));
+  console.log(JSON.stringify(data));
+}

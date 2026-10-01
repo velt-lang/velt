@@ -1,0 +1,138 @@
+// std/url against JS's WHATWG URL: parsing, normalization, components, setters, search params.
+import {
+  URL,
+  URLSearchParams,
+  UrlError,
+  encodeURIComponent,
+  encodeURI,
+  decodeURIComponent,
+  decodeURI,
+} from "velt:url";
+
+function show(input: string, base: string | null) {
+  try {
+    const u = new URL(input, base);
+    console.log(u.href, "|", u.protocol, u.username, u.password, u.host, u.hostname, u.port);
+    console.log("  ", u.pathname, u.search, u.hash, u.origin);
+  } catch (e) {
+    console.log("invalid:", e.message);
+  }
+}
+
+function main() {
+  const inputs: string[] = [
+    "HTTP://User:Pa%20ss@Example.COM:80/a/./b/../c?q=1#Frag",
+    "https://example.com:443/",
+    "https://example.com:8443/x y/z?a b=c d#e f",
+    "http://example.com/%7Efoo/%zz/ä",
+    "http://example.com\\a\\b",
+    "ftp://ftp.example.org/pub/../file.txt",
+    "ws://h:80/chat",
+    "file:///etc/passwd",
+    "mailto:someone@example.com",
+    "data:text/plain,hello world",
+    "javascript:alert(1)",
+    "urn:isbn:0451450523",
+    "http://[::1]:8080/",
+    "http://192.168.0.1/",
+    "http://0x7f.1/",
+    "https://a.b.c/?#",
+    "not a url",
+    "http://",
+    "http://exa mple.com/",
+    "https://example.com/../../x",
+    "HTTPS://EXAMPLE.com/Path?Q#H",
+    "http://a/b?c=d&e=f&c=g",
+  ];
+  for (const s of inputs) {
+    show(s, null);
+  }
+  const relatives: string[] = [
+    "g",
+    "./g",
+    "g/",
+    "/g",
+    "//g",
+    "?y",
+    "g?y",
+    "#s",
+    "g#s",
+    "..",
+    "../g",
+    "../../../g",
+    "g;x",
+    "",
+  ];
+  for (const r of relatives) {
+    show(r, "http://a/b/c/d;p?q");
+  }
+  show("x", "not a base");
+  console.log(URL.canParse("https://x"), URL.canParse("nope"), URL.canParse("/p", "https://h/"));
+  console.log(URL.parse("::") == null);
+
+  const u = new URL("https://example.com/path?a=1&b=2&a=3#top");
+  u.pathname = "/new path/ä";
+  u.hash = "sec tion";
+  u.port = "8080";
+  u.hostname = "Other.Example";
+  u.username = "me";
+  u.password = "p@ss";
+  u.protocol = "http";
+  u.search = "?x=1 2";
+  console.log(u.href, u.host, u.origin);
+  u.port = "80";
+  u.port = "notaport";
+  console.log(u.href);
+  u.protocol = "mailto";
+  console.log(u.href);
+  u.href = "https://reset.example/";
+  console.log(u.toString(), JSON.stringify({ u: u.toJSON() }));
+  try {
+    u.href = "::bad";
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+
+  const p = new URLSearchParams("?a=1&b=two+words&a=3&c=%26&d&=e&f=%zz");
+  console.log(
+    p.toString(),
+    p.size,
+    p.get("a"),
+    p.get("missing"),
+    p.getAll("a"),
+    p.has("b"),
+    p.has("a", "3"),
+  );
+  p.append("z", "ü & =");
+  p.set("a", "only");
+  p.delete("b");
+  p.delete("c", "nope");
+  console.log(p.toString(), [...p.keys()], [...p.values()]);
+  p.sort();
+  for (const [k, v] of p.entries()) {
+    console.log(`${k}=${v}`);
+  }
+  const w = new URL("https://h/p?x=1");
+  const q = w.searchParams;
+  q.set("y", "a b");
+  w.searchParams = q;
+  console.log(w.href);
+  w.searchParams = new URLSearchParams("");
+  console.log(w.href);
+
+  const texts: string[] = ["a b&c=d/é?#", "-_.!~*'()", ";,/?:@&=+$#", "100%", "\t\n"];
+  for (const t of texts) {
+    const c = encodeURIComponent(t);
+    const i = encodeURI(t);
+    console.log(c, i, decodeURIComponent(c) == t, decodeURI(i) == t);
+  }
+  console.log(decodeURI("%3B%2F%41%20"), decodeURIComponent("%3B%2F%41%20"));
+  const bad: string[] = ["%", "%4", "%zz", "%E0%A4%A", "%C3%28", "%FF"];
+  for (const b of bad) {
+    try {
+      console.log(decodeURIComponent(b));
+    } catch (e) {
+      console.log("malformed", b, e.message, e instanceof UrlError);
+    }
+  }
+}

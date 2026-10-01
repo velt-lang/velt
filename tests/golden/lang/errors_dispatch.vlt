@@ -1,0 +1,145 @@
+// Errors through dynamic dispatch: interface methods, overridden methods, closures and named
+// functions used as values all carry their error types.
+class Missing extends Error {}
+
+class Denied extends Error {
+  user: string;
+
+  constructor(user: string) {
+    super(`denied for ${user}`);
+    this.user = user;
+  }
+}
+
+// A declared `throws` bounds every implementation.
+interface Store {
+  get(key: string): string throws Missing | Denied;
+}
+
+class MemoryStore implements Store {
+  get(key: string): string {
+    if (key == "secret") {
+      throw new Denied("guest");
+    }
+    throw new Missing(`no ${key}`);
+  }
+}
+
+class FixedStore implements Store {
+  get(key: string): string {
+    return `fixed ${key}`;
+  }
+}
+
+// Without a clause, an interface method throws what its implementations throw.
+interface Check {
+  run(n: i64): i64;
+}
+
+class Positive implements Check {
+  run(n: i64): i64 {
+    if (n < 0) {
+      throw new Missing("negative");
+    }
+    return n;
+  }
+}
+
+class Base {
+  describe(): string {
+    return "base";
+  }
+}
+
+class Strict extends Base {
+  override describe(): string {
+    throw new Denied("strict");
+  }
+}
+
+// A subclass used as an interface value still runs its override.
+class Greeter implements Check {
+  run(n: i64): i64 {
+    return n + 1;
+  }
+}
+
+class LoudGreeter extends Greeter {
+  override run(n: i64): i64 {
+    if (n > 100) {
+      throw new Denied("loud");
+    }
+    return n * 100;
+  }
+}
+
+class Handler {
+  f: (x: i64) => i64 throws Missing;
+
+  constructor(f: (x: i64) => i64 throws Missing) {
+    this.f = f;
+  }
+}
+
+function strictHalf(x: i64): i64 {
+  if (x % 2 == 1) {
+    throw new Missing(`odd ${x}`);
+  }
+  return x / 2;
+}
+
+function never(x: i64): i64 {
+  return x;
+}
+
+function main() {
+  const stores: Store[] = [new MemoryStore(), new FixedStore()];
+  for (const s of stores) {
+    for (const k of ["a", "secret"]) {
+      try {
+        console.log(s.get(k));
+      } catch (e) {
+        if (e instanceof Denied) {
+          console.log("denied:", e.user);
+        } else {
+          console.log("missing:", e.message);
+        }
+      }
+    }
+  }
+  const checks: Check[] = [new Positive(), new Greeter(), new LoudGreeter()];
+  for (const c of checks) {
+    try {
+      console.log(c.run(2), c.run(-1), c.run(500));
+    } catch (e) {
+      console.log("check failed:", e.message);
+    }
+  }
+  const objs: Base[] = [new Base(), new Strict()];
+  for (const o of objs) {
+    try {
+      console.log(o.describe());
+    } catch (e) {
+      console.log("describe failed:", e.user);
+    }
+  }
+  const handlers = [new Handler(strictHalf), new Handler(never), new Handler((x) => x - 1)];
+  for (const h of handlers) {
+    try {
+      console.log(h.f(4), h.f(3));
+    } catch (e) {
+      console.log("handler:", e.message);
+    }
+  }
+  const pick = (big: bool): string => {
+    if (big) {
+      throw new Denied("picker");
+    }
+    return "small";
+  };
+  try {
+    console.log(pick(false), pick(true));
+  } catch (e) {
+    console.log("closure:", e.user);
+  }
+}

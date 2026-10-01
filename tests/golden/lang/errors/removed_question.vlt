@@ -1,0 +1,9 @@
+// The postfix `?` operator was removed: a throwing call propagates by itself.
+function load(): i64 {
+  return 1;
+}
+
+function main() {
+  const v = load()?;
+  console.log(v);
+}

@@ -1,0 +1,127 @@
+// std/postgres errors: PgError with the server's SQLSTATE (plus detail and constraint), and
+// Node-style codes for failures outside the server (connection, parameters, decoding, closed
+// handles). The connection stays usable after each of them.
+// requires-env: VELT_TEST_PG_URL
+import { env } from "velt:process";
+import { connect, createPool, Client } from "velt:postgres";
+
+class Item {
+  id: i64;
+  name: string;
+
+  constructor(id: i64, name: string) {
+    this.id = id;
+    this.name = name;
+  }
+}
+
+class Span {
+  d: string;
+
+  constructor(d: string) {
+    this.d = d;
+  }
+}
+
+async function attempt(db: Client, what: string, sql: string) {
+  try {
+    await db.run(sql);
+    console.log(what, "ok");
+  } catch (e) {
+    console.log(what, e.code, e.message);
+  }
+}
+
+async function connectTo(url: string) {
+  try {
+    const c = await connect(url);
+    c.close();
+    console.log("connected?");
+  } catch (e) {
+    console.log("connect", e.code);
+  }
+}
+
+async function main() {
+  const url = env("VELT_TEST_PG_URL") ?? "";
+  const db = await connect(url);
+  await db.batch("CREATE TEMP TABLE items (id int PRIMARY KEY, name text NOT NULL)");
+  await db.run("INSERT INTO items VALUES (1, 'a')");
+
+  // Server errors: SQLSTATE, message, detail, constraint.
+  await attempt(db, "syntax", "SELEC 1");
+  await attempt(db, "table", "SELECT * FROM no_such_table");
+  try {
+    await db.execute("INSERT INTO items VALUES ($1, $2)", ["1", "dup"]);
+  } catch (e) {
+    console.log("unique", e.code, e.constraint, e.detail);
+  }
+  await attempt(db, "not null", "INSERT INTO items VALUES (2, NULL)");
+  await attempt(db, "division", "SELECT 1 / 0");
+
+  // Parameter problems.
+  try {
+    await db.execute("INSERT INTO items VALUES (:id, :name)", { id: 3 });
+  } catch (e) {
+    console.log("missing", e.code, e.message);
+  }
+  try {
+    await db.execute("INSERT INTO items VALUES ($1, $2)", [3]);
+  } catch (e) {
+    console.log("count", e.code, e.message);
+  }
+  try {
+    await db.execute("SELECT $1::int2", [70000]);
+  } catch (e) {
+    console.log("range", e.code, e.message);
+  }
+  try {
+    await db.execute("SELECT $1::int4", [true]);
+  } catch (e) {
+    console.log("type", e.code, e.message);
+  }
+  try {
+    await db.execute("SELECT $1::int4", ["seven"]);
+  } catch (e) {
+    console.log("input", e.code, e.message);
+  }
+  try {
+    await db.execute("SELECT :a + $1", { a: 1 });
+  } catch (e) {
+    console.log("mixed", e.code);
+  }
+
+  // Decoding problems.
+  try {
+    const s: Span[] = await db.select("SELECT point '(1,2)' AS d");
+    console.log(s.length);
+  } catch (e) {
+    console.log("unsupported", e.code, e.message);
+  }
+  const cast: Span[] = await db.select("SELECT (point '(1,2)')::text AS d");
+  console.log("cast", cast[0].d);
+  try {
+    const wrong: Item[] = await db.select("SELECT id, 5 AS name FROM items");
+    console.log(wrong.length);
+  } catch (e) {
+    console.log("mismatch", e.code, e.message);
+  }
+
+  // Still usable.
+  const items: Item[] = await db.select("SELECT * FROM items");
+  console.log("items", items.length);
+  db.close();
+  await attempt(db, "closed", "SELECT 1");
+
+  // Connection failures.
+  await connectTo("postgres://nobody@127.0.0.1:1/x?connect_timeout=5");
+  await connectTo("postgres://[bad");
+  await connectTo(`${url}${url.includes("?") ? "&" : "?"}sslmode=sometimes`);
+  await connectTo(`${url}${url.includes("?") ? "&" : "?"}sslrootcert=/no/such/file.pem`);
+  try {
+    const p = createPool({ url: "nonsense=1" });
+    p.end();
+  } catch (e) {
+    console.log("pool", e.code);
+  }
+}

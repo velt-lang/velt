@@ -1,0 +1,108 @@
+// The notes commands: parse argv, run one command against the store, return the output lines.
+import { ArgParser, CliError, ParsedArgs } from "velt:cli";
+import { DateTime } from "velt:datetime";
+import { NoteStore, Note } from "./store";
+
+export function parser(): ArgParser {
+  return new ArgParser("notes", "Keep short notes in a JSON file.")
+    .option("db", { help: "Notes file (default $NOTES_DB or notes.json)", valueName: "path" })
+    .option("body", { short: "b", help: "Body of a new note" })
+    .option("tag", { short: "t", help: "Tag (repeatable)" })
+    .flag("color", { short: "c", help: "Colorize output" })
+    .positional("command", "add | list | search | show | tag | rm | tags")
+    .positional("arg", "Title, search text or id")
+    .positional("extra", "Tag name for `tag`");
+}
+
+function paint(s: string, code: i64, color: bool): string {
+  return color ? `\x1b[${code}m${s}\x1b[0m` : s;
+}
+
+// One note as a list line: `id  title  #tag #tag`.
+export function line(n: Note, color: bool): string {
+  const tags = n.tags.map((t) => paint(`#${t}`, 36, color)).join(" ");
+  const suffix = tags !== "" ? `  ${tags}` : "";
+  return `${paint(`${n.id}`, 33, color)}  ${n.title}${suffix}`;
+}
+
+function parseId(s: string): i64 {
+  const n = parseInt(s, 10);
+  if (n != n) {
+    throw new CliError(`'${s}' is not a note id`);
+  }
+  return n as i64;
+}
+
+// Positional `name`, or a usage error saying `command` needs `what`.
+function required(opts: ParsedArgs, name: string, command: string, what: string): string {
+  const v = opts.get(name);
+  if (v == null) {
+    throw new CliError(`'${command}' needs ${what}`);
+  }
+  return v;
+}
+
+// Runs `argv` (without the program name) against the notes file (`--db`, else `defaultDb`);
+// `now` is the creation time for `add`. Throws CliError / NotFoundError / IoError / JsonError.
+export function execute(argv: string[], defaultDb: string, now: i64): string[] {
+  const opts = parser().parse(argv);
+  if (opts.flag("help") || opts.positionals.length === 0) {
+    return [parser().help()];
+  }
+  const color = opts.flag("color");
+  const store = NoteStore.load(opts.getOr("db", defaultDb));
+  const command = opts.getOr("command", "");
+  const out: string[] = [];
+  switch (command) {
+    case "add": {
+      const title = required(opts, "arg", command, "a title");
+      const note = store.add(title, opts.getOr("body", ""), opts.getAll("tag"), now);
+      store.save();
+      out.push(`added ${note.id}`);
+      break;
+    }
+    case "list": {
+      const tag = opts.get("tag");
+      const notes = tag != null ? store.withTag(tag) : store.notes.clone();
+      notes.forEach((n) => out.push(line(n, color)));
+      break;
+    }
+    case "search":
+      for (const n of store.search(required(opts, "arg", command, "search text"))) {
+        out.push(line(n, color));
+      }
+      break;
+    case "show": {
+      const n = store.get(parseId(required(opts, "arg", command, "an id")));
+      out.push(line(n, color));
+      out.push(`created ${DateTime.fromEpochMs(n.created).toISOString()}`);
+      if (n.body !== "") {
+        out.push("");
+        out.push(n.body);
+      }
+      break;
+    }
+    case "tag": {
+      const id = parseId(required(opts, "arg", command, "an id"));
+      store.addTag(id, required(opts, "extra", command, "a tag"));
+      store.save();
+      out.push(line(store.get(id), color));
+      break;
+    }
+    case "rm": {
+      const id = parseId(required(opts, "arg", command, "an id"));
+      store.remove(id);
+      store.save();
+      out.push(`removed ${id}`);
+      break;
+    }
+    case "tags":
+      for (const [tag, count] of store.tagCounts()) {
+        out.push(`${tag}: ${count}`);
+      }
+      break;
+    default:
+      throw new CliError(`unknown command '${command}' (try --help)`);
+  }
+  return out;
+}

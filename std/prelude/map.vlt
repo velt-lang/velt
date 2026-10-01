@@ -1,0 +1,405 @@
+// Prelude: `Map<K, V>`, an insertion-ordered hash map with JS `Map` semantics.
+//
+// Layout (like CPython's dict / indexmap):
+// - Entries live in two dense parallel arrays (`entryKeys`, `entryValues`) in insertion order,
+//   so iteration is a linear scan and order matches JS. A deleted entry's value is dropped at
+//   once (set to null); its key stays as a tombstone until the next compaction. (One array of
+//   `{ key, value }` entries measured ~20% slower on k-nucleotide: probing reads only keys, and
+//   they pack densest on their own. Values stay `V | null` so a delete drops the value at once.)
+// - `slots` is an open-addressing index (power-of-two capacity) of packed `u64` words:
+//   the top 32 bits of the entry's scrambled hash `p = hash * 2^64/phi` (Fibonacci hashing,
+//   which spreads even weak hashes such as sequential integers), and in the low 32 bits the
+//   entry position + 1 (0 = empty slot). The home slot of `p` is its top bits, so the stored
+//   tag also gives every slot's home: probing rejects most non-matching slots without loading
+//   the key, and growing or deleting never rehashes keys.
+// - Collisions use Robin Hood linear probing: every probe cluster is kept sorted by home slot,
+//   so a lookup stops at the first slot whose resident is closer to its own home than the key
+//   would be (misses are short even at high load), inserts shift the rest of the cluster one
+//   slot right, and deletes shift it back (no tombstones in the index). The index grows at 3/4
+//   load (as fast as plain linear probing grown at 5/8 in bench/hashmap.vlt, with half the
+//   index memory at some sizes; bench/RESULTS.md).
+//
+// Ownership: `set` takes ownership of the key and value. `get` returns a clone of the value
+// (a plain copy for Copy types such as numbers); use `has` to test membership without cloning,
+// and `upsert` / `update` to change a value in place. `keys()`, `values()` and `entries()`
+// return clones too; `forEach` borrows. A map holds at most 2^31 entries.
+
+// First index capacity once a map receives its first entry.
+const INITIAL_SLOTS: usize = 8;
+
+// Dead entries tolerated before `delete` considers compacting.
+const COMPACT_MIN_DEAD: usize = 8;
+
+// 2^64 / golden ratio.
+const FIB: u64 = 0x9e3779b97f4a7c15;
+
+// Low half of a slot word: entry position + 1.
+const POS_MASK: u64 = 0xffffffff;
+
+// Entries (tombstones included) a map may hold: keeps positions within `POS_MASK` and the index
+// at most 2^32 slots, so home slots (`shift` >= 32) come from the tag half of a slot word.
+const MAX_ENTRIES: usize = 0x80000000;
+
+export class Map<K, V> {
+  // Number of live entries (read through the `size` getter; kept up to date by the mutating
+  // methods).
+  private _size: usize = 0;
+  private entryKeys: K[] = [];
+  // null for deleted entries (tombstones).
+  private entryValues: (V | null)[] = [];
+  // Tombstones (deleted but not yet compacted) in the dense arrays.
+  private dead: usize = 0;
+  private slots: u64[] = [];
+  // 64 - log2(slots.length): home slot = p >> shift.
+  private shift: u64 = 64;
+
+  // Number of entries (like JS `Map.prototype.size`).
+  get size(): usize {
+    return this._size;
+  }
+
+  // Inserts or replaces. On replace the new key is dropped and the entry keeps its position
+  // (JS semantics: re-setting a key does not move it to the end).
+  set(key: K, value: V) {
+    const p = __intrinsic_hash(key) * FIB;
+    const e = this.lookup(key, p);
+    if (e >= 0) {
+      this.entryValues[e as usize] = value;
+      return;
+    }
+    this.append(key, value, p, e);
+  }
+
+  // A clone of the value stored for `key` (see header), or null.
+  get(key: K): V | null {
+    const e = this.lookup(key, __intrinsic_hash(key) * FIB);
+    if (e < 0) {
+      return null;
+    }
+    return this.entryValues[e as usize].clone();
+  }
+
+  has(key: K): bool {
+    return this.lookup(key, __intrinsic_hash(key) * FIB) >= 0;
+  }
+
+  // If `key` is present, replaces its value with `f(value)` (which borrows the old value);
+  // otherwise inserts `init` (dropped unused when `key` is present). One lookup either way:
+  // `m.upsert(word, 1, (n) => n + 1)` counts words.
+  upsert<E>(key: K, init: V, f: (value: V) => V throws E) throws E {
+    const p = __intrinsic_hash(key) * FIB;
+    const found = this.lookup(key, p);
+    if (found >= 0) {
+      const e = found as usize;
+      const next = applyTo(this.entryValues[e], f);
+      this.entryValues[e] = next;
+      return;
+    }
+    this.append(key, init, p, found);
+  }
+
+  // Calls `f` with the value stored for `key` (not a copy), so an object value can be changed
+  // in place: `m.update(k, (xs) => { xs.push(x); })`. Copy values (numbers, bool, Copy
+  // structs) arrive by value like any Copy argument: replace them with `upsert` or `set`.
+  // Returns whether `key` was present.
+  update<E>(key: K, f: (value: V) => void throws E): bool throws E {
+    const e = this.lookup(key, __intrinsic_hash(key) * FIB);
+    if (e < 0) {
+      return false;
+    }
+    mutateWith(this.entryValues[e as usize], f);
+    return true;
+  }
+
+  // A clone of the value stored for `key`, inserting `make()` first if `key` is absent.
+  getOrInsert<E>(key: K, make: () => V throws E): V throws E {
+    const p = __intrinsic_hash(key) * FIB;
+    const e = this.lookup(key, p);
+    if (e < 0) {
+      this.append(key, make(), p, e);
+      return cloneValue(this.entryValues[this.entryValues.length - 1]);
+    }
+    return cloneValue(this.entryValues[e as usize]);
+  }
+
+  // Removes `key`; returns whether it was present. The value is dropped immediately.
+  delete(key: K): bool {
+    const p = __intrinsic_hash(key) * FIB;
+    const found = this.lookup(key, p);
+    if (found < 0) {
+      return false;
+    }
+    const e = found as usize;
+    this.removeSlot(this.slotOf(p, e));
+    this._size--;
+    if (this._size == 0) {
+      // Every slot is empty again; drop all entries but keep the index capacity.
+      this.dropEntries();
+      return true;
+    }
+    if (e + 1 == this.entryKeys.length) {
+      // Newest entry: pop it instead of leaving a tombstone.
+      this.entryKeys.pop();
+      this.entryValues.pop();
+      return true;
+    }
+    this.entryValues[e] = null;
+    this.dead++;
+    if (this.dead > COMPACT_MIN_DEAD && this.dead > this._size) {
+      // Compacting renumbers every slot, so shrink an index that has become mostly empty
+      // first: that keeps repeated compactions of a draining map proportional to its size.
+      let fit = INITIAL_SLOTS;
+      while (this._size * 8 > fit * 3) {
+        fit = fit * 2;
+      }
+      if (fit < this.slots.length) {
+        this.resize(fit);
+      } else {
+        this.compact();
+      }
+    }
+    return true;
+  }
+
+  clear() {
+    this.dropEntries();
+    this.slots = [];
+    this.shift = 64;
+  }
+
+  keys(): K[] {
+    const out: K[] = __intrinsic_array_with_capacity(this._size);
+    for (let e: usize = 0; e < this.entryKeys.length; e++) {
+      if (this.entryValues[e] != null) {
+        out.push(this.entryKeys[e].clone());
+      }
+    }
+    return out;
+  }
+
+  values(): V[] {
+    const out: V[] = __intrinsic_array_with_capacity(this._size);
+    for (let e: usize = 0; e < this.entryValues.length; e++) {
+      pushClone(out, this.entryValues[e]);
+    }
+    return out;
+  }
+
+  entries(): [K, V][] {
+    const out: [K, V][] = __intrinsic_array_with_capacity(this._size);
+    for (let e: usize = 0; e < this.entryKeys.length; e++) {
+      pushEntry(out, this.entryKeys[e], this.entryValues[e]);
+    }
+    return out;
+  }
+
+  // Visits live entries in insertion order, borrowing them (JS argument order: value, key).
+  forEach<E>(f: (value: V, key: K) => void throws E) throws E {
+    for (let e: usize = 0; e < this.entryKeys.length; e++) {
+      visit(this.entryValues[e], this.entryKeys[e], f);
+    }
+  }
+
+  // ─────────────── internals (not part of the JS surface) ───────────────
+
+  // Probes for `key` (scrambled hash `p`): its entry position if present, else -(stop + 1)
+  // where `stop` is the slot a new entry for `key` goes to (Robin Hood order). A hit returns the
+  // position so the caller goes straight to the entry arrays. Terminates because the load
+  // factor keeps at least one slot empty.
+  private lookup(key: K, p: u64): i64 {
+    if (this.slots.length == 0) {
+      return -1;
+    }
+    const mask = this.slots.length - 1;
+    let s = (p >> this.shift) as usize;
+    let dist: usize = 0;
+    while (true) {
+      const w = this.slots[s];
+      if (w == 0) {
+        return -(s as i64) - 1;
+      }
+      if (((w ^ p) >> 32) == 0) {
+        const e = ((w & POS_MASK) - 1) as usize;
+        if (this.entryKeys[e] == key) {
+          return e as i64;
+        }
+      }
+      if (((s - ((w >> this.shift) as usize)) & mask) < dist) {
+        return -(s as i64) - 1;
+      }
+      s = (s + 1) & mask;
+      dist++;
+    }
+  }
+
+  // The slot holding entry position `e` (scrambled hash `p`), which is present.
+  private slotOf(p: u64, e: usize): usize {
+    const mask = this.slots.length - 1;
+    let s = (p >> this.shift) as usize;
+    while ((this.slots[s] & POS_MASK) != e as u64 + 1) {
+      s = (s + 1) & mask;
+    }
+    return s;
+  }
+
+  // Appends a new entry; `s` is `lookup`'s miss result for `key`.
+  private append(key: K, value: V, p: u64, s: i64) {
+    if ((this._size + 1) * 4 > this.slots.length * 3) {
+      this.resize(this.slots.length == 0 ? INITIAL_SLOTS : this.slots.length * 2);
+      s = this.lookup(key, p);
+    }
+    if (this.entryKeys.length >= MAX_ENTRIES) {
+      panic("Map: too many entries");
+    }
+    const word = (p & ~POS_MASK) | (this.entryKeys.length as u64 + 1);
+    this.entryKeys.push(key);
+    this.entryValues.push(value);
+    shiftIn(this.slots, (-s - 1) as usize, word);
+    this._size++;
+  }
+
+  // Backward-shift deletion: moves the rest of the probe cluster one slot left until an empty
+  // slot or an entry already in its home slot.
+  private removeSlot(hole: usize) {
+    const mask = this.slots.length - 1;
+    let next = (hole + 1) & mask;
+    let w = this.slots[next];
+    while (w != 0 && ((next - ((w >> this.shift) as usize)) & mask) != 0) {
+      this.slots[hole] = w;
+      hole = next;
+      next = (next + 1) & mask;
+      w = this.slots[next];
+    }
+    this.slots[hole] = 0;
+  }
+
+  // Rebuilds the index with `capacity` slots (a power of two), compacting tombstones first.
+  // The old slot words are re-placed as they are: their tags hold the homes, so no key is
+  // rehashed.
+  private resize(capacity: usize) {
+    if (this.dead > 0) {
+      this.compact();
+    }
+    const slots: u64[] = __intrinsic_array_with_capacity(capacity);
+    for (let s: usize = 0; s < capacity; s++) {
+      slots.push(0);
+    }
+    let bits: u64 = 0;
+    let c = capacity;
+    while (c > 1) {
+      c = c >> 1;
+      bits++;
+    }
+    const shift = 64 - bits;
+    for (let s: usize = 0; s < this.slots.length; s++) {
+      const w = this.slots[s];
+      if (w != 0) {
+        place(slots, shift, w);
+      }
+    }
+    this.slots = slots;
+    this.shift = shift;
+  }
+
+  // Slides live entries to the front (preserving order) with swaps, truncates the dead tail
+  // (dropping the dead keys), then renumbers the positions in the slot words in place.
+  private compact() {
+    const moved: u64[] = __intrinsic_array_with_capacity(this.entryKeys.length);
+    let w: usize = 0;
+    for (let r: usize = 0; r < this.entryKeys.length; r++) {
+      if (this.entryValues[r] != null) {
+        if (w != r) {
+          __intrinsic_array_swap(this.entryKeys, w, r);
+          __intrinsic_array_swap(this.entryValues, w, r);
+        }
+        w++;
+        moved.push(w as u64);
+      } else {
+        moved.push(0);
+      }
+    }
+    __intrinsic_array_truncate(this.entryKeys, w);
+    __intrinsic_array_truncate(this.entryValues, w);
+    this.dead = 0;
+    for (let s: usize = 0; s < this.slots.length; s++) {
+      const word = this.slots[s];
+      if (word != 0) {
+        this.slots[s] = (word & ~POS_MASK) | moved[((word & POS_MASK) - 1) as usize];
+      }
+    }
+  }
+
+  private dropEntries() {
+    __intrinsic_array_truncate(this.entryKeys, 0);
+    __intrinsic_array_truncate(this.entryValues, 0);
+    this._size = 0;
+    this.dead = 0;
+  }
+}
+
+// Inserts slot word `w` into `slots` (home `w >> shift`) at its Robin Hood position.
+function place(slots: u64[], shift: u64, w: u64) {
+  const mask = slots.length - 1;
+  let s = (w >> shift) as usize;
+  let dist: usize = 0;
+  while (slots[s] != 0 && ((s - ((slots[s] >> shift) as usize)) & mask) >= dist) {
+    s = (s + 1) & mask;
+    dist++;
+  }
+  shiftIn(slots, s, w);
+}
+
+// Stores `w` at slot `s`, shifting the occupied slots from `s` up to the next empty one right
+// by one (keeps each cluster sorted by home).
+function shiftIn(slots: u64[], s: usize, w: u64) {
+  const mask = slots.length - 1;
+  while (w != 0) {
+    const next = slots[s];
+    slots[s] = w;
+    w = next;
+    s = (s + 1) & mask;
+  }
+}
+
+// Helpers that reach into a live entry's value (`V | null` narrowed through a parameter).
+
+// `f(value)` for a live entry's value. The caller stores the result into the array element
+// (assigning a parameter is local to the callee).
+function applyTo<V, E>(slot: V | null, f: (value: V) => V throws E): V | null throws E {
+  if (slot != null) {
+    return f(slot);
+  }
+  return null;
+}
+
+function mutateWith<V, E>(slot: V | null, f: (value: V) => void throws E) throws E {
+  if (slot != null) {
+    f(slot);
+  }
+}
+
+function cloneValue<V>(slot: V | null): V {
+  if (slot != null) {
+    return slot.clone();
+  }
+  panic("ICE: Map entry without a value");
+}
+
+function pushClone<V>(out: V[], slot: V | null) {
+  if (slot != null) {
+    out.push(slot.clone());
+  }
+}
+
+function pushEntry<K, V>(out: [K, V][], key: K, slot: V | null) {
+  if (slot != null) {
+    const pair: [K, V] = [key.clone(), slot.clone()];
+    out.push(pair);
+  }
+}
+
+function visit<K, V, E>(slot: V | null, key: K, f: (value: V, key: K) => void throws E) throws E {
+  if (slot != null) {
+    f(slot, key);
+  }
+}

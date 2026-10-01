@@ -1,0 +1,4 @@
+200 application/json {"path":"/json","method":"GET","n":1}
+200 got hi
+404
+3

@@ -1,0 +1,63 @@
+// An expression tree as a class hierarchy with virtual eval/show.
+class Node {
+  eval(): f64 {
+    return 0.0;
+  }
+  show(): string {
+    return "?";
+  }
+}
+
+class Num extends Node {
+  v: f64;
+  constructor(v: f64) {
+    super();
+    this.v = v;
+  }
+  override eval(): f64 {
+    return this.v;
+  }
+  override show(): string {
+    return `${this.v}`;
+  }
+}
+
+class Bin extends Node {
+  op: string;
+  l: Node;
+  r: Node;
+  constructor(op: string, l: Node, r: Node) {
+    super();
+    this.op = op;
+    this.l = l;
+    this.r = r;
+  }
+  override eval(): f64 {
+    const a = this.l.eval();
+    const b = this.r.eval();
+    if (this.op == "+") {
+      return a + b;
+    }
+    if (this.op == "-") {
+      return a - b;
+    }
+    if (this.op == "*") {
+      return a * b;
+    }
+    return a / b;
+  }
+  override show(): string {
+    return `(${this.l.show()} ${this.op} ${this.r.show()})`;
+  }
+}
+
+function main() {
+  const e = new Bin(
+    "*",
+    new Bin("+", new Num(1.5), new Num(2.0)),
+    new Bin("-", new Num(10.0), new Bin("/", new Num(1.0), new Num(3.0))),
+  );
+  console.log(e.show(), "=", e.eval());
+  const z = new Bin("/", new Num(1.0), new Bin("-", new Num(2.0), new Num(2.0)));
+  console.log(z.show(), "=", z.eval());
+}

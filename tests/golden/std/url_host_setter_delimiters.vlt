@@ -1,0 +1,26 @@
+// Regression (difftest url-host-setter-delimiters): the `host` / `hostname` setters parse up to
+// the first `/`, `?` or `#`; an empty host is ignored, an empty port keeps the current one, and
+// a hostless non-special URL (`mailto:/p`) gets a host.
+import { URL } from "velt:url";
+
+function main() {
+  const u = new URL("ws://h/p");
+  u.host = "x?y";
+  console.log(u.href);
+  u.hostname = "z/w";
+  console.log(u.href);
+  u.host = "q:81#r";
+  console.log(u.href);
+  u.host = "a\",?Z";
+  console.log(u.href);
+  u.host = "b#c";
+  console.log(u.href);
+  u.host = ":8";
+  console.log(u.href);
+  const k = new URL("ws://k:443/");
+  k.host = "h0:";
+  console.log(k.href);
+  const m = new URL("mailto:/p/q");
+  m.hostname = "h";
+  console.log(m.href);
+}

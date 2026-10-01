@@ -1,0 +1,7 @@
+rows 400 connections <= 4: true true
+dedicated 2
+  inside: 22012
+rolled back: 22012
+deleted 25 left 376
+shared client [ 1, 4, 9, 16, 25, 36, 49, 64 ]
+ended ECLOSED

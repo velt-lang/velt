@@ -1,0 +1,354 @@
+// Prelude: JS-style methods on every array `T[]` (implicitly imported into every module).
+//
+// Conventions (see std/README.md):
+// - Callbacks are non-escaping function params; elements are passed to them as borrows, so
+//   iterating never copies non-Copy elements. A callback may throw: the method throws what its
+//   callback throws (`E`, inferred per call; `never` when the callback cannot throw).
+// - Methods that return elements *out of* the array (`find`, `filter`, `slice`, `concat`) return
+//   clones: the array keeps ownership of its elements. For Copy element types (numbers, bool,
+//   Copy structs) a clone is a plain copy, so this costs nothing extra.
+// - Indices are `usize` internally; positions reported to users (`indexOf`, `findIndex`) are
+//   `i64` with -1 for "absent", like JS.
+// - Sorting (`sort()`, `sort(cmp)`) lives in sort.vlt. `clone()` is compiler-provided.
+
+extend<T> Array<T> {
+  forEach<E>(f: (x: T) => void throws E) throws E {
+    for (let i: usize = 0; i < this.length; i++) {
+      f(this[i]);
+    }
+  }
+
+  map<U, E>(f: (x: T) => U throws E): U[] throws E {
+    const out: U[] = __intrinsic_array_with_capacity(this.length);
+    for (let i: usize = 0; i < this.length; i++) {
+      out.push(f(this[i]));
+    }
+    return out;
+  }
+
+  filter<E>(keep: (x: T) => bool throws E): T[] throws E {
+    const out: T[] = [];
+    for (let i: usize = 0; i < this.length; i++) {
+      if (keep(this[i])) {
+        out.push(this[i].clone());
+      }
+    }
+    return out;
+  }
+
+  reduce<A, E>(f: (acc: A, x: T) => A throws E, init: A): A throws E {
+    let acc = init;
+    for (let i: usize = 0; i < this.length; i++) {
+      acc = f(acc, this[i]);
+    }
+    return acc;
+  }
+
+  // First element matching `pred`, cloned (see header), or null.
+  find<E>(pred: (x: T) => bool throws E): T | null throws E {
+    for (let i: usize = 0; i < this.length; i++) {
+      if (pred(this[i])) {
+        return this[i].clone();
+      }
+    }
+    return null;
+  }
+
+  // Index of the first element matching `pred`, or -1. Use with `xs[i]` to avoid a clone.
+  findIndex<E>(pred: (x: T) => bool throws E): i64 throws E {
+    for (let i: usize = 0; i < this.length; i++) {
+      if (pred(this[i])) {
+        return i as i64;
+      }
+    }
+    return -1;
+  }
+
+  // Last element matching `pred`, cloned (see header), or null.
+  findLast<E>(pred: (x: T) => bool throws E): T | null throws E {
+    const i = this.findLastIndex(pred);
+    return i < 0 ? null : this[i as usize].clone();
+  }
+
+  // Index of the last element matching `pred`, or -1.
+  findLastIndex<E>(pred: (x: T) => bool throws E): i64 throws E {
+    let i = this.length;
+    while (i > 0) {
+      i--;
+      if (pred(this[i])) {
+        return i as i64;
+      }
+    }
+    return -1;
+  }
+
+  // The element at `index` (negative counts from the end), cloned (see header), or null when
+  // out of range.
+  at(index: i64): T | null {
+    const i = index < 0 ? index + (this.length as i64) : index;
+    if (i < 0 || i >= (this.length as i64)) {
+      return null;
+    }
+    return this[i as usize].clone();
+  }
+
+  // Sets the elements in [start, end) to clones of `value` (positions as in `slice`). JS also
+  // returns the array; here the result is `void`, like `reverse`.
+  fill(value: T, start: i64 = 0, end: i64 = 9223372036854775807) {
+    const hi = clampPosition(end, this.length);
+    for (let i = clampPosition(start, this.length); i < hi; i++) {
+      this[i] = value.clone();
+    }
+  }
+
+  some<E>(pred: (x: T) => bool throws E): bool throws E {
+    for (let i: usize = 0; i < this.length; i++) {
+      if (pred(this[i])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  every<E>(pred: (x: T) => bool throws E): bool throws E {
+    for (let i: usize = 0; i < this.length; i++) {
+      if (!pred(this[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Structural equality (`==`), so `NaN` is never found (JS `indexOf` semantics).
+  indexOf(x: T): i64 {
+    for (let i: usize = 0; i < this.length; i++) {
+      if (this[i] == x) {
+        return i as i64;
+      }
+    }
+    return -1;
+  }
+
+  lastIndexOf(x: T): i64 {
+    let i = this.length;
+    while (i > 0) {
+      i--;
+      if (this[i] == x) {
+        return i as i64;
+      }
+    }
+    return -1;
+  }
+
+  includes(x: T): bool {
+    return this.indexOf(x) >= 0;
+  }
+
+  // Clones of the elements in [start, end). JS semantics: negative positions count from the
+  // end, out-of-range positions are clamped, and `end` defaults to the length.
+  slice(start: i64 = 0, end: i64 = 9223372036854775807): T[] {
+    const lo = clampPosition(start, this.length);
+    const hi = clampPosition(end, this.length);
+    if (hi <= lo) {
+      return [];
+    }
+    const out: T[] = __intrinsic_array_with_capacity(hi - lo);
+    for (let i = lo; i < hi; i++) {
+      out.push(this[i].clone());
+    }
+    return out;
+  }
+
+  // New array with clones of this array's elements followed by `other`'s.
+  concat(other: T[]): T[] {
+    const out: T[] = __intrinsic_array_with_capacity(this.length + other.length);
+    for (let i: usize = 0; i < this.length; i++) {
+      out.push(this[i].clone());
+    }
+    for (let i: usize = 0; i < other.length; i++) {
+      out.push(other[i].clone());
+    }
+    return out;
+  }
+
+  // Reverses in place (JS also returns the array; here the result is `void`).
+  reverse() {
+    if (this.length < 2) {
+      return;
+    }
+    let i: usize = 0;
+    let j = this.length - 1;
+    while (i < j) {
+      __intrinsic_array_swap(this, i, j);
+      i++;
+      j--;
+    }
+  }
+
+  isEmpty(): bool {
+    return this.length == 0;
+  }
+
+  // `[index, element]` pairs, elements cloned (see header). JS returns an iterator; an array
+  // serves the same `for (const [i, x] of xs.entries())` loops.
+  entries(): [usize, T][] {
+    const out: [usize, T][] = __intrinsic_array_with_capacity(this.length);
+    for (let i: usize = 0; i < this.length; i++) {
+      out.push([i, this[i].clone()]);
+    }
+    return out;
+  }
+
+  // `join` for element types without their own (string enums, literal unions, objects): each
+  // element as a template literal shows it (`${x}`; for objects that is the `console.log`
+  // form, where JS writes `[object Object]`). Strings, numbers and bools have exact ones below.
+  join(sep: string = ","): string {
+    let s = "";
+    for (let i: usize = 0; i < this.length; i++) {
+      if (i > 0) {
+        s += sep;
+      }
+      s += `${this[i]}`;
+    }
+    return s;
+  }
+}
+
+// The runtime's string builder (rt_abi_async.md §12). `VeltStrBuf` has the `string` layout,
+// so a `string` local serves as the builder and is the result once built (no finishing copy).
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+
+extend Array<string> {
+  // Joins with `sep`: one pass sums the lengths, then every piece is copied once into a buffer
+  // of exactly that size.
+  join(sep: string = ","): string {
+    const n = this.length;
+    if (n == 0) {
+      return "";
+    }
+    let total = sep.length * (n - 1);
+    for (let i: usize = 0; i < n; i++) {
+      total += this[i].length;
+    }
+    let s = "";
+    velt_rt_strbuf_new(total as u64, s);
+    velt_rt_strbuf_push_str(s, this[0]);
+    for (let i: usize = 1; i < n; i++) {
+      velt_rt_strbuf_push_str(s, sep);
+      velt_rt_strbuf_push_str(s, this[i]);
+    }
+    return s;
+  }
+}
+
+// `join` on numbers and booleans: each element is converted like `String(x)` (the same text
+// `console.log` prints), then joined as strings. One `extend` per element type, since a generic
+// `T` has no `toString`.
+extend Array<i8> {
+  join(sep: string = ","): string {
+    return this.map((x) => x.toString()).join(sep);
+  }
+}
+
+extend Array<i16> {
+  join(sep: string = ","): string {
+    return this.map((x) => x.toString()).join(sep);
+  }
+}
+
+extend Array<i32> {
+  join(sep: string = ","): string {
+    return this.map((x) => x.toString()).join(sep);
+  }
+}
+
+extend Array<i64> {
+  join(sep: string = ","): string {
+    return this.map((x) => x.toString()).join(sep);
+  }
+}
+
+extend Array<isize> {
+  join(sep: string = ","): string {
+    return this.map((x) => x.toString()).join(sep);
+  }
+}
+
+extend Array<u8> {
+  join(sep: string = ","): string {
+    return this.map((x) => x.toString()).join(sep);
+  }
+}
+
+extend Array<u16> {
+  join(sep: string = ","): string {
+    return this.map((x) => x.toString()).join(sep);
+  }
+}
+
+extend Array<u32> {
+  join(sep: string = ","): string {
+    return this.map((x) => x.toString()).join(sep);
+  }
+}
+
+extend Array<u64> {
+  join(sep: string = ","): string {
+    return this.map((x) => x.toString()).join(sep);
+  }
+}
+
+extend Array<usize> {
+  join(sep: string = ","): string {
+    return this.map((x) => x.toString()).join(sep);
+  }
+}
+
+extend Array<f32> {
+  join(sep: string = ","): string {
+    return this.map((x) => x.toString()).join(sep);
+  }
+}
+
+extend Array<f64> {
+  join(sep: string = ","): string {
+    return this.map((x) => x.toString()).join(sep);
+  }
+}
+
+extend Array<bool> {
+  join(sep: string = ","): string {
+    return this.map((x) => x.toString()).join(sep);
+  }
+}
+
+// JS relative position → index in [0, len].
+function clampPosition(pos: i64, len: usize): usize {
+  const n = len as i64;
+  if (pos < 0) {
+    const fromEnd = n + pos;
+    return fromEnd < 0 ? 0 : fromEnd as usize;
+  }
+  return pos > n ? len : pos as usize;
+}
+
+// `new Array<T>(n).fill(v)` (the compiler rewrites it to this, `sema` `array_ctor`): `n` copies
+// of `v` in one allocation.
+export function __arrayFilled<T>(n: i64, v: T): T[] {
+  const len: usize = n > 0 ? n as usize : 0;
+  const out: T[] = __intrinsic_array_with_capacity(len);
+  for (let i: usize = 0; i < len; i++) {
+    out.push(v.clone());
+  }
+  return out;
+}
+
+// `Array.from({ length: n }, (_, i) => f(i))` (rewritten to this): `f(i)` for each index.
+export function __arrayFromLength<U>(n: i64, f: (i: i64) => U): U[] {
+  const out: U[] = __intrinsic_array_with_capacity(n > 0 ? n as usize : 0);
+  for (let i = 0; i < n; i++) {
+    out.push(f(i));
+  }
+  return out;
+}

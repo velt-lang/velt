@@ -1,0 +1,228 @@
+// std/redis/reply: `RedisReply`, the `RedisError` mapping and the decoding of runtime replies for std/redis
+// (rt_abi_async.md §14.12). Internal: import the public names from "velt:redis".
+//
+// The runtime hands a reply over as three parallel arrays in pre-order (a node, then its
+// children): `tags` (the kind), `nums` (an integer, or an array's length) and `strs` (text).
+// Typed commands read them directly (`get` looks at node 0, `lrange` at nodes 1..); `call()` and
+// pipelines rebuild the tree as `RedisReply` objects.
+
+import { IoResult } from "velt:io";
+import { RedisError } from "velt:redis";
+
+declare function velt_rt_err_code_name(code: i32): string;
+
+// Node kinds (the runtime's `reply::tag`).
+const NIL: u8 = 0;
+const STATUS: u8 = 1;
+const ERROR: u8 = 2;
+const INT: u8 = 3;
+const STRING: u8 = 4;
+const ARRAY: u8 = 5;
+
+// `VeltErr.code` of an error reply from the server.
+const SERVER_ERROR: i32 = 100;
+
+// The runtime's `VeltRedisReply`.
+export struct RawReply {
+  tags: u8[];
+  nums: i64[];
+  strs: string[];
+}
+
+// What a reply node is.
+export type RedisReplyKind = "nil" | "status" | "error" | "int" | "string" | "array";
+
+// A decoded reply (from `call()` and pipelines).
+export class RedisReply {
+  kind: RedisReplyKind;
+  // Text of a "status", "error" or "string" reply ("" otherwise).
+  text: string;
+  // Value of an "int" reply (0 otherwise).
+  int: i64;
+  // Elements of an "array" reply (empty otherwise).
+  items: RedisReply[];
+
+  constructor(kind: RedisReplyKind, text: string, int: i64, items: RedisReply[]) {
+    this.kind = kind;
+    this.text = text;
+    this.int = int;
+    this.items = items;
+  }
+
+  // Whether this is a missing value (`nil`).
+  isNull(): bool {
+    return this.kind == "nil";
+  }
+
+  // Whether the command failed (only inside pipelines: a failed `call()` throws).
+  isError(): bool {
+    return this.kind == "error";
+  }
+
+  // The text of a string or status reply, else null.
+  asString(): string | null {
+    if (this.kind == "string" || this.kind == "status") {
+      return this.text;
+    }
+    return null;
+  }
+
+  // The value of an int reply (or of a string holding an integer), else null.
+  asInt(): i64 | null {
+    if (this.kind == "int") {
+      return this.int;
+    }
+    if (this.kind == "string") {
+      const n = parseInt(this.text, 10);
+      if (n == n && `${n}` == this.text) {
+        return n as i64;
+      }
+    }
+    return null;
+  }
+
+  // The string elements of an array reply (nil and non-string elements become "").
+  asStrings(): string[] {
+    const out: string[] = __intrinsic_array_with_capacity(this.items.length);
+    for (const it of this.items) {
+      out.push(it.asString() ?? "");
+    }
+    return out;
+  }
+}
+
+// The error of a failed runtime operation.
+export function redisError(code: i32, message: string): RedisError {
+  if (code == SERVER_ERROR) {
+    const space = message.indexOf(" ");
+    return new RedisError(space > 0 ? message.slice(0, space) : message, message);
+  }
+  return new RedisError(velt_rt_err_code_name(code), message);
+}
+
+// The reply of a successful operation; throws `RedisError` otherwise.
+export function checkReply(r: IoResult<RawReply>): RawReply {
+  if (r.code != 0) {
+    throw redisError(r.code, r.message);
+  }
+  return r.value;
+}
+
+// A reply that is not of the kind a command promises (a server bug or an unexpected module).
+function unexpected(r: RawReply): RedisError {
+  return new RedisError("EPROTO", `unexpected Redis reply of kind ${r.tags[0]}`);
+}
+
+// A string or status reply; null for nil.
+export function replyText(r: RawReply): string | null {
+  const t = r.tags[0];
+  if (t == STRING || t == STATUS) {
+    return r.strs[0];
+  }
+  if (t != NIL) {
+    throw unexpected(r);
+  }
+  return null;
+}
+
+// An integer reply.
+export function replyInt(r: RawReply): i64 {
+  if (r.tags[0] != INT) {
+    throw unexpected(r);
+  }
+  return r.nums[0];
+}
+
+// An array of strings (nil elements become "").
+export function replyStrings(r: RawReply): string[] {
+  if (r.tags[0] != ARRAY) {
+    throw unexpected(r);
+  }
+  return r.strs.slice(1);
+}
+
+// An array of strings that may be nil (`mget`).
+export function replyNullableStrings(r: RawReply): (string | null)[] {
+  if (r.tags[0] != ARRAY) {
+    throw unexpected(r);
+  }
+  const out: (string | null)[] = __intrinsic_array_with_capacity(r.tags.length - 1);
+  for (let i: usize = 1; i < r.tags.length; i++) {
+    out.push(r.tags[i] == NIL ? null : r.strs[i]);
+  }
+  return out;
+}
+
+// A flat array of field, value pairs (`hgetall`).
+export function replyMap(r: RawReply): Map<string, string> {
+  const m = new Map<string, string>();
+  const xs = replyStrings(r);
+  for (let i: usize = 0; i + 1 < xs.length; i += 2) {
+    m.set(xs[i], xs[i + 1]);
+  }
+  return m;
+}
+
+// A Redis float ("1.5", "inf", "-inf").
+export function parseScore(s: string): f64 {
+  if (s == "inf" || s == "+inf") {
+    return 1.0 / 0.0;
+  }
+  if (s == "-inf") {
+    return -1.0 / 0.0;
+  }
+  return parseFloat(s);
+}
+
+// A float argument as Redis reads it (`inf` instead of JS's `Infinity`).
+export function scoreArg(x: f64): string {
+  if (x == 1.0 / 0.0) {
+    return "+inf";
+  }
+  if (x == -1.0 / 0.0) {
+    return "-inf";
+  }
+  return `${x}`;
+}
+
+// Walks the pre-order nodes of a `RawReply`.
+class Cursor {
+  pos: usize = 0;
+}
+
+function node(r: RawReply, c: Cursor): RedisReply {
+  const i = c.pos;
+  c.pos = i + 1;
+  const t = r.tags[i];
+  if (t == ARRAY) {
+    const n = r.nums[i] as usize;
+    const items: RedisReply[] = __intrinsic_array_with_capacity(n);
+    for (let k: usize = 0; k < n; k++) {
+      items.push(node(r, c));
+    }
+    return new RedisReply("array", "", 0, items);
+  }
+  const kind: RedisReplyKind =
+    t == NIL ? "nil" : t == STATUS ? "status" : t == ERROR ? "error" : t == INT ? "int" : "string";
+  return new RedisReply(kind, r.strs[i], r.nums[i], []);
+}
+
+// The reply tree.
+export function replyTree(r: RawReply): RedisReply {
+  return node(r, new Cursor());
+}
+
+// The elements of an array reply, as trees (pipeline results).
+export function replyItems(r: RawReply): RedisReply[] {
+  if (r.tags[0] != ARRAY) {
+    throw unexpected(r);
+  }
+  const c = new Cursor();
+  c.pos = 1;
+  const n = r.nums[0] as usize;
+  const items: RedisReply[] = __intrinsic_array_with_capacity(n);
+  for (let k: usize = 0; k < n; k++) {
+    items.push(node(r, c));
+  }
+  return items;
+}

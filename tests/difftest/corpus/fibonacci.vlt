@@ -1,0 +1,36 @@
+// Fibonacci three ways: recursive, iterative, memoized with a Map.
+function fibRec(n: i64): i64 {
+  return n < 2 ? n : fibRec(n - 1) + fibRec(n - 2);
+}
+
+function fibIter(n: i64): i64 {
+  let a = 0;
+  let b = 1;
+  for (let i = 0; i < n; i++) {
+    const t = a + b;
+    a = b;
+    b = t;
+  }
+  return a;
+}
+
+function fibMemo(n: i64, memo: Map<i64, i64>): i64 {
+  if (n < 2) {
+    return n;
+  }
+  const hit = memo.get(n);
+  if (hit != null) {
+    return hit;
+  }
+  const v = fibMemo(n - 1, memo) + fibMemo(n - 2, memo);
+  memo.set(n, v);
+  return v;
+}
+
+function main() {
+  const memo = new Map<i64, i64>();
+  for (let n = 0; n <= 20; n += 5) {
+    console.log(n, fibRec(n), fibIter(n), fibMemo(n, memo));
+  }
+  console.log(fibIter(70), fibMemo(70, memo), memo.size);
+}

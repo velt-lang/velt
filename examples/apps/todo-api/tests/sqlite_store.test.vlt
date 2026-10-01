@@ -1,0 +1,86 @@
+// The SQLite store on a real file: persistence across reopen, WAL mode, the schema being created
+// only once, the connection closing with the store, and bad data reported as 500 `db_error`.
+import { SqliteTodoStore } from "../src/sqlite_store";
+import { NewTodoBody, TodoPatchBody } from "../src/model";
+import { open } from "velt:sqlite";
+import { tmpdir } from "velt:os";
+import { uuidv4 } from "velt:uuid";
+import { existsSync, removeSync } from "velt:fs";
+
+function tempDb(): string {
+  return `${tmpdir()}/todo-api-${uuidv4()}.sqlite`;
+}
+
+function removeDb(path: string) {
+  for (const suffix of ["", "-wal", "-shm"]) {
+    if (existsSync(path + suffix)) {
+      removeSync(path + suffix);
+    }
+  }
+}
+
+function body(title: string, tags: string[]): NewTodoBody {
+  const b = new NewTodoBody();
+  b.title = title;
+  b.tags = tags;
+  return b;
+}
+
+// The `ApiError` a `get` throws, as "status code: message".
+function getError(store: SqliteTodoStore, id: i64): string {
+  try {
+    store.get(id);
+  } catch (e) {
+    return `${e.status} ${e.code}: ${e.message}`;
+  }
+  return "";
+}
+
+// Fills a store at `path` and lets it go (closing the connection).
+function fill(path: string) {
+  const store = new SqliteTodoStore(path);
+  store.create(body("one", ["a"]));
+  store.create(body("two", ["b", "a"]));
+  const patch = new TodoPatchBody();
+  patch.done = true;
+  store.update(2, patch);
+}
+
+export function test_data_survives_reopening() {
+  const path = tempDb();
+  fill(path);
+  const store = new SqliteTodoStore(path);
+  const todos = store.list(null, "a");
+  assertEq(todos.length, 2);
+  assertEq(todos[1].title, "two");
+  assertEq(todos[1].done, true);
+  assertEq(todos[1].tags, ["b", "a"]);
+  assertEq(store.create(body("three", [])).id, 3);
+  removeDb(path);
+}
+
+export function test_uses_wal_and_one_schema() {
+  const path = tempDb();
+  fill(path);
+  // The dropped store closed its connection, the last one, which folds the WAL into the file.
+  assertEq(existsSync(`${path}-wal`), false);
+  fill(path);
+  const db = open(path, { readonly: true });
+  assertEq(db.pragma("journal_mode"), "wal");
+  const n: { n: i64 } | null = db.prepare("SELECT count(*) AS n FROM todos").get();
+  assertEq(n?.n, 4);
+  db.close();
+  removeDb(path);
+}
+
+export function test_bad_rows_are_server_errors() {
+  const path = tempDb();
+  const store = new SqliteTodoStore(path);
+  store.create(body("one", []));
+  const db = open(path);
+  db.exec("UPDATE todos SET tags = 'not json'");
+  db.close();
+  assertEq(getError(store, 1), "500 db_error: todo 1 has malformed tags: expected array at $");
+  assertEq(getError(store, 2), "404 not_found: todo 2 not found");
+  removeDb(path);
+}

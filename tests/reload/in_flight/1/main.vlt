@@ -1,0 +1,15 @@
+// A request in flight during a hot swap finishes on the code it started with (its future is
+// pinned to its version); requests that start after the swap run the new code.
+import { serve, Request, Response } from "velt:http";
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    if (req.path == "/slow") {
+      await sleep(8000);
+      return Response.text("slow v1");
+    }
+    return Response.text("v1");
+  });
+  console.log(`listening on ${server.port}`);
+  await sleep(1000000000);
+}

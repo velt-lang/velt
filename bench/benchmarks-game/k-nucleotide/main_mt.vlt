@@ -1,0 +1,117 @@
+// k-nucleotide, multi-threaded: main.vlt with every k-nucleotide length counted in its own
+// spawned task (like the Rust #7 program's thread pool); `Promise.all` returns the maps in order.
+// Async parameters are owned, so every task gets its own copy of the sequence (see NOTES.md).
+
+import { readLineSync } from "velt:stdin";
+
+const LETTERS = "ACGT";
+
+// A=0, C=1, G=2, T=3 (either case).
+function code(c: i64): i64 {
+  switch (c) {
+    case 65:
+    case 97:
+      return 0;
+    case 67:
+    case 99:
+      return 1;
+    case 71:
+    case 103:
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+// Sequence THREE of the FASTA input on stdin, as codes.
+function readSequence(): u8[] {
+  for (;;) {
+    const line = readLineSync();
+    if (line == null || line.startsWith(">THREE")) {
+      break;
+    }
+  }
+  const seq: u8[] = [];
+  for (;;) {
+    const line = readLineSync();
+    if (line == null) {
+      break;
+    }
+    for (let i: usize = 0; i < line.length; i++) {
+      seq.push(code(line.charCodeAt(i as i64)) as u8);
+    }
+  }
+  return seq;
+}
+
+// How often each k-nucleotide of `length` occurs, keyed by its packed codes.
+function frequencies(seq: u8[], length: usize): Map<i64, i64> {
+  const counts = new Map<i64, i64>();
+  const mask = (1 << (2 * length as i64)) - 1;
+  let key = 0;
+  for (let i: usize = 0; i < seq.length; i++) {
+    key = ((key << 2) | (seq[i] as i64)) & mask;
+    if (i + 1 >= length) {
+      counts.upsert(key, 1, (n) => n + 1);
+    }
+  }
+  return counts;
+}
+
+function keyToString(key: i64, length: usize): string {
+  let s = "";
+  for (let i: usize = 0; i < length; i++) {
+    const shift = 2 * (length - 1 - i) as i64;
+    const c = (key >> shift) & 3;
+    s += LETTERS.slice(c, c + 1);
+  }
+  return s;
+}
+
+function stringToKey(s: string): i64 {
+  let key = 0;
+  for (let i: usize = 0; i < s.length; i++) {
+    key = (key << 2) | code(s.charCodeAt(i as i64));
+  }
+  return key;
+}
+
+// JS `x.toFixed(3)` for non-negative x.
+function toFixed3(x: f64): string {
+  const scaled = Math.round(x * 1000.0) as i64;
+  return `${scaled / 1000}.${`${scaled % 1000}`.padStart(3, "0")}`;
+}
+
+async function countTask(seq: u8[], length: usize): Promise<Map<i64, i64>> {
+  return frequencies(seq, length);
+}
+
+function printFrequencies(counts: Map<i64, i64>, total: f64, length: usize) {
+  const entries = counts.entries();
+  entries.sort((a, b) => (a[1] != b[1] ? b[1] - a[1] : a[0] - b[0]));
+  for (const [key, count] of entries) {
+    console.log(`${keyToString(key, length)} ${toFixed3((100 * count) as f64 / total)}`);
+  }
+  console.log("");
+}
+
+function printCount(counts: Map<i64, i64>, nucleotide: string) {
+  console.log(`${counts.get(stringToKey(nucleotide)) ?? 0}\t${nucleotide}`);
+}
+
+async function main() {
+  const seq = readSequence();
+  const nucleotides = ["GGT", "GGTA", "GGTATT", "GGTATTTTAATT", "GGTATTTTAATTTATAGT"];
+  // Longest first: the 18- and 12-nucleotide maps take longest.
+  const lengths: usize[] = [18, 12, 6, 4, 3, 2, 1];
+  const tasks: Promise<Map<i64, i64>>[] = [];
+  for (const length of lengths) {
+    tasks.push(spawn(countTask(seq.clone(), length)));
+  }
+  const maps = await Promise.all(tasks);
+  printFrequencies(maps[6], seq.length as f64, 1);
+  printFrequencies(maps[5], (seq.length - 1) as f64, 2);
+  for (let i: usize = 0; i < nucleotides.length; i++) {
+    printCount(maps[4 - i], nucleotides[i]);
+  }
+}

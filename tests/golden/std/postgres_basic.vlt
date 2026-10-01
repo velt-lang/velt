@@ -1,0 +1,80 @@
+// std/postgres basics: connect, batch, query/queryOne/execute with positional and named
+// parameters, the no-parameter forms, and close.
+// requires-env: VELT_TEST_PG_URL
+import { env } from "velt:process";
+import { connect } from "velt:postgres";
+
+class User {
+  id: i64;
+  name: string;
+  email: string;
+  age: i64 | null;
+
+  constructor(id: i64, name: string, email: string, age: i64 | null) {
+    this.id = id;
+    this.name = name;
+    this.email = email;
+    this.age = age;
+  }
+}
+
+class Count {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+async function main() {
+  const db = await connect(env("VELT_TEST_PG_URL") ?? "");
+  await db.batch(`
+    CREATE TEMP TABLE users (
+      id BIGSERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      age INT
+    );
+    INSERT INTO users (name, email, age) VALUES ('Ann', 'ann@example.com', 31);
+  `);
+
+  // Positional and named parameters.
+  // Array elements share one type; a string also binds to non-text types (the server
+  // parses it), so mixed values can go positionally as strings.
+  const added = await db.execute(
+    "INSERT INTO users (name, email, age) VALUES ($1, $2, $3), ($4, $5, NULL)",
+    ["Bob", "bob@example.com", "42", "Cy", "cy@example.com"],
+  );
+  console.log("inserted", added);
+  const bob: User | null = await db.queryOne(
+    "SELECT id, name, email, age FROM users WHERE email = :email",
+    { email: "bob@example.com" },
+  );
+  console.log(bob?.name, bob?.age);
+  const older: User[] = await db.query(
+    "SELECT * FROM users WHERE age > $min OR name = $name ORDER BY id",
+    { min: 30, name: "Cy" },
+  );
+  console.log(older.map((u) => `${u.id}:${u.name}:${u.age ?? -1}`));
+
+  // A name used twice binds once; `::` casts are not placeholders.
+  const same: Count | null = await db.queryOne(
+    "SELECT count(*)::int AS n FROM users WHERE name = :n OR email = :n || '@x'",
+    { n: "Ann" },
+  );
+  console.log("same", same?.n);
+
+  // No parameters.
+  const all: User[] = await db.select("SELECT * FROM users ORDER BY id");
+  console.log(all.length, all[2].email);
+  const none: User | null = await db.selectOne("SELECT * FROM users WHERE id < 0");
+  console.log("none", none == null);
+  console.log("updated", await db.run("UPDATE users SET age = coalesce(age, 0) + 1"));
+  const n: Count | null = await db.queryOne("SELECT count(*) AS n FROM users WHERE age > $1", [40]);
+  console.log("over 40", n?.n);
+
+  // RETURNING works through query.
+  const ids: Count[] = await db.query("DELETE FROM users WHERE age < $1 RETURNING id AS n", [10]);
+  console.log("deleted", ids.map((c) => c.n));
+  db.close();
+}

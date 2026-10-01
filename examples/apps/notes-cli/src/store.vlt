@@ -1,0 +1,91 @@
+// Notes and the JSON file they are kept in.
+import { readFileSync, writeFileSync, existsSync } from "velt:fs";
+
+export type Note = { id: i64; title: string; body: string; tags: string[]; created: i64 };
+
+export class NotFoundError extends Error {
+  constructor(id: i64) {
+    super(`no note with id ${id}`);
+  }
+}
+
+export class NoteStore {
+  notes: Note[] = [];
+  nextId: i64 = 1;
+  private readonly path: string;
+
+  constructor(path: string) {
+    this.path = path;
+  }
+
+  static load(path: string): NoteStore {
+    const store = new NoteStore(path.clone());
+    if (existsSync(path)) {
+      store.notes = JSON.parse<Note[]>(readFileSync(path));
+      for (const n of store.notes) {
+        if (n.id >= store.nextId) {
+          store.nextId = n.id + 1;
+        }
+      }
+    }
+    return store;
+  }
+
+  save() {
+    writeFileSync(this.path, JSON.stringify(this.notes));
+  }
+
+  add(title: string, body: string, tags: string[], now: i64): Note {
+    const note: Note = { id: this.nextId++, title, body, tags, created: now };
+    this.notes.push(note.clone());
+    return note;
+  }
+
+  get(id: i64): Note {
+    const note = this.notes.find((n) => n.id === id);
+    if (note == null) {
+      throw new NotFoundError(id);
+    }
+    return note;
+  }
+
+  remove(id: i64) {
+    const i = this.notes.findIndex((n) => n.id === id);
+    if (i < 0) {
+      throw new NotFoundError(id);
+    }
+    this.notes = this.notes.filter((n) => n.id !== id);
+  }
+
+  // Adds `tag` to note `id` (no-op if it already has it).
+  addTag(id: i64, tag: string) {
+    const i = this.notes.findIndex((n) => n.id === id);
+    if (i < 0) {
+      throw new NotFoundError(id);
+    }
+    if (!this.notes[i as usize].tags.includes(tag)) {
+      this.notes[i as usize].tags.push(tag);
+    }
+  }
+
+  withTag(tag: string): Note[] {
+    return this.notes.filter((n) => n.tags.includes(tag));
+  }
+
+  search(query: string): Note[] {
+    const q = query.toLowerCase();
+    return this.notes.filter(
+      (n) => n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q),
+    );
+  }
+
+  tagCounts(): Map<string, i64> {
+    const counts = new Map<string, i64>();
+    for (const n of this.notes) {
+      for (const t of n.tags) {
+        counts.set(t.clone(), (counts.get(t) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }
+}

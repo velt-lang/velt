@@ -1,0 +1,60 @@
+// std/io: the error type and result plumbing shared by std/fs, std/net, std/http and std/process.
+//
+// Runtime I/O functions (docs/internals/contracts/rt_abi_async.md §3) report failures as an `IoResult<T>`
+// with the C layout `{ i32 code; u32 pad; VeltStr message; T value /* @32 */ }`, which is exactly
+// the natural layout of the Velt struct below. `code == 0` means success: `message` is an empty
+// static string and `value` is initialized. Otherwise `value` is all-zero bytes, which every type's
+// drop glue treats as "owns nothing", so dropping a failed result is safe. Operations without a
+// value return `IoStatus` (the 32-byte `VeltErr` prefix).
+//
+// Everything except `IoError` is std-internal plumbing; it is exported only so the other std
+// modules can share it.
+
+// `velt_rt_err_code_name(i32 code, VeltStr* out)`: a static Node-style name (nothing to free).
+declare function velt_rt_err_code_name(code: i32): string;
+
+// A failed I/O operation (`Error` is the prelude base class). `code` is the Node-style name:
+// "ENOENT", "EACCES", "EEXIST", "EINVAL", "EILSEQ", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET",
+// "EADDRINUSE", "EPIPE", "EOF", "ENOTSUP", "ENOTDIR", "ENOTEMPTY", "EISDIR", "EBADF" (a closed
+// socket, file stream, child process or WebSocket handle) or "UNKNOWN".
+export class IoError extends Error {
+  code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+// Result slot of a runtime operation producing a `T` (layout documented above).
+export struct IoResult<T> {
+  code: i32;
+  message: string;
+  value: T;
+}
+
+// Result slot of a runtime operation producing nothing (`VeltErr`).
+export struct IoStatus {
+  code: i32;
+  message: string;
+}
+
+// Builds the `IoError` for a failed result; takes ownership of the runtime's message.
+export function ioError(code: i32, message: string): IoError {
+  return new IoError(velt_rt_err_code_name(code), message);
+}
+
+// The value of a successful result; throws `IoError` otherwise.
+export function unwrapIo<T>(r: IoResult<T>): T {
+  if (r.code != 0) {
+    throw ioError(r.code, r.message);
+  }
+  return r.value;
+}
+
+// Throws `IoError` if the operation failed.
+export function checkIo(s: IoStatus) {
+  if (s.code != 0) {
+    throw ioError(s.code, s.message);
+  }
+}

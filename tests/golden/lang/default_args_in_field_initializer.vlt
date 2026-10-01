@@ -1,0 +1,28 @@
+// Default parameters apply to calls in class field initializers (`p: Pat = new Pat("a+")`),
+// including defaults that read a module constant: parameter defaults are checked on first use.
+// Regression (apps sprint): "the constructor of `Pat` takes 2 arguments but 1 argument was
+// supplied" because field defaults were checked before parameter defaults.
+const LIMIT: i64 = 7;
+
+class Pat {
+  src: string;
+  n: i64;
+  constructor(src: string, n: i64 = LIMIT) {
+    this.src = src;
+    this.n = n;
+  }
+}
+
+function mk(a: i64, b: i64 = 2): i64 {
+  return a + b;
+}
+
+class Holder {
+  p: Pat = new Pat("a+");
+  k: i64 = mk(10);
+}
+
+function main() {
+  const h = new Holder();
+  console.log(h.p.src, h.p.n, h.k);
+}

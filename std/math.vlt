@@ -1,0 +1,65 @@
+// std/math: integer helpers (explicit import: `import { clamp } from "velt:math"`).
+// Float math lives on the prelude's `Math` class.
+
+// `x` limited to [lo, hi] (assumes lo <= hi).
+export function clamp(x: i64, lo: i64, hi: i64): i64 {
+  if (x < lo) {
+    return lo;
+  }
+  return x > hi ? hi : x;
+}
+
+// Greatest common divisor (Euclid), always >= 0; gcd(0, 0) is 0.
+export function gcd(a: i64, b: i64): i64 {
+  let x = a < 0 ? -a : a;
+  let y = b < 0 ? -b : b;
+  while (y != 0) {
+    const t = x % y;
+    x = y;
+    y = t;
+  }
+  return x;
+}
+
+// Least common multiple, always >= 0; 0 if either argument is 0. Divides before multiplying
+// to delay overflow (which wraps, like all i64 arithmetic).
+export function lcm(a: i64, b: i64): i64 {
+  if (a == 0 || b == 0) {
+    return 0;
+  }
+  const l = (a / gcd(a, b)) * b;
+  return l < 0 ? -l : l;
+}
+
+// Trial division by 6k +/- 1; O(sqrt n).
+export function isPrime(n: i64): bool {
+  if (n < 2) {
+    return false;
+  }
+  if (n < 4) {
+    return true;
+  }
+  if (n % 2 == 0 || n % 3 == 0) {
+    return false;
+  }
+  // `i <= n / i` rather than `i * i <= n`, which would overflow for n near i64 max; `i` is
+  // declared `i64` so `/` stays integer division.
+  for (let i: i64 = 5; i <= n / i; i += 6) {
+    if (n % i == 0 || n % (i + 2) == 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// n-th Fibonacci number (fib(0) = 0, fib(1) = 1), iterative; 0 for negative n.
+export function fib(n: i64): i64 {
+  let a = 0;
+  let b = 1;
+  for (let i = 0; i < n; i++) {
+    const t = a + b;
+    a = b;
+    b = t;
+  }
+  return a;
+}

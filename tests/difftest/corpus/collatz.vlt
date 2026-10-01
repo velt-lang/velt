@@ -1,0 +1,22 @@
+// Collatz sequence lengths; longest chain under 1000.
+function steps(n: i64): i64 {
+  let s = 0;
+  while (n != 1) {
+    n = n % 2 == 0 ? n / 2 : 3 * n + 1;
+    s++;
+  }
+  return s;
+}
+
+function main() {
+  let best = 1;
+  let bestSteps = 0;
+  for (let n = 1; n < 1000; n++) {
+    const s = steps(n);
+    if (s > bestSteps) {
+      best = n;
+      bestSteps = s;
+    }
+  }
+  console.log(best, bestSteps, steps(27), steps(97));
+}

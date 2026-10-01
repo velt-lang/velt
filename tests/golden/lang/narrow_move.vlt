@@ -1,0 +1,39 @@
+// Moving the payload out of a narrowed `T | null` / union local moves the whole local: it is
+// dropped exactly once (regression: the option used to be dropped again at scope end).
+
+class Res {
+  id: string;
+  constructor(id: string) {
+    this.id = id;
+  }
+  [Symbol.dispose](): void {
+    console.log(`drop ${this.id}`);
+  }
+}
+
+function make(id: string, some: bool): Res | null {
+  if (some) {
+    return new Res(id);
+  }
+  return null;
+}
+
+function main() {
+  let a = make("a", true);
+  if (a != null) {
+    const taken = a;
+    console.log(`took ${taken.id}`);
+  }
+  console.log("after a");
+  const b = make("b", false);
+  if (b != null) {
+    const taken = b;
+    console.log(taken.id);
+  }
+  let u: Res | string = new Res("u");
+  if (u instanceof Res) {
+    const r = u;
+    console.log(`took ${r.id}`);
+  }
+  console.log("end");
+}

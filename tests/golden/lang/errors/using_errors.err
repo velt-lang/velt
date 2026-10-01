@@ -1,0 +1,18 @@
+using_errors.vlt:13:3: error: `[Symbol.dispose]` must not be `async`, take no parameters and return `void`
+using_errors.vlt:17:3: error: `[Symbol.asyncDispose]` must be `async`, take no parameters and return `Promise<void>`
+using_errors.vlt:37:3: error: `Closable` has no `[Symbol.dispose]()` drop hook to call
+  = note: only a class or struct that declares `[Symbol.dispose]()` (or inherits it) can be disposed of explicitly
+using_errors.vlt:46:3: error: `using` needs a value with a `[Symbol.dispose]()` method, found `Plain`
+  = note: declare it with `const` if it needs no cleanup
+using_errors.vlt:47:3: error: `using` needs a value with a `[Symbol.dispose]()` method, found `i64`
+  = note: declare it with `const` if it needs no cleanup
+using_errors.vlt:52:3: error: cannot assign to `s`, a `using` declaration
+  = note: it is disposed at the end of its block; declare another variable
+using_errors.vlt:54:3: error: `t` is disposed at the end of its block: it is declared with `using`
+  = note: declare it with `const` to dispose of it earlier
+using_errors.vlt:55:3: error: `await using` is only allowed inside async functions
+  = note: mark the enclosing function or arrow `async`
+using_errors.vlt:42:10: error: cannot move `r` out of its `using` declaration
+  = note: `r` is disposed at the end of its block; pass it to a function that borrows it, or declare it with `const` to hand it over
+using_errors.vlt:50:11: error: cannot move `r` out of its `using` declaration
+  = note: `r` is disposed at the end of its block; pass it to a function that borrows it, or declare it with `const` to hand it over

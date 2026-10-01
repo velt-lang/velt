@@ -1,0 +1,111 @@
+// std/redis/pipeline: `RedisPipeline`, commands queued locally and sent together by `exec()`
+// (rt_abi_async.md §14.12). Internal: import the public names from "velt:redis".
+//
+// Queued commands travel as one flat `string[]` plus the argument count of each command, so the
+// runtime encodes the whole batch in one pass and writes it at once.
+
+import { IoResult } from "velt:io";
+import { RawReply, RedisReply, checkReply, replyItems, scoreArg } from "velt:redis/reply";
+
+declare async function velt_rt_redis_pipeline(
+  c: u64,
+  args: string[],
+  counts: u64[],
+  atomic: bool,
+): Promise<IoResult<RawReply>>;
+
+// Commands to send in one round trip: `client.pipeline()` (independent commands) or
+// `client.multi()` (a `MULTI`/`EXEC` transaction). Queue commands, then `await p.exec()`.
+export class RedisPipeline {
+  private handle: u64;
+  private atomic: bool;
+  private args: string[] = [];
+  private counts: u64[] = [];
+
+  // Use `client.pipeline()` / `client.multi()`.
+  constructor(handle: u64, atomic: bool) {
+    this.handle = handle;
+    this.atomic = atomic;
+  }
+
+  // Number of queued commands.
+  get length(): usize {
+    return this.counts.length;
+  }
+
+  // Queues any command (`args[0]` is its name).
+  call(args: string[]) {
+    for (const a of args) {
+      this.args.push(a);
+    }
+    this.counts.push(args.length as u64);
+  }
+
+  private add(name: string, args: string[]) {
+    this.args.push(name);
+    for (const a of args) {
+      this.args.push(a);
+    }
+    this.counts.push((args.length + 1) as u64);
+  }
+
+  get(key: string) {
+    this.add("GET", [key]);
+  }
+
+  set(key: string, value: string) {
+    this.add("SET", [key, value]);
+  }
+
+  del(keys: string[]) {
+    this.add("DEL", keys);
+  }
+
+  incr(key: string) {
+    this.add("INCR", [key]);
+  }
+
+  incrBy(key: string, n: i64) {
+    this.add("INCRBY", [key, `${n}`]);
+  }
+
+  expire(key: string, seconds: i64) {
+    this.add("EXPIRE", [key, `${seconds}`]);
+  }
+
+  hget(key: string, field: string) {
+    this.add("HGET", [key, field]);
+  }
+
+  hset(key: string, field: string, value: string) {
+    this.add("HSET", [key, field, value]);
+  }
+
+  lpush(key: string, values: string[]) {
+    this.add("LPUSH", [key, ...values]);
+  }
+
+  rpush(key: string, values: string[]) {
+    this.add("RPUSH", [key, ...values]);
+  }
+
+  sadd(key: string, members: string[]) {
+    this.add("SADD", [key, ...members]);
+  }
+
+  zadd(key: string, score: f64, member: string) {
+    this.add("ZADD", [key, scoreArg(score), member]);
+  }
+
+  publish(channel: string, message: string) {
+    this.add("PUBLISH", [channel, message]);
+  }
+
+  // Sends every queued command and returns one reply per command, in order. A command the
+  // server rejects gives an "error" reply (`isError()`), not a throw; connection failures
+  // throw. For `multi()`, a transaction the server aborts (EXECABORT) throws `RedisError`.
+  async exec(): Promise<RedisReply[]> {
+    const r = await velt_rt_redis_pipeline(this.handle, this.args, this.counts, this.atomic);
+    return replyItems(checkReply(r));
+  }
+}

@@ -1,0 +1,54 @@
+// JSON.stringify writes the dynamic class through generic and multi-level hierarchies (type
+// args follow from the static type); a subclass with a field that has no JSON form (a closure)
+// is written as the static type, as JS omits function fields.
+class Base<T> {
+  a: T;
+  constructor(a: T) {
+    this.a = a;
+  }
+}
+
+class Mid<T> extends Base<T> {
+  m: string = "mid";
+  constructor(a: T) {
+    super(a);
+  }
+}
+
+class Leaf extends Mid<i64> {
+  leaf: bool = true;
+  constructor() {
+    super(7);
+  }
+}
+
+class Fn extends Base<i64> {
+  f: () => i64;
+  constructor() {
+    super(1);
+    this.f = () => 3;
+  }
+}
+
+class Unused extends Base<string> {
+  u: i64 = 0;
+  constructor() {
+    super("u");
+  }
+}
+
+class Holder {
+  item: Base<i64> | null = null;
+}
+
+function main() {
+  const xs: Base<i64>[] = [new Base(1), new Mid(2), new Leaf(), new Fn()];
+  console.log(JSON.stringify(xs));
+  const ys: Base<string>[] = [new Mid("s")];
+  console.log(JSON.stringify(ys));
+  const h = new Holder();
+  h.item = new Leaf();
+  console.log(JSON.stringify(h));
+  const m: Mid<i64> = new Leaf();
+  console.log(JSON.stringify(m));
+}

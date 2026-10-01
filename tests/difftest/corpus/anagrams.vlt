@@ -1,0 +1,20 @@
+// Anagram detection by sorted letters; grouping into a Map<string, string>.
+function key(w: string): string {
+  const letters = w.toLowerCase().split("");
+  letters.sort();
+  return letters.join("");
+}
+
+function main() {
+  const words = ["listen", "silent", "enlist", "google", "gooegl", "cat", "act", "tac", "dog"];
+  const groups = new Map<string, string>();
+  for (const w of words) {
+    const k = key(w);
+    const prev = groups.get(k) ?? "";
+    groups.set(k, prev == "" ? `${w}` : `${prev},${w}`);
+  }
+  for (const [k, g] of groups) {
+    console.log(`${k}: ${g}`);
+  }
+  console.log(key("Dormitory") == key("dirtyroom"));
+}

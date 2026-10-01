@@ -1,0 +1,202 @@
+// std/datetime: civil conversions, ISO / HTTP parsing and formatting, calendar arithmetic,
+// comparisons and Duration. Expected values checked against Node 24's Date. Local time is
+// printed only as properties (the machine's time zone varies).
+import { DateTime, DateTimeError, Duration, DateParts } from "velt:datetime";
+
+function maxOf<T extends Comparable<T>>(a: T, b: T): T {
+  return a > b ? a : b;
+}
+
+function showParts(p: DateParts) {
+  console.log(
+    p.year,
+    p.month,
+    p.day,
+    p.hour,
+    p.minute,
+    p.second,
+    p.millisecond,
+    p.dayOfWeek,
+    p.dayOfYear,
+    p.offsetMinutes,
+  );
+}
+
+function conversions() {
+  const epochs: i64[] = [
+    0,
+    951782400000,
+    1709210096789,
+    -1,
+    -86400000,
+    -62135596800000,
+    -62198755200000,
+    253402300799999,
+    253402300800000,
+    -8640000000000000,
+    8640000000000000,
+  ];
+  for (const ms of epochs) {
+    const d = DateTime.fromEpochMs(ms);
+    console.log(ms, d.toISOString(), d.toUTCString(), d.dayOfWeek, d.dayOfYear);
+  }
+  const d = DateTime.utc(2024, 2, 29, 12, 34, 56, 789);
+  console.log(d.toEpochMs(), d.toEpochSeconds(), d.year, d.month, d.day, d.hour, d.minute);
+  console.log(d.second, d.millisecond, d.dayOfWeek, d.dayOfYear, d.toString());
+  showParts(d.parts());
+  console.log(DateTime.utc(2023, 13, 1).toISOString(), DateTime.utc(2024, 3, 0).toISOString());
+  console.log(
+    DateTime.utc(2024, 0, 1).toISOString(),
+    DateTime.utc(2024, 1, 1, 25, 61).toISOString(),
+  );
+  console.log(DateTime.fromEpochMs(-1500).second, DateTime.fromEpochMs(-1500).millisecond);
+  console.log(DateTime.fromEpochMs(-1500).toEpochSeconds(), DateTime.fromEpochMs(-1).hour);
+}
+
+function parsing() {
+  const inputs = [
+    "2024-02-29",
+    "2024-02",
+    "2024",
+    "2024-02-29T12:34",
+    "2024-02-29T12:34:56Z",
+    "2024-02-29T12:34:56.7Z",
+    "2024-02-29T12:34:56.123456789Z",
+    "2024-02-29t12:34:56,5z",
+    "2024-02-29 12:34:56+02:00",
+    "2024-02-29T12:34:56-0530",
+    "2024-02-29T00:30:00+01",
+    "+012345-06-07T00:00:00Z",
+    "-000001-01-01T00:00:00Z",
+    "1969-12-31T23:59:59.999Z",
+    "2023-02-29",
+    "2024-13-01",
+    "2024-00-10",
+    "2024-04-31",
+    "2024-02-29T24:00:00Z",
+    "2024-02-29T12:60:00Z",
+    "2024-02-29T12:34:56.Z",
+    "2024-02-29T12:34:56+25:00",
+    "2024-2-29",
+    "24-02-29",
+    "2024-02-29T12",
+    "2024-02-29Z",
+    "-000000-01-01",
+    "",
+    "nope",
+  ];
+  for (const s of inputs) {
+    try {
+      console.log(s, "->", DateTime.parse(s).toISOString());
+    } catch (e) {
+      console.log(s, "->", e.message);
+    }
+  }
+}
+
+function httpDates() {
+  const inputs = [
+    "Thu, 29 Feb 2024 12:34:56 GMT",
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    "Sunday, 06-Nov-94 08:49:37 GMT",
+    "Tuesday, 01-Jan-30 00:00:00 GMT",
+    "Sun Nov  6 08:49:37 1994",
+    "Thu, 30 Feb 2024 12:34:56 GMT",
+    "Thu, 29 Foo 2024 12:34:56 GMT",
+    "Thu, 29 Feb 2024 12:34:56 PST",
+    "Thu, 29 Feb 2024 12:34 GMT",
+    "garbage",
+  ];
+  for (const s of inputs) {
+    try {
+      const d = DateTime.parseHttpDate(s);
+      console.log(s, "->", d.toISOString(), d.toUTCString());
+    } catch (e) {
+      console.log(s, "->", e.message);
+    }
+  }
+}
+
+function formatting() {
+  const d = DateTime.utc(2024, 2, 9, 7, 5, 3, 42);
+  console.log(d.format("YYYY-MM-DD HH:mm:ss.SSS Z"));
+  console.log(d.format("YY M D H m s ZZ"));
+  console.log(d.format("dddd, MMMM D, YYYY h:mm A"));
+  console.log(d.format("ddd MMM DD hh:mm a [at] DDDD [YYYY] Q"));
+  console.log(DateTime.utc(2024, 7, 4, 0, 0).format("h A / hh a / H"));
+  console.log(DateTime.utc(2024, 7, 4, 12, 0).format("h A / HH"));
+  console.log(DateTime.utc(2024, 7, 4, 23, 59).format("h:mm a [unterminated"));
+}
+
+function arithmetic() {
+  const d = DateTime.utc(2024, 1, 31, 10, 30);
+  console.log(d.addMonths(1).toISOString(), d.addMonths(2).toISOString());
+  console.log(d.addMonths(-2).toISOString(), d.addMonths(13).toISOString());
+  console.log(d.addMonths(-25).toISOString());
+  const leap = DateTime.utc(2024, 2, 29);
+  console.log(leap.addYears(1).toISOString(), leap.addYears(4).toISOString());
+  console.log(leap.addYears(-100).toISOString());
+  console.log(d.addMs(1).toISOString(), d.addSeconds(-90).toISOString());
+  console.log(d.addMinutes(90).toISOString(), d.addHours(-11).toISOString());
+  console.log(d.addDays(30).toISOString(), d.addDays(-366).toISOString());
+  console.log(d.startOfDay().toISOString(), DateTime.fromEpochMs(-1).startOfDay().toISOString());
+  const later = d.add(Duration.ofHours(49).plus(Duration.ofSeconds(5)));
+  console.log(later.toISOString(), later.diffMs(d), later.since(d).toString());
+}
+
+function comparisons() {
+  const a = DateTime.utc(2024, 1, 1);
+  const b = DateTime.utc(2024, 6, 1);
+  const c = a;
+  console.log(a.compareTo(b), b.compareTo(a), a.compareTo(c), a.equals(c));
+  console.log(a.isBefore(b), a.isAfter(b), maxOf(a, b).toISOString());
+  const ds = [b, a, DateTime.utc(2023, 12, 31)];
+  ds.sort((x, y) => x.compareTo(y));
+  console.log(ds.map((x) => x.toISOString()));
+}
+
+function durations() {
+  const ds = [
+    Duration.ofMs(0),
+    Duration.ofMs(1500),
+    Duration.ofSeconds(59),
+    Duration.ofMinutes(61),
+    Duration.ofHours(24),
+    Duration.ofDays(2).plus(Duration.ofMs(3723004)),
+    Duration.ofSeconds(90).negated(),
+    Duration.ofHours(1).minus(Duration.ofMinutes(90)),
+  ];
+  for (const d of ds) {
+    console.log(d.toString(), d.toMs(), d.toSeconds());
+  }
+  console.log(maxOf(Duration.ofSeconds(1), Duration.ofMs(999)).toMs());
+}
+
+function localTime() {
+  const d = DateTime.utc(2024, 2, 29, 12, 0);
+  const off = d.localOffsetMinutes;
+  const p = d.localParts();
+  const shifted = DateTime.utc(p.year, p.month, p.day, p.hour, p.minute, p.second, p.millisecond);
+  console.log(off >= -720 && off <= 840, p.offsetMinutes == off, shifted.diffMs(d) == off * 60000);
+  const iso = d.toLocalISOString();
+  console.log(iso.length == 29, DateTime.parse(iso).equals(d));
+  console.log(d.formatLocal("Z").length == 6, d.formatLocal("HH:mm").length == 5);
+  const now = DateTime.now();
+  console.log(now.year >= 2024, now.isAfter(d), DateTime.parse(now.toISOString()).equals(now));
+}
+
+function main() {
+  conversions();
+  parsing();
+  httpDates();
+  formatting();
+  arithmetic();
+  comparisons();
+  durations();
+  localTime();
+  try {
+    DateTime.parse("2024-02-30");
+  } catch (e) {
+    console.log(e instanceof DateTimeError, e.message);
+  }
+}

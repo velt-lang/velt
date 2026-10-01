@@ -1,0 +1,31 @@
+// Prelude: helper methods on `T | null`.
+//
+// The value-extracting helpers (`unwrap`, `unwrapOr`, `map`) move the payload out of the receiver,
+// so they consume it: `x.unwrapOr(d)` gives up `x`. The usual receivers are temporaries
+// (`find(xs, k).unwrapOr(0)`), where that is free. For Copy payloads the receiver stays usable.
+// `isNull` only borrows.
+
+extend<T> (T | null) {
+  isNull(): bool {
+    return this == null;
+  }
+
+  unwrapOr(fallback: T): T {
+    return this ?? fallback;
+  }
+
+  // The value; panics on null.
+  unwrap(): T {
+    if (this != null) {
+      return this;
+    }
+    panic("called unwrap() on a null value");
+  }
+
+  map<U, E>(f: (x: T) => U throws E): U | null throws E {
+    if (this != null) {
+      return f(this);
+    }
+    return null;
+  }
+}

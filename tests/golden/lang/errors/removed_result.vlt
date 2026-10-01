@@ -1,0 +1,10 @@
+// `Result`, `Ok` and `Err` were removed: errors are thrown (typed, checked) or returned as
+// union values.
+function parse(s: string): Result<i64, string> {
+  if (s == "1") {
+    return Ok(1);
+  }
+  return Err("bad");
+}
+
+function main() {}

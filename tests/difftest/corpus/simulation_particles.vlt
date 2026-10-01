@@ -1,0 +1,30 @@
+// Deterministic particle simulation with float physics and bounces.
+class Particle {
+  x: f64;
+  v: f64;
+  constructor(x: f64, v: f64) {
+    this.x = x;
+    this.v = v;
+  }
+  step(dt: f64) {
+    this.v -= 9.81 * dt;
+    this.x += this.v * dt;
+    if (this.x < 0.0) {
+      this.x = -this.x;
+      this.v = -this.v * 0.8;
+    }
+  }
+}
+
+function main() {
+  const ps = [new Particle(10.0, 0.0), new Particle(0.0, 5.0), new Particle(3.3, -1.25)];
+  for (let t = 1; t <= 60; t++) {
+    for (const p of ps) {
+      p.step(0.05);
+    }
+    if (t % 20 == 0) {
+      console.log(ps.map((p) => `${Math.round(p.x * 1000.0) / 1000.0}`).join(" "));
+    }
+  }
+  console.log(`${ps[0].x} ${ps[0].v}`);
+}

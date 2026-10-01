@@ -1,0 +1,21 @@
+// std/arena: values named by `u32` index, reset between rounds (the memory is kept).
+import { Arena } from "velt:arena";
+
+struct Pair {
+  a: i64;
+  b: i64;
+}
+
+function main() {
+  const arena = new Arena<Pair>(2);
+  const first = arena.alloc({ a: 1, b: 2 });
+  const second = arena.alloc({ a: 3, b: 4 });
+  const third = arena.alloc({ a: 5, b: 6 });
+  arena.set(second, { a: 30, b: 40 });
+  console.log(first, second, third, arena.length, arena.get(second).a, arena.get(third).b);
+  arena.reset();
+  console.log(arena.length, arena.alloc({ a: 7, b: 8 }), arena.get(0).a);
+  const names = new Arena<string>();
+  const i = names.alloc("x");
+  console.log(names.get(i), names.length);
+}

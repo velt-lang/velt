@@ -1,0 +1,55 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Velt: debug current file (CodeLLDB)",
+      "type": "lldb",
+      "request": "launch",
+      "preLaunchTask": "velt: build current file (debug, LLVM)",
+      "program": "${workspaceFolder}/target/velt/${fileBasenameNoExtension}",
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Velt: debug package (CodeLLDB)",
+      "type": "lldb",
+      "request": "launch",
+      "preLaunchTask": "velt: build package (debug, LLVM)",
+      "program": "${workspaceFolder}/target/velt/${workspaceFolderBasename}",
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Velt: attach to a running program (CodeLLDB)",
+      "type": "lldb",
+      "request": "attach",
+      "pid": "${command:pickMyProcess}"
+    },
+    {
+      "name": "Velt: debug current file (Windows, cppvsdbg)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "preLaunchTask": "velt: build current file (debug, LLVM)",
+      "program": "${workspaceFolder}/target/velt/${fileBasenameNoExtension}.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Velt: debug package (Windows, cppvsdbg)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "preLaunchTask": "velt: build package (debug, LLVM)",
+      "program": "${workspaceFolder}/target/velt/${workspaceFolderBasename}.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Velt: attach to a running program (Windows, cppvsdbg)",
+      "type": "cppvsdbg",
+      "request": "attach",
+      "processId": "${command:pickProcess}"
+    }
+  ]
+}

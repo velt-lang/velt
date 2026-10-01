@@ -1,0 +1,57 @@
+// Function-typed params that the callee keeps are owned (docs/reference/functions.md "Captures"): storing
+// one (`push`, a field, a generic `T`), copying it (`.clone()`) or passing it to an async
+// function makes the closure literal at the call site escaping (it captures by value), so it
+// stays valid after the caller's frame is gone. Run with junk allocations in between so a
+// dangling environment would show.
+class Keeper {
+  fs: (() => string)[] = [];
+
+  add(f: () => string) {
+    this.fs.push(f);
+  }
+
+  addCopy(f: () => string) {
+    this.fs.push(f.clone());
+  }
+}
+
+function keep<T>(xs: T[], x: T) {
+  xs.push(x);
+}
+
+async function callLater(f: () => string): Promise<string> {
+  await sleep(1);
+  return f();
+}
+
+function startLater(f: () => string): Promise<string> {
+  return spawn(callLater(f));
+}
+
+function fill(k: Keeper, fs: (() => string)[]): Promise<string> {
+  const msg = `hello ${40 + 2} with a tail long enough to live on the heap`;
+  let count = 0;
+  k.add(() => msg.clone());
+  k.addCopy(() => `${msg}!`);
+  keep<() => string>(fs, () => `${msg}?`);
+  const later = startLater(() => `${msg} (later)`);
+  count++;
+  console.log(count);
+  return later;
+}
+
+async function main() {
+  const k = new Keeper();
+  const fs: (() => string)[] = [];
+  const later = fill(k, fs);
+  const junk: string[] = [];
+  for (let i = 0; i < 200; i++) {
+    junk.push(`overwrite ${i} with a tail long enough to live on the heap`);
+  }
+  for (const f of k.fs) {
+    console.log(f());
+  }
+  console.log(fs[0]());
+  console.log(await later);
+  console.log(junk.length);
+}

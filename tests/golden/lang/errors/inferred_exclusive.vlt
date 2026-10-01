@@ -1,0 +1,51 @@
+// Exclusive access is checked with the inferred modes: a method or param that may be modified
+// on any path counts as modified.
+class Bag {
+  items: i64[] = [];
+
+  // Modifies `this` only in one branch, through a helper.
+  addFrom(src: i64[]) {
+    if (src.length > 0) {
+      this.put(src);
+    }
+  }
+
+  put(src: i64[]) {
+    for (const x of src) {
+      this.items.push(x);
+    }
+  }
+}
+
+// Modifies `to` only inside a loop body.
+function fill(to: i64[], from: i64[]) {
+  for (let i: usize = 0; i < from.length; i++) {
+    to.push(from[i]);
+  }
+}
+
+struct Pt {
+  x: i64;
+  bump() {
+    this.x += 1;
+  }
+}
+
+const ORIGIN = Pt { x: 0 };
+
+function main() {
+  const b = new Bag();
+  b.addFrom(b.items);
+  const xs: i64[] = [1];
+  fill(xs, xs);
+  const grid: i64[][] = [[1]];
+  // The callback modifies its argument, so the call may modify `grid`.
+  grid.forEach((row) => {
+    row.push(grid.length as i64);
+  });
+  const run = (v: i64[]) => {
+    v = [];
+  };
+  run(xs);
+  ORIGIN.bump();
+}

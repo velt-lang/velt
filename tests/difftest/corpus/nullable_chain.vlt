@@ -1,0 +1,46 @@
+// Nullable values: ?? defaults, != null narrowing, optional chaining on class instances.
+class Profile {
+  nick: string | null;
+  age: i64 | null;
+  constructor(nick: string | null, age: i64 | null) {
+    this.nick = nick;
+    this.age = age;
+  }
+}
+
+class User {
+  name: string;
+  profile: Profile | null;
+  constructor(name: string, profile: Profile | null) {
+    this.name = name;
+    this.profile = profile;
+  }
+}
+
+function describe(u: User): string {
+  // Copied through a template: `??` over places moves them (bug ternary-moves-place).
+  const nick = u.profile?.nick ?? `${u.name}`;
+  const age = u.profile?.age ?? -1;
+  return `${nick} (${age >= 0 ? `${age}` : "age unknown"})`;
+}
+
+function firstAdult(ages: (i64 | null)[]): i64 | null {
+  for (const a of ages) {
+    if (a != null && a >= 18) {
+      return a;
+    }
+  }
+  return null;
+}
+
+function main() {
+  const users = [
+    new User("ann", new Profile("annie", 31)),
+    new User("bob", null),
+    new User("cy", new Profile(null, null)),
+  ];
+  for (const u of users) {
+    console.log(describe(u));
+  }
+  console.log(firstAdult([null, 12, 17, null, 44, 20]) ?? -1, firstAdult([1, null]) ?? -1);
+}

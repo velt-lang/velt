@@ -1,0 +1,96 @@
+// Builtin `Comparable<T>`: ordering operators on bounded generics, builtin impls for numbers,
+// strings and bools, user implementations (class `implements`, struct via `extend`).
+
+class Version implements Ordered<Version> {
+  major: i64;
+  minor: i64;
+
+  constructor(major: i64, minor: i64) {
+    this.major = major;
+    this.minor = minor;
+  }
+
+  compareTo(other: Version): i64 {
+    if (this.major != other.major) {
+      return this.major.compareTo(other.major);
+    }
+    return this.minor.compareTo(other.minor);
+  }
+
+  toString(): string {
+    return `${this.major}.${this.minor}`;
+  }
+}
+
+struct Point {
+  x: i64;
+  y: i64;
+}
+
+extend Point {
+  compareTo(other: Point): i64 {
+    return (this.x * this.x + this.y * this.y).compareTo(other.x * other.x + other.y * other.y);
+  }
+}
+
+interface Ordered<T> extends Comparable<T> {}
+
+function maxIndex<T extends Comparable<T>>(xs: T[]): i64 {
+  let best: usize = 0;
+  for (let i: usize = 1; i < xs.length; i++) {
+    if (xs[i] > xs[best]) {
+      best = i;
+    }
+  }
+  return best as i64;
+}
+
+function isSorted<T extends Comparable<T>>(xs: T[]): bool {
+  for (let i: usize = 1; i < xs.length; i++) {
+    if (xs[i] < xs[i - 1]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function clamp<T extends Comparable<T>>(x: T, lo: T, hi: T): T {
+  if (x <= lo) {
+    return lo;
+  }
+  return x >= hi ? hi : x;
+}
+
+function sortAll<T extends Comparable<T>>(xs: T[]) {
+  xs.sort((a, b) => a.compareTo(b));
+}
+
+function between<T extends Ordered<T>>(x: T, lo: T, hi: T): bool {
+  return lo <= x && x <= hi;
+}
+
+function main() {
+  console.log(maxIndex([3, 9, 2]), maxIndex(["pear", "apple", "zoo"]), maxIndex([1.5, -2.0]));
+  console.log(isSorted([1u8, 2u8, 2u8]), isSorted([true, false]), isSorted(["a", "b"]));
+  console.log(clamp(15, 0, 10), clamp(-3i32, 0i32, 10i32), clamp("m", "a", "k"));
+
+  const nan = 0.0 / 0.0;
+  const fs = [2.5, nan, -1.0, 0.0];
+  sortAll(fs);
+  console.log(fs);
+  console.log((1.0).compareTo(nan), nan.compareTo(1.0), nan.compareTo(nan));
+
+  const vs = [new Version(1, 10), new Version(1, 2), new Version(0, 9)];
+  sortAll(vs);
+  console.log(vs.map((v) => v.toString()).join(" "));
+  console.log(vs[maxIndex(vs)].toString(), isSorted(vs));
+
+  const ps = [Point { x: 3, y: 4 }, Point { x: 1, y: 1 }, Point { x: 0, y: 2 }];
+  sortAll(ps);
+  console.log(ps.map((p) => `(${p.x},${p.y})`).join(" "));
+  console.log(clamp(Point { x: 9, y: 9 }, Point { x: 0, y: 0 }, Point { x: 2, y: 2 }).x);
+
+  const words = ["b", "c", "a"];
+  sortAll(words);
+  console.log(words, between(new Version(1, 5), vs[0], vs[2]), between(vs[0], vs[1], vs[2]));
+}

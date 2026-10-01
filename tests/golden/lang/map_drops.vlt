@@ -1,0 +1,33 @@
+// When Map drops values: on replace, on delete (immediately, not at the next compaction), on
+// clear, via upsert's replacement, and with the map itself.
+class Res {
+  id: i64;
+  constructor(id: i64) {
+    this.id = id;
+  }
+  [Symbol.dispose]() {
+    console.log(`drop ${this.id}`);
+  }
+}
+
+function main() {
+  const m = new Map<string, Res>();
+  m.set("a", new Res(1));
+  m.set("b", new Res(2));
+  m.set("c", new Res(3));
+  console.log("replace a");
+  m.set("a", new Res(4));
+  console.log("delete b (not the newest entry)");
+  m.delete("b");
+  console.log("delete c (the newest entry)");
+  m.delete("c");
+  console.log("upsert a");
+  m.upsert("a", new Res(5), (r) => new Res(r.id * 10));
+  console.log("upsert d");
+  m.upsert("d", new Res(6), (r) => new Res(r.id * 10));
+  console.log("delete missing", m.delete("zz"));
+  console.log("clear");
+  m.clear();
+  m.set("e", new Res(7));
+  console.log("end of main", m.size);
+}

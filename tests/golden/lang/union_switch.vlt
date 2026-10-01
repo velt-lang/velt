@@ -1,0 +1,82 @@
+// `switch` on unions: `typeof` cases narrow to the members with that tag, literal cases select
+// their member, `case null`, and a `default` sees the members no case took.
+
+struct Point {
+  x: i64;
+  y: i64;
+}
+
+type Shape = Point | f64 | string;
+
+function area(s: Shape): f64 {
+  switch (typeof s) {
+    case "object":
+      return (s.x * s.y) as f64;
+    case "number":
+      return 3.0 * s * s;
+    case "string":
+      return s.length as f64;
+  }
+}
+
+function classify(v: i64 | string | bool | null): string {
+  switch (v) {
+    case null:
+      return "nothing";
+    case 0:
+      return "zero";
+    case "":
+      return "empty string";
+    case true:
+      return "yes";
+    case false:
+      return "no";
+  }
+  switch (typeof v) {
+    case "number":
+      if (v < 0) {
+        return "negative";
+      }
+      return `positive ${v}`;
+    case "string":
+      return `string ${v}`;
+    default:
+      return "unreachable";
+  }
+}
+
+function onlyTypes(v: i64 | string): string {
+  switch (typeof v) {
+    case "number":
+      return "some int";
+    default:
+      return "not an int";
+  }
+}
+
+function main() {
+  const shapes: Shape[] = [Point { x: 2, y: 3 }, 1.0, "abcd"];
+  for (const s of shapes) {
+    console.log(area(s));
+  }
+  const vs: (i64 | string | bool | null)[] = [null, 0, -3, 12, "", "hey", true, false];
+  for (const v of vs) {
+    console.log(classify(v));
+  }
+  console.log(onlyTypes(1), onlyTypes("x"));
+
+  // A switch borrows the member; a narrowed local can be mutated in place.
+  let items: i64[] | string = [1, 2];
+  switch (typeof items) {
+    case "object":
+      console.log(`${items.length} items`);
+      break;
+    case "string":
+      console.log(items);
+      break;
+  }
+  if (typeof items === "object") {
+    items.push(3);
+  }
+  console.log(items);
+}

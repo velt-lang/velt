@@ -1,0 +1,8 @@
+49
+Point { x: 1.5, y: 2.5, label: 'nested' }
+2
+down
+inner
+module-level
+42
+5

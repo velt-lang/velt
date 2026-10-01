@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Velt Playground</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="playground.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Velt <span>Playground</span></h1>
+    <label>Example
+      <select id="example"></select>
+    </label>
+    <label class="check"><input type="checkbox" id="release"> --release</label>
+    <button id="run" title="Ctrl/Cmd + Enter">Run</button>
+    <button id="stop" disabled>Stop</button>
+  </header>
+  <main>
+    <textarea id="source" spellcheck="false" autocapitalize="off" autocomplete="off"
+      aria-label="Program source"></textarea>
+    <section aria-label="Output">
+      <div id="status">Ready.</div>
+      <pre id="output"></pre>
+    </section>
+  </main>
+  <footer>
+    Programs are compiled by the server this page came from (<code>velt playground</code>) to
+    WebAssembly and run in your browser, in a Web Worker.
+  </footer>
+</body>
+</html>

@@ -1,0 +1,13 @@
+// A field without a type needs an initializer that states its type (a literal, `new C()` or an
+// array of literals); anything else asks for the annotation.
+function start(): i64 {
+  return 1;
+}
+
+class Counter {
+  n = start();
+}
+
+function main() {
+  console.log(new Counter().n);
+}

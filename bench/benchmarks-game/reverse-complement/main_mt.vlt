@@ -1,0 +1,103 @@
+// reverse-complement, multi-threaded: main.vlt with each sequence's output split into blocks
+// of whole lines (like the Rust #1 program's rayon tasks). Block k of the output is the reverse
+// complement of a slice taken from the end of the sequence, so every spawned task gets its own
+// slice and `Promise.all` returns the blocks in order.
+
+import { openRead } from "velt:fs_stream";
+import { stdout } from "velt:process";
+
+const LINE_LENGTH: usize = 60;
+// Output characters per task (a whole number of lines).
+const BLOCK_CHARS: usize = 60 * 16384;
+const NEWLINE: u8 = 10;
+const HEADER_START: u8 = 62; // '>'
+
+// complement[c] is the complement of code c (either case); other bytes map to themselves.
+function complementTable(): u8[] {
+  const from = "ACGTUMRWSYKVHDBN";
+  const to = "TGCAAKYWSRMBDHVN";
+  const table: u8[] = [];
+  for (let c = 0; c < 256; c++) {
+    table.push(c as u8);
+  }
+  for (let i: usize = 0; i < from.length; i++) {
+    const upper = from.charCodeAt(i as i64);
+    const target = to.charCodeAt(i as i64) as u8;
+    table[upper as usize] = target;
+    table[(upper + 32) as usize] = target; // lower case
+  }
+  return table;
+}
+
+// The reverse complement of `seq`, folded into lines.
+function reverseComplement(seq: u8[], table: u8[]): u8[] {
+  const out: u8[] = [];
+  let column: usize = 0;
+  for (let i = seq.length; i > 0; i--) {
+    out.push(table[seq[i - 1] as usize]);
+    column++;
+    if (column == LINE_LENGTH) {
+      out.push(NEWLINE);
+      column = 0;
+    }
+  }
+  if (column > 0) {
+    out.push(NEWLINE);
+  }
+  return out;
+}
+
+async function reverseComplementTask(seq: u8[], table: u8[]): Promise<u8[]> {
+  return reverseComplement(seq, table);
+}
+
+// The reverse complement of `seq` in line-aligned blocks, computed concurrently.
+async function reverseComplementBlocks(seq: u8[], table: u8[]): Promise<u8[][]> {
+  const tasks: Promise<u8[]>[] = [];
+  for (let end = seq.length; end > 0;) {
+    const start = end > BLOCK_CHARS ? end - BLOCK_CHARS : 0;
+    tasks.push(spawn(reverseComplementTask(seq.slice(start as i64, end as i64), table)));
+    end = start;
+  }
+  return await Promise.all(tasks);
+}
+
+async function main() {
+  const table = complementTable();
+  const input = await openRead("/dev/stdin");
+  let header: u8[] = [];
+  let seq: u8[] = [];
+  let inHeader = false;
+  for (;;) {
+    const chunk = await input.read();
+    if (chunk.length == 0) {
+      break;
+    }
+    for (const b of chunk) {
+      if (inHeader) {
+        header.push(b);
+        inHeader = b != NEWLINE;
+      } else if (b == HEADER_START) {
+        if (header.length > 0) {
+          stdout.write(header);
+          for (const block of await reverseComplementBlocks(seq, table)) {
+            stdout.write(block);
+          }
+          header = [];
+          seq = [];
+        }
+        header.push(b);
+        inHeader = true;
+      } else if (b != NEWLINE) {
+        seq.push(b);
+      }
+    }
+  }
+  if (header.length > 0) {
+    stdout.write(header);
+    for (const block of await reverseComplementBlocks(seq, table)) {
+      stdout.write(block);
+    }
+  }
+  input.close();
+}

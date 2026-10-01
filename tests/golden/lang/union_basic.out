@@ -1,0 +1,15 @@
+21 hello true
+number 42 | string(5) hello | bool false
+21
+[ 1, 'two', false, -4 ]
+1 and two
+[1,"two",false,-4]
+{"id":7,"value":"hello"}
+number number string boolean object
+true false false false
+false true
+narrowed: 1
+null object true
+SET
+5
+num 1.5 hi

@@ -1,0 +1,82 @@
+// Exhaustive switches: without `default`, a switch on a discriminant, a union of literals, an
+// enum or `typeof` of a union must handle every member — then it needs no `return` after it.
+// Each body sees the value narrowed to the members that reach it (its own labels plus the
+// cases falling into it); in `default`, what no case took (`never` when nothing is left).
+
+type Event =
+  | { kind: "key"; code: i64 }
+  | { kind: "click"; x: i64; y: i64 }
+  | { kind: "scroll"; dy: i64 }
+  | { kind: "quit" };
+
+function handle(e: Event): string {
+  switch (e.kind) {
+    case "key":
+      return `key ${e.code}`;
+    case "click":
+    case "scroll":
+      // Narrowed to click | scroll: the common `kind` is readable, the rest after a test.
+      if (e.kind === "click") {
+        return `click at ${e.x},${e.y}`;
+      }
+      return `scroll ${e.dy}`;
+    case "quit":
+      return "bye";
+  }
+}
+
+function weight(e: Event): i64 {
+  let w = 0;
+  switch (e.kind) {
+    case "click":
+      w += e.x;
+    // Falls through: here `e` is click | scroll.
+    case "scroll":
+      w += 100;
+      break;
+    default: {
+      // `e` is key | quit here.
+      const k = e.kind;
+      w = k == "key" ? 1 : 2;
+    }
+  }
+  return w;
+}
+
+function checked(e: Event): i64 {
+  switch (e.kind) {
+    case "key":
+    case "click":
+    case "scroll":
+    case "quit":
+      return 1;
+    default:
+      // Every member is handled: `e` is `never` here.
+      const unreachable: never = e;
+      return unreachable;
+  }
+}
+
+function tag(v: i64 | string | bool): string {
+  switch (typeof v) {
+    case "number":
+      return `n${v * 2}`;
+    case "string":
+      return `s${v.length}`;
+    case "boolean":
+      return v ? "T" : "F";
+  }
+}
+
+function main() {
+  const events: Event[] = [
+    { kind: "key", code: 13 },
+    { kind: "click", x: 3, y: 4 },
+    { kind: "scroll", dy: -2 },
+    { kind: "quit" },
+  ];
+  for (const e of events) {
+    console.log(handle(e), weight(e), checked(e));
+  }
+  console.log(tag(21), tag("abc"), tag(false));
+}

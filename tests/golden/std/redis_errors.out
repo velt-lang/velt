@@ -1,0 +1,12 @@
+get on a list: WRONGTYPE: WRONGTYPE Operation against a key holdin
+unknown command: ERR true
+incr on text: ERR ERR value is not an integer or out of range
+empty command: EINVAL
+still usable: PONG
+refused: ECONNREFUSED
+bad scheme: EINVAL
+bad port: EINVAL
+bad db index: ERR
+bad password: WRONGPASS
+TLS to a plain server fails: true
+cleanup: 2

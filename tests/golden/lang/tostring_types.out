@@ -1,0 +1,39 @@
+struct: Point { x: 1, y: 2.5 }
+struct: Point { x: 1, y: 2.5 }
+nested struct: Named { name: 'Zoë', at: Point { x: -1, y: 0 }, tags: [ 'a' ] }
+nested struct: Named { name: 'Zoë', at: Point { x: -1, y: 0 }, tags: [ 'a' ] }
+empty struct: Unit {}
+empty struct: Unit {}
+anonymous: { id: 7, label: 'seven' }
+anonymous: { id: 7, label: 'seven' }
+class: Animal { name: 'cat' }
+class: Animal { name: 'cat' }
+subclass via base: Dog { name: 'rex', tricks: 2 }
+subclass via base: Dog { name: 'rex', tricks: 2 }
+class array: [ Animal { name: 'a' }, Animal { name: 'b' } ]
+class array: [ Animal { name: 'a' }, Animal { name: 'b' } ]
+union member: { kind: 'rect', w: 1, h: 2.5 }
+union member: { kind: 'rect', w: 1, h: 2.5 }
+union string: { kind: 'label', text: 'hi' }
+union string: { kind: 'label', text: 'hi' }
+union unit: { kind: 'empty' }
+union unit: { kind: 'empty' }
+union array: [ { kind: 'circle', r: 1 }, { kind: 'empty' } ]
+union array: [ { kind: 'circle', r: 1 }, { kind: 'empty' } ]
+c-like enum: 6
+c-like enum: 6
+string enum: SLOW
+string enum: SLOW
+string enum array: [ 'FAST', 'SLOW' ]
+string enum array: [ 'FAST', 'SLOW' ]
+literal union: down
+literal union: down
+literal array: [ 'up', 'down' ]
+literal array: [ 'up', 'down' ]
+value ok: 1
+value ok: 1
+value err: ParseError { message: 'bad input x' }
+value err: ParseError { message: 'bad input x' }
+optional union: { kind: 'circle', r: 0.5 }
+optional union: { kind: 'circle', r: 0.5 }
+p=Point { x: 1, y: 2.5 } c=5 m=FAST s={ kind: 'empty' } d=down a=Dog { name: 'rex', tricks: 2 } n=Point { x: -1, y: 0 }

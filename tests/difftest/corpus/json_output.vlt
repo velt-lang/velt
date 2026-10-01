@@ -1,0 +1,38 @@
+// JSON.stringify of classes, nested arrays, strings with escapes, numbers.
+class Point {
+  x: f64;
+  y: f64;
+  label: string;
+  constructor(x: f64, y: f64, label: string) {
+    this.x = x;
+    this.y = y;
+    this.label = label;
+  }
+}
+
+class Poly {
+  name: string;
+  points: Point[];
+  closed: bool;
+  constructor(name: string, points: Point[], closed: bool) {
+    this.name = name;
+    this.points = points;
+    this.closed = closed;
+  }
+}
+
+function main() {
+  const p = new Poly(
+    "tri \"one\"",
+    [new Point(0.0, 0.0, "a"), new Point(1.5, -2.0, "b\nc"), new Point(1e21, 0.1, "\t")],
+    true,
+  );
+  console.log(JSON.stringify(p));
+  console.log(JSON.stringify([[1, 2], [], [3]]));
+  console.log(
+    JSON.stringify(["x", "y\\z", ""]),
+    JSON.stringify(0.30000000000000004),
+    JSON.stringify("é"),
+  );
+  console.log(JSON.stringify(new Point(-0.0, 1.0 / 3.0, "")));
+}

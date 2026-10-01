@@ -1,0 +1,198 @@
+// std/collections: Set, Deque, PriorityQueue and SortedMap — semantics, ordering, wrap-around
+// growth, element ownership (string elements), and a randomized check against plain arrays.
+
+import { Set } from "velt:collections/set";
+import { Deque } from "velt:collections/deque";
+import { PriorityQueue } from "velt:collections/priority_queue";
+import { SortedMap } from "velt:collections/sorted_map";
+
+class Job {
+  name: string;
+  priority: i64;
+
+  constructor(name: string, priority: i64) {
+    this.name = name;
+    this.priority = priority;
+  }
+}
+
+function sets() {
+  const s = new Set<string>();
+  s.add("b");
+  s.add("a");
+  s.add("b");
+  console.log(s.size, s.has("a"), s.has("z"), s.values(), s.isEmpty());
+  console.log(s.delete("b"), s.delete("b"), s.values());
+  s.add("b");
+  for (const x of s.values()) {
+    console.log("item", x);
+  }
+  s.clear();
+  console.log(s.size, s.isEmpty(), s.values());
+  const a = Set.from([1, 2, 3, 4, 2]);
+  const b = Set.from([3, 4, 5]);
+  console.log(a.values(), b.values());
+  console.log("union", a.union(b).values());
+  console.log("intersection", a.intersection(b).values());
+  console.log("difference", a.difference(b).values(), b.difference(a).values());
+  console.log("symmetric", a.symmetricDifference(b).values());
+  const small = Set.from([4, 1]);
+  console.log(small.isSubsetOf(a), a.isSupersetOf(small), a.isSubsetOf(small));
+  console.log(a.isDisjointFrom(b), a.isDisjointFrom(Set.from([9])));
+  let sum = 0;
+  a.forEach((x) => {
+    sum += x;
+  });
+  console.log("sum", sum);
+}
+
+function deques() {
+  const d = new Deque<string>();
+  console.log(d.popFront(), d.popBack(), d.peekFront(), d.at(0), d.isEmpty());
+  for (let i = 0; i < 6; i++) {
+    d.pushBack(`b${i}`);
+  }
+  console.log(d.popFront(), d.popFront(), d.popFront());
+  for (let i = 0; i < 6; i++) {
+    d.pushFront(`f${i}`);
+  }
+  // The ring wrapped around and then grew: order must survive.
+  console.log(d.length, d.size, d.toArray());
+  console.log(d.peekFront(), d.peekBack(), d.at(1), d.at(-2), d.at(9), d.at(-10));
+  console.log(d.popBack(), d.popFront(), d.length);
+  const seen: string[] = [];
+  d.forEach((x) => {
+    seen.push(x.clone());
+  });
+  console.log(seen.join(","));
+  d.clear();
+  console.log(d.length, d.toArray(), d.popFront());
+  d.pushFront("again");
+  console.log(d.toArray());
+  console.log(Deque.from([1, 2, 3]).toArray());
+}
+
+function dequeModel() {
+  const d = new Deque<i64>();
+  let model: i64[] = [];
+  let seed: i64 = 7;
+  let ok = true;
+  for (let i: i64 = 0; i < 20000; i++) {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    const op = seed % 5;
+    if (op == 0) {
+      d.pushBack(i);
+      model.push(i);
+    } else if (op == 1) {
+      d.pushFront(i);
+      model = [i, ...model];
+    } else if (op == 2) {
+      ok = ok && d.popBack() == model.pop();
+    } else if (op == 3) {
+      const front = d.popFront();
+      if (model.length > 0) {
+        ok = ok && (front ?? -1) == model[0];
+        model = model.slice(1);
+      } else {
+        ok = ok && front == null;
+      }
+    } else {
+      ok = ok && d.length == model.length;
+    }
+  }
+  const rest = d.toArray();
+  ok = ok && rest.length == model.length;
+  for (let i: usize = 0; i < rest.length; i++) {
+    ok = ok && rest[i] == model[i];
+  }
+  console.log("deque matches array model:", ok, d.length);
+}
+
+function queues() {
+  const q = new PriorityQueue<i64>((a, b) => a - b);
+  console.log(q.pop(), q.peek(), q.isEmpty());
+  const xs = [5, 3, 9, 1, 7, 3, 8, -2];
+  for (const x of xs) {
+    q.push(x);
+  }
+  console.log(q.size, q.length, q.peek(), q.toSortedArray());
+  const out: i64[] = [];
+  while (!q.isEmpty()) {
+    out.push(q.pop() ?? 0);
+  }
+  console.log(out);
+  const maxQ = new PriorityQueue<i64>((a, b) => b - a);
+  for (const x of xs) {
+    maxQ.push(x);
+  }
+  console.log(maxQ.pop(), maxQ.pop(), maxQ.size);
+  maxQ.clear();
+  console.log(maxQ.size, maxQ.pop());
+  const jobs = new PriorityQueue<Job>((a, b) => b.priority - a.priority);
+  jobs.push(new Job("write docs", 1));
+  jobs.push(new Job("fix outage", 9));
+  jobs.push(new Job("review", 5));
+  console.log(jobs.peek());
+  while (!jobs.isEmpty()) {
+    const j = jobs.pop();
+    if (j != null) {
+      console.log(j.priority, j.name);
+    }
+  }
+  const words = new PriorityQueue<string>((a, b) => (a.length as i64) - (b.length as i64));
+  const ws = ["ccc", "a", "dddd", "bb"];
+  for (const w of ws) {
+    words.push(w.clone());
+  }
+  console.log(words.toSortedArray(), words.pop());
+}
+
+function queueModel() {
+  const q = new PriorityQueue<i64>((a, b) => a - b);
+  let seed: i64 = 99;
+  const all: i64[] = [];
+  for (let i = 0; i < 5000; i++) {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    q.push(seed % 1000);
+    all.push(seed % 1000);
+  }
+  all.sort();
+  let ok = true;
+  for (let i: usize = 0; i < all.length; i++) {
+    ok = ok && (q.pop() ?? -1) == all[i];
+  }
+  console.log("heap pops in sorted order:", ok, q.isEmpty());
+}
+
+function sortedMaps() {
+  const m = new SortedMap<string, i64>();
+  console.log(m.first(), m.last(), m.get("x"), m.isEmpty());
+  m.set("pear", 3);
+  m.set("apple", 1);
+  m.set("fig", 2);
+  m.set("apple", 10);
+  console.log(m.size, m.keys(), m.values(), m.get("apple"), m.get("kiwi"), m.has("fig"));
+  console.log(m.first(), m.last(), m.floorKey("b"), m.ceilingKey("b"));
+  console.log(m.floorKey("a"), m.ceilingKey("z"), m.floorKey("fig"), m.ceilingKey("fig"));
+  console.log(m.range("b", "q"), m.range("q", "b"), m.entries());
+  console.log(m.delete("fig"), m.delete("fig"), m.keys());
+  m.forEach((v, k) => {
+    console.log(k, v);
+  });
+  m.clear();
+  console.log(m.size, m.keys());
+  const n = new SortedMap<i64, string>();
+  for (let i: i64 = 10; i > 0; i--) {
+    n.set((i * 7) % 11, `v${i}`);
+  }
+  console.log(n.keys(), n.range(3, 7));
+}
+
+function main() {
+  sets();
+  deques();
+  dequeModel();
+  queues();
+  queueModel();
+  sortedMaps();
+}

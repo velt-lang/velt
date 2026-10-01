@@ -1,0 +1,33 @@
+// Packing booleans into integers and back; hamming distance between bit strings.
+function pack(bits: bool[]): i64 {
+  let v = 0;
+  for (const b of bits) {
+    v = v * 2 + (b ? 1 : 0);
+  }
+  return v;
+}
+
+function unpack(v: i64, n: i64): string {
+  let s = "";
+  for (let i = n - 1; i >= 0; i--) {
+    s += ((v >> i) & 1) == 1 ? "1" : "0";
+  }
+  return s;
+}
+
+function hamming(a: i64, b: i64): i64 {
+  let x = a ^ b;
+  let n = 0;
+  while (x != 0) {
+    n += x & 1;
+    x >>= 1;
+  }
+  return n;
+}
+
+function main() {
+  const bits = [true, false, true, true, false, false, true, false, true];
+  const v = pack(bits);
+  console.log(v, unpack(v, 9), unpack(v, 12));
+  console.log(hamming(v, 0), hamming(v, 511), hamming(123456, 654321), unpack(123456 ^ 654321, 20));
+}

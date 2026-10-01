@@ -1,0 +1,8 @@
+1: line 1
+2: line 2
+1001: hé
+1002: no newline at end
+1002 lines, last: no newline at end
+true true
+[ 108, 105, 110, 101 ] true
+ENOENT

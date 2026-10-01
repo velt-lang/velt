@@ -1,0 +1,66 @@
+// pidigits (Benchmarks Game): the spigot of Node #2 (Isaac Gouy, after Alexander Fyodorov) in
+// idiomatic Velt on std/bigint. Where the JS program assigns (`a *= k1`, `n = n * 10n`), this
+// uses the in-place methods (`a.mulIntAssign(k1)`), so the numbers keep their buffers.
+import { args } from "velt:process";
+import { BigInt } from "velt:bigint";
+
+// JS `pad`: `digits` as 10 characters, zero-padded on the left, or space-padded on the right
+// for the last (short) line.
+function pad(digits: i64, last: bool): string {
+  const s = `${digits}`;
+  return last ? s.padEnd(10) : s.padStart(10, "0");
+}
+
+function main() {
+  const argv = args();
+  const n = argv.length > 0 ? parseInt(argv[0]) as i64 : 27;
+  let i = 0;
+  let line: i64 = 0;
+  let k: i64 = 0;
+  let k1: i64 = 1;
+  const a = new BigInt(0);
+  const d = new BigInt(1);
+  const num = new BigInt(1);
+  const m = new BigInt(0);
+  const t = new BigInt(0);
+  const u = new BigInt(0);
+  while (true) {
+    k += 1;
+    k1 += 2;
+    t.set(num);
+    t.shlAssign(1);
+    num.mulIntAssign(k);
+    a.addAssign(t);
+    a.mulIntAssign(k1);
+    d.mulIntAssign(k1);
+    if (a.compareTo(num) > 0) {
+      // m = n * 3 + a; t = m / d; u = m % d + n
+      m.set(num);
+      m.mulIntAssign(3);
+      m.addAssign(a);
+      t.set(m);
+      t.divAssign(d);
+      u.set(m);
+      u.remAssign(d);
+      u.addAssign(num);
+      if (d.compareTo(u) > 0) {
+        line = line * 10 + t.toI64();
+        i += 1;
+        const last = i >= n;
+        if (i % 10 == 0 || last) {
+          console.log(`${pad(line, last)}\t:${i}`);
+          line = 0;
+        }
+        if (last) {
+          break;
+        }
+        // a = (a - d * t) * 10; n = n * 10
+        u.set(d);
+        u.mulAssign(t);
+        a.subAssign(u);
+        a.mulIntAssign(10);
+        num.mulIntAssign(10);
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+// Converting between strings and numbers: parseInt radixes, parseFloat, Number, templates.
+function main() {
+  const inputs = [
+    "42",
+    "  17  ",
+    "-0",
+    "3.75",
+    "1e3",
+    "0x1f",
+    "0b101",
+    "12abc",
+    "abc",
+    "",
+    "Infinity",
+    "-1.5e-3",
+  ];
+  for (const s of inputs) {
+    console.log(
+      `"${s}" int=${parseInt(s, 10)} int16=${parseInt(s, 16)} float=${parseFloat(s)} num=${Number(s)}`,
+    );
+  }
+  console.log(parseInt("z", 36), parseInt("777", 8), parseInt("11111111", 2), parseInt("-ff", 16));
+}

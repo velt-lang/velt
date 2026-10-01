@@ -1,0 +1,89 @@
+// The Computer Language Benchmarks Game: spectral-norm, multi-threaded
+// https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/spectralnorm.html
+//
+// main.vlt with each matrix-vector product split into row blocks: every block is a spawned task
+// that gets its own copy of the input vector (async parameters are owned) and returns its rows;
+// `Promise.all` gives the blocks back in order.
+import { argv } from "velt:process";
+import { availableParallelism } from "velt:os";
+
+// JS `Number.prototype.toFixed` for the magnitudes printed here (|x| * 10^digits < 2^53).
+extend f64 {
+  toFixed(digits: i64): string {
+    const scale = 10.0 ** (digits as f64);
+    const scaled = Math.round(Math.abs(this) * scale) as i64;
+    const unit = scale as i64;
+    const frac = `${scaled % unit}`.padStart(digits, "0");
+    const sign = this < 0.0 && scaled != 0 ? "-" : "";
+    return `${sign}${scaled / unit}.${frac}`;
+  }
+}
+
+// Entry (i, j) of the infinite matrix A.
+function a(i: i64, j: i64): f64 {
+  return (((i + j) * (i + j + 1)) / 2 + i + 1) as f64;
+}
+
+// Rows [first, last) of A * u, or of transpose(A) * u when `transpose` is set.
+async function multiplyRows(u: f64[], first: i64, last: i64, transpose: bool): Promise<f64[]> {
+  const n = u.length as i64;
+  const rows: f64[] = [];
+  for (let i = first; i < last; i++) {
+    let sum = 0.0;
+    for (let j = 0; j < n; j++) {
+      sum += u[j] / (transpose ? a(j, i) : a(i, j));
+    }
+    rows.push(sum);
+  }
+  return rows;
+}
+
+// A * u (or transpose(A) * u), computed by `blocks` concurrent tasks.
+async function multiply(u: f64[], transpose: bool, blocks: i64): Promise<f64[]> {
+  const n = u.length as i64;
+  const blockSize = (n + blocks - 1) / blocks;
+  const tasks: Promise<f64[]>[] = [];
+  for (let first = 0; first < n; first += blockSize) {
+    const last = first + blockSize < n ? first + blockSize : n;
+    tasks.push(spawn(multiplyRows(u.clone(), first, last, transpose)));
+  }
+  const result: f64[] = [];
+  for (const rows of await Promise.all(tasks)) {
+    for (const x of rows) {
+      result.push(x);
+    }
+  }
+  return result;
+}
+
+// transpose(A) * A * u
+async function multiplyAtAv(u: f64[], blocks: i64): Promise<f64[]> {
+  const w = await multiply(u, false, blocks);
+  return await multiply(w, true, blocks);
+}
+
+async function spectralNorm(n: i64): Promise<f64> {
+  const blocks = availableParallelism() * 4;
+  let u: f64[] = [];
+  for (let i = 0; i < n; i++) {
+    u.push(1.0);
+  }
+  let v: f64[] = [];
+  for (let i = 0; i < 10; i++) {
+    v = await multiplyAtAv(u.clone(), blocks);
+    u = await multiplyAtAv(v.clone(), blocks);
+  }
+  let vBv = 0.0;
+  let vv = 0.0;
+  for (let i = 0; i < n; i++) {
+    vBv += u[i] * v[i];
+    vv += v[i] * v[i];
+  }
+  return Math.sqrt(vBv / vv);
+}
+
+async function main() {
+  const args = argv();
+  const n = args.length > 1 ? Number(args[1]) as i64 : 100;
+  console.log((await spectralNorm(n)).toFixed(9));
+}

@@ -1,0 +1,39 @@
+type Shape =
+  | { kind: "circle"; r: f64 }
+  | { kind: "rect"; w: f64; h: f64 };
+
+enum Mode {
+  Fast = "FAST",
+  Slow,
+}
+
+// A field of one member needs narrowing first.
+function radius(s: Shape): f64 {
+  return s.r;
+}
+
+// Fields every member has can be read, but not assigned, without narrowing.
+function resize(s: Shape) {
+  s.kind = "rect";
+}
+
+function notExhaustive(s: Shape): f64 {
+  switch (s.kind) {
+    case "circle":
+      return s.r;
+    default:
+      const rest: never = s;
+      return 0.0;
+  }
+}
+
+function neverTrue(s: Shape): bool {
+  return s.kind === "square";
+}
+
+function main() {
+  const bad: Shape = { kind: "square", side: 1.0 };
+  const d: "up" | "down" = "left";
+  const n: 1 | 2 = 3;
+  const m = Mode.Fast as i64;
+}

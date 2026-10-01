@@ -1,0 +1,44 @@
+function apply(f: (x: i64) => i64, v: i64): i64 {
+  return f(v);
+}
+
+function makeCounter(): () => i64 {
+  let n = 0;
+  return () => {
+    n += 1;
+    return n;
+  };
+}
+
+function makeAdder(k: i64): (x: i64) => i64 {
+  return (x) => x + k;
+}
+
+function main() {
+  let total = 0;
+  const xs = [1, 2, 3, 4];
+  // Passed directly as an argument: non-escaping, captures `total` by reference (JS semantics).
+  xs.forEach((x) => {
+    total += x;
+  });
+  console.log(total);
+
+  const factor = 10;
+  console.log(apply((x) => x * factor, 5));
+
+  // Escaping closures own their captured state.
+  const c = makeCounter();
+  c();
+  c();
+  console.log(c());
+
+  const add5 = makeAdder(5);
+  console.log(add5(1), apply(add5, 10));
+
+  const name = "velt";
+  const greet = () => `hi ${name}`;
+  console.log(greet());
+
+  console.log(xs.map((x) => x * x).filter((x) => x > 4).length);
+  console.log(xs.reduce((acc, x) => acc + x, 100));
+}

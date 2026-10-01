@@ -1,0 +1,31 @@
+// Sorting strings: built-in sort, then insertion sort by length then alphabetically.
+function byLength(xs: string[]): string[] {
+  const out = xs.slice(0);
+  for (let i: usize = 1; i < out.length; i++) {
+    let j = i;
+    while (
+      j > 0 &&
+      (
+        out[j - 1].length > out[j].length ||
+        (out[j - 1].length == out[j].length && out[j - 1] > out[j])
+      )
+    ) {
+      const t = `${out[j]}`;
+      out[j] = `${out[j - 1]}`;
+      out[j - 1] = t;
+      j--;
+    }
+  }
+  return out;
+}
+
+function main() {
+  const words = ["pear", "Fig", "apple", "kiwi", "banana", "date", "fig", "APPLE", "cherry"];
+  const a = words.slice(0);
+  a.sort();
+  console.log(a.join(" "));
+  console.log(byLength(words).join(" "));
+  const lower = words.map((w) => w.toLowerCase());
+  lower.sort();
+  console.log(lower.join(" "));
+}

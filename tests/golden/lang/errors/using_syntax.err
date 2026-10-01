@@ -1,0 +1,3 @@
+using_syntax.vlt:2:1: error: `using` declarations are only allowed inside a block (a module's values are never disposed)
+using_syntax.vlt:5:3: error: `Symbol.iterator` is not supported: the only symbol keys are `[Symbol.dispose]` and `[Symbol.asyncDispose]`
+using_syntax.vlt:9:3: error: a `using` declaration must be initialized

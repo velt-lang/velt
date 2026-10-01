@@ -1,0 +1,401 @@
+// std/url/record (std-internal): the URL record, its parser and serializer, for std/url.
+//
+// A simplified WHATWG basic URL parser (url.spec.whatwg.org §4.4): the input is split into
+// scheme, authority, path, query and fragment by scanning for delimiters instead of running the
+// spec's character state machine, which gives the same results for the inputs the spec accepts
+// (minus the gaps listed in std/url.vlt). Relative references resolve against a base record
+// like RFC 3986 §5.2 with WHATWG's special-scheme rules (`\` is a separator, empty hosts are
+// invalid, default ports are dropped). Parsers return null where the URL is invalid.
+
+import {
+  FRAGMENT,
+  QUERY,
+  SPECIAL_QUERY,
+  PATH,
+  USERINFO,
+  C0,
+  encodeSet,
+  bytesOf,
+} from "velt:url/encode";
+import { parseHost } from "velt:url/host";
+
+// A parsed URL. `path` is serialized (it starts with "/" unless it is empty or `opaque`, e.g.
+// `mailto:` paths); `port` is "" when absent or the scheme's default. Optional components are
+// a flag plus a string (not `string | null`) so they can be read without cloning.
+export class UrlRecord {
+  scheme: string = "";
+  username: string = "";
+  password: string = "";
+  hasHost: bool = false;
+  host: string = "";
+  port: string = "";
+  path: string = "";
+  opaque: bool = false;
+  hasQuery: bool = false;
+  query: string = "";
+  hasFragment: bool = false;
+  fragment: string = "";
+}
+
+// Byte values used by the scanners.
+const SLASH: i64 = 47;
+const BACKSLASH: i64 = 92;
+const QUESTION: i64 = 63;
+const HASH: i64 = 35;
+
+// Whether `scheme` is one of WHATWG's special schemes.
+export function isSpecial(scheme: string): bool {
+  return scheme == "http" ||
+    scheme == "https" ||
+    scheme == "ws" ||
+    scheme == "wss" ||
+    scheme == "ftp" ||
+    scheme == "file";
+}
+
+// The default port of a special scheme as a string, or "".
+export function defaultPort(scheme: string): string {
+  if (scheme == "http" || scheme == "ws") {
+    return "80";
+  }
+  if (scheme == "https" || scheme == "wss") {
+    return "443";
+  }
+  return scheme == "ftp" ? "21" : "";
+}
+
+// Parses `input` (absolute, or relative to `base`); null if it is not a valid URL.
+export function parseUrl(input: string, base: UrlRecord | null): UrlRecord | null {
+  const s = cleanInput(input);
+  const colon = schemeEnd(s);
+  if (colon < 0) {
+    return base == null ? null : parseRelative(s, base);
+  }
+  const scheme = s.slice(0, colon).toLowerCase();
+  const rest = s.slice(colon + 1);
+  if (base != null && isSpecial(scheme) && base.scheme == scheme && !rest.startsWith("//")) {
+    return parseRelative(rest, base);
+  }
+  return parseAbsolute(scheme, rest);
+}
+
+// Strips leading/trailing C0 controls and spaces, and removes tabs and newlines (WHATWG).
+function cleanInput(input: string): string {
+  const b = bytesOf(input);
+  let start: usize = 0;
+  let end = b.length;
+  while (start < end && (b[start] as i64) <= 32) {
+    start++;
+  }
+  while (end > start && (b[end - 1] as i64) <= 32) {
+    end--;
+  }
+  return removeTabNewline(input.slice(start as i64, end as i64));
+}
+
+// `s` without ASCII tabs and newlines, which the WHATWG parser drops everywhere (the constructor
+// and every setter that runs it).
+export function removeTabNewline(s: string): string {
+  if (s.indexOf("\t") < 0 && s.indexOf("\n") < 0 && s.indexOf("\r") < 0) {
+    return s;
+  }
+  return s.replaceAll("\t", "").replaceAll("\n", "").replaceAll("\r", "");
+}
+
+// Index of the `:` ending a scheme (`ALPHA *(ALPHA / DIGIT / "+" / "-" / ".")`), or -1.
+function schemeEnd(s: string): i64 {
+  const first = s.charCodeAt(0);
+  if (!((first >= 65 && first <= 90) || (first >= 97 && first <= 122))) {
+    return -1;
+  }
+  for (let i: i64 = 1; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i);
+    if (c == 58) {
+      return i;
+    }
+    const ok =
+      (c >= 65 && c <= 90) ||
+      (c >= 97 && c <= 122) ||
+      (c >= 48 && c <= 57) ||
+      c == 43 ||
+      c == 45 ||
+      c == 46;
+    if (!ok) {
+      return -1;
+    }
+  }
+  return -1;
+}
+
+// Whether the byte at `i` separates path segments.
+function isSep(s: string, i: i64, special: bool): bool {
+  const c = s.charCodeAt(i);
+  return c == SLASH || (special && c == BACKSLASH);
+}
+
+// Index of the first byte of `s` at or after `from` ending an authority (or a path, when
+// `pathToo` is false: then only `?` and `#` end it).
+function componentEnd(s: string, from: i64, special: bool, pathToo: bool): i64 {
+  for (let i = from; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i);
+    if (c == QUESTION || c == HASH || (pathToo && isSep(s, i, special))) {
+      return i;
+    }
+  }
+  return s.length as i64;
+}
+
+function parseAbsolute(scheme: string, rest: string): UrlRecord | null {
+  const special = isSpecial(scheme);
+  const file = scheme == "file";
+  const r = new UrlRecord();
+  r.scheme = scheme;
+  if (!special && !rest.startsWith("/")) {
+    return parseOpaque(r, rest);
+  }
+  let at: i64 = 0;
+  const twoSlashes = isSep(rest, 0, special) && isSep(rest, 1, special);
+  if (special && !file) {
+    while (isSep(rest, at, true)) {
+      at++;
+    }
+  } else if (twoSlashes) {
+    at = 2;
+  }
+  if (at > 0 || (special && !file)) {
+    const end = componentEnd(rest, at, special, true);
+    if (!parseAuthority(r, rest.slice(at, end))) {
+      return null;
+    }
+    at = end;
+  } else if (file) {
+    r.hasHost = true;
+  }
+  applyTail(r, rest.slice(at), []);
+  return r;
+}
+
+// `mailto:a@b`, `data:...`: the path is kept as written (C0-encoded), without dot segments.
+function parseOpaque(r: UrlRecord, rest: string): UrlRecord {
+  const end = componentEnd(rest, 0, false, false);
+  r.opaque = true;
+  r.path = encodeSet(rest.slice(0, end), C0);
+  applyQueryFragment(r, rest, end);
+  return r;
+}
+
+// Fills userinfo, host and port from `auth`; false if any of them is invalid.
+function parseAuthority(r: UrlRecord, auth: string): bool {
+  if (r.scheme == "file") {
+    return setFileHost(r, auth);
+  }
+  const special = isSpecial(r.scheme);
+  const at = auth.lastIndexOf("@");
+  if (at >= 0) {
+    const info = auth.slice(0, at);
+    const colon = info.indexOf(":");
+    if (colon >= 0) {
+      r.username = encodeSet(info.slice(0, colon), USERINFO);
+      r.password = encodeSet(info.slice(colon + 1), USERINFO);
+    } else {
+      r.username = encodeSet(info, USERINFO);
+    }
+  }
+  const hostPort = auth.slice(at + 1);
+  // An IPv6 literal's colons are not the port separator.
+  let colon = hostPort.indexOf(":", hostPort.startsWith("[") ? hostPort.indexOf("]") : 0);
+  if (colon < 0) {
+    colon = hostPort.length as i64;
+  }
+  const hostText = hostPort.slice(0, colon);
+  if (hostText.length == 0) {
+    if (special && r.scheme != "file") {
+      return false;
+    }
+    r.hasHost = true;
+    return at < 0 && colon == (hostPort.length as i64);
+  }
+  const host = parseHost(hostText, special);
+  if (host == null) {
+    return false;
+  }
+  r.hasHost = true;
+  r.host = host;
+  return parsePort(r, hostPort.slice(colon + 1));
+}
+
+// A `file:` URL's authority is only a host (no credentials or port: `@` and `:` are forbidden
+// host code points); `localhost` means the empty host. False if `text` is not a valid host.
+export function setFileHost(r: UrlRecord, text: string): bool {
+  let host = "";
+  if (text.length > 0) {
+    const parsed = parseHost(text, true);
+    if (parsed == null) {
+      return false;
+    }
+    host = parsed == "localhost" ? "" : parsed;
+  }
+  r.hasHost = true;
+  r.host = host;
+  return true;
+}
+
+// Digits only, at most 65535; leading zeros and the scheme's default port are dropped.
+function parsePort(r: UrlRecord, text: string): bool {
+  if (text.length == 0) {
+    return true;
+  }
+  let v: i64 = 0;
+  for (let i: i64 = 0; i < (text.length as i64); i++) {
+    const c = text.charCodeAt(i);
+    if (c < 48 || c > 57) {
+      return false;
+    }
+    v = v * 10 + (c - 48);
+    if (v > 65535) {
+      return false;
+    }
+  }
+  const port = `${v}`;
+  r.port = port == defaultPort(r.scheme) ? "" : port;
+  return true;
+}
+
+// Resolves a scheme-less reference against `base`.
+function parseRelative(rest: string, base: UrlRecord): UrlRecord | null {
+  if (base.opaque) {
+    if (!rest.startsWith("#")) {
+      return null;
+    }
+    const r = base.clone();
+    r.hasFragment = true;
+    r.fragment = encodeSet(rest.slice(1), FRAGMENT);
+    return r;
+  }
+  const special = isSpecial(base.scheme);
+  if (isSep(rest, 0, special) && isSep(rest, 1, special)) {
+    return parseAbsolute(base.scheme.clone(), rest);
+  }
+  const r = new UrlRecord();
+  r.scheme = base.scheme.clone();
+  r.username = base.username.clone();
+  r.password = base.password.clone();
+  r.hasHost = base.hasHost;
+  r.host = base.host.clone();
+  r.port = base.port.clone();
+  const end = componentEnd(rest, 0, special, false);
+  if (end == 0) {
+    r.path = base.path.clone();
+    applyQueryFragment(r, rest, 0);
+    if (!r.hasQuery) {
+      r.hasQuery = base.hasQuery;
+      r.query = base.query.clone();
+    }
+    return r;
+  }
+  if (isSep(rest, 0, special)) {
+    applyTail(r, rest, []);
+    return r;
+  }
+  const segs = base.path.length > 0 ? base.path.slice(1).split("/") : [];
+  segs.pop();
+  applyTail(r, rest, segs);
+  return r;
+}
+
+// Sets path, query and fragment from `tail` (everything after the authority); a relative path
+// continues from `segs`.
+function applyTail(r: UrlRecord, tail: string, segs: string[]) {
+  const special = isSpecial(r.scheme);
+  const end = componentEnd(tail, 0, special, false);
+  r.path = parsePath(tail.slice(0, end), segs, special);
+  applyQueryFragment(r, tail, end);
+}
+
+// Sets query and fragment from `s[from..]`, which is empty or starts with `?` or `#`.
+function applyQueryFragment(r: UrlRecord, s: string, from: i64) {
+  let hash = s.indexOf("#", from);
+  if (hash < 0) {
+    hash = s.length as i64;
+  } else {
+    r.hasFragment = true;
+    r.fragment = encodeSet(s.slice(hash + 1), FRAGMENT);
+  }
+  if (from < hash && s.charCodeAt(from) == QUESTION) {
+    const set = isSpecial(r.scheme) ? SPECIAL_QUERY : QUERY;
+    r.hasQuery = true;
+    r.query = encodeSet(s.slice(from + 1, hash), set);
+  }
+}
+
+// Serializes path `p` (after `segs`), percent-encoding segments and resolving `.` and `..`.
+export function parsePath(p: string, segs: string[], special: bool): string {
+  const len = p.length as i64;
+  if (len == 0 && segs.length == 0) {
+    return special ? "/" : "";
+  }
+  let i: i64 = isSep(p, 0, special) ? 1 : 0;
+  while (true) {
+    let j = i;
+    while (j < len && !isSep(p, j, special)) {
+      j++;
+    }
+    const last = j >= len;
+    const dots = dotSegment(p, i, j);
+    if (dots == 2) {
+      segs.pop();
+    }
+    if (dots == 0) {
+      segs.push(encodeSet(p.slice(i, j), PATH));
+    } else if (last) {
+      segs.push("");
+    }
+    if (last) {
+      break;
+    }
+    i = j + 1;
+  }
+  return `/${segs.join("/")}`;
+}
+
+// 1 for a `.` segment, 2 for `..` (also spelled with `%2e`), else 0.
+function dotSegment(p: string, from: i64, to: i64): i64 {
+  const n = to - from;
+  if (n == 0 || n > 6) {
+    return 0;
+  }
+  const seg = p.slice(from, to).toLowerCase();
+  if (seg == "." || seg == "%2e") {
+    return 1;
+  }
+  return seg == ".." || seg == ".%2e" || seg == "%2e." || seg == "%2e%2e" ? 2 : 0;
+}
+
+// The serialized URL (WHATWG "URL serializer").
+export function serialize(r: UrlRecord): string {
+  let out = `${r.scheme}:`;
+  if (r.hasHost) {
+    out = `${out}//${userinfo(r)}${r.host}${r.port.length > 0 ? ":" : ""}${r.port}`;
+  } else if (!r.opaque && r.path.startsWith("//")) {
+    out = `${out}/.`;
+  }
+  out = `${out}${r.path}`;
+  if (r.hasQuery) {
+    out = `${out}?${r.query}`;
+  }
+  if (r.hasFragment) {
+    out = `${out}#${r.fragment}`;
+  }
+  return out;
+}
+
+// `user:pass@`, `user@` or "".
+export function userinfo(r: UrlRecord): string {
+  if (r.username.length == 0 && r.password.length == 0) {
+    return "";
+  }
+  if (r.password.length == 0) {
+    return `${r.username}@`;
+  }
+  return `${r.username}:${r.password}@`;
+}

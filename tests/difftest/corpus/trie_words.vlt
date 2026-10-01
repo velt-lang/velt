@@ -1,0 +1,28 @@
+// Prefix counting with a Map-of-prefixes "trie" and longest common prefix.
+function lcp(words: string[]): string {
+  if (words.length == 0) {
+    return "";
+  }
+  let prefix = `${words[0]}`;
+  for (const w of words) {
+    while (!w.startsWith(prefix)) {
+      prefix = prefix.slice(0, -1);
+    }
+  }
+  return prefix;
+}
+
+function main() {
+  const words = ["interstellar", "internet", "interval", "internal", "into", "inter"];
+  const counts = new Map<string, i64>();
+  for (const w of words) {
+    for (let i = 1; i <= (w.length as i64); i++) {
+      const p = w.slice(0, i);
+      counts.set(p, (counts.get(p) ?? 0) + 1);
+    }
+  }
+  for (const p of ["i", "in", "int", "inte", "inter", "intern", "into", "x"]) {
+    console.log(p, counts.get(p) ?? 0);
+  }
+  console.log(lcp(words), lcp(["flower", "flow", "flight"]), `[${lcp(["a", "b"])}]`, counts.size);
+}

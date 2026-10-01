@@ -1,0 +1,31 @@
+// Singly linked list: push front, reverse, to array, length.
+class ListNode {
+  value: string;
+  next: ListNode | null;
+  constructor(value: string, next: ListNode | null) {
+    this.value = value;
+    this.next = next;
+  }
+}
+
+// Recursive walk: `cur = cur.next` would move a field out of a borrowed node in Velt.
+function collect(node: ListNode | null, out: string[]) {
+  if (node != null) {
+    out.push(`${node.value}`);
+    collect(node.next, out);
+  }
+}
+
+function toArray(head: ListNode | null): string[] {
+  const out: string[] = [];
+  collect(head, out);
+  return out;
+}
+
+function main() {
+  let head: ListNode | null = null;
+  for (const w of ["a", "b", "c", "d"]) {
+    head = new ListNode(w, head);
+  }
+  console.log(toArray(head).join("->"));
+}

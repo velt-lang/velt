@@ -1,0 +1,45 @@
+// Streaming: read the log line by line (never the whole file) into `Stats`.
+import { openRead } from "velt:fs_stream";
+import { LineSplitter } from "./lines";
+
+const CHUNK: u64 = 1048576;
+
+import { LineParser } from "./parse";
+import { Stats } from "./stats";
+
+// Folds one line into `stats`.
+export function addLine(stats: Stats, parser: LineParser, line: string) {
+  stats.lines++;
+  const e = parser.parse(line);
+  if (e == null) {
+    stats.malformed++;
+    return;
+  }
+  stats.add(e, parser.routeOf(e.path));
+}
+
+function drain(stats: Stats, parser: LineParser, lines: LineSplitter) {
+  let line = lines.next();
+  while (line != null) {
+    addLine(stats, parser, line);
+    line = lines.next();
+  }
+}
+
+// Statistics of every line of the file at `path`.
+export async function analyze(path: string): Promise<Stats> {
+  const stats = new Stats();
+  const parser = new LineParser();
+  const input = await openRead(path);
+  const lines = new LineSplitter();
+  let chunk = await input.readString(CHUNK);
+  while (chunk != "") {
+    lines.feed(chunk);
+    drain(stats, parser, lines);
+    chunk = await input.readString(CHUNK);
+  }
+  input.close();
+  lines.finish();
+  drain(stats, parser, lines);
+  return stats;
+}

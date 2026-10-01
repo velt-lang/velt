@@ -1,0 +1,193 @@
+# Async and concurrency
+
+Velt's `async`/`await` behaves like JavaScript's: promises start when you create them, and
+output order matches Node. Underneath, async functions compile to state machines running on a
+multi-threaded tokio runtime, so a directly awaited call costs no allocation, and `spawn` puts
+work on other cores. This guide covers the patterns; the exact rules are in
+[the Reference](../reference/async.md).
+
+## Promises start at once
+
+```ts
+async function fetchPrice(item: string): Promise<f64> {
+  await sleep(item.length as i64 * 5);            // pretend to do I/O
+  return item.length as f64 * 1.5;
+}
+
+async function main() {
+  const tea = fetchPrice("tea");                  // starts now
+  const coffee = fetchPrice("coffee");            // runs concurrently with tea
+  console.log(await tea, await coffee);           // 4.5 9, after ~30 ms, not ~45
+
+  const all = await Promise.all(["tea", "milk"].map((i) => fetchPrice(i)));
+  console.log(all);                               // [ 4.5, 6 ]
+}
+```
+
+- `await f()` runs `f` in place: no task, no allocation. Use it whenever you need the result
+  right away.
+- `const p = f()` starts `f` now; it runs until its first `await`, then concurrently with you.
+  It costs one small allocation.
+- `f();` on its own line is a compile error, "floating promise": either `await` it or
+  `spawn` it. In JavaScript a forgotten `await` silently drops errors.
+- A promise you never await still runs to completion, and the program waits for it before
+  exiting, like Node.
+
+Started promises run on their creator's task, one at a time, like JavaScript's single thread.
+That is why they need no locks.
+
+## Timeouts with `Promise.race`
+
+`Promise.race` settles with the first promise to settle. The others keep running, so a timeout
+should **return** a value rather than throw: a loser that rejects after the race is over is
+reported as an uncaught error, like an unhandled rejection in Node.
+
+```ts
+class OutOfStock extends Error {}
+
+async function fetchPrice(item: string): Promise<f64> throws OutOfStock {
+  await sleep(item.length as i64 * 5);
+  if (item == "caviar") {
+    throw new OutOfStock(`no ${item} today`);
+  }
+  return item.length as f64 * 1.5;
+}
+
+async function priceWithin(item: string, ms: i64): Promise<f64 | null> throws OutOfStock {
+  const price = async (): Promise<f64 | null> throws OutOfStock => await fetchPrice(item);
+  const timeout = async (): Promise<f64 | null> throws OutOfStock => {
+    await sleep(ms);
+    return null;                                  // null means "too slow"
+  };
+  return await Promise.race([price(), timeout()]);
+}
+
+async function main() {
+  console.log(await priceWithin("water", 100));               // 7.5
+  console.log(await priceWithin("a very long name", 10));     // null
+}
+```
+
+Every promise in one `Promise.race` (or `all`, `allSettled`, `any`) must have the same type,
+including the error type: `Promise<f64 | null, OutOfStock>` here. That is why both closures
+declare `throws OutOfStock`; a `throws` clause may allow more than the body throws.
+
+## Errors in concurrent work
+
+Errors are typed in async code too: a promise's type carries what it can reject with, and
+`await` rethrows it.
+
+```ts
+class OutOfStock extends Error {}
+
+async function fetchPrice(item: string): Promise<f64> throws OutOfStock {
+  await sleep(5);
+  if (item == "caviar") {
+    throw new OutOfStock(`no ${item} today`);
+  }
+  return 4.5;
+}
+
+async function main() {
+  try {
+    await Promise.all([fetchPrice("tea"), fetchPrice("caviar")]);
+  } catch (e) {                                   // e: OutOfStock
+    console.log("all failed:", e.message);
+  }
+
+  const results = await Promise.allSettled([fetchPrice("tea"), fetchPrice("caviar")]);
+  for (const r of results) {
+    switch (r.status) {
+      case "fulfilled":
+        console.log("ok", r.value);               // ok 4.5
+        break;
+      case "rejected":
+        console.log("failed:", r.reason.message); // failed: no caviar today
+        break;
+    }
+  }
+}
+```
+
+`Promise.all` waits for every promise, then rethrows the first rejection in array order (in
+JavaScript it rejects as soon as one promise rejects). `Promise.allSettled` reports each result
+as a discriminated union. `Promise.any` gives the first success, or an `AggregateError`.
+
+## Using every core with `spawn`
+
+`spawn(f())` or `spawn(async () => …)` runs work as its own task on any core and returns a
+promise for the result. A spawned task runs even if nobody awaits it.
+
+```ts
+function sumOfSquares(from: i64, to: i64): i64 {
+  let total = 0;
+  for (let i = from; i < to; i++) {
+    total += i * i % 7;
+  }
+  return total;
+}
+
+async function main() {
+  const chunks: Promise<i64>[] = [];
+  for (let c = 0; c < 4; c++) {
+    chunks.push(spawn(async () => sumOfSquares(c * 1000000, (c + 1) * 1000000)));
+  }
+  const parts = await Promise.all(chunks);       // four cores at once
+  console.log(parts.reduce((a, b) => a + b, 0)); // 7999999
+}
+```
+
+## Sharing state between tasks
+
+Spawned tasks run in parallel, so the compiler doesn't let them modify captured variables
+("cannot mutate captured variable `n` in a spawned task"). Data races are compile errors. Share
+state explicitly:
+
+- `shared(x)` creates an atomically reference-counted value; `.clone()` adds a reference. On
+  64-bit integers, `add`, `get` and `set` are atomic.
+- `shared(new Mutex<T>(x))` guards any value; `m.with((v) => …)` locks it for the callback, which
+  gets the value itself and may return a result.
+
+```ts
+async function main() {
+  const seen = shared(new Mutex<string[]>([]));
+  const done = shared(0);
+  const workers: Promise<void>[] = [];
+  for (let w = 0; w < 3; w++) {
+    const s = seen.clone();
+    const d = done.clone();
+    workers.push(spawn(async () => {
+      s.with((v) => {
+        v.push(`worker ${w}`);
+      });
+      d.add(1);
+    }));
+  }
+  await Promise.all(workers);
+  console.log(done.get(), seen.with((v) => v.length));   // 3 3
+}
+```
+
+A `with` callback is synchronous: keep it short and don't `await` inside it.
+
+## Timers
+
+`sleep(ms)` pauses the current async function. [`velt:timers`](../std/timers.md) has
+`setTimeout` (with `clear()`), `setImmediate` and `Ticker`, a drift-free interval you pull
+with `await ticker.tick()`. There is no global `setTimeout`.
+
+## Performance
+
+From `bench/async` ([bench/RESULTS.md](../../bench/RESULTS.md#async); release builds on an
+Intel i9-12900HK laptop under Windows 11, best of 5, wall-clock including process start, while
+other builds were running, so ±15–20%):
+
+| Benchmark | Velt | Rust tokio (multi-thread) | Node |
+|---|---:|---:|---:|
+| 10M sequential awaits | 55 ms | 52 ms | 508 ms |
+| 500k awaits 21 frames deep | 379 ms | 433 ms | 743 ms |
+| 1M spawned tasks | 614 ms | 703 ms | 1618 ms |
+| 100k concurrent timers | 70 ms | 64 ms | 229 ms |
+
+An idle Velt process uses about 2 MB more memory than the Rust one and about 50 MB less than
+Node.

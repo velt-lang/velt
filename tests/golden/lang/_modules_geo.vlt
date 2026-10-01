@@ -1,0 +1,45 @@
+// Helper for modules_namespace / modules_reexports: a module used through `import * as geo`.
+export const UNIT: f64 = 1.0;
+
+export enum Color {
+  Red,
+  Green = 5,
+}
+
+export type Pair = [f64, f64];
+
+export interface Shape {
+  area(): f64;
+}
+
+export class Circle implements Shape {
+  r: f64;
+  constructor(r: f64) {
+    this.r = r;
+  }
+  area(): f64 {
+    return 3.0 * this.r * this.r;
+  }
+  static unit(): Circle {
+    return new Circle(UNIT);
+  }
+}
+
+export class Box<T> {
+  value: T;
+  constructor(value: T) {
+    this.value = value;
+  }
+}
+
+export function scale(p: Pair, by: f64): Pair {
+  return [p[0] * by, p[1] * by];
+}
+
+export function describe(s: Shape): string {
+  return `shape with area ${s.area()}`;
+}
+
+function hidden(): i64 {
+  return 0;
+}

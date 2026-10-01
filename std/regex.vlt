@@ -1,0 +1,235 @@
+// std/regex: JavaScript-flavoured regular expressions over the runtime's Rust `regex` engine
+// (rt_abi_async.md §14). Matching is linear-time (no catastrophic backtracking); in exchange
+// lookaround and backreferences are not supported (compiling them throws `RegExpError`).
+//
+// Offsets are byte offsets, like every Velt string index (`slice`, `indexOf`). `\d \w \b` are
+// ASCII-only as in JS; `i m s` flags work as in JS; `g` makes `replace` replace every match and
+// `y` (sticky) makes `test`/`exec` match only at `from`. There is no hidden `lastIndex` state:
+// `exec(s, from)` takes the start offset explicitly, and `matchAll` returns every match.
+//
+// A `RegExp` owns a runtime handle (released by `[Symbol.dispose]()`); the compiled program is
+// immutable and can be used from any task.
+
+import { IoResult } from "velt:io";
+
+declare function velt_rt_regex_new(pattern: string, flags: string): IoResult<u64>;
+declare function velt_rt_regex_free(re: u64);
+declare function velt_rt_regex_group_count(re: u64): u64;
+declare function velt_rt_regex_group_names(re: u64): string[];
+declare function velt_rt_regex_test(re: u64, s: string, from: u64): bool;
+// `out` is a fresh local the runtime overwrites (std/README.md "Runtime bindings").
+declare function velt_rt_regex_exec(re: u64, s: string, from: u64, out: i64[]): bool;
+declare function velt_rt_regex_exec_all(re: u64, s: string): i64[];
+declare function velt_rt_regex_replace(re: u64, s: string, replacement: string, all: bool): string;
+declare function velt_rt_regex_split(re: u64, s: string, limit: u64): string[];
+declare function velt_rt_regex_escape(s: string): string;
+
+// An invalid pattern or flags (JS throws `SyntaxError`).
+export class RegExpError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+// One match: the matched text, where it is, and its capture groups.
+export class RegExpMatch {
+  // Byte offset of the match in the subject.
+  index: usize;
+  // Byte offset just past the match.
+  end: usize;
+  // The matched text (JS `m[0]`).
+  value: string;
+  // Groups 1.. (JS `m[1]`, `m[2]`, …); null for a group that did not take part.
+  captures: (string | null)[];
+  // Name of each group in `captures` ("" when unnamed).
+  names: string[];
+
+  constructor(
+    index: usize,
+    end: usize,
+    value: string,
+    captures: (string | null)[],
+    names: string[],
+  ) {
+    this.index = index;
+    this.end = end;
+    this.value = value;
+    this.captures = captures;
+    this.names = names;
+  }
+
+  // Group `n` (0 = the whole match); null if it did not take part or does not exist.
+  group(n: usize): string | null {
+    if (n == 0) {
+      return this.value.clone();
+    }
+    if (n > this.captures.length) {
+      return null;
+    }
+    return this.captures[n - 1].clone();
+  }
+
+  // The named group `(?<name>…)`; null if it did not take part or does not exist.
+  named(name: string): string | null {
+    for (let i: usize = 0; i < this.names.length; i++) {
+      if (this.names[i] == name) {
+        return this.captures[i].clone();
+      }
+    }
+    return null;
+  }
+}
+
+// A compiled regular expression: `new RegExp("(\\d+)-(\\d+)", "g")`.
+export class RegExp {
+  // The pattern text as given.
+  readonly source: string;
+  // The flags as given.
+  readonly flags: string;
+  // `g`: `replace` replaces every match.
+  readonly global: bool;
+  // `y`: `test`/`exec` only match starting exactly at `from`.
+  readonly sticky: bool;
+  private handle: u64;
+  private names: string[];
+
+  // Throws `RegExpError` for an invalid pattern or flags.
+  constructor(pattern: string, flags: string = "") {
+    const r = velt_rt_regex_new(pattern, flags);
+    if (r.code != 0) {
+      throw new RegExpError(r.message);
+    }
+    this.handle = r.value;
+    this.source = pattern.clone();
+    this.flags = flags.clone();
+    this.global = flags.includes("g");
+    this.sticky = flags.includes("y");
+    this.names = velt_rt_regex_group_names(this.handle);
+  }
+
+  // Whether `s` matches (anywhere at or after byte `from`; exactly at `from` when sticky).
+  test(s: string, from: usize = 0): bool {
+    if (this.sticky) {
+      return this.exec(s, from) != null;
+    }
+    return velt_rt_regex_test(this.handle, s, from as u64);
+  }
+
+  // The first match at or after byte `from` (exactly at `from` when sticky), or null.
+  exec(s: string, from: usize = 0): RegExpMatch | null {
+    let offsets: i64[] = [];
+    if (!velt_rt_regex_exec(this.handle, s, from as u64, offsets)) {
+      return null;
+    }
+    if (this.sticky && offsets[0] != from as i64) {
+      return null;
+    }
+    return this.matchAt(s, offsets, 0);
+  }
+
+  // Every non-overlapping match, in order (JS `s.matchAll(re)`, whatever the flags).
+  matchAll(s: string): RegExpMatch[] {
+    const offsets = velt_rt_regex_exec_all(this.handle, s);
+    const stride = 2 * (this.names.length + 1);
+    const n = offsets.length / stride;
+    const out: RegExpMatch[] = __intrinsic_array_with_capacity(n);
+    for (let i: usize = 0; i < n; i++) {
+      out.push(this.matchAt(s, offsets, i * stride));
+    }
+    return out;
+  }
+
+  // The text of every match (JS `s.match(re)` with the `g` flag); empty if none.
+  matches(s: string): string[] {
+    const offsets = velt_rt_regex_exec_all(this.handle, s);
+    const stride = 2 * (this.names.length + 1);
+    const out: string[] = __intrinsic_array_with_capacity(offsets.length / stride);
+    for (let i: usize = 0; i < offsets.length; i += stride) {
+      out.push(s.slice(offsets[i], offsets[i + 1]));
+    }
+    return out;
+  }
+
+  // JS `s.replace(re, replacement)`: every match with the `g` flag, else the first.
+  // `replacement` expands `$&`, `$1`…`$99`, `$<name>`, `` $` ``, `$'` and `$$`.
+  replace(s: string, replacement: string): string {
+    return velt_rt_regex_replace(this.handle, s, replacement, this.global);
+  }
+
+  // Replaces every match, whatever the flags (JS `replaceAll`).
+  replaceAll(s: string, replacement: string): string {
+    return velt_rt_regex_replace(this.handle, s, replacement, true);
+  }
+
+  // Replaces matches (every one with `g`, else the first) with `f(match)`.
+  replaceWith<E>(s: string, f: (m: RegExpMatch) => string throws E): string throws E {
+    const found = this.global ? this.matchAll(s) : this.firstMatch(s);
+    let out = "";
+    let last: usize = 0;
+    for (const m of found) {
+      out += s.slice(last as i64, m.index as i64);
+      out += f(m);
+      last = m.end;
+    }
+    out += s.slice(last as i64);
+    return out;
+  }
+
+  // JS `s.split(re, limit)`: captured groups are included in the result; `limit` 0 = none.
+  split(s: string, limit: usize = 0): string[] {
+    return velt_rt_regex_split(this.handle, s, limit as u64);
+  }
+
+  // Number of capture groups (not counting the whole match).
+  get groupCount(): usize {
+    return (velt_rt_regex_group_count(this.handle) - 1) as usize;
+  }
+
+  // `s` with every regex metacharacter escaped, for building patterns from text.
+  static escape(s: string): string {
+    return velt_rt_regex_escape(s);
+  }
+
+  // An independent copy (compiles the pattern again).
+  clone(): RegExp {
+    return new RegExp(this.source, this.flags);
+  }
+
+  // Drop hook: releases the compiled program.
+  [Symbol.dispose]() {
+    if (this.handle != 0) {
+      velt_rt_regex_free(this.handle);
+      this.handle = 0;
+    }
+  }
+
+  private firstMatch(s: string): RegExpMatch[] {
+    const out: RegExpMatch[] = [];
+    const m = this.exec(s, 0);
+    if (m != null) {
+      out.push(m);
+    }
+    return out;
+  }
+
+  // Builds the match whose offsets start at `offsets[at]`.
+  private matchAt(s: string, offsets: i64[], at: usize): RegExpMatch {
+    const n = this.names.length;
+    const captures: (string | null)[] = __intrinsic_array_with_capacity(n);
+    for (let g: usize = 1; g <= n; g++) {
+      const start = offsets[at + 2 * g];
+      if (start < 0) {
+        captures.push(null);
+      } else {
+        captures.push(s.slice(start, offsets[at + 2 * g + 1]));
+      }
+    }
+    return new RegExpMatch(
+      offsets[at] as usize,
+      offsets[at + 1] as usize,
+      s.slice(offsets[at], offsets[at + 1]),
+      captures,
+      this.names.clone(),
+    );
+  }
+}

@@ -1,0 +1,26 @@
+// Building strings: padding, repeat, templates in loops, trimming.
+function box(lines: string[]): string {
+  let width = 0;
+  for (const l of lines) {
+    if ((l.length as i64) > width) {
+      width = l.length as i64;
+    }
+  }
+  let out = `+${"-".repeat(width + 2)}+\n`;
+  for (const l of lines) {
+    out += `| ${l.padEnd(width, " ")} |\n`;
+  }
+  out += `+${"-".repeat(width + 2)}+`;
+  return out;
+}
+
+function main() {
+  console.log(box(["hello", "velt and node", "", "ok"]));
+  const nums: string[] = [];
+  for (let i = 1; i <= 12; i++) {
+    nums.push(`${i * i}`.padStart(4, " "));
+  }
+  console.log(nums.join(""));
+  console.log(`[${"  both  ".trim()}] [${"  start".trimStart()}] [${"end  ".trimEnd()}]`);
+  console.log("a-b-c".replaceAll("-", "+"), "aaa".replace("a", "b"), "x".repeat(0).length);
+}

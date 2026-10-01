@@ -1,0 +1,117 @@
+// Generic interface methods (static dispatch through `T extends I`, direct calls on classes)
+// and overriding generic methods (called on the concrete class).
+
+interface Mapper {
+  apply<U>(f: (x: i64) => U): U[];
+  first<U>(f: (x: i64) => U, fallback: U): U;
+}
+
+class Nums implements Mapper {
+  xs: i64[];
+  constructor(xs: i64[]) {
+    this.xs = xs;
+  }
+  apply<U>(f: (x: i64) => U): U[] {
+    const out: U[] = [];
+    for (const x of this.xs) {
+      out.push(f(x));
+    }
+    return out;
+  }
+  first<U>(f: (x: i64) => U, fallback: U): U {
+    if (this.xs.length == 0) {
+      return fallback.clone();
+    }
+    return f(this.xs[0]);
+  }
+}
+
+class Twice implements Mapper {
+  v: i64 = 21;
+  apply<U>(f: (x: i64) => U): U[] {
+    return [f(this.v), f(this.v)];
+  }
+  first<U>(f: (x: i64) => U, fallback: U): U {
+    return f(this.v * 2);
+  }
+}
+
+function describe<T extends Mapper>(m: T): string {
+  const strs = m.apply((x) => `<${x}>`);
+  const doubled = m.apply<i64>((x) => x * 2);
+  const f = m.first((x) => x > 1, false);
+  console.log(doubled);
+  return `${strs.join(",")} ${f}`;
+}
+
+class Box {
+  v: i64;
+  constructor(v: i64) {
+    this.v = v;
+  }
+  wrap<T>(x: T): T[] {
+    return [x];
+  }
+}
+
+class BigBox extends Box {
+  constructor(v: i64) {
+    super(v);
+  }
+  override wrap<T>(x: T): T[] {
+    return [x.clone(), x];
+  }
+}
+
+// Generic methods with bounds, inherited through `extends`; the implementing class can still
+// be used as an interface value for its non-generic methods.
+interface Labeled {
+  label(): string;
+}
+
+class Tag implements Labeled {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  label(): string {
+    return `#${this.name}`;
+  }
+}
+
+interface Collector {
+  collect<L extends Labeled>(items: L[]): string;
+}
+
+interface SizedCollector extends Collector {
+  size(): i64;
+}
+
+class Joiner implements SizedCollector {
+  collect<L extends Labeled>(items: L[]): string {
+    const parts: string[] = [];
+    for (const it of items) {
+      parts.push(it.label());
+    }
+    return parts.join(" ");
+  }
+  size(): i64 {
+    return 3;
+  }
+}
+
+function useCollector<C extends SizedCollector>(c: C): string {
+  return `${c.collect([new Tag("a"), new Tag("b")])} (${c.size()})`;
+}
+
+function main() {
+  console.log(useCollector(new Joiner()));
+  const sized: SizedCollector = new Joiner();
+  console.log(sized.size());
+  console.log(describe(new Nums([1, 2, 3])));
+  console.log(describe(new Twice()));
+  const n = new Nums([]);
+  console.log(n.first((x) => `${x}`, "empty"), n.apply((x) => x).length);
+  const big = new BigBox(2);
+  console.log(big.wrap("b"), big.wrap(7), big.v);
+}

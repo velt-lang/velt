@@ -1,0 +1,38 @@
+// Ordering of try/catch/finally output with break, continue and return inside.
+function probe(n: i64): string {
+  const log: string[] = [];
+  for (let i = 0; i < n; i++) {
+    try {
+      if (i == 1) {
+        continue;
+      }
+      if (i == 3) {
+        break;
+      }
+      log.push(`body${i}`);
+    } finally {
+      log.push(`fin${i}`);
+    }
+  }
+  return log.join(" ");
+}
+
+function early(x: i64): i64 {
+  try {
+    if (x > 0) {
+      return x * 10;
+    }
+    throw new Error("neg");
+  } catch (e) {
+    console.log(`caught ${e.message}`);
+    return -1;
+  } finally {
+    console.log(`finally ${x}`);
+  }
+}
+
+function main() {
+  console.log(probe(5));
+  console.log(probe(2));
+  console.log(early(4), early(-4));
+}

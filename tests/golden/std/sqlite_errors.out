@@ -1,0 +1,12 @@
+SQLITE_ERROR | near "SELEC": syntax error in SELEC * FROM t at offset 0
+SQLITE_MISUSE | The supplied SQL string contains more than one statement
+SQLITE_ERROR | no such table: nope
+SQLITE_CONSTRAINT_UNIQUE | UNIQUE constraint failed: t.name
+SQLITE_RANGE | missing named parameter "name"
+SQLITE_RANGE | the statement has 1 parameter(s) but none were given (use runWith / getWith / allWith)
+SQLITE_RANGE | the statement has 1 parameter(s) but 2 value(s) were given
+SQLITE_MISMATCH | row does not match the requested type: expected i64 at $[0].id
+SQLITE_MISMATCH | row does not match the requested type: expected field "name" at $
+SQLITE_MISUSE | The database connection is not open
+SQLITE_CANTOPEN
+SQLITE_READONLY

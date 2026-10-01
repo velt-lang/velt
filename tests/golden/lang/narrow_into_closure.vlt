@@ -1,0 +1,22 @@
+// A variable narrowed where a closure is created stays narrowed in the closure body (TS keeps
+// narrowing of variables not assigned afterwards): a by-value capture copies the narrowed value,
+// a by-reference one is only used during the call.
+type Sh = { kind: "pt"; x: i64 } | { kind: "box"; w: i64 };
+
+function f(u: string | null): i64[] {
+  if (u != null) {
+    return [1, 2].map((x) => x + u.indexOf("b"));
+  }
+  return [];
+}
+
+function g(s: Sh): () => i64 {
+  if (s.kind === "box") {
+    return () => s.w * 2;
+  }
+  return () => 0;
+}
+
+function main() {
+  console.log(f("ab"), f(null), g({ kind: "box", w: 4 })(), g({ kind: "pt", x: 1 })());
+}

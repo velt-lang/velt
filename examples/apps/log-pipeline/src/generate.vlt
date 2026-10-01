@@ -1,0 +1,95 @@
+// A deterministic synthetic access log (same bytes as node/pipeline.mjs for the same seed/count).
+import { openWrite } from "velt:fs_stream";
+
+// A 32-bit LCG (Numerical Recipes); JS mirrors it with `Math.imul` and `>>> 0`.
+export class Random {
+  private state: u32;
+
+  constructor(seed: u32) {
+    this.state = seed;
+  }
+
+  // An integer in [0, n).
+  next(n: i64): i64 {
+    this.state = this.state * 1664525u32 + 1013904223u32;
+    return ((this.state >> 8u32) as i64) % n;
+  }
+}
+
+// Request path templates (a function: module-level constants can't be arrays).
+function paths(): string[] {
+  return [
+    "/",
+    "/api/users/{id}",
+    "/api/users/{id}/orders",
+    "/api/orders/{id}",
+    "/api/products?page={n}",
+    "/static/app.js",
+    "/static/style.css",
+    "/login",
+    "/api/search?q=term{n}",
+    "/health",
+  ];
+}
+
+function pad2(n: i64): string {
+  return `${n}`.padStart(2, "0");
+}
+
+function pick(r: Random, weights: i64[]): i64 {
+  let x = r.next(100);
+  for (let i: usize = 0; i < weights.length; i++) {
+    if (x < weights[i]) {
+      return i as i64;
+    }
+    x -= weights[i];
+  }
+  return (weights.length - 1) as i64;
+}
+
+function client(r: Random): string {
+  if (r.next(5) == 0) {
+    return `192.168.0.${r.next(50)}`;
+  }
+  return `10.${r.next(4)}.${r.next(256)}.${r.next(256)}`;
+}
+
+function requestPath(r: Random, templates: string[]): string {
+  const template = templates[r.next(templates.length as i64) as usize].clone();
+  return template.replace("{id}", `${r.next(5000)}`).replace("{n}", `${r.next(20)}`);
+}
+
+// Line `i` of `count` (timestamps spread over one day).
+export function logLine(r: Random, templates: string[], i: i64, count: i64): string {
+  if (r.next(1000) == 0) {
+    return `garbage line ${i}`;
+  }
+  const second = (i * 86400) / count;
+  const time = `30/Sep/2026:${pad2(second / 3600)}:${pad2((second / 60) % 60)}:${pad2(second % 60)}`;
+  const method = ["GET", "POST", "DELETE"][pick(r, [80, 15, 5]) as usize].clone();
+  const status = [200, 304, 404, 500, 503][pick(r, [85, 5, 6, 3, 1]) as usize];
+  const micros = r.next(2000000);
+  const ms = `${micros / 1000}.${`${micros % 1000}`.padStart(3, "0")}`;
+  const ip = client(r);
+  const path = requestPath(r, templates);
+  return `${ip} - - [${time} +0000] "${method} ${path} HTTP/1.1" ${status} ${r.next(50000)} ${ms}`;
+}
+
+// Writes `count` lines to `path`, 1000 lines per write.
+export async function generate(path: string, count: i64, seed: u32) {
+  const r = new Random(seed);
+  const out = await openWrite(path);
+  const templates = paths();
+  let batch: string[] = [];
+  for (let i: i64 = 0; i < count; i++) {
+    batch.push(logLine(r, templates, i, count));
+    if (batch.length == 1000) {
+      await out.write(`${batch.join("\n")}\n`);
+      batch = [];
+    }
+  }
+  if (batch.length > 0) {
+    await out.write(`${batch.join("\n")}\n`);
+  }
+  await out.close();
+}

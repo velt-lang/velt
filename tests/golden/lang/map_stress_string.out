@@ -1,0 +1,4 @@
+seed 11: size 14, hits 646, mismatches 0
+seed 12: size 251, hits 961, mismatches 0
+seed 13: size 80, hits 889, mismatches 0
+[ '', 'aa', 'aaa', 'a' ] [ 5, 2, 3, 10 ] 5 false

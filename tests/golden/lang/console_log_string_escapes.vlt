@@ -1,0 +1,20 @@
+// console.log of containers quotes and escapes strings like node's util.inspect: `\t`, `\n`,
+// `\\`, control characters as `\xHH`, double quotes (or backticks) around text with `'`; also
+// string enums and literal types. Regression (difftest corpus): strings were wrapped in `'…'`
+// verbatim.
+enum Mood {
+  Ok = "it's ok",
+}
+
+type Q = "a'b" | "c";
+
+class Note {
+  text: string = "it's\tfine";
+}
+
+function main() {
+  console.log(["tab\there", "new\nline", "back\\slash", "single'q", "both'\"q"]);
+  console.log(new Note());
+  const q: Q = "a'b";
+  console.log([Mood.Ok], [q], ["\u0001x"]);
+}

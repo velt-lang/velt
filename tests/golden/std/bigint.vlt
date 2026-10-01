@@ -1,0 +1,31 @@
+// std/bigint: arbitrary-precision integers. Expected output is Node's (BigInt literals and
+// operators; `asIntN(64, x)` for `toI64`).
+import { BigInt } from "velt:bigint";
+
+function main() {
+  const f = new BigInt(1);
+  for (let k = 1; k <= 30; k++) {
+    f.mulIntAssign(k);
+  }
+  console.log(f.toString(), f.toString(16));
+  const g = BigInt.parse("-123456789012345678901234567890");
+  const h = f.add(g);
+  console.log(h.toString(), h.compareTo(f), f.divInt(7).toString(), g.remInt(1000).toString());
+  const c = f.clone();
+  c.shlAssign(3);
+  console.log(
+    c.shr(3).equals(f),
+    f.neg().toNumber(),
+    BigInt.fromNumber(1e20).toString(),
+    f.toI64(),
+  );
+  const q = new BigInt(7);
+  q.mulAssign(q);
+  q.subIntAssign(50);
+  console.log(q.toString(), q.compareToInt(-1), g.div(f).toString(), g.shr(64).toString());
+  try {
+    BigInt.parse("12x");
+  } catch (e) {
+    console.log(e.message);
+  }
+}

@@ -1,0 +1,7 @@
+// `typeof` narrowing of a captured `const` union applies inside an arrow function. Regression
+// (difftest): "no method named `toUpperCase` found for type `string | i64`".
+function main() {
+  const u: i64 | string = "hey";
+  const xs = [1, 2];
+  console.log(xs.map((x) => (typeof u === "string" ? u.toUpperCase() : "n")));
+}

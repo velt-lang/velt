@@ -1,0 +1,40 @@
+// Unions of classes narrowed with instanceof; unions of scalars with typeof.
+class Circle {
+  r: f64;
+  constructor(r: f64) {
+    this.r = r;
+  }
+}
+
+class Rect {
+  w: f64;
+  h: f64;
+  constructor(w: f64, h: f64) {
+    this.w = w;
+    this.h = h;
+  }
+}
+
+function area(s: Circle | Rect): f64 {
+  if (s instanceof Circle) {
+    return 3.0 * s.r * s.r;
+  }
+  return s.w * s.h;
+}
+
+function show(v: i64 | string | bool): string {
+  if (typeof v === "number") {
+    return `n${v * 2}`;
+  }
+  if (typeof v === "boolean") {
+    return v ? "T" : "F";
+  }
+  return `s${v.length}`;
+}
+
+function main() {
+  const shapes: (Circle | Rect)[] = [new Circle(1.0), new Rect(2.0, 3.5), new Circle(0.5)];
+  console.log(shapes.map((s) => `${area(s)}`).join(" "));
+  const vals: (i64 | string | bool)[] = [4, "hey", true, -2, "", false];
+  console.log(vals.map((v) => show(v)).join(","));
+}

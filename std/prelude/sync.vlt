@@ -1,0 +1,11 @@
+// Prelude: `Mutex<T>` for `shared(new Mutex<T>(x))` (docs/reference/async.md).
+//
+// The compiler implements `new Mutex<T>(x)` (initializes the lock word) and `m.with((v) => ...)`
+// (lock, run the callback on the value, unlock) on a `Mutex<T>` or `shared<Mutex<T>>`; this
+// declaration only fixes the layout they use: the runtime's 8-byte lock word, then the value.
+// A `Mutex` is never Copy (copying it would duplicate the lock). Use `with` to reach the value.
+
+export struct Mutex<T> {
+  private lock: u64;
+  private value: T;
+}

@@ -1,0 +1,7 @@
+sync function returned 1
+dropped at the end of a block
+awaited
+logged: awaited
+main returns
+started by a sync function
+kept but never awaited

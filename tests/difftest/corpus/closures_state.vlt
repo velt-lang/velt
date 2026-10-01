@@ -1,0 +1,25 @@
+// Closures reading captured constants; callbacks accumulating into captured lets.
+function makeScaler(factor: i64, offset: i64): (x: i64) => i64 {
+  return (x: i64): i64 => x * factor + offset;
+}
+
+function applyAll(xs: i64[], f: (x: i64) => i64): i64[] {
+  return xs.map((x) => f(x));
+}
+
+function main() {
+  const triple = makeScaler(3, 0);
+  const shift = makeScaler(1, -10);
+  const xs = [1, 2, 3, 4];
+  console.log(applyAll(xs, triple), applyAll(xs, shift), applyAll(applyAll(xs, triple), shift));
+  let log = "";
+  let n = 0;
+  xs.forEach((x) => {
+    n += x;
+    log += `${x}:${n};`;
+  });
+  console.log(log, n);
+  const limit = 5;
+  const small = xs.concat([7, 9, 11]).filter((x) => x < limit);
+  console.log(small, small.length);
+}

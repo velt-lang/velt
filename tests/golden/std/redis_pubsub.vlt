@@ -1,0 +1,68 @@
+// requires-env: VELT_TEST_REDIS_URL
+// std/redis: pub/sub with pulled messages, pattern subscriptions and close() from another task.
+import { connect, subscribe, psubscribe, RedisSubscriber, RedisMessage } from "velt:redis";
+import { redisUrl, freshPrefix } from "./_redis";
+
+function show(m: RedisMessage | null, p: string): string {
+  if (m == null) {
+    return "null";
+  }
+  const n = p.length as i64;
+  // `?.slice` rather than `m.pattern ?? "-"`, which moves the field (tests/golden/bugs/
+  // sema_ternary_moves_place.vlt).
+  const pattern = m.pattern?.slice(n) ?? "-";
+  return `${m.channel.slice(n)} ${m.message} (pattern ${pattern})`;
+}
+
+async function closeLater(sub: RedisSubscriber): Promise<void> {
+  await sleep(50);
+  sub.close();
+}
+
+async function main() {
+  const p = freshPrefix();
+  const url = redisUrl();
+  const c = await connect(url);
+
+  // subscribe() resolves once the server confirmed, so nothing published afterwards is lost.
+  const sub = await subscribe(url, [`${p}news`]);
+  console.log("receivers:", await c.publish(`${p}news`, "hello"));
+  await c.publish(`${p}other`, "not subscribed");
+  await c.publish(`${p}news`, "world ✓");
+  console.log(show(await sub.next(), p));
+  console.log(show(await sub.next(), p));
+
+  // More channels on the same subscriber, then fewer.
+  await sub.subscribe([`${p}alerts`]);
+  await c.publish(`${p}alerts`, "fire");
+  console.log(show(await sub.next(), p));
+  await sub.unsubscribe([`${p}news`]);
+  console.log("receivers after unsubscribe:", await c.publish(`${p}news`, "dropped"));
+  await c.publish(`${p}alerts`, "second");
+  console.log(show(await sub.next(), p));
+
+  // Pattern subscription, opened from a client (same server and database).
+  const psub = await psubscribe(c, [`${p}room.*`]);
+  await c.publish(`${p}room.1`, "a");
+  await c.publish(`${p}room.2`, "b");
+  console.log(show(await psub.next(), p));
+  console.log(show(await psub.next(), p));
+  psub.close();
+
+  // A pull loop, ended by close() from another task while `next()` waits (the closer starts
+  // after the first message, so the output does not depend on timing).
+  await c.publish(`${p}alerts`, "last");
+  let count = 0;
+  let m = await sub.next();
+  while (m != null) {
+    console.log("loop:", show(m, p));
+    count++;
+    if (count == 1) {
+      spawn(closeLater(sub));
+    }
+    m = await sub.next();
+  }
+  console.log("loop ended after", count, "message(s)");
+  console.log("next after close:", show(await sub.next(), p));
+  c.close();
+}

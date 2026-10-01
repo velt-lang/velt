@@ -1,0 +1,8 @@
+// Regression (benchmarks-game gap): `x.toFixed(digits)` with JS rounding (exact ties away from
+// zero, using the exact binary value: 1.005 is really 1.00499…).
+function main() {
+  console.log((30.2954).toFixed(3));
+  console.log((100.0 * 3.0 / 7.0).toFixed(3));
+  console.log((0.5).toFixed(0), (1.005).toFixed(2), (-1.25).toFixed(1));
+  console.log((1234.5678).toFixed(2), (0.0).toFixed(3));
+}

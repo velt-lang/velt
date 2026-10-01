@@ -1,0 +1,7 @@
+// Regression (difftest math-pow-platform-rounding): `**` / `Math.pow` use fdlibm's pow (V8's),
+// not the platform libm, so x = 0.3 / -0.1 squared is 8.999999999999998 on every OS (macOS's
+// libm said 8.999999999999996).
+function main() {
+  const x = 0.3 / -0.1;
+  console.log(`${Math.pow(x, 2.0)} ${x ** 2.0} ${x * x}`);
+}

@@ -1,0 +1,133 @@
+// Routing: method + path + query + body in, status + JSON body out. No sockets and no files of
+// its own (only the store's), so the tests call it directly; src/server.vlt puts it behind
+// std/http. Generic over the store, so it works on the JSON and the SQLite one alike.
+import { TodoRepository, must } from "./repository";
+import { Todo, NewTodoBody, TodoPatchBody, ApiError } from "./model";
+import { decodeURIComponent } from "velt:url";
+
+// What a request produced; `changed` tells the server to persist the store.
+export type ApiResponse = { status: i64; body: string; changed: bool };
+
+type ErrorBody = { error: { code: string; message: string } };
+
+function json<T>(status: i64, value: T, changed: bool = false): ApiResponse {
+  return { status, body: JSON.stringify(value), changed };
+}
+
+function failure(status: i64, code: string, message: string): ApiResponse {
+  const body: ErrorBody = { error: { code, message } };
+  return json(status, body);
+}
+
+// `JSON.parse<T>`, with malformed or mistyped JSON reported as a 400.
+function decode<T>(body: string): T {
+  try {
+    return JSON.parse<T>(body);
+  } catch (e) {
+    throw new ApiError(400, "bad_json", e.message.clone());
+  }
+}
+
+// A positive integer id; anything else can't name a todo.
+function parseId(segment: string): i64 {
+  const id = Number(segment);
+  if (id != id || id < 1.0 || id !== Math.trunc(id)) {
+    throw new ApiError(404, "not_found", `no todo '${segment}'`);
+  }
+  return id as i64;
+}
+
+// A percent-decoded query value. Malformed escapes are kept as written: `decodeURIComponent`
+// throws `UrlError`, which would widen `route`'s `catch (e)` from ApiError to Error.
+function decodeParam(raw: string): string {
+  try {
+    return decodeURIComponent(raw.replaceAll("+", " "));
+  } catch (e) {
+    return raw;
+  }
+}
+
+// The value of query parameter `name` (`done=true&tag=x`), or null.
+export function queryParam(q: string, name: string): string | null {
+  for (const pair of q.split("&")) {
+    const eq = pair.indexOf("=");
+    const key = pair.slice(0, eq < 0 ? pair.length as i64 : eq);
+    if (key === name) {
+      return eq < 0 ? "" : decodeParam(pair.slice(eq + 1));
+    }
+  }
+  return null;
+}
+
+function listTodos<S extends TodoRepository>(store: S, q: string): ApiResponse {
+  const done = queryParam(q, "done");
+  const todos = must<Todo[]>(
+    store.list(done == null ? null : done === "true", queryParam(q, "tag")),
+  );
+  return json(200, todos);
+}
+
+function deleteTodo<S extends TodoRepository>(store: S, id: i64): ApiResponse {
+  const err = store.delete(id);
+  if (err != null) {
+    throw err;
+  }
+  return { status: 204, body: "", changed: true };
+}
+
+function routeItem<S extends TodoRepository>(
+  store: S,
+  method: string,
+  segment: string,
+  body: string,
+): ApiResponse {
+  const id = parseId(segment);
+  switch (method) {
+    case "GET":
+      return json(200, must<Todo>(store.get(id)));
+    case "PATCH":
+      return json(200, must<Todo>(store.update(id, decode<TodoPatchBody>(body))), true);
+    case "DELETE":
+      return deleteTodo(store, id);
+    default:
+      throw new ApiError(405, "method_not_allowed", `${method} is not allowed here`);
+  }
+}
+
+function dispatch<S extends TodoRepository>(
+  store: S,
+  method: string,
+  path: string,
+  q: string,
+  body: string,
+): ApiResponse {
+  const parts = path.split("/").filter((p) => p !== "");
+  if (parts.length === 0 || parts[0] !== "todos" || parts.length > 2) {
+    throw new ApiError(404, "not_found", `no route for ${path}`);
+  }
+  if (parts.length === 2) {
+    return routeItem(store, method, parts[1], body);
+  }
+  if (method === "GET") {
+    return listTodos(store, q);
+  }
+  if (method === "POST") {
+    return json(201, must<Todo>(store.create(decode<NewTodoBody>(body))), true);
+  }
+  throw new ApiError(405, "method_not_allowed", `${method} is not allowed here`);
+}
+
+// Handles one request; every error becomes `{ "error": { code, message } }`.
+export function route<S extends TodoRepository>(
+  store: S,
+  method: string,
+  path: string,
+  q: string,
+  body: string,
+): ApiResponse {
+  try {
+    return dispatch(store, method, path, q, body);
+  } catch (e) {
+    return failure(e.status, e.code.clone(), e.message.clone());
+  }
+}

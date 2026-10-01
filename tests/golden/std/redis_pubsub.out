@@ -1,0 +1,11 @@
+receivers: 1
+news hello (pattern -)
+news world ✓ (pattern -)
+alerts fire (pattern -)
+receivers after unsubscribe: 0
+alerts second (pattern -)
+room.1 a (pattern room.*)
+room.2 b (pattern room.*)
+loop: alerts last (pattern -)
+loop ended after 1 message(s)
+next after close: null

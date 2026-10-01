@@ -1,0 +1,13 @@
+// A stored promise that is never awaited still runs; if it rejects, nobody can catch the error,
+// so it is reported like an unhandled rejection in Node: `Uncaught Timeout: ...`, exit code 1.
+class Timeout extends Error {}
+
+async function load(ms: i64): Promise<string> throws Timeout {
+  await sleep(ms);
+  throw new Timeout(`timed out after ${ms} ms`);
+}
+
+async function main() {
+  const forgotten = load(20);
+  console.log("main returns");
+}

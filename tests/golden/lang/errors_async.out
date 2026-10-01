@@ -1,0 +1,11 @@
+direct 10
+direct timeout 40
+value 4 | refused: connection refused
+timeout 35
+slow failed: 50
+all [ 2, 4 ]
+all failed: timed out after 50ms
+joined failed: timed out after 40ms
+joined [ 2, 6 ]
+closure: from a closure
+spawned closure: from a closure

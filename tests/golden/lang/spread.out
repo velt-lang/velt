@@ -1,0 +1,9 @@
+1 5 1
+Labeled { x: 1, y: 2, label: 'origin' }
+{ x: 10, y: 2, label: 'origin' }
+bob 42 bob
+{ name: 'ann', age: 30, admin: true }
+Labeled { x: 7, y: 2, label: 'typed' }
+[ 0, 1, 2, 3, 4, 1, 2, 3 ] 3
+abcd 2
+0 [ 5, 6 ]

@@ -1,0 +1,32 @@
+// Callbacks updating several captured locals; forEach/map/filter/reduce/some/every/find chains.
+function main() {
+  const xs = [4, 8, 15, 16, 23, 42];
+  let evens = 0;
+  let odds = 0;
+  let maxSeen = -1;
+  xs.forEach((x) => {
+    if (x % 2 == 0) {
+      evens++;
+    } else {
+      odds++;
+    }
+    if (x > maxSeen) {
+      maxSeen = x;
+    }
+  });
+  console.log(evens, odds, maxSeen);
+  const scaled = xs.map((x) => x * 3 - 1).filter((x) => x % 5 != 0);
+  console.log(scaled, scaled.reduce((a, b) => a + b, 0));
+  console.log(
+    xs.some((x) => x > 40),
+    xs.every((x) => x > 3),
+    xs.find((x) => x > 15) ?? -1,
+    xs.findIndex((x) => x == 23),
+  );
+  const words = ["alpha", "beta", "gamma", "delta"];
+  let total = 0;
+  words.filter((w) => w.includes("a")).forEach((w) => {
+    total += w.length as i64;
+  });
+  console.log(total, words.map((w) => w.toUpperCase().slice(0, 2)).join("-"));
+}

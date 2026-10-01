@@ -1,0 +1,33 @@
+// An error escaping `main` reports the member the union error holds:
+// `Uncaught <Type>: <message>` (exit 1). A task spawned as a statement (nobody can await it)
+// reports its error the same way, like an unhandled promise rejection.
+class NotFound extends Error {}
+
+class Forbidden extends Error {}
+
+function load(n: i64): string {
+  if (n == 1) {
+    throw new NotFound("no such user");
+  }
+  if (n == 2) {
+    throw new Forbidden("admins only");
+  }
+  return "ok";
+}
+
+async function background(): Promise<void> {
+  await sleep(1);
+  load(2);
+}
+
+async function main() {
+  console.log(load(0));
+  try {
+    load(1);
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+  spawn(background());
+  await sleep(200);
+  console.log("unreachable");
+}

@@ -1,0 +1,279 @@
+//! The current-thread executor: spawned tasks, a FIFO ready queue, timers, and `block_on`.
+//!
+//! Tasks are heap `VeltFut`s. A waker is just a task id (0 = the `block_on` root) that `wake`
+//! pushes onto the ready queue once. When nothing is ready, the executor sleeps until the
+//! earliest timer; if there is no timer either, no task can ever be woken again and the
+//! program is deadlocked, which is reported as a panic (the native runtime would hang).
+
+use std::cell::RefCell;
+use std::cmp::{Ordering, Reverse};
+use std::collections::{BinaryHeap, HashSet, VecDeque};
+use std::rc::Rc;
+use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
+use super::{raw_cx, PollFn, VeltFut, FUT_RESULT_OFFSET, READY};
+use crate::platform;
+
+/// Task id of the future driven by `block_on`.
+const ROOT: usize = 0;
+
+/// Completion state shared by a spawned task and its join handle.
+#[derive(Default)]
+pub struct JoinState {
+    /// The task finished and `result` holds its result bytes.
+    pub done: bool,
+    /// The result, moved out of the task's result slot.
+    pub result: Vec<u8>,
+    /// The join handle's waker while it waits.
+    pub waiter: Option<Waker>,
+}
+
+struct Task {
+    fut: *mut VeltFut,
+    result_size: usize,
+    join: Option<Rc<RefCell<JoinState>>>,
+}
+
+/// A pending timer (ordered by deadline, then registration order).
+struct Timer {
+    deadline: f64,
+    seq: u64,
+    waker: Waker,
+}
+
+impl PartialEq for Timer {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+impl Eq for Timer {}
+impl PartialOrd for Timer {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Timer {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.deadline
+            .total_cmp(&other.deadline)
+            .then(self.seq.cmp(&other.seq))
+    }
+}
+
+#[derive(Default)]
+struct Executor {
+    /// Slot `id - 1` holds task `id`.
+    tasks: Vec<Option<Task>>,
+    free: Vec<usize>,
+    ready: VecDeque<usize>,
+    queued: HashSet<usize>,
+    timers: BinaryHeap<Reverse<Timer>>,
+    timer_seq: u64,
+    /// Inside `block_on` (promises can only be started while tasks run).
+    running: bool,
+    /// Started promises that have not finished (`block_on` waits for them, like JS).
+    locals: usize,
+}
+
+thread_local! {
+    static EXEC: RefCell<Executor> = RefCell::new(Executor::default());
+}
+
+fn with_exec<R>(f: impl FnOnce(&mut Executor) -> R) -> R {
+    EXEC.with(|e| f(&mut e.borrow_mut()))
+}
+
+static VTABLE: RawWakerVTable = RawWakerVTable::new(clone_raw, wake_raw, wake_raw, drop_raw);
+
+fn raw_waker(id: usize) -> RawWaker {
+    RawWaker::new(id as *const (), &VTABLE)
+}
+
+unsafe fn clone_raw(p: *const ()) -> RawWaker {
+    raw_waker(p as usize)
+}
+
+unsafe fn wake_raw(p: *const ()) {
+    schedule(p as usize);
+}
+
+unsafe fn drop_raw(_: *const ()) {}
+
+/// The waker of task `id`. Wakers carry no data beyond the id, so they are only meaningful on
+/// the executor's own thread (the only thread there is on WebAssembly).
+pub fn waker(id: usize) -> Waker {
+    // SAFETY: the vtable functions ignore everything but the id, which is plain data.
+    unsafe { Waker::from_raw(raw_waker(id)) }
+}
+
+/// Queue task `id` (once) to be polled.
+fn schedule(id: usize) {
+    with_exec(|e| {
+        if e.queued.insert(id) {
+            e.ready.push_back(id);
+        }
+    });
+}
+
+/// Wake `w` so that its task runs next (before the tasks already queued): how a finished
+/// promise resumes whoever awaits it, like a JS microtask. Other wakers are woken normally.
+pub fn wake_next(w: Waker) {
+    if !std::ptr::eq(w.vtable(), &VTABLE) {
+        w.wake();
+        return;
+    }
+    let id = w.data() as usize;
+    with_exec(|e| {
+        if !e.queued.insert(id) {
+            e.ready.retain(|&q| q != id);
+        }
+        e.ready.push_front(id);
+    });
+}
+
+fn next_ready() -> Option<usize> {
+    with_exec(|e| {
+        let id = e.ready.pop_front()?;
+        e.queued.remove(&id);
+        Some(id)
+    })
+}
+
+/// Is `block_on` running (so a started promise will be driven)?
+pub fn running() -> bool {
+    with_exec(|e| e.running)
+}
+
+/// A started promise began (`true`) or finished (`false`).
+pub fn count_local(started: bool) {
+    with_exec(|e| {
+        if started {
+            e.locals += 1;
+        } else {
+            e.locals -= 1;
+        }
+    });
+}
+
+/// Start `fut` as a task (queued now); on completion its `result_size` result bytes move into
+/// `join` (if any) and the future is freed. Returns the task id.
+pub fn spawn(fut: *mut VeltFut, result_size: usize, join: Option<Rc<RefCell<JoinState>>>) -> usize {
+    let task = Task {
+        fut,
+        result_size,
+        join,
+    };
+    let id = with_exec(|e| match e.free.pop() {
+        Some(slot) => {
+            e.tasks[slot] = Some(task);
+            slot + 1
+        }
+        None => {
+            e.tasks.push(Some(task));
+            e.tasks.len()
+        }
+    });
+    schedule(id);
+    id
+}
+
+/// Poll task `id` once; finish it if it is ready.
+unsafe fn run_task(id: usize) {
+    let Some(fut) = with_exec(|e| e.tasks[id - 1].as_ref().map(|t| t.fut)) else {
+        return; // finished earlier; a stale wake-up
+    };
+    let w = waker(id);
+    let mut cx = Context::from_waker(&w);
+    if ((*fut).poll.0)(fut, raw_cx(&mut cx)) != READY {
+        return;
+    }
+    let task = with_exec(|e| {
+        e.free.push(id - 1);
+        e.tasks[id - 1].take()
+    })
+    .expect("ICE: a running task has a slot");
+    if let Some(join) = &task.join {
+        let result = (fut as *const u8).add(FUT_RESULT_OFFSET);
+        let waiter = {
+            let mut j = join.borrow_mut();
+            j.result = std::slice::from_raw_parts(result, task.result_size).to_vec();
+            j.done = true;
+            j.waiter.take()
+        };
+        if let Some(w) = waiter {
+            w.wake();
+        }
+    }
+    ((*fut).drop.0)(fut);
+}
+
+/// Poll a timer leaf: ready once `deadline` (monotonic ms) has passed, else registered.
+pub fn poll_timer(deadline: f64, cx: &mut Context<'_>) -> Poll<()> {
+    if platform::monotonic_ms() >= deadline {
+        return Poll::Ready(());
+    }
+    let waker = cx.waker().clone();
+    with_exec(|e| {
+        e.timer_seq += 1;
+        let seq = e.timer_seq;
+        e.timers.push(Reverse(Timer {
+            deadline,
+            seq,
+            waker,
+        }));
+    });
+    Poll::Pending
+}
+
+/// Sleep until the earliest timer and wake every timer that is due; false if there is none.
+fn wait_for_timers() -> bool {
+    let Some(first) = with_exec(|e| e.timers.peek().map(|t| t.0.deadline)) else {
+        return false;
+    };
+    platform::sleep_ms(first - platform::monotonic_ms());
+    let now = platform::monotonic_ms();
+    loop {
+        let due = with_exec(|e| match e.timers.peek() {
+            Some(t) if t.0.deadline <= now => e.timers.pop().map(|t| t.0.waker),
+            _ => None,
+        });
+        match due {
+            Some(w) => w.wake(),
+            None => return true,
+        }
+    }
+}
+
+/// `async main`: drive the compiled root state machine (and every task it spawns) until the
+/// root is ready and every started promise finished. Spawned tasks still running afterwards are
+/// abandoned.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
+    with_exec(|e| e.running = true);
+    schedule(ROOT);
+    let mut root_done = false;
+    loop {
+        if root_done && with_exec(|e| e.locals == 0) {
+            with_exec(|e| e.running = false);
+            return;
+        }
+        let Some(id) = next_ready() else {
+            if !wait_for_timers() {
+                crate::panic::fatal(
+                    "deadlock: the main task is waiting, but no task or timer can wake it",
+                );
+            }
+            continue;
+        };
+        if id != ROOT {
+            run_task(id);
+            continue;
+        }
+        if root_done {
+            continue;
+        }
+        let w = waker(ROOT);
+        let mut cx = Context::from_waker(&w);
+        root_done = poll(state, raw_cx(&mut cx)) == READY;
+    }
+}

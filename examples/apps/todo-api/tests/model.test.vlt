@@ -1,0 +1,48 @@
+// Validation rules for titles, priorities and tags.
+import { validTitle, parsePriority, validTags } from "../src/model";
+
+// The error message of each call.
+function titleError(t: string): string {
+  try {
+    validTitle(t);
+  } catch (e) {
+    return e.message.clone();
+  }
+  return "";
+}
+
+function priorityError(p: string): string {
+  try {
+    parsePriority(p);
+  } catch (e) {
+    return e.message.clone();
+  }
+  return "";
+}
+
+function tagsError(tags: string[]): string {
+  try {
+    validTags(tags);
+  } catch (e) {
+    return e.message.clone();
+  }
+  return "";
+}
+
+export function test_titles_are_trimmed_and_bounded() {
+  assertEq(validTitle("  hi "), "hi");
+  assertEq(titleError("   "), "title must not be empty");
+  assertEq(titleError("x".repeat(201)), "title is longer than 200 characters");
+  assertEq(validTitle("x".repeat(200)).length, 200);
+}
+
+export function test_priorities() {
+  assertEq(parsePriority("high"), "high");
+  assertEq(priorityError("urgent"), `priority must be low, normal or high (got "urgent")`);
+}
+
+export function test_tags_are_normalized() {
+  assertEq(validTags([" Work", "work", "home"]), ["work", "home"]);
+  assertEq(tagsError([" "]), "tags must not be empty");
+  assertEq(tagsError("abcdefghijk".split("")), "at most 10 tags are allowed");
+}

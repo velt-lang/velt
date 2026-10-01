@@ -1,0 +1,31 @@
+// Decoding messages and how the client shows them, without sockets.
+import { decodeClient, decodeServer, describe } from "../src/protocol";
+
+function clientError(text: string): string {
+  try {
+    decodeClient(text);
+  } catch (e) {
+    return e.message.clone();
+  }
+  return "";
+}
+
+export function test_client_messages() {
+  const join = decodeClient(`{"type":"join","name":"ann"}`);
+  assertEq(join.type, "join");
+  if (join.type === "join") {
+    assertEq(join.name, "ann");
+  }
+  assertEq(decodeClient(`{"type":"leave"}`).type, "leave");
+}
+
+export function test_bad_client_messages() {
+  assertEq(clientError(`{"type":"dance"}`), "unknown message type dance");
+  assertEq(clientError(`{"type":"say","text":5}`), `"text" must be a string`);
+}
+
+export function test_describe_server_messages() {
+  assertEq(describe(decodeServer(`{"type":"joined","name":"ann"}`)), "* ann joined");
+  assertEq(describe(decodeServer(`{"type":"message","from":"ann","text":"hi"}`)), "<ann> hi");
+  assertEq(describe(decodeServer(`{"type":"error","message":"nope"}`)), "! nope");
+}

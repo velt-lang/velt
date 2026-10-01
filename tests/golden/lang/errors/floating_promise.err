@@ -1,0 +1,12 @@
+floating_promise.vlt:15:3: error: floating promise: this promise is neither awaited nor spawned
+its result, and any error it throws, would be lost
+to run it in the background: `spawn(load(...))`
+floating_promise.vlt:19:3: error: floating promise: this promise is neither awaited nor spawned
+to wait for it: `await load(...)`
+floating_promise.vlt:20:3: error: floating promise
+to wait for it: put `await` in front
+floating_promise.vlt:21:3: error: floating promise
+to wait for it: `await Promise.all(...)`
+floating_promise.vlt:22:3: error: floating promise
+floating_promise.vlt:23:3: error: floating promise
+to wait for them: `await Promise.all(...)`

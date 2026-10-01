@@ -1,0 +1,26 @@
+const BASE: i64 = 100;
+
+export function add(a: i64, b: i64 = 2, c: string = "x"): string {
+  return `${a + b} ${c}`;
+}
+
+export function withConst(a: i64, b: i64 = BASE + 1): i64 {
+  return a + b;
+}
+
+export class Counter {
+  n: i64 = 0;
+  bump(by: i64 = 1): i64 {
+    this.n += by;
+    return this.n;
+  }
+  static make(start: i64 = 5): Counter {
+    const c = new Counter();
+    c.n = start;
+    return c;
+  }
+}
+
+export function gen<T>(x: T, label: string = "v"): string {
+  return label;
+}

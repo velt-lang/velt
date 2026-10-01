@@ -1,0 +1,11 @@
+[package]
+name = "velt_http"
+version.workspace = true
+edition.workspace = true
+# A deliberately small HTTP/1.1 server and client over std::net for the developer tools
+# (`velt playground`, the package registry server, vpm's registry client). No dependencies:
+# the tools serve a few requests on a developer's machine or a LAN, not production traffic.
+# https:// URLs are fetched with the system `curl`.
+
+[dev-dependencies]
+tempfile = "3.27.0"

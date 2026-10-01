@@ -1,0 +1,43 @@
+// `switch` on a nullable (non-union) value: `default` after `case null` sees the value narrowed to
+// non-null (docs/reference/control-flow.md "switch"), as does a literal case; a `case null` that falls into
+// `default` does not narrow it. Regression (docs agent): `return x` in `default` was
+// "mismatched types: expected string, found string | null".
+function describe(x: string | null): string {
+  switch (x) {
+    case null:
+      return "none";
+    case "a":
+      return x + "!";
+    default:
+      return x;
+  }
+}
+
+function fall(x: i64 | null): i64 {
+  switch (x) {
+    case null:
+    default:
+      return 0;
+  }
+}
+
+function lit(x: string | null): string {
+  switch (x) {
+    case "q":
+      return "Q";
+    default:
+      return x ?? "null";
+  }
+}
+
+function main() {
+  console.log(
+    describe(null),
+    describe("a"),
+    describe("b"),
+    fall(null),
+    fall(3),
+    lit(null),
+    lit("q"),
+  );
+}

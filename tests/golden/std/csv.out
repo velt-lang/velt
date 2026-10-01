@@ -1,0 +1,34 @@
+simple [["a","b","c"],["1","2","3"]]
+no final newline [["a","b"],["1","2"]]
+crlf [["a","b"],["1","2"]]
+lone cr [["a"],["b"]]
+empty []
+one newline [[""]]
+blank line [["a"],[""],["b"]]
+empty fields [["","a","",""],["",""]]
+quoted [["a,b","say \"hi\"",""]]
+multiline [["id","text"],["1","line one\nline two\r\nline three"],["2","x"]]
+utf8 [["namn","stad"],["Åsa","Göteborg"],["日本","😀"]]
+bom [["h1","h2"],["v1","v2"]]
+spaces kept [[" a "," b "]]
+quote inside unquoted [["a\"b","c"]]
+unterminated error: Unterminated quoted field starting on line 2 2
+unterminated line 1 error: Unterminated quoted field starting on line 1 1
+junk after quote error: Unexpected character after closing quote on line 3 3
+[["a","b","c;d"],["1","2","3"]]
+[["a","b"],["1","2"]]
+[["a","b, c","d"]]
+[["a"],["b"]]
+Invalid CSV delimiter: "::" 0
+Invalid CSV delimiter: "\"" 0
+3
+Ada 36 London 3 [ 'name', 'age', 'city' ]
+Linus 28  3 [ 'name', 'age', 'city' ]
+Grace, Rear Adm. 85 New York 3 [ 'name', 'age', 'city' ]
+0 0
+"id,text,note\n1,plain,\n2,\"with, comma\",\"say \"\"hi\"\"\"\n3,\"two\nlines\",\"cr\rhere\"\n4, spaced ,ünïcode\n"
+true
+"a;\"b;c\"\r\nd\r\n"
+"" "\n"
+[["x","a\r\nb"]]
+true 2

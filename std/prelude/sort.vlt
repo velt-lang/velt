@@ -1,0 +1,490 @@
+// Prelude: in-place array sorting.
+//
+// - `sort()` on arrays of numbers and strings: ascending, pattern-defeating quicksort
+//   (pdqsort, Orson Peters): median-of-3 / ninther pivots, branchless Lomuto partitioning
+//   (as in Rust's `sort_unstable`), a separate pass for runs of keys equal to the previous
+//   pivot, detection of already-sorted / reversed input, insertion sort for short ranges and
+//   heapsort once too many partitions come out unbalanced. O(n log n) worst case, no
+//   allocation. Not stable, which is unobservable for these types. Floats sort NaN last (a
+//   total order, so the algorithm's invariants hold).
+// - `sort(cmp)` for any element type (and on numbers and strings too): **stable** like JS
+//   `Array.prototype.sort(cmp)`.
+//   Insertion-sorted blocks merged with SymMerge (in place, rotation based, O(n log^2 n)
+//   swaps, no allocation); runs that are already in order are not merged.
+//   `cmp(a, b)` returns < 0 when `a` goes first, > 0 when `b` goes first, 0 when equivalent.
+// Elements are only ever swapped, never copied or cloned (there is no generic move out of an
+// array), so every algorithm here works for any `T`.
+// There is no generic ordering bound yet, so `sort()` is provided per element type. The
+// comparator returns `i64` (like `compareTo`), except on `f64[]`, where it returns `f64`.
+
+extend Array<i64> {
+  sort(cmp: ((x: i64, y: i64) => i64) | null = null) {
+    if (cmp != null) {
+      stableSort(this, cmp);
+      return;
+    }
+    pdqsort(this, (a, b) => a < b);
+  }
+}
+
+extend Array<i32> {
+  sort(cmp: ((x: i32, y: i32) => i64) | null = null) {
+    if (cmp != null) {
+      stableSort(this, cmp);
+      return;
+    }
+    pdqsort(this, (a, b) => a < b);
+  }
+}
+
+extend Array<u64> {
+  sort(cmp: ((x: u64, y: u64) => i64) | null = null) {
+    if (cmp != null) {
+      stableSort(this, cmp);
+      return;
+    }
+    pdqsort(this, (a, b) => a < b);
+  }
+}
+
+extend Array<usize> {
+  sort(cmp: ((x: usize, y: usize) => i64) | null = null) {
+    if (cmp != null) {
+      stableSort(this, cmp);
+      return;
+    }
+    pdqsort(this, (a, b) => a < b);
+  }
+}
+
+extend Array<f64> {
+  // The comparator returns a float, so `(a, b) => a - b` works; a NaN result counts as 0.
+  sort(cmp: ((x: f64, y: f64) => f64) | null = null) {
+    if (cmp != null) {
+      stableSortFloat(this, cmp);
+      return;
+    }
+    pdqsort(this, (a, b) => a < b || (b != b && a == a));
+  }
+}
+
+extend Array<string> {
+  sort(cmp: ((x: string, y: string) => i64) | null = null) {
+    if (cmp != null) {
+      stableSort(this, cmp);
+      return;
+    }
+    pdqsort(this, (a, b) => a < b);
+  }
+}
+
+extend<T> Array<T> {
+  // Stable sort by `cmp` (JS `sort(compareFn)`; there is no default order for arbitrary `T`).
+  sort(cmp: (x: T, y: T) => i64) {
+    stableSort(this, cmp);
+  }
+}
+
+// `stableSort` with a float comparator (the sign of its result; NaN counts as 0).
+function stableSortFloat(xs: f64[], cmp: (x: f64, y: f64) => f64) {
+  stableSort(xs, (x, y) => {
+    const c = cmp(x, y);
+    return c < 0.0 ? -1 : c > 0.0 ? 1 : 0;
+  });
+}
+
+// ───────────────────────── pdqsort (unstable) ─────────────────────────
+
+// Ranges at most this long are finished with insertion sort.
+const INSERTION_MAX: usize = 20;
+// Ranges longer than this take the ninther (median of 3 medians of 3) as pivot.
+const NINTHER_MIN: usize = 128;
+// Partial insertion sort gives up after moving this many elements in total.
+const PARTIAL_LIMIT: usize = 8;
+
+function pdqsort<T>(xs: T[], less: (x: T, y: T) => bool) {
+  const n = xs.length;
+  if (n < 2) {
+    return;
+  }
+  // Whole array already ascending, or strictly descending (reversing keeps it unstable-safe):
+  // O(n) and done. Random input leaves this loop after a couple of elements.
+  let run: usize = 1;
+  if (less(xs[1], xs[0])) {
+    while (run < n && less(xs[run], xs[run - 1])) {
+      run++;
+    }
+    if (run == n) {
+      xs.reverse();
+      return;
+    }
+  } else {
+    while (run < n && !less(xs[run], xs[run - 1])) {
+      run++;
+    }
+    if (run == n) {
+      return;
+    }
+  }
+  // Unbalanced partitions tolerated before switching to heapsort: floor(log2(n)).
+  let bad = 0;
+  let m = n;
+  while (m > 1) {
+    m = m >> 1;
+    bad++;
+  }
+  pdqLoop(xs, 0, n, less, bad, true);
+}
+
+// Sorts xs[lo..hi). `leftmost` is false when xs[lo - 1] exists and is <= every element of
+// the range (it was a pivot). Recurses into the smaller side and loops on the larger one, so
+// the stack depth stays O(log n).
+function pdqLoop<T>(
+  xs: T[],
+  lo: usize,
+  hi: usize,
+  less: (x: T, y: T) => bool,
+  bad: i64,
+  leftmost: bool,
+) {
+  while (hi - lo > INSERTION_MAX) {
+    const size = hi - lo;
+    choosePivot(xs, lo, hi, less);
+    // The pivot equals the previous pivot xs[lo - 1]: every key equal to it goes left in one
+    // pass and is done, so inputs with many duplicates take linear time.
+    if (!leftmost && !less(xs[lo - 1], xs[lo])) {
+      lo = partitionLeft(xs, lo, hi, less) + 1;
+      continue;
+    }
+    const r = partitionRight(xs, lo, hi, less);
+    const p = r >> 1;
+    const alreadyPartitioned = (r & 1) == 1;
+    const leftSize = p - lo;
+    const rightSize = hi - p - 1;
+    if (leftSize < size / 8 || rightSize < size / 8) {
+      bad--;
+      if (bad == 0) {
+        heapsort(xs, lo, hi, less);
+        return;
+      }
+      breakPatterns(xs, lo, p, leftSize);
+      breakPatterns(xs, p + 1, hi, rightSize);
+    } else if (
+      alreadyPartitioned &&
+      partialInsertionSort(xs, lo, p, less) &&
+      partialInsertionSort(xs, p + 1, hi, less)
+    ) {
+      return;
+    }
+    if (leftSize < rightSize) {
+      pdqLoop(xs, lo, p, less, bad, leftmost);
+      lo = p + 1;
+      leftmost = false;
+    } else {
+      pdqLoop(xs, p + 1, hi, less, bad, false);
+      hi = p;
+    }
+  }
+  insertionSort(xs, lo, hi, less);
+}
+
+// Moves the pivot to xs[lo]: the median of first / middle / last, or for long ranges the
+// ninther. Afterwards some element of xs[lo + 1..hi) is >= the pivot.
+function choosePivot<T>(xs: T[], lo: usize, hi: usize, less: (x: T, y: T) => bool) {
+  const size = hi - lo;
+  const mid = lo + size / 2;
+  if (size > NINTHER_MIN) {
+    sort3(xs, lo, mid, hi - 1, less);
+    sort3(xs, lo + 1, mid - 1, hi - 2, less);
+    sort3(xs, lo + 2, mid + 1, hi - 3, less);
+    sort3(xs, mid - 1, mid, mid + 1, less);
+    __intrinsic_array_swap(xs, lo, mid);
+  } else {
+    sort3(xs, mid, lo, hi - 1, less);
+  }
+}
+
+function sort2<T>(xs: T[], a: usize, b: usize, less: (x: T, y: T) => bool) {
+  if (less(xs[b], xs[a])) {
+    __intrinsic_array_swap(xs, a, b);
+  }
+}
+
+// Orders xs[a] <= xs[b] <= xs[c].
+function sort3<T>(xs: T[], a: usize, b: usize, c: usize, less: (x: T, y: T) => bool) {
+  sort2(xs, a, b, less);
+  sort2(xs, b, c, less);
+  sort2(xs, a, b, less);
+}
+
+// Partitions xs[lo..hi) around the pivot xs[lo]: returns 2 * p + already, where the pivot
+// ends at p, xs[lo..p) < pivot <= xs[p + 1..hi), and `already` is 1 when no element had to
+// move (the range may be sorted: worth a partial insertion sort).
+function partitionRight<T>(xs: T[], lo: usize, hi: usize, less: (x: T, y: T) => bool): usize {
+  // Skip the prefix already < pivot and the suffix already >= pivot.
+  let first = lo + 1;
+  while (first < hi && less(xs[first], xs[lo])) {
+    first++;
+  }
+  let last = hi;
+  while (last > first && !less(xs[last - 1], xs[lo])) {
+    last--;
+  }
+  const already: usize = first >= last ? 1 : 0;
+  let p = first - 1;
+  if (first < last) {
+    p = lomuto(xs, lo, first, last, less);
+  }
+  __intrinsic_array_swap(xs, lo, p);
+  return 2 * p + already;
+}
+
+// Branchless Lomuto over xs[first..last) (pivot at xs[lo]): each element is swapped to the
+// end of the "< pivot" prefix, which grows by the comparison result. Returns the last index
+// of that prefix (the pivot's slot).
+function lomuto<T>(
+  xs: T[],
+  lo: usize,
+  first: usize,
+  last: usize,
+  less: (x: T, y: T) => bool,
+): usize {
+  let lt = first;
+  for (let i = first; i < last; i++) {
+    // Compare before the swap: the comparison then does not wait for the previous
+    // iteration's stores, only `lt` does.
+    const smaller = less(xs[i], xs[lo]) as usize;
+    __intrinsic_array_swap(xs, i, lt);
+    lt += smaller;
+  }
+  return lt - 1;
+}
+
+// Partitions xs[lo..hi) around the pivot xs[lo] into <= pivot and > pivot; returns the
+// pivot's final index. Used when the pivot equals xs[lo - 1], so the left side is all equal.
+function partitionLeft<T>(xs: T[], lo: usize, hi: usize, less: (x: T, y: T) => bool): usize {
+  let i = lo + 1;
+  let j = hi - 1;
+  while (true) {
+    while (i <= j && !less(xs[lo], xs[i])) {
+      i++;
+    }
+    while (i <= j && less(xs[lo], xs[j])) {
+      j--;
+    }
+    if (i > j) {
+      break;
+    }
+    __intrinsic_array_swap(xs, i, j);
+    i++;
+    j--;
+  }
+  __intrinsic_array_swap(xs, lo, j);
+  return j;
+}
+
+// After an unbalanced partition, swaps a few elements of xs[lo..hi) (`size` long) to break
+// the pattern that produced it.
+function breakPatterns<T>(xs: T[], lo: usize, hi: usize, size: usize) {
+  if (size < INSERTION_MAX) {
+    return;
+  }
+  const q = size / 4;
+  __intrinsic_array_swap(xs, lo, lo + q);
+  __intrinsic_array_swap(xs, hi - 1, hi - 1 - q);
+  if (size > NINTHER_MIN) {
+    __intrinsic_array_swap(xs, lo + 1, lo + q + 1);
+    __intrinsic_array_swap(xs, lo + 2, lo + q + 2);
+    __intrinsic_array_swap(xs, hi - 2, hi - 2 - q);
+    __intrinsic_array_swap(xs, hi - 3, hi - 3 - q);
+  }
+}
+
+function insertionSort<T>(xs: T[], lo: usize, hi: usize, less: (x: T, y: T) => bool) {
+  for (let i = lo + 1; i < hi; i++) {
+    let j = i;
+    while (j > lo && less(xs[j], xs[j - 1])) {
+      __intrinsic_array_swap(xs, j, j - 1);
+      j--;
+    }
+  }
+}
+
+// Insertion sort that gives up (returns false) once it has moved more than PARTIAL_LIMIT
+// elements: cheap confirmation that a range which needed no partitioning is sorted.
+function partialInsertionSort<T>(xs: T[], lo: usize, hi: usize, less: (x: T, y: T) => bool): bool {
+  let moved: usize = 0;
+  for (let i = lo + 1; i < hi; i++) {
+    if (moved > PARTIAL_LIMIT) {
+      return false;
+    }
+    let j = i;
+    while (j > lo && less(xs[j], xs[j - 1])) {
+      __intrinsic_array_swap(xs, j, j - 1);
+      j--;
+    }
+    moved += i - j;
+  }
+  return true;
+}
+
+function heapsort<T>(xs: T[], lo: usize, hi: usize, less: (x: T, y: T) => bool) {
+  const n = hi - lo;
+  let start = n / 2;
+  while (start > 0) {
+    start--;
+    siftDown(xs, lo, start, n, less);
+  }
+  let end = n;
+  while (end > 1) {
+    end--;
+    __intrinsic_array_swap(xs, lo, lo + end);
+    siftDown(xs, lo, 0, end, less);
+  }
+}
+
+// Max-heap sift-down of heap node `root` in the heap xs[base..base+n).
+function siftDown<T>(xs: T[], base: usize, root: usize, n: usize, less: (x: T, y: T) => bool) {
+  while (true) {
+    let child = 2 * root + 1;
+    if (child >= n) {
+      break;
+    }
+    if (child + 1 < n && less(xs[base + child], xs[base + child + 1])) {
+      child++;
+    }
+    if (!less(xs[base + root], xs[base + child])) {
+      break;
+    }
+    __intrinsic_array_swap(xs, base + root, base + child);
+    root = child;
+  }
+}
+
+// ───────────────────────── stable sort (SymMerge) ─────────────────────────
+// Algorithm from Kim & Kutzner, "Stable Minimum Storage Merging by Symmetric Comparisons"
+// (the same scheme as Go's `sort.Stable`).
+
+// Width of the insertion-sorted blocks that the merge passes start from.
+const STABLE_BLOCK: usize = 20;
+
+function stableSort<T>(xs: T[], cmp: (x: T, y: T) => i64) {
+  const n = xs.length;
+  let block = STABLE_BLOCK;
+  let a: usize = 0;
+  while (a + block <= n) {
+    stableInsertion(xs, a, a + block, cmp);
+    a += block;
+  }
+  stableInsertion(xs, a, n, cmp);
+  while (block < n) {
+    a = 0;
+    while (a + block < n) {
+      const m = a + block;
+      const b = m + block < n ? m + block : n;
+      // Runs already in order (common for partly sorted input) need no merge.
+      if (cmp(xs[m], xs[m - 1]) < 0) {
+        symMerge(xs, a, m, b, cmp);
+      }
+      a = b;
+    }
+    block *= 2;
+  }
+}
+
+function stableInsertion<T>(xs: T[], lo: usize, hi: usize, cmp: (x: T, y: T) => i64) {
+  for (let i = lo + 1; i < hi; i++) {
+    let j = i;
+    while (j > lo && cmp(xs[j], xs[j - 1]) < 0) {
+      __intrinsic_array_swap(xs, j, j - 1);
+      j--;
+    }
+  }
+}
+
+// Merges the sorted runs xs[a..m) and xs[m..b) in place (requires a < m < b).
+function symMerge<T>(xs: T[], a: usize, m: usize, b: usize, cmp: (x: T, y: T) => i64) {
+  if (m - a == 1) {
+    // Single element on the left: binary-search its slot in the right run, rotate it there.
+    let i = m;
+    let j = b;
+    while (i < j) {
+      const h = i + (j - i) / 2;
+      if (cmp(xs[h], xs[a]) < 0) {
+        i = h + 1;
+      } else {
+        j = h;
+      }
+    }
+    for (let k = a; k + 1 < i; k++) {
+      __intrinsic_array_swap(xs, k, k + 1);
+    }
+    return;
+  }
+  if (b - m == 1) {
+    // Single element on the right: binary-search its slot in the left run.
+    let i = a;
+    let j = m;
+    while (i < j) {
+      const h = i + (j - i) / 2;
+      if (cmp(xs[m], xs[h]) >= 0) {
+        i = h + 1;
+      } else {
+        j = h;
+      }
+    }
+    for (let k = m; k > i; k--) {
+      __intrinsic_array_swap(xs, k, k - 1);
+    }
+    return;
+  }
+  const mid = a + (b - a) / 2;
+  const n = mid + m;
+  let start: usize = a;
+  let r = m;
+  if (m > mid) {
+    start = n - b;
+    r = mid;
+  }
+  const p = n - 1;
+  while (start < r) {
+    const c = start + (r - start) / 2;
+    if (cmp(xs[p - c], xs[c]) >= 0) {
+      start = c + 1;
+    } else {
+      r = c;
+    }
+  }
+  const end = n - start;
+  if (start < m && m < end) {
+    rotate(xs, start, m, end);
+  }
+  if (a < start && start < mid) {
+    symMerge(xs, a, start, mid, cmp);
+  }
+  if (mid < end && end < b) {
+    symMerge(xs, mid, end, b, cmp);
+  }
+}
+
+// Rotates xs[a..b) so that xs[m..b) comes before xs[a..m), using block swaps.
+function rotate<T>(xs: T[], a: usize, m: usize, b: usize) {
+  let i = m - a;
+  let j = b - m;
+  while (i != j) {
+    if (i > j) {
+      swapRange(xs, m - i, m, j);
+      i -= j;
+    } else {
+      swapRange(xs, m - i, m + j - i, i);
+      j -= i;
+    }
+  }
+  swapRange(xs, m - i, m, i);
+}
+
+function swapRange<T>(xs: T[], a: usize, b: usize, n: usize) {
+  for (let k: usize = 0; k < n; k++) {
+    __intrinsic_array_swap(xs, a + k, b + k);
+  }
+}

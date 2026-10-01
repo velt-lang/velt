@@ -1,0 +1,17 @@
+// `mut` is not part of the language: mutation is inferred.
+function push(mut xs: i64[]) {
+  xs.push(1);
+}
+
+class C {
+  n: i64 = 0;
+  mut bump() {
+    this.n += 1;
+  }
+}
+
+type F = (mut xs: i64[]) => void;
+
+function main() {
+  const f = (mut xs: i64[]) => xs.length;
+}

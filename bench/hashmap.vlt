@@ -1,0 +1,46 @@
+// Hash maps: 1M integer inserts + 1M lookups (half of them misses) in a Map<i64, i64>, then a
+// word count over 1M generated words in a Map<string, i64> (one `upsert` per word, like Rust's
+// `entry().or_insert(0) += 1`).
+function intMap(n: i64): i64 {
+  const m = new Map<i64, i64>();
+  let x = 1;
+  for (let i = 0; i < n; i++) {
+    x = (x * 48271) % 2147483647;
+    m.set(x % 2000000, i);
+  }
+  let hits = 0;
+  let sum = 0;
+  for (let k = 0; k < n; k++) {
+    const v = m.get(k * 2);
+    if (v != null) {
+      hits++;
+      sum += v;
+    }
+  }
+  console.log(m.size, hits, sum);
+  return hits;
+}
+
+function wordCount(n: i64) {
+  const counts = new Map<string, i64>();
+  let x = 7;
+  for (let i = 0; i < n; i++) {
+    x = (x * 48271) % 2147483647;
+    const word = `w${x % 50000}`;
+    counts.upsert(word, 1, (c) => c + 1);
+  }
+  let best = 0;
+  let total = 0;
+  for (const [w, c] of counts) {
+    total += c;
+    if (c > best) {
+      best = c;
+    }
+  }
+  console.log(counts.size, total, best, counts.get("w123") ?? 0);
+}
+
+function main() {
+  intMap(1000000);
+  wordCount(1000000);
+}

@@ -1,0 +1,12 @@
+[package]
+name = "velt_codegen_llvm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+velt_vir.workspace = true
+velt_codegen_cl.workspace = true
+
+[dev-dependencies]
+object = { version = "0.39", default-features = false, features = ["read"] }
+velt_opt = { workspace = true, features = ["interp"] }

@@ -1,0 +1,15 @@
+// Regression (difftest math-hypot-overflow): Math.hypot scales large and tiny inputs instead of
+// overflowing to Infinity (or underflowing to 0) in sqrt(a*a + b*b).
+// Expected output is Node's.
+function main() {
+  console.log(Math.hypot(1e300, 1.0));
+  console.log(Math.hypot(3e-200, 4e-200));
+  console.log(Math.hypot(3.0, 4.0));
+  console.log(Math.hypot(-1e200, 1e200));
+  console.log(Math.hypot(1.7976931348623157e308, 1.0));
+  console.log(Math.hypot(1.7976931348623157e308, 1.7976931348623157e308));
+  console.log(Math.hypot(5e-324, 0.0));
+  console.log(Math.hypot(0.0, -0.0));
+  console.log(Math.hypot(0.0 / 0.0, -1.0 / 0.0));
+  console.log(Math.hypot(0.0 / 0.0, 1.0));
+}

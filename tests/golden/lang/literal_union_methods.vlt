@@ -1,0 +1,14 @@
+// A union of literals uses its base type's members (`l.length`, `l.toUpperCase()`, a
+// discriminant's `v.kind.length`), as docs/reference/types.md says; `join` works on an array of them.
+// Regression (difftest seed 20029): "no field `length` on type `Lvl`".
+type Sh = { kind: "pt"; x: i64 } | { kind: "nil" };
+type Lvl = "lo" | "mid";
+
+function main() {
+  const v: Sh = { kind: "pt", x: 1 };
+  const l: Lvl = "mid";
+  console.log(l + "!", l.length, l.toUpperCase(), l.startsWith("m"));
+  console.log(v.kind.length, v.kind.toUpperCase());
+  const vs: Sh[] = [v, { kind: "nil" }];
+  console.log(vs.map((w) => w.kind).join(","));
+}

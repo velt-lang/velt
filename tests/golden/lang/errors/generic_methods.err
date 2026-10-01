@@ -1,0 +1,5 @@
+generic_methods.vlt:18:8: error: generic interface methods cannot have a default body yet
+generic_methods.vlt:30:12: error: method `wrap` must have 1 type parameter(s) like the base class method it overrides
+generic_methods.vlt:12:3: error: method `apply` must have 1 type parameter(s) to implement `Mapper.apply`
+generic_methods.vlt:49:3: error: generic method `apply` cannot be called on an interface value (`Mapper`)
+generic_methods.vlt:51:5: error: generic method `get` is overridden in `Smaller`, so calling it on a `Small` would need dynamic dispatch

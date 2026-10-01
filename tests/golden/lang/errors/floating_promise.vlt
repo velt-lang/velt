@@ -1,0 +1,27 @@
+// A promise that is neither awaited nor spawned is an error: its result and errors would be
+// lost. `spawn(...)` may be dropped (the task keeps running), and a stored promise may go unused
+// (it still runs to completion).
+class Store {
+  async save(key: string): Promise<void> {
+    console.log("saved", key);
+  }
+}
+
+async function load(id: i64): Promise<i64> {
+  return id;
+}
+
+function syncCaller() {
+  load(1);
+}
+
+async function main() {
+  load(2);
+  new Store().save("k");
+  Promise.all([load(3), load(4)]);
+  sleep(10);
+  [load(5)];
+  spawn(load(6));
+  const unused = load(7);
+  await load(8);
+}

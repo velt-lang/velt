@@ -1,0 +1,3 @@
+action: start
+get /count: count 1
+get /count: count 2

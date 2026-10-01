@@ -1,0 +1,34 @@
+// A `static` method declared in an `extend` block is called on the type (`C.make()`), also for
+// a generic class (`extend<T> Box<T> { static of(v: T) }`). Regression (docs agent):
+// "`C.make` is not a static method".
+class C {
+  n: i64 = 1;
+}
+
+extend C {
+  static make(): C {
+    return new C();
+  }
+
+  twice(): i64 {
+    return this.n * 2;
+  }
+}
+
+class Box<T> {
+  v: T;
+
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+extend<T> Box<T> {
+  static of(v: T): Box<T> {
+    return new Box<T>(v);
+  }
+}
+
+function main() {
+  console.log(C.make().n, C.make().twice(), Box.of("x").v, Box.of(3).v);
+}

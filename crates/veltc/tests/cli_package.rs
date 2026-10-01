@@ -1,0 +1,187 @@
+//! CLI-level package workflows through the `velt` binary, with an isolated `VELT_HOME` per test:
+//! `new` → `publish` → `add` → `install` → lockfile, plus `build`/`run`/`test` in package mode.
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+struct Sandbox {
+    _tmp: tempfile::TempDir,
+    dir: PathBuf,
+}
+
+fn sandbox() -> Sandbox {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    Sandbox { _tmp: tmp, dir }
+}
+
+impl Sandbox {
+    fn velt(&self, cwd: &str, args: &[&str]) -> Output {
+        let cwd = self.dir.join(cwd);
+        Command::new(env!("CARGO_BIN_EXE_velt"))
+            .args(args)
+            .current_dir(&cwd)
+            .env("VELT_HOME", self.dir.join("home"))
+            .env_remove("VELT_REGISTRY")
+            .output()
+            .unwrap()
+    }
+
+    /// Run and assert success; returns stderr (status lines).
+    fn ok(&self, cwd: &str, args: &[&str]) -> String {
+        let o = self.velt(cwd, args);
+        let stderr = String::from_utf8_lossy(&o.stderr).into_owned();
+        assert!(
+            o.status.success(),
+            "`velt {}` failed:\n{stderr}{}",
+            args.join(" "),
+            String::from_utf8_lossy(&o.stdout)
+        );
+        stderr
+    }
+
+    fn fail(&self, cwd: &str, args: &[&str]) -> String {
+        let o = self.velt(cwd, args);
+        assert!(!o.status.success(), "`velt {}` should fail", args.join(" "));
+        String::from_utf8_lossy(&o.stderr).into_owned()
+    }
+
+    fn read(&self, rel: &str) -> String {
+        std::fs::read_to_string(self.dir.join(rel)).unwrap()
+    }
+
+    fn write(&self, rel: &str, text: &str) {
+        std::fs::write(self.dir.join(rel), text).unwrap();
+    }
+}
+
+fn set_version(s: &Sandbox, pkg: &str, version: &str) {
+    let manifest = s
+        .read(&format!("{pkg}/velt.toml"))
+        .replace("0.1.0", version)
+        .replace("1.0.0", version);
+    s.write(&format!("{pkg}/velt.toml"), &manifest);
+}
+
+#[test]
+fn new_publish_add_install() {
+    let s = sandbox();
+    s.ok("", &["new", "mylib", "--lib"]);
+    set_version(&s, "mylib", "1.0.0");
+    assert!(s
+        .ok("mylib", &["publish"])
+        .contains("Published `mylib` 1.0.0"));
+    set_version(&s, "mylib", "1.2.0");
+    s.ok("mylib/src", &["publish"]); // found by searching upward
+    assert!(s.fail("mylib", &["publish"]).contains("already published"));
+    assert!(s.dir.join("home/registry/mylib/index.toml").is_file());
+
+    s.ok("", &["new", "app"]);
+    s.ok("app", &["add", "mylib@^1.0"]);
+    let manifest = s.read("app/velt.toml");
+    assert!(manifest.contains("mylib = \"^1.0\""), "{manifest}");
+    let lock = s.read("app/velt.lock");
+    assert!(
+        lock.contains("name = \"mylib\"") && lock.contains("version = \"1.2.0\""),
+        "{lock}"
+    );
+    assert!(s.dir.join("home/cache/mylib-1.2.0/src/lib.vlt").is_file());
+    s.ok("app", &["install", "--locked"]);
+
+    // Unknown package: error, and velt.toml is left untouched.
+    assert!(s
+        .fail("app", &["add", "nope"])
+        .contains("not in the registry"));
+    assert_eq!(s.read("app/velt.toml"), manifest);
+    // Conflict: a requirement nothing satisfies.
+    assert!(s
+        .fail("app", &["add", "mylib@^2"])
+        .contains("no version of `mylib` matches"));
+    assert_eq!(s.read("app/velt.toml"), manifest);
+}
+
+#[test]
+fn add_without_version_uses_latest_and_path_deps_work() {
+    let s = sandbox();
+    s.ok("", &["new", "util", "--lib"]);
+    s.ok("util", &["publish"]);
+    s.ok("", &["new", "app"]);
+    s.ok("app", &["add", "util"]);
+    assert!(s.read("app/velt.toml").contains("util = \"0.1.0\""));
+
+    s.ok("", &["new", "local", "--lib"]);
+    s.ok("app", &["add", "local", "--path", "../local"]);
+    assert!(s
+        .read("app/velt.toml")
+        .contains("local = { path = \"../local\" }"));
+    assert!(s
+        .read("app/velt.lock")
+        .contains("source = \"path+../local\""));
+}
+
+#[test]
+fn package_commands_outside_a_package() {
+    let s = sandbox();
+    assert!(s.fail("", &["install"]).contains("no `velt.toml`"));
+    assert!(s.fail("", &["build"]).contains("no `velt.toml`"));
+    assert!(s.fail("", &["new", "Bad"]).contains("invalid package name"));
+    s.ok("", &["new", "lib", "--lib"]);
+    assert!(s.fail("lib", &["build"]).contains("it is a library"));
+}
+
+#[test]
+fn import_of_undeclared_package_is_reported() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    s.write(
+        "app/src/main.vlt",
+        "import { f } from \"json\";\nfunction main() {}\n",
+    );
+    let err = s.fail("app", &["build"]);
+    assert!(
+        err.contains("package `json` is not a dependency (add it with `velt add json`)"),
+        "{err}"
+    );
+}
+
+/// Needs the full compiler pipeline (VIR lowering + codegen).
+#[test]
+fn new_then_build_and_run() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    s.ok("app", &["build"]);
+    let exe = if cfg!(windows) {
+        "app/target/velt/app.exe"
+    } else {
+        "app/target/velt/app"
+    };
+    assert!(s.dir.join(exe).is_file());
+    let o = s.velt("app", &["run"]);
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "Hello, world!\n");
+}
+
+/// Needs the full compiler pipeline and the prelude's `assert`.
+#[test]
+fn test_runner_reports_passes_and_failures() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    s.write(
+        "app/src/math.test.vlt",
+        "export function test_ok() { assert(1 + 1 == 2); }\n\
+         export function test_bad() { assertEq(1, 2); }\n\
+         export function test_after() { console.log(\"still runs\"); }\n",
+    );
+    let o = s.velt("app", &["test"]);
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert_eq!(o.status.code(), Some(1), "{stdout}");
+    for want in [
+        "ok test_ok",
+        "FAILED test_bad",
+        "still runs",
+        "ok test_after",
+        "4 passed; 1 failed", // + the template's two tests in tests/greet.test.vlt
+    ] {
+        assert!(stdout.contains(want), "missing `{want}` in:\n{stdout}");
+    }
+    assert!(Path::new(&s.dir.join("app/target/velt/test")).is_dir());
+}

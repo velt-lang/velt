@@ -1,0 +1,32 @@
+// TS constructor parameter properties (`constructor(public x: f64, private readonly mass: f64)`,
+// docs/internals/design/ts-alignment.md §5) declare the fields and store the arguments; with a base class
+// the stores follow `super(...)`. Regression (benchmarks-game): a parse error.
+class Body {
+  constructor(public x: f64, private readonly mass: f64) {}
+
+  weight(): f64 {
+    return this.mass * 9.81;
+  }
+}
+
+class Base {
+  tag: string;
+
+  constructor(tag: string) {
+    this.tag = tag;
+  }
+}
+
+class Moon extends Base {
+  constructor(readonly r: f64, protected name: string) {
+    super("moon");
+  }
+}
+
+function main() {
+  const m = new Moon(3.0, "io");
+  console.log(m.tag, m.r, m.name);
+  const b = new Body(1.5, 2.0);
+  b.x += 1.0;
+  console.log(b.x, b.weight());
+}

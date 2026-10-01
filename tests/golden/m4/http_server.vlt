@@ -1,0 +1,26 @@
+import { serve, fetch, Request, Response } from "velt:http";
+
+async function main() {
+  const hits = shared(0);
+  const counter = hits.clone();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    counter.add(1);
+    if (req.path == "/json") {
+      return Response.json({ path: req.path, method: req.method, n: counter.get() });
+    }
+    if (req.path == "/echo") {
+      return Response.text(`got ${req.body}`);
+    }
+    return Response.text("not found", 404);
+  });
+
+  const base = `http://127.0.0.1:${server.port}`;
+  const r1 = await fetch(`${base}/json`);
+  console.log(r1.status, r1.headers.get("content-type") ?? "", await r1.text());
+  const r2 = await fetch(`${base}/echo`, { method: "POST", body: "hi" });
+  console.log(r2.status, await r2.text());
+  const r3 = await fetch(`${base}/nope`);
+  console.log(r3.status);
+  console.log(hits.get());
+  server.close();
+}

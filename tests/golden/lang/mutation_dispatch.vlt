@@ -1,0 +1,87 @@
+// Inferred mutation through dynamic dispatch and function values: interface methods and
+// overrides are modifying if any implementation is; callbacks receive objects by reference and
+// Copy values by value.
+
+class Log {
+  lines: string[] = [];
+}
+
+interface Sink {
+  write(log: Log, msg: string): void;
+}
+
+class Quiet implements Sink {
+  write(log: Log, msg: string) {}
+}
+
+class Loud implements Sink {
+  write(log: Log, msg: string) {
+    log.lines.push(msg);
+  }
+}
+
+class Base {
+  count: i64 = 0;
+  touch(log: Log) {}
+}
+
+class Derived extends Base {
+  override touch(log: Log) {
+    this.count += 1;
+    log.lines.push("derived");
+  }
+}
+
+struct Vec2 {
+  x: f64;
+  y: f64;
+}
+
+function tag(log: Log) {
+  log.lines.push("tagged");
+}
+
+// A Copy struct param modified locally, also when called through a function value.
+function stretch(v: Vec2): f64 {
+  v.x *= 2.0;
+  return v.x + v.y;
+}
+
+function applyAll(log: Log, fs: ((log: Log) => void)[]) {
+  for (let i: usize = 0; i < fs.length; i++) {
+    fs[i](log);
+  }
+}
+
+function main() {
+  const log = new Log();
+  const sinks: Sink[] = [new Quiet(), new Loud()];
+  for (let i: usize = 0; i < sinks.length; i++) {
+    sinks[i].write(log, `sink ${i}`);
+  }
+  const b: Base = new Derived();
+  b.touch(log);
+  console.log(log.lines, b.count);
+
+  // Named function and arrows as values.
+  const fs: ((log: Log) => void)[] = [
+    tag,
+    (l) => {
+      l.lines.push("arrow");
+    },
+  ];
+  applyAll(log, fs);
+  console.log(log.lines.length, log.lines[3]);
+
+  const v = Vec2 { x: 1.0, y: 2.0 };
+  const f: (v: Vec2) => f64 = stretch;
+  console.log(f(v), stretch(v), v.x);
+
+  // Map.update hands the stored object to the callback: changes stay in the map.
+  const groups = new Map<string, string[]>();
+  groups.set("a", []);
+  groups.update("a", (xs) => {
+    xs.push("one");
+  });
+  console.log(groups.get("a"));
+}

@@ -1,0 +1,92 @@
+// Higher-order functions rethrow what their callbacks throw: the prelude's array and `Map`
+// methods are generic over the callback's error type (`map<U, E>(f: (x: T) => U throws E)`),
+// and so can user functions. A callback that cannot throw makes the call non-throwing.
+class BadInput extends Error {
+  input: string;
+
+  constructor(input: string) {
+    super(`bad input: ${input}`);
+    this.input = input;
+  }
+}
+
+class TooLarge extends Error {}
+
+function parse(s: string): i64 {
+  if (s == "one") {
+    return 1;
+  }
+  if (s == "two") {
+    return 2;
+  }
+  if (s == "many") {
+    throw new TooLarge("too many");
+  }
+  throw new BadInput(s);
+}
+
+// A user-written higher-order function: `E` is inferred from the callback.
+function retry<T, E>(times: i64, f: (attempt: i64) => T throws E): T throws E {
+  let i = 1;
+  while (i < times) {
+    try {
+      return f(i);
+    } catch {
+      i++;
+    }
+  }
+  return f(times);
+}
+
+function total(words: string[]): i64 {
+  return words.map((w) => parse(w)).reduce((acc, n) => acc + n, 0);
+}
+
+function main() {
+  // Non-throwing callbacks: no try needed.
+  console.log([1, 2, 3].map((x) => x * 2), [1, 2, 3].filter((x) => x > 1));
+  try {
+    console.log("total", total(["one", "two", "two"]));
+    console.log("total", total(["one", "three"]));
+  } catch (e) {
+    if (e instanceof BadInput) {
+      console.log("bad:", e.input);
+    } else {
+      console.log("large:", e.message);
+    }
+  }
+  try {
+    ["one", "many", "x"].forEach((w) => {
+      console.log("word", parse(w));
+    });
+  } catch (e) {
+    console.log("forEach stopped:", e.message);
+  }
+  try {
+    console.log(["one", "two"].some((w) => parse(w) > 1), ["x"].every((w) => parse(w) > 0));
+  } catch (e) {
+    console.log("some/every:", e.message);
+  }
+  const counts = new Map<string, i64>();
+  counts.set("a", 1);
+  try {
+    counts.upsert("a", 0, (n) => n + parse("two"));
+    counts.upsert("b", 5, (n) => n + parse("zzz"));
+    counts.upsert("a", 0, (n) => n + parse("zzz"));
+  } catch (e) {
+    console.log("upsert:", e.message);
+  }
+  console.log(counts.get("a"), counts.get("b"));
+  const r = retry(3, (i) => {
+    if (i < 3) {
+      throw new TooLarge(`attempt ${i}`);
+    }
+    return i * 10;
+  });
+  console.log("retry", r);
+  try {
+    retry(2, (i) => parse(`try${i}`));
+  } catch (e) {
+    console.log("retry gave up:", e.message);
+  }
+}

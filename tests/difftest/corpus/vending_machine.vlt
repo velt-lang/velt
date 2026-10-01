@@ -1,0 +1,51 @@
+// A small state machine with a union-typed result and exceptions.
+class OutOfStock extends Error {
+  constructor(item: string) {
+    super(`out of stock: ${item}`);
+  }
+}
+
+class Machine {
+  stock: Map<string, i64> = new Map<string, i64>();
+  prices: Map<string, i64> = new Map<string, i64>();
+  credit: i64 = 0;
+  add(item: string, price: i64, count: i64) {
+    this.stock.set(`${item}`, count);
+    this.prices.set(item, price);
+  }
+  insert(coins: i64) {
+    this.credit += coins;
+  }
+  buy(item: string): i64 | string {
+    const left = this.stock.get(item) ?? 0;
+    if (left == 0) {
+      throw new OutOfStock(item);
+    }
+    const price = this.prices.get(item) ?? 0;
+    if (this.credit < price) {
+      return `need ${price - this.credit} more`;
+    }
+    this.credit -= price;
+    this.stock.set(item, left - 1);
+    const change = this.credit;
+    this.credit = 0;
+    return change;
+  }
+}
+
+function main() {
+  const m = new Machine();
+  m.add("cola", 150, 1);
+  m.add("chips", 90, 3);
+  m.insert(100);
+  console.log(m.buy("cola"));
+  m.insert(100);
+  console.log(m.buy("cola"));
+  try {
+    m.insert(500);
+    console.log(m.buy("cola"));
+  } catch (e) {
+    console.log(e.message);
+  }
+  console.log(m.buy("chips"), m.credit, m.stock.get("chips") ?? -1);
+}

@@ -1,0 +1,42 @@
+// Rational numbers with normalization; harmonic numbers and a continued fraction.
+class Ratio {
+  n: i64;
+  d: i64;
+  constructor(n: i64, d: i64) {
+    const g = gcd(n < 0 ? -n : n, d < 0 ? -d : d);
+    const s = d < 0 ? -1 : 1;
+    this.n = (s * n) / (g == 0 ? 1 : g);
+    this.d = (s * d) / (g == 0 ? 1 : g);
+  }
+  add(o: Ratio): Ratio {
+    return new Ratio(this.n * o.d + o.n * this.d, this.d * o.d);
+  }
+  mul(o: Ratio): Ratio {
+    return new Ratio(this.n * o.n, this.d * o.d);
+  }
+  show(): string {
+    return this.d == 1 ? `${this.n}` : `${this.n}/${this.d}`;
+  }
+}
+
+function gcd(a: i64, b: i64): i64 {
+  return b == 0 ? a : gcd(b, a % b);
+}
+
+function main() {
+  let h = new Ratio(0, 1);
+  for (let k = 1; k <= 10; k++) {
+    h = h.add(new Ratio(1, k));
+  }
+  console.log(h.show());
+  console.log(
+    new Ratio(6, -8).show(),
+    new Ratio(3, 4).mul(new Ratio(8, 3)).show(),
+    new Ratio(0, 5).show(),
+  );
+  let cf = new Ratio(1, 1);
+  for (let i = 0; i < 12; i++) {
+    cf = new Ratio(1, 1).add(new Ratio(cf.d, cf.n));
+  }
+  console.log(cf.show(), (cf.n - (cf.n % cf.d)) / cf.d, cf.n % cf.d);
+}

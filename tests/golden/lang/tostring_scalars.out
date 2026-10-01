@@ -1,0 +1,41 @@
+int: [-42] 3
+int: -42
+u8: [255] 3
+u8: 255
+u64: [18446744073709551615] 20
+u64: 18446744073709551615
+float: [3.25] 4
+float: 3.25
+float whole: [2] 1
+float whole: 2
+float tiny: [0.000001] 8
+float tiny: 0.000001
+f32: [1.5] 3
+f32: 1.5
+bool: [true] 4
+bool: true
+string: [plain] 5
+string: plain
+empty string: [] 0
+empty string: 
+unicode: [héllo wörld ✓ 日本 🎉] 29
+unicode: héllo wörld ✓ 日本 🎉
+null option: [null] 4
+null option: null
+some option: [7] 1
+some option: 7
+string option: [inside] 6
+string option: inside
+union int: [21] 2
+union int: 21
+union string: [twenty-one] 10
+union string: twenty-one
+union bool: [false] 5
+union bool: false
+union null: [null] 4
+union null: null
+union set: [set] 3
+union set: set
+3ab6true1.5|null|twenty-one
+start é middle ✓✓ end
+x3ab

@@ -1,0 +1,21 @@
+// Pascal's triangle rows and binomial coefficients.
+function row(n: i64): i64[] {
+  let r: i64[] = [1];
+  for (let i = 0; i < n; i++) {
+    const next: i64[] = [1];
+    for (let j: usize = 1; j < r.length; j++) {
+      next.push(r[j - 1] + r[j]);
+    }
+    next.push(1);
+    r = next;
+  }
+  return r;
+}
+
+function main() {
+  for (let n = 0; n <= 6; n++) {
+    console.log(row(n).map((x) => `${x}`).join(" "));
+  }
+  const big = row(40);
+  console.log(big[20], big.reduce((a, b) => a + b, 0), big.length);
+}

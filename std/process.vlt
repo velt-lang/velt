@@ -1,0 +1,79 @@
+// std/process: command-line arguments, environment variables, working directory and exit
+// (rt_abi_async.md §8), and synchronous writes to standard output (`stdout.write`). Strings are
+// UTF-8 (the runtime uses the wide APIs on Windows).
+
+import { IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
+
+declare function velt_rt_process_args(): string[];
+declare function velt_rt_env_get(name: string, out: string): bool;
+declare function velt_rt_env_set(name: string, value: string);
+declare function velt_rt_env_remove(name: string);
+declare function velt_rt_process_cwd(): IoResult<string>;
+declare function velt_rt_process_chdir(path: string): IoStatus;
+declare function velt_rt_stdout_write_bytes(bytes: u8[]);
+declare function velt_rt_write_str(stream: u32, s: string);
+
+// Standard output as a synchronous byte sink (Node's `process.stdout.write`, which Velt spells
+// `stdout.write` after `import { stdout } from "velt:process"`). Writes are ordered with
+// `console.log` and buffered the same way; a large array (64 KiB or more) goes straight to the OS
+// from the caller's buffer, without a copy. Portable: no `/dev/stdout` needed.
+export struct Stdout {
+  // Writes raw bytes (the array stays the caller's, ready to be refilled).
+  write(bytes: u8[]) {
+    velt_rt_stdout_write_bytes(bytes);
+  }
+
+  // Writes a string as UTF-8, without a newline.
+  writeString(s: string) {
+    velt_rt_write_str(1, s);
+  }
+}
+
+export const stdout: Stdout = {};
+
+// Every command-line argument, starting with the program path (like C's `argv`).
+export function argv(): string[] {
+  return velt_rt_process_args();
+}
+
+// The arguments after the program path.
+export function args(): string[] {
+  let all = velt_rt_process_args();
+  if (all.length > 0) {
+    __intrinsic_array_remove(all, 0);
+  }
+  return all;
+}
+
+// The value of environment variable `name`, or null if it is unset.
+export function env(name: string): string | null {
+  let out = "";
+  if (velt_rt_env_get(name, out)) {
+    return out;
+  }
+  return null;
+}
+
+// Not synchronized with concurrent `env` reads on other threads: set variables at startup.
+export function setEnv(name: string, value: string) {
+  velt_rt_env_set(name, value);
+}
+
+export function removeEnv(name: string) {
+  velt_rt_env_remove(name);
+}
+
+// The current working directory (throws `IoError`).
+export function cwd(): string {
+  return unwrapIo(velt_rt_process_cwd());
+}
+
+// Changes the current working directory of the whole process (throws `IoError`).
+export function chdir(path: string) {
+  checkIo(velt_rt_process_chdir(path));
+}
+
+// Flushes stdout/stderr and ends the process with `code` (same as `process.exit`).
+export function exit(code: i32) {
+  process.exit(code);
+}

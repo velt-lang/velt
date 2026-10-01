@@ -1,0 +1,72 @@
+// `${x}` of arrays, nested arrays, tuples of containers and maps is exactly what
+// `console.log(x)` prints: node style `[ 1, 2 ]`, `[]`, quoted strings inside containers,
+// `Map(1) { 'a' => 1 }`.
+class Oops {
+  message: string;
+  constructor(message: string) {
+    this.message = message;
+  }
+}
+
+function check(xs: i64[]): i64[] {
+  if (xs.length == 0) {
+    throw new Oops("empty");
+  }
+  return xs;
+}
+
+function show<T>(label: string, x: T) {
+  const t = `${x}`;
+  console.log(`${label}: ${t}`);
+  console.log(`${label}:`, x);
+}
+
+function main() {
+  const empty: i64[] = [];
+  show("empty", empty);
+  show("ints", [1, 2, 3]);
+  show("floats", [0.5, -2.0, 1e21]);
+  show("bools", [true, false]);
+  show("strings", ["a", "b c", ""]);
+  show("unicode strings", ["ü", "日本語", "🎉"]);
+  const nested: i64[][] = [[1, 2], [], [3]];
+  show("nested", nested);
+  const deep: string[][][] = [[["x"]], [[]]];
+  show("deep", deep);
+  const noInner: string[][] = [[]];
+  show("empty inner", noInner);
+  const opts: (i64 | null)[] = [1, null, 3];
+  show("options", opts);
+  const mixed: (i64 | string)[] = [1, "two", 3];
+  show("unions", mixed);
+
+  const m = new Map<string, i64>();
+  show("empty map", m);
+  m.set("one", 1);
+  m.set("two", 2);
+  m.set("three", 3);
+  show("map", m);
+  m.delete("two");
+  show("map after delete", m);
+  const byNum = new Map<i64, string[]>();
+  byNum.set(1, ["a"]);
+  byNum.set(2, []);
+  show("map of arrays", byNum);
+  const maps = [m];
+  show("array of maps", maps);
+
+  // A container in a longer template, and string concatenation around it.
+  const xs = [10, 20];
+  console.log(`xs=${xs} len=${xs.length} nested=${nested}!`);
+  console.log("xs: " + `${xs}` + " done");
+
+  // A part that throws abandons the partly built string; parts are converted in order, so a
+  // later part's side effect does not change an earlier part.
+  try {
+    console.log(`ok ${check(xs)} then ${check(empty)}`);
+  } catch (e) {
+    console.log("caught:", e.message);
+  }
+  let ys = [1];
+  console.log(`before ${ys} pop ${ys.pop()} after ${ys}`);
+}

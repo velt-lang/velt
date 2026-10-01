@@ -1,0 +1,44 @@
+// Aggregation: every parsed entry is folded into per-route, per-client and per-hour counters.
+import { Entry } from "./parse";
+
+export type RouteStats = { count: i64; errors: i64; bytes: i64; latencies: f64[] };
+export type HourStats = { count: i64; errors: i64 };
+
+export class Stats {
+  lines: i64 = 0;
+  malformed: i64 = 0;
+  bytes: i64 = 0;
+  // "2xx" → count.
+  statusClasses: Map<string, i64> = new Map<string, i64>();
+  // "GET /api/users/:id" → stats.
+  routes: Map<string, RouteStats> = new Map<string, RouteStats>();
+  clients: Map<string, i64> = new Map<string, i64>();
+  hours: Map<string, HourStats> = new Map<string, HourStats>();
+
+  // Counts `e`, whose path normalizes to `route`.
+  add(e: Entry, route: string) {
+    this.bytes += e.bytes;
+    this.statusClasses.upsert(`${e.status / 100}xx`, 1, (n) => n + 1);
+    this.clients.upsert(e.ip.clone(), 1, (n) => n + 1);
+    const isError = e.status >= 500;
+    const errors = isError ? 1 : 0;
+    // `Map.get` returns a copy, so objects stored in a map are changed with `update`.
+    const key = `${e.method} ${route}`;
+    const seen = this.routes.update(key, (r) => {
+      r.count++;
+      r.bytes += e.bytes;
+      r.errors += errors;
+      r.latencies.push(e.ms);
+    });
+    if (!seen) {
+      this.routes.set(key, { count: 1, errors, bytes: e.bytes, latencies: [e.ms] });
+    }
+    // HourStats has only number fields, which makes it a Copy value: `update`'s callback would
+    // change a copy (tests/golden/bugs/sema_copy_object_map_update), so replace it instead.
+    this.hours.upsert(
+      e.hour,
+      { count: 1, errors },
+      (h) => ({ count: h.count + 1, errors: h.errors + errors }),
+    );
+  }
+}

@@ -1,0 +1,48 @@
+// Bank accounts with a custom error class; overdrafts throw.
+class InsufficientFunds extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+class Account {
+  owner: string;
+  balance: i64;
+  history: string[] = [];
+  constructor(owner: string, balance: i64) {
+    this.owner = owner;
+    this.balance = balance;
+  }
+  deposit(n: i64) {
+    this.balance += n;
+    this.history.push(`+${n}`);
+  }
+  withdraw(n: i64) {
+    if (n > this.balance) {
+      throw new InsufficientFunds(`${this.owner} has ${this.balance}, needs ${n}`);
+    }
+    this.balance -= n;
+    this.history.push(`-${n}`);
+  }
+}
+
+function transfer(from: Account, to: Account, n: i64) {
+  from.withdraw(n);
+  to.deposit(n);
+}
+
+function main() {
+  const a = new Account("ann", 100);
+  const b = new Account("bob", 20);
+  transfer(a, b, 30);
+  try {
+    transfer(b, a, 500);
+  } catch (e) {
+    console.log(`failed: ${e.message}`);
+  }
+  a.deposit(5);
+  console.log(a.owner, a.balance, a.history.join(" "));
+  console.log(b.owner, b.balance, b.history.join(" "));
+  transfer(a, b, 1000);
+  console.log("unreachable");
+}

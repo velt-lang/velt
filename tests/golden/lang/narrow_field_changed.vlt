@@ -1,0 +1,18 @@
+// A narrowed field read is checked at run time: a call between the test and the read may set
+// the field to null (TS does not notice), and then the read panics instead of using null.
+class Box {
+  v: i64 = 7;
+  next: Box | null = null;
+  clear() {
+    this.next = null;
+  }
+}
+
+function main() {
+  const a = new Box();
+  a.next = new Box();
+  if (a.next !== null) {
+    a.clear();
+    console.log(a.next.v);
+  }
+}

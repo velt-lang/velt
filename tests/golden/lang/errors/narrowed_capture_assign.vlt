@@ -1,0 +1,16 @@
+// A closure that starts from a narrowing made outside it may not assign the variable: it could
+// run again (here in `forEach`) with the value it assigned, which the narrowing does not allow.
+function f(u: string | null): usize {
+  let n: usize = 0;
+  if (u != null) {
+    [1, 2].forEach((x) => {
+      n += u.length;
+      u = null;
+    });
+  }
+  return n;
+}
+
+function main() {
+  console.log(f("ab"));
+}

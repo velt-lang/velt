@@ -1,0 +1,23 @@
+// Closures: callbacks capturing and updating locals, higher-order functions.
+function applyTwice(f: (x: i64) => i64, x: i64): i64 {
+  return f(f(x));
+}
+
+function makeAdder(n: i64): (x: i64) => i64 {
+  return (x: i64): i64 => x + n;
+}
+
+function main() {
+  const add5 = makeAdder(5);
+  const times3 = (x: i64): i64 => x * 3;
+  console.log(applyTwice(add5, 1), applyTwice(times3, 2), add5(times3(4)));
+  let count = 0;
+  let sum = 0;
+  [3, 1, 4, 1, 5, 9, 2, 6].forEach((x) => {
+    count++;
+    sum += x;
+  });
+  console.log(count, sum);
+  const fs = [makeAdder(1), makeAdder(10), makeAdder(100)];
+  console.log(fs.map((f) => f(7)));
+}

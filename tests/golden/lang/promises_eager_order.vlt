@@ -1,0 +1,48 @@
+// Hybrid promises: a stored promise starts at once (its body runs until its first `await`) and
+// then runs concurrently with its creator, on the creator's thread; when it finishes, whoever
+// awaits it resumes right away. The output order is Node's (`yieldNow()` = a `setImmediate`).
+async function step(name: string, n: i64): Promise<string> {
+  for (let i = 0; i < n; i++) {
+    console.log(name, i);
+    await yieldNow();
+  }
+  console.log(name, "done");
+  return name;
+}
+
+async function chain(): Promise<string> {
+  console.log("chain start");
+  const inner = await step("inner", 2);
+  console.log("chain got", inner);
+  return `chain(${inner})`;
+}
+
+async function wrap(p: Promise<string>): Promise<string> {
+  const v = await p;
+  console.log("wrap got", v);
+  return `wrap(${v})`;
+}
+
+async function main() {
+  const a = step("a", 3);
+  const b = step("b", 2);
+  console.log("main: started a and b");
+  console.log("main got", await a);
+  console.log("main got", await b);
+
+  const c = chain();
+  const d = step("d", 1);
+  const w = wrap(step("e", 1));
+  console.log("main: started c, d and w");
+  console.log("main got", await c);
+  console.log("main got", await w);
+  console.log("main got", await d);
+
+  // Finished before anyone awaits it: awaiting it just takes the result.
+  const quick = step("quick", 0);
+  console.log("quick created");
+  console.log("main got", await quick);
+
+  // A direct `await f()` runs f in place (no task, no allocation).
+  console.log("main got", await step("direct", 1));
+}

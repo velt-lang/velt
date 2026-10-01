@@ -1,0 +1,11 @@
+random: 16/16 ok
+dups: 16/16 ok
+sorted: 16/16 ok
+reversed: 16/16 ok
+equal: 16/16 ok
+organ: 16/16 ok
+sawtooth: 16/16 ok
+nearly: 16/16 ok
+alternating: 16/16 ok
+i32 / u64 / usize sorted: true -50 49 0 99 50
+200000 random sorted: true -499981976 499958291

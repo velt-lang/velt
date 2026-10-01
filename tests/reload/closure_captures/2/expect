@@ -1,0 +1,3 @@
+action: restart
+reason: the captures of main::{closure#0} changed
+get /: hello world

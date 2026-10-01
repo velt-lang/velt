@@ -1,0 +1,23 @@
+queued: 15
+  0: status OK
+  1: int 2
+  2: int 12
+  3: string 12
+  4: nil
+  5: int 2
+  6: array [string x, string y]
+  7: int 1
+  8: string v
+  9: error WRONGTYPE
+  10: int 1
+  11: int 1
+  12: int 1
+  13: int 0
+  14: int 1
+error reply: true asInt: 2
+empty pipeline: 0
+multi: [ 'int 1', 'int 2', 'string 2' ]
+aborted: EXECABORT
+counter unchanged: 2
+8 tasks x 25 incr: 200 highest seen: 200
+cleanup: 6

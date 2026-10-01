@@ -1,0 +1,17 @@
+// Celsius/Fahrenheit table with float formatting and rounding.
+function toF(c: f64): f64 {
+  return (c * 9.0) / 5.0 + 32.0;
+}
+
+function round1(x: f64): f64 {
+  return Math.round(x * 10.0) / 10.0;
+}
+
+function main() {
+  for (let c = -40.0; c <= 100.0; c += 17.5) {
+    console.log(`${c}C = ${toF(c)}F ~ ${round1(toF(c))}`);
+  }
+  const temps: f64[] = [21.5, 19.25, 23.0, 18.75];
+  const avg = temps.reduce((a, b) => a + b, 0.0) / (temps.length as f64);
+  console.log(`avg ${avg} max ${temps.reduce((a, b) => Math.max(a, b), -1000.0)}`);
+}

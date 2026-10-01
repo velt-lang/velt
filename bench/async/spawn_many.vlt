@@ -1,0 +1,19 @@
+// Spawn 1M tasks, each doing trivial work plus one yieldNow, then join them all.
+async function work(i: i64): Promise<i64> {
+  const v = (i * 17 + 3) % 1009;
+  await yieldNow();
+  return v;
+}
+
+async function main() {
+  const handles: Promise<i64>[] = [];
+  for (let i = 0; i < 1000000; i++) {
+    handles.push(spawn(work(i)));
+  }
+  const rs = await Promise.all(handles);
+  let total = 0;
+  for (const r of rs) {
+    total += r;
+  }
+  console.log(total);
+}

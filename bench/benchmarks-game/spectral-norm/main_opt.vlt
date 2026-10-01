@@ -1,0 +1,101 @@
+// The Computer Language Benchmarks Game: spectral-norm, optimized variant
+// https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/spectralnorm.html
+//
+// Single-threaded, with the Rust #5 program's loop shape (Rust Project Developers, Matt Brubeck,
+// TeXitoi, Tung Duong, Cristi Cobzarenco, Andre Bogus): two output rows at a time, each summed
+// in two lanes of a Copy struct `F64x2` (even and odd j). Four independent sums instead of one
+// long dependency chain of adds; compare with main.vlt (Node #1 shape).
+import { argv } from "velt:process";
+
+// JS `Number.prototype.toFixed` for the magnitudes printed here (|x| * 10^digits < 2^53).
+extend f64 {
+  toFixed(digits: i64): string {
+    const scale = 10.0 ** (digits as f64);
+    const scaled = Math.round(Math.abs(this) * scale) as i64;
+    const unit = scale as i64;
+    const frac = `${scaled % unit}`.padStart(digits, "0");
+    const sign = this < 0.0 && scaled != 0 ? "-" : "";
+    return `${sign}${scaled / unit}.${frac}`;
+  }
+}
+
+// Entry (i, j) of the infinite matrix A.
+function a(i: i64, j: i64): f64 {
+  return (((i + j) * (i + j + 1)) / 2 + i + 1) as f64;
+}
+
+struct F64x2 {
+  a: f64;
+  b: f64;
+
+  add(o: F64x2): F64x2 {
+    return F64x2 { a: this.a + o.a, b: this.b + o.b };
+  }
+
+  div(o: F64x2): F64x2 {
+    return F64x2 { a: this.a / o.a, b: this.b / o.b };
+  }
+}
+
+// v = A * u, two rows at a time with two partial sums per row (the Rust program's shape).
+function multiplyAv(n: i64, u: f64[], v: f64[]) {
+  for (let i = 0; i < n; i += 2) {
+    let s0 = F64x2 { a: 0.0, b: 0.0 };
+    let s1 = F64x2 { a: 0.0, b: 0.0 };
+    for (let j = 0; j < n; j += 2) {
+      const x = F64x2 { a: u[j], b: u[j + 1] };
+      s0 = s0.add(x.div(F64x2 { a: a(i, j), b: a(i, j + 1) }));
+      s1 = s1.add(x.div(F64x2 { a: a(i + 1, j), b: a(i + 1, j + 1) }));
+    }
+    v[i] = s0.a + s0.b;
+    v[i + 1] = s1.a + s1.b;
+  }
+}
+
+function multiplyAtv(n: i64, u: f64[], v: f64[]) {
+  for (let i = 0; i < n; i += 2) {
+    let s0 = F64x2 { a: 0.0, b: 0.0 };
+    let s1 = F64x2 { a: 0.0, b: 0.0 };
+    for (let j = 0; j < n; j += 2) {
+      const x = F64x2 { a: u[j], b: u[j + 1] };
+      s0 = s0.add(x.div(F64x2 { a: a(j, i), b: a(j + 1, i) }));
+      s1 = s1.add(x.div(F64x2 { a: a(j, i + 1), b: a(j + 1, i + 1) }));
+    }
+    v[i] = s0.a + s0.b;
+    v[i + 1] = s1.a + s1.b;
+  }
+}
+
+// v = transpose(A) * A * u
+function multiplyAtAv(n: i64, u: f64[], v: f64[], w: f64[]) {
+  multiplyAv(n, u, w);
+  multiplyAtv(n, w, v);
+}
+
+function spectralNorm(n: i64): f64 {
+  const u: f64[] = [];
+  const v: f64[] = [];
+  const w: f64[] = [];
+  for (let i = 0; i < n; i++) {
+    u.push(1.0);
+    v.push(0.0);
+    w.push(0.0);
+  }
+  for (let i = 0; i < 10; i++) {
+    multiplyAtAv(n, u, v, w);
+    multiplyAtAv(n, v, u, w);
+  }
+  let vBv = 0.0;
+  let vv = 0.0;
+  for (let i = 0; i < n; i++) {
+    vBv += u[i] * v[i];
+    vv += v[i] * v[i];
+  }
+  return Math.sqrt(vBv / vv);
+}
+
+function main() {
+  const args = argv();
+  const n = args.length > 1 ? Number(args[1]) as i64 : 100;
+  console.log(spectralNorm(n).toFixed(9));
+}

@@ -1,0 +1,12 @@
+import { Vec2, dot, ORIGIN, Registry } from "./_geometry";
+import { clamp } from "velt:math";
+
+function main() {
+  const a = Vec2 { x: 1.0, y: 2.0 };
+  console.log(dot(a, Vec2 { x: 3.0, y: 4.0 }), ORIGIN.x);
+  let r = new Registry();
+  r.add("x");
+  r.add("y");
+  console.log(r.names.join(","));
+  console.log(clamp(15, 0, 10), clamp(-2, 0, 10));
+}

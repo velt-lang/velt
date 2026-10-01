@@ -1,0 +1,3 @@
+module_let.vlt:1:1
+mutable module-level state is not allowed
+shared(0)

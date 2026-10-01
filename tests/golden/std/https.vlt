@@ -1,0 +1,49 @@
+import { serve, fetch, Request, Response } from "velt:http";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
+
+async function main() {
+  const server = await serve({ port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } }, async (
+    req: Request,
+  ): Promise<Response> => {
+    if (req.path == "/page") {
+      return Response.html("<h1>hi</h1>");
+    }
+    const r = Response.text(`secure ${req.method} ${req.path} ${req.body}`);
+    r.setHeader("content-type", "text/plain");
+    return r;
+  });
+  const base = `https://localhost:${server.port}`;
+  const a = await fetch(`${base}/hello`, { ca: TEST_CA });
+  console.log(a.status, a.headers.get("content-type") ?? "", await a.text());
+  const b = await fetch(`https://127.0.0.1:${server.port}/page`, {
+    method: "POST",
+    body: "x",
+    ca: TEST_CA,
+  });
+  console.log(b.status, b.headers.get("content-type") ?? "", await b.text());
+
+  // Without the test CA the certificate is not trusted.
+  try {
+    const c = await fetch(`${base}/hello`);
+    console.log("unexpected", c.status);
+  } catch (e) {
+    console.log("untrusted:", e.message.includes("certificate"));
+  }
+  // Plain HTTP to a TLS port fails; a bad key fails at serve time.
+  try {
+    const d = await fetch(`http://127.0.0.1:${server.port}/hello`);
+    console.log("unexpected", d.status);
+  } catch (e) {
+    console.log("plain http rejected");
+  }
+  try {
+    const bad = await serve(
+      { port: 0, tls: { cert: TEST_CERT, key: "nope" } },
+      async (req: Request): Promise<Response> => Response.text("x"),
+    );
+    console.log(bad.port);
+  } catch (e) {
+    console.log(e.code, e.message.startsWith("invalid key PEM"));
+  }
+  server.close();
+}

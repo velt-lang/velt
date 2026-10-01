@@ -1,0 +1,297 @@
+// std/encoding: byte <-> text encodings — Base64 (RFC 4648 §4 and the URL-safe §5 alphabet),
+// lowercase hex, and UTF-8 (strict and lossy decoding, validation).
+//
+// Strings are UTF-8 byte sequences, so `utf8Encode` is a copy of a string's bytes and decoding
+// validates them. Encoders build the output as ASCII bytes and turn them into a string with one
+// runtime copy. Decoders throw `EncodingError` on malformed input.
+
+import { IoResult } from "velt:io";
+
+// `(const VeltStr* s, VeltBytes* out)`: copies a string's bytes.
+declare function velt_rt_bytes_from_str(s: string): u8[];
+// `(const VeltBytes* b, IoResult<VeltStr>* out)`: copies bytes into a string, `EILSEQ` if invalid.
+declare function velt_rt_bytes_to_str(b: u8[]): IoResult<string>;
+
+const BASE64_STD = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const BASE64_URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+const HEX_DIGITS = "0123456789abcdef";
+
+// Marks a byte that is not a digit in the decode tables.
+const INVALID: u8 = 0xff;
+
+// `=`
+const PAD: u8 = 61;
+
+// Thrown for malformed Base64, hex or UTF-8 input.
+export class EncodingError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+// ───────────────────────────── Base64 ─────────────────────────────
+
+// Standard Base64 (`+/` alphabet) with `=` padding.
+export function base64Encode(data: u8[]): string {
+  return encode64(data, BASE64_STD, true);
+}
+
+// Decodes standard Base64; padding is optional. Throws `EncodingError` on any other character.
+export function base64Decode(s: string): u8[] {
+  return decode64(s, BASE64_STD);
+}
+
+// URL-safe Base64 (`-_` alphabet, RFC 4648 §5) without padding.
+export function base64UrlEncode(data: u8[]): string {
+  return encode64(data, BASE64_URL, false);
+}
+
+// Decodes URL-safe Base64; padding is optional. Throws `EncodingError`.
+export function base64UrlDecode(s: string): u8[] {
+  return decode64(s, BASE64_URL);
+}
+
+// Base64 of the UTF-8 bytes of `s`.
+export function base64EncodeString(s: string): string {
+  return encode64(velt_rt_bytes_from_str(s), BASE64_STD, true);
+}
+
+// Decodes Base64 to bytes and those as UTF-8. Throws `EncodingError` on bad Base64 or UTF-8.
+export function base64DecodeString(s: string): string {
+  return utf8Decode(decode64(s, BASE64_STD));
+}
+
+function encode64(data: u8[], alphabet: string, pad: bool): string {
+  const digits = velt_rt_bytes_from_str(alphabet);
+  const n = data.length;
+  const out: u8[] = __intrinsic_array_with_capacity((n + 2) / 3 * 4);
+  let i: usize = 0;
+  while (i + 3 <= n) {
+    const t = ((data[i] as u32) << 16) | ((data[i + 1] as u32) << 8) | (data[i + 2] as u32);
+    out.push(digits[(t >> 18) as usize]);
+    out.push(digits[((t >> 12) & 63) as usize]);
+    out.push(digits[((t >> 6) & 63) as usize]);
+    out.push(digits[(t & 63) as usize]);
+    i += 3;
+  }
+  const rest = n - i;
+  if (rest > 0) {
+    let t = (data[i] as u32) << 16;
+    if (rest == 2) {
+      t = t | ((data[i + 1] as u32) << 8);
+    }
+    out.push(digits[(t >> 18) as usize]);
+    out.push(digits[((t >> 12) & 63) as usize]);
+    if (rest == 2) {
+      out.push(digits[((t >> 6) & 63) as usize]);
+    } else if (pad) {
+      out.push(PAD);
+    }
+    if (pad) {
+      out.push(PAD);
+    }
+  }
+  return validToString(out);
+}
+
+// Throws on characters outside `alphabet`, on `=` anywhere but the (at most two) final
+// positions, and on a length that cannot come from whole bytes. Leftover bits are ignored.
+function decode64(s: string, alphabet: string): u8[] {
+  const table = decodeTable(alphabet);
+  const text = velt_rt_bytes_from_str(s);
+  let n = text.length;
+  let pads: usize = 0;
+  while (n > 0 && pads < 2 && text[n - 1] == PAD) {
+    n--;
+    pads++;
+  }
+  const out: u8[] = __intrinsic_array_with_capacity(n / 4 * 3 + 2);
+  let acc: u32 = 0;
+  let bits: u32 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const v = table[text[i] as usize];
+    if (v == INVALID) {
+      throw new EncodingError(`Invalid base64 character at offset ${i}`);
+    }
+    acc = (acc << 6) | (v as u32);
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out.push(((acc >> bits) & 0xff) as u8);
+    }
+  }
+  if (n % 4 == 1 || (pads > 0 && (n + pads) % 4 != 0)) {
+    throw new EncodingError("Invalid base64: bad length or padding");
+  }
+  return out;
+}
+
+// Digit value of every byte (`INVALID` for non-digits).
+function decodeTable(alphabet: string): u8[] {
+  const table: u8[] = __intrinsic_array_with_capacity(256);
+  for (let i = 0; i < 256; i++) {
+    table.push(INVALID);
+  }
+  const digits = velt_rt_bytes_from_str(alphabet);
+  for (let d: usize = 0; d < digits.length; d++) {
+    table[digits[d] as usize] = d as u8;
+  }
+  return table;
+}
+
+// ───────────────────────────── hex ─────────────────────────────
+
+// Lowercase hex, two digits per byte.
+export function hexEncode(data: u8[]): string {
+  const digits = velt_rt_bytes_from_str(HEX_DIGITS);
+  const out: u8[] = __intrinsic_array_with_capacity(data.length * 2);
+  for (let i: usize = 0; i < data.length; i++) {
+    const b = data[i];
+    out.push(digits[(b >> 4) as usize]);
+    out.push(digits[(b & 15) as usize]);
+  }
+  return validToString(out);
+}
+
+// Decodes hex digits (either case). Throws `EncodingError` on odd length or a non-hex character.
+export function hexDecode(s: string): u8[] {
+  const text = velt_rt_bytes_from_str(s);
+  if (text.length % 2 != 0) {
+    throw new EncodingError("Invalid hex: odd length");
+  }
+  const out: u8[] = __intrinsic_array_with_capacity(text.length / 2);
+  for (let i: usize = 0; i < text.length; i += 2) {
+    const hi = hexValue(text[i]);
+    const lo = hexValue(text[i + 1]);
+    if (hi == INVALID || lo == INVALID) {
+      throw new EncodingError(`Invalid hex character at offset ${hi == INVALID ? i : i + 1}`);
+    }
+    out.push((hi << 4) | lo);
+  }
+  return out;
+}
+
+function hexValue(c: u8): u8 {
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  if (c >= 97 && c <= 102) {
+    return c - 87;
+  }
+  if (c >= 65 && c <= 70) {
+    return c - 55;
+  }
+  return INVALID;
+}
+
+// ───────────────────────────── UTF-8 ─────────────────────────────
+
+// The UTF-8 bytes of `s` (a copy).
+export function utf8Encode(s: string): u8[] {
+  return velt_rt_bytes_from_str(s);
+}
+
+// Decodes UTF-8. Throws `EncodingError` if `data` is not valid UTF-8 (overlong forms,
+// surrogates and code points above U+10FFFF are invalid).
+export function utf8Decode(data: u8[]): string {
+  const r = velt_rt_bytes_to_str(data);
+  if (r.code != 0) {
+    throw new EncodingError(`Invalid UTF-8 at offset ${firstInvalid(data)}`);
+  }
+  return r.value;
+}
+
+// Decodes UTF-8, replacing each maximal invalid subsequence with U+FFFD (WHATWG / Unicode
+// "substitution of maximal subparts", as `TextDecoder` and Rust's `from_utf8_lossy` do).
+export function utf8DecodeLossy(data: u8[]): string {
+  const bad = firstInvalid(data);
+  if (bad < 0) {
+    return validToString(data);
+  }
+  const out: u8[] = __intrinsic_array_with_capacity(data.length + 8);
+  let i: usize = 0;
+  while (i < data.length) {
+    const len = sequenceAt(data, i);
+    if (len > 0) {
+      for (let k: usize = 0; k < (len as usize); k++) {
+        out.push(data[i + k]);
+      }
+      i += len as usize;
+    } else {
+      out.push(0xef);
+      out.push(0xbf);
+      out.push(0xbd);
+      i += (-len) as usize;
+    }
+  }
+  return validToString(out);
+}
+
+// Whether `data` is valid UTF-8.
+export function utf8Valid(data: u8[]): bool {
+  return firstInvalid(data) < 0;
+}
+
+// Offset of the first byte that starts an invalid sequence, or -1.
+function firstInvalid(data: u8[]): i64 {
+  let i: usize = 0;
+  const n = data.length;
+  while (i < n) {
+    if (data[i] < 0x80) {
+      i++;
+      continue;
+    }
+    const len = sequenceAt(data, i);
+    if (len < 0) {
+      return i as i64;
+    }
+    i += len as usize;
+  }
+  return -1;
+}
+
+// Length of the valid sequence starting at `i`, or minus the length of its maximal invalid
+// subpart (the bytes one U+FFFD replaces). Follows Unicode Table 3-7 (well-formed sequences).
+function sequenceAt(data: u8[], i: usize): i64 {
+  const b0 = data[i];
+  if (b0 < 0x80) {
+    return 1;
+  }
+  let need: usize = 0;
+  let lo: u8 = 0x80;
+  let hi: u8 = 0xbf;
+  if (b0 >= 0xc2 && b0 <= 0xdf) {
+    need = 1;
+  } else if (b0 >= 0xe0 && b0 <= 0xef) {
+    need = 2;
+    lo = b0 == 0xe0 ? 0xa0 : 0x80;
+    hi = b0 == 0xed ? 0x9f : 0xbf;
+  } else if (b0 >= 0xf0 && b0 <= 0xf4) {
+    need = 3;
+    lo = b0 == 0xf0 ? 0x90 : 0x80;
+    hi = b0 == 0xf4 ? 0x8f : 0xbf;
+  } else {
+    return -1;
+  }
+  for (let k: usize = 1; k <= need; k++) {
+    if (i + k >= data.length) {
+      return -(k as i64);
+    }
+    const b = data[i + k];
+    if (b < lo || b > hi) {
+      return -(k as i64);
+    }
+    lo = 0x80;
+    hi = 0xbf;
+  }
+  return (need + 1) as i64;
+}
+
+// Bytes known to be valid UTF-8 (encoder output, repaired lossy input) as a string.
+function validToString(bytes: u8[]): string {
+  const r = velt_rt_bytes_to_str(bytes);
+  if (r.code != 0) {
+    panic("ICE: std/encoding produced invalid UTF-8");
+  }
+  return r.value;
+}

@@ -1,0 +1,33 @@
+// An assignment expression has the assigned value (JS/TS): `while ((line = next()) != null)`
+// reads and narrows `line`, `y = (x = 5) + 1`, `a = b = 7`, a field target. Regression
+// (benchmarks-game): its type was `void` ("comparison with `null`, but `void` is never null").
+class Lines {
+  items: string[] = ["a", "bc", "def"];
+  pos: usize = 0;
+
+  next(): string | null {
+    if (this.pos == this.items.length) {
+      return null;
+    }
+    this.pos++;
+    return this.items[this.pos - 1].clone();
+  }
+}
+
+function main() {
+  const input = new Lines();
+  let line: string | null = null;
+  let total: usize = 0;
+  while ((line = input.next()) != null) {
+    total += line.length;
+  }
+  let x = 0;
+  const y = (x = 5) + 1;
+  console.log(total, x, y);
+  const lines = new Lines();
+  const z = (lines.pos = 2) * 3;
+  let a = 0;
+  let b = 0;
+  a = b = 7;
+  console.log(z, lines.pos, a, b);
+}

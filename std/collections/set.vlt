@@ -1,0 +1,133 @@
+// std/collections/set: `Set<T>`, an insertion-ordered hash set with JS `Set` semantics, plus the
+// ES2025 set algebra (`union`, `intersection`, `difference`, `symmetricDifference`,
+// `isSubsetOf`, `isSupersetOf`, `isDisjointFrom`).
+//
+// Built on the prelude `Map<T, bool>` (Robin Hood index over dense insertion-ordered entries),
+// so elements may be anything a map key may be: ints, bool, string, Copy structs. `add` takes
+// ownership of the element; `values()` and the algebra results hold clones; `forEach` borrows.
+
+// An insertion-ordered set of unique values.
+export class Set<T> {
+  private items: Map<T, bool> = new Map<T, bool>();
+
+  // A set holding each distinct element of `xs` (clones), in first-occurrence order.
+  static from(xs: T[]): Set<T> {
+    const s = new Set<T>();
+    for (let i: usize = 0; i < xs.length; i++) {
+      s.add(xs[i].clone());
+    }
+    return s;
+  }
+
+  // Number of elements.
+  get size(): usize {
+    return this.items.size;
+  }
+
+  // Inserts `value`; a value already present keeps its position (the new copy is dropped).
+  add(value: T) {
+    this.items.set(value, true);
+  }
+
+  // Whether `value` is in the set.
+  has(value: T): bool {
+    return this.items.has(value);
+  }
+
+  // Removes `value`; returns whether it was present.
+  delete(value: T): bool {
+    return this.items.delete(value);
+  }
+
+  // Removes every element.
+  clear() {
+    this.items.clear();
+  }
+
+  // Whether the set has no elements.
+  isEmpty(): bool {
+    return this.items.size == 0;
+  }
+
+  // Clones of the elements in insertion order (`for (const x of s.values())`).
+  values(): T[] {
+    return this.items.keys();
+  }
+
+  // Visits the elements in insertion order, borrowing them.
+  forEach<E>(f: (value: T) => void throws E) throws E {
+    this.items.forEach((_present, key) => {
+      f(key);
+    });
+  }
+
+  // Elements of this set, then those of `other` not in it.
+  union(other: Set<T>): Set<T> {
+    const out = this.clone();
+    other.forEach((x) => {
+      if (!out.has(x)) {
+        out.add(x.clone());
+      }
+    });
+    return out;
+  }
+
+  // Elements of this set that are also in `other` (in this set's order).
+  intersection(other: Set<T>): Set<T> {
+    const out = new Set<T>();
+    this.forEach((x) => {
+      if (other.has(x)) {
+        out.add(x.clone());
+      }
+    });
+    return out;
+  }
+
+  // Elements of this set that are not in `other`.
+  difference(other: Set<T>): Set<T> {
+    const out = new Set<T>();
+    this.forEach((x) => {
+      if (!other.has(x)) {
+        out.add(x.clone());
+      }
+    });
+    return out;
+  }
+
+  // Elements in exactly one of the two sets (this set's first, then `other`'s).
+  symmetricDifference(other: Set<T>): Set<T> {
+    const out = this.difference(other);
+    other.forEach((x) => {
+      if (!this.has(x)) {
+        out.add(x.clone());
+      }
+    });
+    return out;
+  }
+
+  // Whether every element of this set is in `other`.
+  isSubsetOf(other: Set<T>): bool {
+    if (this.size > other.size) {
+      return false;
+    }
+    let all = true;
+    this.forEach((x) => {
+      all = all && other.has(x);
+    });
+    return all;
+  }
+
+  // Whether every element of `other` is in this set.
+  isSupersetOf(other: Set<T>): bool {
+    return other.isSubsetOf(this);
+  }
+
+  // Whether the sets share no element.
+  isDisjointFrom(other: Set<T>): bool {
+    let none = true;
+    this.forEach((x) => {
+      none = none && !other.has(x);
+    });
+    return none;
+  }
+}

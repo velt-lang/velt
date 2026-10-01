@@ -1,0 +1,51 @@
+// Strings are values (docs/reference/types.md "Strings"): copy, store, capture and take them
+// out of fields, elements and maps without `.clone()`; the source stays usable.
+class User {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  getName(): string {
+    return this.name;
+  }
+  get upper(): string {
+    return this.name.toUpperCase();
+  }
+}
+
+function keep(s: string): string {
+  return s;
+}
+
+function main() {
+  const a = "a heap string that is longer than twenty-three bytes";
+  const b = a;
+  const c = a;
+  console.log(a, b, c);
+  const u = new User(a);
+  console.log(u.getName(), a);
+  const n = u.name;
+  console.log(n, u.name);
+  const xs: string[] = [];
+  xs.push(a);
+  xs.push(a);
+  for (const x of xs) {
+    const y = x;
+    console.log(y.length, x);
+  }
+  const first = xs[0];
+  console.log(first, xs[0], xs.length);
+  const k = keep(a);
+  console.log(k, a);
+  const m = new Map<string, string>();
+  m.set("k", a);
+  const got = m.get("k");
+  console.log(got, a);
+  const f = () => a.length;
+  console.log(f(), a);
+  const g = () => `${b}!`;
+  console.log(g(), b);
+  let s = a;
+  s += "!";
+  console.log(s.length, a.length);
+}

@@ -1,0 +1,11 @@
+import { platform, arch, availableParallelism, tmpdir, hostname, eol } from "velt:os";
+
+function main() {
+  const p = platform();
+  console.log(p == "darwin" || p == "linux" || p == "win32");
+  console.log(arch() == "arm64" || arch() == "x64");
+  console.log(availableParallelism() >= 1);
+  const t = tmpdir();
+  console.log(t.length > 0, t.endsWith("/"));
+  console.log(hostname().length >= 0, eol() == (p == "win32" ? "\r\n" : "\n"));
+}

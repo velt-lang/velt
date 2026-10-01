@@ -1,0 +1,10 @@
+// `using` at module level, without an initializer, and unsupported symbol keys.
+using top = 1;
+
+class Iter {
+  [Symbol.iterator]() {}
+}
+
+function main() {
+  using r;
+}

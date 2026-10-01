@@ -1,0 +1,59 @@
+// Items, the JSON bodies clients send, the API's errors and the validation rules.
+
+/// An item as the API returns it.
+export type Item = { id: i64; name: string; quantity: i64 };
+
+/// Body of `POST /items`. A class with optional fields, because clients may leave fields out.
+export class NewItemBody {
+  name?: string;
+  quantity?: i64;
+}
+
+/// Every error the API turns into a JSON error response: `status` is the HTTP status, `code` a
+/// stable machine-readable name. One base class, so `catch (e)` can read both.
+export class ApiError extends Error {
+  status: i64;
+  code: string;
+
+  constructor(status: i64, code: string, message: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/// A well-formed request that breaks a rule (400).
+export class ValidationError extends ApiError {
+  constructor(message: string) {
+    super(400, "invalid", message);
+  }
+}
+
+/// No item has the requested id (404).
+export class NotFoundError extends ApiError {
+  constructor(id: i64) {
+    super(404, "not_found", `item ${id} not found`);
+  }
+}
+
+const MAX_NAME: usize = 100;
+
+/// The trimmed name, or a `ValidationError` if it is empty or too long.
+export function validName(name: string): string {
+  const n = name.trim();
+  if (n.length === 0) {
+    throw new ValidationError("name must not be empty");
+  }
+  if (n.length > MAX_NAME) {
+    throw new ValidationError(`name is longer than ${MAX_NAME} characters`);
+  }
+  return n;
+}
+
+/// The quantity, or a `ValidationError` if it is negative.
+export function validQuantity(quantity: i64): i64 {
+  if (quantity < 0) {
+    throw new ValidationError("quantity must not be negative");
+  }
+  return quantity;
+}

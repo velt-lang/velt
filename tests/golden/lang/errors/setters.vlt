@@ -1,0 +1,36 @@
+interface Sized {
+  set size(v: i64);
+}
+
+class Box implements Sized {
+  n: i64 = 0;
+
+  set size(v: i64) {
+    this.n = v;
+  }
+
+  get area(): i64 {
+    return this.n * this.n;
+  }
+}
+
+class Plain implements Sized {}
+
+function make(): Box {
+  return new Box();
+}
+
+function writes(b: Box) {
+  b.size = 1;
+}
+
+function main() {
+  const b = new Box();
+  b.size = 2;
+  b.size += 1;
+  b.area = 4;
+  b.size = "big";
+  const k = b.size;
+  make().size = 3;
+  make().area += 1;
+}

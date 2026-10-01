@@ -1,0 +1,162 @@
+// Discriminated unions: construction by discriminant, switch with narrowing, fallthrough into
+// shared cases, exhaustive switches without default, `never` checks, common fields, early-exit
+// narrowing and a recursive union through a class member.
+type Shape =
+  | { kind: "circle"; r: f64 }
+  | { kind: "rect"; w: f64; h: f64 }
+  | { kind: "square"; w: f64 }
+  | { kind: "tri"; b: f64; h: f64 };
+
+function area(s: Shape): f64 {
+  switch (s.kind) {
+    case "circle":
+      return 3.0 * s.r * s.r;
+    case "rect":
+      return s.w * s.h;
+    case "square":
+      return s.w * s.w;
+    case "tri":
+      return (s.b * s.h) / 2.0;
+  }
+}
+
+function corners(s: Shape): i64 {
+  let n = 0;
+  switch (s.kind) {
+    case "rect":
+    case "square":
+      n += 1;
+    case "tri":
+      n += 3;
+      break;
+    default:
+      n = -1;
+  }
+  return n;
+}
+
+function perimeterish(s: Shape): f64 {
+  switch (s.kind) {
+    case "circle":
+      return 6.0 * s.r;
+    case "rect":
+    case "tri":
+      return 2.0 * s.h;
+    case "square":
+      return 4.0 * s.w;
+    default: {
+      const unreachable: never = s;
+      return 0.0;
+    }
+  }
+}
+
+function describe(s: Shape): string {
+  if (s.kind === "circle") {
+    return `circle r=${s.r}`;
+  }
+  if (s.kind !== "tri") {
+    return `${s.kind} w=${s.w}`;
+  }
+  return `tri ${s.b}x${s.h}`;
+}
+
+type Msg =
+  | { tag: "add"; n: i64 }
+  | { tag: "mul"; n: i64 }
+  | { tag: "neg" }
+  | { tag: "reset"; to: i64 };
+
+function run(msgs: Msg[]): i64 {
+  let acc = 1;
+  for (const m of msgs) {
+    switch (m.tag) {
+      case "add":
+        acc += m.n;
+        break;
+      case "mul":
+        acc *= m.n;
+        break;
+      case "neg":
+        acc = -acc;
+        break;
+      case "reset":
+        acc = m.to;
+        break;
+    }
+  }
+  return acc;
+}
+
+class Leaf {
+  kind: "leaf";
+  v: i64;
+  constructor(v: i64) {
+    this.kind = "leaf";
+    this.v = v;
+  }
+}
+
+class Node {
+  kind: "node";
+  op: string;
+  kids: Tree[];
+  constructor(op: string, kids: Tree[]) {
+    this.kind = "node";
+    this.op = op;
+    this.kids = kids;
+  }
+}
+
+type Tree = Leaf | Node;
+
+function evalTree(t: Tree): i64 {
+  switch (t.kind) {
+    case "leaf":
+      return t.v;
+    case "node": {
+      let out = t.op == "*" ? 1 : 0;
+      for (const k of t.kids) {
+        out = t.op == "*" ? out * evalTree(k) : out + evalTree(k);
+      }
+      return out;
+    }
+  }
+}
+
+function main() {
+  const shapes: Shape[] = [
+    { kind: "circle", r: 2.0 },
+    { kind: "rect", w: 3.0, h: 4.5 },
+    { kind: "square", w: 1.5 },
+    { kind: "tri", b: 3.0, h: 5.0 },
+  ];
+  for (const s of shapes) {
+    console.log(
+      s.kind,
+      `${area(s)}`,
+      corners(s),
+      describe(s),
+      `${perimeterish(s)}`,
+      JSON.stringify(s),
+    );
+  }
+  const total = shapes.reduce((acc, s) => acc + area(s), 0.0);
+  console.log(`total ${total}`, shapes.filter((s) => s.kind != "circle").length);
+  const msgs: Msg[] = [
+    { tag: "add", n: 4 },
+    { tag: "mul", n: 3 },
+    { tag: "neg" },
+    { tag: "add", n: 20 },
+  ];
+  console.log(run(msgs));
+  msgs.push({ tag: "reset", to: 7 });
+  msgs.push({ tag: "mul", n: 6 });
+  console.log(run(msgs), msgs.map((m) => `${m.tag}`).join(","));
+  const t: Tree = new Node("+", [
+    new Leaf(1),
+    new Node("*", [new Leaf(2), new Leaf(3), new Leaf(4)]),
+    new Leaf(5),
+  ]);
+  console.log(evalTree(t));
+}

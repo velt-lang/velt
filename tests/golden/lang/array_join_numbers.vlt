@@ -1,0 +1,8 @@
+// Regression (difftest join-numbers): `join` on number and bool arrays converts elements like
+// JS `String(x)`, not only on `string[]`.
+// Expected output is Node's.
+function main() {
+  const xs: f64[] = [1.5, 2.0, -0.0];
+  const ns = [1, 2, 3];
+  console.log(xs.join(" "), ns.join());
+}

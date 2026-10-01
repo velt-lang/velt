@@ -1,0 +1,18 @@
+// std/html: escapeHtml on each special character, mixed and non-ASCII text, text that needs no
+// escaping, and the TechEmpower fortunes payload.
+
+import { escapeHtml } from "velt:html";
+
+function main() {
+  console.log(escapeHtml(""), escapeHtml("plain text"), escapeHtml("フレームワーク — ok"));
+  console.log(escapeHtml("&"), escapeHtml("<"), escapeHtml(">"), escapeHtml("\""), escapeHtml("'"));
+  console.log(
+    escapeHtml("<script>alert(\"This should not be displayed in a browser alert box.\");</script>"),
+  );
+  console.log(escapeHtml("a && b < c > d"), escapeHtml("&amp;"));
+  const name = `<b>"Tom" & 'Jerry'</b>`;
+  console.log(`<td title="${escapeHtml(name)}">${escapeHtml(name)}</td>`);
+  const original = "x < y";
+  const escaped = escapeHtml(original);
+  console.log(original, "|", escaped);
+}

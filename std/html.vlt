@@ -1,0 +1,15 @@
+// std/html: escaping text for HTML output.
+//
+// `escapeHtml` is one pass in the runtime (`velt_rt_html_escape`, rt_abi_async.md §14.10): the
+// output is sized once and copied in chunks, where a chain of `replaceAll` calls in Velt would
+// scan and allocate once per character class.
+
+// `(const VeltStr* s, VeltStr* out)`: a new string with `& < > " '` replaced by entities.
+declare function velt_rt_html_escape(s: string): string;
+
+// `s` with `&`, `<`, `>`, `"` and `'` replaced by `&amp;`, `&lt;`, `&gt;`, `&quot;` and `&#39;`:
+// safe inside element content and in single- or double-quoted attribute values. Other
+// characters (including non-ASCII) are kept as they are.
+export function escapeHtml(s: string): string {
+  return velt_rt_html_escape(s);
+}

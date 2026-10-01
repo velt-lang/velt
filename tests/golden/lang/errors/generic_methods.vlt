@@ -1,0 +1,52 @@
+interface Mapper {
+  apply<U>(f: (x: i64) => U): U[];
+}
+
+class Nums implements Mapper {
+  apply<U>(f: (x: i64) => U): U[] {
+    return [f(1)];
+  }
+}
+
+class Plain implements Mapper {
+  apply(f: (x: i64) => string): string[] {
+    return [f(1)];
+  }
+}
+
+interface WithDefault {
+  make<U>(x: U): U[] {
+    return [x];
+  }
+}
+
+class Box {
+  wrap<T>(x: T): T[] {
+    return [x];
+  }
+}
+
+class BigBox extends Box {
+  override wrap<T, U>(x: T): T[] {
+    return [x];
+  }
+}
+
+class Small {
+  get<T>(x: T): T {
+    return x;
+  }
+}
+
+class Smaller extends Small {
+  override get<T>(x: T): T {
+    return x;
+  }
+}
+
+function main() {
+  const m: Mapper = new Nums();
+  m.apply((x) => x);
+  const s: Small = new Smaller();
+  s.get(1);
+}

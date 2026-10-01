@@ -1,0 +1,16 @@
+replace a
+drop 1
+delete b (not the newest entry)
+drop 2
+delete c (the newest entry)
+drop 3
+upsert a
+drop 4
+drop 5
+upsert d
+delete missing false
+clear
+drop 40
+drop 6
+end of main 1
+drop 7

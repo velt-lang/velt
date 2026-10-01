@@ -1,0 +1,10 @@
+// Integer division by zero panics with the location of the division (exit code 101).
+function ratio(a: i64, b: i64): i64 {
+  return a / b;
+}
+
+function main(): void {
+  console.log(ratio(10, 3));
+  console.log(ratio(1, 0));
+  console.log("unreachable");
+}

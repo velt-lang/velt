@@ -1,0 +1,162 @@
+//! Iterative (no recursion, no depth limit) walk over one JSON value, reporting structure to a
+//! [`Sink`]. Used by `skip_value` (a no-op sink) and by the `json.Value` parser (a tree builder).
+
+use super::scan::{NumTok, Scanner, StrTok, SyntaxError};
+
+/// A scalar JSON value.
+#[derive(Debug)]
+pub enum Scalar {
+    Null,
+    Bool(bool),
+    Number(NumTok),
+    Str(StrTok),
+}
+
+/// Receives the structure of a value in document order.
+pub trait Sink {
+    /// Whether strings with escapes must be decoded (a skipping sink only validates them).
+    const DECODE: bool;
+    fn begin_array(&mut self);
+    fn begin_object(&mut self);
+    /// An object key; the next event is its value.
+    fn key(&mut self, src: &[u8], key: StrTok);
+    /// Closes the innermost open array/object.
+    fn end(&mut self);
+    fn scalar(&mut self, src: &[u8], value: Scalar);
+}
+
+/// Validates without building anything.
+pub struct SkipSink;
+
+impl Sink for SkipSink {
+    const DECODE: bool = false;
+    fn begin_array(&mut self) {}
+    fn begin_object(&mut self) {}
+    fn key(&mut self, _: &[u8], _: StrTok) {}
+    fn end(&mut self) {}
+    fn scalar(&mut self, _: &[u8], _: Scalar) {}
+}
+
+/// Stack of open containers (`true` = object): one word inline, spilling past depth 64.
+struct ContainerStack {
+    inline: u64,
+    spill: Vec<bool>,
+    depth: usize,
+}
+
+impl ContainerStack {
+    fn push(&mut self, object: bool) {
+        if self.depth < 64 {
+            self.inline = (self.inline & !(1 << self.depth)) | ((object as u64) << self.depth);
+        } else {
+            self.spill.push(object);
+        }
+        self.depth += 1;
+    }
+
+    fn top(&self) -> Option<bool> {
+        let d = self.depth.checked_sub(1)?;
+        Some(if d < 64 {
+            self.inline >> d & 1 == 1
+        } else {
+            self.spill[d - 64]
+        })
+    }
+
+    fn pop(&mut self) {
+        self.depth -= 1;
+        if self.depth >= 64 {
+            self.spill.pop();
+        }
+    }
+}
+
+/// Lex one scalar at the current position.
+pub fn scalar(sc: &mut Scanner, decode: bool) -> Result<Scalar, SyntaxError> {
+    match sc.peek_non_ws() {
+        Some(b'"') => Ok(Scalar::Str(sc.string(decode)?)),
+        Some(b't') => sc.literal(b"true").map(|_| Scalar::Bool(true)),
+        Some(b'f') => sc.literal(b"false").map(|_| Scalar::Bool(false)),
+        Some(b'n') => sc.literal(b"null").map(|_| Scalar::Null),
+        Some(b'-' | b'0'..=b'9') => Ok(Scalar::Number(sc.number()?)),
+        _ => Err(sc.unexpected()),
+    }
+}
+
+/// `"key" :` inside an object.
+fn key_colon<S: Sink>(sc: &mut Scanner, sink: &mut S) -> Result<(), SyntaxError> {
+    if sc.peek_non_ws() != Some(b'"') {
+        return Err(sc.error("expected string key"));
+    }
+    let key = sc.string(S::DECODE)?;
+    sink.key(sc.src, key);
+    if sc.peek_non_ws() != Some(b':') {
+        return Err(sc.error("expected ':'"));
+    }
+    sc.pos += 1;
+    Ok(())
+}
+
+/// Walk exactly one value starting at the current position (leading whitespace allowed).
+pub fn walk<S: Sink>(sc: &mut Scanner, sink: &mut S) -> Result<(), SyntaxError> {
+    let mut stack = ContainerStack {
+        inline: 0,
+        spill: Vec::new(),
+        depth: 0,
+    };
+    loop {
+        // At a value position.
+        match sc.peek_non_ws() {
+            Some(open @ (b'{' | b'[')) => {
+                sc.pos += 1;
+                let object = open == b'{';
+                if object {
+                    sink.begin_object();
+                } else {
+                    sink.begin_array();
+                }
+                if sc.peek_non_ws() == Some(if object { b'}' } else { b']' }) {
+                    sc.pos += 1;
+                    sink.end();
+                } else {
+                    stack.push(object);
+                    if object {
+                        key_colon(sc, sink)?;
+                    }
+                    continue;
+                }
+            }
+            _ => {
+                let value = scalar(sc, S::DECODE)?;
+                sink.scalar(sc.src, value);
+            }
+        }
+        // A value just completed: close containers until one expects another element.
+        loop {
+            let Some(object) = stack.top() else {
+                return Ok(());
+            };
+            match sc.peek_non_ws() {
+                Some(b',') => {
+                    sc.pos += 1;
+                    if object {
+                        key_colon(sc, sink)?;
+                    }
+                    break;
+                }
+                Some(b'}') if object => {
+                    sc.pos += 1;
+                    stack.pop();
+                    sink.end();
+                }
+                Some(b']') if !object => {
+                    sc.pos += 1;
+                    stack.pop();
+                    sink.end();
+                }
+                _ if object => return Err(sc.error("expected ',' or '}'")),
+                _ => return Err(sc.error("expected ',' or ']'")),
+            }
+        }
+    }
+}

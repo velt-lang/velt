@@ -1,0 +1,43 @@
+// A scripted HTTP session against the real server (golden: demo.out): create, validate, update,
+// filter, delete, then restart the server on the same file to show the data persisted.
+import { fetch } from "velt:http";
+import { removeSync, existsSync } from "velt:fs";
+import { startServer } from "./src/server";
+
+const DB = "todo-demo.json";
+
+async function request(port: i64, method: string, path: string, body: string = "") {
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: method.clone(), body });
+  const status = res.status;
+  const type = res.headers.get("content-type") ?? "-";
+  const text = await res.text();
+  console.log(`${method} ${path} -> ${status} (${type}) ${text}`);
+}
+
+async function main() {
+  if (existsSync(DB)) {
+    removeSync(DB);
+  }
+  const server = await startServer(DB, 0);
+  const port = server.port;
+  await request(port, "POST", "/todos", `{"title":"  Write docs ","tags":["Work","docs","work"]}`);
+  await request(port, "POST", "/todos", `{"title":"Ship v1","priority":"high"}`);
+  await request(port, "POST", "/todos", `{"title":""}`);
+  await request(port, "POST", "/todos", `{"title":"x","priority":"asap"}`);
+  await request(port, "POST", "/todos", `{"title":42}`);
+  await request(port, "POST", "/todos", `not json`);
+  await request(port, "PATCH", "/todos/1", `{"done":true}`);
+  await request(port, "GET", "/todos?done=true");
+  await request(port, "GET", "/todos?tag=docs");
+  await request(port, "GET", "/todos/7");
+  await request(port, "DELETE", "/todos/2");
+  await request(port, "PUT", "/todos/1");
+  server.close();
+
+  const again = await startServer(DB, 0);
+  console.log("-- restarted --");
+  await request(again.port, "GET", "/todos");
+  await request(again.port, "POST", "/todos", `{"title":"after restart"}`);
+  again.close();
+  removeSync(DB);
+}

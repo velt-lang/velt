@@ -1,0 +1,35 @@
+// Exception control flow: finally ordering, rethrow via propagation, nested try.
+function risky(n: i64): i64 {
+  if (n % 3 == 0) {
+    throw new Error(`bad ${n}`);
+  }
+  return n * 10;
+}
+
+function wrapper(n: i64): i64 {
+  try {
+    return risky(n) + 1;
+  } finally {
+    console.log(`finally ${n}`);
+  }
+}
+
+function main() {
+  for (let i = 1; i <= 4; i++) {
+    try {
+      console.log(`ok ${wrapper(i)}`);
+    } catch (e) {
+      console.log(`caught ${e.message}`);
+    }
+  }
+  try {
+    try {
+      risky(6);
+    } catch (e) {
+      console.log(`inner ${e.message}`);
+      risky(9);
+    }
+  } catch (e) {
+    console.log(`outer ${e.message}`);
+  }
+}

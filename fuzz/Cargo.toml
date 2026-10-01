@@ -1,0 +1,68 @@
+[package]
+name = "velt_fuzz"
+version = "0.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "cargo-fuzz targets for every compiler stage and the runtime's JSON/number code"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Standalone (libFuzzer needs nightly and sanitizer flags): not a member of the compiler workspace.
+[workspace]
+members = ["."]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+velt_common = { path = "../crates/velt_common" }
+velt_syntax = { path = "../crates/velt_syntax" }
+velt_fmt = { path = "../crates/velt_fmt" }
+velt_vir = { path = "../crates/velt_vir" }
+velt_opt = { path = "../crates/velt_opt", features = ["interp"] }
+velt_codegen_cl = { path = "../crates/velt_codegen_cl" }
+velt_codegen_llvm = { path = "../crates/velt_codegen_llvm" }
+veltc = { path = "../crates/veltc" }
+velt_rt = { path = "../crates/velt_rt", default-features = false }
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compile"
+path = "fuzz_targets/compile.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "opt"
+path = "fuzz_targets/opt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "codegen"
+path = "fuzz_targets/codegen.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json"
+path = "fuzz_targets/json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "float_fmt"
+path = "fuzz_targets/float_fmt.rs"
+test = false
+doc = false
+bench = false

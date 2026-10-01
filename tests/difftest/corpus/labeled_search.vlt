@@ -1,0 +1,30 @@
+// Labeled break/continue: find pairs and triples summing to a target.
+function main() {
+  const xs = [3, 9, 14, 20, 27, 31, 40];
+  let found = "";
+  outer: for (let i: usize = 0; i < xs.length; i++) {
+    for (let j = i + 1; j < xs.length; j++) {
+      if (xs[i] + xs[j] == 41) {
+        found = `${xs[i]}+${xs[j]}`;
+        break outer;
+      }
+    }
+  }
+  console.log(found);
+  let triples = 0;
+  let skipped = 0;
+  a: for (let i: usize = 0; i < xs.length; i++) {
+    for (let j = i + 1; j < xs.length; j++) {
+      if (xs[j] > 30) {
+        skipped++;
+        continue a;
+      }
+      for (let k = j + 1; k < xs.length; k++) {
+        if ((xs[i] + xs[j] + xs[k]) % 2 == 0) {
+          triples++;
+        }
+      }
+    }
+  }
+  console.log(triples, skipped);
+}

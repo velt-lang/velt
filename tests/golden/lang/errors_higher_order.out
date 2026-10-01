@@ -1,0 +1,10 @@
+[ 2, 4, 6 ] [ 2, 3 ]
+total 5
+bad: three
+word 1
+forEach stopped: too many
+some/every: bad input: x
+upsert: bad input: zzz
+3 5
+retry 30
+retry gave up: bad input: try2

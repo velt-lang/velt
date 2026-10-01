@@ -1,0 +1,9 @@
+// Regression (difftest array-entries): `xs.entries()` gives `[index, element]` pairs, so
+// `for (const [i, x] of xs.entries())` works.
+// Expected output is Node's.
+function main() {
+  const xs = ["a", "b"];
+  for (const [i, x] of xs.entries()) {
+    console.log(i, x);
+  }
+}

@@ -1,0 +1,122 @@
+// `throws` clauses: written on functions, methods, constructors, arrows and async functions
+// (they bound the body and fix the error type), or inferred over the whole call graph —
+// also through (mutual) recursion.
+class ParseError extends Error {}
+
+class RangeError extends Error {
+  value: i64;
+
+  constructor(value: i64) {
+    super(`out of range: ${value}`);
+    this.value = value;
+  }
+}
+
+// A subclass error is allowed by its base class in a clause (it is upcast).
+class EmptyInput extends ParseError {
+  constructor() {
+    super("empty input");
+  }
+}
+
+function digit(s: string): i64 throws ParseError {
+  if (s == "") {
+    throw new EmptyInput();
+  }
+  if (s == "0" || s == "1") {
+    return s == "1" ? 1 : 0;
+  }
+  throw new ParseError(`bad digit ${s}`);
+}
+
+// A clause may allow more than the body throws (callers must handle it anyway).
+function bounded(n: i64): i64 throws RangeError | ParseError {
+  if (n > 9) {
+    throw new RangeError(n);
+  }
+  return n;
+}
+
+class Account {
+  balance: i64;
+
+  constructor(balance: i64) throws RangeError {
+    if (balance < 0) {
+      throw new RangeError(balance);
+    }
+    this.balance = balance;
+  }
+
+  withdraw(amount: i64): i64 throws RangeError {
+    if (amount > this.balance) {
+      throw new RangeError(amount);
+    }
+    this.balance -= amount;
+    return this.balance;
+  }
+}
+
+// Inferred through mutual recursion: both throw `RangeError`.
+function isEven(n: i64): bool {
+  if (n < 0) {
+    throw new RangeError(n);
+  }
+  return n == 0 ? true : isOdd(n - 1);
+}
+
+function isOdd(n: i64): bool {
+  return n == 0 ? false : isEven(n - 1);
+}
+
+// A generic error type: `run` throws whatever `f` throws.
+function run<E>(f: () => i64 throws E): i64 throws E {
+  return f() * 2;
+}
+
+function main() {
+  for (const s of ["1", "x", ""]) {
+    try {
+      console.log("digit", digit(s));
+    } catch (e) {
+      // `e` is `ParseError` (the clause), so an `EmptyInput` arrives upcast.
+      console.log("parse:", e.message);
+    }
+  }
+  try {
+    console.log(bounded(3), bounded(12));
+  } catch (e) {
+    if (e instanceof RangeError) {
+      console.log("range", e.value);
+    } else {
+      console.log("parse", e.message);
+    }
+  }
+  try {
+    const a = new Account(10);
+    console.log("left", a.withdraw(4));
+    console.log("left", a.withdraw(40));
+  } catch (e) {
+    console.log("account:", e.message);
+  }
+  try {
+    console.log(new Account(-5).balance);
+  } catch (e) {
+    console.log("account:", e.value);
+  }
+  try {
+    console.log(isEven(4), isOdd(7), isEven(-3));
+  } catch (e) {
+    console.log("parity:", e.value);
+  }
+  const half = (n: i64): i64 throws RangeError => {
+    if (n % 2 != 0) {
+      throw new RangeError(n);
+    }
+    return n / 2;
+  };
+  try {
+    console.log(run(() => 21), run(() => half(8)), run(() => half(3)));
+  } catch (e) {
+    console.log("run:", e.value);
+  }
+}

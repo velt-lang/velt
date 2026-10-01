@@ -1,0 +1,31 @@
+// Instances registered in a shared registry object; static constants; method chaining.
+class Registry {
+  names: string[] = [];
+  add(n: string): i64 {
+    this.names.push(n);
+    return this.names.length as i64;
+  }
+}
+
+class Widget {
+  static readonly PREFIX: string = "w-";
+  id: i64;
+  label: string;
+  constructor(reg: Registry, label: string) {
+    this.id = reg.add(`${Widget.PREFIX}${label}`);
+    this.label = label;
+  }
+  rename(l: string): Widget {
+    this.label = l;
+    return this;
+  }
+}
+
+function main() {
+  const reg = new Registry();
+  const a = new Widget(reg, "alpha");
+  const b = new Widget(reg, "beta");
+  b.label = `${b.label}!`;
+  console.log(a.id, b.id, a.label, b.label, reg.names.join(","));
+  console.log(Widget.PREFIX.length, reg.add("extra"));
+}

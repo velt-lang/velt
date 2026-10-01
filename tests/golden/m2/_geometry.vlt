@@ -1,0 +1,21 @@
+export struct Vec2 {
+  x: f64;
+  y: f64;
+}
+
+export function dot(a: Vec2, b: Vec2): f64 {
+  return a.x * b.x + a.y * b.y;
+}
+
+export const ORIGIN: Vec2 = Vec2 { x: 0.0, y: 0.0 };
+
+export class Registry {
+  names: string[] = [];
+  add(name: string) {
+    this.names.push(name);
+  }
+}
+
+function hidden(): i64 {
+  return 1;
+}

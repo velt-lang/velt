@@ -1,0 +1,11 @@
+// Index out of bounds panics with the location of the indexing expression (exit code 101).
+function get(xs: i64[], i: usize): i64 {
+  return xs[i];
+}
+
+function main(): void {
+  const xs: i64[] = [1, 2, 3];
+  console.log(get(xs, 2));
+  console.log(get(xs, 5));
+  console.log("unreachable");
+}

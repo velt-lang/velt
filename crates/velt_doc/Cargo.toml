@@ -1,0 +1,13 @@
+[package]
+name = "velt_doc"
+version.workspace = true
+edition.workspace = true
+# `velt doc` (API docs from doc comments and signatures) and the docs website generator
+# (`cargo run -p velt_doc --bin velt-site`).
+
+[dependencies]
+velt_common.workspace = true
+velt_syntax.workspace = true
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -1,0 +1,40 @@
+// Closures and overridden / interface methods have fixed borrowed params, so they cannot keep a
+// function they receive: a closure passed to them may point into its caller's frame.
+function apply(h: (g: () => string) => void) {
+  let n = 1;
+  h(() => `n=${n}`);
+}
+
+async function later(f: () => string): Promise<void> {
+  console.log(f());
+}
+
+interface Sink {
+  put(f: () => string): void;
+}
+
+class Store implements Sink {
+  fs: (() => string)[] = [];
+
+  put(f: () => string) {
+    this.fs.push(f);
+  }
+}
+
+function main() {
+  const kept: (() => string)[] = [];
+  apply((g) => {
+    kept.push(g.clone());
+  });
+  apply((g) => {
+    spawn(later(g));
+  });
+  apply((g) => {
+    kept.forEach((k) => {
+      const c = g.clone();
+      console.log(k(), c());
+    });
+  });
+  const s: Sink = new Store();
+  s.put(() => "x");
+}

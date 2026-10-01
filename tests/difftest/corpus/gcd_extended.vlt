@@ -1,0 +1,45 @@
+// Extended Euclid, modular inverse and modular exponentiation.
+class Triple {
+  g: i64;
+  x: i64;
+  y: i64;
+  constructor(g: i64, x: i64, y: i64) {
+    this.g = g;
+    this.x = x;
+    this.y = y;
+  }
+}
+
+function egcd(a: i64, b: i64): Triple {
+  if (b == 0) {
+    return new Triple(a, 1, 0);
+  }
+  const t = egcd(b, a % b);
+  const q = (a - (a % b)) / b;
+  return new Triple(t.g, t.y, t.x - q * t.y);
+}
+
+function modInverse(a: i64, m: i64): i64 {
+  const t = egcd(a, m);
+  return t.g != 1 ? -1 : ((t.x % m) + m) % m;
+}
+
+function powMod(b: i64, e: i64, m: i64): i64 {
+  let r = 1;
+  b %= m;
+  while (e > 0) {
+    if (e % 2 == 1) {
+      r = (r * b) % m;
+    }
+    b = (b * b) % m;
+    e = (e - (e % 2)) / 2;
+  }
+  return r;
+}
+
+function main() {
+  const t = egcd(240, 46);
+  console.log(t.g, t.x, t.y, 240 * t.x + 46 * t.y);
+  console.log(modInverse(3, 11), modInverse(10, 17), modInverse(6, 9));
+  console.log(powMod(2, 10, 1000), powMod(3, 200, 1000007), powMod(7, 0, 13));
+}

@@ -1,0 +1,37 @@
+import { bindUdp, Datagram } from "velt:udp";
+import { lookup, lookupOne } from "velt:dns";
+
+async function main() {
+  const server = await bindUdp("127.0.0.1:0");
+  const client = await bindUdp("127.0.0.1:0");
+  const addr = `127.0.0.1:${server.port}`;
+  console.log(server.port > 0, client.port != server.port);
+
+  const incoming = server.recvFrom();
+  console.log(await client.sendTextTo("ping", addr));
+  const d = await incoming;
+  console.log(d.text(), d.addr == `127.0.0.1:${client.port}`);
+
+  const reply = client.recvFrom(2);
+  await server.sendTo([1u8, 2u8, 3u8], d.addr);
+  const r = await reply;
+  console.log(r.data, r.addr == addr);
+
+  client.close();
+  const local = await lookup("localhost");
+  console.log(local.length > 0, local.includes("127.0.0.1") || local.includes("::1"));
+  console.log(await lookupOne("127.0.0.1"));
+  try {
+    const none = await lookup("no-such-host.invalid");
+    console.log(none);
+  } catch (e) {
+    console.log(e.code);
+  }
+  try {
+    const taken = await bindUdp(addr);
+    console.log(taken.port);
+  } catch (e) {
+    console.log(e.code);
+  }
+  server.close();
+}

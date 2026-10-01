@@ -1,0 +1,56 @@
+// `null` is the only "nothing": `a?: T` is `T | null` for parameters, class and interface
+// fields and object types; an object literal may leave such a field out, and `JSON.parse`
+// treats an absent key like an explicit `null` (only `JsonValue` tells them apart).
+
+interface Named {
+  nickname?: string;
+  label(): string;
+}
+
+class User implements Named {
+  name: string;
+  nickname?: string;
+
+  constructor(name: string, nickname?: string) {
+    this.name = name;
+    this.nickname = nickname;
+  }
+
+  label(): string {
+    return this.nickname ?? this.name;
+  }
+}
+
+type Options = { port: i64; host?: string; retries?: i64 };
+
+function greet(name: string, greeting?: string, punctuation?: string): string {
+  return `${greeting ?? "Hello"}, ${name}${punctuation ?? "!"}`;
+}
+
+function describe(o: Options): string {
+  return `${o.host ?? "localhost"}:${o.port} retries=${o.retries ?? 0}`;
+}
+
+class Config {
+  port: i64 = 0;
+  host?: string;
+}
+
+function main() {
+  console.log(greet("Ann"), greet("Bo", "Hi"), greet("Cy", "Hey", "?"), greet("Di", null));
+  const named: Named = new User("ann", "annie");
+  console.log(named.label(), new User("bo").label(), new User("cy").nickname);
+  console.log(describe({ port: 80 }), describe({ port: 8080, host: "example.com", retries: 3 }));
+  const o: Options = { port: 1, retries: null };
+  console.log(o.host, o.retries);
+
+  const parsed = JSON.parse<Options>("{\"port\":443}");
+  console.log(describe(parsed));
+  const explicit = JSON.parse<Options>("{\"port\":443,\"host\":null,\"retries\":2}");
+  console.log(describe(explicit));
+  const c = JSON.parse<Config>("{\"port\":5}");
+  console.log(c.port, c.host, JSON.stringify(c));
+
+  const v = JSON.parseValue("{\"a\":null}");
+  console.log(v.has("a"), v.get("a")?.isNull(), v.has("b"), v.get("b")?.isNull());
+}

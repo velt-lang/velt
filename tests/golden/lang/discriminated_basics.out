@@ -1,0 +1,17 @@
+circle 3 2 0
+rect 6 2 4
+square 4 2 4
+circle 0.75 1 0
+{ kind: 'rect', w: 2, h: 3 }
+{ kind: 'square', side: 2 }
+[{"kind":"circle","r":1},{"kind":"rect","w":2,"h":3},{"kind":"square","side":2},{"kind":"circle","r":0.5}]
+ok 7
+fail 404: missing
+tom cat
+rex dog
+fido knows 1 tricks
+fido knows 2 tricks
+6 6 5
+{ kind: 'list', items: [ 1, 2, 3 ] }
+[ 4, 5 ] []
+ann 0 2.5

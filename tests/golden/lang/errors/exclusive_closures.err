@@ -1,0 +1,6 @@
+exclusive_closures.vlt:12:3: error: cannot use `xs` here: this call may modify it through another argument
+exclusive_closures.vlt:12:14: `xs` is modified by this closure
+exclusive_closures.vlt:18:6: error: cannot use `ys` here: this call may modify it through another argument
+exclusive_closures.vlt:16:21: `ys` is modified by this closure
+exclusive_closures.vlt:23:10: error: cannot use `m` here: this call may modify it through another argument
+exclusive_closures.vlt:23:3: may be modified through this argument

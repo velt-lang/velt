@@ -1,0 +1,95 @@
+import { RegExp, RegExpMatch } from "velt:regex";
+
+function showMatch(m: RegExpMatch | null) {
+  if (m == null) {
+    console.log("no match");
+    return;
+  }
+  console.log(m.index, m.end, m.value, m.captures);
+}
+
+function basics() {
+  const date = new RegExp("(?<year>\\d{4})-(?<month>\\d\\d)(-(\\d\\d))?");
+  console.log(date.test("released 2024-02-29"), date.test("no dates"), date.groupCount);
+  const m = date.exec("released 2024-02 and 2025-01-07");
+  showMatch(m);
+  if (m != null) {
+    console.log(m.named("year") ?? "-", m.named("nope") ?? "-", m.group(4) ?? "unmatched");
+  }
+  showMatch(date.exec("released 2024-02 and 2025-01-07", 12));
+  showMatch(date.exec("nothing here"));
+  const sticky = new RegExp("\\d+", "y");
+  console.log(sticky.test("ab12", 0), sticky.test("ab12", 2));
+}
+
+function iteration() {
+  const word = new RegExp("\\b(\\w)(\\w*)\\b", "g");
+  const text = "hello big world";
+  for (const m of word.matchAll(text)) {
+    console.log(`${m.index}: ${m.value}`);
+  }
+  console.log(new RegExp("o", "g").matches(text));
+  console.log(new RegExp("x").matches(text).length);
+  console.log(
+    word.replaceWith(
+      text,
+      (m: RegExpMatch): string => (m.group(1) ?? "").toUpperCase() + (m.group(2) ?? ""),
+    ),
+  );
+}
+
+function replacing() {
+  console.log(
+    new RegExp("(\\w+)@(\\w+)\\.com").replace("mail ann@example.com now", "$2 at $1 [$&]"),
+  );
+  console.log(new RegExp("a", "g").replace("banana", "o"), new RegExp("a").replace("banana", "o"));
+  console.log(new RegExp("a").replaceAll("banana", "$$"));
+  console.log(
+    new RegExp("(?<d>\\d)").replace("x1y", "<$<d>>"),
+    new RegExp("x*", "g").replace("abc", "-"),
+  );
+  console.log(new RegExp("HELLO", "i").test("say hello"), new RegExp("^b", "m").test("a\nb"));
+  console.log(new RegExp("a.b", "s").test("a\nb"), new RegExp("a.b").test("a\nb"));
+  console.log(new RegExp("é+").replace("caféé!", "e"));
+}
+
+function splitting() {
+  console.log(new RegExp("\\s*,\\s*").split("a , b,c ,d"));
+  console.log(new RegExp("(-)").split("1-2-3"), new RegExp("").split("abc"));
+  console.log(new RegExp(",").split("a,b,c,d", 2), new RegExp(",").split(""));
+  console.log(RegExp.escape("1+1=2? (yes)"));
+  const esc = new RegExp(RegExp.escape("a.b"));
+  console.log(esc.test("a.b"), esc.test("axb"));
+}
+
+function errors() {
+  try {
+    const bad = new RegExp("(unclosed");
+    console.log(bad.source);
+  } catch (e) {
+    console.log(e.message.startsWith("Invalid regular expression: /(unclosed/: "));
+  }
+  try {
+    const bad = new RegExp("a", "gz");
+    console.log(bad.source);
+  } catch (e) {
+    console.log(e.message);
+  }
+  try {
+    const bad = new RegExp("(?=lookahead)");
+    console.log(bad.source);
+  } catch (e) {
+    console.log("lookahead unsupported");
+  }
+}
+
+function main() {
+  basics();
+  iteration();
+  replacing();
+  splitting();
+  errors();
+  const re = new RegExp("[a-z]+", "gi");
+  const copy = re.clone();
+  console.log(copy.source, copy.flags, copy.global, copy.sticky, copy.matches("Ab1Cd"));
+}

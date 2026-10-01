@@ -1,0 +1,25 @@
+// All permutations of a short string (recursive), deduplicated with a Map, and a count check.
+function permute(prefix: string, rest: string, out: string[]) {
+  if (rest.length == 0) {
+    out.push(prefix);
+    return;
+  }
+  for (let i = 0; i < (rest.length as i64); i++) {
+    permute(prefix + rest.slice(i, i + 1), rest.slice(0, i) + rest.slice(i + 1), out);
+  }
+}
+
+function main() {
+  const all: string[] = [];
+  permute("", "abc", all);
+  console.log(all.join(" "));
+  const dup: string[] = [];
+  permute("", "aabb", dup);
+  const seen = new Map<string, bool>();
+  for (const p of dup) {
+    seen.set(`${p}`, true);
+  }
+  const uniq = [...seen.keys()];
+  uniq.sort();
+  console.log(dup.length, uniq.length, uniq.join(" "));
+}

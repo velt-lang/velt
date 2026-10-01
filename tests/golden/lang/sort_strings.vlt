@@ -1,0 +1,145 @@
+// `sort()` on string arrays (random, duplicates, sorted, reversed, shared prefixes) and the
+// stable `sort(cmp)` on objects, both against reference merge sorts.
+
+// Deterministic LCG.
+class Rng {
+  state: i64 = 4242;
+
+  // Next value in [0, bound).
+  next(bound: i64): i64 {
+    this.state = (this.state * 1103515245 + 12345) % 2147483648;
+    return this.state % bound;
+  }
+}
+
+function mergeSorted(xs: string[]): string[] {
+  if (xs.length <= 1) {
+    return xs.slice();
+  }
+  const mid = (xs.length / 2) as i64;
+  const a = mergeSorted(xs.slice(0, mid));
+  const b = mergeSorted(xs.slice(mid));
+  const out: string[] = [];
+  let i: usize = 0;
+  let j: usize = 0;
+  while (i < a.length && j < b.length) {
+    if (b[j] < a[i]) {
+      out.push(b[j]);
+      j++;
+    } else {
+      out.push(a[i]);
+      i++;
+    }
+  }
+  while (i < a.length) {
+    out.push(a[i]);
+    i++;
+  }
+  while (j < b.length) {
+    out.push(b[j]);
+    j++;
+  }
+  return out;
+}
+
+function makeWords(rng: Rng, shape: string, n: i64): string[] {
+  const xs: string[] = [];
+  for (let i = 0; i < n; i++) {
+    if (shape == "random") {
+      xs.push(`w${rng.next(1000000)}`);
+    } else if (shape == "dups") {
+      xs.push(["pear", "apple", "fig", ""][rng.next(4)]);
+    } else if (shape == "sorted") {
+      xs.push(`${100000 + i}`);
+    } else if (shape == "reversed") {
+      xs.push(`${100000 - i}`);
+    } else {
+      // Long shared prefixes: comparisons have to look past them.
+      xs.push(`prefix-prefix-prefix-${rng.next(50)}-${i % 3}`);
+    }
+  }
+  return xs;
+}
+
+class Item {
+  key: i64;
+  id: i64;
+
+  constructor(key: i64, id: i64) {
+    this.key = key;
+    this.id = id;
+  }
+}
+
+// Stable reference: an item moves before an earlier one only if its key is strictly smaller.
+function insertionSorted(xs: Item[]): Item[] {
+  const out: Item[] = [];
+  for (const x of xs) {
+    out.push(x.clone());
+    let j = out.length - 1;
+    while (j > 0 && out[j].key < out[j - 1].key) {
+      const tmp = out[j].clone();
+      out[j] = out[j - 1].clone();
+      out[j - 1] = tmp;
+      j--;
+    }
+  }
+  return out;
+}
+
+function main() {
+  const rng = new Rng();
+  const shapes = ["random", "dups", "sorted", "reversed", "prefixes"];
+  const sizes = [0, 1, 2, 3, 21, 100, 129, 1000, 5000];
+  for (const shape of shapes) {
+    let ok = 0;
+    for (const n of sizes) {
+      const xs = makeWords(rng, shape, n);
+      const want = mergeSorted(xs);
+      xs.sort();
+      let good = xs.length == want.length;
+      for (let i: usize = 0; i < xs.length; i++) {
+        good = good && xs[i] == want[i];
+      }
+      if (good) {
+        ok++;
+      }
+    }
+    console.log(`strings ${shape}: ${ok}/${sizes.length} ok`);
+  }
+
+  // sort(cmp) is stable: equal keys keep their original (id) order.
+  let stableOk = 0;
+  for (const n of [0, 1, 5, 20, 21, 64, 333, 2000]) {
+    for (const distinct of [1, 3, 1000]) {
+      const items: Item[] = [];
+      for (let i = 0; i < n; i++) {
+        items.push(new Item(rng.next(distinct), i));
+      }
+      const want = insertionSorted(items);
+      items.sort((a, b) => a.key - b.key);
+      let good = true;
+      for (let i: usize = 0; i < items.length; i++) {
+        good = good && items[i].key == want[i].key && items[i].id == want[i].id;
+      }
+      if (good) {
+        stableOk++;
+      } else {
+        console.log(`sort(cmp) n=${n} distinct=${distinct}: not stable`);
+      }
+    }
+  }
+  console.log(`sort(cmp) stable: ${stableOk}/24 ok`);
+  const words = ["delta", "Alpha", "charlie", "bravo", "Echo", "alpha"];
+  words.sort(
+    (a, b) => a.toLowerCase() < b.toLowerCase() ? -1 : a.toLowerCase() > b.toLowerCase() ? 1 : 0,
+  );
+  console.log(words);
+  // `join` of sorted words (builder-based): separators, empty pieces, one and zero pieces.
+  const empty: string[] = [];
+  console.log(`[${words.join()}] [${words.join("")}] [${["", "x", ""].join("--")}]`);
+  console.log(`[${["solo"].join(", ")}] [${empty.join(", ")}] [${["é", "ü"].join("·")}]`);
+  const desc = [5, 1, 4, 1, 5, 9, 2, 6];
+  desc.sort((a, b) => b - a);
+  console.log(desc);
+}

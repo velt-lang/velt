@@ -1,0 +1,125 @@
+// Dynamic dispatch: virtual calls over a `Shape[]` of 1M mixed subclasses (vtable dispatch of
+// overridden methods), then interface-typed values (`Scorer[]`, fat pointers) called in a loop.
+class Shape {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  area(): f64 {
+    return 0.0;
+  }
+
+  // Not overridden: a direct call.
+  weight(): i64 {
+    return this.id % 3;
+  }
+}
+
+class Circle extends Shape {
+  r: f64;
+
+  constructor(id: i64, r: f64) {
+    super(id);
+    this.r = r;
+  }
+
+  override area(): f64 {
+    return 3.0 * this.r * this.r;
+  }
+}
+
+class Rect extends Shape {
+  w: f64;
+  h: f64;
+
+  constructor(id: i64, w: f64, h: f64) {
+    super(id);
+    this.w = w;
+    this.h = h;
+  }
+
+  override area(): f64 {
+    return this.w * this.h;
+  }
+}
+
+class Square extends Shape {
+  side: f64;
+
+  constructor(id: i64, side: f64) {
+    super(id);
+    this.side = side;
+  }
+
+  override area(): f64 {
+    return this.side * this.side;
+  }
+}
+
+interface Scorer {
+  score(x: i64): i64;
+}
+
+struct AddScorer implements Scorer {
+  k: i64;
+  score(x: i64): i64 {
+    return x + this.k;
+  }
+}
+
+struct MulScorer implements Scorer {
+  k: i64;
+  score(x: i64): i64 {
+    return (x * this.k) % 1000003;
+  }
+}
+
+struct XorScorer implements Scorer {
+  k: i64;
+  score(x: i64): i64 {
+    return x ^ this.k;
+  }
+}
+
+function main() {
+  const shapes: Shape[] = [];
+  for (let i = 0; i < 1000000; i++) {
+    const size = (i % 17) as f64 + 0.5;
+    if (i % 3 == 0) {
+      shapes.push(new Circle(i, size));
+    } else if (i % 3 == 1) {
+      shapes.push(new Rect(i, size, 2.0));
+    } else {
+      shapes.push(new Square(i, size));
+    }
+  }
+  let total = 0.0;
+  let weights = 0;
+  for (let pass = 0; pass < 20; pass++) {
+    for (const s of shapes) {
+      total += s.area();
+      weights += s.weight();
+    }
+  }
+  console.log(total, weights);
+
+  const scorers: Scorer[] = [];
+  for (let i = 0; i < 1000000; i++) {
+    if (i % 3 == 0) {
+      scorers.push(AddScorer { k: i % 11 });
+    } else if (i % 3 == 1) {
+      scorers.push(MulScorer { k: i % 13 + 1 });
+    } else {
+      scorers.push(XorScorer { k: i % 7 });
+    }
+  }
+  let acc = 1;
+  for (let pass = 0; pass < 20; pass++) {
+    for (const sc of scorers) {
+      acc = sc.score(acc) % 1000003;
+    }
+  }
+  console.log(acc);
+}

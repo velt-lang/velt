@@ -1,0 +1,7 @@
+// The greeting, in its own module so tests/greet.test.vlt can check it.
+
+/// A friendly greeting for `name` (a blank name greets the world).
+export function greet(name: string): string {
+  const who = name.trim();
+  return `Hello, ${who === "" ? "world" : who}!`;
+}

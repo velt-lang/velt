@@ -1,0 +1,83 @@
+// Regression (use after free / hang, apps ergonomics #1): moving a part out of a local that is
+// then dropped: a nested field (`return out.res.body`), a field of a local narrowed from
+// `T | null` (strings and arrays), a field moved in only one branch, and a field moved out of
+// a local that is also reassigned in another branch. The moved part is left zeroed (nothing to
+// drop), so the local's own drop never frees it again. Heap-sized strings so a stale pointer
+// would show.
+type Outer = { res: { status: i64; body: string }; n: i64 };
+type Member = { name: string; tags: string[]; n: i64 };
+type Deep = { inner: { tags: string[]; n: i64 }; label: string };
+
+function body(): string {
+  const out: Outer = { res: { status: 200, body: "x".repeat(30) }, n: 1 };
+  return out.res.body;
+}
+
+function nameOf(): string | null {
+  const m: Member | null = { name: "alice".repeat(6), tags: ["a".repeat(30)], n: 1 };
+  if (m == null) {
+    return null;
+  }
+  return m.name;
+}
+
+function tagsOf(): string[] {
+  const m: Member | null = { name: "bob".repeat(10), tags: ["t".repeat(30), "u"], n: 2 };
+  if (m == null) {
+    return [];
+  }
+  const t = m.tags;
+  console.log(m.name, m.n);
+  return t;
+}
+
+function ternary(): string | null {
+  const m: Member | null = { name: "carol".repeat(6), tags: [], n: 3 };
+  return m == null ? null : m.name;
+}
+
+function branch(c: bool): string {
+  let x: Member = { name: "dave".repeat(8), tags: ["q".repeat(30)], n: 4 };
+  let s = "";
+  if (c) {
+    const tg = x.tags;
+    s = `${tg.length}`;
+  } else {
+    x = { name: "erin".repeat(8), tags: [], n: 5 };
+  }
+  return `${s} ${x.name}`;
+}
+
+function deep(c: bool): i64 {
+  let o: Deep = { inner: { tags: ["q".repeat(30)], n: 2 }, label: "m".repeat(30) };
+  if (c) {
+    const t = o.inner;
+    return t.n + (t.tags.length as i64);
+  } else {
+    o = { inner: { tags: [], n: 3 }, label: "n" };
+  }
+  return o.inner.n;
+}
+
+function pick(c: bool): string[] {
+  const o: Deep = { inner: { tags: ["p".repeat(30)], n: 1 }, label: "l".repeat(30) };
+  let out: string[] = [];
+  if (c) {
+    out = o.inner.tags;
+  }
+  console.log(o.label.length);
+  return out;
+}
+
+function main() {
+  for (let i = 0; i < 3; i++) {
+    console.log(body());
+    console.log(nameOf());
+    console.log(tagsOf().length);
+    console.log(ternary());
+    console.log(branch(true));
+    console.log(branch(false));
+    console.log(deep(true), deep(false));
+    console.log(pick(true).length, pick(false).length);
+  }
+}

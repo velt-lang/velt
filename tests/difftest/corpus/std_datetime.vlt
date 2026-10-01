@@ -1,0 +1,138 @@
+// std/datetime against JS Date (UTC): construction with rollover, parsing, ISO / HTTP strings,
+// getters, pattern formatting, calendar arithmetic, durations.
+import { DateTime, Duration, DateTimeError } from "velt:datetime";
+
+function line(d: DateTime) {
+  console.log(
+    d.toISOString(),
+    d.toUTCString(),
+    d.toEpochMs(),
+    d.toEpochSeconds(),
+    d.dayOfWeek,
+    d.dayOfYear,
+  );
+}
+
+function main() {
+  line(DateTime.fromEpochMs(0));
+  line(DateTime.fromEpochMs(-1));
+  line(DateTime.fromEpochMs(951782400000));
+  line(DateTime.utc(2024, 2, 29, 12, 34, 56, 789));
+  line(DateTime.utc(2023, 13, 1));
+  line(DateTime.utc(2024, 3, 0));
+  line(DateTime.utc(2024, 1, 31, 25, 61, 61, 1001));
+  line(DateTime.utc(2000, 0, 1));
+  line(DateTime.utc(1969, 12, 31, 23, 59, 59, 999));
+  line(DateTime.utc(1900, 3, 1));
+  line(DateTime.utc(2100, 2, 28));
+  line(DateTime.utc(1600, 2, 29));
+  console.log(
+    DateTime.utc(12345, 1, 1).toISOString(),
+    DateTime.utc(-1, 6, 15).toISOString(),
+    DateTime.utc(0, 1, 1).toISOString(),
+  );
+  const d = DateTime.utc(2024, 7, 4, 9, 5, 3, 7);
+  console.log(
+    d.year,
+    d.month,
+    d.day,
+    d.hour,
+    d.minute,
+    d.second,
+    d.millisecond,
+    JSON.stringify(d.parts()),
+  );
+  const patterns: string[] = [
+    "YYYY-MM-DD HH:mm:ss.SSS",
+    "YY M D H m s",
+    "ddd, D MMM YYYY",
+    "dddd MMMM DDDD",
+    "h:mm A a hh",
+    "[Today is] dddd [the] D[th]",
+    "Z ZZ",
+    "YYYYY MMMMM xyz Q [unclosed",
+  ];
+  for (const p of patterns) {
+    console.log(
+      d.format(p),
+      "|",
+      DateTime.utc(1999, 12, 31, 0, 0, 0).format(p),
+      "|",
+      DateTime.utc(2001, 1, 1, 12, 0, 0).format(p),
+    );
+  }
+  console.log(
+    d.formatLocal("YYYY-MM-DD HH:mm Z"),
+    d.toLocalISOString(),
+    d.localOffsetMinutes,
+    JSON.stringify(d.localParts()),
+  );
+  const inputs: string[] = [
+    "2024-02-29",
+    "2024-02",
+    "2024",
+    "2024-02-29T12:34",
+    "2024-02-29T12:34:56.789Z",
+    "2024-02-29T12:34:56+02:00",
+    "2024-02-29T12:34:56.5-05:30",
+    "+012345-01-01T00:00:00Z",
+  ];
+  for (const s of inputs) {
+    console.log(s, "->", DateTime.parse(s).toISOString());
+  }
+  const http: string[] = ["Sun, 06 Nov 1994 08:49:37 GMT", "Thu, 29 Feb 2024 12:34:56 GMT"];
+  for (const s of http) {
+    console.log(DateTime.parseHttpDate(s).toISOString());
+  }
+  const bad: string[] = ["2024-13-01", "not a date", "2024-02-30T25:00"];
+  for (const s of bad) {
+    try {
+      console.log("parsed", DateTime.parse(s).toISOString());
+    } catch (e) {
+      console.log("invalid", s, e instanceof DateTimeError);
+    }
+  }
+  const jan31 = DateTime.utc(2024, 1, 31, 10, 30);
+  for (let n = -13; n <= 13; n += 1) {
+    console.log(
+      n,
+      jan31.addMonths(n).toISOString(),
+      DateTime.utc(2024, 2, 29).addYears(n).toISOString(),
+    );
+  }
+  console.log(
+    d.addMs(-8).toISOString(),
+    d.addSeconds(3600).toISOString(),
+    d.addMinutes(-1500).toISOString(),
+    d.addHours(49).toISOString(),
+    d.addDays(-400).toISOString(),
+  );
+  console.log(d.startOfDay().toISOString(), DateTime.fromEpochMs(-1).startOfDay().toISOString());
+  const e = DateTime.utc(2024, 1, 1);
+  console.log(
+    d.diffMs(e),
+    e.diffMs(d),
+    d.isBefore(e),
+    d.isAfter(e),
+    d.equals(d.addMs(0)),
+    d.compareTo(e),
+    e.compareTo(d),
+    d.compareTo(d),
+  );
+  const spans: Duration[] = [
+    Duration.ofMs(0),
+    Duration.ofMs(5),
+    Duration.ofSeconds(90),
+    Duration.ofMinutes(61),
+    Duration.ofHours(25),
+    Duration.ofDays(2),
+    Duration.ofDays(1).plus(Duration.ofMs(3723004)),
+    Duration.ofSeconds(1).minus(Duration.ofMs(2500)),
+    Duration.ofHours(3).negated(),
+    d.since(e),
+  ];
+  for (const s of spans) {
+    console.log(s.toString(), s.toMs(), `${s.toSeconds()}`, s.compareTo(Duration.ofSeconds(60)));
+  }
+  console.log(e.add(Duration.ofDays(59)).toISOString());
+}

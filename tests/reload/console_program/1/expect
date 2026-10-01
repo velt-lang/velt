@@ -1,0 +1,3 @@
+action: start
+stdout: count 1
+action: exit

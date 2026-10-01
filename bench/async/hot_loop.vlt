@@ -1,0 +1,26 @@
+// An await-free hot loop inside an async function (the shape of reverse-complement's byte loop
+// in `async main`): `bytes` and `total` survive the `await` between rounds, so they live in the
+// state machine's frame while the inner loop runs 5M times per round.
+async function seed(round: i64): Promise<i64> {
+  return (round * 7919 + 17) % 65537;
+}
+
+async function main() {
+  let total = 0;
+  let kept = 0;
+  let bytes: u8[] = [];
+  for (let round = 0; round < 40; round++) {
+    let x = await seed(round);
+    for (let i = 0; i < 5000000; i++) {
+      x = (x + i * 7) & 65535;
+      const b = x & 255;
+      if (b != 10) {
+        bytes.push(b as u8);
+      }
+      total += b;
+    }
+    kept += bytes.length as i64;
+    bytes = [];
+  }
+  console.log(`${total} ${kept}`);
+}

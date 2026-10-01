@@ -1,0 +1,102 @@
+// std/sqlite errors: every failure throws SqliteError with SQLite's code name.
+import { open, Database, SqliteError } from "velt:sqlite";
+import { tmpdir } from "velt:os";
+import { uuidv4 } from "velt:uuid";
+
+class Row {
+  id: i64;
+  name: string;
+
+  constructor(id: i64, name: string) {
+    this.id = id;
+    this.name = name;
+  }
+}
+
+function report(e: SqliteError) {
+  console.log(e.code, "|", e.message);
+}
+
+function setup(): Database {
+  const db = open(":memory:");
+  db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)");
+  db.prepare("INSERT INTO t (name) VALUES (?)").runWith(["a"]);
+  return db;
+}
+
+function main() {
+  const db = setup();
+  try {
+    db.prepare("SELEC * FROM t");
+  } catch (e) {
+    report(e);
+  }
+  try {
+    db.prepare("SELECT 1; SELECT 2");
+  } catch (e) {
+    report(e);
+  }
+  try {
+    db.exec("INSERT INTO nope VALUES (1)");
+  } catch (e) {
+    report(e);
+  }
+  const ins = db.prepare("INSERT INTO t (name) VALUES (:name)");
+  try {
+    ins.runWith({ name: "a" });
+  } catch (e) {
+    report(e);
+  }
+  try {
+    ins.runWith({ other: "b" });
+  } catch (e) {
+    report(e);
+  }
+  try {
+    ins.run();
+  } catch (e) {
+    report(e);
+  }
+  try {
+    db.prepare("SELECT * FROM t WHERE id = ?").allWith<Row, i64[]>([1, 2]);
+  } catch (e) {
+    report(e);
+  }
+  // A row that does not fit the requested type.
+  try {
+    const rows: Row[] = db.prepare("SELECT name AS id, name FROM t").all();
+    console.log(rows.length);
+  } catch (e) {
+    report(e);
+  }
+  try {
+    const row: Row | null = db.prepare("SELECT id FROM t").get();
+    console.log(row?.name);
+  } catch (e) {
+    report(e);
+  }
+
+  // Closing the database invalidates its statements, but they stay safe to use.
+  const byId = db.prepare("SELECT * FROM t WHERE id = ?");
+  db.close();
+  try {
+    byId.getWith<Row, i64>(1);
+  } catch (e) {
+    report(e);
+  }
+  byId.close();
+
+  const missing = `${tmpdir()}/velt-sqlite-${uuidv4()}/none.db`;
+  try {
+    open(missing, { fileMustExist: true });
+  } catch (e) {
+    console.log(e.code);
+  }
+  const ro = open(":memory:", { readonly: true });
+  try {
+    ro.exec("CREATE TABLE x (a)");
+  } catch (e) {
+    console.log(e.code);
+  }
+  ro.close();
+}

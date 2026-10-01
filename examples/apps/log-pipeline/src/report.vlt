@@ -1,0 +1,100 @@
+// The text report: totals, status classes, top routes with latency percentiles, top clients,
+// and the hours with the most server errors. Output is identical to node/pipeline.mjs.
+import { Stats, RouteStats } from "./stats";
+
+// `x` with one decimal, rounded half away from zero (JS `toFixed(1)` has no Velt equivalent).
+export function fixed1(x: f64): string {
+  const tenths = Math.round(x * 10.0) as i64;
+  return `${tenths / 10}.${tenths % 10}`;
+}
+
+// Nearest-rank percentile `p` (0-100) of ascending `sorted`.
+export function percentile(sorted: f64[], p: f64): f64 {
+  if (sorted.length == 0) {
+    return 0.0;
+  }
+  const rank = Math.ceil((p / 100.0) * (sorted.length as f64)) as i64;
+  const i = rank < 1 ? 0 : rank - 1;
+  return sorted[i as usize];
+}
+
+function percent(part: i64, whole: i64): string {
+  return whole == 0 ? "0.0" : fixed1(((part as f64) * 100.0) / (whole as f64));
+}
+
+// Most frequent first, ties by key.
+function byCountDesc(a: [string, i64], b: [string, i64]): i64 {
+  if (a[1] != b[1]) {
+    return b[1] - a[1];
+  }
+  return a[0] < b[0] ? -1 : 1;
+}
+
+function routeLine(name: string, r: RouteStats): string {
+  const sorted = r.latencies.clone();
+  sorted.sort();
+  const cols = [
+    `${r.count}`.padStart(8),
+    percent(r.errors, r.count).padStart(6),
+    fixed1(percentile(sorted, 50.0)).padStart(8),
+    fixed1(percentile(sorted, 95.0)).padStart(8),
+    fixed1(percentile(sorted, 99.0)).padStart(8),
+  ];
+  return `${cols.join(" ")}  ${name}`;
+}
+
+function topRoutes(stats: Stats, n: usize): string[] {
+  const counts: [string, i64][] = [];
+  for (const [name, r] of stats.routes) {
+    counts.push([name, r.count]);
+  }
+  counts.sort(byCountDesc);
+  const out = [`top ${n} routes:`, "   count   err%     p50      p95      p99  route (ms)"];
+  for (const [name, _count] of counts.slice(0, n as i64)) {
+    const r = stats.routes.get(name);
+    if (r != null) {
+      out.push(routeLine(name, r));
+    }
+  }
+  return out;
+}
+
+function topClients(stats: Stats, n: usize): string[] {
+  const counts = stats.clients.entries();
+  counts.sort(byCountDesc);
+  const out = [`top ${n} clients:`];
+  for (const [ip, count] of counts.slice(0, n as i64)) {
+    out.push(`${`${count}`.padStart(8)}  ${ip}`);
+  }
+  return out;
+}
+
+function errorHours(stats: Stats, n: usize): string[] {
+  const counts: [string, i64][] = [];
+  for (const [hour, h] of stats.hours) {
+    counts.push([hour, h.errors]);
+  }
+  counts.sort(byCountDesc);
+  const out = [`top ${n} hours by 5xx:`];
+  for (const [hour, errors] of counts.slice(0, n as i64)) {
+    out.push(`${`${errors}`.padStart(8)}  ${hour}:00`);
+  }
+  return out;
+}
+
+// The whole report, one string per line.
+export function report(stats: Stats): string[] {
+  const parsed = stats.lines - stats.malformed;
+  const out = [
+    `lines: ${stats.lines}  parsed: ${parsed}  malformed: ${stats.malformed}  bytes: ${stats.bytes}`,
+    `routes: ${stats.routes.size}  clients: ${stats.clients.size}  hours: ${stats.hours.size}`,
+  ];
+  const classes = stats.statusClasses.keys();
+  classes.sort();
+  const parts = classes.map((c) => {
+    const n = stats.statusClasses.get(c) ?? 0;
+    return `${c} ${n} (${percent(n, parsed)}%)`;
+  });
+  out.push(`status: ${parts.join("  ")}`);
+  return [...out, ...topRoutes(stats, 10), ...topClients(stats, 5), ...errorHours(stats, 3)];
+}

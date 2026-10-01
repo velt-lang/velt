@@ -1,0 +1,3 @@
+impossible_narrowing.vlt:9:9: error: this comparison is always false: `"pt"` is not a possible value of `v.kind`
+possible values: "box"
+impossible_narrowing.vlt:19:10: error: this comparison is always false: `"pt"` is not a possible value of `k`

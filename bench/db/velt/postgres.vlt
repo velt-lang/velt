@@ -1,0 +1,140 @@
+// PostgreSQL workloads (bench/db/README.md) against $BENCH_PG_URL: a per-run table, dropped at
+// the end. Sequential workloads use one client; the pool workloads a pool of 8. Prints
+// `RESULT <workload> <ops> <checksum> <ms>` per workload; the time covers only the timed loop.
+// `quick` as the first argument runs 1/20 of the sizes.
+import { connect, createPool, Client, Pool } from "velt:postgres";
+import { args, env } from "velt:process";
+import { uuidv4 } from "velt:uuid";
+
+const POOL_SIZE: i64 = 8;
+
+class Row {
+  id: i64;
+  name: string;
+  score: f64;
+
+  constructor(id: i64, name: string, score: f64) {
+    this.id = id;
+    this.name = name;
+    this.score = score;
+  }
+}
+
+function report(workload: string, ops: i64, checksum: i64, ms: f64) {
+  console.log(`RESULT postgres.${workload} ${ops} ${checksum} ${ms}`);
+}
+
+function rowChecksum(r: Row): i64 {
+  return r.id + (r.name.length as i64) + ((r.score * 2.0) as i64);
+}
+
+function pointId(i: i64, rows: i64): i64 {
+  return (i * 7919) % rows + 1;
+}
+
+// One prepared INSERT per row inside one transaction. The values differ in type, so they bind
+// by name (std rewrites `:id` to `$1` once per statement).
+async function insertTx(c: Client, table: string, n: i64) {
+  const sql = `INSERT INTO ${table} (id, name, score) VALUES (:id, :name, :score)`;
+  const t0 = performance.now();
+  const tx = await c.begin();
+  let changes: i64 = 0;
+  for (let i: i64 = 1; i <= n; i++) {
+    changes += await c.execute(sql, { id: i, name: `name-${i}`, score: (i as f64) + 0.5 });
+  }
+  await tx.commit();
+  report("insert_tx", n, changes, performance.now() - t0);
+}
+
+async function pointSelect(c: Client, table: string, n: i64, rows: i64) {
+  const sql = `SELECT id, name, score FROM ${table} WHERE id = $1`;
+  const t0 = performance.now();
+  let sum: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    const r: Row | null = await c.queryOne(sql, [pointId(i, rows)]);
+    if (r != null) {
+      sum += rowChecksum(r);
+    }
+  }
+  report("point_select", n, sum, performance.now() - t0);
+}
+
+async function rangeSelect(c: Client, table: string, m: i64, rows: i64) {
+  const sql = `SELECT id, name, score FROM ${table} WHERE id >= $1 AND id < $2`;
+  const t0 = performance.now();
+  let sum: i64 = 0;
+  for (let j: i64 = 0; j < m; j++) {
+    const lo = (j * 7919) % (rows - 100) + 1;
+    const found: Row[] = await c.query(sql, [lo, lo + 100]);
+    for (const r of found) {
+      sum += rowChecksum(r);
+    }
+  }
+  report("range_select", m, sum, performance.now() - t0);
+}
+
+// One task's share of a pool workload: queries t, t + tasks, t + 2 * tasks, ...
+async function poolWorker(
+  pool: Pool,
+  sql: string,
+  t: i64,
+  tasks: i64,
+  n: i64,
+  rows: i64,
+): Promise<i64> {
+  let sum: i64 = 0;
+  for (let i = t; i < n; i += tasks) {
+    const r: Row | null = await pool.queryOne(sql, [pointId(i, rows)]);
+    if (r != null) {
+      sum += rowChecksum(r);
+    }
+  }
+  return sum;
+}
+
+async function poolSelect(pool: Pool, table: string, tasks: i64, n: i64, rows: i64) {
+  const sql = `SELECT id, name, score FROM ${table} WHERE id = $1`;
+  const t0 = performance.now();
+  const workers: Promise<i64>[] = [];
+  for (let t: i64 = 0; t < tasks; t++) {
+    workers.push(spawn(poolWorker(pool, sql, t, tasks, n, rows)));
+  }
+  let sum: i64 = 0;
+  for (const s of await Promise.all(workers)) {
+    sum += s;
+  }
+  report(`pool_select_${tasks}`, n, sum, performance.now() - t0);
+}
+
+// Opens every pooled connection before timing (the Node and Rust pools are warmed the same way).
+async function warm(pool: Pool) {
+  const held: Client[] = [];
+  for (let k: i64 = 0; k < POOL_SIZE; k++) {
+    held.push(await pool.connect());
+  }
+  for (const c of held) {
+    c.close();
+  }
+}
+
+async function main() {
+  const argv = args();
+  const scale: i64 = argv.length > 0 && argv[0] == "quick" ? 20 : 1;
+  const url = env("BENCH_PG_URL") ?? "";
+  const table = `bench_db_velt_${uuidv4().replaceAll("-", "")}`;
+  const c = await connect(url);
+  await c.batch(
+    `CREATE TABLE ${table} (id INTEGER PRIMARY KEY, name TEXT NOT NULL, score DOUBLE PRECISION NOT NULL)`,
+  );
+  const rows = 20000 / scale;
+  await insertTx(c, table, rows);
+  await pointSelect(c, table, 20000 / scale, rows);
+  await rangeSelect(c, table, 5000 / scale, rows);
+  const pool = createPool({ url: url, max: POOL_SIZE });
+  await warm(pool);
+  await poolSelect(pool, table, 8, 100000 / scale, rows);
+  await poolSelect(pool, table, 64, 100000 / scale, rows);
+  pool.end();
+  await c.batch(`DROP TABLE ${table}`);
+  c.close();
+}

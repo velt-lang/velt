@@ -1,0 +1,18 @@
+GET / -> 200 chat server: connect a WebSocket to /chat
+[alice] * you are alice; online: alice
+[bob] * you are bob; online: alice, bob
+[alice] * bob joined
+[carol] ! join first
+[carol] ! name bob is taken
+[carol] ! invalid JSON: unexpected character 'o' (byte 1)
+[carol] * you are carol; online: alice, bob, carol
+[alice] * carol joined
+[bob] * carol joined
+[alice] <alice> hello everyone
+[bob] <alice> hello everyone
+[carol] <alice> hello everyone
+[bob] (connection closed)
+[alice] * bob left
+[carol] * bob left
+[alice] * carol left
+[alice] (connection closed)

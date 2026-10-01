@@ -1,0 +1,41 @@
+// A type parameter that is one member of a union parameter (`r: T | ApiError`) takes the
+// argument's members left over after matching the others: `must(find(1))` with
+// `find(): Todo | ApiError` gives `T = Todo`, as in TS. Regression: `T` was the
+// whole union ("no field `title` on type `ApiError | Todo`").
+class ApiError extends Error {
+  status: i64;
+
+  constructor(status: i64, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+type Todo = { id: i64; title: string };
+
+function must<T>(r: T | ApiError): T {
+  if (r instanceof ApiError) {
+    throw r;
+  }
+  return r;
+}
+
+function find(id: i64): Todo | ApiError {
+  if (id > 1) {
+    return new ApiError(404, "nope");
+  }
+  return { id, title: "a" };
+}
+
+function title(id: i64): string {
+  try {
+    return must(find(id)).title;
+  } catch (e) {
+    return `${e.status} ${e.message}`;
+  }
+}
+
+function main() {
+  console.log(title(1));
+  console.log(title(2));
+}

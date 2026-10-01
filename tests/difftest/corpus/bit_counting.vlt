@@ -1,0 +1,25 @@
+// Bit tricks on 32-bit-safe values: popcount, parity, highest bit, gray code.
+function popcount(x: i64): i64 {
+  let n = 0;
+  while (x != 0) {
+    x &= x - 1;
+    n++;
+  }
+  return n;
+}
+
+function highestBit(x: i64): i64 {
+  let b = -1;
+  while (x > 0) {
+    x >>= 1;
+    b++;
+  }
+  return b;
+}
+
+function main() {
+  for (const x of [0, 1, 7, 8, 255, 1023, 65535, 123456, 2147483647]) {
+    const gray = x ^ (x >> 1);
+    console.log(x, popcount(x), popcount(x) % 2, highestBit(x), gray, ~x, -x >> 3);
+  }
+}

@@ -1,0 +1,26 @@
+// Trial-division factorization of numbers up to ~1e12.
+function factors(n: i64): string {
+  const out: string[] = [];
+  let d = 2;
+  while (d * d <= n) {
+    let k = 0;
+    while (n % d == 0) {
+      n = n / d;
+      k++;
+    }
+    if (k > 0) {
+      out.push(k == 1 ? `${d}` : `${d}^${k}`);
+    }
+    d += d == 2 ? 1 : 2;
+  }
+  if (n > 1) {
+    out.push(`${n}`);
+  }
+  return out.join(" * ");
+}
+
+function main() {
+  for (const n of [2, 12, 97, 360, 1001, 65536, 999983, 600851475143, 1000000007, 123456789012]) {
+    console.log(`${n} = ${factors(n)}`);
+  }
+}

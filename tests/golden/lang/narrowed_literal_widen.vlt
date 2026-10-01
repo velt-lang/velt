@@ -1,0 +1,25 @@
+// A `Lvl` local narrowed to one literal member (`case "mid":`, `if (v === "mid")`) converts back
+// to `Lvl` (`const w: Lvl = v;`, a `Lvl` parameter). Regression (difftest seeds 20648, 20900,
+// 21431): VIR verification failed with "invalid projection: field 1 out of range" because the
+// zero-sized literal payload was read as a field.
+type Lvl = "lo" | "mid" | "hi";
+
+function show(l: Lvl) {
+  console.log(l);
+}
+
+function main() {
+  let v: Lvl = "mid";
+  switch (v) {
+    case "mid":
+      const w: Lvl = v;
+      console.log(w);
+      break;
+    default:
+      break;
+  }
+  if (v === "mid") {
+    show(v);
+  }
+  console.log(v);
+}

@@ -1,0 +1,27 @@
+[package]
+name = "velt_rt_wasm"
+version.workspace = true
+edition.workspace = true
+# The runtime for the WebAssembly targets (wasm32-wasip1, wasm32-unknown-unknown): a
+# single-threaded counterpart of crates/velt_rt. It compiles velt_rt's portable modules (strings,
+# formatting, JSON, fs operations, memory) from their sources and adds its own entry, output,
+# panics, process state, shared-state helpers and a current-thread executor. Build it for a wasm
+# target with `cargo build -p velt_rt_wasm --target wasm32-wasip1`.
+
+[lib]
+# staticlib: linked into every wasm program by velt_link. rlib: host unit tests.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+dashu-int = "0.6.1"
+# Same versions as crates/velt_rt (its fmt.rs is compiled here).
+itoa = "1.0.18"
+libm = "0.2.16"
+memchr = "2.8.3"
+ryu = "1.0.23"
+
+[lints.rust]
+# crates/velt_rt/src/mem.rs (compiled here) has a fast path behind velt_rt's `mimalloc` feature and
+# `cfg(velt_rt_host)`,
+# which this crate never has.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("mimalloc"))', 'cfg(velt_rt_host)'] }

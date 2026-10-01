@@ -1,0 +1,17 @@
+// Character histogram with Map<string, i64>, sorted output, and a bar chart.
+function main() {
+  const text = "mississippi river banks";
+  const freq = new Map<string, i64>();
+  for (let i = 0; i < (text.length as i64); i++) {
+    const c = text.slice(i, i + 1);
+    if (c != " ") {
+      freq.set(c, (freq.get(c) ?? 0) + 1);
+    }
+  }
+  const keys = [...freq.keys()];
+  keys.sort();
+  for (const k of keys) {
+    const n = freq.get(k) ?? 0;
+    console.log(`${k} ${"*".repeat(n)} ${n}`);
+  }
+}

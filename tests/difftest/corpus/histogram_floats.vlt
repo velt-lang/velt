@@ -1,0 +1,22 @@
+// Bucketing float samples into a histogram; percentages printed through templates.
+function main() {
+  const samples: f64[] = [];
+  let x = 0.5;
+  for (let i = 0; i < 200; i++) {
+    x = (x * 3.9) * (1.0 - x);
+    samples.push(x);
+  }
+  const buckets: i64[] = [0, 0, 0, 0, 0];
+  for (const s of samples) {
+    let b = Math.floor(s * 5.0) as i64;
+    if (b > 4) {
+      b = 4;
+    }
+    buckets[b as usize]++;
+  }
+  for (let i: usize = 0; i < 5; i++) {
+    const pct = (buckets[i] as f64) / 2.0;
+    console.log(`${i}: ${"#".repeat(buckets[i] / 4)} ${pct}%`);
+  }
+  console.log(`${samples[199]} ${samples.reduce((a, b) => a + b, 0.0)}`);
+}

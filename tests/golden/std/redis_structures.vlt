@@ -1,0 +1,65 @@
+// requires-env: VELT_TEST_REDIS_URL
+// std/redis: hashes, lists, sets and sorted sets.
+import { connect, ZMember } from "velt:redis";
+import { redisUrl, freshPrefix, cleanup } from "./_redis";
+
+async function main() {
+  const p = freshPrefix();
+  const c = await connect(redisUrl());
+
+  // Hashes.
+  const h = `${p}user`;
+  console.log("hset:", await c.hset(h, "name", "Ada"), await c.hset(h, "name", "Ada L."));
+  const fields = new Map<string, string>();
+  fields.set("lang", "en");
+  fields.set("visits", "1");
+  console.log("hmset:", await c.hmset(h, fields));
+  console.log("hget:", await c.hget(h, "name"), await c.hget(h, "missing"));
+  console.log("hincrBy:", await c.hincrBy(h, "visits", 4));
+  const all = await c.hgetall(h);
+  const names = all.keys();
+  names.sort();
+  for (const k of names) {
+    console.log(`  ${k} = ${all.get(k) ?? ""}`);
+  }
+  console.log("hlen:", await c.hlen(h), "hdel:", await c.hdel(h, ["lang", "nope"]));
+  console.log("hgetall missing:", (await c.hgetall(`${p}none`)).size);
+
+  // Lists.
+  const l = `${p}list`;
+  console.log("rpush:", await c.rpush(l, ["b", "c"]), "lpush:", await c.lpush(l, ["a", "z"]));
+  console.log("lrange:", await c.lrange(l, 0, -1), await c.lrange(l, 1, 2));
+  console.log("lpop:", await c.lpop(l), "rpop:", await c.rpop(l), "llen:", await c.llen(l));
+  console.log("pop missing:", await c.lpop(`${p}none`));
+
+  // Sets.
+  const s = `${p}set`;
+  console.log("sadd:", await c.sadd(s, ["x", "y", "z", "x"]));
+  const members = await c.smembers(s);
+  members.sort();
+  console.log("smembers:", members, "scard:", await c.scard(s));
+  console.log("sismember:", await c.sismember(s, "y"), await c.sismember(s, "w"));
+  console.log("srem:", await c.srem(s, ["y", "w"]), "scard:", await c.scard(s));
+
+  // Sorted sets.
+  const z = `${p}scores`;
+  const added = await c.zadd(z, [
+    ZMember { member: "carol", score: 3.5 },
+    ZMember { member: "alice", score: 1 },
+    ZMember { member: "bob", score: 2 },
+  ]);
+  console.log("zadd:", added, await c.zadd(z, [ZMember { member: "bob", score: 2.25 }]));
+  console.log("zrange:", await c.zrange(z, 0, -1));
+  for (const m of await c.zrangeWithScores(z, 0, 1)) {
+    console.log(`  ${m.member}: ${m.score}`);
+  }
+  console.log("zscore:", await c.zscore(z, "bob"), await c.zscore(z, "nobody"));
+  console.log("zincrby:", await c.zincrby(z, 10, "alice"), await c.zincrby(z, -0.5, "dave"));
+  console.log("zrange:", await c.zrange(z, 0, -1));
+  console.log("zrem:", await c.zrem(z, ["dave", "nobody"]), "zcard:", await c.zcard(z));
+  await c.zadd(z, [ZMember { member: "top", score: 1.0 / 0.0 }]);
+  console.log("infinite score:", await c.zscore(z, "top"), await c.zrange(z, -1, -1));
+
+  console.log("cleanup:", await cleanup(c, p));
+  c.close();
+}

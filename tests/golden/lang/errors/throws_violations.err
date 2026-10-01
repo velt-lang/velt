@@ -1,0 +1,8 @@
+throws_violations.vlt:8:5: error: `load` throws `Forbidden`, which its `throws` clause does not allow
+throws_violations.vlt:19:5: error: `Db.get` throws `Forbidden`, but `Store.get` does not allow it
+throws_violations.vlt:31:5: error: `Sub.run` throws `Forbidden`, but `Base.run` does not allow it
+throws_violations.vlt:41:5: error: this function throws `NotFound`, but the function type it is used as does not allow throwing
+throws_violations.vlt:45:7: error: this function throws `Forbidden`, but the function type it is used as allows only `NotFound`
+throws_violations.vlt:50:21: error: `attempt` needs a function without parameters, found `(i64) => i64`
+= note: it is used as `() => void`
+= note: it is used as `(i64) => i64 throws NotFound`

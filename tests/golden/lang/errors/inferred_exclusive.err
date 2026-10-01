@@ -1,0 +1,7 @@
+inferred_exclusive.vlt:50:3: error: cannot modify module-level constant `ORIGIN`
+inferred_exclusive.vlt:47:5: error: cannot assign to parameter `v` of a closure
+inferred_exclusive.vlt:38:13: error: cannot use `b.items` here: this call may modify `b` through another argument
+inferred_exclusive.vlt:38:3: may be modified through this argument
+inferred_exclusive.vlt:40:12: error: cannot use `xs` here: this call may modify it through another argument
+inferred_exclusive.vlt:43:16: error: cannot use `grid` here: this call may modify it through another argument
+inferred_exclusive.vlt:43:3: may be modified through this argument

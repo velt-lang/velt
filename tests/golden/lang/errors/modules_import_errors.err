@@ -1,0 +1,8 @@
+modules_import_errors.vlt:3:10: error: `hidden` is not exported by module `../_modules_geo`
+modules_import_errors.vlt:3:18: error: module `../_modules_geo` has no member `missing`
+modules_import_errors.vlt:4:10: error: cannot find `nowhere` in this scope
+modules_import_errors.vlt:8:17: error: `Circle` is imported with `import type` and cannot be used as a value
+modules_import_errors.vlt:9:15: error: `Color` is imported with `import type` and cannot be used as a value
+modules_import_errors.vlt:10:19: error: namespace `geo` has no exported member `hidden`
+modules_import_errors.vlt:10:33: error: namespace `geo` has no exported member `nothing`
+modules_import_errors.vlt:11:13: error: `geo` is a namespace import: use its exported members, like `geo.name`

@@ -1,0 +1,2 @@
+await_outside.vlt:6:13
+`await` is only allowed inside async functions

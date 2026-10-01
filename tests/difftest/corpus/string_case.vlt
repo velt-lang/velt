@@ -1,0 +1,44 @@
+// camelCase / snake_case / kebab-case / Title Case conversions.
+function words(s: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  for (let i = 0; i < (s.length as i64); i++) {
+    const c = s.slice(i, i + 1);
+    const code = s.charCodeAt(i);
+    if (c == "_" || c == "-" || c == " ") {
+      if (cur.length > 0) {
+        out.push(cur);
+      }
+      cur = "";
+    } else if (code >= 65 && code <= 90 && cur.length > 0) {
+      out.push(cur);
+      cur = c.toLowerCase();
+    } else {
+      cur += c.toLowerCase();
+    }
+  }
+  if (cur.length > 0) {
+    out.push(cur);
+  }
+  return out;
+}
+
+function cap(w: string): string {
+  return w.slice(0, 1).toUpperCase() + w.slice(1);
+}
+
+function main() {
+  for (const s of [
+    "helloWorldFooBar",
+    "snake_case_name",
+    "kebab-case-here",
+    "Already Title Case",
+    "x",
+  ]) {
+    const ws = words(s);
+    const camel = ws.map((w) => cap(w)).join("");
+    console.log(
+      `${ws.join("_")} | ${ws.join("-")} | ${camel.slice(0, 1).toLowerCase()}${camel.slice(1)} | ${ws.map((w) => cap(w)).join(" ")}`,
+    );
+  }
+}

@@ -1,0 +1,74 @@
+class ParseError {
+  message: string;
+  constructor(message: string) {
+    this.message = message;
+  }
+}
+
+function parseDigit(s: string): i64 {
+  if (s == "0") {
+    return 0;
+  }
+  if (s == "1") {
+    return 1;
+  }
+  throw new ParseError(`bad digit: ${s}`);
+}
+
+// Throwing calls propagate automatically (compiled to Result checks, no unwinding).
+function sumDigits(a: string, b: string): i64 {
+  return parseDigit(a) + parseDigit(b);
+}
+
+// Errors as values: a union return, narrowed by the caller.
+function safeDiv(a: i64, b: i64): i64 | string {
+  if (b == 0) {
+    return "div by zero";
+  }
+  return a / b;
+}
+
+function useValues(): i64 | string {
+  const q = safeDiv(10, 2);
+  if (typeof q === "string") {
+    return q;
+  }
+  return safeDiv(q, 0);
+}
+
+function orElse(v: i64 | string, fallback: i64): i64 {
+  return typeof v === "string" ? fallback : v;
+}
+
+function find(xs: string[], want: string): i64 | null {
+  for (let i: usize = 0; i < xs.length; i++) {
+    if (xs[i] == want) {
+      return i as i64;
+    }
+  }
+  return null;
+}
+
+function main() {
+  console.log(sumDigits("1", "1"));
+  try {
+    console.log(sumDigits("1", "x"));
+    console.log("unreachable");
+  } catch (e) {
+    console.log("caught:", e.message);
+  } finally {
+    console.log("finally");
+  }
+
+  const r = useValues();
+  const msg = typeof r === "string" ? `err ${r}` : `ok ${r}`;
+  console.log(msg);
+  console.log(orElse(safeDiv(9, 3), -1), orElse(safeDiv(1, 0), -1));
+
+  const names = ["ann", "bob"];
+  const idx = find(names, "bob");
+  if (idx != null) {
+    console.log("found at", idx); // narrowed to i64
+  }
+  console.log(find(names, "zed") ?? -1);
+}

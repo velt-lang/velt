@@ -1,0 +1,5 @@
+killed: 1
+after the kill: before
+new connection: true
+incr after a second kill: 3 3
+cleaned: 2

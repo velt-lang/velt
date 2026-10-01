@@ -1,0 +1,3 @@
+removed_result.vlt:3:28: error: `Result` was removed
+removed_result.vlt:5:12: error: `Ok` was removed with `Result`
+removed_result.vlt:7:10: error: `Err` was removed with `Result`

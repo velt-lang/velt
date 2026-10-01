@@ -1,0 +1,105 @@
+// std/encoding against Node's Buffer / TextDecoder: Base64 (both alphabets), hex, UTF-8.
+import {
+  base64Encode,
+  base64Decode,
+  base64UrlEncode,
+  base64UrlDecode,
+  base64EncodeString,
+  base64DecodeString,
+  hexEncode,
+  hexDecode,
+  utf8Encode,
+  utf8Decode,
+  utf8DecodeLossy,
+  utf8Valid,
+  EncodingError,
+} from "velt:encoding";
+
+function bytesUpTo(n: i64, mul: i64): u8[] {
+  const out: u8[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push(((i * mul + 7) % 256) as u8);
+  }
+  return out;
+}
+
+function main() {
+  for (let n = 0; n < 9; n++) {
+    const b = bytesUpTo(n, 97);
+    const s = base64Encode(b);
+    const u = base64UrlEncode(b);
+    const h = hexEncode(b);
+    console.log(
+      n,
+      s,
+      u,
+      h,
+      JSON.stringify(base64Decode(s)) == JSON.stringify(b),
+      base64UrlDecode(u).length,
+      hexDecode(h).length,
+    );
+  }
+  const high: u8[] = [251, 255, 191, 62, 63, 0];
+  console.log(base64Encode(high), base64UrlEncode(high));
+  const texts: string[] = [
+    "",
+    "f",
+    "fo",
+    "foo",
+    "foob",
+    "fooba",
+    "foobar",
+    "Man is distinguished",
+    "héllo wörld ✓",
+    "日本",
+  ];
+  for (const t of texts) {
+    const e = base64EncodeString(t);
+    console.log(JSON.stringify(t), e, base64DecodeString(e) == t, hexEncode(utf8Encode(t)));
+  }
+  console.log(
+    JSON.stringify(base64Decode("Zm9vYg")),
+    JSON.stringify(base64Decode("Zm9vYg==")),
+    JSON.stringify(base64UrlDecode("-_8")),
+  );
+  console.log(JSON.stringify(hexDecode("DEADbeef00")));
+  const badB64: string[] = ["Zm9v!", "Z", "Zm9=v", "Zm9vY===", "Zm=", "a b", "-_8"];
+  for (const s of badB64) {
+    try {
+      console.log("ok", s, JSON.stringify(base64Decode(s)));
+    } catch (e) {
+      console.log("bad", s, e instanceof EncodingError);
+    }
+  }
+  const badHex: string[] = ["abc", "zz", "0g", ""];
+  for (const s of badHex) {
+    try {
+      console.log("ok", s, JSON.stringify(hexDecode(s)));
+    } catch (e) {
+      console.log("bad", s, e instanceof EncodingError);
+    }
+  }
+  const seqs: u8[][] = [
+    [104, 105],
+    [0xc3, 0xa9],
+    [0xc3],
+    [0xc0, 0xaf],
+    [0xed, 0xa0, 0x80],
+    [0xf4, 0x90, 0x80, 0x80],
+    [0xe2, 0x9c, 0x93, 0x41],
+    [0xe2, 0x9c, 0x41],
+    [0xff, 0x41, 0xfe],
+    [0xf0, 0x9f, 0x98, 0x80],
+    [0xf0, 0x9f, 0x98],
+  ];
+  for (const s of seqs) {
+    const lossy = utf8DecodeLossy(s);
+    let strict = "";
+    try {
+      strict = utf8Decode(s);
+    } catch (e) {
+      strict = "<invalid>";
+    }
+    console.log(JSON.stringify(s), utf8Valid(s), strict, lossy, hexEncode(utf8Encode(lossy)));
+  }
+}

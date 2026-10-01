@@ -1,0 +1,225 @@
+// pidigits (Benchmarks Game): the spigot of Node #2 (Isaac Gouy, after Alexander Fyodorov) on a
+// hand-written limb class, as main.vlt was before std/bigint: `BigInt` below is a minimal
+// arbitrary-precision integer (sign + base-2^32 magnitude in a `u32[]`) with only the in-place
+// operations the spigot needs. Compare with the Rust `pidigits_limbs` baseline (same limb code).
+import { args } from "velt:process";
+
+const LIMB_BASE: f64 = 4294967296.0;
+
+class BigInt {
+  negative: bool;
+  // Little-endian base-2^32 digits of the magnitude; no high zero limbs, so zero is [].
+  limbs: u32[];
+
+  constructor(value: u32) {
+    this.negative = false;
+    this.limbs = [];
+    if (value != 0) {
+      this.limbs.push(value);
+    }
+  }
+
+  // Number of limbs (`length` is a `usize`; loop counters are `i64`).
+  get size(): i64 {
+    return this.limbs.length as i64;
+  }
+
+  // this = other (reuses this's storage).
+  assign(other: BigInt) {
+    this.negative = other.negative;
+    while (this.size > other.size) {
+      this.limbs.pop();
+    }
+    for (let i = 0; i < other.size; i++) {
+      if (i < this.size) {
+        this.limbs[i] = other.limbs[i];
+      } else {
+        this.limbs.push(other.limbs[i]);
+      }
+    }
+  }
+
+  // this *= k, for 0 < k < 2^32.
+  mulSmall(k: u64) {
+    let carry: u64 = 0;
+    for (let i = 0; i < this.size; i++) {
+      const p = (this.limbs[i] as u64) * k + carry;
+      this.limbs[i] = p as u32;
+      carry = p >> 32;
+    }
+    if (carry != 0) {
+      this.limbs.push(carry as u32);
+    }
+  }
+
+  // this += other * k, for a non-negative other and k < 2^32.
+  addMul(other: BigInt, k: u64) {
+    if (this.negative) {
+      this.subMagnitude(other, k);
+    } else {
+      this.addMagnitude(other, k);
+    }
+  }
+
+  // this -= other * k, for a non-negative other and k < 2^32.
+  subMul(other: BigInt, k: u64) {
+    if (this.negative) {
+      this.addMagnitude(other, k);
+    } else {
+      this.subMagnitude(other, k);
+    }
+  }
+
+  // -1, 0 or 1 as this is less than, equal to or greater than other.
+  compare(other: BigInt): i64 {
+    if (this.negative != other.negative) {
+      return this.negative ? -1 : 1;
+    }
+    const magnitude = this.compareMagnitude(other);
+    return this.negative ? -magnitude : magnitude;
+  }
+
+  // For non-negative this and divisor with a quotient below 2^32: replaces this by
+  // this % divisor and returns this / divisor. The quotient is estimated from the top limbs in
+  // floating point, then corrected.
+  divRemSmallQuotient(divisor: BigInt): u64 {
+    if (this.compareMagnitude(divisor) < 0) {
+      return 0;
+    }
+    const top = divisor.size - 1;
+    const estimate = this.topValue(top) / divisor.topValue(top);
+    let quotient = estimate as u64;
+    // Stay below the true quotient when the estimate is within rounding error of an integer.
+    if (quotient > 0 && estimate - (quotient as f64) < 0.000001) {
+      quotient -= 1;
+    }
+    this.subMagnitude(divisor, quotient);
+    while (this.compareMagnitude(divisor) >= 0) {
+      this.subMagnitude(divisor, 1);
+      quotient += 1;
+    }
+    return quotient;
+  }
+
+  // |this| += other * k (the sign is unchanged).
+  private addMagnitude(other: BigInt, k: u64) {
+    let carry: u64 = 0;
+    for (let i = 0; i < other.size || carry != 0; i++) {
+      const o: u64 = i < other.size ? other.limbs[i] as u64 : 0;
+      const p = o * k + carry;
+      if (i < this.size) {
+        const s = (this.limbs[i] as u64) + (p & 0xffffffff);
+        this.limbs[i] = s as u32;
+        carry = (p >> 32) + (s >> 32);
+      } else {
+        this.limbs.push(p as u32);
+        carry = p >> 32;
+      }
+    }
+  }
+
+  // |this| -= other * k; when that goes below zero, the magnitude becomes |other * k - |this||
+  // and the sign flips.
+  private subMagnitude(other: BigInt, k: u64) {
+    // One spare limb, so that other * k fits and the final borrow is 0 or 1.
+    while (this.size <= other.size) {
+      this.limbs.push(0);
+    }
+    let borrow: u64 = 0;
+    for (let i = 0; i < this.size; i++) {
+      const o: u64 = i < other.size ? other.limbs[i] as u64 : 0;
+      const p = o * k + borrow;
+      const low = p & 0xffffffff;
+      const current = this.limbs[i] as u64;
+      this.limbs[i] = (current - low) as u32;
+      borrow = (p >> 32) + (current < low ? 1 : 0);
+    }
+    if (borrow != 0) {
+      // Two's complement of the limbs gives the magnitude of the negative result.
+      let carry: u64 = 1;
+      for (let i = 0; i < this.size; i++) {
+        const s = ((~this.limbs[i]) as u64) + carry;
+        this.limbs[i] = s as u32;
+        carry = s >> 32;
+      }
+      this.negative = !this.negative;
+    }
+    this.trim();
+    if (this.size == 0) {
+      this.negative = false;
+    }
+  }
+
+  private compareMagnitude(other: BigInt): i64 {
+    if (this.size != other.size) {
+      return this.size < other.size ? -1 : 1;
+    }
+    for (let i = this.size - 1; i >= 0; i--) {
+      const a = this.limbs[i];
+      const b = other.limbs[i];
+      if (a != b) {
+        return a < b ? -1 : 1;
+      }
+    }
+    return 0;
+  }
+
+  // The magnitude of the limbs from top + 1 down to top - 1, scaled by 2^(-32 * (top - 1)).
+  private topValue(top: i64): f64 {
+    let value = 0.0;
+    for (let i = top + 1; i >= top - 1; i--) {
+      value = value * LIMB_BASE;
+      if (i >= 0 && i < this.size) {
+        value += this.limbs[i] as f64;
+      }
+    }
+    return value;
+  }
+
+  private trim() {
+    while (this.size > 0 && this.limbs[this.size - 1] == 0) {
+      this.limbs.pop();
+    }
+  }
+}
+
+function main() {
+  const argv = args();
+  const n = argv.length > 0 ? parseInt(argv[0]) as i64 : 27;
+
+  const acc = new BigInt(0);
+  const den = new BigInt(1);
+  const num = new BigInt(1);
+  const tmp = new BigInt(0);
+  let k: u64 = 0;
+  let line = "";
+  let i = 0;
+  while (i < n) {
+    k += 1;
+    const k2 = k * 2 + 1;
+    acc.addMul(num, 2);
+    acc.mulSmall(k2);
+    den.mulSmall(k2);
+    num.mulSmall(k);
+    if (num.compare(acc) > 0) {
+      continue;
+    }
+    // digit = (3 * num + acc) / den; it is final when (4 * num + acc) / den is the same.
+    tmp.assign(acc);
+    tmp.addMul(num, 3);
+    const digit = tmp.divRemSmallQuotient(den);
+    tmp.addMul(num, 1);
+    if (tmp.compare(den) >= 0) {
+      continue;
+    }
+    line += `${digit}`;
+    i++;
+    if (i % 10 == 0 || i == n) {
+      console.log(`${line.padEnd(10)}\t:${i}`);
+      line = "";
+    }
+    acc.subMul(den, digit);
+    acc.mulSmall(10);
+    num.mulSmall(10);
+  }
+}

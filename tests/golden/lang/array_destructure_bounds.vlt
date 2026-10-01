@@ -1,0 +1,17 @@
+// Regression (apps ergonomics sprint): array destructuring didn't bounds-check, so
+// `const [a, b, c] = xs` with a 2-element array read past the buffer. It now panics like
+// indexing (`index out of bounds`, exit 101). Found porting `const [k, v] = pair.split("=")`
+// (TS gives `undefined` for the missing element).
+function main() {
+  const xs = [10, 20];
+  const [x, ...rest] = xs;
+  console.log(x, rest.length);
+  for (const [k, v] of [
+    [1, 2],
+    [3, 4],
+  ]) {
+    console.log(k + v);
+  }
+  const [a, b, c] = xs;
+  console.log(a, b, c);
+}

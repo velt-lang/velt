@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+velt_common = { path = "crates/velt_common" }
+velt_syntax = { path = "crates/velt_syntax" }
+velt_sema = { path = "crates/velt_sema" }
+velt_vir = { path = "crates/velt_vir" }
+velt_codegen_cl = { path = "crates/velt_codegen_cl" }
+velt_codegen_llvm = { path = "crates/velt_codegen_llvm" }
+velt_opt = { path = "crates/velt_opt" }
+velt_link = { path = "crates/velt_link" }
+vpm = { path = "crates/vpm" }
+velt_fmt = { path = "crates/velt_fmt" }
+velt_lsp = { path = "crates/velt_lsp" }
+
+[profile.dev]
+# Keep debug builds reasonably fast when running compiled test programs.
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

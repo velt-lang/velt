@@ -1,0 +1,13 @@
+// A handler that captures another variable restarts: the running handler's environment has
+// the old layout.
+import { serve, Request, Response } from "velt:http";
+
+async function main() {
+  const greeting = "hello";
+  const name = "world";
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return Response.text(`${greeting} ${name}`);
+  });
+  console.log(`listening on ${server.port}`);
+  await sleep(1000000000);
+}

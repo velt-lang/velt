@@ -1,0 +1,45 @@
+// `const x = <place>` of a value that cannot be moved out — a class field or an array element —
+// refers to it in place (no copy, like a `for...of` element, and read-only); `let` still moves or
+// copies.
+class T {
+  left: T | null = null;
+  kids: T[] = [];
+  v: i64 = 1;
+}
+
+function rowSum(rows: i64[][], i: usize): i64 {
+  const row = rows[i];
+  let s = 0;
+  for (const x of row) {
+    s += x;
+  }
+  return s;
+}
+
+function depth(node: T): i64 {
+  const left = node.left;
+  if (left === null) {
+    return 0;
+  }
+  return 1 + depth(left);
+}
+
+function main() {
+  const t = new T();
+  t.left = new T();
+  t.left.left = new T();
+  t.kids.push(new T());
+  const kids = t.kids;
+  t.kids[0].v = 5;
+  console.log(
+    rowSum(
+      [
+        [1, 2],
+        [3, 4, 5],
+      ],
+      1,
+    ),
+    depth(t),
+    kids[0].v,
+  );
+}

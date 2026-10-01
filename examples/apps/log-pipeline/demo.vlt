@@ -1,0 +1,15 @@
+// Generate a 5000-line log, stream it through the pipeline and print the report (golden:
+// demo.out; node/pipeline.mjs prints the same report for the same file).
+import { removeSync } from "velt:fs";
+import { generate } from "./src/generate";
+import { analyze } from "./src/analyze";
+import { report } from "./src/report";
+
+async function main() {
+  const path = "log-pipeline-demo.log";
+  await generate(path, 5000, 42u32);
+  for (const line of report(await analyze(path))) {
+    console.log(line);
+  }
+  removeSync(path);
+}

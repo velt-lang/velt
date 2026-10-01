@@ -1,0 +1,27 @@
+// try/catch/finally with a custom error class, then an uncaught throw (exit code 1).
+class BadInput extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+function parse(s: string): i64 {
+  if (s.length == 0) {
+    throw new BadInput("empty");
+  }
+  return s.length as i64;
+}
+
+function main() {
+  const inputs = ["abc", "", "hello"];
+  for (const s of inputs) {
+    try {
+      console.log(parse(s));
+    } catch (e) {
+      console.log(`caught ${e.message}`);
+    } finally {
+      console.log("done");
+    }
+  }
+  console.log(parse(""));
+}

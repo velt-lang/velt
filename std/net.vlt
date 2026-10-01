@@ -1,0 +1,98 @@
+// std/net: TCP over the runtime (docs/internals/contracts/rt_abi_async.md §6).
+//
+// Handles: the runtime's `VeltListener` / `VeltStream` are opaque `u64` handles (rt_abi_async.md
+// §3.2), declared and defined as `u64` on every target.
+// `TcpListener` and `TcpStream` are Copy structs around that handle, like file descriptors:
+// - async methods take `this` by copy, so `await conn.readString()` never moves `conn` and a
+//   listener can be moved into a spawned task while its `port` is still read outside;
+// - the handle is released only by `close()`: an unclosed handle leaks until process exit. The
+//   handle is a key into a runtime table, not an address: after `close()` through any copy,
+//   every copy is dead: its operations throw `IoError` `EBADF` ("handle is closed") and closing
+//   again does nothing. They cannot use a `[Symbol.dispose]()` drop hook: a type with one is never Copy,
+//   and an async method owns (moves) its `this`, so `await conn.readString(); await
+//   conn.write(...)` would not compile. The runtime keeps a socket alive while an operation is
+//   in flight, so `close()` may be called at any time.
+
+import { IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
+import { writeBytesTo } from "velt:net_bytes";
+
+declare async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>>;
+declare function velt_rt_tcp_listener_port(l: u64): u32;
+declare function velt_rt_tcp_listener_close(l: u64);
+declare async function velt_rt_tcp_accept(l: u64): Promise<IoResult<u64>>;
+declare async function velt_rt_tcp_connect(addr: string): Promise<IoResult<u64>>;
+declare async function velt_rt_tcp_read(s: u64, max: u64): Promise<IoResult<u8[]>>;
+declare async function velt_rt_tcp_read_string(s: u64, max: u64): Promise<IoResult<string>>;
+// The `u8[]` variant, `velt_rt_tcp_write_bytes`, is declared in std/net_bytes.
+declare async function velt_rt_tcp_write(s: u64, data: string): Promise<IoStatus>;
+declare function velt_rt_tcp_shutdown(s: u64): IoStatus;
+declare function velt_rt_tcp_peer_addr(s: u64): string;
+declare function velt_rt_tcp_close(s: u64);
+
+// A bound listening socket.
+export struct TcpListener {
+  // The real bound port (useful after listening on port 0).
+  port: i64;
+  handle: u64;
+
+  // Waits for the next connection (TCP_NODELAY is on).
+  async accept(): Promise<TcpStream> {
+    return TcpStream { handle: unwrapIo(await velt_rt_tcp_accept(this.handle)) };
+  }
+
+  // Stops listening; pending `accept`s fail.
+  close() {
+    velt_rt_tcp_listener_close(this.handle);
+  }
+}
+
+// A connected TCP stream.
+export struct TcpStream {
+  handle: u64;
+
+  // The next 1..max bytes (`max == 0`: up to 64 KiB); an empty array means end of stream.
+  async read(max: u64 = 0): Promise<u8[]> {
+    return unwrapIo(await velt_rt_tcp_read(this.handle, max));
+  }
+
+  // The next chunk as UTF-8 (a character split across reads is completed by the next call,
+  // invalid bytes become U+FFFD); "" means end of stream.
+  async readString(max: u64 = 0): Promise<string> {
+    return unwrapIo(await velt_rt_tcp_read_string(this.handle, max));
+  }
+
+  // Resolves once every byte is written; `data` is copied at the call.
+  async write(data: string): Promise<void> {
+    checkIo(await velt_rt_tcp_write(this.handle, data));
+  }
+
+  async writeBytes(data: u8[]): Promise<void> {
+    checkIo(await writeBytesTo(this.handle, data));
+  }
+
+  // Half-close: the peer reads end of stream; this side can still read.
+  shutdown() {
+    checkIo(velt_rt_tcp_shutdown(this.handle));
+  }
+
+  // The peer's "ip:port".
+  peerAddr(): string {
+    return velt_rt_tcp_peer_addr(this.handle);
+  }
+
+  // Releases the handle (see header).
+  close() {
+    velt_rt_tcp_close(this.handle);
+  }
+}
+
+// Listens on "host:port" (port 0 picks a free port; read it back from `.port`).
+export async function listen(addr: string): Promise<TcpListener> {
+  const handle = unwrapIo(await velt_rt_tcp_listen(addr));
+  return TcpListener { port: velt_rt_tcp_listener_port(handle) as i64, handle: handle };
+}
+
+// Connects to "host:port".
+export async function connect(addr: string): Promise<TcpStream> {
+  return TcpStream { handle: unwrapIo(await velt_rt_tcp_connect(addr)) };
+}

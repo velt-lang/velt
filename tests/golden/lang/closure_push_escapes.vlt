@@ -1,0 +1,28 @@
+// A closure literal passed straight to `push` is stored in the array, so it is escaping and
+// captures by value. Regression: it was treated as a non-escaping argument whose environment
+// lives in the caller's frame, so calling it after `mk` returned read a dead stack frame.
+// A `for (let ...)` loop variable may be captured and then stepped: JS gives each iteration its
+// own binding, which is the closure's copy here too.
+function mk(): (() => i64)[] {
+  const w = 42;
+  const s = "hello world this is long enough";
+  const fs: (() => i64)[] = [];
+  fs.push(() => w + s.indexOf("t"));
+  return fs;
+}
+
+function smash(n: i64): i64 {
+  const a = [n, n, n, n, n, n, n, n];
+  return a[0] + a[7];
+}
+
+function main() {
+  const fs = mk();
+  console.log(smash(7));
+  console.log(fs[0]());
+  const gs: (() => i64)[] = [];
+  for (let i = 0; i < 3; i++) {
+    gs.push(() => i * 10);
+  }
+  console.log(gs[0](), gs[1](), gs[2]());
+}

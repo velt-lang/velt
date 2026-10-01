@@ -1,0 +1,102 @@
+{
+  "name": "velt",
+  "displayName": "Velt",
+  "description": "Velt language support: syntax highlighting, diagnostics, quick fixes, formatting, outline, go to definition, hover, completion, inlay hints, signature help and semantic highlighting (via `velt lsp`).",
+  "version": "0.1.0",
+  "publisher": "velt-lang",
+  "license": "MIT OR Apache-2.0",
+  "private": true,
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters"
+  ],
+  "keywords": [
+    "velt",
+    "lsp"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:velt"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "velt",
+        "aliases": [
+          "Velt",
+          "velt"
+        ],
+        "extensions": [
+          ".vlt"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "velt",
+        "scopeName": "source.vlt",
+        "path": "./syntaxes/velt.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "velt.restartServer",
+        "title": "Restart Language Server",
+        "category": "Velt"
+      }
+    ],
+    "configuration": {
+      "title": "Velt",
+      "properties": {
+        "velt.serverPath": {
+          "type": "string",
+          "default": "velt",
+          "markdownDescription": "Path to the `velt` executable used to run `velt lsp` (a bare name is looked up on `PATH`; `~` and `${workspaceFolder}` are expanded)."
+        },
+        "velt.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Log the JSON-RPC traffic with the language server to the 'Velt Language Server' output channel."
+        }
+      }
+    },
+    "breakpoints": [
+      {
+        "language": "velt"
+      }
+    ],
+    "semanticTokenModifiers": [
+      {
+        "id": "mutable",
+        "description": "A `let` binding (it may be reassigned)."
+      }
+    ],
+    "configurationDefaults": {
+      "[velt]": {
+        "editor.semanticHighlighting.enabled": true
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/vscode": "~1.82.0",
+    "typescript": "^5.4.0"
+  }
+}

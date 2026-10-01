@@ -1,0 +1,49 @@
+// Interfaces as values: a heterogeneous list of shapes behind an interface.
+interface Shape {
+  area(): f64;
+  name(): string;
+}
+
+class Square implements Shape {
+  side: f64;
+  constructor(side: f64) {
+    this.side = side;
+  }
+  area(): f64 {
+    return this.side * this.side;
+  }
+  name(): string {
+    return "square";
+  }
+}
+
+class Tri implements Shape {
+  b: f64;
+  h: f64;
+  constructor(b: f64, h: f64) {
+    this.b = b;
+    this.h = h;
+  }
+  area(): f64 {
+    return (this.b * this.h) / 2.0;
+  }
+  name(): string {
+    return "triangle";
+  }
+}
+
+function describe(s: Shape): string {
+  return `${s.name()} with area ${s.area()}`;
+}
+
+function main() {
+  const shapes: Shape[] = [new Square(3.0), new Tri(4.0, 5.5), new Square(0.5)];
+  for (const s of shapes) {
+    console.log(describe(s));
+  }
+  let total = 0.0;
+  shapes.forEach((s) => {
+    total += s.area();
+  });
+  console.log(`total ${total}`);
+}

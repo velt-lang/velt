@@ -1,0 +1,38 @@
+// Roman numerals: encode and decode round trip.
+function toRoman(n: i64): string {
+  const values = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1];
+  const symbols = ["M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I"];
+  let out = "";
+  for (let i: usize = 0; i < values.length; i++) {
+    while (n >= values[i]) {
+      out += symbols[i];
+      n -= values[i];
+    }
+  }
+  return out;
+}
+
+function fromRoman(s: string): i64 {
+  const value = new Map<string, i64>();
+  value.set("I", 1);
+  value.set("V", 5);
+  value.set("X", 10);
+  value.set("L", 50);
+  value.set("C", 100);
+  value.set("D", 500);
+  value.set("M", 1000);
+  let total = 0;
+  for (let i = 0; i < (s.length as i64); i++) {
+    const v = value.get(s.slice(i, i + 1)) ?? 0;
+    const next = value.get(s.slice(i + 1, i + 2)) ?? 0;
+    total += v < next ? -v : v;
+  }
+  return total;
+}
+
+function main() {
+  for (const n of [1, 4, 9, 14, 40, 90, 400, 1994, 2024, 3999]) {
+    const r = toRoman(n);
+    console.log(n, r, fromRoman(r));
+  }
+}

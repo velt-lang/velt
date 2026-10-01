@@ -1,0 +1,24 @@
+// Folder modules (`dir/index.vlt`), re-exports (`export { x as y } from`, `export * from`,
+// `export type`), local export lists and `import type`, also through a namespace.
+import { Circle, describeShape, square, Square, SIDES, unit } from "./_modules_shapes";
+import type { Shape, Pair } from "./_modules_shapes";
+import * as shapes from "./_modules_shapes";
+
+function largest(all: Shape[]): f64 {
+  let best = 0.0;
+  for (const s of all) {
+    if (s.area() > best) {
+      best = s.area();
+    }
+  }
+  return best;
+}
+
+function main() {
+  const all: Shape[] = [new Circle(1.0), new Square(3.0)];
+  console.log(describeShape(new Circle(2.0)), largest(all));
+  const p: Pair = [square(2.0), unit()];
+  console.log(p[0], p[1], SIDES);
+  const viaNamespace: shapes.Shape = new shapes.Square(2.0);
+  console.log(viaNamespace.area(), shapes.SIDES, shapes.describeShape(viaNamespace));
+}

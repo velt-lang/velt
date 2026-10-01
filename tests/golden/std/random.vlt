@@ -1,0 +1,31 @@
+// std/random: fast non-cryptographic numbers in range, from every task.
+import { random, randomInt } from "velt:random";
+
+async function roll(n: i64): Promise<i64> {
+  let inRange = 0;
+  for (let i = 0; i < n; i++) {
+    const v = randomInt(1, 7);
+    if (v >= 1 && v < 7) {
+      inRange++;
+    }
+  }
+  return inRange;
+}
+
+async function main() {
+  let sum = 0.0;
+  let ok = true;
+  const counts = [0, 0, 0, 0, 0, 0];
+  for (let i = 0; i < 60000; i++) {
+    const x = random();
+    ok = ok && x >= 0.0 && x < 1.0;
+    sum += x;
+    counts[randomInt(0, 6)] += 1;
+  }
+  const mean = sum / 60000.0;
+  console.log("unit interval:", ok, "mean near 0.5:", mean > 0.48 && mean < 0.52);
+  console.log("every face seen often:", counts.every((c) => c > 9000));
+  console.log("empty range:", randomInt(5, 5), randomInt(5, 1));
+  const tasks = [spawn(roll(1000)), spawn(roll(1000)), spawn(roll(1000))];
+  console.log("tasks:", await Promise.all(tasks));
+}

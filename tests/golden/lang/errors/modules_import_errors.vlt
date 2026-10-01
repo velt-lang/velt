@@ -1,0 +1,12 @@
+import type { Circle, Color } from "../_modules_geo";
+import * as geo from "../_modules_geo";
+export { hidden, missing } from "../_modules_geo";
+export { nowhere };
+
+function main() {
+  const c: Circle = geo.Circle.unit();
+  const d = new Circle(1.0);
+  console.log(Color.Red, c.r, d.r);
+  console.log(geo.hidden(), geo.nothing);
+  const g = geo;
+}

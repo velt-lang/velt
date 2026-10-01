@@ -1,0 +1,7 @@
+setters.vlt:17:7: error: `Plain` is missing method `set size` required by `Sized`
+setters.vlt:30:5: error: cannot read `size`: it has a setter but no getter
+setters.vlt:31:5: error: cannot assign to `area`: it is a getter
+define a setter `set area(v)` to make it assignable
+setters.vlt:32:12: error: mismatched types
+setters.vlt:33:15: error: cannot read `size`: it has a setter but no getter
+setters.vlt:35:10: error: cannot assign to `area`: it is a getter

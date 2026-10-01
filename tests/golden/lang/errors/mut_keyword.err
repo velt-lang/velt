@@ -1,0 +1,4 @@
+mut_keyword.vlt:2:15: error: `mut` is not needed: mutation is inferred
+mut_keyword.vlt:8:3: error: `mut` is not needed: mutation is inferred
+mut_keyword.vlt:13:11: error: `mut` is not needed: mutation is inferred
+mut_keyword.vlt:16:14: error: `mut` is not needed: mutation is inferred

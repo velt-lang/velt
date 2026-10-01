@@ -1,0 +1,51 @@
+// A written `throws` clause (on a function, an interface method, a base method or a function
+// type) bounds what may be thrown.
+class NotFound extends Error {}
+class Forbidden extends Error {}
+
+function load(id: string): string throws NotFound {
+  if (id == "") {
+    throw new Forbidden("empty");
+  }
+  throw new NotFound(id);
+}
+
+interface Store {
+  get(key: string): string throws NotFound;
+}
+
+class Db implements Store {
+  get(key: string): string {
+    throw new Forbidden(key);
+  }
+}
+
+class Base {
+  run(): i64 throws NotFound {
+    return 1;
+  }
+}
+
+class Sub extends Base {
+  override run(): i64 {
+    throw new Forbidden("sub");
+  }
+}
+
+function each(f: () => void) {
+  f();
+}
+
+function main() {
+  each(() => {
+    throw new NotFound("x");
+  });
+  const narrow: (x: i64) => i64 throws NotFound = (x) => {
+    if (x > 1) {
+      throw new Forbidden("big");
+    }
+    return x;
+  };
+  console.log(narrow(1));
+  const r = attempt((x: i64) => x);
+}

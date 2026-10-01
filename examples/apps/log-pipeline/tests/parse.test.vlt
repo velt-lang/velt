@@ -1,0 +1,33 @@
+// Parsing lines and normalizing routes.
+import { LineParser } from "../src/parse";
+
+const LINE = `203.0.113.7 - - [30/Sep/2026:12:00:01 +0000] "GET /api/users/42?x=1 HTTP/1.1" 503 5123 12.345`;
+
+export function test_parses_every_field() {
+  const e = new LineParser().parse(LINE);
+  assert(e != null);
+  if (e != null) {
+    assertEq(e.ip, "203.0.113.7");
+    assertEq(e.hour, "30/Sep/2026:12");
+    assertEq(e.method, "GET");
+    assertEq(e.path, "/api/users/42?x=1");
+    assertEq(e.status, 503);
+    assertEq(e.bytes, 5123);
+    assertEq(e.ms, 12.345);
+  }
+}
+
+export function test_malformed_lines() {
+  const p = new LineParser();
+  assertEq(p.parse("garbage line 7"), null);
+  assertEq(p.parse(""), null);
+  assertEq(p.parse(LINE.replace("503", "5x3")), null);
+}
+
+export function test_routes_fold_ids_and_drop_queries() {
+  const p = new LineParser();
+  assertEq(p.routeOf("/api/users/42/orders/7"), "/api/users/:id/orders/:id");
+  assertEq(p.routeOf("/api/search?q=term1"), "/api/search");
+  assertEq(p.routeOf("/"), "/");
+  assertEq(p.routeOf("/v2/x1"), "/v2/x1");
+}

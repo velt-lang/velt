@@ -1,0 +1,2 @@
+array_ctor_holes.vlt:4:13: error: `new Array(n)` would hold `n` empty slots, which Velt has no value for
+array_ctor_holes.vlt:5:39: error: the first argument of `Array.from`'s callback is always `undefined`: name it `_` (`(_, i) => ...`)

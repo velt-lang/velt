@@ -1,0 +1,11 @@
+// `join` works on an array of a string enum (each element as its string). Regression (difftest
+// corpus): "no method named `join` found for type `Color[]`".
+enum Color {
+  Red = "RED",
+  Blue = "BLUE",
+}
+
+function main() {
+  const cs: Color[] = [Color.Red, Color.Blue];
+  console.log(cs.join(" > "));
+}

@@ -1,0 +1,36 @@
+// Shared by the redis_* goldens: the server URL and per-run key names, so concurrent runs never
+// see each other's keys and every run deletes what it created (never FLUSHALL).
+import { RedisClient } from "velt:redis";
+import { env } from "velt:process";
+import { uuidv4 } from "velt:uuid";
+
+// $VELT_TEST_REDIS_URL (the goldens are skipped when it is unset).
+export function redisUrl(): string {
+  return env("VELT_TEST_REDIS_URL") ?? "";
+}
+
+// `host:port` of $VELT_TEST_REDIS_URL (without credentials or database), for URLs that must
+// reach the same server with other settings.
+export function redisHostPort(): string {
+  let rest = redisUrl().substring(8);
+  const at = rest.lastIndexOf("@");
+  if (at >= 0) {
+    rest = rest.substring(at + 1);
+  }
+  const slash = rest.indexOf("/");
+  return slash >= 0 ? rest.substring(0, slash) : rest;
+}
+
+// A key prefix unique to this run: `velt-golden:<uuid>:`.
+export function freshPrefix(): string {
+  return `velt-golden:${uuidv4()}:`;
+}
+
+// Deletes every key under `prefix`; the number deleted.
+export async function cleanup(c: RedisClient, prefix: string): Promise<i64> {
+  const keys = await c.keys(`${prefix}*`);
+  if (keys.length == 0) {
+    return 0;
+  }
+  return await c.del(keys);
+}

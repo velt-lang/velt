@@ -1,0 +1,99 @@
+// Large maps: many index doublings, mass deletes (compaction), re-inserts, clear and reuse.
+// Results are checked arithmetically (sums and order checksums computed independently).
+function orderChecksum(keys: i64[]): i64 {
+  let h = 0;
+  for (const k of keys) {
+    h = (h * 31 + k) % 1000000007;
+  }
+  return h;
+}
+
+function main() {
+  const n = 200000;
+  const m = new Map<i64, i64>();
+  for (let i = 0; i < n; i++) {
+    // Spread keys: a multiplicative permutation of [0, n) scaled, so they are not sequential.
+    m.set(((i * 7919) % n) * 1000, i);
+  }
+  let ok = m.size == n as usize;
+  for (let i = 0; i < n; i++) {
+    const k = ((i * 7919) % n) * 1000;
+    if ((m.get(k) ?? -1) != i || m.has(k + 1)) {
+      ok = false;
+    }
+  }
+  console.log("inserted", m.size, ok);
+
+  // Delete two thirds (in insertion order), which forces compactions.
+  for (let i = 0; i < n; i++) {
+    if (i % 3 != 0 && !m.delete(((i * 7919) % n) * 1000)) {
+      ok = false;
+    }
+  }
+  const expected: i64[] = [];
+  for (let i = 0; i < n; i += 3) {
+    expected.push(((i * 7919) % n) * 1000);
+  }
+  console.log("after delete", m.size, ok, orderChecksum(m.keys()) == orderChecksum(expected));
+
+  // Re-insert some deleted keys (they go to the end) and overwrite surviving ones (they stay).
+  for (let i = 1; i < n; i += 3) {
+    m.set(((i * 7919) % n) * 1000, -2 * i);
+    expected.push(((i * 7919) % n) * 1000);
+  }
+  for (let i = 0; i < n; i += 3) {
+    m.set(((i * 7919) % n) * 1000, i + 1);
+  }
+  let sum = 0;
+  m.forEach((v, k) => {
+    sum += v;
+  });
+  console.log("reinserted", m.size, orderChecksum(m.keys()) == orderChecksum(expected), sum);
+
+  m.clear();
+  console.log("cleared", m.size, m.get(0) ?? -1, m.keys().length);
+  for (let i = 0; i < 1000; i++) {
+    m.set(i, i);
+  }
+  console.log("reused", m.size, m.get(999) ?? -1);
+
+  // 50k string keys.
+  const words = new Map<string, i64>();
+  for (let i = 0; i < 50000; i++) {
+    words.set(`word-${i}`, i);
+  }
+  let found = 0;
+  for (let i = 0; i < 60000; i++) {
+    if (words.has(`word-${i}`)) {
+      found++;
+    }
+  }
+  for (let i = 0; i < 50000; i += 2) {
+    words.delete(`word-${i}`);
+  }
+  const ks = words.keys();
+  console.log("words", found, words.size, ks[0], ks[ks.length - 1], words.get("word-49999") ?? -1);
+
+  // Drain a big map down to a few survivors (the index shrinks while compacting), then grow it
+  // again.
+  const d = new Map<i64, string>();
+  for (let i = 0; i < 100000; i++) {
+    d.set(i * 13, `v${i}`);
+  }
+  for (let i = 0; i < 100000; i++) {
+    if (i % 25000 != 7) {
+      d.delete(i * 13);
+    }
+  }
+  console.log("drained", d.size, d.keys(), d.values(), d.has(13), d.get(25007 * 13) ?? "");
+  for (let i = 0; i < 50000; i++) {
+    d.set(i * 13 + 1, "x");
+  }
+  let xs = 0;
+  d.forEach((v, k) => {
+    if (v == "x" && k % 13 == 1) {
+      xs++;
+    }
+  });
+  console.log("regrown", d.size, xs, d.keys()[3], d.keys()[4]);
+}

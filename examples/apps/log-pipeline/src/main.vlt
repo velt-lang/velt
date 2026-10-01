@@ -1,0 +1,47 @@
+// log-pipeline: generate a synthetic access log, or stream one into a report (see README.md).
+//   log-pipeline gen access.log --lines 1000000
+//   log-pipeline report access.log
+import { ArgParser } from "velt:cli";
+import { args, exit } from "velt:process";
+import { generate } from "./generate";
+import { analyze } from "./analyze";
+import { report } from "./report";
+
+function parser(): ArgParser {
+  return new ArgParser("log-pipeline", "Generate or analyze an access log.")
+    .option("lines", { short: "n", default: "1000000", help: "Lines to generate" })
+    .option("seed", { default: "42", help: "Generator seed" })
+    .flag("timing", { help: "Print the elapsed time to stderr" })
+    .positional("command", "gen | report")
+    .positional("file", "Log file");
+}
+
+async function main() {
+  const opts = parser().parse(args());
+  const file = opts.get("file");
+  if (opts.flag("help") || file == null) {
+    console.log(parser().help());
+    return;
+  }
+  const start = performance.now();
+  switch (opts.getOr("command", "")) {
+    case "gen":
+      await generate(file, opts.getInt("lines") ?? 0, (opts.getInt("seed") ?? 0) as u32);
+      break;
+    case "report":
+      for (const line of report(await analyze(file))) {
+        console.log(line);
+      }
+      break;
+    default:
+      console.error(parser().help());
+      exit(2);
+  }
+  if (opts.flag("timing")) {
+    console.error(`elapsed: ${fixedMs(performance.now() - start)} ms`);
+  }
+}
+
+function fixedMs(ms: f64): string {
+  return `${Math.round(ms)}`;
+}

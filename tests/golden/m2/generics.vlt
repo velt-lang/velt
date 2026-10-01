@@ -1,0 +1,89 @@
+struct Pair<A, B> {
+  first: A;
+  second: B;
+}
+
+// `p` is moved into swap (its fields are moved out), so the caller gives up `p`.
+function swap<A, B>(p: Pair<A, B>): Pair<B, A> {
+  return Pair { first: p.second, second: p.first };
+}
+
+function mapAll<T, U>(xs: T[], f: (x: T) => U): U[] {
+  const out: U[] = [];
+  for (const x of xs) {
+    out.push(f(x));
+  }
+  return out;
+}
+
+class Stack<T> {
+  items: T[] = [];
+
+  push(x: T) {
+    this.items.push(x);
+  }
+
+  pop(): T | null {
+    return this.items.pop();
+  }
+
+  size(): usize {
+    return this.items.length;
+  }
+}
+
+interface Shape {
+  area(): f64;
+  describe(): string {
+    return `shape with area ${this.area()}`;
+  }
+}
+
+struct Square implements Shape {
+  side: f64;
+  area(): f64 {
+    return this.side * this.side;
+  }
+}
+
+struct Circle implements Shape {
+  r: f64;
+  area(): f64 {
+    return 3.0 * this.r * this.r;
+  }
+  describe(): string {
+    return `circle r=${this.r}`;
+  }
+}
+
+function biggest<T extends Shape>(xs: T[]): f64 {
+  let best = 0.0;
+  for (const x of xs) {
+    if (x.area() > best) {
+      best = x.area();
+    }
+  }
+  return best;
+}
+
+function main() {
+  const p = Pair { first: 1, second: "one" };
+  const s = swap(p);
+  console.log(s.first, s.second);
+
+  const doubled = mapAll([1, 2, 3], (x) => x * 2);
+  console.log(doubled.length, doubled[0], doubled[2]);
+  const strs = mapAll([1, 2], (x) => `#${x}`);
+  console.log(strs[1]);
+
+  let st = new Stack<string>();
+  st.push("a");
+  st.push("b");
+  console.log(st.size(), st.pop() ?? "none", st.pop() ?? "none", st.pop() ?? "none");
+
+  console.log(biggest([Square { side: 2.0 }, Square { side: 3.0 }]));
+  const shapes: Shape[] = [Square { side: 1.0 }, Circle { r: 1.0 }];
+  for (const sh of shapes) {
+    console.log(sh.describe());
+  }
+}

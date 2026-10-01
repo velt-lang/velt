@@ -1,0 +1,77 @@
+// `await using` awaits `[Symbol.asyncDispose]()` at the end of the enclosing block, in reverse
+// declaration order together with `using` values, also on early `return` and `throw`; `null`
+// is skipped, and a value with only `[Symbol.dispose]()` falls back to it (like TS).
+class Conn {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  // Sync: an async method takes `this` by value (moved into its promise), which a `using`
+  // value cannot give away.
+  send(msg: string): string {
+    return `${this.name} <- ${msg}`;
+  }
+  async [Symbol.asyncDispose]() {
+    await sleep(1);
+    console.log(`closed ${this.name}`);
+  }
+}
+
+class Lock {
+  [Symbol.dispose]() {
+    console.log("unlocked");
+  }
+}
+
+class Failure {
+  message: string;
+  constructor(message: string) {
+    this.message = message;
+  }
+}
+
+async function connect(name: string): Promise<Conn> {
+  await sleep(1);
+  console.log(`connected ${name}`);
+  return new Conn(name);
+}
+
+async function maybeConnect(name: string, really: bool): Promise<Conn | null> {
+  return really ? await connect(name) : null;
+}
+
+async function ping(name: string): Promise<string> {
+  await using conn = await connect(name);
+  return conn.send("PING");
+}
+
+async function nested(fail: bool): Promise<i64> {
+  using lock = new Lock();
+  await using a = await connect("a");
+  await using b = await connect("b");
+  console.log(a.send("1"), b.send("2"));
+  if (fail) {
+    throw new Failure("nested failed");
+  }
+  return 42;
+}
+
+async function main() {
+  console.log(await ping("p"));
+  console.log(await nested(false));
+  try {
+    await nested(true);
+  } catch (e) {
+    console.log(`caught ${e.message}`);
+  }
+  {
+    await using none = await maybeConnect("none", false);
+    await using some = await maybeConnect("some", true);
+    console.log(none == null, some != null);
+  }
+  {
+    await using lock = new Lock();
+    console.log("holding the lock");
+  }
+  console.log("done");
+}

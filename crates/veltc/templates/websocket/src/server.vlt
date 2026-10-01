@@ -1,0 +1,115 @@
+// The chat server: each WebSocket connection runs `session`, which joins the room and
+// broadcasts what the client says to everyone.
+import { serve, Response, Server } from "velt:http";
+import { WebSocket, WsMessage, isWebSocketRequest, upgradeWebSocket } from "velt:websocket";
+import { Room } from "./room";
+import { decodeClient, ServerMessage } from "./protocol";
+
+// Sends to one peer; a peer that has gone away is skipped (its own session cleans up).
+async function sendQuietly(ws: WebSocket, text: string) {
+  try {
+    await ws.send(text);
+  } catch (e) {
+    return;
+  }
+}
+
+async function broadcast(sockets: WebSocket[], msg: ServerMessage) {
+  const text = JSON.stringify(msg);
+  const sends: Promise<void>[] = [];
+  for (const s of sockets) {
+    sends.push(sendQuietly(s, text));
+  }
+  await Promise.all(sends);
+}
+
+async function reply(ws: WebSocket, msg: ServerMessage) {
+  await sendQuietly(ws, JSON.stringify(msg));
+}
+
+async function join(ws: WebSocket, id: i64, name: string, room: shared<Mutex<Room>>) {
+  const err = room.with((r) => r.join(id, name, ws));
+  if (err != null) {
+    await reply(ws, { type: "error", message: err });
+    return;
+  }
+  await broadcast(room.with((r) => r.sockets()), { type: "joined", name: name.trim() });
+}
+
+async function say(ws: WebSocket, id: i64, text: string, room: shared<Mutex<Room>>) {
+  const from = room.with((r) => r.nameOf(id));
+  if (from == null) {
+    await reply(ws, { type: "error", message: "join first" });
+    return;
+  }
+  await broadcast(room.with((r) => r.sockets()), { type: "message", from, text });
+}
+
+// Handles one text message; false when the client leaves.
+async function handle(
+  ws: WebSocket,
+  id: i64,
+  text: string,
+  room: shared<Mutex<Room>>,
+): Promise<bool> {
+  try {
+    const msg = decodeClient(text);
+    switch (msg.type) {
+      case "join":
+        await join(ws, id, msg.name, room);
+        return true;
+      case "say":
+        await say(ws, id, msg.text, room);
+        return true;
+      case "leave":
+        return false;
+    }
+  } catch (e) {
+    await reply(ws, { type: "error", message: e.message.clone() });
+    return true;
+  }
+}
+
+// The next message, or null once the client closed or the connection broke. (`receive` throws
+// on an abrupt disconnect; uncaught in a spawned task, that would end the server.)
+async function receive(ws: WebSocket): Promise<WsMessage | null> {
+  try {
+    return await ws.receive();
+  } catch (e) {
+    return null;
+  }
+}
+
+// One client connection, until it closes or leaves.
+async function session(ws: WebSocket, id: i64, room: shared<Mutex<Room>>) {
+  let m = await receive(ws);
+  while (m != null) {
+    if (!m.isBinary && !(await handle(ws, id, m.text, room))) {
+      break;
+    }
+    m = await receive(ws);
+  }
+  const name = room.with((r) => r.leave(id));
+  if (name != null) {
+    await broadcast(room.with((r) => r.sockets()), { type: "left", name });
+  }
+  try {
+    await ws.close();
+  } catch (e) {
+    return;
+  }
+}
+
+/// Serves the chat on `port` (0 = any free port): WebSocket `/chat`, a hint on other paths.
+export async function startChat(port: i64): Promise<Server> {
+  const room = shared(new Mutex<Room>(new Room()));
+  const ids = shared(0);
+  return await serve({ port }, async (req) => {
+    if (req.path === "/chat" && isWebSocketRequest(req)) {
+      const up = upgradeWebSocket(req);
+      spawn(session(up.socket, ids.add(1), room));
+      return up.response;
+    }
+    return Response.text("chat server: connect a WebSocket to /chat\n");
+  });
+}

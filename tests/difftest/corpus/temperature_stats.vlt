@@ -1,0 +1,34 @@
+// Mean, variance, median and extremes of float samples.
+function mean(xs: f64[]): f64 {
+  return xs.reduce((a, b) => a + b, 0.0) / (xs.length as f64);
+}
+
+function variance(xs: f64[]): f64 {
+  const m = mean(xs);
+  return xs.reduce((a, b) => a + (b - m) * (b - m), 0.0) / (xs.length as f64);
+}
+
+function median(xs: f64[]): f64 {
+  const s = xs.slice(0);
+  for (let i: usize = 1; i < s.length; i++) {
+    let j = i;
+    while (j > 0 && s[j - 1] > s[j]) {
+      const t = s[j];
+      s[j] = s[j - 1];
+      s[j - 1] = t;
+      j--;
+    }
+  }
+  const n = s.length;
+  const mid = (n - (n % 2)) / 2;
+  return n % 2 == 1 ? s[mid] : (s[mid - 1] + s[mid]) / 2.0;
+}
+
+function main() {
+  const temps: f64[] = [12.5, 14.25, 9.75, 21.0, 18.5, 11.125, 16.0, 13.375];
+  console.log(`mean ${mean(temps)} var ${variance(temps)} sd ${Math.sqrt(variance(temps))}`);
+  console.log(`median ${median(temps)} ${median(temps.slice(1))}`);
+  console.log(
+    `min ${temps.reduce((a, b) => Math.min(a, b), 1e9)} max ${temps.reduce((a, b) => Math.max(a, b), -1e9)}`,
+  );
+}

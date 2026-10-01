@@ -1,0 +1,38 @@
+// `/` is JS division unless both operands are declared integers (docs/reference/types.md "Numbers").
+function half(n: i64): i64 {
+  return n / 2;
+}
+
+function mean(xs: i64[]): f64 {
+  let sum = 0;
+  for (const x of xs) {
+    sum += x;
+  }
+  return sum / xs.length;
+}
+
+function main() {
+  const a = 7;
+  const b = 2;
+  console.log(a / b, a / 2, 7 / 2, -a / b, a % b, -a % b);
+  const n: i64 = 7;
+  const m: i64 = 2;
+  console.log(n / m, n / 2, half(9), -n / m, n % m);
+  const h: i64 = 7 / 2;
+  console.log(h, Math.trunc(a / b), Math.trunc(-a / b), Math.trunc(n / m));
+  const q = Math.trunc(a / b);
+  console.log(q * 10, q / 2);
+  console.log(a + 0.5, a < 7.5, Math.sqrt(16), mean([1, 2, 4]));
+  const xs = [10, 20, 30, 40, 50];
+  console.log(xs.length / 2, xs[xs.length / 2]);
+  let i = 0;
+  let total = 0.0;
+  while (i < 4) {
+    total += i;
+    i++;
+  }
+  console.log(total / 4, 1 / 0, 0.1 + 0.2);
+  const big: u8 = 200;
+  const small: u8 = 7;
+  console.log(big / small, big % small);
+}

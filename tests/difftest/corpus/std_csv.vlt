@@ -1,0 +1,58 @@
+// std/csv against an independent RFC 4180 reader/writer (the shim): quoting, line endings,
+// options, errors, and write → parse round trips.
+import { parseCsv, parseCsvRecords, stringifyCsv, CsvError } from "velt:csv";
+
+function show(label: string, text: string) {
+  try {
+    console.log(label, JSON.stringify(parseCsv(text)));
+  } catch (e) {
+    console.log(label, "error", e.message, e.line);
+  }
+}
+
+function main() {
+  show("simple", "a,b,c\n1,2,3\n");
+  show("no final eol", "a,b\n1,2");
+  show("crlf", "a,b\r\n1,2\r\n");
+  show("lone cr", "a,b\r1,2\r");
+  show("empty", "");
+  show("only eol", "\n");
+  show("blank lines", "a\n\nb\n\n");
+  show("trailing delim", "a,b,\n,\n,,");
+  show("quoted", "\"a,b\",\"c\"\"d\",\"\"\n\"multi\nline\",x\n");
+  show("quoted crlf", "\"x\r\ny\",z\r\n");
+  show("bom", "\u{feff}h1,h2\nv1,v2\n");
+  show("spaces kept", " a , b \n");
+  show("unterminated", "a,\"b\nc\nd");
+  show("after quote", "a\nb,\"c\"x,d\n");
+  show("late error", "1\n2\n\"3\"4\n");
+  console.log(
+    JSON.stringify(
+      parseCsv(" a ;\t\"b;c\"  ; d\t\n\n;\n", { delimiter: ";", trim: true, skipEmptyLines: true }),
+    ),
+  );
+  console.log(JSON.stringify(parseCsv("x\ty\n1\t2\n", { delimiter: "\t" })));
+  try {
+    parseCsv("a", { delimiter: "ab" });
+  } catch (e) {
+    console.log("bad delimiter", e instanceof CsvError, e.message, e.line);
+  }
+  const recs = parseCsvRecords("name,age,name\nann,31,ANN\nbob\ncid,40,CID,extra\n");
+  for (const r of recs) {
+    console.log(JSON.stringify([...r.keys()]), JSON.stringify([...r.values()]));
+  }
+  console.log(parseCsvRecords("").length, parseCsvRecords("h\n").length);
+  const rows: string[][] = [
+    ["plain", "with,comma", "with \"quote\""],
+    ["line\nbreak", "", "cr\rhere"],
+    [],
+    ["x"],
+  ];
+  const text = stringifyCsv(rows);
+  console.log(JSON.stringify(text));
+  console.log(JSON.stringify(stringifyCsv(rows, { delimiter: ";", crlf: true })));
+  console.log(JSON.stringify(stringifyCsv([])));
+  console.log(JSON.stringify(parseCsv(text)));
+  const semi = stringifyCsv([["a;b", "c,d"]], { delimiter: ";" });
+  console.log(JSON.stringify(semi), JSON.stringify(parseCsv(semi, { delimiter: ";" })));
+}

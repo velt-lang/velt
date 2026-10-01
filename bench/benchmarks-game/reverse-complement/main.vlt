@@ -1,0 +1,72 @@
+// reverse-complement: write the reverse complement of every FASTA sequence on stdin.
+// https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/revcomp.html
+// Written the way a TypeScript developer would with Node Buffers: all of stdin is read as bytes,
+// headers are found with `indexOf`, every sequence is written backwards (complemented, folded
+// into 60-column lines) into one preallocated output Buffer, which goes to stdout in one write.
+
+import { readAllBytesSync } from "velt:stdin";
+import { stdout } from "velt:process";
+
+const LINE_LENGTH: usize = 60;
+const NEWLINE: u8 = 10;
+const HEADER_START: u8 = 62; // '>'
+
+// complement[c] is the complement of code c (either case); other bytes map to themselves.
+function complementTable(): u8[] {
+  const from = "ACGTUMRWSYKVHDBN";
+  const to = "TGCAAKYWSRMBDHVN";
+  const table: u8[] = [];
+  for (let c = 0; c < 256; c++) {
+    table.push(c as u8);
+  }
+  for (let i: usize = 0; i < from.length; i++) {
+    const upper = from.charCodeAt(i as i64);
+    const target = to.charCodeAt(i as i64) as u8;
+    table[upper as usize] = target;
+    table[(upper + 32) as usize] = target; // lower case
+  }
+  return table;
+}
+
+function main() {
+  const table = complementTable();
+  const input = readAllBytesSync();
+  const n = input.length;
+  // The output has as many bytes as the input, plus a final newline the input may lack.
+  const out = Buffer.alloc(n + 1);
+  let o: usize = 0;
+  let pos: usize = 0;
+  while (pos < n) {
+    const found = input.indexOf(NEWLINE, pos as i64);
+    const headerEnd = found < 0 ? n : (found as usize) + 1;
+    for (let i = pos; i < headerEnd; i++) {
+      out[o] = input[i];
+      o++;
+    }
+    const nextHeader = input.indexOf(HEADER_START, headerEnd as i64);
+    const end = nextHeader < 0 ? n : nextHeader as usize;
+    let column: usize = 0;
+    for (let i = end; i > headerEnd; i--) {
+      const b = input[i - 1];
+      if (b != NEWLINE) {
+        out[o] = table[b as usize];
+        o++;
+        column++;
+        if (column == LINE_LENGTH) {
+          out[o] = NEWLINE;
+          o++;
+          column = 0;
+        }
+      }
+    }
+    if (column > 0) {
+      out[o] = NEWLINE;
+      o++;
+    }
+    pos = end;
+  }
+  while (out.length > o) {
+    out.pop();
+  }
+  stdout.write(out);
+}

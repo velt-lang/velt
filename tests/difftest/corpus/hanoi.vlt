@@ -1,0 +1,20 @@
+// Towers of Hanoi: move list for 3 disks, move counts up to 20.
+function hanoi(n: i64, from: string, to: string, via: string, moves: string[]) {
+  if (n == 0) {
+    return;
+  }
+  hanoi(n - 1, from, via, to, moves);
+  moves.push(`${n}:${from}${to}`);
+  hanoi(n - 1, via, to, from, moves);
+}
+
+function count(n: i64): i64 {
+  return n == 0 ? 0 : 2 * count(n - 1) + 1;
+}
+
+function main() {
+  const moves: string[] = [];
+  hanoi(3, "A", "C", "B", moves);
+  console.log(moves.join(" "));
+  console.log(count(10), count(20), moves.length);
+}

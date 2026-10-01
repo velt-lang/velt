@@ -1,0 +1,75 @@
+// requires-env: VELT_TEST_PG_URL
+// std/postgres COPY streaming: copyFrom writes rows in chunks (split anywhere), copyTo reads
+// them back as they arrive; abort() cancels a copy, a bad row fails end() and a transaction.
+import { env } from "velt:process";
+import { uuidv4 } from "velt:uuid";
+import { connect } from "velt:postgres";
+
+class Count {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+async function main() {
+  const db = await connect(env("VELT_TEST_PG_URL") ?? "");
+  const t = `copy_${uuidv4().replaceAll("-", "")}`;
+  await db.batch(`CREATE TEMP TABLE ${t} (id int PRIMARY KEY, name text, score float8)`);
+
+  const w = await db.copyFrom(`COPY ${t} (id, name, score) FROM STDIN (FORMAT csv)`);
+  await w.write("1,alpha,1.5\n2,\"be");
+  await w.write("ta, with comma\",2.25\n");
+  for (let i = 3; i <= 1000; i++) {
+    await w.write(`${i},row ${i},${i}.5\n`);
+  }
+  console.log("copied:", await w.end());
+
+  const r = await db.copyTo(`COPY (SELECT * FROM ${t} ORDER BY id) TO STDOUT (FORMAT csv)`);
+  let text = "";
+  let chunk = await r.read();
+  while (chunk != null) {
+    text += chunk;
+    chunk = await r.read();
+  }
+  const lines = text.split("\n");
+  console.log("lines:", lines.length - 1, "|", lines[0], "|", lines[1], "|", lines[999]);
+
+  // Aborted: nothing is copied, and the connection stays usable.
+  const a = await db.copyFrom(`COPY ${t} (id, name, score) FROM STDIN (FORMAT csv)`);
+  await a.write("5000,never,0\n");
+  a.abort();
+  const after: Count | null = await db.selectOne(`SELECT count(*)::int8 AS n FROM ${t}`);
+  console.log("after abort:", after?.n ?? -1);
+
+  // A bad row fails end() with the server's error.
+  const bad = await db.copyFrom(`COPY ${t} (id, name, score) FROM STDIN (FORMAT csv)`);
+  await bad.write("x,y,z\n");
+  try {
+    console.log(await bad.end());
+  } catch (e) {
+    console.log("bad row:", e.code);
+  }
+  // A released writer or reader fails with ECLOSED.
+  try {
+    await bad.write("1,a,1\n");
+  } catch (e) {
+    console.log("closed writer:", e.code);
+  }
+  try {
+    await r.read();
+  } catch (e) {
+    console.log("closed reader:", e.code);
+  }
+  // COPY TO in the binary format, read as bytes: the PGCOPY signature comes first.
+  const b = await db.copyTo(`COPY (SELECT 1) TO STDOUT (FORMAT binary)`);
+  const bytes = await b.readBytes();
+  if (bytes != null) {
+    console.log("binary:", bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]);
+  }
+  b.close();
+  const n: Count | null = await db.selectOne(`SELECT count(*)::int8 AS n FROM ${t}`);
+  console.log("rows:", n?.n ?? -1);
+  db.close();
+}

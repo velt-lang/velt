@@ -1,0 +1,26 @@
+// Regression (difftest json-static-type): JSON.stringify of a subclass instance held as its
+// base class writes the dynamic class's fields, like console.log and JS (`{"a":1,"b":2}`), not
+// just the static type's.
+// Expected output is Node's.
+class Base {
+  a: i64;
+  constructor(a: i64) {
+    this.a = a;
+  }
+}
+
+class Derived extends Base {
+  b: i64;
+  constructor(a: i64, b: i64) {
+    super(a);
+    this.b = b;
+  }
+}
+
+function main() {
+  const xs: Base[] = [new Derived(1, 2)];
+  console.log(JSON.stringify(xs));
+  const one: Base = new Derived(3, 4);
+  console.log(JSON.stringify(one));
+  console.log(one);
+}

@@ -1,0 +1,22 @@
+function first(xs: i64[], extra: i64[]): i64 {
+  return xs[0] + (extra.length as i64);
+}
+
+function takeLast(xs: i64[]): i64 {
+  return xs.pop() ?? 0;
+}
+
+function keep(names: string[], owned: string[]): i64 {
+  const all: string[][] = [owned];
+  return (names.length + all.length) as i64;
+}
+
+function main() {
+  const xs: i64[] = [1, 2, 3];
+  xs.push(xs.length as i64);
+  console.log(first(xs, [xs[0]]));
+  console.log(first(xs, [takeLast(xs)]));
+  xs.push(takeLast(xs));
+  const names: string[] = ["a"];
+  console.log(keep(names, names));
+}

@@ -1,0 +1,61 @@
+class Base@I@ {
+  id: i64;
+  tags: string[];
+
+  constructor(id: i64) {
+    this.id = id;
+    this.tags = [];
+  }
+
+  tag(t: string) {
+    this.tags.push(t);
+  }
+
+  area(): f64 {
+    return 0.0;
+  }
+}
+
+class Sub@I@ extends Base@I@ {
+  r: f64;
+
+  constructor(id: i64, r: f64) {
+    super(id);
+    this.r = r;
+  }
+
+  override area(): f64 {
+    this.tag("a");
+    return this.r;
+  }
+}
+
+struct P@I@ implements Scorer {
+  k: i64;
+  score(x: i64): i64 {
+    return x + this.k;
+  }
+}
+
+function g@I@(xs: i64[], b: Base@I@): i64 {
+  b.tag("g");
+@CHAIN@
+  return r + (xs.length as i64);
+}
+
+function f@I@(b: Base@I@, xs: i64[], s: string): i64 {
+  xs.push(b.id);
+  b.tag(s);
+  let total = g@I@(xs, b);
+  for (const x of xs) {
+    total += x;
+  }
+  const scorers: Scorer[] = [P@I@ { k: @I@ }];
+  for (const sc of scorers) {
+    total += sc.score(total);
+  }
+  const inc = (d: i64): i64 => d + 1;
+  total += inc(1);
+  return total;
+}
+

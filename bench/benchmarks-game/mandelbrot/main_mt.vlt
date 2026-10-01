@@ -1,0 +1,67 @@
+// The Computer Language Benchmarks Game: mandelbrot
+// https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/mandelbrot.html
+//
+// Multi-threaded version of main.vlt: the rows are split into blocks, each block is rendered by
+// a spawned task, and `Promise.all` collects the blocks in order (the runtime runs tasks on one
+// worker thread per core). Same per-pixel code as main.vlt.
+import { argv, stdout } from "velt:process";
+
+const MAX_ITERATIONS = 50;
+const LIMIT_SQUARED = 4.0;
+
+// 1 if c = cr + ci·i stays bounded for MAX_ITERATIONS steps of z = z² + c, else 0.
+function inSet(cr: f64, ci: f64): i64 {
+  let zr = 0.0;
+  let zi = 0.0;
+  let tr = 0.0;
+  let ti = 0.0;
+  for (let i = 0; i < MAX_ITERATIONS && tr + ti <= LIMIT_SQUARED; i++) {
+    zi = 2.0 * zr * zi + ci;
+    zr = tr - ti + cr;
+    tr = zr * zr;
+    ti = zi * zi;
+  }
+  return tr + ti <= LIMIT_SQUARED ? 1 : 0;
+}
+
+// Row y of the bitmap: `size` pixels, most significant bit first, the last byte padded with 0s.
+function renderRow(y: i64, size: i64, out: u8[]) {
+  const ci = (2.0 * (y as f64)) / (size as f64) - 1.0;
+  let bits = 0;
+  for (let x = 0; x < size; x++) {
+    const cr = (2.0 * (x as f64)) / (size as f64) - 1.5;
+    bits = (bits << 1) | inSet(cr, ci);
+    if (x % 8 == 7) {
+      out.push(bits as u8);
+      bits = 0;
+    }
+  }
+  if (size % 8 != 0) {
+    out.push((bits << (8 - (size % 8))) as u8);
+  }
+}
+
+const ROWS_PER_TASK = 16;
+
+async function renderRows(first: i64, last: i64, size: i64): Promise<u8[]> {
+  const out: u8[] = [];
+  for (let y = first; y < last; y++) {
+    renderRow(y, size, out);
+  }
+  return out;
+}
+
+async function main() {
+  const args = argv();
+  const size = args.length > 1 ? Number(args[1]) as i64 : 200;
+  const tasks: Promise<u8[]>[] = [];
+  for (let y = 0; y < size; y += ROWS_PER_TASK) {
+    const last = y + ROWS_PER_TASK < size ? y + ROWS_PER_TASK : size;
+    tasks.push(spawn(renderRows(y, last, size)));
+  }
+  const blocks = await Promise.all(tasks);
+  stdout.writeString(`P4\n${size} ${size}\n`);
+  for (const block of blocks) {
+    stdout.write(block);
+  }
+}

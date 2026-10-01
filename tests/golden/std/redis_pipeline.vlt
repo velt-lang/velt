@@ -1,0 +1,92 @@
+// requires-env: VELT_TEST_REDIS_URL
+// std/redis: pipelines, MULTI/EXEC transactions and one client shared by many tasks.
+import { connect, RedisClient, RedisError, RedisReply } from "velt:redis";
+import { redisUrl, freshPrefix, cleanup } from "./_redis";
+
+function show(r: RedisReply): string {
+  switch (r.kind) {
+    case "nil":
+      return "nil";
+    case "int":
+      return `int ${r.int}`;
+    case "array":
+      return `array [${r.items.map((x) => show(x)).join(", ")}]`;
+    case "error":
+      return `error ${r.text.split(" ")[0]}`;
+    case "status":
+    case "string":
+      return `${r.kind} ${r.text}`;
+  }
+}
+
+async function bump(c: RedisClient, key: string, times: i64): Promise<i64> {
+  let last: i64 = 0;
+  for (let i = 0; i < times; i++) {
+    last = await c.incr(key);
+  }
+  return last;
+}
+
+async function main() {
+  const p = freshPrefix();
+  const c = await connect(redisUrl());
+
+  // A pipeline: one round trip, one reply per command; a rejected command is an error reply.
+  const pl = c.pipeline();
+  pl.set(`${p}a`, "1");
+  pl.incr(`${p}a`);
+  pl.incrBy(`${p}a`, 10);
+  pl.get(`${p}a`);
+  pl.get(`${p}missing`);
+  pl.rpush(`${p}l`, ["x", "y"]);
+  pl.call(["LRANGE", `${p}l`, "0", "-1"]);
+  pl.hset(`${p}h`, "f", "v");
+  pl.hget(`${p}h`, "f");
+  pl.incr(`${p}l`);
+  pl.sadd(`${p}s`, ["m"]);
+  pl.zadd(`${p}z`, 1.5, "m");
+  pl.expire(`${p}a`, 100);
+  pl.publish(`${p}nobody-listens`, "hi");
+  pl.del([`${p}h`]);
+  console.log("queued:", pl.length);
+  const replies = await pl.exec();
+  for (let i: usize = 0; i < replies.length; i++) {
+    console.log(`  ${i}: ${show(replies[i])}`);
+  }
+  console.log("error reply:", replies[9].isError(), "asInt:", replies[1].asInt());
+  console.log("empty pipeline:", (await c.pipeline().exec()).length);
+
+  // A transaction runs atomically and returns EXEC's replies.
+  const tx = c.multi();
+  tx.incr(`${p}counter`);
+  tx.incr(`${p}counter`);
+  tx.get(`${p}counter`);
+  console.log("multi:", (await tx.exec()).map((r) => show(r)));
+
+  // A command the server rejects while queueing aborts the whole transaction.
+  const bad = c.multi();
+  bad.incr(`${p}counter`);
+  bad.call(["NOSUCHCOMMAND"]);
+  try {
+    await bad.exec();
+    console.log("aborted transaction did not throw");
+  } catch (e) {
+    console.log("aborted:", e.code);
+  }
+  console.log("counter unchanged:", await c.get(`${p}counter`));
+
+  // The multiplexed connection is shared by concurrent tasks.
+  const tasks: Promise<i64, RedisError>[] = [];
+  for (let t = 0; t < 8; t++) {
+    tasks.push(spawn(bump(c, `${p}shared`, 25)));
+  }
+  const lasts = await Promise.all(tasks);
+  let highest: i64 = 0;
+  for (const x of lasts) {
+    highest = x > highest ? x : highest;
+  }
+  console.log("8 tasks x 25 incr:", await c.get(`${p}shared`), "highest seen:", highest);
+
+  console.log("cleanup:", await cleanup(c, p));
+  c.close();
+}

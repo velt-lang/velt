@@ -1,0 +1,6 @@
+{"name":"ann","age":30,"tags":["a","b"]}
+bob 41 0 b@x.io
+json error: expected string at $.name
+true
+{"a":[1,2.5,{"b":null}],"c":true,"s":"x\ny"}
+[1,2,3] "q\"uote"

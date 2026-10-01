@@ -1,0 +1,57 @@
+// One access-log line → a typed entry.
+//   203.0.113.7 - - [30/Sep/2026:12:00:01 +0000] "GET /api/users/42 HTTP/1.1" 200 5123 12.345
+// (client, identity, user, time, request line, status, response bytes, response time in ms).
+import { RegExp } from "velt:regex";
+
+export type Entry = {
+  ip: string;
+  hour: string;
+  method: string;
+  path: string;
+  status: i64;
+  bytes: i64;
+  ms: f64;
+}; // Day and hour of the request: "30/Sep/2026:12".
+
+const LINE_PATTERN =
+  "^(\\S+) \\S+ \\S+ \\[([^:\\]]+:\\d\\d)[^\\]]*\\] \"(\\w+) (\\S+) [^\"]*\" (\\d{3}) (\\d+) ([\\d.]+)$";
+
+// The compiled patterns. Module-level constants must be constant expressions, so the regexes
+// live in an object created once by the caller and passed along.
+export class LineParser {
+  private line: RegExp;
+  private digits: RegExp;
+
+  // (Field initializers can't use `new RegExp(p)`: tests/golden/bugs/sema_default_args_in_field_initializer.)
+  constructor() {
+    this.line = new RegExp(LINE_PATTERN);
+    this.digits = new RegExp("^\\d+$");
+  }
+
+  // The entry on `line`, or null if the line is malformed.
+  parse(line: string): Entry | null {
+    const m = this.line.exec(line);
+    if (m == null) {
+      return null;
+    }
+    return {
+      ip: m.group(1) ?? "",
+      hour: m.group(2) ?? "",
+      method: m.group(3) ?? "",
+      path: m.group(4) ?? "",
+      status: Number(m.group(5) ?? "") as i64,
+      bytes: Number(m.group(6) ?? "") as i64,
+      ms: Number(m.group(7) ?? ""),
+    };
+  }
+
+  // `/api/users/42/orders/7?x=1` → `/api/users/:id/orders/:id` (ids folded, query dropped).
+  routeOf(path: string): string {
+    const q = path.indexOf("?");
+    const bare = q < 0 ? path.clone() : path.slice(0, q);
+    return bare
+      .split("/")
+      .map((seg) => (this.digits.test(seg) ? ":id" : seg.clone()))
+      .join("/");
+  }
+}

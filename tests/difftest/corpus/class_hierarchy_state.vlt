@@ -1,0 +1,57 @@
+// Accounts with overridden fee logic, polymorphic month-end processing and history.
+class Account {
+  id: string;
+  balance: f64;
+  log: string[] = [];
+  constructor(id: string, balance: f64) {
+    this.id = id;
+    this.balance = balance;
+  }
+  fee(): f64 {
+    return 1.0;
+  }
+  monthEnd() {
+    const f = this.fee();
+    this.balance -= f;
+    this.log.push(`fee ${f}`);
+  }
+}
+
+class Savings extends Account {
+  rate: f64;
+  constructor(id: string, balance: f64, rate: f64) {
+    super(id, balance);
+    this.rate = rate;
+  }
+  override fee(): f64 {
+    return this.balance > 1000.0 ? 0.0 : 0.5;
+  }
+  override monthEnd() {
+    const interest = Math.round(this.balance * this.rate * 100.0) / 100.0;
+    this.balance += interest;
+    this.log.push(`interest ${interest}`);
+    super.monthEnd();
+  }
+}
+
+class Premium extends Savings {
+  override fee(): f64 {
+    return 0.0;
+  }
+}
+
+function main() {
+  const accts: Account[] = [
+    new Account("chk", 50.0),
+    new Savings("sav", 1500.0, 0.01),
+    new Premium("pre", 200.0, 0.02),
+  ];
+  for (let m = 0; m < 3; m++) {
+    for (const a of accts) {
+      a.monthEnd();
+    }
+  }
+  for (const a of accts) {
+    console.log(`${a.id} ${a.balance} ${a.log.join(",")}`);
+  }
+}

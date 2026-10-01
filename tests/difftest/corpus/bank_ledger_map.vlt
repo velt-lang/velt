@@ -1,0 +1,40 @@
+// A ledger keyed by account with Map updates, validation errors and a final report.
+class LedgerError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+function apply(balances: Map<string, i64>, from: string, to: string, amount: i64) {
+  if (amount <= 0) {
+    throw new LedgerError(`invalid amount ${amount}`);
+  }
+  const have = balances.get(from) ?? 0;
+  if (have < amount) {
+    throw new LedgerError(`${from} lacks ${amount - have}`);
+  }
+  balances.set(`${from}`, have - amount);
+  balances.set(`${to}`, (balances.get(to) ?? 0) + amount);
+}
+
+function main() {
+  const b = new Map<string, i64>();
+  b.set("ann", 100);
+  b.set("bob", 50);
+  const txs = "ann>bob:30 bob>cy:70 cy>ann:10 ann>dee:0 dee>ann:5 bob>ann:10".split(" ");
+  let failed = 0;
+  for (const t of txs) {
+    const parts = t.split(":");
+    const who = parts[0].split(">");
+    try {
+      apply(b, who[0], who[1], parseInt(parts[1], 10) as i64);
+    } catch (e) {
+      failed++;
+      console.log(`rejected ${t}: ${e.message}`);
+    }
+  }
+  for (const [k, v] of b) {
+    console.log(`${k.padEnd(4, " ")}${`${v}`.padStart(5, " ")}`);
+  }
+  console.log(failed, [...b.values()].reduce((x, y) => x + y, 0));
+}

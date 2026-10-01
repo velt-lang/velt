@@ -1,0 +1,35 @@
+// Euclid's GCD (recursive and iterative) and LCM.
+function gcd(a: i64, b: i64): i64 {
+  return b == 0 ? a : gcd(b, a % b);
+}
+
+function gcdLoop(a: i64, b: i64): i64 {
+  while (b != 0) {
+    const t = a % b;
+    a = b;
+    b = t;
+  }
+  return a;
+}
+
+function lcm(a: i64, b: i64): i64 {
+  return (a / gcd(a, b)) * b;
+}
+
+function main() {
+  const pairs = [
+    [12, 18],
+    [17, 5],
+    [100, 75],
+    [0, 9],
+    [270, 192],
+  ];
+  for (const p of pairs) {
+    console.log(`gcd(${p[0]}, ${p[1]}) = ${gcd(p[0], p[1])} = ${gcdLoop(p[0], p[1])}`);
+  }
+  console.log(
+    lcm(4, 6),
+    lcm(21, 6),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].reduce((a, b) => lcm(a, b), 1),
+  );
+}

@@ -1,0 +1,9 @@
+{
+  "name": "velt-bench-web-node",
+  "private": true,
+  "type": "module",
+  "description": "Node baseline for bench/web (run.sh installs it with npm ci).",
+  "dependencies": {
+    "pg": "^8.16.3"
+  }
+}

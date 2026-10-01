@@ -1,0 +1,10 @@
+import { serve, Request, Response } from "velt:http";
+import { greeting } from "./greeting";
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return Response.text(greeting());
+  });
+  console.log(`listening on ${server.port}`);
+  await sleep(1000000000);
+}

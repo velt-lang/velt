@@ -1,0 +1,78 @@
+// The Computer Language Benchmarks Game: fannkuch-redux
+// https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/fannkuchredux.html
+//
+// Idiomatic single-threaded Velt, written the way a TypeScript developer would: integer arrays
+// and the classic sequential algorithm (the permutations in the order of the benchmark's
+// reference program, counting flips by reversing prefixes). Follows the Node.js #8 program
+// (Isaac Gouy, after Rex Kerr's Scala program).
+import { argv } from "velt:process";
+
+function fannkuch(n: i64): { checksum: i64; maxFlips: i64 } {
+  const perm1: i64[] = [];
+  const perm: i64[] = [];
+  const count: i64[] = [];
+  for (let i = 0; i < n; i++) {
+    perm1.push(i);
+    perm.push(0);
+    count.push(0);
+  }
+  let maxFlips = 0;
+  let checksum = 0;
+  let permIndex = 0;
+  let r = n;
+  while (true) {
+    while (r != 1) {
+      count[r - 1] = r;
+      r--;
+    }
+
+    // Count the flips of this permutation.
+    for (let i = 0; i < n; i++) {
+      perm[i] = perm1[i];
+    }
+    let flips = 0;
+    let first = perm[0];
+    while (first != 0) {
+      let lo = 0;
+      let hi = first;
+      while (lo < hi) {
+        const t = perm[lo];
+        perm[lo] = perm[hi];
+        perm[hi] = t;
+        lo++;
+        hi--;
+      }
+      flips++;
+      first = perm[0];
+    }
+    if (flips > maxFlips) {
+      maxFlips = flips;
+    }
+    checksum += permIndex % 2 == 0 ? flips : -flips;
+
+    // Next permutation: rotate the first r + 1 elements until a counter has turns left.
+    while (true) {
+      if (r == n) {
+        return { checksum: checksum, maxFlips: maxFlips };
+      }
+      const perm0 = perm1[0];
+      for (let i = 0; i < r; i++) {
+        perm1[i] = perm1[i + 1];
+      }
+      perm1[r] = perm0;
+      count[r]--;
+      if (count[r] > 0) {
+        break;
+      }
+      r++;
+    }
+    permIndex++;
+  }
+}
+
+function main() {
+  const args = argv();
+  const n = args.length > 1 ? Number(args[1]) as i64 : 7;
+  const result = fannkuch(n);
+  console.log(`${result.checksum}\nPfannkuchen(${n}) = ${result.maxFlips}`);
+}

@@ -1,0 +1,19 @@
+// Compile-time benchmark input: imports every std module (so sema checks all of std and the
+// prelude), with a small main that touches each one.
+import { existsSync } from "velt:fs";
+import { Response } from "velt:http";
+import { ioError } from "velt:io";
+import { Value } from "velt:json";
+import { clamp, gcd } from "velt:math";
+import { connect } from "velt:net";
+import { writeBytesTo } from "velt:net_bytes";
+import { join } from "velt:path";
+import { argv, env } from "velt:process";
+
+function main() {
+  const p = join("a", "b");
+  console.log(`${p} ${existsSync(p)} ${clamp(gcd(12, 18), 0, 5)} ${argv().length}`);
+  console.log(env("HOME") ?? "");
+  const r = Response.text("ok");
+  console.log(`${r.raw != 0}`);
+}

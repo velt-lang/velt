@@ -1,0 +1,50 @@
+// Conway's game of life on a small torus; prints generations as text.
+function step(g: bool[][]): bool[][] {
+  const n = g.length as i64;
+  const m = g[0].length as i64;
+  const out: bool[][] = [];
+  for (let i = 0; i < n; i++) {
+    const row: bool[] = [];
+    for (let j = 0; j < m; j++) {
+      let live = 0;
+      for (let di = -1; di <= 1; di++) {
+        for (let dj = -1; dj <= 1; dj++) {
+          if (di != 0 || dj != 0) {
+            if (g[((i + di + n) % n) as usize][((j + dj + m) % m) as usize]) {
+              live++;
+            }
+          }
+        }
+      }
+      const alive = g[i as usize][j as usize];
+      row.push(alive ? live == 2 || live == 3 : live == 3);
+    }
+    out.push(row);
+  }
+  return out;
+}
+
+function show(g: bool[][]): string {
+  return g.map((row) => row.map((c) => (c ? "#" : ".")).join("")).join("\n");
+}
+
+function main() {
+  let g: bool[][] = [];
+  for (let i = 0; i < 6; i++) {
+    const row: bool[] = [];
+    for (let j = 0; j < 6; j++) {
+      row.push(false);
+    }
+    g.push(row);
+  }
+  g[1][2] = true;
+  g[2][3] = true;
+  g[3][1] = true;
+  g[3][2] = true;
+  g[3][3] = true;
+  for (let t = 0; t < 4; t++) {
+    console.log(show(g));
+    console.log("--");
+    g = step(g);
+  }
+}

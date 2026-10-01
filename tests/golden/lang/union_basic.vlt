@@ -1,0 +1,68 @@
+// General union types: widening, printing, `typeof`, `==` against literals, JSON.
+
+type Scalar = i64 | string | bool;
+
+function describe(v: Scalar): string {
+  if (typeof v === "string") {
+    return `string(${v.length}) ${v}`;
+  }
+  if (typeof v === "number") {
+    return `number ${v * 2}`;
+  }
+  return `bool ${!v}`;
+}
+
+function firstWord(v: f64 | string): string {
+  if (typeof v !== "string") {
+    return `num ${v}`;
+  }
+  return v.split(" ")[0];
+}
+
+function main() {
+  // Widening: literals and values take the member they belong to.
+  const a: Scalar = 21;
+  const b: Scalar = "hello";
+  const c: Scalar = true;
+  console.log(a, b, c);
+  console.log(describe(a), "|", describe(b), "|", describe(c));
+
+  // Member order does not matter: both are the same type.
+  const d: string | i64 | bool = a;
+  const e: bool | i64 | string = d;
+  console.log(e);
+
+  // Arrays, template literals, JSON.
+  const xs: Scalar[] = [1, "two", false, -4];
+  console.log(xs);
+  console.log(`${xs[0]} and ${xs[1]}`);
+  console.log(JSON.stringify(xs));
+  console.log(JSON.stringify({ id: 7, value: b.clone() }));
+
+  // `typeof` as a value: every number type is "number".
+  const n: u8 | f32 | string = 3u8;
+  const f: u8 | f32 | string = 2.5f32;
+  console.log(typeof n, typeof f, typeof b, typeof c, typeof xs);
+
+  // `==` / `!=` against a literal of a member type.
+  let v: i64 | string = 7;
+  console.log(v == 7, v == 8, v == "7", v != 7);
+  v = "7";
+  console.log(v == 7, v == "7");
+  if (v == "7") {
+    console.log(`narrowed: ${v.length}`);
+  }
+
+  // Unions with `null`: `T | U | null`.
+  let m: i64 | string | null = null;
+  console.log(m, typeof m, m == null);
+  m = "set";
+  if (m != null && typeof m === "string") {
+    console.log(m.toUpperCase());
+  }
+  const narrow: i64 | null = 5;
+  const wide: i64 | string | null = narrow;
+  console.log(wide ?? "none");
+
+  console.log(firstWord(1.5), firstWord("hi there"));
+}

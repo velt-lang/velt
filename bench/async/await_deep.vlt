@@ -1,0 +1,16 @@
+// A recursive async function (depth 20) awaited 500k times: the cost of nested async frames.
+async function deep(n: i64, x: i64): Promise<i64> {
+  if (n == 0) {
+    return x;
+  }
+  const r = await deep(n - 1, x + n);
+  return (r * 7 + 1) % 1000003;
+}
+
+async function main() {
+  let acc = 0;
+  for (let i = 0; i < 500000; i++) {
+    acc = (acc + (await deep(20, i))) % 1000003;
+  }
+  console.log(acc);
+}

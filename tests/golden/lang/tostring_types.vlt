@@ -1,0 +1,100 @@
+// `${x}` of structs, anonymous objects, classes (also through a base-class reference),
+// discriminated unions, numeric and string enums, literal types and errors as values is exactly
+// what `console.log(x)` prints.
+struct Point {
+  x: i64;
+  y: f64;
+}
+
+struct Named {
+  name: string;
+  at: Point;
+  tags: string[];
+}
+
+struct Unit {}
+
+class Animal {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+class Dog extends Animal {
+  tricks: i64 = 2;
+
+  constructor(name: string) {
+    super(name);
+  }
+}
+
+type Shape =
+  | { kind: "circle"; r: f64 }
+  | { kind: "rect"; w: f64; h: f64 }
+  | { kind: "label"; text: string }
+  | { kind: "empty" };
+
+enum Mode {
+  Fast = "FAST",
+  Slow = "SLOW",
+}
+
+type Dir = "up" | "down";
+
+enum Color {
+  Red,
+  Green = 5,
+  Blue,
+}
+
+function show<T>(label: string, x: T) {
+  const t = `${x}`;
+  console.log(`${label}: ${t}`);
+  console.log(`${label}:`, x);
+}
+
+class ParseError extends Error {}
+
+function parse(s: string): i64 | ParseError {
+  if (s == "1") {
+    return 1;
+  }
+  return new ParseError(`bad input ${s}`);
+}
+
+function main() {
+  const p: Point = { x: 1, y: 2.5 };
+  show("struct", p);
+  const n: Named = { name: "Zoë", at: { x: -1, y: 0.0 }, tags: ["a"] };
+  show("nested struct", n);
+  const u: Unit = {};
+  show("empty struct", u);
+  show("anonymous", { id: 7, label: "seven" });
+  show("class", new Animal("cat"));
+  const a: Animal = new Dog("rex");
+  show("subclass via base", a);
+  show("class array", [new Animal("a"), new Animal("b")]);
+  const rect: Shape = { kind: "rect", w: 1.0, h: 2.5 };
+  show("union member", rect);
+  const label: Shape = { kind: "label", text: "hi" };
+  show("union string", label);
+  const empty: Shape = { kind: "empty" };
+  show("union unit", empty);
+  const shapes: Shape[] = [{ kind: "circle", r: 1.0 }, { kind: "empty" }];
+  show("union array", shapes);
+  show("c-like enum", Color.Blue);
+  show("string enum", Mode.Slow);
+  show("string enum array", [Mode.Fast, Mode.Slow]);
+  const d: Dir = "down";
+  show("literal union", d);
+  show("literal array", ["up", d]);
+  show("value ok", parse("1"));
+  show("value err", parse("x"));
+  const maybe: Shape | null = { kind: "circle", r: 0.5 };
+  show("optional union", maybe);
+
+  // Everything in one template.
+  console.log(`p=${p} c=${Color.Green} m=${Mode.Fast} s=${empty} d=${d} a=${a} n=${n.at}`);
+}

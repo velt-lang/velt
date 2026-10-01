@@ -1,0 +1,121 @@
+// std/path: POSIX path manipulation (Node's `path.posix`), pure string code.
+//
+// The separator is always "/", on every platform (the runtime's file APIs accept "/" on Windows
+// too); a backslash is an ordinary character. Results match Node for ASCII paths; offsets are
+// byte offsets like every string method in the POC.
+
+// `/`
+const SLASH: i64 = 47;
+
+export const sep = "/";
+
+export function isAbsolute(p: string): bool {
+  return p.startsWith("/");
+}
+
+// Resolves "." and ".." segments and collapses repeated slashes; keeps a trailing slash.
+// "" becomes "."; ".." above the root of an absolute path is dropped.
+export function normalize(p: string): string {
+  if (p.length == 0) {
+    return ".";
+  }
+  const absolute = p.startsWith("/");
+  const parts = p.split("/");
+  const out: string[] = [];
+  for (const part of parts) {
+    if (part.length == 0 || part == ".") {
+      continue;
+    }
+    if (part == "..") {
+      if (out.length > 0 && out[out.length - 1] != "..") {
+        out.pop();
+        continue;
+      }
+      if (absolute) {
+        continue;
+      }
+    }
+    out.push(part);
+  }
+  let body = out.join("/");
+  if (body.length == 0) {
+    if (absolute) {
+      return "/";
+    }
+    body = ".";
+  }
+  if (p.endsWith("/")) {
+    body = `${body}/`;
+  }
+  return absolute ? `/${body}` : body;
+}
+
+// Joins the non-empty parts with "/" and normalizes the result ("." if nothing is left).
+export function joinAll(parts: string[]): string {
+  const nonEmpty = parts.filter((part) => part.length > 0);
+  if (nonEmpty.length == 0) {
+    return ".";
+  }
+  return normalize(nonEmpty.join("/"));
+}
+
+// `join(a, b)`; use `joinAll` for more parts (Velt has no rest parameters).
+export function join(a: string, b: string): string {
+  return joinAll([a, b]);
+}
+
+// Everything before the last segment ("." if there is none; trailing slashes are ignored).
+export function dirname(p: string): string {
+  if (p.length == 0) {
+    return ".";
+  }
+  const hasRoot = p.charCodeAt(0) == SLASH;
+  let end: i64 = -1;
+  let matchedSlash = true;
+  for (let i = (p.length as i64) - 1; i >= 1; i--) {
+    if (p.charCodeAt(i) == SLASH) {
+      if (!matchedSlash) {
+        end = i;
+        break;
+      }
+    } else {
+      matchedSlash = false;
+    }
+  }
+  if (end == -1) {
+    return hasRoot ? "/" : ".";
+  }
+  if (hasRoot && end == 1) {
+    return "//";
+  }
+  return p.slice(0, end);
+}
+
+// The last segment (trailing slashes ignored), without `suffix` if it ends with it and is
+// longer than it.
+export function basename(p: string, suffix: string = ""): string {
+  let end = p.length as i64;
+  while (end > 1 && p.charCodeAt(end - 1) == SLASH) {
+    end--;
+  }
+  const start = end > 0 ? p.lastIndexOf("/", end - 1) + 1 : 0;
+  const base = p.slice(start, end);
+  if (suffix.length > 0 && base != suffix && base.endsWith(suffix)) {
+    return base.slice(0, (base.length - suffix.length) as i64);
+  }
+  return base;
+}
+
+// The extension of the last segment, from its last "." ("" if there is none, or if the only
+// dot starts the name, as in ".bashrc" or "..").
+export function extname(p: string): string {
+  const base = basename(p);
+  if (base == "..") {
+    return "";
+  }
+  const dot = base.lastIndexOf(".");
+  if (dot <= 0) {
+    return "";
+  }
+  return base.slice(dot);
+}

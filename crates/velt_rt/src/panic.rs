@@ -1,0 +1,117 @@
+//! Panics and process exit: `velt_rt_panic`, `velt_rt_exit`, plus the hook that turns internal
+//! Rust panics into the same `panic: <msg>` / exit 101 behavior. No Rust panic ever unwinds across
+//! the C ABI: every exported function is `extern "C"` (non-unwinding, aborts as a last resort), and
+//! the hook installed by [`install_hook`] exits the process before unwinding starts.
+//!
+//! Also the per-thread "where was the last error thrown" slot (`velt_rt_set_throw_loc` /
+//! `velt_rt_throw_loc`) that compiled code fills at each `throw` and reads when it reports an
+//! uncaught error (`Uncaught E: msg at file.vlt:3:5`).
+
+use std::cell::Cell;
+
+use crate::io;
+use crate::str::VeltStr;
+
+/// Exit code used for panics (same as Rust).
+pub const PANIC_EXIT_CODE: i32 = 101;
+
+/// Bytes printed to stderr for a panic with message `msg`.
+pub fn panic_message(msg: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(msg.len() + 8);
+    out.extend_from_slice(b"panic: ");
+    out.extend_from_slice(msg);
+    out.push(b'\n');
+    out
+}
+
+fn die(msg: &[u8]) -> ! {
+    use std::io::Write;
+    io::try_flush_stdout();
+    let _ = std::io::stderr().lock().write_all(&panic_message(msg));
+    std::process::exit(PANIC_EXIT_CODE)
+}
+
+/// Internal fatal runtime error (bad ABI arguments etc.): reported like a Velt panic.
+#[cold]
+pub fn fatal(msg: &str) -> ! {
+    die(msg.as_bytes())
+}
+
+/// Make Rust panics inside the runtime (bugs, or M3 tasks) report `panic: <msg>` and exit 101
+/// instead of unwinding into generated code.
+pub fn install_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let payload = info.payload();
+        let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Box<dyn Any>".to_string()
+        };
+        let msg = match info.location() {
+            Some(l) => format!("{msg} (runtime: {}:{})", l.file(), l.line()),
+            None => msg,
+        };
+        die(msg.as_bytes())
+    }));
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_panic(msg: *const VeltStr) -> ! {
+    let bytes: &[u8] = if msg.is_null() {
+        b""
+    } else {
+        (*msg).as_bytes()
+    };
+    die(bytes)
+}
+
+thread_local! {
+    /// Location suffix (` at <path>:<line>:<col>`, a static string) of the last `throw`.
+    static THROW_LOC: Cell<*const VeltStr> = const { Cell::new(std::ptr::null()) };
+}
+
+/// Record where the error being thrown now comes from. `loc` is a static string (compiled
+/// code passes read-only data) or null for "unknown".
+#[no_mangle]
+pub extern "C" fn velt_rt_set_throw_loc(loc: *const VeltStr) {
+    THROW_LOC.with(|c| c.set(loc));
+}
+
+/// The location recorded by the last [`velt_rt_set_throw_loc`] on this thread (null if none).
+#[no_mangle]
+pub extern "C" fn velt_rt_throw_loc() -> *const VeltStr {
+    THROW_LOC.with(|c| c.get())
+}
+
+#[no_mangle]
+pub extern "C" fn velt_rt_exit(code: i32) -> ! {
+    io::flush_stdout();
+    crate::str::stats::report();
+    std::process::exit(code)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn throw_location_is_per_thread() {
+        let s = crate::str::VeltStr::empty();
+        assert!(super::velt_rt_throw_loc().is_null());
+        super::velt_rt_set_throw_loc(&s);
+        assert_eq!(super::velt_rt_throw_loc(), &s as *const _);
+        std::thread::spawn(|| assert!(super::velt_rt_throw_loc().is_null()))
+            .join()
+            .unwrap();
+        super::velt_rt_set_throw_loc(std::ptr::null());
+        assert!(super::velt_rt_throw_loc().is_null());
+    }
+
+    #[test]
+    fn message_format() {
+        assert_eq!(
+            super::panic_message(b"division by zero"),
+            b"panic: division by zero\n"
+        );
+    }
+}

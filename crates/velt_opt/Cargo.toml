@@ -1,0 +1,16 @@
+[package]
+name = "velt_opt"
+version.workspace = true
+edition.workspace = true
+
+[features]
+# Reference VIR interpreter (`velt_opt::interp`), used to check that optimizations preserve
+# semantics. Always compiled for this crate's own tests.
+interp = []
+
+[dependencies]
+velt_vir.workspace = true
+
+[dev-dependencies]
+velt_opt = { path = ".", features = ["interp"] }
+velt_codegen_cl.workspace = true

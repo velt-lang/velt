@@ -1,0 +1,23 @@
+connected p
+closed p
+p <- PING
+connected a
+connected b
+a <- 1 b <- 2
+closed b
+closed a
+unlocked
+42
+connected a
+connected b
+a <- 1 b <- 2
+closed b
+closed a
+unlocked
+caught nested failed
+connected some
+true true
+closed some
+holding the lock
+unlocked
+done

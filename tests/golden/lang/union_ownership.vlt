@@ -1,0 +1,89 @@
+// Unions of non-Copy members own their active member: moves, drops (each value exactly once),
+// clones, flow narrowing across branches, loops and early returns.
+
+class Res {
+  id: string;
+  constructor(id: string) {
+    this.id = id;
+  }
+  [Symbol.dispose](): void {
+    console.log(`drop ${this.id}`);
+  }
+}
+
+type Slot = Res | string | i64[];
+
+function show(x: Slot): string {
+  if (typeof x === "string") {
+    return `str ${x}`;
+  }
+  if (x instanceof Res) {
+    return `res ${x.id}`;
+  }
+  return `arr ${x.length}`;
+}
+
+// Moving the narrowed member out of an owned union moves the whole value.
+function unwrapRes(x: Slot): Res | null {
+  if (x instanceof Res) {
+    return x;
+  }
+  return null;
+}
+
+function len(x: i64 | string): i64 {
+  if (typeof x === "number") {
+    return x;
+  }
+  return x.length as i64;
+}
+
+function pick(flag: bool): Res | string {
+  if (flag) {
+    return new Res("picked");
+  }
+  return "plain";
+}
+
+function main() {
+  let a: Slot = new Res("a");
+  console.log(show(a));
+  a = "text";
+  console.log(show(a));
+  a = [1, 2, 3];
+  if (typeof a === "object" && !(a instanceof Res)) {
+    a.push(4);
+  }
+  console.log(show(a), a);
+
+  const kept = unwrapRes(new Res("kept"));
+  console.log(kept?.id ?? "none");
+  const none = unwrapRes("s");
+  console.log(none == null);
+
+  // Clones are deep and independent.
+  const xs: string | i64[] = [5];
+  let ys = xs.clone();
+  if (typeof ys !== "string") {
+    ys.push(6);
+  }
+  console.log(xs, ys);
+
+  // Reassignment in one branch does not affect the other branch.
+  let w: i64 | string = 0;
+  while (typeof w === "number") {
+    if (w > 2) {
+      w = "done";
+    } else {
+      w = w + 1;
+    }
+  }
+  console.log(w, len(3), len("four"));
+
+  {
+    const p = pick(true);
+    const q = pick(false);
+    console.log(p instanceof Res, q instanceof Res);
+  }
+  console.log("end");
+}

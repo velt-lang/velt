@@ -1,0 +1,15 @@
+[package]
+name = "vpm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+semver = "1.0.28"
+serde = { version = "1.0.229", features = ["derive"] }
+sha2 = "0.10"
+toml = "1.1.6"
+toml_edit = "0.25"
+velt_http = { path = "../velt_http" }
+
+[dev-dependencies]
+tempfile = "3.27.0"

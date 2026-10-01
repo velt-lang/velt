@@ -1,0 +1,100 @@
+// std/fs_stream: reading and writing files in chunks (rt_abi_async.md §14.7), for files too
+// large to hold in memory or produced incrementally (logs, exports, line-by-line processing).
+//
+// `openRead` gives a `FileReader` (bytes, text chunks or lines); `openWrite` a buffered
+// `FileWriter`. Operations run on the runtime's blocking pool like the rest of std/fs and
+// throw `IoError`. Like std/net's `TcpStream`, both are Copy handles (so `await r.readLine()`
+// can be called repeatedly; async methods take `this` by copy) released by `close()`: an
+// unclosed handle leaks until exit; after `close()` through any copy, the others throw
+// `IoError` `EBADF` and closing again does nothing. A writer's `close()` also flushes and
+// reports write errors.
+
+import { IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
+
+// The runtime's `LineRead` (§14.4).
+struct LineRead {
+  line: IoResult<string>;
+  eof: bool;
+}
+
+declare async function velt_rt_fs_open_read(path: string): Promise<IoResult<u64>>;
+declare async function velt_rt_fs_reader_read(r: u64, max: u64): Promise<IoResult<u8[]>>;
+declare async function velt_rt_fs_reader_read_string(r: u64, max: u64): Promise<IoResult<string>>;
+declare async function velt_rt_fs_reader_read_line(r: u64): Promise<LineRead>;
+declare function velt_rt_fs_reader_close(r: u64);
+declare async function velt_rt_fs_open_write(path: string, append: bool): Promise<IoResult<u64>>;
+declare async function velt_rt_fs_writer_write(w: u64, data: string): Promise<IoStatus>;
+declare async function velt_rt_fs_writer_write_bytes(w: u64, data: u8[]): Promise<IoStatus>;
+declare async function velt_rt_fs_writer_flush(w: u64): Promise<IoStatus>;
+declare async function velt_rt_fs_writer_close(w: u64): Promise<IoStatus>;
+declare function velt_rt_fs_writer_free(w: u64);
+
+// A file open for reading.
+export struct FileReader {
+  handle: u64;
+
+  // The next 1..max bytes; empty at end of file (`max` 0 = up to 64 KiB).
+  async read(max: u64 = 0): Promise<u8[]> {
+    return unwrapIo(await velt_rt_fs_reader_read(this.handle, max));
+  }
+
+  // The next chunk as UTF-8 text ("" at end of file); a character split between chunks is
+  // completed by the next call.
+  async readString(max: u64 = 0): Promise<string> {
+    return unwrapIo(await velt_rt_fs_reader_read_string(this.handle, max));
+  }
+
+  // The next line without "\n" / "\r\n", or null at end of file. Don't mix with `readString`.
+  async readLine(): Promise<string | null> {
+    const r = await velt_rt_fs_reader_read_line(this.handle);
+    if (r.eof) {
+      return null;
+    }
+    return unwrapIo(r.line);
+  }
+
+  // Closes the file (reads in flight finish first).
+  close() {
+    velt_rt_fs_reader_close(this.handle);
+  }
+}
+
+// A file open for writing, buffered (64 KiB).
+export struct FileWriter {
+  handle: u64;
+
+  async write(data: string): Promise<void> {
+    checkIo(await velt_rt_fs_writer_write(this.handle, data));
+  }
+
+  async writeBytes(data: u8[]): Promise<void> {
+    checkIo(await velt_rt_fs_writer_write_bytes(this.handle, data));
+  }
+
+  // Pushes buffered data to the operating system.
+  async flush(): Promise<void> {
+    checkIo(await velt_rt_fs_writer_flush(this.handle));
+  }
+
+  // Flushes and closes the file, then releases the handle; throws if the final flush fails.
+  async close(): Promise<void> {
+    const s = await velt_rt_fs_writer_close(this.handle);
+    velt_rt_fs_writer_free(this.handle);
+    checkIo(s);
+  }
+}
+
+export struct OpenWriteOptions {
+  // Append to the file instead of truncating it.
+  append?: bool;
+}
+
+// Opens `path` for chunked reading.
+export async function openRead(path: string): Promise<FileReader> {
+  return FileReader { handle: unwrapIo(await velt_rt_fs_open_read(path)) };
+}
+
+// Creates (or truncates, or with `append` extends) `path` for buffered writing.
+export async function openWrite(path: string, opts: OpenWriteOptions = {}): Promise<FileWriter> {
+  return FileWriter { handle: unwrapIo(await velt_rt_fs_open_write(path, opts.append ?? false)) };
+}

@@ -1,0 +1,7 @@
+stored promise started
+stored rejected: timed out after 40 ms 40
+race rejected: 10
+any: b
+any rejected: All promises were rejected
+fulfilled e
+rejected 50

@@ -1,0 +1,24 @@
+// Factorials and powers up to 2^53 (exact in both i64 and JS doubles).
+function fact(n: i64): i64 {
+  return n <= 1 ? 1 : n * fact(n - 1);
+}
+
+function pow(b: i64, e: i64): i64 {
+  let r = 1;
+  while (e > 0) {
+    if (e % 2 == 1) {
+      r *= b;
+    }
+    b *= b;
+    e = e >> 1;
+  }
+  return r;
+}
+
+function main() {
+  for (let n = 10; n <= 18; n += 2) {
+    console.log(n, fact(n), fact(n) % 1000000007);
+  }
+  console.log(pow(2, 52), pow(3, 33), pow(7, 18), pow(2, 53) - 1);
+  console.log(9007199254740991 - pow(2, 52), -pow(2, 50) * 7);
+}

@@ -1,0 +1,72 @@
+// The HTTP side: opens the store, serves `route`, and persists the store after each change.
+// The store is picked by the file name: `*.sqlite`, `*.sqlite3` and `*.db` are SQLite
+// databases, anything else is a JSON file.
+import { serve, Request, Response, Server } from "velt:http";
+import { readFile, writeFile, rename, exists } from "velt:fs";
+import { TodoStore } from "./store";
+import { SqliteTodoStore } from "./sqlite_store";
+import { TodoRepository, JsonRepository, SqliteRepository } from "./repository";
+import { route, ApiResponse } from "./api";
+
+// Whether `path` names a SQLite database rather than a JSON file.
+function isSqlitePath(path: string): bool {
+  return path.endsWith(".sqlite") || path.endsWith(".sqlite3") || path.endsWith(".db");
+}
+
+async function load(path: string): Promise<TodoStore> {
+  if (!(await exists(path))) {
+    return new TodoStore();
+  }
+  return TodoStore.fromSnapshot(await readFile(path));
+}
+
+// Writes the file atomically: a crash mid-write leaves the previous version.
+async function persist(path: string, json: string) {
+  const tmp = `${path}.tmp`;
+  await writeFile(tmp, json);
+  await rename(tmp, path);
+}
+
+// What one request did to the store: the response and, if it changed, the new snapshot.
+type Outcome = { res: ApiResponse; snapshot: string | null };
+
+async function handle<S extends TodoRepository>(
+  req: Request,
+  store: shared<Mutex<S>>,
+  file: string,
+): Promise<Response> {
+  const out: Outcome = store.with((s) => {
+    const r = route(s, req.method, req.path, req.query, req.body);
+    const snapshot = r.changed ? s.fileSnapshot() : null;
+    return { res: r, snapshot };
+  });
+  const snapshot = out.snapshot;
+  if (snapshot != null) {
+    await persist(file, snapshot);
+  }
+  if (out.res.status === 204) {
+    return Response.text("", 204);
+  }
+  // `.clone()`: moving a nested field (`out.res.body`) out of a local frees it twice today
+  // (garbage body, then a hang).
+  const res = Response.text(out.res.body.clone(), out.res.status);
+  res.setHeader("content-type", "application/json");
+  return res;
+}
+
+async function serveStore<S extends TodoRepository>(
+  store: S,
+  file: string,
+  port: i64,
+): Promise<Server> {
+  const sharedStore = shared(new Mutex<S>(store));
+  return await serve({ port }, async (req) => await handle(req, sharedStore, file));
+}
+
+// Serves the todo API on `port` (0 = any free port), persisting to `file` (see the header).
+export async function startServer(file: string, port: i64): Promise<Server> {
+  if (isSqlitePath(file)) {
+    return await serveStore(new SqliteRepository(new SqliteTodoStore(file)), file, port);
+  }
+  return await serveStore(new JsonRepository(await load(file)), file, port);
+}

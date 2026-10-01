@@ -1,0 +1,278 @@
+//! JS number semantics on fixed-width types (docs/reference/types.md "Numbers").
+//!
+//! Every integer value is either *declared* (its integer type is written somewhere: an
+//! annotation, a parameter, field or return type, a literal suffix, a cast, an API result such
+//! as `.length`, or a literal typed by such a context) or *inferred* (an integer literal with no
+//! context, a local declared without a type from such a value — `const a = 7`, `let i = 0` —
+//! and arithmetic involving one). Both are stored as integers, so counters and indexes keep
+//! integer speed; inferred ones behave like JS numbers where that is observable:
+//! - `/` is float division unless both operands are declared integers (`a / 2` is `3.5`);
+//! - mixed with a float, or used where a float is expected, they convert to it;
+//! - `Math.trunc(a / b)` on integers is integer division (one instruction).
+
+use velt_common::{Diagnostic, Span};
+use velt_syntax::ast;
+
+use crate::body::{FnCx, Want};
+use crate::hir::{self, BinOp, ExprKind as H, Intrinsic, TyId, UnOp};
+
+/// Where an integer value's type comes from (literals adapt to the other operand).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IntOrigin {
+    Literal,
+    Inferred,
+    Declared,
+}
+
+impl IntOrigin {
+    /// Origin of an arithmetic result: inferred if either side is, else declared if either is.
+    fn join(self, other: IntOrigin) -> IntOrigin {
+        use IntOrigin::*;
+        match (self, other) {
+            (Inferred, _) | (_, Inferred) => Inferred,
+            (Declared, _) | (_, Declared) => Declared,
+            _ => Literal,
+        }
+    }
+}
+
+fn arithmetic(op: BinOp) -> bool {
+    use BinOp::*;
+    matches!(
+        op,
+        Add | Sub | Mul | Div | Rem | Pow | BitAnd | BitOr | BitXor | Shl | Shr | UShr
+    )
+}
+
+impl FnCx<'_, '_> {
+    /// Origin of the integer value `h` (see the module docs).
+    pub(crate) fn int_origin(&self, h: &hir::Expr) -> IntOrigin {
+        match &h.kind {
+            H::Lit(hir::Lit::Int(_)) => IntOrigin::Literal,
+            H::Local(l, _) if self.f.inferred_ints.contains(l) => IntOrigin::Inferred,
+            H::Unary {
+                op: UnOp::Neg | UnOp::BitNot,
+                expr,
+            } => self.int_origin(expr),
+            H::Binary { op, lhs, rhs } if arithmetic(*op) => {
+                self.int_origin(lhs).join(self.int_origin(rhs))
+            }
+            // A float converted for a bitwise operator is still a JS number (`bitwise_int32`).
+            H::Call {
+                callee: hir::Callee::Def(d, _),
+                ..
+            } if self.cx.fn_info(*d).name == "__toInt32" => IntOrigin::Inferred,
+            _ => IntOrigin::Declared,
+        }
+    }
+
+    /// An integer that behaves like a JS number (not declared with an integer type).
+    pub(crate) fn is_inferred_int(&self, h: &hir::Expr) -> bool {
+        self.cx.ty.is_int(h.ty) && self.int_origin(h) != IntOrigin::Declared
+    }
+
+    /// `let x = init` without a type: `x` is an inferred integer when `init` is one.
+    pub(crate) fn note_inferred_local(&mut self, local: hir::LocalId, init: &hir::Expr) {
+        if self.is_inferred_int(init) {
+            self.f.inferred_ints.insert(local);
+        }
+    }
+
+    /// The inferred integer `h` as a value of float type `t` (a literal becomes a float literal).
+    pub(crate) fn int_to_float(&mut self, h: hir::Expr, t: TyId) -> hir::Expr {
+        let span = h.span;
+        match h.kind {
+            H::Lit(hir::Lit::Int(n)) => self.mk(H::Lit(hir::Lit::Float(n as f64)), t, span),
+            _ => self.mk(H::Cast(Box::new(h)), t, span),
+        }
+    }
+
+    /// Operands of `/` of two different integer types, one of them inferred (`sum / xs.length`):
+    /// float division, as in JS.
+    pub(crate) fn mix_division(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+        let ty = &self.cx.ty;
+        let ints = ty.is_int(l.ty) && ty.is_int(r.ty) && l.ty != r.ty;
+        if ints && (self.is_inferred_int(&l) || self.is_inferred_int(&r)) {
+            let f = self.cx.ty.f64;
+            return (self.int_to_float(l, f), self.int_to_float(r, f));
+        }
+        (l, r)
+    }
+
+    /// Operands of a binary operator: an inferred integer next to a float converts to it.
+    pub(crate) fn mix_numbers(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+        let ty = &self.cx.ty;
+        let (lf, rf) = (ty.is_float(l.ty), ty.is_float(r.ty));
+        if lf && !rf && self.is_inferred_int(&r) {
+            let t = l.ty;
+            let r = self.int_to_float(r, t);
+            (l, r)
+        } else if rf && !lf && self.is_inferred_int(&l) {
+            let t = r.ty;
+            (self.int_to_float(l, t), r)
+        } else {
+            (l, r)
+        }
+    }
+
+    /// Is `l / r` on integers integer division? Both operands declared, or only literals in a
+    /// context that expects an integer (`const n: i64 = 7 / 2`).
+    fn int_division(&self, l: &hir::Expr, r: &hir::Expr, hint: Option<TyId>) -> bool {
+        match self.int_origin(l).join(self.int_origin(r)) {
+            IntOrigin::Declared => true,
+            IntOrigin::Literal => hint.is_some_and(|t| self.cx.ty.is_int(t)),
+            IntOrigin::Inferred => false,
+        }
+    }
+
+    /// `l / r` of two checked operands of numeric type `t`.
+    pub(crate) fn divide(
+        &mut self,
+        l: hir::Expr,
+        r: hir::Expr,
+        t: TyId,
+        hint: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let (l, r, t) = if self.cx.ty.is_int(t) && !self.int_division(&l, &r, hint) {
+            let f = self.cx.ty.f64;
+            (self.int_to_float(l, f), self.int_to_float(r, f), f)
+        } else {
+            (l, r, t)
+        };
+        let kind = H::Binary {
+            op: BinOp::Div,
+            lhs: Box::new(l),
+            rhs: Box::new(r),
+        };
+        self.mk(kind, t, span)
+    }
+
+    /// The hint for a float quotient found where an integer is required.
+    pub(crate) fn float_division_note(&self, found: &hir::Expr) -> Option<&'static str> {
+        let quotient = matches!(found.kind, H::Binary { op: BinOp::Div, .. });
+        (quotient && self.cx.ty.is_float(found.ty)).then_some(
+            "`/` gives a float (like JS) unless both operands are declared with integer types; for integer division write `Math.trunc(a / b)`",
+        )
+    }
+
+    /// `x /= y` on an integer place: allowed only when it stays integer division.
+    pub(crate) fn check_int_div_assign(&mut self, place: &hir::Expr, v: &hir::Expr, span: Span) {
+        if self.cx.ty.is_int(place.ty) && !self.int_division(place, v, Some(place.ty)) {
+            self.cx.error(
+                Diagnostic::error(
+                    "`/=` would store a float in an integer variable",
+                    span,
+                )
+                .with_note(
+                    "`/` gives a float (like JS) unless both operands are declared with integer types",
+                )
+                .with_note("for integer division write `x = Math.trunc(x / y)`, or declare the variable as a float (`let x = 0.0`)"),
+            );
+        }
+    }
+
+    /// `Math.trunc(a / b)` (the prelude's `Math`): integer division when both operands are
+    /// integers, else `trunc` of the float quotient. `None` if the call is anything else.
+    pub(crate) fn math_trunc_div(
+        &mut self,
+        callee: &ast::Expr,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let ast::ExprKind::Member {
+            object,
+            prop,
+            optional: false,
+        } = &callee.kind
+        else {
+            return None;
+        };
+        let (ast::ExprKind::Ident(m), [arg]) = (&object.kind, args) else {
+            return None;
+        };
+        let mut arg = arg;
+        while let ast::ExprKind::Paren(x) = &arg.kind {
+            arg = x;
+        }
+        let ast::ExprKind::Binary {
+            op: ast::BinaryOp::Div,
+            lhs,
+            rhs,
+        } = &arg.kind
+        else {
+            return None;
+        };
+        if m.name != "Math" || prop.name != "trunc" || self.is_local_name("Math") {
+            return None;
+        }
+        let math = self.cx.prelude_adt("Math")?;
+        match self.cx.lookup_item_at(self.module, "Math", m.span) {
+            Some(crate::ctx::Item::Def(d)) if d == math => {}
+            _ => return None,
+        }
+        let (l, r) = self.operands(lhs, rhs, None, Want::Borrow);
+        let (l, r) = self.mix_numbers(l, r);
+        let Some(t) = self.check_operands(ast::BinaryOp::Div, l.ty, &r, arg.span) else {
+            return Some(self.error_expr(span));
+        };
+        if self.cx.ty.is_int(t) {
+            let kind = H::Binary {
+                op: BinOp::Div,
+                lhs: Box::new(l),
+                rhs: Box::new(r),
+            };
+            return Some(self.mk(kind, t, span));
+        }
+        let q = self.divide(l, r, t, None, arg.span);
+        let ty = q.ty;
+        Some(self.intrinsic(Intrinsic::Trunc, vec![q], ty, span))
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// Operands of a bitwise operator: a float one is converted like JS's `ToInt32`
+    /// (`(a / 13) | 0`, the JS truncation idiom), through the prelude's `__toInt32`, and is then an
+    /// inferred `i64`. Integer operands are left alone.
+    pub(super) fn bitwise_int32(
+        &mut self,
+        op: ast::BinaryOp,
+        l: hir::Expr,
+        r: hir::Expr,
+    ) -> (hir::Expr, hir::Expr) {
+        use ast::BinaryOp as B;
+        let bitwise = matches!(
+            op,
+            B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr | B::UShr
+        );
+        if !bitwise || !(self.cx.ty.is_float(l.ty) || self.cx.ty.is_float(r.ty)) {
+            return (l, r);
+        }
+        (self.as_int32(l), self.as_int32(r))
+    }
+
+    /// A float as JS's ToInt32 of it (an inferred `i64`); other values unchanged.
+    pub(super) fn as_int32(&mut self, h: hir::Expr) -> hir::Expr {
+        if !self.cx.ty.is_float(h.ty) {
+            return h;
+        }
+        let Some(crate::ctx::Item::Def(d)) = self.cx.prelude.get("__toInt32").copied() else {
+            return h;
+        };
+        let span = h.span;
+        let (f64_, i64_) = (self.cx.ty.f64, self.cx.ty.i64);
+        let arg = if h.ty == f64_ {
+            h
+        } else {
+            self.mk(H::Cast(Box::new(h)), f64_, span)
+        };
+        self.mk(
+            H::Call {
+                callee: hir::Callee::Def(d, vec![]),
+                args: vec![arg],
+            },
+            i64_,
+            span,
+        )
+    }
+}

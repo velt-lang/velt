@@ -1,0 +1,104 @@
+// SQLite workloads (bench/db/README.md): a file database in the temp directory with WAL and
+// synchronous = NORMAL. Prints `RESULT <workload> <ops> <checksum> <ms>` per workload; the time
+// covers only the timed loop. `quick` as the first argument runs 1/20 of the sizes.
+import { open, Database } from "velt:sqlite";
+import { args } from "velt:process";
+import { tmpdir } from "velt:os";
+import { uuidv4 } from "velt:uuid";
+import { existsSync, removeSync } from "velt:fs";
+
+class Row {
+  id: i64;
+  name: string;
+  score: f64;
+
+  constructor(id: i64, name: string, score: f64) {
+    this.id = id;
+    this.name = name;
+    this.score = score;
+  }
+}
+
+function report(workload: string, ops: i64, checksum: i64, ms: f64) {
+  console.log(`RESULT sqlite.${workload} ${ops} ${checksum} ${ms}`);
+}
+
+function rowChecksum(r: Row): i64 {
+  return r.id + (r.name.length as i64) + ((r.score * 2.0) as i64);
+}
+
+// Every row in one transaction, one prepared INSERT per row.
+function insertTx(db: Database, n: i64) {
+  const ins = db.prepare("INSERT INTO bench (id, name, score) VALUES (:id, :name, :score)");
+  const t0 = performance.now();
+  const tx = db.begin();
+  let changes: i64 = 0;
+  for (let i: i64 = 1; i <= n; i++) {
+    changes += ins.runWith({ id: i, name: `name-${i}`, score: (i as f64) + 0.5 }).changes;
+  }
+  tx.commit();
+  report("insert_tx", n, changes, performance.now() - t0);
+}
+
+// Point selects by primary key in a scattered order, each decoded into a `Row`.
+function pointSelect(db: Database, n: i64, rows: i64) {
+  const sel = db.prepare("SELECT id, name, score FROM bench WHERE id = :id");
+  const t0 = performance.now();
+  let sum: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    const r: Row | null = sel.getWith({ id: (i * 7919) % rows + 1 });
+    if (r != null) {
+      sum += rowChecksum(r);
+    }
+  }
+  report("point_select", n, sum, performance.now() - t0);
+}
+
+// Range selects of 100 rows each, decoded into `Row[]`.
+function rangeSelect(db: Database, m: i64, rows: i64) {
+  const sel = db.prepare("SELECT id, name, score FROM bench WHERE id >= :lo AND id < :hi");
+  const t0 = performance.now();
+  let sum: i64 = 0;
+  for (let j: i64 = 0; j < m; j++) {
+    const lo = (j * 7919) % (rows - 100) + 1;
+    const found: Row[] = sel.allWith({ lo: lo, hi: lo + 100 });
+    for (const r of found) {
+      sum += rowChecksum(r);
+    }
+  }
+  report("range_select", m, sum, performance.now() - t0);
+}
+
+// Single-row inserts outside a transaction: one commit (WAL append) each.
+function insertAutocommit(db: Database, n: i64) {
+  const ins = db.prepare("INSERT INTO bench_auto (id, name, score) VALUES (:id, :name, :score)");
+  const t0 = performance.now();
+  let changes: i64 = 0;
+  for (let i: i64 = 1; i <= n; i++) {
+    changes += ins.runWith({ id: i, name: `name-${i}`, score: (i as f64) + 0.5 }).changes;
+  }
+  report("insert_autocommit", n, changes, performance.now() - t0);
+}
+
+function main() {
+  const argv = args();
+  const scale: i64 = argv.length > 0 && argv[0] == "quick" ? 20 : 1;
+  const path = `${tmpdir()}/velt-bench-db-${uuidv4()}.db`;
+  const db = open(path, { wal: true });
+  db.exec("PRAGMA synchronous = NORMAL");
+  db.exec("CREATE TABLE bench (id INTEGER PRIMARY KEY, name TEXT NOT NULL, score REAL NOT NULL)");
+  db.exec(
+    "CREATE TABLE bench_auto (id INTEGER PRIMARY KEY, name TEXT NOT NULL, score REAL NOT NULL)",
+  );
+  const rows = 1000000 / scale;
+  insertTx(db, rows);
+  pointSelect(db, 1000000 / scale, rows);
+  rangeSelect(db, 50000 / scale, rows);
+  insertAutocommit(db, 100000 / scale);
+  db.close();
+  for (const suffix of ["", "-wal", "-shm"]) {
+    if (existsSync(path + suffix)) {
+      removeSync(path + suffix);
+    }
+  }
+}

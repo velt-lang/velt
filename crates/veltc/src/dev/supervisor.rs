@@ -1,0 +1,337 @@
+//! The `velt dev` loop: build, start the program, watch the files the build read, and on a
+//! change build the new version while the old one keeps running. A failed build prints its
+//! diagnostics and leaves the old version serving; a good one replaces it.
+//!
+//! - JIT mode (default): the new version is a `velt dev --host` child that compiles and
+//!   JIT-compiles the program itself, reports `built ok|failed` with the files it read over the
+//!   dev channel and waits; only then is the old version stopped and the new one told to go. The
+//!   supervisor does not compile at all, and the new version's compile overlaps the old one's
+//!   serving. While a host runs, a change first goes to it over its reload channel: it swaps
+//!   the changed code into the running program (state survives), or says why it must restart,
+//!   and only then is a new host started.
+//! - `--exe` mode: the supervisor links an executable per version (`versions`), then swaps the
+//!   processes.
+
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::Receiver;
+use std::time::{Instant, SystemTime};
+
+use crate::cli::{DevArgs, DevMode, Emit};
+use crate::commands::{build_options, failure_code, report};
+use crate::driver::{self, Artifact, BuildError, OutputPaths, Session};
+
+use velt_rt_host::dev::handover::reload::{request_reload, Reloaded};
+use velt_rt_host::dev::handover::Stream;
+
+use super::child::{Launch, Running};
+use super::listeners::{Built, Handover};
+use super::versions::Versions;
+use super::watch::{Watcher, POLL};
+
+/// Supervisor state for one `velt dev` session.
+pub struct Supervisor {
+    args: DevArgs,
+    watcher: Watcher,
+    running: Option<Running>,
+    /// JIT mode: the running host's reload channel.
+    channel: Option<Stream>,
+    /// Environment every program version gets (the dev channel).
+    env: Vec<(OsString, OsString)>,
+    /// `--exe` mode: the version executables (set up by the first build).
+    versions: Option<Versions>,
+    /// The dev channel server (listener handover, build reports, stop channels).
+    dev_socket: Handover,
+    /// Build reports from JIT hosts.
+    reports: Receiver<Built>,
+}
+
+/// How one rebuild ended.
+enum Outcome {
+    /// The new version runs; the build read these files.
+    Replaced(Vec<PathBuf>),
+    /// The running host swapped in this many changed functions; the build read these files.
+    Swapped(usize, Vec<PathBuf>),
+    /// The running host could not take the new version (the reason), so it was restarted.
+    Restarted(String, Vec<PathBuf>),
+    /// The build failed; it read these files.
+    Failed(Vec<PathBuf>),
+}
+
+impl Supervisor {
+    /// Prepare a session (starts the dev channel server).
+    pub fn new(args: DevArgs) -> Result<Supervisor, String> {
+        let (tx, reports) = std::sync::mpsc::channel();
+        let dev_socket = Handover::start(tx)?;
+        let env = vec![(
+            velt_rt_host::dev::SOCKET_ENV.into(),
+            dev_socket.name().to_os_string(),
+        )];
+        #[cfg(windows)]
+        super::interrupt::install();
+        Ok(Supervisor {
+            args,
+            watcher: Watcher::default(),
+            running: None,
+            channel: None,
+            env,
+            versions: None,
+            dev_socket,
+            reports,
+        })
+    }
+
+    /// Run until the process is interrupted (Ctrl-C ends the supervisor and the program).
+    pub fn run(mut self) -> ! {
+        let mut since = Instant::now();
+        let mut first = true;
+        loop {
+            self.rebuild(since, first);
+            first = false;
+            since = self.wait_for_change();
+        }
+    }
+
+    /// Build the current sources; on success the new version replaces the running one.
+    fn rebuild(&mut self, since: Instant, first: bool) {
+        let started = SystemTime::now();
+        let outcome = match self.args.mode {
+            DevMode::Exe => self.rebuild_exe(),
+            DevMode::Jit | DevMode::Host => self.reload_jit(),
+        };
+        let manifest = manifest_files(self.args.build.input.as_deref());
+        let ms = since.elapsed().as_millis();
+        match outcome {
+            Outcome::Replaced(files) => {
+                self.watcher.set(files.into_iter().chain(manifest), started);
+                let verb = if first { "started" } else { "reloaded" };
+                eprintln!("velt dev: {verb} in {ms} ms");
+            }
+            Outcome::Swapped(functions, files) => {
+                self.watcher.set(files.into_iter().chain(manifest), started);
+                let plural = if functions == 1 { "" } else { "s" };
+                eprintln!("velt dev: hot-swapped {functions} function{plural} in {ms} ms");
+            }
+            Outcome::Restarted(reason, files) => {
+                self.watcher.set(files.into_iter().chain(manifest), started);
+                eprintln!("velt dev: restarted ({reason}) in {ms} ms");
+            }
+            Outcome::Failed(files) => {
+                self.watcher.add(files.into_iter().chain(manifest));
+                let still = if self.running.is_some() {
+                    " (the previous version keeps running)"
+                } else {
+                    ""
+                };
+                eprintln!("velt dev: build failed{still}; waiting for changes");
+            }
+        }
+    }
+
+    /// JIT mode: let the running host take the new version in place if it can; otherwise
+    /// replace it with a new host.
+    fn reload_jit(&mut self) -> Outcome {
+        let alive = self.running.as_mut().is_some_and(|r| r.exited().is_none());
+        let reply = match &self.channel {
+            Some(channel) if alive => request_reload(channel),
+            _ => return self.rebuild_jit(),
+        };
+        match reply {
+            Ok(Reloaded::Swapped { functions, files }) => Outcome::Swapped(functions, files),
+            Ok(Reloaded::Failed { files }) => Outcome::Failed(files),
+            Ok(Reloaded::Restart { reason, .. }) => match self.rebuild_jit() {
+                Outcome::Replaced(files) => Outcome::Restarted(reason, files),
+                other => other,
+            },
+            // The host went away (crashed or exited meanwhile): start a new one.
+            Err(_) => self.rebuild_jit(),
+        }
+    }
+
+    /// JIT mode: start a host, wait for its build report, then replace the running one.
+    fn rebuild_jit(&mut self) -> Outcome {
+        let started = std::env::current_exe()
+            .map_err(|e| format!("cannot locate velt: {e}"))
+            .and_then(|program| {
+                Running::start(&Launch {
+                    program,
+                    args: host_args(&self.args),
+                    env: self.env.clone(),
+                    output: None,
+                })
+            });
+        let mut candidate = match started {
+            Ok(candidate) => candidate,
+            Err(msg) => {
+                crate::style::error(&msg);
+                return Outcome::Failed(vec![]);
+            }
+        };
+        loop {
+            match self.reports.recv_timeout(POLL) {
+                Ok(built) if built.ok => {
+                    self.stop_running();
+                    // A host that cannot receive `go` has died; its exit is reported later.
+                    let _ = velt_rt_host::dev::handover::reply_go(&built.stream);
+                    self.running = Some(candidate);
+                    self.channel = Some(built.stream);
+                    return Outcome::Replaced(built.files);
+                }
+                // The host printed the diagnostics and exits by itself.
+                Ok(built) => return Outcome::Failed(built.files),
+                Err(_) => {
+                    if let Some(code) = candidate.exited() {
+                        eprintln!(
+                            "velt dev: the new version exited with code {code} before it was ready"
+                        );
+                        return Outcome::Failed(vec![]);
+                    }
+                }
+            }
+        }
+    }
+
+    /// `--exe` mode: build an executable, then swap the processes.
+    fn rebuild_exe(&mut self) -> Outcome {
+        let mut sess = Session::new();
+        let launch = self.build_exe(&mut sess);
+        report(&sess, self.args.build.verbose);
+        let files: Vec<PathBuf> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
+        let launch = match launch {
+            Ok(launch) => launch,
+            Err((err, output)) => {
+                failure_code(&err);
+                self.retire(output);
+                return Outcome::Failed(files);
+            }
+        };
+        self.stop_running();
+        match Running::start(&launch) {
+            Ok(running) => {
+                self.running = Some(running);
+                Outcome::Replaced(files)
+            }
+            Err(msg) => {
+                crate::style::error(&msg);
+                self.retire(launch.output);
+                Outcome::Failed(files)
+            }
+        }
+    }
+
+    /// Link the next version; on failure also its output path (it may hold partial files).
+    fn build_exe(&mut self, sess: &mut Session) -> Result<Launch, (BuildError, Option<PathBuf>)> {
+        let mut opts =
+            build_options(&self.args.build).map_err(|e| (BuildError::Failed(e), None))?;
+        let target = opts.target();
+        let default = OutputPaths::new(&opts.input, opts.output.as_deref(), Emit::Exe, &target);
+        let versions = self.versions.get_or_insert_with(|| {
+            let stem = default
+                .executable
+                .file_stem()
+                .map_or_else(|| "program".into(), |s| s.to_string_lossy().into_owned());
+            let dir = default.executable.parent().unwrap_or(Path::new("."));
+            Versions::new(dir.join("dev"), stem)
+        });
+        let output = versions.next_output();
+        opts.output = Some(output.clone());
+        opts.emit = Emit::Exe;
+        match driver::build(sess, &opts) {
+            Ok(Artifact::Executable(exe)) => Ok(Launch {
+                program: vpm::relpath::absolute(&exe),
+                args: self.args.args.clone(),
+                env: self.env.clone(),
+                output: Some(output),
+            }),
+            Ok(other) => Err((
+                BuildError::Ice(format!("dev build produced {other:?}")),
+                Some(output),
+            )),
+            Err(err) => Err((err, Some(output))),
+        }
+    }
+
+    fn stop_running(&mut self) {
+        self.channel = None;
+        if let Some(old) = self.running.take() {
+            let output = old.stop(&self.dev_socket);
+            self.retire(output);
+        }
+    }
+
+    /// Delete a finished version's executable (now or on a later sweep).
+    fn retire(&mut self, output: Option<PathBuf>) {
+        if let (Some(versions), Some(output)) = (self.versions.as_mut(), output) {
+            versions.retire(output);
+        }
+    }
+
+    /// Wait until the watched files change; meanwhile report when the program exits by itself.
+    fn wait_for_change(&mut self) -> Instant {
+        loop {
+            std::thread::sleep(POLL);
+            #[cfg(windows)]
+            if super::interrupt::interrupted() {
+                self.exit();
+            }
+            if let Some(since) = self.watcher.poll() {
+                return since;
+            }
+            if let Some(versions) = self.versions.as_mut().filter(|v| v.pending()) {
+                versions.sweep();
+            }
+            if let Some(code) = self.running.as_mut().and_then(Running::exited) {
+                self.channel = None;
+                if let Some(done) = self.running.take() {
+                    let output = done.stop(&self.dev_socket);
+                    self.retire(output);
+                }
+                eprintln!("velt dev: program exited with code {code}; waiting for changes");
+            }
+        }
+    }
+
+    /// Interrupted (Windows): stop the program, delete the version executables and exit.
+    #[cfg(windows)]
+    fn exit(&mut self) -> ! {
+        self.stop_running();
+        for _ in 0..50 {
+            match self.versions.as_mut() {
+                Some(versions) if versions.pending() => versions.sweep(),
+                _ => break,
+            }
+            std::thread::sleep(POLL);
+        }
+        std::process::exit(130)
+    }
+}
+
+/// Arguments for the JIT host child: `dev --host [<file>] [--locked] [-v] -- <program args>`.
+fn host_args(args: &DevArgs) -> Vec<OsString> {
+    let mut out: Vec<OsString> = vec!["dev".into(), "--host".into()];
+    out.extend(args.build.input.iter().map(|p| p.into()));
+    if args.build.locked {
+        out.push("--locked".into());
+    }
+    if args.build.verbose {
+        out.push("-v".into());
+    }
+    out.push("--".into());
+    out.extend(args.args.iter().cloned());
+    out
+}
+
+/// The package manifest and lockfile, when the program is in a package.
+fn manifest_files(input: Option<&Path>) -> Vec<PathBuf> {
+    let start = input
+        .and_then(Path::parent)
+        .filter(|d| !d.as_os_str().is_empty())
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    match vpm::manifest::find_package_root(&start) {
+        Some(root) => vec![
+            root.join(vpm::manifest::MANIFEST_FILE),
+            root.join(vpm::lockfile::LOCK_FILE),
+        ],
+        None => vec![],
+    }
+}

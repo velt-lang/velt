@@ -1,0 +1,105 @@
+// `sort()` on f64 arrays: NaN sorts last, infinities at the ends, -0 and 0 compare equal;
+// checked against a reference merge sort with the same total order.
+
+// Deterministic LCG.
+class Rng {
+  state: i64 = 777;
+
+  // Next value in [0, bound).
+  next(bound: i64): i64 {
+    this.state = (this.state * 1103515245 + 12345) % 2147483648;
+    return this.state % bound;
+  }
+}
+
+const NAN: f64 = 0.0 / 0.0;
+const INF: f64 = 1.0 / 0.0;
+
+// NaN goes after every number (the order `sort()` documents).
+function before(a: f64, b: f64): bool {
+  return a < b || (b != b && a == a);
+}
+
+function mergeSorted(xs: f64[]): f64[] {
+  if (xs.length <= 1) {
+    return xs.slice();
+  }
+  const mid = (xs.length / 2) as i64;
+  const a = mergeSorted(xs.slice(0, mid));
+  const b = mergeSorted(xs.slice(mid));
+  const out: f64[] = [];
+  let i: usize = 0;
+  let j: usize = 0;
+  while (i < a.length && j < b.length) {
+    if (before(b[j], a[i])) {
+      out.push(b[j]);
+      j++;
+    } else {
+      out.push(a[i]);
+      i++;
+    }
+  }
+  while (i < a.length) {
+    out.push(a[i]);
+    i++;
+  }
+  while (j < b.length) {
+    out.push(b[j]);
+    j++;
+  }
+  return out;
+}
+
+function same(a: f64, b: f64): bool {
+  return a == b || (a != a && b != b);
+}
+
+function make(rng: Rng, shape: string, n: i64): f64[] {
+  const xs: f64[] = [];
+  for (let i = 0; i < n; i++) {
+    const r = rng.next(1000) as f64;
+    const x = i as f64;
+    const len = n as f64;
+    if (shape == "random") {
+      xs.push((r - 500.0) / 7.0);
+    } else if (shape == "special") {
+      // NaN, infinities and signed zeros mixed into few distinct values.
+      const k = r % 7.0;
+      xs.push(
+        k == 0.0
+          ? NAN
+          : k == 1.0 ? INF : k == 2.0 ? -INF : k == 3.0 ? -0.0 : k == 4.0 ? 0.0 : k - 5.5,
+      );
+    } else if (shape == "nanfirst") {
+      xs.push(i < n / 3 ? NAN : len - x);
+    } else {
+      xs.push(i % 10 == 0 ? NAN : x / 3.0);
+    }
+  }
+  return xs;
+}
+
+function main() {
+  const rng = new Rng();
+  const shapes = ["random", "special", "nanfirst", "sorted_nans"];
+  const sizes = [0, 1, 2, 7, 21, 100, 129, 1000, 20000];
+  for (const shape of shapes) {
+    let ok = 0;
+    for (const n of sizes) {
+      const xs = make(rng, shape, n);
+      const want = mergeSorted(xs);
+      xs.sort();
+      let good = xs.length == want.length;
+      for (let i: usize = 0; i < xs.length; i++) {
+        good = good && same(xs[i], want[i]);
+      }
+      if (good) {
+        ok++;
+      }
+    }
+    console.log(`${shape}: ${ok}/${sizes.length} ok`);
+  }
+  const small = [3.5, NAN, -INF, 2.0, -0.0, INF, NAN, -7.25, 0.0];
+  small.sort();
+  console.log(small);
+}

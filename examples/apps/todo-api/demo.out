@@ -1,0 +1,15 @@
+POST /todos -> 201 (application/json) {"id":1,"title":"Write docs","done":false,"priority":"normal","tags":["work","docs"]}
+POST /todos -> 201 (application/json) {"id":2,"title":"Ship v1","done":false,"priority":"high","tags":[]}
+POST /todos -> 400 (application/json) {"error":{"code":"invalid","message":"title must not be empty"}}
+POST /todos -> 400 (application/json) {"error":{"code":"invalid","message":"priority must be low, normal or high (got \"asap\")"}}
+POST /todos -> 400 (application/json) {"error":{"code":"bad_json","message":"expected string at $.title"}}
+POST /todos -> 400 (application/json) {"error":{"code":"bad_json","message":"expected object at $"}}
+PATCH /todos/1 -> 200 (application/json) {"id":1,"title":"Write docs","done":true,"priority":"normal","tags":["work","docs"]}
+GET /todos?done=true -> 200 (application/json) [{"id":1,"title":"Write docs","done":true,"priority":"normal","tags":["work","docs"]}]
+GET /todos?tag=docs -> 200 (application/json) [{"id":1,"title":"Write docs","done":true,"priority":"normal","tags":["work","docs"]}]
+GET /todos/7 -> 404 (application/json) {"error":{"code":"not_found","message":"todo 7 not found"}}
+DELETE /todos/2 -> 204 (text/plain; charset=utf-8) 
+PUT /todos/1 -> 405 (application/json) {"error":{"code":"method_not_allowed","message":"PUT is not allowed here"}}
+-- restarted --
+GET /todos -> 200 (application/json) [{"id":1,"title":"Write docs","done":true,"priority":"normal","tags":["work","docs"]}]
+POST /todos -> 201 (application/json) {"id":2,"title":"after restart","done":false,"priority":"normal","tags":[]}

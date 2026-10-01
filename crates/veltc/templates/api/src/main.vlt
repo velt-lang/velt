@@ -1,0 +1,9 @@
+// A JSON HTTP API (see README.md):  PORT=8080 velt run
+import { env } from "velt:process";
+import { startServer } from "./server";
+
+async function main() {
+  const port = parseInt(env("PORT") ?? "8080", 10) as i64;
+  const server = await startServer(port);
+  console.log(`listening on http://127.0.0.1:${server.port}`);
+}

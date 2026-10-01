@@ -1,0 +1,21 @@
+syntax 42601 syntax error at or near "SELEC"
+table 42P01 relation "no_such_table" does not exist
+unique 23505 items_pkey Key (id)=(1) already exists.
+not null 23502 null value in column "name" of relation "items" violates not-null constraint
+division 22012 division by zero
+missing EINVAL missing parameter "name" (placeholder $2)
+count EINVAL the statement takes 2 parameter(s) but 1 were given
+range EINVAL parameter $1: 70000 is out of range for int2
+type EINVAL parameter $1: cannot bind a bool to a parameter of type int4
+input 22P02 invalid input syntax for type integer: "seven"
+mixed EINVAL
+unsupported ENOTSUP column "d" has type point, which std/postgres cannot decode; cast it, e.g. "d"::text
+cast (1,2)
+mismatch EMISMATCH row does not match the requested type: expected string at $[0].name
+items 1
+closed ECLOSED the client is closed
+connect ECONNREFUSED
+connect EINVAL
+connect EINVAL
+connect ETLS
+pool EINVAL

@@ -1,0 +1,60 @@
+// The commands: argv in, output lines out. No process access here, so tests call `execute`
+// directly; src/main.vlt does the printing and the exit code.
+import { ArgParser, CliError, ParsedArgs } from "velt:cli";
+
+/// The argument parser (also the source of `--help`).
+export function parser(): ArgParser {
+  return new ArgParser("{{name}}", "A command-line tool written in Velt.")
+    .flag("shout", { short: "s", help: "Print the greeting in capitals" })
+    .option("times", { short: "n", default: "1", help: "Repeat the greeting", valueName: "n" })
+    .positional("command", "greet | sum")
+    .positional("args", "A name for `greet`, numbers for `sum`");
+}
+
+function greet(opts: ParsedArgs): string[] {
+  const name = opts.get("args");
+  if (name == null) {
+    throw new CliError("'greet' needs a name");
+  }
+  const times = opts.getInt("times") ?? 1;
+  if (times < 1) {
+    throw new CliError("--times must be at least 1");
+  }
+  const text = `Hello, ${name}!`;
+  const line = opts.flag("shout") ? text.toUpperCase() : text;
+  const out: string[] = [];
+  for (let i: i64 = 0; i < times; i++) {
+    out.push(line.clone());
+  }
+  return out;
+}
+
+function sum(opts: ParsedArgs): string[] {
+  let total = 0.0;
+  for (const arg of opts.positionals.slice(1)) {
+    const n = Number(arg);
+    if (n != n) {
+      throw new CliError(`'${arg}' is not a number`);
+    }
+    total += n;
+  }
+  return [`${total}`];
+}
+
+/// Runs `argv` (without the program name) and returns the lines to print. Throws `CliError` for
+/// usage mistakes.
+export function execute(argv: string[]): string[] {
+  const opts = parser().parse(argv);
+  if (opts.flag("help") || opts.positionals.length === 0) {
+    return [parser().help()];
+  }
+  const command = opts.getOr("command", "");
+  switch (command) {
+    case "greet":
+      return greet(opts);
+    case "sum":
+      return sum(opts);
+    default:
+      throw new CliError(`unknown command '${command}' (try --help)`);
+  }
+}

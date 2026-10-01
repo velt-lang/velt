@@ -1,0 +1,15 @@
+[package]
+name = "async_bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone: not a member of the Velt workspace (it only exists to be benchmarked).
+[workspace]
+
+[dependencies]
+futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
+
+[profile.release]
+codegen-units = 1

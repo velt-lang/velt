@@ -1,0 +1,25 @@
+lines: 5000  parsed: 4994  malformed: 6  bytes: 125544168
+routes: 30  clients: 4043  hours: 24
+status: 2xx 4258 (85.3%)  3xx 244 (4.9%)  4xx 287 (5.7%)  5xx 205 (4.1%)
+top 10 routes:
+   count   err%     p50      p95      p99  route (ms)
+     422    7.1   1023.1   1925.1   1968.0  GET /
+     420    4.3   1013.4   1918.4   1977.5  GET /api/users/:id/orders
+     416    3.8    900.9   1897.8   1976.7  GET /login
+     410    5.1   1012.5   1873.5   1989.2  GET /api/users/:id
+     410    3.9    960.5   1925.1   1979.1  GET /static/app.js
+     407    3.4    921.7   1874.1   1978.3  GET /static/style.css
+     388    3.6   1007.2   1922.3   1988.1  GET /api/products
+     387    3.4    983.2   1903.2   1967.8  GET /api/orders/:id
+     381    2.9   1037.0   1904.2   1979.8  GET /health
+     378    2.9    982.5   1864.2   1974.2  GET /api/search
+top 5 clients:
+      33  192.168.0.40
+      32  192.168.0.12
+      28  192.168.0.21
+      26  192.168.0.14
+      26  192.168.0.17
+top 3 hours by 5xx:
+      15  30/Sep/2026:07:00
+      13  30/Sep/2026:03:00
+      12  30/Sep/2026:11:00

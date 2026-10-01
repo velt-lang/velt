@@ -1,0 +1,78 @@
+// `for...of` over a temporary array of non-Copy elements consumes it: elements are owned by
+// the loop variable and can be moved (no `.clone()`); leftovers after `break` are dropped.
+
+class Todo {
+  title: string;
+  done: bool;
+
+  constructor(title: string, done: bool) {
+    this.title = title;
+    this.done = done;
+  }
+}
+
+function load(): Todo[] {
+  return [new Todo("write", false), new Todo("test", true), new Todo("ship", false)];
+}
+
+async function fetchNames(): Promise<string[]> {
+  return ["ada", "grace", "barbara"];
+}
+
+async function run() {
+  const upper: string[] = [];
+  for (const n of await fetchNames()) {
+    upper.push(n);
+  }
+  console.log(upper.join(","));
+}
+
+async function main() {
+  const open: Todo[] = [];
+  for (const t of load()) {
+    if (t.done) {
+      continue;
+    }
+    open.push(t);
+  }
+  console.log(open.length, open[0].title, open[1].title);
+
+  const firstTwo: string[] = [];
+  outer: for (let s of ["a", "b", "c", "d"]) {
+    s += "!";
+    firstTwo.push(s);
+    if (firstTwo.length == 2) {
+      break outer;
+    }
+  }
+  console.log(firstTwo);
+
+  const titles: string[] = [];
+  for (const { title } of load().filter((t) => !t.done)) {
+    titles.push(title);
+  }
+  console.log(titles);
+
+  const pairs: string[][] = [];
+  for (const [a, b] of [
+    ["x", "y"],
+    ["z", "w"],
+  ]) {
+    pairs.push([b, a]);
+  }
+  console.log(pairs);
+
+  // Places are still borrowed (and stay usable).
+  const kept = load();
+  for (const t of kept) {
+    console.log(t.title);
+  }
+  console.log(kept.length);
+
+  let total = 0;
+  for (const x of [1, 2, 3].map((x) => x * 2)) {
+    total += x;
+  }
+  console.log(total);
+  await run();
+}

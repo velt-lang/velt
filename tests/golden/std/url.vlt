@@ -1,0 +1,189 @@
+// std/url: WHATWG URL parsing, relative resolution, components, setters, URLSearchParams and
+// the encodeURIComponent family. Expected output checked against Node 24.
+import {
+  URL,
+  URLSearchParams,
+  encodeURIComponent,
+  decodeURIComponent,
+  encodeURI,
+  decodeURI,
+} from "velt:url";
+
+// Absolute inputs (base "") and relative references with their base.
+function cases(): string[][] {
+  return [
+    ["http://example.com", ""],
+    ["HTTP://EXAMPLE.COM:80/A/B?Q#F", ""],
+    ["https://example.com:443/", ""],
+    ["https://example.com:8443/x", ""],
+    ["ws://h:80/", ""],
+    ["wss://h:443/chat", ""],
+    ["http://h:0080/", ""],
+    ["http://a/b/c/./../../g", ""],
+    ["http://a/%2e%2E/b/.%2e/c", ""],
+    ["http://a/b/c/..", ""],
+    ["http://a/b/c/.", ""],
+    ["http:\\\\h\\a\\b", ""],
+    ["http:example.com/x", ""],
+    ["  http://h/ a\tb\n  ", ""],
+    ["http://user:p@ss:w@h/", ""],
+    ["http://@h/", ""],
+    ["http://h/p?q=a b'c\"d#frag `x`", ""],
+    ["http://h/{}|^`<>", ""],
+    ["http://h/%zz%41", ""],
+    ["http://h/é?é#é", ""],
+    ["http://127.1/", ""],
+    ["http://0x7f.0.0.1:8080/", ""],
+    ["http://2130706433/", ""],
+    ["http://[::1]:3000/x", ""],
+    ["http://[2001:DB8::A]/", ""],
+    ["http://ex%41mple.com/", ""],
+    ["file:///tmp/a/../b.txt", ""],
+    ["file://localhost/etc/hosts", ""],
+    ["file:/x/y", ""],
+    ["mailto:Joe@Example.com?subject=hi there", ""],
+    ["data:text/plain,a b", ""],
+    ["urn:isbn:0451450523", ""],
+    ["foo://Host/a/../b", ""],
+    ["foo://host", ""],
+    ["foo:/a/./b", ""],
+    ["g", "http://a/b/c/d;p?q"],
+    ["./g", "http://a/b/c/d;p?q"],
+    ["g/", "http://a/b/c/d;p?q"],
+    ["/g", "http://a/b/c/d;p?q"],
+    ["//g", "http://a/b/c/d;p?q"],
+    ["?y", "http://a/b/c/d;p?q"],
+    ["g?y", "http://a/b/c/d;p?q"],
+    ["#s", "http://a/b/c/d;p?q"],
+    ["g#s", "http://a/b/c/d;p?q"],
+    [";x", "http://a/b/c/d;p?q"],
+    ["", "http://a/b/c/d;p?q#f"],
+    [".", "http://a/b/c/d;p?q"],
+    ["./", "http://a/b/c/d;p?q"],
+    ["..", "http://a/b/c/d;p?q"],
+    ["../g", "http://a/b/c/d;p?q"],
+    ["../..", "http://a/b/c/d;p?q"],
+    ["../../../../g", "http://a/b/c/d;p?q"],
+    ["g;x=1/../y", "http://a/b/c/d;p?q"],
+    ["http:g", "http://a/b/c/d;p?q"],
+    ["https:g", "http://a/b/c/d;p?q"],
+    ["\\\\other\\x", "http://a/b"],
+    ["x", "foo://h/a/b"],
+    ["#top", "mailto:a@b"],
+    ["x", "mailto:a@b"],
+    ["relative/path", ""],
+    ["http://", ""],
+    ["http://h:65536/", ""],
+    ["http://h:12a/", ""],
+    ["http://exa mple.com/", ""],
+    ["http://h%00/", ""],
+    ["http://1.2.3.256/", ""],
+    ["http://a<b/", ""],
+    ["http://[::1/", ""],
+    ["https://[1:2]:x/", ""],
+    ["x", "not a url"],
+  ];
+}
+
+function show(input: string, base: string) {
+  try {
+    const u = base.length == 0 ? new URL(input) : new URL(input, base);
+    console.log(`${input} | ${base} -> ${u.href}`);
+  } catch (e) {
+    console.log(`${input} | ${base} -> ${e.message}`);
+  }
+}
+
+function components(s: string) {
+  const u = new URL(s);
+  console.log(u.protocol, u.username, u.password, u.host, u.hostname, u.port);
+  console.log(u.pathname, u.search, u.hash, u.origin, u.toString() == u.href, u.toJSON());
+}
+
+function setters() {
+  const u = new URL("http://user@example.com:8080/a/b?x=1#top");
+  u.pathname = "/c d/../e";
+  u.search = "?q=a b";
+  u.hash = "sec 2";
+  u.port = "80";
+  u.hostname = "Other.ORG";
+  u.username = "me@home";
+  u.password = "p:w";
+  console.log(u.href);
+  u.port = "99999";
+  u.port = "12ab";
+  u.protocol = "https";
+  console.log(u.href);
+  u.protocol = "mailto";
+  u.host = "h.example:443";
+  u.search = "";
+  u.hash = "";
+  console.log(u.href, u.host);
+  u.href = "ws://chat.example/room";
+  console.log(u.href, u.origin);
+  try {
+    u.href = "nope";
+  } catch (e) {
+    console.log(e.message);
+  }
+  console.log(URL.canParse("/x", "http://h"), URL.canParse("/x"), URL.parse("::") == null);
+}
+
+function searchParams() {
+  const p = new URLSearchParams("?b=2&a=1&a=3&c=x+y%20z&empty=&novalue&%E2%82%AC=%zz&&");
+  console.log(p.size, p.get("a"), p.get("missing"), p.getAll("a"), p.has("c"), p.has("a", "3"));
+  console.log(p.get("c"), p.get("empty"), p.get("novalue"), p.get("€"));
+  p.append("a", "4");
+  p.set("b", "two words");
+  p.delete("empty");
+  p.delete("a", "3");
+  console.log(p.toString());
+  p.set("a", "only");
+  p.sort();
+  console.log(p.keys(), p.values());
+  console.log(p.entries());
+  const bad = new URLSearchParams("a=%FF%C3&b=%E2%82x&c=%F0%9F%98&d=%ED%A0%80z&e=%C0%AF");
+  console.log(JSON.stringify(bad.values()));
+  const q = new URLSearchParams();
+  q.append("k", "a&b=c/d~*'()!é");
+  console.log(q.toString(), q.size);
+  const u = new URL("https://h/p?x=1&y=2#f");
+  const sp = u.searchParams;
+  sp.set("x", "9");
+  sp.append("z", "a b");
+  console.log(u.search, sp.toString());
+  u.searchParams = sp;
+  console.log(u.href);
+  u.searchParams = new URLSearchParams();
+  console.log(u.href);
+}
+
+function uriFunctions() {
+  const s = "https://h/ä ö?a=1&b=x y#€;,/?:@&=+$";
+  console.log(encodeURIComponent(s));
+  console.log(encodeURI(s));
+  console.log(encodeURIComponent("-_.!~*'()"), encodeURIComponent("😀"));
+  console.log(decodeURIComponent("%F0%9F%98%80%20%e2%82%ac%2F"));
+  console.log(decodeURI("%3B%2F%3F%3A%40%26%3D%2B%24%2C%23%20%41"));
+  const bad = ["%", "%4", "%zz", "%C3", "%C3%28", "%ED%A0%80", "%FF"];
+  for (const b of bad) {
+    try {
+      console.log(decodeURIComponent(b));
+    } catch (e) {
+      console.log(`${b}: ${e.message}`);
+    }
+  }
+}
+
+function main() {
+  for (const c of cases()) {
+    show(c[0], c[1]);
+  }
+  components("https://u:p@EXAMPLE.com:8443/a%20b/c?x=1#h");
+  components("http://h");
+  components("file:///C:/x");
+  components("blob:thing");
+  setters();
+  searchParams();
+  uriFunctions();
+}

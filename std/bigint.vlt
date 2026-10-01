@@ -1,0 +1,246 @@
+// std/bigint: arbitrary-precision integers (JS `BigInt`), backed by the runtime (num-bigint).
+//
+// Velt has no operator overloading, so arithmetic is methods: `a.add(b)` returns a new BigInt
+// like JS `a + b`; `a.addAssign(b)` changes `a` in place like `a += b`, reusing its buffer (hot
+// loops such as a pidigits spigot should use the in-place forms). Every operation has a
+// machine-integer twin (`mulInt(10)`, `mulIntAssign(k)`) that skips building a BigInt for the
+// small operand. Division truncates and `rem` takes the dividend's sign, like JS; dividing by
+// zero panics with a RangeError, as JS throws one.
+//
+// A BigInt owns a runtime handle: `clone()` copies the number, `[Symbol.dispose]()` frees it.
+
+declare function velt_rt_bigint_from_i64(v: i64): u64;
+declare function velt_rt_bigint_from_f64(v: f64): u64;
+declare function velt_rt_bigint_parse(s: string, radix: i64): u64;
+declare function velt_rt_bigint_clone(h: u64): u64;
+declare function velt_rt_bigint_free(h: u64);
+declare function velt_rt_bigint_op(dst: u64, a: u64, b: u64, op: u32): bool;
+declare function velt_rt_bigint_op_i64(dst: u64, a: u64, k: i64, op: u32): bool;
+declare function velt_rt_bigint_assign(dst: u64, a: u64);
+declare function velt_rt_bigint_neg(dst: u64, a: u64);
+declare function velt_rt_bigint_cmp(a: u64, b: u64): i64;
+declare function velt_rt_bigint_cmp_i64(a: u64, k: i64): i64;
+declare function velt_rt_bigint_to_f64(a: u64): f64;
+declare function velt_rt_bigint_to_i64(a: u64): i64;
+declare function velt_rt_bigint_to_string(a: u64, radix: i64): string;
+
+// Operation codes of `velt_rt_bigint_op*` (crates/velt_rt/src/bigint.rs `op`).
+const ADD: u32 = 0;
+const SUB: u32 = 1;
+const MUL: u32 = 2;
+const DIV: u32 = 3;
+const REM: u32 = 4;
+const SHL: u32 = 5;
+const SHR: u32 = 6;
+
+// A string that is not a valid integer (JS throws `SyntaxError`).
+export class BigIntError extends Error {}
+
+export class BigInt {
+  private handle: u64;
+
+  // JS `BigInt(n)` / `10n`.
+  constructor(value: i64 = 0) {
+    this.handle = velt_rt_bigint_from_i64(value);
+  }
+
+  // JS `BigInt(x)` for a float: the integer part of `x` (panics on NaN and ±Infinity, which JS
+  // rejects with a RangeError).
+  static fromNumber(x: f64): BigInt {
+    if (x != x || x - x != 0.0) {
+      panic("RangeError: cannot convert a non-finite number to a BigInt");
+    }
+    return BigInt.adopt(velt_rt_bigint_from_f64(x));
+  }
+
+  // Parses digits in `radix` (2 to 36) with an optional sign; throws `BigIntError`.
+  static parse(s: string, radix: i64 = 10): BigInt {
+    const h = velt_rt_bigint_parse(s, radix);
+    if (h == 0) {
+      throw new BigIntError(`Cannot convert ${s} to a BigInt`);
+    }
+    return BigInt.adopt(h);
+  }
+
+  add(other: BigInt): BigInt {
+    return this.binary(other, ADD);
+  }
+
+  sub(other: BigInt): BigInt {
+    return this.binary(other, SUB);
+  }
+
+  mul(other: BigInt): BigInt {
+    return this.binary(other, MUL);
+  }
+
+  div(other: BigInt): BigInt {
+    return this.binary(other, DIV);
+  }
+
+  rem(other: BigInt): BigInt {
+    return this.binary(other, REM);
+  }
+
+  addInt(k: i64): BigInt {
+    return this.binaryInt(k, ADD);
+  }
+
+  subInt(k: i64): BigInt {
+    return this.binaryInt(k, SUB);
+  }
+
+  mulInt(k: i64): BigInt {
+    return this.binaryInt(k, MUL);
+  }
+
+  divInt(k: i64): BigInt {
+    return this.binaryInt(k, DIV);
+  }
+
+  remInt(k: i64): BigInt {
+    return this.binaryInt(k, REM);
+  }
+
+  // `this << n` (`n` >= 0).
+  shl(n: i64): BigInt {
+    return this.binaryInt(n, SHL);
+  }
+
+  // `this >> n` (`n` >= 0; rounds toward -Infinity, like JS).
+  shr(n: i64): BigInt {
+    return this.binaryInt(n, SHR);
+  }
+
+  neg(): BigInt {
+    const out = new BigInt();
+    velt_rt_bigint_neg(out.handle, this.handle);
+    return out;
+  }
+
+  addAssign(other: BigInt) {
+    this.assignOp(other, ADD);
+  }
+
+  subAssign(other: BigInt) {
+    this.assignOp(other, SUB);
+  }
+
+  mulAssign(other: BigInt) {
+    this.assignOp(other, MUL);
+  }
+
+  divAssign(other: BigInt) {
+    this.assignOp(other, DIV);
+  }
+
+  remAssign(other: BigInt) {
+    this.assignOp(other, REM);
+  }
+
+  addIntAssign(k: i64) {
+    this.assignOpInt(k, ADD);
+  }
+
+  subIntAssign(k: i64) {
+    this.assignOpInt(k, SUB);
+  }
+
+  mulIntAssign(k: i64) {
+    this.assignOpInt(k, MUL);
+  }
+
+  divIntAssign(k: i64) {
+    this.assignOpInt(k, DIV);
+  }
+
+  shlAssign(n: i64) {
+    this.assignOpInt(n, SHL);
+  }
+
+  shrAssign(n: i64) {
+    this.assignOpInt(n, SHR);
+  }
+
+  // Makes this number equal to `other`, reusing this one's buffer.
+  set(other: BigInt) {
+    velt_rt_bigint_assign(this.handle, other.handle);
+  }
+
+  // -1, 0 or 1 as this is less than, equal to or greater than `other`.
+  compareTo(other: BigInt): i64 {
+    return velt_rt_bigint_cmp(this.handle, other.handle);
+  }
+
+  // -1, 0 or 1 as this is less than, equal to or greater than `k`.
+  compareToInt(k: i64): i64 {
+    return velt_rt_bigint_cmp_i64(this.handle, k);
+  }
+
+  equals(other: BigInt): bool {
+    return this.compareTo(other) == 0;
+  }
+
+  // The nearest number (JS `Number(big)`).
+  toNumber(): f64 {
+    return velt_rt_bigint_to_f64(this.handle);
+  }
+
+  // The low 64 bits as a signed integer (JS `BigInt.asIntN(64, big)`).
+  toI64(): i64 {
+    return velt_rt_bigint_to_i64(this.handle);
+  }
+
+  // Digits in `radix` (2 to 36), lowercase, with a leading `-` when negative.
+  toString(radix: i64 = 10): string {
+    return velt_rt_bigint_to_string(this.handle, radix);
+  }
+
+  // An independent copy.
+  clone(): BigInt {
+    return BigInt.adopt(velt_rt_bigint_clone(this.handle));
+  }
+
+  // Drop hook: frees the number.
+  [Symbol.dispose]() {
+    if (this.handle != 0) {
+      velt_rt_bigint_free(this.handle);
+      this.handle = 0;
+    }
+  }
+
+  // A BigInt owning the runtime handle `h`.
+  private static adopt(h: u64): BigInt {
+    const b = new BigInt();
+    velt_rt_bigint_free(b.handle);
+    b.handle = h;
+    return b;
+  }
+
+  private binary(other: BigInt, op: u32): BigInt {
+    const out = new BigInt();
+    checked(velt_rt_bigint_op(out.handle, this.handle, other.handle, op));
+    return out;
+  }
+
+  private binaryInt(k: i64, op: u32): BigInt {
+    const out = new BigInt();
+    checked(velt_rt_bigint_op_i64(out.handle, this.handle, k, op));
+    return out;
+  }
+
+  private assignOp(other: BigInt, op: u32) {
+    checked(velt_rt_bigint_op(this.handle, this.handle, other.handle, op));
+  }
+
+  private assignOpInt(k: i64, op: u32) {
+    checked(velt_rt_bigint_op_i64(this.handle, this.handle, k, op));
+  }
+}
+
+// `ok` is false after a division by zero or a negative or enormous shift (operand unchanged).
+function checked(ok: bool) {
+  if (!ok) {
+    panic("RangeError: BigInt division by zero or invalid shift");
+  }
+}

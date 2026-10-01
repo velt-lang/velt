@@ -1,0 +1,31 @@
+// Function composition and pipelines of closures stored in arrays.
+function compose(f: (x: i64) => i64, g: (x: i64) => i64): (x: i64) => i64 {
+  return (x: i64): i64 => g(f(x));
+}
+
+function pipeline(fs: ((x: i64) => i64)[], x: i64): i64 {
+  let v = x;
+  for (const f of fs) {
+    v = f(v);
+  }
+  return v;
+}
+
+function main() {
+  // Each closure value is used once: passing one to `compose` (which stores it) moves it in Velt.
+  const h = compose(
+    compose((x: i64): i64 => x + 1, (x: i64): i64 => x * 2),
+    (x: i64): i64 => x * x,
+  );
+  console.log(h(1), h(5));
+  const sq = (x: i64): i64 => x * x;
+  const steps: ((x: i64) => i64)[] = [
+    (x: i64): i64 => x * 2,
+    (x: i64): i64 => x + 1,
+    (x: i64): i64 => x * x,
+    (x: i64): i64 => x + 1,
+  ];
+  console.log(pipeline(steps, 3), pipeline([], 7));
+  const evens = [1, 2, 3, 4, 5, 6].filter((x) => x % 2 == 0).map(sq);
+  console.log(evens);
+}

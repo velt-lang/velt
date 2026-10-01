@@ -1,0 +1,18 @@
+// 100k concurrent sleep(1) tasks, joined with Promise.all.
+async function nap(i: i64): Promise<i64> {
+  await sleep(1);
+  return i % 13;
+}
+
+async function main() {
+  const ps: Promise<i64>[] = [];
+  for (let i = 0; i < 100000; i++) {
+    ps.push(nap(i));
+  }
+  const rs = await Promise.all(ps);
+  let total = 0;
+  for (const r of rs) {
+    total += r;
+  }
+  console.log(total);
+}

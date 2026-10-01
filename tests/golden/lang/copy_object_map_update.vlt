@@ -1,0 +1,15 @@
+// An object type whose fields are all Copy (`{ count: i64 }`) is not itself Copy (only `struct`s
+// are): like a class instance it has one owner, so `Map.update`'s callback changes the stored
+// object as in JS. Regression (apps sprint): the callback got a copy and `c.count++` was lost.
+type Counter = { count: i64 };
+
+function main() {
+  const m = new Map<string, Counter>();
+  for (let i = 0; i < 3; i++) {
+    const found = m.update("k", (c) => {
+      c.count++;
+    });
+    if (!found) m.set("k", { count: 1 });
+  }
+  console.log(m.get("k")?.count);
+}

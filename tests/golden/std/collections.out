@@ -1,0 +1,44 @@
+2 true false [ 'b', 'a' ] false
+true false [ 'a' ]
+item a
+item b
+0 true []
+[ 1, 2, 3, 4 ] [ 3, 4, 5 ]
+union [ 1, 2, 3, 4, 5 ]
+intersection [ 3, 4 ]
+difference [ 1, 2 ] [ 5 ]
+symmetric [ 1, 2, 5 ]
+true true false
+false true
+sum 10
+null null null null true
+b0 b1 b2
+9 9 [ 'f5', 'f4', 'f3', 'f2', 'f1', 'f0', 'b3', 'b4', 'b5' ]
+f5 b5 f4 b4 null null
+b5 f5 7
+f4,f3,f2,f1,f0,b3,b4
+0 [] null
+[ 'again' ]
+[ 1, 2, 3 ]
+deque matches array model: true 211
+null null true
+8 8 -2 [ -2, 1, 3, 3, 5, 7, 8, 9 ]
+[ -2, 1, 3, 3, 5, 7, 8, 9 ]
+9 8 6
+0 null
+Job { name: 'fix outage', priority: 9 }
+9 fix outage
+5 review
+1 write docs
+[ 'a', 'bb', 'ccc', 'dddd' ] a
+heap pops in sorted order: true true
+null null null true
+3 [ 'apple', 'fig', 'pear' ] [ 10, 2, 3 ] 10 null true
+apple pear apple fig
+null null fig fig
+[ [ 'fig', 2 ], [ 'pear', 3 ] ] [] [ [ 'apple', 10 ], [ 'fig', 2 ], [ 'pear', 3 ] ]
+true false [ 'apple', 'pear' ]
+apple 10
+pear 3
+0 []
+[ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ] [ [ 3, 'v2' ], [ 4, 'v10' ], [ 5, 'v7' ], [ 6, 'v4' ] ]

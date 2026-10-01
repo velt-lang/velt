@@ -1,0 +1,50 @@
+// A generic function bounded by a user interface; implementations in two classes.
+interface Sized {
+  size(): i64;
+}
+
+class Box implements Sized {
+  w: i64;
+  h: i64;
+  constructor(w: i64, h: i64) {
+    this.w = w;
+    this.h = h;
+  }
+  size(): i64 {
+    return this.w * this.h;
+  }
+}
+
+class Line implements Sized {
+  len: i64;
+  constructor(len: i64) {
+    this.len = len;
+  }
+  size(): i64 {
+    return this.len;
+  }
+}
+
+function total<T extends Sized>(xs: T[]): i64 {
+  let t = 0;
+  for (const x of xs) {
+    t += x.size();
+  }
+  return t;
+}
+
+function biggest<T extends Sized>(xs: T[]): i64 {
+  let best = -1;
+  for (let i: usize = 0; i < xs.length; i++) {
+    if (best < 0 || xs[i].size() > xs[best as usize].size()) {
+      best = i as i64;
+    }
+  }
+  return best;
+}
+
+function main() {
+  const boxes = [new Box(2, 3), new Box(4, 4), new Box(1, 9)];
+  const lines = [new Line(5), new Line(50)];
+  console.log(total(boxes), total(lines), biggest(boxes), biggest(lines));
+}

@@ -1,0 +1,11 @@
+up true
+right false
+down true
+left false
+up true
+5 dir=right right!
+[ 'left', 'up' ] 2
+0 10
+sure: true not sure
+Version { major: 1, minor: 4 } 5 {"major":1,"minor":4}
+[ 'a', 'b', 'right' ]

@@ -1,0 +1,81 @@
+// requires-env: VELT_TEST_REDIS_URL
+// std/redis: connecting, strings, expiry, counters, mget/mset, call() and database selection.
+import { connect } from "velt:redis";
+import { redisUrl, freshPrefix, cleanup } from "./_redis";
+
+async function main() {
+  const url = redisUrl();
+  const p = freshPrefix();
+  const c = await connect(url);
+  console.log("ping:", await c.ping());
+
+  // Strings.
+  console.log("get missing:", await c.get(`${p}name`));
+  console.log("set:", await c.set(`${p}name`, "Ada"));
+  console.log("get:", await c.get(`${p}name`));
+  console.log("set nx on existing:", await c.set(`${p}name`, "Bob", { nx: true }));
+  console.log("set xx on missing:", await c.set(`${p}nobody`, "x", { xx: true }));
+  console.log("set xx on existing:", await c.set(`${p}name`, "Grace", { xx: true }));
+  console.log("value:", await c.get(`${p}name`));
+  console.log("unicode:", await c.set(`${p}ü`, "héllo ✓"), await c.get(`${p}ü`));
+  console.log("exists:", await c.exists([`${p}name`, `${p}nobody`, `${p}name`]));
+
+  // Expiry.
+  await c.set(`${p}session`, "s", { ex: 100 });
+  const ttl = await c.ttl(`${p}session`);
+  console.log("ttl in (90, 100]:", ttl > 90 && ttl <= 100);
+  console.log(
+    "ttl without expiry:",
+    await c.ttl(`${p}name`),
+    "missing:",
+    await c.ttl(`${p}nobody`),
+  );
+  console.log("pexpire:", await c.pexpire(`${p}name`, 50000));
+  const pttl = await c.pttl(`${p}name`);
+  console.log("pttl in (40000, 50000]:", pttl > 40000 && pttl <= 50000);
+  console.log("persist:", await c.persist(`${p}name`), await c.ttl(`${p}name`));
+  console.log("expire missing:", await c.expire(`${p}nobody`, 10));
+  await c.set(`${p}short`, "gone soon", { px: 30 });
+  await sleep(80);
+  console.log("after px expiry:", await c.get(`${p}short`));
+
+  // Counters.
+  console.log("incr:", await c.incr(`${p}n`), await c.incr(`${p}n`));
+  console.log("incrBy:", await c.incrBy(`${p}n`, 40));
+  console.log("decr:", await c.decr(`${p}n`), await c.decrBy(`${p}n`, 10));
+
+  // mget / mset.
+  const m = new Map<string, string>();
+  m.set(`${p}a`, "1");
+  m.set(`${p}b`, "2");
+  await c.mset(m);
+  console.log("mget:", await c.mget([`${p}a`, `${p}missing`, `${p}b`]));
+
+  // The generic escape hatch.
+  const echo = await c.call(["ECHO", "hi"]);
+  console.log("call ECHO:", echo.kind, echo.asString());
+  const kind = await c.call(["TYPE", `${p}a`]);
+  console.log("call TYPE:", kind.kind, kind.text);
+  const nothing = await c.call(["GET", `${p}missing`]);
+  console.log("call GET missing:", nothing.kind, nothing.isNull());
+  const n = await c.call(["STRLEN", `${p}name`]);
+  console.log("call STRLEN:", n.kind, n.asInt());
+
+  // Database index in the URL: db 1 does not see db 0's keys.
+  const db1 = await connect(`${url}/1`);
+  console.log("db1 sees db0 key:", await db1.get(`${p}a`));
+  await db1.set(`${p}only-in-1`, "yes");
+  console.log("db0 sees db1 key:", await c.get(`${p}only-in-1`));
+  console.log("db1 cleanup:", await cleanup(db1, p));
+  db1.close();
+
+  // A duplicate is a separate connection to the same database.
+  const d = await c.duplicate();
+  console.log("duplicate:", await d.get(`${p}a`));
+  d.close();
+
+  console.log("del:", await c.del([`${p}a`, `${p}b`, `${p}missing`]));
+  console.log("cleanup:", await cleanup(c, p) > 0);
+  console.log("left:", (await c.keys(`${p}*`)).length);
+  c.close();
+}

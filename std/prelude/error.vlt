@@ -1,0 +1,14 @@
+// Prelude: `Error`, the base class of every error thrown by std (`IoError`, `JsonError`).
+//
+// A function's error type is the union of what it can throw, so a call that can fail in two ways
+// (e.g. `FetchResponse.json()`: I/O, then JSON decoding) throws `IoError | JsonError`, and
+// `catch (e) { e.message }` works either way (every member has `message`). User error classes
+// extend it too.
+
+export class Error {
+  message: string;
+
+  constructor(message: string) {
+    this.message = message;
+  }
+}

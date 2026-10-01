@@ -1,0 +1,7 @@
+for_of_modify.vlt:26:5: error: cannot modify `xs` while a `for...of` loop iterates over `xs`
+the loop borrows the array here
+collect the changes and apply them after the loop, or loop over indexes
+for_of_modify.vlt:34:5: error: cannot modify `ys` while a `for...of` loop iterates over `ys`
+for_of_modify.vlt:38:5: error: cannot modify `b.items` while a `for...of` loop iterates over `b.items`
+for_of_modify.vlt:42:10: error: cannot move `xs` while a `for...of` loop iterates over `xs`
+for_of_modify.vlt:12:7: error: cannot modify `this` while a `for...of` loop iterates over `this.items`

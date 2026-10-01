@@ -1,0 +1,23 @@
+[package]
+name = "benchmarks_game"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone: not a member of the Velt workspace (it only exists to be benchmarked).
+[workspace]
+
+[dependencies]
+rayon = "1"
+regex = "1"
+# pidigits: the fastest published Rust (#4) uses GMP through rug.
+rug = { version = "1.12", default-features = false, features = ["integer"] }
+# binary-trees: Rust #5 allocates from bumpalo arenas; binary-trees_box uses mimalloc (the Velt
+# runtime's allocator) for a same-allocator comparison with the idiomatic Velt port.
+bumpalo = "3"
+mimalloc = { version = "0.1", default-features = false }
+
+[profile.release]
+codegen-units = 1
+lto = true
+panic = "abort"

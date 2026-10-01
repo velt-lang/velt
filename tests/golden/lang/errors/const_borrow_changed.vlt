@@ -1,0 +1,43 @@
+// `const left = node.left` refers to the field's value in place, so the rest of the block may
+// not change that field or anything that owns it while `left` exists, and `left` is read-only.
+class T {
+  left: T | null = null;
+  right: T | null = null;
+  v: i64 = 1;
+
+  reset() {
+    this.left = null;
+  }
+}
+
+function f(node: T): i64 {
+  const left = node.left;
+  node.right = new T();
+  node.left = null;
+  return left === null ? 0 : left.v;
+}
+
+function g(node: T): i64 {
+  const left = node.left;
+  node.reset();
+  return left === null ? 0 : left.v;
+}
+
+function h(rows: T[][]): usize {
+  const row = rows[0];
+  rows.push([]);
+  return row.length;
+}
+
+function k(node: T) {
+  const left = node.left;
+  if (left !== null) {
+    left.v = 2;
+  }
+}
+
+function main() {
+  const t = new T();
+  k(t);
+  console.log(f(t), g(t), h([[t]]));
+}

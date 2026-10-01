@@ -1,0 +1,137 @@
+// std/datetime/format (std-internal): ISO 8601, HTTP-date and pattern formatting for std/datetime.
+
+import {
+  DateParts,
+  partsOf,
+  monthShort,
+  monthLong,
+  weekdayShort,
+  weekdayLong,
+} from "velt:datetime/civil";
+
+// `n` zero-padded to `width` digits (a minus sign goes in front of the padding).
+export function pad(n: i64, width: i64): string {
+  if (n < 0) {
+    const digits = `${-n}`;
+    return `-${digits.padStart(width, "0")}`;
+  }
+  return `${n}`.padStart(width, "0");
+}
+
+// `+01:00` / `-05:30` (`colon` false: `+0100`).
+export function offsetString(offsetMinutes: i64, colon: bool): string {
+  const sign = offsetMinutes < 0 ? "-" : "+";
+  const abs = offsetMinutes < 0 ? -offsetMinutes : offsetMinutes;
+  return `${sign}${pad(abs / 60, 2)}${colon ? ":" : ""}${pad(abs % 60, 2)}`;
+}
+
+// JS year formatting: 4 digits for 0-9999, else a sign and 6 digits.
+function isoYear(y: i64): string {
+  if (y >= 0 && y <= 9999) {
+    return pad(y, 4);
+  }
+  return `${y < 0 ? "-" : "+"}${pad(y < 0 ? -y : y, 6)}`;
+}
+
+// `2024-02-29T12:34:56.000Z`, or with a numeric offset when `utcZ` is false.
+export function isoString(t: i64, offsetMinutes: i64, utcZ: bool): string {
+  const p = partsOf(t, offsetMinutes);
+  const zone = utcZ ? "Z" : offsetString(offsetMinutes, true);
+  const date = `${isoYear(p.year)}-${pad(p.month, 2)}-${pad(p.day, 2)}`;
+  return `${date}T${pad(p.hour, 2)}:${pad(p.minute, 2)}:${pad(p.second, 2)}.${pad(p.millisecond, 3)}${zone}`;
+}
+
+// RFC 7231 IMF-fixdate: `Thu, 29 Feb 2024 12:34:56 GMT` (always UTC).
+export function httpString(t: i64): string {
+  const p = partsOf(t, 0);
+  const date = `${weekdayShort(p.dayOfWeek)}, ${pad(p.day, 2)} ${monthShort(p.month)} ${pad(p.year, 4)}`;
+  return `${date} ${pad(p.hour, 2)}:${pad(p.minute, 2)}:${pad(p.second, 2)} GMT`;
+}
+
+// Expands the tokens of `pattern` (documented on `DateTime.format`) for `t` at `offsetMinutes`.
+export function formatPattern(t: i64, offsetMinutes: i64, pattern: string): string {
+  const p = partsOf(t, offsetMinutes);
+  const out: string[] = [];
+  const len = pattern.length as i64;
+  let i: i64 = 0;
+  while (i < len) {
+    const c = pattern.charCodeAt(i);
+    if (c == 91) {
+      const close = pattern.indexOf("]", i + 1);
+      const end = close < 0 ? len : close;
+      out.push(pattern.slice(i + 1, end));
+      i = end + 1;
+      continue;
+    }
+    let j = i + 1;
+    while (j < len && pattern.charCodeAt(j) == c) {
+      j++;
+    }
+    const run = pattern.slice(i, j);
+    out.push(token(p, run) ?? run);
+    i = j;
+  }
+  return out.join("");
+}
+
+// The text of one token (a run of one repeated letter), or null if it is not a token.
+function token(p: DateParts, run: string): string | null {
+  switch (run) {
+    case "YYYY":
+      return pad(p.year, 4);
+    case "YY":
+      return pad(p.year % 100 < 0 ? -(p.year % 100) : p.year % 100, 2);
+    case "M":
+      return `${p.month}`;
+    case "MM":
+      return pad(p.month, 2);
+    case "MMM":
+      return monthShort(p.month);
+    case "MMMM":
+      return monthLong(p.month);
+    case "D":
+      return `${p.day}`;
+    case "DD":
+      return pad(p.day, 2);
+    case "DDDD":
+      return pad(p.dayOfYear, 3);
+    case "ddd":
+      return weekdayShort(p.dayOfWeek);
+    case "dddd":
+      return weekdayLong(p.dayOfWeek);
+  }
+  return timeToken(p, run);
+}
+
+function timeToken(p: DateParts, run: string): string | null {
+  const h12 = p.hour % 12 == 0 ? 12 : p.hour % 12;
+  switch (run) {
+    case "H":
+      return `${p.hour}`;
+    case "HH":
+      return pad(p.hour, 2);
+    case "h":
+      return `${h12}`;
+    case "hh":
+      return pad(h12, 2);
+    case "m":
+      return `${p.minute}`;
+    case "mm":
+      return pad(p.minute, 2);
+    case "s":
+      return `${p.second}`;
+    case "ss":
+      return pad(p.second, 2);
+    case "SSS":
+      return pad(p.millisecond, 3);
+    case "A":
+      return p.hour < 12 ? "AM" : "PM";
+    case "a":
+      return p.hour < 12 ? "am" : "pm";
+    case "Z":
+      return offsetString(p.offsetMinutes, true);
+    case "ZZ":
+      return offsetString(p.offsetMinutes, false);
+  }
+  return null;
+}

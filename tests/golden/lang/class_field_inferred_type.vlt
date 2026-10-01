@@ -1,0 +1,14 @@
+// A class field with an initializer and no type annotation takes the type the initializer
+// states (`done = false;` is a `bool`, `count = 0;` an `i64`, `new C()` a `C`), as TS infers it.
+// Regression (benchmarks-game): a parse error ("expected `:` or `(`").
+class Parser {
+  done = false;
+  count = 0;
+  name = "p";
+}
+
+function main() {
+  const p = new Parser();
+  p.count += 2;
+  console.log(p.done, p.count, p.name);
+}

@@ -1,0 +1,16 @@
+// Bug (apps ergonomics sprint): returning a non-Copy field of a local narrowed from `T | null`
+// (`if (m == null) return null; return m.name;`, also `m == null ? null : m.name`) hands out a
+// string that is freed when `m` is dropped: prints garbage (use after free); with a `Map.get`
+// result the program can hang. Found as garbled names in the chat app (`Room.nameOf`).
+// Expected output is Node's.
+type Member = { name: string; n: i64 };
+
+function nameOf(): string | null {
+  const m: Member | null = { name: "alice".repeat(3), n: 1 };
+  if (m == null) return null;
+  return m.name;
+}
+
+function main() {
+  console.log(nameOf());
+}

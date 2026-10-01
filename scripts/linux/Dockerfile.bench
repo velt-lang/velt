@@ -1,0 +1,21 @@
+# Benchmark image for bench/web/linux.sh: the bookworm toolchain image (scripts/linux-check.sh
+# builds it) plus the other servers' toolchains and wrk. Versions match the macOS runs.
+ARG BASE=velt-linux-bookworm:arm64
+FROM ${BASE}
+ARG NODE_VERSION=24.11.1
+ARG GO_VERSION=1.27.1
+ARG BUN_VERSION=1.4.2
+RUN apt-get update -q \
+ && apt-get install -y -q --no-install-recommends wrk unzip xz-utils postgresql-client \
+ && rm -rf /var/lib/apt/lists/*
+RUN arch=$(dpkg --print-architecture) \
+ && case "$arch" in arm64) node=arm64; go=arm64; bun=aarch64 ;; *) node=x64; go=amd64; bun=x64 ;; esac \
+ && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node}.tar.xz" \
+      | tar -xJ -C /opt && ln -s /opt/node-v${NODE_VERSION}-linux-${node}/bin/* /usr/local/bin/ \
+ && curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${go}.tar.gz" | tar -xz -C /opt \
+ && ln -s /opt/go/bin/go /usr/local/bin/go \
+ && curl -fsSL -o /tmp/bun.zip \
+      "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-${bun}.zip" \
+ && unzip -q /tmp/bun.zip -d /opt && ln -s /opt/bun-linux-${bun}/bun /usr/local/bin/bun \
+ && rm /tmp/bun.zip
+ENV GOPATH=/opt/gopath GOCACHE=/opt/gocache

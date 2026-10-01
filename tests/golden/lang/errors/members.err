@@ -1,0 +1,11 @@
+members.vlt:27:17: error: `secret` is private
+it can only be used inside the body of `Box`
+members.vlt:28:17: error: `hidden` is private
+members.vlt:29:5: error: cannot assign to `id`: it is a readonly field
+members.vlt:15:10: error: cannot assign to `id`: it is a readonly field
+members.vlt:30:5: error: cannot assign to `double`: it is a getter
+members.vlt:31:17: error: `double` is a getter, not a method
+members.vlt:32:7: error: cannot assign to `Box.MAX`: static fields are readonly
+members.vlt:34:17: error: `entryKeys` is private
+members.vlt:35:5: error: cannot assign to `size`: it is a getter
+members.vlt:21:17: error: `secret` is private

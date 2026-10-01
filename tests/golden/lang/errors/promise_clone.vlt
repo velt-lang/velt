@@ -1,0 +1,13 @@
+// Promises run once and have one owner: no copies (explicit or through a clone of a value
+// that holds one).
+async function work(): Promise<i64> {
+  return 1;
+}
+
+async function main() {
+  const p = work();
+  const q = p.clone();
+  const ps = [work()];
+  const qs = ps.clone();
+  console.log(await p, await q, qs.length);
+}

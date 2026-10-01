@@ -1,0 +1,55 @@
+// binary-trees (Benchmarks Game): idiomatic single-threaded Velt, written the way a TypeScript
+// developer would port Node #7 (Léo Sarrazin, Andrey Filatkin, Isaac Gouy): a `TreeNode` class
+// with nullable children, one heap allocation per node, trees freed when they go out of scope.
+import { args } from "velt:process";
+
+const MIN_DEPTH = 4;
+
+class TreeNode {
+  left: TreeNode | null;
+  right: TreeNode | null;
+
+  constructor(left: TreeNode | null, right: TreeNode | null) {
+    this.left = left;
+    this.right = right;
+  }
+
+  // Counts the nodes. `?.` because fields can't be narrowed (`if (this.left === null)`).
+  check(): i64 {
+    return 1 + (this.left?.check() ?? 0) + (this.right?.check() ?? 0);
+  }
+}
+
+function bottomUpTree(depth: i64): TreeNode {
+  return depth > 0
+    ? new TreeNode(bottomUpTree(depth - 1), bottomUpTree(depth - 1))
+    : new TreeNode(null, null);
+}
+
+function work(iterations: i64, depth: i64): string {
+  let check = 0;
+  for (let i = 0; i < iterations; i++) {
+    check += bottomUpTree(depth).check();
+  }
+  return `${iterations}\t trees of depth ${depth}\t check: ${check}`;
+}
+
+function main() {
+  const argv = args();
+  const n = argv.length > 0 ? parseInt(argv[0]) as i64 : 10;
+  const maxDepth = n > MIN_DEPTH + 2 ? n : MIN_DEPTH + 2;
+
+  const stretchDepth = maxDepth + 1;
+  console.log(
+    `stretch tree of depth ${stretchDepth}\t check: ${bottomUpTree(stretchDepth).check()}`,
+  );
+
+  const longLivedTree = bottomUpTree(maxDepth);
+
+  for (let depth = MIN_DEPTH; depth <= maxDepth; depth += 2) {
+    const iterations = 1 << (maxDepth - depth + MIN_DEPTH);
+    console.log(work(iterations, depth));
+  }
+
+  console.log(`long lived tree of depth ${maxDepth}\t check: ${longLivedTree.check()}`);
+}

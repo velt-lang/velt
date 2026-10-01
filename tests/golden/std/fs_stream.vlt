@@ -1,0 +1,59 @@
+import { openRead, openWrite } from "velt:fs_stream";
+import { readFile, remove } from "velt:fs";
+import { tmpdir } from "velt:os";
+import { uuidv4 } from "velt:uuid";
+
+async function main() {
+  const path = `${tmpdir()}/velt-fs-stream-${uuidv4()}.txt`;
+  const w = await openWrite(path);
+  for (let i = 1; i <= 1000; i++) {
+    await w.write(`line ${i}\n`);
+  }
+  await w.writeBytes([104u8, 195u8, 169u8, 13u8, 10u8]);
+  await w.write("no newline at end");
+  await w.close();
+
+  const r = await openRead(path);
+  let n = 0;
+  let last = "";
+  let line = await r.readLine();
+  while (line != null) {
+    n++;
+    if (n <= 2 || n > 1000) {
+      console.log(`${n}: ${line}`);
+    }
+    last = line;
+    line = await r.readLine();
+  }
+  console.log(n, "lines, last:", last);
+  r.close();
+
+  const chunks = await openRead(path);
+  let total: usize = 0;
+  let pieces = 0;
+  let text = await chunks.readString(7);
+  while (text != "") {
+    total += text.length;
+    pieces++;
+    text = await chunks.readString(7);
+  }
+  console.log(total == (await readFile(path)).length, pieces > 1000);
+  chunks.close();
+
+  const a = await openWrite(path, { append: true });
+  await a.write("!");
+  await a.flush();
+  await a.close();
+  const bytes = await openRead(path);
+  const first = await bytes.read(4);
+  bytes.close();
+  console.log(first, (await readFile(path)).endsWith("end!"));
+
+  await remove(path);
+  try {
+    const missing = await openRead(path);
+    missing.close();
+  } catch (e) {
+    console.log(e.code);
+  }
+}

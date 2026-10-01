@@ -1,0 +1,46 @@
+// The items in memory, with the operations the API offers.
+import {
+  Item,
+  NewItemBody,
+  NotFoundError,
+  ValidationError,
+  validName,
+  validQuantity,
+} from "./model";
+
+export class ItemStore {
+  items: Item[] = [];
+  nextId: i64 = 1;
+
+  get(id: i64): Item {
+    const item = this.items.find((i) => i.id === id);
+    if (item == null) {
+      throw new NotFoundError(id);
+    }
+    return item;
+  }
+
+  // Validates every field before anything is stored.
+  create(body: NewItemBody): Item {
+    const name = body.name?.clone();
+    if (name == null) {
+      throw new ValidationError("name is required");
+    }
+    const item: Item = {
+      id: this.nextId,
+      name: validName(name),
+      quantity: validQuantity(body.quantity ?? 1),
+    };
+    this.nextId++;
+    this.items.push(item.clone());
+    return item;
+  }
+
+  delete(id: i64) {
+    const before = this.items.length;
+    this.items = this.items.filter((i) => i.id !== id);
+    if (this.items.length === before) {
+      throw new NotFoundError(id);
+    }
+  }
+}

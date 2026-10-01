@@ -1,0 +1,156 @@
+// std/uuid: RFC 9562 UUIDs — random v4, time-ordered v7, parsing, formatting and validation.
+//
+// Text form is the canonical lowercase `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` (parsing accepts
+// either case); binary form is 16 bytes in network order. Randomness comes from the OS CSPRNG.
+// v7 puts the Unix time in milliseconds in the first 48 bits, so v7 ids sort by creation time
+// (ids created in the same millisecond are ordered randomly: no counter, no module state).
+
+import { IoResult } from "velt:io";
+
+declare function velt_rt_random_bytes(n: u64): u8[];
+declare function velt_rt_bytes_from_str(s: string): u8[];
+declare function velt_rt_bytes_to_str(b: u8[]): IoResult<string>;
+
+// The all-zero UUID (RFC 9562 §5.9).
+export const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+
+const HEX_DIGITS = "0123456789abcdef";
+
+// Length of the text form.
+const TEXT_LEN: usize = 36;
+
+// `-`
+const DASH: u8 = 45;
+
+// Thrown for malformed UUID text or a byte array that is not 16 bytes long.
+export class UuidError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+// A random (version 4) UUID.
+export function uuidv4(): string {
+  const b = velt_rt_random_bytes(16);
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  return format(b);
+}
+
+// A time-ordered (version 7) UUID: 48-bit Unix milliseconds, then 74 random bits.
+export function uuidv7(): string {
+  const b = velt_rt_random_bytes(16);
+  const ms = Date.now() as u64;
+  for (let i: usize = 0; i < 6; i++) {
+    b[i] = ((ms >> ((40 - i * 8) as u64)) & 0xff) as u8;
+  }
+  b[6] = (b[6] & 0x0f) | 0x70;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  return format(b);
+}
+
+// The 16 bytes of a UUID in text form (either case). Throws `UuidError` if malformed.
+export function uuidParse(s: string): u8[] {
+  const text = velt_rt_bytes_from_str(s);
+  if (text.length != TEXT_LEN) {
+    throw new UuidError(`Invalid UUID: expected ${TEXT_LEN} characters, got ${text.length}`);
+  }
+  const out: u8[] = __intrinsic_array_with_capacity(16);
+  let i: usize = 0;
+  while (i < TEXT_LEN) {
+    if (i == 8 || i == 13 || i == 18 || i == 23) {
+      if (text[i] != DASH) {
+        throw new UuidError(`Invalid UUID: expected '-' at offset ${i}`);
+      }
+      i++;
+      continue;
+    }
+    const hi = hexValue(text[i]);
+    const lo = hexValue(text[i + 1]);
+    if (hi > 15 || lo > 15) {
+      throw new UuidError(`Invalid UUID: bad hex digit at offset ${hi > 15 ? i : i + 1}`);
+    }
+    out.push((hi << 4) | lo);
+    i += 2;
+  }
+  return out;
+}
+
+// The lowercase text form of 16 UUID bytes. Throws `UuidError` for any other length.
+export function uuidStringify(bytes: u8[]): string {
+  if (bytes.length != 16) {
+    throw new UuidError(`Invalid UUID: expected 16 bytes, got ${bytes.length}`);
+  }
+  return format(bytes);
+}
+
+// Whether `s` is a UUID in text form with an RFC 9562 version (1-8) and variant, or the
+// nil / max UUID (like the `uuid` npm package's `validate`).
+export function uuidValidate(s: string): bool {
+  if (!wellFormed(s)) {
+    return false;
+  }
+  const lower = s.toLowerCase();
+  if (lower == NIL_UUID || lower == "ffffffff-ffff-ffff-ffff-ffffffffffff") {
+    return true;
+  }
+  const version = hexValue(lower.charCodeAt(14) as u8);
+  const variant = hexValue(lower.charCodeAt(19) as u8);
+  return version >= 1 && version <= 8 && variant >= 8 && variant <= 11;
+}
+
+// The version number (the 13th hex digit) of a well-formed UUID. Throws `UuidError` if `s` is
+// not a UUID in text form.
+export function uuidVersion(s: string): i64 {
+  if (!wellFormed(s)) {
+    throw new UuidError(`Invalid UUID: ${s}`);
+  }
+  return hexValue(s.charCodeAt(14) as u8) as i64;
+}
+
+// Right length, dashes in place, hex digits elsewhere.
+function wellFormed(s: string): bool {
+  const text = velt_rt_bytes_from_str(s);
+  if (text.length != TEXT_LEN) {
+    return false;
+  }
+  for (let i: usize = 0; i < TEXT_LEN; i++) {
+    const dash = i == 8 || i == 13 || i == 18 || i == 23;
+    if (dash ? text[i] != DASH : hexValue(text[i]) > 15) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Digit value, or 16 for a non-hex byte.
+function hexValue(c: u8): u8 {
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  if (c >= 97 && c <= 102) {
+    return c - 87;
+  }
+  if (c >= 65 && c <= 70) {
+    return c - 55;
+  }
+  return 16;
+}
+
+// Text form of exactly 16 bytes.
+function format(b: u8[]): string {
+  const digits = velt_rt_bytes_from_str(HEX_DIGITS);
+  const out: u8[] = __intrinsic_array_with_capacity(TEXT_LEN);
+  for (let i: usize = 0; i < 16; i++) {
+    if (i == 4 || i == 6 || i == 8 || i == 10) {
+      out.push(DASH);
+    }
+    out.push(digits[(b[i] >> 4) as usize]);
+    out.push(digits[(b[i] & 15) as usize]);
+  }
+  const r = velt_rt_bytes_to_str(out);
+  if (r.code != 0) {
+    panic("ICE: std/uuid produced invalid UTF-8");
+  }
+  return r.value;
+}

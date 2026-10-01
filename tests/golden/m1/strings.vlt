@@ -1,0 +1,24 @@
+function greet(name: string): string {
+  return `Hello, ${name}!`;
+}
+
+function main() {
+  const who = "Velt";
+  console.log(greet(who));
+  console.log(greet("world"));
+  const n = 42;
+  const pi = 3.5;
+  console.log(`n=${n} pi=${pi} ok=${n > 40} sum=${n + 1}`);
+  let s = "a";
+  s = s + "b";
+  s += "c";
+  console.log(s, s.length);
+  console.log("abc" == s, "abd" != s, "abc" < "abd");
+  console.log(`multi
+line`);
+  console.log("esc: \"q\" \\ \t|");
+  for (let i = 0; i < 3; i++) {
+    const line = `row ${i}: ${greet(who)}`;
+    console.log(line);
+  }
+}

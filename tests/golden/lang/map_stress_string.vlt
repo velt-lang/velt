@@ -1,0 +1,124 @@
+// Map<string, string> (owned keys and values: exercises drops, clones and eager value drops
+// on delete) under random set / delete / get / clear, checked against an array-based
+// reference model after every batch of operations.
+class RefMap {
+  keys: string[] = [];
+  vals: string[] = [];
+  live: bool[] = [];
+
+  find(k: string): i64 {
+    for (let i: usize = 0; i < this.keys.length; i++) {
+      if (this.live[i] && this.keys[i] == k) {
+        return i as i64;
+      }
+    }
+    return -1;
+  }
+
+  set(k: string, v: string) {
+    const i = this.find(k);
+    if (i >= 0) {
+      this.vals[i as usize] = v;
+      return;
+    }
+    this.keys.push(k);
+    this.vals.push(v);
+    this.live.push(true);
+  }
+
+  delete(k: string): bool {
+    const i = this.find(k);
+    if (i < 0) {
+      return false;
+    }
+    this.live[i as usize] = false;
+    return true;
+  }
+
+  clear() {
+    this.keys = [];
+    this.vals = [];
+    this.live = [];
+  }
+
+  // Live entries as "k=v" in insertion order.
+  dump(): string {
+    const out: string[] = [];
+    for (let i: usize = 0; i < this.keys.length; i++) {
+      if (this.live[i]) {
+        out.push(`${this.keys[i]}=${this.vals[i]}`);
+      }
+    }
+    return out.join(",");
+  }
+}
+
+function dump(m: Map<string, string>): string {
+  const out: string[] = [];
+  for (const [k, v] of m) {
+    out.push(`${k}=${v}`);
+  }
+  return out.join(",");
+}
+
+function run(seed: i64, ops: i64, universe: i64, deletePct: i64): i64 {
+  const m = new Map<string, string>();
+  const r = new RefMap();
+  let x = seed;
+  let bad = 0;
+  let hits = 0;
+  for (let i = 0; i < ops; i++) {
+    x = (x * 48271) % 2147483647;
+    // Keys of varied length, some sharing long prefixes.
+    const n = (x >> 4) % universe;
+    const k = n % 3 == 0 ? `key-with-a-long-shared-prefix-${n}` : `k${n}`;
+    x = (x * 48271) % 2147483647;
+    const op = x % 100;
+    if (op < deletePct) {
+      if (m.delete(k) != r.delete(k)) {
+        bad++;
+      }
+    } else if (op < deletePct + 30) {
+      const got = m.get(k) ?? "<none>";
+      const j = r.find(k);
+      const want = j >= 0 ? r.vals[j as usize] : "<none>";
+      if (got != want || m.has(k) != (j >= 0)) {
+        bad++;
+      }
+      if (j >= 0) {
+        hits++;
+      }
+    } else if (op == 99 && i % 20 == 0) {
+      m.clear();
+      r.clear();
+    } else {
+      m.set(k, `v${i}`);
+      r.set(k, `v${i}`);
+    }
+    if (i % 101 == 0 && dump(m) != r.dump()) {
+      bad++;
+    }
+  }
+  if (dump(m) != r.dump()) {
+    bad++;
+  }
+  console.log(`seed ${seed}: size ${m.size}, hits ${hits}, mismatches ${bad}`);
+  return bad;
+}
+
+function main() {
+  run(11, 6000, 40, 45);
+  run(12, 6000, 400, 25);
+  run(13, 6000, 2000, 5);
+
+  // Empty string key, keys differing only in length, and iteration order after re-inserts.
+  const m = new Map<string, i64>();
+  m.set("", 0);
+  m.set("a", 1);
+  m.set("aa", 2);
+  m.set("aaa", 3);
+  m.delete("a");
+  m.set("a", 10);
+  m.set("", 5);
+  console.log(m.keys(), m.values(), m.get("") ?? -1, m.has("aaaa"));
+}

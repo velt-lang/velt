@@ -1,0 +1,85 @@
+// Safe truthiness: conditions and `!`, `&&`, `||` take `bool` and nullable values. A nullable
+// is truthy when it is not null (`bool | null`: when it is `true`) and the tests narrow it;
+// on nullable objects `||` and `&&` return values like TS.
+
+class User {
+  name: string;
+  nickname?: string;
+  manager?: User;
+  active: bool = true;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+function find(name: string): User | null {
+  if (name === "ann") {
+    const ann = new User("ann");
+    ann.nickname = "annie";
+    ann.manager = new User("boss");
+    return ann;
+  }
+  return name === "boss" ? new User("boss") : null;
+}
+
+function greet(user: User | null): string {
+  if (!user) {
+    return "nobody";
+  }
+  return `hi ${user.name}`; // narrowed: user is User here
+}
+
+function managerName(user: User | null): string {
+  if (user && user.manager) {
+    return user.manager.name;
+  }
+  return "-";
+}
+
+function label(flag: bool | null): string {
+  if (flag) {
+    return "yes";
+  }
+  return flag === null ? "unset" : "no";
+}
+
+function leading(users: (User | null)[]): usize {
+  let n: usize = 0;
+  while (n < users.length && users[n]) {
+    n++;
+  }
+  return n;
+}
+
+function main() {
+  console.log(greet(find("ann")), greet(find("zed")));
+  console.log(managerName(find("ann")), managerName(find("boss")), managerName(null));
+  console.log(label(true), label(false), label(null));
+
+  // Value-returning `||` / `&&` on nullable objects.
+  const fallback = find("zed") || new User("guest");
+  console.log(fallback.name);
+  const ann = find("ann");
+  console.log(ann && ann.nickname, find("zed") && "found", find("boss") && "found");
+  const boss = ann && ann.manager ? ann.manager.name : "-";
+  console.log(boss, (find("boss") && find("boss")?.active) ?? false);
+  const active = ann && ann.active;
+  console.log(active, ann && ann.name.length);
+
+  // Loops, ternaries, `!` and `!!`.
+  console.log(
+    leading([find("ann"), find("boss"), null, find("ann")]),
+    ann ? "some" : "none",
+    !ann,
+    !!find("zed"),
+  );
+  let n = 0;
+  do {
+    n++;
+  } while (n < 3 && !find("zed"));
+  for (let i = 0; ann && i < 2; i++) {
+    n += 10;
+  }
+  console.log(n);
+}

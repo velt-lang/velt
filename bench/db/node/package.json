@@ -1,0 +1,11 @@
+{
+  "name": "velt-bench-db",
+  "private": true,
+  "type": "module",
+  "description": "Node baselines for bench/db (run.sh installs them).",
+  "dependencies": {
+    "better-sqlite3": "^12.4.1",
+    "ioredis": "^5.8.2",
+    "pg": "^8.16.3"
+  }
+}

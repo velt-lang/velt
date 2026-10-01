@@ -1,0 +1,9 @@
+// `/` gives a float unless both operands are declared integers.
+function main() {
+  let total = 10;
+  total /= 4;
+  const a = 7;
+  const n: i64 = a / 2;
+  const xs = [1, 2, 3];
+  console.log(total, n, xs[a / 2]);
+}

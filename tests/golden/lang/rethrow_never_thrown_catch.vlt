@@ -1,0 +1,39 @@
+// Regression: rethrowing the catch variable of a `try` whose body cannot throw (`e: never`, the
+// catch is dead code) crashed the compiler, also in a generic async wrapper awaiting a callback
+// (`try { return await fn(); } catch (e) { cleanup; throw e; }`, std/postgres `transaction`).
+function f() {
+  try {
+    console.log(1);
+  } catch (e) {
+    throw e;
+  }
+}
+
+class Rollback extends Error {}
+
+// Generic over the callback's error type: rethrows exactly what `fn` rejects with.
+async function guarded<T, E>(fn: () => Promise<T, E>): Promise<T> throws E {
+  try {
+    return await fn();
+  } catch (e) {
+    console.log("cleanup");
+    throw e;
+  }
+}
+
+async function main() {
+  try {
+    f();
+  } catch (e) {
+    console.log("caught");
+  }
+  console.log("done");
+  console.log(await guarded(async () => 5));
+  try {
+    await guarded(async (): Promise<i64> => {
+      throw new Rollback("undo");
+    });
+  } catch (e) {
+    console.log("rolled back:", e.message);
+  }
+}

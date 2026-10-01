@@ -1,0 +1,16 @@
+// `unwrap()` on null panics at the caller's `unwrap()` call, not inside the standard library.
+function find(xs: string[], want: string): i64 | null {
+  for (let i: usize = 0; i < xs.length; i++) {
+    if (xs[i] == want) {
+      return i as i64;
+    }
+  }
+  return null;
+}
+
+function main(): void {
+  const xs: string[] = ["a", "b"];
+  console.log(find(xs, "b").unwrap());
+  console.log(find(xs, "z").unwrap());
+  console.log("unreachable");
+}

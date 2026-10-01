@@ -1,0 +1,9 @@
+// `reduce`'s accumulator type follows the elements when the initial value is an untyped number
+// literal (`usize` lengths, `f64` values), like TS's single `number`. Regression (difftest): the
+// literal `0` made it `i64` ("mismatched types").
+function main() {
+  const words = ["ab", "cde"];
+  const lens = words.map((w) => w.length);
+  console.log(lens.reduce((a, b) => a + b, 0));
+  console.log([1.5, 2.0].reduce((a, b) => a + b, 0), words.reduce((n, w) => n + 1, 0));
+}

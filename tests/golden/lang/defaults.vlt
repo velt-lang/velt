@@ -1,0 +1,54 @@
+// Default parameter values: across modules, on methods, statics, generics, interfaces and
+// overridden (virtual) methods.
+
+import { add, withConst, Counter, gen } from "./_defaults_lib";
+
+interface Greeter {
+  greet(name: string, punct: string = "!"): string;
+}
+
+interface LoudGreeter extends Greeter {
+  shout(): string {
+    return this.greet("all", "!!!");
+  }
+}
+
+class En implements LoudGreeter {
+  greet(name: string, punct: string = "."): string {
+    return `hello ${name}${punct}`;
+  }
+}
+
+class Base {
+  f(a: i64, b: i64 = 10): i64 {
+    return a + b;
+  }
+}
+
+class Sub extends Base {
+  override f(a: i64, b: i64 = 10): i64 {
+    return a * b;
+  }
+}
+
+function viaParam<T extends LoudGreeter>(g: T): string {
+  return `${g.greet("p")} ${g.shout()}`;
+}
+
+function local(a: i64, b: i64 = 2): i64 {
+  return a * b;
+}
+
+function main() {
+  console.log(add(1), add(1, 5), add(1, 5, "y"));
+  console.log(withConst(1), local(4));
+  const c = Counter.make();
+  let d = Counter.make(7);
+  console.log(d.bump(), d.bump(10), c.n);
+  console.log(gen(1), gen("s", "w"));
+  const g: Greeter = new En();
+  console.log(g.greet("dyn"), g.greet("dyn", "?"), new En().greet("direct"));
+  console.log(viaParam(new En()));
+  const b: Base = new Sub();
+  console.log(b.f(2), new Base().f(2));
+}

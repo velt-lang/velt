@@ -1,0 +1,79 @@
+// Routing: method + path + body in, status + JSON body out. No sockets here; src/server.vlt
+// puts it behind std/http.
+import { ItemStore } from "./store";
+import { ApiError, NewItemBody } from "./model";
+
+/// What a request produced.
+export type ApiResponse = { status: i64; body: string };
+
+type ErrorBody = { error: { code: string; message: string } };
+
+function json<T>(status: i64, value: T): ApiResponse {
+  return { status, body: JSON.stringify(value) };
+}
+
+// `JSON.parse<T>`, with malformed or mistyped JSON reported as a 400.
+function decode<T>(body: string): T {
+  try {
+    return JSON.parse<T>(body);
+  } catch (e) {
+    throw new ApiError(400, "bad_json", e.message.clone());
+  }
+}
+
+// A positive integer id; anything else can't name an item.
+function parseId(segment: string): i64 {
+  const id = Number(segment);
+  if (id != id || id < 1.0 || id !== Math.trunc(id)) {
+    throw new ApiError(404, "not_found", `no item '${segment}'`);
+  }
+  return id as i64;
+}
+
+function notAllowed(method: string): ApiError {
+  return new ApiError(405, "method_not_allowed", `${method} is not allowed here`);
+}
+
+function routeItem(store: ItemStore, method: string, segment: string): ApiResponse {
+  const id = parseId(segment);
+  switch (method) {
+    case "GET":
+      return json(200, store.get(id));
+    case "DELETE":
+      store.delete(id);
+      return { status: 204, body: "" };
+    default:
+      throw notAllowed(method);
+  }
+}
+
+function dispatch(store: ItemStore, method: string, path: string, body: string): ApiResponse {
+  if (path === "/health") {
+    return json(200, { ok: true });
+  }
+  const parts = path.split("/").filter((p) => p !== "");
+  if (parts.length === 0 || parts[0] !== "items" || parts.length > 2) {
+    throw new ApiError(404, "not_found", `no route for ${path}`);
+  }
+  if (parts.length === 2) {
+    return routeItem(store, method, parts[1]);
+  }
+  switch (method) {
+    case "GET":
+      return json(200, store.items);
+    case "POST":
+      return json(201, store.create(decode<NewItemBody>(body)));
+    default:
+      throw notAllowed(method);
+  }
+}
+
+/// Handles one request; every error becomes `{ "error": { code, message } }` with its status.
+export function route(store: ItemStore, method: string, path: string, body: string): ApiResponse {
+  try {
+    return dispatch(store, method, path, body);
+  } catch (e) {
+    const err: ErrorBody = { error: { code: e.code.clone(), message: e.message.clone() } };
+    return json(e.status, err);
+  }
+}

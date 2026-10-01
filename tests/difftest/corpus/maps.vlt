@@ -1,0 +1,21 @@
+// Word frequencies with Map, sorted keys, closures.
+function main() {
+  const text = "the quick brown fox jumps over the lazy dog the end";
+  const counts = new Map<string, i64>();
+  for (const w of text.split(" ")) {
+    counts.set(w, (counts.get(w) ?? 0) + 1);
+  }
+  const keys = [...counts.keys()];
+  keys.sort();
+  for (const k of keys) {
+    console.log(`${k}: ${counts.get(k) ?? 0}`);
+  }
+  console.log(counts.size, counts.has("fox"), counts.has("cat"));
+  const lens = keys.map((k) => k.length as i64);
+  console.log(lens.filter((n) => n > 3).length, lens.reduce((a, b) => a + b, 0));
+  let total = 0;
+  keys.forEach((k) => {
+    total += k.length as i64;
+  });
+  console.log(total, keys.join("|"));
+}

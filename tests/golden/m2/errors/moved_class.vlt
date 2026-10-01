@@ -1,0 +1,9 @@
+class Box {
+  v: i64 = 0;
+}
+
+function main() {
+  const a = new Box();
+  const b = a;
+  console.log(a.v, b.v);
+}

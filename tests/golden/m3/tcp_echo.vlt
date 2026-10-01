@@ -1,0 +1,18 @@
+import { listen, connect } from "velt:net";
+
+async function main() {
+  const server = await listen("127.0.0.1:0");
+  const port = server.port;
+  const serverTask = spawn(async () => {
+    const conn = await server.accept();
+    const data = await conn.readString();
+    await conn.write(`echo: ${data}`);
+    conn.close();
+  });
+
+  const client = await connect(`127.0.0.1:${port}`);
+  await client.write("ping");
+  const reply = await client.readString();
+  console.log(reply);
+  await serverTask;
+}

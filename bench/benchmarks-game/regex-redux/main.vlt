@@ -1,0 +1,46 @@
+// regex-redux: match DNA 8-mers and substitute magic patterns with regular expressions.
+// https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/regexredux.html
+// Written the way a TypeScript developer would: read all of stdin into a string and use
+// `RegExp` (std/regex, the Rust `regex` crate underneath) for every match and replace.
+
+import { readAll } from "velt:stdin";
+import { RegExp } from "velt:regex";
+
+async function main() {
+  // (Locals, not module constants: module-level constants must be literals.)
+  const variants = [
+    "agggtaaa|tttaccct",
+    "[cgt]gggtaaa|tttaccc[acg]",
+    "a[act]ggtaaa|tttacc[agt]t",
+    "ag[act]gtaaa|tttac[agt]ct",
+    "agg[act]taaa|ttta[agt]cct",
+    "aggg[acg]aaa|ttt[cgt]ccct",
+    "agggt[cgt]aa|tt[acg]accct",
+    "agggta[cgt]a|t[acg]taccct",
+    "agggtaa[cgt]|[acg]ttaccct",
+  ];
+
+  const substitutions = [
+    { pattern: "tHa[Nt]", replacement: "<4>" },
+    { pattern: "aND|caN|Ha[DS]|WaS", replacement: "<3>" },
+    { pattern: "a[NSt]|BY", replacement: "<2>" },
+    { pattern: "<[^>]*>", replacement: "|" },
+    { pattern: "\\|[^|][^|]*\\|", replacement: "-" },
+  ];
+
+  const input = await readAll();
+  const initialLength = input.length;
+  const sequence = new RegExp(">.*\n|\n", "g").replace(input, "");
+  const cleanedLength = sequence.length;
+
+  for (const pattern of variants) {
+    console.log(`${pattern} ${new RegExp(pattern, "g").matches(sequence).length}`);
+  }
+
+  let replaced = sequence;
+  for (const s of substitutions) {
+    replaced = new RegExp(s.pattern, "g").replace(replaced, s.replacement);
+  }
+
+  console.log(`\n${initialLength}\n${cleanedLength}\n${replaced.length}`);
+}

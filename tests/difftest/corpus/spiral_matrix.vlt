@@ -1,0 +1,47 @@
+// Fill an n x n matrix in spiral order and print it.
+function spiral(n: i64): i64[][] {
+  const m: i64[][] = [];
+  for (let i = 0; i < n; i++) {
+    const row: i64[] = [];
+    for (let j = 0; j < n; j++) {
+      row.push(0);
+    }
+    m.push(row);
+  }
+  let top = 0;
+  let bottom = n - 1;
+  let left = 0;
+  let right = n - 1;
+  let k = 1;
+  while (top <= bottom && left <= right) {
+    for (let j = left; j <= right; j++) {
+      m[top as usize][j as usize] = k++;
+    }
+    top++;
+    for (let i = top; i <= bottom; i++) {
+      m[i as usize][right as usize] = k++;
+    }
+    right--;
+    if (top <= bottom) {
+      for (let j = right; j >= left; j--) {
+        m[bottom as usize][j as usize] = k++;
+      }
+      bottom--;
+    }
+    if (left <= right) {
+      for (let i = bottom; i >= top; i--) {
+        m[i as usize][left as usize] = k++;
+      }
+      left++;
+    }
+  }
+  return m;
+}
+
+function main() {
+  for (const n of [1, 3, 4]) {
+    for (const row of spiral(n)) {
+      console.log(row.map((x) => `${x}`.padStart(3, " ")).join(""));
+    }
+  }
+}

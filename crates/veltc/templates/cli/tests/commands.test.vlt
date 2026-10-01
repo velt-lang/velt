@@ -1,0 +1,35 @@
+// The command layer end to end: argv in, output lines out.
+import { execute } from "../src/commands";
+
+// The message of the error `argv` fails with, or "" if it succeeds.
+function error(argv: string[]): string {
+  try {
+    execute(argv);
+  } catch (e) {
+    return e.message.clone();
+  }
+  return "";
+}
+
+export function test_greet() {
+  assertEq(execute(["greet", "Ada"]), ["Hello, Ada!"]);
+  assertEq(execute(["greet", "Ada", "--shout", "-n", "2"]), ["HELLO, ADA!", "HELLO, ADA!"]);
+}
+
+export function test_sum() {
+  assertEq(execute(["sum", "1", "2", "3.5"]), ["6.5"]);
+  assertEq(execute(["sum"]), ["0"]);
+}
+
+export function test_help() {
+  assert(execute([])[0].startsWith("Usage: {{name}}"));
+  assert(execute(["--help"])[0].includes("--shout"));
+}
+
+export function test_usage_errors() {
+  assertEq(error(["frob"]), "unknown command 'frob' (try --help)");
+  assertEq(error(["greet"]), "'greet' needs a name");
+  assertEq(error(["greet", "Ada", "--times", "0"]), "--times must be at least 1");
+  assertEq(error(["sum", "1", "x"]), "'x' is not a number");
+  assertEq(error(["--nope"]), "Unknown option '--nope'");
+}

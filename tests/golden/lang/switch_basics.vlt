@@ -1,0 +1,189 @@
+// `switch` with JS semantics: the first equal case is entered (`default` when none is, wherever
+// it is written), bodies fall through into the next case until `break` / `return` / `throw`,
+// `continue` inside a `switch` continues the enclosing loop. Case values: numbers (also
+// negative), strings, bools, enum members, `null`, and any other expression (compared with `==`).
+
+enum Level {
+  Low = 1,
+  Mid = 5,
+  High,
+}
+
+enum Mode {
+  Fast = "FAST",
+  Slow = "SLOW",
+}
+
+function fall(n: i64): string {
+  let out = "";
+  switch (n) {
+    case 1:
+      out += "one ";
+    case 2:
+      out += "two ";
+      break;
+    default:
+      out += "other ";
+    case 3:
+      out += "three ";
+  }
+  return out;
+}
+
+function sign(n: i32): string {
+  switch (n) {
+    case -1:
+      return "minus";
+    case 0:
+      return "zero";
+    case 1:
+      return "plus";
+  }
+  return "big";
+}
+
+function command(s: string): string {
+  switch (s) {
+    case "go":
+    case "run": {
+      const speed = s.length * 10;
+      return `moving at ${speed}`;
+    }
+    case "stop":
+      return "stopped";
+    default:
+      return `unknown ${s}`;
+  }
+}
+
+function level(l: Level): string {
+  switch (l) {
+    case Level.Low:
+      return "low";
+    case Level.Mid:
+      return "mid";
+    case Level.High:
+      return "high";
+  }
+}
+
+function mode(m: Mode): i64 {
+  switch (m) {
+    case Mode.Fast:
+      return 100;
+    default:
+      return 1;
+  }
+}
+
+function flag(b: bool): string {
+  switch (b) {
+    case true:
+      return "on";
+    case false:
+      return "off";
+  }
+  return "?";
+}
+
+function maybe(x: i64 | null): string {
+  switch (x) {
+    case null:
+      return "none";
+    case 0:
+      return "zero";
+    default:
+      return `some ${x}`;
+  }
+}
+
+function dynamic(x: i64, a: i64, b: i64): string {
+  switch (x) {
+    case a:
+      return "a";
+    case a + b:
+      return "a+b";
+    case 7:
+      return "seven";
+    default:
+      return "none";
+  }
+}
+
+function main() {
+  console.log(fall(1));
+  console.log(fall(2));
+  console.log(fall(3));
+  console.log(fall(9));
+  console.log(sign(-1), sign(0), sign(1), sign(5));
+  console.log(command("go"), "|", command("run"), "|", command("stop"), "|", command("fly"));
+  console.log(level(Level.Low), level(Level.Mid), level(Level.High));
+  console.log(mode(Mode.Fast), mode(Mode.Slow));
+  console.log(flag(true), flag(false));
+  console.log(maybe(null), maybe(0), maybe(4));
+  console.log(dynamic(2, 2, 3), dynamic(5, 2, 3), dynamic(7, 2, 3), dynamic(8, 2, 3));
+
+  // `break` leaves the switch; `continue` the loop around it; labels reach outer loops.
+  let log = "";
+  outer: for (let i = 0; i < 6; i++) {
+    switch (i) {
+      case 1:
+        continue;
+      case 2:
+        for (let j = 0; j < 5; j++) {
+          if (j == 2) {
+            break;
+          }
+          log += `j${j} `;
+        }
+        break;
+      case 4:
+        break outer;
+      default: {
+        log += `d${i} `;
+      }
+    }
+    log += `i${i} `;
+  }
+  console.log(log);
+
+  // A labelled switch can be left from inside a nested loop.
+  let found = -1;
+  search: switch (found) {
+    case -1:
+      for (let k = 0; k < 10; k++) {
+        if (k * k > 20) {
+          found = k;
+          break search;
+        }
+      }
+      found = 100;
+  }
+  console.log(found);
+
+  // Nested switches.
+  for (let a = 0; a < 2; a++) {
+    for (let b = 0; b < 2; b++) {
+      switch (a) {
+        case 0:
+          switch (b) {
+            case 0:
+              console.log("a0 b0");
+              break;
+            default:
+              console.log("a0 b1");
+          }
+          break;
+        default:
+          console.log(`a1 b${b}`);
+      }
+    }
+  }
+
+  // An empty switch and a default-only switch.
+  switch (found) {}
+  switch (found) {
+    default:
+      console.log("default only");
+  }
+}

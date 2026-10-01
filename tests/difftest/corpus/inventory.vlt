@@ -1,0 +1,43 @@
+// Inventory management: classes in a Map by name, restock rules, sorted report.
+class Item {
+  name: string;
+  qty: i64;
+  price: f64;
+  constructor(name: string, qty: i64, price: f64) {
+    this.name = name;
+    this.qty = qty;
+    this.price = price;
+  }
+  get value(): f64 {
+    return (this.qty as f64) * this.price;
+  }
+}
+
+function main() {
+  const items = [
+    new Item("bolt", 120, 0.25),
+    new Item("nut", 8, 0.1),
+    new Item("gear", 3, 12.5),
+    new Item("chain", 0, 30.0),
+  ];
+  let restocked = 0;
+  for (const it of items) {
+    if (it.qty < 10) {
+      restocked += 10 - it.qty;
+    }
+  }
+  for (let i: usize = 0; i < items.length; i++) {
+    if (items[i].qty < 10) {
+      items[i].qty = 10;
+    }
+  }
+  const names = items.map((it) => `${it.name}`);
+  names.sort();
+  console.log(names.join(","), restocked);
+  let total = 0.0;
+  for (const it of items) {
+    total += it.value;
+    console.log(`${it.name.padEnd(6, " ")} ${`${it.qty}`.padStart(4, " ")} ${it.value}`);
+  }
+  console.log(`total ${total}`);
+}

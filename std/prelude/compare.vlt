@@ -1,0 +1,114 @@
+// Prelude: the builtin ordering interface.
+//
+// `a.compareTo(b)` is < 0 when `a` sorts before `b`, > 0 when after, 0 when equivalent.
+// A generic `T extends Comparable<T>` can use `<`, `<=`, `>`, `>=` (they call `compareTo`).
+// Implemented here for every number type, `string` (bytewise) and `bool` (`false` first); an
+// `extend` block defining `compareTo(other: X): i64` makes `X` Comparable, and classes and
+// structs can declare `implements Comparable<X>`. Floats order NaN after every other value
+// (and equal to itself), the total order `sort()` uses.
+
+export interface Comparable<T> {
+  compareTo(other: T): i64;
+}
+
+extend i8 {
+  compareTo(other: i8): i64 {
+    return this < other ? -1 : this > other ? 1 : 0;
+  }
+}
+
+extend i16 {
+  compareTo(other: i16): i64 {
+    return this < other ? -1 : this > other ? 1 : 0;
+  }
+}
+
+extend i32 {
+  compareTo(other: i32): i64 {
+    return this < other ? -1 : this > other ? 1 : 0;
+  }
+}
+
+extend i64 {
+  compareTo(other: i64): i64 {
+    return this < other ? -1 : this > other ? 1 : 0;
+  }
+}
+
+extend isize {
+  compareTo(other: isize): i64 {
+    return this < other ? -1 : this > other ? 1 : 0;
+  }
+}
+
+extend u8 {
+  compareTo(other: u8): i64 {
+    return this < other ? -1 : this > other ? 1 : 0;
+  }
+}
+
+extend u16 {
+  compareTo(other: u16): i64 {
+    return this < other ? -1 : this > other ? 1 : 0;
+  }
+}
+
+extend u32 {
+  compareTo(other: u32): i64 {
+    return this < other ? -1 : this > other ? 1 : 0;
+  }
+}
+
+extend u64 {
+  compareTo(other: u64): i64 {
+    return this < other ? -1 : this > other ? 1 : 0;
+  }
+}
+
+extend usize {
+  compareTo(other: usize): i64 {
+    return this < other ? -1 : this > other ? 1 : 0;
+  }
+}
+
+extend f32 {
+  compareTo(other: f32): i64 {
+    if (this < other) {
+      return -1;
+    }
+    if (this > other) {
+      return 1;
+    }
+    // Equal, or at least one NaN: NaN goes last.
+    const aNaN = this != this;
+    const bNaN = other != other;
+    return aNaN == bNaN ? 0 : aNaN ? 1 : -1;
+  }
+}
+
+extend f64 {
+  compareTo(other: f64): i64 {
+    if (this < other) {
+      return -1;
+    }
+    if (this > other) {
+      return 1;
+    }
+    // Equal, or at least one NaN: NaN goes last.
+    const aNaN = this != this;
+    const bNaN = other != other;
+    return aNaN == bNaN ? 0 : aNaN ? 1 : -1;
+  }
+}
+
+extend string {
+  compareTo(other: string): i64 {
+    return this < other ? -1 : this > other ? 1 : 0;
+  }
+}
+
+extend bool {
+  compareTo(other: bool): i64 {
+    return this == other ? 0 : this ? 1 : -1;
+  }
+}

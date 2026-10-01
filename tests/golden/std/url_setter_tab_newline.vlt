@@ -1,0 +1,12 @@
+// Regression (difftest url-setter-tab-newline): the setters drop tabs and newlines from their
+// value, like the constructor (WHATWG), instead of percent-encoding them.
+import { URL } from "velt:url";
+
+function main() {
+  console.log(new URL("http://h/a\nb?c\td#e\nf").href);
+  const u = new URL("http://h/p?x#y");
+  u.search = "a\nb";
+  u.hash = "c\td";
+  u.pathname = "/q\nr";
+  console.log(u.href);
+}

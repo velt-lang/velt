@@ -1,0 +1,38 @@
+// Run-length encoding and decoding of strings.
+function encode(s: string): string {
+  let out = "";
+  let i = 0;
+  const n = s.length as i64;
+  while (i < n) {
+    const c = s.slice(i, i + 1);
+    let j = i;
+    while (j < n && s.slice(j, j + 1) == c) {
+      j++;
+    }
+    out += `${j - i}${c}`;
+    i = j;
+  }
+  return out;
+}
+
+function decode(s: string): string {
+  let out = "";
+  let num = 0;
+  for (let i = 0; i < (s.length as i64); i++) {
+    const code = s.charCodeAt(i);
+    if (code >= 48 && code <= 57) {
+      num = num * 10 + (code - 48);
+    } else {
+      out += s.slice(i, i + 1).repeat(num);
+      num = 0;
+    }
+  }
+  return out;
+}
+
+function main() {
+  for (const s of ["aaabccdddd", "", "abc", "zzzzzzzzzzzz", "aabbaa"]) {
+    const e = encode(s);
+    console.log(`"${s}" -> "${e}" -> "${decode(e)}" ${decode(e) == s}`);
+  }
+}

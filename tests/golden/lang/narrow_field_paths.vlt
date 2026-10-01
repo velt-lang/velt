@@ -1,0 +1,38 @@
+// Field narrowing in more shapes: `this.x`, `&&` and ternaries, nested paths, and assignment
+// narrowing (`a.next = new Box(); a.next.v = 3`, and a local assigned a non-null value); a
+// narrowed value may be tested for null again.
+class Box {
+  v: i64 = 7;
+  next: Box | null = null;
+  name: string | null = null;
+  total(): i64 {
+    if (this.next != null) {
+      return this.v + this.next.total();
+    }
+    return this.v;
+  }
+  label(): string {
+    return this.name !== null && this.name.length > 0 ? this.name : "anon";
+  }
+}
+
+function deep(b: Box): i64 {
+  if (b.next === null || b.next.next === null) {
+    return 0;
+  }
+  return b.next.next.v;
+}
+
+function main() {
+  const a = new Box();
+  a.next = new Box();
+  a.next.v = 3;
+  console.log(a.total(), a.label(), deep(a));
+  a.name = "x";
+  console.log(a.label());
+  let b: Box | null = null;
+  b = new Box();
+  if (b != null && a.next != null) {
+    console.log(b.v, a.next.v);
+  }
+}

@@ -1,0 +1,37 @@
+"" -> "" -> ""
+"f" -> "Zg==" -> "f"
+"fo" -> "Zm8=" -> "fo"
+"foo" -> "Zm9v" -> "foo"
+"foob" -> "Zm9vYg==" -> "foob"
+"fooba" -> "Zm9vYmE=" -> "fooba"
+"foobar" -> "Zm9vYmFy" -> "foobar"
+344 AAECAwQFBgcICQoLDA0ODxAR 8PHy8/T19vf4+fr7/P3+/w==
+roundtrip 256: true
++/+//g== -_-__g
+[ 251, 255, 191, 250 ] [ 251, 255, 191, 250 ]
+[ 102, 111, 111, 98 ] [ 102, 111, 111, 98, 97 ]
+fafbfcfdfeff 
+486921
+[ 222, 173, 190, 239, 0 ] []
+23 true true
+false 61efbfbd62
+false efbfbdefbfbd
+false efbfbdefbfbdefbfbd
+false efbfbdefbfbdefbfbd
+false efbfbdefbfbdefbfbdefbfbd
+false efbfbd
+false efbfbd41
+false efbfbd
+true true
+Invalid base64 character at offset 4
+Invalid base64: bad length or padding
+Invalid base64 character at offset 5
+Invalid base64 character at offset 2
+Invalid base64: bad length or padding
+Invalid base64 character at offset 0
+Invalid base64 character at offset 2
+Invalid hex: odd length
+Invalid hex character at offset 1
+Invalid hex character at offset 0
+Invalid UTF-8 at offset 2
+Invalid UTF-8 at offset 0

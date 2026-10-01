@@ -1,0 +1,48 @@
+// Prelude: `Promise.allSettled` and `Promise.any` (docs/reference/async.md). The compiler compiles
+// `Promise.allSettled(ps)` and `Promise.any(ps)` to calls of `promiseAllSettled` / `promiseAny`.
+
+// How `Promise.allSettled` reports one promise (`E`: what the promise rejects with).
+export type PromiseSettledResult<T, E> =
+  | { status: "fulfilled"; value: T }
+  | { status: "rejected"; reason: E };
+
+// Thrown by `Promise.any` when no promise fulfills (JS: `AggregateError`).
+export class AggregateError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+// `Promise.allSettled(ps)`: waits for every promise and reports each outcome, in order. The
+// promises already run concurrently (they started when created), so awaiting them one by one
+// settles when the last one does.
+export async function promiseAllSettled<T, E>(
+  ps: Promise<T, E>[],
+): Promise<PromiseSettledResult<T, E>[]> {
+  const out: PromiseSettledResult<T, E>[] = [];
+  ps.reverse();
+  while (true) {
+    const p = ps.pop();
+    if (p == null) {
+      return out;
+    }
+    try {
+      out.push({ status: "fulfilled", value: await p });
+    } catch (e) {
+      out.push({ status: "rejected", reason: e });
+    }
+  }
+}
+
+// `Promise.any(ps)`: the first promise to fulfill; `AggregateError` when all of them reject
+// (or the array is empty).
+export async function promiseAny<T, E>(ps: Promise<T, E>[]): Promise<T> throws AggregateError {
+  if (ps.length == 0) {
+    throw new AggregateError("All promises were rejected");
+  }
+  try {
+    return await __intrinsic_promise_any(ps);
+  } catch (e) {
+    throw new AggregateError("All promises were rejected");
+  }
+}

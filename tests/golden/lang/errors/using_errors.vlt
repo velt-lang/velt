@@ -1,0 +1,56 @@
+// `using` misuse: a value without `[Symbol.dispose]()`, moving or reassigning a `using`
+// local, disposing of one explicitly, `await using` outside async functions, and malformed
+// cleanup methods, an explicit `[Symbol.dispose]()` through an interface.
+class Res {
+  [Symbol.dispose]() {}
+}
+
+class Plain {
+  n: i64 = 1;
+}
+
+class BadSync {
+  [Symbol.dispose](force: bool) {}
+}
+
+class BadAsync {
+  [Symbol.asyncDispose]() {}
+}
+
+class Holder {
+  r: Res | null = null;
+}
+
+function keep(h: Holder, r: Res) {
+  h.r = r;
+}
+
+interface Closable {
+  [Symbol.dispose](): void;
+}
+
+class File implements Closable {
+  [Symbol.dispose]() {}
+}
+
+function closeIt(c: Closable) {
+  c[Symbol.dispose]();
+}
+
+function returned(): Res {
+  using r = new Res();
+  return r;
+}
+
+function main() {
+  using p = new Plain();
+  using n = 5;
+  using r = new Res();
+  const h = new Holder();
+  keep(h, r);
+  using s = new Res();
+  s = new Res();
+  using t = new Res();
+  t[Symbol.dispose]();
+  await using a = new Res();
+}

@@ -1,0 +1,111 @@
+// The todo list in memory, with the operations the API offers and its JSON snapshot.
+import {
+  Todo,
+  StoredTodo,
+  NewTodoBody,
+  TodoPatchBody,
+  ValidationError,
+  NotFoundError,
+  validTitle,
+  validTags,
+  parsePriority,
+  fromStored,
+} from "./model";
+
+export class TodoStore {
+  todos: Todo[] = [];
+  nextId: i64 = 1;
+
+  // A store holding the todos of a snapshot written by `snapshot()`.
+  static fromSnapshot(json: string): TodoStore {
+    const store = new TodoStore();
+    for (const s of JSON.parse<StoredTodo[]>(json)) {
+      const todo = fromStored(s);
+      if (todo.id >= store.nextId) {
+        store.nextId = todo.id + 1;
+      }
+      store.todos.push(todo);
+    }
+    return store;
+  }
+
+  snapshot(): string {
+    return JSON.stringify(this.todos);
+  }
+
+  // Todos with `done` (when not null) and tag `tag` (when not null).
+  list(done: bool | null, tag: string | null): Todo[] {
+    return this.todos.filter((t) => matches(t, done, tag));
+  }
+
+  get(id: i64): Todo {
+    const todo = this.todos.find((t) => t.id === id);
+    if (todo == null) {
+      throw new NotFoundError(id);
+    }
+    return todo;
+  }
+
+  create(body: NewTodoBody): Todo {
+    const title = body.title?.clone();
+    if (title == null) {
+      throw new ValidationError("title is required");
+    }
+    const todo: Todo = {
+      id: this.nextId,
+      title: validTitle(title),
+      done: false,
+      priority: parsePriority(body.priority?.clone() ?? "normal"),
+      tags: validTags(body.tags?.clone() ?? []),
+    };
+    this.nextId++;
+    this.todos.push(todo.clone());
+    return todo;
+  }
+
+  // Applies the fields `patch` has; all are checked before any is changed.
+  update(id: i64, patch: TodoPatchBody): Todo {
+    const i = this.indexOf(id);
+    const title = patch.title?.clone();
+    const priority = patch.priority?.clone();
+    const newTitle = title != null ? validTitle(title) : null;
+    const newPriority = priority != null ? parsePriority(priority) : null;
+    // `const todo = this.todos[i]` would move the element out; write through the index.
+    if (newTitle != null) {
+      this.todos[i].title = newTitle;
+    }
+    if (newPriority != null) {
+      this.todos[i].priority = newPriority;
+    }
+    const done = patch.done;
+    if (done != null) {
+      this.todos[i].done = done;
+    }
+    return this.todos[i].clone();
+  }
+
+  delete(id: i64) {
+    const before = this.todos.length;
+    this.todos = this.todos.filter((t) => t.id !== id);
+    if (this.todos.length === before) {
+      throw new NotFoundError(id);
+    }
+  }
+
+  private indexOf(id: i64): usize {
+    const i = this.todos.findIndex((t) => t.id === id);
+    if (i < 0) {
+      throw new NotFoundError(id);
+    }
+    return i as usize;
+  }
+}
+
+// Filter helper: a named function so the null checks narrow (they don't inside an arrow
+// function capturing `done` / `tag`; tests/golden/bugs/sema_narrow_captured_nullable_in_closure).
+function matches(t: Todo, done: bool | null, tag: string | null): bool {
+  if (done != null && t.done !== done) {
+    return false;
+  }
+  return tag == null || t.tags.includes(tag);
+}

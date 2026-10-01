@@ -1,0 +1,38 @@
+// Room membership rules.
+import { Room } from "../src/room";
+import { WebSocket } from "velt:websocket";
+
+// Sockets are only stored and handed back here, never used.
+function socket(n: u64): WebSocket {
+  return WebSocket { handle: n };
+}
+
+export function test_join_and_names() {
+  const r = new Room();
+  assertEq(r.join(1, " ann ", socket(10u64)), null);
+  assertEq(r.join(2, "bo", socket(20u64)), null);
+  assertEq(r.names(), ["ann", "bo"]);
+  assertEq(r.nameOf(1), "ann");
+  assertEq(r.nameOf(3), null);
+}
+
+export function test_join_rules() {
+  const r = new Room();
+  r.join(1, "ann", socket(10u64));
+  assertEq(r.join(2, "ann", socket(20u64)), "name ann is taken");
+  assertEq(r.join(1, "other", socket(10u64)), "already joined");
+  assertEq(r.join(3, "   ", socket(30u64)), "name must be 1-20 characters");
+  assertEq(r.join(3, "x".repeat(21), socket(30u64)), "name must be 1-20 characters");
+}
+
+export function test_leave_and_sockets() {
+  const r = new Room();
+  r.join(1, "ann", socket(10u64));
+  r.join(2, "bo", socket(20u64));
+  r.join(3, "cy", socket(30u64));
+  assertEq(r.sockets(2).map((s) => s.handle), [10u64, 30u64]);
+  assertEq(r.leave(2), "bo");
+  assertEq(r.leave(2), null);
+  assertEq(r.sockets().map((s) => s.handle), [10u64, 30u64]);
+  assertEq(r.names(), ["ann", "cy"]);
+}

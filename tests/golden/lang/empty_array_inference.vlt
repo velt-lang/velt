@@ -1,0 +1,7 @@
+// An unannotated `[]` that nothing gives an element type (an argument whose type doesn't matter,
+// `[].length`) is a `never[]`, as in TS. `const xs = []` still asks for an annotation. Regression
+// (difftest): "cannot infer the element type of `[]`".
+function main() {
+  console.log(JSON.stringify([]));
+  console.log([].length);
+}

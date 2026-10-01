@@ -1,0 +1,19 @@
+// std/random: fast pseudo-random numbers (like JavaScript's `Math.random()`), for simulations,
+// sampling, shuffling, jitter and load generation. NOT for secrets, tokens or anything an
+// attacker must not predict: use std/crypto (`randomBytes`, `randomInt`) for those.
+//
+// Each thread has its own generator (wyrand), seeded from the OS on first use, so concurrent
+// tasks never contend and every run gives a different sequence.
+
+declare function velt_rt_prng_f64(): f64;
+declare function velt_rt_prng_range(min: i64, max: i64): i64;
+
+// A number in [0, 1) (53 random bits), like `Math.random()`.
+export function random(): f64 {
+  return velt_rt_prng_f64();
+}
+
+// An integer in [min, max), uniformly distributed; `min` when `max <= min`.
+export function randomInt(min: i64, max: i64): i64 {
+  return velt_rt_prng_range(min, max);
+}

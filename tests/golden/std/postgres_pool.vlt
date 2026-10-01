@@ -1,0 +1,115 @@
+// std/postgres pool: concurrent queries from spawned tasks on at most `max` connections,
+// dedicated clients with pool.connect(), pool.transaction(fn), and end(). Tables live in a
+// schema named with a fresh UUID (connections of a pool share no temp tables), dropped at the
+// end.
+// requires-env: VELT_TEST_PG_URL
+import { env } from "velt:process";
+import { connect, createPool, Client, PgError, Pool } from "velt:postgres";
+import { uuidv4 } from "velt:uuid";
+
+class Count {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+class Backend {
+  pid: i64;
+
+  constructor(pid: i64) {
+    this.pid = pid;
+  }
+}
+
+// Inserts `per` rows for worker `w`, one statement at a time; returns the backends it used.
+async function worker(pool: Pool, table: string, w: i64, per: i64): Promise<i64[]> {
+  const pids: i64[] = [];
+  for (let i = 0; i < per; i++) {
+    const b: Backend | null = await pool.queryOne(
+      `INSERT INTO ${table} (w, i) VALUES ($1, $2) RETURNING pg_backend_pid() AS pid`,
+      [w, i],
+    );
+    const pid = b?.pid ?? 0;
+    if (!pids.includes(pid)) {
+      pids.push(pid);
+    }
+  }
+  return pids;
+}
+
+// One query on a shared client.
+async function square(db: Client, n: i64): Promise<i64> {
+  const r: Count | null = await db.queryOne("SELECT $1::int8 * $1::int8 AS n", [n]);
+  return r?.n ?? -1;
+}
+
+async function main() {
+  const schema = `velt_test_${uuidv4().replaceAll("-", "")}`;
+  const table = `${schema}.hits`;
+  const pool = createPool({ url: env("VELT_TEST_PG_URL") ?? "", max: 4 });
+  await pool.batch(`CREATE SCHEMA ${schema}; CREATE TABLE ${table} (w int, i int)`);
+
+  // 16 tasks share 4 connections.
+  const tasks: Promise<i64[], PgError>[] = [];
+  for (let w = 0; w < 16; w++) {
+    tasks.push(spawn(worker(pool, table, w, 25)));
+  }
+  const used: i64[] = [];
+  for (const pids of await Promise.all(tasks)) {
+    for (const pid of pids) {
+      if (!used.includes(pid)) {
+        used.push(pid);
+      }
+    }
+  }
+  const total: Count | null = await pool.selectOne(`SELECT count(*) AS n FROM ${table}`);
+  console.log("rows", total?.n, "connections <= 4:", used.length <= 4, pool.idleCount <= 4);
+
+  // A dedicated client keeps its session (a temp table) until close() returns it.
+  const c = await pool.connect();
+  await c.batch("CREATE TEMP TABLE mine (x int)");
+  await c.run("INSERT INTO mine VALUES (1), (2)");
+  const mine: Count | null = await c.selectOne("SELECT count(*) AS n FROM mine");
+  console.log("dedicated", mine?.n);
+  c.close();
+
+  // pool.transaction: all-or-nothing on one connection.
+  const kept = await pool.transaction(async (tx) => {
+    await tx.execute(`INSERT INTO ${table} (w, i) VALUES ($1, $2)`, [99, 0]);
+    return await tx.execute(`DELETE FROM ${table} WHERE w = $1`, [0]);
+  });
+  try {
+    await pool.transaction(async (tx) => {
+      await tx.execute(`DELETE FROM ${table}`, {});
+      try {
+        await tx.run("SELECT 1 / 0");
+      } catch (e) {
+        console.log("  inside:", e.code);
+      }
+      return 0;
+    });
+  } catch (e) {
+    console.log("rolled back:", e.code);
+  }
+  const after: Count | null = await pool.selectOne(`SELECT count(*) AS n FROM ${table}`);
+  console.log("deleted", kept, "left", after?.n);
+
+  // One client shared by spawned tasks pipelines their queries on its connection.
+  const shared = await connect(env("VELT_TEST_PG_URL") ?? "");
+  const squares: Promise<i64, PgError>[] = [];
+  for (let n = 1; n <= 8; n++) {
+    squares.push(spawn(square(shared, n)));
+  }
+  console.log("shared client", await Promise.all(squares));
+  shared.close();
+
+  await pool.batch(`DROP SCHEMA ${schema} CASCADE`);
+  pool.end();
+  try {
+    await pool.run("SELECT 1");
+  } catch (e) {
+    console.log("ended", e.code);
+  }
+}

@@ -1,0 +1,12 @@
+7 false HELLO CHILD to stderr
+from parent
+line 1: first
+line 2: second
+line 3: 
+line 4: last
+4 lines
+exit 0 0
+ENOENT true
+true true
+killed true
+EINVAL

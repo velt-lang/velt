@@ -1,0 +1,48 @@
+// `${x}` of scalars, strings, options and unions: exactly the text `console.log(x)` prints
+// (each value is shown as a template line, then as a console.log line).
+type Scalar = i64 | string | bool;
+
+function show<T>(label: string, x: T) {
+  const t = `${x}`;
+  console.log(`${label}: [${t}] ${t.length}`);
+  console.log(`${label}:`, x);
+}
+
+function main() {
+  show("int", -42);
+  show("u8", 255u8);
+  show("u64", 18446744073709551615u64);
+  show("float", 3.25);
+  show("float whole", 2.0);
+  show("float tiny", 0.000001);
+  show("f32", 1.5f32);
+  show("bool", true);
+  show("string", "plain");
+  show("empty string", "");
+  show("unicode", "héllo wörld ✓ 日本 🎉");
+
+  const none: i64 | null = null;
+  const some: i64 | null = 7;
+  const someStr: string | null = "inside";
+  show("null option", none);
+  show("some option", some);
+  show("string option", someStr);
+
+  const a: Scalar = 21;
+  const b: Scalar = "twenty-one";
+  const c: Scalar = false;
+  show("union int", a);
+  show("union string", b);
+  show("union bool", c);
+  let m: i64 | string | null = null;
+  show("union null", m);
+  m = "set";
+  show("union set", m);
+
+  // Several parts, mixed kinds, adjacent substitutions.
+  const n = 3;
+  const s = "ab";
+  console.log(`${n}${s}${n * 2}${true}${1.5}|${none}|${b}`);
+  console.log(`start ${"é"} middle ${"✓✓"} end`);
+  console.log(`${""}${""}` + "x" + `${n}` + s);
+}

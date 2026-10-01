@@ -1,0 +1,43 @@
+// Day of week (Zeller), leap years and days between dates.
+function isLeap(y: i64): bool {
+  return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+}
+
+function dayOfWeek(y: i64, m: i64, d: i64): string {
+  let mm = m;
+  let yy = y;
+  if (mm < 3) {
+    mm += 12;
+    yy -= 1;
+  }
+  const k = yy % 100;
+  const j = (yy - k) / 100;
+  const h =
+    (
+      d +
+      (13 * (mm + 1) - ((13 * (mm + 1)) % 5)) / 5 +
+      k +
+      (k - (k % 4)) / 4 +
+      (j - (j % 4)) / 4 +
+      5 * j
+    ) %
+    7;
+  const names = "Sat Sun Mon Tue Wed Thu Fri".split(" ");
+  return `${names[h as usize]}`;
+}
+
+function dayOfYear(y: i64, m: i64, d: i64): i64 {
+  const days = [31, isLeap(y) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  let n = d;
+  for (let i = 0; i < m - 1; i++) {
+    n += days[i as usize];
+  }
+  return n;
+}
+
+function main() {
+  for (const y of [1900, 2000, 2023, 2024, 2100]) {
+    console.log(y, isLeap(y), dayOfWeek(y, 1, 1), dayOfYear(y, 12, 31));
+  }
+  console.log(dayOfWeek(1969, 7, 20), dayOfWeek(2026, 9, 30), dayOfYear(2026, 9, 30));
+}

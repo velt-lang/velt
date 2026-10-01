@@ -1,0 +1,55 @@
+// std/sqlite on a file: WAL mode, a second connection, persistence across reopen; the files
+// are deleted afterwards.
+import { open } from "velt:sqlite";
+import { tmpdir } from "velt:os";
+import { uuidv4 } from "velt:uuid";
+import { existsSync, removeSync } from "velt:fs";
+
+class Note {
+  id: i64;
+  body: string;
+
+  constructor(id: i64, body: string) {
+    this.id = id;
+    this.body = body;
+  }
+}
+
+function main() {
+  const path = `${tmpdir()}/velt-sqlite-${uuidv4()}.db`;
+  const db = open(path, { wal: true });
+  console.log("journal", db.pragma("journal_mode"));
+  db.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)");
+  const ins = db.prepare("INSERT INTO notes (body) VALUES (:body)");
+  db.transaction(() => {
+    for (let i = 0; i < 1000; i++) {
+      try {
+        ins.runWith({ body: `note ${i}` });
+      } catch (e) {
+        console.log(e.message);
+      }
+    }
+    return 0;
+  });
+
+  // A second connection sees committed data (WAL lets readers and the writer overlap).
+  const reader = open(path, { readonly: true, fileMustExist: true });
+  const last: Note | null = reader.prepare("SELECT * FROM notes ORDER BY id DESC").get();
+  console.log("reader", last?.id, last?.body);
+  reader.close();
+  ins.close();
+  db.close();
+
+  const again = open(path, { fileMustExist: true });
+  console.log("journal after reopen", again.pragma("journal_mode"));
+  const notes: Note[] = again.prepare("SELECT * FROM notes WHERE id % 250 = 0").all();
+  console.log(notes.map((n) => n.body));
+  again.close();
+
+  for (const suffix of ["", "-wal", "-shm"]) {
+    if (existsSync(path + suffix)) {
+      removeSync(path + suffix);
+    }
+  }
+  console.log("cleaned", !existsSync(path));
+}

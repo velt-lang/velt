@@ -1,0 +1,3 @@
+non_exhaustive.vlt:4:11
+non-exhaustive switch on `s.kind`
+missing cases: "empty"

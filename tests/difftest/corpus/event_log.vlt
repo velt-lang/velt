@@ -1,0 +1,46 @@
+// Parse a tiny log format, aggregate by level and find the busiest minute.
+class Entry {
+  minute: i64;
+  level: string;
+  msg: string;
+  constructor(minute: i64, level: string, msg: string) {
+    this.minute = minute;
+    this.level = level;
+    this.msg = msg;
+  }
+}
+
+function parse(line: string): Entry {
+  const parts = line.split("|");
+  const time = parts[0].split(":");
+  const minute = (parseInt(time[0], 10) as i64) * 60 + (parseInt(time[1], 10) as i64);
+  return new Entry(minute, parts[1].trim(), parts[2].trim());
+}
+
+function main() {
+  const raw =
+    "10:01|INFO|start;10:01|WARN|slow disk;10:02|INFO|tick;10:02|ERROR|boom;10:02|INFO|tick;10:05|INFO|stop";
+  const entries = raw.split(";").map((l) => parse(l));
+  const byLevel = new Map<string, i64>();
+  const byMinute = new Map<i64, i64>();
+  for (const e of entries) {
+    byLevel.set(`${e.level}`, (byLevel.get(e.level) ?? 0) + 1);
+    byMinute.set(e.minute, (byMinute.get(e.minute) ?? 0) + 1);
+  }
+  let busy = 0;
+  let most = 0;
+  for (const [m, n] of byMinute) {
+    if (n > most) {
+      most = n;
+      busy = m;
+    }
+  }
+  console.log(JSON.stringify([...byLevel.keys()]), JSON.stringify([...byLevel.values()]));
+  console.log(`${(busy - (busy % 60)) / 60}:${`${busy % 60}`.padStart(2, "0")} x${most}`);
+  console.log(
+    entries
+      .filter((e) => e.level == "ERROR")
+      .map((e) => `${e.msg}`)
+      .join(","),
+  );
+}

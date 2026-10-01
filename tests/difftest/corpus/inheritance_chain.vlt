@@ -1,0 +1,44 @@
+// Three-level inheritance with overrides, super calls and dynamic dispatch through the base.
+class Animal {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  sound(): string {
+    return "...";
+  }
+  describe(): string {
+    return `${this.name} says ${this.sound()}`;
+  }
+}
+
+class Dog extends Animal {
+  constructor(name: string) {
+    super(name);
+  }
+  override sound(): string {
+    return "woof";
+  }
+}
+
+class Puppy extends Dog {
+  age: i64;
+  constructor(name: string, age: i64) {
+    super(name);
+    this.age = age;
+  }
+  override sound(): string {
+    return `${super.sound()} (tiny)`;
+  }
+  override describe(): string {
+    return `${super.describe()}, age ${this.age}`;
+  }
+}
+
+function main() {
+  const zoo: Animal[] = [new Animal("generic"), new Dog("rex"), new Puppy("bit", 1)];
+  for (const a of zoo) {
+    console.log(a.describe());
+  }
+  console.log(zoo[2]);
+}

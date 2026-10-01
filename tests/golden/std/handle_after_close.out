@@ -1,0 +1,11 @@
+received echo hi
+receiver: connection closed
+ws send: EBADF handle is closed
+ws receive: EBADF handle is closed
+ws: closed twice
+tcp accept: EBADF handle is closed
+tcp write: EBADF handle is closed
+tcp read: EBADF handle is closed
+udp send: EBADF handle is closed
+file write: EBADF handle is closed
+file read: EBADF handle is closed

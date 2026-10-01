@@ -1,0 +1,25 @@
+// A ternary or `??` whose operand is a string place, used where the place is read again, copies
+// the string. Regression (difftest): after an earlier soft move of `s` in the same function, a
+// branch join kept that stale move's location, so the new move in `none ?? s` was not turned
+// into a copy ("cannot move `s` here: it is already borrowed by this call").
+class Profile {
+  nick: string | null = null;
+}
+
+class User {
+  name: string = "ann";
+  profile: Profile | null = null;
+}
+
+function main() {
+  const s = `a${1}`;
+  const c = true;
+  console.log(`${c ? s : "b"}`);
+  console.log((c ? s : "b").length, s);
+  const xs = ["x", "y"];
+  console.log(c ? xs[0] : "b", xs);
+  const none: string | null = null;
+  console.log(`${none ?? s}`, s);
+  const u = new User();
+  console.log(`${u.profile?.nick ?? u.name}`, u.name);
+}

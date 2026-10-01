@@ -1,0 +1,33 @@
+open first
+open second
+read first read second
+dispose second
+dispose first
+after block
+open a
+open b
+dispose b
+dispose a
+early read b
+open a
+open c
+dispose c
+dispose a
+late read a
+open loop 0
+dispose loop 0
+open loop 1
+read loop 1
+dispose loop 1
+open loop 2
+dispose loop 2
+open maybe
+true true
+dispose maybe
+open thrower
+dispose thrower
+caught boom
+open explicit
+dispose explicit
+disposed before the end of the block
+done

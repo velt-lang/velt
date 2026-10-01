@@ -1,0 +1,34 @@
+// A scripted notes session (golden: demo.out) — what `notes <argv>` prints for each command.
+import { execute } from "@notes/commands";
+import { removeSync } from "velt:fs";
+
+const DB = "notes-demo.json";
+
+function notes(argv: string[]) {
+  console.log(`$ notes ${argv.join(" ")}`);
+  try {
+    for (const l of execute(argv, DB, 1767225600000)) {
+      console.log(l);
+    }
+  } catch (e) {
+    console.log(`notes: ${e.message}`);
+  }
+}
+
+function main() {
+  notes(["add", "Buy milk", "-b", "oat, 2 liters", "-t", "home", "-t", "shop"]);
+  notes(["add", "Write the ergonomics report", "--tag", "work"]);
+  notes(["add", "Call Anna", "-t", "home"]);
+  notes(["list"]);
+  notes(["list", "--tag", "home"]);
+  notes(["search", "MILK"]);
+  notes(["tag", "2", "urgent"]);
+  notes(["show", "1"]);
+  notes(["tags"]);
+  notes(["rm", "1"]);
+  notes(["list"]);
+  notes(["show", "1"]);
+  notes(["show", "one"]);
+  notes(["frob"]);
+  removeSync(DB);
+}

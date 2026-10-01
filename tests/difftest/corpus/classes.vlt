@@ -1,0 +1,56 @@
+// Shapes hierarchy with overrides, interfaces and getters.
+interface Named {
+  label(): string;
+}
+
+class Shape implements Named {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  area(): f64 {
+    return 0.0;
+  }
+  label(): string {
+    return `${this.name}(${this.area()})`;
+  }
+}
+
+class Rect extends Shape {
+  w: f64;
+  h: f64;
+  constructor(w: f64, h: f64) {
+    super("rect");
+    this.w = w;
+    this.h = h;
+  }
+  override area(): f64 {
+    return this.w * this.h;
+  }
+}
+
+class Circle extends Shape {
+  r: f64;
+  constructor(r: f64) {
+    super("circle");
+    this.r = r;
+  }
+  override area(): f64 {
+    return 3.0 * this.r * this.r;
+  }
+  get diameter(): f64 {
+    return this.r * 2.0;
+  }
+}
+
+function main() {
+  const shapes: Shape[] = [new Rect(2.0, 3.5), new Circle(1.5), new Shape("blob")];
+  let total = 0.0;
+  for (const s of shapes) {
+    console.log(s.label());
+    total += s.area();
+  }
+  console.log(`total ${total}`);
+  const c = new Circle(4.0);
+  console.log(c.diameter);
+}

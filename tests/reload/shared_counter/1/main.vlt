@@ -1,0 +1,18 @@
+// Handler state (the closure's captured `shared` counter) survives a hot swap: this edit (a
+// string in the handler body, env layout unchanged) swaps, and the count continues at 3. A
+// restart (`--exe` mode) starts it over.
+import { serve, Request, Response } from "velt:http";
+
+async function main() {
+  const hits = shared(0);
+  const counter = hits.clone();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    if (req.path == "/count") {
+      counter.add(1);
+      return Response.text(`count ${counter.get()}`);
+    }
+    return Response.text("ok");
+  });
+  console.log(`listening on ${server.port}`);
+  await sleep(1000000000);
+}

@@ -1,0 +1,49 @@
+// Breadth-first search on a text maze; prints distance and the maze with the path marked.
+function main() {
+  const maze = ["S.#.....", ".##.###.", "....#...", "##.##.#.", "...#..#E"];
+  const h = maze.length as i64;
+  const w = maze[0].length as i64;
+  const dist: i64[] = [];
+  for (let i = 0; i < h * w; i++) {
+    dist.push(-1);
+  }
+  const queue: i64[] = [0];
+  dist[0] = 0;
+  let head: usize = 0;
+  while (head < queue.length) {
+    const cell = queue[head];
+    head++;
+    const r = (cell - (cell % w)) / w;
+    const c = cell % w;
+    const moves = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ];
+    for (const m of moves) {
+      const nr = r + m[0];
+      const nc = c + m[1];
+      if (
+        nr >= 0 &&
+        nr < h &&
+        nc >= 0 &&
+        nc < w &&
+        maze[nr as usize].slice(nc, nc + 1) != "#" &&
+        dist[(nr * w + nc) as usize] < 0
+      ) {
+        dist[(nr * w + nc) as usize] = dist[cell as usize] + 1;
+        queue.push(nr * w + nc);
+      }
+    }
+  }
+  console.log(dist[(h * w - 1) as usize], queue.length);
+  for (let r = 0; r < h; r++) {
+    let line = "";
+    for (let c = 0; c < w; c++) {
+      const d = dist[(r * w + c) as usize];
+      line += d < 0 ? maze[r as usize].slice(c, c + 1) : `${d % 10}`;
+    }
+    console.log(line);
+  }
+}

@@ -1,0 +1,8 @@
+inserted 200000 true
+after delete 66667 true true
+reinserted 133334 true -6666700000
+cleared 0 -1 0
+reused 1000 999
+words 50000 25000 word-1 word-49999 49999
+drained 4 [ 91, 325091, 650091, 975091 ] [ 'v7', 'v25007', 'v50007', 'v75007' ] false v25007
+regrown 50004 50000 975091 1

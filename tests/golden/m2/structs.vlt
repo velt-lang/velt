@@ -1,0 +1,30 @@
+struct Point {
+  x: f64;
+  y: f64;
+
+  len(): f64 {
+    return Math.sqrt(this.x * this.x + this.y * this.y);
+  }
+
+  scale(k: f64) {
+    this.x *= k;
+    this.y *= k;
+  }
+}
+
+function add(a: Point, b: Point): Point {
+  return Point { x: a.x + b.x, y: a.y + b.y };
+}
+
+function main() {
+  let p = Point { x: 3.0, y: 4.0 };
+  const q = p; // Copy struct: p stays usable
+  console.log(p.len(), q.x);
+  p.scale(2.0);
+  console.log(p.x, p.y, q.x);
+  const r = add(p, q);
+  console.log(`${r.x},${r.y}`);
+  const o = { name: "anon", n: 1 };
+  console.log(o.name, o.n);
+  console.log(Math.floor(2.7), Math.max(3.0, 9.0), Math.abs(-4.5), Math.min(1.5, 0.5));
+}

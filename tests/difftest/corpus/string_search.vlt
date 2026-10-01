@@ -1,0 +1,31 @@
+// Naive substring search vs indexOf; counting occurrences; replaceAll.
+function findAll(hay: string, needle: string): i64[] {
+  const out: i64[] = [];
+  const n = hay.length as i64;
+  const m = needle.length as i64;
+  for (let i = 0; i + m <= n; i++) {
+    if (hay.slice(i, i + m) == needle) {
+      out.push(i);
+    }
+  }
+  return out;
+}
+
+function main() {
+  const hay = "abracadabra abracadabra";
+  for (const needle of ["abra", "a", "cad", "zzz", "ra a"]) {
+    const hits = findAll(hay, needle);
+    console.log(
+      needle,
+      JSON.stringify(hits),
+      hay.indexOf(needle),
+      hay.lastIndexOf(needle),
+      hay.includes(needle),
+    );
+  }
+  console.log(
+    hay.replaceAll("abra", "X"),
+    hay.split("a").length,
+    hay.toUpperCase().startsWith("ABRA"),
+  );
+}

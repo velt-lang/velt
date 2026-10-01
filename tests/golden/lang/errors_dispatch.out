@@ -1,0 +1,13 @@
+missing: no a
+denied: guest
+fixed a
+fixed secret
+check failed: negative
+3 0 501
+check failed: denied for loud
+base
+describe failed: strict
+handler: odd 3
+4 3
+3 2
+closure: picker

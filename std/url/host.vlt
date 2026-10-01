@@ -1,0 +1,191 @@
+// std/url/host (std-internal): the WHATWG host parser (url.spec.whatwg.org §3.5) for std/url.
+//
+// Supported: ASCII domains (percent-decoded, lowercased, checked for forbidden code points), IPv4
+// in every WHATWG spelling (`127.1`, `0x7f.0.0.1`, `2130706433`) normalized to dotted decimal,
+// bracketed IPv6 literals (validated and lowercased but not compressed), and the opaque hosts of
+// non-special schemes. Not supported: IDNA / punycode — a host that is not ASCII after decoding
+// is rejected. Every parser returns null where the URL is invalid.
+
+import { C0, encodeSet, decodeLenient, bytesOf } from "velt:url/encode";
+
+// The serialized host for `input` (the text between the userinfo and the port), or null.
+export function parseHost(input: string, special: bool): string | null {
+  if (input.startsWith("[")) {
+    return parseIpv6(input);
+  }
+  if (!special) {
+    return parseOpaqueHost(input);
+  }
+  const domain = decodeLenient(input, false);
+  const b = bytesOf(domain);
+  for (let i: usize = 0; i < b.length; i++) {
+    if (isForbiddenDomainByte(b[i] as i64)) {
+      return null;
+    }
+  }
+  const ascii = domain.toLowerCase();
+  if (ascii.length == 0) {
+    return null;
+  }
+  if (endsInNumber(ascii)) {
+    return parseIpv4(ascii);
+  }
+  return ascii;
+}
+
+// Forbidden host code points (WHATWG), without `%`.
+function isForbiddenHostByte(c: i64): bool {
+  return c == 0 ||
+    c == 9 ||
+    c == 10 ||
+    c == 13 ||
+    c == 32 ||
+    c == 35 ||
+    c == 47 ||
+    c == 58 ||
+    c == 60 ||
+    c == 62 ||
+    c == 63 ||
+    c == 64 ||
+    c == 91 ||
+    c == 92 ||
+    c == 93 ||
+    c == 94 ||
+    c == 124;
+}
+
+// Forbidden domain code points, plus every non-ASCII byte (no IDNA, see header).
+function isForbiddenDomainByte(c: i64): bool {
+  return c <= 0x20 || c >= 0x7f || c == 37 || isForbiddenHostByte(c);
+}
+
+function parseOpaqueHost(input: string): string | null {
+  const b = bytesOf(input);
+  for (let i: usize = 0; i < b.length; i++) {
+    if (isForbiddenHostByte(b[i] as i64)) {
+      return null;
+    }
+  }
+  return encodeSet(input, C0);
+}
+
+// `[...]` with hex digits, `:` and `.` inside (validated loosely: at least one `:`).
+function parseIpv6(input: string): string | null {
+  const b = bytesOf(input);
+  if (b.length < 4 || b[b.length - 1] != (93 as u8)) {
+    return null;
+  }
+  let colons = 0;
+  for (let i: usize = 1; i + 1 < b.length; i++) {
+    const c = b[i] as i64;
+    if (c == 58) {
+      colons++;
+    } else if (!isHex(c) && c != 46) {
+      return null;
+    }
+  }
+  return colons >= 2 ? input.toLowerCase() : null;
+}
+
+function isHex(c: i64): bool {
+  return (c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102);
+}
+
+// The dot-separated labels of `host`, without one trailing empty label.
+function labels(host: string): string[] {
+  const parts = host.split(".");
+  if (parts.length > 1 && parts[parts.length - 1].length == 0) {
+    parts.pop();
+  }
+  return parts;
+}
+
+// WHATWG "ends in a number": the last label is decimal digits or `0x` + hex digits.
+function endsInNumber(host: string): bool {
+  const parts = labels(host);
+  const last = parts.length - 1;
+  if (parts[last].length == 0) {
+    return false;
+  }
+  if (allDigits(parts[last], 0, 10)) {
+    return true;
+  }
+  return parts[last].startsWith("0x") && allDigits(parts[last], 2, 16);
+}
+
+// Whether `s[from..]` is only digits of `radix` (10, 16 or 8); true when empty.
+function allDigits(s: string, from: i64, radix: i64): bool {
+  for (let i = from; i < (s.length as i64); i++) {
+    if (digitValue(s.charCodeAt(i), radix) < 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function digitValue(c: i64, radix: i64): i64 {
+  let v: i64 = -1;
+  if (c >= 48 && c <= 57) {
+    v = c - 48;
+  } else if (c >= 97 && c <= 102) {
+    v = c - 87;
+  } else if (c >= 65 && c <= 70) {
+    v = c - 55;
+  }
+  return v < radix ? v : -1;
+}
+
+// One IPv4 part (decimal, `0x` hex or leading-zero octal), capped just above 2^32; -1 if invalid.
+function ipv4Number(part: string): i64 {
+  if (part.length == 0) {
+    return -1;
+  }
+  let radix: i64 = 10;
+  let start: i64 = 0;
+  if (part.startsWith("0x") || part.startsWith("0X")) {
+    radix = 16;
+    start = 2;
+  } else if (part.length > 1 && part.startsWith("0")) {
+    radix = 8;
+    start = 1;
+  }
+  let v: i64 = 0;
+  for (let i = start; i < (part.length as i64); i++) {
+    const d = digitValue(part.charCodeAt(i), radix);
+    if (d < 0) {
+      return -1;
+    }
+    v = v * radix + d;
+    if (v > 0x100000000) {
+      v = 0x100000000;
+    }
+  }
+  return v;
+}
+
+// WHATWG IPv4 parser: 1 to 4 parts, the last one filling the remaining bytes.
+function parseIpv4(host: string): string | null {
+  const parts = labels(host);
+  if (parts.length > 4) {
+    return null;
+  }
+  let addr: i64 = 0;
+  for (let i: usize = 0; i < parts.length; i++) {
+    const n = ipv4Number(parts[i]);
+    if (n < 0) {
+      return null;
+    }
+    if (i + 1 < parts.length) {
+      if (n > 255) {
+        return null;
+      }
+      addr += n << (((3 - i) * 8) as i64);
+    } else {
+      if (n >= (1 as i64) << (((5 - parts.length) * 8) as i64)) {
+        return null;
+      }
+      addr += n;
+    }
+  }
+  return `${addr >> 24}.${(addr >> 16) & 255}.${(addr >> 8) & 255}.${addr & 255}`;
+}

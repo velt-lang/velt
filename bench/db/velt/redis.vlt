@@ -1,0 +1,125 @@
+// Redis workloads (bench/db/README.md) against $BENCH_REDIS_URL, on one multiplexed client.
+// Prints `RESULT <workload> <ops> <checksum> <ms>` per workload; the time covers only the timed
+// loop. `quick` as the first argument runs 1/20 of the sizes. Keys live under a per-run prefix
+// and are deleted at the end (never FLUSHALL).
+import { connect, RedisClient } from "velt:redis";
+import { args, env } from "velt:process";
+import { uuidv4 } from "velt:uuid";
+
+const BATCH: i64 = 100;
+const TASKS: i64 = 50;
+
+function report(workload: string, ops: i64, checksum: i64, ms: f64) {
+  console.log(`RESULT redis.${workload} ${ops} ${checksum} ${ms}`);
+}
+
+function valueLength(v: string | null): i64 {
+  return v == null ? 0 : (v.length as i64);
+}
+
+// One SET per round trip.
+async function setSeq(c: RedisClient, p: string, n: i64, keys: i64) {
+  const t0 = performance.now();
+  let ok: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    const j = i % keys;
+    if (await c.set(`${p}${j}`, `value-${j}`)) {
+      ok++;
+    }
+  }
+  report("set_seq", n, ok, performance.now() - t0);
+}
+
+// One GET per round trip.
+async function getSeq(c: RedisClient, p: string, n: i64, keys: i64) {
+  const t0 = performance.now();
+  let sum: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    sum += valueLength(await c.get(`${p}${(i * 7919) % keys}`));
+  }
+  report("get_seq", n, sum, performance.now() - t0);
+}
+
+// SETs sent as pipelines of BATCH commands.
+async function pipelineSet(c: RedisClient, p: string, n: i64, keys: i64) {
+  const t0 = performance.now();
+  let ok: i64 = 0;
+  for (let b: i64 = 0; b < n; b += BATCH) {
+    const pl = c.pipeline();
+    for (let i = b; i < b + BATCH; i++) {
+      const j = i % keys;
+      pl.set(`${p}${j}`, `value-${j}`);
+    }
+    for (const r of await pl.exec()) {
+      if (r.kind == "status") {
+        ok++;
+      }
+    }
+  }
+  report("pipeline_set", n, ok, performance.now() - t0);
+}
+
+// GETs sent as pipelines of BATCH commands.
+async function pipelineGet(c: RedisClient, p: string, n: i64, keys: i64) {
+  const t0 = performance.now();
+  let sum: i64 = 0;
+  for (let b: i64 = 0; b < n; b += BATCH) {
+    const pl = c.pipeline();
+    for (let i = b; i < b + BATCH; i++) {
+      pl.get(`${p}${(i * 7919) % keys}`);
+    }
+    for (const r of await pl.exec()) {
+      sum += valueLength(r.asString());
+    }
+  }
+  report("pipeline_get", n, sum, performance.now() - t0);
+}
+
+// One task's share of `concurrentGet`: GETs t, t + TASKS, t + 2 * TASKS, ...
+async function getWorker(c: RedisClient, p: string, t: i64, n: i64, keys: i64): Promise<i64> {
+  let sum: i64 = 0;
+  for (let i = t; i < n; i += TASKS) {
+    sum += valueLength(await c.get(`${p}${(i * 7919) % keys}`));
+  }
+  return sum;
+}
+
+// TASKS concurrent tasks issuing GETs over the one multiplexed client.
+async function concurrentGet(c: RedisClient, p: string, n: i64, keys: i64) {
+  const t0 = performance.now();
+  const tasks: Promise<i64>[] = [];
+  for (let t: i64 = 0; t < TASKS; t++) {
+    tasks.push(spawn(getWorker(c, p, t, n, keys)));
+  }
+  let sum: i64 = 0;
+  for (const s of await Promise.all(tasks)) {
+    sum += s;
+  }
+  report("concurrent_get", n, sum, performance.now() - t0);
+}
+
+async function cleanup(c: RedisClient, p: string, keys: i64) {
+  for (let b: i64 = 0; b < keys; b += 1000) {
+    const batch: string[] = [];
+    for (let j = b; j < b + 1000 && j < keys; j++) {
+      batch.push(`${p}${j}`);
+    }
+    await c.del(batch);
+  }
+}
+
+async function main() {
+  const argv = args();
+  const scale: i64 = argv.length > 0 && argv[0] == "quick" ? 20 : 1;
+  const c = await connect(env("BENCH_REDIS_URL") ?? "redis://127.0.0.1:6379");
+  const p = `velt-bench-db:${uuidv4()}:`;
+  // Distinct keys; every write of key j stores `value-j`.
+  const keys = 20000 / scale;
+  await setSeq(c, p, 40000 / scale, keys);
+  await getSeq(c, p, 40000 / scale, keys);
+  await pipelineSet(c, p, 1000000 / scale, keys);
+  await pipelineGet(c, p, 1000000 / scale, keys);
+  await concurrentGet(c, p, 400000 / scale, keys);
+  await cleanup(c, p, keys);
+  c.close();
+}

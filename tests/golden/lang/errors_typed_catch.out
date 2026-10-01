@@ -1,0 +1,7 @@
+missing 404 | forbidden: admins only | user 7
+timeout after 30ms | closed | ok 40
+text: negative | too big: 500 | code 5
+fallback
+rethrown admins only
+caught without a binding
+finally

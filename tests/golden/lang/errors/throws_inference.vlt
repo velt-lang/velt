@@ -1,0 +1,32 @@
+// Error types that inference cannot settle: a closure whose error type is needed while the
+// recursive function it calls is still being checked, and implementations called through one
+// interface entry whose error types depend on type parameters. Both need a `throws` clause.
+class TooDeep extends Error {}
+
+function walk(n: i64): i64 {
+  if (n > 3) {
+    throw new TooDeep("too deep");
+  }
+  const next = () => walk(n + 1);
+  return next();
+}
+
+interface Source<T> {
+  read(v: T): T;
+}
+
+class Rejecting<T> implements Source<T> {
+  read(v: T): T {
+    throw v.clone();
+  }
+}
+
+function main() {
+  console.log(walk(0));
+  const s: Source<i64> = new Rejecting<i64>();
+  try {
+    console.log(s.read(1));
+  } catch (e) {
+    console.log(e);
+  }
+}

@@ -1,0 +1,20 @@
+// Regression (double free): a `Promise` param forwarded into `spawn(fire(ms, task))` used to be
+// copied (a shallow clone of the future); promises have no clone, so the param is owned and moved.
+async function fire(ms: i64, task: Promise<void>): Promise<void> {
+  await sleep(ms);
+  await task;
+}
+
+async function say(m: string): Promise<void> {
+  console.log(m);
+}
+
+function setTimeout(task: Promise<void>, ms: i64) {
+  spawn(fire(ms, task));
+}
+
+async function main() {
+  setTimeout(say(`heap ${1}`), 10);
+  await sleep(500);
+  console.log("done");
+}

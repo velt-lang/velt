@@ -1,0 +1,316 @@
+//! Pass 2: per-function name resolution + bidirectional type checking + desugaring into HIR.
+//!
+//! # Encoding decisions (other stages rely on these)
+//! - **void `main`** (and every void fn) has `FnDef::ret == Unit`; no trailing `return` is inserted.
+//! - **Use modes**: every read of a place has a `UseMode`. Copy types get `UseMode::Copy`.
+//!   Non-Copy reads get `Move` for `let` initializers, `return` values, assignment RHS, literal
+//!   elements/fields, `throw`, args to `Owned` params and ternary branches; `Borrow` for args to
+//!   `Borrow` params, `console.log/error` args, operator operands, conditions and expression
+//!   statements; `BorrowMut` for args to params and receivers known to be modified (intrinsics,
+//!   setters, constructors); calls to user functions are patched once mutation is inferred.
+//! - **Places** (`Local`/`Field`/`Index`/`UnwrapSome`/`Global`): the outermost node's mode says
+//!   how the value is used; the base of a projection is `Borrow` (or `BorrowMut` when the
+//!   projection is written / mutably borrowed) even for Copy base types. Moving a field out of a
+//!   struct local (`Field { mode: Move }`) is a partial move: the other fields must still be
+//!   dropped at scope end. Assignment places use `BorrowMut`.
+//! - **Method calls** are `Call { Callee::Def(method, type_args), [receiver, args..] }`; the
+//!   receiver uses the `this` pass mode (`Borrow`/`BorrowMut`, also for Copy types; `Owned` →
+//!   `Move`/`Copy`). `type_args` = the owner's generics (class / extend block / interface +
+//!   implementor) followed by the method's own.
+//! - **Closures** capture into leading params (see `expr/closure.rs`); function values are
+//!   `TyKind::FnPtr` and not Copy (they may own their captured state).
+//! - **Ownership / mutation inference** runs after all bodies (`crate::ownership`): params start
+//!   `Copy` / `Borrow` and may become `BorrowMut` or `Owned`; call sites are patched.
+//! - **Strings**: `a + b` → `Call(Intrinsic::StrConcat, [a, b])`; `s += e` →
+//!   `Assign { s, StrConcat(s (Borrow), e) }`. `StrConcat` operands may be owned temporaries.
+//! - **Templates**: left fold of `StrConcat` over the non-empty parts; string-typed `${e}` parts are
+//!   used directly (Borrow), others wrapped in `ToString` (any printable type). A template with no
+//!   parts is `Lit("")`; exactly one string `${e}` is `StrConcat(Lit(""), e)` (a fresh value).
+//! - **`++`/`--`**: as a statement → `CompoundAssign { Add|Sub, place, 1 }`. Prefix as a value →
+//!   `Block { [CompoundAssign], value: place read }`. Postfix as a value →
+//!   `Block { [Let tmp = place; CompoundAssign], value: Local(tmp) }` (tmp named `<postfix>`).
+//! - **`for(init; cond; step)`** → `Block { init; While { cond, body, step } }`; missing cond →
+//!   `Lit(true)`. **`do body while (c)`** → see the hir.rs header (two forms).
+//! - **Ternary** → `ExprKind::If`. Statement `if` without braces is a one-statement block.
+
+mod assigned;
+mod const_borrow;
+mod defaults;
+mod driver;
+mod expr;
+mod field_narrow;
+mod locals;
+mod loops;
+pub(crate) mod narrow;
+mod pattern;
+pub(crate) mod places;
+mod stmt;
+pub(crate) mod switch;
+mod using;
+
+use std::collections::HashMap;
+
+use velt_common::Span;
+
+use crate::ctx::Ctx;
+use crate::defs::{Bound, FnKind, ThrowSrc};
+use crate::hir::{self, DefId, LocalDef, LocalId, TyId, UseMode};
+use crate::resolve::TyEnv;
+
+pub(crate) use driver::{check_bodies, ensure_body};
+
+/// What the consumer of an expression's value does with it (only matters for non-Copy types).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Want {
+    Move,
+    Borrow,
+    BorrowMut,
+}
+
+/// Role of a local in its function (drives mutability and move-out rules).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LocalKind {
+    Let,
+    Const,
+    /// `using` / `await using`: a `const` that stays in place until the end of its block (it
+    /// cannot be moved out; `crate::moves`).
+    Using,
+    Param,
+    This,
+    Temp,
+    /// Pattern binding of a `match` arm or destructuring `let` (binding mode is inferred).
+    Bind,
+    /// `for...of` element binding (borrows the element).
+    Elem,
+    /// A captured variable inside a closure body.
+    Capture,
+}
+
+/// An enclosing loop or `switch` (a `break` target).
+pub(crate) struct LoopCx {
+    pub label: Option<String>,
+    pub has_continue: bool,
+    /// A `switch` (`break` exits it; `continue` skips it and targets the loop around it).
+    pub is_switch: bool,
+    /// Some `break` targets this entry.
+    pub has_break: bool,
+    /// A `continue` from inside a `switch` targets this loop: its HIR loop needs a label.
+    pub needs_label: bool,
+    /// Label given to the HIR loop when the source has none but one is needed.
+    pub synth_label: String,
+}
+
+impl LoopCx {
+    /// The label of the HIR loop built for this entry.
+    pub fn hir_label(&self) -> Option<String> {
+        match &self.label {
+            Some(l) => Some(l.clone()),
+            None if self.needs_label || self.is_switch => Some(self.synth_label.clone()),
+            None => None,
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Scope {
+    pub names: HashMap<String, LocalId>,
+    /// Option locals narrowed to their payload inside this scope.
+    pub narrowed: Vec<LocalId>,
+    /// Union locals narrowed to some of their variants inside this scope (see `narrow::Fact`).
+    pub members: Vec<(LocalId, Vec<u32>)>,
+    /// Source offset where the scope ends (its locals' visibility, for `crate::ide`).
+    pub hi: u32,
+}
+
+/// A captured variable of a closure frame.
+pub(crate) struct CaptureCx {
+    pub outer: LocalId,
+    pub inner: LocalId,
+    pub mutated: bool,
+    /// Where the closure first mutates it (for async closures, where that is an error).
+    pub mutated_at: Option<Span>,
+    /// The variable was narrowed where the closure was created, and the closure body starts
+    /// from that narrowing (so the body must not assign it).
+    pub narrowed: bool,
+}
+
+/// Per-function checking state; closures push a new frame (the enclosing one is saved).
+pub(crate) struct Frame {
+    pub kind: FnKind,
+    pub locals: Vec<LocalDef>,
+    pub kinds: Vec<LocalKind>,
+    pub scopes: Vec<Scope>,
+    pub loops: Vec<LoopCx>,
+    /// Loops and `switch`es entered so far (numbers synthesized labels).
+    pub loop_count: u32,
+    /// Declared/expected return type; `None` while a closure's return type is being inferred.
+    pub ret: Option<TyId>,
+    pub captures: Vec<CaptureCx>,
+    pub escaping: bool,
+    /// Body of an `async` function / arrow: `await` is allowed.
+    pub is_async: bool,
+    /// See `FnInfo::soft_moves`.
+    pub soft_moves: Vec<Span>,
+    /// Locals holding inferred integers (`expr::numbers`).
+    pub inferred_ints: std::collections::HashSet<LocalId>,
+    /// Throw sources of the enclosing `try` bodies (innermost last).
+    pub tries: Vec<Vec<ThrowSrc>>,
+    pub uncaught: Vec<ThrowSrc>,
+    /// `super(...)` is allowed here (first statement of a constructor).
+    pub super_ok: bool,
+    pub super_called: bool,
+    /// Field paths that conditions narrow (`field_narrow`).
+    pub field_tokens: Vec<field_narrow::FieldToken>,
+    /// `const`s bound by reference (`const_borrow`).
+    pub const_refs: std::collections::HashSet<LocalId>,
+}
+
+impl Frame {
+    pub fn new(kind: FnKind, ret: Option<TyId>) -> Self {
+        Frame {
+            kind,
+            locals: vec![],
+            kinds: vec![],
+            scopes: vec![Scope::default()],
+            loops: vec![],
+            loop_count: 0,
+            ret,
+            captures: vec![],
+            escaping: false,
+            is_async: false,
+            soft_moves: vec![],
+            inferred_ints: Default::default(),
+            tries: vec![],
+            uncaught: vec![],
+            super_ok: false,
+            super_called: false,
+            field_tokens: vec![],
+            const_refs: Default::default(),
+        }
+    }
+}
+
+pub(crate) struct FnCx<'a, 'm> {
+    pub cx: &'a mut Ctx<'m>,
+    pub module: usize,
+    /// Generic params in scope (for annotations inside the body).
+    pub env: TyEnv,
+    pub bounds: Vec<Vec<Bound>>,
+    /// Name of the enclosing top-level function (for closure names).
+    pub fn_name: String,
+    /// Type whose body is being checked (methods, constructors, defaults, field initializers):
+    /// its `private` members are accessible.
+    pub owner: Option<DefId>,
+    /// Locals of the functions enclosing a nested declaration (see `collect::nested`).
+    pub enclosing_locals: Vec<String>,
+    pub f: Frame,
+    /// Enclosing frames of the closure being checked (innermost last).
+    pub outer: Vec<Frame>,
+}
+
+impl<'a, 'm> FnCx<'a, 'm> {
+    pub fn new(cx: &'a mut Ctx<'m>, module: usize, env: TyEnv, frame: Frame) -> Self {
+        FnCx {
+            cx,
+            module,
+            env,
+            bounds: vec![],
+            fn_name: String::new(),
+            owner: None,
+            enclosing_locals: vec![],
+            f: frame,
+            outer: vec![],
+        }
+    }
+
+    pub fn mk(&self, kind: hir::ExprKind, ty: TyId, span: Span) -> hir::Expr {
+        hir::Expr { kind, ty, span }
+    }
+
+    /// Error-typed placeholder expression.
+    pub fn error_expr(&self, span: Span) -> hir::Expr {
+        self.mk(hir::ExprKind::Lit(hir::Lit::Unit), self.cx.ty.error, span)
+    }
+
+    pub fn unit_expr(&self, span: Span) -> hir::Expr {
+        self.mk(hir::ExprKind::Lit(hir::Lit::Unit), self.cx.ty.unit, span)
+    }
+
+    pub fn local_ty(&self, l: LocalId) -> TyId {
+        self.f.locals[l.0 as usize].ty
+    }
+
+    pub fn local_kind(&self, l: LocalId) -> LocalKind {
+        self.f.kinds[l.0 as usize]
+    }
+
+    /// Use mode of a value of type `ty` for the given consumer (places written or mutably
+    /// borrowed are `BorrowMut` even for Copy types).
+    pub fn use_mode(&mut self, ty: TyId, want: Want) -> UseMode {
+        if want == Want::BorrowMut {
+            UseMode::BorrowMut
+        } else if self.cx.is_copy(ty) {
+            UseMode::Copy
+        } else {
+            match want {
+                Want::Move => UseMode::Move,
+                Want::Borrow => UseMode::Borrow,
+                Want::BorrowMut => UseMode::BorrowMut,
+            }
+        }
+    }
+
+    /// The loop / `switch` entry a `break` or `continue` targets (unlabeled: the innermost
+    /// entry for `break`, the innermost loop for `continue`).
+    pub fn loop_target(
+        &mut self,
+        label: Option<&velt_syntax::ast::Ident>,
+        what: &str,
+        span: Span,
+    ) -> Option<usize> {
+        let is_continue = what == "continue";
+        let found = match label {
+            None => self
+                .f
+                .loops
+                .iter()
+                .rposition(|lp| !(is_continue && lp.is_switch)),
+            Some(l) => {
+                let found = self
+                    .f
+                    .loops
+                    .iter()
+                    .rposition(|lp| lp.label.as_deref() == Some(l.name.as_str()));
+                if found.is_none() {
+                    self.cx
+                        .err(format!("use of undeclared label `{}`", l.name), l.span);
+                    return None;
+                }
+                found
+            }
+        };
+        let Some(i) = found else {
+            let msg = if is_continue || self.f.loops.is_empty() {
+                format!("`{what}` outside of a loop")
+            } else {
+                format!("`{what}` outside of a loop or `switch`")
+            };
+            self.cx.err(msg, span);
+            return None;
+        };
+        if is_continue && self.f.loops[i].is_switch {
+            self.cx.err("`continue` cannot target a `switch`", span);
+            return None;
+        }
+        Some(i)
+    }
+
+    /// Record something that may throw at this point (caught by the innermost `try`, else
+    /// propagated by the function).
+    pub fn throw_src(&mut self, s: ThrowSrc) {
+        match self.f.tries.last_mut() {
+            Some(t) => t.push(s),
+            None => self.f.uncaught.push(s),
+        }
+    }
+}

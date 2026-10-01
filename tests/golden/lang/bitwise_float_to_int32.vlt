@@ -1,0 +1,12 @@
+// A float operand of a bitwise operator is converted like JS's ToInt32 (truncated, wrapped to
+// the signed 32-bit range, NaN and ±Infinity 0): `(a / 13) | 0` is the JS integer-division
+// idiom. Regression (difftest generator, 246 of 600 seeds): "cannot apply binary operator `|`
+// to type `f64`" since `/` yields `f64`.
+function main() {
+  const a = 41;
+  const q = (a / 13) | 0;
+  const f = 3.7;
+  const big = 4294967301.5;
+  const nan = 0.0 / 0.0;
+  console.log(q, f | 0, -f | 0, big | 0, nan | 0, 2147483648.0 | 0, 7.9 >> 1, 5.5 & 3, ~2.5, q + 1);
+}

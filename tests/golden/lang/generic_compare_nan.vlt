@@ -1,0 +1,20 @@
+// With a `T extends Comparable<T>` bound, `<`, `>`, `<=`, `>=` on floats compare like the
+// operators on concrete floats: anything involving NaN is false, as in JS. Regression (difftest
+// seed 10878): they went through `compareTo`, which orders NaN (for `sort()`).
+function gt<T extends Comparable<T>>(a: T, b: T): bool {
+  return a > b;
+}
+
+function lt<T extends Comparable<T>>(a: T, b: T): bool {
+  return a < b;
+}
+
+function ge<T extends Comparable<T>>(a: T, b: T): bool {
+  return a >= b;
+}
+
+function main() {
+  const nan = 0.0 / 0.0;
+  console.log(nan > 7.0, nan < 7.0, nan >= 7.0, 7.0 > nan);
+  console.log(gt(nan, 7.0), lt(nan, 7.0), ge(nan, 7.0), gt(7.0, nan), lt(7.0, nan), ge(nan, nan));
+}

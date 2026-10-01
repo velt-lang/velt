@@ -1,0 +1,81 @@
+/* Velt playground: two panes (editor, output) under a toolbar; light and dark themes. */
+:root {
+  --bg: #fbfbfa;
+  --panel: #ffffff;
+  --text: #1d1f23;
+  --muted: #6a6f78;
+  --border: #d9dbe0;
+  --accent: #2f6fdd;
+  --error: #c4312b;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c;
+    --panel: #1d2026;
+    --text: #e3e5e9;
+    --muted: #9097a3;
+    --border: #2f333b;
+    --accent: #6c9ef8;
+    --error: #ff7b72;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+h1 { font-size: 18px; margin: 0 12px 0 0; }
+h1 span { color: var(--muted); font-weight: 400; }
+label { color: var(--muted); display: flex; gap: 6px; align-items: center; }
+select, button {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+}
+button { cursor: pointer; }
+button#run { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: 0.5; cursor: default; }
+main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 0;
+}
+@media (max-width: 760px) {
+  main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+}
+textarea, pre {
+  margin: 0;
+  font: 13px/1.5 var(--mono);
+  tab-size: 2;
+}
+textarea {
+  resize: none;
+  border: 0;
+  border-right: 1px solid var(--border);
+  padding: 12px 16px;
+  background: var(--panel);
+  color: var(--text);
+  outline: none;
+}
+section { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+#status { padding: 8px 16px; color: var(--muted); border-bottom: 1px solid var(--border); }
+pre { flex: 1; overflow: auto; padding: 12px 16px; white-space: pre-wrap; }
+pre .err { color: var(--error); }
+footer { padding: 6px 16px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); }

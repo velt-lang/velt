@@ -1,0 +1,36 @@
+// Edit distance with a full DP table.
+function distance(a: string, b: string): i64 {
+  const n = a.length as i64;
+  const m = b.length as i64;
+  const dp: i64[][] = [];
+  for (let i = 0; i <= n; i++) {
+    const row: i64[] = [];
+    for (let j = 0; j <= m; j++) {
+      row.push(i == 0 ? j : j == 0 ? i : 0);
+    }
+    dp.push(row);
+  }
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      const cost = a.slice(i - 1, i) == b.slice(j - 1, j) ? 0 : 1;
+      const del = dp[(i - 1) as usize][j as usize] + 1;
+      const ins = dp[i as usize][(j - 1) as usize] + 1;
+      const sub = dp[(i - 1) as usize][(j - 1) as usize] + cost;
+      dp[i as usize][j as usize] = del < ins ? (del < sub ? del : sub) : ins < sub ? ins : sub;
+    }
+  }
+  return dp[n as usize][m as usize];
+}
+
+function main() {
+  const pairs = [
+    ["kitten", "sitting"],
+    ["flaw", "lawn"],
+    ["", "abc"],
+    ["same", "same"],
+    ["intention", "execution"],
+  ];
+  for (const p of pairs) {
+    console.log(p[0], p[1], distance(p[0], p[1]));
+  }
+}

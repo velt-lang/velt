@@ -1,0 +1,12 @@
+// 10M sequential awaits of an async function that completes immediately: the per-await cost.
+async function step(x: i64, i: i64): Promise<i64> {
+  return (x * 31 + i) % 1000003;
+}
+
+async function main() {
+  let acc = 1;
+  for (let i = 0; i < 10000000; i++) {
+    acc = await step(acc, i);
+  }
+  console.log(acc);
+}

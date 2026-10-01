@@ -1,0 +1,86 @@
+// std/sqlite transactions: transaction(fn) commits or rolls back, nests with savepoints, and
+// begin()/commit()/rollback() for explicit control.
+import { open, Database, Statement } from "velt:sqlite";
+
+class Count {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+function count(db: Database): i64 {
+  const c: Count | null = db.prepare("SELECT count(*) AS n FROM t").get();
+  return c?.n ?? -1;
+}
+
+// Inserts `n`; a duplicate fails (and is reported, since closures cannot throw).
+function add(ins: Statement, n: i64) {
+  try {
+    ins.runWith([n]);
+  } catch (e) {
+    console.log("  failed:", e.code);
+  }
+}
+
+function main() {
+  const db = open(":memory:");
+  db.exec("CREATE TABLE t (n INTEGER PRIMARY KEY)");
+  const ins = db.prepare("INSERT INTO t VALUES (?)");
+
+  // Commit: the callback's result is returned.
+  const inserted = db.transaction(() => {
+    for (let i = 1; i <= 100; i++) {
+      add(ins, i);
+    }
+    return 100;
+  });
+  console.log("committed", inserted, count(db), db.inTransaction);
+
+  // Any failure inside rolls everything back and is thrown by transaction().
+  try {
+    db.transaction(() => {
+      add(ins, 200);
+      add(ins, 1);
+      add(ins, 201);
+      return 0;
+    });
+  } catch (e) {
+    console.log("rolled back:", e.code, count(db));
+  }
+
+  // Nested: a failed inner transaction undoes only its savepoint.
+  db.transaction(() => {
+    add(ins, 300);
+    try {
+      db.transaction(() => {
+        add(ins, 301);
+        add(ins, 300);
+        return 0;
+      });
+    } catch (e) {
+      console.log("inner rolled back:", e.message, db.inTransaction);
+    }
+    add(ins, 302);
+    return 0;
+  });
+  const top: Count[] = db.prepare("SELECT n FROM t WHERE n >= 300 ORDER BY n").all();
+  console.log("after nested", top.map((c) => c.n));
+
+  // Explicit control.
+  const tx = db.begin();
+  ins.runWith([400]);
+  console.log("in tx", db.inTransaction, count(db));
+  tx.rollback();
+  console.log("after rollback", db.inTransaction, count(db));
+  const tx2 = db.begin();
+  ins.runWith([401]);
+  const inner = db.begin();
+  ins.runWith([402]);
+  inner.rollback();
+  tx2.commit();
+  const last: Count[] = db.prepare("SELECT n FROM t WHERE n >= 400").all();
+  console.log("explicit", last.map((c) => c.n), db.inTransaction);
+  db.close();
+}

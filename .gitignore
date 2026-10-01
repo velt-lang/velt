@@ -1,0 +1,11 @@
+# Build output at any depth (`velt build` next to a source file writes `target/` there).
+target/
+**/*.rs.bk
+*.pdb
+*.obj
+*.o
+*.exe
+/tests/golden/**/*.actual
+/.claude/
+*.stackdump
+/dist/

@@ -1,0 +1,33 @@
+async function worker(id: i64, counter: shared<i64>): Promise<i64> {
+  for (let i = 0; i < 1000; i++) {
+    counter.add(1);
+  }
+  await yieldNow();
+  return id;
+}
+
+async function main() {
+  const counter = shared(0);
+  const handles: Promise<i64>[] = [];
+  for (let i = 0; i < 100; i++) {
+    // clone() of a shared value only bumps the reference count.
+    handles.push(spawn(worker(i, counter.clone())));
+  }
+  const ids = await Promise.all(handles);
+  console.log(ids.reduce((a, b) => a + b, 0), counter.get());
+
+  const log = shared(new Mutex<string[]>([]));
+  const tasks: Promise<void>[] = [];
+  for (let i = 0; i < 3; i++) {
+    const l = log.clone();
+    tasks.push(
+      spawn(async () => {
+        l.with((v) => {
+          v.push(`task`);
+        });
+      }),
+    );
+  }
+  await Promise.all(tasks);
+  console.log(log.with((v) => v.length));
+}

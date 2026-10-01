@@ -1,0 +1,136 @@
+// What the router needs from a todo store, and the two stores behind it: `TodoStore` (in memory,
+// saved as a JSON file) and `SqliteTodoStore` (a SQLite database). The router and the server are
+// generic over `TodoRepository`, so the calls are monomorphized, not dispatched.
+//
+// Interface methods cannot throw yet, so they return their `ApiError` instead and the router
+// rethrows it (`must`). The stores themselves keep plain throwing methods (easy to use and test);
+// the two small adapters below translate.
+import { Todo, NewTodoBody, TodoPatchBody, ApiError } from "./model";
+import { TodoStore } from "./store";
+import { SqliteTodoStore } from "./sqlite_store";
+
+export interface TodoRepository {
+  // Todos with `done` (when not null) and tag `tag` (when not null), by id.
+  list(done: bool | null, tag: string | null): Todo[] | ApiError;
+  get(id: i64): Todo | ApiError;
+  create(body: NewTodoBody): Todo | ApiError;
+  // Applies the fields `patch` has; all are checked before any is changed.
+  update(id: i64, patch: TodoPatchBody): Todo | ApiError;
+  delete(id: i64): ApiError | null;
+  // The JSON to write to the store's file after a change, or null when the store saved the
+  // change itself.
+  fileSnapshot(): string | null;
+}
+
+// The value of `r`, or its error thrown. Call it with an explicit `T` (`must<Todo>(…)`):
+// inference would take the whole union for `T`.
+export function must<T>(r: T | ApiError): T {
+  if (r instanceof ApiError) {
+    throw r;
+  }
+  return r;
+}
+
+// `TodoStore` as a repository; it is persisted by writing `fileSnapshot()` to a file.
+export class JsonRepository implements TodoRepository {
+  store: TodoStore;
+
+  constructor(store: TodoStore) {
+    this.store = store;
+  }
+
+  list(done: bool | null, tag: string | null): Todo[] | ApiError {
+    return this.store.list(done, tag);
+  }
+
+  get(id: i64): Todo | ApiError {
+    try {
+      return this.store.get(id);
+    } catch (e) {
+      return e;
+    }
+  }
+
+  create(body: NewTodoBody): Todo | ApiError {
+    try {
+      return this.store.create(body);
+    } catch (e) {
+      return e;
+    }
+  }
+
+  update(id: i64, patch: TodoPatchBody): Todo | ApiError {
+    try {
+      return this.store.update(id, patch);
+    } catch (e) {
+      return e;
+    }
+  }
+
+  delete(id: i64): ApiError | null {
+    try {
+      this.store.delete(id);
+    } catch (e) {
+      return e;
+    }
+    return null;
+  }
+
+  fileSnapshot(): string | null {
+    return this.store.snapshot();
+  }
+}
+
+// `SqliteTodoStore` as a repository; every change is committed as it happens.
+export class SqliteRepository implements TodoRepository {
+  store: SqliteTodoStore;
+
+  constructor(store: SqliteTodoStore) {
+    this.store = store;
+  }
+
+  list(done: bool | null, tag: string | null): Todo[] | ApiError {
+    try {
+      return this.store.list(done, tag);
+    } catch (e) {
+      return e;
+    }
+  }
+
+  get(id: i64): Todo | ApiError {
+    try {
+      return this.store.get(id);
+    } catch (e) {
+      return e;
+    }
+  }
+
+  create(body: NewTodoBody): Todo | ApiError {
+    try {
+      return this.store.create(body);
+    } catch (e) {
+      return e;
+    }
+  }
+
+  update(id: i64, patch: TodoPatchBody): Todo | ApiError {
+    try {
+      return this.store.update(id, patch);
+    } catch (e) {
+      return e;
+    }
+  }
+
+  delete(id: i64): ApiError | null {
+    try {
+      this.store.delete(id);
+    } catch (e) {
+      return e;
+    }
+    return null;
+  }
+
+  fileSnapshot(): string | null {
+    return null;
+  }
+}

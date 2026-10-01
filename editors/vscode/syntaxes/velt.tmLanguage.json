@@ -1,0 +1,243 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Velt",
+  "scopeName": "source.vlt",
+  "fileTypes": ["vlt"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#calls" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.documentation.vlt",
+          "begin": "/\\*\\*(?!/)",
+          "end": "\\*/",
+          "captures": { "0": { "name": "punctuation.definition.comment.vlt" } }
+        },
+        {
+          "name": "comment.block.vlt",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "captures": { "0": { "name": "punctuation.definition.comment.vlt" } }
+        },
+        {
+          "name": "comment.line.double-slash.vlt",
+          "begin": "//",
+          "end": "$",
+          "beginCaptures": { "0": { "name": "punctuation.definition.comment.vlt" } }
+        }
+      ]
+    },
+    "escapes": {
+      "patterns": [
+        {
+          "name": "constant.character.escape.vlt",
+          "match": "\\\\(?:[nrt0\\\\\"'`$]|x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]{1,6}\\})"
+        },
+        {
+          "name": "invalid.illegal.escape.vlt",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.vlt",
+          "begin": "\"",
+          "end": "\"|$",
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.vlt" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.vlt" } },
+          "patterns": [{ "include": "#escapes" }]
+        },
+        {
+          "name": "string.quoted.single.vlt",
+          "begin": "'",
+          "end": "'|$",
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.vlt" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.vlt" } },
+          "patterns": [{ "include": "#escapes" }]
+        },
+        { "include": "#template" }
+      ]
+    },
+    "template": {
+      "name": "string.template.vlt",
+      "begin": "`",
+      "end": "`",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.template.begin.vlt" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.string.template.end.vlt" } },
+      "patterns": [
+        { "include": "#escapes" },
+        { "include": "#template-substitution" }
+      ]
+    },
+    "template-substitution": {
+      "name": "meta.template.expression.vlt",
+      "begin": "\\$\\{",
+      "end": "\\}",
+      "beginCaptures": { "0": { "name": "punctuation.definition.template-expression.begin.vlt" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.template-expression.end.vlt" } },
+      "contentName": "meta.embedded.line.vlt",
+      "patterns": [
+        { "include": "#brace-block" },
+        { "include": "$self" }
+      ]
+    },
+    "brace-block": {
+      "begin": "\\{",
+      "end": "\\}",
+      "beginCaptures": { "0": { "name": "punctuation.definition.block.vlt" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.block.vlt" } },
+      "patterns": [
+        { "include": "#brace-block" },
+        { "include": "$self" }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.vlt",
+          "match": "\\b0[xX][0-9A-Fa-f][0-9A-Fa-f_]*((?:[iu](?:8|16|32|64|size))?)\\b",
+          "captures": { "1": { "name": "storage.type.numeric.vlt" } }
+        },
+        {
+          "name": "constant.numeric.binary.vlt",
+          "match": "\\b0[bB][01][01_]*((?:[iu](?:8|16|32|64|size))?)\\b",
+          "captures": { "1": { "name": "storage.type.numeric.vlt" } }
+        },
+        {
+          "name": "constant.numeric.octal.vlt",
+          "match": "\\b0[oO][0-7][0-7_]*((?:[iu](?:8|16|32|64|size))?)\\b",
+          "captures": { "1": { "name": "storage.type.numeric.vlt" } }
+        },
+        {
+          "name": "constant.numeric.decimal.vlt",
+          "match": "(?<![\\w$])(?:\\d[\\d_]*(?:\\.\\d[\\d_]*)?|\\.\\d[\\d_]*)(?:[eE][+-]?\\d[\\d_]*)?((?:[iu](?:8|16|32|64|size)|f32|f64)?)\\b",
+          "captures": { "1": { "name": "storage.type.numeric.vlt" } }
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(function)\\s*(\\*?)\\s*([A-Za-z_$][\\w$]*)",
+          "captures": {
+            "1": { "name": "storage.type.function.vlt" },
+            "3": { "name": "entity.name.function.vlt" }
+          }
+        },
+        {
+          "match": "\\b(class|struct|interface|enum|type)\\s+([A-Za-z_$][\\w$]*)",
+          "captures": {
+            "1": { "name": "storage.type.$1.vlt" },
+            "2": { "name": "entity.name.type.$1.vlt" }
+          }
+        },
+        {
+          "match": "\\b(extend)\\b(?=\\s*(?:<|[A-Za-z_$]))",
+          "captures": { "1": { "name": "storage.type.extend.vlt" } }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.flow.vlt",
+          "match": "(?<![\\w$.])(if|else|while|do|for|of|in|break|continue|return|throw|try|catch|finally|switch|case|default|await)(?![\\w$])"
+        },
+        {
+          "name": "keyword.control.import.vlt",
+          "match": "(?<![\\w$.])(import|export|from|as)(?![\\w$])"
+        },
+        {
+          "name": "storage.type.vlt",
+          "match": "(?<![\\w$.])(const|let|function|class|struct|interface|enum|type|declare|constructor)(?![\\w$])"
+        },
+        {
+          "name": "storage.modifier.vlt",
+          "match": "(?<![\\w$.])(async|static|readonly|override|extends|implements|shared)(?![\\w$])"
+        },
+        {
+          "name": "keyword.operator.new.vlt",
+          "match": "(?<![\\w$.])new(?![\\w$])"
+        },
+        {
+          "name": "variable.language.vlt",
+          "match": "(?<![\\w$.])(this|super)(?![\\w$])"
+        },
+        {
+          "name": "constant.language.boolean.vlt",
+          "match": "(?<![\\w$.])(true|false)(?![\\w$])"
+        },
+        {
+          "name": "constant.language.null.vlt",
+          "match": "(?<![\\w$.])null(?![\\w$])"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.vlt",
+          "match": "(?<![\\w$.])(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|number|bool|string|void|never)(?![\\w$])"
+        },
+        {
+          "name": "support.type.builtin.vlt",
+          "match": "(?<![\\w$.])(Map|Promise|Result|Record)(?![\\w$])"
+        },
+        {
+          "name": "entity.name.type.vlt",
+          "match": "(?<![\\w$])[A-Z][\\w$]*(?![\\w$])"
+        }
+      ]
+    },
+    "calls": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.vlt",
+          "match": "(?<![\\w$.])(panic|spawn|sleep|yieldNow|shared)(?=\\s*\\()"
+        },
+        {
+          "name": "entity.name.function.call.vlt",
+          "match": "[a-z_$][\\w$]*(?=\\s*(?:\\?\\.)?\\()"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "storage.type.function.arrow.vlt", "match": "=>" },
+        { "name": "keyword.operator.optional.vlt", "match": "\\?\\.|\\?\\?=?" },
+        {
+          "name": "keyword.operator.assignment.compound.vlt",
+          "match": "(?:\\*\\*|<<|>>>|>>|&&|\\|\\||[-+*/%&|^])="
+        },
+        { "name": "keyword.operator.comparison.vlt", "match": "===|!==|==|!=|<=|>=" },
+        { "name": "keyword.operator.logical.vlt", "match": "&&|\\|\\||!" },
+        { "name": "keyword.operator.bitwise.vlt", "match": "<<|>>>|>>|[&|^~]" },
+        { "name": "keyword.operator.increment.vlt", "match": "\\+\\+|--" },
+        { "name": "keyword.operator.arithmetic.vlt", "match": "\\*\\*|[-+*/%]" },
+        { "name": "keyword.operator.assignment.vlt", "match": "=" },
+        { "name": "keyword.operator.relational.vlt", "match": "[<>]" },
+        { "name": "keyword.operator.spread.vlt", "match": "\\.\\.\\.|\\.\\.=|\\.\\." },
+        { "name": "keyword.operator.ternary.vlt", "match": "[?:]" }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        { "name": "punctuation.terminator.statement.vlt", "match": ";" },
+        { "name": "punctuation.separator.comma.vlt", "match": "," },
+        { "name": "punctuation.accessor.vlt", "match": "\\." }
+      ]
+    }
+  }
+}

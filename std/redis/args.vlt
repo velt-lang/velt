@@ -1,0 +1,34 @@
+// std/redis/args: argument lists of std/redis commands that take options or maps. Internal:
+// import the public names from "velt:redis".
+
+import { SetOptions } from "velt:redis";
+
+// `SET key value [EX s] [PX ms] [NX] [XX]`.
+export function setArgs(key: string, value: string, opts: SetOptions): string[] {
+  const args = ["SET", key, value];
+  if (opts.ex != null) {
+    args.push("EX");
+    args.push(`${opts.ex}`);
+  }
+  if (opts.px != null) {
+    args.push("PX");
+    args.push(`${opts.px}`);
+  }
+  if (opts.nx ?? false) {
+    args.push("NX");
+  }
+  if (opts.xx ?? false) {
+    args.push("XX");
+  }
+  return args;
+}
+
+// `head` followed by every key and value of `pairs`.
+export function withPairs(head: string[], pairs: Map<string, string>): string[] {
+  const args = head;
+  for (const [k, v] of pairs) {
+    args.push(k);
+    args.push(v);
+  }
+  return args;
+}

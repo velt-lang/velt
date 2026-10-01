@@ -1,0 +1,5 @@
+invalid Invalid URL: file://h:0/x
+invalid Invalid URL: file://u@h/x
+invalid Invalid URL: file://example.com:65535/a
+file://h/x h  
+file://a/x

@@ -1,0 +1,175 @@
+// The Computer Language Benchmarks Game: n-body
+// https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/nbody.html
+//
+// Idiomatic Velt, written the way a TypeScript developer would: a `Body` class, an array of
+// bodies and plain f64 arithmetic. Follows the Node.js #6 program (Isaac Gouy, Andrey Filatkin).
+import { argv } from "velt:process";
+
+const SOLAR_MASS: f64 = 4.0 * Math.PI * Math.PI;
+const DAYS_PER_YEAR: f64 = 365.24;
+
+// JS `Number.prototype.toFixed` for the magnitudes printed here (|x| * 10^digits < 2^53).
+extend f64 {
+  toFixed(digits: i64): string {
+    const scale = 10.0 ** (digits as f64);
+    const scaled = Math.round(Math.abs(this) * scale) as i64;
+    const unit = scale as i64;
+    const frac = `${scaled % unit}`.padStart(digits, "0");
+    const sign = this < 0.0 && scaled != 0 ? "-" : "";
+    return `${sign}${scaled / unit}.${frac}`;
+  }
+}
+
+class Body {
+  x: f64;
+  y: f64;
+  z: f64;
+  vx: f64;
+  vy: f64;
+  vz: f64;
+  mass: f64;
+
+  constructor(x: f64, y: f64, z: f64, vx: f64, vy: f64, vz: f64, mass: f64) {
+    this.x = x;
+    this.y = y;
+    this.z = z;
+    this.vx = vx;
+    this.vy = vy;
+    this.vz = vz;
+    this.mass = mass;
+  }
+}
+
+function planet(x: f64, y: f64, z: f64, vx: f64, vy: f64, vz: f64, mass: f64): Body {
+  return new Body(
+    x,
+    y,
+    z,
+    vx * DAYS_PER_YEAR,
+    vy * DAYS_PER_YEAR,
+    vz * DAYS_PER_YEAR,
+    mass * SOLAR_MASS,
+  );
+}
+
+function createBodies(): Body[] {
+  return [
+    new Body(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, SOLAR_MASS),
+    // Jupiter
+    planet(
+      4.84143144246472090e+00,
+      -1.16032004402742839e+00,
+      -1.03622044471123109e-01,
+      1.66007664274403694e-03,
+      7.69901118419740425e-03,
+      -6.90460016972063023e-05,
+      9.54791938424326609e-04,
+    ),
+    // Saturn
+    planet(
+      8.34336671824457987e+00,
+      4.12479856412430479e+00,
+      -4.03523417114321381e-01,
+      -2.76742510726862411e-03,
+      4.99852801234917238e-03,
+      2.30417297573763929e-05,
+      2.85885980666130812e-04,
+    ),
+    // Uranus
+    planet(
+      1.28943695621391310e+01,
+      -1.51111514016986312e+01,
+      -2.23307578892655734e-01,
+      2.96460137564761618e-03,
+      2.37847173959480950e-03,
+      -2.96589568540237556e-05,
+      4.36624404335156298e-05,
+    ),
+    // Neptune
+    planet(
+      1.53796971148509165e+01,
+      -2.59193146099879641e+01,
+      1.79258772950371181e-01,
+      2.68067772490389322e-03,
+      1.62824170038242295e-03,
+      -9.51592254519715870e-05,
+      5.15138902046611451e-05,
+    ),
+  ];
+}
+
+function offsetMomentum(bodies: Body[]) {
+  let px = 0.0;
+  let py = 0.0;
+  let pz = 0.0;
+  for (const body of bodies) {
+    px += body.vx * body.mass;
+    py += body.vy * body.mass;
+    pz += body.vz * body.mass;
+  }
+  bodies[0].vx = -px / SOLAR_MASS;
+  bodies[0].vy = -py / SOLAR_MASS;
+  bodies[0].vz = -pz / SOLAR_MASS;
+}
+
+function advance(bodies: Body[], dt: f64) {
+  const size = bodies.length;
+  for (let i: usize = 0; i < size; i++) {
+    let vxi = bodies[i].vx;
+    let vyi = bodies[i].vy;
+    let vzi = bodies[i].vz;
+    for (let j = i + 1; j < size; j++) {
+      const dx = bodies[i].x - bodies[j].x;
+      const dy = bodies[i].y - bodies[j].y;
+      const dz = bodies[i].z - bodies[j].z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      const mag = dt / (d2 * Math.sqrt(d2));
+      const massj = bodies[j].mass * mag;
+      vxi -= dx * massj;
+      vyi -= dy * massj;
+      vzi -= dz * massj;
+      const massi = bodies[i].mass * mag;
+      bodies[j].vx += dx * massi;
+      bodies[j].vy += dy * massi;
+      bodies[j].vz += dz * massi;
+    }
+    bodies[i].vx = vxi;
+    bodies[i].vy = vyi;
+    bodies[i].vz = vzi;
+  }
+  for (let i: usize = 0; i < size; i++) {
+    bodies[i].x += dt * bodies[i].vx;
+    bodies[i].y += dt * bodies[i].vy;
+    bodies[i].z += dt * bodies[i].vz;
+  }
+}
+
+function energy(bodies: Body[]): f64 {
+  let e = 0.0;
+  const size = bodies.length;
+  for (let i: usize = 0; i < size; i++) {
+    e +=
+      0.5 *
+      bodies[i].mass *
+      (bodies[i].vx * bodies[i].vx + bodies[i].vy * bodies[i].vy + bodies[i].vz * bodies[i].vz);
+    for (let j = i + 1; j < size; j++) {
+      const dx = bodies[i].x - bodies[j].x;
+      const dy = bodies[i].y - bodies[j].y;
+      const dz = bodies[i].z - bodies[j].z;
+      e -= (bodies[i].mass * bodies[j].mass) / Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+  }
+  return e;
+}
+
+function main() {
+  const args = argv();
+  const n = args.length > 1 ? Number(args[1]) as i64 : 1000;
+  const bodies = createBodies();
+  offsetMomentum(bodies);
+  console.log(energy(bodies).toFixed(9));
+  for (let i = 0; i < n; i++) {
+    advance(bodies, 0.01);
+  }
+  console.log(energy(bodies).toFixed(9));
+}

@@ -1,0 +1,15 @@
+// `NaN`, `Infinity`, `isNaN`, `isFinite`, `Math.hypot` with up to four values, and `Math.umulh`.
+// Expected output is Node's (umulh: `(a * b) >> 64n` on BigInts).
+function main() {
+  console.log(NaN, Infinity, -Infinity, isNaN(NaN), isNaN(1.0), isFinite(Infinity), isFinite(2.5));
+  console.log(Math.hypot(), Math.hypot(-3.0), Math.hypot(3.0, 4.0), Math.hypot(1.0, 2.0, 2.0));
+  console.log(
+    Math.hypot(1.0, 1.0, 1.0, 1.0),
+    Math.hypot(1e200, 1e200, 1e200),
+    Math.hypot(NaN, Infinity),
+  );
+  console.log(
+    Math.umulh(18446744073709551615, 18446744073709551615),
+    Math.umulh(4294967296, 4294967296),
+  );
+}

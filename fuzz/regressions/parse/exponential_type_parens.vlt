@@ -1,0 +1,1 @@
+declare async function velt_rt_fs_exists(path: ((((((((((((((((((((((((((string): Promise<bool>;

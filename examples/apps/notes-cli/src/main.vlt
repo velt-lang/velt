@@ -1,0 +1,15 @@
+// notes: a small note-taking CLI backed by a JSON file (see README.md).
+import { args, env, exit } from "velt:process";
+import { execute } from "./commands";
+
+function main() {
+  try {
+    const lines = execute(args(), env("NOTES_DB") ?? "notes.json", Date.now());
+    for (const l of lines) {
+      console.log(l);
+    }
+  } catch (e) {
+    console.error(`notes: ${e.message}`);
+    exit(2);
+  }
+}

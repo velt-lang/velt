@@ -1,0 +1,28 @@
+// Comma lists in a C-style `for` head: several declarations, init expressions and updates
+// (desugared by the parser); `continue` and labels still run every update.
+function main() {
+  for (let i = 0, j = 3; i < j; i++, j--) {
+    console.log(i, j);
+  }
+  const xs = [1, 2, 3, 4];
+  outer: for (let i: usize = 0, n = xs.length; i < n; i++) {
+    for (let k = 0, s = "x"; k < 3; k++, s += "y") {
+      if (k == 1) {
+        continue outer;
+      }
+      if (i == 2) {
+        break outer;
+      }
+      console.log(i, n, k, s);
+    }
+  }
+  let a = 0;
+  let b = 10;
+  for (a = 1, b = 5; a < b; a += 2, b -= 1) {
+    if (a == 3) {
+      continue;
+    }
+    console.log(a, b);
+  }
+  console.log(a, b);
+}

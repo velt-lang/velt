@@ -1,0 +1,30 @@
+// requires-env: VELT_TEST_REDISS_URL VELT_TEST_REDISS_CA
+// std/redis over TLS: `rediss://` against a real TLS Redis whose certificate is signed by the CA
+// in the file $VELT_TEST_REDISS_CA (scripts/linux-check.sh --services starts one).
+import { connect } from "velt:redis";
+import { env } from "velt:process";
+import { readFile } from "velt:fs";
+import { freshPrefix, cleanup } from "./_redis";
+
+async function main() {
+  const url = env("VELT_TEST_REDISS_URL") ?? "";
+  const ca = await readFile(env("VELT_TEST_REDISS_CA") ?? "");
+  const p = freshPrefix();
+  const c = await connect(url, { ca: ca });
+  console.log("ping:", await c.ping());
+  await c.set(`${p}secret`, "over tls");
+  console.log("get:", await c.get(`${p}secret`));
+  const pipe = c.pipeline();
+  pipe.incr(`${p}n`);
+  pipe.incr(`${p}n`);
+  console.log("pipeline:", (await pipe.exec()).length);
+  // Without the CA the server's certificate is not trusted.
+  try {
+    const bad = await connect(url);
+    console.log("unexpected", await bad.ping());
+  } catch (e) {
+    console.log("untrusted:", e.message.includes("certificate"));
+  }
+  console.log("cleaned:", await cleanup(c, p));
+  c.close();
+}

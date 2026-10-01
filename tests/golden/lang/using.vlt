@@ -1,0 +1,88 @@
+// `using` declarations and `[Symbol.dispose]()`: disposed at the end of the enclosing block in
+// reverse declaration order, also on `return`, `break`, `continue` and `throw`; `null` is
+// skipped; an explicit `x[Symbol.dispose]()` releases a `const` early (and only once).
+class Res {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  read(): string {
+    return `read ${this.name}`;
+  }
+  [Symbol.dispose]() {
+    console.log(`dispose ${this.name}`);
+  }
+}
+
+class Boom {
+  message: string;
+  constructor(message: string) {
+    this.message = message;
+  }
+}
+
+function open(name: string): Res {
+  console.log(`open ${name}`);
+  return new Res(name);
+}
+
+function maybeOpen(name: string, really: bool): Res | null {
+  return really ? open(name) : null;
+}
+
+// Borrows its argument: passing a `using` value along is fine.
+function peek(r: Res): string {
+  return r.read();
+}
+
+function early(n: i64): string {
+  using a = open("a");
+  if (n > 0) {
+    using b = open("b");
+    return `early ${peek(b)}`;
+  }
+  using c = open("c");
+  return `late ${peek(a)}`;
+}
+
+function fails() {
+  using r = open("thrower");
+  throw new Boom("boom");
+}
+
+function main() {
+  {
+    using first = open("first");
+    using second = open("second");
+    console.log(peek(first), peek(second));
+  }
+  console.log("after block");
+  console.log(early(1));
+  console.log(early(0));
+  for (let i = 0; i < 3; i++) {
+    using loop = open(`loop ${i}`);
+    if (i == 0) {
+      continue;
+    }
+    if (i == 2) {
+      break;
+    }
+    console.log(peek(loop));
+  }
+  {
+    using none = maybeOpen("never", false);
+    using some = maybeOpen("maybe", true);
+    console.log(none == null, some != null);
+  }
+  try {
+    fails();
+  } catch (e) {
+    console.log(`caught ${e.message}`);
+  }
+  {
+    const early = open("explicit");
+    early[Symbol.dispose]();
+    console.log("disposed before the end of the block");
+  }
+  console.log("done");
+}

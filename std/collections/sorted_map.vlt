@@ -1,0 +1,182 @@
+// std/collections/sorted_map: `SortedMap<K, V>`, a map that keeps its keys in ascending order
+// (`K extends Comparable<K>`: numbers, strings, bool, user types implementing `compareTo`).
+//
+// Two parallel sorted arrays searched by binary search: O(log n) lookups, O(n) inserts and
+// deletes (element swaps, cache friendly), which beats a tree for small and read-mostly maps.
+// Ordered queries (`first`, `last`, `floorKey`, `ceilingKey`, `range`) are O(log n) plus the
+// output. Like `Map`, `set` takes ownership, and `get` / `keys` / `values` / `entries` clone.
+
+// A map ordered by key.
+export class SortedMap<K extends Comparable<K>, V> {
+  private sortedKeys: K[] = [];
+  private vals: V[] = [];
+
+  // Number of entries.
+  get size(): usize {
+    return this.sortedKeys.length;
+  }
+
+  // Whether the map is empty.
+  isEmpty(): bool {
+    return this.sortedKeys.length == 0;
+  }
+
+  // Inserts or replaces the value for `key`.
+  set(key: K, value: V) {
+    const i = this.lowerBound(key);
+    if (i < this.sortedKeys.length && !(key < this.sortedKeys[i])) {
+      this.vals[i] = value;
+      return;
+    }
+    this.sortedKeys.push(key);
+    this.vals.push(value);
+    for (let j = this.sortedKeys.length - 1; j > i; j--) {
+      __intrinsic_array_swap(this.sortedKeys, j, j - 1);
+      __intrinsic_array_swap(this.vals, j, j - 1);
+    }
+  }
+
+  // A clone of the value for `key`, or null.
+  get(key: K): V | null {
+    const i = this.indexOf(key);
+    if (i < 0) {
+      return null;
+    }
+    return this.vals[i as usize].clone();
+  }
+
+  // Whether `key` is present.
+  has(key: K): bool {
+    return this.indexOf(key) >= 0;
+  }
+
+  // Removes `key`; returns whether it was present.
+  delete(key: K): bool {
+    const i = this.indexOf(key);
+    if (i < 0) {
+      return false;
+    }
+    __intrinsic_array_remove(this.sortedKeys, i as usize);
+    __intrinsic_array_remove(this.vals, i as usize);
+    return true;
+  }
+
+  // Removes every entry.
+  clear() {
+    __intrinsic_array_truncate(this.sortedKeys, 0);
+    __intrinsic_array_truncate(this.vals, 0);
+  }
+
+  // Clones of the keys, ascending.
+  keys(): K[] {
+    return this.sortedKeys.clone();
+  }
+
+  // Clones of the values, in key order.
+  values(): V[] {
+    return this.vals.clone();
+  }
+
+  // Clones of the `[key, value]` pairs, in key order.
+  entries(): [K, V][] {
+    return this.slice(0, this.sortedKeys.length);
+  }
+
+  // Visits the entries in key order, borrowing them (JS argument order: value, key).
+  forEach<E>(f: (value: V, key: K) => void throws E) throws E {
+    for (let i: usize = 0; i < this.sortedKeys.length; i++) {
+      f(this.vals[i], this.sortedKeys[i]);
+    }
+  }
+
+  // A clone of the smallest key, or null if empty.
+  first(): K | null {
+    if (this.sortedKeys.length == 0) {
+      return null;
+    }
+    return this.sortedKeys[0].clone();
+  }
+
+  // A clone of the largest key, or null if empty.
+  last(): K | null {
+    if (this.sortedKeys.length == 0) {
+      return null;
+    }
+    return this.sortedKeys[this.sortedKeys.length - 1].clone();
+  }
+
+  // The largest key <= `key` (a clone), or null.
+  floorKey(key: K): K | null {
+    const i = this.upperBound(key);
+    if (i == 0) {
+      return null;
+    }
+    return this.sortedKeys[i - 1].clone();
+  }
+
+  // The smallest key >= `key` (a clone), or null.
+  ceilingKey(key: K): K | null {
+    const i = this.lowerBound(key);
+    if (i == this.sortedKeys.length) {
+      return null;
+    }
+    return this.sortedKeys[i].clone();
+  }
+
+  // Clones of the entries with `from <= key < to`, in key order.
+  range(from: K, to: K): [K, V][] {
+    const lo = this.lowerBound(from);
+    const hi = this.lowerBound(to);
+    return this.slice(lo, hi < lo ? lo : hi);
+  }
+
+  // ─────────────── internals ───────────────
+
+  // Position of `key`, or -1.
+  private indexOf(key: K): i64 {
+    const i = this.lowerBound(key);
+    if (i < this.sortedKeys.length && !(key < this.sortedKeys[i])) {
+      return i as i64;
+    }
+    return -1;
+  }
+
+  // First position whose key is >= `key`.
+  private lowerBound(key: K): usize {
+    let lo: usize = 0;
+    let hi = this.sortedKeys.length;
+    while (lo < hi) {
+      const mid = lo + (hi - lo) / 2;
+      if (this.sortedKeys[mid] < key) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo;
+  }
+
+  // First position whose key is > `key`.
+  private upperBound(key: K): usize {
+    let lo: usize = 0;
+    let hi = this.sortedKeys.length;
+    while (lo < hi) {
+      const mid = lo + (hi - lo) / 2;
+      if (key < this.sortedKeys[mid]) {
+        hi = mid;
+      } else {
+        lo = mid + 1;
+      }
+    }
+    return lo;
+  }
+
+  private slice(lo: usize, hi: usize): [K, V][] {
+    const out: [K, V][] = __intrinsic_array_with_capacity(hi - lo);
+    for (let i = lo; i < hi; i++) {
+      const pair: [K, V] = [this.sortedKeys[i].clone(), this.vals[i].clone()];
+      out.push(pair);
+    }
+    return out;
+  }
+}

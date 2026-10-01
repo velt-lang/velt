@@ -1,0 +1,83 @@
+// std/sqlite basics: open ":memory:", exec, prepare, run/get/all with and without params.
+import { open } from "velt:sqlite";
+
+class User {
+  id: i64;
+  name: string;
+  email: string;
+  age: i64 | null;
+
+  constructor(id: i64, name: string, email: string, age: i64 | null) {
+    this.id = id;
+    this.name = name;
+    this.email = email;
+    this.age = age;
+  }
+}
+
+class Count {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+function main() {
+  const db = open(":memory:");
+  db.exec(`
+    CREATE TABLE users (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      age INTEGER
+    );
+    CREATE INDEX users_name ON users (name);
+  `);
+
+  const insert = db.prepare("INSERT INTO users (name, email, age) VALUES (:name, :email, :age)");
+  const r1 = insert.runWith({ name: "Ann", email: "ann@example.com", age: 41 });
+  console.log("insert", r1.changes, r1.lastInsertRowid);
+  const r2 = insert.runWith({ name: "Bob", email: "bob@example.com", age: 29 });
+  console.log("insert", r2.changes, r2.lastInsertRowid);
+  const age: i64 | null = null;
+  insert.runWith({ name: "Cy", email: "cy@example.com", age: age });
+
+  // Positional parameters take an array.
+  const byPos = db.prepare("INSERT INTO users (name, email) VALUES (?, ?)");
+  console.log("positional", byPos.runWith(["Dee", "dee@example.com"]).lastInsertRowid);
+
+  const all: User[] = db.prepare("SELECT * FROM users ORDER BY id").all();
+  for (const u of all) {
+    console.log(u.id, u.name, u.email, u.age);
+  }
+
+  const byId = db.prepare("SELECT id, name, email, age FROM users WHERE id = $id");
+  const bob: User | null = byId.getWith({ id: 2 });
+  if (bob != null) {
+    console.log("found", bob.name, bob.age);
+  }
+  const nobody: User | null = byId.getWith({ id: 99 });
+  console.log("missing", nobody == null);
+
+  // A single scalar is one positional parameter.
+  const older: User[] = db.prepare("SELECT * FROM users WHERE age > ? ORDER BY age").allWith(30);
+  console.log("older", older.length, older[0].name);
+
+  const n: Count | null = db.prepare("SELECT count(*) AS n FROM users").get();
+  console.log("count", n?.n);
+
+  const upd = db.prepare("UPDATE users SET age = age + 1 WHERE age IS NOT NULL");
+  console.log("updated", upd.run().changes);
+
+  // Anonymous object types work as row types too.
+  const names: { name: string }[] = db.prepare("SELECT name FROM users ORDER BY name DESC").all();
+  console.log(names.map((r) => r.name).join(","));
+  console.log(db.pragma("user_version"), db.inTransaction);
+
+  insert.close();
+  byPos.close();
+  byId.close();
+  upd.close();
+  db.close();
+}

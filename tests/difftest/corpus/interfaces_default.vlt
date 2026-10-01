@@ -1,0 +1,63 @@
+// Interfaces with several implementations, dispatch through interface-typed arrays and params.
+interface Scorer {
+  score(word: string): i64;
+  name(): string;
+}
+
+class LengthScorer implements Scorer {
+  score(word: string): i64 {
+    return word.length as i64;
+  }
+  name(): string {
+    return "length";
+  }
+}
+
+class VowelScorer implements Scorer {
+  score(word: string): i64 {
+    let n = 0;
+    for (let i = 0; i < (word.length as i64); i++) {
+      if ("aeiou".includes(word.slice(i, i + 1))) {
+        n++;
+      }
+    }
+    return n;
+  }
+  name(): string {
+    return "vowels";
+  }
+}
+
+class WeightedScorer implements Scorer {
+  weight: i64;
+  constructor(weight: i64) {
+    this.weight = weight;
+  }
+  score(word: string): i64 {
+    return word.charCodeAt(0) * this.weight;
+  }
+  name(): string {
+    return `weighted(${this.weight})`;
+  }
+}
+
+function best(s: Scorer, words: string[]): string {
+  let top = "";
+  let topScore = -1;
+  for (const w of words) {
+    const sc = s.score(w);
+    if (sc > topScore) {
+      topScore = sc;
+      top = `${w}`;
+    }
+  }
+  return `${s.name()}: ${top} (${topScore})`;
+}
+
+function main() {
+  const words = ["banana", "kiwi", "apple", "zucchini", "fig"];
+  const scorers: Scorer[] = [new LengthScorer(), new VowelScorer(), new WeightedScorer(3)];
+  for (const s of scorers) {
+    console.log(best(s, words));
+  }
+}

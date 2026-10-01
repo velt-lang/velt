@@ -1,0 +1,53 @@
+// The Computer Language Benchmarks Game: mandelbrot
+// https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/mandelbrot.html
+//
+// Idiomatic single-threaded Velt, written the way a TypeScript developer would: one pixel at a
+// time, eight pixels packed per byte, the bitmap written as binary PBM to stdout. Follows the
+// Node.js #2 program (Greg Buchholz's C #2, buffered by Isaac Gouy).
+import { argv, stdout } from "velt:process";
+
+const MAX_ITERATIONS = 50;
+const LIMIT_SQUARED = 4.0;
+
+// 1 if c = cr + ci·i stays bounded for MAX_ITERATIONS steps of z = z² + c, else 0.
+function inSet(cr: f64, ci: f64): i64 {
+  let zr = 0.0;
+  let zi = 0.0;
+  let tr = 0.0;
+  let ti = 0.0;
+  for (let i = 0; i < MAX_ITERATIONS && tr + ti <= LIMIT_SQUARED; i++) {
+    zi = 2.0 * zr * zi + ci;
+    zr = tr - ti + cr;
+    tr = zr * zr;
+    ti = zi * zi;
+  }
+  return tr + ti <= LIMIT_SQUARED ? 1 : 0;
+}
+
+// Row y of the bitmap: `size` pixels, most significant bit first, the last byte padded with 0s.
+function renderRow(y: i64, size: i64, out: u8[]) {
+  const ci = (2.0 * (y as f64)) / (size as f64) - 1.0;
+  let bits = 0;
+  for (let x = 0; x < size; x++) {
+    const cr = (2.0 * (x as f64)) / (size as f64) - 1.5;
+    bits = (bits << 1) | inSet(cr, ci);
+    if (x % 8 == 7) {
+      out.push(bits as u8);
+      bits = 0;
+    }
+  }
+  if (size % 8 != 0) {
+    out.push((bits << (8 - (size % 8))) as u8);
+  }
+}
+
+function main() {
+  const args = argv();
+  const size = args.length > 1 ? Number(args[1]) as i64 : 200;
+  const bitmap: u8[] = [];
+  for (let y = 0; y < size; y++) {
+    renderRow(y, size, bitmap);
+  }
+  stdout.writeString(`P4\n${size} ${size}\n`);
+  stdout.write(bitmap);
+}

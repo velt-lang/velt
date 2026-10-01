@@ -1,0 +1,3 @@
+[ 'tab\there', 'new\nline', 'back\\slash', "single'q", `both'"q` ]
+Note { text: "it's\tfine" }
+[ "it's ok" ] [ "a'b" ] [ '\x01x' ]

@@ -1,0 +1,64 @@
+// Text helpers: slugs, truncation and word frequencies. Everything exported here is the
+// package's public API; `velt doc` turns these comments into HTML docs.
+
+/// A URL-friendly form of `text`: lower case, ASCII letters and digits, words joined by `-`.
+///
+/// `slugify("Hello, World!")` is `"hello-world"`.
+export function slugify(text: string): string {
+  const words: string[] = [];
+  let word = "";
+  for (const c of text.toLowerCase().split("")) {
+    if ((c >= "a" && c <= "z") || (c >= "0" && c <= "9")) {
+      word += c;
+    } else if (word !== "") {
+      words.push(word);
+      word = "";
+    }
+  }
+  if (word !== "") {
+    words.push(word);
+  }
+  return words.join("-");
+}
+
+/// `text` cut to at most `max` characters, ending in `…` when it was cut.
+export function truncate(text: string, max: usize): string {
+  if (text.length <= max) {
+    return text;
+  }
+  if (max === 0) {
+    return "";
+  }
+  return `${text.slice(0, (max - 1) as i64)}…`;
+}
+
+type WordCount = { word: string; count: i64 };
+
+/// Counts how often each word occurs, ignoring case and punctuation.
+export class WordCounter {
+  private counts: Map<string, i64> = new Map<string, i64>();
+
+  /// Adds every word of `text`.
+  add(text: string) {
+    for (const word of slugify(text).split("-")) {
+      if (word !== "") {
+        this.counts.set(word.clone(), (this.counts.get(word) ?? 0) + 1);
+      }
+    }
+  }
+
+  /// How often `word` occurred (0 if never).
+  count(word: string): i64 {
+    return this.counts.get(word.toLowerCase()) ?? 0;
+  }
+
+  /// The `n` most frequent words, most frequent first (ties in first-seen order).
+  top(n: usize): string[] {
+    const entries: WordCount[] = [];
+    for (const [word, count] of this.counts) {
+      entries.push({ word, count });
+    }
+    entries.sort((a, b) => b.count - a.count);
+    return entries.slice(0, n as i64).map((e) => e.word);
+  }
+}

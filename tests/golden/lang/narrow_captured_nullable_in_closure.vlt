@@ -1,0 +1,11 @@
+// A null check on a captured variable inside an arrow function narrows it there, like in a
+// function body: `xs.filter((x) => want == null || x === want)`. Regression (apps sprint):
+// "expected bool, found bool | null" (the capture was created after the narrowing was computed).
+function keep(want: bool | null, xs: bool[]): bool[] {
+  return xs.filter((x) => want == null || x === want);
+}
+
+function main() {
+  console.log(keep(true, [true, false, true]));
+  console.log(keep(null, [true, false]));
+}

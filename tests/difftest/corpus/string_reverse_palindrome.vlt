@@ -1,0 +1,28 @@
+// String reversal and palindrome checks.
+function reverse(s: string): string {
+  let out = "";
+  for (let i = s.length as i64 - 1; i >= 0; i--) {
+    out += s.slice(i, i + 1);
+  }
+  return out;
+}
+
+function isPalindrome(s: string): bool {
+  const clean = s.toLowerCase().split(" ").join("");
+  return clean == reverse(clean);
+}
+
+function main() {
+  const words = [
+    "racecar",
+    "hello",
+    "A man a plan a canal Panama",
+    "",
+    "ab",
+    "Was it a car or a cat I saw",
+  ];
+  for (const w of words) {
+    console.log(`"${reverse(w)}" ${isPalindrome(w)}`);
+  }
+  console.log(words.filter((w) => isPalindrome(w)).length);
+}

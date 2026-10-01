@@ -1,0 +1,80 @@
+// std/udp: UDP sockets (rt_abi_async.md §14.6). Addresses are "host:port" strings, like
+// std/net; a received datagram names its sender as "ip:port".
+
+import { IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
+import { utf8Encode, utf8DecodeLossy } from "velt:encoding";
+
+// The runtime's `VeltDatagram`.
+struct RawDatagram {
+  data: u8[];
+  addr: string;
+}
+
+declare async function velt_rt_udp_bind(addr: string): Promise<IoResult<u64>>;
+declare function velt_rt_udp_port(u: u64): u32;
+declare async function velt_rt_udp_send_to(
+  u: u64,
+  data: u8[],
+  addr: string,
+): Promise<IoResult<u64>>;
+declare async function velt_rt_udp_recv_from(u: u64, max: u64): Promise<IoResult<RawDatagram>>;
+declare function velt_rt_udp_set_broadcast(u: u64, on: bool): IoStatus;
+declare function velt_rt_udp_close(u: u64);
+
+// A received datagram.
+export class Datagram {
+  data: u8[];
+  // The sender, "ip:port" (reply with `socket.sendTo(x, d.addr)`).
+  addr: string;
+
+  constructor(data: u8[], addr: string) {
+    this.data = data;
+    this.addr = addr;
+  }
+
+  // The payload as UTF-8 text (invalid bytes become U+FFFD).
+  text(): string {
+    return utf8DecodeLossy(this.data);
+  }
+}
+
+// A bound UDP socket: a Copy handle like std/net's `TcpStream` (async methods take `this` by
+// copy, so it can be used repeatedly and from several tasks), released by `close()`; after
+// that, every copy throws `IoError` `EBADF`.
+export struct UdpSocket {
+  // The bound local port (useful after binding port 0).
+  port: i64;
+  handle: u64;
+
+  // Sends one datagram to "host:port"; resolves with the number of bytes sent.
+  async sendTo(data: u8[], addr: string): Promise<i64> {
+    return unwrapIo(await velt_rt_udp_send_to(this.handle, data, addr)) as i64;
+  }
+
+  // Sends `text` as UTF-8.
+  async sendTextTo(text: string, addr: string): Promise<i64> {
+    return unwrapIo(await velt_rt_udp_send_to(this.handle, utf8Encode(text), addr)) as i64;
+  }
+
+  // The next datagram (at most `max` bytes are kept; 0 = up to 64 KiB).
+  async recvFrom(max: u64 = 0): Promise<Datagram> {
+    const raw = unwrapIo(await velt_rt_udp_recv_from(this.handle, max));
+    return new Datagram(raw.data, raw.addr);
+  }
+
+  // Allows sending to broadcast addresses.
+  setBroadcast(on: bool) {
+    checkIo(velt_rt_udp_set_broadcast(this.handle, on));
+  }
+
+  // Closes the socket (operations in flight finish first).
+  close() {
+    velt_rt_udp_close(this.handle);
+  }
+}
+
+// Binds a UDP socket to "host:port" (port 0 picks a free port; read it from `.port`).
+export async function bindUdp(addr: string): Promise<UdpSocket> {
+  const handle = unwrapIo(await velt_rt_udp_bind(addr));
+  return UdpSocket { port: velt_rt_udp_port(handle) as i64, handle: handle };
+}

@@ -1,0 +1,23 @@
+// Calling an async closure clones the class instances it captured into every call's state and
+// drops the clone afterwards, so `[Symbol.dispose]()` runs once per call (and a captured resource, e.g. a
+// database store in an HTTP handler, is copied per request). The instance should be shared by
+// the calls and disposed once, when the closure is dropped (as for a sync closure).
+class Store {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  [Symbol.dispose]() {
+    console.log(`${this.name} disposed`);
+  }
+}
+
+async function main() {
+  const store = new Store("store");
+  const f = async (x: i64): Promise<string> => `${store.name} ${x}`;
+  console.log(await f(1));
+  console.log(await f(2));
+  console.log("end");
+}

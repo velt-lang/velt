@@ -1,0 +1,9 @@
+digit 1
+parse: bad digit x
+parse: empty input
+range 12
+left 6
+account: out of range: 40
+account: -5
+parity: -3
+run: 3

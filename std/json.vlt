@@ -1,0 +1,8 @@
+// std/json: the `json.Value` name for dynamic JSON values.
+//
+// `JSON`, `JsonError` and the value class itself live in the prelude (std/prelude/json.vlt),
+// because `JSON.stringify`/`JSON.parse` are used without an import. The prelude class is named
+// `JsonValue` so it does not take the common name `Value` in every module; importing `Value`
+// from here gives the spelling of docs/std/json.md.
+
+export type Value = JsonValue;

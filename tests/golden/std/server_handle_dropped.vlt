@@ -1,0 +1,17 @@
+// Dropping a `Server` value keeps it serving (like Node); only `close()` stops it.
+import { serve, fetch, Request, Response } from "velt:http";
+import { exit } from "velt:process";
+
+async function start(): Promise<i64> {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return Response.text(`still serving ${req.path}`);
+  });
+  return server.port; // `server` is dropped here — the server keeps running
+}
+
+async function main() {
+  const port = await start();
+  const res = await fetch(`http://127.0.0.1:${port}/after-drop`);
+  console.log(res.status, await res.text());
+  exit(0); // a listening server would otherwise keep the process alive after main
+}

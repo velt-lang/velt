@@ -1,0 +1,24 @@
+36 true 4 true true
+variant ok: true
+36 true 7 true
+v7 timestamp in range: true
+16 true
+v7 time prefixes ordered: true
+[ 248, 29, 79, 174, 125, 236, 17, 208, 167, 101, 0, 160, 201, 30, 107, 246 ]
+f81d4fae-7dec-11d0-a765-00a0c91e6bf6 1 true
+[ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ] true 0
+true
+true
+"" false
+"f81d4fae7dec11d0a76500a0c91e6bf6" false
+"f81d4fae-7dec-01d0-a765-00a0c91e6bf6" false
+"f81d4fae-7dec-91d0-a765-00a0c91e6bf6" false
+"f81d4fae-7dec-11d0-c765-00a0c91e6bf6" false
+"f81d4fae-7dec-11d0-a765-00a0c91e6bfg" false
+"f81d4fae-7dec-11d0-a765_00a0c91e6bf6" false
+Invalid UUID: expected 36 characters, got 35
+Invalid UUID: expected '-' at offset 23
+Invalid UUID: bad hex digit at offset 35
+Invalid UUID: bad hex digit at offset 0
+Invalid UUID: expected 16 bytes, got 3
+Invalid UUID: nope

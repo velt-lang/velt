@@ -1,0 +1,7 @@
+exclusive_args.vlt:32:12: error: cannot use `xs` here: this call may modify it through another argument
+exclusive_args.vlt:32:8: may be modified through this argument
+exclusive_args.vlt:33:14: error: cannot use `xs` here: this call may modify it through another argument
+exclusive_args.vlt:35:21: error: cannot use `g.rows[..]` here: this call may modify it through another argument
+exclusive_args.vlt:38:23: error: cannot use `row` here: this call may modify `g.rows[..]` through another argument
+exclusive_args.vlt:23:17: error: cannot use `this.rows[..]` here: this call may modify `this` through another argument
+exclusive_args.vlt:23:5: may be modified through this argument

@@ -1,0 +1,11 @@
+// Regression (difftest regex-empty-after-match): like JS, a global match may be empty right where
+// the previous non-empty match ended (`x*` over "axxb" matches "", "xx", "", "").
+import { RegExp } from "velt:regex";
+
+function main() {
+  const re = new RegExp("x*", "g");
+  console.log(JSON.stringify(re.matches("axxb")));
+  console.log(re.replace("axxb", "-"));
+  console.log(re.matchAll("xa").length);
+  console.log(new RegExp("\\d*", "g").replaceAll("12ab3", "<$&>"));
+}

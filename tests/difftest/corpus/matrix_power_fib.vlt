@@ -1,0 +1,42 @@
+// Fibonacci by 2x2 matrix exponentiation modulo a prime, checked against iteration.
+function mul(a: i64[], b: i64[], m: i64): i64[] {
+  return [
+    (a[0] * b[0] + a[1] * b[2]) % m,
+    (a[0] * b[1] + a[1] * b[3]) % m,
+    (a[2] * b[0] + a[3] * b[2]) % m,
+    (a[2] * b[1] + a[3] * b[3]) % m,
+  ];
+}
+
+function fibMod(n: i64, m: i64): i64 {
+  let result = [1, 0, 0, 1];
+  let base = [1, 1, 1, 0];
+  let e = n;
+  while (e > 0) {
+    if (e % 2 == 1) {
+      result = mul(result, base, m);
+    }
+    base = mul(base, base, m);
+    e = (e - (e % 2)) / 2;
+  }
+  return result[1];
+}
+
+function fibIter(n: i64, m: i64): i64 {
+  let a = 0;
+  let b = 1;
+  for (let i = 0; i < n; i++) {
+    const t = (a + b) % m;
+    a = b;
+    b = t;
+  }
+  return a;
+}
+
+function main() {
+  const m = 1000003;
+  for (const n of [0, 1, 2, 10, 50, 90, 1000]) {
+    console.log(n, fibMod(n, m), fibIter(n, m));
+  }
+  console.log(fibMod(1000000000000, m));
+}

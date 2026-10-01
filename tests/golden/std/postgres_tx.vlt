@@ -1,0 +1,98 @@
+// std/postgres transactions: transaction(fn) commits or rolls back (reporting the first
+// failure, not the "transaction is aborted" ones after it), nests with savepoints, and
+// begin()/commit()/rollback() give explicit control.
+// requires-env: VELT_TEST_PG_URL
+import { env } from "velt:process";
+import { connect, Client } from "velt:postgres";
+
+class Count {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+async function count(db: Client): Promise<i64> {
+  const c: Count | null = await db.selectOne("SELECT count(*) AS n FROM t");
+  return c?.n ?? -1;
+}
+
+// Inserts `n`; a duplicate fails (and is reported, since closures cannot throw).
+async function add(db: Client, n: i64) {
+  try {
+    await db.execute("INSERT INTO t VALUES ($1)", [n]);
+  } catch (e) {
+    console.log("  failed:", e.code);
+  }
+}
+
+async function main() {
+  const db = await connect(env("VELT_TEST_PG_URL") ?? "");
+  await db.batch("CREATE TEMP TABLE t (n int PRIMARY KEY)");
+
+  // Commit: the callback's result is returned.
+  const inserted = await db.transaction(async (tx) => {
+    for (let i = 1; i <= 100; i++) {
+      await add(tx, i);
+    }
+    return 100;
+  });
+  console.log("committed", inserted, await count(db), db.inTransaction);
+
+  // Any failure inside rolls everything back and is thrown by transaction().
+  try {
+    await db.transaction(async (tx) => {
+      await add(tx, 200);
+      await add(tx, 1);
+      await add(tx, 201);
+      return 0;
+    });
+  } catch (e) {
+    console.log("rolled back:", e.code, e.constraint, await count(db), db.inTransaction);
+  }
+
+  // Nested: a failed inner transaction undoes only its savepoint.
+  await db.transaction(async (tx) => {
+    await add(tx, 300);
+    try {
+      await tx.transaction(async (inner) => {
+        await add(inner, 301);
+        await add(inner, 300);
+        return 0;
+      });
+    } catch (e) {
+      console.log("inner rolled back:", e.code, tx.inTransaction);
+    }
+    await add(tx, 302);
+    return 0;
+  });
+  const top: Count[] = await db.select("SELECT n FROM t WHERE n >= 300 ORDER BY n");
+  console.log("after nested", top.map((c) => c.n));
+
+  // Explicit control.
+  const tx = await db.begin();
+  await db.execute("INSERT INTO t VALUES ($1)", [400]);
+  console.log("in tx", db.inTransaction, await count(db));
+  await tx.rollback();
+  console.log("after rollback", db.inTransaction, await count(db));
+  const tx2 = await db.begin();
+  await db.execute("INSERT INTO t VALUES ($1)", [401]);
+  const inner = await db.begin();
+  await db.execute("INSERT INTO t VALUES ($1)", [402]);
+  try {
+    await tx2.commit();
+  } catch (e) {
+    console.log("out of order:", e.code, e.message);
+  }
+  await inner.rollback();
+  await tx2.commit();
+  try {
+    await tx2.commit();
+  } catch (e) {
+    console.log("twice:", e.code, e.message);
+  }
+  const last: Count[] = await db.select("SELECT n FROM t WHERE n >= 400");
+  console.log("explicit", last.map((c) => c.n), db.inTransaction);
+  db.close();
+}

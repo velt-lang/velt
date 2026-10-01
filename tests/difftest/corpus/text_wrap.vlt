@@ -1,0 +1,31 @@
+// Greedy word wrapping to a column width, with justification of full lines.
+function wrap(text: string, width: i64): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const w of text.split(" ")) {
+    if (line.length == 0) {
+      line = `${w}`;
+    } else if ((line.length as i64) + 1 + (w.length as i64) <= width) {
+      line += ` ${w}`;
+    } else {
+      lines.push(line);
+      line = `${w}`;
+    }
+  }
+  if (line.length > 0) {
+    lines.push(line);
+  }
+  return lines;
+}
+
+function main() {
+  const text =
+    "the quick brown fox jumps over the lazy dog and keeps running far away into the woods";
+  for (const width of [10, 20, 35]) {
+    const lines = wrap(text, width);
+    console.log(`width ${width}: ${lines.length} lines`);
+    for (const l of lines) {
+      console.log(`|${l.padEnd(width, ".")}|`);
+    }
+  }
+}

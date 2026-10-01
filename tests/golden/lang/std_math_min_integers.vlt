@@ -1,0 +1,9 @@
+// Gap (benchmarks-game): `Math.min` / `Math.max` only take f64, so the everyday
+// `Math.min(start + size, total)` on integer indices is "mismatched types".
+// Expected output is Node's.
+function main() {
+  const total = 10;
+  const start = 8;
+  const end = Math.min(start + 4, total);
+  console.log(end, Math.max(3, end), Math.min(2.5, 1.5));
+}

@@ -1,0 +1,34 @@
+// JS evaluates an assignment's target — the array and the index expressions — before the
+// right-hand side, and forms the element place after it. Regression (difftest seed 31418):
+// `xs[f()] = g()` called `g()` first (also with `await g()`).
+function f(tag: string, n: i64): i64 {
+  console.log(tag);
+  return n;
+}
+
+async function g(n: i64): Promise<i64> {
+  console.log("g");
+  return n;
+}
+
+class Box {
+  grid: i64[][] = [
+    [0, 0],
+    [0, 0],
+  ];
+}
+
+async function main() {
+  const xs: i64[] = [0, 0];
+  xs[f("index", 1)] = f("rhs", 5);
+  xs[f("index2", 0)] += f("rhs2", 1);
+  console.log(xs[0], xs[1]);
+  let i = 0;
+  xs[i] = i++;
+  xs[f("idx", 1)] = await g(7);
+  const b = new Box();
+  b.grid[f("a", 1)][f("b", 0)] = f("c", 9);
+  const strs: string[] = ["x", "y"];
+  strs[f("s", 1)] = `v${f("t", 2)}`;
+  console.log(xs, i, b.grid, strs);
+}

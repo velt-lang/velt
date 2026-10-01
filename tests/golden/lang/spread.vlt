@@ -1,0 +1,56 @@
+// Object spread builds a compile-time merged struct; array spread copies/clones elements.
+
+struct Point {
+  x: i64;
+  y: i64;
+}
+
+struct Labeled {
+  x: i64;
+  y: i64;
+  label: string;
+}
+
+class User {
+  name: string;
+  age: i64;
+
+  constructor(name: string, age: i64) {
+    this.name = name;
+    this.age = age;
+  }
+}
+
+function withLabel(p: Point, label: string): Labeled {
+  return { ...p, label };
+}
+
+function makeUser(): User {
+  return new User("ann", 30);
+}
+
+function main() {
+  const p: Point = { x: 1, y: 2 };
+  const q = { ...p, y: 5 };
+  console.log(q.x, q.y, p.x);
+  const l = withLabel(p, "origin");
+  console.log(l);
+  const moved = { ...l, x: 10 };
+  console.log(moved);
+  const u = new User("bob", 41);
+  const copy = { ...u, age: 42 };
+  console.log(copy.name, copy.age, u.name);
+  const fresh = { ...makeUser(), admin: true };
+  console.log(fresh);
+  const s: Labeled = { ...p, label: "typed", x: 7 };
+  console.log(s);
+
+  const xs = [1, 2, 3];
+  const ys = [0, ...xs, 4, ...xs];
+  console.log(ys, xs.length);
+  const words = ["b", "c"];
+  const all = ["a", ...words, "d"];
+  console.log(all.join(""), words.length);
+  const empty: i64[] = [];
+  console.log([...empty, ...empty].length, [...[5, 6]]);
+}

@@ -1,0 +1,23 @@
+// Union-typed values: parsing tokens into numbers or words, typeof narrowing.
+function classify(tok: string): i64 | string {
+  const n = parseInt(tok, 10);
+  if (tok.length > 0 && `${n}` == tok) {
+    return n as i64;
+  }
+  return tok.toUpperCase();
+}
+
+function main() {
+  const toks = "12 apples and 7 pears or 100 figs".split(" ");
+  let total = 0;
+  const words: string[] = [];
+  for (const t of toks) {
+    const v = classify(t);
+    if (typeof v === "number") {
+      total += v;
+    } else {
+      words.push(v);
+    }
+  }
+  console.log(total, words.join(" "));
+}

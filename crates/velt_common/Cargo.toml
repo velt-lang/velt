@@ -1,0 +1,6 @@
+[package]
+name = "velt_common"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

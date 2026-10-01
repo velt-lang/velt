@@ -1,0 +1,5 @@
+ping: PONG
+get: over tls
+pipeline: 2
+untrusted: true
+cleaned: 2

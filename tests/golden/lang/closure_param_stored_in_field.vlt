@@ -1,0 +1,29 @@
+// Regression (use after free): a closure passed to a function-typed constructor parameter that
+// the constructor stores. The param is inferred as owned, so the closure literal captures by
+// value and lives with the object (it used to point into `make`'s frame).
+class Holder {
+  f: () => string;
+
+  constructor(f: () => string) {
+    this.f = f;
+  }
+
+  run(): string {
+    return this.f();
+  }
+}
+
+function make(): Holder {
+  const msg = `captured ${40 + 2}`;
+  return new Holder(() => msg.clone());
+}
+
+function main() {
+  const h = make();
+  const junk: string[] = [];
+  for (let i = 0; i < 100; i++) {
+    junk.push(`overwrite the freed closure environment ${i}`);
+  }
+  console.log(h.run());
+  console.log(junk.length);
+}
