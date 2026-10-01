@@ -33,7 +33,7 @@ mod windows;
 #[cfg(unix)]
 use unix::receive_listener;
 #[cfg(unix)]
-pub use unix::{connect, reply_ok, Server, Stream};
+pub use unix::{connect, peer_pid, reply_ok, Server, Stream};
 #[cfg(windows)]
 use windows::receive_listener;
 #[cfg(windows)]
@@ -228,6 +228,8 @@ mod tests {
         };
         assert_eq!(read_request(&s).unwrap(), failed);
         let s = server.accept().unwrap();
+        #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
+        assert_eq!(peer_pid(&s).unwrap(), std::process::id());
         assert_eq!(
             read_request(&s).unwrap(),
             Request::Built { ok: true, files }

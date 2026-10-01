@@ -26,6 +26,7 @@ velt_registry = { path = "../velt_registry" }
 velt_rt_host = { path = "../velt_rt_host" }
 # `velt check --json`.
 serde_json = "1.0.151"
+notify = "8"
 
 [target.'cfg(unix)'.dependencies]
 # Stopping the supervised program with SIGTERM.

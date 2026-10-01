@@ -55,6 +55,24 @@ The same three runs on arm64 macOS (hot swap together with the shared debug runt
   tests (`cargo test -p velt_codegen_cl hot_swap`, all reload goldens in both modes) pass on
   macOS arm64, Debian 12 arm64 and Alpine arm64 (static musl `velt`).
 
+## Spare host (Linux x86_64, 2026-10-01)
+
+After a reload that restarted, `velt dev` starts the next host together with the next reload
+request, so a restart no longer runs the front end twice in a row (see the design doc). Same
+benchmark, release `velt`, 4 vCPUs (load ≈ 2.5), two runs each; `main` at 40cf0b3 against this
+change. Not on Windows: there a spare host on every save made the hot swap about 4× slower
+(59 → 225–259 ms) and the restart no faster (415 → 442–555 ms, debug `velt`), so it is off.
+
+| run | `main` | spare host |
+|---|---|---|
+| JIT, body edit → **hot swap** | 62.7 / 61.2 ms | 59.8 / 56.1 ms |
+| JIT, body + `main` edit → restart | 114.1 / 107.1 ms | **94.8 / 92.8 ms** |
+| `--exe`, body edit → restart | 219.9 / 235.6 ms | 194.8 / 238.4 ms |
+
+- Every edit of the restart run restarts, so from the second edit on each reload has a spare.
+- The hot swap run never restarts and never starts a spare; its small gain is noise or the
+  file notifications that replaced polling.
+
 ## Where the time goes (Windows, JIT, release `velt dev -v`, 3 reloads)
 
 | step | ms |
