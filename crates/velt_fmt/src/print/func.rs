@@ -102,8 +102,8 @@ impl<'a> Printer<'a> {
         cat!["<", join(&text(", "), docs), ">"]
     }
 
-    /// `[async ][<T,>](params)[: R [throws E]] => body`. A single unbounded type parameter
-    /// keeps its trailing comma (`<T,>`): without it `<T>` would start a JSX element.
+    /// `[async ][<T>](params)[: R [throws E]] => body`. `<T,>` (the `.tsx` spelling) is printed
+    /// as `<T>`: the parser tells a generic arrow from a JSX element.
     pub(super) fn arrow(
         &mut self,
         type_params: &[GenericParam],
@@ -132,10 +132,7 @@ impl<'a> Printer<'a> {
             },
         );
         let asyncness = if is_async { "async " } else { "" };
-        let type_params = match type_params {
-            [only] if only.bounds.is_empty() => cat!["<", only.name.name.clone(), ",>"],
-            _ => self.generic_params(type_params),
-        };
+        let type_params = self.generic_params(type_params);
         let ret = self.return_type(ret);
         let throws = self.throws_clause(throws);
         let head = cat![

@@ -14,6 +14,9 @@ interface Post {
 }
 
 const identity = <T,>(x: T): T => x;
+const identity2 = <T>(x: T): T => x;
+const later = async <T>(x: T): Promise<T> => x;
+const user = value.as<User>() ?? value?.as<User>();
 const pair = <A, B extends Show>(a: A, b: B) => [a, b];
 
 function Tag(props: { name: string }) {

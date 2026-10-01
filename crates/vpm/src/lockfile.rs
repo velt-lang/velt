@@ -15,10 +15,20 @@
 //! name = "util"
 //! version = "0.1.0"
 //! source = "path+../util"
+//!
+//! [[package]]
+//! name = "sqlite"
+//! version = "0.1.0"
+//! source = "registry"
+//! checksum = "sha256:…"
+//! native = { "x86_64-unknown-linux-gnu" = "sha256:…", "aarch64-apple-darwin" = "sha256:…" }
 //! ```
+//! `native` pins the prebuilt library of **every** published target, so the lockfile is the same
+//! on every platform and each machine verifies the one it uses.
 //! Path sources are relative to the root package, `/`-separated. The root package itself is not
 //! listed (its dependencies come from velt.toml).
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -53,6 +63,9 @@ pub struct LockedPackage {
     /// Names of this package's direct dependencies.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<String>,
+    /// Registry packages with native code: target triple → checksum of its prebuilt library.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub native: BTreeMap<String, String>,
 }
 
 /// The `source` value for registry packages.
@@ -128,6 +141,7 @@ mod tests {
                 source: "path+../util".into(),
                 checksum: None,
                 dependencies: vec![],
+                native: BTreeMap::new(),
             },
             LockedPackage {
                 name: "json".into(),
@@ -135,6 +149,7 @@ mod tests {
                 source: REGISTRY_SOURCE.into(),
                 checksum: Some("sha256:00".into()),
                 dependencies: vec!["util".into()],
+                native: BTreeMap::from([("x86_64-unknown-linux-gnu".into(), "sha256:01".into())]),
             },
         ]);
         assert_eq!(lock.packages[0].name, "json");

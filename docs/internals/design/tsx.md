@@ -19,8 +19,18 @@ already solved it; add nothing JavaScript-specific that causes bugs; keep Rust-l
   `{...p}`, `key`, string and expression attributes, children text with JSX whitespace rules,
   `{/* comments */}`.
 - Allowed in every `.vlt` file: Velt has no `<T>expr` casts (only `as`), so TypeScript's `.ts`
-  / `.tsx` split isn't needed. A generic arrow needs a trailing comma, `<T,>(x: T) => x`,
-  exactly as in `.tsx` files. `velt fmt` formats JSX like Prettier.
+  / `.tsx` split isn't needed. `velt fmt` formats JSX like Prettier.
+- **The parser decides where an element starts**, not the lexer: in code the lexer always
+  emits `<` as a plain `Lt`. Where the parser expects an expression and finds `<` directly
+  followed by a name or `>`, it first tries a generic arrow (type parameters, a parameter list
+  and `=>`, or a head starting `<T,`, `<T extends` or `<T =`); otherwise it has the lexer re-lex
+  from that `<` in JSX mode (the parser pulls tokens on demand, so only its short lookahead is
+  dropped). So generic arrows are written as in `.ts` files, `<T>(x: T): T => x` (`<T,>` works
+  too, and `velt fmt` prints `<T>`), and `<` after a keyword used as a name is never JSX:
+  `v.as<User>()`, `v?.as<User>()`, `class C { as<T>(): T {…} }`, `x as T`. The one program
+  this reads differently from `.tsx` is an element named like a type parameter whose text is an
+  arrow signature, `<T>(x: T): T => x</T>`. A `<` that fails both reads as a broken generic
+  arrow gets a hint on the unclosed-element error.
 
 ## Semantics: TypeScript's automatic runtime, with an SSR precompile mode
 

@@ -1,6 +1,6 @@
 //! Primary (atomic) expressions: literals, identifiers, `this`, `super`, `new`, parenthesized
 //! expressions, array/object/struct literals, template literals and regular expression literals.
-//! JSX elements are parsed in `jsx`.
+//! JSX elements are parsed in `jsx`: a `<` directly followed by a name or `>` starts one here.
 
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
@@ -16,6 +16,11 @@ impl<'a> Parser<'a> {
         }
         let kind = match self.peek() {
             Tok::Template(..) => self.parse_template()?,
+            Tok::Lt if self.jsx_starts_here() => {
+                self.relex_jsx();
+                ExprKind::Jsx(Box::new(self.parse_jsx_element()?))
+            }
+            // Already re-lexed, by a speculative parse that came this way before.
             Tok::JsxLt => ExprKind::Jsx(Box::new(self.parse_jsx_element()?)),
             Tok::Regex(i) => {
                 self.bump();
@@ -65,21 +70,14 @@ impl<'a> Parser<'a> {
     }
 
     /// Literal value of the current token (numbers, strings, `true`/`false`/`null`), if any.
-    pub(super) fn literal_at_cursor(&self) -> Option<Lit> {
-        let payload = |idx: u32| self.payloads.get(idx as usize);
+    pub(super) fn literal_at_cursor(&mut self) -> Option<Lit> {
         Some(match self.peek() {
-            Tok::Int(i) => match payload(i)? {
-                Payload::Int { value, suffix } => Lit::Int {
-                    value: *value,
-                    suffix: suffix.clone(),
-                },
+            Tok::Int(i) => match self.payload(i)? {
+                Payload::Int { value, suffix } => Lit::Int { value, suffix },
                 _ => return None,
             },
-            Tok::Float(i) => match payload(i)? {
-                Payload::Float { value, suffix } => Lit::Float {
-                    value: *value,
-                    suffix: suffix.clone(),
-                },
+            Tok::Float(i) => match self.payload(i)? {
+                Payload::Float { value, suffix } => Lit::Float { value, suffix },
                 _ => return None,
             },
             Tok::Str(i) => Lit::Str(self.payload_text(i)),
@@ -131,7 +129,7 @@ impl<'a> Parser<'a> {
 
     /// After a name: does `{` start a struct literal body (`{}`, `{ ...`, `{ a: `, `{ a, `, `{ a }`)?
     /// Statement bodies never follow a bare name (conditions are parenthesized), so this is safe.
-    fn at_struct_lit_body(&self) -> bool {
+    fn at_struct_lit_body(&mut self) -> bool {
         if self.peek() != Tok::LBrace {
             return false;
         }
@@ -214,18 +212,18 @@ impl<'a> Parser<'a> {
     }
 
     /// `match (x) {` — the removed `match` expression (`match(x)` alone is an ordinary call).
-    fn is_removed_match(&self) -> bool {
+    fn is_removed_match(&mut self) -> bool {
         if self.nth(1) != Tok::LParen {
             return false;
         }
         let mut depth = 0usize;
-        for (i, t) in self.toks.iter().enumerate().skip(self.pos + 1) {
-            match t.kind {
+        for i in self.pos + 1.. {
+            match self.tok(i).kind {
                 Tok::LParen | Tok::LBracket | Tok::LBrace => depth += 1,
                 Tok::RParen | Tok::RBracket | Tok::RBrace => {
                     depth = depth.saturating_sub(1);
                     if depth == 0 {
-                        return self.toks.get(i + 1).map(|t| t.kind) == Some(Tok::LBrace);
+                        return self.tok(i + 1).kind == Tok::LBrace;
                     }
                 }
                 Tok::Eof => return false,
@@ -239,8 +237,8 @@ impl<'a> Parser<'a> {
 impl Parser<'_> {
     /// `/body/flags` → `new RegExp("body", "flags")` (std/regex's class, which must be imported).
     fn regex_literal(&mut self, idx: u32, span: velt_common::Span) -> ExprKind {
-        let (source, flags) = match self.payloads.get(idx as usize) {
-            Some(Payload::Regex { source, flags }) => (source.clone(), flags.clone()),
+        let (source, flags) = match self.payload(idx) {
+            Some(Payload::Regex { source, flags }) => (source, flags),
             _ => (String::new(), String::new()),
         };
         let class = TypeExpr {

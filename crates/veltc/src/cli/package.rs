@@ -1,5 +1,5 @@
 //! Argument parsing for the package-manager and test subcommands (`new`, `init`, `add`,
-//! `install`, `update`, `publish`, `test`).
+//! `install`, `update`, `publish`, `native build`, `test`).
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -34,6 +34,14 @@ pub(super) fn parse(name: &str, rest: Vec<OsString>) -> Result<Command, String> 
                 flags.path = Some(take_value(inline.as_deref(), &mut it, "--path")?)
             }
             ("install" | "test", "--locked") => flags.locked = true,
+            ("publish", "--native-artifacts") => {
+                let dir = take_value(inline.as_deref(), &mut it, "--native-artifacts")?;
+                flags.native_artifacts = Some(PathBuf::from(dir));
+            }
+            ("publish", "--native-only") => flags.native_only = true,
+            ("native", "--target") => {
+                flags.target = Some(take_value(inline.as_deref(), &mut it, "--target")?)
+            }
             ("test", "--release") => flags.release = true,
             ("test", "--watch") => flags.watch = true,
             _ if s.starts_with('-') && s.len() > 1 => return Err(super::unknown_option(name, &s)),
@@ -52,6 +60,9 @@ struct Flags {
     release: bool,
     watch: bool,
     path: Option<String>,
+    native_artifacts: Option<PathBuf>,
+    native_only: bool,
+    target: Option<String>,
 }
 
 fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Command, String> {
@@ -100,7 +111,19 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
             locked: flags.locked,
         }),
         "update" => Ok(Command::Update),
-        "publish" => Ok(Command::Publish),
+        "publish" => Ok(Command::Publish {
+            native_artifacts: flags.native_artifacts,
+            native_only: flags.native_only,
+        }),
+        "native" => match arg.as_deref() {
+            Some("build") => Ok(Command::NativeBuild {
+                target: flags.target,
+            }),
+            Some(other) => Err(format!(
+                "unknown `velt native` command `{other}` (usage: velt native build [--target <triple>])"
+            )),
+            None => Err("usage: velt native build [--target <triple>]".into()),
+        },
         "test" => Ok(Command::Test {
             path: arg.map(PathBuf::from),
             release: flags.release,
@@ -184,7 +207,36 @@ mod tests {
             Command::Install { locked: true }
         );
         assert_eq!(p(&["update"]).unwrap(), Command::Update);
-        assert_eq!(p(&["publish"]).unwrap(), Command::Publish);
+        assert_eq!(
+            p(&["publish"]).unwrap(),
+            Command::Publish {
+                native_artifacts: None,
+                native_only: false
+            }
+        );
+        assert_eq!(
+            p(&["publish", "--native-artifacts", "dist", "--native-only"]).unwrap(),
+            Command::Publish {
+                native_artifacts: Some(PathBuf::from("dist")),
+                native_only: true
+            }
+        );
+        assert_eq!(
+            p(&["native", "build", "--target=aarch64-apple-darwin"]).unwrap(),
+            Command::NativeBuild {
+                target: Some("aarch64-apple-darwin".into())
+            }
+        );
+        assert_eq!(
+            p(&["native", "build"]).unwrap(),
+            Command::NativeBuild { target: None }
+        );
+        assert!(p(&["native"])
+            .unwrap_err()
+            .contains("usage: velt native build"));
+        assert!(p(&["native", "test"])
+            .unwrap_err()
+            .contains("unknown `velt native` command"));
         assert_eq!(
             p(&["test"]).unwrap(),
             Command::Test {

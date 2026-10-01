@@ -179,6 +179,16 @@ fn check_program(sess: &mut Session, opts: &BuildOptions) -> Result<hir::Program
     let t = Instant::now();
     let (hir, diags) = velt_sema::check(&loaded.modules, loaded.root);
     sess.diagnostics.extend(diags);
+    if let (Some(hir), Some(graph)) = (&hir, &opts.packages) {
+        let std_root = loader::std_root();
+        crate::native::check_declares(
+            hir,
+            &sess.sm,
+            std_root.as_deref(),
+            graph,
+            &mut sess.diagnostics,
+        );
+    }
     sess.record("sema", t);
     sess.stop_if_errors()?;
     hir.ok_or_else(|| BuildError::Ice("sema returned no program but reported no errors".into()))
@@ -190,9 +200,11 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
 
     let t = Instant::now();
     let std_root = loader::std_root();
+    let native_inits = crate::native::inits(opts.packages.as_ref());
     let lower_opts = velt_vir::LowerOptions {
         source_map: Some(&sess.sm),
         std_root: std_root.as_deref(),
+        native_inits: &native_inits,
     };
     let mut program = velt_vir::lower_with(&hir, &lower_opts);
     if !opts.wants_debug_info() {
@@ -323,6 +335,7 @@ fn build_on_current_thread(
         opts.release,
         // Release settings strip debug info (and PDB generation on Windows).
         opts.release && !opts.debug_info,
+        &crate::native::links(opts.packages.as_ref(), opts.release),
     )
     .map_err(BuildError::Failed)?;
     sess.record("link", t);

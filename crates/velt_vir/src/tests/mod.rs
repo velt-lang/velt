@@ -28,6 +28,7 @@ mod m3_state;
 mod m3_tasks;
 mod m4_http;
 mod m4_json;
+mod native_init;
 mod numeric;
 mod param_attrs;
 mod programs_http;

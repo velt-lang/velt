@@ -18,6 +18,10 @@
 //!
 //! [jsx]
 //! importSource = "sigx"              # JSX runtime of the package's modules (default `velt:jsx`)
+//!
+//! [native]                           # a Rust crate built into the package's native library
+//! path = "native"                    # (`crate::native`; docs/internals/contracts/native_abi.md)
+//! targets = ["x86_64-unknown-linux-gnu"]
 //! ```
 
 use std::collections::BTreeMap;
@@ -52,6 +56,9 @@ pub struct Manifest {
     /// (`"@app/*" = "src/*"`, see [`crate::paths`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub paths: BTreeMap<String, String>,
+    /// `[native]` table: the package ships a native library built from a Cargo crate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native: Option<NativeConfig>,
     /// `[jsx]` table: how the package's modules compile JSX.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jsx: Option<JsxConfig>,
@@ -71,6 +78,38 @@ pub struct JsxConfig {
     )]
     pub import_source: Option<String>,
 }
+
+/// The `[native]` table.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeConfig {
+    /// The Cargo crate's directory: one directory name inside the package root (default `native`).
+    #[serde(default = "default_native_path")]
+    pub path: String,
+    /// The targets `velt publish` must publish a prebuilt library for.
+    #[serde(default)]
+    pub targets: Vec<String>,
+    /// Whether a `wasm32-wasip1` library is published too (not supported yet: must be false).
+    #[serde(default)]
+    pub wasm: bool,
+}
+
+/// Default `[native] path`.
+pub const DEFAULT_NATIVE_PATH: &str = "native";
+
+fn default_native_path() -> String {
+    DEFAULT_NATIVE_PATH.to_string()
+}
+
+/// The targets a native library can be published for (the targets `velt` itself builds for).
+pub const NATIVE_TARGETS: &[&str] = &[
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+];
 
 /// The `[package]` table.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +205,9 @@ impl Manifest {
         check_name(&self.package.name)?;
         check_version(&self.package.version).map_err(|e| format!("package.version {e}"))?;
         crate::paths::validate(&self.paths)?;
+        if let Some(native) = &self.native {
+            check_native_table(native)?;
+        }
         if let Some(source) = self.jsx.as_ref().and_then(|j| j.import_source.as_deref()) {
             check_import_source(source).map_err(|e| format!("[jsx] {e}"))?;
         }
@@ -234,6 +276,54 @@ fn check_dependency(name: &str, dep: &Dependency) -> Result<(), String> {
         })?;
     }
     Ok(())
+}
+
+/// The `[native]` checks, with `velt.toml`'s messages.
+fn check_native_table(native: &NativeConfig) -> Result<(), String> {
+    check_native_path(&native.path).map_err(|e| format!("[native] {e}"))?;
+    for target in &native.targets {
+        check_native_target(target).map_err(|e| format!("[native] {e}"))?;
+    }
+    check_native_wasm(native.wasm).map_err(|e| format!("[native] wasm = true {e}"))
+}
+
+/// The message names the value, not the table: callers prefix it.
+fn check_native_path(path: &str) -> Result<(), String> {
+    let ok = !path.is_empty()
+        && !path.starts_with('.')
+        && path != SRC_DIR
+        && path != "target"
+        && path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "path `{path}` must be the name of a directory in the package root (not `src` or `target`)"
+        ))
+    }
+}
+
+/// The message names the value, not the table: callers prefix it.
+fn check_native_target(target: &str) -> Result<(), String> {
+    if NATIVE_TARGETS.contains(&target) {
+        Ok(())
+    } else {
+        Err(format!(
+            "target `{target}` is not supported (supported: {})",
+            NATIVE_TARGETS.join(", ")
+        ))
+    }
+}
+
+/// The message continues the caller's spelling of `wasm = true`, which differs per format.
+fn check_native_wasm(wasm: bool) -> Result<(), String> {
+    if wasm {
+        Err("is not supported yet: packages with native code cannot target WebAssembly".into())
+    } else {
+        Ok(())
+    }
 }
 
 /// Whether `name` is a valid package name: `[a-z][a-z0-9_-]*`.
@@ -346,6 +436,27 @@ mod tests {
         )
         .unwrap_err();
         assert!(e.contains("requirement"), "{e}");
+    }
+
+    #[test]
+    fn native_table() {
+        let head = "[package]\nname = \"db-x\"\nversion = \"1.0.0\"\n[native]\n";
+        let m =
+            Manifest::parse(&format!("{head}targets = [\"x86_64-unknown-linux-gnu\"]\n")).unwrap();
+        let native = m.native.as_ref().unwrap();
+        assert_eq!(native.path, "native");
+        assert_eq!(native.targets, ["x86_64-unknown-linux-gnu"]);
+        assert_eq!(Manifest::parse(&m.to_toml()).unwrap(), m);
+        for (bad, msg) in [
+            ("targets = [\"sparc-sun-solaris\"]", "not supported"),
+            ("path = \"../x\"", "directory in the package root"),
+            ("path = \"src\"", "directory in the package root"),
+            ("wasm = true", "WebAssembly"),
+            ("crate = \"x\"", "unknown field"),
+        ] {
+            let e = Manifest::parse(&format!("{head}{bad}\n")).unwrap_err();
+            assert!(e.contains(msg), "{bad}: {e}");
+        }
     }
 
     #[test]

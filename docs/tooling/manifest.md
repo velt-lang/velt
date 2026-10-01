@@ -16,6 +16,9 @@ util = { path = "../util" }    # local package (version optional)
 [paths]                        # optional import aliases
 "@app/*" = "src/*"             # import { x } from "@app/util"  →  src/util.vlt (or src/util/index.vlt)
 "@config" = "src/config"       # exact alias
+
+[native]                       # optional: the package includes a Rust crate
+targets = ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]
 ```
 
 ## `[package]`
@@ -42,6 +45,17 @@ Import aliases, like TypeScript's `compilerOptions.paths`, replace long `../../`
 - Targets must stay inside the package (no `..`, not absolute).
 - Each package's aliases apply to its own modules only.
 
+## `[native]`
+
+The package includes a Rust crate (a `cdylib` + `staticlib` built on the `velt_native` crate)
+whose functions its Velt code declares ([Packages with native code](packages.md#packages-with-native-code)).
+
+- `path`: the crate's directory, a directory name in the package root (default `"native"`).
+- `targets`: the targets `velt publish` publishes a prebuilt library for (it fails if one is
+  missing): `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`,
+  `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`.
+- `wasm`: must be `false` (the default); WebAssembly libraries are not supported yet.
+
 ## `registry`
 
 ```toml
@@ -56,6 +70,7 @@ precedence), replaces the local registry directory for `velt add`, `velt install
 
 `velt install` writes `velt.lock`, which pins the exact version and content hash of every
 dependency: `version = 1` and one `[[package]]` entry per package with `name`, `version`,
-`source` (`"registry"` or `"path+<relative path>"`), `checksum` and `dependencies`. Commit it
-for applications. `--locked` on `build`, `run`, `test` and `install` fails instead of changing
+`source` (`"registry"` or `"path+<relative path>"`), `checksum` and `dependencies`, and for a
+package with native code a `[package.native]` table with the checksum of its prebuilt library
+for every published target. Commit it for applications. `--locked` on `build`, `run`, `test` and `install` fails instead of changing
 it.

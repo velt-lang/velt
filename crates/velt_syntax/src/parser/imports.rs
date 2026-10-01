@@ -41,7 +41,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Is the parser (right after `export`) at a re-export or export list: `{`, `*`, `type {`?
-    pub(super) fn at_export_list(&self) -> bool {
+    pub(super) fn at_export_list(&mut self) -> bool {
         match self.peek() {
             Tok::LBrace | Tok::Star => true,
             Tok::Kw(Kw::Type) => self.nth(1) == Tok::LBrace,
@@ -156,7 +156,8 @@ impl<'a> Parser<'a> {
         self.bump(); // default
         let declaration = match self.cur_kw() {
             Some(Kw::Function | Kw::Class | Kw::Struct | Kw::Interface | Kw::Enum) => {
-                Some(self.text(self.toks[self.pos].lo, self.toks[self.pos].hi))
+                let t = self.tok(self.pos);
+                Some(self.text(t.lo, t.hi))
             }
             Some(Kw::Async) if self.nth(1) == Tok::Kw(Kw::Function) => Some("async function"),
             _ => None,
@@ -186,14 +187,13 @@ impl<'a> Parser<'a> {
 
     /// The name a declaration starting at the cursor declares (`function f` → `f`), or the
     /// identifier at the cursor (`export default f;` → `f`).
-    fn declaration_name_ahead(&self) -> Option<String> {
+    fn declaration_name_ahead(&mut self) -> Option<String> {
         let skip = match self.cur_kw() {
             Some(Kw::Async) => 2,
             Some(Kw::Function | Kw::Class | Kw::Struct | Kw::Interface | Kw::Enum) => 1,
             _ => 0,
         };
-        let i = (self.pos + skip).min(self.toks.len() - 1);
-        let t = self.toks[i];
+        let t = self.tok(self.pos + skip);
         Self::is_ident_like(t.kind).then(|| self.text(t.lo, t.hi).to_string())
     }
 

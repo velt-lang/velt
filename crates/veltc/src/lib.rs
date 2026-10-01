@@ -12,6 +12,7 @@ pub mod dev;
 pub mod driver;
 pub mod link;
 pub mod loader;
+pub mod native;
 pub mod playground;
 pub mod style;
 pub mod templates;

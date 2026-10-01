@@ -9,7 +9,7 @@ use crate::lexer::Tok;
 
 impl<'a> Parser<'a> {
     /// Is the cursor at `[Symbol.<name>]`?
-    pub(super) fn at_symbol_key(&self) -> bool {
+    pub(super) fn at_symbol_key(&mut self) -> bool {
         self.peek() == Tok::LBracket
             && self.nth_word(1, "Symbol")
             && self.nth(2) == Tok::Dot
@@ -54,9 +54,8 @@ impl<'a> Parser<'a> {
     }
 
     /// Is token `pos + n` the plain identifier `word`?
-    pub(super) fn nth_word(&self, n: usize, word: &str) -> bool {
-        let i = (self.pos + n).min(self.toks.len() - 1);
-        let t = &self.toks[i];
+    pub(super) fn nth_word(&mut self, n: usize, word: &str) -> bool {
+        let t = self.tok(self.pos + n);
         t.kind == Tok::Ident && self.text(t.lo, t.hi) == word
     }
 }

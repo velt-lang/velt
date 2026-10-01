@@ -254,6 +254,7 @@ impl Reader<'_> {
             },
             dependencies: BTreeMap::new(),
             paths: BTreeMap::new(),
+            native: None,
             jsx: None,
         };
         let Some(fields) = self.object(value, "the manifest") else {

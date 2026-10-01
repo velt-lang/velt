@@ -15,6 +15,8 @@ helper), and explain it in your final report.
 | Link API | `crates/velt_link/src/lib.rs` (`link`, `find_runtime_lib`) | tooling → driver |
 | Runtime ABI | `docs/internals/contracts/rt_abi.md` + `rt_abi_async.md` | runtime ↔ IR lowering |
 | CLI | `docs/internals/contracts/cli.md` | tooling ↔ golden tests |
+| Manifest, lockfile, registry | `docs/internals/contracts/velt_toml.md` | vpm ↔ tooling, registries |
+| Native libraries of packages | `docs/internals/contracts/native_abi.md` + `crates/velt_native` | packages' Rust crates ↔ runtime, vpm, compiler |
 | Language semantics | `docs/reference/` + `tests/golden/**` | everyone |
 
 ## Pipeline
@@ -35,7 +37,7 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 - `vir::Function::locs: Vec<Vec<Option<SrcLoc>>>` — per block, one entry per statement plus a
   last one for the terminator; empty = no information (vir.rs invariant 8, checked by `verify`).
   Helpers: `Function::loc(block, stmt)`, `term_loc(block)`, `first_loc()`.
-- `velt_vir::lower_with(&hir, &LowerOptions { source_map, std_root })` fills them (the driver
+- `velt_vir::lower_with(&hir, &LowerOptions { source_map, std_root, native_inits })` fills them (the driver
   calls it); `velt_vir::lower` keeps its signature and output (no locations). With a source map,
   compiler-emitted panics end in ` at <path>:<line>:<col>` (bounds checks, division by zero,
   `panic()`, and standard-library helpers such as `unwrap()`/`assert*` report their caller), and an
@@ -59,6 +61,7 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 | codegen | `crates/velt_codegen_cl` |
 | runtime | `crates/velt_rt`, `std/**` |
 | tooling | `crates/veltc`, `crates/velt_link`, `crates/vpm` (except `tests/golden.rs`), `crates/velt_doc`, `crates/velt_registry`, `crates/velt_http` |
+| native SDK | `crates/velt_native`, `crates/velt_native_macros` (versioned with the native ABI), `packages/**` |
 | runtime (wasm) | `crates/velt_rt_wasm`, `crates/velt_rt_host` (mirror of velt_rt deps) |
 | runtime packaging | `crates/velt_rt_shared` (the runtime as a shared library for debug builds; mirror of velt_rt deps) |
 

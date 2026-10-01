@@ -7,7 +7,7 @@ use super::{Kw, Lexer, Payload, Tok, TplPart};
 
 impl Lexer<'_> {
     /// Is an operand expected here (no operand just ended)? Then a `/` starts a regular
-    /// expression and a `<` may start a JSX element.
+    /// expression.
     pub(super) fn operand_expected(&self) -> bool {
         let Some(prev) = self.toks.last() else {
             return true;

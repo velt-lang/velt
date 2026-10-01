@@ -1,6 +1,8 @@
 //! The package cache: registry packages extracted to `<cache>/<name>-<version>/`, the directory the
 //! compiler reads them from. For the local registry "extracting" is a copy; every fetch verifies the
-//! content checksum so a tampered cache or registry entry is caught.
+//! content checksum so a tampered cache or registry entry is caught. Native bundles are cached
+//! per target under `<cache>/native/<name>-<version>/<triple>/` ([`fetch_native`]) and verified
+//! the same way **before** they are placed where the compiler loads or links them.
 
 use std::path::PathBuf;
 
@@ -8,6 +10,7 @@ use semver::Version;
 
 use crate::contents;
 use crate::locations::Locations;
+use crate::native::bundle;
 
 /// Ensure `name` `version` is in the cache with contents hashing to `checksum`; returns its dir.
 /// A cached copy with the wrong checksum is replaced from the registry; a registry copy with the
@@ -44,6 +47,49 @@ pub fn fetch(
             "checksum mismatch for `{name}` {version}: expected {checksum}, registry contents hash to {actual}"
         ));
     }
+    Ok(dir)
+}
+
+/// Ensure the `target` native bundle of `name` `version` is in the cache with contents hashing to
+/// `checksum` (from `velt.lock` / the index); returns its directory. A download or registry copy
+/// is verified in a staging directory and only then moved into place.
+pub fn fetch_native(
+    loc: &Locations,
+    name: &str,
+    version: &Version,
+    target: &str,
+    checksum: &str,
+) -> Result<PathBuf, String> {
+    let dir = loc.cached_native(name, version, target);
+    if dir.is_dir() && bundle::checksum(&dir).is_ok_and(|sum| sum == checksum) {
+        return Ok(dir);
+    }
+    let staging = dir.with_extension("partial");
+    if let Some(url) = &loc.remote {
+        crate::remote::download_native(url, name, version, target, checksum, &staging)?;
+    } else {
+        let published = loc.registry_native(name, version, target);
+        if !published.is_dir() {
+            return Err(format!(
+                "the {target} native library of `{name}` {version} is missing from the registry `{}`",
+                loc.registry.display()
+            ));
+        }
+        bundle::copy(&published, &staging)?;
+        let actual = bundle::checksum(&staging)?;
+        if actual != checksum {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(format!(
+                "checksum mismatch for the {target} native library of `{name}` {version}: expected {checksum}, the registry's hashes to {actual}"
+            ));
+        }
+    }
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir)
+            .map_err(|e| format!("cannot clean `{}`: {e}", dir.display()))?;
+    }
+    std::fs::rename(&staging, &dir)
+        .map_err(|e| format!("cannot write `{}`: {e}", dir.display()))?;
     Ok(dir)
 }
 

@@ -150,6 +150,8 @@ fn registry_candidate(name: &str, entry: &registry::IndexEntry) -> Result<Candid
         version: entry.semver(),
         source: Source::Registry {
             checksum: entry.checksum.clone(),
+            native: entry.native.clone(),
+            native_abi: entry.native_abi,
         },
         dependencies,
     })

@@ -4,6 +4,11 @@
 //! substitution expressions lexed as ordinary tokens in between. A mode stack ([`Mode`]) tells a
 //! `}` that closes `${` apart from an ordinary `}` and switches between code, JSX tags and JSX
 //! children (`jsx`). Literal scanning lives in `literals`, HTML entities in `entities`.
+//!
+//! The parser pulls tokens on demand ([`Lexer::fill`]). In code a `<` is always `Lt`: only the
+//! parser knows whether an expression starts there, so it decides where JSX begins and calls
+//! [`Lexer::relex_jsx`], which drops the tokens lexed past that `<` and lexes it again as an
+//! element. Each `<` records the mode stack it starts in, so lexing can restart there.
 
 mod entities;
 mod jsx;
@@ -15,17 +20,19 @@ pub(crate) use token::{Kw, Payload, Tok, Token, TplPart};
 
 use velt_common::{Diagnostic, FileId, Span};
 
-/// Result of lexing one file.
+/// Result of lexing a whole file as code (no JSX elements outside the parser's control).
+#[cfg(test)]
 pub(crate) struct Lexed {
     /// Always ends with an `Eof` token.
     pub toks: Vec<Token>,
-    pub payloads: Vec<Payload>,
-    pub diags: Vec<Diagnostic>,
-    /// `@jsxImportSource pkg` from a comment before the first token.
-    pub jsx_import_source: Option<String>,
-    /// Byte ranges of the comments, in source order.
-    pub comments: Vec<std::ops::Range<u32>>,
 }
+
+/// How many tokens `Lexer::fill` lexes past the one asked for.
+const LEX_BATCH: usize = 32;
+
+/// How many tokens after a `<` that may start an element are lexed one at a time: about as far
+/// as the parser looks before deciding whether to re-lex it as JSX (`<div class`, `<p>text`).
+const JSX_DECISION_TOKENS: usize = 4;
 
 /// What the lexer is inside of: one entry per open bracket-like construct.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,45 +50,47 @@ enum Mode {
 }
 
 /// Lexes a whole file. Never fails: problems become diagnostics and lexing continues.
+#[cfg(test)]
 pub(crate) fn lex(file: FileId, src: &str) -> Lexed {
-    let mut lx = Lexer {
-        src: src.as_bytes(),
-        text: src,
-        pos: 0,
-        file,
-        toks: Vec::with_capacity(src.len() / 4 + 1),
-        payloads: Vec::new(),
-        diags: Vec::new(),
-        modes: Vec::new(),
-        jsx_import_source: None,
-        comments: Vec::new(),
-    };
-    lx.run();
-    Lexed {
-        toks: lx.toks,
-        payloads: lx.payloads,
-        diags: lx.diags,
-        jsx_import_source: lx.jsx_import_source,
-        comments: lx.comments,
-    }
+    let mut lx = Lexer::new(file, src);
+    lx.fill(usize::MAX);
+    Lexed { toks: lx.toks }
 }
 
-struct Lexer<'a> {
+/// The lexer state of one file; `toks` grows as the parser asks for tokens.
+pub(crate) struct Lexer<'a> {
     src: &'a [u8],
     text: &'a str,
     pos: usize,
     file: FileId,
-    toks: Vec<Token>,
-    payloads: Vec<Payload>,
-    diags: Vec<Diagnostic>,
-    /// Open braces, template substitutions and JSX constructs, innermost last.
-    modes: Vec<Mode>,
-    jsx_import_source: Option<String>,
-    comments: Vec<std::ops::Range<u32>>,
+    /// Tokens lexed so far; ends with `Eof` once the end is reached.
+    pub toks: Vec<Token>,
+    pub payloads: Vec<Payload>,
+    pub diags: Vec<Diagnostic>,
+    /// Mode stacks as a tree: node `i` is `(parent, mode)`; node 0 is the empty stack. Popping
+    /// returns to the parent node, so equal ids mean equal stacks.
+    modes: Vec<(u32, Mode)>,
+    /// The current mode stack (a node of `modes`).
+    ctx: u32,
+    /// `(token index, mode stack)` of each `<` that may start an element ([`may_start_jsx`]), in
+    /// token order: where `relex_jsx` restarts.
+    lt_ctx: Vec<(usize, u32)>,
+    /// `@jsxImportSource pkg` from a comment before the first token.
+    pub jsx_import_source: Option<String>,
+    /// Byte ranges of the comments, in source order.
+    pub comments: Vec<std::ops::Range<u32>>,
 }
 
+/// Can byte `c` start an identifier?
 fn is_ident_start(c: u8) -> bool {
     c.is_ascii_alphabetic() || c == b'_' || c == b'$'
+}
+
+/// Can a `<` directly followed by byte `c` start a JSX element (`<name`, or the fragment `<>`)?
+/// Only the parser knows whether an expression starts there; for such a `<` the lexer keeps
+/// what it needs to re-lex it.
+pub(crate) fn may_start_jsx(c: u8) -> bool {
+    is_ident_start(c) || c == b'>'
 }
 
 fn is_ident_continue(c: u8) -> bool {
@@ -105,17 +114,117 @@ impl<'a> Lexer<'a> {
         (self.payloads.len() - 1) as u32
     }
 
-    fn run(&mut self) {
-        if self.src.starts_with(&[0xEF, 0xBB, 0xBF]) {
-            self.pos = 3; // UTF-8 BOM
+    pub(crate) fn new(file: FileId, src: &'a str) -> Self {
+        let pos = if src.as_bytes().starts_with(&[0xEF, 0xBB, 0xBF]) {
+            3 // UTF-8 BOM
+        } else {
+            0
+        };
+        Lexer {
+            src: src.as_bytes(),
+            text: src,
+            pos,
+            file,
+            // About one token per four bytes of source: one allocation for most files.
+            toks: Vec::with_capacity(src.len() / 4 + 1),
+            payloads: Vec::new(),
+            diags: Vec::new(),
+            modes: vec![(0, Mode::Brace)],
+            ctx: 0,
+            lt_ctx: Vec::new(),
+            jsx_import_source: None,
+            comments: Vec::new(),
         }
+    }
+
+    /// Lexes until token `i` exists or the file is exhausted (`Eof` lexed). Lexing ahead in
+    /// batches is cheaper per token, but the parser may have a `<` that can start an element
+    /// re-lexed as JSX, which throws away everything lexed after it: a batch stops at such a
+    /// `<`, and near one only what is asked for is lexed.
+    pub(crate) fn fill(&mut self, i: usize) {
+        let near_jsx = self.last_jsx_candidate_within(JSX_DECISION_TOKENS);
+        let end = if near_jsx {
+            i
+        } else {
+            i.saturating_add(LEX_BATCH)
+        };
+        while self.toks.len() <= end && !self.at_eof_token() {
+            self.step();
+            if self.toks.len() > i && self.last_jsx_candidate_within(1) {
+                return;
+            }
+        }
+    }
+
+    /// Is one of the last `n` tokens a `<` that may start an element?
+    fn last_jsx_candidate_within(&self, n: usize) -> bool {
+        self.lt_ctx
+            .last()
+            .is_some_and(|&(j, _)| j + n >= self.toks.len())
+    }
+
+    fn at_eof_token(&self) -> bool {
+        matches!(self.toks.last(), Some(t) if t.kind == Tok::Eof)
+    }
+
+    /// Re-lexes from token `i`, a `<`, as the start of a JSX element: drops token `i` and every
+    /// token, diagnostic and comment after it, then restarts in the mode stack of that `<`.
+    pub(crate) fn relex_jsx(&mut self, i: usize) {
+        let at = self.lt_ctx.partition_point(|&(j, _)| j < i);
+        let (Some(&t), Some(&(j, ctx))) = (self.toks.get(i), self.lt_ctx.get(at)) else {
+            return;
+        };
+        if j != i {
+            return; // not a `<`
+        }
+        self.lt_ctx.truncate(at);
+        self.toks.truncate(i);
+        // Truncating instead of filtering keeps a file full of errors and elements linear. A
+        // diagnostic lies within its token's span or in the trivia before it, so the diagnostics
+        // before `t` come first even where one token reports out of order (an unterminated
+        // template after an escape inside it).
+        let keep = self
+            .diags
+            .partition_point(|d| d.labels.first().is_some_and(|l| l.span.lo < t.lo));
+        self.diags.truncate(keep);
+        let keep = self.comments.partition_point(|c| c.start < t.lo);
+        self.comments.truncate(keep);
+        self.ctx = ctx;
+        self.pos = t.lo as usize + 1;
+        self.toks.push(Token {
+            kind: Tok::JsxLt,
+            lo: t.lo,
+            hi: t.lo + 1,
+        });
+        self.push_mode(Mode::JsxTag { closing: false });
+    }
+
+    /// The innermost mode, if any.
+    fn mode(&self) -> Option<Mode> {
+        (self.ctx != 0).then(|| self.modes[self.ctx as usize].1)
+    }
+
+    fn push_mode(&mut self, m: Mode) {
+        self.modes.push((self.ctx, m));
+        self.ctx = (self.modes.len() - 1) as u32;
+    }
+
+    fn pop_mode(&mut self) -> Option<Mode> {
+        let m = self.mode()?;
+        self.ctx = self.modes[self.ctx as usize].0;
+        Some(m)
+    }
+
+    /// Lexes one token (skipping bad characters) and appends it.
+    fn step(&mut self) {
         loop {
-            let mode = self.modes.last().copied();
+            let mode = self.mode();
             // JSX text is significant: no whitespace or comments are skipped in children.
             if mode != Some(Mode::JsxChildren) {
                 self.skip_trivia();
             }
             let start = self.pos;
+            let ctx = self.ctx;
             if start >= self.src.len() {
                 let end = self.src.len() as u32;
                 self.toks.push(Token {
@@ -131,11 +240,15 @@ impl<'a> Lexer<'a> {
                 _ => self.next_token(),
             };
             if let Some(kind) = kind {
+                if kind == Tok::Lt && may_start_jsx(self.at(0)) {
+                    self.lt_ctx.push((self.toks.len(), ctx));
+                }
                 self.toks.push(Token {
                     kind,
                     lo: start as u32,
                     hi: self.pos as u32,
                 });
+                return;
             }
         }
     }
@@ -155,17 +268,15 @@ impl<'a> Lexer<'a> {
             self.template(start, true)
         } else if c == b'{' {
             self.pos += 1;
-            self.modes.push(Mode::Brace);
+            self.push_mode(Mode::Brace);
             Tok::LBrace
         } else if c == b'}' {
             self.pos += 1;
-            if self.modes.pop() == Some(Mode::TemplateSub) {
+            if self.pop_mode() == Some(Mode::TemplateSub) {
                 self.template(start, false)
             } else {
                 Tok::RBrace
             }
-        } else if let Some(t) = self.jsx_start() {
-            t
         } else if let Some(t) = self.regex_start() {
             t
         } else if let Some(t) = self.punct() {
@@ -337,6 +448,67 @@ mod tests {
             .collect();
         assert_eq!(parts, vec![TplPart::Head, TplPart::Middle, TplPart::Tail]);
         assert!(toks.contains(&Tok::LBrace) && toks.contains(&Tok::RBrace));
+    }
+
+    #[test]
+    fn less_than_in_code_is_never_jsx() {
+        use Tok::*;
+        assert_eq!(kinds("<div>")[..3], [Lt, Ident, Gt]);
+        assert_eq!(
+            kinds("return <p />")[..3],
+            [Kw(super::Kw::Return), Lt, Ident]
+        );
+        assert_eq!(kinds("v.as<T>()")[2..5], [Kw(super::Kw::As), Lt, Ident]);
+    }
+
+    #[test]
+    fn relex_restarts_in_the_mode_of_the_token() {
+        use Tok::*;
+        // `{` (a template substitution) then `<p>`; re-lexed as JSX, the element closes and
+        // the substitution's `}` resumes the template.
+        let src = "`a${ <p>it's</p> }b` + 1";
+        let mut lx = Lexer::new(FileId(0), src);
+        lx.fill(3);
+        assert_eq!(lx.toks[1].kind, Lt);
+        lx.relex_jsx(1);
+        lx.fill(usize::MAX);
+        let got: Vec<Tok> = lx.toks.iter().map(|t| t.kind).collect();
+        assert!(matches!(got[0], Template(_, TplPart::Head)), "{got:?}");
+        assert!(
+            matches!(
+                got[1..],
+                [
+                    JsxLt,
+                    JsxIdent,
+                    JsxGt,
+                    JsxText(_),
+                    JsxLtSlash,
+                    JsxIdent,
+                    JsxGt,
+                    Template(_, TplPart::Tail),
+                    Plus,
+                    Int(_),
+                    Eof
+                ]
+            ),
+            "{got:?}"
+        );
+        assert!(lx.diags.is_empty(), "{:?}", lx.diags);
+    }
+
+    #[test]
+    fn relex_keeps_only_the_diagnostics_before_the_element() {
+        // Lexed as code, `'s</p> §` is an unterminated string; as JSX it is text.
+        let src = "\u{a7} x = <p>it's</p> \u{a7}";
+        let mut lx = Lexer::new(FileId(0), src);
+        lx.fill(usize::MAX);
+        let messages =
+            |lx: &Lexer| -> Vec<String> { lx.diags.iter().map(|d| d.message.clone()).collect() };
+        assert!(messages(&lx).contains(&"unterminated string literal".to_string()));
+        let lt = lx.toks.iter().position(|t| t.kind == Tok::Lt).unwrap();
+        lx.relex_jsx(lt);
+        lx.fill(usize::MAX);
+        assert_eq!(messages(&lx), ["unexpected character `\u{a7}`"; 2]);
     }
 
     #[test]

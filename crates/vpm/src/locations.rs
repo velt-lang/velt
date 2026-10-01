@@ -86,6 +86,25 @@ impl Locations {
     pub fn cached_package(&self, name: &str, version: &semver::Version) -> PathBuf {
         self.cache.join(format!("{name}-{version}"))
     }
+
+    /// Directory of a published native bundle inside the registry.
+    pub fn registry_native(&self, name: &str, version: &semver::Version, target: &str) -> PathBuf {
+        self.registry
+            .join(name)
+            .join(format!("{version}.native"))
+            .join(target)
+    }
+
+    /// Native libraries of one package version inside the cache: `<cache>/native/<name>-<version>/`
+    /// (a verified bundle per target, and cargo's work for builds from source).
+    pub fn cached_native_root(&self, name: &str, version: &semver::Version) -> PathBuf {
+        self.cache.join("native").join(format!("{name}-{version}"))
+    }
+
+    /// A verified prebuilt bundle inside the cache.
+    pub fn cached_native(&self, name: &str, version: &semver::Version, target: &str) -> PathBuf {
+        self.cached_native_root(name, version).join(target)
+    }
 }
 
 #[cfg(test)]

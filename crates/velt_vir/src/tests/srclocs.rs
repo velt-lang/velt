@@ -37,6 +37,7 @@ fn lower_located(p: &Program, sm: &SourceMap) -> crate::vir::Program {
     let opts = LowerOptions {
         source_map: Some(sm),
         std_root: None,
+        native_inits: &[],
     };
     let v = crate::lower_with(p, &opts);
     if let Err(errs) = crate::verify(&v) {

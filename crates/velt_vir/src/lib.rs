@@ -143,6 +143,18 @@ pub struct LowerOptions<'a> {
     /// Root of the standard library: its functions that panic on behalf of their caller
     /// (`unwrap`, `assert`, …) report the call site instead of their own location.
     pub std_root: Option<&'a Path>,
+    /// Native libraries of packages (docs/internals/contracts/native_abi.md): `velt_main` starts
+    /// by calling each one's init function with the runtime's table, in this order.
+    pub native_inits: &'a [NativeInit],
+}
+
+/// One native library to initialize before `main` runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeInit {
+    /// The package (named in the start-up error if its init fails).
+    pub package: String,
+    /// Its init function, `velt_native_init_<pkg>`: `(const VeltRtApi*) -> i32`.
+    pub symbol: String,
 }
 
 /// CONTRACT: lower a checked program. Infallible for any `Program` sema accepted

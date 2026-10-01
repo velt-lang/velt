@@ -31,7 +31,16 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
         }
     };
     let mut sess = Session::new();
-    let mut session = DevSession::new(&velt_rt_host::abi_symbols::symbol_table());
+    let natives = match super::native::jit_symbols(opts.packages.as_ref()) {
+        Ok(natives) => natives,
+        Err(msg) => {
+            crate::style::error(&msg);
+            return ExitCode::from(1);
+        }
+    };
+    let mut symbols = velt_rt_host::abi_symbols::symbol_table();
+    symbols.extend(natives.iter().map(|(n, a)| (n.as_str(), *a as *const u8)));
+    let mut session = DevSession::new(&symbols);
     let loaded = compile_and_load(&mut sess, &opts, &mut session);
     // A host started ahead of need stays quiet: the running version reports the same build.
     if std::env::var_os(QUIET_ENV).is_none() {
@@ -41,7 +50,8 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
         }
     }
     if let Some(socket) = std::env::var_os(velt_rt_host::dev::SOCKET_ENV) {
-        let files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
+        let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
+        files.extend(super::native::source_files(opts.packages.as_ref()));
         let ready =
             velt_rt_host::dev::handover::report_build(socket.as_ref(), loaded.is_ok(), &files);
         match ready {
