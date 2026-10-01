@@ -134,7 +134,7 @@ impl<'a> Parser<'a> {
     }
 
     /// After a member name: `(` or `<` starts a method signature.
-    fn at_method_start(&self) -> bool {
+    fn at_method_start(&mut self) -> bool {
         self.at(Tok::LParen) || self.at(Tok::Lt)
     }
 

@@ -1,5 +1,5 @@
-//! Generic arrow functions (`<T,>(x: T): T => x`, the TSX spelling): a module-level
-//! `const f = <T,>(x: T): R => body;` with typed parameters and a return type is checked as the
+//! Generic arrow functions (`<T>(x: T): T => x`, or `<T,>` as `.tsx` spells it): a module-level
+//! `const f = <T>(x: T): R => body;` with typed parameters and a return type is checked as the
 //! generic function `function f<T>(x: T): R { return body; }` (same spans, same `export`). The
 //! syntax is rewritten before collection, so every later pass sees an ordinary generic function.
 //! Generic arrows anywhere else are reported by `body::expr::closure` (a closure value has one
@@ -40,7 +40,7 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Vec<SourceModule>> {
     Some(lifted)
 }
 
-/// `const f = <T,>(x: T): R => body;` as `function f<T>(x: T): R { return body; }`.
+/// `const f = <T>(x: T): R => body;` as `function f<T>(x: T): R { return body; }`.
 fn as_function(item: &ast::Item) -> Option<ast::Item> {
     let ast::ItemKind::Var(v) = &item.kind else {
         return None;

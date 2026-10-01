@@ -1,6 +1,7 @@
-//! JSX lexing. A `<` starts a JSX element where an operand is expected (the same rule that makes
-//! a `/` start a regular expression) and a name or `>` (fragment) follows directly; `<T,` and
-//! `<T extends` stay type parameters of a generic arrow (`<T,>(x: T) => x`, as in `.tsx`).
+//! JSX lexing. In code a `<` is always `Lt`; the parser decides where an element starts (only
+//! where it expects an expression, and not before a generic arrow `<T>(x: T) => x`) and re-lexes
+//! from there ([`Lexer::relex_jsx`]). Inside an element, child elements and element attribute
+//! values start with `JsxLt` directly.
 //!
 //! Inside a tag (`Mode::JsxTag`) names may contain `-`, strings have no backslash escapes and
 //! `{` opens an expression container. Between the tags (`Mode::JsxChildren`) everything up to
@@ -11,37 +12,6 @@ use super::entities::decode_entities;
 use super::{is_ident_continue, is_ident_start, Lexer, Mode, Payload, Tok};
 
 impl Lexer<'_> {
-    /// `JsxLt` if the `<` at the cursor starts a JSX element.
-    pub(super) fn jsx_start(&mut self) -> Option<Tok> {
-        let next = self.at(1);
-        if self.at(0) != b'<' || !(is_ident_start(next) || next == b'>') {
-            return None;
-        }
-        if !self.operand_expected() || self.generic_params_ahead() {
-            return None;
-        }
-        self.pos += 1;
-        self.modes.push(Mode::JsxTag { closing: false });
-        Some(Tok::JsxLt)
-    }
-
-    /// `<T,` or `<T extends`: the type parameters of a generic arrow, not a JSX tag.
-    fn generic_params_ahead(&self) -> bool {
-        let mut i = self.pos + 1;
-        while self.src.get(i).is_some_and(|&c| is_ident_continue(c)) {
-            i += 1;
-        }
-        if i == self.pos + 1 {
-            return false;
-        }
-        while self.src.get(i).is_some_and(|c| c.is_ascii_whitespace()) {
-            i += 1;
-        }
-        let rest = &self.src[i.min(self.src.len())..];
-        rest.starts_with(b",")
-            || (rest.starts_with(b"extends") && !rest.get(7).is_some_and(|&c| is_ident_continue(c)))
-    }
-
     /// One token inside a tag (trivia already skipped). `None` = skipped a bad character.
     pub(super) fn jsx_tag_token(&mut self) -> Option<Tok> {
         let start = self.pos;
@@ -56,13 +26,13 @@ impl Lexer<'_> {
             b'"' | b'\'' => self.jsx_string(c),
             b'{' => {
                 self.pos += 1;
-                self.modes.push(Mode::JsxExpr);
+                self.push_mode(Mode::JsxExpr);
                 Tok::LBrace
             }
             // An element as an attribute value: `<A icon=<Star /> />`.
             b'<' => {
                 self.pos += 1;
-                self.modes.push(Mode::JsxTag { closing: false });
+                self.push_mode(Mode::JsxTag { closing: false });
                 Tok::JsxLt
             }
             b'/' if self.at(1) == b'>' => {
@@ -94,17 +64,20 @@ impl Lexer<'_> {
     /// Leaves a tag at its `>` / `/>`: an opening tag's `>` starts its children; a closing tag
     /// (or a self-closing one) ends the element, and a closing tag also ends the children.
     fn end_tag(&mut self, self_closing: bool) {
-        match self.modes.pop() {
+        match self.mode() {
             Some(Mode::JsxTag { closing: true }) => {
-                if self.modes.last() == Some(&Mode::JsxChildren) {
-                    self.modes.pop();
+                self.pop_mode();
+                if self.mode() == Some(Mode::JsxChildren) {
+                    self.pop_mode();
                 }
             }
-            Some(Mode::JsxTag { closing: false }) if !self_closing => {
-                self.modes.push(Mode::JsxChildren);
+            Some(Mode::JsxTag { closing: false }) => {
+                self.pop_mode();
+                if !self_closing {
+                    self.push_mode(Mode::JsxChildren);
+                }
             }
-            Some(Mode::JsxTag { .. }) | None => {}
-            Some(other) => self.modes.push(other),
+            _ => {}
         }
     }
 
@@ -130,17 +103,17 @@ impl Lexer<'_> {
         match (self.at(0), self.at(1)) {
             (b'{', _) => {
                 self.pos += 1;
-                self.modes.push(Mode::JsxExpr);
+                self.push_mode(Mode::JsxExpr);
                 Tok::LBrace
             }
             (b'<', b'/') => {
                 self.pos += 2;
-                self.modes.push(Mode::JsxTag { closing: true });
+                self.push_mode(Mode::JsxTag { closing: true });
                 Tok::JsxLtSlash
             }
             (b'<', _) => {
                 self.pos += 1;
-                self.modes.push(Mode::JsxTag { closing: false });
+                self.push_mode(Mode::JsxTag { closing: false });
                 Tok::JsxLt
             }
             _ => self.jsx_text(),

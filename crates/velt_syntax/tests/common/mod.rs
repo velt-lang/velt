@@ -438,6 +438,8 @@ function main(): i32 {
   type L = i32;
   ;
   const id = <T,>(x: T): T => x;
+  const id2 = <T>(x: T): T => x;
+  const u = v.as<User>() ?? v?.as<User>();
   const page = (
     <>
       <ui.Card title="a &amp; b" data-id={id(1)} {...rest} svg:x="1" disabled>

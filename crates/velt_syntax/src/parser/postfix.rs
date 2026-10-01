@@ -194,6 +194,7 @@ impl<'a> Parser<'a> {
             | Tok::Float(_)
             | Tok::Str(_)
             | Tok::Template(..)
+            | Tok::Lt
             | Tok::JsxLt
             | Tok::LParen
             | Tok::LBracket

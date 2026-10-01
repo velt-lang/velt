@@ -78,7 +78,7 @@ impl FnCx<'_, '_> {
                     "a generic arrow function must be a module-level constant with typed parameters and a return type",
                     e.span,
                 )
-                .with_note("a function value has one type; write `const id = <T,>(x: T): T => x;` at module level, or a generic `function`"),
+                .with_note("a function value has one type; write `const id = <T>(x: T): T => x;` at module level, or a generic `function`"),
             );
             return self.error_expr(e.span);
         }
