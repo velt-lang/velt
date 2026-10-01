@@ -117,6 +117,7 @@ pub(crate) fn run(program: &vir::Program, optimize: bool) -> Result<(i32, String
     for (name, p) in stub_symbols() {
         jb.symbol(name, p);
     }
+    jb.memory_provider(crate::jit_memory::arena(16 << 20)?);
     let mut module = JITModule::new(jb);
     let built = crate::module::build_module(&mut module, program, &crate::module::Naming::Program)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;

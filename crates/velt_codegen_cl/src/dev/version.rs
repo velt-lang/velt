@@ -8,15 +8,12 @@ use velt_vir::vir;
 
 use crate::module::{build_module, DevFunction, Naming};
 
-/// Address space reserved for one version's code, data and unwind records on Windows x64,
-/// where it is committed up front (charged against the page file): the first version gets the
-/// most; later ones only hold the functions that changed.
-#[cfg(all(windows, target_arch = "x86_64"))]
+/// Address space reserved for one version's code, data and unwind records (committed up front
+/// on Windows, see `jit_memory`): the first version gets the most; later ones only hold the
+/// functions that changed.
 const FIRST_ARENA: usize = 128 << 20;
-#[cfg(all(windows, target_arch = "x86_64"))]
 const MIN_ARENA: usize = 4 << 20;
 /// Generous bytes of unoptimized code (and data) per VIR statement, to size later arenas.
-#[cfg(all(windows, target_arch = "x86_64"))]
 const BYTES_PER_STATEMENT: usize = 512;
 
 /// A compiled version: its module (owning the code), and by function index in the program the
@@ -43,12 +40,7 @@ pub(crate) fn compile(
     }
     #[cfg(unix)]
     builder.symbol_lookup_fn(Box::new(crate::c_symbols::lookup));
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    builder.memory_provider(crate::unwind::jit_windows::arena(arena_size(
-        program, names, first,
-    ))?);
-    #[cfg(not(all(windows, target_arch = "x86_64")))]
-    let _ = first;
+    builder.memory_provider(crate::jit_memory::arena(arena_size(program, names, first))?);
     let mut module = JITModule::new(builder);
     let built = build_module(&mut module, program, &Naming::Dev(names))?;
     #[cfg(all(windows, target_arch = "x86_64"))]
@@ -75,7 +67,6 @@ pub(crate) fn compile(
 }
 
 /// Arena size for a version: everything for the first, else sized by the defined functions.
-#[cfg(all(windows, target_arch = "x86_64"))]
 fn arena_size(program: &vir::Program, names: &[DevFunction], first: bool) -> usize {
     if first {
         return FIRST_ARENA;

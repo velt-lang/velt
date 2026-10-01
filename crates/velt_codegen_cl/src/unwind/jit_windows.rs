@@ -5,12 +5,12 @@
 //!
 //! `RtlAddFunctionTable` takes `RUNTIME_FUNCTION` entries whose code range and `UNWIND_INFO`
 //! pointer are 32-bit offsets from one base address, so the code and its unwind records must
-//! lie within 4 GiB of each other. The module therefore allocates from one contiguous arena
-//! ([`arena`]), and the unwind records become a read-only data object of the same module
+//! lie within 4 GiB of each other. Every JIT module allocates from one contiguous arena
+//! (`jit_memory`), so the unwind records become a read-only data object of the same module
 //! ([`JitUnwind::stage`]), placed in that arena when the module is finalized.
 
 use cranelift_codegen::isa::unwind::UnwindInfo;
-use cranelift_jit::{ArenaMemoryProvider, JITModule};
+use cranelift_jit::JITModule;
 use cranelift_module::{DataDescription, DataId, FuncId, Module};
 use windows_sys::Win32::System::Diagnostics::Debug::{
     RtlAddFunctionTable, IMAGE_RUNTIME_FUNCTION_ENTRY, IMAGE_RUNTIME_FUNCTION_ENTRY_0,
@@ -18,15 +18,6 @@ use windows_sys::Win32::System::Diagnostics::Debug::{
 
 use super::FunctionUnwind;
 use crate::CodegenResult;
-
-/// The memory provider for a JIT module whose unwind info will be registered: `size` bytes of
-/// address space for its code, data and unwind records (Windows commits it up front: charged
-/// against the page file, not touched until used).
-pub(crate) fn arena(size: usize) -> CodegenResult<Box<ArenaMemoryProvider>> {
-    ArenaMemoryProvider::new_with_size(size)
-        .map(Box::new)
-        .map_err(|e| format!("codegen: reserving JIT memory: {e}"))
-}
 
 /// A module's unwind records, defined as data but not yet registered.
 pub(crate) struct JitUnwind {
