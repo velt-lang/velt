@@ -32,12 +32,19 @@ step() {
     printf '\033[32m    ok (%ds)\033[0m\n' $((SECONDS - start))
 }
 
-step "build" cargo build --workspace --all-targets
-step "clippy" cargo clippy --workspace --all-targets -- -D warnings
+# musl targets link statically and cannot build a cdylib, so the shared runtime (an optional
+# speed-up for debug links; `velt` falls back to the static runtime) is left out there.
+workspace=(--workspace)
+if rustc -vV | grep -q '^host: .*-musl'; then
+    workspace+=(--exclude velt_rt_shared)
+fi
+
+step "build" cargo build "${workspace[@]}" --all-targets
+step "clippy" cargo clippy "${workspace[@]}" --all-targets -- -D warnings
 step "cargo fmt --check" cargo fmt --all --check
 # The end-to-end goldens are their own step below (run once, with their summary); --no-fail-fast
 # reports every failing test binary in one run.
-step "unit + integration tests" cargo test --workspace --no-fail-fast -- --skip golden --exact
+step "unit + integration tests" cargo test "${workspace[@]}" --no-fail-fast -- --skip golden --exact
 # Non-strict: goldens under a `.pending` dir (known bugs, milestones in progress) are reported only.
 step "goldens (debug + release)" cargo test -p veltc --test golden -- --nocapture
 velt_bin="${CARGO_TARGET_DIR:-target}/debug/velt"
