@@ -1,5 +1,7 @@
 //! Ownership in M2: parameter / receiver / binding ownership inference, moves out of borrowed
-//! places, partial moves, closures moving their captures.
+//! places, partial moves, closures moving their captures. Semantics stage 2: a non-Copy value
+//! used again (or taken out of a borrowed place) is shared (`Intrinsic::Share`) instead of being
+//! a "use of moved value"; only promises keep move errors.
 
 mod common;
 
@@ -32,78 +34,77 @@ fn ownership_propagates_through_calls() {
     assert_eq!(func(&p, "relay").params[0].mode, PassMode::Owned);
 }
 
+/// Number of `Intrinsic::Share` calls in `f`.
+fn shares(f: &velt_sema::hir::FnDef) -> usize {
+    calls(f)
+        .into_iter()
+        .filter(|(c, _)| matches!(c, Callee::Intrinsic(velt_sema::hir::Intrinsic::Share)))
+        .count()
+}
+
 #[test]
-fn use_after_passing_to_owned_param_is_an_error() {
-    let r = err_src(
+fn use_after_passing_to_owned_param_shares() {
+    let p = ok_src(
         "function take(s: i64[]): i64[] { return s; }
          function main() { const a = [1]; take(a); console.log(a); }",
     );
-    assert!(r.contains("use of moved value `a`"), "{r}");
-    assert!(r.contains("main.vlt:2:64"), "{r}");
-    // A string argument still used afterwards is copied instead.
+    assert_eq!(shares(func(&p, "main")), 1);
     let p = ok_src(
         "function take(s: string): string { return s; }
          function main() { const a = `x${1}`; take(a); console.log(a); }",
     );
-    let clones = calls(func(&p, "main"))
-        .into_iter()
-        .filter(|(c, _)| matches!(c, Callee::Intrinsic(velt_sema::hir::Intrinsic::Clone)))
-        .count();
-    assert_eq!(clones, 1);
-}
-
-#[test]
-fn modified_and_moved_params_are_owned() {
+    assert_eq!(shares(func(&p, "main")), 1);
+    // Promises have one owner.
     let r = err_src(
-        "function f(xs: i64[]): i64[] { xs.push(1); return xs; }
-         function main() { const a: i64[] = []; f(a); console.log(a); }",
+        "async function f(): Promise<i64> { return 1; }
+         function keep(p: Promise<i64>): Promise<i64> { return p; }
+         async function main() { const a = f(); keep(a); console.log(await a); }",
     );
     assert!(r.contains("use of moved value `a`"), "{r}");
 }
 
 #[test]
-fn moving_out_of_array_elements_and_for_of_bindings() {
-    let r = err_src("function main() { const xs = [[1]]; let s = xs[0]; console.log(s); }");
-    assert!(
-        r.contains("cannot move out of an array element; use .clone() or pop()"),
-        "{r}"
+fn modified_and_moved_params_are_owned() {
+    let p = ok_src(
+        "function f(xs: i64[]): i64[] { xs.push(1); return xs; }
+         function main() { const a: i64[] = []; f(a); console.log(a); }",
     );
+    assert_eq!(func(&p, "f").params[0].mode, PassMode::Owned);
+    assert_eq!(shares(func(&p, "main")), 1);
+}
+
+#[test]
+fn array_elements_and_for_of_bindings_are_shared() {
+    let p = ok_src("function main() { const xs = [[1]]; let s = xs[0]; console.log(s); }");
+    assert_eq!(shares(func(&p, "main")), 1);
     // A `const` refers to the element in place (`body::const_borrow`).
-    ok_src("function main() { const xs = [[1]]; const s = xs[0]; console.log(s); }");
-    let r = err_src(
+    let p = ok_src("function main() { const xs = [[1]]; const s = xs[0]; console.log(s); }");
+    assert_eq!(shares(func(&p, "main")), 0);
+    let p = ok_src(
         "function main() { const xs = [[1]]; const out: i64[][] = []; for (const s of xs) { out.push(s); } }",
     );
-    assert!(
-        r.contains("cannot move out of `s`, which borrows an array element"),
-        "{r}"
-    );
+    assert_eq!(shares(func(&p, "main")), 1);
     ok_src("function main() { const xs = [[1]]; const out: i64[][] = []; for (const s of xs) { out.push(s.clone()); } }");
-    // Strings are values: elements are copied out.
     ok_src("function main() { const xs = [\"a\"]; const s = xs[0]; const out: string[] = []; for (const t of xs) { out.push(t); } console.log(s, xs, out); }");
 }
 
 #[test]
-fn class_fields_cannot_be_moved_out() {
-    let r = err_src(
+fn class_fields_are_shared() {
+    let p = ok_src(
         "class U { items: i64[] = []; }
          function main() { const u = new U(); const out: i64[][] = []; out.push(u.items); }",
     );
-    assert!(
-        r.contains("cannot move a field out of a class instance"),
-        "{r}"
-    );
+    assert_eq!(shares(func(&p, "main")), 1);
     ok_src(
         "class U { items: i64[] = []; }
          function main() { const u = new U(); const n = u.items; console.log(n); }",
     );
-    let r = err_src(
+    // Replacing the field while `n` refers to it: `n` keeps the old array (a share).
+    let p = ok_src(
         "class U { items: i64[] = []; }
          function main() { const u = new U(); const n = u.items; u.items = [2]; console.log(n); }",
     );
-    assert!(
-        r.contains("cannot modify `u.items` while `n` refers to `u.items`"),
-        "{r}"
-    );
+    assert_eq!(shares(func(&p, "main")), 1);
     ok_src(
         "class U { name: string = \"n\"; getName(): string { return this.name; } }
          function main() { const u = new U(); const n = u.name; console.log(n, u.getName(), u.name); }",
@@ -116,16 +117,14 @@ fn struct_fields_move_separately() {
         "struct P { a: i64[]; b: i64[]; }
          function main() { const p = P { a: [1], b: [2] }; const a = p.a; const b = p.b; console.log(a, b); }",
     );
-    let r = err_src(
+    for src in [
         "struct P { a: i64[]; b: i64[]; }
          function main() { const p = P { a: [1], b: [2] }; const a = p.a; console.log(p.a, a); }",
-    );
-    assert!(r.contains("use of moved value `p`"), "{r}");
-    let r = err_src(
         "struct P { a: i64[]; b: i64[]; }
          function main() { const p = P { a: [1], b: [2] }; const a = p.a; console.log(p, a); }",
-    );
-    assert!(r.contains("use of moved value `p`"), "{r}");
+    ] {
+        assert_eq!(shares(func(&ok_src(src), "main")), 1);
+    }
     ok_src(
         "struct P { a: string; b: string; }
          function main() { const p = P { a: \"x\", b: \"y\" }; const a = p.a; console.log(p, p.a, a); }",
@@ -135,9 +134,8 @@ fn struct_fields_move_separately() {
 #[test]
 fn copy_structs_copy_and_classes_move() {
     ok_src("struct P { x: f64; } function main() { const p = P { x: 1.0 }; const q = p; console.log(p.x, q.x); }");
-    let r = err_src("class C { x: f64 = 1.0; } function main() { const p = new C(); const q = p; console.log(p.x, q.x); }");
-    assert!(r.contains("use of moved value `p`"), "{r}");
-    assert!(r.contains("clone()"), "{r}");
+    let p = ok_src("class C { x: f64 = 1.0; } function main() { const p = new C(); const q = p; console.log(p.x, q.x); }");
+    assert_eq!(shares(func(&p, "main")), 1);
 }
 
 #[test]
@@ -156,11 +154,11 @@ fn receivers_that_are_moved_from_are_owned() {
         .unwrap();
     assert_eq!(take.params[0].mode, PassMode::Owned);
     assert_eq!(uses_of(func(&p, "main"), "xs"), vec![UseMode::Move]);
-    let r = err_src(
+    let p = ok_src(
         "extend<T> Array<T> { take(): T[] { return this; } }
          function main() { const xs = [1, 2]; const ys = xs.take(); console.log(xs.length, ys.length); }",
     );
-    assert!(r.contains("use of moved value `xs`"), "{r}");
+    assert_eq!(shares(func(&p, "main")), 1);
 }
 
 #[test]
@@ -195,12 +193,15 @@ fn narrowed_members_move_from_places_when_moved() {
 }
 
 #[test]
-fn escaping_closures_move_captures() {
-    let r = err_src(
+fn escaping_closures_move_or_share_captures() {
+    let p = ok_src(
         "function main() { const s = [1]; const f = () => s; console.log(s); console.log(f()); }",
     );
-    assert!(r.contains("use of moved value `s`"), "{r}");
-    assert!(r.contains("shared(s)"), "{r}");
+    let shared = p
+        .defs
+        .iter()
+        .any(|d| matches!(d, velt_sema::hir::Def::Fn(f) if f.captures.iter().any(|c| c.share)));
+    assert!(shared, "the closure shares `s`");
     // A string variable used after the closure is created is copied into it.
     ok_src(
         "function main() { const s = `a${1}`; const f = () => s; console.log(s); console.log(f()); }",
@@ -222,16 +223,11 @@ fn owned_params_cannot_be_function_values() {
 }
 
 #[test]
-fn closures_cannot_move_their_params_or_captures() {
-    let r = err_src(
+fn closures_share_their_params_and_captures() {
+    ok_src(
         "function main() { const out: i64[][] = []; const xs = [[1]]; xs.forEach((x) => { out.push(x); }); }",
     );
-    assert!(
-        r.contains("cannot move out of `x`, which is borrowed"),
-        "{r}"
-    );
-    let r = err_src("function main() { const s = [1]; const f = () => { const t = s; return t; }; console.log(f()); }");
-    assert!(r.contains("cannot move captured variable `s`"), "{r}");
+    ok_src("function main() { const s = [1]; const f = () => { const t = s; return t; }; console.log(f()); }");
     // Strings are copied instead.
     ok_src("function main() { const out: string[] = []; const xs = [\"a\"]; xs.forEach((x) => { out.push(x); }); }");
     ok_src("function main() { const s = `a${1}`; const f = () => { const t = s; return t; }; console.log(f()); }");
@@ -239,15 +235,13 @@ fn closures_cannot_move_their_params_or_captures() {
 
 #[test]
 fn virtual_method_params_are_borrowed() {
-    let r = err_src(
+    let p = ok_src(
         "class A { items: i64[][] = []; add(s: i64[]) { this.items.push(s); } }
          class B extends A { override add(s: i64[]) { this.items.push(s); } }
          function main() { let b = new B(); b.add([1]); }",
     );
-    assert!(
-        r.contains("cannot move out of `s`, which is borrowed"),
-        "{r}"
-    );
+    assert_eq!(func(&p, "A.add").params[1].mode, PassMode::Borrow);
+    assert_eq!(shares(func(&p, "A.add")), 1);
 }
 
 #[test]
@@ -273,11 +267,11 @@ fn owned_arg_through_upcast_and_wrap() {
 
 #[test]
 fn moves_in_loops_and_branches() {
-    let r = err_src(
+    let p = ok_src(
         "function take(s: i64[]): i64[] { return s; }
          function main() { const s = [1]; for (let i = 0; i < 2; i++) { take(s); } }",
     );
-    assert!(r.contains("use of moved value `s`"), "{r}");
+    assert_eq!(shares(func(&p, "main")), 1);
     ok_src(
         "function take(s: i64[]): i64[] { return s; }
          function main() { let s = [1]; for (let i = 0; i < 2; i++) { take(s); s = [2]; } }",
@@ -286,13 +280,13 @@ fn moves_in_loops_and_branches() {
 
 #[test]
 fn try_catch_moves_are_joined() {
-    let r = err_src(
+    let p = ok_src(
         "class E { m: string = \"e\"; }
          function take(s: i64[]): i64[] { return s; }
          function risky(): i64 { throw new E(); }
          function main() { const s = [1]; try { take(s); risky(); } catch (e) { console.log(s); } }",
     );
-    assert!(r.contains("use of moved value `s`"), "{r}");
+    assert_eq!(shares(func(&p, "main")), 1);
 }
 
 #[test]
@@ -326,24 +320,19 @@ fn destructuring_moves_or_borrows() {
 }
 
 #[test]
-fn moving_a_field_out_of_a_borrow_names_the_place() {
-    let r = err_src("function main() { const xs = [{ a: [1] }]; const ys = xs.map((t) => t.a); }");
-    assert!(
-        r.contains("cannot move `t.a` out of `t`, which is borrowed"),
-        "{r}"
-    );
-    assert!(r.contains("`t.a.clone()`"), "{r}");
+fn fields_of_borrowed_values_are_shared() {
+    ok_src("function main() { const xs = [{ a: [1] }]; const ys = xs.map((t) => t.a); }");
     ok_src("function main() { const xs = [{ a: [1] }]; const ys = xs.map((t) => t.a.clone()); }");
     ok_src("function main() { const xs = [{ a: `x${1}` }]; const ys = xs.map((t) => t.a); }");
 }
 
 #[test]
 fn object_types_are_not_copy() {
-    let r = err_src(
+    let p = ok_src(
         "type P = { x: i64 };
          function main() { const a: P = { x: 1 }; const b = a; console.log(a.x, b.x); }",
     );
-    assert!(r.contains("use of moved value `a`"), "{r}");
+    assert_eq!(shares(func(&p, "main")), 1);
     ok_src(
         "struct S { x: i64; }
          function main() { const a = S { x: 1 }; const b = a; console.log(a.x, b.x); }",

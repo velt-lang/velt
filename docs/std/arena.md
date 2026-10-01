@@ -5,14 +5,14 @@ growing array and named by their `u32` index, and the whole pool is released at 
 `reset()`, which keeps the memory for the next round: a tree rebuilt on every iteration costs no
 allocation after the first one.
 
-It works best with Copy structs that link to each other by index
+It works best with small structs of numbers that link to each other by index
 (`struct Node { left: u32; right: u32 }`), the shape of Rust's typed-arena programs: `u32`
 indices are half the size of pointers, so twice as many nodes fit in a cache line. Indices stay
 valid until `reset()`.
 
 - `new Arena<T>(capacity: usize = 0)`: `capacity` values fit before the pool first grows.
 - `alloc(value): u32` stores a value and returns its index.
-- `get(index): T` (a copy for Copy types, else a clone), `set(index, value)`.
+- `get(index): T` (an independent copy, `clone()`), `set(index, value)`.
 - `length`: values allocated since the last `reset()`.
 - `reset()` drops every value and keeps the memory.
 

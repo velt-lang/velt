@@ -1,3 +1,4 @@
+{ a: [ 1, 2 ] } { hits: Counter { n: 1 }, misses: Counter { n: 5 } }
 /home/a /bin null [ 'HOME', 'SHELL', 'PATH', 'EDITOR' ]
 HOME /home/a
 PATH /bin

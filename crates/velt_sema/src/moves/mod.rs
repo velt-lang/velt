@@ -39,18 +39,35 @@ struct Moves<'a> {
     /// copy of the loop variable is what JS sees too.
     in_step: bool,
     never: TyId,
-    str_: TyId,
+    /// Per local of the function: is its value shared (`Ctx::is_shared_value`) rather than
+    /// moved when an escaping closure captures it and it is used again?
+    shared: Vec<bool>,
     report: bool,
     errors: Vec<Diagnostic>,
     loops: Vec<LoopFlow>,
     /// Soft moves of this function (`FnInfo::soft_moves`) and those whose place is used again.
     soft: HashSet<Span>,
     reused: HashSet<Span>,
+    /// Per escaping closure: the enclosing variables it captures by value and assigns.
+    writers: &'a HashMap<DefId, HashSet<LocalId>>,
+    /// Per local: may it live in a shared cell (not a promise, no async closure captures it)?
+    boxable: Vec<bool>,
+    /// Locals that need a shared cell (`LocalDef::boxed`, see `crate::ownership::cells`).
+    boxed: HashSet<LocalId>,
 }
 
-/// Check every function body. Returns, per function, the soft moves (async-call arguments,
-/// strings) whose place is used again: they must become clones (`crate::ownership::soft`).
-pub(crate) fn check_all(cx: &mut Ctx) -> HashMap<DefId, HashSet<Span>> {
+/// What the move dataflow found besides errors.
+#[derive(Default)]
+pub(crate) struct Outcome {
+    /// Per function: the soft moves whose place is used again (they become shares,
+    /// `crate::ownership::soft`).
+    pub reused: HashMap<DefId, HashSet<Span>>,
+    /// Per function: the variables that need a shared cell (`crate::ownership::cells`).
+    pub boxed: HashMap<DefId, HashSet<LocalId>>,
+}
+
+/// Check every function body.
+pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
     let mut captures = HashMap::new();
     let mut escaping = HashSet::new();
     for (i, d) in cx.defs.iter().enumerate() {
@@ -62,9 +79,27 @@ pub(crate) fn check_all(cx: &mut Ctx) -> HashMap<DefId, HashSet<Span>> {
             }
         }
     }
-    let (never, str_) = (cx.ty.never, cx.ty.str_);
+    let never = cx.ty.never;
+    let local_tys: Vec<Vec<TyId>> = cx
+        .defs
+        .iter()
+        .map(|d| match d {
+            Some(Def::Fn(f)) => f.body.locals.iter().map(|l| l.ty).collect(),
+            _ => vec![],
+        })
+        .collect();
+    let copy: Vec<Vec<bool>> = local_tys
+        .iter()
+        .map(|tys| tys.iter().map(|&t| cx.is_copy(t)).collect())
+        .collect();
+    let shared: Vec<Vec<bool>> = local_tys
+        .into_iter()
+        .map(|tys| tys.into_iter().map(|t| cx.is_shared_value(t)).collect())
+        .collect();
+    let writers = writers(cx, &escaping);
+    let async_captured = async_captured(cx);
     let mut all = vec![];
-    let mut reused = HashMap::new();
+    let mut out = Outcome::default();
     for (i, d) in cx.defs.iter().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let def = DefId(i as u32);
@@ -88,18 +123,37 @@ pub(crate) fn check_all(cx: &mut Ctx) -> HashMap<DefId, HashSet<Span>> {
             holder: None,
             open: vec![],
             never,
-            str_,
-            report: true,
+            boxable: shared[i]
+                .iter()
+                .zip(&copy[i])
+                .enumerate()
+                .map(|(l, (s, c))| {
+                    (*s || *c) && !async_captured.contains(&(def, LocalId(l as u32)))
+                })
+                .collect(),
+            shared: shared[i].clone(),
+            writers: &writers,
+            boxed: HashSet::new(),
+            report: false,
             errors: vec![],
             loops: vec![],
             soft,
             reused: HashSet::new(),
         };
-        let mut st = Some(State::new(f.body.locals.len()));
-        m.block(&f.body.block, &mut st);
+        // A silent pass first (only bodies creating an escaping closure can need a cell): a
+        // variable found to need a shared cell late in the body is no move error earlier either.
+        if creates_escaping(&f.body.block, &escaping) {
+            m.report = false;
+            m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
+        }
+        m.report = true;
+        m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
         all.extend(m.errors);
         if !m.reused.is_empty() {
-            reused.insert(def, m.reused);
+            out.reused.insert(def, m.reused);
+        }
+        if !m.boxed.is_empty() {
+            out.boxed.insert(def, m.boxed);
         }
     }
     let mut seen = HashSet::new();
@@ -109,7 +163,62 @@ pub(crate) fn check_all(cx: &mut Ctx) -> HashMap<DefId, HashSet<Span>> {
             cx.error(d);
         }
     }
-    reused
+    out
+}
+
+/// Per escaping closure: the enclosing variables it captures by value and assigns.
+fn writers(cx: &mut Ctx, escaping: &HashSet<DefId>) -> HashMap<DefId, HashSet<LocalId>> {
+    let mut out = HashMap::new();
+    for &c in escaping {
+        let Some(Def::Fn(mut f)) = cx.defs[c.0 as usize].take() else {
+            continue;
+        };
+        let mut assigned = HashSet::new();
+        crate::visit::exprs_mut(&mut f.body.block, &mut |e: &mut crate::hir::Expr| {
+            use crate::hir::ExprKind as E;
+            if let E::Assign { place, .. } | E::CompoundAssign { place, .. } = &e.kind {
+                if let E::Local(l, _) = place.kind {
+                    assigned.insert(l);
+                }
+            }
+        });
+        let outer: HashSet<LocalId> = f
+            .captures
+            .iter()
+            .filter(|cap| assigned.contains(&cap.inner))
+            .map(|cap| cap.outer)
+            .collect();
+        cx.defs[c.0 as usize] = Some(Def::Fn(f));
+        out.insert(c, outer);
+    }
+    out
+}
+
+/// `(function, local)` pairs captured by an async closure: such a variable keeps its own
+/// value per closure (async closures may run on other threads, and cells are not atomic).
+fn async_captured(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
+    let mut out = HashSet::new();
+    for i in 0..cx.defs.len() {
+        let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
+            continue;
+        };
+        let mut closures = vec![];
+        crate::visit::exprs_mut(&mut f.body.block, &mut |e: &mut crate::hir::Expr| {
+            if let crate::hir::ExprKind::Closure(c) = e.kind {
+                closures.push(c);
+            }
+        });
+        cx.defs[i] = Some(Def::Fn(f));
+        for c in closures {
+            if let Some(Def::Fn(cf)) = &cx.defs[c.0 as usize] {
+                if cf.is_async {
+                    let d = DefId(i as u32);
+                    out.extend(cf.captures.iter().map(|cap| (d, cap.outer)));
+                }
+            }
+        }
+    }
+    out
 }
 
 impl Moves<'_> {
@@ -125,6 +234,9 @@ impl Moves<'_> {
     ) {
         let Some(s) = st else { return };
         let i = l.0 as usize;
+        if self.watch_cell(s, i, closure) {
+            s.clear(i);
+        }
         if s.overlaps(i, path) {
             match s.moved_at[i] {
                 Some((at, MoveKind::Soft)) => {
@@ -172,10 +284,19 @@ impl Moves<'_> {
     fn assigned(&mut self, l: LocalId, span: Span, st: &mut Flow) {
         let Some(s) = st else { return };
         let i = l.0 as usize;
-        let Some((at, _)) = s.captured[i].take() else {
+        let Some((at, holder, writes)) = s.captured[i].take() else {
             return;
         };
-        if !self.report || self.in_step {
+        if self.in_step {
+            return;
+        }
+        if self.boxable[i] {
+            // The closure and this function see one variable: it lives in a shared cell.
+            self.boxed.insert(l);
+            s.captured[i] = Some((at, holder, writes));
+            return;
+        }
+        if !self.report {
             return;
         }
         let name = &self.locals[i].name;
@@ -189,6 +310,17 @@ impl Moves<'_> {
                 "the closure keeps its own copy of `{name}` and would not see the new value; assign `{name}` before creating the closure, use a separate variable, or share it with `shared(...)`"
             )),
         );
+    }
+
+    /// A use of local `i` (by this function, or a capture by a closure: `closure`) while an
+    /// escaping closure that assigns it holds it: the variable needs a shared cell. Returns
+    /// whether it is (now) boxed, so a move into that closure is no move.
+    fn watch_cell(&mut self, s: &mut State, i: usize, closure: bool) -> bool {
+        let l = LocalId(i as u32);
+        if s.captured[i].is_some_and(|(_, _, writes)| writes) && self.boxable[i] && !closure {
+            self.boxed.insert(l);
+        }
+        self.boxed.contains(&l)
     }
 
     fn moved_error(&self, i: usize, moved_at: Option<(Span, MoveKind)>, span: Span) -> Diagnostic {
@@ -346,4 +478,16 @@ impl Moves<'_> {
             self.block(f, st);
         }
     }
+}
+
+/// Does block `b` create an escaping closure?
+fn creates_escaping(b: &crate::hir::Block, escaping: &HashSet<DefId>) -> bool {
+    let mut b = b.clone();
+    let mut found = false;
+    crate::visit::exprs_mut(&mut b, &mut |e: &mut crate::hir::Expr| {
+        if let crate::hir::ExprKind::Closure(c) = e.kind {
+            found |= escaping.contains(&c);
+        }
+    });
+    found
 }

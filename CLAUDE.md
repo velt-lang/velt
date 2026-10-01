@@ -21,6 +21,10 @@ follow it. The essentials for agents:
 - Try a program: `cargo run -p veltc --bin velt -- run tests/golden/m1/hello.vlt`
 
 ## Rules for agents
+0. Work in your own git worktree, never in the main checkout: `velt/main` stays on `main`, and each
+   task gets `velt/branches/<task>` (`git worktree add ../branches/<task> -b <task> origin/main`;
+   CONTRIBUTING.md "Working on several things at once"). If you find yourself in `main/`, create
+   your worktree first. Use a build directory of your own for that worktree.
 1. Stay within the crates your task owns. Treat the contracts as fixed (`ast.rs`, `hir`,
    `vir.rs` types, `velt_common`, public API signatures, `docs/internals/contracts/*`,
    `tests/golden/**`); if one must change, say so in your report and work around it meanwhile.
@@ -28,7 +32,12 @@ follow it. The essentials for agents:
    (hand-built inputs, unit tests, snapshot tests).
 3. Before you finish: `cargo build --workspace` and `cargo test -p <your crates>` pass, and
    `cargo clippy -p <your crates> --all-targets -- -D warnings` is clean. Commit on your branch
-   with a message like `frontend: lexer + Pratt parser for M1 subset`. Never push unless asked.
+   with a message like `frontend: lexer + Pratt parser for M1 subset`. Push your branch and open
+   a pull request (`Closes #N`, gate result); never push to `main`. The pull request title and
+   description become the squash commit message: no "Generated with …" footers, session links or
+   `Co-authored-by` trailers there or in commits, and commits keep the repository's configured
+   author. CI runs the fast gate on the
+   pull request and the full three-OS gate in the merge queue (CONTRIBUTING.md).
 4. Compiler code must not panic on user input; report `Diagnostic`s. Internal invariant
    violations may panic with a message starting `ICE:`.
 5. Every bug fix gets a regression test (end-to-end or unit). Every user-visible change updates

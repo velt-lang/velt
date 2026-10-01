@@ -110,13 +110,15 @@ console.log(label("tea", 3), "a,b".split(","), "  x ".trim().padStart(3, "*"));
 - `==` and `===` are the same operator, as are `!=` and `!==`: there is no coercion, and both
   operands must have the same type (`1 == "1"` is a compile error; an `i64` compared with an
   `i32` needs a cast).
-- Numbers, bools and strings compare by value. Structs and arrays compare by content; class
-  instances by identity.
+- Numbers, bools and strings compare by value. Objects (class instances, arrays, maps,
+  structs, object literals, interface and function values) compare by **identity**, like JS:
+  `[1] == [1]` is `false`, and `a == b` is `true` when `b` refers to the same object as `a`.
+  `T | null`, unions and tuples compare their parts that way.
+- Content comparison: `deepEqual(a, b)` ([prelude](../std/prelude.md)) compares arrays,
+  structs and object literals by their contents, recursively, and class instances (`Map`
+  included) by identity; `assertEq` uses it.
 - `<`, `<=`, `>`, `>=` work on numbers and strings, and on a generic `T extends Comparable<T>`
   ([Comparable](classes.md#comparable)).
-- **Planned** ([semantics](../internals/design/semantics.md#js-fidelity-decisions)): every
-  object, including arrays and today's structs, compares by identity; content comparison goes
-  through `.equals(other)` or a std `deepEqual`.
 
 ## Null
 
@@ -142,9 +144,9 @@ has type `T | null`, stored without an extra allocation where possible.
   so a call that set it to `null` in between panics instead of reading `null`. Inside a
   closure, a variable narrowed where the closure is created stays narrowed (the closure may not
   assign it).
-- `const x = node.left` / `const row = grid[i]` (a class field or array element that cannot be
-  moved out) refers to the value in place, read-only; the rest of the block may not change that
-  place while `x` exists (``cannot modify `node.left` while `x` refers to `node.left` ``).
+- `const x = node.left` / `const row = grid[i]` refers to the same object as the field or
+  element (objects are references, [Memory model](memory.md#values-and-references)); when the
+  rest of the block replaces `node.left`, `x` keeps referring to the old object, as in JS.
 
 ```ts
 class User {
@@ -209,7 +211,8 @@ the nullable type; `void` cannot be a member.
 - Printing and template literals show the active member's value. `JSON.stringify` works on
   unions; `JSON.parse` decodes them when the JSON value tells the members apart (discriminated
   unions by their discriminant; see [`velt:json`](../std/json.md)).
-- A union is Copy when all its members are; otherwise it owns its active member.
+- A union of numbers, bools, strings and literals is copied; one holding an object refers to
+  it like any other variable.
 
 ```ts
 class NotFound {
@@ -316,11 +319,13 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   `n` elements in one allocation. A bare `new Array<T>(n)` is an error: arrays have no holes.
 - **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. `Promise.all` over tuples of
   different types is not supported.
-- **`Map<K, V>`**: `new Map<K, V>()`, `set`, `get(k): V | null` (a copy), `has`, `delete`,
-  `size`, `keys()`, `values()`, `entries()`, `for (const [k, v] of m)`, plus single-lookup
-  updates: `upsert(k, init, (v) => v + 1)`, `update(k, (v) => { v.push(x); }): bool` (the
-  callback gets the stored value itself) and `getOrInsert(k, () => v)`. Keys: numbers, `bool`,
-  `string`, Copy structs. Iteration follows insertion order, like JS.
+- **`Map<K, V>`**: `new Map<K, V>()`, `set`, `get(k): V | null` (the stored value itself, as in
+  JS), `has`, `delete`, `size`, `keys()`, `values()`, `entries()`, `for (const [k, v] of m)`,
+  plus single-lookup updates: `upsert(k, init, (v) => v + 1)`,
+  `update(k, (v) => { v.push(x); }): bool` (the callback gets the stored value itself) and
+  `getOrInsert(k, () => v)`. Keys: numbers, `bool`, `string`, class instances (by identity),
+  and structs, object types and tuples, which compare by content (in JS two equal object
+  literals are two different keys). Iteration follows insertion order, like JS.
 - **`Record<K, V>`**: a dictionary written with object syntax, like TypeScript's `Record`.
   `K` is `string`, a union of string literal types, or a string enum. With `string` keys a
   record is *open*: `r[k]` and `r.name` are `V | null`, `r[k] = v` inserts or replaces, and
@@ -329,8 +334,7 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   object literal where a record is expected (`const r: Record<string, i64> = {}`; a closed
   record's literal must list every key) or with `new Record<string, V>()`. A literal may
   spread another record (`{ ...r, x: 1 }`). `Object.keys(r)`, `Object.values(r)` and
-  `Object.entries(r)` return arrays in insertion order. Reads return a copy, so modifying
-  `r[k].push(x)` is an error: assign the changed value back. `console.log` and `JSON` treat a
+  `Object.entries(r)` return arrays in insertion order. `console.log` and `JSON` treat a
   record as an object. A literal for an enum-keyed record is not supported yet.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,
   strings, literal types, arrays, tuples, enums, nullable values, `Map<string, V>`,

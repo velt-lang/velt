@@ -149,9 +149,10 @@ console.log(total, squares, first + second, merged);
 
 ## Memory in one minute
 
-There is no garbage collector. Strings are values you can copy freely. Other objects (arrays,
-class instances, maps) have one owner and are freed when the owner goes out of scope; calls
-borrow them, so passing an object to a function never gives it away:
+There is no garbage collector. Numbers and strings are values you can copy freely. Other
+objects (arrays, class instances, maps) are references, as in JS, and are freed the moment
+their last reference goes; calls borrow them, so passing an object to a function costs
+nothing:
 
 ```ts
 class User {
@@ -167,8 +168,8 @@ save(user);
 ```
 
 There is no `mut`: the compiler infers which functions modify their arguments. Assigning an
-object to a second variable moves it today; JavaScript-style shared references are the next
-planned stage. [Memory without a garbage collector](memory.md) explains the model.
+object to a second variable refers to the same object, as in JS; `.clone()` makes a deep copy.
+[Memory without a garbage collector](memory.md) explains the model.
 
 ## Async and I/O
 
@@ -191,8 +192,7 @@ async function main() {
   const counter = shared(0);
   const tasks: Promise<void>[] = [];
   for (let i = 0; i < 100; i++) {
-    const c = counter.clone();
-    tasks.push(spawn(async () => { c.add(1); }));   // on any core
+    tasks.push(spawn(async () => { counter.add(1); })); // on any core
   }
   await Promise.all(tasks);
   console.log(counter.get());                        // 100

@@ -42,9 +42,10 @@ garbage collector and no runtime to install.
   Linux arm64, 10 cores shared with the load generator and PostgreSQL), Velt answers 741k JSON
   requests/s (Rust axum 619k, Go 327k, Node 100k) and is within 0.94–1.07× of Rust on every
   database test, at 25–54 MB of memory (Node: 173–278 MB).
-- **No garbage collector, no pauses.** Memory is freed deterministically, and cleanup
-  (`[Symbol.dispose]`, `using`) runs at a known point. The compiler infers ownership and
-  mutation: no lifetimes, no borrow syntax, no `mut`.
+- **No garbage collector, no pauses.** Objects are references, as in JavaScript, and memory is
+  freed deterministically when the last reference goes; cleanup (`[Symbol.dispose]`, `using`)
+  runs at a known point. The compiler infers ownership and mutation: no lifetimes, no borrow
+  syntax, no `mut`, and no reference count for values with a single owner.
 - **Errors are typed.** `catch (e)` knows exactly what the `try` block can throw. Errors compile
   to plain return values: no unwinding, no exception tables.
 - **Async on every core.** Promises start eagerly and behave like JavaScript's, a directly

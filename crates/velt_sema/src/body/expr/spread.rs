@@ -183,16 +183,7 @@ impl FnCx<'_, '_> {
         if mode != UseMode::Borrow {
             return field;
         }
-        if self.cx.owns_resource(ty) {
-            let tn = self.cx.display(ty);
-            self.cx.err(
-                format!(
-                    "cannot spread: a field of type `{tn}` owns a resource and cannot be cloned"
-                ),
-                span,
-            );
-        }
-        self.intrinsic(Intrinsic::Clone, vec![field], ty, span)
+        self.intrinsic(Intrinsic::Share, vec![field], ty, span)
     }
 
     fn spread_anon(&mut self, entries: Vec<(String, Value)>, span: Span) -> hir::Expr {
@@ -371,7 +362,7 @@ impl FnCx<'_, '_> {
         let value = if copy {
             read
         } else {
-            self.intrinsic(Intrinsic::Clone, vec![read], elem, span)
+            self.intrinsic(Intrinsic::Share, vec![read], elem, span)
         };
         let push = self.push_stmt(out, arr_ty, value);
         let binding = Pat {

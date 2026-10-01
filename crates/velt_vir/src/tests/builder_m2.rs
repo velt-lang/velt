@@ -61,6 +61,7 @@ pub(super) fn adt(name: &str, kind: AdtKind, fields: Vec<(&str, TyId, Option<Exp
             })
             .collect(),
         is_copy,
+        assigned: false,
         base: None,
         ctor: None,
         dispose: None,
@@ -260,7 +261,7 @@ pub(super) fn closure_def(
             outer: *outer,
             inner: l,
             mode: *mode,
-            clone: false,
+            share: false,
         });
         inner.push(l);
     }

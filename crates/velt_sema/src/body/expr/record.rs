@@ -3,7 +3,7 @@
 //! union of string literal types / a string enum (a *closed* record: every key is present).
 //!
 //! - `r[k]`, `r.name`: `r.__get(k)` (`V | null`) on open records, `r.__at(k)` (`V`) on closed
-//!   ones. The result is a copy: mutating through it is an error.
+//!   ones: the stored value itself, so modifying it modifies the record's entry (as in JS).
 //! - `r[k] = v`: `r.__set(k, v)`; `r[k] op= v` and `++`/`--` are `r.__set(k, r[k] op v)`, so the
 //!   receiver and key must be free of side effects (like setters).
 //! - `delete r[k]`: `r.__delete(k)` (open records only).
@@ -159,15 +159,11 @@ impl FnCx<'_, '_> {
         &mut self,
         obj: hir::Expr,
         key: RecordKey<'_>,
-        want: Want,
         span: Span,
     ) -> hir::Expr {
         let (k, _) = self
             .record_args(obj.ty)
             .expect("ICE: record read on a non-record");
-        if want == Want::BorrowMut {
-            self.record_copy_error(span);
-        }
         let closed = self.record_keys(k).is_some();
         if let (true, RecordKey::Name(id)) = (closed, &key) {
             if !self.record_has_key(k, &id.name, id.span) {
@@ -186,21 +182,6 @@ impl FnCx<'_, '_> {
         let kn = self.cx.display(k);
         self.cx.err(format!("`{kn}` has no key \"{name}\""), span);
         false
-    }
-
-    pub(crate) fn record_copy_error(&mut self, span: Span) {
-        self.cx.error(
-            Diagnostic::error(
-                "cannot modify a value read from a `Record`: it is a copy",
-                span,
-            )
-            .with_note("assign the changed value back with `r[k] = ...`"),
-        );
-    }
-
-    /// Is `e` a read of a record value (`__get` / `__at`), which yields a copy?
-    pub(crate) fn is_record_read(&self, e: &hir::Expr) -> bool {
-        self.cx.is_record_read(e)
     }
 
     /// `target = value` / `target op= value` where `target` is `obj[key]` / `obj.name` of a

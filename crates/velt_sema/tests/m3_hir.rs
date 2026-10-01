@@ -132,8 +132,8 @@ fn spawned_closures_may_throw() {
         main.throws.is_some(),
         "main awaits `listen`/`connect` directly"
     );
-    // `TcpListener` is a Copy handle struct: captured by copy.
-    assert_eq!(task.captures[0].mode, PassMode::Copy);
+    // `TcpListener` is an object (semantics stage 2): the escaping task owns its capture.
+    assert_eq!(task.captures[0].mode, PassMode::Owned);
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn async_call_arguments_used_again_are_cloned() {
     let clones = calls(main)
         .into_iter()
         .filter(|(c, a)| {
-            matches!(c, Callee::Intrinsic(Intrinsic::Clone))
+            matches!(c, Callee::Intrinsic(Intrinsic::Share))
                 && matches!(a[0].kind, E::Local(l, UseMode::Borrow) if main.body.locals[l.0 as usize].name == "dir")
         })
         .count();
@@ -166,7 +166,7 @@ fn borrowed_places_passed_to_async_functions_are_cloned() {
     );
     let start = func(&p, "start");
     assert_eq!(start.params[0].mode, PassMode::Borrow);
-    assert!(intrinsics(start).contains(&Intrinsic::Clone));
+    assert!(intrinsics(start).contains(&Intrinsic::Share));
 }
 
 #[test]

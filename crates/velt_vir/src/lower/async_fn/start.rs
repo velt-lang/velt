@@ -2,7 +2,8 @@
 //! function — or of a function value returning a promise — whose promise is kept as a value
 //! (stored, put in an array, passed on, returned) is started at once with `velt_rt_fut_start`:
 //! its body runs until its first suspension, like calling an async function in JS, and the
-//! current task drives it from then on.
+//! current task drives it from then on. So is a rejecting `Promise.all` / `race` kept as a
+//! value (kept.rs).
 //!
 //! The zero-cost forms never get here: `await f()` embeds `f`'s state in the caller's state and
 //! `spawn(f())` gives `f` its own task, both from `f`'s initial state; `await` / `spawn` of a
@@ -21,7 +22,10 @@ use crate::vir::{BinOp, Function, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
     /// A call used as a value (`ExprKind::Call`); a compiled promise it returns is started unless
-    /// it is awaited or spawned right away (`lazy_call`, set by `take_promise`).
+    /// it is awaited or spawned right away (`lazy_call`, set by `take_promise`). Async functions
+    /// and function values returning promises (async closures) return lazy boxed promises, and so
+    /// do the combinator intrinsics (kept.rs); other intrinsics, externs (runtime leaves) and
+    /// synchronous functions (which started any promise they return) don't.
     pub(in crate::lower) fn call_value(
         &mut self,
         callee: &hir::Callee,
@@ -30,24 +34,23 @@ impl FnLower<'_, '_> {
     ) -> Operand {
         let lazy = std::mem::take(&mut self.lazy_call);
         let v = self.call_expr(callee, args, ty);
-        if lazy || self.dead() || !self.returns_compiled_promise(callee, ty) {
+        if lazy || self.dead() {
             return v;
         }
         let t = self.sub(ty);
+        let v = match callee {
+            hir::Callee::Intrinsic(i) => match self.kept_combinator(*i, v.clone(), t) {
+                Some(started) => started,
+                None => return v,
+            },
+            hir::Callee::Def(d, _) if self.cx.is_async_fn(*d) => v,
+            hir::Callee::Def(..) => return v,
+            _ if matches!(self.kind(ty), TyKind::Promise(..)) => v,
+            _ => return v,
+        };
         let drop = self.unclaimed_drop_fn(t);
         self.call_rt(Rt::FutStart, vec![v.clone(), drop], None);
         v
-    }
-
-    /// Can `callee` return a lazy boxed promise? Async functions and function values returning
-    /// promises (async closures) do; intrinsics, externs (runtime leaves) and synchronous
-    /// functions (which started any promise they return) don't.
-    fn returns_compiled_promise(&mut self, callee: &hir::Callee, ty: TyId) -> bool {
-        match callee {
-            hir::Callee::Intrinsic(_) => false,
-            hir::Callee::Def(d, _) => self.cx.is_async_fn(*d),
-            _ => matches!(self.kind(ty), TyKind::Promise(..)),
-        }
     }
 
     /// `(slot: ptr)` disposing of the unclaimed result of a started promise of type `t`, or null

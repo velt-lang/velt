@@ -39,6 +39,8 @@ pub(super) struct Layouts {
     pub(super) all_wrap: Option<AggId>,
     /// State of the settling `Promise.all` wrapper per child result type (all_settle.rs).
     pub(super) settle_wraps: HashMap<TyId, AggId>,
+    /// State of the wrapper boxing a kept `Promise.race` per result slot type (kept.rs).
+    pub(super) race_boxes: HashMap<TyId, AggId>,
     /// Failure context of JSON decoders (json/).
     pub(super) json_ctx: Option<AggId>,
     /// Promise-value wrappers of throwing async functions: layout and inner-state field.
@@ -46,6 +48,8 @@ pub(super) struct Layouts {
     /// Vtable statics (glue/vtable.rs).
     pub(super) vtables: HashMap<super::VtableKey, crate::vir::StaticId>,
     pub(super) drop_memo: HashMap<TyId, bool>,
+    /// Foreign (runtime-facing) layouts of types containing boxed values (foreign.rs).
+    pub(super) foreign: HashMap<TyId, Ty>,
 }
 
 impl Cx<'_> {
@@ -286,7 +290,7 @@ impl Cx<'_> {
         roots
     }
 
-    fn class_root(&self, mut d: DefId) -> DefId {
+    pub(super) fn class_root(&self, mut d: DefId) -> DefId {
         while let Some(b) = self.adt_def(d).base {
             match self.types.kind(b) {
                 TyKind::Adt(bd, _) => d = *bd,
@@ -314,10 +318,14 @@ impl Cx<'_> {
             return a;
         }
         let f = self.fn_def(def);
+        // A shared cell (`LocalDef::boxed`) is stored as its pointer, like a borrow.
         let caps: Vec<(PassMode, TyId)> = f
             .captures
             .iter()
-            .map(|c| (c.mode, f.body.locals[c.inner.0 as usize].ty))
+            .map(|c| match f.body.locals[c.inner.0 as usize].boxed {
+                true => (PassMode::Borrow, f.body.locals[c.inner.0 as usize].ty),
+                false => (c.mode, f.body.locals[c.inner.0 as usize].ty),
+            })
             .collect();
         let name = format!("{} env", f.name);
         let mut tys = vec![Ty::Ptr, Ty::Ptr];

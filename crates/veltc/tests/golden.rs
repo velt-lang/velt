@@ -14,6 +14,8 @@
 //!
 //! - A golden whose first lines contain `// requires-env: NAME ...` is skipped unless those
 //!   environment variables are set (for tests needing a database or other external service).
+//! - A golden whose first lines contain `// check: no leaks` must free every block it allocates
+//!   (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with A = F) in its debug run.
 //!
 //! Filter with `VELT_GOLDEN=<substring>`. A program running longer than `VELT_GOLDEN_TIMEOUT`
 //! seconds (default 120) is killed and fails. Builds go to `target/golden-work` (or
@@ -201,8 +203,17 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             if mode.is_none() && std::env::var_os("VELT_RT_DEBUG_ALLOC").is_none() {
                 cmd.env("VELT_RT_DEBUG_ALLOC", "1");
             }
+            let leak_check = mode.is_none() && checks_leaks(f);
+            if leak_check {
+                cmd.env("VELT_RC_STATS", "1");
+            }
             let o = run_with_timeout(cmd);
             let stdout = norm(&String::from_utf8_lossy(&o.stdout));
+            if leak_check {
+                if let Some(leak) = leaked_blocks(&String::from_utf8_lossy(&o.stderr)) {
+                    failures.push(format!("{rel} [debug]: {leak}"));
+                }
+            }
             let code = o.status.code().unwrap_or(-1);
             if code != want_code || stdout != want {
                 failures.push(format!(
@@ -220,6 +231,30 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
         failures.push(format!("{rel}: no .out or .err expectation file"));
     }
     failures
+}
+
+/// Does the golden ask for a leak check (`// check: no leaks` on one of its first lines)?
+fn checks_leaks(file: &Path) -> bool {
+    std::fs::read_to_string(file).is_ok_and(|src| {
+        src.lines()
+            .take(10)
+            .any(|l| l.trim() == "// check: no leaks")
+    })
+}
+
+/// The leak in a `rc stats: ... blocks=A/F` report: blocks allocated but not freed, or no report.
+fn leaked_blocks(stderr: &str) -> Option<String> {
+    let counts = stderr
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("rc stats:"))
+        .and_then(|l| l.split_whitespace().find_map(|w| w.strip_prefix("blocks=")))
+        .and_then(|b| b.split_once('/'));
+    match counts {
+        Some((a, f)) if a == f => None,
+        Some((a, f)) => Some(format!("leak: {a} blocks allocated, {f} freed")),
+        None => Some("leak check: no `rc stats` report on stderr".into()),
+    }
 }
 
 /// The build modes to check: `VELT_GOLDEN_MODES=debug` or `release` (the fast gate checks debug

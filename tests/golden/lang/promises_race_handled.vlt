@@ -1,0 +1,45 @@
+// A promise passed to `Promise.race` or `Promise.any` is handled, like in JS: once it lost, its
+// later rejection is dropped instead of being reported as uncaught. Losers keep running to
+// completion. Timers are >= 40 ms apart.
+class Timeout extends Error {
+  ms: i64;
+
+  constructor(ms: i64) {
+    super(`timed out after ${ms} ms`);
+    this.ms = ms;
+  }
+}
+
+async function work(name: string, ms: i64): Promise<string> throws Timeout {
+  await sleep(ms);
+  if (ms < 0) {
+    throw new Timeout(ms);
+  }
+  return name;
+}
+
+async function rejectAfter(ms: i64): Promise<string> throws Timeout {
+  await sleep(ms);
+  console.log("timer fired after", ms, "ms");
+  throw new Timeout(ms);
+}
+
+async function withTimeout(
+  name: string,
+  workMs: i64,
+  limitMs: i64,
+): Promise<string> throws Timeout {
+  return await Promise.race([work(name, workMs), rejectAfter(limitMs)]);
+}
+
+async function main() {
+  console.log("race:", await withTimeout("fast work", 10, 50));
+  try {
+    console.log(await withTimeout("slow work", 150, 100));
+  } catch (e) {
+    console.log("race rejected:", e.message);
+  }
+  console.log("any:", await Promise.any([work("any work", 200), rejectAfter(250)]));
+  await sleep(400);
+  console.log("exits normally");
+}

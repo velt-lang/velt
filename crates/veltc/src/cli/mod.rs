@@ -39,7 +39,7 @@ pub struct DocArgs {
 /// `velt registry serve` arguments.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegistryArgs {
-    /// Registry directory (`None`: the local registry, `$VELT_REGISTRY` / `~/.vlt/registry`).
+    /// Registry directory (`None`: the local registry, `$VELT_REGISTRY` / `~/.velt/registry`).
     pub dir: Option<PathBuf>,
     /// Address to listen on.
     pub addr: String,

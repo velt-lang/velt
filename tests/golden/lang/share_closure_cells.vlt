@@ -1,0 +1,58 @@
+// check: no leaks
+// Semantics stage 2: a variable that an escaping closure captures and that it (or the enclosing
+// function) assigns afterwards lives in a shared cell, so every party sees the same variable
+// (formerly the errors of lang/errors/closure_capture_reassign and m2/errors/closure_escape).
+function makeCounter(): () => i64 {
+  let n = 0;
+  return () => {
+    n += 1;
+    return n;
+  };
+}
+
+function pair(): (() => i64)[] {
+  let hits = 0;
+  const bump = (): i64 => {
+    hits += 10;
+    return hits;
+  };
+  const read = (): i64 => hits;
+  return [bump, read];
+}
+
+function main() {
+  let count = 0;
+  const inc = () => {
+    count += 1;
+  };
+  inc();
+  inc();
+  console.log(count);
+  let k = 1;
+  const f = (x: i64): i64 => x + k;
+  k = 5;
+  console.log(f(1), k);
+  let s = "a";
+  const g = () => s;
+  s += "b";
+  console.log(g());
+  const next = makeCounter();
+  next();
+  console.log(next());
+  const fs = pair();
+  fs[0]();
+  fs[0]();
+  console.log(fs[1]());
+  let items = [1];
+  const add = (x: i64) => {
+    items.push(x);
+  };
+  const reset = () => {
+    items = [];
+  };
+  add(2);
+  console.log(items);
+  reset();
+  add(3);
+  console.log(items);
+}

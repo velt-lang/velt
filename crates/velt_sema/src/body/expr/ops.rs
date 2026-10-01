@@ -1,5 +1,6 @@
-//! Unary and binary operators (`!`, `&&` and `||` are in `truthiness`). `==`/`!=` on non-primitive types (structs, enums,
-//! options, generic `T`, ...) is `Intrinsic::Eq` (structural; `!=` wraps it in `Not`).
+//! Unary and binary operators (`!`, `&&` and `||` are in `truthiness`). `==`/`!=` on non-primitive types (objects, enums,
+//! options, generic `T`, ...) is `Intrinsic::Same` (JS `===`: objects by identity; `!=` wraps it
+//! in `Not`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -293,10 +294,10 @@ impl FnCx<'_, '_> {
         ty.is_numeric(t) || t == ty.bool_ || t == ty.str_ || t == ty.never
     }
 
-    /// `a == b` on non-primitive types → `Intrinsic::Eq(a, b)` (both borrowed).
+    /// `a == b` on non-primitive types → `Intrinsic::Same(a, b)` (both borrowed).
     fn structural_eq(&mut self, l: hir::Expr, r: hir::Expr, negate: bool, span: Span) -> hir::Expr {
         let b = self.cx.ty.bool_;
-        let eq = self.intrinsic(Intrinsic::Eq, vec![l, r], b, span);
+        let eq = self.intrinsic(Intrinsic::Same, vec![l, r], b, span);
         if !negate {
             return eq;
         }

@@ -63,8 +63,10 @@ pub(super) const NO_MEMBER: u32 = u32::MAX;
 pub(super) struct Head {
     pub poll: PollFn,
     pub drop: DropFn,
-    /// Drops an unclaimed result (started nodes; `None` when the result needs no drop).
-    pub result_drop: Option<ResultDropFn>,
+    /// Drops an unclaimed result (started nodes; null when the result needs no drop). A
+    /// `ResultDropFn`; atomic because [`mark_handled`] may replace it while another task drives
+    /// the node.
+    result_drop: AtomicPtr<()>,
     pub state_size: u32,
     pub flags: AtomicU32,
     pub refs: AtomicUsize,
@@ -125,7 +127,7 @@ pub(super) unsafe fn alloc_node(
     (base as *mut Head).write(Head {
         poll,
         drop,
-        result_drop: None,
+        result_drop: AtomicPtr::new(std::ptr::null_mut()),
         state_size,
         flags: AtomicU32::new(0),
         refs: AtomicUsize::new(1),
@@ -210,7 +212,7 @@ pub(super) unsafe fn mark_started(
 ) {
     let h = head_mut(f);
     h.set = Arc::as_ptr(shared);
-    h.result_drop = result_drop;
+    h.result_drop = AtomicPtr::new(drop_fn_ptr(result_drop));
     h.flags.store(STARTED, Ordering::Relaxed);
     (*f).poll = started_poll;
     (*f).drop = started_drop;
@@ -290,10 +292,37 @@ pub(super) unsafe fn cancel(f: *mut VeltFut) {
     }
 }
 
+fn drop_fn_ptr(d: Option<ResultDropFn>) -> *mut () {
+    d.map_or(std::ptr::null_mut(), |d| d as *mut ())
+}
+
 unsafe fn drop_result(f: *mut VeltFut) {
-    if let Some(d) = head(f).result_drop {
+    let d = head(f).result_drop.load(Ordering::Acquire);
+    if !d.is_null() {
+        // SAFETY: only ever stored from a `ResultDropFn` (`drop_fn_ptr`).
+        let d = std::mem::transmute::<*mut (), ResultDropFn>(d);
         d(state(f));
     }
+}
+
+/// Someone handles started node `f`'s outcome (`Promise.race` and the other combinators, like
+/// JS attaching handlers): an unclaimed result is dropped with `quiet_drop` from now on instead
+/// of being reported as an unhandled rejection. No-op for any other future.
+pub(super) unsafe fn mark_handled(f: *mut VeltFut, quiet_drop: Option<ResultDropFn>) {
+    if !is_started(f) {
+        return;
+    }
+    head(f)
+        .result_drop
+        .store(drop_fn_ptr(quiet_drop), Ordering::Release);
+}
+
+/// Is `f` a started node (`velt_rt_fut_start` succeeded on it)?
+unsafe fn is_started(f: *mut VeltFut) -> bool {
+    std::ptr::fn_addr_eq(
+        (*f).poll,
+        started_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32,
+    )
 }
 
 /// The owner awaits a started node: ready once it finished. Awaited from inside the task that

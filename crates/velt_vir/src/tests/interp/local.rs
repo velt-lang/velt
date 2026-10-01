@@ -33,6 +33,18 @@ impl Interp<'_> {
         Ok(0)
     }
 
+    /// `velt_rt_futs_handled(futs, n, quiet_drop)`: the started promises among the `n` at
+    /// `futs` dispose of an unclaimed result with `quiet_drop` from now on.
+    pub(super) fn futs_handled(&mut self, futs: u64, n: u64, quiet_drop: u64) -> Result<(), i32> {
+        for i in 0..n {
+            let f = self.read_u64(futs + 8 * i);
+            if let Some(Fut::Started { result_drop, .. }) = self.exec.futs.get_mut(&f) {
+                *result_drop = quiet_drop;
+            }
+        }
+        Ok(())
+    }
+
     /// Poll started promise `f` once (if still running); on completion, dispose of the result
     /// of a detached one.
     fn run_started(&mut self, f: u64) -> Result<(), i32> {

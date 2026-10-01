@@ -172,7 +172,9 @@ impl FnLower<'_, '_> {
     ) {
         let tys = self.cx.adt_field_tys(ty);
         let keys = self.field_place(obj, ty, KEYS);
+        let keys = self.content(&keys, tys[KEYS as usize]);
         let values = self.field_place(obj, ty, VALUES);
+        let values = self.content(&values, tys[VALUES as usize]);
         let TyKind::Array(slot_t) = self.cx.kind(tys[VALUES as usize]) else {
             crate::lower::ice("Map.entryValues is not an array")
         };

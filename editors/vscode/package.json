@@ -38,7 +38,7 @@
     "grammars": [
       {
         "language": "velt",
-        "scopeName": "source.vlt",
+        "scopeName": "source.velt",
         "path": "./syntaxes/velt.tmLanguage.json"
       }
     ],

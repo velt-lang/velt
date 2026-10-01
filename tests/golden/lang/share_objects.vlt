@@ -1,0 +1,43 @@
+// check: no leaks
+// Semantics stage 2: object types (structs, anonymous objects) are references when the program
+// changes their fields; JSON, destructuring and interface values keep seeing one object.
+interface Scored {
+  score(): i64;
+}
+
+struct Counter implements Scored {
+  n: i64;
+  tag: string;
+
+  score(): i64 {
+    return this.n;
+  }
+}
+
+type Config = { name: string; ports: i64[] };
+
+function rename(c: Config, name: string) {
+  c.name = name;
+}
+
+function main() {
+  const c = Counter { n: 1, tag: "c" };
+  const d = c;
+  d.n = 5;
+  console.log(c.n, d.n);
+  const s: Scored = c;
+  const t = s;
+  d.n = 7;
+  console.log(s.score(), t.score());
+  const cfg: Config = JSON.parse<Config>("{\"name\":\"a\",\"ports\":[80]}");
+  const view = cfg;
+  rename(view, "b");
+  view.ports.push(443);
+  console.log(cfg.name, JSON.stringify(cfg));
+  const { name, ports } = cfg;
+  ports.push(8080);
+  console.log(name, cfg.ports);
+  const list = [cfg, view];
+  list[0].name = "c";
+  console.log(view.name, list.length);
+}

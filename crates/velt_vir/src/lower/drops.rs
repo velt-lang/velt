@@ -122,6 +122,9 @@ impl FnLower<'_, '_> {
     }
 
     fn drop_local(&mut self, id: LocalId) {
+        if self.info[id.0 as usize].cell {
+            return self.release_cell(id);
+        }
         let info = &self.info[id.0 as usize];
         let (ty, flag, state) = (info.ty, info.flag, info.state);
         let moved = info.moved_fields.clone();
@@ -166,9 +169,8 @@ impl FnLower<'_, '_> {
             }
         }
         if self.cx.is_class(ty) {
-            let obj = self.cx.obj_agg(ty);
             let ptr = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place)));
-            self.free(ptr, Ty::Agg(obj));
+            self.object_free(ptr, ty);
         }
     }
 
@@ -221,13 +223,33 @@ impl FnLower<'_, '_> {
             return;
         }
         let info = &self.info[id.0 as usize];
-        if info.droppable {
+        if info.droppable && !info.cell {
             self.drop_entry(&DropEntry::Local(id));
         } else if info.indirect {
             // Borrowed param written in place (`Mutex.with` callback): the caller's value is
             // always initialized.
             let p = self.local_place(id);
             self.drop_glue(p, ty);
+        }
+    }
+
+    /// A new (uninitialized) object of class `ty`: counted when the class is (boxing/).
+    pub(super) fn object_alloc(&mut self, ty: TyId) -> Operand {
+        let oa = Ty::Agg(self.cx.obj_agg(ty));
+        if self.cx.counted(ty) {
+            self.counted_alloc(oa)
+        } else {
+            self.alloc(oa)
+        }
+    }
+
+    /// Free the object `ptr` of class `ty` (its fields already dropped).
+    pub(super) fn object_free(&mut self, ptr: Operand, ty: TyId) {
+        let oa = Ty::Agg(self.cx.obj_agg(ty));
+        if self.cx.counted(ty) {
+            self.counted_free(ptr, oa);
+        } else {
+            self.free(ptr, oa);
         }
     }
 

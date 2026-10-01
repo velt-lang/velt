@@ -38,12 +38,14 @@ That is why they need no locks.
 
 ## Timeouts with `Promise.race`
 
-`Promise.race` settles with the first promise to settle. The others keep running, so a timeout
-should **return** a value rather than throw: a loser that rejects after the race is over is
-reported as an uncaught error, like an unhandled rejection in Node.
+`Promise.race` settles with the first promise to settle. Like in JavaScript, every promise in
+the race counts as handled: the losers keep running to completion, and a loser that rejects
+after the race is over is dropped, not reported as an uncaught error. So a timeout can simply
+throw:
 
 ```ts
 class OutOfStock extends Error {}
+class TooSlow extends Error {}
 
 async function fetchPrice(item: string): Promise<f64> throws OutOfStock {
   await sleep(item.length as i64 * 5);
@@ -53,24 +55,28 @@ async function fetchPrice(item: string): Promise<f64> throws OutOfStock {
   return item.length as f64 * 1.5;
 }
 
-async function priceWithin(item: string, ms: i64): Promise<f64 | null> throws OutOfStock {
-  const price = async (): Promise<f64 | null> throws OutOfStock => await fetchPrice(item);
-  const timeout = async (): Promise<f64 | null> throws OutOfStock => {
+async function priceWithin(item: string, ms: i64): Promise<f64> throws OutOfStock | TooSlow {
+  const price = async (): Promise<f64> throws OutOfStock | TooSlow => await fetchPrice(item);
+  const timeout = async (): Promise<f64> throws OutOfStock | TooSlow => {
     await sleep(ms);
-    return null;                                  // null means "too slow"
+    throw new TooSlow(`no price within ${ms} ms`);
   };
   return await Promise.race([price(), timeout()]);
 }
 
 async function main() {
-  console.log(await priceWithin("water", 100));               // 7.5
-  console.log(await priceWithin("a very long name", 10));     // null
+  console.log(await priceWithin("water", 100));               // 7.5, and the timer is dropped
+  try {
+    await priceWithin("a very long name", 10);
+  } catch (e) {
+    console.log(e.message);                                   // no price within 10 ms
+  }
 }
 ```
 
 Every promise in one `Promise.race` (or `all`, `allSettled`, `any`) must have the same type,
-including the error type: `Promise<f64 | null, OutOfStock>` here. That is why both closures
-declare `throws OutOfStock`; a `throws` clause may allow more than the body throws.
+including the error type: `Promise<f64, OutOfStock | TooSlow>` here. That is why both closures
+declare the same `throws` clause; a `throws` clause may allow more than the body throws.
 
 ## Errors in concurrent work
 
@@ -140,11 +146,12 @@ async function main() {
 ## Sharing state between tasks
 
 Spawned tasks run in parallel, so the compiler doesn't let them modify captured variables
-("cannot mutate captured variable `n` in a spawned task"). Data races are compile errors. Share
-state explicitly:
+("cannot mutate captured variable `n` in a spawned task"), and an object a task captures is
+copied for it (a structured clone) when the rest of the program still uses it. Data races are
+compile errors. Share state explicitly:
 
-- `shared(x)` creates an atomically reference-counted value; `.clone()` adds a reference. On
-  64-bit integers, `add`, `get` and `set` are atomic.
+- `shared(x)` creates an atomically reference-counted value: tasks that capture it refer to the
+  same value. On 64-bit integers, `add`, `get` and `set` are atomic.
 - `shared(new Mutex<T>(x))` guards any value; `m.with((v) => …)` locks it for the callback, which
   gets the value itself and may return a result.
 
@@ -154,13 +161,11 @@ async function main() {
   const done = shared(0);
   const workers: Promise<void>[] = [];
   for (let w = 0; w < 3; w++) {
-    const s = seen.clone();
-    const d = done.clone();
     workers.push(spawn(async () => {
-      s.with((v) => {
+      seen.with((v) => {
         v.push(`worker ${w}`);
       });
-      d.add(1);
+      done.add(1);
     }));
   }
   await Promise.all(workers);

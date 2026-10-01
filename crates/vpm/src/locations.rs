@@ -1,6 +1,6 @@
 //! Where vpm keeps shared state: the local registry and the package cache.
 //!
-//! `$VELT_HOME` (default `~/.vlt`) holds `cache/`; the registry is `$VELT_REGISTRY` or
+//! `$VELT_HOME` (default `~/.velt`) holds `cache/`; the registry is `$VELT_REGISTRY` or
 //! `<home>/registry`. A remote registry is an `http(s)://` URL: `$VELT_REGISTRY` set to one, or
 //! the root package's `registry = "…"` in `velt.toml` ([`Locations::with_manifest`]). Everything else in vpm takes a [`Locations`] explicitly so tests can use
 //! isolated temp dirs without touching process-wide environment variables.
@@ -35,7 +35,7 @@ impl Locations {
         }
     }
 
-    /// Locations from `$VELT_HOME` / `$VELT_REGISTRY`, falling back to `~/.vlt`.
+    /// Locations from `$VELT_HOME` / `$VELT_REGISTRY`, falling back to `~/.velt`.
     pub fn from_env() -> Result<Locations, String> {
         let var = |name: &str| {
             std::env::var_os(name)
@@ -46,7 +46,7 @@ impl Locations {
             Some(h) => h,
             None => var("HOME")
                 .or_else(|| var("USERPROFILE"))
-                .map(|h| h.join(".vlt"))
+                .map(|h| h.join(".velt"))
                 .ok_or("cannot find the home directory; set VELT_HOME")?,
         };
         let mut loc = Locations::under(&home);

@@ -69,6 +69,13 @@ impl FnLower<'_, '_> {
     pub(super) fn throw(&mut self, inner: &hir::Expr) -> Operand {
         let from = self.sub(inner.ty);
         let v = self.consume(inner);
+        if matches!(self.cx.kind(from), TyKind::Never) {
+            // A generic `throw e` instantiated with `E = never`: no such value exists.
+            if !self.dead() {
+                self.terminate(vir::Terminator::Unreachable);
+            }
+            return unit();
+        }
         self.record_throw_loc();
         self.route_error(v, from);
         unit()

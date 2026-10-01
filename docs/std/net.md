@@ -1,6 +1,6 @@
 # velt:net
 
-`import { listen, connect } from "velt:net"`. TCP. `TcpListener` and `TcpStream` are Copy
+`import { listen, connect } from "velt:net"`. TCP. `TcpListener` and `TcpStream` are
 structs around a handle, like file descriptors. Release each handle exactly once with `close()`.
 
 - `listen(addr: "host:port"): Promise<TcpListener>`: port 0 picks a free port.
@@ -36,6 +36,7 @@ async function main() {
 }
 ```
 
-Notes: an unclosed handle leaks until the process exits, and closing through two copies is a
-double free. (A `[Symbol.dispose]()` drop hook would make these structs non-Copy, which is why there is
-none.)
+Notes: an unclosed handle leaks until the process exits, and closing it twice (also through a
+copy handed to another task) is a double free. **Planned**
+([semantics stage 2 §7](../internals/design/semantics-stage2.md#7-identity-and-the-struct-keyword)):
+these structs become disposable classes with `using` support.

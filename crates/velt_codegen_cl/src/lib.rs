@@ -6,7 +6,8 @@
 //! - `module`: `build_module<M: Module>` declares/defines a whole program in any Cranelift
 //!   module (the object backend and the JIT share the exact same path).
 //! - `dev`: [`DevSession`], the in-process JIT behind `velt dev`, with hot swap; `c_symbols`:
-//!   the C library functions it resolves by address.
+//!   the C library functions it resolves by address; `jit_memory`: one contiguous arena per JIT
+//!   module.
 //! - `abi`: VIR type → Cranelift type / C-ABI signature mapping, layout lookups.
 //! - `function`: per-function translation (places, operands, ops, casts, terminators).
 //! - `entry`: the `main` of executables linked against the shared runtime ([`emit_entry_object`]).
@@ -28,6 +29,7 @@ mod dev;
 mod entry;
 mod function;
 mod isa;
+mod jit_memory;
 mod module;
 mod unwind;
 

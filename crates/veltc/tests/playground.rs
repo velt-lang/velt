@@ -7,11 +7,14 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+// Not `canonicalize()`: on Windows that yields a verbatim `\\?\D:\…` path, from which Node
+// cannot load a main script (`EISDIR: lstat 'D:'`).
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
+        .ancestors()
+        .nth(2)
         .expect("repo root")
+        .to_path_buf()
 }
 
 /// The `"Name": \`source\`` entries of the page's `EXAMPLES` table, unescaped.
@@ -91,8 +94,8 @@ fn examples_compile_and_run() {
             let file = work.join("example.wasm");
             std::fs::write(&file, &module).expect("write module");
             let o = Command::new("node")
-                .arg(&glue)
-                .arg(&file)
+                .arg(vpm::relpath::plain(&glue))
+                .arg(vpm::relpath::plain(&file))
                 .output()
                 .expect("node");
             assert!(o.status.success(), "example `{name}` failed: {o:?}");

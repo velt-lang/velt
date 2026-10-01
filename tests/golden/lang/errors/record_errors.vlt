@@ -5,10 +5,6 @@ enum Color {
   Red = "red",
 }
 
-class P {
-  x: i64 = 0;
-}
-
 function key(): string {
   return "k";
 }
@@ -18,11 +14,8 @@ function main() {
   const m: Record<Limit, i64> = { cpu: 2, mem: 1, disk: 3 };
   console.log(l.disk);
   delete l.cpu;
-  const r: Record<string, i64[]> = {};
-  r["a"]?.push(1);
+  const r: Record<string, i64> = {};
   r[key()] += 1;
-  const q: Record<Limit, P> = { cpu: new P(), mem: new P() };
-  q.cpu.x = 2;
   const n: Record<i64, string> = {};
   const c: Record<Color, i64> = {};
   const e = new Record<Limit, i64>();

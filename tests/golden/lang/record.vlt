@@ -61,7 +61,27 @@ function json() {
   show('{"env":{},"limits":{"cpu":1,"mem":1,"gpu":[1,}],"prices":{}}');
 }
 
+class Counter {
+  n: i64 = 0;
+}
+
+// A read is the stored value itself (as in JS): changing it changes the record's entry.
+function sharing() {
+  const lists: Record<string, i64[]> = { a: [] };
+  lists["a"]?.push(1);
+  lists.a?.push(2);
+  const counters: Record<"hits" | "misses", Counter> = {
+    hits: new Counter(),
+    misses: new Counter(),
+  };
+  counters.hits.n += 1;
+  const m = counters.misses;
+  m.n = 5;
+  console.log(lists, counters);
+}
+
 function main() {
+  sharing();
   syntax();
   formatting();
   json();

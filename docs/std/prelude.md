@@ -57,13 +57,13 @@ Byte arrays are plain `u8[]` with faster versions of `indexOf`, `lastIndexOf`, `
 
 ## Map
 
-`Map<K, V>` is an insertion-ordered hash map. Keys are numbers, `bool`, `string` or Copy
-structs.
+`Map<K, V>` is an insertion-ordered hash map. Keys are numbers, `bool`, `string`, class
+instances (compared by identity), and structs, object types and tuples (compared by content).
 
 | Member | Notes |
 |---|---|
 | `new Map<K, V>()`, `size`, `clear()` | |
-| `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns a copy |
+| `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself, as in JS |
 | `upsert(k, init, (v) => v + 1)` | insert `init` or replace the value with the callback's result, in one lookup |
 | `update(k, (v) => { … }): bool` | modify the stored value in place; `false` when `k` is absent |
 | `getOrInsert(k, () => v)` | |
@@ -89,7 +89,8 @@ console.log(env.HOME ?? "/", Object.keys(env), limits);
 ## Nullable values
 
 On any `T | null`: `isNull()`, `unwrap()` (panics on `null`), `unwrapOr(fallback)`, and
-`map(f)`. The value-extracting helpers consume the receiver unless the payload is Copy.
+`map(f)`. The value-extracting helpers return the payload itself (an object is shared, not
+copied).
 
 ## JSON
 
@@ -101,7 +102,11 @@ On any `T | null`: `isNull()`, `unwrap()` (panics on `null`), `unwrapOr(fallback
 - `class Error { message: string }`, the base class of thrown errors.
 - `attempt(() => f())`: a throwing call as a value, `T | E`.
 - `AggregateError`, thrown by `Promise.any` when every promise rejects.
-- `assert(cond, msg?)`, `assertEq(a, b, msg?)`, `panic(msg)`: panics, for bugs.
+- `assert(cond, msg?)`, `assertEq(a, b, msg?)` (compares with `deepEqual`), `panic(msg)`:
+  panics, for bugs.
+- `deepEqual(a, b): bool`: content comparison. Arrays, structs and object literals compare
+  their contents recursively, class instances (`Map` included) by identity; `==` compares
+  every object by identity.
 
 ## Async and concurrency
 

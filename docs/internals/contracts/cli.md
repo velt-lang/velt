@@ -33,8 +33,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - **WebAssembly** (additive): `--target wasm32-wasip1` (alias `wasm32-wasi`)
   and `--target wasm32-unknown-unknown` build `./target/velt/<stem>.wasm` (object `<stem>.o`) with
   the LLVM backend (always; `--backend cranelift` is an error) using LLVM's `opt`/`llc`
-  (`$VELT_LLVM_BIN`, else rustup's `llvm-tools`), `wasm-ld` (`$VELT_LINKER`, `wasm-ld`, rustup's
-  `rust-lld`) and `libvelt_rt_wasm.a` (`$VELT_RT_LIB`, else cargo's `target/<triple>/<profile>/`,
+  (`$VELT_LLVM_BIN`, else rustup's `llvm-tools`), `wasm-ld` (`$VELT_LINKER`, rustup's `rust-lld`,
+  `wasm-ld` on PATH) and `libvelt_rt_wasm.a` (`$VELT_RT_LIB`, else cargo's `target/<triple>/<profile>/`,
   else `<prefix>/lib/<triple>/`). WASI builds also need wasi-libc (`$VELT_WASI_SYSROOT`, else
   rustup's `wasm32-wasip1` target). `run` executes WASI modules with `$VELT_WASM_RUNNER <module>
   <args>` or `wasmtime run --dir=. <module> <args>`; browser builds also write the JS glue
@@ -86,15 +86,19 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - Diagnostics go to stderr as `Diagnostic::render` output.
 - `dev` (docs/internals/design/hot-reload.md, phases 1–2): builds and runs like `run`, then stays up as a
   supervisor. It watches every file the build read (std and path dependencies included) plus
-  `velt.toml`/`velt.lock` (mtime polling, 30 ms settle). On a change it builds the new version
+  `velt.toml`/`velt.lock`, and new `.vlt` files in their directories (OS file notifications,
+  checked against mtime and length; polling every 10 ms where notifications fail or with
+  `VELT_DEV_POLL=1`; 30 ms settle). On a change it builds the new version
   while the old one keeps running: a failed build prints its diagnostics and
   `velt dev: build failed (the previous version keeps running); waiting for changes`; a good one
   stops the old version (a stop request: SIGTERM on Unix, `stop` on the dev channel on Windows;
   drain up to 1 s, then kill) and starts the new one: `velt dev: reloaded in <n> ms` (from the
   first file change). A program that exits prints
   `velt dev: program exited with code <n>; waiting for changes`. Status lines go to stderr; the
-  program's stdio is inherited. Runs until interrupted (Ctrl-C stops the supervisor and program;
-  on Windows programs run in a job object that ends them with the supervisor).
+  program's stdio is inherited. Runs until interrupted: Ctrl-C, SIGTERM or SIGHUP (console
+  events on Windows) stop the program like a reload does, wait for it, and exit with
+  128 + the signal (130 on Windows); a second interrupt exits at once. On Windows programs also
+  run in a job object that ends them with the supervisor.
   - Default mode (every platform): each version is a `velt dev --host` child (**internal**, not for
     users) that compiles to VIR, JIT-compiles it with Cranelift (debug settings, no link, no new
     executable) and runs it in-process with the runtime linked into `velt`; it reports its build
@@ -159,7 +163,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - Imports: `velt:x` → `<std root>/x.vlt` or `x/index.vlt`; `./x`, `../x` → relative `x.vlt` or
   folder module `x/index.vlt`; bare names → `[paths]` aliases of the importing package first,
   then packages via `velt.toml` (`pkg/sub` → `src/sub.vlt` or `src/sub/index.vlt`). `std/prelude/*.vlt` is loaded implicitly before everything else.
-- Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.vlt`), `VELT_REGISTRY`
+- Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.velt`), `VELT_REGISTRY`
   (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (linker override), `VELT_CLANG` (clang for the LLVM backend).
   Set by `velt dev` for the program (not for users): `VELT_DEV_SOCKET` (a Unix socket path, or a
   named pipe `\\.\pipe\velt-dev-<pid>-<n>` on Windows).

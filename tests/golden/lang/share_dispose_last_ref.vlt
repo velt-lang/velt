@@ -1,0 +1,35 @@
+// check: no leaks
+// Semantics stage 2: a shared object is disposed when its last reference goes, not when the
+// first owner drops it.
+class Res {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  [Symbol.dispose]() {
+    console.log("dispose", this.name);
+  }
+}
+
+function keep(m: Map<string, Res>): Res | null {
+  return m.get("a");
+}
+
+function main() {
+  const m = new Map<string, Res>();
+  m.set("a", new Res("a"));
+  m.set("b", new Res("b"));
+  const r = keep(m);
+  m.delete("a");
+  console.log("deleted a, still", r?.name);
+  m.delete("b");
+  console.log("deleted b");
+  {
+    const all = [new Res("c"), new Res("d")];
+    const firsts = all.slice(0, 1);
+    console.log("sliced", firsts.length);
+  }
+  console.log("end");
+}

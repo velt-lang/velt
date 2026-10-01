@@ -35,8 +35,8 @@ pub fn write_glue(target: &str, module: &Path) -> Result<(), String> {
 pub fn runner(target: &str, module: &Path, args: &[OsString]) -> Result<Command, String> {
     if is_browser(target) {
         let mut cmd = Command::new("node");
-        cmd.arg(module.with_file_name(GLUE_FILE))
-            .arg(module)
+        cmd.arg(vpm::relpath::plain(&module.with_file_name(GLUE_FILE)))
+            .arg(vpm::relpath::plain(module))
             .args(args);
         return Ok(cmd);
     }

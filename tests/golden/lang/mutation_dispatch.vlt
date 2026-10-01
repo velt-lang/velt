@@ -41,7 +41,7 @@ function tag(log: Log) {
   log.lines.push("tagged");
 }
 
-// A Copy struct param modified locally, also when called through a function value.
+// An object param modified by the callee (shared, JS), also when called through a function value.
 function stretch(v: Vec2): f64 {
   v.x *= 2.0;
   return v.x + v.y;

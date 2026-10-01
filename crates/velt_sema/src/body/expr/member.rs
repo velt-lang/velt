@@ -245,7 +245,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         if self.record_args(obj.ty).is_some() {
-            return self.record_read(obj, super::record::RecordKey::Name(prop), want, span);
+            return self.record_read(obj, super::record::RecordKey::Name(prop), span);
         }
         let obj = self.widen_literal_receiver(obj, &prop.name);
         if prop.name == "length" {
@@ -292,7 +292,7 @@ impl FnCx<'_, '_> {
         let t = obj.ty;
         match self.cx.ty.kind(t).clone() {
             TyKind::Adt(..) if self.record_args(t).is_some() => {
-                self.record_read(obj, super::record::RecordKey::Index(index), want, span)
+                self.record_read(obj, super::record::RecordKey::Index(index), span)
             }
             TyKind::Array(elem) => self.array_index(obj, elem, index, want, span),
             TyKind::Tuple(ts) => self.tuple_index(obj, &ts, index, want, span),

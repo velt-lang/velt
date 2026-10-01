@@ -236,3 +236,18 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
         set::add_member(set, f);
     }
 }
+
+/// The `n` futures in `futs` are handled by a combinator (`Promise.race`, `any`, `all`): a
+/// started promise among them that is dropped unfinished and rejects later is not reported as an
+/// unhandled rejection, like in JS; `quiet_drop` disposes of its result slot (null if nothing to
+/// drop). Call before handing the futures over.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_futs_handled(
+    futs: *const *mut VeltFut,
+    n: u64,
+    quiet_drop: Option<ResultDropFn>,
+) {
+    for i in 0..n as usize {
+        node::mark_handled(*futs.add(i), quiet_drop);
+    }
+}

@@ -8,7 +8,8 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `console.log(a, b, …)`, `console.error(…)` | print the arguments separated by spaces to stdout / stderr. Values print like Node: `[ 1, 2 ]`, `{ k: 1, s: 'a' }`, `Map(1) { 'a' => 1 }`, `ClassName { field: value }`, numbers JS-style |
 | `process.exit(code: i32)` | exit immediately |
 | `panic(msg)` | stop with a panic (exit code 101) |
-| `assert(cond, msg)`, `assertEq(a, b)` | panic when the check fails |
+| `assert(cond, msg)`, `assertEq(a, b)` | panic when the check fails (`assertEq` compares contents) |
+| `deepEqual(a, b)` | content comparison (`==` compares objects by identity) |
 | `attempt(() => f())` | a throwing call as a value: `T \| E` ([Errors](errors.md#errors-as-values)) |
 | `Math` | `PI`, `E`, `sqrt floor ceil round trunc abs sign max min pow hypot`, … |
 | `Number(s)`, `parseInt(s, radix)`, `parseFloat(s)`, `String.fromCharCode(c)`, `NaN`, `Infinity` | conversions |

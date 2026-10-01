@@ -13,7 +13,7 @@ failing to start the program throws `IoError` (e.g. `ENOENT`).
 - `spawn(program, args = [], opts: SpawnOptions = {}): ChildProcess`. `SpawnOptions` has
   `cwd env clearEnv stdin stdout stderr`; the stdio fields take `"pipe"`, `"inherit"` (the
   default) or `"ignore"`.
-- `ChildProcess { pid }`: a Copy handle like `TcpStream`, released by `close()`.
+- `ChildProcess { pid }`: a handle like `TcpStream`, released by `close()`.
   - `write(data)`, `closeStdin()`
   - `readStdout(max = 0)` / `readStderr`: `""` means end of output
   - `readStdoutBytes` / `readStderrBytes`

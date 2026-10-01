@@ -578,7 +578,7 @@ fn string_copy_keeps_the_source() {
     let clones = exprs_of(main)
         .into_iter()
         .filter(|e| {
-            matches!(&e.kind, E::Call { callee: Callee::Intrinsic(Intrinsic::Clone), args }
+            matches!(&e.kind, E::Call { callee: Callee::Intrinsic(Intrinsic::Share), args }
                 if matches!(args[0].kind, E::Local(_, UseMode::Borrow)))
         })
         .count();

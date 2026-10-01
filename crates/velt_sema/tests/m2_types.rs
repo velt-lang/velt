@@ -81,8 +81,8 @@ fn modifying_methods_and_receivers_are_inferred() {
     );
     assert_eq!(func(&p, "C.inc").params[0].mode, PassMode::BorrowMut);
     assert_eq!(func(&p, "C.get").params[0].mode, PassMode::Borrow);
-    // Copy params are values: modifying one is local.
-    assert_eq!(func(&p, "f").params[0].mode, PassMode::Copy);
+    // Structs are objects (semantics stage 2): the caller sees the change.
+    assert_eq!(func(&p, "f").params[0].mode, PassMode::BorrowMut);
     assert_eq!(func(&p, "g").params[0].mode, PassMode::BorrowMut);
     assert_eq!(func(&p, "h").params[0].mode, PassMode::Borrow);
 }
@@ -254,7 +254,7 @@ fn enums_cast_and_compare() {
     let p = ok_src("enum C { R, G = 5 } function main() { console.log(C.G as i64, C.R == C.G); }");
     assert!(calls(func(&p, "main"))
         .iter()
-        .any(|(c, _)| matches!(c, Callee::Intrinsic(Intrinsic::Eq))));
+        .any(|(c, _)| matches!(c, Callee::Intrinsic(Intrinsic::Same))));
     let r = err_src("enum S { A = \"a\" } function main() { console.log(S.A as i64); }");
     assert!(r.contains("cannot cast"), "{r}");
     ok_src("enum S { A = \"a\" } function main() { const s: string = S.A; console.log(s); }");
@@ -313,11 +313,12 @@ fn generic_functions_infer_and_check_bounds() {
 }
 
 #[test]
-fn generic_equality_uses_the_eq_intrinsic() {
+fn generic_equality_uses_the_same_intrinsic() {
+    // `==` is JS `===` (objects by identity, semantics stage 2): `Intrinsic::Same`.
     let p = ok_src("function same<T>(a: T, b: T): bool { return a == b; } function main() { console.log(same(1, 2)); }");
     assert!(calls(func(&p, "same"))
         .iter()
-        .any(|(c, _)| matches!(c, Callee::Intrinsic(Intrinsic::Eq))));
+        .any(|(c, _)| matches!(c, Callee::Intrinsic(Intrinsic::Same))));
 }
 
 #[test]
@@ -407,7 +408,7 @@ fn interface_values_and_default_methods() {
     assert_eq!(u_impl.methods[1], def_id(&p, "U.<name>"));
     assert!(calls(getter)
         .iter()
-        .any(|(c, _)| matches!(c, Callee::Intrinsic(Intrinsic::Clone))));
+        .any(|(c, _)| matches!(c, Callee::Intrinsic(Intrinsic::Share))));
 }
 
 // ───────────────────────────── modules & intrinsics ─────────────────────────────
@@ -562,8 +563,8 @@ fn dispose_is_a_drop_hook() {
         r.contains("`[Symbol.dispose]` must not be `async`, take no parameters and return `void`"),
         "{r}"
     );
-    let r = err_src("struct H { fd: i64; [Symbol.dispose]() {} } function main() { const a = H { fd: 1 }; const b = a; console.log(a.fd); }");
-    assert!(r.contains("use of moved value `a`"), "{r}");
+    // Semantics stage 2: a value with `dispose` is shared (disposed at the last reference).
+    ok_src("struct H { fd: i64; [Symbol.dispose]() {} } function main() { const a = H { fd: 1 }; const b = a; console.log(a.fd, b.fd); }");
 }
 
 #[test]

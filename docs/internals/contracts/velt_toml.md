@@ -24,7 +24,7 @@ util = { path = "../util" }    # local package (version optional)
   its own modules only (`vpm::PackageGraph::path_alias`).
 - A library package exposes `src/lib.vlt` (entry for importers); `src/main.vlt` makes it runnable.
 - `velt.lock` pins exact versions + content hashes; registry for the POC is a local directory
-  (`$VELT_REGISTRY`, default `~/.vlt/registry/<name>/<version>/`), cache in `~/.vlt/cache`.
+  (`$VELT_REGISTRY`, default `~/.velt/registry/<name>/<version>/`), cache in `~/.velt/cache`.
 
 ## Remote registries (additive)
 ```toml

@@ -1,0 +1,6 @@
+# One toolchain for every machine and CI. rustup installs it on first use; upgrade it with a
+# pull request (new compiler versions bring new lints, and the gate runs clippy with -D warnings).
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rustfmt", "llvm-tools"]
+targets = ["wasm32-wasip1", "wasm32-unknown-unknown"]

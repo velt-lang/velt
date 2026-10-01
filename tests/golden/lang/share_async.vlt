@@ -1,0 +1,38 @@
+// check: no leaks
+// Semantics stage 2 and async code: a promise shares the objects its call is given (same
+// thread); a spawned task gets its own copy of an object the program still shares, so threads
+// never share reference counts.
+class Log {
+  lines: string[] = [];
+}
+
+async function note(log: Log, line: string): Promise<void> {
+  await sleep(1);
+  log.lines.push(line);
+}
+
+async function total(xs: i64[]): Promise<i64> {
+  let t = 0;
+  for (const x of xs) {
+    t += x;
+  }
+  xs.push(0);
+  return t;
+}
+
+async function main() {
+  const log = new Log();
+  await note(log, "a");
+  const p = note(log, "b");
+  await note(log, "c");
+  await p;
+  console.log(log.lines);
+  const xs = [1, 2, 3];
+  const ys = xs;
+  const t = await spawn(total(xs));
+  console.log(t, xs.length, ys.length);
+  const parts = await Promise.all([total([4]), total([5, 6])]);
+  const same = parts;
+  same.push(0);
+  console.log(parts);
+}

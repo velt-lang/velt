@@ -1,8 +1,0 @@
-function main() {
-  let count = 0;
-  const inc = () => {
-    count += 1;
-  };
-  inc();
-  console.log(count);
-}

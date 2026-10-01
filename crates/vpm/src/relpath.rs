@@ -35,6 +35,20 @@ pub fn absolute(p: &Path) -> PathBuf {
     }
 }
 
+/// `p` without the Windows verbatim prefix that `canonicalize` adds (`\\?\C:\x` -> `C:\x`,
+/// `\\?\UNC\host\share` -> `\\host\share`), for tools that don't understand it (Node resolves
+/// `\\?\D:\...` to the drive itself). Other paths are returned unchanged.
+pub fn plain(p: &Path) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => p.to_path_buf(),
+    }
+}
+
 /// `path` relative to `base` as a `/`-separated string (both normalized, same anchor), e.g.
 /// `relative("/a/b/c", "/a/x") == "../b/c"`. Returns `"."` for equal paths.
 pub fn relative(path: &Path, base: &Path) -> String {
@@ -63,6 +77,23 @@ pub fn relative(path: &Path, base: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plain_strips_the_verbatim_prefix() {
+        assert_eq!(
+            plain(Path::new(r"\\?\D:\a\b.mjs")),
+            PathBuf::from(r"D:\a\b.mjs")
+        );
+        assert_eq!(
+            plain(Path::new(r"\\?\UNC\host\share\x")),
+            PathBuf::from(r"\\host\share\x")
+        );
+        assert_eq!(
+            plain(Path::new(r"\\?\Volume{x}\y")),
+            PathBuf::from(r"\\?\Volume{x}\y")
+        );
+        assert_eq!(plain(Path::new("/usr/lib/x")), PathBuf::from("/usr/lib/x"));
+    }
 
     #[test]
     fn normalize_paths() {

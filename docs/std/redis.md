@@ -12,7 +12,7 @@ it in order, so it already works as a connection pool (there is no separate `cre
 - `connect(url, opts: RedisConnectOptions { ca? } = {}): Promise<RedisClient>`: URL
   `redis://[[user]:password@]host[:port][/db]` (`AUTH` and `SELECT` are sent for you);
   `rediss://` uses TLS, also trusting the PEM CAs in `ca`.
-- `RedisClient` (Copy handle, many tasks may use it at once; `close()` once when done):
+- `RedisClient` (a handle, many tasks may use it at once; `close()` once when done):
   - Commands that take several keys or values take a `string[]` (there are no rest
     parameters): `del(["a", "b"])`.
   - Keys and strings: `get(key): string | null`, `set(key, value, opts: SetOptions { ex?, px?, nx?,
@@ -48,7 +48,7 @@ it in order, so it already works as a connection pool (there is no separate `cre
 - `subscribe(target: string | RedisClient, channels, opts = {}): Promise<RedisSubscriber>` and
   `psubscribe(target, patterns, opts = {})` (glob patterns) open a dedicated connection (to the
   URL, or to the server and database a client uses) and resolve once the server confirmed.
-- `RedisSubscriber` (Copy handle): `next(): Promise<RedisMessage | null>` (null after
+- `RedisSubscriber` (a handle): `next(): Promise<RedisMessage | null>` (null after
   `close()`), `subscribe(channels)`, `unsubscribe(channels)`, `psubscribe(patterns)`,
   `punsubscribe(patterns)`, `close()` (call once, from any task).
 - `RedisMessage { channel; message; pattern: string | null }`.

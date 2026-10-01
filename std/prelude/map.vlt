@@ -19,10 +19,10 @@
 //   load (as fast as plain linear probing grown at 5/8 in bench/hashmap.vlt, with half the
 //   index memory at some sizes; bench/RESULTS.md).
 //
-// Ownership: `set` takes ownership of the key and value. `get` returns a clone of the value
-// (a plain copy for Copy types such as numbers); use `has` to test membership without cloning,
-// and `upsert` / `update` to change a value in place. `keys()`, `values()` and `entries()`
-// return clones too; `forEach` borrows. A map holds at most 2^31 entries.
+// Ownership: `set` takes ownership of the key and value. `get` returns the stored value like JS
+// (an object is shared — another reference to it — and numbers or strings are copied); `upsert`
+// / `update` change a value in place. `keys()`, `values()` and `entries()` return the stored
+// keys and values the same way; `forEach` borrows. A map holds at most 2^31 entries.
 
 // First index capacity once a map receives its first entry.
 const INITIAL_SLOTS: usize = 8;
@@ -70,13 +70,13 @@ export class Map<K, V> {
     this.append(key, value, p, e);
   }
 
-  // A clone of the value stored for `key` (see header), or null.
+  // The value stored for `key` (see header), or null.
   get(key: K): V | null {
     const e = this.lookup(key, __intrinsic_hash(key) * FIB);
     if (e < 0) {
       return null;
     }
-    return this.entryValues[e as usize].clone();
+    return __intrinsic_share(this.entryValues[e as usize]);
   }
 
   has(key: K): bool {
@@ -111,15 +111,15 @@ export class Map<K, V> {
     return true;
   }
 
-  // A clone of the value stored for `key`, inserting `make()` first if `key` is absent.
+  // The value stored for `key`, inserting `make()` first if `key` is absent.
   getOrInsert<E>(key: K, make: () => V throws E): V throws E {
     const p = __intrinsic_hash(key) * FIB;
     const e = this.lookup(key, p);
     if (e < 0) {
       this.append(key, make(), p, e);
-      return cloneValue(this.entryValues[this.entryValues.length - 1]);
+      return sharedValue(this.entryValues[this.entryValues.length - 1]);
     }
-    return cloneValue(this.entryValues[e as usize]);
+    return sharedValue(this.entryValues[e as usize]);
   }
 
   // Removes `key`; returns whether it was present. The value is dropped immediately.
@@ -171,7 +171,7 @@ export class Map<K, V> {
     const out: K[] = __intrinsic_array_with_capacity(this._size);
     for (let e: usize = 0; e < this.entryKeys.length; e++) {
       if (this.entryValues[e] != null) {
-        out.push(this.entryKeys[e].clone());
+        out.push(__intrinsic_share(this.entryKeys[e]));
       }
     }
     return out;
@@ -180,7 +180,7 @@ export class Map<K, V> {
   values(): V[] {
     const out: V[] = __intrinsic_array_with_capacity(this._size);
     for (let e: usize = 0; e < this.entryValues.length; e++) {
-      pushClone(out, this.entryValues[e]);
+      pushShared(out, this.entryValues[e]);
     }
     return out;
   }
@@ -220,7 +220,7 @@ export class Map<K, V> {
       }
       if (((w ^ p) >> 32) == 0) {
         const e = ((w & POS_MASK) - 1) as usize;
-        if (this.entryKeys[e] == key) {
+        if (__intrinsic_eq(this.entryKeys[e], key)) {
           return e as i64;
         }
       }
@@ -378,22 +378,22 @@ function mutateWith<V, E>(slot: V | null, f: (value: V) => void throws E) throws
   }
 }
 
-function cloneValue<V>(slot: V | null): V {
+function sharedValue<V>(slot: V | null): V {
   if (slot != null) {
-    return slot.clone();
+    return __intrinsic_share(slot);
   }
   panic("ICE: Map entry without a value");
 }
 
-function pushClone<V>(out: V[], slot: V | null) {
+function pushShared<V>(out: V[], slot: V | null) {
   if (slot != null) {
-    out.push(slot.clone());
+    out.push(__intrinsic_share(slot));
   }
 }
 
 function pushEntry<K, V>(out: [K, V][], key: K, slot: V | null) {
   if (slot != null) {
-    const pair: [K, V] = [key.clone(), slot.clone()];
+    const pair: [K, V] = [__intrinsic_share(key), __intrinsic_share(slot)];
     out.push(pair);
   }
 }

@@ -82,15 +82,29 @@ existing `README.md`, and names the package after the directory unless `--name` 
 velt doc [<file|dir>...] [--std] [-o <dir>]
 ```
 
-Generates HTML documentation for exported items: their signatures as written and the `///`
-comment block right above each declaration (a comment block at the top of a file documents the
-module). Without paths, it documents the package's `src/` into `<package>/target/doc`;
-`--std` documents the standard library. The output has one page per module and a client-side
-search.
+Generates HTML documentation for exported items: their signatures and the `///` comment block
+right above each declaration (a comment block at the top of a file documents the module).
+Without paths, it documents the package's `src/` into `<package>/target/doc`; `--std` documents
+the standard library. The output has one page per module and a client-side search.
+
+- **Signatures** are shown in one canonical form whatever the source's layout:
+  `function pick<T extends Comparable<T>, U>(items: T[], limit?: i64): U | null`, with
+  `static`, `async`, `get`/`set` on members and the type's `extends`/`implements`.
+- **Type names link** to their documentation: types the module declares, imports (also
+  `ns.Type` through `import * as ns`) or re-exports, among the modules documented together.
+  Prelude types link when the prelude is part of the docs (`--std`, the docs website); a
+  package's docs don't include std, so its prelude types stay plain text. Type parameters and
+  parameter names never link.
+- **Re-exports** are documented under the re-exporting module: `export { x as y } from "…"`
+  shows `x`'s documentation as `y`, `export * from "…"` every export the module doesn't
+  declare or list itself, each with a link to where it is declared. A re-export from a module
+  that isn't documented alongside (another package; std when documenting a package) is listed
+  as one line. Names in a local `export { a, b as c };` list are documented too.
 
 ## `velt doctor`
 
-Checks the runtime library, the standard library, the system linker, clang, and that
+Checks the runtime library, the standard library, the system linker, the WebAssembly linker
+(the Rust toolchain's `rust-lld` when Rust is installed), clang, and that
 `VELT_HOME` is writable, then compiles and runs a hello world (debug, plus release through LLVM
 when clang is found). Problems are marked `✗` (required) or `!` (optional) with a `fix:` hint.
 It exits with 0 when every required check passes.
@@ -101,6 +115,7 @@ $ velt doctor
 ✓ runtime lib      C:\Users\me\AppData\Local\velt\lib\velt_rt.lib
 ✓ std              C:\Users\me\AppData\Local\velt\std
 ✓ linker           C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\...\link.exe
+✓ wasm linker      C:\Users\me\.rustup\toolchains\...\bin\rust-lld.exe
 ✓ clang            C:\Program Files\LLVM\bin\clang.exe
 ✓ velt home        registry C:\Users\me\.velt\registry, cache C:\Users\me\.velt\cache
 ✓ hello (debug)    built with Cranelift and ran

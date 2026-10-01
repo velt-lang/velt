@@ -220,17 +220,26 @@ impl Moves<'_> {
     }
 
     /// Creating a closure uses its captures: by-value captures move the variable (softly for
-    /// strings: a string variable used again is copied into the closure instead).
+    /// shared values: a variable used again is shared with the closure instead).
     fn closure(&mut self, d: DefId, span: Span, holder: Option<LocalId>, st: &mut Flow) {
         let Some(caps) = self.captures.get(&d) else {
             return;
         };
         let escaping = self.escaping.contains(&d);
+        let writes =
+            |c: &crate::hir::Capture| self.writers.get(&d).is_some_and(|w| w.contains(&c.outer));
         for c in caps.clone() {
-            let soft_string =
-                self.soft.contains(&span) && self.locals[c.outer.0 as usize].ty == self.str_;
+            let i = c.outer.0 as usize;
+            // A second escaping closure capturing a variable that one of them assigns.
+            if escaping && matches!(c.mode, PassMode::Owned | PassMode::Copy) && self.boxable[i] {
+                let prev = st.as_ref().and_then(|s| s.captured[i]);
+                if prev.is_some_and(|(_, _, w)| w || writes(&c)) {
+                    self.boxed.insert(c.outer);
+                }
+            }
+            let soft_share = self.soft.contains(&span) && self.shared[c.outer.0 as usize];
             let (mode, by_closure) = match c.mode {
-                PassMode::Owned => (UseMode::Move, !soft_string),
+                PassMode::Owned => (UseMode::Move, !soft_share),
                 PassMode::Copy => (UseMode::Copy, false),
                 PassMode::Borrow | PassMode::BorrowMut => (UseMode::Borrow, false),
             };
@@ -239,8 +248,10 @@ impl Moves<'_> {
             }
             self.use_path(c.outer, &[], mode, span, st, by_closure);
             if escaping && matches!(c.mode, PassMode::Owned | PassMode::Copy) {
+                let w = writes(&c);
                 if let Some(s) = st {
-                    s.captured[c.outer.0 as usize] = Some((span, holder.map(|h| h.0 as usize)));
+                    let before = s.captured[i].is_some_and(|(_, _, x)| x);
+                    s.captured[i] = Some((span, holder.map(|h| h.0 as usize), w || before));
                 }
             }
         }

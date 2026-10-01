@@ -103,7 +103,7 @@ fn moved_roots(cx: &Ctx, b: &mut Block, soft: &HashSet<Span>) -> HashSet<LocalId
             out.insert(*l);
         }
         E::Call {
-            callee: Callee::Intrinsic(Intrinsic::Clone),
+            callee: Callee::Intrinsic(Intrinsic::Clone | Intrinsic::Share),
             args,
         } => {
             if let [a @ Expr {

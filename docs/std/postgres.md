@@ -10,7 +10,7 @@ to the server is async.
 - `connect(url): Promise<Client>`. `url` is `postgres://user:password@host:port/db?options` or
   a libpq string (`host=… user=… dbname=…`). Supported options include `connect_timeout`,
   `application_name` and `sslmode`.
-- `Client` is a Copy handle, so you can pass it around and capture it in tasks. Concurrent
+- `Client` is a handle, so you can pass it around and capture it in tasks. Concurrent
   queries on one client are pipelined on its connection. Methods:
   - `query<T, P>(sql, params): T[]`, `queryOne<T, P>(sql, params): T | null`,
     `execute<P>(sql, params): i64` (rows affected or returned);

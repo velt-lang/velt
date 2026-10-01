@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "Velt",
-  "scopeName": "source.vlt",
+  "scopeName": "source.velt",
   "fileTypes": ["vlt"],
   "patterns": [
     { "include": "#comments" },
@@ -18,33 +18,33 @@
     "comments": {
       "patterns": [
         {
-          "name": "comment.block.documentation.vlt",
+          "name": "comment.block.documentation.velt",
           "begin": "/\\*\\*(?!/)",
           "end": "\\*/",
-          "captures": { "0": { "name": "punctuation.definition.comment.vlt" } }
+          "captures": { "0": { "name": "punctuation.definition.comment.velt" } }
         },
         {
-          "name": "comment.block.vlt",
+          "name": "comment.block.velt",
           "begin": "/\\*",
           "end": "\\*/",
-          "captures": { "0": { "name": "punctuation.definition.comment.vlt" } }
+          "captures": { "0": { "name": "punctuation.definition.comment.velt" } }
         },
         {
-          "name": "comment.line.double-slash.vlt",
+          "name": "comment.line.double-slash.velt",
           "begin": "//",
           "end": "$",
-          "beginCaptures": { "0": { "name": "punctuation.definition.comment.vlt" } }
+          "beginCaptures": { "0": { "name": "punctuation.definition.comment.velt" } }
         }
       ]
     },
     "escapes": {
       "patterns": [
         {
-          "name": "constant.character.escape.vlt",
+          "name": "constant.character.escape.velt",
           "match": "\\\\(?:[nrt0\\\\\"'`$]|x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]{1,6}\\})"
         },
         {
-          "name": "invalid.illegal.escape.vlt",
+          "name": "invalid.illegal.escape.velt",
           "match": "\\\\."
         }
       ]
@@ -52,42 +52,42 @@
     "strings": {
       "patterns": [
         {
-          "name": "string.quoted.double.vlt",
+          "name": "string.quoted.double.velt",
           "begin": "\"",
           "end": "\"|$",
-          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.vlt" } },
-          "endCaptures": { "0": { "name": "punctuation.definition.string.end.vlt" } },
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.velt" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.velt" } },
           "patterns": [{ "include": "#escapes" }]
         },
         {
-          "name": "string.quoted.single.vlt",
+          "name": "string.quoted.single.velt",
           "begin": "'",
           "end": "'|$",
-          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.vlt" } },
-          "endCaptures": { "0": { "name": "punctuation.definition.string.end.vlt" } },
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.velt" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.velt" } },
           "patterns": [{ "include": "#escapes" }]
         },
         { "include": "#template" }
       ]
     },
     "template": {
-      "name": "string.template.vlt",
+      "name": "string.template.velt",
       "begin": "`",
       "end": "`",
-      "beginCaptures": { "0": { "name": "punctuation.definition.string.template.begin.vlt" } },
-      "endCaptures": { "0": { "name": "punctuation.definition.string.template.end.vlt" } },
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.template.begin.velt" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.string.template.end.velt" } },
       "patterns": [
         { "include": "#escapes" },
         { "include": "#template-substitution" }
       ]
     },
     "template-substitution": {
-      "name": "meta.template.expression.vlt",
+      "name": "meta.template.expression.velt",
       "begin": "\\$\\{",
       "end": "\\}",
-      "beginCaptures": { "0": { "name": "punctuation.definition.template-expression.begin.vlt" } },
-      "endCaptures": { "0": { "name": "punctuation.definition.template-expression.end.vlt" } },
-      "contentName": "meta.embedded.line.vlt",
+      "beginCaptures": { "0": { "name": "punctuation.definition.template-expression.begin.velt" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.template-expression.end.velt" } },
+      "contentName": "meta.embedded.line.velt",
       "patterns": [
         { "include": "#brace-block" },
         { "include": "$self" }
@@ -96,8 +96,8 @@
     "brace-block": {
       "begin": "\\{",
       "end": "\\}",
-      "beginCaptures": { "0": { "name": "punctuation.definition.block.vlt" } },
-      "endCaptures": { "0": { "name": "punctuation.definition.block.vlt" } },
+      "beginCaptures": { "0": { "name": "punctuation.definition.block.velt" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.block.velt" } },
       "patterns": [
         { "include": "#brace-block" },
         { "include": "$self" }
@@ -106,24 +106,24 @@
     "numbers": {
       "patterns": [
         {
-          "name": "constant.numeric.hex.vlt",
+          "name": "constant.numeric.hex.velt",
           "match": "\\b0[xX][0-9A-Fa-f][0-9A-Fa-f_]*((?:[iu](?:8|16|32|64|size))?)\\b",
-          "captures": { "1": { "name": "storage.type.numeric.vlt" } }
+          "captures": { "1": { "name": "storage.type.numeric.velt" } }
         },
         {
-          "name": "constant.numeric.binary.vlt",
+          "name": "constant.numeric.binary.velt",
           "match": "\\b0[bB][01][01_]*((?:[iu](?:8|16|32|64|size))?)\\b",
-          "captures": { "1": { "name": "storage.type.numeric.vlt" } }
+          "captures": { "1": { "name": "storage.type.numeric.velt" } }
         },
         {
-          "name": "constant.numeric.octal.vlt",
+          "name": "constant.numeric.octal.velt",
           "match": "\\b0[oO][0-7][0-7_]*((?:[iu](?:8|16|32|64|size))?)\\b",
-          "captures": { "1": { "name": "storage.type.numeric.vlt" } }
+          "captures": { "1": { "name": "storage.type.numeric.velt" } }
         },
         {
-          "name": "constant.numeric.decimal.vlt",
+          "name": "constant.numeric.decimal.velt",
           "match": "(?<![\\w$])(?:\\d[\\d_]*(?:\\.\\d[\\d_]*)?|\\.\\d[\\d_]*)(?:[eE][+-]?\\d[\\d_]*)?((?:[iu](?:8|16|32|64|size)|f32|f64)?)\\b",
-          "captures": { "1": { "name": "storage.type.numeric.vlt" } }
+          "captures": { "1": { "name": "storage.type.numeric.velt" } }
         }
       ]
     },
@@ -132,55 +132,55 @@
         {
           "match": "\\b(function)\\s*(\\*?)\\s*([A-Za-z_$][\\w$]*)",
           "captures": {
-            "1": { "name": "storage.type.function.vlt" },
-            "3": { "name": "entity.name.function.vlt" }
+            "1": { "name": "storage.type.function.velt" },
+            "3": { "name": "entity.name.function.velt" }
           }
         },
         {
           "match": "\\b(class|struct|interface|enum|type)\\s+([A-Za-z_$][\\w$]*)",
           "captures": {
-            "1": { "name": "storage.type.$1.vlt" },
-            "2": { "name": "entity.name.type.$1.vlt" }
+            "1": { "name": "storage.type.$1.velt" },
+            "2": { "name": "entity.name.type.$1.velt" }
           }
         },
         {
           "match": "\\b(extend)\\b(?=\\s*(?:<|[A-Za-z_$]))",
-          "captures": { "1": { "name": "storage.type.extend.vlt" } }
+          "captures": { "1": { "name": "storage.type.extend.velt" } }
         }
       ]
     },
     "keywords": {
       "patterns": [
         {
-          "name": "keyword.control.flow.vlt",
+          "name": "keyword.control.flow.velt",
           "match": "(?<![\\w$.])(if|else|while|do|for|of|in|break|continue|return|throw|try|catch|finally|switch|case|default|await)(?![\\w$])"
         },
         {
-          "name": "keyword.control.import.vlt",
+          "name": "keyword.control.import.velt",
           "match": "(?<![\\w$.])(import|export|from|as)(?![\\w$])"
         },
         {
-          "name": "storage.type.vlt",
+          "name": "storage.type.velt",
           "match": "(?<![\\w$.])(const|let|function|class|struct|interface|enum|type|declare|constructor)(?![\\w$])"
         },
         {
-          "name": "storage.modifier.vlt",
+          "name": "storage.modifier.velt",
           "match": "(?<![\\w$.])(async|static|readonly|override|extends|implements|shared)(?![\\w$])"
         },
         {
-          "name": "keyword.operator.new.vlt",
+          "name": "keyword.operator.new.velt",
           "match": "(?<![\\w$.])new(?![\\w$])"
         },
         {
-          "name": "variable.language.vlt",
+          "name": "variable.language.velt",
           "match": "(?<![\\w$.])(this|super)(?![\\w$])"
         },
         {
-          "name": "constant.language.boolean.vlt",
+          "name": "constant.language.boolean.velt",
           "match": "(?<![\\w$.])(true|false)(?![\\w$])"
         },
         {
-          "name": "constant.language.null.vlt",
+          "name": "constant.language.null.velt",
           "match": "(?<![\\w$.])null(?![\\w$])"
         }
       ]
@@ -188,15 +188,15 @@
     "types": {
       "patterns": [
         {
-          "name": "support.type.primitive.vlt",
+          "name": "support.type.primitive.velt",
           "match": "(?<![\\w$.])(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|number|bool|string|void|never)(?![\\w$])"
         },
         {
-          "name": "support.type.builtin.vlt",
+          "name": "support.type.builtin.velt",
           "match": "(?<![\\w$.])(Map|Promise|Result|Record)(?![\\w$])"
         },
         {
-          "name": "entity.name.type.vlt",
+          "name": "entity.name.type.velt",
           "match": "(?<![\\w$])[A-Z][\\w$]*(?![\\w$])"
         }
       ]
@@ -204,39 +204,39 @@
     "calls": {
       "patterns": [
         {
-          "name": "support.function.builtin.vlt",
+          "name": "support.function.builtin.velt",
           "match": "(?<![\\w$.])(panic|spawn|sleep|yieldNow|shared)(?=\\s*\\()"
         },
         {
-          "name": "entity.name.function.call.vlt",
+          "name": "entity.name.function.call.velt",
           "match": "[a-z_$][\\w$]*(?=\\s*(?:\\?\\.)?\\()"
         }
       ]
     },
     "operators": {
       "patterns": [
-        { "name": "storage.type.function.arrow.vlt", "match": "=>" },
-        { "name": "keyword.operator.optional.vlt", "match": "\\?\\.|\\?\\?=?" },
+        { "name": "storage.type.function.arrow.velt", "match": "=>" },
+        { "name": "keyword.operator.optional.velt", "match": "\\?\\.|\\?\\?=?" },
         {
-          "name": "keyword.operator.assignment.compound.vlt",
+          "name": "keyword.operator.assignment.compound.velt",
           "match": "(?:\\*\\*|<<|>>>|>>|&&|\\|\\||[-+*/%&|^])="
         },
-        { "name": "keyword.operator.comparison.vlt", "match": "===|!==|==|!=|<=|>=" },
-        { "name": "keyword.operator.logical.vlt", "match": "&&|\\|\\||!" },
-        { "name": "keyword.operator.bitwise.vlt", "match": "<<|>>>|>>|[&|^~]" },
-        { "name": "keyword.operator.increment.vlt", "match": "\\+\\+|--" },
-        { "name": "keyword.operator.arithmetic.vlt", "match": "\\*\\*|[-+*/%]" },
-        { "name": "keyword.operator.assignment.vlt", "match": "=" },
-        { "name": "keyword.operator.relational.vlt", "match": "[<>]" },
-        { "name": "keyword.operator.spread.vlt", "match": "\\.\\.\\.|\\.\\.=|\\.\\." },
-        { "name": "keyword.operator.ternary.vlt", "match": "[?:]" }
+        { "name": "keyword.operator.comparison.velt", "match": "===|!==|==|!=|<=|>=" },
+        { "name": "keyword.operator.logical.velt", "match": "&&|\\|\\||!" },
+        { "name": "keyword.operator.bitwise.velt", "match": "<<|>>>|>>|[&|^~]" },
+        { "name": "keyword.operator.increment.velt", "match": "\\+\\+|--" },
+        { "name": "keyword.operator.arithmetic.velt", "match": "\\*\\*|[-+*/%]" },
+        { "name": "keyword.operator.assignment.velt", "match": "=" },
+        { "name": "keyword.operator.relational.velt", "match": "[<>]" },
+        { "name": "keyword.operator.spread.velt", "match": "\\.\\.\\.|\\.\\.=|\\.\\." },
+        { "name": "keyword.operator.ternary.velt", "match": "[?:]" }
       ]
     },
     "punctuation": {
       "patterns": [
-        { "name": "punctuation.terminator.statement.vlt", "match": ";" },
-        { "name": "punctuation.separator.comma.vlt", "match": "," },
-        { "name": "punctuation.accessor.vlt", "match": "\\." }
+        { "name": "punctuation.terminator.statement.velt", "match": ";" },
+        { "name": "punctuation.separator.comma.velt", "match": "," },
+        { "name": "punctuation.accessor.velt", "match": "\\." }
       ]
     }
   }

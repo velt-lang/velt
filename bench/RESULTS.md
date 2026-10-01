@@ -397,6 +397,83 @@ Soak (`-SoakSeconds 600`, candidate, 256 connections, 10 minutes, 31.9M requests
 private bytes 29.6 MB at 1 min, 29.4–30.9 MB throughout, 29.9 MB at the end; working set
 17.0 → 19.3 MB (peak 19.9 MB). No growth trend in private memory: no leak.
 
+## Semantics stage 2: shared references (2026-10-01)
+Gate ([semantics.md "Gates"](../docs/internals/design/semantics.md#gates),
+[semantics-stage2.md §8](../docs/internals/design/semantics-stage2.md#8-gates-and-accounting))
+on an i9-12900HK laptop, Windows 11, with no builds or tests running (one background desktop
+app used about 1.5 of 20 hardware threads). Baseline = `main` at bde7b1d, candidate = this
+branch; both LLVM release, interleaved A/B runs, medians of wall-clock ms including process
+start. The evidence is in three layers:
+
+1. **Representation.** No benchmark shares a value, so lowering counts no type in any of them
+   (`VELT_DEBUG_COUNTED=1` prints an empty set for all 26 programs below): no reference count,
+   no box, `noalias`/`readonly` unchanged.
+2. **Generated code.** LLVM IR of baseline and candidate (`--release --emit llvm`, panic-location
+   strings normalized, since the two checkouts' std paths differ in length) is **byte-identical**
+   for 20 of the 26 programs: fib, floats, hashmap, loops, shapes, sort, strings; all six of
+   bench/async; binary-trees, fannkuch-redux, fasta, mandelbrot, n-body, pidigits,
+   spectral-norm. The others differ only in: classes, k-nucleotide, regex-redux,
+   reverse-complement — vtables gain one hidden slot (`SLOT_SHARE`; in the three Benchmarks
+   Game programs only the vtables of thrown error objects, used on the error path), so method
+   offsets move by 8 bytes; closures — heap closure environments carry a count word (one store
+   at creation, a load and branch at release); nbody — `Vec3`/`Body` are no longer Copy
+   (structs are objects), so they are passed by reference instead of by copy.
+3. **Interleaved timings.**
+
+`pwsh bench/compare.ps1 -Runs 21` (bench/) and `-Runs 15 -Dir bench/async`:
+
+| benchmark | baseline | candidate | change | IR |
+|---|---|---|---|---|
+| classes | 216.2 | 213.3 | -1.4% | vtable slot |
+| closures | 257.8 | 254.5 | -1.3% | env count |
+| fib | 52.7 | 52.4 | -0.4% | identical |
+| floats | 75.1 | 75.9 | +1.0% | identical |
+| hashmap | 211.1 | 203.0 | -3.9% (rerun, 31 runs: -3.2%) | identical |
+| loops | 228.6 | 222.2 | -2.8% | identical |
+| nbody | 187.6 | 187.7 | +0.0% | by reference |
+| shapes | 121.9 | 123.2 | +1.1% | identical |
+| sort | 104.1 | 106.7 | +2.5% | identical |
+| strings | 129.3 | 128.2 | -0.9% | identical |
+| async/await_chain | 67.5 | 69.7 | +3.2% (rerun, 31 runs: -5.7%) | identical |
+| async/await_deep | 306.6 | 311.6 | +1.6% | identical |
+| async/fanout_all | 159.0 | 157.7 | -0.8% | identical |
+| async/hot_loop | 155.9 | 156.5 | +0.3% | identical |
+| async/spawn_many | 637.5 | 646.4 | +1.4% | identical |
+| async/timers | 102.0 | 98.7 | -3.2% (rerun, 31 runs: +2.5%) | identical |
+
+`pwsh bench/benchmarks-game/compare.ps1 -Runs 9` (official N; reruns `-Only <program> -Runs 9`):
+
+| program | baseline | candidate | change | rerun | IR |
+|---|---|---|---|---|---|
+| binary-trees | 7259 | 7203 | -0.8% | | identical |
+| fannkuch-redux | 33710 | 33186 | -1.6% | | identical |
+| fasta | 12695 | 15107 | +19.0% | -19.2% | identical |
+| k-nucleotide | 18609 | 17042 | -8.4% | +9.8% | error vtables |
+| mandelbrot | 31507 | 29741 | -5.6% | +2.6% | identical |
+| n-body | 4097 | 3940 | -3.8% | +3.1% | identical |
+| pidigits | 3274 | 2640 | -19.4% | -0.8% | identical |
+| regex-redux | 1598 | 1585 | -0.9% | | error vtables |
+| reverse-complement | 20305 | 17888 | -11.9% | +16.1% | error vtables |
+| spectral-norm | 2026 | 2226 | +9.9% | -0.3% | identical |
+
+Every program whose generated code changed is within ±3% in the micro suite (classes -1.4%,
+closures -1.3%, nbody +0.0%). Every result outside ±3% is either on byte-identical IR (hashmap,
+await_chain, timers, fasta, mandelbrot, n-body, pidigits, spectral-norm) or on IR that differs
+only off the hot path (k-nucleotide, reverse-complement), and its sign flips on a rerun. Even
+with no other builds running, this laptop's Benchmarks Game timings drift by up to 2–5× between
+runs (thermal and turbo state; fasta, k-nucleotide and reverse-complement also stream 250 MB
+through files), so those rows measure the machine, not the compiler. On the IR evidence the
+gate holds: no benchmark's code got slower.
+
+Refcount operations: the string counters (`pwsh bench/rc_stats.ps1`) are unchanged (no
+benchmark shares an object; counted types are empty). New: the debug runtime's `VELT_RC_STATS=1`
+line ends in `blocks=A/F`, every `velt_rt_alloc`/`velt_rt_free` block; the stage 2 goldens marked
+`// check: no leaks` assert A = F (no leaks), and every debug golden runs under the checking
+allocator. Compile time: programs that share nothing lower once (`lower` of tests/golden/m1/hello
+0.6 → 0.8 ms); a program that shares lowers two or three times (the counted-type fixpoint;
+tests/golden/lang/share_aliasing: 4.3 ms). Sema of examples/http_hello: 5.5 → 6.3 ms (median of
+6 interleaved release builds): the shared-value, cell and assigned-field passes.
+
 ## Compile time
 
 `pwsh bench/compile/run.ps1 -Runs 10` (Linux/macOS: `bench/compile/run.sh 10`): the front end of

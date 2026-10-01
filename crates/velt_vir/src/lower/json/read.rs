@@ -264,6 +264,18 @@ impl FnLower<'_, '_> {
     fn json_read_expand(&mut self, r: Local, place: &Place, ctx: Local, ty: TyId, fail: BlockId) {
         let ro = Operand::Copy(Place::local(r));
         let vt = self.cx.ty(ty);
+        if self.cx.boxed(ty) {
+            // A boxed array / object is read into a fresh box of its own.
+            let payload = self.cx.payload_ty(ty);
+            let p = self.counted_alloc(payload);
+            let pp = self.operand_place(p.clone(), Ty::Ptr);
+            let zero = self.zero_value(payload);
+            self.assign(
+                crate::lower::operand::proj(&pp, crate::vir::Proj::Deref(payload)),
+                Rvalue::Use(zero),
+            );
+            self.assign(place.clone(), Rvalue::Use(p));
+        }
         match self.cx.kind(ty) {
             TyKind::Int(it) => self.json_read_int(r, place, ctx, it, fail),
             TyKind::Float(_) => {
@@ -286,7 +298,10 @@ impl FnLower<'_, '_> {
             }
             TyKind::Unit => self.json_expect(Rt::JsonReadNull, vec![ro], ctx, "null", fail),
             TyKind::Option(e) => self.json_read_option(r, place, ctx, ty, e, fail),
-            TyKind::Array(e) => self.json_read_array(r, place, ctx, e, fail),
+            TyKind::Array(e) => {
+                let arr = self.content(place, ty);
+                self.json_read_array(r, &arr, ctx, e, fail)
+            }
             TyKind::Tuple(es) => self.json_read_tuple(r, place, ctx, ty, &es, fail),
             // Literal types, literal unions and C-like enums: one of a fixed set of scalars.
             TyKind::Literal(_) | TyKind::Adt(..) if self.json_choices(ty).is_some() => {

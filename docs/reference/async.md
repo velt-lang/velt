@@ -26,21 +26,32 @@ Promises behave like JavaScript's, at Rust's cost:
   completion (its result is dropped), and the program waits for it before exiting, like Node
   waits for pending work. A promise created outside async code (for example in a synchronous
   `main`) starts when it is awaited or spawned.
-- An async call owns its arguments: an argument variable used again afterwards is copied,
-  otherwise moved, because the promise may outlive the caller's frame. Promises, and values
-  holding one or a `[Symbol.dispose]` resource, cannot be copied: they are always moved
-  (``a promise cannot be copied`` for an explicit `p.clone()`).
+- An async call owns its arguments: an argument variable used again afterwards is shared with
+  the promise (objects) or copied (numbers, strings), otherwise moved, because the promise may
+  outlive the caller's frame. A promise has one owner: using a promise variable after handing
+  it on is ``use of moved value``, and an explicit `p.clone()` is ``a promise cannot be copied``.
+- Values handed to `spawn` (and captured by an HTTP handler) go to another thread: an object
+  the program still shares is deep-copied for the task (like a structured clone), so threads
+  never share reference counts.
 
 ## Combinators
 
 - `Promise.all(ps: Promise<T, E>[]): Promise<T[], E>`: the results, in order.
-- `Promise.race(ps): Promise<T, E>`: the first to settle; the others keep running.
+- `Promise.race(ps): Promise<T, E>`: the first to settle; the others keep running to
+  completion.
 - `Promise.allSettled(ps)`: a `PromiseSettledResult<T, E>[]`, where each element is
   `{ status: "fulfilled"; value: T } | { status: "rejected"; reason: E }`.
 - `Promise.any(ps): Promise<T>`: the first to fulfill; `AggregateError` when all of them reject
   (or the array is empty).
 
-All promises in one call must have the same type.
+All promises in one call must have the same type. Like in JS, every promise passed to a
+combinator is *handled*: one that loses (or is left behind) and rejects later has its error
+dropped, not reported as uncaught, so a timeout written as a rejecting promise in a
+`Promise.race` is fine once the work won (`Promise.allSettled` awaits every promise itself).
+Losing promises that already started, such as calls of async functions, run to completion;
+a runtime operation that loses, such as `sleep(ms)` or an I/O call, is cancelled. A combinator
+kept as a value is itself a stored promise: if nobody awaits it, its own rejection is reported
+as uncaught.
 
 ## Tasks
 
@@ -56,8 +67,9 @@ Built-ins: `sleep(ms)`, `yieldNow()`, `performance.now(): f64` (monotonic millis
 Thread safety is checked at compile time: async closures, and HTTP handlers, must not modify
 captured variables; the error mentions "spawned task" and `shared`. Share state with:
 
-- `shared(x)`, which gives a `shared<T>`: an atomically reference-counted value; `.clone()`
-  adds a reference. For 64-bit integers, `.add(n)`, `.get()` and `.set(v)` are atomic.
+- `shared(x)`, which gives a `shared<T>`: an atomically reference-counted value. Assigning,
+  passing or capturing it adds a reference (so does `.clone()`); it is never deep-copied. For
+  64-bit integers, `.add(n)`, `.get()` and `.set(v)` are atomic.
 - `shared(new Mutex<T>(x))` with `m.with((v) => …)`: a synchronous lock. The callback gets the
   value itself (assigning `v` updates it), returns a result, and must not be async.
 
@@ -77,7 +89,7 @@ can reject with: `Promise<T, E>` (a `Promise<T>` never rejects).
   `{ status: "rejected"; reason: E }`.
 - A promise nobody can await reports its error as uncaught (`Uncaught <Type>: <message>`, exit
   code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`), and a
-  stored promise that rejects after it was dropped unawaited.
+  stored promise that rejects after it was dropped unawaited (unless a combinator handled it).
 
 **Planned** ([semantics — promises](../internals/design/semantics.md#promises)): a stored
 promise may borrow its arguments instead of owning them when it provably finishes before they
@@ -105,7 +117,7 @@ async function main() {
   const hits = shared(0);
   const tasks: Promise<i64>[] = [];
   for (let i = 0; i < 4; i++) {
-    tasks.push(spawn(worker(i, hits.clone())));                          // on any core
+    tasks.push(spawn(worker(i, hits)));                                  // on any core
   }
   const ids = await Promise.all(tasks);
   const log = shared(new Mutex<string[]>([]));

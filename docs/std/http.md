@@ -19,7 +19,7 @@ it. For a walkthrough, see [Building an HTTP server](../book/http-server.md).
   `has(name)` and `header(name)` are case-insensitive. A `Request` is valid until its handler
   settles: keep its properties, not the `Request`, in anything that outlives the handler (a
   `Response.stream` body, a spawned task). Reading a released `Request` stops the program with a
-  clear error; stage 2 of the memory model (shared references) will lift this rule.
+  clear error.
 - `Response.text(body, status = 200)`, `Response.json<T>(value, status = 200)`,
   `Response.html(body, status = 200)`, `Response.bytes(body: u8[], status = 200)`.
   `.header(name, value): bool` adds a header; `.setHeader(name, value): bool` replaces it (e.g.
@@ -30,7 +30,7 @@ it. For a walkthrough, see [Building an HTTP server](../book/http-server.md).
   before returning; default `content-type: text/plain; charset=utf-8`) go out first, then every
   flushed chunk (HTTP/1.1 chunked transfer, no `content-length`). The response ends when `body`
   returns; if it throws, the error is printed to stderr and the response is cut off (the client
-  sees a failed body, not a complete one). `ResponseWriter` (a Copy handle):
+  sees a failed body, not a complete one). `ResponseWriter` (a handle):
   `write(text): bool` / `writeBytes(data): bool` buffer, `await flush(): bool` sends the buffer
   and waits while the client is behind (backpressure), `await close(): bool` ends the response
   early, `abort()` cuts it off. Once the client has gone away they return `false` and discard

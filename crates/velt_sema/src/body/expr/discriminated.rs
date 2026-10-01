@@ -110,7 +110,7 @@ impl FnCx<'_, '_> {
         };
         let mut value = self.mk(field, fty, span);
         if !copy {
-            value = self.intrinsic(hir::Intrinsic::Clone, vec![value], fty, span);
+            value = self.intrinsic(hir::Intrinsic::Share, vec![value], fty, span);
         }
         (self.pat(P::Binding(b, mode), m, span), value)
     }

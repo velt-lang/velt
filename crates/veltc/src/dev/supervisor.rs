@@ -7,10 +7,16 @@
 //!   dev channel and waits; only then is the old version stopped and the new one told to go. The
 //!   supervisor does not compile at all, and the new version's compile overlaps the old one's
 //!   serving. While a host runs, a change first goes to it over its reload channel: it swaps
-//!   the changed code into the running program (state survives), or says why it must restart,
-//!   and only then is a new host started.
+//!   the changed code into the running program (state survives), or says why it must restart.
+//!   After a restart (the same kind of edit likely follows), a new host starts together with
+//!   the next request (quietly: the running host reports the build), so a restart doesn't wait
+//!   for two front-end runs one after the other; it is ended unused after a swap. Not on
+//!   Windows, where the second host costs more than it saves.
 //! - `--exe` mode: the supervisor links an executable per version (`versions`), then swaps the
 //!   processes.
+//!
+//! Interrupted (Ctrl-C, SIGTERM, SIGHUP; console events on Windows), the supervisor stops the
+//! program the way a reload does, waits for it and exits with 128 + the signal (130 on Windows).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -25,6 +31,8 @@ use velt_rt_host::dev::handover::reload::{request_reload, Reloaded};
 use velt_rt_host::dev::handover::Stream;
 
 use super::child::{Launch, Running};
+use super::host::QUIET_ENV;
+use super::interrupt;
 use super::listeners::{Built, Handover};
 use super::versions::Versions;
 use super::watch::{Watcher, POLL};
@@ -44,6 +52,11 @@ pub struct Supervisor {
     dev_socket: Handover,
     /// Build reports from JIT hosts.
     reports: Receiver<Built>,
+    /// Whether the last reload ended in a restart: the next one likely does too (the same
+    /// kind of edit again), so its host starts ahead of need.
+    last_restarted: bool,
+    /// The manifest's and lockfile's modification times when the last build started.
+    manifest_seen: Vec<Option<SystemTime>>,
 }
 
 /// How one rebuild ended.
@@ -67,8 +80,7 @@ impl Supervisor {
             velt_rt_host::dev::SOCKET_ENV.into(),
             dev_socket.name().to_os_string(),
         )];
-        #[cfg(windows)]
-        super::interrupt::install();
+        interrupt::install();
         Ok(Supervisor {
             args,
             watcher: Watcher::default(),
@@ -78,6 +90,8 @@ impl Supervisor {
             versions: None,
             dev_socket,
             reports,
+            manifest_seen: vec![],
+            last_restarted: false,
         })
     }
 
@@ -88,6 +102,7 @@ impl Supervisor {
         loop {
             self.rebuild(since, first);
             first = false;
+            self.exit_if_interrupted();
             since = self.wait_for_change();
         }
     }
@@ -95,10 +110,12 @@ impl Supervisor {
     /// Build the current sources; on success the new version replaces the running one.
     fn rebuild(&mut self, since: Instant, first: bool) {
         let started = SystemTime::now();
+        let manifest_stamps = self.manifest_stamps();
         let outcome = match self.args.mode {
             DevMode::Exe => self.rebuild_exe(),
             DevMode::Jit | DevMode::Host => self.reload_jit(),
         };
+        self.manifest_seen = manifest_stamps;
         let manifest = manifest_files(self.args.build.input.as_deref());
         let ms = since.elapsed().as_millis();
         match outcome {
@@ -131,36 +148,89 @@ impl Supervisor {
     /// JIT mode: let the running host take the new version in place if it can; otherwise
     /// replace it with a new host.
     fn reload_jit(&mut self) -> Outcome {
+        let outcome = self.reload_jit_inner();
+        match outcome {
+            Outcome::Restarted(..) => self.last_restarted = true,
+            Outcome::Swapped(..) | Outcome::Replaced(_) => self.last_restarted = false,
+            Outcome::Failed(_) => {}
+        }
+        outcome
+    }
+
+    /// After a restart, the next host starts right away, in parallel with the request (where
+    /// reports can be told apart by process id: a host given up on may still report later).
+    /// After a swap it doesn't: a second front end beside the running host's would only slow
+    /// the swap down.
+    fn reload_jit_inner(&mut self) -> Outcome {
         let alive = self.running.as_mut().is_some_and(|r| r.exited().is_none());
+        if !(alive && self.channel.is_some()) {
+            return self.rebuild_jit(None);
+        }
+        // A host installs changed dependencies when it starts; one that may be killed unused
+        // must not be in the middle of that.
+        let manifest_changed = self.manifest_stamps() != self.manifest_seen;
+        let spare = if SPECULATE && self.last_restarted && !manifest_changed {
+            self.start_host(true).ok()
+        } else {
+            None
+        };
         let reply = match &self.channel {
-            Some(channel) if alive => request_reload(channel),
-            _ => return self.rebuild_jit(),
+            Some(channel) => request_reload(channel),
+            None => return self.rebuild_jit(spare),
         };
         match reply {
-            Ok(Reloaded::Swapped { functions, files }) => Outcome::Swapped(functions, files),
-            Ok(Reloaded::Failed { files }) => Outcome::Failed(files),
-            Ok(Reloaded::Restart { reason, .. }) => match self.rebuild_jit() {
+            Ok(Reloaded::Swapped { functions, files }) => {
+                self.discard(spare);
+                Outcome::Swapped(functions, files)
+            }
+            Ok(Reloaded::Failed { files }) => {
+                self.discard(spare);
+                Outcome::Failed(files)
+            }
+            Ok(Reloaded::Restart { reason, .. }) => match self.rebuild_jit(spare) {
                 Outcome::Replaced(files) => Outcome::Restarted(reason, files),
                 other => other,
             },
             // The host went away (crashed or exited meanwhile): start a new one.
-            Err(_) => self.rebuild_jit(),
+            Err(_) => self.rebuild_jit(spare),
         }
     }
 
-    /// JIT mode: start a host, wait for its build report, then replace the running one.
-    fn rebuild_jit(&mut self) -> Outcome {
-        let started = std::env::current_exe()
-            .map_err(|e| format!("cannot locate velt: {e}"))
-            .and_then(|program| {
-                Running::start(&Launch {
-                    program,
-                    args: host_args(&self.args),
-                    env: self.env.clone(),
-                    output: None,
-                })
-            });
-        let mut candidate = match started {
+    /// The modification times of the manifest and lockfile.
+    fn manifest_stamps(&self) -> Vec<Option<SystemTime>> {
+        manifest_files(self.args.build.input.as_deref())
+            .iter()
+            .map(|f| std::fs::metadata(f).and_then(|m| m.modified()).ok())
+            .collect()
+    }
+
+    /// Start a JIT host (`quiet`: one that prints nothing about its build).
+    fn start_host(&self, quiet: bool) -> Result<Running, String> {
+        let program = std::env::current_exe().map_err(|e| format!("cannot locate velt: {e}"))?;
+        let mut env = self.env.clone();
+        if quiet {
+            env.push((QUIET_ENV.into(), "1".into()));
+        }
+        Running::start(&Launch {
+            program,
+            args: host_args(&self.args),
+            env,
+            output: None,
+        })
+    }
+
+    /// End a host that was started ahead of need and not needed after all.
+    fn discard(&self, spare: Option<Running>) {
+        if let Some(spare) = spare {
+            spare.kill(&self.dev_socket);
+        }
+    }
+
+    /// JIT mode: start a host (or take `spare`, a quiet one already started), wait for its
+    /// build report, then replace the running one.
+    fn rebuild_jit(&mut self, spare: Option<Running>) -> Outcome {
+        let quiet = spare.is_some();
+        let mut candidate = match spare.map_or_else(|| self.start_host(false), Ok) {
             Ok(candidate) => candidate,
             Err(msg) => {
                 crate::style::error(&msg);
@@ -168,7 +238,13 @@ impl Supervisor {
             }
         };
         loop {
+            if let Some(code) = interrupt::interrupted() {
+                candidate.kill(&self.dev_socket);
+                self.exit(code);
+            }
             match self.reports.recv_timeout(POLL) {
+                // A report from a host given up on earlier.
+                Ok(built) if built.pid.is_some_and(|pid| pid != candidate.id()) => {}
                 Ok(built) if built.ok => {
                     self.stop_running();
                     // A host that cannot receive `go` has died; its exit is reported later.
@@ -177,10 +253,19 @@ impl Supervisor {
                     self.channel = Some(built.stream);
                     return Outcome::Replaced(built.files);
                 }
+                // A quiet host printed nothing: build again where the diagnostics show (the
+                // sources changed since the running host built them).
+                Ok(_) if quiet => {
+                    candidate.kill(&self.dev_socket);
+                    return self.rebuild_jit(None);
+                }
                 // The host printed the diagnostics and exits by itself.
                 Ok(built) => return Outcome::Failed(built.files),
                 Err(_) => {
                     if let Some(code) = candidate.exited() {
+                        if quiet {
+                            return self.rebuild_jit(None);
+                        }
                         eprintln!(
                             "velt dev: the new version exited with code {code} before it was ready"
                         );
@@ -270,16 +355,15 @@ impl Supervisor {
     fn wait_for_change(&mut self) -> Instant {
         loop {
             std::thread::sleep(POLL);
-            #[cfg(windows)]
-            if super::interrupt::interrupted() {
-                self.exit();
-            }
+            self.exit_if_interrupted();
             if let Some(since) = self.watcher.poll() {
                 return since;
             }
             if let Some(versions) = self.versions.as_mut().filter(|v| v.pending()) {
                 versions.sweep();
             }
+            // No host is starting now: a report is from one given up on (drop its connection).
+            while self.reports.try_recv().is_ok() {}
             if let Some(code) = self.running.as_mut().and_then(Running::exited) {
                 self.channel = None;
                 if let Some(done) = self.running.take() {
@@ -291,9 +375,16 @@ impl Supervisor {
         }
     }
 
-    /// Interrupted (Windows): stop the program, delete the version executables and exit.
-    #[cfg(windows)]
-    fn exit(&mut self) -> ! {
+    /// Once interrupted: [`Supervisor::exit`].
+    fn exit_if_interrupted(&mut self) {
+        if let Some(code) = interrupt::interrupted() {
+            self.exit(code);
+        }
+    }
+
+    /// Stop the program (a stop request, then a kill after the grace period), wait for it,
+    /// delete the version executables and exit with `code`.
+    fn exit(&mut self, code: i32) -> ! {
         self.stop_running();
         for _ in 0..50 {
             match self.versions.as_mut() {
@@ -302,9 +393,19 @@ impl Supervisor {
             }
             std::thread::sleep(POLL);
         }
-        std::process::exit(130)
+        std::process::exit(code)
     }
 }
+
+/// Whether a host may be started ahead of need here: build reports must carry the host's
+/// process id, so a host given up on can be told apart. Not on Windows: there a second host
+/// compiling beside the running one slowed its hot swaps about 4× and its restarts too (process
+/// creation and the on-access scan cost more than the overlap saves).
+const SPECULATE: bool = cfg!(any(
+    target_os = "linux",
+    target_os = "android",
+    target_vendor = "apple"
+));
 
 /// Arguments for the JIT host child: `dev --host [<file>] [--locked] [-v] -- <program args>`.
 fn host_args(args: &DevArgs) -> Vec<OsString> {

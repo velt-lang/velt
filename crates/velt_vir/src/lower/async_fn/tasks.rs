@@ -108,8 +108,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
             } if self.cx.is_async_fn(*d) => {
                 let targs: Vec<TyId> = targs.iter().map(|&t| self.sub(t)).collect();
                 if self.cx.async_info(*d, &targs).is_some() {
-                    self.state_from_call(*d, &targs, args)
-                        .map(|(info, s)| self.value_future(*d, &targs, &info, s, detached))
+                    // The task may run on another thread: its arguments are transferred.
+                    self.transfer_args = true;
+                    let state = self.state_from_call(*d, &targs, args);
+                    self.transfer_args = false;
+                    state.map(|(info, s)| self.value_future(*d, &targs, &info, s, detached))
                 } else {
                     None
                 }
@@ -167,6 +170,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let buf = self.results_buffer(n.clone(), stride, align);
         let inner = self.temp(Ty::Ptr);
         let futs = Operand::Copy(proj(&ap, Proj::Field(0)));
+        self.mark_handled(futs.clone(), n.clone(), pel, elem);
         let mut args = vec![futs, n.clone(), cint(stride as i128, Ty::U64), buf.clone()];
         let rt = match self.result_drop_fn(elem) {
             Some(d) => {
@@ -223,6 +227,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let n = Operand::Copy(proj(&ap, Proj::Field(1)));
         let et = self.cx.ty(elem);
         let size = cint(self.cx.size_align(et).0 as i128, Ty::U64);
+        self.mark_handled(futs.clone(), n.clone(), pel, elem);
         let d = self.temp(Ty::Ptr);
         if first_ok {
             let drop = self
@@ -236,6 +241,19 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.free_buffer(&ap, pel);
         let ty = self.sub(ty);
         self.owned_result(Some(d), ty)
+    }
+
+    /// The combinator handles the rejections of the `n` promises at `futs` (element type
+    /// `pel`, slot type `slot`): one that loses or is left behind and rejects later is dropped
+    /// quietly, not reported as uncaught (JS attaches handlers to every input).
+    fn mark_handled(&mut self, futs: Operand, n: Operand, pel: TyId, slot: TyId) {
+        if self.cx.promise_error(pel).is_none() {
+            return;
+        }
+        let drop = self
+            .result_drop_fn(slot)
+            .unwrap_or_else(|| cint(0, Ty::Ptr));
+        self.call_rt(Rt::FutsHandled, vec![futs, n, drop], None);
     }
 
     /// Address of a `(slot: ptr)` function dropping a `T` in place, if `T` needs dropping (the
@@ -298,6 +316,19 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.terminate(Terminator::Return(cint(0, Ty::U32)));
         lw.switch_to(ready);
         lw.call_rt(Rt::FutDrop, vec![inner], None);
+        let aty = lw.cx.intern(TyKind::Array(elem));
+        if lw.cx.boxed(aty) {
+            // The awaiter reads a boxed array: replace the header by a box holding it.
+            let hdr = proj(
+                &proj(&Place::local(st), Proj::Deref(Ty::Agg(wa))),
+                Proj::Field(0),
+            );
+            let v = lw.box_value(Operand::Copy(hdr), aty);
+            lw.assign(
+                proj(&Place::local(st), Proj::Deref(Ty::Ptr)),
+                Rvalue::Use(v),
+            );
+        }
         lw.terminate(Terminator::Return(cint(1, Ty::U32)));
         let sym = format!("_Gall_poll_{}", lw.cx.type_symbol(elem));
         lw.finish(sym, vec![Ty::Ptr, Ty::Ptr], Ty::U32)
