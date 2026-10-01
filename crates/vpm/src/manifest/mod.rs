@@ -29,6 +29,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub mod read;
+
 /// File name of the manifest at a package root.
 pub const MANIFEST_FILE: &str = "velt.toml";
 /// Default runnable entry, relative to the package root.
@@ -198,80 +200,130 @@ impl Manifest {
 
     fn validate(&self) -> Result<(), String> {
         if let Some(url) = &self.registry {
-            if !crate::locations::is_url(url) {
-                return Err(format!(
-                    "registry `{url}` must be an http:// or https:// URL"
-                ));
-            }
+            check_registry(url)?;
         }
-        if !is_valid_package_name(&self.package.name) {
-            return Err(format!(
-                "invalid package name `{}` (use lowercase letters, digits, `-` and `_`, starting with a letter)",
-                self.package.name
-            ));
-        }
-        semver::Version::parse(&self.package.version).map_err(|e| {
-            format!(
-                "package.version `{}` is not a semver version: {e}",
-                self.package.version
-            )
-        })?;
+        check_name(&self.package.name)?;
+        check_version(&self.package.version).map_err(|e| format!("package.version {e}"))?;
         crate::paths::validate(&self.paths)?;
         if let Some(native) = &self.native {
-            validate_native(native)?;
+            check_native_table(native)?;
         }
         if let Some(source) = self.jsx.as_ref().and_then(|j| j.import_source.as_deref()) {
-            if source.is_empty() || source.ends_with('/') || source.contains('\\') {
-                return Err(format!(
-                    "[jsx] importSource `{source}` is not a module specifier"
-                ));
-            }
+            check_import_source(source).map_err(|e| format!("[jsx] {e}"))?;
         }
         for (name, dep) in &self.dependencies {
-            if !is_valid_package_name(name) {
-                return Err(format!("invalid dependency name `{name}`"));
-            }
-            if dep.version().is_none() && dep.path().is_none() {
-                return Err(format!("dependency `{name}` needs a `version` or a `path`"));
-            }
-            if let Some(req) = dep.version() {
-                semver::VersionReq::parse(req).map_err(|e| {
-                    format!("dependency `{name}`: invalid version requirement `{req}`: {e}")
-                })?;
-            }
+            check_dependency_name(name)?;
+            check_dependency(name, dep)?;
         }
         Ok(())
     }
 }
 
-fn validate_native(native: &NativeConfig) -> Result<(), String> {
-    let p = &native.path;
-    let ok = !p.is_empty()
-        && !p.starts_with('.')
-        && p != SRC_DIR
-        && p != "target"
-        && p.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
-    if !ok {
-        return Err(format!(
-            "[native] path `{p}` must be the name of a directory in the package root (not `src` or `target`)"
-        ));
+// The checks below are shared by the `velt.toml` reader and the `package.vlt` reader
+// ([`read`]), which attaches a location to their messages.
+
+fn check_registry(url: &str) -> Result<(), String> {
+    if crate::locations::is_url(url) {
+        Ok(())
+    } else {
+        Err(format!(
+            "registry `{url}` must be an http:// or https:// URL"
+        ))
     }
-    for t in &native.targets {
-        if !NATIVE_TARGETS.contains(&t.as_str()) {
-            return Err(format!(
-                "[native] target `{t}` is not supported (supported: {})",
-                NATIVE_TARGETS.join(", ")
-            ));
-        }
+}
+
+fn check_name(name: &str) -> Result<(), String> {
+    if is_valid_package_name(name) {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid package name `{name}` (use lowercase letters, digits, `-` and `_`, starting with a letter)"
+        ))
     }
-    if native.wasm {
-        return Err(
-            "[native] wasm = true is not supported yet: packages with native code cannot target WebAssembly"
-                .into(),
-        );
+}
+
+/// The message names the value, not the field: callers prefix it.
+fn check_version(version: &str) -> Result<(), String> {
+    semver::Version::parse(version)
+        .map(drop)
+        .map_err(|e| format!("`{version}` is not a semver version: {e}"))
+}
+
+/// The message names the value, not the table: callers prefix it.
+fn check_import_source(source: &str) -> Result<(), String> {
+    if source.is_empty() || source.ends_with('/') || source.contains('\\') {
+        Err(format!("importSource `{source}` is not a module specifier"))
+    } else {
+        Ok(())
+    }
+}
+
+fn check_dependency_name(name: &str) -> Result<(), String> {
+    if is_valid_package_name(name) {
+        Ok(())
+    } else {
+        Err(format!("invalid dependency name `{name}`"))
+    }
+}
+
+fn check_dependency(name: &str, dep: &Dependency) -> Result<(), String> {
+    if dep.version().is_none() && dep.path().is_none() {
+        return Err(format!("dependency `{name}` needs a `version` or a `path`"));
+    }
+    if let Some(req) = dep.version() {
+        semver::VersionReq::parse(req).map_err(|e| {
+            format!("dependency `{name}`: invalid version requirement `{req}`: {e}")
+        })?;
     }
     Ok(())
+}
+
+/// The `[native]` checks, with `velt.toml`'s messages.
+fn check_native_table(native: &NativeConfig) -> Result<(), String> {
+    check_native_path(&native.path).map_err(|e| format!("[native] {e}"))?;
+    for target in &native.targets {
+        check_native_target(target).map_err(|e| format!("[native] {e}"))?;
+    }
+    check_native_wasm(native.wasm).map_err(|e| format!("[native] wasm = true {e}"))
+}
+
+/// The message names the value, not the table: callers prefix it.
+fn check_native_path(path: &str) -> Result<(), String> {
+    let ok = !path.is_empty()
+        && !path.starts_with('.')
+        && path != SRC_DIR
+        && path != "target"
+        && path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "path `{path}` must be the name of a directory in the package root (not `src` or `target`)"
+        ))
+    }
+}
+
+/// The message names the value, not the table: callers prefix it.
+fn check_native_target(target: &str) -> Result<(), String> {
+    if NATIVE_TARGETS.contains(&target) {
+        Ok(())
+    } else {
+        Err(format!(
+            "target `{target}` is not supported (supported: {})",
+            NATIVE_TARGETS.join(", ")
+        ))
+    }
+}
+
+/// The message continues the caller's spelling of `wasm = true`, which differs per format.
+fn check_native_wasm(wasm: bool) -> Result<(), String> {
+    if wasm {
+        Err("is not supported yet: packages with native code cannot target WebAssembly".into())
+    } else {
+        Ok(())
+    }
 }
 
 /// Whether `name` is a valid package name: `[a-z][a-z0-9_-]*`.

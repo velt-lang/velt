@@ -16,26 +16,31 @@ use std::path::{Component, Path, PathBuf};
 /// Check every alias of a `[paths]` table.
 pub fn validate(paths: &BTreeMap<String, String>) -> Result<(), String> {
     for (pattern, target) in paths {
-        let bad = |why: &str| Err(format!("[paths] alias `{pattern}`: {why}"));
-        if pattern.is_empty() || pattern == "*" {
-            return bad("the pattern needs a prefix such as `@app/*`");
-        }
-        if pattern.starts_with("./") || pattern.starts_with("../") || pattern.starts_with("velt:") {
-            return bad("relative and `velt:` specifiers cannot be aliased");
-        }
-        if !wildcard_ok(pattern) || !wildcard_ok(target) {
-            return bad("`*` may only appear once, at the end");
-        }
-        if pattern.ends_with('*') != target.ends_with('*') {
-            return bad("the pattern and its target must both end in `*`, or neither");
-        }
-        let dir = target.trim_end_matches('*');
-        let escapes = Path::new(dir)
-            .components()
-            .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir));
-        if escapes || target.contains('\\') {
-            return bad("the target must be a `/`-separated path inside the package");
-        }
+        check_alias(pattern, target).map_err(|why| format!("[paths] alias `{pattern}`: {why}"))?;
+    }
+    Ok(())
+}
+
+/// Check one alias; the error says what is wrong with it, without naming it.
+pub(crate) fn check_alias(pattern: &str, target: &str) -> Result<(), &'static str> {
+    if pattern.is_empty() || pattern == "*" {
+        return Err("the pattern needs a prefix such as `@app/*`");
+    }
+    if pattern.starts_with("./") || pattern.starts_with("../") || pattern.starts_with("velt:") {
+        return Err("relative and `velt:` specifiers cannot be aliased");
+    }
+    if !wildcard_ok(pattern) || !wildcard_ok(target) {
+        return Err("`*` may only appear once, at the end");
+    }
+    if pattern.ends_with('*') != target.ends_with('*') {
+        return Err("the pattern and its target must both end in `*`, or neither");
+    }
+    let dir = target.trim_end_matches('*');
+    let escapes = Path::new(dir)
+        .components()
+        .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir));
+    if escapes || target.contains('\\') {
+        return Err("the target must be a `/`-separated path inside the package");
     }
     Ok(())
 }
