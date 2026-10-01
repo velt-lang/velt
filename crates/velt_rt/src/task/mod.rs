@@ -11,6 +11,7 @@
 //! * `cx` is always the Rust `&mut Context` passed through as an opaque pointer.
 
 pub mod all;
+pub mod channel;
 pub mod compiled;
 pub mod leaf;
 pub mod local;

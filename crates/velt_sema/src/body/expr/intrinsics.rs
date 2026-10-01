@@ -44,6 +44,9 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "json_parse" => I::JsonParse,
         "http_handler" => I::HttpHandler,
         "promise_any" => I::PromiseAny,
+        "chan_send" => I::ChanSend,
+        "chan_receive" => I::ChanReceive,
+        "chan_try_receive" => I::ChanTryReceive,
         _ => return None,
     })
 }
@@ -149,6 +152,12 @@ impl FnCx<'_, '_> {
                 (vec![(ps, O)], ty.promise_rejecting(arr, e), true)
             }
             I::PromiseRace | I::PromiseAny => (vec![(ty.array(pt), O)], pt, true),
+            I::ChanSend => (vec![(u64_, C), (t, O)], ty.promise(ty.bool_), true),
+            I::ChanReceive => {
+                let v = ty.option(t);
+                (vec![(u64_, C)], ty.promise(v), true)
+            }
+            I::ChanTryReceive => (vec![(u64_, C)], ty.option(t), true),
             I::PerfNow => (vec![], ty.f64, false),
             I::DateNow => (vec![], i64_, false),
             I::SharedAdd => (vec![(shared, B), (t, C)], t, true),

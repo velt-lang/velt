@@ -9,7 +9,7 @@ publish = false
 
 [dependencies]
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync"] }
 
 [profile.release]
 codegen-units = 1

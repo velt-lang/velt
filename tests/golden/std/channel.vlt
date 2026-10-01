@@ -1,0 +1,103 @@
+// velt:channel: a bounded channel makes the producer wait (backpressure); a worker pool of
+// spawned tasks shares one jobs channel and one results channel; closing ends the stream, a
+// send on a closed channel throws `ChannelClosed` and drops the value it was given.
+import { Channel, ChannelClosed, channel } from "velt:channel";
+
+class Result {
+  job: string;
+  length: i64;
+
+  constructor(job: string, length: i64) {
+    this.job = job;
+    this.length = length;
+  }
+}
+
+class Ticket {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    console.log("ticket", this.id, "dropped");
+  }
+}
+
+async function produce(ch: Channel<i64>, n: i64): Promise<void> throws ChannelClosed {
+  for (let i = 0; i < n; i++) {
+    await ch.send(i);
+    console.log("sent", i, "queued", ch.length);
+  }
+  ch.close();
+}
+
+async function worker(
+  jobs: Channel<string>,
+  results: Channel<Result>,
+): Promise<i64> throws ChannelClosed {
+  let done = 0;
+  while (true) {
+    const job = await jobs.receive();
+    if (job == null) {
+      return done;
+    }
+    await results.send(new Result(job, job.length as i64));
+    done++;
+  }
+}
+
+async function main() {
+  // Backpressure: capacity 2, so the producer runs ahead by at most two values.
+  const ch = channel<i64>(2);
+  const producing = produce(ch, 5);
+  await sleep(20);
+  console.log("consumer starts");
+  while (true) {
+    const v = await ch.receive();
+    if (v == null) {
+      break;
+    }
+    console.log("received", v);
+  }
+  await producing;
+
+  // A pool of 3 spawned workers.
+  const jobs = channel<string>();
+  const results = channel<Result>();
+  const workers: Promise<i64, ChannelClosed>[] = [];
+  for (let w = 0; w < 3; w++) {
+    workers.push(spawn(worker(jobs, results)));
+  }
+  for (let i = 0; i < 20; i++) {
+    await jobs.send(`a job description long enough for the heap, number ${i}`);
+  }
+  jobs.close();
+  let handled = 0;
+  for (const n of await Promise.all(workers)) {
+    handled += n;
+  }
+  results.close();
+  let total = 0;
+  let count = 0;
+  while (true) {
+    const r = results.tryReceive();
+    if (r == null) {
+      break;
+    }
+    total += r.length;
+    count++;
+  }
+  console.log("handled", handled, "results", count, "total length", total);
+
+  // Closed: a send throws and drops its value; receive returns null.
+  const tickets = channel<Ticket>();
+  tickets.close();
+  try {
+    await tickets.send(new Ticket(1));
+  } catch (e) {
+    console.log("caught:", e.message);
+  }
+  console.log("closed:", tickets.closed, "receive:", await tickets.receive());
+}

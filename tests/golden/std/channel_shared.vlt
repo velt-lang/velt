@@ -1,0 +1,34 @@
+// check: no leaks
+// A value sent through a channel crosses to the receiver's task like a `spawn` argument: one the
+// sender still uses is copied, so changing it afterwards doesn't reach the receiver, and the two
+// tasks never share an object.
+import { Channel, ChannelClosed, channel } from "velt:channel";
+
+class Order {
+  items: string[] = [];
+}
+
+async function consume(orders: Channel<Order>): Promise<i64> {
+  let total = 0;
+  while (true) {
+    const o = await orders.receive();
+    if (o == null) {
+      return total;
+    }
+    console.log("received", o.items);
+    total += o.items.length as i64;
+  }
+}
+
+async function main() {
+  const orders = channel<Order>();
+  const consumer = spawn(consume(orders));
+  const order = new Order();
+  order.items.push("apple");
+  await orders.send(order);
+  order.items.push("pear");
+  await orders.send(order);
+  orders.close();
+  const total = await consumer;
+  console.log("sender sees", order.items, "total", total);
+}
