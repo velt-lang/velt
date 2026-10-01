@@ -46,7 +46,18 @@
     `!v.has("a")` vs `v.get("a")?.isNull()`); `len()`; `keys()`
   - type tests: `isNull isBool isNumber isString isArray isObject`
   - conversions: `asNumber(): f64 | null`, `asBool()`, `asString()`
-  - `stringify()`; `clone()` is O(1) because values are immutable
+  - building: `JsonValue.object()`, `JsonValue.array()`, `JsonValue.of(x)` (a string, number,
+    `bool` or `null`), `JsonValue.from(x)` (the JSON form of any value `JSON.stringify` accepts)
+  - editing: `set(key, v)` (an existing key keeps its position), `delete(key)`, `push(v)`,
+    `setAt(i, v)`; each returns `false` when the value is not an object / array (or `i` is out
+    of range)
+  - `as<T>(options?)`: decode into a `T`, like `JSON.parse<T>`
+  - `stringify()` (keys in insertion order); `clone()` is O(1)
+
+  A `JsonValue` has value semantics: an edit never shows through a clone, through the value it
+  was `set` into, or through a child handle from `get`/`at`. The runtime copies a node another
+  handle shares before changing it (copy-on-write, one node at a time). To change a nested
+  value, edit the child and `set` it back. There is no `v[k] = x` syntax: use `set`.
 
 ```ts
 import { Value } from "velt:json";

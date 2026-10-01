@@ -1,0 +1,36 @@
+// Building and editing dynamic JSON (issue #19): JsonValue.object/array/of/from, set, delete,
+// push, setAt, as<T>. Values have value semantics: edits never show through clones or child
+// handles (copy-on-write). Keys keep insertion order.
+type User = { name: string; age: i64 };
+
+function main() {
+  const doc = JsonValue.object();
+  doc.set("name", JsonValue.of("ada"));
+  doc.set("age", JsonValue.of(36));
+  const tags = JsonValue.array();
+  tags.push(JsonValue.of("x"));
+  tags.push(JsonValue.of(true));
+  tags.push(JsonValue.of(null));
+  doc.set("tags", tags);
+  console.log(doc.stringify());
+  // Value semantics: a clone and a child handle do not see later edits.
+  const copy = doc.clone();
+  const child = doc.get("tags");
+  doc.set("name", JsonValue.of("bob"));
+  doc.delete("age");
+  doc.set("age", JsonValue.of(37));
+  tags.setAt(0, JsonValue.of("y"));
+  console.log(doc.stringify(), copy.stringify(), child?.stringify(), tags.stringify());
+  console.log(doc.set("x", tags), tags.set("x", doc), tags.setAt(9, doc), doc.delete("nope"));
+  const u = doc.as<User>();
+  console.log(u.name, u.age);
+  const v = JsonValue.from({ name: "c", age: 1, extra: [1.5] });
+  console.log(v.stringify(), JSON.stringify({ v }));
+  try {
+    doc.as<User>({ unknownKeys: "reject" });
+  } catch (e) {
+    console.log(e.message);
+  }
+  doc.set("self", doc.clone());
+  console.log(doc.stringify());
+}

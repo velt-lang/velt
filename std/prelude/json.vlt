@@ -5,9 +5,11 @@
 // throw `JsonError { message }` like "expected string at $.name". The stringify glue writes a
 // `JsonValue` (at any depth) with `velt_rt_strbuf_push_json_value(b, v.handle)`.
 //
-// `JSON.parseValue` gives a `JsonValue` for data of unknown shape: an immutable tree of
-// reference-counted runtime nodes behind an opaque `u64` handle (rt_abi_async.md §3.2; 0 is
-// the null handle). Every `JsonValue` owns one reference (`get`/`at`/`clone` return new
+// `JSON.parseValue` gives a `JsonValue` for data of unknown shape: a tree of reference-counted
+// runtime nodes behind an opaque `u64` handle (rt_abi_async.md §3.2; 0 is the null handle).
+// Values have value semantics: `set`/`delete`/`push`/`setAt` copy a node another handle shares
+// before changing it (copy-on-write), so an edit never shows through a clone, a parent or a
+// child handle. Every `JsonValue` owns one reference (`get`/`at`/`clone` return new
 // ones; children stay valid after their parent is released), released by the `[Symbol.dispose]()` drop
 // hook. A value that contains a `JsonValue` has no automatic deep `clone()` (sema rejects it: the
 // generated copy could not take a new reference).
@@ -24,6 +26,16 @@ declare function velt_rt_json_value_as_str(v: u64, out: string): bool;
 declare function velt_rt_json_value_stringify(v: u64): string;
 declare function velt_rt_json_value_clone(v: u64): u64;
 declare function velt_rt_json_value_free(v: u64);
+declare function velt_rt_json_value_new_null(): u64;
+declare function velt_rt_json_value_new_bool(b: bool): u64;
+declare function velt_rt_json_value_new_number(n: f64): u64;
+declare function velt_rt_json_value_new_string(s: string): u64;
+declare function velt_rt_json_value_new_array(): u64;
+declare function velt_rt_json_value_new_object(): u64;
+declare function velt_rt_json_value_set(slot: JsonHandleSlot, key: string, v: u64): bool;
+declare function velt_rt_json_value_delete(slot: JsonHandleSlot, key: string): bool;
+declare function velt_rt_json_value_push(slot: JsonHandleSlot, v: u64): bool;
+declare function velt_rt_json_value_set_at(slot: JsonHandleSlot, i: u64, v: u64): bool;
 
 // `velt_rt_json_value_kind` results.
 const KIND_NULL: u32 = 1;
@@ -87,21 +99,93 @@ export class JSON {
     if (!velt_rt_json_parse_value(text, slot, err)) {
       throw new JsonError(err);
     }
-    return new Value(slot.handle);
+    return new JsonValue(slot.handle);
   }
 }
 
-// The name every module sees for a parsed JSON value (std/json calls it `Value`).
-export type JsonValue = Value;
-
-// A parsed JSON value (see header). Accessors on the wrong kind return null / 0. Module-private
-// under the name `Value`: the compiler's JSON glue recognizes the type by that name in a `json`
-// module (it serializes the value's tree, not its handle field).
-class Value {
+// A JSON value of any shape (see header; std/json calls it `Value`). Accessors on the wrong kind
+// return null / 0. The compiler recognizes the class by this name in a `json` module: JSON glue
+// reads and writes the value's tree, never its `handle` field.
+export class JsonValue {
   handle: u64;
 
   constructor(handle: u64) {
     this.handle = handle;
+  }
+
+  // An empty object, to fill with `set`.
+  static object(): JsonValue {
+    return new JsonValue(velt_rt_json_value_new_object());
+  }
+
+  // An empty array, to fill with `push`.
+  static array(): JsonValue {
+    return new JsonValue(velt_rt_json_value_new_array());
+  }
+
+  // A string, number, boolean or `null`.
+  static of(x: string | f64 | bool | null): JsonValue {
+    if (x == null) {
+      return new JsonValue(velt_rt_json_value_new_null());
+    }
+    if (typeof x === "string") {
+      return new JsonValue(velt_rt_json_value_new_string(x));
+    }
+    if (typeof x === "number") {
+      return new JsonValue(velt_rt_json_value_new_number(x));
+    }
+    return new JsonValue(velt_rt_json_value_new_bool(x));
+  }
+
+  // The JSON form of any value `JSON.stringify` accepts.
+  static from<T>(x: T): JsonValue {
+    const text = JSON.stringify(x);
+    let slot = JsonHandleSlot { handle: 0 };
+    let err = "";
+    if (!velt_rt_json_parse_value(text, slot, err)) {
+      panic(`JsonValue.from: ${err}`);
+    }
+    return new JsonValue(slot.handle);
+  }
+
+  // Decodes this value into a `T`, like `JSON.parse<T>` (throws `JsonError`).
+  as<T>(options: JsonParseOptions | null = null): T {
+    return JSON.parse<T>(this.stringify(), options);
+  }
+
+  // Sets object member `key` (an existing key keeps its position); false if not an object.
+  set(key: string, value: JsonValue): bool {
+    let slot = JsonHandleSlot { handle: this.handle };
+    const ok = velt_rt_json_value_set(slot, key, value.handle);
+    this.handle = slot.handle;
+    return ok;
+  }
+
+  // Removes object member `key`; false if absent or not an object.
+  delete(key: string): bool {
+    let slot = JsonHandleSlot { handle: this.handle };
+    const ok = velt_rt_json_value_delete(slot, key);
+    this.handle = slot.handle;
+    return ok;
+  }
+
+  // Appends to an array; false if not an array.
+  push(value: JsonValue): bool {
+    let slot = JsonHandleSlot { handle: this.handle };
+    const ok = velt_rt_json_value_push(slot, value.handle);
+    this.handle = slot.handle;
+    return ok;
+  }
+
+  // Replaces array element `i`; false if not an array or `i` is out of range.
+  setAt(i: i64, value: JsonValue): bool {
+    if (i < 0) {
+      return false;
+    }
+    let slot = JsonHandleSlot { handle: this.handle };
+    const ok = velt_rt_json_value_set_at(slot, i as u64, value.handle);
+    this.handle = slot.handle;
+    return ok;
   }
 
   // Object member `key`, or null (not an object, or no such key).
@@ -194,9 +278,9 @@ class Value {
     return velt_rt_json_value_stringify(this.handle);
   }
 
-  // Another reference to the same (immutable) value: O(1).
+  // Another reference to the same value: O(1) (edits copy on write, so they stay apart).
   clone(): JsonValue {
-    return new Value(velt_rt_json_value_clone(this.handle));
+    return new JsonValue(velt_rt_json_value_clone(this.handle));
   }
 
   // Drop hook: releases this reference (see header).
@@ -211,5 +295,5 @@ function wrapHandle(handle: u64): JsonValue | null {
   if (handle == 0) {
     return null;
   }
-  return new Value(handle);
+  return new JsonValue(handle);
 }

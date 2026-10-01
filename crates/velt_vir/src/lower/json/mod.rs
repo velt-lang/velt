@@ -95,7 +95,7 @@ impl Cx<'_> {
         match self.types.kind(t) {
             TyKind::Adt(d, _) => match self.hir.def(*d) {
                 hir::Def::Adt(a) => {
-                    a.name.ends_with("json::Value") || a.name.ends_with("json.Value")
+                    a.name.ends_with("json::JsonValue") || a.name.ends_with("json.JsonValue")
                 }
                 _ => false,
             },

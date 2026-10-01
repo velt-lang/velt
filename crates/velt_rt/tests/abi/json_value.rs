@@ -172,23 +172,47 @@ fn large_objects_use_the_index() {
 #[test]
 fn syntax_errors() {
     let cases = [
-        ("[1,]", "invalid JSON at $[1]: unexpected character ']' (byte 3)"),
+        (
+            "[1,]",
+            "invalid JSON at $[1]: unexpected character ']' (byte 3)",
+        ),
         ("", "invalid JSON at $: unexpected end of input (byte 0)"),
         (
             "{} x",
             "invalid JSON at $: unexpected trailing characters (byte 3)",
         ),
         (r#"{"a" 1}"#, "invalid JSON at $.a: expected ':' (byte 5)"),
-        ("[1 2]", "invalid JSON at $[1]: expected ',' or ']' (byte 3)"),
-        ("{\"a\":1,}", "invalid JSON at $: expected string key (byte 7)"),
+        (
+            "[1 2]",
+            "invalid JSON at $[1]: expected ',' or ']' (byte 3)",
+        ),
+        (
+            "{\"a\":1,}",
+            "invalid JSON at $: expected string key (byte 7)",
+        ),
         ("[\"\\x\"]", "invalid JSON at $[0]: invalid escape (byte 3)"),
         ("[01]", "invalid JSON at $[1]: expected ',' or ']' (byte 2)"),
         ("[1.]", "invalid JSON at $[0]: invalid number (byte 3)"),
-        ("[.5]", "invalid JSON at $[0]: unexpected character '.' (byte 1)"),
-        ("[+1]", "invalid JSON at $[0]: unexpected character '+' (byte 1)"),
-        ("[nul]", "invalid JSON at $[0]: unexpected character ']' (byte 4)"),
-        ("[NaN]", "invalid JSON at $[0]: unexpected character 'N' (byte 1)"),
-        ("\"abc", "invalid JSON at $: unexpected end of input (byte 4)"),
+        (
+            "[.5]",
+            "invalid JSON at $[0]: unexpected character '.' (byte 1)",
+        ),
+        (
+            "[+1]",
+            "invalid JSON at $[0]: unexpected character '+' (byte 1)",
+        ),
+        (
+            "[nul]",
+            "invalid JSON at $[0]: unexpected character ']' (byte 4)",
+        ),
+        (
+            "[NaN]",
+            "invalid JSON at $[0]: unexpected character 'N' (byte 1)",
+        ),
+        (
+            "\"abc",
+            "invalid JSON at $: unexpected end of input (byte 4)",
+        ),
         (
             "[\"\t\"]",
             "invalid JSON at $[0]: control character in string (byte 2)",
@@ -269,5 +293,60 @@ fn reader_reads_values_as_trees() {
             "invalid JSON at $.c: unexpected character '}' (byte 40)"
         );
         velt_rt_json_reader_free(r);
+    }
+}
+
+#[test]
+fn build_and_edit_copy_on_write() {
+    use crate::json::value_edit::*;
+    unsafe {
+        let mut obj = velt_rt_json_value_new_object();
+        let one = velt_rt_json_value_new_number(1.0);
+        let s = velt_rt_json_value_new_string(&borrow("x"));
+        assert_eq!(velt_rt_json_value_set(&mut obj, &borrow("a"), one), 1);
+        assert_eq!(velt_rt_json_value_set(&mut obj, &borrow("b"), s), 1);
+        // A second reference: the next edit copies the node, the clone keeps the old value.
+        let shared = velt_rt_json_value_clone(obj);
+        let before = obj;
+        assert_eq!(velt_rt_json_value_set(&mut obj, &borrow("a"), s), 1);
+        assert_ne!(obj.bits(), before.bits());
+        assert_eq!(stringify(obj), r#"{"a":"x","b":"x"}"#);
+        assert_eq!(stringify(shared), r#"{"a":1,"b":"x"}"#);
+        // The only reference: edited in place.
+        let mine = obj;
+        assert_eq!(velt_rt_json_value_delete(&mut obj, &borrow("a")), 1);
+        assert_eq!(obj.bits(), mine.bits());
+        assert_eq!(velt_rt_json_value_delete(&mut obj, &borrow("a")), 0);
+        assert_eq!(stringify(obj), r#"{"b":"x"}"#);
+        // Arrays; wrong kinds and ranges are refused.
+        let mut arr = velt_rt_json_value_new_array();
+        assert_eq!(velt_rt_json_value_push(&mut arr, ValueHandle::NULL), 1);
+        assert_eq!(
+            velt_rt_json_value_push(&mut arr, velt_rt_json_value_new_bool(1)),
+            1
+        );
+        assert_eq!(velt_rt_json_value_set_at(&mut arr, 0, one), 1);
+        assert_eq!(velt_rt_json_value_set_at(&mut arr, 2, one), 0);
+        assert_eq!(velt_rt_json_value_push(&mut obj, one), 0);
+        assert_eq!(velt_rt_json_value_set(&mut arr, &borrow("k"), one), 0);
+        assert_eq!(stringify(arr), "[1,true]");
+        // Removing from an indexed object (more than 16 keys) keeps lookups right.
+        let mut big = velt_rt_json_value_new_object();
+        for i in 0..20 {
+            let k = format!("k{i}");
+            velt_rt_json_value_set(
+                &mut big,
+                &borrow(&k),
+                velt_rt_json_value_new_number(i as f64),
+            );
+        }
+        assert_eq!(velt_rt_json_value_delete(&mut big, &borrow("k3")), 1);
+        let k19 = get(big, "k19");
+        assert_eq!(velt_rt_json_value_as_f64(k19), 19.0);
+        assert!(get(big, "k3").is_null());
+        assert_eq!(velt_rt_json_value_len(big), 19);
+        for h in [obj, shared, arr, big, one, s, k19] {
+            free(h);
+        }
     }
 }

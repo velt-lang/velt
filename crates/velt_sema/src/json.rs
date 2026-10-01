@@ -111,9 +111,9 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) {
                 format!(" (in `{tn}`)")
             };
             let fix = if why.contains("objects") {
-                "give each object member a literal field such as `kind: \"a\"` (a discriminant), or parse a `json.Value` and build the union from it"
+                "give each object member a literal field such as `kind: \"a\"` (a discriminant), or parse a `JsonValue` and build the union from it"
             } else {
-                "parse a `json.Value` and build the union from it"
+                "parse a `JsonValue` and build the union from it"
             };
             cx.error(
                 Diagnostic::error(
@@ -131,7 +131,7 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) {
         };
         let mut d =
             Diagnostic::error(format!("cannot convert to or from JSON: {what}"), span).with_note(
-                "JSON supports numbers, bool, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `json.Value`",
+                "JSON supports numbers, bool, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`",
             );
         if matches!(cx.ty.kind(bad), TyKind::Adt(d, _) if Some(*d) == cx.prelude_adt("Map")) {
             d = d.with_note("a `Map` converts to a JSON object only with `string` keys");
@@ -227,7 +227,7 @@ enum Shape {
     Object,
     /// `Map<string, V>` / `Record<K, V>`: any object.
     Dict,
-    /// `json.Value`: any value.
+    /// `JsonValue`: any value.
     Any,
 }
 
@@ -274,7 +274,7 @@ pub(crate) fn union_decode_problem(cx: &mut Ctx, u: TyId) -> Option<String> {
         format!("`{a}` and `{b}` are both {what}")
     };
     if shapes.contains(&Shape::Any) {
-        return Some("a `json.Value` member takes any JSON value".into());
+        return Some("a `JsonValue` member takes any JSON value".into());
     }
     let nums = of(&[Shape::Num]);
     if nums.len() > 1 {

@@ -1,10 +1,10 @@
 json_union_errors.vlt:7:3: error: `JSON.parse` cannot decode the union `i64 | f64`: `i64` and `f64` are both JSON numbers
-parse a `json.Value` and build the union from it
+parse a `JsonValue` and build the union from it
 json_union_errors.vlt:8:3: error: `JSON.parse` cannot decode the union `A | B`: `A` and `B` are both objects with no discriminant field and no required field that only one of them has
-give each object member a literal field such as `kind: "a"` (a discriminant), or parse a `json.Value` and build the union from it
+give each object member a literal field such as `kind: "a"` (a discriminant), or parse a `JsonValue` and build the union from it
 json_union_errors.vlt:9:3: error: `JSON.parse` cannot decode the union `C | Map<string, i64>`: `Map<string, i64>` takes any JSON object
-parse a `json.Value` and build the union from it
+parse a `JsonValue` and build the union from it
 json_union_errors.vlt:10:3: error: `JSON.parse` cannot decode the union `string[] | i64[]`: `string[]` and `i64[]` are both JSON arrays
-parse a `json.Value` and build the union from it
-json_union_errors.vlt:11:3: error: `JSON.parse` cannot decode the union `Value | C`: a `json.Value` member takes any JSON value
-parse a `json.Value` and build the union from it
+parse a `JsonValue` and build the union from it
+json_union_errors.vlt:11:3: error: `JSON.parse` cannot decode the union `JsonValue | C`: a `JsonValue` member takes any JSON value
+parse a `JsonValue` and build the union from it

@@ -498,8 +498,9 @@ puts the key in the path), and nesting past `max_depth` is
 
 ### 12.5 `json.Value` (`JSON.parseValue`)
 
-An immutable tree of reference-counted nodes behind opaque handles (`VeltJson`). Every
-handle the runtime returns (`parse_value`, `get`, `at`, `clone`, `reader_read_value`) is its own reference and must be
+A tree of reference-counted nodes behind opaque handles (`VeltJson`), with value semantics:
+the editors below copy a node that another handle shares before changing it. Every
+handle the runtime returns (`parse_value`, `get`, `at`, `clone`, `reader_read_value`, `new_*`) is its own reference and must be
 released with `velt_rt_json_value_free`; a child handle stays valid after its parent's handles are
 freed. All accessors accept a null handle (what a failed `get`/`at` returns), so `v.get("a")?.at(2)`
 chains need no checks until the end. Parsing, stringify and freeing are iterative (no depth limit).
@@ -520,6 +521,12 @@ objects with more than 16 keys get a hash index for `get`.
 | `velt_rt_json_value_stringify` | `(VeltJson v, VeltStr* out)` | `JSON.stringify`: no whitespace, key order kept, numbers JS-formatted; null handle ⇒ `null` |
 | `velt_rt_json_value_clone` | `(VeltJson v) -> VeltJson` | O(1) new reference to the same immutable value (may be the same pointer) |
 | `velt_rt_json_value_free` | `(VeltJson v)` | null ok |
+
+| `velt_rt_json_value_new_null` / `_new_bool(u8)` / `_new_number(f64)` / `_new_string(const VeltStr*)` / `_new_array()` / `_new_object()` | `(…) -> VeltJson` | a new value (the string is copied) |
+| `velt_rt_json_value_set` | `(VeltJson* slot, const VeltStr* key, VeltJson v) -> u8` | object member `key` = `v` (an existing key keeps its position); 0 if `*slot` is not an object. `v` is shared, not consumed (null handle = JSON `null`). `*slot` may be replaced by a copy (copy-on-write); the old handle's reference is released then |
+| `velt_rt_json_value_delete` | `(VeltJson* slot, const VeltStr* key) -> u8` | remove member `key`, keeping the order of the others; 0 if absent or not an object |
+| `velt_rt_json_value_push` | `(VeltJson* slot, VeltJson v) -> u8` | append to an array; 0 if not an array |
+| `velt_rt_json_value_set_at` | `(VeltJson* slot, u64 i, VeltJson v) -> u8` | replace element `i`; 0 if not an array or out of range |
 
 `isNull()` = `kind == 1`, `asNumber()` = `as_f64` after checking `kind == 3`, etc.
 

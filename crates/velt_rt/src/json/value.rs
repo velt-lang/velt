@@ -1,4 +1,5 @@
-//! `json.Value`: an immutable tree of `Arc`'d nodes built by `JSON.parseValue`.
+//! `json.Value`: a tree of `Arc`'d nodes built by `JSON.parseValue` or edited through
+//! `value_edit` (copy-on-write: a node shared with another handle is copied before a change).
 //!
 //! Handles given to generated code are `Arc::into_raw` pointers, so a handle to a child stays
 //! valid after the root handle is freed. Parsing, stringifying and dropping are iterative, so
@@ -41,8 +42,26 @@ impl Object {
         }
     }
 
+    /// Remove `key`, keeping the order of the others; whether it was there.
+    pub fn remove(&mut self, key: &str) -> bool {
+        let Some(i) = self.find(key) else {
+            return false;
+        };
+        self.entries.remove(i);
+        if self.index.is_some() {
+            self.index = (self.entries.len() > INDEX_THRESHOLD).then(|| {
+                self.entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (k, _))| (k.clone(), i))
+                    .collect()
+            });
+        }
+        true
+    }
+
     /// Insert, replacing the value of an existing key in place.
-    fn insert(&mut self, key: Box<str>, value: Arc<Value>) {
+    pub fn insert(&mut self, key: Box<str>, value: Arc<Value>) {
         if let Some(i) = self.find(&key) {
             self.entries[i].1 = value;
             return;
@@ -64,6 +83,21 @@ impl Object {
 }
 
 impl Value {
+    /// A copy of this node sharing its children (O(number of children)).
+    pub fn shallow_clone(&self) -> Value {
+        match self {
+            Value::Null => Value::Null,
+            Value::Bool(b) => Value::Bool(*b),
+            Value::Number(n) => Value::Number(*n),
+            Value::String(s) => Value::String(s.clone()),
+            Value::Array(items) => Value::Array(items.clone()),
+            Value::Object(obj) => Value::Object(Object {
+                entries: obj.entries.clone(),
+                index: obj.index.clone(),
+            }),
+        }
+    }
+
     /// Move out all children (leaves `self` childless).
     fn take_children(&mut self) -> Vec<Arc<Value>> {
         match self {
