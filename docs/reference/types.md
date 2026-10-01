@@ -186,7 +186,7 @@ A string, number or bool literal is a type with that one value: `"circle"`, `42`
   `string`). A literal-typed value converts implicitly to its base type (`const s: string = d;`).
 - A literal type is zero-sized; a union of literals is only its tag. Printing, `${}` and
   `JSON.stringify` show the value; `typeof` gives the base type's tag.
-- `JSON.parse` into literal types is not supported yet.
+- `JSON.parse` checks a literal type against its value (`expected "task" at $.kind`).
 
 ## Union types
 
@@ -207,7 +207,7 @@ the nullable type; `void` cannot be a member.
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
 - Printing and template literals show the active member's value. `JSON.stringify` works on
-  unions; `JSON.parse` cannot decode them yet.
+  unions; `JSON.parse` decodes unions of literal types (`"low" | "high"`) but not other unions yet.
 - A union is Copy when all its members are; otherwise it owns its active member.
 
 ```ts

@@ -16,6 +16,7 @@
 //! (`.name`, `[3]`) while returning, so paths cost nothing on success.
 
 mod dynamic;
+mod literal;
 mod object;
 mod read;
 mod write;
@@ -27,6 +28,30 @@ use super::{cint, ice, unit, Cx, FnLower, Glue};
 use crate::vir::{AggId, BlockId, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
 const STR: Ty = Ty::Agg(STR_AGG);
+
+/// `velt_rt_json_reader_peek` kinds (rt_abi_async.md §12.3).
+const TOKEN_NULL: u32 = 1;
+const TOKEN_TRUE: u32 = 2;
+const TOKEN_FALSE: u32 = 3;
+const TOKEN_NUMBER: u32 = 4;
+const TOKEN_STRING: u32 = 5;
+
+/// `s` as a JSON string literal (for messages).
+fn json_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
 
 /// A path segment prepended to the failure path while returning from a failed decoder.
 enum Seg<'a> {
@@ -104,12 +129,14 @@ impl FnLower<'_, '_> {
         if self.dead() {
             return unit();
         }
-        let vt = match self.cx.ty(t) {
-            Ty::Unit => ice("JSON.parse<void>"),
-            vt => vt,
-        };
+        // A zero-sized target (`null`, a literal type) is only checked: decode into a dummy.
+        let vt = self.cx.ty(t);
+        let zero_sized = vt == Ty::Unit;
         let src = self.operand_addr(v, STR);
-        let out = self.temp(vt);
+        let out = self.temp(if zero_sized { Ty::U8 } else { vt });
+        if !zero_sized {
+            self.json_init(out, t);
+        }
         let err = self.temp(STR);
         let oa = self.addr(Place::local(out));
         let ea = self.addr(Place::local(err));
@@ -122,6 +149,9 @@ impl FnLower<'_, '_> {
         let et = self.cx.json_error_ty();
         self.route_error(e, et);
         self.switch_to(ok_bb);
+        if zero_sized {
+            return unit();
+        }
         self.owned_result(Some(out), t)
     }
 

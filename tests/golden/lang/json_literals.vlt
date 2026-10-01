@@ -1,0 +1,72 @@
+// JSON.parse<T> into literal types, unions of literal types, string enums and numeric enums
+// (issue #16). Values outside the set fail with the path and the allowed values.
+type Priority = "low" | "normal" | "high";
+type Mixed = "auto" | 0 | 1.5 | false;
+type Answer = 42;
+type Yes = true;
+type Marks = { k: "x", xs: "x"[] };
+
+enum Color {
+  Red = "red",
+  Green = "green",
+}
+
+enum Level {
+  Debug = 10,
+  Info = 20,
+}
+
+type Task = {
+  kind: "task",
+  title: string,
+  priority: Priority,
+  tags: Priority[],
+  color: Color,
+  level: Level,
+  due: Priority | null,
+};
+
+function show(text: string) {
+  try {
+    const t = JSON.parse<Task>(text);
+    console.log(t.kind, t.title, t.priority, t.tags, t.color, t.level, t.due);
+    console.log(JSON.stringify(t));
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+
+function main() {
+  const ok = '{"kind":"task","title":"a","priority":"high","tags":["low","normal"],"color":"green","level":20,"due":null}';
+  show(ok);
+  // A stringify round trip gives the same document.
+  console.log(JSON.stringify(JSON.parse<Task>(ok)) == ok);
+  show('{"kind":"task","title":"b","priority":"low","tags":[],"color":"red","level":10,"due":"normal"}');
+
+  // Errors: wrong literal, wrong member, wrong kind, wrong enum value, nested in an array.
+  show('{"kind":"note","title":"c"}');
+  show('{"kind":"task","title":"c","priority":"urgent"}');
+  show('{"kind":"task","title":"c","priority":3}');
+  show('{"kind":"task","title":"c","priority":"low","tags":["low","later"]}');
+  show('{"kind":"task","title":"c","priority":"low","tags":[],"color":"blue"}');
+  show('{"kind":"task","title":"c","priority":"low","tags":[],"color":"red","level":15}');
+  show('{"kind":"task","title":"c","priority":"low","tags":[],"color":"red","level":10,"due":"x"}');
+  show('{"kind":"task","title":"c","priority":lo}');
+
+  // Literal unions mixing kinds, and top-level literals.
+  console.log(JSON.parse<Mixed[]>('["auto",0,1.5,false]'));
+  try {
+    JSON.parse<Mixed>("true");
+  } catch (e) {
+    console.log(e.message);
+  }
+  console.log(JSON.parse<Answer>(" 42 "), JSON.parse<Yes>("true"), JSON.parse<Color>('"red"'));
+
+  // Arrays of a zero-sized literal type are checked element by element.
+  console.log(JSON.parse<Marks>('{"k":"x","xs":["x","x"]}'));
+  try {
+    JSON.parse<Marks>('{"k":"x","xs":["x","y"]}');
+  } catch (e) {
+    console.log(e.message);
+  }
+}

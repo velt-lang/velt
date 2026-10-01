@@ -5,6 +5,11 @@
 
 - `JSON.stringify<T>(x)`, `JSON.parse<T>(text): T` (throws `JsonError`, e.g.
   `expected string at $.name`), `JSON.parseValue(text): Value`.
+- `JSON.parse<T>` decodes numbers, `bool`, `string`, arrays, `T | null`, structs, classes, object
+  literals and `Value` (any JSON value, kept as a tree). Values from a fixed set are checked:
+  literal types (`kind: "task"`), unions of literal types (`"low" | "normal" | "high"`), string
+  enums (from their strings) and numeric enums (from their values). Anything else fails with
+  the allowed values, e.g. `expected one of "low", "normal", "high" at $.tags[1]`.
 - `JSON.parse<T>` treats an absent key and an explicit `null` alike: a `T | null` field
   (including `a?: T`) may be missing and is then `null`; every other field is required.
   `JSON.stringify` omits a `null` optional class field (`a?: T`) and writes other `null`s.

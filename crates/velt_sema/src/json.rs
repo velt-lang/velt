@@ -116,12 +116,13 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) {
 }
 
 /// The first part of `t` without a JSON form, if any (`stack`: ADTs being visited, so recursive
-/// types terminate). Unions can be written (as their active member) but not decoded.
+/// types terminate). Unions can be written (as their active member); only unions of literal
+/// types can be decoded.
 fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> Option<TyId> {
     let fields: Vec<TyId> = match cx.ty.kind(t).clone() {
         TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str => return None,
-        // Literal types are written as their value (decoding them is not supported yet).
-        TyKind::Literal(_) if !parse => return None,
+        // Literal types are their value (decoding checks it).
+        TyKind::Literal(_) => return None,
         // Elements of `never[]` (`JSON.stringify([])`) never exist.
         TyKind::Never if !parse => return None,
         TyKind::Array(e) | TyKind::Option(e) => vec![e],
@@ -138,11 +139,16 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
                 {
                     a.fields.iter().map(|f| f.ty).collect()
                 }
-                // Numeric enums are numbers (their discriminants); string enums are written as
-                // their strings (decoding them is not supported yet).
+                // Numeric enums are numbers (their discriminants), string enums their strings.
+                DefInfo::Enum(e) if e.variants.iter().all(|v| v.payload.is_empty()) => {
+                    return None
+                }
+                // A union of literal types decodes by value (`"low" | "high"`).
                 DefInfo::Enum(e)
-                    if e.variants.iter().all(|v| v.payload.is_empty())
-                        && (!parse || e.variants.iter().all(|v| v.str_value.is_none())) =>
+                    if e.is_union
+                        && e.variants.iter().all(|v| {
+                            matches!(cx.ty.kind(v.payload[0]), TyKind::Literal(_))
+                        }) =>
                 {
                     return None
                 }
