@@ -34,6 +34,10 @@ pub(super) enum Fut {
         size: u64,
         result_drop: u64,
         complete: bool,
+        /// `velt_rt_all_or_reject`: complete at the first `Err` result, moved to slot 0 (which
+        /// then belongs to the awaiter); `rejected` is the child it came from.
+        reject_early: bool,
+        rejected: Option<usize>,
     },
     /// Join handle of task `task`; result of `size` bytes.
     Join {
@@ -118,6 +122,7 @@ impl Interp<'_> {
                 f
             }
             "velt_rt_fut_start" => return Some(self.fut_start(a[0], a[1])),
+            "velt_rt_fut_detach" => return Some(self.fut_detach(a[0], a[1]).map(|_| 0)),
             "velt_rt_futs_handled" => return Some(self.futs_handled(a[0], a[1], a[2]).map(|_| 0)),
             "velt_rt_race" => self.rt_race(a, None),
             "velt_rt_race_ok" => self.rt_race(a, Some(a[3])),
@@ -131,7 +136,8 @@ impl Interp<'_> {
                 let deadline = self.exec.now + (a[0] as i64).max(0) as f64;
                 self.new_fut(0, Fut::Sleep { deadline })
             }
-            "velt_rt_all" | "velt_rt_all_with_drop" => self.rt_all(a),
+            "velt_rt_all" | "velt_rt_all_with_drop" => self.rt_all(a, false),
+            "velt_rt_all_or_reject" => self.rt_all(a, true),
             "velt_rt_block_on" => return Some(self.block_on(a[0], a[1]).map(|_| 0)),
             "velt_rt_spawn" => {
                 let (poll, drop) = (self.func_id(a[0]), self.func_id(a[1]));
@@ -194,7 +200,7 @@ impl Interp<'_> {
         }))
     }
 
-    fn rt_all(&mut self, a: &[u64]) -> u64 {
+    fn rt_all(&mut self, a: &[u64], reject_early: bool) -> u64 {
         let children = (0..a[1]).map(|i| self.read_u64(a[0] + 8 * i)).collect();
         let kind = Fut::All {
             children,
@@ -202,6 +208,8 @@ impl Interp<'_> {
             size: a[2],
             result_drop: a.get(4).copied().unwrap_or(0),
             complete: false,
+            reject_early,
+            rejected: None,
         };
         self.new_fut(0, kind)
     }
@@ -287,28 +295,49 @@ impl Interp<'_> {
             children,
             results,
             size,
+            reject_early,
             ..
         }) = self.exec.futs.get(&f)
         else {
             unreachable!()
         };
-        let (children, results, size) = (children.clone(), *results, *size);
+        let (children, results, size, reject_early) =
+            (children.clone(), *results, *size, *reject_early);
         let mut left = children.clone();
+        let mut rejected = None;
         for (i, c) in children.into_iter().enumerate() {
             if c != 0 && self.fut_poll(c)? == 1 {
                 let b = self.read_bytes(c + 16, size as usize);
                 self.write_bytes(results + i as u64 * size, &b);
                 self.fut_drop(c)?;
                 left[i] = 0;
+                if reject_early && b.first().is_some_and(|&tag| tag != 0) {
+                    if i != 0 {
+                        let result_drop = match self.exec.futs.get(&f) {
+                            Some(Fut::All { result_drop, .. }) => *result_drop,
+                            _ => 0,
+                        };
+                        if left[0] == 0 && result_drop != 0 {
+                            self.call_addr(result_drop, vec![results])?;
+                        }
+                        self.write_bytes(results, &b);
+                    }
+                    rejected = Some(i);
+                    break;
+                }
             }
         }
-        let done = left.iter().all(|&c| c == 0);
+        let done = rejected.is_some() || left.iter().all(|&c| c == 0);
         if let Some(Fut::All {
-            children, complete, ..
+            children,
+            complete,
+            rejected: r,
+            ..
         }) = self.exec.futs.get_mut(&f)
         {
             *children = left;
-            *complete = done;
+            *complete = done && rejected.is_none();
+            *r = rejected;
         }
         Ok(done as u64)
     }
@@ -342,11 +371,16 @@ impl Interp<'_> {
                 size,
                 result_drop,
                 complete,
+                rejected,
+                ..
             } => {
                 for (i, c) in children.into_iter().enumerate() {
                     if c != 0 {
                         self.fut_drop(c)?;
-                    } else if result_drop != 0 && !complete {
+                    } else if result_drop != 0
+                        && !complete
+                        && !rejected.is_some_and(|r| i == 0 || i == r)
+                    {
                         self.call_addr(result_drop, vec![results + i as u64 * size])?;
                     }
                 }

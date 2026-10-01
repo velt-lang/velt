@@ -36,7 +36,8 @@ Promises behave like JavaScript's, at Rust's cost:
 
 ## Combinators
 
-- `Promise.all(ps: Promise<T, E>[]): Promise<T[], E>`: the results, in order.
+- `Promise.all(ps: Promise<T, E>[]): Promise<T[], E>`: the results, in order; rejects as soon
+  as one promise rejects.
 - `Promise.race(ps): Promise<T, E>`: the first to settle; the others keep running to
   completion.
 - `Promise.allSettled(ps)`: a `PromiseSettledResult<T, E>[]`, where each element is
@@ -86,13 +87,13 @@ can reject with: `Promise<T, E>` (a `Promise<T>` never rejects).
   the promise's `E`: `() => Promise<T> throws E`.
 - Awaiting rethrows the typed error: a direct `await f()`, a stored promise
   (`const p = f(); … await p`), a spawned task's handle, `await Promise.race(ps)` (the first
-  promise to settle), and `await Promise.all(ps)`, which waits for every promise and then
-  rethrows the first rejection in array order (unlike JS, which rejects as soon as one promise
-  rejects). `Promise.allSettled` reports each rejection as
+  promise to settle), and `await Promise.all(ps)`, which rejects as soon as one promise rejects,
+  like JS (the others keep running to completion). `Promise.allSettled` reports each rejection as
   `{ status: "rejected"; reason: E }`.
 - A promise nobody can await reports its error as uncaught (`Uncaught <Type>: <message>`, exit
-  code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`), and a
-  stored promise that rejects after it was dropped unawaited (unless a combinator handled it).
+  code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`, or
+  `spawn(p);` of a stored promise), and a stored promise that rejects after it was dropped
+  unawaited (unless a combinator handled it).
 
 ## `new Promise`
 

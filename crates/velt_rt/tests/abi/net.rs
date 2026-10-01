@@ -165,6 +165,7 @@ fn tcp_echo_in_process() {
             size_of::<Echo>() as u64,
             8,
             8,
+            None,
         )
     };
     let mut client = Client {

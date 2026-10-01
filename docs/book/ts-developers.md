@@ -167,8 +167,6 @@ surprise ([Error handling](errors.md)).
   *Why*: a forgotten `await` silently loses errors in JS.
 - `spawn(f())` runs a task on another core; the runtime is multi-threaded. Data shared between
   tasks must be `shared(...)` or a `Mutex`, and data races are compile errors.
-- `Promise.all` waits for every promise, then rethrows the first rejection in array order. JS
-  rejects as soon as one promise rejects.
 - A promise's type carries its error type: `Promise<T, E>`.
 - `new Promise((resolve, reject) => …)` works as in JS; `resolve` and `reject` may be kept and
   called later from any task. No global `setTimeout` (use

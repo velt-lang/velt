@@ -1,0 +1,15 @@
+// `spawn(p);` of a stored promise: nobody can await the task, so its rejection is reported as
+// uncaught (exit 1), like a spawned call.
+class Failed extends Error {}
+
+async function bad(name: string): Promise<string> throws Failed {
+  await sleep(1);
+  throw new Failed(`${name} failed`);
+}
+
+async function main() {
+  const p = bad("stored");
+  spawn(p);
+  await sleep(20);
+  console.log("end");
+}

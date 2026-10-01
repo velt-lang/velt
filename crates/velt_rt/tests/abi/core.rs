@@ -170,6 +170,7 @@ pub unsafe extern "C" fn fanout_poll(s: *mut u8, cx: *mut c_void) -> u32 {
                 size_of::<Square>() as u64,
                 8,
                 8,
+                None,
             ));
         }
         st.tag = 1;
@@ -232,6 +233,7 @@ fn sleeps_complete_in_deadline_order() {
                     size_of::<AddAfter>() as u64,
                     8,
                     8,
+                    None,
                 )
             }
         })
@@ -277,6 +279,7 @@ fn detached_tasks_and_dropped_join_handles_keep_running() {
             40,
             8,
             8,
+            None,
         )
     };
     unsafe { velt_rt_fut_drop(h) };
@@ -349,7 +352,7 @@ fn dropping_a_pending_boxed_future_runs_its_drop_fn() {
 #[test]
 fn spawn_fut_runs_existing_heap_futures() {
     // spawn(yieldNow())
-    let h = unsafe { velt_rt_spawn_fut(velt_rt_yield_now_fut(), 0) };
+    let h = unsafe { velt_rt_spawn_fut(velt_rt_yield_now_fut(), 0, None) };
     block_on_fut::<()>(h);
     // const p = addAfter(5, 1); spawn(p)  — p is a boxed compiled promise
     let init = add_after(5, 1);
@@ -363,7 +366,7 @@ fn spawn_fut_runs_existing_heap_futures() {
             8,
         )
     };
-    let h = unsafe { velt_rt_spawn_fut(boxed, 8) };
+    let h = unsafe { velt_rt_spawn_fut(boxed, 8, None) };
     assert_eq!(block_on_fut::<i64>(h), 6);
 }
 
@@ -500,7 +503,17 @@ fn all_over_100k_spawned_children_is_linear() {
                 i,
             };
             let p = &init as *const Square as *const u8;
-            unsafe { velt_rt_spawn(square_poll, no_drop, p, size_of::<Square>() as u64, 8, 8) }
+            unsafe {
+                velt_rt_spawn(
+                    square_poll,
+                    no_drop,
+                    p,
+                    size_of::<Square>() as u64,
+                    8,
+                    8,
+                    None,
+                )
+            }
         },
         |i| i * i,
     );

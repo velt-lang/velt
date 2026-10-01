@@ -240,6 +240,32 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
     }
 }
 
+/// The owner gives up promise `f` without cancelling it (the pending siblings of an early
+/// `Promise.all` rejection). A lazy compiled future, which its owner may have polled already,
+/// joins the current task's started promises without being polled now: it is queued, so it runs
+/// at the task's next poll, after the owner's continuation (in JS the rejection handler runs
+/// before other woken promises). A started promise keeps running. Either way its outcome is
+/// handled: `quiet_drop` disposes of its result (null if nothing to drop). Anything else (a
+/// runtime leaf, a join handle) is dropped as by `velt_rt_fut_drop`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fut_detach(f: *mut VeltFut, quiet_drop: Option<ResultDropFn>) {
+    let tcx = CURRENT.with(Cell::get);
+    if node::is_lazy(f) && !tcx.is_null() {
+        let tcx = &*tcx;
+        if (*tcx.set).is_null() {
+            *tcx.set = Box::into_raw(LocalSet::new(&*tcx.waker));
+        }
+        let set = *tcx.set;
+        node::mark_started(f, &(*set).shared, quiet_drop);
+        node::count_set(f);
+        set::add_member(set, f);
+        // Its leaves hold its owner's waker: one poll from the set makes them wake the node.
+        node::queue(f);
+    }
+    node::mark_handled(f, quiet_drop);
+    crate::task::velt_rt_fut_drop(f);
+}
+
 /// The `n` futures in `futs` are handled by a combinator (`Promise.race`, `any`, `all`): a
 /// started promise among them that is dropped unfinished and rejects later is not reported as an
 /// unhandled rejection, like in JS; `quiet_drop` disposes of its result slot (null if nothing to
