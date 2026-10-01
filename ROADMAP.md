@@ -8,7 +8,7 @@ deprecated, and the compiler explains how to update code.
 |---|---|
 | **Semantics stage 2** | Objects, arrays, maps and closures become shared references, exactly like JavaScript: no more "use of moved value", `.clone()` becomes an explicit deep copy, escaping closures may modify captures. Uniquely owned values keep today's code; every benchmark must stay within 3%. The `struct` keyword goes away and objects compare by identity. ([design](docs/internals/design/semantics.md)) |
 | **TSX and server-side rendering** | JSX syntax with TypeScript's `jsxImportSource` model, a precompiling SSR mode, the `velt:jsx` provider, streaming async components. ([design](docs/internals/design/tsx.md)) |
-| **JSON round** | `JSON.parse` into unions, literal types and string enums; recursive type aliases. |
+| **JSON round** | Recursive type aliases; `unknown` for dynamic JSON ([design](docs/internals/design/unknown.md)). |
 | **Packages and a modular std** | A public package registry; the database drivers (`sqlite`, `postgres`, `redis`) move to versioned packages; module-scoped `extend` and retroactive `implements`. |
 | **Platform** | Unwind information for JIT code on macOS and Linux, hot swap verified on every platform, Windows arm64, a released toolchain with installers. |
 | **Performance** | Compile-time scaling of lowering and the optimizer, closure environments, `noalias` from the exclusivity rule, a batched PostgreSQL query API. |

@@ -1,0 +1,13 @@
+// Unions JSON.parse cannot decode: members it cannot tell apart (issue #15).
+type A = { x: i64; y?: string };
+type B = { x: i64; z: f64 | null };
+type C = { a: i64 };
+
+function main() {
+  JSON.parse<i64 | f64>("1");
+  JSON.parse<A | B>("{}");
+  JSON.parse<C | Map<string, i64>>("{}");
+  JSON.parse<i64[] | string[]>("[]");
+  JSON.parse<C | JsonValue>("{}");
+  JSON.parse<C | string>("{}");
+}

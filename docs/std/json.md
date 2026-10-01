@@ -15,6 +15,17 @@
   literal types (`kind: "task"`), unions of literal types (`"low" | "normal" | "high"`), string
   enums (from their strings) and numeric enums (from their values). Anything else fails with
   the allowed values, e.g. `expected one of "low", "normal", "high" at $.tags[1]`.
+- Unions decode when `JSON.parse` can tell the members apart from the JSON value:
+  - by its kind: `string | i64 | bool | null`, an array, or an object;
+  - literal and enum members by value, before a plain member of the same kind (`"auto" | f64`);
+  - several object members by a discriminant, a field with a different literal type in each
+    (`{ kind: "join"; ... } | { kind: "leave"; ... }`) found anywhere in the object, or else by
+    a required field only one member has.
+
+  An unknown tag fails with `expected one of "join", "leave" at $.kind`. A union with two
+  number types, two array types, a `Map`/`Record` beside another object, or object members
+  without a discriminant or distinguishing field is a compile error that explains which
+  members clash.
 - `JSON.parse<T>` treats an absent key and an explicit `null` alike: a `T | null` field
   (including `a?: T`) may be missing and is then `null`; every other field is required.
   `JSON.stringify` omits a `null` optional class field (`a?: T`) and writes other `null`s.

@@ -127,7 +127,11 @@ impl FnLower<'_, '_> {
         self.json_expect(Rt::JsonArrayStart, vec![ro.clone()], ctx, &expected, fail);
         for (i, &e) in es.iter().enumerate() {
             let more = self.temp(Ty::U8);
-            self.call_rt(Rt::JsonArrayNext, vec![ro.clone()], Some(Place::local(more)));
+            self.call_rt(
+                Rt::JsonArrayNext,
+                vec![ro.clone()],
+                Some(Place::local(more)),
+            );
             let (body, bad) = (self.new_block(), self.new_block());
             self.terminate(Terminator::Switch {
                 value: Operand::Copy(Place::local(more)),
@@ -283,6 +287,9 @@ impl FnLower<'_, '_> {
             TyKind::Literal(_) | TyKind::Adt(..) if self.json_choices(ty).is_some() => {
                 self.json_read_choice(r, place, ctx, ty, fail)
             }
+            TyKind::Adt(..) if self.cx.is_union(ty) => {
+                self.json_read_union(r, place, ctx, ty, fail)
+            }
             // `JsonValue` takes any value as a tree, never its private `handle` field.
             TyKind::Adt(..) if self.cx.is_json_value(ty) => {
                 self.json_read_value(r, place, ctx, ty, fail)
@@ -292,7 +299,9 @@ impl FnLower<'_, '_> {
                 self.json_read_map(r, place, ctx, ty, kv, fail)
             }
             TyKind::Adt(..) if self.prelude_record(ty).is_some() => {
-                let kv = self.prelude_record(ty).unwrap_or_else(|| ice("not a Record"));
+                let kv = self
+                    .prelude_record(ty)
+                    .unwrap_or_else(|| ice("not a Record"));
                 self.json_read_record(r, place, ctx, ty, kv, fail)
             }
             TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => {

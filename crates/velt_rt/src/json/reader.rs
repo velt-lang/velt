@@ -10,8 +10,8 @@ use super::error::{mismatch_message, reader_syntax_message};
 use super::scan::{number_f64, number_i64, NumTok, Scanner, StrTok, SyntaxError};
 use super::value::{read, Value};
 use super::walk::{walk, SkipSink};
-use std::sync::Arc;
 use crate::str::VeltStr;
+use std::sync::Arc;
 
 /// `peek` results.
 pub const TOKEN_EOF: u32 = 0;
@@ -249,6 +249,19 @@ impl Reader {
         }
         let r = walk(&mut self.sc, &mut SkipSink);
         self.syntax(r)
+    }
+
+    /// The current position, to come back to with `reset` (a decoder looking ahead, e.g. for
+    /// a union's discriminant).
+    pub fn mark(&self) -> u64 {
+        ((self.sc.pos as u64) << 1) | self.after_open as u64
+    }
+
+    /// Go back to `mark` and forget any error since.
+    pub fn reset(&mut self, mark: u64) {
+        self.sc.pos = (mark >> 1) as usize;
+        self.after_open = mark & 1 == 1;
+        self.error = None;
     }
 
     /// One complete value of any kind, built as a `json.Value` tree.

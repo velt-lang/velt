@@ -20,6 +20,7 @@ mod literal;
 mod map;
 mod object;
 mod read;
+mod union;
 mod write;
 
 use velt_sema::hir::{self, AdtKind, TyId, TyKind};

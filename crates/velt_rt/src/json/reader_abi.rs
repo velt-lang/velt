@@ -115,6 +115,18 @@ pub unsafe extern "C" fn velt_rt_json_reader_skip_value(r: *mut Reader) -> u8 {
     (*r).skip()
 }
 
+/// The reader's position, for `reset` (looking ahead and coming back).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_json_reader_mark(r: *const Reader) -> u64 {
+    (*r).mark()
+}
+
+/// Go back to a position from `mark` (of the same reader), clearing any error since.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_json_reader_reset(r: *mut Reader, mark: u64) {
+    (*r).reset(mark)
+}
+
 /// Read one value of any kind into `*out` (an owned `json.Value` handle): 1 = ok, 0 = error
 /// (`out` untouched).
 #[no_mangle]

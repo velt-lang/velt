@@ -108,8 +108,11 @@ impl FnLower<'_, '_> {
 /// (the runtime's `velt_rt_strbuf_push_inspect_key` does the same at run time).
 pub(crate) fn inspect_key(s: &str) -> String {
     let b = s.as_bytes();
-    let ident = b.first().is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_' || *c == b'$')
-        && b.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_' || *c == b'$');
+    let ident = b
+        .first()
+        .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_' || *c == b'$')
+        && b.iter()
+            .all(|c| c.is_ascii_alphanumeric() || *c == b'_' || *c == b'$');
     if ident {
         s.to_string()
     } else {

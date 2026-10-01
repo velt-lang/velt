@@ -6,8 +6,8 @@
 
 use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
-use crate::lower::operand::proj;
 use crate::lower::glue::literals::inspect_key;
+use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty};
@@ -49,7 +49,8 @@ impl FnLower<'_, '_> {
         let hir::Def::Adt(a) = self.cx.hir.def(d) else {
             return None;
         };
-        let named = a.name == "Record" || a.name.ends_with("::Record") || a.name.ends_with(".Record");
+        let named =
+            a.name == "Record" || a.name.ends_with("::Record") || a.name.ends_with(".Record");
         if !named || a.fields.first().map(|f| f.name.as_str()) != Some("entries") {
             return None;
         }

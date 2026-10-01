@@ -54,5 +54,4 @@ Decided direction that is not implemented yet. Each chapter says where it applie
 | Objects compared by identity; the `struct` keyword removed | [semantics — JS fidelity](../internals/design/semantics.md#js-fidelity-decisions) |
 | `extend`: retroactive `implements`, module scoping | [TypeScript alignment §4](../internals/design/ts-alignment.md#4-extend--full-power-zero-cost-module-scoped) |
 | TSX for server-side rendering | [TSX](../internals/design/tsx.md) |
-| `JSON.parse` into unions other than unions of literal types | [roadmap](../../ROADMAP.md) |
 | `new Promise((resolve, reject) => …)` | [semantics — promises](../internals/design/semantics.md#promises) |

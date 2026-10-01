@@ -208,7 +208,8 @@ impl<'a> Parser<'a> {
             Tok::Kw(Kw::Typeof) => self.finish_prefix(UnaryOp::TypeOf)?,
             // `delete` is a contextual word: `delete r[k]`, `delete this.x`.
             Tok::Ident
-                if self.at_word("delete") && matches!(self.nth(1), Tok::Ident | Tok::Kw(Kw::This)) =>
+                if self.at_word("delete")
+                    && matches!(self.nth(1), Tok::Ident | Tok::Kw(Kw::This)) =>
             {
                 self.finish_prefix(UnaryOp::Delete)?
             }

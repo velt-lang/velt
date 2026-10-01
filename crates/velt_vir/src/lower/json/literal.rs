@@ -185,9 +185,17 @@ impl FnLower<'_, '_> {
         } else {
             let s = self.temp(STR);
             let sa = self.addr(Place::local(s));
-            self.json_expect(Rt::JsonReadString, vec![ro.clone(), sa.clone()], ctx, &expected, fail);
+            self.json_expect(
+                Rt::JsonReadString,
+                vec![ro.clone(), sa.clone()],
+                ctx,
+                &expected,
+                fail,
+            );
             for (i, l) in &strs {
-                let LitValue::Str(text) = l else { unreachable!() };
+                let LitValue::Str(text) = l else {
+                    unreachable!()
+                };
                 let lit = self.str_lit(text);
                 let la = self.operand_addr(lit, STR);
                 let eq = self.rt_u8(Rt::StrEq, vec![sa.clone(), la]);
@@ -241,7 +249,9 @@ impl FnLower<'_, '_> {
             let ba = self.addr(Place::local(b));
             self.json_expect(Rt::JsonReadBool, vec![ro.clone(), ba], ctx, &expected, fail);
             for (i, l) in &bools {
-                let LitValue::Bool(want) = l else { unreachable!() };
+                let LitValue::Bool(want) = l else {
+                    unreachable!()
+                };
                 let eq = self.rvalue_temp(
                     Ty::Bool,
                     Rvalue::Binary(

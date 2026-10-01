@@ -73,9 +73,9 @@ use crate::LowerOptions;
 pub(crate) use cfg::successors;
 pub(crate) use glue::Glue;
 // The VIR interpreter (tests) formats like the runtime.
+use glue::VtableKey;
 #[cfg(test)]
 pub(crate) use glue::{inspect_key, inspect_quote};
-use glue::VtableKey;
 
 /// Lower a whole checked program (see [`crate::lower`]).
 pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Program {

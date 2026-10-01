@@ -8,8 +8,11 @@
 /// An object key as `util.inspect` prints it: bare when it is an identifier (`a`, `_x1`,
 /// `$`), else quoted like a string (`'a b'`, `'1'`).
 pub fn push_inspect_key(out: &mut Vec<u8>, s: &[u8]) {
-    let ident = s.first().is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_' || *c == b'$')
-        && s.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_' || *c == b'$');
+    let ident = s
+        .first()
+        .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_' || *c == b'$')
+        && s.iter()
+            .all(|c| c.is_ascii_alphanumeric() || *c == b'_' || *c == b'$');
     if ident {
         out.extend_from_slice(s);
     } else {

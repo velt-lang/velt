@@ -447,6 +447,8 @@ typedef struct VeltJsonReader VeltJsonReader;   // opaque
 | `velt_rt_json_reader_read_null` | `(r) -> u8` | optional fields: `if (peek(r) == 1) read_null(r); else read the T` |
 | `velt_rt_json_reader_skip_value` | `(r) -> u8` | skips (and validates) any value — unknown keys; iterative, no depth limit |
 | `velt_rt_json_reader_read_value` | `(r, VeltJson* out) -> u8` | any one value as a `json.Value` tree (§12.5), an owned handle: a typed decoder's `JsonValue` target. Iterative, no depth limit. |
+| `velt_rt_json_reader_mark` | `(const VeltJsonReader* r) -> u64` | the current position (opaque), for `reset` |
+| `velt_rt_json_reader_reset` | `(r, u64 mark)` | go back to a `mark` of the same reader and clear any error since: union decoders look ahead (for a discriminant key, or a number against literal members) and then decode from the start of the value |
 | `velt_rt_json_reader_end` | `(r) -> u8` | after the top-level value: 1 if only whitespace remains |
 | `velt_rt_json_error` | `(const VeltJsonReader* r, const VeltStr* expected, const VeltStr* path, VeltStr* out)` | builds the owned `JsonError.message` (§12.4) |
 

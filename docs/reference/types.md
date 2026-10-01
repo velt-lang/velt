@@ -207,7 +207,8 @@ the nullable type; `void` cannot be a member.
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
 - Printing and template literals show the active member's value. `JSON.stringify` works on
-  unions; `JSON.parse` decodes unions of literal types (`"low" | "high"`) but not other unions yet.
+  unions; `JSON.parse` decodes them when the JSON value tells the members apart (discriminated
+  unions by their discriminant; see [`velt:json`](../std/json.md)).
 - A union is Copy when all its members are; otherwise it owns its active member.
 
 ```ts

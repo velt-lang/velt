@@ -108,7 +108,9 @@ impl FnLower<'_, '_> {
                 self.json_write_map(buf, place, ty, kv)
             }
             TyKind::Adt(..) if self.prelude_record(ty).is_some() => {
-                let kv = self.prelude_record(ty).unwrap_or_else(|| ice("not a Record"));
+                let kv = self
+                    .prelude_record(ty)
+                    .unwrap_or_else(|| ice("not a Record"));
                 self.json_write_record(buf, place, ty, kv)
             }
             TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => {

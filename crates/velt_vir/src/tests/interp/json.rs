@@ -15,6 +15,8 @@ pub(super) struct Reader {
     syntax: Option<(String, usize)>,
     /// Per open container: no element read yet.
     first: Vec<bool>,
+    /// Positions saved by `mark` (the mark is the index).
+    marks: Vec<(usize, Vec<bool>)>,
 }
 
 #[derive(Default)]
@@ -230,6 +232,7 @@ impl Interp<'_> {
                     failed: false,
                     syntax: None,
                     first: vec![],
+                    marks: vec![],
                 };
                 rs.open.insert(h, r);
                 h
@@ -279,6 +282,20 @@ impl Interp<'_> {
             "velt_rt_json_reader_skip_value" => {
                 let r = self.reader(a[0]);
                 (!r.failed && r.skip()) as u64
+            }
+            "velt_rt_json_reader_mark" => {
+                let r = self.reader(a[0]);
+                r.marks.push((r.pos, r.first.clone()));
+                (r.marks.len() - 1) as u64
+            }
+            "velt_rt_json_reader_reset" => {
+                let r = self.reader(a[0]);
+                let (pos, first) = r.marks[a[1] as usize].clone();
+                r.pos = pos;
+                r.first = first;
+                r.failed = false;
+                r.syntax = None;
+                0
             }
             "velt_rt_json_reader_end" => {
                 let r = self.reader(a[0]);

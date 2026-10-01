@@ -29,7 +29,9 @@ impl RecordKey<'_> {
     fn expr(&self) -> ast::Expr {
         match self {
             RecordKey::Index(e) => (*e).clone(),
-            RecordKey::Name(id) => synth(ast::ExprKind::Lit(ast::Lit::Str(id.name.clone())), id.span),
+            RecordKey::Name(id) => {
+                synth(ast::ExprKind::Lit(ast::Lit::Str(id.name.clone())), id.span)
+            }
         }
     }
 
@@ -115,8 +117,11 @@ impl FnCx<'_, '_> {
         if let TyKind::Literal(LitValue::Str(s)) = self.cx.ty.kind(k) {
             let s = s.clone();
             self.cx.error(
-                Diagnostic::error(format!("a `Record` with the single key \"{s}\" is not supported"), span)
-                    .with_note(format!("use an object type: `{{ {s}: V }}`")),
+                Diagnostic::error(
+                    format!("a `Record` with the single key \"{s}\" is not supported"),
+                    span,
+                )
+                .with_note(format!("use an object type: `{{ {s}: V }}`")),
             );
             return false;
         }
@@ -157,7 +162,9 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
-        let (k, _) = self.record_args(obj.ty).expect("ICE: record read on a non-record");
+        let (k, _) = self
+            .record_args(obj.ty)
+            .expect("ICE: record read on a non-record");
         if want == Want::BorrowMut {
             self.record_copy_error(span);
         }
@@ -177,15 +184,17 @@ impl FnCx<'_, '_> {
             return true;
         }
         let kn = self.cx.display(k);
-        self.cx
-            .err(format!("`{kn}` has no key \"{name}\""), span);
+        self.cx.err(format!("`{kn}` has no key \"{name}\""), span);
         false
     }
 
     pub(crate) fn record_copy_error(&mut self, span: Span) {
         self.cx.error(
-            Diagnostic::error("cannot modify a value read from a `Record`: it is a copy", span)
-                .with_note("assign the changed value back with `r[k] = ...`"),
+            Diagnostic::error(
+                "cannot modify a value read from a `Record`: it is a copy",
+                span,
+            )
+            .with_note("assign the changed value back with `r[k] = ...`"),
         );
     }
 
@@ -207,7 +216,9 @@ impl FnCx<'_, '_> {
         value: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
-        let (k, _) = self.record_args(obj.ty).expect("ICE: record write on a non-record");
+        let (k, _) = self
+            .record_args(obj.ty)
+            .expect("ICE: record write on a non-record");
         if let RecordKey::Name(id) = &key {
             if self.record_keys(k).is_some() && !self.record_has_key(k, &id.name, id.span) {
                 self.check_args_loose(std::slice::from_ref(value));
@@ -288,8 +299,10 @@ impl FnCx<'_, '_> {
             } => (object, RecordKey::Name(prop)),
             ast::ExprKind::Paren(inner) => return self.delete_expr(inner, span),
             _ => {
-                self.cx
-                    .err("`delete` removes a key from a `Record`: write `delete r[k]`", span);
+                self.cx.err(
+                    "`delete` removes a key from a `Record`: write `delete r[k]`",
+                    span,
+                );
                 return self.error_expr(span);
             }
         };
@@ -331,7 +344,8 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let keys = self.record_keys(k);
-        let enum_keys = matches!(self.cx.ty.kind(k), TyKind::Adt(..)) && self.cx.union_def(k).is_none();
+        let enum_keys =
+            matches!(self.cx.ty.kind(k), TyKind::Adt(..)) && self.cx.union_def(k).is_none();
         if enum_keys {
             let kn = self.cx.display(k);
             self.cx.err(
@@ -398,7 +412,10 @@ impl FnCx<'_, '_> {
                 let list: Vec<String> = missing.iter().map(|k| format!("\"{k}\"")).collect();
                 let kn = self.cx.display(k);
                 self.cx.err(
-                    format!("missing key {} in a `Record<{kn}, ...>` literal", list.join(", ")),
+                    format!(
+                        "missing key {} in a `Record<{kn}, ...>` literal",
+                        list.join(", ")
+                    ),
                     span,
                 );
             }

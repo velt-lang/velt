@@ -10,7 +10,9 @@ use super::{Seg, STR};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, ice, FnLower, ScopeKind};
-use crate::vir::{self, BinOp, BlockId, Const, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
+use crate::vir::{
+    self, BinOp, BlockId, Const, Local, Operand, Place, Proj, Rvalue, Terminator, Ty,
+};
 
 /// Field indexes of the prelude `Map` (see glue/format_map.rs).
 const KEYS: u32 = 1;
@@ -114,7 +116,11 @@ impl FnLower<'_, '_> {
         self.switch_to(head);
         let step = self.temp(Ty::U8);
         let ka = self.addr(Place::local(key));
-        self.call_rt(Rt::JsonNextKey, vec![ro, ka.clone()], Some(Place::local(step)));
+        self.call_rt(
+            Rt::JsonNextKey,
+            vec![ro, ka.clone()],
+            Some(Place::local(step)),
+        );
         self.terminate(Terminator::Switch {
             value: Operand::Copy(Place::local(step)),
             cases: vec![(1, body), (0, done)],
@@ -132,7 +138,9 @@ impl FnLower<'_, '_> {
                 let oa = self.addr(Place::local(kv));
                 self.call_rt(Rt::StrClone, vec![ka.clone(), oa], None);
             }
-            Some(keys) => self.json_record_key(r, ctx, (ka.clone(), keys), (kv, kt), seen, head, fail),
+            Some(keys) => {
+                self.json_record_key(r, ctx, (ka.clone(), keys), (kv, kt), seen, head, fail)
+            }
         }
         let vty = self.cx.ty(vt);
         let value = (vty != Ty::Unit).then(|| self.temp(vty));
@@ -277,7 +285,13 @@ impl FnLower<'_, '_> {
     }
 
     /// `Record<K, V>`: its `Map<K, V>` (field 0) as an object.
-    pub(super) fn json_write_record(&mut self, buf: &Operand, place: &Place, ty: TyId, kv: (TyId, TyId)) {
+    pub(super) fn json_write_record(
+        &mut self,
+        buf: &Operand,
+        place: &Place,
+        ty: TyId,
+        kv: (TyId, TyId),
+    ) {
         let map_ty = self.cx.adt_field_tys(ty)[0];
         let map = self.field_place(place, ty, 0);
         self.json_write_map(buf, &map, map_ty, kv);

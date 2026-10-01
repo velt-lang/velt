@@ -71,6 +71,6 @@ function loopReassign(start: Cat | null): void {
 }
 
 function main() {
-  const j = JSON.parse<i64 | string>("1");
+  const j = JSON.parse<i64 | f64>("1");
   const bad: i64 | void = 1;
 }

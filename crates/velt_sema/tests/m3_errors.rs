@@ -148,7 +148,10 @@ fn json_types() {
             "{decl} type W = {{ f: {ty} }};
              async function main() {{ const w = JSON.parse<W>(\"{{}}\"); }}"
         ));
-        assert!(r.contains(&format!("contains `{ty}`, which has no JSON form")), "{r}");
+        assert!(
+            r.contains(&format!("contains `{ty}`, which has no JSON form")),
+            "{r}"
+        );
     }
     // An unknown type is reported once, not again as having no JSON form.
     let r = err_src("type W = { s: Nope }; function main() { JSON.parse<W>(\"{}\"); }");

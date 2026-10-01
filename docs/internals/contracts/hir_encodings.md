@@ -91,8 +91,8 @@ Maintainer-owned, like hir.rs.
   times, e.g. as an HTTP handler); borrowed captures are read from its env.
 - `__intrinsic_http_handler(closure)`: `Call { Intrinsic(HttpHandler), [closure] }`, type `u64[]`
   (init, poll, drop, state_size, state_align, env).
-- Sema rejects: JSON of Map / functions / interface values (and `JSON.parse` of unions, literal
-  types and string enums); atomics on non-64-bit ints.
+- Sema rejects: JSON of maps without `string` keys / functions / interface values, and
+  `JSON.parse` of unions whose members it cannot tell apart; atomics on non-64-bit ints.
 
 ## Post-M4 additions
 - `StmtKind::ForOf { consume: true, .. }`: `for...of` over an owned temporary array (a call
@@ -164,8 +164,9 @@ Maintainer-owned, like hir.rs.
   base type, members to a common base class / interface): a `Match` whose arms convert each
   member (`V(m) => <m as T>`); re-tagging into a wider union may convert members the same way.
 - `Print`/`PrintErr`/`ToString`/`JsonStringify` of a union format the active member (top-level
-  style for `console.log` args: a string member prints raw). `JSON.parse` into a union is
-  rejected by sema.
+  style for `console.log` args: a string member prints raw). `JSON.parse` into a union
+  picks the member by the JSON value (velt_vir lower/json/union.rs); sema rejects unions whose
+  members it cannot tell apart.
 - Clone/drop/eq/hash glue is the ordinary enum glue.
 
 ## Literal types
