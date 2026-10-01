@@ -1,0 +1,24 @@
+name: setup
+description: Rust toolchain, wasm targets, wasmtime, node, clang and a build cache for the gates.
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy, rustfmt, llvm-tools
+        targets: wasm32-wasip1, wasm32-unknown-unknown
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: gate
+        cache-on-failure: true
+    - uses: bytecodealliance/actions/wasmtime/setup@v1
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+    # The LLVM backend (--release goldens) needs clang 16 or newer; Apple's clang can be older.
+    - name: clang (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install llvm >/dev/null
+        echo "VELT_CLANG=$(brew --prefix llvm)/bin/clang" >> "$GITHUB_ENV"

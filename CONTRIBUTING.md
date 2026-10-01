@@ -119,9 +119,19 @@ something that is not TypeScript only where TypeScript can't express it at nativ
 
 ## Commits and pull requests
 
-Keep commits focused, with a message that says what changed and why (`sema: infer throws through
-closures in recursive functions`). Run the full gate before opening a pull request. Never commit
-secrets, tokens or personal data.
+Work on a branch and open a pull request against `main`; nothing is pushed to `main` directly.
+Reference the issue it resolves (`Closes #123`) and say which gate you ran.
+
+- **CI**: every pull request runs the fast gate on Linux. When a pull request is ready, add it to
+  the **merge queue**: the queue runs the full gate on Linux, Windows and macOS against the pull
+  request merged with the latest `main`, and merges it when all three pass. A nightly run adds
+  PostgreSQL and Redis so the database tests run too.
+- Pull requests are **squash-merged**: write the pull request title and description as the final
+  commit message (`sema: infer throws through closures in recursive functions`).
+- Changes to the contracts (`ast.rs`, `hir`, `vir.rs`, `docs/internals/contracts/**`) or to
+  language semantics need a maintainer's review (see `.github/CODEOWNERS`).
+
+Never commit secrets, tokens or personal data.
 
 By contributing, you agree that your contributions are licensed under the project's dual
 MIT / Apache-2.0 license.

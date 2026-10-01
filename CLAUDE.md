@@ -28,7 +28,9 @@ follow it. The essentials for agents:
    (hand-built inputs, unit tests, snapshot tests).
 3. Before you finish: `cargo build --workspace` and `cargo test -p <your crates>` pass, and
    `cargo clippy -p <your crates> --all-targets -- -D warnings` is clean. Commit on your branch
-   with a message like `frontend: lexer + Pratt parser for M1 subset`. Never push unless asked.
+   with a message like `frontend: lexer + Pratt parser for M1 subset`. Push your branch and open
+   a pull request (`Closes #N`, gate result); never push to `main`. CI runs the fast gate on the
+   pull request and the full three-OS gate in the merge queue (CONTRIBUTING.md).
 4. Compiler code must not panic on user input; report `Diagnostic`s. Internal invariant
    violations may panic with a message starting `ICE:`.
 5. Every bug fix gets a regression test (end-to-end or unit). Every user-visible change updates
