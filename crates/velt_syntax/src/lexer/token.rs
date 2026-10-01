@@ -210,6 +210,18 @@ pub(crate) enum Tok {
     Caret,
     CaretEq,
     Tilde,
+    /// `<` opening a JSX tag (an operand was expected and a name or `>` follows).
+    JsxLt,
+    /// `</` starting a JSX closing tag.
+    JsxLtSlash,
+    /// A JSX tag or attribute name piece: identifier characters plus `-` (`data-id`).
+    JsxIdent,
+    /// `>` ending a JSX tag.
+    JsxGt,
+    /// `/>` ending a self-closing JSX tag.
+    JsxSlashGt,
+    /// JSX child text (`Payload::Text`, cooked; may be empty after whitespace removal).
+    JsxText(u32),
     Eof,
 }
 
@@ -278,6 +290,12 @@ impl Tok {
             Caret => "^",
             CaretEq => "^=",
             Tilde => "~",
+            JsxLt => "<",
+            JsxLtSlash => "</",
+            JsxIdent => "JSX name",
+            JsxGt => ">",
+            JsxSlashGt => "/>",
+            JsxText(_) => "JSX text",
             Eof => "end of file",
         }
     }

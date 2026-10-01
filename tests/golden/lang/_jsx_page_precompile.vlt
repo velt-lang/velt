@@ -1,0 +1,49 @@
+// @jsxImportSource ./_jsx_test_precompile
+
+// The page of `jsx_precompile_equals_generic`, lowered through the precompiling runtime (the same
+// source as `_jsx_page_generic.vlt`, which uses the generic runtime).
+
+type RowProps = { label: string; value: number };
+
+function Row(props: RowProps): JSX.Element {
+  return (
+    <li class="row" title={props.label}>
+      {props.label}: {props.value}
+    </li>
+  );
+}
+
+async function Later(props: { id: number }): Promise<JSX.Element> {
+  return <span data-id={props.id}>loaded {props.id}</span>;
+}
+
+export function page(title: string, items: string[], admin: bool): JSX.Element {
+  const attrs = { class: "spread", title: "from <spread>" };
+  const rows: JSX.Element[] = [];
+  for (const item of items) {
+    rows.push(<li key={item}>{item}</li>);
+  }
+  return (
+    <div class="page" id="main" hidden={!admin}>
+      <h1 class={admin ? "admin" : "guest"}>{title} &amp; "more" &lt;3</h1>
+      <p title='it&apos;s "quoted"'>
+        Static <span>text</span> & entities&nbsp;&copy;
+      </p>
+      <ul>{rows}</ul>
+      <Row label="answer" value={42} />
+      <>
+        <br />
+        <input name="q" value={title} checked />
+      </>
+      <div key="k">
+        <span>inside a keyed div</span>
+      </div>
+      <span {...attrs}>spread</span>
+      <a></a>
+      <Later id={7} />
+      {null}
+      {false}
+      {1.5}
+    </div>
+  );
+}

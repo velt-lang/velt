@@ -1,0 +1,154 @@
+// A minimal string-building JSX provider for the JSX goldens (docs/contracts/jsx.md): elements
+// are lists of HTML pieces, child elements and components not run yet. `render` joins them and
+// runs each component when it reaches it, so parents run before their children (as a provider
+// with `provide`/`inject` needs). Numbers are spelled `i64 | f64`.
+
+import { escapeHtml } from "velt:html";
+
+export class Element {
+  parts: Part[] = [];
+}
+
+// A component call the renderer makes when it reaches it.
+export class Later {
+  run: () => Element;
+
+  constructor(run: () => Element) {
+    this.run = run;
+  }
+}
+
+// An async component call the renderer makes (and awaits) when it reaches it.
+export class LaterAsync {
+  run: () => Promise<Element>;
+
+  constructor(run: () => Promise<Element>) {
+    this.run = run;
+  }
+}
+
+export type Part = string | Element | Later | LaterAsync;
+export type Text = string | i64 | f64 | bool | null;
+export type Child = Element | Element[] | Text;
+export type AttrValue = Text;
+
+const VOID_TAGS = "|area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr|";
+
+// Pass an array along by value, so `for...of` consumes it.
+function own<T>(xs: T[]): T[] {
+  return xs;
+}
+
+// A number or string as attribute or text content (not escaped).
+function plain(v: string | i64 | f64): string {
+  if (typeof v === "string") {
+    return v;
+  }
+  return JSON.stringify(v);
+}
+
+// The escaped text of `v` ("" for booleans and null).
+export function textOf(v: Text): string {
+  if (v === null) {
+    return "";
+  }
+  if (typeof v === "boolean") {
+    return "";
+  }
+  return escapeHtml(plain(v));
+}
+
+export function addChild(el: Element, c: Child) {
+  if (c === null) {
+    return;
+  }
+  if (c instanceof Element) {
+    el.parts.push(c);
+  } else if (typeof c === "object") {
+    for (const e of own(c)) {
+      el.parts.push(e);
+    }
+  } else {
+    el.parts.push(textOf(c));
+  }
+}
+
+// ` name="value"`, ` name` for `true`, nothing for `false` / `null`.
+export function attr(name: string, v: AttrValue): string {
+  if (v === null) {
+    return "";
+  }
+  if (typeof v === "boolean") {
+    return v ? ` ${name}` : "";
+  }
+  return ` ${name}="${escapeHtml(plain(v))}"`;
+}
+
+export function attrs(names: string[], values: AttrValue[]): string {
+  let out = "";
+  for (let i: usize = 0; i < names.length; i++) {
+    out += attr(names[i], values[i]);
+  }
+  return out;
+}
+
+// `<!--key=k-->` in front of keyed elements, so the goldens show keys.
+function keyMark(key: string | null): string {
+  return key === null ? "" : `<!--key=${key}-->`;
+}
+
+export function element(
+  tag: string,
+  names: string[],
+  values: AttrValue[],
+  children: Child[],
+  key: string | null,
+): Element {
+  const el = new Element();
+  el.parts.push(`${keyMark(key)}<${tag}${attrs(names, values)}>`);
+  if (VOID_TAGS.includes(`|${tag}|`)) {
+    return el;
+  }
+  for (const c of own(children)) {
+    addChild(el, c);
+  }
+  el.parts.push(`</${tag}>`);
+  return el;
+}
+
+export function fragment(children: Child[]): Element {
+  const el = new Element();
+  for (const c of own(children)) {
+    addChild(el, c);
+  }
+  return el;
+}
+
+// A component behind a `<!--name-->` marker (and its key), run when rendered.
+export function component(name: string, key: string | null, run: Later | LaterAsync): Element {
+  const el = new Element();
+  el.parts.push(`${keyMark(key)}<!--${name}-->`);
+  el.parts.push(run);
+  return el;
+}
+
+export async function render(el: Element): Promise<string> {
+  let out = "";
+  el.parts.reverse();
+  while (el.parts.length > 0) {
+    const p = el.parts.pop();
+    if (p === null) {
+      break;
+    }
+    if (typeof p === "string") {
+      out += p;
+    } else if (p instanceof Element) {
+      out += await render(p);
+    } else if (p instanceof Later) {
+      out += await render(p.run());
+    } else {
+      out += await render(await p.run());
+    }
+  }
+  return out;
+}

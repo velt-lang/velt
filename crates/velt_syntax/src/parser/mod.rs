@@ -1,7 +1,7 @@
 //! Recursive-descent parser over the token stream. This module holds the parser state and the
 //! token/diagnostic primitives; grammar lives in the submodules:
 //! `items`/`type_decls`/`members` (declarations), `imports` (imports and re-exports), `stmt`,
-//! `expr` (operators), `postfix` (calls, members), `primary` (atoms), `arrow`, `for_loop`,
+//! `expr` (operators), `postfix` (calls, members), `primary` (atoms), `jsx`, `arrow`, `for_loop`,
 //! `types`, `patterns`, `undefined` (the rejected `undefined`), and `recovery` (error
 //! synchronization).
 
@@ -11,6 +11,7 @@ mod field_types;
 mod for_loop;
 mod imports;
 mod items;
+mod jsx;
 mod members;
 mod param_props;
 mod patterns;
@@ -64,6 +65,8 @@ pub(crate) struct Parser<'a> {
     /// parser decide "function type / arrow function?" by looking past the parentheses instead
     /// of speculating, which would re-parse nested parentheses exponentially often.
     paren_close: Vec<u32>,
+    /// The lexer's `@jsxImportSource` pragma, moved into the module at the end.
+    jsx_import_source: Option<String>,
 }
 
 /// `paren_close` entry of a token that is not a matched `(`.
@@ -103,6 +106,7 @@ impl<'a> Parser<'a> {
             hit_depth_limit: false,
             speculating: 0,
             paren_close: match_parens(&toks),
+            jsx_import_source: lexed.jsx_import_source,
             toks,
         }
     }

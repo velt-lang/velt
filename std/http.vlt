@@ -19,6 +19,10 @@
 // dropping it releases the handle but keeps it serving (like Node).
 
 import { IoResult, unwrapIo } from "velt:io";
+import { ResponseWriter as Writer_, openStream } from "velt:http/stream";
+
+// A streamed response's body (`Response.stream`; std/http/stream.vlt).
+export type ResponseWriter = Writer_;
 
 // `VeltHandler` field by field: init, poll, drop, state_size, state_align, env (48 bytes).
 type RtHandler = [u64, u64, u64, u64, u64, u64];
@@ -116,7 +120,8 @@ export class Headers {
 // the runtime request (`VeltReq`) that reads each property on access, so a handler pays only for
 // what it looks at; every read is an owned copy (`{ path: req.path }`). Valid until the handler's
 // promise settles (`serve` then releases the runtime request): keep copies of the properties, not
-// the `Request`, in anything that outlives the handler.
+// the `Request`, in anything that outlives the handler. Reading it afterwards is a runtime error
+// (the runtime checks every request handle), never a read of freed memory.
 //
 // Not a `[Symbol.dispose]()` owner: calling the handler (an async closure value) copies its class
 // arguments, so each copy would release the request (tests/golden/bugs/
@@ -207,6 +212,17 @@ export class Response {
     const r = velt_rt_http_resp_new(status as u32);
     let owned = body;
     velt_rt_http_resp_body_bytes(r, owned);
+    return new Response(r);
+  }
+
+  // A body produced while it is sent (server-side rendering, long reports): `body` starts at
+  // once and keeps running after the handler returned the response, which sends the status and
+  // headers first (set them before returning), then each flushed chunk (HTTP/1.1 chunked
+  // transfer, no `content-length`). The response ends when `body` returns; if it throws, the
+  // error is printed and the response is cut off. Default `text/plain; charset=utf-8`.
+  static stream<E>(body: (w: ResponseWriter) => Promise<void, E>, status: i64 = 200): Response {
+    const r = velt_rt_http_resp_new(status as u32);
+    openStream(r, body);
     return new Response(r);
   }
 

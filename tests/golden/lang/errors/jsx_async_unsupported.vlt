@@ -1,0 +1,11 @@
+// @jsxImportSource ./_jsx_sync_provider
+
+// An async component needs a runtime that exports `jsxAsyncComponent`.
+
+async function Posts(): Promise<JSX.Element> {
+  return <ul></ul>;
+}
+
+function main() {
+  const page = <div><Posts /></div>;
+}

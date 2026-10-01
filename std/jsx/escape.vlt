@@ -1,0 +1,39 @@
+// std/jsx/escape: HTML escaping of text and attributes (docs/contracts/jsx.md "Escaping").
+//
+// Text escapes `&`, `<` and `>`; attribute values also `"` and `'`, which is exactly std/html
+// `escapeHtml`. The compiler escapes static text of precompiled templates with the same rules,
+// so text must not escape quotes: `escapeText` returns text without `& < >` as it is (runtime
+// searches, the common case) and otherwise uses the runtime's one-pass `escapeHtml`, putting
+// the quotes back when there were any.
+
+import { escapeHtml } from "velt:html";
+import type { AttrValue } from "velt:jsx/node";
+
+// `s` with `&`, `<` and `>` replaced by `&amp;`, `&lt;` and `&gt;` (quotes are kept).
+export function escapeText(s: string): string {
+  if (!s.includes("<") && !s.includes("&") && !s.includes(">")) {
+    return s;
+  }
+  const escaped = escapeHtml(s);
+  if (!s.includes("\"") && !s.includes("'")) {
+    return escaped;
+  }
+  // Every `&quot;` / `&#39;` in `escaped` came from a quote: a literal one in `s` was escaped to
+  // `&amp;quot;`.
+  return escaped.replaceAll("&quot;", "\"").replaceAll("&#39;", "'");
+}
+
+// One attribute as it appears in a start tag: ` name="escaped value"`, ` name` for `true`, and
+// nothing for `false` and `null`.
+export function renderAttr(name: string, value: AttrValue): string {
+  if (value == null) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return ` ${name}="${escapeHtml(value)}"`;
+  }
+  if (typeof value === "boolean") {
+    return value ? ` ${name}` : "";
+  }
+  return ` ${name}="${value}"`;
+}

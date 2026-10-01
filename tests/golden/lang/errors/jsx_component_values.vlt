@@ -1,0 +1,25 @@
+// @jsxImportSource ../_jsx_test_provider
+
+// Component values are checked against the runtime's component type; props are copied into a
+// component that takes ownership of them, which is impossible for props holding a promise; a
+// generic component's type arguments must be inferable from its props.
+
+function Waiting(props: { pending: Promise<i64> }): JSX.Element {
+  const p = props.pending;
+  return <p>waiting</p>;
+}
+
+function Empty<T>(props: { label: string }): JSX.Element {
+  return <p>{props.label}</p>;
+}
+
+async function value(): Promise<i64> {
+  return 1;
+}
+
+function main() {
+  const Text = (props: { s: string }): string => props.s;
+  const a = <Text s="x" />;
+  const b = <Waiting pending={value()} />;
+  const c = <Empty label="x" />;
+}

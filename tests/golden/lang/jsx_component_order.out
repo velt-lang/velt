@@ -1,0 +1,8 @@
+evaluate dark
+evaluate first
+evaluate second
+built
+run Theme(dark)
+run Themed(first) sees dark
+run Themed(second) sees dark
+<!--main#Theme--><div class="dark"><!--main#Themed--><p>first: dark</p><!--main#Themed--><p>second: dark</p></div>

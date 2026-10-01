@@ -5,7 +5,8 @@
 //!   reads `ns.x` in expressions and types as that name);
 //! - re-exports (`export { x } from "…"`, `export * from "…"`) and local export lists
 //!   (`export { a }`) bind nothing locally; their names are checked here and resolved on demand
-//!   by [`super::exports`].
+//!   by [`super::exports`];
+//! - the JSX runtime of a module containing JSX is bound as the namespace `JSX`.
 
 use std::collections::HashSet;
 
@@ -103,6 +104,30 @@ fn bind_namespace(cx: &mut Ctx, m: usize, t: usize, ns: &ast::Ident) {
         cx.scopes[m].items.insert(format!("{}.{name}", ns.name), it);
     }
 }
+
+/// A module containing JSX sees its runtime's exports as `JSX.x` (`JSX.Element`, …), as if it
+/// imported `* as JSX` from it; a name `JSX` the module defines or imports itself wins.
+pub(super) fn bind_jsx_runtime(cx: &mut Ctx, m: usize) {
+    let modules = cx.modules;
+    let Some(path) = &modules[m].jsx_runtime else {
+        return;
+    };
+    let Some(t) = modules.iter().position(|x| x.path == *path) else {
+        return;
+    };
+    let scope = &cx.scopes[m];
+    if scope.items.contains_key(JSX_NAMESPACE) || scope.namespaces.contains_key(JSX_NAMESPACE) {
+        return;
+    }
+    let ns = ast::Ident {
+        name: JSX_NAMESPACE.to_string(),
+        span: velt_common::Span::DUMMY,
+    };
+    bind_namespace(cx, m, t, &ns);
+}
+
+/// The namespace the JSX runtime's exports are visible under.
+const JSX_NAMESPACE: &str = "JSX";
 
 /// Claim top-level name `local` in module `m`; false (after an error) if it is taken.
 fn define(cx: &mut Ctx, m: usize, local: &ast::Ident) -> bool {

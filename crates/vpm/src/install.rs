@@ -128,19 +128,26 @@ fn build_graph(
 ) -> PackageGraph {
     let deps_of = |names: &[String]| names.iter().map(|n| (n.clone(), dirs[n].clone())).collect();
     let mut graph = PackageGraph::default();
-    graph
-        .add(
-            &manifest.package.name,
-            root,
-            deps_of(&resolution.root_dependencies),
-        )
-        .paths = manifest.paths.clone();
+    let added = graph.add(
+        &manifest.package.name,
+        root,
+        deps_of(&resolution.root_dependencies),
+    );
+    configure(added, manifest);
     for pkg in resolution.packages.values() {
         let dir = &dirs[&pkg.name];
-        // A dependency's aliases apply inside that dependency; an unreadable manifest (already
-        // reported by resolution) simply contributes none.
-        let paths = Manifest::from_dir(dir).map(|m| m.paths).unwrap_or_default();
-        graph.add(&pkg.name, dir, deps_of(&pkg.dependencies)).paths = paths;
+        let added = graph.add(&pkg.name, dir, deps_of(&pkg.dependencies));
+        // A dependency's aliases and JSX source apply inside that dependency; an unreadable
+        // manifest (already reported by resolution) simply contributes none.
+        if let Ok(m) = Manifest::from_dir(dir) {
+            configure(added, &m);
+        }
     }
     graph
+}
+
+/// The per-package compile settings of `manifest`: `[paths]` and `[jsx]`.
+fn configure(package: &mut crate::graph::GraphPackage, manifest: &Manifest) {
+    package.paths = manifest.paths.clone();
+    package.jsx_import_source = manifest.jsx.as_ref().and_then(|j| j.import_source.clone());
 }

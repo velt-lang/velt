@@ -16,6 +16,8 @@ pub struct GraphPackage {
     pub dependencies: BTreeMap<String, PathBuf>,
     /// The package's `[paths]` import aliases (`crate::paths`).
     pub paths: BTreeMap<String, String>,
+    /// The package's `[jsx] importSource`, as written.
+    pub jsx_import_source: Option<String>,
     /// `root`, canonicalized, for matching importing files.
     key: PathBuf,
 }
@@ -60,6 +62,7 @@ impl PackageGraph {
             root: root.to_path_buf(),
             dependencies,
             paths: BTreeMap::new(),
+            jsx_import_source: None,
             key,
         });
         self.packages.last_mut().expect("ICE: just pushed")
@@ -71,6 +74,24 @@ impl PackageGraph {
         let package = self.package_of(importer)?;
         let module = crate::paths::resolve(&package.paths, spec)?;
         Some(package.root.join(module))
+    }
+
+    /// The `[jsx] importSource` of the package containing `importer`, as a specifier `importer`
+    /// can import from: a relative source (`./ui`) is relative to the package root, so it is
+    /// re-expressed relative to `importer`'s directory.
+    pub fn jsx_import_source(&self, importer: &Path) -> Option<String> {
+        let package = self.package_of(importer)?;
+        let source = package.jsx_import_source.as_ref()?;
+        if !source.starts_with("./") && !source.starts_with("../") {
+            return Some(source.clone());
+        }
+        let dir = canonical(importer).parent()?.to_path_buf();
+        let rel = crate::relpath::relative(&package.key.join(source), &dir);
+        Some(if rel.starts_with("..") {
+            rel
+        } else {
+            format!("./{rel}")
+        })
     }
 
     /// All packages, in insertion order (root package first when built by [`crate::install`]).
@@ -139,6 +160,32 @@ mod tests {
             g.package_of(&nested.join("src/lib.vlt")).unwrap().name,
             "inner"
         );
+    }
+
+    #[test]
+    fn jsx_import_source_relative_to_the_package_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = tmp.path().join("app");
+        std::fs::create_dir_all(app.join("src/pages")).unwrap();
+        let mut g = PackageGraph::default();
+        g.add("app", &app, BTreeMap::new()).jsx_import_source = Some("./ui".into());
+        assert_eq!(
+            g.jsx_import_source(&app.join("main.vlt")).as_deref(),
+            Some("./ui")
+        );
+        assert_eq!(
+            g.jsx_import_source(&app.join("src/pages/home.vlt"))
+                .as_deref(),
+            Some("../../ui")
+        );
+        g.add("lib", &tmp.path().join("lib"), BTreeMap::new())
+            .jsx_import_source = Some("sigx".into());
+        assert_eq!(
+            g.jsx_import_source(&tmp.path().join("lib/src/lib.vlt"))
+                .as_deref(),
+            Some("sigx")
+        );
+        assert_eq!(g.jsx_import_source(&tmp.path().join("x.vlt")), None);
     }
 
     #[test]

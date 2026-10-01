@@ -1,0 +1,23 @@
+// A union local narrowed to its number members (`i64 | f64`) cannot be formatted when another
+// member of the declared union holds a promise: "cannot format a value of type `Slot`" (with
+// one member left it is fine, and so is passing it to an `i64 | f64` parameter first). Found
+// through std/jsx, whose `Child` union holds `Element`.
+class Task {
+  pending: Promise<i64>[] = [];
+}
+
+type Slot = Task | string | i64 | f64;
+
+function show(slot: Slot): string {
+  if (typeof slot === "string") {
+    return slot;
+  }
+  if (slot instanceof Task) {
+    return "task";
+  }
+  return `${slot}`;
+}
+
+function main() {
+  console.log(show(1), show(2.5), show("s"), show(new Task()));
+}

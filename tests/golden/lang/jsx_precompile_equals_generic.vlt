@@ -1,0 +1,19 @@
+// The SSR precompile lowering (static markup compiled into `jsxTemplate` strings) renders
+// byte-identical to the generic lowering of the same page (up to the module path in the
+// component markers: the two copies of the page are different modules).
+
+import { render } from "./_jsx_test_provider/render";
+import * as generic from "./_jsx_page_generic";
+import * as precompiled from "./_jsx_page_precompile";
+
+async function main() {
+  for (const admin of [true, false]) {
+    const a = await render(generic.page("Tom & <Jerry>", ["x", "y"], admin));
+    const b = (await render(precompiled.page("Tom & <Jerry>", ["x", "y"], admin))).replaceAll(
+      "_jsx_page_precompile#",
+      "_jsx_page_generic#",
+    );
+    console.log(a);
+    console.log(a == b ? "same" : `different:\n${b}`);
+  }
+}

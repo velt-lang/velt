@@ -4,24 +4,25 @@
 //! Body setters take ownership of a string/bytes value (the caller's value is left empty; heap
 //! buffers are handed to hyper without copying) and set a default `content-type` unless one was
 //! already set. Header values a server sends on every response are interned (`interned.rs`).
+//! `stream.rs` turns the body into a stream instead (`Response.stream`).
 
+use super::body::RespBody;
 use super::interned::header_value;
 use super::{take_bytes, take_text};
 use crate::bytes::VeltBytes;
 use crate::handle::Handle;
 use crate::str::VeltStr;
 use bytes::Bytes;
-use http_body_util::Full;
 use hyper::header::{HeaderName, HeaderValue, CONTENT_TYPE};
 use hyper::{Response, StatusCode};
 
 /// Opaque response (`VeltResp` in the ABI docs).
-pub type RespObj = Response<Full<Bytes>>;
+pub type RespObj = Response<RespBody>;
 
 /// New response with `status` (invalid codes become 500) and an empty body.
 #[no_mangle]
 pub extern "C" fn velt_rt_http_resp_new(status: u32) -> Handle<RespObj> {
-    let mut r = Response::new(Full::new(Bytes::new()));
+    let mut r = Response::new(RespBody::full(Bytes::new()));
     *r.status_mut() = u16::try_from(status)
         .ok()
         .and_then(|s| StatusCode::from_u16(s).ok())
@@ -66,7 +67,7 @@ pub unsafe extern "C" fn velt_rt_http_resp_set_header(
 
 unsafe fn set_body(r: Handle<RespObj>, body: Bytes, default_type: &'static str) {
     let r = r.obj_mut();
-    *r.body_mut() = Full::new(body);
+    *r.body_mut() = RespBody::full(body);
     r.headers_mut()
         .entry(CONTENT_TYPE)
         .or_insert(HeaderValue::from_static(default_type));

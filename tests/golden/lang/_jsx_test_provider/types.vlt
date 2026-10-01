@@ -1,0 +1,17 @@
+// The `JSX` types of the test providers: a small HTML subset (no event handlers).
+
+export type IntrinsicElements = {
+  a: { href?: string; class?: string; title?: string };
+  br: {};
+  button: { type?: "button" | "submit"; disabled?: bool; class?: string };
+  div: { class?: string; id?: string; hidden?: bool; title?: string };
+  h1: { class?: string };
+  img: { src: string; alt?: string };
+  input: { name?: string; value?: string; checked?: bool; tabindex?: number };
+  li: { class?: string; title?: string };
+  p: { class?: string; title?: string };
+  span: { class?: string; title?: string };
+  ul: { class?: string };
+};
+
+export type ElementChildrenAttribute = { children: {} };

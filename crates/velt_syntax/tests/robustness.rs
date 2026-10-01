@@ -110,6 +110,19 @@ fn garbage_never_panics() {
         "\r",
         "#",
         "@",
+        "<div>",
+        "</div>",
+        "<>",
+        "</>",
+        "/>",
+        "<a ",
+        "b=\"x\"",
+        "{...",
+        "&amp;",
+        "&#x",
+        "<T,>",
+        "</",
+        "x:y",
     ];
     for _ in 0..3000 {
         let len = (next() % 60) as usize;
@@ -141,6 +154,8 @@ fn deep_nesting_is_an_error_not_a_crash() {
         ("x => ", ""),
         ("`${", "}`"),
         ("f(", ")"),
+        ("<a>", "</a>"),
+        ("<a b=", " />"),
     ] {
         let src = format!(
             "function f() {{ x = {}1{}; }}",

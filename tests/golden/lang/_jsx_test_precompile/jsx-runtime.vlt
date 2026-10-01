@@ -1,0 +1,33 @@
+// The precompiling test JSX runtime: the generic test runtime plus `Text`, `jsxTemplate`,
+// `jsxEscape` and `jsxAttr` (static markup and text are compiled into template strings). It
+// renders exactly like the generic test runtime.
+
+import { AttrValue, Element, Text, attr, textOf } from "../_jsx_test_provider/render";
+
+export * from "../_jsx_test_provider/jsx-runtime";
+export { Text } from "../_jsx_test_provider/render";
+
+// Pass an array along by value, so `for...of` consumes it.
+function own<T>(xs: T[]): T[] {
+  return xs;
+}
+
+export function jsxTemplate(strings: string[], slots: Element[]): Element {
+  const el = new Element();
+  let i: usize = 0;
+  for (const s of own(slots)) {
+    el.parts.push(strings[i]);
+    el.parts.push(s);
+    i++;
+  }
+  el.parts.push(strings[i]);
+  return el;
+}
+
+export function jsxEscape(value: Text): string {
+  return textOf(value);
+}
+
+export function jsxAttr(name: string, value: AttrValue): string {
+  return attr(name, value);
+}

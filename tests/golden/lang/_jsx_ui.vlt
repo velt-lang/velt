@@ -1,0 +1,7 @@
+// @jsxImportSource ./_jsx_test_provider
+
+// Components imported through a namespace (`<ui.Badge>`).
+
+export function Badge(props: { tone: string; children: string }): JSX.Element {
+  return <span class={`badge-${props.tone}`}>{props.children}</span>;
+}

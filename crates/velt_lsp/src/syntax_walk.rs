@@ -205,5 +205,36 @@ fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
                 }
             }
         }
+        E::Jsx(element) => jsx_exprs(element, f),
+    }
+}
+
+/// Call `f` on every expression of a JSX element (attribute values, spreads, children), nested
+/// elements included.
+fn jsx_exprs<'a>(el: &'a ast::JsxElement, f: &mut dyn FnMut(&'a ast::Expr)) {
+    use ast::{JsxAttr, JsxAttrValue, JsxChild};
+    for attr in &el.attrs {
+        match attr {
+            JsxAttr::Spread { expr, .. }
+            | JsxAttr::Named {
+                value: Some(JsxAttrValue::Expr { expr, .. }),
+                ..
+            } => f(expr),
+            JsxAttr::Named {
+                value: Some(JsxAttrValue::Element(inner)),
+                ..
+            } => jsx_exprs(inner, f),
+            JsxAttr::Named { .. } => {}
+        }
+    }
+    for child in &el.children {
+        match child {
+            JsxChild::Expr {
+                expr: Some(expr), ..
+            }
+            | JsxChild::Spread { expr, .. } => f(expr),
+            JsxChild::Element(inner) => jsx_exprs(inner, f),
+            JsxChild::Text { .. } | JsxChild::Expr { expr: None, .. } => {}
+        }
     }
 }

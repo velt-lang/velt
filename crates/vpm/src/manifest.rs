@@ -15,6 +15,9 @@
 //!
 //! [paths]
 //! "@app/*" = "src/*"                 # import aliases (`crate::paths`)
+//!
+//! [jsx]
+//! importSource = "sigx"              # JSX runtime of the package's modules (default `velt:jsx`)
 //! ```
 
 use std::collections::BTreeMap;
@@ -47,6 +50,24 @@ pub struct Manifest {
     /// (`"@app/*" = "src/*"`, see [`crate::paths`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub paths: BTreeMap<String, String>,
+    /// `[jsx]` table: how the package's modules compile JSX.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jsx: Option<JsxConfig>,
+}
+
+/// The `[jsx]` table (docs/internals/contracts/jsx.md "Choosing the provider").
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JsxConfig {
+    /// `importSource = "sigx"`: the module whose `jsx-runtime` provides the JSX factories (a
+    /// package, a `std/` module, a `[paths]` alias, or `./dir` relative to the package root);
+    /// a `// @jsxImportSource` pragma in a file wins.
+    #[serde(
+        default,
+        rename = "importSource",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub import_source: Option<String>,
 }
 
 /// The `[package]` table.
@@ -157,6 +178,13 @@ impl Manifest {
             )
         })?;
         crate::paths::validate(&self.paths)?;
+        if let Some(source) = self.jsx.as_ref().and_then(|j| j.import_source.as_deref()) {
+            if source.is_empty() || source.ends_with('/') || source.contains('\\') {
+                return Err(format!(
+                    "[jsx] importSource `{source}` is not a module specifier"
+                ));
+            }
+        }
         for (name, dep) in &self.dependencies {
             if !is_valid_package_name(name) {
                 return Err(format!("invalid dependency name `{name}`"));
@@ -235,6 +263,22 @@ mod tests {
         assert_eq!(Manifest::parse(&m.to_toml()).unwrap(), m);
         let e = Manifest::parse(&format!("{head}\"@app/*\" = \"../x/*\"\n")).unwrap_err();
         assert!(e.contains("`@app/*`"), "{e}");
+    }
+
+    #[test]
+    fn jsx_import_source() {
+        let head = "[package]\nname = \"app\"\nversion = \"1.0.0\"\n";
+        let m = Manifest::parse(&format!("{head}[jsx]\nimportSource = \"sigx\"\n")).unwrap();
+        assert_eq!(
+            m.jsx.as_ref().and_then(|j| j.import_source.as_deref()),
+            Some("sigx")
+        );
+        assert_eq!(Manifest::parse(&m.to_toml()).unwrap(), m);
+        assert_eq!(Manifest::parse(head).unwrap().jsx, None);
+        let e = Manifest::parse(&format!("{head}[jsx]\nimportSource = \"\"\n")).unwrap_err();
+        assert!(e.contains("importSource"), "{e}");
+        let e = Manifest::parse(&format!("{head}[jsx]\nimport_source = \"x\"\n")).unwrap_err();
+        assert!(e.contains("import_source"), "{e}");
     }
 
     #[test]

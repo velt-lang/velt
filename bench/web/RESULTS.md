@@ -9,9 +9,9 @@ Raw data: `results/*.jsonl`; the tables come from `summarize.py` (each cell is t
 over the measured connection levels, with that level's p99 and the server's peak RSS during the
 test; ratios are to Rust).
 
-## Round 11 (`stream/platform-perf`): lazy `Request`, Postgres batches — not re-run yet
+## Lazy `Request` and Postgres batches — not re-run yet
 
-The two changes of Mac round 11 were measured while they were written, but the full suite has
+The lazy Request and Postgres batch changes were measured while they were written, but the full suite has
 **not** been re-run since: the machine was shared with other work (load average 10–38), and the
 same route swung up to 2.4× between back-to-back wrk runs. The tables below are therefore still
 the round 9 numbers. Re-run `run.sh` and `linux.sh` on a quiet machine before quoting them.

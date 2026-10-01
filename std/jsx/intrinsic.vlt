@@ -1,0 +1,175 @@
+// std/jsx/intrinsic: the JSX types of std/jsx (docs/contracts/jsx.md): which lower-case tags
+// exist and which attributes each accepts (attribute types: std/jsx/attrs/*.vlt). A tag or
+// attribute that is not listed is a compile error, so typos are caught; custom elements
+// (`<my-widget>`) and hyphenated attributes (`data-*`, `aria-*`) are not checked. There are no
+// event handler attributes: std/jsx renders HTML on the server.
+
+import type { Child } from "velt:jsx/node";
+import type { HtmlAttrs } from "velt:jsx/attrs/global";
+import type {
+  AnchorAttrs,
+  AreaAttrs,
+  BaseAttrs,
+  LinkAttrs,
+  MetaAttrs,
+  ScriptAttrs,
+  StyleAttrs,
+} from "velt:jsx/attrs/links";
+import type {
+  AudioAttrs,
+  VideoAttrs,
+  ImgAttrs,
+  SourceAttrs,
+  TrackAttrs,
+  CanvasAttrs,
+} from "velt:jsx/attrs/media";
+import type {
+  IframeAttrs,
+  EmbedAttrs,
+  ObjectAttrs,
+  MapAttrs,
+  SlotAttrs,
+  TemplateAttrs,
+} from "velt:jsx/attrs/embedded";
+import type { ButtonAttrs, FieldsetAttrs, FormAttrs, InputAttrs } from "velt:jsx/attrs/forms";
+import type {
+  LabelAttrs,
+  MeterAttrs,
+  OptgroupAttrs,
+  OptionAttrs,
+  OutputAttrs,
+  ProgressAttrs,
+  SelectAttrs,
+  TextareaAttrs,
+} from "velt:jsx/attrs/controls";
+import type {
+  QuoteAttrs,
+  EditAttrs,
+  DataAttrs,
+  TimeAttrs,
+  LiAttrs,
+  OlAttrs,
+  DetailsAttrs,
+  DialogAttrs,
+} from "velt:jsx/attrs/text";
+import type { ColAttrs, TdAttrs, ThAttrs } from "velt:jsx/attrs/tables";
+
+// Tag name → attribute type, for every element of the HTML standard (SVG and MathML are not
+// included).
+export type IntrinsicElements = {
+  a: AnchorAttrs;
+  abbr: HtmlAttrs;
+  address: HtmlAttrs;
+  area: AreaAttrs;
+  article: HtmlAttrs;
+  aside: HtmlAttrs;
+  audio: AudioAttrs;
+  b: HtmlAttrs;
+  base: BaseAttrs;
+  bdi: HtmlAttrs;
+  bdo: HtmlAttrs;
+  blockquote: QuoteAttrs;
+  body: HtmlAttrs;
+  br: HtmlAttrs;
+  button: ButtonAttrs;
+  canvas: CanvasAttrs;
+  caption: HtmlAttrs;
+  cite: HtmlAttrs;
+  code: HtmlAttrs;
+  col: ColAttrs;
+  colgroup: ColAttrs;
+  data: DataAttrs;
+  datalist: HtmlAttrs;
+  dd: HtmlAttrs;
+  del: EditAttrs;
+  details: DetailsAttrs;
+  dfn: HtmlAttrs;
+  dialog: DialogAttrs;
+  div: HtmlAttrs;
+  dl: HtmlAttrs;
+  dt: HtmlAttrs;
+  em: HtmlAttrs;
+  embed: EmbedAttrs;
+  fieldset: FieldsetAttrs;
+  figcaption: HtmlAttrs;
+  figure: HtmlAttrs;
+  footer: HtmlAttrs;
+  form: FormAttrs;
+  h1: HtmlAttrs;
+  h2: HtmlAttrs;
+  h3: HtmlAttrs;
+  h4: HtmlAttrs;
+  h5: HtmlAttrs;
+  h6: HtmlAttrs;
+  head: HtmlAttrs;
+  header: HtmlAttrs;
+  hgroup: HtmlAttrs;
+  hr: HtmlAttrs;
+  html: HtmlAttrs;
+  i: HtmlAttrs;
+  iframe: IframeAttrs;
+  img: ImgAttrs;
+  input: InputAttrs;
+  ins: EditAttrs;
+  kbd: HtmlAttrs;
+  label: LabelAttrs;
+  legend: HtmlAttrs;
+  li: LiAttrs;
+  link: LinkAttrs;
+  main: HtmlAttrs;
+  map: MapAttrs;
+  mark: HtmlAttrs;
+  menu: HtmlAttrs;
+  meta: MetaAttrs;
+  meter: MeterAttrs;
+  nav: HtmlAttrs;
+  noscript: HtmlAttrs;
+  object: ObjectAttrs;
+  ol: OlAttrs;
+  optgroup: OptgroupAttrs;
+  option: OptionAttrs;
+  output: OutputAttrs;
+  p: HtmlAttrs;
+  picture: HtmlAttrs;
+  pre: HtmlAttrs;
+  progress: ProgressAttrs;
+  q: QuoteAttrs;
+  rp: HtmlAttrs;
+  rt: HtmlAttrs;
+  ruby: HtmlAttrs;
+  s: HtmlAttrs;
+  samp: HtmlAttrs;
+  script: ScriptAttrs;
+  search: HtmlAttrs;
+  section: HtmlAttrs;
+  select: SelectAttrs;
+  slot: SlotAttrs;
+  small: HtmlAttrs;
+  source: SourceAttrs;
+  span: HtmlAttrs;
+  strong: HtmlAttrs;
+  style: StyleAttrs;
+  sub: HtmlAttrs;
+  summary: HtmlAttrs;
+  sup: HtmlAttrs;
+  table: HtmlAttrs;
+  tbody: HtmlAttrs;
+  td: TdAttrs;
+  template: TemplateAttrs;
+  textarea: TextareaAttrs;
+  tfoot: HtmlAttrs;
+  th: ThAttrs;
+  thead: HtmlAttrs;
+  time: TimeAttrs;
+  title: HtmlAttrs;
+  tr: HtmlAttrs;
+  track: TrackAttrs;
+  u: HtmlAttrs;
+  ul: HtmlAttrs;
+  var: HtmlAttrs;
+  video: VideoAttrs;
+  wbr: HtmlAttrs;
+};
+
+// Components receive their JSX children in the `children` field of their props.
+export type ElementChildrenAttribute = { children: Child };

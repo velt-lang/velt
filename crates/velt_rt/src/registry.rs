@@ -44,6 +44,11 @@ impl<T> Key<T> {
         self.0
     }
 
+    /// The key whose raw value is `bits` (what generated code passes back to the runtime).
+    pub fn from_bits(bits: u64) -> Self {
+        Key(bits, PhantomData)
+    }
+
     fn slot(self) -> Option<(usize, u32)> {
         let index = (self.0 & 0xffff_ffff) as usize;
         (index != 0).then(|| (index - 1, (self.0 >> 32) as u32))

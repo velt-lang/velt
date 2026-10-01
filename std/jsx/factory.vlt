@@ -1,0 +1,299 @@
+// std/jsx/factory: the functions compiled JSX calls (docs/contracts/jsx.md "Required exports"
+// and "SSR precompile"), plus `raw`. Internal: std/jsx/jsx-runtime re-exports them.
+//
+// Every factory renders what it can at once (node.vlt): children's markup is appended to the
+// new node's `html`, and a child that still waits for an async component is kept as a part, with
+// the markup after it collected in a following complete part.
+
+import { Element, Deferred, RenderError } from "velt:jsx/node";
+import type { AttrValue, Child, Text } from "velt:jsx/node";
+import { escapeText, renderAttr } from "velt:jsx/escape";
+import { isVoidElement } from "velt:jsx/void_elements";
+
+// An intrinsic element `<tag names[i]=values[i]…>children</tag>`. `names` are compile-time
+// attribute names; children of a void element (`<br>`) are dropped. `key` is not rendered.
+export function jsx(
+  tag: string,
+  names: string[],
+  values: AttrValue[],
+  children: Child[],
+  key: string | null,
+): Element {
+  let open = `<${tag}`;
+  for (let i: usize = 0; i < names.length; i++) {
+    open += renderAttr(names[i], values[i]);
+  }
+  open += ">";
+  if (isVoidElement(tag)) {
+    return new Element(open);
+  }
+  const inner = childrenHtml(children);
+  if (inner != null) {
+    return new Element(`${open}${inner}</${tag}>`);
+  }
+  const node = new Element(open);
+  appendChildren(node, children);
+  appendHtml(node, `</${tag}>`);
+  return node;
+}
+
+// `<>children</>`: the children's markup, nothing around it.
+export function Fragment(children: Child[], key: string | null): Element {
+  const inner = childrenHtml(children);
+  if (inner != null) {
+    return new Element(inner);
+  }
+  const node = new Element("");
+  appendChildren(node, children);
+  return node;
+}
+
+// `<Card …/>`: std/jsx has no context to set up, so it calls the component at once. What the
+// component throws does not propagate from here: the node then fails when it is rendered, with
+// a `RenderError` naming the component, like an async component's rejection. `name`
+// (`"<module path>#<Name>"`) is for providers that emit hydration markers; std/jsx renders none.
+export function jsxComponent<P, E>(
+  component: (props: P) => Element throws E,
+  props: P,
+  key: string | null,
+  name: string,
+): Element {
+  try {
+    return component(props);
+  } catch (e) {
+    const rest = new Deferred();
+    rest.failure = new RenderError(name, `component ${name} failed: ${e}`);
+    const node = new Element("");
+    node.rest = rest;
+    return node;
+  }
+}
+
+// `<Posts …/>` for an async component: calls it now, so siblings load concurrently, and keeps
+// its promise in the node; rendering awaits it in document order, and a rejection surfaces then
+// as a `RenderError` naming the component.
+export function jsxAsyncComponent<P, E>(
+  component: (props: P) => Promise<Element, E>,
+  props: P,
+  key: string | null,
+  name: string,
+): Element {
+  const rest = new Deferred();
+  rest.pending.push(settle(component(props), name));
+  const node = new Element("");
+  node.rest = rest;
+  return node;
+}
+
+// The component's promise with its error turned into a `RenderError` (Element cannot carry a
+// generic error type).
+async function settle<E>(p: Promise<Element, E>, name: string): Promise<Element, RenderError> {
+  try {
+    return await p;
+  } catch (e) {
+    throw new RenderError(name, `component ${name} failed: ${e}`);
+  }
+}
+
+// A precompiled subtree: `strings[0] slots[0] strings[1] … strings[n]`. `strings` are the
+// compiler's markup, text and attributes already folded in (one more than `slots`).
+export function jsxTemplate(strings: string[], slots: Element[]): Element {
+  if (slots.length == 0) {
+    // The common case (a subtree without components or fragments): one string, one node.
+    return new Element(strings[0]);
+  }
+  let complete = true;
+  for (const slot of slots) {
+    if (!slot.isComplete) {
+      complete = false;
+    }
+  }
+  if (!complete) {
+    return templateWithParts(strings, slots);
+  }
+  const html = templateHtml(strings, slots);
+  // Reuse a slot's node for the result: one allocation less per template.
+  const node = slots.pop();
+  if (node == null) {
+    return new Element(html);
+  }
+  node.html = html;
+  return node;
+}
+
+// The markup of a template whose slots are complete. Template literals for the common slot
+// counts build the string in one buffer.
+function templateHtml(strings: string[], slots: Element[]): string {
+  switch (slots.length) {
+    case 1:
+      return `${strings[0]}${slots[0].html}${strings[1]}`;
+    case 2:
+      return `${strings[0]}${slots[0].html}${strings[1]}${slots[1].html}${strings[2]}`;
+    case 3:
+      return `${strings[0]}${slots[0].html}${strings[1]}${slots[1].html}${strings[2]}${slots[2].html}${strings[3]}`;
+  }
+  const pieces: string[] = __intrinsic_array_with_capacity(strings.length + slots.length);
+  pieces.push(strings[0]);
+  for (let i: usize = 0; i < slots.length; i++) {
+    pieces.push(slots[i].html);
+    pieces.push(strings[i + 1]);
+  }
+  return pieces.join("");
+}
+
+// `jsxTemplate` when a slot waits for an async component.
+function templateWithParts(strings: string[], slots: Element[]): Element {
+  const node = new Element(strings[0]);
+  const n = slots.length;
+  slots.reverse();
+  for (let i: usize = 0; i < n; i++) {
+    const slot = slots.pop();
+    if (slot != null) {
+      appendElement(node, slot);
+    }
+    appendHtml(node, strings[i + 1]);
+  }
+  return node;
+}
+
+// A dynamic text child of a template, escaped: numbers render like `${n}`, `true`, `false` and
+// `null` render nothing. The compiler folds the result into the template's strings.
+export function jsxEscape(value: Text): string {
+  if (value == null || typeof value === "boolean") {
+    return "";
+  }
+  if (typeof value === "string") {
+    return escapeText(value);
+  }
+  return formatNumber(value);
+}
+
+// A dynamic attribute of a template: ` name="value"`, ` name` or nothing (folded into the
+// template's strings like `jsxEscape`).
+export function jsxAttr(name: string, value: AttrValue): string {
+  return renderAttr(name, value);
+}
+
+// `html` inserted as it is, without escaping: the only way to emit markup from a string. Never
+// pass it text from users.
+export function raw(html: string): Element {
+  return new Element(html);
+}
+
+// Appends finished markup after everything `node` holds.
+function appendHtml(node: Element, html: string) {
+  if (node.rest == null) {
+    if (node.html == "") {
+      node.html = html;
+    } else {
+      node.html += html;
+    }
+    return;
+  }
+  const n = node.rest.parts.length;
+  if (n > 0 && node.rest.parts[n - 1].isComplete) {
+    node.rest.parts[n - 1].html += html;
+  } else {
+    node.rest.parts.push(new Element(html));
+  }
+}
+
+// Appends a child node: its markup when it is complete, else the node itself as a part.
+function appendElement(node: Element, child: Element) {
+  if (child.isComplete) {
+    appendHtml(node, child.html);
+    return;
+  }
+  if (node.rest == null) {
+    const rest = new Deferred();
+    rest.parts.push(child);
+    node.rest = rest;
+  } else {
+    node.rest.parts.push(child);
+  }
+}
+
+// Appends a child: its markup when it is complete, else the incomplete nodes themselves.
+function appendChild(node: Element, child: Child) {
+  const html = childHtml(child);
+  if (html != null) {
+    appendHtml(node, html);
+    return;
+  }
+  if (child instanceof Element) {
+    appendElement(node, child);
+    return;
+  }
+  if (child != null && typeof child === "object") {
+    appendElements(node, child);
+  }
+}
+
+function appendElements(node: Element, elements: Element[]) {
+  elements.reverse();
+  while (elements.length > 0) {
+    const e = elements.pop();
+    if (e != null) {
+      appendElement(node, e);
+    }
+  }
+}
+
+// Appends children, moving the incomplete ones into `node` (the slow path of `childrenHtml`).
+function appendChildren(node: Element, children: Child[]) {
+  const n = children.length;
+  children.reverse();
+  for (let i: usize = 0; i < n; i++) {
+    const child = children.pop();
+    if (child != null) {
+      appendChild(node, child);
+    }
+  }
+}
+
+// The markup of `children` when none of them waits for an async component, else null. Reads
+// the children in place, so the common case moves nothing.
+function childrenHtml(children: Child[]): string | null {
+  if (children.length == 1) {
+    return childHtml(children[0]);
+  }
+  const pieces: string[] = __intrinsic_array_with_capacity(children.length);
+  for (const child of children) {
+    const html = childHtml(child);
+    if (html == null) {
+      return null;
+    }
+    pieces.push(html);
+  }
+  return pieces.join("");
+}
+
+// The markup of one child when it is complete, else null.
+function childHtml(child: Child): string | null {
+  if (child == null || typeof child === "boolean") {
+    return "";
+  }
+  if (typeof child === "string") {
+    return escapeText(child);
+  }
+  if (child instanceof Element) {
+    return child.isComplete ? child.html : null;
+  }
+  if (typeof child === "object") {
+    const pieces: string[] = __intrinsic_array_with_capacity(child.length);
+    for (const e of child) {
+      if (!e.isComplete) {
+        return null;
+      }
+      pieces.push(e.html);
+    }
+    return pieces.join("");
+  }
+  return formatNumber(child);
+}
+
+// `${n}`. A separate function because formatting the narrowed union in place fails: the
+// declared union holds an Element, whose promise cannot be formatted.
+function formatNumber(n: i64 | f64): string {
+  return `${n}`;
+}

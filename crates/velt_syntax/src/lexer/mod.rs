@@ -1,9 +1,12 @@
 //! Byte-oriented hand-written lexer: source text → compact token stream + literal payloads.
 //!
 //! Template literals are split into `Template` tokens (`NoSub`, `Head`, `Middle`, `Tail`) with the
-//! substitution expressions lexed as ordinary tokens in between; a brace stack tells a `}` that
-//! closes `${` apart from an ordinary `}`. Literal scanning lives in `literals`.
+//! substitution expressions lexed as ordinary tokens in between. A mode stack ([`Mode`]) tells a
+//! `}` that closes `${` apart from an ordinary `}` and switches between code, JSX tags and JSX
+//! children (`jsx`). Literal scanning lives in `literals`, HTML entities in `entities`.
 
+mod entities;
+mod jsx;
 mod literals;
 mod regex;
 mod token;
@@ -18,6 +21,25 @@ pub(crate) struct Lexed {
     pub toks: Vec<Token>,
     pub payloads: Vec<Payload>,
     pub diags: Vec<Diagnostic>,
+    /// `@jsxImportSource pkg` from a comment before the first token.
+    pub jsx_import_source: Option<String>,
+    /// Byte ranges of the comments, in source order.
+    pub comments: Vec<std::ops::Range<u32>>,
+}
+
+/// What the lexer is inside of: one entry per open bracket-like construct.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    /// An ordinary `{` in code.
+    Brace,
+    /// A template substitution `${`: its `}` resumes the template text.
+    TemplateSub,
+    /// A JSX expression container `{` (attribute value, spread or child).
+    JsxExpr,
+    /// Inside a JSX tag, after `<` (`closing: false`) or `</` (`closing: true`).
+    JsxTag { closing: bool },
+    /// Between an opening tag's `>` and the matching `</`.
+    JsxChildren,
 }
 
 /// Lexes a whole file. Never fails: problems become diagnostics and lexing continues.
@@ -30,13 +52,17 @@ pub(crate) fn lex(file: FileId, src: &str) -> Lexed {
         toks: Vec::with_capacity(src.len() / 4 + 1),
         payloads: Vec::new(),
         diags: Vec::new(),
-        braces: Vec::new(),
+        modes: Vec::new(),
+        jsx_import_source: None,
+        comments: Vec::new(),
     };
     lx.run();
     Lexed {
         toks: lx.toks,
         payloads: lx.payloads,
         diags: lx.diags,
+        jsx_import_source: lx.jsx_import_source,
+        comments: lx.comments,
     }
 }
 
@@ -48,8 +74,10 @@ struct Lexer<'a> {
     toks: Vec<Token>,
     payloads: Vec<Payload>,
     diags: Vec<Diagnostic>,
-    /// One entry per open `{`; `true` = the brace is a template substitution `${`.
-    braces: Vec<bool>,
+    /// Open braces, template substitutions and JSX constructs, innermost last.
+    modes: Vec<Mode>,
+    jsx_import_source: Option<String>,
+    comments: Vec<std::ops::Range<u32>>,
 }
 
 fn is_ident_start(c: u8) -> bool {
@@ -82,7 +110,11 @@ impl<'a> Lexer<'a> {
             self.pos = 3; // UTF-8 BOM
         }
         loop {
-            self.skip_trivia();
+            let mode = self.modes.last().copied();
+            // JSX text is significant: no whitespace or comments are skipped in children.
+            if mode != Some(Mode::JsxChildren) {
+                self.skip_trivia();
+            }
             let start = self.pos;
             if start >= self.src.len() {
                 let end = self.src.len() as u32;
@@ -93,7 +125,12 @@ impl<'a> Lexer<'a> {
                 });
                 return;
             }
-            if let Some(kind) = self.next_token() {
+            let kind = match mode {
+                Some(Mode::JsxChildren) => Some(self.jsx_children_token()),
+                Some(Mode::JsxTag { .. }) => self.jsx_tag_token(),
+                _ => self.next_token(),
+            };
+            if let Some(kind) = kind {
                 self.toks.push(Token {
                     kind,
                     lo: start as u32,
@@ -118,15 +155,17 @@ impl<'a> Lexer<'a> {
             self.template(start, true)
         } else if c == b'{' {
             self.pos += 1;
-            self.braces.push(false);
+            self.modes.push(Mode::Brace);
             Tok::LBrace
         } else if c == b'}' {
             self.pos += 1;
-            if self.braces.pop() == Some(true) {
+            if self.modes.pop() == Some(Mode::TemplateSub) {
                 self.template(start, false)
             } else {
                 Tok::RBrace
             }
+        } else if let Some(t) = self.jsx_start() {
+            t
         } else if let Some(t) = self.regex_start() {
             t
         } else if let Some(t) = self.punct() {
@@ -154,14 +193,26 @@ impl<'a> Lexer<'a> {
             match self.at(0) {
                 b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => self.pos += 1,
                 b'/' if self.at(1) == b'/' => {
+                    let start = self.pos;
                     while self.pos < self.src.len() && self.src[self.pos] != b'\n' {
                         self.pos += 1;
                     }
+                    self.comment_done(start);
                 }
-                b'/' if self.at(1) == b'*' => self.block_comment(),
+                b'/' if self.at(1) == b'*' => {
+                    let start = self.pos;
+                    self.block_comment();
+                    self.comment_done(start);
+                }
                 _ => return,
             }
         }
+    }
+
+    /// Records the comment `start..self.pos` (and a leading `@jsxImportSource` pragma).
+    fn comment_done(&mut self, start: usize) {
+        self.leading_pragma(start);
+        self.comments.push(start as u32..self.pos as u32);
     }
 
     fn block_comment(&mut self) {

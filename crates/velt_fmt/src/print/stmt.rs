@@ -78,7 +78,7 @@ impl<'a> Printer<'a> {
     /// `return value;` / `throw value;`
     fn keyword_value(&mut self, keyword: &str, value: Option<&Expr>) -> Doc {
         match value {
-            Some(v) => cat![keyword, " ", self.expr(v), ";"],
+            Some(v) => cat![keyword, " ", self.expr_jsx_parens(v), ";"],
             None => cat![keyword, ";"],
         }
     }
