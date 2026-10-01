@@ -5,7 +5,6 @@
 //! ([`playground`]), terminal colors ([`style`]) and the `velt new` project [`templates`].
 //! The binary (`src/main.rs`) is a thin wrapper so tests can drive everything directly.
 
-
 pub mod backend;
 pub mod cli;
 pub mod commands;

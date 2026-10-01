@@ -18,6 +18,7 @@ mod dispose_call;
 mod errors;
 mod iface_call;
 mod intrinsics;
+pub(crate) mod jsx;
 mod lit;
 mod literal_types;
 mod matching;
@@ -125,6 +126,7 @@ impl FnCx<'_, '_> {
             A::Cast { expr, ty } => self.cast(expr, ty, span),
             A::InstanceOf { expr, ty } => self.instanceof(expr, ty, span),
             A::Paren(inner) => self.expr(inner, exp, want),
+            A::Jsx(el) => self.jsx(el),
         }
     }
 }

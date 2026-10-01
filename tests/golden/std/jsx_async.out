@@ -1,0 +1,22 @@
+start post 1
+start post 2
+tree built
+end post 2
+end post 1
+<h1>Posts</h1><div><article id="post-1">Post #1</article> | <article id="post-2">Post #2</article></div><footer>end</footer>
+start post 3
+start post 4
+end post 4
+end post 3
+<section><article id="post-3">Post #3</article><article id="post-4">Post #4</article></section>
+start post 6
+end post 6
+<ol><li>a</li><article id="post-6">Post #6</article><li>b</li></ol>
+start post -1
+end post -1
+RenderError: jsx_async#Post | component jsx_async#Post failed: NotFound { message: 'no post -1' }
+RenderError: jsx_async#Broken | component jsx_async#Broken failed: NotFound { message: 'sync failure' }
+start post 5
+sync: the element has an async component: use `await renderToString`
+<p>sync</p> <p>sync</p>
+end post 5

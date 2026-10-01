@@ -15,7 +15,10 @@ impl<'a> Printer<'a> {
         let mut parts = self.binary_parts(e);
         let first = parts.remove(0);
         let rest = concat(parts);
-        if indent_rest {
+        // `a && (` … `)`: the parenthesized element brings its own indentation.
+        let jsx_last = matches!(&e.kind, ExprKind::Binary { op, rhs, .. }
+            if super::jsx::is_jsx_operand(*op, rhs));
+        if indent_rest && !jsx_last {
             group(cat![first, indent(rest)])
         } else {
             group(cat![first, rest])
@@ -42,6 +45,10 @@ impl<'a> Printer<'a> {
         let mut parts = vec![self.expr(first)];
         for &(op, lhs, rhs) in spine.iter().rev() {
             let op_text = self.op_text(op, lhs, rhs);
+            if super::jsx::is_jsx_operand(op, rhs) {
+                parts.push(cat![" ", op_text, " ", self.expr_jsx_parens(rhs)]);
+                continue;
+            }
             let right = self.expr(rhs);
             parts.push(if inline_rhs(op, rhs) {
                 cat![" ", op_text, " ", right]

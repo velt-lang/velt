@@ -127,6 +127,7 @@ fn standalone(path: &Path, overlay: &HashMap<PathBuf, String>, msg: String) -> A
         file,
         ast,
         imports: vec![],
+        jsx_runtime: None,
     };
     Analysis {
         sm,
@@ -142,6 +143,7 @@ fn parse(file: FileId, src: &str) -> (ast::Module, Diagnostics) {
         let empty = ast::Module {
             items: vec![],
             span: Span::new(file, 0, 0),
+            jsx_import_source: None,
         };
         let d = Diagnostic::error("internal error in the parser", Span::new(file, 0, 0));
         (empty, vec![d])

@@ -1,0 +1,12 @@
+// The JSX runtime comes from the package's velt.toml (`[jsx] importSource = "./_ui"`, relative
+// to the package root), since this file has no `@jsxImportSource` comment.
+
+import { render } from "../../_jsx_test_provider/render";
+
+function Greeting(props: { name: string }): JSX.Element {
+  return <p class="hello">Hello, {props.name}!</p>;
+}
+
+async function main() {
+  console.log(await render(<Greeting name="velt.toml" />));
+}

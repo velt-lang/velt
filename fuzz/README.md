@@ -14,11 +14,14 @@ Needs a nightly toolchain and `cargo install cargo-fuzz`; on Windows use WSL or 
 
 ```sh
 cd fuzz
-./seed.sh                                    # seed corpora from every .vlt file in the repo
+./seed.sh                                    # seed corpora from every .vlt file in the repo + seeds/
 cargo +nightly fuzz run parse -- -max_total_time=600
 cargo +nightly fuzz run compile -s none      # no sanitizer: ~20x faster for this target
 cargo +nightly test --lib                    # the properties on known inputs
 ```
+
+`seeds/<target>/` holds hand-written seeds for syntax no golden covers yet (`seeds/parse/jsx.vlt`:
+TSX); the formatter's corpus tests (`crates/velt_fmt/tests`) format them too.
 
 The properties live in `src/` (one module per stage) so they are unit-tested; the targets in
 `fuzz_targets/` are one-liners. `velt_rt`'s rlib defines the C `main`, so the fuzz binaries

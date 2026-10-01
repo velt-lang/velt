@@ -150,7 +150,7 @@ fn std_import_without_std_root() {
         "import { f } from \"velt:fs\";\nfunction main() {}\n",
     );
     let (_, diags, _) = load(&root, LoadOptions::default());
-    assert_eq!(messages(&diags), ["cannot find module `std/fs`"]);
+    assert_eq!(messages(&diags), ["cannot find module `velt:fs`"]);
     assert!(diags[0].notes[0].contains("VELT_STD"));
 }
 
@@ -314,4 +314,83 @@ fn path_aliases_resolve_like_relative_imports() {
         messages(&diags),
         ["invalid package name `@other` in module specifier `@other/x`"]
     );
+}
+
+fn jsx_runtime<'l>(l: &'l Loaded, module: &str) -> Option<&'l str> {
+    l.modules
+        .iter()
+        .find(|m| m.path == module)
+        .and_then(|m| m.jsx_runtime.as_deref())
+}
+
+#[test]
+fn jsx_runtime_from_the_pragma() {
+    let t = Tree::new();
+    t.write("app/ui/jsx-runtime.vlt", "export class Element {}\n");
+    let root = t.write(
+        "app/main.vlt",
+        "// @jsxImportSource ./ui\nimport { f } from \"./plain\";\nfunction main() { const e = <p />; }\n",
+    );
+    t.write(
+        "app/plain.vlt",
+        "// @jsxImportSource ./nowhere\nexport function f(a: i64, b: i64): bool { return a < b; }\n",
+    );
+    let (l, diags, _) = load(&root, LoadOptions::default());
+    assert!(diags.is_empty(), "{:?}", messages(&diags));
+    assert_eq!(paths(&l), ["main", "plain", "ui/jsx-runtime"]);
+    assert_eq!(jsx_runtime(&l, "main"), Some("ui/jsx-runtime"));
+    assert_eq!(jsx_runtime(&l, "plain"), None, "no JSX, no runtime");
+}
+
+/// Every importer's package has `[jsx] importSource = "<0>"`.
+struct JsxResolver(String);
+
+impl PackageResolver for JsxResolver {
+    fn dependency_root(&self, _importer: &Path, name: &str) -> Result<PathBuf, String> {
+        Err(vpm::graph::not_a_dependency(name))
+    }
+
+    fn jsx_import_source(&self, _importer: &Path) -> Option<String> {
+        Some(self.0.clone())
+    }
+}
+
+#[test]
+fn jsx_runtime_from_the_package_unless_the_file_names_one() {
+    let t = Tree::new();
+    t.write("app/pkg-ui/jsx-runtime.vlt", "export class Element {}\n");
+    t.write("app/own/jsx-runtime.vlt", "export class Element {}\n");
+    let root = t.write(
+        "app/main.vlt",
+        "import { g } from \"./other\";\nfunction main() { const e = <></>; }\n",
+    );
+    t.write(
+        "app/other.vlt",
+        "// @jsxImportSource ./own\nexport function g() { const e = <b />; }\n",
+    );
+    let resolver = JsxResolver("./pkg-ui".into());
+    let (l, diags, _) = load(
+        &root,
+        LoadOptions {
+            packages: Some(&resolver),
+            ..Default::default()
+        },
+    );
+    assert!(diags.is_empty(), "{:?}", messages(&diags));
+    assert_eq!(jsx_runtime(&l, "main"), Some("pkg-ui/jsx-runtime"));
+    assert_eq!(jsx_runtime(&l, "other"), Some("own/jsx-runtime"));
+}
+
+#[test]
+fn missing_jsx_runtime_says_where_it_came_from() {
+    let t = Tree::new();
+    let root = t.write("app/main.vlt", "function main() { const e = <p />; }\n");
+    let (l, diags, _) = load(&root, LoadOptions::default());
+    assert_eq!(
+        messages(&diags),
+        ["cannot find module `velt:jsx/jsx-runtime`"]
+    );
+    let note = diags[0].notes.last().unwrap();
+    assert!(note.contains("from the default"), "{note}");
+    assert_eq!(jsx_runtime(&l, "main"), None);
 }

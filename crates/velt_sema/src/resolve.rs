@@ -184,7 +184,7 @@ impl Ctx<'_> {
     }
 
     /// The type an item named `name` denotes with type arguments `args`.
-    fn item_type(
+    pub(crate) fn item_type(
         &mut self,
         item: Item,
         name: &str,

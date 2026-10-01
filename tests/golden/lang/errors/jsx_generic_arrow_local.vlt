@@ -1,0 +1,7 @@
+// A generic arrow function is a module-level constant with typed parameters and a return type.
+
+const noReturnType = <T,>(x: T) => x;
+
+function main() {
+  const id = <T,>(x: T): T => x;
+}

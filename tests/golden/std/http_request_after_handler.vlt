@@ -1,0 +1,20 @@
+// A streamed body that reads the `Request` after its handler returned: the request is already
+// released, so this is a clear runtime error (exit 101), never a read of freed memory. Copy the
+// properties the body needs before returning (tests/golden/std/http_stream.vlt).
+import { serve, fetch, Request, Response, ResponseWriter } from "velt:http";
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return Response.stream(async (w: ResponseWriter) => {
+      await sleep(20);
+      w.write(req.path);
+    });
+  });
+  console.log("requesting");
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.port}/x`);
+    console.log(await res.text());
+  } catch (e) {
+    console.log("cut off");
+  }
+}

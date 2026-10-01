@@ -1,0 +1,5 @@
+jsx_component_values.vlt:22:14: error: 'Text' cannot be used as a JSX component.
+its type `({ s: string }) => string` is not assignable to `({ s: string }) => Element`, the component type of the JSX provider
+jsx_component_values.vlt:23:14: error: the props of <Waiting> cannot be copied into the component
+holds a promise or a `[Symbol.dispose]` resource (e.g. a pending async element), which cannot be copied
+jsx_component_values.vlt:24:14: error: cannot infer type parameter `T` of component <Empty>

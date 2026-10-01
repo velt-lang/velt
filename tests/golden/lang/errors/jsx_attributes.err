@@ -1,0 +1,10 @@
+jsx_attributes.vlt:7:14: error: Property 'blink' does not exist on type 'JSX.IntrinsicElements'.
+jsx_attributes.vlt:8:18: error: Property 'clas' does not exist on type 'JSX.IntrinsicElements["div"]'. Did you mean 'class'?
+jsx_attributes.vlt:9:29: error: Type 'string' is not assignable to type 'f64 | null'.
+in attribute 'tabindex' of <input>
+jsx_attributes.vlt:10:26: error: Type 'i64' is not assignable to type 'bool | null'.
+jsx_attributes.vlt:11:21: error: Property 'onClick' does not exist on type 'JSX.IntrinsicElements["button"]'.
+declares no event handlers: server-rendered HTML cannot run them
+jsx_attributes.vlt:12:25: error: JSX elements cannot have multiple attributes with the same name.
+jsx_attributes.vlt:13:24: error: Type 'i64[]' is not assignable to type 'string | number'.
+jsx_attributes.vlt:14:14: error: Property 'src' is missing in type '{}' but required in type 'JSX.IntrinsicElements["img"]'.

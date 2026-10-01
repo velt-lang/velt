@@ -49,4 +49,9 @@ mod tests {
         super::check("function main( {");
         super::check("");
     }
+
+    #[test]
+    fn jsx_seed_round_trips() {
+        super::check(include_str!("../seeds/parse/jsx.vlt"));
+    }
 }

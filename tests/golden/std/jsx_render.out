@@ -1,0 +1,13 @@
+<a href="/x" class="link" title="a &quot;quoted&quot; &amp; &#39;single&#39;">go</a>
+<p>&lt;script&gt;alert("x")&lt;/script&gt; &amp; 'q'</p>
+<img src="x&quot; onerror=&quot;alert(1)" alt="&#39;&gt;&lt;script&gt;">
+<br><hr id="h"><div></div>
+<input disabled>
+<p>after</p>
+<td colspan="2" data-ratio="0.5">42 / 1.5</td>
+<ul><li>a</li><li>&lt;b&gt;</li><li>c</li>x<li>y</li></ul>
+<main><section class="card"><h2>Hi &lt;ann&gt;</h2><p>a &lt; b</p><p>c</p></section><section class="card"><h2>2nd</h2></section></main>
+<div><span>1</span></div>
+caught component jsx_render#Strict failed: BadInput { message: 'negative: -1' }
+<div><b>bold</b>&lt;b&gt;escaped&lt;/b&gt;</div>
+<my-widget some-attr="v"><svg:rect width="10"></svg:rect></my-widget>

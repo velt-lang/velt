@@ -21,7 +21,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `fs.vlt` | `std/fs`: async + `*Sync` file system API. |
 | `fs_stream.vlt` | `std/fs_stream`: chunked/line `FileReader` (`openRead`) and buffered `FileWriter` (`openWrite`). |
 | `net.vlt` | `std/net`: `listen`/`connect`, `TcpListener`, `TcpStream` (`net_bytes.vlt`: internal). |
-| `http.vlt` | `std/http`: `serve` (HTTP/1.1, HTTP/2, HTTPS), `fetch` (http/https), `Request`, `Response`, `Server`, `FetchResponse`. |
+| `http.vlt` | `std/http`: `serve` (HTTP/1.1, HTTP/2, HTTPS), `fetch` (http/https), `Request`, `Response` (incl. streamed bodies, `ResponseWriter`: `http/stream.vlt`, internal), `Server`, `FetchResponse`. |
 | `websocket.vlt` | `std/websocket`: server upgrades (`upgradeWebSocket`) and clients (`connectWebSocket`), `WebSocket`. |
 | `json.vlt` | `std/json`: `Value` (= prelude `JsonValue`). |
 | `process.vlt` | `std/process`: `argv args env setEnv removeEnv cwd chdir exit`. |
@@ -38,6 +38,8 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `url.vlt` | `std/url`: WHATWG `URL`, `URLSearchParams`, `encodeURIComponent` family (`url/*.vlt`: internal). |
 | `datetime.vlt` | `std/datetime`: UTC-first `DateTime` (ISO/HTTP dates, formatting, calendar math), `Duration` (`datetime/*.vlt`: internal). |
 | `html.vlt` | `std/html`: `escapeHtml` (one runtime pass). |
+| `jsx.vlt` | `velt:jsx`: server-side TSX rendering, `renderToString renderToStringSync renderToStream raw Fragment`, `Element`, `RenderError`, the `JSX` types. |
+| `jsx/jsx-runtime.vlt` | `velt:jsx/jsx-runtime`: the JSX provider module compiled JSX calls (docs/internals/contracts/jsx.md), with the SSR precompile exports; `jsx/generic/jsx-runtime.vlt` without them. Internal: `jsx/node.vlt` (`Element`), `factory.vlt`, `escape.vlt`, `void_elements.vlt`, `render.vlt`, `intrinsic.vlt` + `attrs/*.vlt` (HTML tags and attributes). |
 | `csv.vlt` | `std/csv`: RFC 4180 `parseCsv parseCsvRecords stringifyCsv`, `CsvError`. |
 | `cli.vlt` | `std/cli`: `ArgParser` (flags, options, positionals, help text), `ParsedArgs`, `CliError`. |
 | `child_process.vlt` | `std/child_process`: `exec execSync execShell spawn`, `ChildProcess`, `ExecResult`. |

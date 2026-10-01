@@ -1,0 +1,15 @@
+// @jsxImportSource ../_jsx_test_provider
+
+// Intrinsic elements are checked against the provider's `JSX.IntrinsicElements`, with
+// TypeScript's wording.
+
+function main() {
+  const a = <blink>old</blink>;
+  const b = <div clas="x">typo</div>;
+  const c = <input tabindex="1" />;
+  const d = <div hidden={1}>wrong type</div>;
+  const e = <button onClick={() => 1}>click</button>;
+  const f = <div id="a" id="b"></div>;
+  const g = <span key={[1]}>bad key</span>;
+  const h = <img />;
+}

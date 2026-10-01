@@ -2,12 +2,12 @@
 
 use super::{invalid, Ws, WsHandle, WsObj};
 use crate::handle::Handle;
+use crate::http::body::RespBody;
 use crate::http::response::RespObj;
 use crate::http::upgrade;
 use crate::result::IoResult;
 use crate::str::VeltStr;
 use bytes::Bytes;
-use http_body_util::Full;
 use hyper::header::{HeaderValue, CONNECTION, SEC_WEBSOCKET_ACCEPT, UPGRADE};
 use hyper::upgrade::OnUpgrade;
 use hyper::{Response, StatusCode};
@@ -48,7 +48,7 @@ pub(super) async fn finish(
 }
 
 fn switching_protocols(sec_key: &[u8]) -> RespObj {
-    let mut r = Response::new(Full::new(Bytes::new()));
+    let mut r = Response::new(RespBody::full(Bytes::new()));
     *r.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
     let h = r.headers_mut();
     h.insert(UPGRADE, HeaderValue::from_static("websocket"));

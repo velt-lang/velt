@@ -143,6 +143,7 @@ impl<'a> Parser<'a> {
             })
             .collect();
         let arrow = ExprKind::Arrow {
+            type_params: vec![],
             params: vec![],
             ret: None,
             throws: None,

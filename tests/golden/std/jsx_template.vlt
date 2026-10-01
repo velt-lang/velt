@@ -1,0 +1,124 @@
+// SSR precompile: the same trees built the way the compiler precompiles them (`jsxTemplate`
+// strings with text and attributes folded in through `jsxEscape`/`jsxAttr`, Element slots)
+// and the generic way (`jsx` / `Fragment`) render byte-identical HTML, including escaping,
+// booleans, null, numbers, void elements, arrays, components and async components.
+import {
+  jsx,
+  Fragment,
+  jsxComponent,
+  jsxAsyncComponent,
+  jsxTemplate,
+  jsxEscape,
+  jsxAttr,
+} from "velt:jsx/jsx-runtime";
+import { Element, raw, renderToString } from "velt:jsx";
+
+class Fortune {
+  constructor(public id: i64, public message: string) {}
+}
+
+function fortunes(): Fortune[] {
+  return [
+    new Fortune(
+      11,
+      "<script>alert(\"This should not be displayed in a browser alert box.\");</script>",
+    ),
+    new Fortune(4, "A bad random number generator: 1, 1, 1, 1, 1, 4.33e+67, 1, 1, 1"),
+    new Fortune(7, "フレームワークのベンチマーク & 'quotes'"),
+  ];
+}
+
+// <tr><td>{f.id}</td><td>{f.message}</td></tr>: text folded into the template string.
+function rowTemplate(f: Fortune): Element {
+  return jsxTemplate([`<tr><td>${jsxEscape(f.id)}</td><td>${jsxEscape(f.message)}</td></tr>`], []);
+}
+
+function rowGeneric(f: Fortune): Element {
+  return jsx(
+    "tr",
+    [],
+    [],
+    [jsx("td", [], [], [f.id], null), jsx("td", [], [], [f.message], null)],
+    null,
+  );
+}
+
+function Badge(props: { n: i64 }): Element {
+  return jsxTemplate([`<b class="badge">${jsxEscape(props.n)}</b>`], []);
+}
+
+async function Late(props: { text: string }): Promise<Element> {
+  await sleep(5);
+  return jsx("em", [], [], [props.text], null);
+}
+
+// <div><table class="f"><tr><th>id</th><th>message</th></tr>{rows}</table>
+//   <a href={url} class="x" hidden={hidden} title={null}>a &amp; b {count}</a><br />
+//   <p>{true}{false}{null}{1.5}{raw("<i>raw</i>")}</p><Badge n={3} /><>frag &lt; ment</>
+//   <Late text="&" /></div>
+// Text and attributes are folded into the strings; only Element parts are slots.
+function pageTemplate(url: string, hidden: bool, count: i64): Element {
+  const rows = fortunes().map((f) => rowTemplate(f));
+  const link = `</table><a${jsxAttr("href", url)} class="x"${jsxAttr("hidden", hidden)}${jsxAttr("title", null)}>`;
+  const text = `a &amp; b ${jsxEscape(count)}</a><br><p>`;
+  const flags = `${jsxEscape(true)}${jsxEscape(false)}${jsxEscape(null)}${jsxEscape(1.5)}`;
+  return jsxTemplate(
+    [
+      "<div><table class=\"f\"><tr><th>id</th><th>message</th></tr>",
+      `${link}${text}${flags}`,
+      "</p>",
+      "",
+      "",
+      "</div>",
+    ],
+    [
+      Fragment([rows], null),
+      raw("<i>raw</i>"),
+      jsxComponent(Badge, { n: 3 }, null, "jsx_template#Badge"),
+      Fragment(["frag < ment"], null),
+      jsxAsyncComponent((p: { text: string }) => Late(p), { text: "&" }, null, "jsx_template#Late"),
+    ],
+  );
+}
+
+function pageGeneric(url: string, hidden: bool, count: i64): Element {
+  const rows = fortunes().map((f) => rowGeneric(f));
+  const head = jsx(
+    "tr",
+    [],
+    [],
+    [jsx("th", [], [], ["id"], null), jsx("th", [], [], ["message"], null)],
+    null,
+  );
+  return jsx(
+    "div",
+    [],
+    [],
+    [
+      jsx("table", ["class"], ["f"], [head, rows], null),
+      jsx(
+        "a",
+        ["href", "class", "hidden", "title"],
+        [url, "x", hidden, null],
+        ["a & b ", count],
+        null,
+      ),
+      jsx("br", [], [], [], null),
+      jsx("p", [], [], [true, false, null, 1.5, raw("<i>raw</i>")], null),
+      jsxComponent(Badge, { n: 3 }, null, "jsx_template#Badge"),
+      Fragment(["frag < ment"], null),
+      jsxAsyncComponent((p: { text: string }) => Late(p), { text: "&" }, null, "jsx_template#Late"),
+    ],
+    null,
+  );
+}
+
+async function main() {
+  for (const hidden of [true, false]) {
+    const url = "/q?a=1&b=\"2\"";
+    const precompiled = await renderToString(pageTemplate(url, hidden, 42));
+    const generic = await renderToString(pageGeneric(url, hidden, 42));
+    console.log(precompiled);
+    console.log(`identical: ${precompiled == generic}`);
+  }
+}

@@ -1,0 +1,1 @@
+jsx_async_unsupported.vlt:10:22: error: the JSX provider '_jsx_sync_provider' does not support async components

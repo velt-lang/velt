@@ -30,6 +30,7 @@ pub(super) fn declare_all(cx: &mut Ctx, items: &mut ItemDefs) {
     super::nested::declare_nested(cx, items);
     for m in 0..cx.modules.len() {
         super::imports::resolve_imports(cx, m);
+        super::imports::bind_jsx_runtime(cx, m);
     }
     collect_prelude(cx);
 }

@@ -1,4 +1,6 @@
-//! Arrow functions: `x => e`, `(a, b: T): R => { ... }`, `(a): R throws E => e`, `async (x) => e`.
+//! Arrow functions: `x => e`, `(a, b: T): R => { ... }`, `(a): R throws E => e`, `async (x) => e`,
+//! and generic arrows `<T,>(x: T) => x` (the lexer leaves a `<` that starts `<T,` or
+//! `<T extends` in operand position as `Lt`, so here it can only start type parameters).
 //!
 //! `(`-started arrows are recognized by speculatively parsing a parameter list followed by `=>`;
 //! on failure the parser rewinds and the `(` is parsed as a parenthesized expression.
@@ -15,9 +17,17 @@ impl<'a> Parser<'a> {
     pub(super) fn try_parse_arrow(&mut self) -> PResult<Option<Expr>> {
         let lo = self.cur_lo();
         let is_async = self.at_kw(Kw::Async)
-            && (self.nth(1) == Tok::LParen
+            && (matches!(self.nth(1), Tok::LParen | Tok::Lt)
                 || (Self::is_ident_like(self.nth(1)) && self.nth(2) == Tok::FatArrow));
         let off = usize::from(is_async);
+        if self.nth(off) == Tok::Lt {
+            if is_async {
+                self.bump();
+            }
+            let type_params = self.parse_generic_params()?;
+            let head = self.parse_arrow_head()?;
+            return self.finish_arrow(lo, type_params, head, is_async).map(Some);
+        }
         if Self::is_ident_like(self.nth(off)) && self.nth(off + 1) == Tok::FatArrow {
             if is_async {
                 self.bump();
@@ -26,7 +36,7 @@ impl<'a> Parser<'a> {
             self.bump(); // =>
             let params = vec![ArrowParam { name, ty: None }];
             return self
-                .finish_arrow(lo, (params, None, None), is_async)
+                .finish_arrow(lo, vec![], (params, None, None), is_async)
                 .map(Some);
         }
         if !self.may_start_arrow_params(off) {
@@ -39,7 +49,7 @@ impl<'a> Parser<'a> {
             p.parse_arrow_head()
         });
         match head {
-            Some(head) => self.finish_arrow(lo, head, is_async).map(Some),
+            Some(head) => self.finish_arrow(lo, vec![], head, is_async).map(Some),
             None => Ok(None),
         }
     }
@@ -89,6 +99,7 @@ impl<'a> Parser<'a> {
     fn finish_arrow(
         &mut self,
         lo: u32,
+        type_params: Vec<GenericParam>,
         (params, ret, throws): ArrowHead,
         is_async: bool,
     ) -> PResult<Expr> {
@@ -100,6 +111,7 @@ impl<'a> Parser<'a> {
         let span = self.span_from(lo);
         Ok(self.mk_expr(
             ExprKind::Arrow {
+                type_params,
                 params,
                 ret,
                 throws,

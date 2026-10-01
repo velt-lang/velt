@@ -1,0 +1,3 @@
+// The package's JSX runtime: the generic test runtime.
+
+export * from "../../_jsx_test_provider/jsx-runtime";

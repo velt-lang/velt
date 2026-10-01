@@ -35,7 +35,7 @@ sources.
 |---|---|
 | Files and I/O | [fs](fs.md) · [fs_stream](fs_stream.md) · [io](io.md) · [stdin](stdin.md) · [path](path.md) |
 | Network | [http](http.md) · [websocket](websocket.md) · [net](net.md) · [udp](udp.md) · [dns](dns.md) |
-| Data formats | [json](json.md) · [csv](csv.md) · [encoding](encoding.md) · [url](url.md) · [html](html.md) |
+| Data formats | [json](json.md) · [csv](csv.md) · [encoding](encoding.md) · [url](url.md) · [html](html.md) · [jsx](jsx.md) (TSX rendering) |
 | Collections | [collections/set](collections/set.md) · [collections/deque](collections/deque.md) · [collections/priority_queue](collections/priority_queue.md) · [collections/sorted_map](collections/sorted_map.md) · [arena](arena.md) |
 | Numbers and time | [math](math.md) · [bigint](bigint.md) · [random](random.md) · [datetime](datetime.md) · [timers](timers.md) |
 | Security | [crypto](crypto.md) · [uuid](uuid.md) |
@@ -70,7 +70,7 @@ what Velt can't do on its own:
 
 Pure Velt: `velt:path`, `velt:math`, `velt:collections/*`, `velt:arena`, `velt:encoding`,
 `velt:url`, `velt:csv`, `velt:cli`, `velt:timers` (built on `sleep` and `spawn`), `velt:json`
-and `velt:io`. The runtime ABI is documented in
+and `velt:io`; `velt:jsx` too (escaping through `velt:html`). The runtime ABI is documented in
 [the internals](../internals/contracts/rt_abi_async.md).
 
 ## WebAssembly

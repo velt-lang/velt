@@ -1,0 +1,43 @@
+// std/jsx/attrs/global: the global HTML attributes, which every element accepts
+// (internal: std/jsx/intrinsic.vlt maps tags to attribute types). Object types cannot be
+// combined, so every attribute type in std/jsx/attrs repeats these fields (generated from one
+// list). Event handlers (`onclick`, …) are not attributes here: std/jsx renders on the
+// server, so a handler would be a compile error anyway; client providers add their own.
+// Names are HTML's (`class`, `for`, `tabindex`); `data-*`, `aria-*` and other hyphenated
+// names are not checked against these types (docs/contracts/jsx.md).
+
+// The attributes of elements that have no others (`<div>`, `<span>`, `<p>`, …).
+export type HtmlAttrs = {
+  accesskey?: string;
+  autocapitalize?: string;
+  autocorrect?: string;
+  autofocus?: bool;
+  class?: string;
+  contenteditable?: bool | string;
+  dir?: string;
+  draggable?: string;
+  enterkeyhint?: string;
+  exportparts?: string;
+  hidden?: bool | string;
+  id?: string;
+  inert?: bool;
+  inputmode?: string;
+  is?: string;
+  itemid?: string;
+  itemprop?: string;
+  itemref?: string;
+  itemscope?: bool;
+  itemtype?: string;
+  lang?: string;
+  nonce?: string;
+  part?: string;
+  popover?: bool | string;
+  role?: string;
+  slot?: string;
+  spellcheck?: string;
+  style?: string;
+  tabindex?: string | i64 | f64;
+  title?: string;
+  translate?: string;
+  writingsuggestions?: string;
+};

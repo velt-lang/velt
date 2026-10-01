@@ -1,0 +1,6 @@
+rendering
+loading post 1
+loaded post 1
+loading post 2
+loaded post 2
+<main-page><!--main#Post--><article-card data-id="1">post 1</article-card><!--main#Post--><article-card data-id="2">post 2</article-card><!--main#Comments--><section-box><em-text>first!</em-text></section-box></main-page>
