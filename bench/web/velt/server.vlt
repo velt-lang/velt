@@ -15,6 +15,8 @@ const SELECT_FORTUNES = "SELECT id, message FROM fortune";
 // One statement for any N: the sorted ids and new numbers travel as two int arrays.
 const UPDATE_WORLDS =
   "UPDATE world SET randomnumber = u.r FROM (SELECT unnest($1::int[]) AS id, unnest($2::int[]) AS r) AS u WHERE world.id = u.id";
+// From this many rows on, a request's queries go as one batch (one Sync, like pgx's Batch).
+const BATCH_FROM = 5;
 const FORTUNES_HEAD =
   "<!DOCTYPE html><html><head><title>Fortunes</title></head><body><table><tr><th>id</th><th>message</th></tr>";
 
@@ -102,8 +104,33 @@ async function fetchWorlds(c: Client, n: i64): Promise<World[]> {
   return worlds;
 }
 
-// `n` random rows on `c`: one query for a single row.
+// `n` random ids as batch parameter sets (`[[id], ...]`).
+function idSets(n: i64): i64[][] {
+  const sets: i64[][] = [];
+  for (const id of randomIds(n)) {
+    sets.push([id]);
+  }
+  return sets;
+}
+
+// The rows of a batch of `SELECT_WORLD`s; throws if one is missing.
+function batchWorlds(rows: (World | null)[]): World[] {
+  const worlds: World[] = [];
+  for (const w of rows) {
+    if (w == null) {
+      throw new Error("no such world");
+    }
+    worlds.push(new World(w.id, w.randomNumber));
+  }
+  return worlds;
+}
+
+// `n` random rows on `c`: one query for a single row, a batch from `BATCH_FROM` rows.
 async function worldsOn(c: Client, n: i64): Promise<World[]> {
+  if (n >= BATCH_FROM) {
+    const rows: (World | null)[] = await c.batchQueryOne(SELECT_WORLD, idSets(n));
+    return batchWorlds(rows);
+  }
   if (n == 1) {
     const w: World | null = await c.queryOne(SELECT_WORLD, [randomInt(1, 10001)]);
     if (w == null) {
@@ -118,8 +145,13 @@ async function worldsOn(c: Client, n: i64): Promise<World[]> {
   return worlds;
 }
 
-// `n` random rows: one pooled query for a single row, else pipelined on a dedicated connection.
+// `n` random rows: one pooled query for a single row, a pooled batch from `BATCH_FROM` rows,
+// else pipelined on a dedicated connection.
 async function loadWorlds(pool: Pool, n: i64): Promise<World[]> {
+  if (n >= BATCH_FROM) {
+    const rows: (World | null)[] = await pool.batchQueryOne(SELECT_WORLD, idSets(n));
+    return batchWorlds(rows);
+  }
   if (n == 1) {
     const w: World | null = await pool.queryOne(SELECT_WORLD, [randomInt(1, 10001)]);
     if (w == null) {

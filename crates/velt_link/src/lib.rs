@@ -18,9 +18,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod fast_ld;
+mod runtime_profile;
 mod shared;
 pub mod wasm;
 
+pub use runtime_profile::runtime_lib_is_debug;
 pub use shared::shared_runtime_lib_name;
 
 /// Everything needed to link one executable.

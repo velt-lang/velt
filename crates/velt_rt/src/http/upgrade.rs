@@ -2,7 +2,7 @@
 //! code that accepts it.
 //!
 //! hyper hands out an upgrade as an `OnUpgrade` taken from the request. The Velt handler only
-//! sees a copied `Request`, so the runtime parks the `OnUpgrade` here under a key the request
+//! sees the request through accessors, so the runtime parks the `OnUpgrade` here under a key the request
 //! carries (`velt_rt_http_req_upgrade`); `velt_rt_ws_accept` claims it. Once the handler has
 //! produced its response, an unclaimed entry is dropped, so nothing outlives its request.
 

@@ -865,8 +865,8 @@ Not available on wasm (no sockets): the symbols are not defined by `velt_rt_wasm
 
 ### 14.13 PostgreSQL (`velt:postgres`; stream db, additive)
 
-`crates/velt_rt/src/postgres/` over `tokio-postgres` (`default-features = false`, `runtime`).
-TLS is a hand-written `MakeTlsConnect` over tokio-rustls with the runtime's `ring` provider and
+`crates/velt_rt/src/postgres/` over `tokio-postgres` (`default-features = false`, `runtime`), connected over the runtime's own socket and wire stream (§14.17).
+TLS is a hand-written `TlsConnect` over tokio-rustls with the runtime's `ring` provider and
 roots (§14.8); `sslmode` = `disable`, `prefer` (default), `require` (no certificate check),
 `verify-ca`, `verify-full`, plus `sslrootcert=<PEM file>` (extra roots; turns `require` into
 `verify-ca`). No channel binding (SCRAM falls back to SCRAM-SHA-256). Every server round trip is
@@ -957,3 +957,26 @@ against the client.
 | `velt_rt_prng_f64` | `() -> f64` | uniform `[0, 1)`, 53 bits; per-thread wyrand seeded from §14.1 |
 | `velt_rt_prng_range` | `(i64 min, i64 max) -> i64` | uniform `[min, max)` (unbiased); `min` if `max <= min` |
 
+
+### 14.17 PostgreSQL batches (`std/postgres`; stream platform-perf, additive)
+One prepared statement run with N parameter sets in one message group — `Bind` + `Execute` per
+set and **one** `Sync` (pgx's `Batch`): one round trip and one implicit transaction on the server
+instead of N. tokio-postgres has no API for it, so every connection now runs over a wire stream
+(`postgres/wire`) between tokio-postgres and the socket/TLS stream that injects the group between
+two driver requests and routes the server's replies up to its `ReadyForQuery` back to the batch.
+The runtime opens the socket itself for that (`Config::connect_raw`): hosts/`hostaddr`s/ports in
+order, `connect_timeout`, keepalives; `target_session_attrs` and `load_balance_hosts` are not
+supported. The statement is prepared by tokio-postgres (types, cache) and a second time under a
+batch name (`velt_b<n>`, `Parse` at the head of the first group; closed when evicted).
+
+`sets` is JSON: an array with one element per execution, each a parameter set as §14.13
+`params` (array ⇒ `$1..$n`, object ⇒ named placeholders, scalar ⇒ one parameter; the first
+element decides named vs positional). `[]` ⇒ `"[]"` without a server round trip. Errors are the
+§14.13 JSON `PgError`; when an execution fails, the server skips the rest of the group, so the
+whole batch fails with that error (its SQLSTATE) and, outside a transaction, the group's
+earlier writes are rolled back with it (all or nothing). Failures count against the client.
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_pg_query_batch` | `(VeltPgClient c, const VeltStr* sql, const VeltStr* sets, u8 mode) -> VeltFut*` | `IoResult<VeltStr>`: a JSON array, per execution: `mode` 0 its rows (`[[{…},…],…]`), 1 its first row or `null` (`[{…},null]`), 2 its rows affected (`[1,0]`) |
+| `velt_rt_pg_pool_query_batch` | `(VeltPgPool p, const VeltStr* sql, const VeltStr* sets, u8 mode) -> VeltFut*` | as `velt_rt_pg_query_batch`, on one pooled connection |

@@ -4,7 +4,8 @@
 //! - `windows`: `.pdata`/`.xdata` for x86_64 COFF;
 //! - `eh_frame`: DWARF CFI in `.eh_frame` (ELF) or `__TEXT,__eh_frame` (Mach-O; ld64 derives
 //!   the compact unwind table from it);
-//! - `jit_windows`: the same Windows x64 records for JIT code, registered at run time.
+//! - `jit_windows`: the same Windows x64 records for JIT code, registered at run time;
+//! - `jit_systemv`: DWARF CFI for JIT code on macOS and Linux, registered at run time.
 
 use cranelift_codegen::isa::unwind::UnwindInfo;
 use cranelift_codegen::isa::TargetIsa;
@@ -14,6 +15,8 @@ use cranelift_object::ObjectProduct;
 use crate::CodegenResult;
 
 mod eh_frame;
+#[cfg(unix)]
+pub(crate) mod jit_systemv;
 #[cfg(all(windows, target_arch = "x86_64"))]
 pub(crate) mod jit_windows;
 mod windows;

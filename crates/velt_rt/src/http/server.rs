@@ -71,9 +71,9 @@ struct HandlerFut<S: OwnedStore> {
 }
 
 impl<S: OwnedStore> HandlerFut<S> {
-    fn new(shared: &Arc<Shared>, req: ReqObj) -> Self {
+    fn new(shared: &Arc<Shared>, req: Box<ReqObj>) -> Self {
         let d = &shared.handler();
-        let req = Handle::from_box(Box::new(req));
+        let req = Handle::from_box(req);
         let (size, align) = (d.state_size as usize, d.state_align as usize);
         let inner = Compiled::<S>::with_init(d.poll, d.drop, size, align, |st| {
             // SAFETY: generated init writes a fresh state; ownership of `req` moves to it.

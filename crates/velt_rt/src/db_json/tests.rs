@@ -3,6 +3,25 @@
 use super::*;
 use std::borrow::Cow;
 
+#[test]
+fn batch_parameter_sets() {
+    let sets = parse_param_list(br#" [[1,"a"], {"id":2}, 3, []] "#).unwrap();
+    assert_eq!(
+        sets,
+        [
+            Params::Positional(vec![DbValue::Int(1), DbValue::Text("a".into())]),
+            named(&[("id", DbValue::Int(2))]),
+            Params::Positional(vec![DbValue::Int(3)]),
+            Params::Positional(vec![]),
+        ]
+    );
+    assert_eq!(parse_param_list(b"[]").unwrap(), []);
+    let e = parse_param_list(br#"[[1],[{"x":1}]]"#).unwrap_err();
+    assert!(e.starts_with("parameter set 2:"), "{e}");
+    assert!(parse_param_list(b"{}").is_err());
+    assert!(parse_param_list(b"[[1]] x").is_err());
+}
+
 fn named<'a>(pairs: &[(&'a str, DbValue<'a>)]) -> Params<'a> {
     Params::Named(
         pairs

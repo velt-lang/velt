@@ -1,8 +1,9 @@
 //! The per-connection prepared-statement cache: SQL text → server-side prepared statement (and,
 //! for named parameters, the rewritten SQL's placeholder names), least recently used evicted
 //! beyond [`CAPACITY`]. An evicted `Statement` is closed on the server when its last user
-//! drops it.
+//! drops it (and so is its batch twin, see `super::batch`).
 
+use super::batch::BatchStatement;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio_postgres::Statement;
@@ -17,6 +18,8 @@ pub struct Prepared {
     pub statement: Statement,
     /// Placeholder names in `$n` order when the SQL used named parameters.
     pub names: Option<Arc<[String]>>,
+    /// The same statement as batches prepare it on the server.
+    pub batch: Arc<BatchStatement>,
 }
 
 /// Key: the SQL text and whether it was prepared for named parameters (the same text binds

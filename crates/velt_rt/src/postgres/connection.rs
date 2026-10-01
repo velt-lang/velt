@@ -1,8 +1,9 @@
 //! One PostgreSQL connection: a tokio-postgres `Client` (its protocol task runs on the runtime),
-//! the prepared-statement cache and the transaction depth. Used by standalone clients and by
-//! the pool alike; every method takes `&self`, so tasks may share a connection (tokio-postgres
-//! pipelines their queries).
+//! the connection's wire (for batches, `super::wire`), the prepared-statement cache and the
+//! transaction depth. Used by standalone clients and by the pool alike; every method takes
+//! `&self`, so tasks may share a connection (tokio-postgres pipelines their queries).
 
+use super::batch::{BatchState, BatchStatement};
 use super::bind::{bind_all, PgParam};
 use super::config::PgConfig;
 use super::error::PgError;
@@ -10,6 +11,7 @@ use super::placeholders::rewrite_named;
 use super::rows;
 use super::statements::{Prepared, StatementCache};
 use super::tls::PgTls;
+use super::wire::Wire;
 use crate::db_json::{parse_params, Params};
 use bytes::Bytes;
 use parking_lot::Mutex;
@@ -28,11 +30,19 @@ pub struct Conn {
     cache: Mutex<StatementCache>,
     /// Open transaction levels (0 = none, 1 = BEGIN, n = savepoint `velt_tx_n`).
     depth: AtomicU32,
+    /// Where batches send their message groups.
+    pub(super) wire: Wire,
+    /// Batch statement names and the lock that orders their preparation.
+    pub(super) batches: BatchState,
+    /// Held (shared) by batches in flight, exclusively while a `COPY … FROM STDIN` starts: a
+    /// batch written between the copy's request and the server's `CopyInResponse` would land
+    /// inside the copy (later, the wire itself holds batches back until the copy ends).
+    pub(super) copy_gate: tokio::sync::RwLock<()>,
 }
 
 /// Connect with `config` (TLS per its `sslmode`).
 pub async fn connect(config: &PgConfig, tls: PgTls) -> Result<Conn, PgError> {
-    let (client, connection) = config.inner.connect(tls).await?;
+    let (client, connection, wire) = super::socket::connect(&config.inner, &tls).await?;
     crate::task::runtime::handle().spawn(async move {
         // The task ends when the client is dropped or the server goes away; errors surface
         // on the client's next call ("connection closed").
@@ -42,7 +52,15 @@ pub async fn connect(config: &PgConfig, tls: PgTls) -> Result<Conn, PgError> {
         client,
         cache: Mutex::new(StatementCache::default()),
         depth: AtomicU32::new(0),
+        wire,
+        batches: BatchState::default(),
+        copy_gate: tokio::sync::RwLock::new(()),
     })
+}
+
+/// Whether `params` (JSON) binds by name (an object).
+fn is_named(params: &[u8]) -> bool {
+    params.trim_ascii_start().first() == Some(&b'{')
 }
 
 /// The SQL text a statement is cached under (surrounding whitespace does not matter).
@@ -62,7 +80,7 @@ impl Conn {
     }
 
     /// The cached statement for `sql`, prepared on a miss.
-    async fn prepared(&self, sql: &str, named: bool) -> Result<Prepared, PgError> {
+    pub(super) async fn prepared(&self, sql: &str, named: bool) -> Result<Prepared, PgError> {
         let key = cache_key(sql);
         if let Some(p) = self.cache.lock().get(key, named) {
             return Ok(p);
@@ -74,7 +92,12 @@ impl Conn {
             (key.to_string(), None)
         };
         let statement = self.client.prepare(&text).await?;
-        let p = Prepared { statement, names };
+        let batch = BatchStatement::new(text, &self.batches);
+        let p = Prepared {
+            statement,
+            names,
+            batch,
+        };
         self.cache.lock().insert(key, named, p.clone());
         Ok(p)
     }
@@ -88,11 +111,11 @@ impl Conn {
         Ok((p, values))
     }
 
-    /// Drop `sql` from the cache when `e` says its plan is stale.
-    fn forget_if_stale<T>(&self, sql: &str, params: &[u8], r: &Result<T, PgError>) {
+    /// Drop `sql` (prepared for named parameters or not) from the cache when `r` says its
+    /// plan is stale.
+    pub(super) fn forget_if_stale<T>(&self, sql: &str, named: bool, r: &Result<T, PgError>) {
         if let Err(e) = r {
             if STALE_PLAN.contains(&e.code.as_str()) {
-                let named = params.trim_ascii_start().first() == Some(&b'{');
                 self.cache.lock().remove(cache_key(sql), named);
             }
         }
@@ -113,7 +136,7 @@ impl Conn {
             rows::to_json(p.statement.columns(), &rows, first_only)
         }
         .await;
-        self.forget_if_stale(sql, params, &r);
+        self.forget_if_stale(sql, is_named(params), &r);
         r
     }
 
@@ -125,7 +148,7 @@ impl Conn {
             Ok(self.client.execute(&p.statement, &refs).await?)
         }
         .await;
-        self.forget_if_stale(sql, params, &r);
+        self.forget_if_stale(sql, is_named(params), &r);
         r
     }
 
@@ -136,6 +159,7 @@ impl Conn {
 
     /// Start `COPY … FROM STDIN` (`sql` is not cached).
     pub async fn copy_in(&self, sql: &str) -> Result<CopyInSink<Bytes>, PgError> {
+        let _no_batches = self.copy_gate.write().await;
         Ok(self.client.copy_in(sql).await?)
     }
 

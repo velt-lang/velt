@@ -13,6 +13,7 @@
 pub mod abi_symbols;
 pub mod array;
 pub mod bigint;
+pub mod build_profile;
 pub mod bytes;
 pub mod bytes_ops;
 pub mod child;

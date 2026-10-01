@@ -8,8 +8,11 @@
 //! implemented in Velt over `begin` / `end` and the client's failure counter.
 //!
 //! - [`config`]: connection strings and `sslmode`;
+//! - [`socket`]: opening the socket and running the startup over it;
 //! - [`tls`]: the rustls connector;
+//! - [`wire`]: the stream under tokio-postgres that batches inject their message groups into;
 //! - [`connection`]: one connection, its statement cache and transaction depth;
+//! - [`batch`]: one statement × N parameter sets in one group with one `Sync`;
 //! - [`statements`]: the LRU prepared-statement cache;
 //! - [`placeholders`]: `:name` / `$name` → `$n`;
 //! - [`bind`]: JSON values → parameters of the prepared types;
@@ -17,6 +20,7 @@
 //! - [`client`], [`pool`]: the handles and the ABI; [`copy`]: `COPY` streaming;
 //! - [`error`]: `PgError` (SQLSTATE or Node-style code) and its JSON form.
 
+pub mod batch;
 pub mod bind;
 pub mod client;
 pub mod config;
@@ -27,10 +31,12 @@ pub mod network;
 pub mod placeholders;
 pub mod pool;
 pub mod rows;
+pub mod socket;
 pub mod statements;
 pub mod temporal;
 pub mod tls;
 pub mod types;
+pub mod wire;
 
 #[cfg(test)]
 mod tests;

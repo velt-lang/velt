@@ -11,10 +11,13 @@ it. For a walkthrough, see [Building an HTTP server](../book/http-server.md).
   (PEM certificate chain and key) the server speaks HTTPS and offers HTTP/2. Like spawned tasks,
   handlers must not mutate captured variables (use `shared`). A handler that throws gets a 500
   response (`Internal Server Error`) and its error is printed to stderr.
-- `Request { method; path; query; headers: Headers; body; upgrade }` (`upgrade` is an internal
-  key velt:websocket uses): `path` excludes the query and
-  `query` excludes the `?`. `Headers.get(name): string | null` and `has(name)` are
-  case-insensitive.
+- `Request` (a class) with getters `method`, `path`, `query`, `headers: Headers`, `body` and
+  `upgrade` (an internal key `velt:websocket` uses), plus `header(name): string | null`. Each read
+  copies that property out of the runtime request, so a handler pays only for what it reads;
+  `header(name)` looks up one header without copying the others (`headers` copies them all).
+  `path` excludes the query and `query` excludes the `?`. `Headers.get(name): string | null`,
+  `has(name)` and `header(name)` are case-insensitive. A `Request` is valid until its handler
+  settles: keep its properties, not the `Request`, in anything that outlives the handler.
 - `Response.text(body, status = 200)`, `Response.json<T>(value, status = 200)`,
   `Response.html(body, status = 200)`, `Response.bytes(body: u8[], status = 200)`.
   `.header(name, value): bool` adds a header; `.setHeader(name, value): bool` replaces it (e.g.

@@ -11,6 +11,7 @@ use crate::str::VeltStr;
 use crate::str_array::VeltStrArray;
 use bytes::Bytes;
 use http_body_util::BodyExt;
+use hyper::body::Body;
 use hyper::body::Incoming;
 use hyper::Request;
 
@@ -27,15 +28,21 @@ pub struct ReqObj {
 
 impl ReqObj {
     /// Read a hyper request including its whole body; `None` if the body could not be read.
-    /// `upgrade` is the key of its parked upgrade, 0 if none.
-    pub async fn read(req: Request<Incoming>, upgrade: u64) -> Option<ReqObj> {
+    /// `upgrade` is the key of its parked upgrade, 0 if none. Boxed right away, so the (large)
+    /// parts are not moved again on their way to the handler.
+    pub async fn read(req: Request<Incoming>, upgrade: u64) -> Option<Box<ReqObj>> {
         let (parts, body) = req.into_parts();
-        let body = body.collect().await.ok()?.to_bytes();
-        Some(ReqObj {
+        // Most requests (GET) have no body: skip the collecting future.
+        let body = if body.is_end_stream() {
+            Bytes::new()
+        } else {
+            body.collect().await.ok()?.to_bytes()
+        };
+        Some(Box::new(ReqObj {
             parts,
             body,
             upgrade,
-        })
+        }))
     }
 }
 

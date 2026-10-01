@@ -1,4 +1,4 @@
-//! TLS for PostgreSQL connections: tokio-postgres' `MakeTlsConnect` over tokio-rustls, with
+//! TLS for PostgreSQL connections: tokio-postgres' `TlsConnect` over tokio-rustls, with
 //! the runtime's rustls `ring` provider and roots (`crate::tls`), so no second TLS stack or
 //! crypto provider is linked.
 //!
@@ -7,8 +7,13 @@
 //! `prefer` / `require` accept any certificate (libpq semantics: encryption without
 //! authentication) but still check the handshake signatures. Channel binding
 //! (SCRAM-SHA-256-PLUS) is not offered, so SCRAM falls back to plain SCRAM-SHA-256.
+//!
+//! The handshake runs on the socket under the connection's wire (`super::wire`), which then
+//! wraps the encrypted stream instead.
 
 use super::config::{PgConfig, Verify};
+use super::socket::RawSocket;
+use super::wire::WireStream;
 use crate::tls::{certificates, provider};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::client::WebPkiServerVerifier;
@@ -21,8 +26,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio_postgres::tls::{ChannelBinding, MakeTlsConnect, TlsConnect, TlsStream};
-use tokio_postgres::Socket;
+use tokio_postgres::tls::{ChannelBinding, TlsConnect, TlsStream};
 use tokio_rustls::TlsConnector;
 
 /// Checks a server certificate per [`Verify`] (the `Full` case uses the WebPKI verifier
@@ -129,53 +133,52 @@ pub fn connector(config: &PgConfig) -> Result<PgTls, String> {
     })
 }
 
-/// `MakeTlsConnect` for tokio-postgres.
+/// The TLS settings of a connection string, for each connection opened with it.
 #[derive(Clone)]
 pub struct PgTls {
     config: Arc<ClientConfig>,
 }
 
-impl MakeTlsConnect<Socket> for PgTls {
-    type Stream = PgTlsStream;
-    type TlsConnect = PgTlsConnect;
-    type Error = io::Error;
-
-    fn make_tls_connect(&mut self, domain: &str) -> io::Result<PgTlsConnect> {
-        let name = ServerName::try_from(domain.to_string())
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        Ok(PgTlsConnect {
+impl PgTls {
+    /// The handshake for a connection to `host` (the name the certificate is checked
+    /// against; empty for a Unix socket, where the server never offers TLS).
+    pub fn for_host(&self, host: &str) -> PgTlsConnect {
+        PgTlsConnect {
             config: self.config.clone(),
-            name,
-        })
+            name: ServerName::try_from(host.to_string()).map_err(|e| e.to_string()),
+        }
     }
 }
 
 /// The handshake of one connection.
 pub struct PgTlsConnect {
     config: Arc<ClientConfig>,
-    name: ServerName<'static>,
+    name: Result<ServerName<'static>, String>,
 }
 
-type Handshake = Pin<Box<dyn Future<Output = io::Result<PgTlsStream>> + Send>>;
+type Handshake = Pin<Box<dyn Future<Output = io::Result<WireStream<PgTlsStream>>> + Send>>;
 
-impl TlsConnect<Socket> for PgTlsConnect {
-    type Stream = PgTlsStream;
+impl TlsConnect<WireStream<RawSocket>> for PgTlsConnect {
+    type Stream = WireStream<PgTlsStream>;
     type Error = io::Error;
     type Future = Handshake;
 
-    fn connect(self, stream: Socket) -> Handshake {
+    fn connect(self, stream: WireStream<RawSocket>) -> Handshake {
         Box::pin(async move {
+            let name = self
+                .name
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+            let (socket, shared) = stream.into_parts();
             let tls = TlsConnector::from(self.config)
-                .connect(self.name, stream)
+                .connect(name, socket)
                 .await?;
-            Ok(PgTlsStream(Box::new(tls)))
+            Ok(WireStream::new(PgTlsStream(Box::new(tls)), shared))
         })
     }
 }
 
 /// An encrypted connection.
-pub struct PgTlsStream(Box<tokio_rustls::client::TlsStream<Socket>>);
-
+pub struct PgTlsStream(Box<tokio_rustls::client::TlsStream<RawSocket>>);
 impl AsyncRead for PgTlsStream {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -204,7 +207,7 @@ impl AsyncWrite for PgTlsStream {
     }
 }
 
-impl TlsStream for PgTlsStream {
+impl TlsStream for WireStream<PgTlsStream> {
     fn channel_binding(&self) -> ChannelBinding {
         ChannelBinding::none()
     }

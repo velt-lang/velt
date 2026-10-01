@@ -96,14 +96,14 @@ export struct WebSocketUpgrade {
 
 // Whether `req` asks to be upgraded to a WebSocket.
 export function isWebSocketRequest(req: Request): bool {
-  const upgrade = req.headers.get("upgrade") ?? "";
+  const upgrade = req.header("upgrade") ?? "";
   return req.upgrade != 0 && upgrade.toLowerCase() == "websocket";
 }
 
 // Accepts a WebSocket upgrade request (throws `IoError` "EINVAL" if `req` is not one). Return
 // `response` from the handler; the socket works once that response has been sent.
 export function upgradeWebSocket(req: Request): WebSocketUpgrade {
-  const r = unwrapIo(velt_rt_ws_accept(req.upgrade, req.headers.get("sec-websocket-key") ?? ""));
+  const r = unwrapIo(velt_rt_ws_accept(req.upgrade, req.header("sec-websocket-key") ?? ""));
   return WebSocketUpgrade {
     socket: WebSocket { handle: r.ws },
     response: new Response(r.response),

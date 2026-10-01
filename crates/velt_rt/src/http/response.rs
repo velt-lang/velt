@@ -3,8 +3,9 @@
 //!
 //! Body setters take ownership of a string/bytes value (the caller's value is left empty; heap
 //! buffers are handed to hyper without copying) and set a default `content-type` unless one was
-//! already set.
+//! already set. Header values a server sends on every response are interned (`interned.rs`).
 
+use super::interned::header_value;
 use super::{take_bytes, take_text};
 use crate::bytes::VeltBytes;
 use crate::handle::Handle;
@@ -37,7 +38,7 @@ pub unsafe extern "C" fn velt_rt_http_resp_header(
 ) -> u8 {
     let (Ok(n), Ok(v)) = (
         HeaderName::from_bytes((*name).as_bytes()),
-        HeaderValue::from_bytes((*value).as_bytes()),
+        header_value((*value).as_bytes()),
     ) else {
         return 0;
     };
@@ -55,7 +56,7 @@ pub unsafe extern "C" fn velt_rt_http_resp_set_header(
 ) -> u8 {
     let (Ok(n), Ok(v)) = (
         HeaderName::from_bytes((*name).as_bytes()),
-        HeaderValue::from_bytes((*value).as_bytes()),
+        header_value((*value).as_bytes()),
     ) else {
         return 0;
     };

@@ -90,6 +90,14 @@ pub fn error(msg: &str) {
     eprintln!("{} {msg}", paint(Stream::Stderr, Style::Error, "error:"));
 }
 
+/// Print `warning: <msg>` to stderr.
+pub fn warning(msg: &str) {
+    eprintln!(
+        "{} {msg}",
+        paint(Stream::Stderr, Style::Warning, "warning:")
+    );
+}
+
 /// Print a cargo-style status line to stderr: the verb right-aligned in 12 columns, then `msg`.
 pub fn status(verb: &str, msg: &str) {
     let verb = format!("{verb:>12}");

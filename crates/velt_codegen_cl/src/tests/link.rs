@@ -106,8 +106,11 @@ fn build_and_run(
         .arg(format!("-Clink-arg={}", obj.display()));
     if cfg!(target_os = "linux") {
         // Link args come after rustc's libraries, so libm must follow the object for `fmod`
-        // (glibc on aarch64 has it only in libm).
+        // (glibc on aarch64 has it only in libm; static musl has it in libc, already scanned).
         cmd.arg("-Clink-arg=-lm");
+        if cfg!(target_env = "musl") {
+            cmd.arg("-Clink-arg=-lc");
+        }
     }
     let o = cmd.output().unwrap();
     assert!(

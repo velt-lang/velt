@@ -136,7 +136,7 @@ pub(super) fn io_result<T>(r: Result<T, PgError>) -> IoResult<T> {
 }
 
 /// Run `op` on the client's connection as a leaf future, counting a failure.
-unsafe fn client_op<R, F, Fut>(client: ClientHandle, op: F) -> *mut VeltFut
+pub(super) unsafe fn client_op<R, F, Fut>(client: ClientHandle, op: F) -> *mut VeltFut
 where
     R: Send + 'static,
     F: FnOnce(Arc<Conn>) -> Fut + Send + 'static,
