@@ -12,7 +12,9 @@
 | Linux musl (Alpine) | Not an official target, but works: `velt doctor`, every end-to-end test and the HTTP example pass on Alpine 3.21 (aarch64). `velt dev`'s JIT host is unavailable there (use `velt dev --exe`). |
 | WebAssembly | `wasm32-wasip1` and `wasm32-unknown-unknown`, single-threaded, without networking ([WebAssembly](webassembly.md)). |
 
-Windows on arm64 has not been tested, and its code has no unwind information yet.
+Windows on arm64 has not been run yet. Its executables carry unwind information (`.pdata` and
+`.xdata`, as on x64), so debuggers and backtraces walk through Velt frames; `velt dev`'s JIT
+code does not register unwind information there yet.
 
 ## Prerequisites
 
@@ -107,7 +109,8 @@ installer replaces `bin/`, `lib/` and `std/` in the prefix and prints the comman
   (Xcode 15) or newer is LLVM 16-based and works for `--release`; with an older Xcode,
   `brew install llvm` or set `VELT_CLANG`.
 - Programs are built for macOS 11.0 on arm64 (10.12 on x86_64), the same as rustc's defaults,
-  whichever backend compiled them.
+  whichever backend compiled them. `MACOSX_DEPLOYMENT_TARGET` raises the minimum (e.g. `13.0`);
+  values below those defaults are ignored, since the runtime library needs them.
 - The linker ad-hoc signs every executable on Apple silicon, which is all a locally built
   program needs. Files downloaded with a browser get the quarantine attribute, and Gatekeeper
   refuses ad-hoc signed binaries; clear it with `xattr -dr com.apple.quarantine <dir>`.

@@ -25,7 +25,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn at_stmt_keyword(&self) -> bool {
+    fn at_stmt_keyword(&mut self) -> bool {
         use Kw::*;
         matches!(
             self.cur_kw(),
@@ -52,7 +52,7 @@ impl<'a> Parser<'a> {
         )
     }
 
-    pub(super) fn at_item_keyword(&self) -> bool {
+    pub(super) fn at_item_keyword(&mut self) -> bool {
         use Kw::*;
         match self.cur_kw() {
             Some(

@@ -37,6 +37,18 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
 - **Arrow functions** `(x: T) => expr` and `(x) => { … }` are closures. Parameter types are
   inferred where a function type is expected. There are no `function` expressions and no
   `this` rebinding: `this` inside an arrow is the enclosing method's `this`.
+- **Generic arrow functions** are written as in `.ts` files, `<T>(x: T): T => x` (the `.tsx`
+  spelling `<T,>` works too, and JSX is allowed alongside). One must be a module-level `const`
+  with typed parameters and a return type; it is then a generic function:
+
+  ```ts
+  const firstOr = <T>(xs: T[], fallback: T): T => (xs.length > 0 ? xs[0].clone() : fallback);
+
+  function main() {
+    console.log(firstOr([3, 4], 0), firstOr([], "none"));
+  }
+  ```
+
 - **Function types** `(x: T) => U` accept closures and named functions alike. One that may
   throw says so: `(x: T) => U throws E` ([Errors](errors.md#dynamic-calls)).
 

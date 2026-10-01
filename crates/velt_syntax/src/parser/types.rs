@@ -134,7 +134,7 @@ impl<'a> Parser<'a> {
     }
 
     /// A string / number / `true` / `false` literal (numbers may have a leading `-`).
-    fn at_literal_type(&self) -> bool {
+    fn at_literal_type(&mut self) -> bool {
         match self.peek() {
             Tok::Str(_) | Tok::Int(_) | Tok::Float(_) | Tok::Kw(Kw::True) | Tok::Kw(Kw::False) => {
                 true

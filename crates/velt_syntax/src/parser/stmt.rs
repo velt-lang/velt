@@ -109,7 +109,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Declarations allowed inside blocks (functions, types, ...).
-    fn at_nested_item(&self) -> bool {
+    fn at_nested_item(&mut self) -> bool {
         match self.cur_kw() {
             Some(
                 Kw::Function

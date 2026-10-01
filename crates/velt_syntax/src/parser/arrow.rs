@@ -1,6 +1,7 @@
 //! Arrow functions: `x => e`, `(a, b: T): R => { ... }`, `(a): R throws E => e`, `async (x) => e`,
-//! and generic arrows `<T,>(x: T) => x` (the lexer leaves a `<` that starts `<T,` or
-//! `<T extends` in operand position as `Lt`, so here it can only start type parameters).
+//! and generic arrows `<T>(x: T) => x` (also `<T,>`, as `.tsx` requires). A `<` where an
+//! expression starts is a generic arrow if `<T,`, `<T extends` or `<T =` follow, or if type
+//! parameters, a parameter list and `=>` parse; otherwise the primary parser makes it JSX.
 //!
 //! `(`-started arrows are recognized by speculatively parsing a parameter list followed by `=>`;
 //! on failure the parser rewinds and the `(` is parsed as a parenthesized expression.
@@ -16,18 +17,14 @@ impl<'a> Parser<'a> {
     /// Parses an arrow function if one starts here; otherwise consumes nothing and returns `None`.
     pub(super) fn try_parse_arrow(&mut self) -> PResult<Option<Expr>> {
         let lo = self.cur_lo();
-        let is_async = self.at_kw(Kw::Async)
-            && (matches!(self.nth(1), Tok::LParen | Tok::Lt)
+        let async_kw = self.at_kw(Kw::Async);
+        if self.nth(usize::from(async_kw)) == Tok::Lt {
+            return self.try_generic_arrow(lo, async_kw);
+        }
+        let is_async = async_kw
+            && (self.nth(1) == Tok::LParen
                 || (Self::is_ident_like(self.nth(1)) && self.nth(2) == Tok::FatArrow));
         let off = usize::from(is_async);
-        if self.nth(off) == Tok::Lt {
-            if is_async {
-                self.bump();
-            }
-            let type_params = self.parse_generic_params()?;
-            let head = self.parse_arrow_head()?;
-            return self.finish_arrow(lo, type_params, head, is_async).map(Some);
-        }
         if Self::is_ident_like(self.nth(off)) && self.nth(off + 1) == Tok::FatArrow {
             if is_async {
                 self.bump();
@@ -54,9 +51,45 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// `[async] <T, …>(params)[: R] => body` at the cursor, else nothing consumed and `None` (a
+    /// JSX element, or `async < x`). `<T,`, `<T extends` and `<T =` can only be type parameters:
+    /// those commit, so a broken arrow gets arrow diagnostics.
+    fn try_generic_arrow(&mut self, lo: u32, is_async: bool) -> PResult<Option<Expr>> {
+        let off = usize::from(is_async);
+        let committed = Self::is_ident_like(self.nth(off + 1))
+            && matches!(
+                self.nth(off + 2),
+                Tok::Comma | Tok::Kw(Kw::Extends) | Tok::Eq
+            );
+        if committed {
+            if is_async {
+                self.bump();
+            }
+            let type_params = self.parse_generic_params()?;
+            let head = self.parse_arrow_head()?;
+            return self.finish_arrow(lo, type_params, head, is_async).map(Some);
+        }
+        let parsed = self.speculate(|p| {
+            if is_async {
+                p.bump();
+            }
+            let type_params = p.parse_generic_params()?;
+            if !p.may_start_arrow_params(0) {
+                return Err(super::Fail);
+            }
+            Ok((type_params, p.parse_arrow_head()?))
+        });
+        match parsed {
+            Some((type_params, head)) => {
+                self.finish_arrow(lo, type_params, head, is_async).map(Some)
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Cheap pre-check before speculating: `()` or `(name`, and the matching `)` is followed by
     /// `=>` or a return type's `:` (so a parenthesized expression is not tried as an arrow).
-    fn may_start_arrow_params(&self, off: usize) -> bool {
+    fn may_start_arrow_params(&mut self, off: usize) -> bool {
         if self.nth(off) != Tok::LParen {
             return false;
         }

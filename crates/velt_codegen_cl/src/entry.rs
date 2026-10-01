@@ -7,7 +7,6 @@ use cranelift_codegen::ir::{types, AbiParam, InstBuilder, Signature, UserFuncNam
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
-use target_lexicon::{Architecture, BinaryFormat};
 
 use crate::module::{define, unwind_info};
 use crate::{isa, unwind, CodegenResult};
@@ -66,15 +65,7 @@ pub(crate) fn emit_entry_object(target: &str) -> CodegenResult<Vec<u8>> {
     b.finalize();
 
     define(&mut module, main, &mut ctx, "main")?;
-    // Same rule as `build_module`: no unwind info for arm64 COFF yet.
-    let triple = module.isa().triple();
-    let unwind = if triple.binary_format != BinaryFormat::Coff
-        || triple.architecture == Architecture::X86_64
-    {
-        unwind_info(&module, main, &ctx, "main")?
-    } else {
-        None
-    };
+    let unwind = unwind_info(&module, main, &ctx, "main")?;
     let mut product = module.finish();
     unwind::add_unwind_info(&mut product, &*isa, &Vec::from_iter(unwind))?;
     product

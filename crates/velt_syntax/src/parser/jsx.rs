@@ -2,15 +2,30 @@
 //! member (`ui.Card`) and namespaced (`svg:rect`) names, attribute values (string, `{expr}`,
 //! element), children (text, `{expr}`, `{}` / `{/* comment */}`, `{...spread}`, elements).
 //!
-//! The lexer has already split JSX into its own tokens (`JsxLt`, `JsxIdent`, `JsxText`, ...), so
-//! this is plain recursive descent. Closing-tag diagnostics are worded like TypeScript's.
+//! The parser decides where an element starts: at a `<` where it expects an expression (after
+//! ruling out a generic arrow `<T>(x: T) => x`, see `arrow`), it has the lexer re-lex from that
+//! `<` in JSX mode. From there the lexer splits JSX into its own tokens (`JsxLt`, `JsxIdent`,
+//! `JsxText`, ...), so this is plain recursive descent. Closing-tag diagnostics are worded like
+//! TypeScript's.
 
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
-use crate::lexer::Tok;
-use velt_common::Span;
+use crate::lexer::{may_start_jsx, Tok};
+use velt_common::{Diagnostic, Span};
+
+/// Note on an unclosed element that looks like a generic arrow whose head did not parse.
+const GENERIC_ARROW_NOTE: &str = "if this is a generic arrow function, check its parameter list and return type: `<T>(x: T): T => x`";
 
 impl Parser<'_> {
+    /// Can the `<` at the cursor start an element (`<name` or the fragment `<>`)?
+    pub(super) fn jsx_starts_here(&mut self) -> bool {
+        let at = self.cur_lo() as usize + 1;
+        self.src
+            .as_bytes()
+            .get(at)
+            .is_some_and(|&c| may_start_jsx(c))
+    }
+
     /// An element or fragment; the cursor is at `JsxLt`.
     pub(super) fn parse_jsx_element(&mut self) -> PResult<JsxElement> {
         self.guarded(|p| p.jsx_element_inner())
@@ -21,7 +36,7 @@ impl Parser<'_> {
         let open_span = self.cur_span();
         self.bump(); // <
         if self.eat(Tok::JsxGt) {
-            let children = self.jsx_children(None, open_span)?;
+            let children = self.jsx_children(None, open_span, false)?;
             return Ok(JsxElement {
                 name: None,
                 attrs: vec![],
@@ -39,7 +54,9 @@ impl Parser<'_> {
         } else {
             self.expect(Tok::JsxGt)?;
             let name_span = name.span();
-            self.jsx_children(Some(&name), name_span)?
+            // `<T>(x: T => x`: a broken generic arrow ends up here.
+            let arrow_like = attrs.is_empty() && matches!(name, JsxName::Ident(_));
+            self.jsx_children(Some(&name), name_span, arrow_like)?
         };
         Ok(JsxElement {
             name: Some(name),
@@ -136,8 +153,14 @@ impl Parser<'_> {
     }
 
     /// Children up to and including the closing tag of the element named `name` (`None` for a
-    /// fragment); `open_span` is where an unclosed element is reported.
-    fn jsx_children(&mut self, name: Option<&JsxName>, open_span: Span) -> PResult<Vec<JsxChild>> {
+    /// fragment); `open_span` is where an unclosed element is reported. `arrow_like`: the opening
+    /// tag could have been the type parameters of a generic arrow.
+    fn jsx_children(
+        &mut self,
+        name: Option<&JsxName>,
+        open_span: Span,
+        arrow_like: bool,
+    ) -> PResult<Vec<JsxChild>> {
         let mut children = Vec::new();
         loop {
             match self.peek() {
@@ -163,7 +186,16 @@ impl Parser<'_> {
                         ),
                         None => "JSX fragment has no corresponding closing tag.".to_string(),
                     };
-                    self.error(msg, open_span);
+                    let looks_like_arrow = arrow_like
+                        && matches!(children.first(), Some(JsxChild::Text { value, .. })
+                            if value.starts_with('(') && value.contains("=>"));
+                    let mut diag = Diagnostic::error(msg, open_span);
+                    if looks_like_arrow {
+                        diag = diag.with_note(GENERIC_ARROW_NOTE);
+                    }
+                    if self.speculating == 0 {
+                        self.diags.push(diag);
+                    }
                     return Err(Fail);
                 }
             }

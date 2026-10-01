@@ -256,10 +256,10 @@ fn written_space_containers_are_kept() {
 }
 
 #[test]
-fn generic_arrows_keep_their_comma() {
+fn generic_arrows_drop_the_tsx_comma() {
     assert_fmt(
-        "const id = <T,>(x: T) => x;\nconst id2 = <T extends Show,>(x: T) => x;\nconst p = <A, B>(a: A, b: B) => a;\n",
-        "const id = <T,>(x: T) => x;\nconst id2 = <T extends Show>(x: T) => x;\nconst p = <A, B>(a: A, b: B) => a;\n",
+        "const id = <T,>(x: T) => x;\nconst id2 = <T extends Show,>(x: T) => x;\nconst p = <A, B>(a: A, b: B) => a;\nconst q = async <T>(x: T) => <p>{x}</p>;\n",
+        "const id = <T>(x: T) => x;\nconst id2 = <T extends Show>(x: T) => x;\nconst p = <A, B>(a: A, b: B) => a;\nconst q = async <T>(x: T) => <p>{x}</p>;\n",
     );
 }
 

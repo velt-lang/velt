@@ -1,0 +1,64 @@
+// @jsxImportSource ./_jsx_test_provider
+
+// `.ts`-style code next to JSX in one file (#111): generic arrows without the `.tsx` comma
+// (`<T>(x: T) => x`), and keywords used as member names before type arguments (`as<T>()`,
+// `v?.as<T>()`, `get<T>()`). The parser decides where an element starts, so none of these is
+// mistaken for one, while elements still start wherever an expression does.
+
+import { render } from "./_jsx_test_provider/render";
+
+const identity = <T>(x: T): T => x;
+
+const firstOr = <T>(xs: T[], fallback: T): T => {
+  if (xs.length === 0) {
+    return fallback;
+  }
+  return xs[0].clone();
+};
+
+const pair = <A, B>(a: A, b: B): [A, B] => [a, b];
+
+const later = async <T>(x: T): Promise<T> => x;
+
+class Cell {
+  value: i64;
+
+  constructor(value: i64) {
+    this.value = value;
+  }
+
+  as<T>(convert: (v: i64) => T): T {
+    return convert(this.value);
+  }
+
+  get<T>(fallback: T, pick: (v: i64) => T): T {
+    return this.value > 0 ? pick(this.value) : fallback;
+  }
+}
+
+function label(c: Cell | null): string {
+  return c?.as<string>((v) => `#${v}`) ?? "none";
+}
+
+async function main() {
+  console.log(identity(42), identity("text"));
+  console.log(firstOr([3, 4], 0), firstOr([], "none"));
+  const p = pair("a", 1);
+  console.log(p[0], p[1]);
+  console.log(await later(true));
+
+  const cell = new Cell(7);
+  console.log(cell.as<string>((v) => `v=${v}`), cell.get<i64>(0, (v) => v * 2));
+  console.log(label(cell), label(null));
+
+  const items = [1, 2, 3];
+  const small = items.length < 5;
+  console.log(
+    await render(
+      <ul class={small ? "small" : "big"}>
+        {items.map((i) => <li>{identity(i)}</li>)}
+      </ul>,
+    ),
+  );
+  console.log(await render(<span>it's {cell.as<string>((v) => `${v}`)}</span>));
+}

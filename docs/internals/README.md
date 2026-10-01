@@ -86,6 +86,8 @@ Decisions and their rationale, including what is still planned:
   dictionary (implemented).
 - [`unknown` for dynamic JSON](design/unknown.md): narrowing JSON values the TypeScript way
   (proposed; open questions).
+- [A package manifest written in Velt](design/package-manifest.md): `package.vlt`, data-only and
+  typed, replacing `velt.toml` (decided, issue #128).
 
 ## Testing
 
