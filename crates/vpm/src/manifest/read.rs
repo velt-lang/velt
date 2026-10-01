@@ -19,7 +19,7 @@
 //! manifest; the `Package` type only gives editors completion and errors. Manifests come from
 //! uploaded archives too, so the input's size, nesting and number of values are bounded.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use velt_common::{Diagnostic, Diagnostics, FileId, Span};
 use velt_syntax::ast::{self, ExprKind, ItemKind, Lit, ObjectProp, PatternKind, TypeExprKind};
@@ -54,7 +54,12 @@ impl Manifest {
         if diags.iter().any(Diagnostic::is_error) {
             return Err(diags);
         }
-        let mut reader = Reader::default();
+        let mut reader = Reader {
+            src,
+            diags: Vec::new(),
+            values: 0,
+            too_many: false,
+        };
         let init = reader.declaration(&module);
         let value = init.and_then(|e| reader.value(e));
         if let Some(value) = value {
@@ -96,14 +101,14 @@ impl ValueKind {
     }
 }
 
-#[derive(Default)]
-struct Reader {
+struct Reader<'s> {
+    src: &'s str,
     diags: Diagnostics,
     values: usize,
     too_many: bool,
 }
 
-impl Reader {
+impl Reader<'_> {
     fn error(&mut self, message: impl Into<String>, span: Span) {
         self.diags.push(Diagnostic::error(message, span));
     }
@@ -119,6 +124,7 @@ impl Reader {
                     let types_only = import.from == TYPES_MODULE
                         && import.namespace.is_none()
                         && !import.all
+                        && !import.names.is_empty()
                         && import.names.iter().all(|n| n.type_only);
                     if !types_only {
                         self.error(
@@ -126,6 +132,12 @@ impl Reader {
                             item.span,
                         );
                     }
+                }
+                ItemKind::Import(_) if !item.exported => {
+                    self.error(
+                        format!("`{PACKAGE_FILE}` may have at most one import"),
+                        item.span,
+                    );
                 }
                 ItemKind::Var(var) if init.is_none() && is_pkg_declaration(item, var) => {
                     init = var.init.as_ref();
@@ -174,7 +186,10 @@ impl Reader {
             ExprKind::Object(props) => ValueKind::Object(self.props(props)?),
             other => {
                 self.error(
-                    format!("the manifest is data only: {} not allowed", not_data(other)),
+                    format!(
+                        "the manifest is data only: {} not allowed",
+                        self.not_data(other, expr.span)
+                    ),
                     expr.span,
                 );
                 return None;
@@ -188,18 +203,19 @@ impl Reader {
 
     fn props(&mut self, props: &[ObjectProp]) -> Option<Vec<(ast::Ident, Value)>> {
         let mut out: Vec<(ast::Ident, Value)> = Vec::new();
+        let mut seen: HashMap<&str, Span> = HashMap::new();
         let mut ok = true;
         for prop in props {
             match prop {
                 ObjectProp::KeyValue(key, expr) => {
-                    if let Some((first, _)) = out.iter().find(|(k, _)| k.name == key.name) {
-                        let first = first.span;
+                    if let Some(&first) = seen.get(key.name.as_str()) {
                         self.diags.push(
                             Diagnostic::error(format!("duplicate key `{}`", key.name), key.span)
                                 .with_label(first, "first written here"),
                         );
                         ok = false;
                     }
+                    seen.entry(&key.name).or_insert(key.span);
                     match self.value(expr) {
                         Some(v) => out.push((key.clone(), v)),
                         None => ok = false,
@@ -379,6 +395,11 @@ impl Reader {
         }
     }
 
+    fn not_data(&self, kind: &ExprKind, span: Span) -> &'static str {
+        let text = self.src.get(span.lo as usize..span.hi as usize);
+        not_data(kind, text.is_some_and(|t| t.starts_with('/')))
+    }
+
     fn check(&mut self, result: Result<(), String>, span: Span) {
         if let Err(message) = result {
             self.error(message, span);
@@ -390,7 +411,9 @@ impl Reader {
             format!("unknown key `{}` in the manifest", key.name),
             key.span,
         );
-        if let Some(close) = known.iter().find(|k| edit_distance(k, &key.name) <= 2) {
+        // About one edit per three characters: `dependecies` → `dependencies`, but `x` → nothing.
+        let max = key.name.chars().count() / 3;
+        if let Some(close) = known.iter().find(|k| edit_distance(k, &key.name) <= max) {
             d = d.with_note(format!("did you mean `{close}`?"));
         }
         self.diags.push(d);
@@ -422,8 +445,10 @@ fn is_pkg_declaration(item: &ast::Item, var: &ast::VarDecl) -> bool {
 }
 
 /// What a non-data expression is, for "… not allowed".
-fn not_data(kind: &ExprKind) -> &'static str {
+fn not_data(kind: &ExprKind, regex: bool) -> &'static str {
     match kind {
+        // The parser lowers `/a/` to `new RegExp("a", "")`.
+        ExprKind::New { .. } if regex => "regular expressions are",
         ExprKind::Template { .. } => "template literals are",
         ExprKind::Ident(_) | ExprKind::This | ExprKind::Super => "names are",
         ExprKind::Call { .. } => "calls are",

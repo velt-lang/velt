@@ -22,7 +22,7 @@ pub fn validate(paths: &BTreeMap<String, String>) -> Result<(), String> {
 }
 
 /// Check one alias; the error says what is wrong with it, without naming it.
-pub fn check_alias(pattern: &str, target: &str) -> Result<(), &'static str> {
+pub(crate) fn check_alias(pattern: &str, target: &str) -> Result<(), &'static str> {
     if pattern.is_empty() || pattern == "*" {
         return Err("the pattern needs a prefix such as `@app/*`");
     }

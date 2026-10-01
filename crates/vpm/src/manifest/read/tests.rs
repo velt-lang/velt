@@ -292,3 +292,55 @@ fn edit_distance_counts_edits() {
     assert_eq!(edit_distance("jsx", "jsx"), 0);
     assert_eq!(edit_distance("", "abc"), 3);
 }
+
+#[test]
+fn imports_name_at_least_one_type() {
+    let body = "export const pkg: Package = { name: \"app\", version: \"1.0.0\" };";
+    for import in [
+        "import \"velt:package\";",
+        "import type {} from \"velt:package\";",
+    ] {
+        let (message, covered) = error(&format!("{import}\n{body}"));
+        assert!(
+            message.contains("may only import types from `velt:package`"),
+            "{import}: {message}"
+        );
+        assert_eq!(covered, import);
+    }
+    let second = "import type { Package } from \"velt:package\";";
+    let (message, covered) = error(&format!("{HEAD}{second}\n{body}"));
+    assert_eq!(message, "`package.vlt` may have at most one import");
+    assert_eq!(covered, second);
+}
+
+#[test]
+fn regular_expressions_are_named() {
+    let (message, covered) = error(&with("entry: /a/g"));
+    assert_eq!(
+        message,
+        "the manifest is data only: regular expressions are not allowed"
+    );
+    assert_eq!(covered, "/a/g");
+    let (message, _) = error(&with("entry: new RegExp(\"a\", \"\")"));
+    assert_eq!(message, "the manifest is data only: `new` is not allowed");
+}
+
+#[test]
+fn did_you_mean_needs_a_close_key() {
+    let note = |fields: &str| {
+        Manifest::read(FILE, &with(fields)).unwrap_err()[0]
+            .notes
+            .clone()
+    };
+    assert!(note("x: 1").is_empty());
+    assert!(note("jsc: {}").contains(&"did you mean `jsx`?".to_string()));
+    assert!(note("regsitry: \"\"").contains(&"did you mean `registry`?".to_string()));
+}
+
+#[test]
+fn many_distinct_keys_are_read() {
+    let keys: String = (0..4_000).map(|i| format!("\"@k{i}\":\"s\",")).collect();
+    let src = with(&format!("paths: {{ {keys} }}"));
+    assert!(src.len() <= MAX_BYTES);
+    assert_eq!(read(&src).paths.len(), 4_000);
+}
