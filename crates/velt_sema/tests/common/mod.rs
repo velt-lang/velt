@@ -419,8 +419,13 @@ pub fn run(items: Vec<Item>) -> (Option<hir::Program>, Diagnostics) {
     let m = SourceModule {
         path: "main".into(),
         file: FileId(0),
-        ast: Module { items, span: D },
+        ast: Module {
+            items,
+            span: D,
+            jsx_import_source: None,
+        },
         imports: vec![],
+        jsx_runtime: None,
     };
     check(&[m], 0)
 }

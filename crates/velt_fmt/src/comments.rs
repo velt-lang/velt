@@ -1,6 +1,5 @@
-//! Comment recovery. The lexer drops comments, so this module re-scans the source for them
-//! (skipping string and template literals, including `${ }` substitutions, so `//` inside a
-//! string is not a comment) and hands them out in source order as the printer walks the AST:
+//! Comment recovery. The AST drops comments, so this module asks the lexer where they are
+//! ([`velt_syntax::comment_ranges`]) and hands them out in source order as the printer walks the AST:
 //! [`Comments::take_before`] yields the comments preceding a node (leading comments) and
 //! [`Comments::take_trailing`] those that end the line a node ends on.
 
@@ -26,41 +25,16 @@ impl Comment {
     }
 }
 
-/// Every comment in `src`, in source order.
+/// Every comment in `src`, in source order (the lexer's view, so `//` inside a string, a
+/// template, a regular expression or JSX text is not a comment).
 pub(crate) fn scan(src: &str) -> Vec<Comment> {
-    let bytes = src.as_bytes();
-    let mut out = vec![];
-    // One entry per open `{`; `true` = it opened a template substitution `${`.
-    let mut braces: Vec<bool> = vec![];
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'"' | b'\'' => i = skip_string(bytes, i),
-            b'`' => i = skip_template(bytes, i + 1, &mut braces),
-            b'{' => {
-                braces.push(false);
-                i += 1;
-            }
-            b'}' => {
-                i += 1;
-                if braces.pop() == Some(true) {
-                    i = skip_template(bytes, i, &mut braces);
-                }
-            }
-            b'/' if bytes.get(i + 1) == Some(&b'/') => {
-                let end = src[i..].find('\n').map_or(src.len(), |n| i + n);
-                out.push(comment(src, i, end, false));
-                i = end;
-            }
-            b'/' if bytes.get(i + 1) == Some(&b'*') => {
-                let end = src[i + 2..].find("*/").map_or(src.len(), |n| i + 2 + n + 2);
-                out.push(comment(src, i, end, true));
-                i = end;
-            }
-            _ => i += 1,
-        }
-    }
-    out
+    velt_syntax::comment_ranges(src)
+        .into_iter()
+        .map(|r| {
+            let (lo, hi) = (r.start as usize, r.end as usize);
+            comment(src, lo, hi, src[lo..].starts_with("/*"))
+        })
+        .collect()
 }
 
 fn comment(src: &str, lo: usize, hi: usize, is_block: bool) -> Comment {
@@ -74,38 +48,6 @@ fn comment(src: &str, lo: usize, hi: usize, is_block: bool) -> Comment {
         is_block,
         newline_after: rest.is_empty() || rest.starts_with(['\n', '\r']),
     }
-}
-
-/// Index just past the string literal starting at `start` (strings end at a newline too).
-fn skip_string(bytes: &[u8], start: usize) -> usize {
-    let quote = bytes[start];
-    let mut i = start + 1;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' => i += 2,
-            b'\n' => return i,
-            c if c == quote => return i + 1,
-            _ => i += 1,
-        }
-    }
-    bytes.len()
-}
-
-/// Scans template text from `i` to the closing backtick or the next `${` (which is pushed on the
-/// brace stack so the matching `}` resumes the template).
-fn skip_template(bytes: &[u8], mut i: usize, braces: &mut Vec<bool>) -> usize {
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' => i += 2,
-            b'`' => return i + 1,
-            b'$' if bytes.get(i + 1) == Some(&b'{') => {
-                braces.push(true);
-                return i + 2;
-            }
-            _ => i += 1,
-        }
-    }
-    bytes.len()
 }
 
 /// The comments of one file, handed out in source order.
@@ -176,6 +118,9 @@ mod tests {
     #[test]
     fn ignores_comment_markers_in_literals() {
         let src = "let a = \"// no\"; let b = `/* no ${ {x: 1} /* yes */ } // no`; // yes\n";
+        let found: Vec<String> = scan(src).into_iter().map(|c| c.text).collect();
+        assert_eq!(found, ["/* yes */", "// yes"]);
+        let src = "const r = /\"/; const j = <p a='//'>don't // no {/* yes */}</p>; // yes\n";
         let found: Vec<String> = scan(src).into_iter().map(|c| c.text).collect();
         assert_eq!(found, ["/* yes */", "// yes"]);
     }

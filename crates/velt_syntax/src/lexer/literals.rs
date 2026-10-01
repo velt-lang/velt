@@ -1,7 +1,7 @@
 //! Literal scanning: numbers (bases, `_` separators, exponents, type suffixes), strings with
 //! escapes, and template-literal pieces.
 
-use super::{is_ident_continue, is_ident_start, Lexer, Payload, Tok, TplPart};
+use super::{is_ident_continue, is_ident_start, Lexer, Mode, Payload, Tok, TplPart};
 
 const INT_SUFFIXES: &[&str] = &[
     "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
@@ -304,7 +304,7 @@ impl<'a> Lexer<'a> {
                 b'$' if self.at(1) == b'{' => {
                     out.push_str(&self.text[run..self.pos]);
                     self.pos += 2;
-                    self.braces.push(true);
+                    self.modes.push(Mode::TemplateSub);
                     break if first {
                         TplPart::Head
                     } else {

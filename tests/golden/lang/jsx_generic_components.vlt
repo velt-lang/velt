@@ -1,0 +1,27 @@
+// @jsxImportSource ./_jsx_test_provider
+
+// A generic component: `T` is inferred from the props, as in TypeScript (the arrow function
+// prop gets its parameter type from `items`).
+
+import { render } from "./_jsx_test_provider/render";
+
+type ListProps<T> = { items: T[]; render: (item: T) => JSX.Child };
+
+function List<T>(props: ListProps<T>): JSX.Element {
+  const rows: JSX.Element[] = [];
+  for (const item of props.items) {
+    rows.push(<li>{props.render(item)}</li>);
+  }
+  return <ul>{rows}</ul>;
+}
+
+function Pair<A, B>(props: { first: A; second: B; show: (a: A, b: B) => string }): JSX.Element {
+  return <span>{props.show(props.first, props.second)}</span>;
+}
+
+async function main() {
+  const scores = [3, 1, 2];
+  console.log(await render(<List items={scores} render={(n) => n * 10} />));
+  console.log(await render(<List items={["a", "b"]} render={(s) => <p>{s}</p>} />));
+  console.log(await render(<Pair first="x" second={true} show={(a, b) => `${a}=${b}`} />));
+}

@@ -110,6 +110,7 @@ fn length_of(e: &ast::Expr) -> Option<&ast::Expr> {
 /// `(_, i) => e` as `(i) => e` (the element parameter must be named `_…`).
 fn index_only(f: &ast::Expr) -> Option<ast::Expr> {
     let ast::ExprKind::Arrow {
+        type_params,
         params,
         ret,
         throws,
@@ -128,6 +129,7 @@ fn index_only(f: &ast::Expr) -> Option<ast::Expr> {
     Some(ast::Expr {
         id: ast::NodeId(u32::MAX),
         kind: ast::ExprKind::Arrow {
+            type_params: type_params.clone(),
             params: vec![index.clone()],
             ret: ret.clone(),
             throws: throws.clone(),

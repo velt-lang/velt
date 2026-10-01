@@ -242,6 +242,12 @@ impl FnCx<'_, '_> {
                 }
             }
         }
+        self.concat_parts(parts, span)
+    }
+
+    /// The string parts of a template literal joined: a left fold of `StrConcat` (one part that
+    /// is not a fresh value is concatenated to `""`, so the result is always a fresh string).
+    pub(crate) fn concat_parts(&mut self, parts: Vec<hir::Expr>, span: Span) -> hir::Expr {
         let mut it = parts.into_iter();
         let Some(first) = it.next() else {
             return self.str_lit("", span);

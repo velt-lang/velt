@@ -49,6 +49,9 @@ pub(crate) enum Node {
     /// Tries each layout in order (the first flat, the others as they are) and keeps the first
     /// that fits; the last is the fallback. Does not propagate breaks to enclosing groups.
     Conditional(Vec<Doc>),
+    /// Alternating contents and separators, laid out like a paragraph: each separator breaks
+    /// only if the content after it does not fit on the line (prettier's `fill`).
+    Fill(Vec<Doc>),
     Line(LineKind),
     /// `broken` if the enclosing group is broken, else `flat`.
     IfBreak {
@@ -176,6 +179,13 @@ pub(crate) fn conditional(states: Vec<Doc>) -> Doc {
     Doc::new(Node::Conditional(states), false)
 }
 
+/// Paragraph layout of `parts` = `[content, separator, content, separator, …, content]`
+/// (see [`Node::Fill`]).
+pub(crate) fn fill(parts: Vec<Doc>) -> Doc {
+    let breaks = parts.iter().any(Doc::breaks);
+    Doc::new(Node::Fill(parts), breaks)
+}
+
 /// A space, or a newline when the group breaks.
 pub(crate) fn line() -> Doc {
     Doc::new(Node::Line(LineKind::Space), false)
@@ -260,6 +270,27 @@ mod tests {
     fn line_suffix_moves_before_newline() {
         let d = cat!["a", line_suffix(text(" // c")), ",", hardline(), "b"];
         assert_eq!(render(&d, 80), "a, // c\nb");
+    }
+
+    #[test]
+    fn fill_breaks_only_where_needed() {
+        let words = ["aaa", "bbb", "ccc", "ddd"].map(text);
+        let mut parts = vec![];
+        for (i, w) in words.into_iter().enumerate() {
+            if i > 0 {
+                parts.push(line());
+            }
+            parts.push(w);
+        }
+        assert_eq!(render(&group(fill(parts.clone())), 80), "aaa bbb ccc ddd");
+        assert_eq!(render(&group(fill(parts)), 8), "aaa bbb\nccc ddd");
+    }
+
+    #[test]
+    fn fill_puts_broken_content_on_its_own_line() {
+        let block = group_broken(cat!["{", indent(cat![hardline(), "x"]), hardline(), "}"]);
+        let d = group(fill(vec![text("a"), line(), block, line(), text("b")]));
+        assert_eq!(render(&d, 80), "a\n{\n  x\n}\nb");
     }
 
     #[test]

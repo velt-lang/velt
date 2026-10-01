@@ -1,0 +1,88 @@
+// @jsxImportSource ./_jsx_test_provider
+
+// Components: props (string, expression, bare, spread, optional), children (one child as
+// itself, several as an array), member components, components without props, keys and
+// local arrow components.
+
+import { render } from "./_jsx_test_provider/render";
+import * as ui from "./_jsx_ui";
+
+type CardProps = { title: string; featured?: bool; children: JSX.Element };
+
+function Card(props: CardProps): JSX.Element {
+  const star = props.featured ?? false;
+  return (
+    <div class="card">
+      <h1>
+        {star ? "* " : ""}
+        {props.title}
+      </h1>
+      {props.children}
+    </div>
+  );
+}
+
+type ListProps = { items: string[]; children: JSX.Element[] };
+
+function List(props: ListProps): JSX.Element {
+  const rows: JSX.Element[] = [];
+  for (const item of props.items) {
+    rows.push(<li key={item}>{item}</li>);
+  }
+  return (
+    <ul>
+      {rows}
+      {props.children}
+    </ul>
+  );
+}
+
+function Divider(): JSX.Element {
+  return <br />;
+}
+
+async function main() {
+  const base = { title: "From a spread", featured: true };
+  const Label = (props: { text: string }): JSX.Element => <span>[{props.text}]</span>;
+  console.log(
+    await render(
+      <Card title="Hello">
+        <p>Body</p>
+      </Card>,
+    ),
+  );
+  console.log(
+    await render(
+      <Card {...base} featured={false}>
+        <p>Spread</p>
+      </Card>,
+    ),
+  );
+  console.log(
+    await render(
+      <Card title="Bare" featured>
+        <Divider />
+      </Card>,
+    ),
+  );
+  console.log(
+    await render(
+      <List items={["a", "b"]}>
+        <span>tail</span>
+        <Label text="x" />
+        <>{42}</>
+      </List>,
+    ),
+  );
+  console.log(await render(<ui.Badge tone="ok">ready</ui.Badge>));
+  const n = 7;
+  console.log(
+    await render(
+      <>
+        <Label key="label" text="keyed" />
+        <span key={n}>number key</span>
+        <span key={n * 1.5}>float key</span>
+      </>,
+    ),
+  );
+}

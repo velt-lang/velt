@@ -2,7 +2,7 @@
 //! checking (nested declarations). Statements inside block-bodied arrow functions are not
 //! expressions and are left to the caller.
 
-use velt_syntax::ast::{self, ExprKind as E, ObjectProp};
+use velt_syntax::ast::{self, ExprKind as E, JsxAttr, JsxAttrValue, JsxChild, ObjectProp};
 
 /// Call `f` on every direct sub-expression of `e`.
 pub(crate) fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
@@ -51,6 +51,32 @@ pub(crate) fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
                     ObjectProp::Shorthand(_) => {}
                 }
             }
+        }
+        E::Jsx(element) => jsx_exprs(element, f),
+    }
+}
+
+/// Call `f` on every expression of a JSX element: attribute values, spreads and children,
+/// descending into nested elements (which are not expressions themselves).
+fn jsx_exprs<'a>(el: &'a ast::JsxElement, f: &mut dyn FnMut(&'a ast::Expr)) {
+    for attr in &el.attrs {
+        match attr {
+            JsxAttr::Spread { expr, .. } => f(expr),
+            JsxAttr::Named { value, .. } => match value {
+                Some(JsxAttrValue::Expr { expr, .. }) => f(expr),
+                Some(JsxAttrValue::Element(inner)) => jsx_exprs(inner, f),
+                Some(JsxAttrValue::Str { .. }) | None => {}
+            },
+        }
+    }
+    for child in &el.children {
+        match child {
+            JsxChild::Expr {
+                expr: Some(expr), ..
+            }
+            | JsxChild::Spread { expr, .. } => f(expr),
+            JsxChild::Element(inner) => jsx_exprs(inner, f),
+            JsxChild::Text { .. } | JsxChild::Expr { expr: None, .. } => {}
         }
     }
 }

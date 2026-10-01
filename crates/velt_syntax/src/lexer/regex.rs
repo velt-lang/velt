@@ -6,8 +6,9 @@
 use super::{Kw, Lexer, Payload, Tok, TplPart};
 
 impl Lexer<'_> {
-    /// May a `/` here start a regular expression (no operand just ended)?
-    fn regex_allowed(&self) -> bool {
+    /// Is an operand expected here (no operand just ended)? Then a `/` starts a regular
+    /// expression and a `<` may start a JSX element.
+    pub(super) fn operand_expected(&self) -> bool {
         let Some(prev) = self.toks.last() else {
             return true;
         };
@@ -22,6 +23,8 @@ impl Lexer<'_> {
             | Tok::RBrace
             | Tok::PlusPlus
             | Tok::MinusMinus
+            | Tok::JsxGt
+            | Tok::JsxSlashGt
             | Tok::Template(_, TplPart::NoSub | TplPart::Tail) => false,
             // A contextual keyword may be a variable (`from / 2`).
             Tok::Kw(k) => !k.is_soft() && !matches!(k, Kw::This | Kw::True | Kw::False | Kw::Null),
@@ -32,7 +35,7 @@ impl Lexer<'_> {
     /// A regular expression literal at `self.pos`, if a `/` starts one here.
     pub(super) fn regex_start(&mut self) -> Option<Tok> {
         let c = self.at(0);
-        if c != b'/' || matches!(self.at(1), b'/' | b'*' | b'=') || !self.regex_allowed() {
+        if c != b'/' || matches!(self.at(1), b'/' | b'*' | b'=') || !self.operand_expected() {
             return None;
         }
         self.regex()

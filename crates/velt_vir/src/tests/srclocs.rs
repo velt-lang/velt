@@ -139,10 +139,6 @@ fn uncaught_error_names_the_throw() {
     let out = interp::run(&lower_located(&p, &source_map()));
     assert_eq!(
         (out.stdout.as_str(), out.stderr.as_str(), out.code),
-        (
-            "before\n",
-            "Uncaught BadThing: oh no at dir/t.vlt:2:3\n",
-            1
-        )
+        ("before\n", "Uncaught BadThing: oh no at dir/t.vlt:2:3\n", 1)
     );
 }

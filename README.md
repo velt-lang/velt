@@ -107,7 +107,7 @@ standard library, packages with a lockfile, the formatter, the language server, 
 `velt dev` with hot swap, and WebAssembly (WASI and browser, without networking).
 
 What is coming next, from [the roadmap](ROADMAP.md): JavaScript's shared-reference semantics for
-objects (no more moves), TSX for server-side rendering, `JSON.parse` into unions, the database
+objects (no more moves), the rest of TSX (`children` props, faster templates), `JSON.parse` into unions, the database
 drivers as packages, and more platform and tooling work. Planned features are marked
 **Planned** in the docs and never shown as working.
 

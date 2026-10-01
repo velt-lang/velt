@@ -77,6 +77,11 @@ pub(crate) struct Ctx<'m> {
     /// For each nested definition: names bound in its enclosing functions (for the
     /// "nested functions cannot capture" error).
     pub nested_locals: HashMap<DefId, Vec<String>>,
+    /// The JSX runtime of each module that uses JSX, resolved on first use (`None` after its
+    /// errors were reported).
+    pub jsx_providers: HashMap<usize, Option<std::rc::Rc<crate::body::expr::jsx::Provider>>>,
+    /// JSX component adapters, checked after ownership inference.
+    pub jsx_adapters: Vec<crate::body::expr::jsx::Adapter>,
     /// Side tables for [`crate::ide`] (`None` when compiling).
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     pub diags: Diagnostics,
@@ -116,6 +121,8 @@ impl<'m> Ctx<'m> {
             throw_checks: vec![],
             nested: vec![],
             nested_locals: HashMap::new(),
+            jsx_providers: HashMap::new(),
+            jsx_adapters: vec![],
             ide: None,
             diags: vec![],
         }

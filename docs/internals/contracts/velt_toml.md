@@ -39,3 +39,16 @@ registry = "https://registry.example.com"   # top level, before [package]
 - Archives (`vpm::archive`) carry `velt.toml` + `src/**`; their checksum is the same content hash
   `velt.lock` records, and every download is verified against it before it enters the cache.
 - `https://` goes through the system `curl`; `http://` is built in.
+
+## JSX import source (additive)
+```toml
+[jsx]
+importSource = "sigx"    # or "velt:jsx" (the default), an "@alias" from [paths], or "./ui"
+```
+- The JSX runtime of the package's modules ([jsx.md](jsx.md) "Choosing the provider"): a module
+  containing JSX imports `<importSource>/jsx-runtime`. A `// @jsxImportSource x` comment in a file
+  wins; without either the source is `velt:jsx`.
+- The value is a module specifier: a dependency (`"sigx"`), `"std/x"`, a `[paths]` alias, or a
+  path starting with `./` / `../`, which is relative to the package root (not to the importing
+  file, unlike a pragma). Each package's `[jsx]` applies to its own modules only
+  (`vpm::PackageGraph::jsx_import_source`). Unknown keys in `[jsx]` are errors.

@@ -1,0 +1,47 @@
+// A streamed response (`Response.stream`): the producer keeps writing after the handler
+// returned, with awaited sleeps between flushes; the client gets the headers that were set
+// before returning, no content-length (chunked transfer), and every chunk in order. A producer
+// that throws cuts the response off, so the client sees a failed body, not a complete one.
+import { serve, fetch, Request, Response, ResponseWriter } from "velt:http";
+
+class RenderError extends Error {}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const count = parseInt(req.query);
+    // Copy what the body needs: the request is released once the handler returns.
+    const broken = req.path == "/broken";
+    const res = Response.stream(async (w: ResponseWriter) => {
+      w.write("<ul>");
+      for (let i = 1; i <= count; i++) {
+        w.write(`<li>${i}</li>`);
+        await w.flush();
+        console.log(`server: flushed ${i}`);
+        await sleep(20);
+      }
+      if (broken) {
+        throw new RenderError("template failed");
+      }
+      w.write("</ul>");
+    });
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    res.header("x-stream", "yes");
+    console.log("server: response returned");
+    return res;
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  const res = await fetch(`${base}/list?3`);
+  console.log(res.status);
+  console.log(res.headers.get("content-type"));
+  console.log(res.headers.get("x-stream"));
+  console.log(res.headers.get("content-length") ?? "no content-length");
+  console.log(res.headers.get("transfer-encoding"));
+  console.log(await res.text());
+  try {
+    const broken = await fetch(`${base}/broken?1`);
+    console.log("unexpected:", await broken.text());
+  } catch (e) {
+    console.log("broken stream: cut off");
+  }
+  server.close();
+}

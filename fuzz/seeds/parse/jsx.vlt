@@ -1,0 +1,75 @@
+// @jsxImportSource std/jsx
+// Seed for the `parse` target and the formatter's corpus: TSX syntax (elements, fragments,
+// member/namespaced names, attributes, spreads, entities, JSX whitespace, comments, generic
+// arrows). Parsing and formatting only; it is not type-checked.
+
+import { renderToString } from "velt:jsx";
+
+interface Post {
+  id: i64;
+  title: string;
+  author: string;
+  tags: string[];
+  body: string;
+}
+
+const identity = <T,>(x: T): T => x;
+const pair = <A, B extends Show>(a: A, b: B) => [a, b];
+
+function Tag(props: { name: string }) {
+  return (
+    <li class="tag" data-name={props.name}>
+      #{props.name}
+    </li>
+  );
+}
+
+function PostCard(props: { post: Post; highlight: boolean }) {
+  const post = props.post;
+  const highlight = props.highlight;
+  return (
+    <article key={post.id} class={highlight ? "post post--highlight" : "post"} aria-label="post">
+      <h2>{post.title}</h2>
+      <p class="byline">
+        by <b>{post.author}</b> &mdash; {post.tags.length} tags &amp; counting&hellip;
+      </p>
+      {post.tags.length > 0 && <ul class="tags">{post.tags.map((t) => <Tag name={t} />)}</ul>}
+      {/* the body is escaped by the renderer */}
+      <div class="body">{post.body}</div>
+    </article>
+  );
+}
+
+function Layout(props: { title: string; children: JSX.Element[] }) {
+  return (
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <title>{props.title}</title>
+        <link rel="stylesheet" href="/style.css" />
+      </head>
+      <body>
+        <ui.Header title={props.title} {...headerProps} />
+        <main>{...props.children}</main>
+        <svg:svg xmlns:xlink="http://www.w3.org/1999/xlink">
+          <svg:use xlink:href="#logo" />
+        </svg:svg>
+        <footer>
+          Made with <a href="https://example.com/velt">Velt</a> &copy; 2026. Text with a // slash
+          and a 'quote' that are not code, and {"  "} spaces.
+        </footer>
+      </body>
+    </html>
+  );
+}
+
+function page(posts: Post[]): string {
+  const items = posts.map((p, i) => <PostCard post={p} highlight={i == 0} />);
+  const empty = (
+    <>
+      <p>No posts yet.</p>
+      <p>Come back later!</p>
+    </>
+  );
+  return renderToString(<Layout title="Blog">{posts.length > 0 ? items : empty}</Layout>);
+}

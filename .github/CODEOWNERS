@@ -1,0 +1,8 @@
+# Contracts and language semantics need a maintainer's review.
+/crates/velt_syntax/src/ast.rs        @andtii
+/crates/velt_sema/src/hir/            @andtii
+/crates/velt_vir/src/vir.rs           @andtii
+/crates/velt_common/                  @andtii
+/docs/internals/contracts/            @andtii
+/docs/internals/design/               @andtii
+/.github/                             @andtii

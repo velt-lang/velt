@@ -33,7 +33,7 @@ struct Hello {
 unsafe extern "C" fn hello_init(_env: *mut c_void, req: *mut ReqObj, state: *mut u8) {
     (state as *mut Hello).write(Hello {
         result: Handle::NULL,
-        req: Handle::from_ptr(req),
+        req: ReqHandle::from_bits(req as usize as u64),
     });
 }
 

@@ -1,0 +1,32 @@
+// @jsxImportSource ./_jsx_test_provider
+
+// Async components: `(props) => Promise<JSX.Element>` goes through `jsxAsyncComponent`
+// uncalled. The test runtime calls (and awaits) each one when rendering reaches it, so nothing
+// loads before `render` and the components run in document order.
+
+import { render } from "./_jsx_test_provider/render";
+
+async function Post(props: { id: number; delay: i64 }): Promise<JSX.Element> {
+  console.log(`loading post ${props.id}`);
+  await sleep(props.delay);
+  console.log(`loaded post ${props.id}`);
+  return <article-card data-id={props.id}>post {props.id}</article-card>;
+}
+
+async function Comments(props: { children: JSX.Element }): Promise<JSX.Element> {
+  return <section-box>{props.children}</section-box>;
+}
+
+async function main() {
+  const page = (
+    <main-page>
+      <Post id={1} delay={60} />
+      <Post id={2} delay={1} />
+      <Comments>
+        <em-text>first!</em-text>
+      </Comments>
+    </main-page>
+  );
+  console.log("rendering");
+  console.log(await render(page));
+}

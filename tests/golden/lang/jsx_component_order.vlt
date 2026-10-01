@@ -1,0 +1,40 @@
+// @jsxImportSource ./_jsx_test_provider
+
+// Components are passed to the runtime uncalled, as in TypeScript: the props (with their child
+// elements) are built first, and each component runs when the runtime calls it. The test runtime
+// renders parent first, so a value a parent provides is seen by its children (provide/inject).
+
+import { render } from "./_jsx_test_provider/render";
+import { inject, provide } from "./_jsx_test_provider/context";
+
+function note(what: string): string {
+  console.log(`evaluate ${what}`);
+  return what;
+}
+
+function Theme(props: { name: string; children: JSX.Element[] }): JSX.Element {
+  console.log(`run Theme(${props.name})`);
+  provide("theme", props.name);
+  return <div class={props.name}>{props.children}</div>;
+}
+
+function Themed(props: { label: string }): JSX.Element {
+  const theme = inject("theme");
+  console.log(`run Themed(${props.label}) sees ${theme}`);
+  return (
+    <p>
+      {props.label}: {theme}
+    </p>
+  );
+}
+
+async function main() {
+  const page = (
+    <Theme name={note("dark")}>
+      <Themed label={note("first")} />
+      <Themed label={note("second")} />
+    </Theme>
+  );
+  console.log("built");
+  console.log(await render(page));
+}

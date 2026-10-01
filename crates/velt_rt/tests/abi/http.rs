@@ -43,7 +43,7 @@ unsafe extern "C" fn handler_init(env: *mut c_void, req: *mut ReqObj, state: *mu
     let h = Handler {
         result: Handle::NULL,
         tag: 0,
-        req: Handle::from_ptr(req),
+        req: ReqHandle::from_bits(req as usize as u64),
         env: (*(env as *const Env)).hits,
         fut: null_mut(),
     };

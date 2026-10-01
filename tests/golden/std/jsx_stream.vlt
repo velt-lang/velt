@@ -1,0 +1,91 @@
+// `renderToStream` into a std/http `Response.stream` body: the markup before a pending async
+// component is flushed before the component finishes loading (a raw TCP client sees the page
+// head first), and the streamed body is byte-identical to `renderToString` of the same tree.
+import { jsx, Fragment, jsxAsyncComponent } from "velt:jsx/jsx-runtime";
+import { Element, renderToString, renderToStream } from "velt:jsx";
+import { serve, fetch, Request, Response, ResponseWriter } from "velt:http";
+import { connect } from "velt:net";
+
+type SlowProps = { label: string; delay: i64; log: bool };
+
+async function Slow(props: SlowProps): Promise<Element> {
+  await sleep(props.delay);
+  if (props.log) {
+    console.log(`server: ${props.label} loaded`);
+  }
+  return jsx("li", [], [], [props.label], null);
+}
+
+function page(delay: i64, log: bool): Element {
+  return Fragment(
+    [
+      jsx("h1", [], [], ["Posts & news"], null),
+      jsx(
+        "ul",
+        [],
+        [],
+        [
+          jsxAsyncComponent(
+            (p: SlowProps) => Slow(p),
+            { label: "first", delay: delay, log: log },
+            null,
+            "jsx_stream#Slow",
+          ),
+          jsxAsyncComponent(
+            (p: SlowProps) => Slow(p),
+            { label: "second", delay: delay / 2, log: log },
+            null,
+            "jsx_stream#Slow",
+          ),
+        ],
+        null,
+      ),
+      jsx("footer", [], [], ["end"], null),
+    ],
+    null,
+  );
+}
+
+// Reads a raw HTTP/1.1 response and reports whether the page head arrived before the posts.
+async function rawClient(port: i64): Promise<void> {
+  const c = await connect(`127.0.0.1:${port}`);
+  await c.write("GET /log?150 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+  let received = "";
+  let reported = false;
+  while (true) {
+    const chunk = await c.readString();
+    if (chunk == "") {
+      break;
+    }
+    received += chunk;
+    if (!reported && received.includes("<h1>")) {
+      reported = true;
+      console.log(`client: head received, posts included: ${received.includes("first")}`);
+    }
+  }
+  c.close();
+  console.log(`client: complete: ${received.includes("<footer>end</footer>")}`);
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const delay = parseInt(req.query) as i64;
+    const res = Response.stream(async (w: ResponseWriter) => {
+      const log = req.path == "/log";
+      const ok = await renderToStream(page(delay, log), w);
+      if (log) {
+        console.log(`server: stream done ${ok}`);
+      }
+    });
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    return res;
+  });
+  await rawClient(server.port);
+  const res = await fetch(`http://127.0.0.1:${server.port}/?10`);
+  console.log(res.status, res.headers.get("content-type"), res.headers.get("transfer-encoding"));
+  const body = await res.text();
+  const expected = await renderToString(page(1, false));
+  console.log(body);
+  console.log(`same as renderToString: ${body == expected}`);
+  server.close();
+}

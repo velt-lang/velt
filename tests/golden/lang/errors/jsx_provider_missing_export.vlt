@@ -1,0 +1,9 @@
+// @jsxImportSource ./_jsx_incomplete_provider
+
+// A JSX runtime must export the factory functions of docs/contracts/jsx.md; what is missing is
+// reported once, at the first JSX of the module.
+
+function main() {
+  const a = <p>one</p>;
+  const b = <p>two {1 + "x"}</p>;
+}

@@ -1,0 +1,67 @@
+// std/jsx/node: the value every JSX expression evaluates to (internal; std/jsx and
+// std/jsx/jsx-runtime export it).
+//
+// std/jsx renders eagerly: building an element renders it, so a tree without async components
+// is one string (`html`) by the time it is complete, and rendering it is a copy. Text and
+// attributes are escaped as they arrive, an intrinsic element or template appends its children's
+// markup to its own, and a fragment or `raw` node is its markup. Only an async component cannot
+// be rendered up front: its node holds the component's started promise, and every node above it
+// keeps its finished markup in `html` plus the rest, in order, in `rest.parts` (a component
+// that threw is kept the same way, as a node that fails when rendered). The renderer
+// (render.vlt) writes `html`, then awaits `rest.pending`, then renders `rest.parts`, so markup
+// before a pending component can be sent while it still loads.
+
+// What an intrinsic attribute may hold: `true` renders the bare name, `false` and `null` omit
+// the attribute, numbers render like `${n}`.
+export type AttrValue = string | i64 | f64 | bool | null;
+
+// A dynamic text child that a precompiled template folds into its strings (`jsxEscape`).
+export type Text = string | i64 | f64 | bool | null;
+
+// What may appear as a child: text is escaped, numbers render like `${n}`, `true`, `false` and
+// `null` render nothing, and an array renders its elements in order.
+export type Child = Element | Element[] | string | i64 | f64 | bool | null;
+
+// Thrown while rendering when a component threw or an async component rejected. Element is not
+// generic, so the component's own error type cannot travel through the tree: its value is
+// formatted like `${e}` into `message`, and `component` names the component
+// (`"<module path>#<Name>"`). Also thrown by `renderToStringSync` for a tree that still has a
+// pending async component (`component` is then "").
+export class RenderError extends Error {
+  component: string;
+
+  constructor(component: string, message: string) {
+    super(message);
+    this.component = component;
+  }
+}
+
+// A rendered or partly rendered JSX node (see the module comment).
+export class Element {
+  // Markup rendered so far: everything when `rest` is null.
+  html: string;
+  // What follows `html` when the node contains an async component or a component that threw.
+  rest: Deferred | null = null;
+
+  constructor(html: string) {
+    this.html = html;
+  }
+
+  // True when `html` is the whole node (no async or failed component inside).
+  get isComplete(): bool {
+    return this.rest == null;
+  }
+}
+
+// The part of a node that waits for an async component, or the error of a component that threw
+// (internal: not re-exported). A separate object so that complete nodes, almost all of them,
+// stay small.
+export class Deferred {
+  // An async component's promise (at most one), started when its node was created; rendered
+  // right after the node's `html`.
+  pending: Promise<Element, RenderError>[] = [];
+  // The rest of the node, in document order.
+  parts: Element[] = [];
+  // Set instead when a sync component threw: rendering the node throws it.
+  failure: RenderError | null = null;
+}

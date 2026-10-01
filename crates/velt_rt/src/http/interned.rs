@@ -58,7 +58,7 @@ fn is_valid(bytes: &[u8]) -> bool {
 /// Takes `len` bytes from the leak budget; false if it is used up.
 fn reserve(len: usize) -> bool {
     LEAKED
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
             (used + len <= LEAK_BUDGET).then_some(used + len)
         })
         .is_ok()
