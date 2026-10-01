@@ -163,7 +163,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - Imports: `velt:x` → `<std root>/x.vlt` or `x/index.vlt`; `./x`, `../x` → relative `x.vlt` or
   folder module `x/index.vlt`; bare names → `[paths]` aliases of the importing package first,
   then packages via `velt.toml` (`pkg/sub` → `src/sub.vlt` or `src/sub/index.vlt`). `std/prelude/*.vlt` is loaded implicitly before everything else.
-- Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.vlt`), `VELT_REGISTRY`
+- Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.velt`), `VELT_REGISTRY`
   (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (linker override), `VELT_CLANG` (clang for the LLVM backend).
   Set by `velt dev` for the program (not for users): `VELT_DEV_SOCKET` (a Unix socket path, or a
   named pipe `\\.\pipe\velt-dev-<pid>-<n>` on Windows).
