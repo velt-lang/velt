@@ -1,0 +1,23 @@
+// A generic `throw e` whose error type is instantiated with `never` (here: `unwrap` of an
+// outcome that cannot fail) compiles; the throw is unreachable.
+class Failed extends Error {}
+
+type Outcome<T, E> = { status: "ok"; value: T } | { status: "failed"; error: E };
+
+function unwrap<T, E>(o: Outcome<T, E>): T throws E {
+  switch (o.status) {
+    case "ok":
+      return o.value;
+    case "failed":
+      throw o.error;
+  }
+}
+
+function main() {
+  console.log(unwrap<i64, never>({ status: "ok", value: 1 }));
+  try {
+    console.log(unwrap<i64, Failed>({ status: "failed", error: new Failed("no value") }));
+  } catch (e) {
+    console.log("caught:", e.message);
+  }
+}
