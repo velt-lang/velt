@@ -1,0 +1,57 @@
+# Pull requests run the fast gate on Linux; the merge queue runs the full gate on Linux, Windows
+# and macOS against the pull request merged with the latest main. The single required check is
+# `ci`, which summarizes whichever jobs ran.
+name: ci
+
+on:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fast:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: scripts/check-all.sh --fast
+
+  full:
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: gate (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: scripts/check-all.sh
+      - name: gate (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/check-all.ps1
+
+  ci:
+    if: always()
+    needs: [fast, full]
+    runs-on: ubuntu-latest
+    steps:
+      - name: every gate that ran passed
+        run: |
+          for r in "${{ needs.fast.result }}" "${{ needs.full.result }}"; do
+            case "$r" in success|skipped) ;; *) echo "a gate failed: $r"; exit 1 ;; esac
+          done

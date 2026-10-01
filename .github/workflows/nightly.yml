@@ -1,0 +1,40 @@
+# Nightly: the full gate on Linux with real PostgreSQL and Redis, so the database goldens run
+# (they are skipped without their URLs).
+name: nightly
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gate-with-services:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: velt
+          POSTGRES_DB: velt_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s
+          --health-retries 10
+    env:
+      VELT_TEST_PG_URL: postgres://postgres:velt@127.0.0.1:5432/velt_test
+      VELT_TEST_REDIS_URL: redis://127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: scripts/check-all.sh
