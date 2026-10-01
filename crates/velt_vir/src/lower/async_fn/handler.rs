@@ -83,9 +83,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let targs = self.targs.clone();
         let ea = self.cx.env_agg(def, &targs);
-        let env = self.alloc(Ty::Agg(ea));
+        let env = self.counted_alloc(Ty::Agg(ea));
         let drop = cfunc(self.cx.func(Work::EnvDrop(def, targs)));
+        // Concurrent requests read the captures from several threads (transfer.rs).
+        self.transfer_args = true;
         self.fill_env(def, env.clone(), drop, cint(0, Ty::Ptr));
+        self.transfer_args = false;
         env
     }
 

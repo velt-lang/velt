@@ -61,6 +61,9 @@ impl FnLower<'_, '_> {
 
     /// Release the parts of the value at `place` (the structural step behind `Glue::Drop`).
     fn drop_expand(&mut self, place: &Place, ty: TyId) {
+        if self.cx.boxed(ty) {
+            return self.drop_boxed(place, ty, |lw, v| lw.drop_inline(v, ty));
+        }
         match self.cx.kind(ty) {
             TyKind::Str => {
                 let a = self.addr(place.clone());
@@ -71,12 +74,11 @@ impl FnLower<'_, '_> {
                 let done = self.new_block();
                 let nn = self.non_null(obj.clone());
                 self.when(nn, done);
-                if self.cx.has_header(d) {
-                    let vt = self.obj_vtable(obj.clone(), ty);
-                    let f = self.dispatch(vt, SLOT_DROP);
-                    self.call_entry(f, vec![obj], vec![Ty::Ptr], Ty::Unit);
+                if self.cx.counted(ty) {
+                    let o = obj.clone();
+                    self.release(obj, |lw| lw.drop_object(o, ty, d));
                 } else {
-                    self.call_glue(Glue::ObjDrop, ty, vec![obj]);
+                    self.drop_object(obj, ty, d);
                 }
                 self.goto(done);
                 self.switch_to(done);
@@ -134,6 +136,34 @@ impl FnLower<'_, '_> {
                 self.switch_to(done);
             }
             _ => {}
+        }
+    }
+
+    /// Drop the fields of the class object `obj` and free it (through its vtable when the
+    /// hierarchy has one, so a subclass held as its base releases the whole object).
+    fn drop_object(&mut self, obj: Operand, ty: TyId, d: velt_sema::hir::DefId) {
+        if self.cx.has_header(d) {
+            let vt = self.obj_vtable(obj.clone(), ty);
+            let f = self.dispatch(vt, SLOT_DROP);
+            self.call_entry(f, vec![obj], vec![Ty::Ptr], Ty::Unit);
+        } else {
+            self.call_glue(Glue::ObjDrop, ty, vec![obj]);
+        }
+    }
+
+    /// Drop the inline value of a boxed array / object type (`dispose()` first).
+    fn drop_inline(&mut self, v: &Place, ty: TyId) {
+        if let TyKind::Array(e) = self.cx.kind(ty) {
+            return self.drop_array(v, e);
+        }
+        let this = self.addr(v.clone());
+        self.call_dispose(this, ty);
+        let tys = self.cx.part_types(ty);
+        for (i, t) in tys.into_iter().enumerate() {
+            if !self.cx.is_unit(t) && self.cx.needs_drop(t) {
+                let f = Proj::Field(self.cx.vir_field(ty, i as u32));
+                self.drop_glue(proj(v, f), t);
+            }
         }
     }
 
@@ -245,14 +275,14 @@ impl FnLower<'_, '_> {
             let fp = self.field_place(&p, ty, i as u32);
             self.drop_glue(fp, t);
         }
-        let oa = self.cx.obj_agg(ty);
-        self.free(Operand::Copy(p), Ty::Agg(oa));
+        self.object_free(Operand::Copy(p), ty);
         self.terminate(Terminator::Return(unit()));
     }
 
-    /// Interface value data: class objects are their own data pointer; others are boxed.
+    /// Interface value data: class objects and boxed values are their own data pointer; others
+    /// are in a heap box of their own.
     pub(super) fn dyn_drop_body(&mut self, data: vir::Local, ty: TyId) {
-        if self.cx.is_class(ty) {
+        if self.cx.is_class(ty) || self.cx.boxed(ty) {
             self.drop_glue(Place::local(data), ty);
         } else {
             let vt = self.cx.ty(ty);

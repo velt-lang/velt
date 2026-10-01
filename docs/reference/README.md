@@ -49,9 +49,8 @@ Decided direction that is not implemented yet. Each chapter says where it applie
 
 | Change | Design |
 |---|---|
-| Semantics stage 2: objects, arrays, maps and closures become shared references like in JS; no moves; `.clone()` becomes an explicit deep copy | [semantics — stages](../internals/design/semantics.md#stages-each-fully-gated) |
 | Semantics stage 3: `weak` references and a compile-time warning for reference cycles | [semantics — cycles](../internals/design/semantics.md#reference-cycles--without-a-collector) |
-| Objects compared by identity; the `struct` keyword removed | [semantics — JS fidelity](../internals/design/semantics.md#js-fidelity-decisions) |
+| The `struct` keyword removed (structs already behave as objects) | [semantics — JS fidelity](../internals/design/semantics.md#js-fidelity-decisions) |
 | `extend`: retroactive `implements`, module scoping | [TypeScript alignment §4](../internals/design/ts-alignment.md#4-extend--full-power-zero-cost-module-scoped) |
 | TSX: `children` and other element-typed props, faster templates (syntax, providers, `velt:jsx` and streaming already work) | [TSX](../internals/design/tsx.md) |
 | `JSON.parse` into unions and literal types | [roadmap](../../ROADMAP.md) |

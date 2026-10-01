@@ -1,7 +1,7 @@
 # velt:udp
 
 `import { bindUdp } from "velt:udp"`. UDP sockets. Addresses are `"host:port"` strings.
-`UdpSocket` is a Copy handle like `TcpStream`: it can be used from several tasks and is released
+`UdpSocket` is a handle like `TcpStream`: it can be used from several tasks and is released
 by `close()`.
 
 - `bindUdp(addr): Promise<UdpSocket>`: port 0 picks a free port.

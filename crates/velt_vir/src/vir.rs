@@ -28,14 +28,16 @@
 //!    \"Exclusive access"): during a call, memory reachable through a `BorrowMut` param is
 //!    reachable through no other param, and `Borrow` params never alias a `BorrowMut`/`Owned`
 //!    one. Lowering sets them for user functions from `PassMode` (`BorrowMut` aggregate or
-//!    class object → `noalias`; `Borrow` aggregate or class object → `readonly` unless the value
-//!    holds a `Mutex` or the param is written (`LocalDef::mutable`); aggregate-return
-//!    out-pointer → `noalias`; `nonnull` + `dereferenceable(size)` on all of them; the frame of
-//!    a poll function (`Function::is_poll`) → `nonnull` + `dereferenceable(frame size)`, plus
-//!    `noalias` from `velt_opt` when no pointer into the frame ever leaves the function). Every
-//!    caller must uphold them: `velt_opt` keeps them on clones and specializations and drops a
-//!    param's attributes when it rewrites that param. Backends may use them (LLVM param
-//!    attributes) or ignore them.
+//!    class object → `noalias`, only when values of the type have no other owners: not counted
+//!    and never borrowed inside a counted object, docs/design/semantics-stage2.md §3.4;
+//!    `Borrow` aggregate or class object → `readonly` unless the value holds a `Mutex` or the
+//!    param is written (`LocalDef::mutable`); aggregate-return out-pointer → `noalias`;
+//!    `nonnull` + `dereferenceable(size)` on all of them; the frame of a poll function
+//!    (`Function::is_poll`) → `nonnull` + `dereferenceable(frame size)`, plus `noalias` from
+//!    `velt_opt` when no pointer into the frame ever leaves the function). Every caller must
+//!    uphold them: `velt_opt` keeps them on clones and specializations and drops a param's
+//!    attributes when it rewrites that param. Backends may use them (LLVM param attributes) or
+//!    ignore them.
 
 use std::fmt;
 

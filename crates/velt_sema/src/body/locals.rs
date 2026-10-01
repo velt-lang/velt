@@ -64,6 +64,7 @@ fn add_capture(f: &mut Frame, name: &str, outer: LocalId, ty: TyId, span: Span) 
         name: name.to_string(),
         ty,
         mutable: false,
+        boxed: false,
         span,
     });
     f.kinds.push(LocalKind::Capture);
@@ -92,6 +93,7 @@ impl FnCx<'_, '_> {
             name: name.to_string(),
             ty,
             mutable,
+            boxed: false,
             span,
         });
         self.f.kinds.push(kind);

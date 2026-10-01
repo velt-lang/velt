@@ -18,9 +18,10 @@ pub(crate) struct State {
     /// Where each maybe-moved local was (last) moved, and how.
     pub moved_at: Vec<Option<(Span, MoveKind)>>,
     /// Where an escaping closure (maybe) captured each local by value (and the local holding
-    /// that closure, while it is known): assigning the local afterwards would not reach the
-    /// closure's copy, unless the closure is gone (its holder's block ended).
-    pub captured: Vec<Option<(Span, Option<usize>)>>,
+    /// that closure, while it is known), and whether such a closure assigns it: assigning the
+    /// local afterwards, or reading it after a closure assigned it, needs a shared cell
+    /// (`LocalDef::boxed`), unless the closure is gone (its holder's block ended).
+    pub captured: Vec<Option<Captured>>,
 }
 
 /// How a place was moved.
@@ -44,6 +45,10 @@ impl PartialEq for State {
 }
 
 pub(crate) type Flow = Option<State>;
+
+/// An escaping closure's by-value capture of a local: where, the local holding the closure
+/// (while known), and whether the closure assigns the variable.
+pub(crate) type Captured = (Span, Option<usize>, bool);
 
 impl State {
     pub fn new(n: usize) -> Self {
@@ -84,7 +89,7 @@ impl State {
     /// Local `holder` left its block: captures by the closure it held no longer count.
     pub fn drop_holder(&mut self, holder: usize) {
         for c in &mut self.captured {
-            if c.is_some_and(|(_, h)| h == Some(holder)) {
+            if c.is_some_and(|(_, h, _)| h == Some(holder)) {
                 *c = None;
             }
         }
@@ -92,7 +97,7 @@ impl State {
 
     /// Local `holder` was moved: the closure it held lives on somewhere unknown.
     pub fn escape_holder(&mut self, holder: usize) {
-        for (_, h) in self.captured.iter_mut().flatten() {
+        for (_, h, _) in self.captured.iter_mut().flatten() {
             if *h == Some(holder) {
                 *h = None;
             }
@@ -125,6 +130,9 @@ pub(crate) fn join(a: Flow, b: Flow) -> Flow {
                 a.partial[i].sort();
                 if a.moved_at[i].is_none() {
                     a.moved_at[i] = b.moved_at[i];
+                }
+                if let (Some(x), Some(y)) = (&mut a.captured[i], b.captured[i]) {
+                    x.2 |= y.2;
                 }
                 if a.captured[i].is_none() {
                     a.captured[i] = b.captured[i];

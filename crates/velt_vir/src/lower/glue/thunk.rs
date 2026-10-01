@@ -47,7 +47,7 @@ impl Cx<'_> {
 }
 
 impl<'c, 'h> FnLower<'c, 'h> {
-    /// A deep copy of a borrowed incoming argument (param local `l`), passed as owned.
+    /// Another reference to a borrowed incoming argument (param local `l`), passed as owned.
     fn owned_copy(&mut self, l: vir::Local, vt: Ty, pty: TyId) -> Operand {
         let src = match vt {
             Ty::Agg(_) => Operand::Copy(Place {
@@ -56,7 +56,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }),
             _ => Operand::Copy(Place::local(l)),
         };
-        let c = self.clone_value(src, pty);
+        let c = self.share_value(src, pty);
         match vt {
             Ty::Agg(_) => self.operand_addr(c, vt),
             _ => c,

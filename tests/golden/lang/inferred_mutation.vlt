@@ -106,7 +106,7 @@ struct Point {
   y: i64;
 }
 
-// Copy params are values: changes stay here.
+// Objects are shared with the callee (JS): the caller sees `p.x` change; numbers are copies.
 function moved(p: Point, n: i64): i64 {
   p.x += 10;
   n += 1;

@@ -1,10 +1,9 @@
-//! Soft moves: a place passed to an owned parameter of an async function (every non-Copy param
-//! of an async function is owned, so the future never borrows from its caller). Moving it is
-//! free, but JS code reuses such values (`await mkdir(dir); await writeFile(dir + "/a", s)`), so
-//! the argument becomes a deep copy (`Intrinsic::Clone` of a borrow) when the place cannot be
-//! moved from (a borrowed param, a class field, an array element — found by `validate`) or is
-//! used again later (found by the move dataflow, `crate::moves`). Otherwise it stays a move.
-//! Types owning a `[Symbol.dispose]` resource have no clone, so their soft moves are never recorded.
+//! Soft moves: a move that becomes a share (`Intrinsic::Share` of a borrow) when the place
+//! cannot be moved from (a borrowed param, a class field, an array element — found by
+//! `validate`) or is used again later (found by the move dataflow, `crate::moves`); otherwise
+//! it stays a move. Every move of a shared value is soft (`super::shares`), and so is a place
+//! passed to an owned parameter of an async function (every non-Copy param of an async
+//! function is owned, so the future never borrows from its caller).
 
 use std::collections::{HashMap, HashSet};
 
@@ -15,8 +14,18 @@ use crate::ctx::Ctx;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, UseMode};
 use crate::visit;
 
-/// Turn the place `e` (moved) into `clone(e)`.
-pub(super) fn make_clone(e: &mut Expr) {
+/// Turn the place `e` (moved) into `share(e)`.
+pub(super) fn make_share(e: &mut Expr) {
+    wrap_place(e, Intrinsic::Share);
+}
+
+/// Turn the place `e` (moved) into `clone(e)` (a deep copy).
+pub(super) fn make_deep_copy(e: &mut Expr) {
+    wrap_place(e, Intrinsic::Clone);
+}
+
+/// Turn the place `e` (moved) into `op(e)` of the borrowed place.
+fn wrap_place(e: &mut Expr, op: Intrinsic) {
     let (ty, span) = (e.ty, e.span);
     let mut place = std::mem::replace(
         e,
@@ -29,7 +38,7 @@ pub(super) fn make_clone(e: &mut Expr) {
     set_place_mode(&mut place, UseMode::Borrow);
     *e = Expr {
         kind: E::Call {
-            callee: Callee::Intrinsic(Intrinsic::Clone),
+            callee: Callee::Intrinsic(op),
             args: vec![place],
         },
         ty,
@@ -68,11 +77,11 @@ pub(crate) fn clone_reused(cx: &mut Ctx, reused: &HashMap<DefId, HashSet<Span>>)
         };
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| match &e.kind {
             E::Closure(c) if spans.contains(&e.span) => closures.push(*c),
-            _ if is_moved_place(e) && spans.contains(&e.span) => make_clone(e),
+            _ if is_moved_place(e) && spans.contains(&e.span) => make_share(e),
             _ => {}
         });
     }
     for c in closures {
-        super::strings::copy_string_captures(cx, c);
+        super::shares::share_captures(cx, c);
     }
 }

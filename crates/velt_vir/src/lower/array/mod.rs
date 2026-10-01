@@ -106,8 +106,31 @@ impl FnLower<'_, '_> {
         let a = self.cx.array_agg();
         let t = self.temp(Ty::Agg(a));
         self.assign(Place::local(t), Rvalue::Aggregate(a, vec![data, len, cap]));
+        self.own_array(t, ty)
+    }
+
+    /// The inline array header in temp `t` as an owned value of type `ty` (boxed when `ty` is),
+    /// registered for dropping.
+    pub(super) fn own_array(&mut self, t: Local, ty: TyId) -> Operand {
+        if self.cx.boxed(ty) {
+            let v = self.box_value(Operand::Copy(Place::local(t)), ty);
+            return self.own_value(v, ty);
+        }
         self.own_temp(t, ty);
         Operand::Copy(Place::local(t))
+    }
+
+    /// An inline array header (unregistered temp) with room for and length `n` (elements
+    /// unset) of element type `elem`.
+    pub(super) fn inline_array_with_len(&mut self, n: Operand, elem: TyId) -> Local {
+        let data = self.alloc_elems(n.clone(), elem);
+        let a = self.cx.array_agg();
+        let t = self.temp(Ty::Agg(a));
+        self.assign(
+            Place::local(t),
+            Rvalue::Aggregate(a, vec![data, n.clone(), n]),
+        );
+        t
     }
 
     pub(super) fn array_lit(&mut self, es: &[hir::Expr], ty: TyId) -> Operand {
@@ -132,16 +155,7 @@ impl FnLower<'_, '_> {
             let p = self.elem_place(&Place::local(tmp), cint(i as i128, Ty::U64), elem);
             self.store(p, v);
         }
-        self.own_temp(tmp, ty);
-        Operand::Copy(Place::local(tmp))
-    }
-
-    /// Array intrinsics (`xs.length`, `push`, `pop`, `__intrinsic_array_*`).
-    /// A fresh owned array of concrete type `ty` with room for and length `n` (elements unset).
-    pub(super) fn array_with_len(&mut self, n: Operand, ty: TyId) -> Operand {
-        let elem = self.elem_ty(ty);
-        let data = self.alloc_elems(n.clone(), elem);
-        self.array_value(ty, data, n.clone(), n)
+        self.own_array(tmp, ty)
     }
 
     /// Free the buffer of the array at `arr` (if it has one); elements are not dropped.
@@ -165,8 +179,9 @@ impl FnLower<'_, '_> {
         self.switch_to(join);
     }
 
-    /// Copy (clone) the `n` elements starting at index `from` of array `src` into the elements
-    /// `0..n` of array `dst` (uninitialized): one `MemCopyDyn` when elements need no clone glue.
+    /// Copy the `n` elements starting at index `from` of array `src` into the elements `0..n`
+    /// of array `dst` (uninitialized): shares when `share`, else deep copies; one `MemCopyDyn`
+    /// when elements own nothing.
     pub(super) fn copy_elems(
         &mut self,
         src: &Place,
@@ -174,6 +189,7 @@ impl FnLower<'_, '_> {
         dst: &Place,
         n: Operand,
         elem: TyId,
+        share: bool,
     ) {
         if !self.cx.needs_drop(elem) {
             let (stride, _) = self.stride(elem);
@@ -193,7 +209,10 @@ impl FnLower<'_, '_> {
             let i = lw.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Add, k.clone(), from));
             let sp = lw.elem_place(src, i, elem);
             let dp = lw.elem_place(dst, k, elem);
-            lw.clone_into(sp, dp, elem);
+            match share {
+                true => lw.share_into(sp, dp, elem),
+                false => lw.clone_into(sp, dp, elem),
+            }
         });
     }
 

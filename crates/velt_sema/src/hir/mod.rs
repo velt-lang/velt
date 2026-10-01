@@ -15,10 +15,11 @@
 //!   `Block { [Let tmp = x; CompoundAssign], value: Local(tmp) }`.
 //! - Assignment places are `Local(id, UseMode::BorrowMut)` (a write, not a read).
 //! - `StrConcat`/`ToString` operands may be owned temporaries; lowering drops them after the call.
-//! - Strings are values: a string place is never left moved-from where it is used again or
+//! - Values are shared (semantics stage 2): a place of a shared value (`Ctx::is_shared_value`:
+//!   strings, objects, arrays, maps, closures) is never left moved-from where it is used again or
 //!   cannot be moved from (borrowed params, fields of classes, array / `for...of` elements); such
-//!   uses are `Intrinsic::Clone` calls (a refcount increment at most, see rt_abi.md "Strings")
-//!   or `Capture::clone` captures. Moves remain where the source is dead (no count traffic).
+//!   uses are `Intrinsic::Share` calls (a count increment at most, hir_encodings.md "Sharing")
+//!   or `Capture::share` captures. Moves remain where the source is dead (no count traffic).
 //! - Compound assignment on locals/fields stays as `CompoundAssign` (place evaluated once).
 //! - `x++`/`x--` → `CompoundAssign` (+ value read for postfix via a temp `Let`).
 //! - Ternary `c ? a : b` → `ExprKind::If`.
@@ -285,6 +286,11 @@ pub struct LocalDef {
     /// Assigned (`let` locals, reassigned params) or, for params, contents modified by the body
     /// (see hir_encodings.md "Mutation inference").
     pub mutable: bool,
+    /// The variable lives in a counted cell shared with the escaping closures that capture it
+    /// (semantics stage 2, hir_encodings.md "Sharing"): one of them or the enclosing function
+    /// assigns it while another still sees it. Set on the enclosing local and on each capturing
+    /// closure's capture local; the variable is never moved from.
+    pub boxed: bool,
     pub span: Span,
 }
 
@@ -323,6 +329,10 @@ pub struct AdtDef {
     pub fields: Vec<FieldDef>,
     /// Sema's verdict: bitwise-copyable (all fields Copy, kind Struct/Anon).
     pub is_copy: bool,
+    /// Some field is assigned somewhere in the program (`x.f = …`, `x.f += …`): two references
+    /// to one value must see the same fields, so sharing it needs one counted object
+    /// (hir_encodings.md "Sharing"); otherwise a share may copy it field by field.
+    pub assigned: bool,
     /// Classes: base class type (its fields are a prefix of `fields`).
     pub base: Option<TyId>,
     /// Classes: constructor `Def::Fn` (None: every field has a default).
@@ -392,10 +402,10 @@ pub struct Capture {
     /// Corresponding param local in the closure body.
     pub inner: LocalId,
     pub mode: PassMode,
-    /// An `Owned` capture that copies instead of moving (`Intrinsic::Clone` semantics): a
-    /// string whose variable is used after the closure is created, or is not movable (a
+    /// An `Owned` capture that shares instead of moving (`Intrinsic::Share` semantics): the
+    /// enclosing variable is used after the closure is created, or cannot be moved from (a
     /// borrowed param, a `for...of` element). The enclosing local stays initialized.
-    pub clone: bool,
+    pub share: bool,
 }
 
 // ───────────────────────────── Statements (M1) ─────────────────────────────

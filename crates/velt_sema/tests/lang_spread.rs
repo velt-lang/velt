@@ -30,12 +30,11 @@ fn object_spread_of_a_local_moves_its_fields() {
         "struct S { a: string; b: i64; }
          function main() { const s = S { a: \"x\", b: 1 }; const t = { ...s }; console.log(s.a, t.b); }",
     );
-    // ... an array field is moved.
-    let r = err_src(
+    // ... and so is an array field (semantics stage 2: shared).
+    ok_src(
         "struct S { a: i64[]; b: i64; }
          function main() { const s = S { a: [1], b: 1 }; const t = { ...s }; console.log(s.a, t.b); }",
     );
-    assert!(r.contains("use of moved value"), "{r}");
 }
 
 #[test]
@@ -50,7 +49,7 @@ fn object_spread_of_a_class_clones() {
             matches!(
                 &e.kind,
                 E::Call {
-                    callee: velt_sema::hir::Callee::Intrinsic(Intrinsic::Clone),
+                    callee: velt_sema::hir::Callee::Intrinsic(Intrinsic::Share),
                     ..
                 }
             )
@@ -95,7 +94,7 @@ fn array_spread_builds_with_capacity_and_pushes() {
         .collect();
     assert!(intrinsics.contains(&Intrinsic::ArrayWithCapacity));
     assert!(
-        intrinsics.contains(&Intrinsic::Clone),
+        intrinsics.contains(&Intrinsic::Share),
         "string elements are cloned"
     );
     assert_eq!(

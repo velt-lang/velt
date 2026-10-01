@@ -46,6 +46,8 @@ pub(super) struct Layouts {
     /// Vtable statics (glue/vtable.rs).
     pub(super) vtables: HashMap<super::VtableKey, crate::vir::StaticId>,
     pub(super) drop_memo: HashMap<TyId, bool>,
+    /// Foreign (runtime-facing) layouts of types containing boxed values (foreign.rs).
+    pub(super) foreign: HashMap<TyId, Ty>,
 }
 
 impl Cx<'_> {
@@ -286,7 +288,7 @@ impl Cx<'_> {
         roots
     }
 
-    fn class_root(&self, mut d: DefId) -> DefId {
+    pub(super) fn class_root(&self, mut d: DefId) -> DefId {
         while let Some(b) = self.adt_def(d).base {
             match self.types.kind(b) {
                 TyKind::Adt(bd, _) => d = *bd,
@@ -314,10 +316,14 @@ impl Cx<'_> {
             return a;
         }
         let f = self.fn_def(def);
+        // A shared cell (`LocalDef::boxed`) is stored as its pointer, like a borrow.
         let caps: Vec<(PassMode, TyId)> = f
             .captures
             .iter()
-            .map(|c| (c.mode, f.body.locals[c.inner.0 as usize].ty))
+            .map(|c| match f.body.locals[c.inner.0 as usize].boxed {
+                true => (PassMode::Borrow, f.body.locals[c.inner.0 as usize].ty),
+                false => (c.mode, f.body.locals[c.inner.0 as usize].ty),
+            })
             .collect();
         let name = format!("{} env", f.name);
         let mut tys = vec![Ty::Ptr, Ty::Ptr];

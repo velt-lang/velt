@@ -6,7 +6,7 @@ deprecated, and the compiler explains how to update code.
 
 | Milestone | What it brings |
 |---|---|
-| **Semantics stage 2** | Objects, arrays, maps and closures become shared references, exactly like JavaScript: no more "use of moved value", `.clone()` becomes an explicit deep copy, escaping closures may modify captures. Uniquely owned values keep today's code; every benchmark must stay within 3%. The `struct` keyword goes away and objects compare by identity. ([design](docs/internals/design/semantics.md)) |
+| **Semantics stage 2** | Objects, arrays, maps and closures are shared references, exactly like JavaScript: no more "use of moved value", `.clone()` is an explicit deep copy, escaping closures may modify captures, and objects compare by identity; uniquely owned values keep their code and every benchmark stays within 3% (done). Remaining: the `struct` keyword goes away. ([design](docs/internals/design/semantics-stage2.md)) |
 | **TSX and server-side rendering** | JSX syntax with TypeScript's `jsxImportSource` model, a precompiling SSR mode, the `velt:jsx` provider, streaming async components. ([design](docs/internals/design/tsx.md)) |
 | **JSON round** | `JSON.parse` into unions, literal types and string enums; recursive type aliases. |
 | **Packages and a modular std** | A public package registry; the database drivers (`sqlite`, `postgres`, `redis`) move to versioned packages; module-scoped `extend` and retroactive `implements`. |

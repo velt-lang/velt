@@ -29,7 +29,7 @@ inferred or given explicitly (`f<f64>(2)`). Bounds are interfaces
 
 Parameters behave like `let` locals: reassigning one never affects the caller. Objects are
 shared with the callee (`xs.push(1)` or `p.x = 2` inside the function is visible to the
-caller); numbers, bools, strings and Copy structs are copies. Which parameters a function
+caller); numbers, bools and strings are copies. Which parameters a function
 modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
 
 ## Arrow functions and function types
@@ -52,18 +52,17 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   parameters, so they cannot keep a function they receive:
   ``cannot keep a copy of `g`, a borrowed function parameter``.
 - A closure stored in a variable, field or array, or returned, is **escaping** and captures by
-  move: using a moved variable afterwards is ``use of moved value `x` `` (strings are copied
-  instead; share mutable state with `shared(...)`). A closure's captured state is its own, so a
-  counter closure keeps counting.
-- Assigning a variable after a stored closure captured it is an error
-  (``cannot assign to `k` after a stored closure captured it``: the closure would keep the old
-  value, where a JS closure sees the new one), except a `for (let …)` loop's step, which JS runs
-  on a fresh binding per iteration. A closure passed to `push` is stored, so it is escaping too.
+  value: objects are shared with it (the closure and the enclosing code see the same object),
+  numbers and strings are copied. A variable that the closure or the enclosing code assigns
+  while the other still uses it (`let count = 0; const inc = () => { count++; }; inc();
+  console.log(count)`) lives in a shared, reference-counted cell, so both see every change, as
+  in JS; a closure that is the only remaining user (a `makeCounter` returning `() => ++n`) keeps
+  a plain copy. A `for (let …)` loop's step runs on a fresh binding per iteration, as in JS. A
+  closure passed to `push` is stored, so it is escaping too.
 - Async closures never modify captured variables, because they may run on another thread
-  ([Async](async.md#thread-safety)).
-- **Planned** ([semantics stage 2](../internals/design/semantics.md#stages-each-fully-gated)):
-  escaping closures that modify captures just work (`let count = 0; const inc = () => count++;`),
-  with the variable boxed only when the closure escapes.
+  ([Async](async.md#thread-safety)), and the enclosing code may not assign a variable an async
+  closure captured (``cannot assign to `k` after a stored closure captured it``): the closure
+  keeps its own copy.
 
 ```ts
 function apply(f: (x: i64) => i64, v: i64): i64 {

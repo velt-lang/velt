@@ -105,9 +105,9 @@ function main() {
 ## Equality
 
 `==` and `===` are the same operator (as are `!=` and `!==`), and both sides must have the same
-type: `1 == "1"` is a compile error. Strings compare by content. Today, arrays and structs
-compare by content and class instances by identity; **coming** with semantics stage 2: every
-object compares by identity, as in JS.
+type: `1 == "1"` is a compile error. Strings compare by content; every object (arrays, class
+instances, structs, object literals) compares by identity, as in JS. `deepEqual(a, b)` compares
+contents.
 
 ## Objects and types
 
@@ -132,9 +132,10 @@ object compares by identity, as in JS.
   classes and no `protected` (`private` is private to the declaring class).
 - `static readonly` constants exist; mutable statics don't.
 - A method that is never overridden is called directly; only overridden methods use a vtable.
-- `struct` declares a value type with the same members as a class (copied on assignment).
-  **Coming**: with semantics stage 2, `struct` goes away and all objects have JavaScript
-  reference semantics.
+- `struct` declares an object type with the same members as a class, built from a literal
+  (no constructor). **Planned**
+  ([semantics](../internals/design/semantics.md#js-fidelity-decisions)): `struct` goes away in
+  favor of `class` and `type Name = { … }` with `extend`.
 
 ## Functions
 
@@ -175,12 +176,12 @@ surprise ([Error handling](errors.md)).
 ## Memory
 
 There is no garbage collector, so no GC pauses and no heap tuning: memory is freed as soon as
-its owner goes away, and `[Symbol.dispose]()` runs at that moment. You never write lifetimes,
-borrows or `mut`; the compiler infers them. Today, one rule shows through: assigning an object
-(an array, a class instance, a map) to a second variable **moves** it, and the first variable
-can't be used afterwards. Calls borrow, so passing objects to functions works as in JS.
-**Coming** with semantics stage 2: objects become shared references exactly like in JS, and the
-move rule disappears ([Memory without a garbage collector](memory.md)).
+its last reference goes away, and `[Symbol.dispose]()` runs at that moment. You never write
+lifetimes, borrows or `mut`; the compiler infers them. Objects are shared references exactly
+like in JS (`const b = a; b.push(1)` changes `a`), and `.clone()` is an explicit deep copy.
+Values with a single owner cost nothing extra; only types the program actually shares get a
+reference count. Reference cycles are not freed (**planned**: `weak` references)
+([Memory without a garbage collector](memory.md)).
 
 ## Modules
 
@@ -205,8 +206,8 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | `"5" + 1 === "51"` | compile error: use a template literal | — |
 | `null` and `undefined` | `null` only; `a?: T` is `T \| null` | — |
 | `if (count)`, `port \|\| 8080` | conditions take `bool` and nullable values; `??` for defaults | — |
-| `==` coerces | `==` is `===`; both sides have the same type | objects compared by identity |
-| objects are shared references | objects have one owner: `const b = a` moves; calls borrow | shared references (stage 2) |
+| `==` coerces | `==` is `===` (objects by identity, `deepEqual` for contents); both sides have the same type | — |
+| objects are shared references | the same: arrays, maps, class instances, object types and closures are references, freed when the last reference goes | — |
 | garbage collector | deterministic freeing, no pauses; `[Symbol.dispose]()`, `using`, `await using` | `weak` references (stage 3) |
 | structural typing everywhere | object types structural but exact; interfaces nominal | — |
 | `any`, `unknown`, type assertions | none; `as` converts numbers; `JsonValue` for dynamic data | — |
@@ -220,4 +221,4 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | `export default` | named exports only | — |
 | string length in UTF-16 units | length and offsets in UTF-8 bytes | — |
 | (no equivalent) | `extend` adds members to any type | module-scoped extensions, retroactive `implements` |
-| JSX | server-side rendering through a `jsxImportSource` provider ([`velt:jsx`](../std/jsx.md)) | no client-side DOM; `children` props arrive with semantics stage 2 |
+| JSX | server-side rendering through a `jsxImportSource` provider ([`velt:jsx`](../std/jsx.md)) | no client-side DOM; see [TSX](../internals/design/tsx.md) for what is planned |

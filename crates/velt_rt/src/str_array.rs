@@ -41,6 +41,8 @@ impl VeltStrArray {
             };
         }
         let mut v = std::mem::ManuallyDrop::new(v);
+        // Generated code frees the buffer like one of its own blocks (leak counters).
+        crate::str::stats::block_alloc();
         VeltStrArray {
             ptr: v.as_mut_ptr(),
             len: v.len() as u64,
@@ -54,6 +56,7 @@ impl VeltStrArray {
 pub unsafe extern "C" fn velt_rt_str_array_drop(a: *mut VeltStrArray) {
     let arr = &mut *a;
     if arr.cap > 0 {
+        crate::str::stats::block_free();
         let mut v = Vec::from_raw_parts(arr.ptr, arr.len as usize, arr.cap as usize);
         for s in v.iter_mut() {
             velt_rt_str_drop(s);

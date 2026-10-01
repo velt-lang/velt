@@ -9,7 +9,7 @@ upgrade, or opened as a client to `ws://` / `wss://` URLs.
   return `response` (a `101`) from the handler and use `socket` from a spawned task. Throws
   `IoError` "EINVAL" if `req` is not an upgrade request.
 - `connectWebSocket(url, opts: WsConnectOptions { ca? } = {}): Promise<WebSocket>`.
-- `WebSocket` (Copy handle): `send(text)`, `sendBytes(data: u8[])`, `receive(): Promise<WsMessage
+- `WebSocket` (a handle): `send(text)`, `sendBytes(data: u8[])`, `receive(): Promise<WsMessage
   | null>` (null once the peer closed), `close(code = 1000, reason = "")` (sends a close frame
   and releases the handle; always call it).
 - `WsMessage { isBinary; text; data: u8[] }`.

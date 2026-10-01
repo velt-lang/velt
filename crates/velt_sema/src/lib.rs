@@ -24,6 +24,7 @@
 pub mod hir;
 
 mod anon;
+mod assigned_fields;
 mod ast_walk;
 mod body;
 mod collect;
@@ -137,10 +138,11 @@ fn analyze(cx: &mut ctx::Ctx) {
     throws::infer_all(cx);
     json::check_json_types(cx);
     void_fields::check_instantiations(cx);
-    ownership::soften_string_moves(cx);
+    ownership::soften_moves(cx);
     ownership::validate_moves(cx);
-    let reused = moves::check_all(cx);
-    ownership::clone_reused(cx, &reused);
+    let moved = moves::check_all(cx);
+    ownership::clone_reused(cx, &moved.reused);
+    ownership::box_cells(cx, &moved.boxed);
     ownership::check_exclusive(cx);
 }
 

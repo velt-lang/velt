@@ -18,11 +18,13 @@ impl FnLower<'_, '_> {
         match self.cx.kind(ty) {
             TyKind::Adt(..) if self.cx.is_class(ty) => {
                 let obj = self.cx.obj_agg(ty);
-                let p = proj(base, Proj::Deref(Ty::Agg(obj)));
+                let base = self.retained_hop(base, ty);
+                let p = proj(&base, Proj::Deref(Ty::Agg(obj)));
                 proj(&p, Proj::Field(self.cx.vir_field(ty, index)))
             }
             TyKind::Adt(..) | TyKind::Tuple(_) => {
-                proj(base, Proj::Field(self.cx.vir_field(ty, index)))
+                let value = self.content(base, ty);
+                proj(&value, Proj::Field(self.cx.vir_field(ty, index)))
             }
             TyKind::Shared(inner) => {
                 let bx = self.cx.shared_box(inner);
@@ -36,6 +38,13 @@ impl FnLower<'_, '_> {
 
     pub(super) fn field_expr(&mut self, base: &hir::Expr, index: u32, mode: UseMode) -> Operand {
         let bty = self.sub(base.ty);
+        if mode == UseMode::Move && self.counted_part(base) {
+            // Other owners still see the field (semantics stage 2): share it instead.
+            let v = self.field_expr(base, index, UseMode::Borrow);
+            let fty = self.cx.adt_field_tys(bty)[index as usize];
+            let s = self.share_value(v, fty);
+            return self.own_value(s, fty);
+        }
         if self.is_unit_field(bty, index) {
             self.expr(base);
             return unit();
@@ -124,6 +133,7 @@ impl FnLower<'_, '_> {
         let bty = self.sub(base.ty);
         let v = self.expr(base);
         let arr = self.place_of(v, bty);
+        let arr = self.content(&arr, bty);
         let i = self.expr(index);
         let ity = self.vty(index.ty);
         Operand::Copy(self.elem_place_checked(&arr, bty, i, ity))
@@ -139,6 +149,14 @@ impl FnLower<'_, '_> {
 
     pub(super) fn unwrap_some(&mut self, inner: &hir::Expr, mode: UseMode) -> Operand {
         let oty = self.sub(inner.ty);
+        if mode == UseMode::Move && self.through_counted(inner, oty) {
+            let v = self.unwrap_some(inner, UseMode::Borrow);
+            let TyKind::Option(pty) = self.cx.kind(oty) else {
+                ice("unwrap of a non-option")
+            };
+            let s = self.share_value(v, pty);
+            return self.own_value(s, pty);
+        }
         let v = self.expr(inner);
         let p = self.place_of(v, oty);
         self.check_narrowed_field(inner, &p, oty);
@@ -179,6 +197,12 @@ impl FnLower<'_, '_> {
         mode: UseMode,
     ) -> Operand {
         let ety = self.sub(inner.ty);
+        if mode == UseMode::Move && self.through_counted(inner, ety) {
+            let v = self.unwrap_variant(inner, variant, UseMode::Borrow);
+            let pty = self.cx.variant_tys(ety, variant)[0];
+            let s = self.share_value(v, pty);
+            return self.own_value(s, pty);
+        }
         let v = self.expr(inner);
         let p = self.place_of(v, ety);
         let (payload, pty) = self.variant_part(&p, ety, variant, 0);
@@ -264,6 +288,7 @@ impl FnLower<'_, '_> {
             K::Index { base, index, .. } => {
                 let bty = self.sub(base.ty);
                 let arr = self.place_expr_with(base, pre);
+                let arr = self.content(&arr, bty);
                 let i = match pre.pop_front() {
                     Some(i) => i,
                     None => self.expr(index),
@@ -312,9 +337,18 @@ impl FnLower<'_, '_> {
             return unit();
         }
         let refill = self.refilled_field(place);
-        let p = self.place_expr_with(place, &mut pre);
         let ty = self.sub(place.ty);
-        if refill.is_none() && self.cx.needs_drop(ty) {
+        let shared = self.through_counted(place, ty);
+        let p = self.place_expr_with(place, &mut pre);
+        if shared && self.cx.needs_drop(ty) {
+            // Other owners see the place: store first, then drop the old value (its `dispose`
+            // may reach the place's container and must find it consistent).
+            let vt = self.cx.ty(ty);
+            let v = self.detach(v, place.ty);
+            let old = self.copy_to_temp(Operand::Copy(p.clone()), vt);
+            self.store(p, v);
+            self.drop_glue(Place::local(old), ty);
+        } else if refill.is_none() && self.cx.needs_drop(ty) {
             let v = self.detach(v, place.ty);
             self.drop_glue(p.clone(), ty);
             self.store(p, v);
@@ -363,6 +397,10 @@ impl FnLower<'_, '_> {
             hir::ExprKind::Local(id, _) => Some(*id),
             _ => None,
         };
+        let pty = self.sub(place.ty);
+        if local.is_none() && self.through_counted(place, pty) {
+            return self.compound_assign_shared(op, place, value, pty);
+        }
         let p = match local {
             Some(id) => match self.local_target(id) {
                 Some(p) => p,
@@ -396,6 +434,36 @@ impl FnLower<'_, '_> {
                 self.assign(p, Rvalue::Use(v));
             }
         }
+        unit()
+    }
+
+    /// `place op= value` where other owners may reach `place` (through a counted object): the
+    /// right-hand side may change or free what `place` points to, so the old value is shared
+    /// before it runs and the place is formed again afterwards (with the same indices).
+    fn compound_assign_shared(
+        &mut self,
+        op: hir::BinOp,
+        place: &hir::Expr,
+        value: &hir::Expr,
+        ty: TyId,
+    ) -> Operand {
+        let mut pre = VecDeque::new();
+        self.place_indices(place, &mut pre);
+        let first = self.place_expr_with(place, &mut pre.clone());
+        let l = self.share_value(Operand::Copy(first), ty);
+        let l = self.own_value(l, ty);
+        let r = self.expr(value);
+        let v = self.binop(op, l, r, place.ty, place.ty);
+        let v = match self.cx.needs_drop(ty) {
+            true => self.take_owned(v),
+            false => v,
+        };
+        let vt = self.cx.ty(ty);
+        let v = Operand::Copy(Place::local(self.copy_to_temp(v, vt)));
+        let p = self.place_expr_with(place, &mut pre);
+        let old = self.copy_to_temp(Operand::Copy(p.clone()), vt);
+        self.assign(p, Rvalue::Use(v));
+        self.drop_glue(Place::local(old), ty);
         unit()
     }
 

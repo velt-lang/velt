@@ -1,44 +1,53 @@
 # Memory model
 
 There is no garbage collector, and nothing ever pauses the program: memory is freed
-deterministically when its owner goes away. The compiler infers ownership and mutation, so
-programs carry no lifetime, borrow or `mut` annotations. For a gentler explanation, see
-[Memory without a garbage collector](../book/memory.md).
+deterministically when the last reference to it goes away. The compiler infers ownership and
+mutation, so programs carry no lifetime, borrow or `mut` annotations. For a gentler
+explanation, see [Memory without a garbage collector](../book/memory.md).
 
-## Ownership
+## Values and references
 
-- **Values that copy**: numbers, `bool`, strings ([Strings](types.md#strings)), structs whose
-  fields are all Copy, and unions of Copy members. Object types (`type P = { x: i64 }`, object
-  literals) are not Copy even when their fields are: like class instances they have one owner,
-  so `m.update(k, (c) => { c.count++; })` changes the stored object as in JS.
-- **Owned objects**: class instances, arrays, maps, closures and other structs have one owner.
-  `const b = a;` **moves** the object; a later use of `a` is ``use of moved value `a` ``, with
-  the fixes: pass it to a function instead, `a.clone()`, or `shared(a)`. Returning a value or
-  storing it into a field or array moves it too.
-- **Calls borrow**: passing an object to a function lends it, so `log(user); save(user);` just
-  works. The compiler infers per parameter whether the callee reads it, modifies it, or keeps
-  it. A parameter the body stores or returns takes ownership, so the caller's variable is
-  moved. Parameters of async functions are always owned, and an argument used again is copied.
-- `Map.get` returns a copy; `for...of` borrows ([Control flow](control-flow.md#forof)).
-  Values are dropped at the end of their scope or when overwritten.
-- **Planned — semantics stage 2**
-  ([semantics](../internals/design/semantics.md#model-js-semantics-by-default-rust-costs-only-where-needed)):
-  objects, arrays, maps and closures become shared references like in JS (`const b = a;
-  b.push(1)` changes `a`); "use of moved value" goes away; `.clone()` becomes an explicit deep
-  copy (`structuredClone`). Uniquely owned values keep today's code; only actually aliased ones
-  get a reference count. Stage 3 adds `weak` references and a compile-time warning for
-  reference cycles.
+- **Values that copy**: numbers, `bool`, strings ([Strings](types.md#strings)), literal and
+  enum types, and unions, tuples and `T | null` of those.
+- **Objects are references**, as in JS: class instances, arrays, maps, structs, object types
+  (`type P = { x: i64 }`, object literals) and closures. `const b = a;`, passing `a` to a
+  function, storing it in a field, an array or a map, returning it and capturing it all refer
+  to the *same* object: `b.push(1)` changes `a`. Elements, fields and `Map.get` results are the
+  stored objects themselves: changing the object `m.get(k)` returns changes the one in the
+  map. `x.clone()` makes an independent deep copy (like `structuredClone`).
+- **No garbage collector, no pauses**: memory is freed (and `[Symbol.dispose]()` runs,
+  [below](#resource-cleanup-using-and-symboldispose)) the moment the last reference goes. The
+  compiler infers ownership: a value with a single owner is moved, with no reference count and
+  the same code as Rust, and only types whose values the program actually shares get a
+  reference count (a word in front of the object; arrays and object types that are shared are
+  then stored behind a pointer). Freeing is deterministic.
+- **Calls borrow**: passing an object to a function lends it, so `log(user); save(user);` costs
+  nothing. The compiler infers per parameter whether the callee reads it, modifies it, or keeps
+  it. A parameter the body stores or returns takes ownership: a caller that does not use its
+  variable again hands it over for free, one that does shares it.
+- A **promise** has one owner: `await` a stored promise once; using a promise variable after
+  handing it on is ``use of moved value `p` ``.
+- Reference cycles (`a.next = b; b.next = a`) are never freed. **Planned**
+  ([semantics — cycles](../internals/design/semantics.md#reference-cycles--without-a-collector)):
+  `weak` references and a compile-time warning for reference cycles.
 
-```ts error
+```ts
 class Box {
   v: i64 = 1;
 }
 
-function main() {
-  const a = new Box();
-  const b = a;              // ownership moves to b
-  console.log(a.v, b.v);    // error: use of moved value `a`
+function bump(b: Box) {
+  b.v += 1;
 }
+
+const a = new Box();
+const b = a;                    // the same object
+b.v = 5;
+bump(a);
+const copy = a.clone();         // a deep copy
+copy.v = 0;
+console.log(a.v, b.v, copy.v);  // 6 6 0
+console.log(a == b, a == copy); // true false: `==` compares objects by identity
 ```
 
 ## Mutation is inferred
@@ -51,12 +60,12 @@ There is no `mut`; writing it is an error
   method's implementations.
 - **Parameters** whose contents are modified (field writes, `push`, modifying methods, passing
   them on). The caller sees those changes; reassigning the parameter only rebinds the local
-  name. Copy parameters are local copies.
+  name. Number, bool and string parameters are local copies.
 - **Callbacks** receive objects by reference and may modify them; calling a function value of
   unknown behavior counts as modifying the call's other arguments.
 - Not allowed: modifying a module constant through a call
-  (``cannot modify module-level constant `X` ``), assigning a field of a `for...of` element, and
-  reassigning an object parameter of a closure or of an overridden or interface method.
+  (``cannot modify module-level constant `X` ``) and reassigning an object parameter of a
+  closure or of an overridden or interface method.
 
 ```ts
 class Cart {
@@ -85,9 +94,11 @@ place a closure argument modifies) must not be reachable through any other argum
 call: directly, as an overlapping place (`a` / `a.f`, `xs` / `xs[i]`), through a `for...of`
 binding, or as a closure capture. `append(xs, xs)`, `append(g.rows[0], g.rows[1])` and
 `xs.forEach((x) => { xs.push(x); })` are errors
-(``cannot use `xs` here: this call may modify it through another argument``). Reading a Copy
-value is fine (`xs.push(xs.length)`), and distinct fields are disjoint (`f(this.a, this.b)`).
-This rule is what lets the compiler assume no aliasing, like Rust.
+(``cannot use `xs` here: this call may modify it through another argument``). Reading a number
+is fine (`xs.push(xs.length)`), and distinct fields are disjoint (`f(this.a, this.b)`). This rule
+is what lets the compiler assume no aliasing for values with a single owner, like Rust. Two
+variables that refer to the same object (`const ys = xs; append(xs, ys)`) are allowed and work
+as in JS: the type is then reference-counted, and the compiler makes no such assumption for it.
 
 ```ts error
 function append(a: i64[], b: i64[]) {
@@ -105,12 +116,11 @@ function main() {
 ## Resource cleanup: `using` and `[Symbol.dispose]`
 
 A class or struct may define `[Symbol.dispose](): void` (TypeScript's cleanup method name). It
-runs automatically when the value is dropped (end of scope, overwrite, owner dropped), before
-its fields are dropped, like Rust's `Drop`. Types with `[Symbol.dispose]` are never Copy, since
-a handle can't be closed twice. Calling it explicitly, `x[Symbol.dispose]()`, drops the value
-right there (the hook runs once; `x` is moved, so using it afterwards is an error). A method
-merely named `dispose()` is an ordinary method. APIs with an explicit `close()` keep it, like
-Node.
+runs automatically when the last reference to the object goes away (end of scope, overwrite,
+owner dropped), before its fields are dropped, like Rust's `Drop`. Calling it explicitly,
+`x[Symbol.dispose]()`, releases `x` right there (the hook runs once, when no other reference
+remains; using `x` afterwards is ``use of moved value `x` ``). A method merely named `dispose()`
+is an ordinary method. APIs with an explicit `close()` keep it, like Node.
 
 ```ts
 class TempFile {

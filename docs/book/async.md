@@ -140,11 +140,12 @@ async function main() {
 ## Sharing state between tasks
 
 Spawned tasks run in parallel, so the compiler doesn't let them modify captured variables
-("cannot mutate captured variable `n` in a spawned task"). Data races are compile errors. Share
-state explicitly:
+("cannot mutate captured variable `n` in a spawned task"), and an object a task captures is
+copied for it (a structured clone) when the rest of the program still uses it. Data races are
+compile errors. Share state explicitly:
 
-- `shared(x)` creates an atomically reference-counted value; `.clone()` adds a reference. On
-  64-bit integers, `add`, `get` and `set` are atomic.
+- `shared(x)` creates an atomically reference-counted value: tasks that capture it refer to the
+  same value. On 64-bit integers, `add`, `get` and `set` are atomic.
 - `shared(new Mutex<T>(x))` guards any value; `m.with((v) => …)` locks it for the callback, which
   gets the value itself and may return a result.
 
@@ -154,13 +155,11 @@ async function main() {
   const done = shared(0);
   const workers: Promise<void>[] = [];
   for (let w = 0; w < 3; w++) {
-    const s = seen.clone();
-    const d = done.clone();
     workers.push(spawn(async () => {
-      s.with((v) => {
+      seen.with((v) => {
         v.push(`worker ${w}`);
       });
-      d.add(1);
+      done.add(1);
     }));
   }
   await Promise.all(workers);

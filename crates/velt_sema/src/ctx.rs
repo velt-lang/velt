@@ -84,6 +84,8 @@ pub(crate) struct Ctx<'m> {
     pub jsx_adapters: Vec<crate::body::expr::jsx::Adapter>,
     /// Side tables for [`crate::ide`] (`None` when compiling).
     pub ide: Option<Box<crate::ide::record::Recorder>>,
+    /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
+    pub shared_memo: HashMap<TyId, bool>,
     pub diags: Diagnostics,
 }
 
@@ -124,6 +126,7 @@ impl<'m> Ctx<'m> {
             jsx_providers: HashMap::new(),
             jsx_adapters: vec![],
             ide: None,
+            shared_memo: HashMap::new(),
             diags: vec![],
         }
     }
@@ -287,6 +290,40 @@ impl<'m> Ctx<'m> {
         t == self.ty.str_ || self.ty.opt_payload(t) == Some(self.ty.str_)
     }
 
+    /// Semantics stage 2: a non-Copy value that is *shared* — another reference to the same
+    /// value — where its place stays in use or cannot be moved from, instead of being moved
+    /// (strings, objects, arrays, maps, closures). Promises have one owner (`await` takes the
+    /// result out), so values that hold one are moved as before.
+    pub fn is_shared_value(&mut self, t: TyId) -> bool {
+        if let Some(&b) = self.shared_memo.get(&t) {
+            return b;
+        }
+        let b = !self.is_copy(t) && !self.holds_promise(t, 0);
+        self.shared_memo.insert(t, b);
+        b
+    }
+
+    fn holds_promise(&mut self, t: TyId, depth: u32) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
+            TyKind::Promise(..) => return true,
+            TyKind::Array(e) | TyKind::Option(e) => vec![e],
+            TyKind::Tuple(ts) => ts,
+            TyKind::Adt(d, args) => {
+                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
+                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                    DefInfo::Enum(e) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
+                    _ => vec![],
+                };
+                tys.into_iter().map(|f| self.ty.subst(f, &args)).collect()
+            }
+            _ => vec![],
+        };
+        parts.into_iter().any(|p| self.holds_promise(p, depth + 1))
+    }
+
     /// Ownership: can values of this type be duplicated bitwise?
     pub fn is_copy(&mut self, t: TyId) -> bool {
         self.is_copy_depth(t, 0)
@@ -312,10 +349,8 @@ impl<'m> Ctx<'m> {
             // Copying a mutex would duplicate its lock word.
             TyKind::Adt(d, _) if Some(d) == self.mutex_ty() => false,
             TyKind::Adt(d, args) => {
+                // Objects (structs included, semantics stage 2) are references: never Copy.
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
-                    DefInfo::Adt(a) if a.kind == AdtKind::Struct && !a.has_dispose => {
-                        a.fields.iter().map(|f| f.ty).collect()
-                    }
                     DefInfo::Enum(e) => e
                         .variants
                         .iter()

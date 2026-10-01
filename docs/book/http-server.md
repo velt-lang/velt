@@ -58,7 +58,7 @@ class Store {
   add(title: string): Todo {
     const todo: Todo = { id: this.nextId, title, done: false };
     this.nextId++;
-    this.todos.push(todo.clone());
+    this.todos.push(todo);                       // the same object, as in JS
     return todo;
   }
 

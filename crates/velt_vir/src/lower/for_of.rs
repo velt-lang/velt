@@ -25,6 +25,9 @@ impl FnLower<'_, '_> {
         body: &hir::Block,
         consume: bool,
     ) {
+        if self.iterates_shared(iter) {
+            return self.for_of_shared(label, binding, iter, body, consume);
+        }
         self.push_scope(ScopeKind::Temps);
         let aty = self.sub(iter.ty);
         if !matches!(self.cx.kind(aty), hir::TyKind::Array(_)) {

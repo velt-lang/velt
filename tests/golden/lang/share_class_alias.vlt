@@ -1,0 +1,28 @@
+// check: no leaks
+// Semantics stage 2: assigning an object to a second name shares it (like JS) — formerly the
+// "use of moved value" error golden (m2/errors/moved_class).
+class Box {
+  v: i64 = 0;
+}
+
+function bump(b: Box) {
+  b.v += 1;
+}
+
+function keep(b: Box): Box {
+  return b;
+}
+
+function main() {
+  const a = new Box();
+  const b = a;
+  b.v = 2;
+  console.log(a.v, b.v);
+  bump(a);
+  const c = keep(a);
+  c.v *= 10;
+  console.log(a.v, b.v, c.v);
+  const boxes = [a, b, c];
+  boxes[1].v = 7;
+  console.log(a.v, boxes.length);
+}

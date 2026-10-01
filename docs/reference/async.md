@@ -26,10 +26,13 @@ Promises behave like JavaScript's, at Rust's cost:
   completion (its result is dropped), and the program waits for it before exiting, like Node
   waits for pending work. A promise created outside async code (for example in a synchronous
   `main`) starts when it is awaited or spawned.
-- An async call owns its arguments: an argument variable used again afterwards is copied,
-  otherwise moved, because the promise may outlive the caller's frame. Promises, and values
-  holding one or a `[Symbol.dispose]` resource, cannot be copied: they are always moved
-  (``a promise cannot be copied`` for an explicit `p.clone()`).
+- An async call owns its arguments: an argument variable used again afterwards is shared with
+  the promise (objects) or copied (numbers, strings), otherwise moved, because the promise may
+  outlive the caller's frame. A promise has one owner: using a promise variable after handing
+  it on is ``use of moved value``, and an explicit `p.clone()` is ``a promise cannot be copied``.
+- Values handed to `spawn` (and captured by an HTTP handler) go to another thread: an object
+  the program still shares is deep-copied for the task (like a structured clone), so threads
+  never share reference counts.
 
 ## Combinators
 
@@ -56,8 +59,9 @@ Built-ins: `sleep(ms)`, `yieldNow()`, `performance.now(): f64` (monotonic millis
 Thread safety is checked at compile time: async closures, and HTTP handlers, must not modify
 captured variables; the error mentions "spawned task" and `shared`. Share state with:
 
-- `shared(x)`, which gives a `shared<T>`: an atomically reference-counted value; `.clone()`
-  adds a reference. For 64-bit integers, `.add(n)`, `.get()` and `.set(v)` are atomic.
+- `shared(x)`, which gives a `shared<T>`: an atomically reference-counted value. Assigning,
+  passing or capturing it adds a reference (so does `.clone()`); it is never deep-copied. For
+  64-bit integers, `.add(n)`, `.get()` and `.set(v)` are atomic.
 - `shared(new Mutex<T>(x))` with `m.with((v) => …)`: a synchronous lock. The callback gets the
   value itself (assigning `v` updates it), returns a result, and must not be async.
 
@@ -105,7 +109,7 @@ async function main() {
   const hits = shared(0);
   const tasks: Promise<i64>[] = [];
   for (let i = 0; i < 4; i++) {
-    tasks.push(spawn(worker(i, hits.clone())));                          // on any core
+    tasks.push(spawn(worker(i, hits)));                                  // on any core
   }
   const ids = await Promise.all(tasks);
   const log = shared(new Mutex<string[]>([]));

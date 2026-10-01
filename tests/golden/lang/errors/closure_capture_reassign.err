@@ -1,5 +1,0 @@
-closure_capture_reassign.vlt:7:3: error: cannot assign to `k` after a stored closure captured it
-the closure keeps its own copy of `k` and would not see the new value; assign `k` before creating the closure, use a separate variable, or share it with `shared(...)`
-closure_capture_reassign.vlt:11:3: error: cannot assign to `s` after a stored closure captured it
-closure_capture_reassign.vlt:14:18: error: cannot assign to `n` after a stored closure captured it
-closure_capture_reassign.vlt:21:5: error: cannot assign to `w` after a stored closure captured it

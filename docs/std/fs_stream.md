@@ -2,8 +2,8 @@
 
 `import { openRead, openWrite } from "velt:fs_stream"`. Reads and writes files in chunks, for
 files too large to hold in memory or written incrementally. `FileReader` and `FileWriter` are
-Copy handles like `TcpStream`: async methods take `this` by copy, and `close()` releases the
-handle exactly once. Failures throw `IoError`.
+handles like `TcpStream`: you can pass them to tasks and async methods, and `close()` releases
+the handle exactly once. Failures throw `IoError`.
 
 - `openRead(path): Promise<FileReader>`.
 - `FileReader`:

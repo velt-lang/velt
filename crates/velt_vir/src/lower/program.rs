@@ -12,10 +12,16 @@ use crate::vir::Ty;
 use crate::vir::{self, AggLayout, ExternFn, ExternId, FuncId, Function, StaticData, StaticId};
 
 impl<'h> Cx<'h> {
-    pub(super) fn new(hir: &'h hir::Program) -> Self {
+    /// A pass over `hir` with the type table `types` (the HIR's, plus what earlier passes
+    /// interned) and the counted types `boxing`.
+    pub(super) fn new(
+        hir: &'h hir::Program,
+        types: hir::TyTable,
+        boxing: super::boxing::Boxing,
+    ) -> Self {
         Cx {
             hir,
-            types: hir.types.clone(),
+            types,
             aggs: vec![AggLayout {
                 name: "string".into(),
                 size: 24,
@@ -37,6 +43,8 @@ impl<'h> Cx<'h> {
             locs: None,
             tracked: HashMap::new(),
             str_objects: HashMap::new(),
+            boxing,
+            facts: Default::default(),
             iface_impls: None,
             dyn_modes_memo: HashMap::new(),
         }

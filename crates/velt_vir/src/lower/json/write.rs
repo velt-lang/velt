@@ -71,7 +71,10 @@ impl FnLower<'_, '_> {
             TyKind::Unit | TyKind::Never => self.push_text(buf, "null"),
             TyKind::Literal(l) => self.push_literal_json(buf, &l),
             TyKind::Option(e) => self.json_write_option(buf, place, ty, e),
-            TyKind::Array(e) => self.json_write_array(buf, place, e),
+            TyKind::Array(e) => {
+                let arr = self.content(place, ty);
+                self.json_write_array(buf, &arr, e)
+            }
             TyKind::Tuple(es) => {
                 self.push_text(buf, "[");
                 for (i, e) in es.into_iter().enumerate() {

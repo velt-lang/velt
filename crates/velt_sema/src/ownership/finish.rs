@@ -99,7 +99,7 @@ pub(super) fn soft_args(cx: &mut Ctx, d: DefId, f: &mut FnDef) {
         }
     });
     for (span, ty) in spans {
-        if !cx.owns_resource(ty) {
+        if cx.is_shared_value(ty) {
             cx.fn_info_mut(d).soft_moves.push(span);
         }
     }

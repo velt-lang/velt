@@ -1,7 +1,7 @@
 # velt:datetime
 
 `import { DateTime, Duration } from "velt:datetime"`. `DateTime` is a UTC-first instant: epoch
-milliseconds in a Copy struct. **Months are 1-12.** Local time is opt-in and DST-aware, using
+milliseconds in a small struct. **Months are 1-12.** Local time is opt-in and DST-aware, using
 the OS time zone.
 
 - Constructors:

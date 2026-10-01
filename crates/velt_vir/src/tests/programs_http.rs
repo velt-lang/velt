@@ -88,7 +88,7 @@ fn user_handler(pb: &mut PB, ty: &Types, rt: &Rt, counter: velt_sema::hir::Local
         outer: counter,
         inner: cnt,
         mode: PassMode::Owned,
-        clone: false,
+        share: false,
     });
     let req = c.param("req", ty.req, PassMode::Owned);
     let n = c.local("n", t.i64);
@@ -129,7 +129,7 @@ fn adapter(pb: &mut PB, ty: &Types, rt: &Rt, handler: velt_sema::hir::LocalId) -
         outer: handler,
         inner: h,
         mode: PassMode::Owned,
-        clone: false,
+        share: false,
     });
     let raw = c.param("raw", ty.u64t, PassMode::Copy);
     let req = c.local("req", ty.req);
