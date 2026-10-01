@@ -177,6 +177,7 @@ fn link_and_run_on_host() {
             runtime_lib: &found,
             output: &exe,
             release,
+            native: &[],
         })
         .unwrap_or_else(|e| panic!("link failed (release={release}):\n{e}"));
 
@@ -203,6 +204,7 @@ fn link_and_run_on_host() {
         runtime_lib: &bad_rt,
         output: &dir.join(format!("bad{}", std::env::consts::EXE_SUFFIX)),
         release: false,
+        native: &[],
     })
     .unwrap_err();
     assert!(

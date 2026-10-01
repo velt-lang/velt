@@ -21,6 +21,7 @@ impl<'h> Cx<'h> {
     ) -> Self {
         Cx {
             hir,
+            native_inits: vec![],
             types,
             aggs: vec![AggLayout {
                 name: "string".into(),

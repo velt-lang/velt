@@ -24,6 +24,7 @@ pub fn link_executable(
     exe: &Path,
     release: bool,
     strip_debug: bool,
+    native: &[velt_link::NativeLink],
 ) -> Result<Linked, String> {
     let shared = if release {
         None
@@ -42,7 +43,7 @@ pub fn link_executable(
         objects.push(entry);
     }
     let stamp_path = stamp_path(exe);
-    let key = link_key(target, &objects, &runtime_lib, strip_debug);
+    let key = link_key(target, &objects, &runtime_lib, strip_debug, native);
     if std::fs::read_to_string(&stamp_path).ok() == Some(stamp(&key, exe)) {
         return Ok(Linked::UpToDate);
     }
@@ -54,6 +55,7 @@ pub fn link_executable(
         runtime_lib: &runtime_lib,
         output: exe,
         release: strip_debug,
+        native,
     })?;
     // Best effort: without a stamp the next build just links again.
     let _ = std::fs::write(&stamp_path, stamp(&key, exe));
@@ -82,8 +84,14 @@ fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 /// Hash of everything the link reads or is configured by: target, settings, object contents, the
-/// runtime library (path, size, modification time) and the linker override.
-fn link_key(target: &str, objects: &[PathBuf], runtime_lib: &Path, strip_debug: bool) -> String {
+/// runtime library and native libraries (path, size, modification time) and the linker override.
+fn link_key(
+    target: &str,
+    objects: &[PathBuf],
+    runtime_lib: &Path,
+    strip_debug: bool,
+    native: &[velt_link::NativeLink],
+) -> String {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     (target, strip_debug).hash(&mut h);
     for o in objects {
@@ -91,6 +99,16 @@ fn link_key(target: &str, objects: &[PathBuf], runtime_lib: &Path, strip_debug: 
     }
     runtime_lib.hash(&mut h);
     file_stamp(runtime_lib).hash(&mut h);
+    for n in native {
+        for file in [
+            Some(&n.shared),
+            n.import_lib.as_ref(),
+            n.static_obj.as_ref(),
+        ] {
+            file.hash(&mut h);
+            file.and_then(|f| file_stamp(f)).hash(&mut h);
+        }
+    }
     std::env::var_os("VELT_LINKER").hash(&mut h);
     format!("{:016x}", h.finish())
 }
@@ -130,12 +148,18 @@ mod tests {
         std::fs::write(&obj, b"one").unwrap();
         std::fs::write(&rt, b"runtime").unwrap();
         let objs = [obj.clone()];
-        let key = link_key("t", &objs, &rt, false);
-        assert_eq!(key, link_key("t", &objs, &rt, false));
-        assert_ne!(key, link_key("t", &objs, &rt, true));
-        assert_ne!(key, link_key("u", &objs, &rt, false));
+        let key = link_key("t", &objs, &rt, false, &[]);
+        assert_eq!(key, link_key("t", &objs, &rt, false, &[]));
+        assert_ne!(key, link_key("t", &objs, &rt, true, &[]));
+        assert_ne!(key, link_key("u", &objs, &rt, false, &[]));
+        let native = [velt_link::NativeLink {
+            shared: rt.clone(),
+            import_lib: None,
+            static_obj: None,
+        }];
+        assert_ne!(key, link_key("t", &objs, &rt, false, &native));
         std::fs::write(&obj, b"two").unwrap();
-        assert_ne!(key, link_key("t", &objs, &rt, false));
+        assert_ne!(key, link_key("t", &objs, &rt, false, &[]));
     }
 
     #[test]

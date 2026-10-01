@@ -16,6 +16,9 @@ pub struct GraphPackage {
     pub dependencies: BTreeMap<String, PathBuf>,
     /// The package's `[paths]` import aliases (`crate::paths`).
     pub paths: BTreeMap<String, String>,
+    /// The package's native library for the build target (packages with native code, when the
+    /// install had a target).
+    pub native: Option<crate::native::NativeLib>,
     /// The package's `[jsx] importSource`, as written.
     pub jsx_import_source: Option<String>,
     /// `root`, canonicalized, for matching importing files.
@@ -62,6 +65,7 @@ impl PackageGraph {
             root: root.to_path_buf(),
             dependencies,
             paths: BTreeMap::new(),
+            native: None,
             jsx_import_source: None,
             key,
         });
@@ -97,6 +101,13 @@ impl PackageGraph {
     /// All packages, in insertion order (root package first when built by [`crate::install`]).
     pub fn packages(&self) -> &[GraphPackage] {
         &self.packages
+    }
+
+    /// The packages with a native library, in insertion order.
+    pub fn natives(&self) -> impl Iterator<Item = (&GraphPackage, &crate::native::NativeLib)> {
+        self.packages
+            .iter()
+            .filter_map(|p| p.native.as_ref().map(|n| (p, n)))
     }
 
     /// The innermost package whose root contains `file`.

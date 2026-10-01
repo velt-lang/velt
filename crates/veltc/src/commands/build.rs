@@ -162,13 +162,14 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
                 .parent()
                 .filter(|d| !d.as_os_str().is_empty())
                 .unwrap_or(Path::new("."));
-            opts.packages = Project::find(dir, args.locked)?.map(|p| p.graph);
+            opts.packages = Project::find(dir, args.locked, &opts.target())?.map(|p| p.graph);
             opts.input = file.clone();
         }
         None => {
             let project = Project::current(vpm::InstallOptions {
                 locked: args.locked,
                 update: false,
+                target: Some(opts.target()),
             })?;
             opts.input = project.entry()?;
             if opts.output.is_none() {
