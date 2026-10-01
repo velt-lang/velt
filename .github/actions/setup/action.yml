@@ -3,10 +3,10 @@ description: Rust toolchain, wasm targets, wasmtime, node, clang and a build cac
 runs:
   using: composite
   steps:
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        components: clippy, rustfmt, llvm-tools
-        targets: wasm32-wasip1, wasm32-unknown-unknown
+    # The toolchain, components and targets come from rust-toolchain.toml.
+    - name: rust (pinned)
+      shell: bash
+      run: rustup show active-toolchain || rustup toolchain install
     - uses: Swatinem/rust-cache@v2
       with:
         shared-key: gate
