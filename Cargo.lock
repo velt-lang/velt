@@ -2296,7 +2296,9 @@ dependencies = [
  "tempfile",
  "toml",
  "toml_edit",
+ "velt_common",
  "velt_http",
+ "velt_syntax",
 ]
 
 [[package]]
