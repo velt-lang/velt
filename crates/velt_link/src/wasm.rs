@@ -115,7 +115,8 @@ pub fn find_wasm_ld() -> Result<(Command, Vec<&'static str>), String> {
         Some(WasmLinker::RustLld(p)) => Ok((Command::new(p), vec!["-flavor", "wasm"])),
         Some(WasmLinker::WasmLd(p)) => Ok((Command::new(p), vec![])),
         None => Err(
-            "no WebAssembly linker found: install Rust (its rust-lld links wasm), put              LLVM's `wasm-ld` on PATH, or set $VELT_LINKER"
+            "no WebAssembly linker found: install Rust (its rust-lld links wasm), put \
+             LLVM's `wasm-ld` on PATH, or set $VELT_LINKER"
                 .into(),
         ),
     }
@@ -163,7 +164,13 @@ fn rust_host_bin() -> Option<PathBuf> {
     let out = Command::new("rustc").arg("-vV").output().ok()?;
     let text = String::from_utf8(out.stdout).ok()?;
     let host = text.lines().find_map(|l| l.strip_prefix("host: "))?.trim();
-    Some(rust_sysroot()?.join("lib").join("rustlib").join(host).join("bin"))
+    Some(
+        rust_sysroot()?
+            .join("lib")
+            .join("rustlib")
+            .join(host)
+            .join("bin"),
+    )
 }
 
 /// Directory with wasi-libc's `crt1-command.o` and `libc.a`.

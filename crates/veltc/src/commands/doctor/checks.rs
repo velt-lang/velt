@@ -1,5 +1,6 @@
 //! Environment checks for `velt doctor`: version, runtime libraries (static, shared), std, system
-//! linker, WebAssembly linker, clang and the vpm home directory. Each returns a [`Check`] with a fix hint when something is missing.
+//! linker, WebAssembly linker, clang and the vpm home directory. Each returns a [`Check`] with a
+//! fix hint when something is missing.
 
 use std::path::Path;
 
