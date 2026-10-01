@@ -294,6 +294,130 @@ fn sigterm_stops_the_program() {
     assert!(get(port, "/").is_err(), "the program outlived velt dev");
 }
 
+/// After a restart, the next reload starts a spare host beside the running one (Linux): a
+/// failed build's diagnostics appear once, and the spare is killed when the running host fails
+/// the build or swaps the change in.
+#[cfg(target_os = "linux")]
+#[test]
+fn spare_host_is_discarded() {
+    let dir = tempfile::tempdir().unwrap();
+    let case = root().join("tests/reload/hello_server/1");
+    apply(&case, dir.path());
+    let main = std::fs::read_to_string(case.join("main.vlt")).unwrap();
+    let write = |text: String| std::fs::write(dir.path().join("main.vlt"), text).unwrap();
+    let dev = Dev::start(dir.path(), &[]);
+    let ok = |r: Result<Instant, String>| r.unwrap_or_else(|e| panic!("{e}"));
+    ok(dev.wait_stderr(Mark::default(), "velt dev: started"));
+    // `main` changed: a restart, so the next reload gets a spare.
+    let mark = dev.mark();
+    write(main.replace("1000000000", "1000000001"));
+    ok(dev.wait_stderr(mark, "velt dev: restarted"));
+    let one_program = |what: &str| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while dev.children().len() != 1 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            dev.children().len(),
+            1,
+            "{what}: the spare host is still running"
+        );
+    };
+    one_program("after the restart");
+    // A failed build: one diagnostic, and the spare is gone.
+    let mark = dev.mark();
+    write(
+        main.replace("1000000000", "1000000001")
+            .replace("Response.text", "Response.txt"),
+    );
+    ok(dev.wait_stderr(mark, "velt dev: build failed"));
+    std::thread::sleep(Duration::from_millis(300));
+    let errors = dev.stderr_since(mark);
+    let count = errors
+        .iter()
+        .filter(|l| l.contains("is not a static method"))
+        .count();
+    assert_eq!(count, 1, "{errors:?}");
+    one_program("after the failed build");
+    // A body edit swaps (still with a spare: the last finished reload restarted); the spare
+    // is killed.
+    let mark = dev.mark();
+    write(main.replace("1000000000", "1000000001").replace("v1", "v2"));
+    ok(dev.wait_stderr(mark, "velt dev: hot-swapped"));
+    one_program("after the swap");
+    let port = dev.port().unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(get(port, "/"), Ok("v2".to_string()));
+}
+
+/// A host started with `VELT_DEV_QUIET` (a spare) prints nothing about its build; without it
+/// the same failed build prints its diagnostics.
+#[test]
+fn quiet_host_prints_no_diagnostics() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = std::fs::read_to_string(root().join("tests/reload/hello_server/1/main.vlt"));
+    let bad = main.unwrap().replace("Response.text", "Response.txt");
+    std::fs::write(dir.path().join("main.vlt"), bad).unwrap();
+    let host = |quiet: bool| {
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_velt"));
+        cmd.args(["dev", "--host", "main.vlt"])
+            .current_dir(dir.path());
+        if quiet {
+            cmd.env("VELT_DEV_QUIET", "1");
+        }
+        let out = cmd.output().expect("run velt dev --host");
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (code, stderr) = host(false);
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("is not a static method"), "{stderr}");
+    assert_eq!(host(true), (Some(1), String::new()));
+}
+
+/// A second SIGTERM exits at once, and takes the program along: the program (busy with a
+/// request it would otherwise drain for a second) is gone right after `velt dev` exits,
+/// instead of running on, orphaned.
+#[cfg(target_os = "linux")]
+#[test]
+fn second_interrupt_kills_the_program() {
+    let dir = tempfile::tempdir().unwrap();
+    apply(&root().join("tests/reload/in_flight/1"), dir.path());
+    let mut dev = Dev::start(dir.path(), &[]);
+    let started = dev.wait_stderr(Mark::default(), "velt dev: started");
+    started.unwrap_or_else(|e| panic!("{e}"));
+    let port = dev.port().unwrap_or_else(|e| panic!("{e}"));
+    let programs = dev.children();
+    assert_eq!(programs.len(), 1, "{programs:?}");
+    let slow = Background::start(port, "/slow");
+    std::thread::sleep(Duration::from_millis(200));
+    dev.signal(libc::SIGTERM);
+    std::thread::sleep(Duration::from_millis(50));
+    dev.signal(libc::SIGTERM);
+    assert_eq!(
+        dev.wait_exit(Duration::from_secs(5)),
+        Some(128 + libc::SIGTERM)
+    );
+    let alive = |pid: u32| {
+        std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+            !stat
+                .rsplit(')')
+                .next()
+                .unwrap_or("")
+                .trim_start()
+                .starts_with('Z')
+        })
+    };
+    // Killed: gone within moments (a drained program would live on for up to a second).
+    let deadline = Instant::now() + Duration::from_millis(300);
+    while alive(programs[0]) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!alive(programs[0]), "the program outlived velt dev");
+    assert!(slow.finish().1.is_err(), "the slow request was not cut off");
+}
+
 /// How the benchmark edits `hello_server` for edit number `n`.
 #[derive(Clone, Copy, Debug)]
 enum BenchEdit {

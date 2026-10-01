@@ -167,12 +167,16 @@ function. After 200 swaps the host restarts to reclaim memory.
 host keeps its build-report connection; on a change the supervisor sends `reload` there, the
 host builds on a background thread while the program runs, and answers `swapped <n>`,
 `restart <reason>` or `failed`. The front end runs twice for a restart (once in the running
-host to decide, once in the new host), so the next host starts together with the `reload`
-request instead of after the answer: both builds run in parallel, and on `swapped` or `failed`
-the spare host is killed before it ran any user code. The spare prints nothing about its build
+host to decide, once in the new host). After a reload that restarted, the same kind of edit
+likely follows, so the next host starts together with the next `reload` request instead of
+after the answer: both builds run in parallel, and on `swapped` or `failed` the spare host is
+killed before it ran any user code. After a swap no spare starts: a second front end beside
+the running host's only slows the swap down. The spare prints nothing about its build
 (`VELT_DEV_QUIET`; the running host reports the same build), and the supervisor tells its
-build report from a stale one by the peer's process id (`SO_PEERCRED`, `LOCAL_PEERPID`, the
-named pipe's client id; on other Unixes the spare is not started).
+build report from a stale one by the peer's process id (`SO_PEERCRED`, `LOCAL_PEERPID`). Not on
+Windows, where a spare on every save made hot swaps about 4× slower and restarts no faster
+(process creation and the on-access scan cost more than the overlap saves), nor on Unixes
+without a peer pid.
 
 **Runtime audit**: the only stored code pointers are vtables, future headers and future wrappers
 (`spawn`, `Promise.all`, `block_on`, pinned with their state), and the per-server HTTP handler
@@ -200,9 +204,9 @@ Save to first new response ([bench/reload/RESULTS.md](../../../bench/reload/RESU
 Windows x64, release `velt`, a shared machine): hot swap **64 ms** median; JIT restart 378 ms;
 `--exe` restart 2.6 s. Of a reload, sema is now the largest part.
 
-Starting the next host together with the `reload` request (Linux x86_64, debug `velt`, median
-of 10): JIT restart 120 → 95 ms; a hot swap pays about 5 ms for the spare host it kills
-(57 → 61 ms).
+Starting the next host together with the `reload` request after a restart (Linux x86_64,
+release `velt`): JIT restart 107–114 → 93–95 ms, hot swap unchanged
+([RESULTS.md](../../../bench/reload/RESULTS.md#spare-host-linux-x86_64-2026-10-01)).
 
 ## Known gaps
 

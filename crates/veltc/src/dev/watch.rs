@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant, SystemTime};
 
+use notify::event::{ModifyKind, RenameMode};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
 /// Interval between checks.
@@ -47,6 +48,17 @@ struct Notifier {
     watcher: RecommendedWatcher,
     events: Receiver<notify::Result<Event>>,
     watched: BTreeSet<PathBuf>,
+}
+
+/// What a notification says happened to a path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Seen {
+    /// Created, or renamed to this name.
+    Appeared,
+    /// Deleted, or renamed away from this name.
+    Gone,
+    /// Anything else (look at the file).
+    Changed,
 }
 
 /// What identifies a file version: modification time and length (length catches rewrites
@@ -205,9 +217,10 @@ impl Watcher {
 
     /// Notifications: whether any of `paths` is a watched file whose stamp changed, or a new
     /// `.vlt` file in a watched directory.
-    fn check_paths(&mut self, paths: Vec<PathBuf>) -> bool {
+    /// A file that was deleted and created again (`git stash`, a branch switch) is new again.
+    fn check_paths(&mut self, paths: Vec<(Seen, PathBuf)>) -> bool {
         let mut changed = false;
-        for path in paths {
+        for (seen, path) in paths {
             let path = self.key(path);
             if let Some(old) = self.files.get_mut(&path) {
                 let new = stamp(&path);
@@ -215,12 +228,26 @@ impl Watcher {
                     *old = new;
                     changed = true;
                 }
-            } else if is_source(&path) && path.exists() {
-                let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
-                let dir = self.key(dir);
-                if let (Some(known), Some(name)) = (self.dirs.get_mut(&dir), path.file_name()) {
-                    changed |= known.insert(dir.join(name));
-                }
+                continue;
+            }
+            if !is_source(&path) {
+                continue;
+            }
+            let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+            let dir = self.key(dir);
+            let (Some(known), Some(name)) = (self.dirs.get_mut(&dir), path.file_name()) else {
+                continue;
+            };
+            let entry = dir.join(name);
+            let present = match seen {
+                Seen::Appeared => true,
+                Seen::Gone => false,
+                Seen::Changed => path.exists(),
+            };
+            if present {
+                changed |= known.insert(entry);
+            } else {
+                known.remove(&entry);
             }
         }
         changed
@@ -283,15 +310,31 @@ impl Notifier {
         Ok(())
     }
 
-    /// The paths reported since the last call (reads are not changes); `Err` when the
-    /// notifier reported an error and can no longer be trusted.
-    fn changed_paths(&self) -> Result<Vec<PathBuf>, ()> {
+    /// The paths reported since the last call, in order, with what happened to them (reads
+    /// are not changes); `Err` when the notifier reported an error and can no longer be
+    /// trusted.
+    fn changed_paths(&self) -> Result<Vec<(Seen, PathBuf)>, ()> {
         let mut paths = vec![];
         for event in self.events.try_iter() {
             let event = event.map_err(|_| ())?;
-            if !matches!(event.kind, EventKind::Access(_)) {
-                paths.extend(event.paths);
-            }
+            let seen = match event.kind {
+                EventKind::Access(_) => continue,
+                EventKind::Create(_) | EventKind::Modify(ModifyKind::Name(RenameMode::To)) => {
+                    Seen::Appeared
+                }
+                EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(RenameMode::From)) => {
+                    Seen::Gone
+                }
+                EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
+                    // `paths` is [from, to].
+                    let mut it = event.paths.into_iter();
+                    paths.extend(it.next().map(|from| (Seen::Gone, from)));
+                    paths.extend(it.map(|to| (Seen::Appeared, to)));
+                    continue;
+                }
+                _ => Seen::Changed,
+            };
+            paths.extend(event.paths.into_iter().map(|p| (seen, p)));
         }
         Ok(paths)
     }
@@ -336,8 +379,20 @@ mod tests {
         // So does a new module nothing has read yet; other new files don't.
         std::fs::write(dir.path().join("notes.txt"), "x").unwrap();
         assert!(!wait(&mut w, SETTLE * 5), "not a source file");
-        std::fs::write(dir.path().join("added.vlt"), "x").unwrap();
+        let added = dir.path().join("added.vlt");
+        std::fs::write(&added, "x").unwrap();
         assert!(wait(&mut w, Duration::from_secs(5)));
+        // Deleted and created again (`git stash`, a branch switch): new again.
+        std::fs::remove_file(&added).unwrap();
+        assert!(!wait(&mut w, SETTLE * 3), "a deletion alone needs no build");
+        std::fs::write(&added, "x").unwrap();
+        assert!(wait(&mut w, Duration::from_secs(5)), "recreated");
+        // An editor's atomic save: write a temporary file, rename it over the original.
+        let tmp = dir.path().join("main.vlt.tmp");
+        std::fs::write(&tmp, "atomic save").unwrap();
+        std::fs::rename(&tmp, &file).unwrap();
+        assert!(wait(&mut w, Duration::from_secs(5)), "renamed over");
+        assert!(!wait(&mut w, SETTLE * 3), "reported once");
         // Saved while the build that read it was running.
         let before = SystemTime::now() - Duration::from_secs(5);
         w.set([file.clone()], before);

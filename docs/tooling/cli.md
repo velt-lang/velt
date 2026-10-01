@@ -91,7 +91,9 @@ the standard library. The output has one page per module and a client-side searc
   `function pick<T extends Comparable<T>, U>(items: T[], limit?: i64): U | null`, with
   `static`, `async`, `get`/`set` on members and the type's `extends`/`implements`.
 - **Type names link** to their documentation: types the module declares, imports (also
-  `ns.Type` through `import * as ns`) or re-exports, and the prelude's. Type parameters and
+  `ns.Type` through `import * as ns`) or re-exports, among the modules documented together.
+  Prelude types link when the prelude is part of the docs (`--std`, the docs website); a
+  package's docs don't include std, so its prelude types stay plain text. Type parameters and
   parameter names never link.
 - **Re-exports** are documented under the re-exporting module: `export { x as y } from "…"`
   shows `x`'s documentation as `y`, `export * from "…"` every export the module doesn't

@@ -82,6 +82,17 @@ impl Dev {
         unsafe { libc::kill(pid, signal) };
     }
 
+    /// The supervisor's child processes (Linux: `/proc/<pid>/task/<pid>/children`).
+    #[cfg(target_os = "linux")]
+    pub fn children(&self) -> Vec<u32> {
+        let pid = self.child.id();
+        std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children"))
+            .unwrap_or_default()
+            .split_whitespace()
+            .filter_map(|p| p.parse().ok())
+            .collect()
+    }
+
     /// Wait up to `limit` for the supervisor to exit; its exit code (128 + signal if a signal
     /// ended it).
     #[cfg(unix)]
@@ -123,6 +134,16 @@ impl Dev {
         })
         .map_err(|log| format!("no {needles:?} on stderr:\n{log}"))?;
         Ok(found.unwrap_or_else(Instant::now))
+    }
+
+    /// The stderr lines after `mark`.
+    #[allow(dead_code)]
+    pub fn stderr_since(&self, mark: Mark) -> Vec<String> {
+        let log = self.log.lock().unwrap();
+        log.stderr[mark.stderr..]
+            .iter()
+            .map(|(_, l)| l.clone())
+            .collect()
     }
 
     /// Wait for the stdout line `line` after `mark`.
