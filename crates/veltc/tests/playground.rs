@@ -90,8 +90,8 @@ fn examples_compile_and_run() {
             let file = work.join("example.wasm");
             std::fs::write(&file, &module).expect("write module");
             let o = Command::new("node")
-                .arg(&glue)
-                .arg(&file)
+                .arg(vpm::relpath::plain(&glue))
+                .arg(vpm::relpath::plain(&file))
                 .output()
                 .expect("node");
             assert!(o.status.success(), "example `{name}` failed: {o:?}");
