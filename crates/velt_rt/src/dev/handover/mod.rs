@@ -33,7 +33,7 @@ mod windows;
 #[cfg(unix)]
 use unix::receive_listener;
 #[cfg(unix)]
-pub use unix::{connect, reply_ok, Server, Stream};
+pub use unix::{connect, peer_pid, reply_ok, Server, Stream};
 #[cfg(windows)]
 use windows::receive_listener;
 #[cfg(windows)]
@@ -209,10 +209,7 @@ mod tests {
         let name = server.name().to_os_string();
         let bound = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = bound.local_addr().unwrap().port();
-        let files = vec![
-            PathBuf::from("/a/main.vlt"),
-            PathBuf::from("/std/http.vlt"),
-        ];
+        let files = vec![PathBuf::from("/a/main.vlt"), PathBuf::from("/std/http.vlt")];
         let (socket, sent) = (name.clone(), files.clone());
         let program = std::thread::spawn(move || {
             report_build(&socket, false, &sent[..1]).unwrap();
@@ -231,6 +228,8 @@ mod tests {
         };
         assert_eq!(read_request(&s).unwrap(), failed);
         let s = server.accept().unwrap();
+        #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
+        assert_eq!(peer_pid(&s).unwrap(), std::process::id());
         assert_eq!(
             read_request(&s).unwrap(),
             Request::Built { ok: true, files }

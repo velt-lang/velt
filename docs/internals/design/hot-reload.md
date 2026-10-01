@@ -37,7 +37,10 @@ first-launch check for programs they start. Documented in
 `velt dev [<file>]` builds and runs like `velt run`, then stays up as a **supervisor**:
 
 - It **watches** the files the loader actually read (plus `velt.toml` and `velt.lock`), not a
-  directory glob, so imports into std or path dependencies are covered.
+  directory glob, so imports into std or path dependencies are covered; a new `.vlt` file in one
+  of their directories counts too (the module a failed build was missing). Changes come from
+  OS notifications (the `notify` crate, each checked against the file's mtime and length), or
+  from polling every 10 ms where notifications fail or `VELT_DEV_POLL=1`.
 - It **rebuilds while the old version keeps serving.** On a compile error it prints the
   diagnostics and keeps the old process; on success it stops the old process and starts the new
   one.
@@ -48,7 +51,8 @@ first-launch check for programs they start. Documented in
   `WSADuplicateSocketW` records). The supervisor binds on the first request and returns the same
   socket to every later process.
 - The old process gets a stop request, drains in-flight requests, and is killed after a short
-  timeout.
+  timeout. Interrupting the supervisor (Ctrl-C, SIGTERM, SIGHUP; console events on Windows)
+  stops the program the same way and waits for it before exiting.
 
 ### Phase 2: JIT dev backend (no link, no new executable)
 
@@ -162,8 +166,13 @@ function. After 200 swaps the host restarts to reclaim memory.
 **Supervisor and host** ([rt_abi_async.md §13](../contracts/rt_abi_async.md)): after `go`, the
 host keeps its build-report connection; on a change the supervisor sends `reload` there, the
 host builds on a background thread while the program runs, and answers `swapped <n>`,
-`restart <reason>` or `failed`. On `restart` a new host starts as in phase 2, so the front end
-runs twice for a restart (once to decide, once in the new host).
+`restart <reason>` or `failed`. The front end runs twice for a restart (once in the running
+host to decide, once in the new host), so the next host starts together with the `reload`
+request instead of after the answer: both builds run in parallel, and on `swapped` or `failed`
+the spare host is killed before it ran any user code. The spare prints nothing about its build
+(`VELT_DEV_QUIET`; the running host reports the same build), and the supervisor tells its
+build report from a stale one by the peer's process id (`SO_PEERCRED`, `LOCAL_PEERPID`, the
+named pipe's client id; on other Unixes the spare is not started).
 
 **Runtime audit**: the only stored code pointers are vtables, future headers and future wrappers
 (`spawn`, `Promise.all`, `block_on`, pinned with their state), and the per-server HTTP handler
@@ -172,8 +181,8 @@ slots. Timers are tasks; WebSockets, child processes, fs and net take no callbac
 **Platforms**: hot swap is tested end to end on Windows x64, where each version registers its own
 unwind table (aligned to 16 bytes: an odd base address made Windows read the unwind data as a
 chained entry). macOS and Linux (aarch64 and x86_64) compile from the same code, and the
-trampoline bytes are unit-tested per architecture, but the reload tests have not run there yet;
-JIT frames there have no registered unwind information yet.
+trampoline bytes are unit-tested per architecture; the reload tests also pass on Linux x86_64
+(not yet run on macOS). JIT frames there have no registered unwind information yet.
 
 **Tests**: `velt_codegen_cl` `tests/hot_swap.rs` (hand-built VIR: old code reaching new code
 through direct calls, function values and a pinned entry; restart reasons; repeated swaps);
@@ -191,15 +200,23 @@ Save to first new response ([bench/reload/RESULTS.md](../../../bench/reload/RESU
 Windows x64, release `velt`, a shared machine): hot swap **64 ms** median; JIT restart 378 ms;
 `--exe` restart 2.6 s. Of a reload, sema is now the largest part.
 
+Starting the next host together with the `reload` request (Linux x86_64, debug `velt`, median
+of 10): JIT restart 120 → 95 ms; a hot swap pays about 5 ms for the spare host it kills
+(57 → 61 ms).
+
 ## Known gaps
 
 - Code that is already running keeps running old code: a future in flight (by design), `main`'s
   remaining body, an endless loop inside one async function. The functions they call do swap.
-- Editing an async function that `main` awaits directly can restart: `main`'s state embeds the
-  child's.
+- Editing an async function that `main` awaits directly restarts (`main changed`): `main`'s
+  state embeds the child's, so `main::$poll` refers to the child's pinned `poll` and is
+  recompiled with it. Swapping instead is possible but useless: the running `main` future and
+  the child's state inside it stay pinned to their version, and `main` never creates the child
+  again, so the edit would only reach other callers. Migrating the in-flight child's state to
+  the new layout is not possible in general (the layout comes from liveness analysis). The
+  restart is therefore the behavior that makes the edit take effect; the user documentation
+  says to move work that should swap into functions the long-running one calls.
 - Edits to functions that only ran during startup are swapped but don't run again.
-- A restart pays for the front end twice; starting the new host together with the reload
-  request would overlap the two.
 
 Out of scope: browser-side hot module replacement for frontends, and production zero-downtime
 deploys (the socket handover could be reused for that later).

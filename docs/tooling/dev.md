@@ -19,8 +19,11 @@ velt dev: restarted (Point gained a field) in 380 ms
 ## What happens on save
 
 `velt dev` watches every file the build read (your modules, the standard library, path
-dependencies) plus `velt.toml` and `velt.lock`. On a change it builds the new version while the
-old one keeps running:
+dependencies) plus `velt.toml` and `velt.lock`, and new `.vlt` files next to them (so a module
+that an import was missing is picked up as soon as you create it). Changes come from the
+operating system's file notifications; where those don't work (some network or container file
+systems), set `VELT_DEV_POLL=1` to check the files every 10 ms instead. On a change it builds
+the new version while the old one keeps running:
 
 - **Hot swap** (the common case): the changed functions are compiled and swapped into the
   running program. In-memory data, open connections, caches and running tasks survive. New
@@ -31,6 +34,11 @@ old one keeps running:
   function that live values may still call was removed, or closures were reordered.
 - **Build error**: the diagnostics are printed and the old version keeps running.
 - **Program exit**: `velt dev` prints the exit code and waits for the next change.
+
+Stopping `velt dev` (Ctrl-C, or SIGTERM/SIGHUP from a process manager or `docker stop`) stops
+the program the same way a reload does: it gets a stop request, can finish in-flight requests
+for up to a second, and `velt dev` waits for it before exiting. Press Ctrl-C twice to exit at
+once.
 
 Listening sockets survive restarts: `velt dev` owns them and hands them to each version, so no
 connection is refused during a reload and a server on port 0 keeps its port. Hot swap needs no
@@ -69,12 +77,16 @@ The time includes a 30 ms settle delay after the last write.
 - Code that is already running keeps running the old version: a future in flight (by design),
   the rest of `main`'s body, and an endless loop inside one async function. The functions they
   call do swap.
-- Editing an async function that `main` awaits directly can cause a restart.
+- Editing an async function that `main` awaits directly restarts the program. The call is
+  already running (a server loop, say), and running code keeps its version, so a swap would
+  have no visible effect; a restart runs the new code. To keep state across such edits, move
+  the work into functions the long-running one calls (a request handler, a loop body): those
+  swap.
 - Edits to functions that only ran during startup are swapped, but they don't run again.
 - After 200 hot swaps the host restarts to reclaim the memory of old code.
 - JIT code has no line-level debug information; use `--exe` or a normal build to debug.
 - On macOS and Linux, JIT frames have no registered unwind information yet; on musl (Alpine)
-  the JIT host is unavailable, so use `--exe`. Hot swap is tested end to end on Windows x64;
-  macOS and Linux build the same code, but the reload tests have not been run there yet.
+  the JIT host is unavailable, so use `--exe`. Hot swap is tested end to end on Windows x64 and
+  Linux x86_64; macOS builds the same code, but the reload tests have not been run there yet.
 
 How it works: [the hot reload design](../internals/design/hot-reload.md).

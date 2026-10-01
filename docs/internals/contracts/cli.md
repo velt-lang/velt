@@ -86,15 +86,19 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - Diagnostics go to stderr as `Diagnostic::render` output.
 - `dev` (docs/internals/design/hot-reload.md, phases 1–2): builds and runs like `run`, then stays up as a
   supervisor. It watches every file the build read (std and path dependencies included) plus
-  `velt.toml`/`velt.lock` (mtime polling, 30 ms settle). On a change it builds the new version
+  `velt.toml`/`velt.lock`, and new `.vlt` files in their directories (OS file notifications,
+  checked against mtime and length; polling every 10 ms where notifications fail or with
+  `VELT_DEV_POLL=1`; 30 ms settle). On a change it builds the new version
   while the old one keeps running: a failed build prints its diagnostics and
   `velt dev: build failed (the previous version keeps running); waiting for changes`; a good one
   stops the old version (a stop request: SIGTERM on Unix, `stop` on the dev channel on Windows;
   drain up to 1 s, then kill) and starts the new one: `velt dev: reloaded in <n> ms` (from the
   first file change). A program that exits prints
   `velt dev: program exited with code <n>; waiting for changes`. Status lines go to stderr; the
-  program's stdio is inherited. Runs until interrupted (Ctrl-C stops the supervisor and program;
-  on Windows programs run in a job object that ends them with the supervisor).
+  program's stdio is inherited. Runs until interrupted: Ctrl-C, SIGTERM or SIGHUP (console
+  events on Windows) stop the program like a reload does, wait for it, and exit with
+  128 + the signal (130 on Windows); a second interrupt exits at once. On Windows programs also
+  run in a job object that ends them with the supervisor.
   - Default mode (every platform): each version is a `velt dev --host` child (**internal**, not for
     users) that compiles to VIR, JIT-compiles it with Cranelift (debug settings, no link, no new
     executable) and runs it in-process with the runtime linked into `velt`; it reports its build

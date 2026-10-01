@@ -49,8 +49,7 @@ impl Running {
     }
 
     /// The program's process id (Windows: the key of its stop channel).
-    #[cfg(windows)]
-    fn id(&self) -> u32 {
+    pub fn id(&self) -> u32 {
         self.child.id()
     }
 
@@ -77,6 +76,17 @@ impl Running {
         #[cfg(windows)]
         handover.forget(self.id());
         self.output
+    }
+
+    /// End a program that has not started running user code (a JIT host before `go`): no
+    /// graceful stop needed.
+    pub fn kill(mut self, handover: &Handover) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        #[cfg(windows)]
+        handover.forget(self.id());
+        #[cfg(not(windows))]
+        let _ = handover;
     }
 
     #[cfg(unix)]

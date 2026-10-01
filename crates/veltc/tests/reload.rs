@@ -274,6 +274,26 @@ fn reload_goldens() {
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
 
+/// SIGTERM to the supervisor alone (a process manager, `docker stop`) stops the program the
+/// way a reload does and waits for it before `velt dev` exits; the port is closed afterwards.
+#[cfg(unix)]
+#[test]
+fn sigterm_stops_the_program() {
+    let dir = tempfile::tempdir().unwrap();
+    apply(&root().join("tests/reload/hello_server/1"), dir.path());
+    let mut dev = Dev::start(dir.path(), &[]);
+    let started = dev.wait_stderr(Mark::default(), "velt dev: started");
+    started.unwrap_or_else(|e| panic!("{e}"));
+    let port = dev.port().unwrap_or_else(|e| panic!("{e}"));
+    assert!(get(port, "/").is_ok());
+    dev.signal(libc::SIGTERM);
+    assert_eq!(
+        dev.wait_exit(Duration::from_secs(30)),
+        Some(128 + libc::SIGTERM)
+    );
+    assert!(get(port, "/").is_err(), "the program outlived velt dev");
+}
+
 /// How the benchmark edits `hello_server` for edit number `n`.
 #[derive(Clone, Copy, Debug)]
 enum BenchEdit {
