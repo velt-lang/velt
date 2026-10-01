@@ -147,7 +147,11 @@ fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
             }
         }
     };
-    let from_raw = quote! { #(::velt_native::Param::from_raw(#args)),* };
+    // `__scope` is a local of the wrapper: tying each borrowed argument to it makes a parameter
+    // type that demands a longer borrow (`type S = &'static str;`) a compile error, however the
+    // type is spelled. The syntactic lifetime check above only gives the common case a nicer
+    // message.
+    let from_raw = quote! { #(::velt_native::__from_raw_scoped(&__scope, #args)),* };
 
     let (prefix, ret_sig, wrapper) = match mode {
         Mode::Sync if is_direct(&sig.output) => {
@@ -162,6 +166,7 @@ fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
                     #[no_mangle]
                     pub unsafe extern "C" fn #name(#(#raw_params),*) -> #ret_ty {
                         #inner_fn
+                        let __scope = ();
                         #body
                     }
                 },
@@ -182,6 +187,7 @@ fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
                         __out: *mut <#ret_ty as ::velt_native::OutRet>::Slot,
                     ) {
                         #inner_fn
+                        let __scope = ();
                         let __r: #ret_ty = #body;
                         ::velt_native::OutRet::write(__r, __out)
                     }
@@ -224,6 +230,7 @@ fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
                     #[no_mangle]
                     pub unsafe extern "C" fn #name(#(#raw_params),*) -> *mut ::std::ffi::c_void {
                         #inner_fn
+                        let __scope = ();
                         let __f: #ret_ty = #body;
                         ::velt_native::FutureRet::__into_raw(__f)
                     }

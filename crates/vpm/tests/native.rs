@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use vpm::edit::{add_dependency, DependencySpec};
 use vpm::lockfile::Lockfile;
-use vpm::native::{NativeMeta, NativeOrigin};
+use vpm::native::{library_files, NativeMeta, NativeOrigin};
 use vpm::{install, InstallOptions, Locations};
 
 const LINUX: &str = "x86_64-unknown-linux-gnu";
@@ -19,15 +19,22 @@ fn bundle_dir(dir: &Path, target: &str, content: &str) -> PathBuf {
     let b = dir.join(target);
     std::fs::create_dir_all(b.join("shared")).unwrap();
     std::fs::create_dir_all(b.join("static")).unwrap();
-    std::fs::write(b.join("shared/libvelt_native_db.so"), content).unwrap();
+    let (shared, import_lib) = library_files("db", target);
+    let (shared, import_lib) = (
+        format!("shared/{shared}"),
+        import_lib.map(|f| format!("shared/{f}")),
+    );
+    for file in std::iter::once(&shared).chain(&import_lib) {
+        std::fs::write(b.join(file), content).unwrap();
+    }
     std::fs::write(b.join("static/db.o"), content).unwrap();
     let meta = NativeMeta {
         package: "db".into(),
         version: "1.0.0".into(),
         target: target.into(),
         abi: 1,
-        shared: "shared/libvelt_native_db.so".into(),
-        import_lib: None,
+        shared,
+        import_lib,
         static_obj: Some("static/db.o".into()),
         exports: BTreeMap::from([("db_open".into(), "(string)->IoResult<u64>".into())]),
     };

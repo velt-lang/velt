@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use crate::archive;
-use crate::native::{NativeMeta, META_FILE};
+use crate::native::{library_files, NativeMeta, META_FILE};
 
 /// Whether `path` (relative, `/`-separated) may be part of a bundle.
 fn allowed(path: &str) -> bool {
@@ -107,7 +107,9 @@ pub fn copy(from: &Path, to: &Path) -> Result<(), String> {
 
 /// A bundle's metadata must describe what it is used as, and name only its own (checksummed)
 /// `files`: an absolute path or `../` in `shared`, `import_lib` or `static` would let the loader or
-/// the linker use a file the checksum does not cover.
+/// the linker use a file the checksum does not cover. The libraries must carry the package's own
+/// names ([`library_files`]): on Windows the DLL is copied next to the executable, where a bundle
+/// naming another package's DLL would replace it.
 pub fn check_meta(
     meta: &NativeMeta,
     (name, version, target): (&str, &str, &str),
@@ -130,6 +132,29 @@ pub fn check_meta(
         if !allowed(path) || !path.starts_with(dir) || !files.contains(path) {
             return Err(format!(
                 "{what}: `{key} = \"{path}\"` in {META_FILE} must name a file of the bundle under `{dir}`"
+            ));
+        }
+    }
+    check_library_files(meta, what)
+}
+
+fn check_library_files(meta: &NativeMeta, what: &str) -> Result<(), String> {
+    let (shared, import_lib) = library_files(&meta.package, &meta.target);
+    let named = [
+        ("shared", Some(&meta.shared), Some(shared)),
+        ("import_lib", meta.import_lib.as_ref(), import_lib),
+    ];
+    for (key, path, expected) in named {
+        let Some(path) = path else { continue };
+        let file = path.strip_prefix("shared/").unwrap_or(path);
+        if expected.as_deref() != Some(file) {
+            let must = match expected {
+                Some(e) => format!("be `shared/{e}`"),
+                None => format!("not be set for {}", meta.target),
+            };
+            return Err(format!(
+                "{what}: `{key} = \"{path}\"` in {META_FILE} must {must} (the library of package `{}`)",
+                meta.package
             ));
         }
     }
@@ -225,6 +250,42 @@ mod tests {
                 e.contains("must name a file of the bundle"),
                 "{shared}: {e}"
             );
+        }
+
+        // A library named after another package (which on Windows would replace that package's
+        // DLL next to the executable) is refused, even though it is a file of the bundle.
+        let other = b.join("shared/libvelt_native_q.so");
+        std::fs::write(&other, b"ELF").unwrap();
+        let files = list_files(&b).unwrap();
+        let mut bad = good.clone();
+        bad.shared = "shared/libvelt_native_q.so".into();
+        let e = check_meta(&bad, id, &files, "t").unwrap_err();
+        assert!(e.contains("must be `shared/libvelt_native_p.so`"), "{e}");
+        let mut bad = good.clone();
+        bad.import_lib = Some("shared/libvelt_native_q.so".into());
+        let e = check_meta(&bad, id, &files, "t").unwrap_err();
+        assert!(e.contains("must not be set"), "{e}");
+        std::fs::remove_file(other).unwrap();
+
+        let win = ("p", "1.0.0", "x86_64-pc-windows-msvc");
+        let names = ["shared/velt_native_p.dll", "shared/velt_native_p.dll.lib"];
+        let names = names.map(String::from);
+        let mut dll = good.clone();
+        dll.target = win.2.into();
+        dll.shared = names[0].clone();
+        dll.import_lib = Some(names[1].clone());
+        dll.static_obj = None;
+        check_meta(&dll, win, &names, "t").unwrap();
+        for (shared, import) in [
+            ("shared/velt_native_q.dll", "shared/velt_native_p.dll.lib"),
+            ("shared/velt_native_p.dll", "shared/velt_native_q.dll.lib"),
+        ] {
+            let mut bad = dll.clone();
+            bad.shared = shared.into();
+            bad.import_lib = Some(import.into());
+            let files = [shared.to_string(), import.to_string()];
+            let e = check_meta(&bad, win, &files, "t").unwrap_err();
+            assert!(e.contains("(the library of package `p`)"), "{shared}: {e}");
         }
 
         // A malicious native.toml inside a correctly checksummed archive is refused on unpack.

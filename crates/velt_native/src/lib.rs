@@ -29,8 +29,6 @@
 //! each function's signature (a `velt_sig_<name>` symbol) that `velt native build` reads, and
 //! that `velt` checks every `declare` against.
 
-#![allow(clippy::missing_safety_doc)]
-
 use std::ffi::c_void;
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicPtr, Ordering};
@@ -161,6 +159,8 @@ macro_rules! package {
     };
 }
 
+/// # Safety
+/// `api` must be null or point to a function table that lives for the whole program.
 #[doc(hidden)]
 pub unsafe fn __init(api: *const Api, package: &str) -> i32 {
     if api.is_null() {
@@ -304,6 +304,37 @@ pub trait Param<'a>: Sized {
     /// # Safety
     /// `raw` must be a valid argument per native_abi.md.
     unsafe fn from_raw(raw: Self::Raw) -> Self;
+}
+
+/// Converts an argument of an exported function, borrowed no longer than `scope` (a local of the
+/// generated wrapper): a parameter type that demands a longer borrow is a compile error, however
+/// it is spelled.
+///
+/// ```compile_fail
+/// type S = &'static str;
+/// static mut KEPT: Option<S> = None;
+///
+/// #[velt_native::export]
+/// fn p_keep(s: S) -> u64 {
+///     unsafe { KEPT = Some(s) };
+///     0
+/// }
+/// ```
+///
+/// The same function without the `'static` alias compiles:
+///
+/// ```
+/// #[velt_native::export]
+/// fn p_len(s: &str) -> u64 {
+///     s.len() as u64
+/// }
+/// ```
+///
+/// # Safety
+/// `raw` must be a valid argument per native_abi.md that lives at least as long as `scope`.
+#[doc(hidden)]
+pub unsafe fn __from_raw_scoped<'a, T: Param<'a>>(_scope: &'a (), raw: T::Raw) -> T {
+    T::from_raw(raw)
 }
 
 /// A parameter type of a `blocking` export: owned, so it can move to the blocking pool.

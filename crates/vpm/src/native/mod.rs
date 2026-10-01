@@ -45,6 +45,21 @@ pub fn library_name(package: &str) -> String {
     format!("velt_native_{}", package.replace('-', "_"))
 }
 
+/// The file names of `package`'s shared library on `target` and, on Windows, of its import library:
+/// `libvelt_native_<pkg>.so` / `.dylib`, `velt_native_<pkg>.dll` + `velt_native_<pkg>.dll.lib`.
+/// On Windows the DLL is copied next to the executable, so these names must be unique per package:
+/// `velt native build` and every bundle's metadata are held to them.
+pub fn library_files(package: &str, target: &str) -> (String, Option<String>) {
+    let name = library_name(package);
+    if target.contains("windows") {
+        (format!("{name}.dll"), Some(format!("{name}.dll.lib")))
+    } else if target.contains("apple") {
+        (format!("lib{name}.dylib"), None)
+    } else {
+        (format!("lib{name}.so"), None)
+    }
+}
+
 /// `velt_native_init_<pkg>`: the library's start-up function.
 pub fn init_symbol(package: &str) -> String {
     format!("velt_native_init_{}", package.replace('-', "_"))
@@ -114,7 +129,6 @@ pub struct NativeLib {
 }
 
 impl NativeLib {
-    /// Load a bundle directory.
     /// Load a bundle directory; its metadata may only name the bundle's own files.
     pub fn open(dir: &Path, origin: NativeOrigin) -> Result<NativeLib, String> {
         let meta = NativeMeta::read(dir)?;
@@ -145,6 +159,21 @@ impl NativeLib {
     /// Linux/macOS: the prelinked object for release builds.
     pub fn static_obj(&self) -> Option<PathBuf> {
         self.meta.static_obj.as_ref().map(|p| self.dir.join(p))
+    }
+
+    /// The file names of `package`'s shared library on `target` and, on Windows, of its import library:
+    /// `libvelt_native_<pkg>.so` / `.dylib`, `velt_native_<pkg>.dll` + `velt_native_<pkg>.dll.lib`.
+    /// On Windows the DLL is copied next to the executable, so these names must be unique per package:
+    /// `velt native build` and every bundle's metadata are held to them.
+    pub fn library_files(package: &str, target: &str) -> (String, Option<String>) {
+        let name = library_name(package);
+        if target.contains("windows") {
+            (format!("{name}.dll"), Some(format!("{name}.dll.lib")))
+        } else if target.contains("apple") {
+            (format!("lib{name}.dylib"), None)
+        } else {
+            (format!("lib{name}.so"), None)
+        }
     }
 
     /// `velt_native_init_<pkg>`.

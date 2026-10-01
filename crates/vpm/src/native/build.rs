@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::manifest::Manifest;
-use crate::native::{exports, init_symbol, library_name, NativeMeta, META_FILE, NATIVE_ABI};
+use crate::native::{
+    exports, init_symbol, library_files, library_name, NativeMeta, META_FILE, NATIVE_ABI,
+};
 
 /// What to build.
 #[derive(Clone, Copy, Debug)]
@@ -137,15 +139,10 @@ pub fn build(req: BuildRequest) -> Result<NativeMeta, String> {
             Some(format!("shared/{import_file}")),
         )
     } else {
-        let ext = if req.target.contains("apple") {
-            "dylib"
-        } else {
-            "so"
-        };
-        let file = format!("libvelt_native_{lib}.{ext}");
+        let (file, _) = library_files(name, req.target);
         let dest = tmp.join("shared").join(&file);
         copy(&shared, &dest)?;
-        if ext == "dylib" {
+        if req.target.contains("apple") {
             run(Command::new("install_name_tool")
                 .arg("-id")
                 .arg(format!("@rpath/{file}"))
@@ -195,13 +192,7 @@ pub fn build(req: BuildRequest) -> Result<NativeMeta, String> {
 /// one.
 fn check_library_name(package: &str, shared: &Path, target: &str) -> Result<(), String> {
     let expected = library_name(package);
-    let file = if target.contains("windows") {
-        format!("{expected}.dll")
-    } else if target.contains("apple") {
-        format!("lib{expected}.dylib")
-    } else {
-        format!("lib{expected}.so")
-    };
+    let (file, _) = library_files(package, target);
     if file_name(shared) == file {
         return Ok(());
     }
