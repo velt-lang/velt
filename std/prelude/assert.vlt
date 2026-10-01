@@ -6,12 +6,20 @@ export function assert(cond: bool, msg: string = "assertion failed") {
   }
 }
 
-// Structural equality (`==`). On failure prints both values to stderr, then panics.
+// Deep equality (`deepEqual`: contents, not identity). On failure prints both values to stderr,
+// then panics.
 export function assertEq<T>(left: T, right: T, msg: string = "assertEq failed") {
-  if (left != right) {
+  if (!__intrinsic_eq(left, right)) {
     console.error("assertion `left == right` failed");
     console.error("  left:", left);
     console.error(" right:", right);
     panic(msg);
   }
+}
+
+// Deep (structural) equality: arrays, structs and object literals compare their contents,
+// recursively; class instances (`Map` included) by identity. `==` compares every object by
+// identity, like JS.
+export function deepEqual<T>(a: T, b: T): bool {
+  return __intrinsic_eq(a, b);
 }

@@ -1,5 +1,7 @@
-// `const left = node.left` refers to the field's value in place, so the rest of the block may
-// not change that field or anything that owns it while `left` exists, and `left` is read-only.
+// check: no leaks
+// Semantics stage 2: `const left = node.left` refers to the same object as the field; when the
+// block replaces the field, `left` keeps the old object (formerly an error golden,
+// lang/errors/const_borrow_changed).
 class T {
   left: T | null = null;
   right: T | null = null;
@@ -38,6 +40,10 @@ function k(node: T) {
 
 function main() {
   const t = new T();
+  t.left = new T();
   k(t);
-  console.log(f(t), g(t), h([[t]]));
+  console.log(t.left?.v);
+  console.log(f(t));
+  console.log(t.left === null, g(t));
+  console.log(h([[t]]));
 }

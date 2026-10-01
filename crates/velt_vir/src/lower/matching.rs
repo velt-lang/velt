@@ -30,7 +30,16 @@ impl FnLower<'_, '_> {
     ) -> Operand {
         let sty = self.sub(scrutinee.ty);
         self.push_scope(ScopeKind::Temps);
-        let v = self.expr(scrutinee);
+        // Through a counted object other owners may replace the scrutinee while an arm runs:
+        // match on a share of it (semantics stage 2, stabilize.rs).
+        let v = match self.through_counted(scrutinee, sty) {
+            true => {
+                let v = self.expr(scrutinee);
+                let s = self.share_value(v, sty);
+                self.own_value(s, sty)
+            }
+            false => self.expr(scrutinee),
+        };
         let svt = self.cx.ty(sty);
         let sp = self.place_of(v, sty);
         let moved_local = matches!(&scrutinee.kind,
@@ -140,9 +149,21 @@ impl FnLower<'_, '_> {
         if matches!(pat.kind, hir::PatKind::Binding(_, UseMode::Borrow)) && local_place(init) {
             // `const x = node.left` bound by reference (sema `const_borrow`): no copy, and the
             // place keeps ownership.
+            // Through a counted object, other owners may replace the place while `x` lives:
+            // `x` refers to a share of its own instead (semantics stage 2).
+            let shared = self.through_counted(init, ty);
             let v = self.expr(init);
             if !self.dead() {
-                let p = self.place_of(v, ty);
+                let p = match shared {
+                    true => {
+                        let s = self.share_value(v, ty);
+                        let vt = self.cx.ty(ty);
+                        let t = Place::local(self.copy_to_temp(s, vt));
+                        self.own_place(t.clone(), ty);
+                        t
+                    }
+                    false => self.place_of(v, ty),
+                };
                 self.bind_pat(pat, &p, ty, false);
             }
             return;

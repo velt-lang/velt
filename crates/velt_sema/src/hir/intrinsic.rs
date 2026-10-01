@@ -37,10 +37,20 @@ pub enum Intrinsic {
     ArrayTruncate,
     /// `(x: borrow T) -> u64` compiler-generated hash (ints, bool, string, Copy structs, enums)
     Hash,
-    /// `(a: borrow T, b: borrow T) -> bool` structural equality (`==` on generic types)
+    /// `(a: borrow T, b: borrow T) -> bool` structural (deep) equality: `__intrinsic_eq`, `Map`
+    /// keys, `deepEqual`, `assertEq`
     Eq,
+    /// `(a: borrow T, b: borrow T) -> bool` JS `===` (`==` on non-primitive types): objects —
+    /// class instances, arrays, object types, interface and function values — by identity;
+    /// `T | null`, unions and tuples part by part; strings and numbers by value
+    Same,
     /// `x.clone()` (user-visible, every type): deep copy
     Clone,
+    /// `(x: borrow T) -> T`: another reference to the same value (JS reference copy; semantics
+    /// stage 2, hir_encodings.md "Sharing"): a count increment for counted objects, a copy for
+    /// Copy types and strings, a field-wise share for immutable value types. Emitted by sema
+    /// wherever a non-Copy place is used by value but stays in use (or cannot be moved from).
+    Share,
     /// f64 math: `Math.sqrt/floor/ceil/round/trunc/abs` (round = JS: half toward +inf)
     Sqrt,
     Floor,

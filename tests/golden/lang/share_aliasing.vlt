@@ -1,0 +1,75 @@
+// check: no leaks
+// Semantics stage 2: mutation through aliases of arrays, maps, object types and interface
+// values, and values that other owners change while a call borrows them.
+interface Named {
+  name(): string;
+}
+
+class Tag implements Named {
+  label: string;
+
+  constructor(label: string) {
+    this.label = label;
+  }
+
+  name(): string {
+    return this.label;
+  }
+}
+
+class Holder {
+  items: i64[] = [];
+  other: Holder | null = null;
+
+  grow(n: i64) {
+    const o = this.other;
+    if (o != null) {
+      o.items = [];
+    }
+    this.items.push(n);
+  }
+}
+
+function sum(xs: i64[], h: Holder): i64 {
+  h.items = [100];
+  let t = 0;
+  for (const x of xs) {
+    t += x;
+  }
+  return t;
+}
+
+function main() {
+  const words = "a b c".split(" ");
+  const alias = words;
+  alias.push("d");
+  console.log(words.join(","), JSON.stringify(alias));
+  assertEq(words, alias);
+  console.log(words == alias);
+  const m = new Map<string, string[]>();
+  m.set("k", words);
+  m.get("k")?.push("e");
+  console.log(words.length);
+  const point = { x: 1, y: 2 };
+  const same = point;
+  same.x = 10;
+  console.log(point.x, JSON.stringify(same));
+  const tags: Named[] = [new Tag("t1")];
+  const first = tags[0];
+  console.log(first.name(), tags.length);
+  const h = new Holder();
+  h.items = [1, 2, 3];
+  const keep = h;
+  console.log(sum(h.items, keep), h.items);
+  const a = new Holder();
+  a.other = a;
+  a.items = [5];
+  a.grow(6);
+  console.log(a.items);
+  a.other = null;
+  const nested = [[1, 2], [3]];
+  const inner = nested[1];
+  nested[1] = [];
+  inner.push(4);
+  console.log(nested, inner);
+}

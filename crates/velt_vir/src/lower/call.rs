@@ -67,7 +67,7 @@ impl FnLower<'_, '_> {
             _ => self.cx.func_for(def, targs.clone()),
         };
         let mut argv = pre;
-        argv.extend(self.lower_args(args, &modes));
+        argv.extend(self.lower_args(args, &modes, true));
         let ret = self.cx.subst(ret, &targs);
         let throws = throws.map(|e| self.cx.subst(e, &targs));
         let throws = self.cx.error_ty(throws);
@@ -76,14 +76,23 @@ impl FnLower<'_, '_> {
 
     /// Externs use the same mapping as Velt functions: aggregates by pointer (read-only borrow),
     /// aggregate results via a trailing out-pointer; a `never` result marks the extern noreturn.
+    /// Types containing boxed values cross in their foreign layout (foreign.rs).
     fn extern_call(&mut self, def: DefId, args: &[hir::Expr]) -> Operand {
         let hir::Def::ExternFn(x) = self.cx.hir.def(def) else {
             ice("not an extern")
         };
+        let foreign = x
+            .params
+            .iter()
+            .chain([&x.ret])
+            .any(|&t| self.cx.foreign_differs(t));
+        if foreign && !x.is_async {
+            return self.foreign_extern_call(x, args);
+        }
         let mut params = vec![];
         let mut modes = vec![];
         for &p in &x.params {
-            match self.cx.ty(p) {
+            match self.cx.foreign_ty(p) {
                 Ty::Unit => modes.push(PassMode::Copy),
                 Ty::Agg(_) => {
                     params.push(Ty::Ptr);
@@ -104,11 +113,75 @@ impl FnLower<'_, '_> {
         };
         let never = self.cx.is_never(x.ret);
         let id = self.cx.extern_sym(&x.symbol, params, ret, never);
-        let argv = self.lower_args(args, &modes);
+        let argv = match foreign {
+            true => self.foreign_args(&x.params, args),
+            false => self.lower_args(args, &modes, false),
+        };
         self.finish_call(vir::Callee::Extern(id), argv, x.ret, None)
     }
 
-    pub(super) fn lower_args(&mut self, args: &[hir::Expr], modes: &[PassMode]) -> Vec<Operand> {
+    /// A synchronous extern whose signature mentions boxed values: arguments as foreign views,
+    /// the result converted from the foreign layout.
+    fn foreign_extern_call(&mut self, x: &hir::ExternFnDef, args: &[hir::Expr]) -> Operand {
+        let mut params: Vec<Ty> = x
+            .params
+            .iter()
+            .filter_map(|&p| match self.cx.foreign_ty(p) {
+                Ty::Unit => None,
+                Ty::Agg(_) => Some(Ty::Ptr),
+                s => Some(s),
+            })
+            .collect();
+        let mut argv = self.foreign_args(&x.params, args);
+        let fret = self.cx.foreign_ty(x.ret);
+        let ret = match fret {
+            Ty::Agg(_) => Ty::Unit,
+            t => t,
+        };
+        let out = (fret != Ty::Unit).then(|| self.temp(fret));
+        if let (Some(o), Ty::Agg(_)) = (out, fret) {
+            params.push(Ty::Ptr);
+            argv.push(self.addr(Place::local(o)));
+        }
+        let never = self.cx.is_never(x.ret);
+        let id = self.cx.extern_sym(&x.symbol, params, ret, never);
+        let dest = out.filter(|_| ret != Ty::Unit).map(Place::local);
+        self.call(vir::Callee::Extern(id), argv, dest, never);
+        let Some(o) = out else { return unit() };
+        let rt = self.sub(x.ret);
+        let vt = self.cx.ty(rt);
+        let native = self.temp(vt);
+        self.adopt_foreign(&Place::local(o), rt, &Place::local(native));
+        self.owned_result(Some(native), rt)
+    }
+
+    /// Arguments of an extern as foreign views (borrowed: the caller keeps ownership).
+    fn foreign_args(&mut self, params: &[TyId], args: &[hir::Expr]) -> Vec<Operand> {
+        let mut argv = vec![];
+        for (&p, a) in params.iter().zip(args) {
+            let v = self.expr(a);
+            match self.cx.foreign_ty(p) {
+                Ty::Unit => {}
+                Ty::Agg(_) => {
+                    let vt = self.cx.ty(p);
+                    let place = self.operand_place(v, vt);
+                    let view = self.foreign_view(&place, p);
+                    argv.push(self.addr(view));
+                }
+                _ => argv.push(v),
+            }
+        }
+        argv
+    }
+
+    /// Arguments of a direct call per the callee's modes. `user_code`: the callee may run user
+    /// code (not a runtime extern), so borrows through counted objects are stabilized.
+    pub(super) fn lower_args(
+        &mut self,
+        args: &[hir::Expr],
+        modes: &[PassMode],
+        user_code: bool,
+    ) -> Vec<Operand> {
         if args.len() != modes.len() {
             ice("argument count does not match parameter count");
         }
@@ -119,7 +192,10 @@ impl FnLower<'_, '_> {
                     self.expr(a);
                 }
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
-                    let v = self.borrowed_arg(a);
+                    let v = match user_code {
+                        true => self.stable_borrow(a),
+                        false => self.borrowed_arg(a),
+                    };
                     argv.push(self.operand_addr(v, t));
                 }
                 (t @ Ty::Agg(_), PassMode::Owned | PassMode::Copy) => {
@@ -129,10 +205,12 @@ impl FnLower<'_, '_> {
                     argv.push(self.addr(Place::local(tmp)));
                 }
                 (_, m) => {
-                    let v = if *m == PassMode::Owned {
-                        self.consume(a)
-                    } else {
-                        self.expr(a)
+                    let v = match m {
+                        PassMode::Owned => self.consume(a),
+                        PassMode::Borrow | PassMode::BorrowMut if user_code => {
+                            self.stable_borrow(a)
+                        }
+                        _ => self.expr(a),
                     };
                     let v = if args[i + 1..].iter().any(may_write) {
                         self.freeze(v, a.ty)
@@ -167,7 +245,7 @@ impl FnLower<'_, '_> {
                 let ty = self.sub(a.ty);
                 self.own_value(v, ty)
             } else {
-                self.borrowed_arg(a)
+                self.stable_borrow(a)
             };
             match t {
                 Ty::Unit => {}

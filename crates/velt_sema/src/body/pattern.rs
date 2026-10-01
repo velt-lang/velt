@@ -139,9 +139,11 @@ impl FnCx<'_, '_> {
             TyKind::Array(e) => {
                 let pats = elems.iter().map(|p| self.pattern(p, e, ctx)).collect();
                 let rest = rest.map(|r| {
-                    if !self.cx.is_copy(e) {
-                        self.cx
-                            .err("`...rest` needs an array of Copy elements", r.span);
+                    if !self.cx.is_copy(e) && !self.cx.is_shared_value(e) {
+                        self.cx.err(
+                            "`...rest` needs an array of Copy or shared elements (not promises)",
+                            r.span,
+                        );
                     }
                     self.declare_local(r, ty, LocalKind::Bind)
                 });

@@ -24,8 +24,11 @@ mod adt;
 mod array;
 mod async_fn;
 mod attempt;
+mod boxes;
+mod boxing;
 mod call;
 mod callee;
+mod cells;
 mod cfg;
 mod closure;
 mod console;
@@ -35,6 +38,8 @@ mod errors;
 mod expr;
 mod flags;
 mod for_of;
+mod for_of_shared;
+mod foreign;
 mod glue;
 mod intrinsics;
 mod json;
@@ -48,13 +53,18 @@ mod param_attrs;
 mod pattern;
 mod place;
 mod program;
+mod rc;
 mod rt;
+mod same;
+mod share;
 mod srcloc;
+mod stabilize;
 mod stmt;
 mod strbuf;
 mod strings;
 mod template;
 mod track_caller;
+mod transfer;
 mod types;
 mod widen;
 
@@ -77,17 +87,39 @@ pub(crate) use glue::Glue;
 pub(crate) use glue::inspect_quote;
 use glue::VtableKey;
 
-/// Lower a whole checked program (see [`crate::lower`]).
+/// Most lowering passes the counted-type fixpoint may take (boxing/): each pass adds types,
+/// and the closure computed after a pass already contains everything its facts imply.
+const MAX_BOXING_PASSES: usize = 8;
+
+/// Lower a whole checked program (see [`crate::lower`]). Lowering repeats while a pass finds
+/// shares of types that were not counted yet (boxing/); the type table carries over, so type
+/// ids in the counted set stay valid.
 pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Program {
-    let mut cx = Cx::new(hir);
-    cx.locs = opts
-        .source_map
-        .map(|sm| srcloc::LocMap::new(sm, opts.std_root));
-    cx.seed_functions();
-    while let Some((fid, work)) = cx.queue.pop_front() {
-        cx.build_now(fid, &work);
+    let mut types = hir.types.clone();
+    let mut counted = boxing::Boxing::default();
+    for _ in 0..MAX_BOXING_PASSES {
+        let mut cx = Cx::new(hir, types, counted.clone());
+        cx.locs = opts
+            .source_map
+            .map(|sm| srcloc::LocMap::new(sm, opts.std_root));
+        cx.seed_functions();
+        while let Some((fid, work)) = cx.queue.pop_front() {
+            cx.build_now(fid, &work);
+        }
+        let next = cx.close_boxing();
+        if next == counted {
+            if cx.facts.unmet {
+                ice("a shared type was not counted");
+            }
+            if std::env::var_os("VELT_DEBUG_COUNTED").is_some() {
+                eprintln!("velt: counted types: {}", cx.counted_names().join(", "));
+            }
+            return cx.finish();
+        }
+        types = cx.types;
+        counted = next;
     }
-    cx.finish()
+    ice("the counted types did not converge")
 }
 
 /// Internal-compiler-error: lowering was handed something sema should never produce.
@@ -187,6 +219,10 @@ struct Cx<'h> {
     tracked: HashMap<DefId, bool>,
     /// Interned static `VeltStr` objects (`static_str_object`).
     str_objects: HashMap<String, StaticId>,
+    /// Types whose values carry a reference count in this pass (boxing/).
+    boxing: boxing::Boxing,
+    /// Sharing facts observed in this pass (boxing/).
+    facts: boxing::Facts,
     /// `Program::impls` indexes per interface (`impls_of`), built on first use.
     iface_impls: Option<HashMap<DefId, Rc<[u32]>>>,
     /// Memoized `dyn_modes` per (interface, slot).
@@ -219,6 +255,9 @@ struct LInfo {
     /// instead of being recorded in `moved_fields`: set when the static record would be wrong
     /// on some path (drop flags, a field move in a conditional region).
     zero_parts: bool,
+    /// The local is a shared cell owned by this function (cells.rs): `vir` holds the cell
+    /// pointer; dropping the local releases the cell.
+    cell: bool,
 }
 
 /// A pending drop obligation.
@@ -295,4 +334,13 @@ struct FnLower<'c, 'h> {
     /// The next call lowered is awaited or spawned right away: its promise is not started
     /// (async_fn/start.rs).
     lazy_call: bool,
+    /// While lowering a stabilized borrow (stabilize.rs): every counted object a place
+    /// projection goes through is retained until the end of the statement.
+    retain_hops: bool,
+    /// While binding a pattern inside a counted value: owned bindings take shares (pattern.rs).
+    share_binds: bool,
+    /// While lowering the arguments of a spawned call: owned ones are transferred (transfer.rs).
+    transfer_args: bool,
+    /// Building `Glue::Same`: objects inside the compared values compare by identity (same.rs).
+    same_mode: bool,
 }

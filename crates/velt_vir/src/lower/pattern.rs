@@ -179,9 +179,19 @@ impl FnLower<'_, '_> {
         if self.dead() {
             return;
         }
+        // Parts of a counted value have other owners: moving bindings inside it take shares of
+        // them (a binding of the whole value just takes it over).
+        let outer = self.share_binds;
+        self.share_binds |= self.cx.counted(ty) && !matches!(pat.kind, PatKind::Binding(..));
+        self.bind_parts(pat, place, ty, register);
+        self.share_binds = outer;
+    }
+
+    fn bind_parts(&mut self, pat: &Pat, place: &Place, ty: TyId, register: bool) {
         match &pat.kind {
             PatKind::Binding(id, mode) => {
-                self.bind_local(*id, *mode == UseMode::Move && register, place)
+                let moving = *mode == UseMode::Move;
+                self.bind_local(*id, moving && register, moving, place)
             }
             PatKind::Variant { variant, args, .. } => {
                 for (k, p) in args.iter().enumerate() {
@@ -207,6 +217,7 @@ impl FnLower<'_, '_> {
             }
             PatKind::Array { elems, rest } => {
                 let elem = self.elem_ty(ty);
+                let place = &self.content(place, ty);
                 // A destructuring `let` is not tested first: an array shorter than the pattern
                 // panics like indexing its first missing element (`xs[2]`).
                 if let Some(last) = elems.len().checked_sub(1) {
@@ -236,7 +247,9 @@ impl FnLower<'_, '_> {
         }
     }
 
-    fn bind_local(&mut self, id: hir::LocalId, owns: bool, place: &Place) {
+    /// `owns`: the binding becomes owned by the current scope now; `moving`: it takes the part
+    /// out of the matched value (a share inside a counted value, `bind_pat`).
+    fn bind_local(&mut self, id: hir::LocalId, owns: bool, moving: bool, place: &Place) {
         let info = &self.info[id.0 as usize];
         let Some(l) = info.vir else { return };
         if info.indirect {
@@ -244,14 +257,21 @@ impl FnLower<'_, '_> {
             self.assign(Place::local(l), Rvalue::Use(a));
             return;
         }
-        self.assign(Place::local(l), Rvalue::Use(Operand::Copy(place.clone())));
+        let v = match moving && self.share_binds {
+            true => {
+                let ty = self.info[id.0 as usize].ty;
+                self.share_value(Operand::Copy(place.clone()), ty)
+            }
+            false => Operand::Copy(place.clone()),
+        };
+        self.assign(Place::local(l), Rvalue::Use(v));
         if owns && self.info[id.0 as usize].droppable {
             self.mark_init(id);
             self.register_local_drop(id);
         }
     }
 
-    /// `[a, b, ...rest]`: `rest` gets a new array of clones of the remaining elements.
+    /// `[a, b, ...rest]`: `rest` gets a new array of the remaining elements (shared, like JS).
     fn bind_rest(&mut self, r: hir::LocalId, place: &Place, ty: TyId, skip: usize) {
         let Some(l) = self.info[r.0 as usize].vir else {
             return;
@@ -262,12 +282,11 @@ impl FnLower<'_, '_> {
             Ty::U64,
             Rvalue::Binary(BinOp::Sub, len.clone(), cint(skip as i128, Ty::U64)),
         );
-        let fresh = self.array_with_len(n.clone(), ty);
-        let aa = self.cx.array_agg();
-        let fp = self.operand_place(fresh.clone(), Ty::Agg(aa));
-        self.copy_elems(place, cint(skip as i128, Ty::U64), &fp, n, elem);
-        self.take_temp(&fp);
-        self.assign(Place::local(l), Rvalue::Use(fresh));
+        let fresh = self.inline_array_with_len(n.clone(), elem);
+        let fp = Place::local(fresh);
+        self.copy_elems(place, cint(skip as i128, Ty::U64), &fp, n, elem, true);
+        let v = self.box_value(Operand::Copy(fp), ty);
+        self.assign(Place::local(l), Rvalue::Use(v));
         if self.info[r.0 as usize].droppable {
             self.mark_init(r);
             self.register_local_drop(r);
@@ -276,7 +295,9 @@ impl FnLower<'_, '_> {
 
     /// Drop the parts of the owned value at `place` that `pat` did not move out.
     pub(super) fn drop_rest(&mut self, place: Place, ty: TyId, pat: &Pat) {
-        if !has_moves(pat) {
+        // Bindings out of a counted value are shares (`bind_pat`): it is released whole.
+        let inside = self.cx.counted(ty) && !matches!(pat.kind, PatKind::Binding(..));
+        if !has_moves(pat) || inside {
             self.drop_glue(place, ty);
             return;
         }
@@ -320,8 +341,7 @@ impl FnLower<'_, '_> {
             }
         }
         if self.cx.is_class(ty) {
-            let oa = self.cx.obj_agg(ty);
-            self.free(Operand::Copy(place), Ty::Agg(oa));
+            self.object_free(Operand::Copy(place), ty);
         }
     }
 

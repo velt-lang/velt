@@ -119,6 +119,7 @@ pub extern "C" fn velt_rt_alloc(size: u64, align: u64) -> *mut u8 {
     if p.is_null() {
         out_of_memory(size, a);
     }
+    crate::str::stats::block_alloc();
     p
 }
 
@@ -149,6 +150,7 @@ pub unsafe extern "C" fn velt_rt_free(p: *mut u8, size: u64, align: u64) {
     if p.is_null() || size == 0 {
         return;
     }
+    crate::str::stats::block_free();
     raw::free(p, size as usize, check_align(align));
 }
 

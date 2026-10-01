@@ -69,7 +69,7 @@ fn string_copy_inside_loop_is_fine() {
             matches!(
                 e.kind,
                 E::Call {
-                    callee: Callee::Intrinsic(Intrinsic::Clone),
+                    callee: Callee::Intrinsic(Intrinsic::Share),
                     ..
                 }
             )

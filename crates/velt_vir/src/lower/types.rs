@@ -120,7 +120,7 @@ impl<'h> Cx<'h> {
 
     /// `Option<t>` uses the null pointer for none.
     pub(super) fn has_null_niche(&self, t: TyId) -> bool {
-        self.is_class(t) || matches!(self.types.kind(t), TyKind::Shared(_))
+        self.is_class(t) || self.boxed(t) || matches!(self.types.kind(t), TyKind::Shared(_))
     }
 
     /// VIR type of a concrete HIR type. `Unit` and `Never` map to `Ty::Unit` (no value).
@@ -133,6 +133,7 @@ impl<'h> Cx<'h> {
             TyKind::Str => Ty::Agg(STR_AGG),
             // Literal types are zero-sized: the type is the value.
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => Ty::Unit,
+            _ if self.boxed(t) => Ty::Ptr,
             TyKind::Adt(d, _) => match self.hir.def(d) {
                 hir::Def::Adt(a) if a.kind == AdtKind::Class => Ty::Ptr,
                 hir::Def::Adt(_) => Ty::Agg(self.value_agg(t)),
@@ -158,6 +159,7 @@ impl<'h> Cx<'h> {
         // Provisional answer for recursive types (a type reached again through itself).
         self.lay.drop_memo.insert(t, false);
         let b = match self.kind(t) {
+            _ if self.boxed(t) => true,
             TyKind::Str
             | TyKind::Array(_)
             | TyKind::Shared(_)

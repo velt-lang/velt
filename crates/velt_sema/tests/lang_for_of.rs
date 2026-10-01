@@ -29,12 +29,12 @@ fn temporaries_are_consumed_and_elements_can_be_moved() {
 
 #[test]
 fn places_are_still_borrowed() {
-    let r = err_src(
+    // Semantics stage 2: an element pushed elsewhere is shared.
+    ok_src(
         "function load(): i64[][] { return [[1], [2]]; }
          function main() { const xs = load(); const out: i64[][] = [];
            for (const s of xs) { out.push(s); } }",
     );
-    assert!(r.contains("which borrows an array element"), "{r}");
     let r = err_src(&format!(
         "{LOAD} function main() {{ for (const s of load()) {{ s = \"z\"; }} }}"
     ));

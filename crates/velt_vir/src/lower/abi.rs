@@ -63,6 +63,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
             ref_bindings: HashSet::new(),
             asyncx: None,
             lazy_call: false,
+            retain_hops: false,
+            share_binds: false,
+            transfer_args: false,
+            same_mode: false,
         };
         let entry = lw.new_block();
         lw.live[entry.0 as usize] = true;
@@ -226,13 +230,17 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 let ty = self.sub(ld.ty);
                 let by_ref = self.ref_bindings.contains(&hir::LocalId(i as u32));
                 let t = self.cx.ty(ty);
+                let cell = ld.boxed && t != Ty::Unit;
                 let (vt, indirect) = match t {
+                    _ if cell => (Ty::Ptr, true),
                     Ty::Agg(_) if by_ref => (Ty::Ptr, true),
                     t => (t, false),
                 };
                 let vir = (vt != Ty::Unit).then(|| self.new_local(vt, Some(ld.name.clone())));
-                let droppable = vir.is_some() && !by_ref && self.cx.needs_drop(ty);
-                info[i] = Some(LInfo::new(vir, ty, indirect, droppable, LState::Uninit));
+                let droppable = cell || vir.is_some() && !by_ref && self.cx.needs_drop(ty);
+                let mut li = LInfo::new(vir, ty, indirect, droppable, LState::Uninit);
+                li.cell = cell;
+                info[i] = Some(li);
             }
         }
         self.info = info
@@ -263,6 +271,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
     pub(super) fn lower_body(&mut self, f: &FnDef) {
         // Outermost scope: owned params, dropped on every return.
         self.push_scope(ScopeKind::Block);
+        for p in &f.params[f.captures.len()..] {
+            self.box_param(f, p);
+        }
         for p in &f.params {
             if self.info[p.local.0 as usize].droppable {
                 self.mark_init(p.local);
@@ -369,6 +380,7 @@ impl LInfo {
             state,
             moved_fields: vec![],
             zero_parts: false,
+            cell: false,
         }
     }
 }

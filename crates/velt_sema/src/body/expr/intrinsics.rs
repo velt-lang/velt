@@ -29,7 +29,9 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "array_truncate" => I::ArrayTruncate,
         "hash" => I::Hash,
         "eq" => I::Eq,
+        "same" => I::Same,
         "clone" => I::Clone,
+        "share" => I::Share,
         "sqrt" => I::Sqrt,
         "floor" => I::Floor,
         "ceil" => I::Ceil,
@@ -105,8 +107,8 @@ impl FnCx<'_, '_> {
             I::ArrayRemove => (vec![(arr, M), (usize_, C)], t, true),
             I::ArrayTruncate => (vec![(arr, M), (usize_, C)], unit, true),
             I::Hash => (vec![(t, B)], ty.u64, true),
-            I::Eq => (vec![(t, B), (t, B)], bool_, true),
-            I::Clone => (vec![(t, B)], t, true),
+            I::Eq | I::Same => (vec![(t, B), (t, B)], bool_, true),
+            I::Clone | I::Share => (vec![(t, B)], t, true),
             I::ToString => (vec![(t, B)], str_, true),
             I::SharedNew => {
                 let s = ty.intern(TyKind::Shared(t));

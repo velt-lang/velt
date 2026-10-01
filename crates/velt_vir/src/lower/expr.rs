@@ -62,10 +62,10 @@ impl FnLower<'_, '_> {
             },
             _ => match &v {
                 Operand::Copy(p) if self.take_temp(&p.clone()) => v,
-                // A borrowed place used as an owned value: make a deep copy.
+                // A borrowed place used as an owned value: another reference to it (JS).
                 _ => {
                     let ty = self.sub(e.ty);
-                    self.clone_value(v, ty)
+                    self.share_value(v, ty)
                 }
             },
         }

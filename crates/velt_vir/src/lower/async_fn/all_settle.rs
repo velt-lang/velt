@@ -228,7 +228,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.free_buffer(buf, slot);
         let out = proj(base, Proj::Field(0));
         let jv = self.cx.view(joined, 0);
-        let arr_v = Operand::Copy(Place::local(arr));
+        let arr_ty = self.cx.intern(TyKind::Array(t));
+        let arr_v = self.box_value(Operand::Copy(Place::local(arr)), arr_ty);
         self.assign(
             proj(&proj(&out, Proj::Cast(jv)), Proj::Field(1)),
             Rvalue::Use(arr_v),

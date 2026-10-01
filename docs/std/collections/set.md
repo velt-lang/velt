@@ -2,7 +2,8 @@
 
 `import { Set } from "velt:collections/set"`. An insertion-ordered hash set with JS `Set`
 semantics plus the ES2025 set algebra. It is built on the prelude `Map`, so elements can be
-anything a map key can be: ints, bool, string, Copy structs.
+anything a map key can be: numbers, bool, string, class instances (by identity), and structs,
+object types and tuples (by content).
 
 - `new Set<T>()`, `Set.from(xs)`, `size`, `isEmpty()`.
 - `add(v)`: takes ownership. `has(v)`, `delete(v): bool`, `clear()`.

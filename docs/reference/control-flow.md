@@ -12,10 +12,11 @@
 
 - `for...of` iterates arrays, maps (`[key, value]` pairs), and classes with an `entries()`
   method.
-- Iterating a variable or field **borrows** each element: you can call its methods (including
-  modifying ones) but not assign its fields or move it. Index the array to replace an element.
+- The loop variable is each element itself (objects are references): you can call its methods
+  (including modifying ones), assign its fields, and store it elsewhere, which shares the
+  element. Index the array to replace an element.
 - Iterating a temporary (a call result, `await …`, a literal) **consumes** it: each element is
-  owned and can be moved.
+  handed to the loop variable without a count.
 - There is no `for...in`; iterate `map.keys()` or an object's known fields.
 
 ## `switch`

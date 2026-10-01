@@ -13,6 +13,7 @@ use crate::hir::{
 
 pub(crate) fn build_defs(cx: &mut Ctx) {
     let mut memo: HashMap<DefId, Vec<Option<hir::Expr>>> = HashMap::new();
+    let assigned = crate::assigned_fields::assigned_objects(cx);
     for i in 0..cx.info.len() {
         let d = DefId(i as u32);
         if cx.defs[i].is_some() {
@@ -31,7 +32,7 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
                 is_async: f.is_async,
                 span: f.span,
             })),
-            DefInfo::Adt(_) => Some(Def::Adt(adt_def(cx, d, &mut memo))),
+            DefInfo::Adt(_) => Some(Def::Adt(adt_def(cx, d, &mut memo, assigned.contains(&d)))),
             DefInfo::Enum(_) => Some(Def::Enum(enum_def(cx, d))),
             DefInfo::Iface(i) => Some(Def::Interface(InterfaceDef {
                 name: i.qual_name.clone(),
@@ -105,7 +106,12 @@ fn field_defaults(
     out
 }
 
-fn adt_def(cx: &mut Ctx, d: DefId, memo: &mut HashMap<DefId, Vec<Option<hir::Expr>>>) -> AdtDef {
+fn adt_def(
+    cx: &mut Ctx,
+    d: DefId,
+    memo: &mut HashMap<DefId, Vec<Option<hir::Expr>>>,
+    assigned: bool,
+) -> AdtDef {
     let defaults = field_defaults(cx, d, memo);
     let a = cx.adt(d).expect("ICE: adt");
     let n = a.generics.len();
@@ -139,6 +145,7 @@ fn adt_def(cx: &mut Ctx, d: DefId, memo: &mut HashMap<DefId, Vec<Option<hir::Exp
         generics: n as u32,
         fields,
         is_copy: cx.is_copy(st),
+        assigned,
         base,
         ctor,
         dispose,

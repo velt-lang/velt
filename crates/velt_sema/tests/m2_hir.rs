@@ -281,9 +281,10 @@ fn arrays_maps_and_destructuring() {
 }
 
 #[test]
-fn structs_are_values() {
+fn structs_are_objects() {
     let p = golden("structs");
-    assert!(adt(&p, "Point").is_copy);
+    // Semantics stage 2: structs are objects (references), never Copy.
+    assert!(!adt(&p, "Point").is_copy);
     let main = func(&p, "main");
     assert!(
         uses_of(main, "p").contains(&UseMode::BorrowMut),

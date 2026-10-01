@@ -25,8 +25,10 @@ hidden classes and no runtime shape checks.
   called or assigned; `set size(v: T) { … }` runs on `x.size = v`; with both, `x.size += 1` and
   `x.size++` use both. Implementations and overrides of a getter or setter must be accessors
   too. Getters cannot be `static` or `async`.
-- `x.clone()` makes a deep copy of any class, struct or union, except values owning a
-  `[Symbol.dispose]` resource, which may define `clone()` themselves.
+- Instances are references, as in JS ([Memory model](memory.md#values-and-references)):
+  `const b = a` refers to the same object. `x.clone()` makes an independent deep copy of any
+  class, struct or union (like `structuredClone`), except values owning a `[Symbol.dispose]`
+  resource, which may define `clone()` themselves.
 - Async methods take `this` by value: the promise owns it.
 
 ```ts
@@ -71,15 +73,16 @@ console.log(ok, a.total, a.owner, Account.LIMIT);
 
 ## Structs
 
-`struct` declares a value type with the same members as a class (methods, getters, `private`,
-`static`). It is built with a struct literal `Point { x: 1, y: 2 }` or an object literal where a
-`Point` is expected. A struct has no constructor and no inheritance (`implements` is allowed). A
-struct whose fields are all Copy (numbers, `bool`, Copy structs) is itself Copy: assigning or
-passing it copies it.
+`struct` declares an object type with the same members as a class (methods, getters,
+`private`, `static`). It is built with a struct literal `Point { x: 1, y: 2 }` or an object
+literal where a `Point` is expected. A struct has no constructor and no inheritance
+(`implements` is allowed). Like every object it is a reference
+([Memory model](memory.md#values-and-references)): assigning or passing it shares it. The
+compiler stores it inline (no heap allocation, no count) as long as the program never shares a
+value of the type, or never changes one in place.
 
 **Planned** ([semantics](../internals/design/semantics.md#js-fidelity-decisions)): the `struct`
-keyword is removed; objects get JS reference semantics and the compiler keeps inline storage
-where the difference can't be observed.
+keyword is removed (use `class`, or `type Name = { … }` with `extend Name { … }` for plain data).
 
 ```ts
 struct Vec2 {
@@ -92,9 +95,9 @@ struct Vec2 {
 }
 
 let p = Vec2 { x: 3.0, y: 4.0 };
-const q = p;                    // a copy
+const q = p;                    // the same object
 p.x = 0.0;
-console.log(p.len(), q.len());  // 4 5
+console.log(p.len(), q.len());  // 4 4
 ```
 
 ## Interfaces
@@ -267,7 +270,7 @@ function max<T extends Comparable<T>>(xs: T[]): T | null {
   let best = xs.pop();
   for (const x of xs) {
     if (best != null && x > best) {
-      best = x.clone();
+      best = x;
     }
   }
   return best;

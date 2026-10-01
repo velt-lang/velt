@@ -139,7 +139,10 @@ impl FnLower<'_, '_> {
                 self.goto(done);
                 self.switch_to(done);
             }
-            TyKind::Array(e) => self.format_array(buf, place, e),
+            TyKind::Array(e) => {
+                let arr = self.content(place, ty);
+                self.format_array(buf, &arr, e)
+            }
             TyKind::Shared(e) => {
                 let bx = self.cx.shared_box(e);
                 let inner = proj(&proj(place, Proj::Deref(Ty::Agg(bx))), Proj::Field(1));
@@ -277,7 +280,7 @@ impl FnLower<'_, '_> {
     }
 
     pub(super) fn dyn_format_body(&mut self, buf: Operand, data: vir::Local, ty: TyId) {
-        if self.cx.is_class(ty) {
+        if self.cx.is_class(ty) || self.cx.boxed(ty) {
             self.format_nested(&buf, &Place::local(data), ty);
         } else {
             let p = self.deref_param(data, ty);

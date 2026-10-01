@@ -68,9 +68,12 @@ compile-time thread safety.
    copy otherwise; closures capture by copy), and `s.clone()` compiles as a plain copy. JS
    division (below) shipped in the same stage. Gate results:
    [bench/RESULTS.md "Semantics stage 1"](../../../bench/RESULTS.md).
-2. **Objects, arrays, maps, closures** (planned): shared-reference semantics with uniqueness
-   inference and a refcount fallback; `.clone()` becomes a deep copy; move errors are removed;
-   escaping closures box the captures they modify.
+2. **Objects, arrays, maps, closures** (implemented, [semantics-stage2.md](semantics-stage2.md)):
+   shared-reference semantics with uniqueness inference and a refcount fallback; `.clone()` is a
+   deep copy; move errors are removed; escaping closures box the captures they modify. Lowering
+   counts exactly the types a program shares; everything else keeps the unique-owner code. `==`
+   on objects is identity and `deepEqual` compares contents. Not yet: removing the `struct`
+   keyword (structs already behave as objects).
 3. **Cycles** (planned): `weak`, static cycle-capability analysis and the warning.
 
 ## Gates
