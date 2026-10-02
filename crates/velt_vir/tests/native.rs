@@ -39,10 +39,18 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Build the runtime staticlib once (it must sit next to the test binary's target dir).
+/// Build the runtime staticlib once per process (it must sit next to the test binary's target
+/// dir). Not under the gate: `cargo xtask check` builds the workspace first and sets
+/// `VELT_RT_PREBUILT=1`. There `-p velt_rt` would resolve other features than `--workspace` and
+/// rebuild `velt_rt.lib` while tests running in parallel processes link against it, which fails
+/// on Windows (the file is open).
 fn ensure_runtime() {
     static BUILD: Once = Once::new();
     BUILD.call_once(|| {
+        let prebuilt = std::env::var_os("VELT_RT_PREBUILT").is_some_and(|v| v == "1");
+        if cfg!(debug_assertions) && prebuilt {
+            return;
+        }
         let st = Command::new(env!("CARGO"))
             .args(["build", "-p", "velt_rt"])
             .current_dir(root())
