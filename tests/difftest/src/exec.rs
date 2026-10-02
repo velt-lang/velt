@@ -40,9 +40,14 @@ pub fn run(cmd: &mut Command, scratch: &Path, timeout: Duration) -> Result<Outpu
     let err_path = scratch.join("stderr.txt");
     let create =
         |p: &Path| File::create(p).map_err(|e| format!("cannot create {}: {e}", p.display()));
+    // Programs and their Node twins see the same local time zone: UTC, except on Windows, where
+    // Velt reads the system zone and ignores `TZ` (Node honors it), so neither side gets it.
+    if cfg!(windows) {
+        cmd.env_remove("TZ");
+    } else {
+        cmd.env("TZ", "UTC");
+    }
     let mut child = cmd
-        // Programs and their Node twins see the same (UTC) local time zone.
-        .env("TZ", "UTC")
         .stdin(Stdio::null())
         .stdout(create(&out_path)?)
         .stderr(create(&err_path)?)
