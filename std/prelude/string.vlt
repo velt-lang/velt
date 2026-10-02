@@ -123,9 +123,12 @@ extend string {
     return velt_rt_str_pad_end(this, target, fill);
   }
 
-  // -1, 0 or 1: the order of `this` and `that` in ICU's root collation, like Node's
-  // `localeCompare` without a locale ("a" < "A" < "b", "e" < "é" < "f"). Exact for Latin text;
-  // other scripts sort after Latin letters by code point. No locale or options arguments.
+  // -1, 0 or 1: the order of `this` and `that` in the CLDR root collation, like
+  // `new Intl.Collator("und").compare` ("a" < "A" < "b", "e" < "é" < "f"). Node's own
+  // `localeCompare` follows the host's locale instead. Exact for Latin (including Vietnamese),
+  // Greek and Cyrillic letters, punctuation and digits, except a few characters that stand for
+  // three or more (`¼`, `½`, `¾`, `ϗ`); approximate for other scripts. No locale or options
+  // arguments.
   localeCompare(that: string): i64 {
     return velt_rt_str_locale_compare(this, that);
   }

@@ -1,6 +1,11 @@
 // JS idioms that Velt spells differently get an error with the fix: assigning an array's
-// `length`, using the result of an in-place method, `then`/`catch` on a promise, and Node's
+// `length`, using the result of an in-place array method (on a variable or on a temporary;
+// other types' `sort` get no array hint), `then`/`catch` on a promise, and Node's
 // `process.stdout` / `process.argv`.
+class Deck {
+  sort() {}
+}
+
 async function fetchCount(): Promise<i64> {
   return 1;
 }
@@ -9,6 +14,9 @@ async function main() {
   const xs = [3, 1, 2];
   xs.length = 0;
   const sorted = xs.sort();
+  const copy = xs.slice().reverse();
+  const deck = new Deck();
+  const shuffled = deck.sort();
   const count = await fetchCount().then((n: i64) => n + 1);
   process.stdout.write("hi");
   const args = process.argv;

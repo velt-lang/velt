@@ -5,6 +5,7 @@
 [ 1, 2 ]
 [ 1, 2, 3 ] 1,2;3;
 1,,3 a--c
+[ 1, 2 ],[ 3 ] 1,null [ 1, 2 ],
 _x 10 9 adam Ådne émile eve Eve zack Zoë
 -1 1 1
 42 true false true
@@ -13,3 +14,4 @@ _x 10 9 adam Ådne émile eve Eve zack Zoë
 255 3.5 false
 false false -Infinity
 bad input: x true
+bad input: x

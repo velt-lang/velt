@@ -51,6 +51,7 @@ impl FnCx<'_, '_> {
         let Some(r) = self.resolve_method(recv.ty, &prop.name) else {
             return self.no_method(recv, prop, args, span);
         };
+        self.check_extension_ambiguity(&r, recv.ty, &prop.name, prop.span);
         self.check_private(self.method_private_to(&r), &prop.name, prop.span);
         self.rec_method(prop.span, &r);
         if self.is_getter(&r) && !getter {

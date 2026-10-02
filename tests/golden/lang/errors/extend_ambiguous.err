@@ -1,0 +1,4 @@
+extend_ambiguous.vlt:17:22: error: ambiguous extension method `describe` on `Map<string, i64>`
+extend_ambiguous.vlt:4:3: one candidate
+extend_ambiguous.vlt:10:3: one candidate
+  = note: neither `extend` block's target is more specific than the other's: rename one method

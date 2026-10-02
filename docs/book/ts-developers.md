@@ -225,7 +225,7 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | `xs.splice(i, n, a, b)`, `xs.push(a, b)` | `splice(i, n)` removes; one `push(x)` per element | inserting `splice` and `push` with rest parameters |
 | `p.then(f).catch(g)` | `await p` inside `try`/`catch` | — |
 | `process.stdout.write(s)`, `process.argv` | `import { stdout, argv } from "velt:process"`; the builtin `process` has `exit` | — |
-| `a.localeCompare(b, locale, options)` | `a.localeCompare(b)`: ICU's root collation, no locales | — |
+| `a.localeCompare(b, locale, options)` (the host's locale by default) | `a.localeCompare(b)`: the CLDR root collation, like `new Intl.Collator("und").compare(a, b)`; no locales | — |
 | `export default` | named exports only | — |
 | string length in UTF-16 units | length and offsets in UTF-8 bytes | — |
 | (no equivalent) | `extend` adds members to any type | module-scoped extensions, retroactive `implements` |

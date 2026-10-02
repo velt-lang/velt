@@ -21,7 +21,7 @@ byte offsets; a negative position counts from the end, as in JS.
 | `replace(from, to)`, `replaceAll(from, to)` | plain text; for patterns use [`velt:regex`](regex.md) |
 | `repeat(n)`, `padStart(n, fill = " ")`, `padEnd(n, fill = " ")` | |
 | `charCodeAt(i = 0)` | the byte at `i` |
-| `localeCompare(t): i64` | -1, 0 or 1 in ICU's root collation, like Node without a locale (`"a" < "A" < "b"`, `"e" < "é" < "f"`); exact for Latin text, other scripts after Latin letters; no locale or options arguments |
+| `localeCompare(t): i64` | -1, 0 or 1 in the CLDR root collation, like `new Intl.Collator("und").compare(s, t)` (`"a" < "A" < "b"`, `"e" < "é" < "f"`; Node's own `localeCompare` uses the host's locale). Exact for Latin (including Vietnamese), Greek and Cyrillic letters, punctuation and digits, except a few characters that stand for three or more (`¼`, `½`, `¾`, `ϗ`); approximate for other scripts. No locale or options arguments |
 
 Conversions: `String.fromCharCode(code)`, `parseInt(s, radix = 0)` and `parseFloat(s)` (both
 return `f64`, `NaN` on failure), `Number(s)`.
@@ -57,7 +57,7 @@ Callback methods rethrow what their callback throws.
 | `truncate(n)` | JS `xs.length = n`: drops the elements from `n` on (`length` is read-only) |
 | `flat()` | on `T[][]`: the inner elements, one level deep |
 | `isEmpty()`, `entries(): [usize, T][]` | |
-| `join(sep = ",")` | any element type: strings, numbers and booleans like JS, inner arrays joined with `","` and `null` as empty text like JS; other values formatted like `${x}` (JS writes `[object Object]`) |
+| `join(sep = ",")` | any element type: strings, numbers and booleans like JS; one level of inner arrays joined with `","` and `null` elements as empty text, like JS; other values formatted like `${x}` (JS writes `[object Object]`), and so are deeper levels, `null` inside inner arrays and arrays inside nullable elements, which JS joins recursively |
 | `sort()`, `sort(cmp)` | `sort()` on numbers, strings and `Comparable` elements (unstable, pdqsort); `sort(cmp)` is stable on any element type |
 | `new Array<T>(n).fill(v)`, `Array.from({ length: n }, (_, i) => f(i))` | `n` elements in one allocation |
 

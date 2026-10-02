@@ -6,6 +6,8 @@
 //! Dispatch: a class method with a vtable slot in the receiver's static class is
 //! `Callee::Virtual`; everything else on concrete types is a direct `Callee::Def`.
 
+use velt_common::{Diagnostic, Span};
+
 use crate::body::FnCx;
 use crate::collect::lookup_method;
 use crate::defs::{Bound, IfaceMethod};
@@ -134,60 +136,126 @@ impl FnCx<'_, '_> {
         None
     }
 
-    /// Methods of `extend` blocks whose target type matches `recv`: an exact (non-generic)
-    /// target wins over generic ones (`extend Array<i64>` over `extend<T> Array<T>`), a more
-    /// specific generic target over a less specific one (`extend<T> Array<T[]>` over
-    /// `extend<T> Array<T>`), and a generic block only applies when its bounds hold.
+    /// The method `name` of the `extend` block for `recv`: among the applicable blocks (target
+    /// matches, bounds hold) the most specific one, i.e. the block whose target is an instance
+    /// of every other's (`extend Array<i64>` over `extend<T> Array<T[]>` over
+    /// `extend<T> Array<T>`). Several equally specific blocks are ambiguous
+    /// ([`FnCx::check_extension_ambiguity`] reports it at the call); the first is used then.
     fn extension_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
-        let (exact, mut generic): (Vec<usize>, Vec<usize>) = (0..self.cx.extensions.len())
-            .filter(|&i| self.cx.extensions[i].methods.contains_key(name))
-            .partition(|&i| self.cx.extensions[i].generics.len() == 0);
-        // Stable: equally specific blocks keep their declaration order.
-        generic.sort_by_cached_key(|&i| {
-            std::cmp::Reverse(self.specificity(self.cx.extensions[i].target))
-        });
-        for i in exact.into_iter().chain(generic) {
-            let Some(m) = self.cx.extensions[i].methods.get(name).copied() else {
-                continue;
-            };
-            let (target, n) = (
-                self.cx.extensions[i].target,
-                self.cx.extensions[i].generics.len(),
-            );
-            let mut slots = vec![None; n];
-            if !self.cx.match_ty(target, recv, &mut slots)
-                || self.cx.ty.subst_known(target, &slots) != recv
-            {
+        let candidates = self.applicable_extensions(recv, name);
+        let (i, owner) = self
+            .most_specific(&candidates)
+            .first()
+            .map(|&k| candidates[k].clone())?;
+        let m = self.cx.extensions[i].methods.get(name).copied()?;
+        let slots = self.own_generic_slots(m.def, &owner);
+        Some(Resolved::Def {
+            def: m.def,
+            slots,
+            recv_ty: recv,
+            is_static: m.is_static,
+        })
+    }
+
+    /// An error if `r` (the resolved method `name` of `recv`) comes from an `extend` block and
+    /// several equally specific blocks give `recv` a method `name`.
+    pub(crate) fn check_extension_ambiguity(
+        &mut self,
+        r: &Resolved,
+        recv: TyId,
+        name: &str,
+        span: Span,
+    ) {
+        let Resolved::Def { def, .. } = r else {
+            return;
+        };
+        let from_extension = self
+            .cx
+            .extensions
+            .iter()
+            .any(|x| x.methods.get(name).is_some_and(|m| m.def == *def));
+        if !from_extension {
+            return;
+        }
+        let candidates = self.applicable_extensions(recv, name);
+        let best = self.most_specific(&candidates);
+        if best.len() < 2 {
+            return;
+        }
+        let tn = self.cx.display(recv);
+        let mut d = Diagnostic::error(
+            format!("ambiguous extension method `{name}` on `{tn}`"),
+            span,
+        );
+        for k in best {
+            let m = self.cx.extensions[candidates[k].0].methods[name];
+            d = d.with_label(self.cx.fn_info(m.def).name_span, "one candidate");
+        }
+        self.cx.error(d.with_note(
+            "neither `extend` block's target is more specific than the other's: rename one method",
+        ));
+    }
+
+    /// `extend` blocks with a method `name` that apply to `recv`, with their type arguments.
+    fn applicable_extensions(&mut self, recv: TyId, name: &str) -> Vec<(usize, Vec<TyId>)> {
+        let mut out = vec![];
+        for i in 0..self.cx.extensions.len() {
+            if !self.cx.extensions[i].methods.contains_key(name) {
                 continue;
             }
+            let target = self.cx.extensions[i].target;
+            let Some(slots) = self.instance_args(target, recv) else {
+                continue;
+            };
             let owner: Vec<TyId> = slots
                 .iter()
                 .map(|s| s.unwrap_or(self.cx.ty.error))
                 .collect();
-            if !self.extension_bounds_hold(i, &owner) {
-                continue;
+            if self.extension_bounds_hold(i, &owner) {
+                out.push((i, owner));
             }
-            let slots = self.own_generic_slots(m.def, &owner);
-            return Some(Resolved::Def {
-                def: m.def,
-                slots,
-                recv_ty: recv,
-                is_static: m.is_static,
-            });
         }
-        None
+        out
     }
 
-    /// How much of `t` is fixed: the number of its type constructors that are not parameters.
-    fn specificity(&self, t: TyId) -> usize {
+    /// The type arguments that make `pattern` (an `extend` target) equal to `t`, if any.
+    fn instance_args(&mut self, pattern: TyId, t: TyId) -> Option<Vec<Option<TyId>>> {
+        let n = self.max_param(pattern).map_or(0, |p| p + 1);
+        let mut slots = vec![None; n];
+        let ok = self.cx.match_ty(pattern, t, &mut slots)
+            && self.cx.ty.subst_known(pattern, &slots) == t;
+        ok.then_some(slots)
+    }
+
+    /// The candidates (indexes into `candidates`) that no other candidate is strictly more
+    /// specific than, in declaration order. A is more specific than B when A's target is an
+    /// instance of B's and not the other way round.
+    fn most_specific(&mut self, candidates: &[(usize, Vec<TyId>)]) -> Vec<usize> {
+        let targets: Vec<TyId> = candidates
+            .iter()
+            .map(|(i, _)| self.cx.extensions[*i].target)
+            .collect();
+        (0..targets.len())
+            .filter(|&a| {
+                !(0..targets.len()).any(|b| {
+                    b != a
+                        && self.instance_args(targets[b], targets[a]).is_none()
+                        && self.instance_args(targets[a], targets[b]).is_some()
+                })
+            })
+            .collect()
+    }
+
+    /// The highest `Param` index in `t`.
+    fn max_param(&self, t: TyId) -> Option<usize> {
         let k = self.cx.ty.kind(t);
-        if matches!(k, TyKind::Param(_)) {
-            return 0;
+        if let TyKind::Param(p) = k {
+            return Some(*p as usize);
         }
-        1 + children(k)
+        children(k)
             .into_iter()
-            .map(|c| self.specificity(c))
-            .sum::<usize>()
+            .filter_map(|c| self.max_param(c))
+            .max()
     }
 
     /// Do the type args `owner` of extension `i` satisfy its generic bounds?

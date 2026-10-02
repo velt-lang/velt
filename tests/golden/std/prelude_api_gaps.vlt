@@ -1,6 +1,8 @@
 // Prelude APIs TypeScript code reaches for (expected output checked against Node): `splice`,
 // `truncate` (JS `length = n`), `flat`, `join` on nested arrays and nullable elements,
-// `localeCompare`, the static members of `Number`, and `assertThrows`.
+// `localeCompare`, the static members of `Number`, and `assertThrows`. The line after the
+// nullable `join`s shows where Velt differs: an array nested two levels deep, `null` inside an
+// inner array and an array inside a nullable element print like `${x}` (JS: `1,2,3 1, 1,2,`).
 class ParseError extends Error {}
 
 function parse(s: string): i64 {
@@ -32,6 +34,10 @@ function main() {
   const maybe: (i64 | null)[] = [1, null, 3];
   const names: (string | null)[] = ["a", null, "c"];
   console.log(maybe.join(), names.join("-"));
+  const deep = [[[1, 2], [3]]];
+  const innerNull: (i64 | null)[][] = [[1, null]];
+  const outerNull: (i64[] | null)[] = [[1, 2], null];
+  console.log(deep.join(), innerNull.join(), outerNull.join());
 
   const people = ["émile", "Zoë", "adam", "Ådne", "zack", "Eve", "eve", "_x", "10", "9"];
   people.sort((a, b) => a.localeCompare(b));
@@ -48,4 +54,5 @@ function main() {
     parse("x");
   });
   console.log(e.message, e instanceof ParseError);
+  console.log(assertThrows(() => parse("x")).message);
 }

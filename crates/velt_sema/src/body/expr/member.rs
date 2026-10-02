@@ -419,14 +419,18 @@ impl FnCx<'_, '_> {
 /// Where Node's `process.<name>` lives in Velt: the builtin `process` namespace only has
 /// `exit`; the rest is in `velt:process`.
 fn process_note(name: &str) -> String {
-    let import = match name {
-        "stdout" => "`import { stdout } from \"velt:process\"`, then `stdout.write(s)`",
-        "argv" | "env" | "cwd" | "chdir" => {
-            return format!(
-                "`import {{ {name} }} from \"velt:process\"`: `{name}` is a function there"
-            );
+    match name {
+        "stdout" => {
+            "use `import { stdout } from \"velt:process\"`, then `stdout.write(s)`".to_string()
         }
-        _ => "the functions of `velt:process` (`argv()`, `env(name)`, `cwd()`, `stdout.write(s)`)",
-    };
-    format!("use {import}")
+        "argv" => "use `args()` from `velt:process`: the arguments after the program, like \
+                   Node's `process.argv.slice(2)`"
+            .to_string(),
+        "env" | "cwd" | "chdir" => {
+            format!("use `import {{ {name} }} from \"velt:process\"`: `{name}` is a function there")
+        }
+        _ => "use the functions of `velt:process` (`args()`, `env(name)`, `cwd()`, \
+              `stdout.write(s)`)"
+            .to_string(),
+    }
 }

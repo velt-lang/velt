@@ -72,9 +72,14 @@ switch (s.kind) { case "circle": return s.r; case "rect": return s.w * s.h; }
 - **Blanket extensions** (implemented): `extend<T extends Comparable<T>> T { clamp(lo: T, hi: T):
   T { … } }`; extending through a bound adds the method to every implementor.
 - **Retroactive implements** (planned): `extend Point implements Comparable<Point> { … }`.
+- **Overlapping extensions** (implemented): among the applicable blocks (target matches,
+  bounds hold) the most specific wins, A over B when A's target is an instance of B's and not
+  the reverse (`extend Array<i64>` over `extend<T> Array<T[]>` over `extend<T> Array<T>`).
+  Otherwise the conflicting applicable extensions are an ambiguity error at the call
+  (``ambiguous extension method `m` ``, naming both blocks).
 - **Scoping** (planned): an extension is visible in its module and where it is imported
-  (`import { Stats } from …`); prelude extensions are global. Conflicting applicable extensions
-  are an ambiguity error. Today an extension applies wherever its module is loaded.
+  (`import { Stats } from …`); prelude extensions are global. Today an extension applies
+  wherever its module is loaded.
 - A type's own member always wins over an extension. No new fields (the layout is fixed). No
   operator overloading.
 

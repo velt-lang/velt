@@ -292,7 +292,9 @@ impl FnCx<'_, '_> {
                 format!("variable `{}` cannot have type `void`", name.name),
                 name.span,
             );
-            if let Some(note) = v.init.as_ref().and_then(in_place_note) {
+            let receiver_ty = init.as_ref().and_then(method_receiver_ty);
+            let on_array = receiver_ty.is_some_and(|t| self.cx.ty.array_elem(t).is_some());
+            if let Some(note) = v.init.as_ref().filter(|_| on_array).and_then(in_place_note) {
                 d = d.with_note(note);
             }
             self.cx.error(d);
@@ -363,9 +365,17 @@ fn is_empty_array(e: &ast::Expr) -> bool {
     }
 }
 
-/// `xs.sort()`, `xs.reverse()` and `xs.fill(v)` change `xs` and return nothing (returning the
-/// array would share it, which makes every array of its type reference counted): the hint for
-/// code that uses their result as in JS.
+/// The receiver type of a checked method call (its first argument).
+fn method_receiver_ty(call: &hir::Expr) -> Option<hir::TyId> {
+    match &call.kind {
+        hir::ExprKind::Call { args, .. } => args.first().map(|a| a.ty),
+        _ => None,
+    }
+}
+
+/// `xs.sort()`, `xs.reverse()` and `xs.fill(v)` on an array change it and return nothing
+/// (returning the array would share it, which makes every array of its type reference
+/// counted): the hint for code that uses their result as in JS.
 fn in_place_note(init: &ast::Expr) -> Option<String> {
     let ast::ExprKind::Call { callee, .. } = &init.kind else {
         return None;
@@ -373,12 +383,35 @@ fn in_place_note(init: &ast::Expr) -> Option<String> {
     let ast::ExprKind::Member { object, prop, .. } = &callee.kind else {
         return None;
     };
-    if !matches!(prop.name.as_str(), "sort" | "reverse" | "fill") {
+    let m = prop.name.as_str();
+    if !matches!(m, "sort" | "reverse" | "fill") {
         return None;
     }
-    let xs = crate::body::switch::cases::source_text(object);
+    let what = format!("`{m}` changes the array in place and returns nothing (unlike JS)");
+    if is_place(object) {
+        let xs = crate::body::switch::cases::source_text(object);
+        return Some(format!("{what}: call it, then use `{xs}`"));
+    }
+    let call = if m == "fill" {
+        "fill(v)".to_string()
+    } else {
+        format!("{m}()")
+    };
     Some(format!(
-        "`{}` changes the array in place and returns nothing (unlike JS): call it, then use `{xs}`",
-        prop.name
+        "{what}: store the array in a variable first (`const a = …; a.{call};`), then use `a`"
     ))
+}
+
+/// A variable or a field path of one (`xs`, `this.items`), as opposed to a temporary.
+fn is_place(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
+        ast::ExprKind::Member {
+            object,
+            optional: false,
+            ..
+        } => is_place(object),
+        ast::ExprKind::Paren(inner) => is_place(inner),
+        _ => false,
+    }
 }

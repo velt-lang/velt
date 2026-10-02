@@ -1,6 +1,7 @@
-// Prelude: `flat` and `join` on arrays of arrays, and `join` on arrays of nullable elements
-// (JS-identical: inner arrays join with ",", `null` joins as ""). The more specific `extend`
-// target wins over `extend<T> Array<T>` (array.vlt).
+// Prelude: `flat` and `join` on arrays of arrays, and `join` on arrays of nullable elements,
+// one level deep like JS: inner arrays join with ",", `null` joins as "". Deeper levels use
+// `extend<T> Array<T>`'s `${x}` form, because the inner `join` is resolved once for any `T`.
+// These targets are more specific than `extend<T> Array<T>` (array.vlt), so their `join` wins.
 
 extend<T> Array<T[]> {
   // The inner arrays' elements, one level deep (JS `flat()`; deeper levels are not supported).
@@ -19,7 +20,8 @@ extend<T> Array<T[]> {
     return out;
   }
 
-  // Each inner array joined with "," and the results with `sep`, like JS.
+  // Each inner array joined with "," and the results with `sep`, like JS when the inner
+  // elements are strings, numbers or booleans.
   join(sep: string = ","): string {
     let s = "";
     for (let i: usize = 0; i < this.length; i++) {
