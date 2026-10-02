@@ -173,8 +173,9 @@ pub enum Command {
     },
     /// `velt native build [--target <triple>]`: build the package's native library bundle.
     NativeBuild { target: Option<String> },
-    /// `velt manifest --json`: print the package's manifest as JSON, for other tools.
-    Manifest,
+    /// `velt manifest [--json]`: check the package's manifest, or (`json`) print it as JSON for
+    /// other tools.
+    Manifest { json: bool },
     /// `velt --version`.
     Version,
     /// `velt --help` or no arguments (`None`), `velt help <cmd>` / `velt <cmd> --help` (`Some`).
@@ -299,7 +300,7 @@ fn parse_lsp(args: Vec<OsString>) -> Result<Command, String> {
     }
 }
 
-/// `velt manifest --json`: JSON is the only output, but the flag keeps room for others.
+/// `velt manifest [--json]`.
 fn parse_manifest(args: Vec<OsString>) -> Result<Command, String> {
     let args = strings(args)?;
     let mut json = false;
@@ -310,11 +311,7 @@ fn parse_manifest(args: Vec<OsString>) -> Result<Command, String> {
             a => return Err(format!("unexpected argument `{a}` for `velt manifest`")),
         }
     }
-    if json {
-        Ok(Command::Manifest)
-    } else {
-        Err("missing `--json` (usage: velt manifest --json)".into())
-    }
+    Ok(Command::Manifest { json })
 }
 
 /// Split into strings; non-UTF-8 arguments are rejected for these commands.
@@ -336,9 +333,12 @@ mod tests {
     }
 
     #[test]
-    fn manifest_needs_json() {
-        assert_eq!(p(&["manifest", "--json"]).unwrap(), Command::Manifest);
-        assert!(p(&["manifest"]).unwrap_err().contains("missing `--json`"));
+    fn manifest_args() {
+        assert_eq!(
+            p(&["manifest", "--json"]).unwrap(),
+            Command::Manifest { json: true }
+        );
+        assert_eq!(p(&["manifest"]).unwrap(), Command::Manifest { json: false });
         let err = p(&["manifest", "foo", "--json"]).unwrap_err();
         assert!(err.contains("unexpected argument `foo`"), "{err}");
         let err = p(&["manifest", "--jsn"]).unwrap_err();

@@ -15,7 +15,7 @@ prints every command's options and examples.
 | `velt fmt` | format `.vlt` files ([Formatter](fmt.md)) |
 | `velt clean` | remove the package's `target/` directory |
 | `velt add`, `install`, `update`, `publish` | packages ([Packages](packages.md)) |
-| `velt manifest --json` | print the package's manifest as JSON, for other tools ([`package.vlt`](manifest.md#other-tools)) |
+| `velt manifest [--json]` | check the package's manifest, or print it as JSON for other tools ([`package.vlt`](manifest.md#other-tools)) |
 | `velt doc` | generate HTML API documentation |
 | `velt lsp` | the language server ([Editors](editors.md)) |
 | `velt playground` | write and run programs in the browser ([WebAssembly](webassembly.md#the-playground)) |

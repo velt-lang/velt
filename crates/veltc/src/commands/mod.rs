@@ -92,7 +92,7 @@ pub fn execute(cmd: Command) -> ExitCode {
             native_only,
         } => package::publish(native_artifacts.as_deref(), native_only),
         Command::NativeBuild { target } => package::native_build(target),
-        Command::Manifest => package::manifest_json(),
+        Command::Manifest { json } => package::manifest(json),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
