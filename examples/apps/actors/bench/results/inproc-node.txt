@@ -1,0 +1,91 @@
+5 scenario(s), 3 interleaved round(s)
+  warmup dispatch/warm-actor
+  warmup dispatch/warm-actor-deadline
+  warmup dispatch/fan-out-actors
+  warmup activation/cold-cycle
+  warmup mem/per-actor-footprint
+  round 1/3 complete
+  round 2/3 complete
+  round 3/3 complete
+  gc pass complete
+
+v22.22.0 linux/x64 · Intel(R) Xeon(R) Processor @ 2.80GHz
+conditions: production · commit 6a94345 · 3 runs × 400ms
+⚠ THE MACHINE WAS BUSY: the actor-free probe varied 77% across rounds, so something else was competing for the CPU. Repetitions are interleaved and reported as medians, which absorbs some of this — but treat small differences as meaningless. Close other applications and re-run before trusting anything under ~20%.
+
+▸ dispatch/warm-actor — host.dispatch() to one warm activation, no deadline (callTimeoutMs: 0)
+    c=1/ops_per_sec             794.4k  ±39%
+    c=1/p50_ms                   0.9µs  ±69%
+    c=1/p99_ms                   2.6µs  ±48%
+    c=1/p999_ms                 33.3µs  ±31%
+    c=1/max_ms                 1.272ms  (noise ≫ signal)
+    c=64/ops_per_sec            765.5k  ±27%
+    c=64/p50_ms                 72.7µs  ±67%
+    c=64/p99_ms                346.3µs  ±41%
+    c=64/p999_ms               1.478ms  ±61%
+    c=64/max_ms                2.898ms  (noise ≫ signal)
+    c=512/ops_per_sec           708.5k  ±20%
+    c=512/p50_ms               683.2µs  ±64%
+    c=512/p99_ms               2.452ms  ±37%
+    c=512/p999_ms              3.944ms  ±46%
+    c=512/max_ms               4.068ms  ±45%
+    gc/pause_ms              125.806ms
+    gc/collections        140.00 count
+    gc/major_collections    0.00 count
+
+▸ dispatch/warm-actor-deadline — same call with the PRODUCTION callTimeoutMs (30000ms) — the call-deadline tax
+    c=1/ops_per_sec             531.5k  ±21%
+    c=1/p50_ms                   1.3µs  ±14%
+    c=1/p99_ms                   3.3µs  ±48%
+    c=1/p999_ms                 36.4µs  ±11%
+    c=1/max_ms                 824.5µs  ±90%
+    c=64/ops_per_sec            625.9k  ±48%
+    c=64/p50_ms                101.0µs  ±69%
+    c=64/p99_ms                373.5µs  ±38%
+    c=64/p999_ms               1.421ms  ±36%
+    c=64/max_ms                1.615ms  ±46%
+    c=512/ops_per_sec           340.7k  ±16%
+    c=512/p50_ms               1.106ms  ±25%
+    c=512/p99_ms               5.017ms  ±26%
+    c=512/p999_ms             10.243ms  (noise ≫ signal)
+    c=512/max_ms              10.577ms  (noise ≫ signal)
+    gc/pause_ms              181.543ms
+    gc/collections        163.00 count
+    gc/major_collections    2.00 count
+
+▸ dispatch/fan-out-actors — host.dispatch() round-robin across 1 000 warm activations
+    c=1/ops_per_sec             672.4k  ±27%
+    c=1/p50_ms                   1.5µs  ±29%
+    c=1/p99_ms                   5.8µs  ±38%
+    c=1/p999_ms                 49.9µs  ±54%
+    c=1/max_ms                 1.677ms  ±28%
+    c=64/ops_per_sec            663.0k  ±40%
+    c=64/p50_ms                 91.9µs  ±60%
+    c=64/p99_ms                409.5µs  ±79%
+    c=64/p999_ms               1.532ms  ±77%
+    c=64/max_ms                2.611ms  (noise ≫ signal)
+    c=512/ops_per_sec           438.9k  ±87%
+    c=512/p50_ms               989.7µs  ±30%
+    c=512/p99_ms               3.954ms  ±20%
+    c=512/p999_ms              8.958ms  ±39%
+    c=512/max_ms               9.114ms  ±38%
+    gc/pause_ms              131.358ms
+    gc/collections        111.00 count
+    gc/major_collections    2.00 count
+
+▸ activation/cold-cycle — activate a fresh key + deactivate it — Activation.create, storage load, teardown
+    cycles_per_sec               19.7k  ±46%
+    p50_ms                      32.0µs  ±65%
+    p99_ms                     153.8µs  ±32%
+    gc/pause_ms              105.278ms
+    gc/collections         14.00 count
+    gc/major_collections    2.00 count
+
+▸ mem/per-actor-footprint — heapUsed delta per live activation, tiny vs ~200-row state
+    tiny/bytes_per_actor        5.5 KiB
+    large/bytes_per_actor      50.8 KiB
+    gc/pause_ms              3787.973ms
+    gc/collections         140.00 count
+    gc/major_collections    18.00 count
+
+results → /home/user/velt/examples/apps/actors/bench/results/inproc-node.json

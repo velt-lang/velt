@@ -1,0 +1,30 @@
+// B4: an async closure that forwards its object parameter to a captured async function value
+// passes a copy, so the callee's changes are lost. The sync version is fine.
+// Expected: "1 2 2" twice. Actual: "1 1 0", then "1 2 2".
+class Box {
+  n: i64 = 0;
+}
+
+function wrap(f: (b: Box) => Promise<i64>): (b: Box) => Promise<i64> {
+  return async (b: Box): Promise<i64> => await f(b);
+}
+
+function wrapSync(f: (b: Box) => i64): (b: Box) => i64 {
+  return (b: Box): i64 => f(b);
+}
+
+async function main() {
+  const bump = async (b: Box): Promise<i64> => {
+    b.n += 1;
+    return b.n;
+  };
+  const w = wrap(bump);
+  const box = new Box();
+  console.log(await w(box), await w(box), box.n);
+  const ws = wrapSync((b: Box): i64 => {
+    b.n += 1;
+    return b.n;
+  });
+  const box2 = new Box();
+  console.log(ws(box2), ws(box2), box2.n);
+}
