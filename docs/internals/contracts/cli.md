@@ -26,7 +26,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 ```
 - **Single file**: `build <file>` writes `./target/velt/<stem>` (`.exe` on Windows) relative to the
   current dir, object file next to it. If the file lives inside a package, its deps are installed first.
-- **Package mode** (no file argument): finds `velt.toml` upward from the cwd, builds its entry, output
+- **Package mode** (no file argument): finds `package.vlt` upward from the cwd, builds its entry, output
   `<pkg>/target/velt/<name>[.exe]`. Library-only packages can't be run.
 - Backends: default `llvm` for `--release` when clang is found (`$VELT_CLANG`, PATH, standard install
   dirs), else `cranelift` (with a one-line stderr note). `--emit llvm` prints LLVM IR (no clang needed).
@@ -53,7 +53,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   directories into `./target/doc`; `--std`: the standard library. `-o` overrides the output
   directory. Writes `index.html`, one page per module, and a client-side search index.
 - `registry serve` (additive): serves a registry directory (default: the
-  local registry) over HTTP (protocol in velt_toml.md "Remote registries"); uploads need
+  local registry) over HTTP (protocol in manifest.md "Remote registries"); uploads need
   `Authorization: Bearer $VELT_REGISTRY_TOKEN` when that variable is set for the server. `publish`
   uploads when the package's `registry` (or `$VELT_REGISTRY`) is a URL.
 - `check` (additive): parse + sema of a file or the current package (same
@@ -87,7 +87,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - Diagnostics go to stderr as `Diagnostic::render` output.
 - `dev` (docs/internals/design/hot-reload.md, phases 1–2): builds and runs like `run`, then stays up as a
   supervisor. It watches every file the build read (std and path dependencies included) plus
-  `velt.toml`/`velt.lock`, and new `.vlt` files in their directories (OS file notifications,
+  `package.vlt`/`velt.lock`, and new `.vlt` files in their directories (OS file notifications,
   checked against mtime and length; polling every 10 ms where notifications fail or with
   `VELT_DEV_POLL=1`; 30 ms settle). On a change it builds the new version
   while the old one keeps running: a failed build prints its diagnostics and
@@ -127,7 +127,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   (additive: `export async function test_*()` too; the harness awaits it). Prints
   `ok <name>` / `FAILED <name>` and a summary; exit 1 on any failure. Test binaries in
   `<pkg or cwd>/target/velt/test/`.
-- `new` creates `<name>/velt.toml`, `src/main.vlt` (or `src/lib.vlt` with `--lib`), `.gitignore`.
+- `new` creates `<name>/package.vlt`, `src/main.vlt` (or `src/lib.vlt` with `--lib`), `.gitignore`.
 - **Templates** (additive, tooling): `new --template <t>` (default `app`; `--lib` = `--template
   lib`) also writes `README.md` and `tests/*.test.vlt`; every template builds, passes `velt test`
   and is `velt fmt`-clean. `app`: hello world with a module and a test. `cli`: std/cli argument
@@ -156,7 +156,9 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - Errors for common mistakes (additive): a package command outside any package names the
   `.vlt` files in the cwd (`velt run <file>`) and `velt init`; a missing input file suggests
   `<name>.vlt` or a similarly named file; a directory input says to build the package inside it.
-- `add` edits `[dependencies]` preserving formatting (latest published version if no req) and installs.
+- `add` edits `dependencies` in `package.vlt`, keeping comments, then formats the file (latest published version if no req) and installs.
+- `manifest --json` (additive) prints the validated `package.vlt` as pretty JSON on stdout with
+  defaults filled in (manifest.md); `--json` is required. A manifest error exits 1.
 - `install` resolves + fetches deps and writes `velt.lock`; `--locked` fails if the lock would change.
   `update` re-resolves ignoring the lock. `publish` copies the package into the local registry.
 - Native libraries (additive, native_abi.md): `build`, `run`, `check`, `dev`, `test` and the LSP
@@ -165,14 +167,14 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `Native: `<pkg>` <ver> runs native code (prebuilt, checksum verified, <triple>)` (or
   `built from source`) line per such package. `native build` writes the current package's bundle
   to `<pkg>/target/velt-native/<triple>/` (default: the host). `publish` adds a bundle for every
-  `[native] targets` entry, from `--native-artifacts <dir>/<triple>/` or
+  `native.targets` entry, from `--native-artifacts <dir>/<triple>/` or
   `target/velt-native/<triple>/` (the host's is (re)built), and fails if one is missing;
   `--native-only` adds bundles for targets not yet published to the published version.
-- `fmt` formats in place (no paths: package `src/` or all `.vlt` under cwd; skips `target/`, hidden
+- `fmt` formats in place (no paths: the package's `package.vlt` and `src/`, or all `.vlt` under cwd; skips `target/`, hidden
   dirs). `--check` writes nothing, lists unformatted files, exit 1 if any. Unparsable files → exit 1.
 - Imports: `velt:x` → `<std root>/x.vlt` or `x/index.vlt`; `./x`, `../x` → relative `x.vlt` or
-  folder module `x/index.vlt`; bare names → `[paths]` aliases of the importing package first,
-  then packages via `velt.toml` (`pkg/sub` → `src/sub.vlt` or `src/sub/index.vlt`). `std/prelude/*.vlt` is loaded implicitly before everything else.
+  folder module `x/index.vlt`; bare names → `paths` aliases of the importing package first,
+  then packages via `package.vlt` (`pkg/sub` → `src/sub.vlt` or `src/sub/index.vlt`). `std/prelude/*.vlt` is loaded implicitly before everything else.
 - Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.velt`), `VELT_REGISTRY`
   (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (linker override), `VELT_CLANG` (clang for the LLVM backend).
   Set by `velt dev` for the program (not for users): `VELT_DEV_SOCKET` (a Unix socket path, or a

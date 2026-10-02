@@ -342,7 +342,7 @@ fn jsx_runtime_from_the_pragma() {
     assert_eq!(jsx_runtime(&l, "plain"), None, "no JSX, no runtime");
 }
 
-/// Every importer's package has `[jsx] importSource = "<0>"`.
+/// Every importer's package has `jsx: { importSource: "<0>" }`.
 struct JsxResolver(String);
 
 impl PackageResolver for JsxResolver {

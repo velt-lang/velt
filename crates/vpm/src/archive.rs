@@ -7,8 +7,8 @@
 //! ```
 //!
 //! so its [`checksum`] equals [`contents::checksum`] of the directory it was packed from or is
-//! unpacked into. Unpacking accepts only `velt.toml`, files under `src/` and under the `[native]`
-//! crate directory its `velt.toml` names (no `..`, no absolute paths), so an archive cannot write
+//! unpacked into. Unpacking accepts only `package.vlt`, files under `src/` and under the native
+//! crate directory its `package.vlt` names (no `..`, no absolute paths), so an archive cannot write
 //! outside its destination. Native bundles ([`crate::native`]) use the same format with their own
 //! path rule ([`entries_with`]).
 
@@ -17,7 +17,7 @@ use std::path::Path;
 use sha2::{Digest, Sha256};
 
 use crate::contents;
-use crate::manifest::{MANIFEST_FILE, SRC_DIR};
+use crate::manifest::{legacy, LEGACY_MANIFEST_FILE, MANIFEST_FILE, SRC_DIR};
 
 const MAGIC: &[u8] = b"VELTPKG1\n";
 
@@ -61,6 +61,12 @@ pub fn entries(archive: &[u8]) -> Result<Vec<Entry>, String> {
             || native
                 .as_ref()
                 .is_some_and(|dir| e.path.starts_with(&format!("{dir}/")));
+        if e.path == LEGACY_MANIFEST_FILE {
+            return Err(format!(
+                "cannot use this package archive: {}",
+                legacy::REPUBLISH
+            ));
+        }
         if !allowed {
             return Err(format!("archive contains a disallowed path `{}`", e.path));
         }
@@ -162,8 +168,8 @@ mod tests {
         let pkg = tmp.path().join("p");
         std::fs::create_dir_all(pkg.join("src/sub")).unwrap();
         std::fs::write(
-            pkg.join("velt.toml"),
-            "[package]\nname = \"p\"\nversion = \"1.0.0\"\n",
+            pkg.join("package.vlt"),
+            "export const pkg: Package = { name: \"p\", version: \"1.0.0\" };",
         )
         .unwrap();
         std::fs::write(pkg.join("src/lib.vlt"), "export function f() {}\n").unwrap();
@@ -196,15 +202,20 @@ mod tests {
             assert!(entries(&bad).unwrap_err().contains("disallowed"), "{path}");
         }
         // A native crate directory is allowed only when the manifest names it.
-        let manifest = "[package]\nname = \"p\"\nversion = \"1.0.0\"\n[native]\n";
+        let manifest =
+            "export const pkg: Package = { name: \"p\", version: \"1.0.0\", native: {} };";
         let with_native = [
             MAGIC,
             b"native/Cargo.toml\n0\n",
-            format!("velt.toml\n{}\n{manifest}", manifest.len()).as_bytes(),
+            format!("package.vlt\n{}\n{manifest}", manifest.len()).as_bytes(),
         ]
         .concat();
         assert_eq!(entries(&with_native).unwrap().len(), 2);
-        let truncated = [MAGIC, b"velt.toml\n10\nabc"].concat();
+        let legacy = [MAGIC, b"velt.toml\n0\n"].concat();
+        assert!(entries(&legacy)
+            .unwrap_err()
+            .contains("must publish a new version"));
+        let truncated = [MAGIC, b"package.vlt\n10\nabc"].concat();
         assert!(entries(&truncated).unwrap_err().contains("truncated"));
     }
 }

@@ -194,15 +194,10 @@ fn sqlite_package_with_native_code() {
     // Publish a copy that names the server and lists only this machine's target.
     let lib = tmp.path().join("sqlite");
     copy_dir(&source, &lib);
-    let manifest = std::fs::read_to_string(lib.join("velt.toml")).unwrap();
-    let start = manifest.find("targets = [").unwrap();
-    let end = start + manifest[start..].find(']').unwrap() + 1;
-    let manifest = format!(
-        "registry = \"{url}\"\n{}targets = [\"{host}\"]{}",
-        &manifest[..start],
-        &manifest[end..]
-    );
-    std::fs::write(lib.join("velt.toml"), manifest).unwrap();
+    let mut manifest = vpm::Manifest::from_dir(&lib).unwrap();
+    manifest.registry = Some(url.clone());
+    manifest.native.as_mut().unwrap().targets = vec![host.to_string()];
+    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).unwrap();
     let home_a = tmp.path().join("author");
     let artifacts_arg = artifacts.to_string_lossy().into_owned();
     let published = velt(
@@ -221,12 +216,9 @@ fn sqlite_package_with_native_code() {
     let home = tmp.path().join("user");
     ok(velt(tmp.path(), &home, &["new", "app"]), "velt new");
     let app = tmp.path().join("app");
-    let manifest = std::fs::read_to_string(app.join("velt.toml")).unwrap();
-    std::fs::write(
-        app.join("velt.toml"),
-        format!("registry = \"{url}\"\n{manifest}"),
-    )
-    .unwrap();
+    let mut manifest = vpm::Manifest::from_dir(&app).unwrap();
+    manifest.registry = Some(url.clone());
+    std::fs::write(app.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).unwrap();
     let added = ok(velt(&app, &home, &["add", "sqlite"]), "velt add");
     let text = String::from_utf8_lossy(&added.stderr);
     assert!(

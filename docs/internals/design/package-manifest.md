@@ -1,8 +1,9 @@
 # Design: a package manifest written in Velt
 
-Status: decided (issue #128). Nothing here is implemented. The maintainer's review answered the
-open questions; the answers are in [Decisions](#decisions). This design replaces the contract
-[velt_toml.md](../contracts/velt_toml.md).
+Status: implemented (issue #128), except `std/package.vlt` with its sync test (waiting for
+`Record`, #17) and the language server's package-graph refresh. The maintainer's review answered
+the open questions; the answers are in [Decisions](#decisions). The contract is
+[manifest.md](../contracts/manifest.md), which replaced `velt_toml.md`.
 
 ## Problem
 
@@ -42,7 +43,7 @@ export const pkg: Package = {
 ```
 
 Every field keeps the meaning and validation of the `velt.toml` field it replaces
-([velt_toml.md](../contracts/velt_toml.md)). `[package]`'s `name`, `version` and `entry` move to
+([manifest.md](../contracts/manifest.md)). `[package]`'s `name`, `version` and `entry` move to
 the top level, and the `[dependencies]`, `[paths]`, `[jsx]` and `[native]` tables become
 `dependencies`, `paths`, `jsx` and `native`. Package names stay `[a-z][a-z0-9_-]*`; scoped names
 such as `@velt/sqlite` are a separate issue.
@@ -119,11 +120,11 @@ manifest:
    object), each value with its span.
 3. A decoder maps the value tree onto the existing `Manifest` structs. Unknown keys are errors
    everywhere, not only in `[jsx]` and `[native]` as today.
-4. The existing checks (`Manifest::validate`, `paths::validate`, the `native` checks) run on the
-   result and now carry spans.
+4. The field checks (name, version, `entry`, registry, dependencies, `paths::check_alias`, the
+   `native` checks) run on the result and carry spans.
 
-Errors are `velt_common::Diagnostics` with a file, a span and a source snippet, printed like
-compiler errors, instead of today's string messages without a location.
+Errors are `velt_common::Diagnostics` with a file and a span, printed like compiler errors
+(`package.vlt:3:12: error: …`), instead of the old string messages without a location.
 
 The reader rejects everything the `Package` type rejects, so the command line, `vpm` and the
 registry never need the type checker. A test keeps the reader and the type in sync: a manifest
@@ -148,8 +149,8 @@ code.
 comments. The new version works like this:
 
 1. Splice text at syntax-tree spans: replace the value of an existing dependency key, or insert
-   `name: "req",` before the closing `}` of `dependencies` (adding a `dependencies` property
-   when there is none).
+   `name: "req"` before the closing `}` of `dependencies`, adding a `,` after the last property
+   when it has none (and a `dependencies` property when there is none).
 2. Format the file with `velt_fmt`, which keeps comments.
 3. Read the result again to validate it.
 
@@ -245,16 +246,18 @@ Everything in the repository moves in the same change:
 The contract `contracts/velt_toml.md` becomes `contracts/manifest.md`. `docs/tooling/manifest.md`
 is rewritten, with the `jsx` and `native` sections the current page lacks.
 
-Implementation order, one pull request each:
+Implementation order:
 
 1. **The reader in `vpm`**, with unit tests. These include hostile-input tests: deep nesting, a
-   file over the size limit, and too many keys. Once #17 has landed, the same step (or a
-   follow-up) adds `std/package.vlt` and the sync test.
-2. **The switch.** Move `vpm`, `veltc`, the registry and the file watchers over, add the
-   migration error, and add `velt manifest --json`.
-3. **`velt add`** by splicing.
-4. **Migration and editors.** Migrate the templates, examples, golden tests and docs, and
-   refresh the language server's package graph.
+   file over the size limit, and too many keys (#135).
+2. **The switch, `velt add` and the migration**, in one pull request: once `vpm` reads only
+   `package.vlt`, every `velt.toml` in the repository and `velt add`'s TOML editing break, so
+   steps 2 to 4 of the original plan cannot land separately. It moves `vpm`, `veltc`, the
+   registry and the file watchers over, adds the migration error and `velt manifest --json`,
+   makes `velt add` splice, and migrates the templates, examples, golden tests and docs.
+3. **Follow-ups:** `std/package.vlt` and the sync test once #17 has landed (until then an editor
+   reports `velt:package` as unknown in a `package.vlt`), and the language server's
+   package-graph refresh when `package.vlt` is saved.
 
 ## Not proposed
 

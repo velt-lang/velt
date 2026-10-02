@@ -173,6 +173,8 @@ pub enum Command {
     },
     /// `velt native build [--target <triple>]`: build the package's native library bundle.
     NativeBuild { target: Option<String> },
+    /// `velt manifest --json`: print the package's manifest as JSON, for other tools.
+    Manifest,
     /// `velt --version`.
     Version,
     /// `velt --help` or no arguments (`None`), `velt help <cmd>` / `velt <cmd> --help` (`Some`).
@@ -212,6 +214,7 @@ fn parse_command(sub: &str, rest: Vec<OsString>) -> Result<Command, String> {
         "dev" => dev::parse_dev(rest),
         "fmt" => fmt::parse_fmt(rest),
         "lsp" => parse_lsp(rest),
+        "manifest" => parse_manifest(rest),
         "playground" => tools::parse_playground(rest),
         "doc" => tools::parse_doc(rest),
         "registry" => tools::parse_registry(rest),
@@ -296,6 +299,24 @@ fn parse_lsp(args: Vec<OsString>) -> Result<Command, String> {
     }
 }
 
+/// `velt manifest --json`: JSON is the only output, but the flag keeps room for others.
+fn parse_manifest(args: Vec<OsString>) -> Result<Command, String> {
+    let args = strings(args)?;
+    let mut json = false;
+    for arg in &args {
+        match arg.as_str() {
+            "--json" if !json => json = true,
+            a if a.starts_with('-') && a != "--json" => return Err(unknown_option("manifest", a)),
+            a => return Err(format!("unexpected argument `{a}` for `velt manifest`")),
+        }
+    }
+    if json {
+        Ok(Command::Manifest)
+    } else {
+        Err("missing `--json` (usage: velt manifest --json)".into())
+    }
+}
+
 /// Split into strings; non-UTF-8 arguments are rejected for these commands.
 fn strings(args: Vec<OsString>) -> Result<Vec<String>, String> {
     args.into_iter()
@@ -312,6 +333,20 @@ mod tests {
 
     pub(super) fn p(args: &[&str]) -> Result<Command, String> {
         parse(args.iter().map(OsString::from))
+    }
+
+    #[test]
+    fn manifest_needs_json() {
+        assert_eq!(p(&["manifest", "--json"]).unwrap(), Command::Manifest);
+        assert!(p(&["manifest"]).unwrap_err().contains("missing `--json`"));
+        let err = p(&["manifest", "foo", "--json"]).unwrap_err();
+        assert!(err.contains("unexpected argument `foo`"), "{err}");
+        let err = p(&["manifest", "--jsn"]).unwrap_err();
+        assert!(
+            err.contains("unknown option `--jsn`") && err.contains("--json"),
+            "{err}"
+        );
+        assert!(p(&["manifest", "--json", "--json"]).is_err());
     }
 
     #[test]

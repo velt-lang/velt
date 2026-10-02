@@ -57,7 +57,7 @@ Hello, world!
 
 ```
 hello/
-  velt.toml             the manifest: name, version, dependencies
+  package.vlt           the manifest: name, version, dependencies
   src/main.vlt          the entry point: `velt run` builds and runs it
   src/greet.vlt         a module, imported by main and by the tests
   tests/greet.test.vlt  tests: every exported `test_*` function
@@ -65,13 +65,14 @@ hello/
   .gitignore            ignores target/, where builds go
 ```
 
-```toml
-[package]
-name = "hello"
-version = "0.1.0"
+```ts ignore
+import type { Package } from "velt:package";
 
-[dependencies]
+export const pkg: Package = { name: "hello", version: "0.1.0" };
 ```
+
+The manifest is written in Velt but holds only data: `velt` reads it without running it
+([`package.vlt`](../tooling/manifest.md)).
 
 `src/main.vlt` imports the greeting from its own module and the program arguments from the
 standard library:

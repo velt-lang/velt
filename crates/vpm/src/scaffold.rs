@@ -1,9 +1,12 @@
 //! `velt new` / `velt init`: write a package skeleton. The files come from the caller (the CLI's
 //! templates); this module owns the manifest text, name validation and the overwrite rules.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::manifest::{is_valid_package_name, DEFAULT_ENTRY, LIB_ENTRY, MANIFEST_FILE};
+use crate::manifest::{
+    is_valid_package_name, Manifest, Package, DEFAULT_ENTRY, LIB_ENTRY, MANIFEST_FILE,
+};
 
 const MAIN_TEMPLATE: &str = "function main() {\n  console.log(\"Hello, world!\");\n}\n";
 const LIB_TEMPLATE: &str =
@@ -56,9 +59,21 @@ pub struct Written {
     pub updated: Vec<String>,
 }
 
-/// `velt.toml` of a new package.
+/// `package.vlt` of a new package.
 pub fn manifest_text(name: &str) -> String {
-    format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[dependencies]\n")
+    Manifest {
+        registry: None,
+        package: Package {
+            name: name.to_string(),
+            version: "0.1.0".into(),
+            entry: DEFAULT_ENTRY.into(),
+        },
+        dependencies: BTreeMap::new(),
+        paths: BTreeMap::new(),
+        native: None,
+        jsx: None,
+    }
+    .to_vlt()
 }
 
 /// `Err` with an actionable message unless `name` is a valid package name.
@@ -177,7 +192,6 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::Manifest;
 
     #[test]
     fn creates_binary_and_library_packages() {
@@ -209,7 +223,7 @@ mod tests {
 
     fn skeleton() -> Vec<ScaffoldFile> {
         vec![
-            ScaffoldFile::new("velt.toml", manifest_text("p")),
+            ScaffoldFile::new(MANIFEST_FILE, manifest_text("p")),
             ScaffoldFile::new("src/main.vlt", "function main() {}\n".into()),
             ScaffoldFile {
                 if_exists: IfExists::Keep,
@@ -234,7 +248,7 @@ mod tests {
             "{err}"
         );
         assert!(
-            !root.join("velt.toml").exists(),
+            !root.join(MANIFEST_FILE).exists(),
             "nothing written on conflict"
         );
 
@@ -253,7 +267,7 @@ mod tests {
         std::fs::write(root.join("README.md"), "mine").unwrap();
         std::fs::write(root.join(".gitignore"), "node_modules/").unwrap();
         let w = write_files(root, &skeleton(), false).unwrap();
-        assert_eq!(w.created, ["velt.toml", "src/main.vlt"]);
+        assert_eq!(w.created, [MANIFEST_FILE, "src/main.vlt"]);
         assert_eq!(w.kept, ["README.md"]);
         assert_eq!(w.updated, [".gitignore"]);
         assert_eq!(
@@ -265,7 +279,7 @@ mod tests {
             "node_modules/\ntarget/\n"
         );
         // Running again: the .gitignore already has the line.
-        std::fs::remove_file(root.join("velt.toml")).unwrap();
+        std::fs::remove_file(root.join(MANIFEST_FILE)).unwrap();
         std::fs::remove_file(root.join("src/main.vlt")).unwrap();
         let w = write_files(root, &skeleton(), false).unwrap();
         assert_eq!(w.kept, ["README.md", ".gitignore"]);
