@@ -243,7 +243,7 @@ fn iface_info(m: usize, d: &ast::InterfaceDecl, qual: String) -> DefInfo<'_> {
 
 fn collect_prelude(cx: &mut Ctx) {
     for m in 0..cx.modules.len() {
-        if !cx.modules[m].path.starts_with("std/prelude/") {
+        if !cx.scopes[m].is_std || !cx.modules[m].path.starts_with("std/prelude/") {
             continue;
         }
         let mut names: Vec<&String> = cx.scopes[m].exports.iter().collect();
