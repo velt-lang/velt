@@ -124,6 +124,7 @@ impl<'a> Printer<'a> {
             UnaryOp::Not => ("!", None),
             UnaryOp::BitNot => ("~", None),
             UnaryOp::TypeOf => ("typeof ", None),
+            UnaryOp::Delete => ("delete ", None),
         };
         // `- -x` must not become the decrement `--x`.
         let space = if sign.is_some() && leading_sign(inner) == sign {

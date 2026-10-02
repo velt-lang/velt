@@ -268,6 +268,11 @@ impl Ctx<'_> {
             self.arity_error(name, arity, args.len(), t);
             return self.ty.error;
         }
+        // `Record<K, V>`: a concrete `K` must be a key here; a type parameter is checked per
+        // instantiation (`crate::record_keys`).
+        if Some(d) == self.prelude_adt("Record") && !self.check_record_key(args[0], t.span, None) {
+            return self.ty.error;
+        }
         if is_iface {
             self.ty.intern(TyKind::Dyn(d, args))
         } else {

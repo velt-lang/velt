@@ -272,7 +272,9 @@ impl FnLower<'_, '_> {
     }
 
     pub(super) fn obj_format_body(&mut self, buf: Operand, obj: vir::Local, ty: TyId) {
-        if !self.format_map(&buf, &Place::local(obj), ty) {
+        if !self.format_map(&buf, &Place::local(obj), ty)
+            && !self.format_record(&buf, &Place::local(obj), ty)
+        {
             let name = Some(self.cx.type_name(ty));
             self.format_fields(&buf, name, &Place::local(obj), ty);
         }

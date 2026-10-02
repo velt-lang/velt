@@ -84,6 +84,11 @@ impl Interp<'_> {
                 let q = crate::lower::inspect_quote(&String::from_utf8_lossy(&s));
                 self.buf_push(a[0], q.as_bytes());
             }
+            "velt_rt_strbuf_push_inspect_key" => {
+                let s = self.str_bytes(a[1]);
+                let text = crate::lower::inspect_key(&String::from_utf8_lossy(&s));
+                self.buf_push(a[0], text.as_bytes());
+            }
             "velt_rt_strbuf_push_json_str" => {
                 let s = self.str_bytes(a[1]);
                 self.buf_push(a[0], &json_quote(&s));

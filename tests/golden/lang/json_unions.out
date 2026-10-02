@@ -1,0 +1,23 @@
+join a r1
+{"kind":"join","user":"a","room":"r1"} true
+leave b
+{"kind":"leave","user":"b"} true
+say c hi [ 'x' ]
+{"kind":"say","user":"c","text":"hi","tags":["x"]} true
+expected one of "join", "leave", "say" at $.kind
+expected field "kind" at $
+expected field "room" at $
+expected object at $
+[ { r: 1 }, { w: 3, h: 2 } ]
+[ 'x', 3, true, null, 9007199254740993 ]
+[ 'auto', 1.5, 2 ]
+[ { v: 'fast' }, { v: 'other' }, { v: [ 1, 2 ] } ]
+expected i64 at $
+expected one of number, "auto" at $
+expected one of boolean, string, number at $
+expected object with one of the fields "r", "w" at $[0]
+[ { w: 3, h: 2 }, { r: 1 } ]
+unknown field at $.r
+[ 1, 1, 1, 2 ]
+101
+expected one of "leaf", "node" at $.kids[1].kids[1].kind

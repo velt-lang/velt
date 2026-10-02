@@ -4,6 +4,21 @@
 //! (`\n`, `\t`, `\b`, `\f`, `\r`, else `\xHH` for C0, DEL and C1 controls). velt_vir's format
 //! glue quotes compile-time strings (literal types, string enums) the same way.
 
+/// An object key as `util.inspect` prints it: bare when it is an identifier of ASCII letters,
+/// digits and `_` not starting with a digit (`a`, `_x1`), else quoted like a string (`'a b'`,
+/// `'1'`, `'$'`, `'é'`, `''`), as node does.
+pub fn push_inspect_key(out: &mut Vec<u8>, s: &[u8]) {
+    let ident = s
+        .first()
+        .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_')
+        && s.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_');
+    if ident {
+        out.extend_from_slice(s);
+    } else {
+        push_inspect_string(out, s);
+    }
+}
+
 /// Append `s` quoted and escaped to `out`.
 pub fn push_inspect_string(out: &mut Vec<u8>, s: &[u8]) {
     let text = String::from_utf8_lossy(s);
@@ -46,7 +61,7 @@ fn pick_quote(text: &str) -> char {
 
 #[cfg(test)]
 mod tests {
-    use super::push_inspect_string;
+    use super::{push_inspect_key, push_inspect_string};
 
     fn q(s: &str) -> String {
         let mut out = vec![];
@@ -63,5 +78,28 @@ mod tests {
         assert_eq!(q("all'\"`"), "'all\\'\"`'");
         assert_eq!(q("\u{1}\u{b}\u{7f}\u{85}"), "'\\x01\\x0B\\x7F\\x85'");
         assert_eq!(q("é"), "'é'");
+    }
+
+    fn key(s: &str) -> String {
+        let mut out = vec![];
+        push_inspect_key(&mut out, s.as_bytes());
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn keys_bare_only_when_identifiers_like_node() {
+        // As `node -e 'console.log({a: 1, _x1: 2, $: 3, "a b": 4, "1": 5, "é": 6, "": 7})'`.
+        for bare in ["a", "_x1", "A_9", "_"] {
+            assert_eq!(key(bare), bare);
+        }
+        assert_eq!(key("$"), "'$'");
+        assert_eq!(key("$a"), "'$a'");
+        assert_eq!(key("a b"), "'a b'");
+        assert_eq!(key("1"), "'1'");
+        assert_eq!(key("1a"), "'1a'");
+        assert_eq!(key("é"), "'é'");
+        assert_eq!(key(""), "''");
+        assert_eq!(key("it's"), "\"it's\"");
+        assert_eq!(key("a\nb"), "'a\\nb'");
     }
 }

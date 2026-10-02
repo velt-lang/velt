@@ -1,0 +1,11 @@
+// `Record` and `JsonValue` hold invariants a subclass's constructor would bypass (every key
+// present; a runtime JSON handle), also when named through an alias.
+type AB = "a" | "b";
+class MyRecord extends Record<AB, i64> {}
+type R<V> = Record<AB, V>;
+class ViaAlias<V> extends R<V> {}
+class MyJson extends JsonValue {}
+type J = JsonValue;
+class JsonAlias extends J {}
+
+function main() {}

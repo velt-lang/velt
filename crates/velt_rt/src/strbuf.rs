@@ -99,6 +99,12 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_str(buf: *mut VeltStrBuf, s
     (*buf).push_with(|b| crate::inspect::push_inspect_string(b, (*s).as_bytes()));
 }
 
+/// Append `s` as an object key in `console.log` (bare if it is an identifier, else quoted).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_key(buf: *mut VeltStrBuf, s: *const VeltStr) {
+    (*buf).push_with(|b| crate::inspect::push_inspect_key(b, (*s).as_bytes()));
+}
+
 /// Append `JSON.stringify(value)` for a `json.Value` handle (a null handle appends `null`).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_json_value(buf: *mut VeltStrBuf, h: *const Value) {

@@ -1,0 +1,72 @@
+// Prelude: `Record<K, V>` (docs/internals/design/record.md), a dictionary keyed by strings, a
+// union of string literal types or a string enum, and the TypeScript `Object` helpers over it.
+//
+// A record has no members of its own: `r.name` reads the key "name". Sema turns `r[k]`, `r.name`,
+// `r[k] = v`, `delete r[k]` and object literals typed as a record into calls of the `__`
+// methods below (`__get` for string keys, `__at` for literal keys, which are always present).
+// Entries keep insertion order; JSON reads and writes a record as an object, and `console.log`
+// shows it like one.
+
+export class Record<K, V> {
+  // Field 0: the JSON and formatting glue read it directly.
+  private entries: Map<K, V> = new Map();
+
+  __get(key: K): V | null {
+    return this.entries.get(key);
+  }
+
+  // A literal-key record holds every key (sema checks literals; JSON checks documents).
+  __at(key: K): V {
+    return this.entries.get(key).unwrap();
+  }
+
+  __set(key: K, value: V) {
+    this.entries.set(key, value);
+  }
+
+  __delete(key: K): bool {
+    return this.entries.delete(key);
+  }
+
+  __has(key: K): bool {
+    return this.entries.has(key);
+  }
+
+  // `{ ...other }`: every entry of `other`, later entries replacing earlier ones.
+  __extend(other: Record<K, V>) {
+    for (const [k, v] of other.entries.entries()) {
+      this.entries.set(k, v);
+    }
+  }
+
+  __size(): usize {
+    return this.entries.size;
+  }
+
+  __keys(): K[] {
+    return this.entries.keys();
+  }
+
+  __values(): V[] {
+    return this.entries.values();
+  }
+
+  __entries(): [K, V][] {
+    return this.entries.entries();
+  }
+}
+
+// TypeScript's `Object.keys` / `Object.values` / `Object.entries`, for records (insertion order).
+export class Object {
+  static keys<K, V>(r: Record<K, V>): K[] {
+    return r.__keys();
+  }
+
+  static values<K, V>(r: Record<K, V>): V[] {
+    return r.__values();
+  }
+
+  static entries<K, V>(r: Record<K, V>): [K, V][] {
+    return r.__entries();
+  }
+}

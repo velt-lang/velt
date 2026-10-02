@@ -109,7 +109,7 @@ impl FnLower<'_, '_> {
                 _,
             ) => self.async_intrinsic(i, args, ty),
             (I::JsonStringify, [a]) => self.json_stringify(a, ty),
-            (I::JsonParse, [a]) => self.json_parse(a, ty),
+            (I::JsonParse, [a, flags, depth]) => self.json_parse(a, flags, depth, ty),
             (I::HttpHandler, [f]) => self.http_handler(f, ty),
             (I::Attempt, [f]) => self.attempt(f, ty),
             (I::ArrayDataPtr, [xs]) => {

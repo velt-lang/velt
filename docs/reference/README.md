@@ -53,5 +53,4 @@ Decided direction that is not implemented yet. Each chapter says where it applie
 | The `struct` keyword removed (structs already behave as objects) | [semantics — JS fidelity](../internals/design/semantics.md#js-fidelity-decisions) |
 | `extend`: retroactive `implements`, module scoping | [TypeScript alignment §4](../internals/design/ts-alignment.md#4-extend--full-power-zero-cost-module-scoped) |
 | TSX: `children` and other element-typed props, faster templates (syntax, providers, `velt:jsx` and streaming already work) | [TSX](../internals/design/tsx.md) |
-| `JSON.parse` into unions and literal types | [roadmap](../../ROADMAP.md) |
 | `new Promise((resolve, reject) => …)` | [semantics — promises](../internals/design/semantics.md#promises) |

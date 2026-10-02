@@ -1,0 +1,10 @@
+{ name: 'a', tags: [] }
+unknown field at $.extra
+{ name: 'a', tags: [] }
+unknown field at $.c
+{"v":1,"kids":[{"v":2,"kids":[{"v":3,"kids":[]}]}]}
+JSON nested deeper than 5 levels at $.kids[0].kids[0].kids (byte 44)
+JSON nested deeper than 3 levels at $.extra (byte 32)
+JSON nested deeper than 2 levels at $ (byte 2)
+maxDepth must be between 1 and 4294967295, got 0
+{ name: 'a', tags: [] }

@@ -17,7 +17,7 @@
 //! | DynShare  | `(data: ptr) -> ptr`               | data of another reference (share.rs)     |
 //! | JsonWrite | `(buf: ptr, p: ptr)`               | append `JSON.stringify(*p)` to a builder |
 //! | JsonRead  | `(r: ptr, out: ptr, ctx: ptr) -> bool` | decode one value (json/read.rs)      |
-//! | JsonParse | `(src: ptr, out: ptr, err: ptr) -> bool` | whole-document `JSON.parse<T>`     |
+//! | JsonParse | `(src: ptr, flags: u32, max_depth: u32, out: ptr, err: ptr) -> bool` | whole-document `JSON.parse<T>` |
 //!
 //! Class objects in a hierarchy with a vtable are dropped/cloned/formatted through their vtable
 //! (slots -1/-2/-3, glue/vtable.rs), so a `Dog` held as an `Animal` releases the whole `Dog`.
@@ -32,7 +32,7 @@ mod thunk;
 mod vtable;
 
 #[cfg(test)]
-pub(crate) use literals::inspect_quote;
+pub(crate) use literals::{inspect_key, inspect_quote};
 pub(super) use vtable::VtableKey;
 
 use velt_sema::hir::{TyId, TyKind};
@@ -103,7 +103,8 @@ impl Glue {
             Glue::Eq | Glue::Same => (vec![Ptr, Ptr], Bool),
             Glue::Hash => (vec![Ptr], U64),
             Glue::JsonWrite => (vec![Ptr, Ptr], Unit),
-            Glue::JsonRead | Glue::JsonParse => (vec![Ptr, Ptr, Ptr], Bool),
+            Glue::JsonRead => (vec![Ptr, Ptr, Ptr], Bool),
+            Glue::JsonParse => (vec![Ptr, U32, U32, Ptr, Ptr], Bool),
         }
     }
 }
@@ -131,7 +132,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::DynShare => lw.dyn_share_body(args[0], ty),
             Glue::JsonWrite => lw.json_write_body(a(0), args[1], ty),
             Glue::JsonRead => lw.json_read_body(args[0], args[1], args[2], ty),
-            Glue::JsonParse => lw.json_parse_body(args[0], args[1], args[2], ty),
+            Glue::JsonParse => {
+                lw.json_parse_body(args[0], (args[1], args[2]), args[3], args[4], ty)
+            }
         }
         let sym = format!("_G{}_{}", g.name(), lw.cx.type_symbol(ty));
         lw.finish(sym, params, ret)

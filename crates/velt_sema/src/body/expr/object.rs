@@ -167,6 +167,9 @@ impl FnCx<'_, '_> {
         };
         let target = self.hint(exp).and_then(|t| self.adt_of(t));
         if let Some((d, args)) = target {
+            if let Some((k, v)) = self.hint(exp).and_then(|t| self.record_args(t)) {
+                return self.record_literal(d, k, v, props, span);
+            }
             if self.is_class_def(d) {
                 let cn = self.cx.adt(d).map(|a| a.name.clone()).unwrap_or_default();
                 self.cx.error(

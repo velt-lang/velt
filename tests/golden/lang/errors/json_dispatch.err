@@ -1,0 +1,6 @@
+json_dispatch.vlt:27:19: error: cannot convert to or from JSON: `Map<i64, i64>` has no JSON form
+JSON supports numbers, bool, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`
+a `Map` converts to a JSON object only with `string` keys
+json_dispatch.vlt:28:26: error: cannot convert to or from JSON: `Map<i64, i64>` has no JSON form
+JSON supports numbers, bool, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`
+a `Map` converts to a JSON object only with `string` keys
