@@ -116,7 +116,9 @@ impl<'a> Parser<'a> {
         self.lex_up_to(i)
     }
 
-    /// `tok` for a token not lexed yet.
+    /// `tok` for a token not lexed yet: once per batch of tokens, so kept out of line.
+    #[cold]
+    #[inline(never)]
     fn lex_up_to(&mut self, i: usize) -> Token {
         self.lx.fill(i);
         let last = self.lx.toks.len() - 1;
@@ -168,6 +170,7 @@ impl<'a> Parser<'a> {
         Span::new(self.file, t.lo, t.hi)
     }
 
+    #[inline]
     fn bump(&mut self) {
         let t = self.tok(self.pos);
         if t.kind != Tok::Eof {
@@ -176,6 +179,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[inline]
     fn at(&mut self, t: Tok) -> bool {
         self.peek() == t
     }
@@ -191,6 +195,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[inline]
     fn eat(&mut self, t: Tok) -> bool {
         let hit = self.at(t);
         if hit {
@@ -226,14 +231,14 @@ impl<'a> Parser<'a> {
     }
 
     /// The literal payload of a token.
-    fn payload(&self, idx: u32) -> Option<Payload> {
-        self.lx.payloads.get(idx as usize).cloned()
+    fn payload(&self, idx: u32) -> Option<&Payload> {
+        self.lx.payloads.get(idx as usize)
     }
 
     /// Cooked text of a `Str`/`Template` token payload.
     fn payload_text(&self, idx: u32) -> String {
         match self.payload(idx) {
-            Some(Payload::Text(s)) => s,
+            Some(Payload::Text(s)) => s.clone(),
             _ => String::new(),
         }
     }
