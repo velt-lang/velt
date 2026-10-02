@@ -55,8 +55,7 @@ impl Moves<'_> {
         // Every state a throw out of the body can have.
         let body_throws = join(join(entry, st.clone()), body_frame.thrown);
         let mut exits = body_frame.exits;
-        let mut escaping = None;
-        match catch {
+        let escaping = match catch {
             Some((local, handler)) => {
                 let mut h = body_throws;
                 if let Some(l) = local {
@@ -65,11 +64,12 @@ impl Moves<'_> {
                 let h_entry = h.clone();
                 let handler_frame = self.region(handler, has_finally, &mut h);
                 exits.extend(handler_frame.exits);
-                escaping = join(join(h_entry, h.clone()), handler_frame.thrown);
+                let thrown = join(join(h_entry, h.clone()), handler_frame.thrown);
                 *st = join(st.take(), h);
+                thrown
             }
-            None => escaping = body_throws,
-        }
+            None => body_throws,
+        };
         let Some(f) = finally else {
             // Throws leave this `try` as they are: the enclosing region sees them at its own
             // throw points and its entry / end.
