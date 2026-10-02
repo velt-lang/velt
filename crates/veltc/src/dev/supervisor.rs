@@ -109,7 +109,7 @@ impl Supervisor {
 
     /// Build the current sources; on success the new version replaces the running one.
     fn rebuild(&mut self, since: Instant, first: bool) {
-        let started = SystemTime::now();
+        let snapshot = self.watcher.snapshot();
         let manifest_stamps = self.manifest_stamps();
         let outcome = match self.args.mode {
             DevMode::Exe => self.rebuild_exe(),
@@ -120,21 +120,25 @@ impl Supervisor {
         let ms = since.elapsed().as_millis();
         match outcome {
             Outcome::Replaced(files) => {
-                self.watcher.set(files.into_iter().chain(manifest), started);
+                self.watcher
+                    .set(files.into_iter().chain(manifest), &snapshot);
                 let verb = if first { "started" } else { "reloaded" };
                 eprintln!("velt dev: {verb} in {ms} ms");
             }
             Outcome::Swapped(functions, files) => {
-                self.watcher.set(files.into_iter().chain(manifest), started);
+                self.watcher
+                    .set(files.into_iter().chain(manifest), &snapshot);
                 let plural = if functions == 1 { "" } else { "s" };
                 eprintln!("velt dev: hot-swapped {functions} function{plural} in {ms} ms");
             }
             Outcome::Restarted(reason, files) => {
-                self.watcher.set(files.into_iter().chain(manifest), started);
+                self.watcher
+                    .set(files.into_iter().chain(manifest), &snapshot);
                 eprintln!("velt dev: restarted ({reason}) in {ms} ms");
             }
             Outcome::Failed(files) => {
-                self.watcher.add(files.into_iter().chain(manifest));
+                self.watcher
+                    .add(files.into_iter().chain(manifest), &snapshot);
                 let still = if self.running.is_some() {
                     " (the previous version keeps running)"
                 } else {
