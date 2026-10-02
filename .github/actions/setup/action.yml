@@ -1,24 +1,53 @@
 name: setup
-description: Rust toolchain, wasm targets, wasmtime, node, clang and a build cache for the gates.
+description: >-
+  Rust toolchain, a build cache, cargo-nextest and (for the tests) wasmtime, node and clang. On
+  Windows the checkout is copied to a Dev Drive first: run later steps in
+  `${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}`.
+inputs:
+  tools:
+    description: Install what the tests need besides Rust (wasmtime, node, clang on macOS).
+    default: "true"
+  save-cache:
+    description: >-
+      Save the build cache. Only the pushes to main do (`cache` job in ci.yml): caches saved
+      by a pull request or merge queue run can't be restored by any other branch.
+    default: "false"
 runs:
   using: composite
   steps:
+    # ReFS with the antivirus filter detached: cargo's many small files build much faster than on
+    # the runner's NTFS drives. The checkout is copied there (so `target/` is there too).
+    - name: dev drive (Windows)
+      if: runner.os == 'Windows'
+      uses: samypr100/setup-dev-drive@v4
+      with:
+        drive-size: 60GB
+        drive-format: ReFS
+        drive-type: Dynamic
+        workspace-copy: true
+        trusted-dev-drive: true
     # The toolchain, components and targets come from rust-toolchain.toml.
     - name: rust (pinned)
       shell: bash
       run: rustup toolchain install && rustc --version
     - uses: Swatinem/rust-cache@v2
       with:
+        workspaces: ${{ env.DEV_DRIVE_WORKSPACE || '.' }}
         shared-key: gate
-        cache-on-failure: true
+        save-if: ${{ inputs.save-cache == 'true' }}
+    - uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-nextest
     # wasmtime and node enable the WebAssembly and playground tests.
-    - uses: bytecodealliance/actions/wasmtime/setup@v1
-    - uses: actions/setup-node@v4
+    - if: inputs.tools == 'true'
+      uses: bytecodealliance/actions/wasmtime/setup@v1
+    - if: inputs.tools == 'true'
+      uses: actions/setup-node@v4
       with:
         node-version: 22
     # The LLVM backend (--release goldens) needs clang 16 or newer; Apple's clang can be older.
     - name: clang (macOS)
-      if: runner.os == 'macOS'
+      if: inputs.tools == 'true' && runner.os == 'macOS'
       shell: bash
       run: |
         brew install llvm >/dev/null

@@ -1,11 +1,19 @@
-# Pull requests run the fast gate on Linux; the merge queue runs the full gate on Linux, Windows
-# and macOS against the pull request merged with the latest main. The single required check is
-# `ci`, which summarizes whichever jobs ran.
+# Pull requests run the checks their changes need (`cargo xtask check`, rules in
+# crates/xtask/src/plan.rs) on Linux, as three parallel jobs: lint (fmt, clippy), test (build,
+# unit and integration tests) and golden (end-to-end, debug mode). The label `ci:full` makes them
+# check everything (add it before pushing, or close and reopen the pull request).
+#
+# The merge queue checks everything on Linux, Windows and macOS against the pull request merged
+# with the latest main, with the parts as parallel jobs. The single required check is `ci`, which
+# summarizes whichever jobs ran. Pushes to main only refresh the build cache every other run
+# restores (a cache saved on a pull request or queue branch can't be restored anywhere else).
 name: ci
 
 on:
   pull_request:
   merge_group:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -17,41 +25,91 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  fast:
+  pr:
     if: github.event_name == 'pull_request'
+    name: ${{ matrix.part }}
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [lint, test, golden]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
+      # HEAD is the merge of the pull request into its base; HEAD^1 is that base.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: ./.github/actions/setup
-      - run: scripts/check-all.sh --fast
+        with:
+          tools: ${{ matrix.part != 'lint' }}
+      - name: cargo xtask check --part ${{ matrix.part }}
+        run: >-
+          cargo xtask check --part ${{ matrix.part }} --fast --base HEAD^1
+          ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && '--full' || '' }}
 
   full:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
+    name: ${{ matrix.part }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        part: [lint, test, golden-debug, golden-release]
+        include:
+          - part: lint
+            args: --part lint
+          - part: test
+            args: --part test
+          - part: golden-debug
+            args: --part golden --golden-modes debug
+          - part: golden-release
+            args: --part golden --golden-modes release
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: ${{ matrix.part != 'lint' }}
+      - name: cargo xtask check --full ${{ matrix.args }}
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: cargo xtask check --full ${{ matrix.args }}
+
+  # The build cache for the runs above: main's dependencies, built and linted the way the gate
+  # builds them (crates/xtask/src/check.rs), plus the WebAssembly runtime the tests build.
+  cache:
+    if: github.event_name == 'push'
+    name: cache (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 180
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-      - name: gate (Linux, macOS)
-        if: runner.os != 'Windows'
-        run: scripts/check-all.sh
-      - name: gate (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: pwsh -NoProfile -File scripts/check-all.ps1
+        with:
+          tools: "false"
+          save-cache: "true"
+      - name: build and lint like the gate
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: |
+          cargo build --workspace --exclude xtask --all-targets
+          cargo clippy --workspace --all-targets
+          cargo build -p velt_rt_wasm --target wasm32-wasip1
+          cargo build -p velt_rt_wasm --target wasm32-unknown-unknown
+          cargo build -p xtask
 
   ci:
     if: always()
-    needs: [fast, full]
+    needs: [pr, full]
     runs-on: ubuntu-latest
     steps:
       - name: every gate that ran passed
         run: |
-          for r in "${{ needs.fast.result }}" "${{ needs.full.result }}"; do
+          for r in "${{ needs.pr.result }}" "${{ needs.full.result }}"; do
             case "$r" in success|skipped) ;; *) echo "a gate failed: $r"; exit 1 ;; esac
           done
