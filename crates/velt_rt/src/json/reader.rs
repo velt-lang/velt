@@ -57,6 +57,10 @@ pub struct Reader {
     /// Where each array/object skipped by `skip_lookahead` ends, by the offset of its opening
     /// bracket (created on first use).
     skip_ends: Option<HashMap<usize, usize>>,
+    /// Bytes `skip_lookahead` walked (not jumped over): lets tests check that lookahead stays
+    /// linear without timing it.
+    #[cfg(test)]
+    pub(crate) lookahead_walked: usize,
 }
 
 /// `velt_rt_json_reader_new_with` flags.
@@ -85,6 +89,8 @@ impl Reader {
             },
             depth: 0,
             skip_ends: None,
+            #[cfg(test)]
+            lookahead_walked: 0,
         }
     }
 
@@ -302,9 +308,15 @@ impl Reader {
             return 0;
         };
         let limit = self.depth_left();
+        #[cfg(test)]
+        let start = self.sc.pos;
         if !matches!(first, b'{' | b'[') {
             // A scalar: nothing to remember (one peek, like `skip`).
             let r = walk_limited(&mut self.sc, &mut SkipSink, limit);
+            #[cfg(test)]
+            {
+                self.lookahead_walked += self.sc.pos - start;
+            }
             return self.syntax(r);
         }
         let ends = self.skip_ends.get_or_insert_with(HashMap::new);
@@ -319,6 +331,10 @@ impl Reader {
             open: Vec::new(),
         };
         let r = walk_limited(&mut self.sc, &mut sink, limit);
+        #[cfg(test)]
+        {
+            self.lookahead_walked += self.sc.pos - start;
+        }
         self.syntax(r)
     }
 

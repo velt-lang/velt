@@ -7,7 +7,6 @@ use crate::json::reader::*;
 use crate::json::reader_abi::*;
 use crate::str::{velt_rt_str_drop, VeltStr};
 use std::mem::MaybeUninit;
-use std::time::{Duration, Instant};
 
 /// `{ pad: string; child: Leaf | Node; kind: "node" }` or `{ v: i64; kind: "leaf" }`, the
 /// tag last: a document `levels` nodes deep around one leaf.
@@ -84,12 +83,18 @@ unsafe fn decode(r: *mut Reader) -> Option<usize> {
 }
 
 fn parse(src: &str) -> Option<usize> {
+    parse_counting(src).0
+}
+
+/// [`parse`], and how many bytes the lookahead walked (rather than jumped over).
+fn parse_counting(src: &str) -> (Option<usize>, usize) {
     let s = borrow(src);
     unsafe {
         let r = velt_rt_json_reader_new(&s);
         let depth = decode(r).filter(|_| velt_rt_json_reader_end(r) == 1);
+        let walked = (*r).lookahead_walked;
         velt_rt_json_reader_free(r);
-        depth
+        (depth, walked)
     }
 }
 
@@ -116,26 +121,17 @@ fn nested_unions_decode() {
 
 #[test]
 fn union_lookahead_stays_linear() {
-    // `4 * n` levels must take about 4 times as long as `n`, not 16 times (each level skipping
-    // its whole subtree again). Best of three interleaved runs, so a busy machine slows both.
+    // The lookahead walks each byte about once: `4 * n` levels walk about 4 times as much as
+    // `n`, not 16 times (each level skipping its whole subtree again). Counted, not timed, so a
+    // busy machine cannot make it flaky.
     let n = 4_000;
     let (small, large) = (nested(n), nested(4 * n));
-    let (t_small, t_large) = with_stack(move || {
-        let time = |src: &str, levels: usize| {
-            let start = Instant::now();
-            assert_eq!(parse(src), Some(levels));
-            start.elapsed()
-        };
-        let (mut t_small, mut t_large) = (Duration::MAX, Duration::MAX);
-        for _ in 0..3 {
-            t_small = t_small.min(time(&small, n));
-            t_large = t_large.min(time(&large, 4 * n));
-        }
-        (t_small, t_large)
-    });
+    let ((d_small, w_small), (d_large, w_large)) =
+        with_stack(move || (parse_counting(&small), parse_counting(&large)));
+    assert_eq!((d_small, d_large), (Some(n), Some(4 * n)));
     assert!(
-        t_large < t_small * 9,
-        "{n} levels took {t_small:?}, {} took {t_large:?}: not linear",
+        w_large < w_small * 5,
+        "{n} levels walked {w_small} bytes, {} walked {w_large}: not linear",
         4 * n
     );
 }
