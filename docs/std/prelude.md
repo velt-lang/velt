@@ -21,7 +21,7 @@ byte offsets; a negative position counts from the end, as in JS.
 | `replace(from, to)`, `replaceAll(from, to)` | plain text; for patterns use [`velt:regex`](regex.md) |
 | `repeat(n)`, `padStart(n, fill = " ")`, `padEnd(n, fill = " ")` | |
 | `charCodeAt(i = 0)` | the byte at `i` |
-| `localeCompare(t): i64` | -1, 0 or 1 in the CLDR root collation, like `new Intl.Collator("und").compare(s, t)` (`"a" < "A" < "b"`, `"e" < "é" < "f"`; Node's own `localeCompare` uses the host's locale). Exact for Latin (including Vietnamese), Greek and Cyrillic letters, punctuation and digits, except a few characters that stand for three or more (`¼`, `½`, `¾`, `ϗ`); approximate for other scripts. No locale or options arguments |
+| `localeCompare(t): i64` | -1, 0 or 1 in the CLDR root collation, like `new Intl.Collator("und").compare(s, t)` (`"a" < "A" < "b"`, `"e" < "é" < "f"`; Node's own `localeCompare` uses the host's locale). Exact for strings made of U+0020..U+024F, U+0370..U+04FF, U+1E00..U+1EFF, U+2000..U+206F and U+20A0..U+20CF (Latin with Vietnamese, Greek, Cyrillic, general punctuation, currency signs), except a few characters that stand for three or more (`¼`, `½`, `¾`, `ϗ`); approximate for everything else. No locale or options arguments |
 
 Conversions: `String.fromCharCode(code)`, `parseInt(s, radix = 0)` and `parseFloat(s)` (both
 return `f64`, `NaN` on failure), `Number(s)`.

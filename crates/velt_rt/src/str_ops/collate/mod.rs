@@ -2,15 +2,16 @@
 //! `localeCompare` uses the host's locale instead).
 //!
 //! Three levels, as in the Unicode Collation Algorithm: base letters first (`"a" < "B"`), then
-//! accents (`"e" < "é"`), then case (`"a" < "A"`). The characters of `table.rs` (Basic Latin
-//! through Latin Extended-B, Greek, Cyrillic, Latin Extended Additional) take their weights
-//! from a table generated from ICU, so text in those scripts, punctuation and digits order
-//! exactly like `Intl.Collator("und")`, except the few characters that expand to three or more
-//! collation elements (`¼`, `½`, `¾`, `ϗ`; the table holds two). Elsewhere the order is approximate: combining marks
-//! (U+0300..U+036F) weigh only as accents, so a decomposed `e` + U+0301 sorts next to `é` but not
-//! equal to it (ICU normalizes first); other letters and digits sort after the table's
-//! letters (Hangul, kana and Han last, in that order), and other symbols (emoji included) just before the
-//! digits, each group by code point. Controls are ignored, as in ICU.
+//! accents (`"e" < "é"`), then case (`"a" < "A"`). The characters of `table.rs`, U+0020..U+024F,
+//! U+0370..U+04FF, U+1E00..U+1EFF, U+2000..U+206F and U+20A0..U+20CF (Latin with Vietnamese,
+//! Greek, Cyrillic, general punctuation, currency signs), take their weights from a table
+//! generated from ICU, so strings made of them order exactly like `Intl.Collator("und")`, except
+//! the few characters that expand to three or more collation elements (`¼`, `½`, `¾`, `ϗ`; the
+//! table holds two). Everything else is approximate: combining marks (U+0300..U+036F) weigh
+//! only as accents, so a decomposed `e` + U+0301 sorts next to `é` but not equal to it (ICU
+//! normalizes first); other letters and digits sort after the table's letters (Hangul, kana and
+//! Han last, in that order), and other symbols (emoji included) just before the digits, each
+//! group by code point. Controls are ignored, as in ICU.
 
 mod table;
 
@@ -150,6 +151,11 @@ mod tests {
             ("中", "가", Greater),
             ("가", "あ", Less),
             ("あ", "中", Less),
+            ("‼", "!!", Greater),
+            ("€", "$", Greater),
+            ("—", "-", Greater),
+            ("…", "...", Greater),
+            ("“a", "a", Less),
         ];
         for (a, b, want) in cases {
             assert_eq!(collate(a, b), want, "{a:?} vs {b:?}");

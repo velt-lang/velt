@@ -125,10 +125,11 @@ extend string {
 
   // -1, 0 or 1: the order of `this` and `that` in the CLDR root collation, like
   // `new Intl.Collator("und").compare` ("a" < "A" < "b", "e" < "é" < "f"). Node's own
-  // `localeCompare` follows the host's locale instead. Exact for Latin (including Vietnamese),
-  // Greek and Cyrillic letters, punctuation and digits, except a few characters that stand for
-  // three or more (`¼`, `½`, `¾`, `ϗ`); approximate for other scripts. No locale or options
-  // arguments.
+  // `localeCompare` follows the host's locale instead. Exact for strings made of U+0020..U+024F,
+  // U+0370..U+04FF, U+1E00..U+1EFF, U+2000..U+206F and U+20A0..U+20CF (Latin with Vietnamese,
+  // Greek, Cyrillic, general punctuation, currency signs), except a few characters that stand
+  // for three or more (`¼`, `½`, `¾`, `ϗ`); approximate for everything else. No locale or
+  // options arguments.
   localeCompare(that: string): i64 {
     return velt_rt_str_locale_compare(this, that);
   }
