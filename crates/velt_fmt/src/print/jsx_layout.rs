@@ -17,44 +17,84 @@ use crate::doc::{
 /// Merges neighbouring separators (two separators with nothing between them) and trims lines
 /// and empty contents at both ends. `contains_text`: is any child meaningful text?
 pub(super) fn tidy(parts: &mut Vec<Part>, contains_text: bool) {
-    let mut i = parts.len().saturating_sub(1);
-    while i > 0 {
-        i -= 1;
-        let (a, b, c) = (parts.get(i), parts.get(i + 1), parts.get(i + 2));
-        let empty_between = matches!(b, Some(Part::Empty));
-        let space = |p: Option<&Part>| matches!(p, Some(Part::Space(_)));
-        let soft_or_hard = |p: Option<&Part>| p.is_some_and(Part::is_line);
-        let hard = |p: Option<&Part>| matches!(p, Some(Part::Hard));
-        let soft = |p: Option<&Part>| matches!(p, Some(Part::Soft));
-        let pair_of_empties = matches!(a, Some(Part::Empty)) && empty_between;
-        let pair_of_hardlines = hard(a) && empty_between && hard(c);
-        let line_then_space = soft_or_hard(a) && empty_between && space(c);
-        let space_then_line = space(a) && empty_between && soft_or_hard(c);
-        let double_space = space(a) && empty_between && space(c);
-        let soft_and_hard = empty_between && ((soft(a) && hard(c)) || (hard(a) && soft(c)));
-        if double_space {
-            // Prettier keeps one space here; both are kept so the text does not change.
-            if let (Some(Part::Space(first)), Some(Part::Space(second))) = (a, c) {
-                let joined = format!("{first}{second}");
-                parts[i + 2] = Part::Space(joined);
+    // Prettier walks the list backwards and merges each part with the two after it, which are
+    // already tidied. Those are kept on a stack (the next part on top), so the pass is linear.
+    let mut rest: Vec<Part> = Vec::with_capacity(parts.len());
+    let mut iter = std::mem::take(parts).into_iter().rev();
+    rest.extend(iter.next());
+    for a in iter {
+        let n = rest.len();
+        let (b, c) = (
+            n.checked_sub(1).map(|i| &rest[i]),
+            n.checked_sub(2).map(|i| &rest[i]),
+        );
+        match merge(&a, b, c, contains_text) {
+            Merge::Keep => rest.push(a),
+            Merge::DropBoth => {
+                rest.pop();
             }
-            parts.drain(i..i + 2);
-        } else if (pair_of_hardlines && contains_text)
-            || pair_of_empties
-            || line_then_space
-            || soft_and_hard
-        {
-            parts.drain(i..i + 2);
-        } else if space_then_line {
-            parts.drain(i + 1..i + 3);
+            Merge::JoinSpaces => {
+                rest.pop();
+                if let (Part::Space(first), Some(Part::Space(second))) = (&a, rest.last_mut()) {
+                    *second = format!("{first}{second}");
+                }
+            }
+            Merge::DropNextTwo => {
+                rest.pop();
+                rest.pop();
+                rest.push(a);
+            }
         }
     }
+    rest.reverse();
     let edge = |p: &Part| matches!(p, Part::Empty | Part::Line | Part::Soft | Part::Hard);
-    while parts.last().is_some_and(edge) {
-        parts.pop();
+    while rest.last().is_some_and(edge) {
+        rest.pop();
     }
-    while parts.len() > 1 && edge(&parts[0]) && edge(&parts[1]) {
-        parts.drain(..2);
+    let mut lead = 0;
+    while rest.len() - lead > 1 && edge(&rest[lead]) && edge(&rest[lead + 1]) {
+        lead += 2;
+    }
+    rest.drain(..lead);
+    *parts = rest;
+}
+
+/// What happens to a part `a` and the two parts after it, `b` and `c`.
+enum Merge {
+    Keep,
+    /// `a` and `b` go.
+    DropBoth,
+    /// Two spaces with nothing between: one space holding both (prettier keeps one; both are
+    /// kept so the text does not change).
+    JoinSpaces,
+    /// `b` and `c` go.
+    DropNextTwo,
+}
+
+fn merge(a: &Part, b: Option<&Part>, c: Option<&Part>, contains_text: bool) -> Merge {
+    if !matches!(b, Some(Part::Empty)) {
+        return Merge::Keep;
+    }
+    let space = |p: Option<&Part>| matches!(p, Some(Part::Space(_)));
+    let soft_or_hard = |p: Option<&Part>| p.is_some_and(Part::is_line);
+    let (hard, soft) = (
+        |p: Option<&Part>| matches!(p, Some(Part::Hard)),
+        |p: Option<&Part>| matches!(p, Some(Part::Soft)),
+    );
+    let a = Some(a);
+    if space(a) && space(c) {
+        Merge::JoinSpaces
+    } else if (hard(a) && hard(c) && contains_text)
+        || matches!(a, Some(Part::Empty))
+        || (soft_or_hard(a) && space(c))
+        || (soft(a) && hard(c))
+        || (hard(a) && soft(c))
+    {
+        Merge::DropBoth
+    } else if space(a) && soft_or_hard(c) {
+        Merge::DropNextTwo
+    } else {
+        Merge::Keep
     }
 }
 
@@ -215,6 +255,95 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+    /// The quadratic algorithm `tidy` replaced (prettier's loop as written), for comparison.
+    fn tidy_reference(parts: &mut Vec<Part>, contains_text: bool) {
+        let mut i = parts.len().saturating_sub(1);
+        while i > 0 {
+            i -= 1;
+            let (a, b, c) = (parts.get(i).cloned(), parts.get(i + 1), parts.get(i + 2));
+            match a.map(|a| merge(&a, b, c, contains_text)) {
+                Some(Merge::JoinSpaces) => {
+                    if let (Some(Part::Space(first)), Some(Part::Space(second))) =
+                        (parts.get(i).cloned(), parts.get(i + 2).cloned())
+                    {
+                        parts[i + 2] = Part::Space(format!("{first}{second}"));
+                    }
+                    parts.drain(i..i + 2);
+                }
+                Some(Merge::DropBoth) => {
+                    parts.drain(i..i + 2);
+                }
+                Some(Merge::DropNextTwo) => {
+                    parts.drain(i + 1..i + 3);
+                }
+                _ => {}
+            }
+        }
+        let edge = |p: &Part| matches!(p, Part::Empty | Part::Line | Part::Soft | Part::Hard);
+        while parts.last().is_some_and(edge) {
+            parts.pop();
+        }
+        while parts.len() > 1 && edge(&parts[0]) && edge(&parts[1]) {
+            parts.drain(..2);
+        }
+    }
+
+    #[test]
+    fn linear_tidy_matches_the_reference() {
+        let kinds = [
+            Part::Empty,
+            Part::Line,
+            Part::Soft,
+            Part::Hard,
+            Part::Space(" ".into()),
+            Part::Space("  ".into()),
+        ];
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        for round in 0..2000 {
+            let len = 1 + round % 23;
+            let parts: Vec<Part> = (0..len)
+                .map(|i| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    if i % 2 == 0 && seed.is_multiple_of(3) {
+                        word("w")
+                    } else {
+                        kinds[(seed % kinds.len() as u64) as usize].clone()
+                    }
+                })
+                .collect();
+            for contains_text in [false, true] {
+                let (mut fast, mut slow) = (parts.clone(), parts.clone());
+                tidy(&mut fast, contains_text);
+                tidy_reference(&mut slow, contains_text);
+                let joined = |p: &[Part]| {
+                    p.iter()
+                        .map(|x| match x {
+                            Part::Space(s) => format!("space({})", s.len()),
+                            other => shape(std::slice::from_ref(other)),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                };
+                assert_eq!(joined(&fast), joined(&slow), "{}", joined(&parts));
+            }
+        }
+    }
+
+    #[test]
+    fn tidy_is_linear_in_the_number_of_children() {
+        let mut parts = vec![Part::Empty];
+        for _ in 0..200_000 {
+            parts.extend([Part::Hard, Part::Empty, Part::Hard, word("w")]);
+        }
+        let started = std::time::Instant::now();
+        tidy(&mut parts, true);
+        assert!(started.elapsed().as_secs() < 2, "{:?}", started.elapsed());
+        // Each `hard, "", hard` pair becomes one line break; the leading `"", hard` is trimmed.
+        assert_eq!(parts.len(), 399_999);
     }
 
     #[test]
