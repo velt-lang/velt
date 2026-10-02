@@ -193,7 +193,7 @@ function signalNumber(name: string): i32 {
     case "SIGTERM":
       return 15;
     default:
-      throw new IoError("EINVAL", `Unknown signal: ${name}`);
+      throw new IoError("EINVAL", `unknown signal: ${name}`);
   }
 }
 

@@ -66,7 +66,7 @@ pub unsafe extern "C" fn velt_rt_http_resp_set_header(
 }
 
 /// Whether a response with `status` has no body (and so no body headers): 1xx, 204 and 304.
-fn bodiless(status: StatusCode) -> bool {
+pub(crate) fn bodiless(status: StatusCode) -> bool {
     status.is_informational()
         || status == StatusCode::NO_CONTENT
         || status == StatusCode::NOT_MODIFIED

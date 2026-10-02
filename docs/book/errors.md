@@ -128,8 +128,10 @@ integer division by zero, a failed `assert`, `unwrap()` on `null`, an explicit `
 These **panic**: the program prints `panic: <message> at file:line:col` and exits with code
 101. Panics can't be caught.
 
-An error that escapes `main` prints `Uncaught <Type>: <message> at file:line:col` and exits with
-code 1.
+An error that escapes `main` prints `Uncaught <Class>: <message> at file:line:col` and exits with
+code 1. It names the error's actual class, even when the function declared a base class such as
+`throws Error`, and the line it was thrown on; an error from the standard library (a missing
+file, say) points at the line of your code that made the call.
 
 ## Designing errors for an application
 

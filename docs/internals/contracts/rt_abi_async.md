@@ -249,7 +249,10 @@ typedef struct { uint64_t size; double mtime_ms; uint8_t is_file; uint8_t is_dir
 All `path`/`from`/`to`/`data` parameters are `const VeltStr*`. Async variants run on tokio's
 blocking pool. Error messages are Node's: `<CODE>: <description>, <syscall> '<path>'` (plus
 ` -> '<to>'` for `rename`/`copyfile`), e.g. `ENOENT: no such file or directory, lstat 'x'` from
-`fs_remove`; the file streams' `open_read`/`open_write` (§14.7) use the same form.
+`fs_remove`; the file streams' `open_read`/`open_write` (§14.7) use the same form. A failed
+read or write of an opened file names no path (`EISDIR: illegal operation on a directory,
+read`), and a directory opened as a file is `EISDIR` on every system (Windows reports access
+denied).
 
 ## 6. std/net (TCP)
 
@@ -1023,7 +1026,7 @@ its response open.
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_http_resp_stream_open` | `(VeltResp r) -> VeltRespWriter` | body becomes a stream; default `content-type: text/plain; charset=utf-8` unless one is set; opening again detaches the earlier writer (its writes return 0) |
+| `velt_rt_http_resp_stream_open` | `(VeltResp r) -> VeltRespWriter` | body becomes a stream; default `content-type: text/plain; charset=utf-8` unless one is set; opening again detaches the earlier writer (its writes return 0). A bodiless status (1xx, 204, 304) keeps the empty body and gets no `content-type`; the writer's writes return 0 |
 | `velt_rt_http_resp_stream_write` | `(VeltRespWriter w, const VeltStr* text) -> u8` | buffers a copy; 0 once ended, client gone, or `w` released |
 | `velt_rt_http_resp_stream_write_bytes` | `(VeltRespWriter w, const VeltBytes* data) -> u8` | the same for `u8[]` |
 | `velt_rt_http_resp_stream_flush` | `(VeltRespWriter w) -> VeltFut*` | result `u8`: 1 = the buffer was handed to the body (nothing buffered: 1 while the client is there); 0 = client gone / ended. Cancel-safe: the buffer is taken only once there is room |

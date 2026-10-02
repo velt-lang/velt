@@ -24,7 +24,8 @@ it. For a walkthrough, see [Building an HTTP server](../book/http-server.md).
   `Response.html(body, status = 200)`, `Response.bytes(body: u8[], status = 200)`.
   `.header(name, value): bool` adds a header; `.setHeader(name, value): bool` replaces it (e.g.
   the default `content-type`). A 1xx, 204 (`Response.text("", 204)`) or 304 status has no body:
-  the body argument is dropped and no `content-type` is added.
+  the body argument is dropped and no `content-type` is added (with `Response.stream`, the
+  writer's writes return `false`).
 - `Response.stream<E>(body: (w: ResponseWriter) => Promise<void, E>, status = 200)`: a body
   produced while it is sent (server-side rendering, large exports). `body` starts at once and
   keeps running after the handler returned the response; the status and headers (set them

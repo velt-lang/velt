@@ -1,6 +1,7 @@
-// A 204 or 304 response has no body, so no body headers: the body argument is dropped and no
-// default `content-type` is added (Node and the Fetch API do the same). Other statuses keep them.
-import { serve, fetch, Request, Response } from "velt:http";
+// A 204 or 304 response has no body, so no body headers: the body argument (a streamed one
+// too) is dropped and no default `content-type` is added (Node and the Fetch API do the same).
+// Other statuses keep them.
+import { serve, fetch, Request, Response, ResponseWriter } from "velt:http";
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
@@ -13,10 +14,20 @@ async function main() {
     if (req.path == "/html") {
       return Response.html("<p>cached</p>", 304);
     }
+    if (req.path == "/stream") {
+      // The writer's output is discarded: its writes report the body as gone.
+      return Response.stream(
+        async (w: ResponseWriter) => {
+          w.write("dropped");
+          await w.close();
+        },
+        204,
+      );
+    }
     return Response.text("hello", 200);
   });
   const base = `http://127.0.0.1:${server.port}`;
-  for (const path of ["/text", "/json", "/html", "/ok"]) {
+  for (const path of ["/text", "/json", "/html", "/stream", "/ok"]) {
     const r = await fetch(`${base}${path}`);
     const type = r.headers.get("content-type") ?? "none";
     const length = r.headers.get("content-length") ?? "none";

@@ -201,6 +201,8 @@ fn describe(e: &io::Error) -> String {
         Some(i) if text.ends_with(')') => &text[..i],
         _ => &text,
     };
+    // Windows' texts are sentences ("… by another process."); Node's descriptions aren't.
+    let text = text.strip_suffix('.').unwrap_or(text);
     let mut chars = text.chars();
     match chars.next() {
         Some(c) => c.to_lowercase().chain(chars).collect(),
@@ -220,6 +222,13 @@ pub fn fs_error(e: io::Error, syscall: &str, path: &Path, dest: Option<&Path>) -
     if let Some(d) = dest {
         msg.push_str(&format!(" -> '{}'", d.display()));
     }
+    io::Error::new(e.kind(), msg)
+}
+
+/// `e` with Node's message for a failed read or write of an open file, which names no path:
+/// `EISDIR: illegal operation on a directory, read`.
+pub fn op_error(e: io::Error, syscall: &str) -> io::Error {
+    let msg = format!("{}: {}, {syscall}", code_name(code_of(&e)), describe(&e));
     io::Error::new(e.kind(), msg)
 }
 
@@ -274,5 +283,23 @@ mod tests {
         let e = io::Error::other("Something odd (os error 5)");
         let e = fs_error(e, "open", Path::new("f"), None);
         assert_eq!(e.to_string(), "UNKNOWN: something odd, open 'f'");
+        // Windows error 32 (ERROR_SHARING_VIOLATION) as Rust displays it.
+        let text = concat!(
+            "The process cannot access the file because it is being used by another process.",
+            " (os error 32)"
+        );
+        let e = fs_error(io::Error::other(text), "open", Path::new("x"), None);
+        assert_eq!(
+            e.to_string(),
+            concat!(
+                "UNKNOWN: the process cannot access the file because it is being used by another",
+                " process, open 'x'"
+            )
+        );
+        let e = op_error(io::Error::from(io::ErrorKind::IsADirectory), "read");
+        assert_eq!(
+            e.to_string(),
+            "EISDIR: illegal operation on a directory, read"
+        );
     }
 }

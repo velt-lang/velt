@@ -17,6 +17,6 @@ end post -1
 RenderError: jsx_async#Post | Component jsx_async#Post failed: NotFound { message: 'no post -1' }
 RenderError: jsx_async#Broken | Component jsx_async#Broken failed: NotFound { message: 'sync failure' }
 start post 5
-sync: the element has an async component: use `await renderToString`
+sync: The element has an async component: use `await renderToString`
 <p>sync</p> <p>sync</p>
 end post 5

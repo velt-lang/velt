@@ -2,11 +2,11 @@
 //! tokio's blocking pool) and the `*_sync` ABI (run on the calling thread).
 
 use crate::bytes::VeltBytes;
-use crate::result::{fs_error, invalid_utf8, IoResult};
+use crate::result::{fs_error, invalid_utf8, op_error, IoResult};
 use crate::str::VeltStr;
 use crate::str_array::VeltStrArray;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -49,36 +49,60 @@ fn at<'a>(syscall: &'static str, path: &'a Path) -> impl FnOnce(io::Error) -> io
     move |e| fs_error(e, syscall, path, None)
 }
 
+/// Opens `path` with `opts`. Windows refuses to open a directory as a file with "access
+/// denied"; that is EISDIR, as everywhere else.
+pub fn open(path: &Path, opts: &fs::OpenOptions) -> io::Result<fs::File> {
+    opts.open(path).map_err(|e| {
+        if e.kind() == io::ErrorKind::PermissionDenied && path.is_dir() {
+            io::Error::from(io::ErrorKind::IsADirectory)
+        } else {
+            e
+        }
+    })
+}
+
+/// The whole file, with Node's messages: `open 'x'` for a failed open, `read` (no path) for a
+/// failed read; a directory fails the read (`EISDIR: …, read`) on every system.
+fn read_all(path: &Path) -> io::Result<Vec<u8>> {
+    let mut f = open(path, fs::OpenOptions::new().read(true)).map_err(|e| {
+        if e.kind() == io::ErrorKind::IsADirectory {
+            op_error(e, "read")
+        } else {
+            fs_error(e, "open", path, None)
+        }
+    })?;
+    let mut data = vec![];
+    f.read_to_end(&mut data).map_err(|e| op_error(e, "read"))?;
+    Ok(data)
+}
+
 /// `readFile(path)` as UTF-8 text.
 pub fn read_text(path: PathBuf) -> IoResult<VeltStr> {
-    let r = fs::read(&path)
-        .map_err(at("open", &path))
-        .and_then(|b| match String::from_utf8(b) {
-            Ok(s) => Ok(s.into_bytes()),
-            Err(_) => Err(invalid_utf8("file")),
-        });
+    let r = read_all(&path).and_then(|b| match String::from_utf8(b) {
+        Ok(s) => Ok(s.into_bytes()),
+        Err(_) => Err(invalid_utf8("file")),
+    });
     IoResult::from_io(r, VeltStr::from_vec)
 }
 
 /// `readFile(path)` as bytes.
 pub fn read_bytes(path: PathBuf) -> IoResult<VeltBytes> {
-    IoResult::from_io(
-        fs::read(&path).map_err(at("open", &path)),
-        VeltBytes::from_vec,
-    )
+    IoResult::from_io(read_all(&path), VeltBytes::from_vec)
 }
 
-/// `writeFile` (truncate) / `appendFile` (create if missing).
+/// `writeFile` (truncate) / `appendFile` (create if missing), with Node's messages: `open 'x'`
+/// for a failed open (a directory too), `write` (no path) for a failed write.
 pub fn write(path: PathBuf, data: Vec<u8>, append: bool) -> IoResult<()> {
-    if !append {
-        return unit(fs::write(&path, data).map_err(at("open", &path)));
+    let mut opts = fs::OpenOptions::new();
+    opts.create(true);
+    if append {
+        opts.append(true);
+    } else {
+        opts.write(true).truncate(true);
     }
-    let r = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
+    let r = open(&path, &opts)
         .map_err(at("open", &path))
-        .and_then(|mut f| f.write_all(&data));
+        .and_then(|mut f| f.write_all(&data).map_err(|e| op_error(e, "write")));
     unit(r)
 }
 
