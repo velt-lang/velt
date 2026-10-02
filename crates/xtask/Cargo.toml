@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Repository tooling: the quality gate and the check selection by changed files (`cargo xtask`)."
+
+# No dependencies, on purpose: `cargo xtask` runs `cargo build --workspace` while it runs, and a
+# dependency resolved with other features under `--workspace` than under `-p xtask` would make
+# that build replace the running binary (which Windows refuses).
+[dependencies]

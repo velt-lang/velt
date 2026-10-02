@@ -14,10 +14,13 @@ follow it. The essentials for agents:
 - End-to-end tests: `cargo test -p veltc --test golden` (filter: `VELT_GOLDEN=m1/strings`)
 - Documentation tests: `cargo test -p veltc --test docs`
 - Lint: `cargo clippy -p <crate> --all-targets -- -D warnings`
-- All quality gates: `pwsh scripts/check-all.ps1` on Windows, `scripts/check-all.sh` on macOS and
-  Linux. Run the fast tier (`-Fast` / `--fast`: end-to-end tests in debug mode only) while
-  iterating and the full gate once before you report. Filter with `VELT_GOLDEN=<substring>`
-  while working on one area.
+- Quality gate: `scripts/check.sh` on macOS and Linux, `pwsh scripts/check.ps1` on Windows. It
+  runs the checks your changes need, selected from the files changed since `origin/main`
+  (`cargo xtask affected` prints the plan and why). Run it while iterating and before you report.
+  The whole gate is `scripts/check-all.sh` / `check-all.ps1`; the merge queue runs it on three
+  OSes, so you don't need to (changes to the build, toolchain, CI or scripts make `check.sh`
+  select everything anyway). Install cargo-nextest so only the selected tests run, in parallel.
+  Filter goldens with `VELT_GOLDEN=<substring>` while working on one area.
 - Try a program: `cargo run -p veltc --bin velt -- run tests/golden/m1/hello.vlt`
 
 ## Rules for agents
@@ -36,8 +39,8 @@ follow it. The essentials for agents:
    a pull request (`Closes #N`, gate result); never push to `main`. The pull request title and
    description become the squash commit message: no "Generated with …" footers, session links or
    `Co-authored-by` trailers there or in commits, and commits keep the repository's configured
-   author. CI runs the fast gate on the
-   pull request and the full three-OS gate in the merge queue (CONTRIBUTING.md).
+   author. CI runs the checks the pull
+   request's changes need, and the whole gate on three OSes in the merge queue (CONTRIBUTING.md).
 4. Compiler code must not panic on user input; report `Diagnostic`s. Internal invariant
    violations may panic with a message starting `ICE:`.
 5. Every bug fix gets a regression test (end-to-end or unit). Every user-visible change updates

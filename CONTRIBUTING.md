@@ -34,15 +34,25 @@ moves the end-to-end tests' build directory the same way.
 | `cargo test -p veltc --test standards` | the coding standards below (file sizes) |
 | `cargo clippy -p <crate> --all-targets -- -D warnings` | lints |
 
-Two tiers of the whole gate:
+The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
 
-- **Fast**, while iterating: `pwsh scripts/check-all.ps1 -Fast` (Windows) or
-  `scripts/check-all.sh --fast` (macOS, Linux). Build, clippy, all unit tests, the end-to-end
-  tests in debug mode only, and `velt fmt --check` of `std` and `examples`.
-- **Full**, once before you open a pull request: the same without `-Fast`/`--fast`, which adds
-  the release-mode end-to-end tests. On Windows, `-Linux` also runs the gate in WSL;
-  `scripts/linux-check.sh` runs it in Docker from macOS or Linux (`--services` starts PostgreSQL
-  and Redis so the database tests run).
+- **The checks your changes need**, while iterating and before you push: `scripts/check.sh`
+  (macOS, Linux) or `pwsh scripts/check.ps1` (Windows). The files changed since the merge base
+  with `origin/main`, plus uncommitted and untracked ones, select the checks: a crate's tests and
+  those of the crates depending on it, the end-to-end tests when a change can affect compiled
+  programs (or only the goldens you touched), the documentation tests for docs, clippy for Rust
+  changes. Changes to the build, the toolchain, CI or the scripts select everything. `cargo xtask
+  affected` prints the plan and why; the rules are in `crates/xtask/src/plan.rs`. Goldens run in
+  debug mode (`--golden-modes release` for the other), `--part lint|test|golden` runs one part.
+- **Everything**: `scripts/check-all.sh` or `pwsh scripts/check-all.ps1` (`--fast` / `-Fast`:
+  goldens in debug mode only). The merge queue runs it on Linux, Windows and macOS, so you need
+  it locally only when you want that certainty before queueing. On Windows, `-Linux` also runs
+  the gate in WSL; `scripts/linux-check.sh` runs it in Docker from macOS or Linux (`--services`
+  starts PostgreSQL and Redis so the database tests run).
+
+Install [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked`): with it the
+gate runs only the selected tests, and test binaries in parallel; without it every test runs, one
+binary at a time. Local runs keep incremental compilation on (CI turns it off).
 
 Every bug fix comes with a regression test: an end-to-end test (`tests/golden/**`) or a unit
 test. A known bug without a fix can be added under `tests/golden/bugs/` (marked `.pending`: it is
@@ -145,15 +155,23 @@ directory (the default `target/` inside it, or `CARGO_TARGET_DIR` and `VELT_GOLD
 bigger disk), so parallel builds never wait on each other's locks. Agents follow the same layout:
 one worktree per agent, created from `origin/main`.
 
+A new worktree starts with an empty build directory, and building the dependencies takes minutes.
+[sccache](https://github.com/mozilla/sccache) shares them between worktrees: `cargo install
+sccache --locked`, then `export RUSTC_WRAPPER=sccache` (or `[build] rustc-wrapper = "sccache"` in
+your `~/.cargo/config.toml`). It caches the dependencies, which compile the same everywhere; the
+workspace crates build incrementally as before.
+
 ## Commits and pull requests
 
 Work on a branch and open a pull request against `main`; nothing is pushed to `main` directly.
 Reference the issue it resolves (`Closes #123`) and say which gate you ran.
 
-- **CI**: every pull request runs the fast gate on Linux. When a pull request is ready, add it to
-  the **merge queue**: the queue runs the full gate on Linux, Windows and macOS against the pull
-  request merged with the latest `main`, and merges it when all three pass. A nightly run adds
-  PostgreSQL and Redis so the database tests run too.
+- **CI**: every pull request runs the checks its changes need (as `scripts/check.sh` selects
+  them) on Linux, as three parallel jobs: lint, test and golden. The label `ci:full` makes them
+  check everything (add it before pushing, or close and reopen the pull request). When a pull
+  request is ready, add it to the **merge queue**: the queue runs the whole gate on Linux,
+  Windows and macOS against the pull request merged with the latest `main`, and merges it when
+  all pass. A nightly run adds PostgreSQL and Redis so the database tests run too.
 - Pull requests are **squash-merged**: the pull request **title and description become the commit
   message** on `main` (`sema: infer throws through closures in recursive functions`). Keep the
   description to what changed, why, and how it was tested: no tool-generated footers, session
