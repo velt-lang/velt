@@ -19,6 +19,9 @@ use std::time::{Duration, Instant, SystemTime};
 use notify::event::{ModifyKind, RenameMode};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
+mod snapshot;
+pub use snapshot::Snapshot;
+
 /// Interval between checks.
 pub const POLL: Duration = Duration::from_millis(10);
 /// Quiet time after the last change before it is reported.
@@ -32,6 +35,9 @@ pub struct Watcher {
     /// The watched files' directories and the `.vlt` files each held when last looked at
     /// (polling only; with notifications the operating system reports new files).
     dirs: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
+    /// `.vlt` files that appeared in a watched directory since the last build, with their stamp
+    /// when they appeared (a build that reads one for the first time compares with it).
+    appeared: HashMap<PathBuf, Option<Stamp>>,
     /// Change notifications, while they work.
     notifier: Option<Notifier>,
     /// Canonical spellings of the watched files and directories → their keys above
@@ -112,6 +118,7 @@ impl Watcher {
         Watcher {
             files: BTreeMap::new(),
             dirs: BTreeMap::new(),
+            appeared: HashMap::new(),
             notifier,
             aliases: HashMap::new(),
             dirty_since: None,
@@ -125,39 +132,53 @@ impl Watcher {
         self.notifier.is_some()
     }
 
-    /// Watch exactly `paths` from now on, as read by a build that started at `built_from`:
-    /// a file modified after that (saved during the build) counts as changed right away.
-    pub fn set(&mut self, paths: impl IntoIterator<Item = PathBuf>, built_from: SystemTime) {
-        self.files = paths
-            .into_iter()
-            .map(|p| {
-                let s = stamp(&p);
-                (p, s)
-            })
-            .collect();
+    /// Watch exactly `paths` from now on, as read by a build that started at `snap`: a file
+    /// saved since (during the build) counts as changed right away.
+    pub fn set(&mut self, paths: impl IntoIterator<Item = PathBuf>, snap: &Snapshot) {
+        self.files.clear();
         self.dirs.clear();
-        self.watch_dirs();
-        let now = Instant::now();
-        let newer = self
-            .files
-            .values()
-            .any(|s| s.is_some_and(|(modified, _)| modified > built_from));
-        self.dirty_since = newer.then_some(now);
-        self.last_change = newer.then_some(now);
+        self.appeared.clear();
+        self.dirty_since = None;
+        self.last_change = None;
+        self.add(paths, snap);
     }
 
-    /// Also watch `paths` (after a failed build: the files it read may differ from the last
-    /// good build's, e.g. a newly added import).
-    pub fn add(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
+    /// Also watch `paths`, as read by a build that started at `snap` (after a failed build:
+    /// the files it read may differ from the last good build's, e.g. a newly added import).
+    pub fn add(&mut self, paths: impl IntoIterator<Item = PathBuf>, snap: &Snapshot) {
+        let mut newer = false;
         for p in paths {
-            self.files.entry(p).or_insert_with_key(|p| stamp(p));
+            if self.files.contains_key(&p) {
+                continue;
+            }
+            let s = match snap.stamp_of(&p) {
+                Some(s) => s,
+                // Not in a directory watched before the build: modified around its start
+                // may mean saved during the build.
+                None => {
+                    let s = stamp(&p);
+                    newer |= snap.maybe_saved_since(s);
+                    s
+                }
+            };
+            self.files.insert(p, s);
         }
-        self.watch_dirs();
+        newer |= self.watch_dirs(snap);
+        // Anything saved since the snapshot, including files the build read for the first
+        // time and modules that appeared while it ran.
+        if self.check_all() || newer {
+            let now = Instant::now();
+            self.dirty_since.get_or_insert(now);
+            self.last_change = Some(now);
+        }
     }
 
-    /// Start watching the directories of the watched files (and stop watching others). A
-    /// directory the notifier cannot watch switches the watcher to polling.
-    fn watch_dirs(&mut self) {
+    /// Start watching the directories of the watched files (and stop watching others), with
+    /// the `.vlt` files they held at `snap`. A directory the notifier cannot watch switches the
+    /// watcher to polling. Whether a directory the snapshot doesn't cover holds a `.vlt` file
+    /// that may have been saved during the build.
+    fn watch_dirs(&mut self, snap: &Snapshot) -> bool {
+        let mut newer = false;
         let wanted: BTreeSet<PathBuf> = self
             .files
             .keys()
@@ -172,7 +193,12 @@ impl Watcher {
             .collect();
         for dir in &wanted {
             if !self.dirs.contains_key(dir) {
-                self.dirs.insert(dir.clone(), sources_in(dir));
+                let known = snap.listing(dir).unwrap_or_else(|| {
+                    let now = sources_in(dir);
+                    newer |= now.iter().any(|f| snap.maybe_saved_since(stamp(f)));
+                    now
+                });
+                self.dirs.insert(dir.clone(), known);
             }
         }
         self.dirs.retain(|d, _| wanted.contains(d));
@@ -188,6 +214,7 @@ impl Watcher {
                 self.notifier = None;
             }
         }
+        newer
     }
 
     /// Check once; `Some(first change time)` when changes have settled.
@@ -245,7 +272,12 @@ impl Watcher {
                 Seen::Changed => path.exists(),
             };
             if present {
-                changed |= known.insert(entry);
+                let new = known.insert(entry.clone());
+                changed |= new;
+                // Keep its last state, for a build that reads it for the first time.
+                if new || self.appeared.contains_key(&entry) {
+                    self.appeared.insert(entry.clone(), stamp(&entry));
+                }
             } else {
                 known.remove(&entry);
             }
@@ -266,6 +298,10 @@ impl Watcher {
     /// Polling: every watched file's stamp and every watched directory's `.vlt` files.
     fn check_all(&mut self) -> bool {
         let mut changed = false;
+        // Modules nothing has read yet: their last state, for a build that reads them.
+        for (path, last) in self.appeared.iter_mut() {
+            *last = stamp(path);
+        }
         for (path, old) in self.files.iter_mut() {
             let new = stamp(path);
             if new != *old {
@@ -273,9 +309,15 @@ impl Watcher {
                 changed = true;
             }
         }
+        // A watched file that appears was counted above (notifications don't list it).
+        let files = &self.files;
         for (dir, known) in self.dirs.iter_mut() {
             let now = sources_in(dir);
-            if now.iter().any(|f| !known.contains(f)) {
+            let new = now
+                .iter()
+                .filter(|f| !known.contains(*f) && !files.contains_key(*f));
+            for new in new {
+                self.appeared.insert(new.clone(), stamp(new));
                 changed = true;
             }
             *known = now;
@@ -341,73 +383,4 @@ impl Notifier {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Poll until a change is reported (or `limit` passes).
-    fn wait(w: &mut Watcher, limit: Duration) -> bool {
-        let deadline = Instant::now() + limit;
-        while Instant::now() < deadline {
-            if w.poll().is_some() {
-                return true;
-            }
-            std::thread::sleep(POLL);
-        }
-        false
-    }
-
-    /// Edits, files that appear, saves during the build and new `.vlt` files next to watched
-    /// ones, each reported once after it settles.
-    fn reports_changes(notify: bool) {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("main.vlt");
-        std::fs::write(&file, "a").unwrap();
-        let mut w = Watcher::new(notify);
-        assert_eq!(w.notifies(), notify);
-        w.set(
-            [file.clone(), dir.path().join("missing.vlt")],
-            SystemTime::now(),
-        );
-        assert!(!wait(&mut w, SETTLE * 3), "nothing changed");
-        std::fs::write(&file, "bb").unwrap();
-        assert!(w.poll().is_none(), "not settled yet");
-        assert!(wait(&mut w, Duration::from_secs(5)));
-        assert!(!wait(&mut w, SETTLE * 3), "reported once");
-        // A file that appears counts as a change.
-        std::fs::write(dir.path().join("missing.vlt"), "x").unwrap();
-        assert!(wait(&mut w, Duration::from_secs(5)));
-        // So does a new module nothing has read yet; other new files don't.
-        std::fs::write(dir.path().join("notes.txt"), "x").unwrap();
-        assert!(!wait(&mut w, SETTLE * 5), "not a source file");
-        let added = dir.path().join("added.vlt");
-        std::fs::write(&added, "x").unwrap();
-        assert!(wait(&mut w, Duration::from_secs(5)));
-        // Deleted and created again (`git stash`, a branch switch): new again.
-        std::fs::remove_file(&added).unwrap();
-        assert!(!wait(&mut w, SETTLE * 3), "a deletion alone needs no build");
-        std::fs::write(&added, "x").unwrap();
-        assert!(wait(&mut w, Duration::from_secs(5)), "recreated");
-        // An editor's atomic save: write a temporary file, rename it over the original.
-        let tmp = dir.path().join("main.vlt.tmp");
-        std::fs::write(&tmp, "atomic save").unwrap();
-        std::fs::rename(&tmp, &file).unwrap();
-        assert!(wait(&mut w, Duration::from_secs(5)), "renamed over");
-        assert!(!wait(&mut w, SETTLE * 3), "reported once");
-        // Saved while the build that read it was running.
-        let before = SystemTime::now() - Duration::from_secs(5);
-        w.set([file.clone()], before);
-        assert!(wait(&mut w, Duration::from_secs(1)));
-    }
-
-    #[test]
-    fn reports_changes_by_polling() {
-        reports_changes(false);
-    }
-
-    #[test]
-    fn reports_changes_from_notifications() {
-        if Watcher::new(true).notifies() {
-            reports_changes(true);
-        }
-    }
-}
+mod tests;
