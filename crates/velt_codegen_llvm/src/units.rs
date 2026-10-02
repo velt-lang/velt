@@ -4,7 +4,10 @@
 //! long single-threaded clang run. When asked for (`VELT_CODEGEN_UNITS`), the functions are split,
 //! in program order, into contiguous runs of similar size, one module and one object each:
 //! - an internal function referenced from another unit (call, address, vtable slot) becomes a
-//!   `hidden` external symbol of its unit (its name is already unique in the program);
+//!   `hidden` external symbol of its unit (its name is already unique in the program), and the
+//!   other units declare it `hidden` too, so their calls and address computations are direct and
+//!   PC-relative (no PLT or GOT); an exported function (`velt_main`) keeps default visibility,
+//!   since the shared runtime of debug builds finds it by name, and is declared `dso_local`;
 //! - a static is defined by the first unit that uses it (`hidden` when others use it too: the
 //!   runtime compares some static addresses, e.g. type descriptors, so there must be one copy);
 //!   the other units get an `available_externally` copy, so its contents stay visible to their

@@ -149,15 +149,15 @@ fn unit_modules_link_across_units() {
     };
     has(0, "define hidden i64 @\"a\"(");
     has(0, "define hidden i64 @\"b\"(");
-    has(1, "declare i64 @\"a\"(i64)");
-    has(1, "declare i64 @\"b\"()");
+    has(1, "declare hidden i64 @\"a\"(i64)");
+    has(1, "declare hidden i64 @\"b\"()");
     has(1, "define hidden ptr @\"c\"(");
     has(
         1,
         "@.s0 = hidden unnamed_addr constant <{ ptr }> <{ ptr @\"a\" }>",
     );
     has(2, "define available_externally hidden i64 @\"a\"(");
-    has(2, "declare ptr @\"c\"()");
+    has(2, "declare hidden ptr @\"c\"()");
     has(2, "define dso_local i32 @\"velt_main\"(");
     has(
         2,
@@ -178,4 +178,37 @@ fn unit_modules_link_across_units() {
     assert!(ir.contains("define internal i64 @\"a\"("));
     assert!(ir.contains("@.s0 = private unnamed_addr constant"));
     assert!(!ir.contains("hidden") && !ir.contains("declare i64"));
+}
+
+/// An exported function used from another unit is declared `dso_local` (a direct call, no GOT)
+/// but not `hidden`: the shared runtime of debug builds finds exported functions by name.
+#[test]
+fn exported_functions_are_declared_dso_local() {
+    let mut p = program();
+    p.funcs[2].linkage = Linkage::Export;
+    p.funcs[2].symbol = "velt_exported".into();
+    let plan = plan(&p, 3);
+    let target = normalize("x86_64-unknown-linux-gnu").unwrap();
+    let main = emit_unit(&p, &target, true, &plan.units[2], &plan.shared).unwrap();
+    assert!(
+        main.contains("declare dso_local ptr @\"velt_exported\"()"),
+        "{main}"
+    );
+    let first = emit_unit(&p, &target, true, &plan.units[1], &plan.shared).unwrap();
+    assert!(
+        first.contains("define dso_local ptr @\"velt_exported\"("),
+        "{first}"
+    );
+    let all: String = plan
+        .units
+        .iter()
+        .map(|u| emit_unit(&p, &target, true, u, &plan.shared).unwrap())
+        .collect();
+    for symbol in ["velt_exported", "velt_main"] {
+        assert!(
+            !all.contains(&format!("hidden ptr @\"{symbol}\"("))
+                && !all.contains(&format!("hidden i32 @\"{symbol}\"(")),
+            "{symbol} must keep default visibility"
+        );
+    }
 }
