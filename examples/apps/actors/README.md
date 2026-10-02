@@ -60,8 +60,8 @@ Not ported: streams and live reads, reminders, timers, topics, workers, jobs, wr
 migrations, auth and principals, clustering and placement, and file storage. None of them is
 blocked by something new: they need the same primitives the list in FINDINGS.md asks for.
 
-The source carries comments marking each workaround. Search for `F7`, `F8` and so on; they map
-to B2, B3 and the other bugs in FINDINGS.md.
+Every workaround in the source is marked with the FINDINGS.md item it works around: `B1`–`B8`
+for the bugs, `§2.n` for the gaps.
 
 ## Results
 

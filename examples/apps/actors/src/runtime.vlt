@@ -8,15 +8,20 @@
 // threads and nothing needs a lock. Callers on any thread reach a shard through its channel and
 // get the answer back on a one-slot reply channel.
 //
-// Things this file works around (see FINDINGS.md for the list and the minimal repros):
-// - async interface methods must not declare `throws` (F1: calling one through an interface
+// Things this file works around (FINDINGS.md has the list; B<n> are its bugs, with minimal
+// repros in findings/):
+// - async interface methods must not declare `throws` (B1: calling one through an interface
 //   value crashes), so the dynamic seams (`Method`, `Activation`, `ActorStorage`) return errors
 //   as values (`Reply`, `SaveResult`);
 // - an async closure must not forward an object parameter to a captured async function value
-//   (F2: the object is silently copied), so typed methods are classes (`Method0/1/2`), not
+//   (B4: the object is silently copied), so typed methods are classes (`Method0/1/2`), not
 //   wrapping closures;
-// - async closures cannot modify captured objects (F3), so methods receive `ctx` as a
+// - async closures cannot modify captured objects (FINDINGS §2.1), so methods receive `ctx` as a
 //   parameter instead of closing over it the way `methods: (ctx) => ({ ... })` does in TS.
+// - an async method called through an interface value drops its receiver (B2), so those seams'
+//   methods are sync and return the promise of a free async function;
+// - a shared object passed to an async call as its last use in a loop body loses a reference
+//   (B3), so such loops `touch` the object afterwards, and call arguments travel as JSON text.
 import { Value } from "velt:json";
 import { channel, Channel, ChannelClosed } from "velt:channel";
 import { Ticker } from "velt:timers";
@@ -71,7 +76,7 @@ export struct Envelope {
   key: string;
   method: string;
   // The JSON array `[key, ...args]`, as text. (A parsed `Value` arrived empty on the shard in
-  // some call paths — F9 — so it crosses as text and is parsed by the shard.)
+  // some call paths — B3 — so it crosses as text and is parsed by the shard.)
   args: string;
   // Absolute `performance.now()` deadline; 0 = none. A turn that starts after it is skipped.
   deadline: f64;
@@ -149,7 +154,7 @@ export function decode<T>(json: string): T throws ActorError {
 }
 
 // `JSON.parse<T>(json)`, through a one-element array: `velt build --release` fails with an
-// internal compiler error on `JSON.parse` into a number or `bool` (F10).
+// internal compiler error on `JSON.parse` into a number or `bool` (B7).
 function parseOne<T>(json: string): T throws JsonError {
   const one = JSON.parse<T[]>(`[${json}]`);
   const v = one.pop();
@@ -177,7 +182,7 @@ function argAt<A>(args: Value, i: i64, method: string): A throws ActorError {
 }
 
 // A method without arguments. (`invoke` forwards to a free async function rather than being
-// `async` itself: see `ActorStorage` and F7.)
+// `async` itself: see `ActorStorage` and B2.)
 export class Method0<S, R> implements Method<S> {
   name: string;
   f: (ctx: Ctx<S>) => Promise<R> throws ActorError;
@@ -311,9 +316,8 @@ export class Methods<S> {
 //     return new Methods<CounterState>().method1<i64, i64>("increment", async (ctx, by) => { … });
 //   }
 //
-// Like `methods: (ctx) => ({ … })` in sigx, the methods factory runs once per activation. (It
-// has to: an activation that kept a reference to its `ActorDef` corrupts the registry when it
-// is dropped — F7.) The state must round-trip through `JSON.stringify` / `JSON.parse<S>`.
+// Like `methods: (ctx) => ({ … })` in sigx, the methods factory runs once per activation. The
+// state must round-trip through `JSON.stringify` / `JSON.parse<S>`.
 export class ActorDef<S> implements ActorType {
   typeName: string;
   init: (key: string) => S;
@@ -387,7 +391,7 @@ class Live<S> implements Activation {
   }
 
   // Not `async`: an async method called through an `Activation` held in a field drops the
-  // activation when the call ends (F7), so the turn runs in a free function instead.
+  // activation when the call ends (B2), so the turn runs in a free function instead.
   invoke(method: string, args: Value, chain: string[], deadline: f64): Promise<Reply> {
     return runMethod<S>(this.typeName, this.methods, this.ctx, method, args, chain, deadline);
   }
@@ -427,7 +431,7 @@ export struct SaveResult {
 // storage value (`HostConfig.storage` makes one per shard).
 //
 // The methods return promises but are not `async` themselves: an async method called through
-// an interface value that lives in a field drops that value when the call ends (F7), so
+// an interface value that lives in a field drops that value when the call ends (B2), so
 // implementations forward to free async functions.
 export interface ActorStorage {
   load(type: string, key: string): Promise<StoredRecord | null>;
@@ -488,7 +492,7 @@ class Slot {
   act: Activation | null = null;
   etag: string | null = null;
   // Calls waiting for their turn. (A `Deque`, not an array with a head index: an async call on
-  // a local copied out of an array element sends ownership inference into a loop — F5.)
+  // a local copied out of an array element sends ownership inference into a loop — B5.)
   queue: Deque<Envelope> = new Deque<Envelope>();
   running: bool = false;
   lastActivity: f64 = 0.0;
@@ -531,8 +535,8 @@ class Shard {
   router: Router;
   directory: Map<string, Slot> = new Map<string, Slot>();
   // Actors with calls queued and no turn loop running yet; `runShard` starts their loops. (Not
-  // started by `accept` itself: a promise started by a synchronous function from its object
-  // parameters freed the shard when it ended — F8.)
+  // started by `accept` itself: `accept(shard, env)` was the last use of `shard` in the shard
+  // loop, and forwarding it to an async call there freed the shard — B3.)
   ready: Deque<Slot> = new Deque<Slot>();
   started: i64 = 0;
   activations: i64 = 0;
@@ -635,7 +639,7 @@ async function runTurns(shard: Shard, slot: Slot): Promise<void> {
     slot.lastActivity = performance.now();
     await send(env, r);
     // Also keeps `shard` used after the async call above: when such a call is the last use of
-    // a shared object in a loop body, it takes a reference it never added (F8).
+    // a shared object in a loop body, it takes a reference it never added (B3).
     shard.turns += 1;
     if (slot.act == null) {
       shard.deactivations += 1;
@@ -657,9 +661,8 @@ function activateSlot(shard: Shard, slot: Slot, stored: string | null): Reply | 
   }
 }
 
-// One turn. The activation is only ever reached through `slot.act`, never through a local
-// copy: clearing the field while a local still referred to it freed the activation twice
-// (F7).
+// One turn. The activation is reached through `slot.act` rather than a local copy, so clearing
+// the field (deactivation, a conflict) leaves no other reference behind.
 async function turn(shard: Shard, slot: Slot, id: string, env: Envelope): Promise<Reply> {
   if (env.deadline > 0.0 && performance.now() > env.deadline) {
     return errorReply(504, "call-timeout", `${id}.${env.method}: deadline passed while queued`);
@@ -756,7 +759,7 @@ async function runShard<C extends HostConfig>(
         break;
       }
       const turns = runTurns(shard, slot);
-      shard.started += 1; // keeps `shard` used after the call (F8)
+      shard.started += 1; // keeps `shard` used after the call (B3)
     }
   }
   ticker.stop();
@@ -808,7 +811,7 @@ function shardOf(type: string, key: string, n: i64): i64 {
 }
 
 // A use of `x` that does nothing: placed after an async call that would otherwise be the last
-// use of a shared object in a loop body (F8).
+// use of a shared object in a loop body (B3).
 export function touch<T>(x: T) {}
 
 export function parseOrNull(text: string): Value | null {
@@ -871,7 +874,7 @@ export struct Router {
 // The host
 
 // Copies freely: every copy refers to the same shards. (A class holding the shards' join
-// handles could not be shared: a promise has one owner — F6.)
+// handles could not be shared: a promise has one owner — FINDINGS §2.7.)
 export struct Host {
   router: Router;
   controls: Channel<Control>[];
@@ -901,7 +904,7 @@ export struct Host {
         total.saves += s.saves;
         total.live += s.live;
       }
-      touch(this); // F8
+      touch(this); // B3
     }
     return total;
   }
@@ -916,7 +919,7 @@ export struct Host {
     }
     for (let i: usize = 0; i < this.controls.length; i++) {
       await this.done.receive();
-      touch(this); // F8
+      touch(this); // B3
     }
   }
 }
