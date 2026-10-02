@@ -94,7 +94,7 @@ impl Gen {
             self.line(&format!("return {};", self.reduce("this.a * 2")));
             self.close("}");
             self.open("set twice(v: i64) {");
-            self.line("this.a = ((v - (v % 2)) / 2) | 0;");
+            self.line("this.a = Math.trunc(v / 2) | 0;");
             self.close("}");
         }
         self.scope.leave_function(saved);

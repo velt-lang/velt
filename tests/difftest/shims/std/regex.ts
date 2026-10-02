@@ -109,5 +109,4 @@ export class RegExp {
   clone(): RegExp {
     return new RegExp(this.source, this.flags);
   }
-  dispose() {}
 }
