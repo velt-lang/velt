@@ -274,7 +274,11 @@ fn cancelling_a_task_cancels_its_unfinished_promises() {
 unsafe extern "C" fn race_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut [i64; 2]);
     if st[1] == 0 {
-        let futs = [started_job(41, 500), started_job(42, 5), started_job(43, 30)];
+        let futs = [
+            started_job(41, 500),
+            started_job(42, 5),
+            started_job(43, 30),
+        ];
         st[1] = velt_rt_race(futs.as_ptr(), 3, 8) as i64;
     }
     match take(st[1] as *mut VeltFut, cx) {
@@ -294,7 +298,10 @@ fn race_takes_the_first_result_and_the_losers_keep_running() {
     assert_eq!(st[0], 42);
     // The race settled with the first result, before the slowest loser ended (no wall-clock
     // bound: timers are coarse on Windows and tests run in parallel).
-    assert!(!events(41..44).contains(&(41, "end")), "the race waited for a loser");
+    assert!(
+        !events(41..44).contains(&(41, "end")),
+        "the race waited for a loser"
+    );
     while events(41..44).len() < 6 {
         assert!(
             t.elapsed() < Duration::from_secs(10),
