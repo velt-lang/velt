@@ -13,6 +13,15 @@ enum N {
   Zero = 0,
   One = 1,
 }
+// A discriminant whose values are distinct types but the same JSON number.
+class K1 {
+  kind: 1 = 1;
+  a: i64 = 0;
+}
+class K2 {
+  kind: 1.0 = 1.0;
+  b: i64 = 0;
+}
 
 function main() {
   JSON.parse<i64 | f64>("1");
@@ -27,4 +36,5 @@ function main() {
   JSON.parse<N | 1>("1");
   JSON.parse<1 | 1.0 | string>("1");
   JSON.parse<F | "b">('"b"');
+  JSON.parse<K1 | K2>('{"kind":1,"b":5}');
 }

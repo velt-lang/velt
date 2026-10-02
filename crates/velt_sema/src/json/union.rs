@@ -87,6 +87,9 @@ pub(super) fn union_decode_problem(cx: &mut Ctx, u: TyId) -> Option<String> {
             let dn = cx.display(*dict);
             return Some(format!("`{dn}` takes any JSON object"));
         }
+        if let Some(clash) = discriminant_clash(cx, &objects) {
+            return Some(clash);
+        }
         if object_discriminant(cx, &objects).is_none() && required_keys(cx, &objects).is_none() {
             return Some(both(
                 cx,
@@ -139,6 +142,26 @@ fn object_discriminant(cx: &mut Ctx, objects: &[TyId]) -> Option<String> {
     None
 }
 
+/// The discriminant field's values as the decoder compares them: two of them distinct literal
+/// types but the same JSON value (`kind: 1` and `kind: 1.0`) cannot be told apart.
+fn discriminant_clash(cx: &mut Ctx, objects: &[TyId]) -> Option<String> {
+    let name = object_discriminant(cx, objects)?;
+    let mut seen: Vec<(TyId, JsonLit)> = vec![];
+    for &m in objects {
+        let (_, ft) = cx.field_of(m, &name)?;
+        let lit = json_lit(&cx.lit_value(ft)?);
+        if let Some((other, _)) = seen.iter().find(|(_, l)| *l == lit) {
+            let (a, b) = (cx.display(*other), cx.display(m));
+            return Some(format!(
+                "`{a}.{name}` and `{b}.{name}` are both the JSON {}",
+                lit.describe()
+            ));
+        }
+        seen.push((m, lit));
+    }
+    None
+}
+
 /// For each object member, a required field no other member has.
 fn required_keys(cx: &mut Ctx, objects: &[TyId]) -> Option<Vec<String>> {
     let fields: Vec<Vec<(String, TyId, bool)>> =
@@ -163,16 +186,36 @@ fn required_keys(cx: &mut Ctx, objects: &[TyId]) -> Option<Vec<String>> {
 enum JsonLit {
     Str(String),
     Num(f64),
+    Bool(bool),
+}
+
+impl JsonLit {
+    /// `string "a"`, `number 1`, `true`.
+    fn describe(&self) -> String {
+        match self {
+            JsonLit::Str(s) => format!("string {s:?}"),
+            JsonLit::Num(n) => format!("number {n}"),
+            JsonLit::Bool(b) => b.to_string(),
+        }
+    }
+}
+
+fn json_lit(v: &LitValue) -> JsonLit {
+    match v {
+        LitValue::Str(s) => JsonLit::Str(s.clone()),
+        LitValue::Int(_, n) => JsonLit::Num(*n as f64),
+        LitValue::Float(_, bits) => JsonLit::Num(f64::from_bits(*bits)),
+        LitValue::Bool(b) => JsonLit::Bool(*b),
+    }
 }
 
 /// The values literal and enum member `m` is matched by, each with its name in messages
 /// (`"a"`, `1`, `E.A`).
 fn member_literals(cx: &Ctx, m: TyId) -> Vec<(String, JsonLit)> {
+    // Bool literals are matched by kind (`Shape::BoolLits`), not here.
     let num = |v: &LitValue| match v {
-        LitValue::Str(s) => Some(JsonLit::Str(s.clone())),
-        LitValue::Int(_, n) => Some(JsonLit::Num(*n as f64)),
-        LitValue::Float(_, bits) => Some(JsonLit::Num(f64::from_bits(*bits))),
         LitValue::Bool(_) => None,
+        v => Some(json_lit(v)),
     };
     match cx.ty.kind(m) {
         TyKind::Literal(v) => num(v).map(|l| (cx.display(m), l)).into_iter().collect(),
@@ -205,10 +248,7 @@ fn literal_clash(cx: &Ctx, members: &[TyId], shapes: &[Shape]) -> Option<String>
         for (name, lit) in member_literals(cx, *m) {
             let earlier = seen.iter().find(|(j, _, l)| *j != i && *l == lit);
             if let Some((_, other, _)) = earlier {
-                let value = match &lit {
-                    JsonLit::Str(s) => format!("string {s:?}"),
-                    JsonLit::Num(n) => format!("number {n}"),
-                };
+                let value = lit.describe();
                 return Some(format!("`{other}` and `{name}` are both the JSON {value}"));
             }
             seen.push((i, name, lit));
