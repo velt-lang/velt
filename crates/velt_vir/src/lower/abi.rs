@@ -92,6 +92,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::AllDrop(t) => Self::build_all_drop(cx, *t),
             Work::RaceBoxPoll(t) => Self::build_race_box_poll(cx, *t),
             Work::RaceBoxDrop(t) => Self::build_race_box_drop(cx, *t),
+            Work::WidenPoll(from, to) => Self::build_widen_poll(cx, *from, *to),
+            Work::WidenDrop(from, to) => Self::build_widen_drop(cx, *from, *to),
             Work::HandlerInit(def, targs) => Self::build_handler_init(cx, *def, targs),
             Work::Unclaimed(t) => Self::build_unclaimed(cx, *t),
         }

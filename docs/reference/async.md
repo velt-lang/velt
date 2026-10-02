@@ -66,6 +66,22 @@ bounded or unbounded queues where `send` waits while a bounded channel is full.
 Built-ins: `sleep(ms)`, `yieldNow()`, `performance.now(): f64` (monotonic milliseconds) and
 `Date.now(): i64`. Timers and intervals are in [`velt:timers`](../std/timers.md).
 
+## Cancellation
+
+Cancellation is cooperative, with TypeScript's `AbortController` / `AbortSignal`
+([`velt:task`](../std/task.md)): `abort()` marks the signal, and code that takes one checks it
+(`throwIfAborted()`) or races its work against `signal.whenAborted()` (put the wait itself in
+the `Promise.race`, so it is dropped when the work wins). A started promise is never cancelled
+behind the program's back, so `finally` blocks and `using` disposal run as usual.
+`timeout(p, ms)` rejects with `TimeoutError` when `p` is too slow (`p` is then abandoned like a
+`Promise.race` loser: a running call keeps running, like JS).
+`taskScope(async (scope) => …)` is structured concurrency: it settles only after every task
+started with `scope.spawn`, fails with the first error of the body or a child, and that error
+aborts `scope.signal` so the siblings stop.
+
+A task the runtime drops is cancelled at its current suspension point: the values it owns are dropped (`using` resources are disposed),
+`finally` blocks don't run, and its unfinished local promises are cancelled with it.
+
 ## Thread safety
 
 Thread safety is checked at compile time: async closures, and HTTP handlers, must not modify
@@ -90,6 +106,12 @@ can reject with: `Promise<T, E>` (a `Promise<T>` never rejects).
   promise to settle), and `await Promise.all(ps)`, which rejects as soon as one promise rejects,
   like JS (the others keep running to completion). `Promise.allSettled` reports each rejection as
   `{ status: "rejected"; reason: E }`.
+- A promise converts to a promise type whose error type allows all of its errors: a
+  `Promise<T>` can be used as a `Promise<T, E>`, and a `Promise<T, E1>` as a
+  `Promise<T, E1 | E2>`, wherever that type is expected (a typed variable or array, an
+  argument, a return value). An array literal without an expected type still takes its element
+  type from its first element, so mixed arrays need a type:
+  `const ps: Promise<string, Timeout>[] = [work(), rejectAfter(50)]`.
 - A promise nobody can await reports its error as uncaught (`Uncaught <Type>: <message>`, exit
   code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`, or
   `spawn(p);` of a stored promise), and a stored promise that rejects after it was dropped

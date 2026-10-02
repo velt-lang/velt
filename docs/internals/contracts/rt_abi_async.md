@@ -152,6 +152,40 @@ sender still shares is deep-copied). No code pointers are stored, except the `it
 | `velt_rt_chan_receive` | `(u64 ch, u64 size, u64 payload, u64 slot_size) -> VeltFut*` | result: a `slot_size`-byte `T \| null` (see above), null once closed and drained |
 | `velt_rt_chan_try_receive` | `(u64 ch, void* dst, u64 size, u64 payload)` | writes the oldest item, or null, as a `T \| null` at `dst` |
 
+### 2.3 Abort signals (`velt:task`)
+
+Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task.vlt and
+released once, at the cell's last reference; no handle is public. Aborting sets a flag, stores
+the reason and wakes the waiters; it never cancels anything itself. No code pointers are
+stored: `AbortSignal.timeout` is a runtime timer task holding a weak reference. A signal made
+by `any` holds strong references to its sources until it is aborted (they hold weak ones back).
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_signal_new` | `() -> u64` | a signal that is not aborted |
+| `velt_rt_signal_retain` | `(u64 s) -> u64` | another reference to it (a scope's child task holds one) |
+| `velt_rt_signal_free` | `(u64 s)` | releases a handle |
+| `velt_rt_signal_abort` | `(u64 s, const VeltStr* reason)` | aborts it and the signals derived from it (`any`); a no-op if aborted |
+| `velt_rt_signal_aborted` | `(u64 s) -> bool` | |
+| `velt_rt_signal_reason` | `(u64 s, VeltStr* out)` | the reason (`""` while not aborted) |
+| `velt_rt_signal_timeout_ms` | `(u64 s) -> i64` | the `ms` of the `velt_rt_signal_timeout` signal that aborted it (directly or through `any`), else -1 |
+| `velt_rt_signal_wait` | `(u64 s) -> VeltFut*` | completes (unit) once aborted |
+| `velt_rt_signal_timeout` | `(i64 ms, const VeltStr* reason) -> u64` | a signal a timer aborts after `ms` |
+| `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | aborted with the first of `signals` that is (its reason and timeout); keeps them alive until then |
+
+### 2.4 Task groups (`taskScope`)
+
+The live-children count of a `taskScope` (std/task.vlt), behind a registry key (a `TaskScope`
+copy used after its scope ended finds no group). No code pointers are stored.
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_group_new` | `() -> u64` | a group with no children |
+| `velt_rt_group_enter` | `(u64 g) -> bool` | a child is about to start; false (nothing counted) once the group is closed or freed |
+| `velt_rt_group_leave` | `(u64 g)` | a child finished |
+| `velt_rt_group_wait` | `(u64 g) -> VeltFut*` | completes (unit) once no child is live, and closes the group then |
+| `velt_rt_group_free` | `(u64 g)` | the scope ended |
+
 ## 3. Results and errors
 
 ```c

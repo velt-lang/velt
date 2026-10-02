@@ -1,0 +1,91 @@
+// velt:task taskScope: the scope settles only after its body and every child it spawned (so
+// children never outlive it); a failing child aborts the scope's signal, the siblings stop
+// cooperatively, and the scope fails with the first error in time, even one nobody awaited.
+import { AbortSignal, AbortError, TaskScope, taskScope } from "velt:task";
+
+class Failed extends Error {}
+
+// What the scopes below can fail with: a child's own error, or a sibling's `AbortError`.
+type ScopeError = Failed | AbortError;
+
+async function step(name: string, ms: i64, signal: AbortSignal): Promise<string> throws AbortError {
+  for (let i = 0; i < ms / 10; i++) {
+    signal.throwIfAborted();
+    await sleep(10);
+  }
+  console.log(name, "finished");
+  return name;
+}
+
+async function failing(ms: i64): Promise<string> throws Failed {
+  await sleep(ms);
+  throw new Failed("child failed");
+}
+
+async function main() {
+  const names = await taskScope(
+    async (scope: TaskScope<AbortError>): Promise<string> throws AbortError => {
+      // A local for the signal: `scope.spawn(step(..., scope.signal))` is rejected for now (#145).
+      const signal = scope.signal;
+      const a = scope.spawn(step("a", 30, signal));
+      const b = scope.spawn(step("b", 150, signal));
+      return "body done";
+    },
+  );
+  console.log("scope 1:", names);
+
+  const t0 = performance.now();
+  try {
+    await taskScope(async (scope: TaskScope<ScopeError>): Promise<string> throws ScopeError => {
+      const signal = scope.signal;
+      const slow = scope.spawn(step("slow", 500, signal));
+      await scope.spawn(failing(20));
+      return "unreachable";
+    });
+  } catch (e) {
+    console.log(
+      "scope 2 failed:",
+      e.message,
+      "siblings stopped early:",
+      performance.now() - t0 < 300.0,
+    );
+  }
+
+  // The first error in time wins over the `AbortError`s it causes in the siblings, whatever
+  // the order the body awaits them in.
+  try {
+    await taskScope(async (scope: TaskScope<ScopeError>): Promise<string[]> throws ScopeError => {
+      const signal = scope.signal;
+      return await Promise.all([scope.spawn(step("c", 500, signal)), scope.spawn(failing(20))]);
+    });
+  } catch (e) {
+    console.log("scope 3 failed:", e.message);
+  }
+
+  // A child nobody awaits still fails the scope.
+  try {
+    await taskScope(async (scope: TaskScope<Failed>): Promise<i64> throws Failed => {
+      const unawaited = scope.spawn(failing(5));
+      return 1;
+    });
+  } catch (e) {
+    console.log("scope 4 failed:", e.message);
+  }
+
+  // Children that cannot fail need no error type of their own; options turn off the
+  // cancellation.
+  const n = await taskScope(
+    async (scope: TaskScope<Failed>): Promise<string> throws Failed => {
+      const signal = scope.signal;
+      const d = scope.spawn(quiet("d"));
+      return await d;
+    },
+    { cancelOnError: false },
+  );
+  console.log("scope 5:", n);
+}
+
+async function quiet(name: string): Promise<string> {
+  await sleep(5);
+  return name;
+}

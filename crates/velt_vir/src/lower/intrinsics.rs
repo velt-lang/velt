@@ -103,6 +103,7 @@ impl FnLower<'_, '_> {
                 | I::SharedSet
                 | I::MutexNew
                 | I::MutexWith
+                | I::PromiseWiden
                 | I::ChanSend
                 | I::ChanReceive
                 | I::ChanTryReceive,

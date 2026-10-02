@@ -1,0 +1,24 @@
+// check: no leaks
+// `ac.signal` is the controller's own signal (the same object every time, like JS), it can be
+// shared with a spawned task, and a `TaskScope` used after its scope ended is still safe to read.
+import { AbortController, AbortSignal, TaskScope, taskScope } from "velt:task";
+
+async function waitFor(signal: AbortSignal): Promise<string> {
+  await signal.whenAborted();
+  return signal.reason;
+}
+
+async function main() {
+  const ac = new AbortController();
+  console.log("same signal:", ac.signal === ac.signal);
+  const s = ac.signal;
+  const waiter = spawn(waitFor(s));
+  await sleep(5);
+  ac.abort("stop");
+  console.log("spawned task saw:", await waiter, "| local:", s.aborted);
+
+  const escaped = await taskScope(async (scope: TaskScope<never>): Promise<TaskScope<never>> => scope);
+  console.log("escaped scope signal:", escaped.signal.aborted);
+  escaped.cancel("late");
+  console.log("after cancel:", escaped.signal.aborted, escaped.signal.reason);
+}

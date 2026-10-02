@@ -1,0 +1,4 @@
+same signal: true
+spawned task saw: stop | local: true
+escaped scope signal: false
+after cancel: true late
