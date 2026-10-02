@@ -7,7 +7,9 @@ hidden classes and no runtime shape checks.
 
 - Fields need a type (`count: i64 = 0`), or an initializer that states one (`count = 0`,
   `done = false`, `items = new Map<string, i64>()`). A field without a default must be assigned
-  in the `constructor`. `new C(…)` allocates the object on the heap.
+  in the `constructor`. `new C(…)` allocates the object on the heap, evaluates the field
+  initializers (base class ones first) and then runs the constructor; it throws whatever they
+  throw ([Errors](errors.md#throwing)).
 - **Parameter properties**: `constructor(private readonly name: string, public age: i64) {}`
   declares the fields and assigns them, as in TypeScript (`protected` is accepted there and
   means public: there is no `protected`).

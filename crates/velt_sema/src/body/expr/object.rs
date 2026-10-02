@@ -304,6 +304,7 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        crate::body::field_defaults(self.cx, d);
         let a = self.cx.adt(d).expect("ICE: struct");
         let (sname, fields) = (a.name.clone(), a.fields.clone());
         let anon = a.kind == AdtKind::Anon;
@@ -337,6 +338,10 @@ impl FnCx<'_, '_> {
                 (None, Some(dflt)) => {
                     let mut h = dflt.clone();
                     crate::visit::map_expr_types(&mut h, &mut |t| self.cx.ty.subst(t, &type_args));
+                    for s in &f.default_throws {
+                        let s = s.used_at(span, |t| self.cx.ty.subst(t, &type_args));
+                        self.throw_src(s);
+                    }
                     h
                 }
                 // `{ b?: T }` is `{ b: T | null }`: an object literal may leave such a field out.

@@ -16,6 +16,9 @@ compiler knows exactly what each function and each `try` block can throw.
 - A written clause bounds the body
   (``` `load` throws `Timeout`, which its `throws` clause does not allow ```; a subclass is
   allowed by its base class) and is the function's error type even when the body throws less.
+- Field initializers may throw: `new C(…)` (and a struct literal that leaves the field out)
+  evaluates them, so it throws what they throw, including inherited ones, besides what the
+  constructor throws.
 - Methods, constructors (`constructor(x: T) throws E`), arrows (`(x: T): R throws E => …`) and
   async functions (`async function f(): Promise<T> throws E`, see [Async](async.md#errors))
   take a `throws` clause; `declare function` cannot.

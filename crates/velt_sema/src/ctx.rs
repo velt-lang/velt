@@ -62,6 +62,9 @@ pub(crate) struct Ctx<'m> {
     /// Functions whose parameter defaults are checked (or being checked): they are checked on
     /// first use, since a field default or constant may call with fewer arguments.
     pub defaults_checked: HashSet<DefId>,
+    /// Types whose field defaults are checked (or being checked): checked up front, or on first
+    /// use by a `new` or struct literal in a default checked before them.
+    pub field_defaults_checked: HashSet<DefId>,
     /// Closure counters per top-level function name.
     pub closure_counts: HashMap<String, u32>,
     /// Every function-like def, in creation order.
@@ -116,6 +119,7 @@ impl<'m> Ctx<'m> {
             generic_overrides: vec![],
             display_params: vec![],
             defaults_checked: HashSet::new(),
+            field_defaults_checked: HashSet::new(),
             closure_counts: HashMap::new(),
             fn_defs: vec![],
             fn_values: vec![],

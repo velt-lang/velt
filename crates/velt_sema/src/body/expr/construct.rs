@@ -72,6 +72,10 @@ impl FnCx<'_, '_> {
                 return self.error_expr(span);
             }
         }
+        // `new` evaluates every field default (own and inherited) before the constructor.
+        for s in self.class_default_throws(ck.ret, span) {
+            self.throw_src(s);
+        }
         if let Some(c) = ctor {
             self.throw_src(ThrowSrc::Call(c, ck.type_args.clone(), span));
         }
@@ -81,6 +85,32 @@ impl FnCx<'_, '_> {
             args: ck.args,
         };
         self.mk(kind, ck.ret, span)
+    }
+
+    /// What the field defaults of class type `ty` (and of its base classes) may throw, as
+    /// thrown by the `new` at `span`.
+    fn class_default_throws(&mut self, ty: TyId, span: Span) -> Vec<ThrowSrc> {
+        let TyKind::Adt(d, args) = self.cx.ty.kind(ty).clone() else {
+            return vec![];
+        };
+        crate::body::field_defaults(self.cx, d);
+        let Some(a) = self.cx.adt(d) else {
+            return vec![];
+        };
+        let own: Vec<ThrowSrc> = a.fields[a.own_fields_start..]
+            .iter()
+            .flat_map(|f| f.default_throws.iter().cloned())
+            .collect();
+        let base = a.base;
+        let mut out: Vec<ThrowSrc> = own
+            .iter()
+            .map(|s| s.used_at(span, |t| self.cx.ty.subst(t, &args)))
+            .collect();
+        if let Some(b) = base {
+            let b = self.cx.ty.subst(b, &args);
+            out.extend(self.class_default_throws(b, span));
+        }
+        out
     }
 
     fn class_name(&mut self, t: &ast::TypeExpr) -> Option<(DefId, Vec<Option<TyId>>)> {
