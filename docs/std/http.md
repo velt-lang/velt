@@ -40,7 +40,10 @@ it. For a walkthrough, see [Building an HTTP server](../book/http-server.md).
 - `Server { port }`: `close()` stops accepting, lets in-flight requests finish and closes idle
   connections; once the last request finished the handler closure is dropped, so values it
   captured are released (their `[Symbol.dispose]()` runs). `await server.shutdown()` does the same and
-  resolves only after that (it consumes the `Server`). Dropping the `Server` value does not stop it.
+  resolves only after that (it consumes the `Server`); a program that exits right after
+  `close()` may exit before the handler is dropped. Dropping the `Server` value does not stop
+  it. A `serve` that fails (address in use, a TLS certificate or key that does not parse)
+  drops the handler closure before it throws.
 - `fetch(url, opts: FetchOptions { method?; body?; headers?: Map<string, string>; ca? }):
   Promise<FetchResponse>`. `http://` and `https://`; HTTPS trusts Mozilla's root certificates
   (compiled in) plus the PEM CAs in `ca`; HTTP/2 is used when the server offers it.

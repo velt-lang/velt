@@ -1045,8 +1045,9 @@ lists). Not available on WebAssembly (no `velt_rt_pg_*` symbols in `libvelt_rt_w
 `VeltHandler.env` is null or a closure environment box whose first word is its drop function
 (`void drop(void* env)`, may be null), as closure lowering lays it out. Once a server is closed
 and its last connection and request have finished, the runtime calls that function once, so
-the handler's captures are dropped (their `dispose()` hooks run). Before this, `env` was never
-freed. Every in-flight request keeps the server's handler state alive, so no request can see a
+the handler's captures are dropped (their `dispose()` hooks run). A `serve` that fails (the
+address does not bind, the TLS certificate or key does not parse) calls it too, since no server
+will. Before this, `env` was never freed. Every in-flight request keeps the server's handler state alive, so no request can see a
 released environment; under `velt dev`, environments of replaced handlers (§13.5) are still
 never freed.
 
