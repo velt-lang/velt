@@ -3,7 +3,7 @@
 //! (stored, put in an array, passed on, returned) is started at once with `velt_rt_fut_start`:
 //! its body runs until its first suspension, like calling an async function in JS, and the
 //! current task drives it from then on. So is a rejecting `Promise.all` / `race` kept as a
-//! value (kept.rs).
+//! value (kept.rs), and the promise inside one widened to a wider error type (widen.rs).
 //!
 //! The zero-cost forms never get here: `await f()` embeds `f`'s state in the caller's state and
 //! `spawn(f())` gives `f` its own task, both from `f`'s initial state; `await` / `spawn` of a
@@ -24,7 +24,8 @@ impl FnLower<'_, '_> {
     /// A call used as a value (`ExprKind::Call`); a compiled promise it returns is started unless
     /// it is awaited or spawned right away (`lazy_call`, set by `take_promise`). Async functions
     /// and function values returning promises (async closures) return lazy boxed promises, and so
-    /// do the combinator intrinsics (kept.rs); other intrinsics, externs (runtime leaves) and
+    /// do the combinator intrinsics (kept.rs); `PromiseWiden` starts its inner promise (widen.rs);
+    /// other intrinsics, externs (runtime leaves) and
     /// synchronous functions (which started any promise they return) don't.
     pub(in crate::lower) fn call_value(
         &mut self,
@@ -33,6 +34,9 @@ impl FnLower<'_, '_> {
         ty: TyId,
     ) -> Operand {
         let lazy = std::mem::take(&mut self.lazy_call);
+        if let (hir::Callee::Intrinsic(hir::Intrinsic::PromiseWiden), [p]) = (callee, args) {
+            return self.promise_widen(p, ty, !lazy);
+        }
         let v = self.call_expr(callee, args, ty);
         if lazy || self.dead() {
             return v;
@@ -55,7 +59,7 @@ impl FnLower<'_, '_> {
 
     /// `(slot: ptr)` disposing of the unclaimed result of a started promise of type `t`, or null
     /// when there is nothing to do.
-    fn unclaimed_drop_fn(&mut self, t: TyId) -> Operand {
+    pub(super) fn unclaimed_drop_fn(&mut self, t: TyId) -> Operand {
         if self.cx.promise_error(t).is_some() {
             return cfunc(self.cx.func(Work::Unclaimed(t)));
         }

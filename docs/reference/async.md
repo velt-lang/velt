@@ -90,6 +90,12 @@ can reject with: `Promise<T, E>` (a `Promise<T>` never rejects).
   rethrows the first rejection in array order (unlike JS, which rejects as soon as one promise
   rejects). `Promise.allSettled` reports each rejection as
   `{ status: "rejected"; reason: E }`.
+- A promise converts to a promise type whose error type allows all of its errors: a
+  `Promise<T>` can be used as a `Promise<T, E>`, and a `Promise<T, E1>` as a
+  `Promise<T, E1 | E2>`, wherever that type is expected (a typed variable or array, an
+  argument, a return value). An array literal without an expected type still takes its element
+  type from its first element, so mixed arrays need a type:
+  `const ps: Promise<string, Timeout>[] = [work(), rejectAfter(50)]`.
 - A promise nobody can await reports its error as uncaught (`Uncaught <Type>: <message>`, exit
   code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`), and a
   stored promise that rejects after it was dropped unawaited (unless a combinator handled it).

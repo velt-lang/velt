@@ -89,6 +89,10 @@ pub enum Intrinsic {
     /// Compiler-internal (no source syntax): the location of the call's span as a string,
     /// `"path:line:col"` (the site of a `new Promise`, std/prelude/promise.vlt).
     SourceLocation,
+    /// Compiler-internal (no source syntax): `p: Promise<T, E1>` as a `Promise<T, E2>` whose error
+    /// set contains `E1`'s (an implicit conversion, `coerce.rs`): a lazy wrapper that widens
+    /// the rejection.
+    PromiseWiden,
     /// `performance.now(): f64`
     PerfNow,
     /// `Date.now(): i64`

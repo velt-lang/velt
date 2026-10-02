@@ -78,6 +78,10 @@ Maintainer-owned, like hir.rs.
   `promiseNew` (or `promiseNewResolveOnly`) with two more arguments: the compiler-internal
   `Intrinsic::SourceLocation` (no arguments; lowered to the `"path:line:col"` string of its
   span) and a `bool` literal, true when the `new Promise` is the direct operand of `Await`.
+- A promise used where a promise type with a wider error type is expected (`Promise<T>` or
+  `Promise<T, E1>` where `Promise<T, E2>` is expected, every error of `E1` allowed by `E2`) is
+  `Call { Intrinsic(PromiseWiden), [p] }`, `p` owned, typed as the expected promise type. The
+  wrapper is lazy; used as a value (not awaited or spawned right away), it starts `p`.
 - `async main` → `velt_main` calls `velt_rt_block_on`.
 - std wraps rt I/O with `declare async function` externs (`ExternFnDef::is_async`); rt results
   use `IoResult` layout = Velt `struct { code: i32; message: string; value: T }`.

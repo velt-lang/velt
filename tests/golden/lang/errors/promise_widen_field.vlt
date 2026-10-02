@@ -1,0 +1,22 @@
+// Converting a promise to a wider error type takes the promise: from a field it would be a move,
+// which is an error as without the conversion.
+class Oops extends Error {}
+class Other extends Error {}
+
+async function value(): Promise<string> throws Oops {
+  return "v";
+}
+
+class Holder {
+  p: Promise<string, Oops>;
+
+  constructor(p: Promise<string, Oops>) {
+    this.p = p;
+  }
+}
+
+async function main() {
+  const h = new Holder(value());
+  const w: Promise<string, Oops | Other> = h.p;
+  console.log(await w);
+}
