@@ -1,9 +1,7 @@
 //! Robustness: no panics on truncated/garbage input, bounded nesting depth, linear-time
-//! ternary disambiguation, and parse speed.
+//! ternary disambiguation, and parse speed. Parse cost growth is in `parse_linearity.rs`.
 
 mod common;
-#[path = "common/thread_work.rs"]
-mod thread_work;
 
 use common::*;
 
@@ -253,25 +251,13 @@ fn nested_ternaries_are_not_exponential() {
     assert!(start.elapsed().as_secs() < 5);
 }
 
+/// Linearity itself is measured in `parse_linearity.rs`; this checks the input it uses parses
+/// and that pathological JSX and generic arrow attempts still finish.
 #[test]
-fn jsx_decided_by_the_parser_stays_linear() {
-    // Every element is re-lexed once where the parser finds it; nested elements in containers
-    // must not re-lex the rest of the file each time.
-    let unit = "const a = <ul class=\"x\">{xs.map((i) => <li key={i}>it's {i}</li>)}</ul>;\n\
-                const id = <T>(x: T): T => x;\nconst u = v.as<User>();\n";
-    let (m, d) = parse(&unit.repeat(100));
+fn jsx_decided_by_the_parser_finishes() {
+    let (m, d) = parse(&common::JSX_UNIT.repeat(100));
     assert!(d.is_empty(), "{:?}", &d[..d.len().min(3)]);
     assert_eq!(m.items.len(), 300);
-    assert_linear("nested elements and generics", 5_000, |n| unit.repeat(n));
-    // Each re-lex drops the lookahead caches past its `<`, not the ones for the whole file.
-    assert_linear("parentheses before elements", 5_000, |n| {
-        let parens = "function f(a: i64): i64 { return ((a + (1)) * (a - (2))) / (a + (3)); }\n";
-        parens.repeat(n) + &"const p = <p>{(1)}</p>;\n".repeat(n)
-    });
-    // ... and the lexer's diagnostics past it, not all of them.
-    assert_linear("lexer errors before elements", 10_000, |n| {
-        "const x = 1 \u{a7}; const y = <p>a</p>;\n".repeat(n)
-    });
     // Generic arrow attempts that fail late, and unclosed elements, still finish.
     for src in [
         format!("x = {};", "<a>(".repeat(20_000)),
@@ -282,30 +268,6 @@ fn jsx_decided_by_the_parser_stays_linear() {
         let _ = parse(&src);
         assert!(start.elapsed().as_secs() < 5, "took {:?}", start.elapsed());
     }
-}
-
-/// Parsing `make(4 * n)` must cost about 4 times as much as `make(n)`, not 16 times. Cost is the
-/// parsing thread's own CPU time ([`thread_work`]), not wall-clock time, which on a loaded machine
-/// mostly measures waiting for a core; the best of several interleaved runs of each size evens out
-/// what is left (cache and frequency effects of other processes).
-fn assert_linear(what: &str, n: usize, make: impl Fn(usize) -> String) {
-    const ROUNDS: usize = 7;
-    let (small, large) = (make(n), make(4 * n));
-    let cost = |src: &str| {
-        thread_work::measure(|| {
-            let _ = std::hint::black_box(parse(src));
-        })
-    };
-    let (mut c_small, mut c_large) = (u64::MAX, u64::MAX);
-    for _ in 0..ROUNDS {
-        c_small = c_small.min(cost(&small));
-        c_large = c_large.min(cost(&large));
-    }
-    assert!(
-        c_large < c_small.saturating_mul(9),
-        "{what}: {n} units cost {c_small}, {} cost {c_large}: not linear",
-        4 * n
-    );
 }
 
 #[test]
