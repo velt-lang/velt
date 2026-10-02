@@ -1,0 +1,22 @@
+local 4 5 5
+local check 10
+local check 20
+local caught a tag name long enough to live on the heap: 3
+local caught a tag name long enough to live on the heap: 4
+local log 42 item 0,42 item 1,42 item 2,42 x,42 y,n1,n2
+field 1
+field 2
+field check 10
+field caught a tag name long enough to live on the heap: 3
+map a 4
+map b 5
+map a 6
+array for-of 11
+array for-of 12
+log 12 13 13
+args 4 5 5
+args array 6
+args array 7
+args array 8
+args array 9
+args items bump,bump,bump,bump,bump,bump,bump,named,named
