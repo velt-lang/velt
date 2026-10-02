@@ -8,6 +8,7 @@ mod jsx;
 mod jsx_more;
 mod loader;
 mod manifest;
+mod manifest_registry;
 mod modules;
 mod navigation;
 mod protocol;

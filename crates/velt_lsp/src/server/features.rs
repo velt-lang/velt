@@ -20,6 +20,18 @@ impl Server<'_> {
         p: &CodeActionParams,
     ) -> Option<Vec<CodeActionOrCommand>> {
         let uri = &p.text_document.uri;
+        if let Some(text) = self.manifest_text(uri) {
+            let index = LineIndex::new(text);
+            let range = (index.offset(p.range.start), index.offset(p.range.end));
+            let dir = self.docs.get(uri).and_then(|d| d.path.parent());
+            return Some(crate::manifest::code_actions(
+                uri,
+                text,
+                range,
+                &self.registry,
+                dir,
+            ));
+        }
         let analysis = self.analysis(uri)?;
         let index = LineIndex::new(analysis.text());
         let lo = index.offset(p.range.start);

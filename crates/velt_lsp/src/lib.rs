@@ -28,6 +28,7 @@ mod jsx_completion;
 mod line_index;
 mod manifest;
 mod references;
+mod registry;
 mod sema_query;
 mod semantic_tokens;
 mod server;

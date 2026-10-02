@@ -44,6 +44,12 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
   and fixed values (native targets, `true`/`false`); hover explains each field. Saving a changed
   `package.vlt` reinstalls the package's dependencies for the other open files
   ([`package.vlt`](manifest.md)).
+- **Live registry data** in `package.vlt`, from the package's registry: completion of versions
+  (typing `"` after a dependency's name) and of package names in `dependencies`; hover on a
+  dependency shows its newest and locked versions; a requirement no published version matches,
+  or a package the registry doesn't have, is an error, a requirement that leaves out a newer
+  version gets an informational note, and a quick fix moves it to `^<newest>`. The data is fetched in the
+  background; an offline registry just adds nothing.
 
 The server answers even when the program has errors, and a failing request never takes the
 server down.
