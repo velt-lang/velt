@@ -68,7 +68,14 @@ fn build_runtime(root: &Path, triple: &str) {
 fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
     // `VELT_GOLDEN` as in tests/golden.rs: substrings separated by `,`, any of them matches.
     let filter = std::env::var("VELT_GOLDEN").unwrap_or_default();
-    let filters: Vec<&str> = filter.split(',').map(str::trim).collect();
+    let mut filters: Vec<&str> = filter
+        .split(',')
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .collect();
+    if filters.is_empty() {
+        filters.push("");
+    }
     let mut files = vec![];
     for dir in dirs {
         let Ok(rd) = std::fs::read_dir(root.join("tests/golden").join(dir)) else {
