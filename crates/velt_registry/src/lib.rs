@@ -223,7 +223,15 @@ impl Registry {
         version: &str,
     ) -> Result<vpm::registry::IndexEntry, (u16, String)> {
         archive::unpack(body, staging).map_err(|e| (400, e))?;
-        let manifest = Manifest::from_dir(staging).map_err(|e| (400, e))?;
+        // Read with the limits of every manifest; messages name `package.vlt`, never the
+        // server's staging directory.
+        let file = vpm::manifest::MANIFEST_FILE;
+        let path = staging.join(file);
+        if !path.is_file() {
+            return Err((400, format!("the archive has no {file}")));
+        }
+        let manifest =
+            Manifest::from_path_shown_as(&path, Path::new(file)).map_err(|e| (400, e))?;
         if manifest.package.name != name || manifest.version().to_string() != version {
             return Err((
                 400,

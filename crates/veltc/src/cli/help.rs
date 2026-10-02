@@ -253,12 +253,16 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "manifest",
-        summary: "Print the package's manifest as JSON",
-        usage: &["manifest --json"],
-        about: "Reads package.vlt (without running anything), validates it and prints it as JSON \
-                with the defaults filled in, for tools that cannot read Velt.",
-        options: &[("--json", "print JSON (required)")],
-        examples: &[("velt manifest --json", "the current package's manifest")],
+        summary: "Check the package's manifest, or print it as JSON",
+        usage: &["manifest [--json]"],
+        about: "Reads package.vlt the way every command does (as data, without running anything) \
+                and reports its errors. With --json it prints the manifest as JSON with the \
+                defaults filled in, for tools that cannot read Velt.",
+        options: &[("--json", "print the manifest as JSON on stdout")],
+        examples: &[
+            ("velt manifest", "check package.vlt"),
+            ("velt manifest --json", "the current package's manifest as JSON"),
+        ],
     },
     CommandHelp {
         name: "native",
