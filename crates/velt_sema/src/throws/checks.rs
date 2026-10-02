@@ -54,13 +54,15 @@ fn sync_promise_members(cx: &mut Ctx, members: &[DefId]) {
         }
         let Some(e) = f.throws else { continue };
         let (name, at) = (short_name(&f.name), f.name_span);
+        let method = name.rsplit('.').next().unwrap_or(&name).to_string();
         let en = cx.display(e);
         cx.error(
             Diagnostic::error(
                 format!("`{name}` must be `async`: it implements an interface method whose promise rejects with `{en}`"),
                 at,
             )
-            .with_note("a method returning a promise from an interface reports its errors through the promise, which only an `async` method does"),
+            .with_note("a method returning a promise from an interface reports its errors through the promise, which only an `async` method does")
+            .with_note(format!("mark it `async {method}(...)`")),
         );
     }
 }

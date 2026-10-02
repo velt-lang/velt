@@ -1,3 +1,4 @@
 async_iface_default.vlt:7:9: error: only an interface method with a body can be `async`
 async_iface_default.vlt:9:14: error: the return type of an async function must be `Promise<T>`
 async_iface_default.vlt:23:3: error: `C.h` must be `async`: it implements an interface method whose promise rejects with `E`
+  = note: mark it `async h(...)`
