@@ -1,1 +1,1 @@
-evil.vlt:4:10: error: `__intrinsic_array_with_capacity` is a compiler intrinsic
+alias_into_std.vlt:2:22: error: module `@evil` would have the module path `std/evil`, which is reserved for the standard library
