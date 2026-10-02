@@ -1,4 +1,4 @@
-//! The package a build happens in: found by searching upward for `velt.toml`, with its
+//! The package a build happens in: found by searching upward for `package.vlt`, with its
 //! dependencies installed (lockfile honored/updated) so the loader can resolve package imports.
 
 use std::path::{Path, PathBuf};
@@ -7,7 +7,7 @@ use vpm::{InstallOptions, Locations, Manifest, PackageGraph};
 
 /// An installed package.
 pub struct Project {
-    /// Package root (directory of velt.toml), absolute.
+    /// Package root (directory of package.vlt), absolute.
     pub root: PathBuf,
     /// Its manifest.
     pub manifest: Manifest,
@@ -83,7 +83,7 @@ impl Project {
 /// forward (a single file, if there are `.vlt` files here, or making a package).
 fn no_package_message(cwd: &Path) -> String {
     let mut msg = format!(
-        "no `velt.toml` in `{}` or any parent directory, so there is no package here",
+        "no `package.vlt` in `{}` or any parent directory, so there is no package here",
         cwd.display()
     );
     let files = velt_files(cwd);
@@ -169,7 +169,7 @@ mod tests {
         let dir = tmp.path();
         std::fs::write(dir.join("hello.vlt"), "").unwrap();
         std::fs::create_dir(dir.join("pkg")).unwrap();
-        std::fs::write(dir.join("pkg/velt.toml"), "").unwrap();
+        std::fs::write(dir.join("pkg/package.vlt"), "").unwrap();
         assert!(check_input_file(&dir.join("hello.vlt")).is_ok());
         let err = check_input_file(&dir.join("hello")).unwrap_err();
         assert!(
@@ -192,7 +192,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let msg = no_package_message(tmp.path());
         assert!(
-            msg.contains("no `velt.toml`") && msg.contains("velt init"),
+            msg.contains("no `package.vlt`") && msg.contains("velt init"),
             "{msg}"
         );
         assert!(!msg.contains("single file"));

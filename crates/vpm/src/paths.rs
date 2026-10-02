@@ -1,9 +1,10 @@
-//! `[paths]` import aliases of a package (CONTRACT: docs/internals/contracts/velt_toml.md):
+//! `paths` import aliases of a package (CONTRACT: docs/internals/contracts/manifest.md):
 //!
-//! ```toml
-//! [paths]
-//! "@app/*" = "src/*"          # import { x } from "@app/util"  →  src/util.vlt
-//! "@config" = "src/config"    # exact alias
+//! ```ts ignore
+//! paths: {
+//!   "@app/*": "src/*",          // import { x } from "@app/util"  →  src/util.vlt
+//!   "@config": "src/config",    // exact alias
+//! },
 //! ```
 //!
 //! A pattern has at most one `*`, at its end, and so has its target (both or neither). Targets are
@@ -12,14 +13,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
-
-/// Check every alias of a `[paths]` table.
-pub fn validate(paths: &BTreeMap<String, String>) -> Result<(), String> {
-    for (pattern, target) in paths {
-        check_alias(pattern, target).map_err(|why| format!("[paths] alias `{pattern}`: {why}"))?;
-    }
-    Ok(())
-}
 
 /// Check one alias; the error says what is wrong with it, without naming it.
 pub(crate) fn check_alias(pattern: &str, target: &str) -> Result<(), &'static str> {
@@ -124,10 +117,10 @@ mod tests {
             ("@a", "/abs"),
         ] {
             assert!(
-                validate(&table(&[(pattern, target)])).is_err(),
-                "`{pattern}` = `{target}` should be rejected"
+                check_alias(pattern, target).is_err(),
+                "`{pattern}`: `{target}` should be rejected"
             );
         }
-        assert!(validate(&table(&[("@app/*", "src/*"), ("@cfg", "./src/cfg")])).is_ok());
+        assert!(check_alias("@app/*", "src/*").is_ok() && check_alias("@cfg", "./src/cfg").is_ok());
     }
 }

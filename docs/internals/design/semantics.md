@@ -163,7 +163,7 @@ of doing things, even when ported code must change (with a precise error and a f
   (run automatically when the value is dropped); `using x = …` disposes at the end of the
   enclosing block; `await using` and `[Symbol.asyncDispose]()` work too.
 - **Modules** (implemented). `import * as ns`, `export { x } from`, `export * from`, folders
-  through `index.vlt`, `[paths]` aliases in `velt.toml`, `import type`. Named exports only (no
+  through `index.vlt`, `paths` aliases in `package.vlt`, `import type`. Named exports only (no
   `export default`).
 - **One "nothing": `null` only** (implemented). `undefined` is not part of the language: using
   it is a compile error with the fix "use `null`". Code ported from TypeScript changes

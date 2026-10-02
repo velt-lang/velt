@@ -1,5 +1,5 @@
-//! Decoding the `native` object of `package.vlt`, the counterpart of `velt.toml`'s `[native]`
-//! table, with the same checks located at the value they reject.
+//! Decoding the `native` object of `package.vlt`, with each check located at the value it
+//! rejects.
 
 use super::{Reader, Value, ValueKind};
 use crate::manifest::{

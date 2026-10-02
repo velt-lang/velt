@@ -1,5 +1,5 @@
-//! The contents of a package as distributed: `velt.toml`, everything under `src/`, and for a
-//! package with a `[native]` table the sources of its crate (without `target/` and `.git/`).
+//! The contents of a package as distributed: `package.vlt`, everything under `src/`, and for a
+//! package with a `native` object the sources of its crate (without `target/` and `.git/`).
 //! Listing, copying and content-hashing all use the same file set so a checksum computed on a
 //! source tree matches the one computed on its registry or cache copy.
 
@@ -7,11 +7,14 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::manifest::{MANIFEST_FILE, SRC_DIR};
+use crate::manifest::{legacy, LEGACY_MANIFEST_FILE, MANIFEST_FILE, SRC_DIR};
 
 /// Package files relative to `root`, `/`-separated, sorted (deterministic hashing).
 pub fn list_files(root: &Path) -> Result<Vec<String>, String> {
     let manifest = root.join(MANIFEST_FILE);
+    if !manifest.is_file() && root.join(LEGACY_MANIFEST_FILE).is_file() {
+        return Err(format!("`{}`: {}", root.display(), legacy::REPUBLISH));
+    }
     if !manifest.is_file() {
         return Err(format!("`{}` has no {MANIFEST_FILE}", root.display()));
     }
@@ -30,14 +33,14 @@ pub fn list_files(root: &Path) -> Result<Vec<String>, String> {
     Ok(files)
 }
 
-/// The `[native] path` of the package at `root`, if its manifest has one (an unreadable manifest
+/// The `native.path` of the package at `root`, if its manifest has one (an unreadable manifest
 /// has none here; it is reported where it is parsed).
 fn native_dir(root: &Path) -> Option<String> {
     let text = std::fs::read_to_string(root.join(MANIFEST_FILE)).ok()?;
     native_dir_of(&text)
 }
 
-/// The `[native] path` of manifest text.
+/// The `native.path` of manifest text.
 pub fn native_dir_of(manifest: &str) -> Option<String> {
     crate::manifest::Manifest::parse(manifest)
         .ok()?
@@ -119,13 +122,13 @@ mod tests {
     fn lists_hashes_and_copies() {
         let tmp = tempfile::tempdir().unwrap();
         let a = tmp.path().join("a");
-        write(&a, "velt.toml", "[package]");
+        write(&a, "package.vlt", "");
         write(&a, "src/lib.vlt", "export function f() {}");
         write(&a, "src/sub/x.vlt", "");
         write(&a, "target/junk", "ignored");
         assert_eq!(
             list_files(&a).unwrap(),
-            ["src/lib.vlt", "src/sub/x.vlt", "velt.toml"]
+            ["package.vlt", "src/lib.vlt", "src/sub/x.vlt"]
         );
 
         let b = tmp.path().join("b");
@@ -145,8 +148,8 @@ mod tests {
         let a = tmp.path();
         write(
             a,
-            "velt.toml",
-            "[package]\nname = \"a\"\nversion = \"1.0.0\"\n[native]\npath = \"rs\"\n",
+            "package.vlt",
+            "export const pkg: Package = { name: \"a\", version: \"1.0.0\", native: { path: \"rs\" } };",
         );
         write(a, "src/lib.vlt", "");
         write(a, "rs/Cargo.toml", "");
@@ -155,13 +158,22 @@ mod tests {
         write(a, "native/ignored.rs", "");
         assert_eq!(
             list_files(a).unwrap(),
-            ["rs/Cargo.toml", "rs/src/lib.rs", "src/lib.vlt", "velt.toml"]
+            [
+                "package.vlt",
+                "rs/Cargo.toml",
+                "rs/src/lib.rs",
+                "src/lib.vlt"
+            ]
         );
     }
 
     #[test]
     fn missing_manifest_is_an_error() {
         let tmp = tempfile::tempdir().unwrap();
-        assert!(list_files(tmp.path()).unwrap_err().contains("velt.toml"));
+        assert!(list_files(tmp.path()).unwrap_err().contains("package.vlt"));
+        // A package copy from before `package.vlt` (in a registry or the cache).
+        write(tmp.path(), "velt.toml", "");
+        let err = list_files(tmp.path()).unwrap_err();
+        assert!(err.contains("must publish a new version"), "{err}");
     }
 }

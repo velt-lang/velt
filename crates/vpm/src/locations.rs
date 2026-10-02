@@ -2,7 +2,7 @@
 //!
 //! `$VELT_HOME` (default `~/.velt`) holds `cache/`; the registry is `$VELT_REGISTRY` or
 //! `<home>/registry`. A remote registry is an `http(s)://` URL: `$VELT_REGISTRY` set to one, or
-//! the root package's `registry = "…"` in `velt.toml` ([`Locations::with_manifest`]). Everything else in vpm takes a [`Locations`] explicitly so tests can use
+//! the root package's `registry: "…"` in `package.vlt` ([`Locations::with_manifest`]). Everything else in vpm takes a [`Locations`] explicitly so tests can use
 //! isolated temp dirs without touching process-wide environment variables.
 
 use std::path::{Path, PathBuf};
@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn manifest_registry_applies_unless_a_remote_is_set() {
         let m = Manifest::parse(
-            "registry = \"http://r.example:8091\"\n[package]\nname = \"a\"\nversion = \"1.0.0\"\n",
+            "export const pkg: Package = { name: \"a\", version: \"1.0.0\", registry: \"http://r.example:8091\" };",
         )
         .unwrap();
         let loc = Locations::under(Path::new("/h")).with_manifest(&m);
@@ -126,7 +126,7 @@ mod tests {
             Some("https://other")
         );
         assert!(Manifest::parse(
-            "registry = \"/tmp/x\"\n[package]\nname = \"a\"\nversion = \"1.0.0\"\n"
+            "export const pkg: Package = { name: \"a\", version: \"1.0.0\", registry: \"/tmp/x\" };"
         )
         .unwrap_err()
         .contains("must be an http"));

@@ -76,7 +76,7 @@ fn check_template(template: &str, has_main: bool) {
     let out = s.ok("", &["new", &name, "--template", template]);
     assert!(out.contains(&format!("({template} template)")), "{out}");
     let root = s.path(&name);
-    for file in ["velt.toml", ".gitignore", "README.md"] {
+    for file in ["package.vlt", ".gitignore", "README.md"] {
         assert!(root.join(file).is_file(), "{template}: no {file}");
     }
     let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
@@ -92,6 +92,8 @@ fn check_template(template: &str, has_main: bool) {
         "{template}: {tested}"
     );
     s.ok(&name, &["fmt", "--check", "src", "tests"]);
+    // The generated package.vlt is formatted too (`velt fmt` includes it by default).
+    s.ok(&name, &["fmt", "--check"]);
 }
 
 fn exe(dir: &Path, name: &str) -> PathBuf {
@@ -155,14 +157,14 @@ fn init_refuses_to_overwrite_unless_forced() {
         "{err}"
     );
     assert!(
-        !dir.join("velt.toml").exists(),
+        !dir.join("package.vlt").exists(),
         "nothing written on conflict"
     );
 
     let out = s.ok("My Tool", &["init", "--template", "cli", "--force"]);
     assert!(out.contains("package `my-tool`"), "{out}");
-    let manifest = std::fs::read_to_string(dir.join("velt.toml")).unwrap();
-    assert!(manifest.contains("name = \"my-tool\""), "{manifest}");
+    let manifest = std::fs::read_to_string(dir.join("package.vlt")).unwrap();
+    assert!(manifest.contains("name: \"my-tool\""), "{manifest}");
     assert!(std::fs::read_to_string(dir.join("src/main.vlt"))
         .unwrap()
         .contains("execute(args())"));
@@ -177,8 +179,8 @@ fn init_refuses_to_overwrite_unless_forced() {
     );
     s.ok("My Tool", &["test"]);
 
-    // A second init without --force: velt.toml and the sources conflict.
-    assert!(s.fail("My Tool", &["init"]).contains("velt.toml"));
+    // A second init without --force: package.vlt and the sources conflict.
+    assert!(s.fail("My Tool", &["init"]).contains("package.vlt"));
 }
 
 #[test]
@@ -209,7 +211,7 @@ fn clean_removes_target_and_reports_bytes() {
     let out = s.ok("app/src", &["clean"]);
     assert!(out.contains("Removed") && out.contains("iB)"), "{out}");
     assert!(!s.path("app/target").exists());
-    assert!(s.fail("", &["clean"]).contains("no `velt.toml`"));
+    assert!(s.fail("", &["clean"]).contains("no `package.vlt`"));
 }
 
 #[test]
@@ -217,7 +219,7 @@ fn common_mistakes_get_clear_errors() {
     let s = sandbox();
     std::fs::write(s.path("hello.vlt"), "function main() {}\n").unwrap();
     let err = s.fail("", &["run"]);
-    assert!(err.contains("no `velt.toml`"), "{err}");
+    assert!(err.contains("no `package.vlt`"), "{err}");
     assert!(
         err.contains("`velt run hello.vlt`") && err.contains("velt init"),
         "{err}"

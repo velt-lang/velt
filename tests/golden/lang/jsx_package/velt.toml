@@ -1,7 +1,0 @@
-[package]
-name = "jsx-golden"
-version = "0.1.0"
-
-# The JSX runtime of this package's modules: `_ui/jsx-runtime.vlt` (relative to this file).
-[jsx]
-importSource = "./_ui"

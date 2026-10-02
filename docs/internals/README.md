@@ -15,7 +15,7 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 ```
 
 1. **Load**: the driver (`veltc`) reads the root file, follows imports (relative, `velt:` std,
-   `[paths]` aliases, package dependencies through `vpm`), and loads the prelude.
+   `paths` aliases, package dependencies through `vpm`), and loads the prelude.
 2. **Parse** (`velt_syntax`): a hand-written lexer and Pratt parser with error recovery; one
    `ast::Module` per file.
 3. **Check** (`velt_sema`): name resolution, type checking with literal and union types,
@@ -69,7 +69,7 @@ deliberate, reviewed change.
 | Runtime C ABI (sync core) | [contracts/rt_abi.md](contracts/rt_abi.md) |
 | Runtime C ABI (async, I/O, dev mode) | [contracts/rt_abi_async.md](contracts/rt_abi_async.md) |
 | The CLI as tests rely on it | [contracts/cli.md](contracts/cli.md) |
-| The package manifest | [contracts/velt_toml.md](contracts/velt_toml.md) |
+| The package manifest | [contracts/manifest.md](contracts/manifest.md) |
 | The sema query API for editors | [contracts/sema_ide.md](contracts/sema_ide.md) |
 
 ## Design notes
@@ -85,7 +85,7 @@ Decisions and their rationale, including what is still planned:
 - [Native code in packages](design/native-packages.md): a `native/` Rust crate in a package, prebuilt
   per-target binaries and the runtime function table.
 - [A package manifest written in Velt](design/package-manifest.md): `package.vlt`, data-only and
-  typed, replacing `velt.toml` (decided, issue #128).
+  typed, replacing `velt.toml` (implemented, issue #128).
 
 ## Testing
 

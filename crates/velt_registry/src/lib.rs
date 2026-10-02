@@ -1,9 +1,9 @@
 //! A package registry server: vpm's registry directory (`<root>/<name>/index.toml`,
 //! `<root>/<name>/<version>/`) served over the HTTP protocol of `vpm::remote`, so packages can be
-//! shared across machines (`registry = "http://host:port"` in `velt.toml`).
+//! shared across machines (`registry: "http://host:port"` in `package.vlt`).
 //!
 //! Uploads are verified before they are stored: the archive must be well-formed, its content
-//! hash must equal the `X-Velt-Checksum` header, its `velt.toml` must name the package and
+//! hash must equal the `X-Velt-Checksum` header, its `package.vlt` must name the package and
 //! version of the URL, and versions are immutable. Native bundles (`vpm::native`) are uploaded per
 //! target to a published version: verified the same way (checksum, metadata naming the package,
 //! version and target), and a published target is never replaced. When a token is configured,

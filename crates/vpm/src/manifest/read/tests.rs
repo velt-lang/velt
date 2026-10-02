@@ -63,7 +63,7 @@ fn full_manifest_matches_the_toml_one() {
         };
         "#,
     );
-    let toml = Manifest::parse(
+    let toml = crate::manifest::legacy::from_toml(
         r#"
         registry = "https://registry.example.com"
 
@@ -361,7 +361,7 @@ fn native_object_matches_the_toml_table() {
     assert_eq!(native.targets, ["x86_64-pc-windows-msvc"]);
     assert!(!native.wasm);
     let empty = read(&with("native: {}")).native.expect("native is decoded");
-    let toml = Manifest::parse(
+    let toml = crate::manifest::legacy::from_toml(
         "[package]
 name = \"app\"
 version = \"1.0.0\"

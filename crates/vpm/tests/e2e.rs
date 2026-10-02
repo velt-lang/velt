@@ -32,9 +32,9 @@ impl World {
             vpm::scaffold::new_package(&self.dir.join("work"), name, true).unwrap();
         }
         let manifest = format!(
-            "[package]\nname = \"{name}\"\nversion = \"{version}\"\n\n[dependencies]\n{deps}"
+            "export const pkg: Package = {{ name: \"{name}\", version: \"{version}\", dependencies: {{ {deps} }} }};"
         );
-        std::fs::write(root.join("velt.toml"), manifest).unwrap();
+        std::fs::write(root.join(vpm::manifest::MANIFEST_FILE), manifest).unwrap();
         std::fs::write(root.join("src/lib.vlt"), body).unwrap();
         vpm::registry::publish(&root, &self.loc).unwrap();
     }
@@ -164,7 +164,7 @@ fn conflicting_transitive_requirements() {
     let w = world();
     w.publish_lib("base", "1.0.0", "", "");
     w.publish_lib("base", "2.0.0", "", "");
-    w.publish_lib("mid", "1.0.0", "base = \"^2\"\n", "");
+    w.publish_lib("mid", "1.0.0", "base: \"^2\"", "");
     w.add("base", Some("^1"), None);
     w.add("mid", Some("^1"), None);
     let err = w.install(InstallOptions::default()).unwrap_err();
