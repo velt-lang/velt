@@ -1,10 +1,20 @@
-json_union_errors.vlt:7:3: error: `JSON.parse` cannot decode the union `i64 | f64`: `i64` and `f64` are both JSON numbers
+json_union_errors.vlt:18:3: error: `JSON.parse` cannot decode the union `i64 | f64`: `i64` and `f64` are both JSON numbers
 parse a `JsonValue` and build the union from it
-json_union_errors.vlt:8:3: error: `JSON.parse` cannot decode the union `A | B`: `A` and `B` are both objects with no discriminant field and no required field that only one of them has
+json_union_errors.vlt:19:3: error: `JSON.parse` cannot decode the union `A | B`: `A` and `B` are both objects with no discriminant field and no required field that only one of them has
 give each object member a literal field such as `kind: "a"` (a discriminant), or parse a `JsonValue` and build the union from it
-json_union_errors.vlt:9:3: error: `JSON.parse` cannot decode the union `C | Map<string, i64>`: `Map<string, i64>` takes any JSON object
+json_union_errors.vlt:20:3: error: `JSON.parse` cannot decode the union `C | Map<string, i64>`: `Map<string, i64>` takes any JSON object
 parse a `JsonValue` and build the union from it
-json_union_errors.vlt:10:3: error: `JSON.parse` cannot decode the union `string[] | i64[]`: `string[]` and `i64[]` are both JSON arrays
+json_union_errors.vlt:21:3: error: `JSON.parse` cannot decode the union `string[] | i64[]`: `string[]` and `i64[]` are both JSON arrays
 parse a `JsonValue` and build the union from it
-json_union_errors.vlt:11:3: error: `JSON.parse` cannot decode the union `JsonValue | C`: a `JsonValue` member takes any JSON value
+json_union_errors.vlt:22:3: error: `JSON.parse` cannot decode the union `JsonValue | C`: a `JsonValue` member takes any JSON value
 parse a `JsonValue` and build the union from it
+json_union_errors.vlt:25:3: error: `JSON.parse` cannot decode the union `E | "a"`: `E.A` and `"a"` are both the JSON string "a"
+give each member its own values, or parse a `JsonValue` and build the union from it
+json_union_errors.vlt:26:3: error: `JSON.parse` cannot decode the union `E | F`: `E.A` and `F.A2` are both the JSON string "a"
+give each member its own values, or parse a `JsonValue` and build the union from it
+json_union_errors.vlt:27:3: error: `JSON.parse` cannot decode the union `N | 1`: `N.One` and `1` are both the JSON number 1
+give each member its own values, or parse a `JsonValue` and build the union from it
+json_union_errors.vlt:28:3: error: `JSON.parse` cannot decode the union `string | 1 | 1.0`: `1` and `1.0` are both the JSON number 1
+give each member its own values, or parse a `JsonValue` and build the union from it
+json_union_errors.vlt:29:3: error: `JSON.parse` cannot decode the union `F | "b"`: `F.B` and `"b"` are both the JSON string "b"
+give each member its own values, or parse a `JsonValue` and build the union from it

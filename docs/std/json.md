@@ -20,11 +20,16 @@
   - literal and enum members by value, before a plain member of the same kind (`"auto" | f64`);
   - several object members by a discriminant, a field with a different literal type in each
     (`{ kind: "join"; ... } | { kind: "leave"; ... }`) found anywhere in the object, or else by
-    a required field only one member has.
+    a required field only one member has (each member's first such field). Then the first of
+    these fields in the document decides: with `Circle = { r: f64 }` and
+    `Rect = { w: f64; h: f64 }`, `{"w":3,"h":2,"r":1}` is a `Rect`, and its `r` is an unknown
+    key (skipped, or an error with `unknownKeys: "reject"`). A discriminant avoids the
+    question.
 
   An unknown tag fails with `expected one of "join", "leave" at $.kind`. A union with two
-  number types, two array types, a `Map`/`Record` beside another object, or object members
-  without a discriminant or distinguishing field is a compile error that explains which
+  number types, two array types, a `Map`/`Record` beside another object, object members
+  without a discriminant or distinguishing field, or two literal or enum members with the same
+  value (`E | "a"` where `E.A = "a"`, `1 | 1.0`) is a compile error that explains which
   members clash.
 - `JSON.parse<T>(text, options)` takes optional `JsonParseOptions`:
   - `unknownKeys: "reject"` makes an object key the target type has no field for an error

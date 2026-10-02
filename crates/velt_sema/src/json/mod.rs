@@ -11,11 +11,13 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::hir::{
-    AdtKind, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LitValue, TyId, TyKind,
-};
+use crate::hir::{AdtKind, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
 use crate::types::children;
 use crate::visit;
+
+mod union;
+
+use union::union_decode_problem;
 
 /// JSON-relevant facts of one function body.
 #[derive(Default)]
@@ -112,6 +114,8 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) {
             };
             let fix = if why.contains("objects") {
                 "give each object member a literal field such as `kind: \"a\"` (a discriminant), or parse a `JsonValue` and build the union from it"
+            } else if why.contains("are both the JSON") {
+                "give each member its own values, or parse a `JsonValue` and build the union from it"
             } else {
                 "parse a `JsonValue` and build the union from it"
             };
@@ -210,153 +214,4 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
     fields
         .into_iter()
         .find_map(|f| unserializable(cx, f, stack, parse))
-}
-
-/// How a union member is recognized in a JSON document (the decoder's view; velt_vir
-/// lower/json/union.rs classifies members the same way).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Shape {
-    Str,
-    /// String literal types and string enums: matched by value.
-    StrLits,
-    Num,
-    NumLits,
-    Bool,
-    BoolLits,
-    Array,
-    /// Structs, classes and object literal types.
-    Object,
-    /// `Map<string, V>` / `Record<K, V>`: any object.
-    Dict,
-    /// `JsonValue`: any value.
-    Any,
-}
-
-fn shape(cx: &Ctx, m: TyId) -> Shape {
-    match cx.ty.kind(m) {
-        TyKind::Str => Shape::Str,
-        TyKind::Int(_) | TyKind::Float(_) => Shape::Num,
-        TyKind::Bool => Shape::Bool,
-        TyKind::Literal(LitValue::Str(_)) => Shape::StrLits,
-        TyKind::Literal(LitValue::Bool(_)) => Shape::BoolLits,
-        TyKind::Literal(_) => Shape::NumLits,
-        TyKind::Array(_) | TyKind::Tuple(_) => Shape::Array,
-        TyKind::Adt(d, _) if cx.is_json_value(*d) => Shape::Any,
-        TyKind::Adt(d, _)
-            if Some(*d) == cx.prelude_adt("Map") || Some(*d) == cx.prelude_adt("Record") =>
-        {
-            Shape::Dict
-        }
-        TyKind::Adt(d, _) => match cx.enum_info(*d) {
-            Some(e) if e.variants.iter().any(|v| v.str_value.is_some()) => Shape::StrLits,
-            Some(_) => Shape::NumLits,
-            None => Shape::Object,
-        },
-        _ => Shape::Object,
-    }
-}
-
-/// Why `JSON.parse` cannot decode union `u` (`None`: it can). Members are told apart by the
-/// kind of JSON value; literal members by value; several object members by a discriminant (a
-/// field with a different literal type in each) or else by a required key only one of them has.
-pub(crate) fn union_decode_problem(cx: &mut Ctx, u: TyId) -> Option<String> {
-    let members = cx.union_members(u)?;
-    let shapes: Vec<Shape> = members.iter().map(|m| shape(cx, *m)).collect();
-    let of = |want: &[Shape]| -> Vec<TyId> {
-        members
-            .iter()
-            .zip(&shapes)
-            .filter(|(_, s)| want.contains(s))
-            .map(|(m, _)| *m)
-            .collect()
-    };
-    let both = |cx: &mut Ctx, ms: &[TyId], what: &str| {
-        let (a, b) = (cx.display(ms[0]), cx.display(ms[1]));
-        format!("`{a}` and `{b}` are both {what}")
-    };
-    if shapes.contains(&Shape::Any) {
-        return Some("a `JsonValue` member takes any JSON value".into());
-    }
-    let nums = of(&[Shape::Num]);
-    if nums.len() > 1 {
-        return Some(both(cx, &nums, "JSON numbers"));
-    }
-    let arrays = of(&[Shape::Array]);
-    if arrays.len() > 1 {
-        return Some(both(cx, &arrays, "JSON arrays"));
-    }
-    let objects = of(&[Shape::Object, Shape::Dict]);
-    if objects.len() > 1 {
-        if let Some(dict) = of(&[Shape::Dict]).first() {
-            let dn = cx.display(*dict);
-            return Some(format!("`{dn}` takes any JSON object"));
-        }
-        if object_discriminant(cx, &objects).is_none() && required_keys(cx, &objects).is_none() {
-            return Some(both(
-                cx,
-                &objects,
-                "objects with no discriminant field and no required field that only one of them has",
-            ));
-        }
-    }
-    None
-}
-
-/// Field names of object type `t` with whether each is required (not `T | null`).
-fn object_fields(cx: &mut Ctx, t: TyId) -> Vec<(String, TyId, bool)> {
-    let TyKind::Adt(d, args) = cx.ty.kind(t).clone() else {
-        return vec![];
-    };
-    let fields: Vec<(String, TyId)> = cx
-        .adt(d)
-        .map(|a| a.fields.iter().map(|f| (f.name.clone(), f.ty)).collect())
-        .unwrap_or_default();
-    fields
-        .into_iter()
-        .map(|(n, ft)| {
-            let ft = cx.ty.subst(ft, &args);
-            let required = !matches!(cx.ty.kind(ft), TyKind::Option(_));
-            (n, ft, required)
-        })
-        .collect()
-}
-
-/// A field every object member has with a literal type, the values all different.
-pub(crate) fn object_discriminant(cx: &mut Ctx, objects: &[TyId]) -> Option<String> {
-    let first = object_fields(cx, objects[0]);
-    'names: for (name, _, _) in first {
-        let mut seen: Vec<LitValue> = vec![];
-        for &m in objects {
-            let Some((_, ft)) = cx.field_of(m, &name) else {
-                continue 'names;
-            };
-            let Some(v) = cx.lit_value(ft) else {
-                continue 'names;
-            };
-            if seen.contains(&v) {
-                continue 'names;
-            }
-            seen.push(v);
-        }
-        return Some(name);
-    }
-    None
-}
-
-/// For each object member, a required field no other member has.
-pub(crate) fn required_keys(cx: &mut Ctx, objects: &[TyId]) -> Option<Vec<String>> {
-    let fields: Vec<Vec<(String, TyId, bool)>> =
-        objects.iter().map(|m| object_fields(cx, *m)).collect();
-    let mut keys = vec![];
-    for (i, fs) in fields.iter().enumerate() {
-        let own = fs.iter().find(|(n, _, required)| {
-            *required
-                && fields
-                    .iter()
-                    .enumerate()
-                    .all(|(j, other)| j == i || other.iter().all(|(o, _, _)| o != n))
-        })?;
-        keys.push(own.0.clone());
-    }
-    Some(keys)
 }
