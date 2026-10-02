@@ -1,0 +1,12 @@
+aborted: user cancelled
+stopped: This operation was aborted
+before: false true
+after: true timed out after 20 ms
+any: true first
+any of a timeout: true timed out after 20 ms
+throwIfAborted: timed out after 20 ms
+slow 10 finished
+slow 10
+timeout: timed out after 30 ms 30
+slow 200 finished
+done

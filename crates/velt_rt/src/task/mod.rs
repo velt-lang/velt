@@ -10,9 +10,11 @@
 //!   `velt_rt_fut_drop(f)`.
 //! * `cx` is always the Rust `&mut Context` passed through as an opaque pointer.
 
+pub mod abort;
 pub mod all;
 pub mod channel;
 pub mod compiled;
+pub mod group;
 pub mod latch;
 pub mod leaf;
 pub mod local;
