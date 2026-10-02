@@ -3,6 +3,7 @@
 
 mod assists;
 mod client;
+mod jsx;
 mod loader;
 mod modules;
 mod navigation;

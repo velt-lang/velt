@@ -1,5 +1,5 @@
-//! Completion. After `receiver.`: the members of the receiver's type (`this` → the enclosing
-//! class). Elsewhere: locals in scope, the module's items, imported names, prelude items, built-in
+//! Completion. In JSX: tags and attributes ([`jsx_completion`]). After `receiver.`: the members
+//! of the receiver's type (`this` → the enclosing class). Elsewhere: locals in scope, the module's items, imported names, prelude items, built-in
 //! globals and keywords. The receiver is read from the text (while typing `x.` the statement usually
 //! does not parse) and looked up among the names sema sees at the cursor; the AST index answers
 //! when sema has no analysis or does not know the name.
@@ -13,7 +13,7 @@ use crate::analysis::Analysis;
 use crate::index::scope;
 use crate::index::{self, Decl, DeclKind};
 use crate::signature;
-use crate::{definition, sema_query};
+use crate::{definition, jsx_completion, sema_query};
 
 /// Keywords and built-in type names (whitespace separated).
 const KEYWORDS: &str = "async await break case catch class const constructor continue declare \
@@ -50,6 +50,9 @@ pub fn complete(analysis: &Analysis, offset: u32) -> Vec<CompletionItem> {
         .last()
         .map_or(offset, |(i, _)| i);
     let at = word_start as u32;
+    if let Some(ctx) = jsx_completion::context(text, word_start) {
+        return jsx_completion::items(analysis, &ctx, at);
+    }
     if let Some(receiver) = receiver_before(&text[..word_start]) {
         if let Some(items) = sema_query::member_items(analysis, receiver, at) {
             return items;
