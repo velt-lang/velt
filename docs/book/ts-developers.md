@@ -131,6 +131,9 @@ contents.
 - Single inheritance; `override` is required on redefined methods; there are no abstract
   classes and no `protected` (`private` is private to the declaring class).
 - `static readonly` constants exist; mutable statics don't.
+- `new` evaluates all field initializers (base class first) before running the constructors;
+  TypeScript runs the base initializers and constructor before the derived initializers. A known
+  difference, tracked in [#273](https://github.com/velt-lang/velt/issues/273).
 - A method that is never overridden is called directly; only overridden methods use a vtable.
 - `struct` declares an object type with the same members as a class, built from a literal
   (no constructor). **Planned**

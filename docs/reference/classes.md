@@ -9,7 +9,9 @@ hidden classes and no runtime shape checks.
   `done = false`, `items = new Map<string, i64>()`). A field without a default must be assigned
   in the `constructor`. `new C(…)` allocates the object on the heap, evaluates the field
   initializers (base class ones first) and then runs the constructor; it throws whatever they
-  throw ([Errors](errors.md#throwing)).
+  throw ([Errors](errors.md#throwing)). This order is a known difference from TypeScript, which
+  runs the base class's initializers and constructor before the derived class's initializers
+  (tracked in [#273](https://github.com/velt-lang/velt/issues/273)).
 - **Parameter properties**: `constructor(private readonly name: string, public age: i64) {}`
   declares the fields and assigns them, as in TypeScript (`protected` is accepted there and
   means public: there is no `protected`).
