@@ -25,6 +25,6 @@ type-checking the file; these types document the same fields (a test keeps them 
 | `Dependency` | `string` (a semver requirement) or a `DependencySource` |
 | `DependencySource` | `{ version?: string; path?: string }` |
 | `Jsx` | `{ importSource?: string }` |
-| `Native` | `{ path?: string; targets?: string[]; wasm?: boolean }` |
+| `Native` | `{ path?: string; targets?: string[]; wasm?: bool }` |
 
 The fields and their rules are in [`package.vlt`](../tooling/manifest.md).

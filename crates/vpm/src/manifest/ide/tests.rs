@@ -107,6 +107,16 @@ fn nothing_outside_the_manifest_object() {
 }
 
 #[test]
+fn escapes_before_non_ascii_characters_do_not_break_the_scan() {
+    // `\é` once left the tokenizer inside a UTF-8 character (a panic).
+    assert_eq!(
+        labels("{ name: \"caf\\é\\\u{1F600}\", jsx: { | } }"),
+        ["importSource"]
+    );
+    assert_eq!(labels("{ name: \"\\é|"), Vec::<String>::new());
+}
+
+#[test]
 fn hover_explains_known_keys() {
     let (text, offset) = at(&format!(
         "{HEAD}{{ name: \"a\", nat|ive: {{ targets: [] }} }}"

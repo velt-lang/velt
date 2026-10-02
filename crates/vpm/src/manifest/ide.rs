@@ -215,8 +215,10 @@ fn tokenize(src: &str) -> Vec<Token> {
                         }
                         b'\n' if c != b'`' => break,
                         b'\\' if i + 1 < b.len() => {
-                            text.push(b[i + 1] as char);
-                            i += 2;
+                            // The escaped character is kept as written (it may be multi-byte).
+                            let ch = src[i + 1..].chars().next().unwrap_or('\0');
+                            text.push(ch);
+                            i += 1 + ch.len_utf8();
                         }
                         _ => {
                             let ch = src[i..].chars().next().unwrap_or('\0');
