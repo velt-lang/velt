@@ -79,7 +79,7 @@ what Velt can't do on its own:
 | `velt:redis` | a RESP2 client over tokio and rustls: multiplexed connections, pipelines, pub/sub |
 
 Pure Velt: `velt:path`, `velt:math`, `velt:collections/*`, `velt:arena`, `velt:encoding`,
-`velt:url`, `velt:csv`, `velt:cli`, `velt:timers` (built on `sleep` and `spawn`), `velt:json`
+`velt:url`, `velt:csv`, `velt:cli`, `velt:timers` (built on `sleep`, `spawn` and `velt:task` signals), `velt:json`
 and `velt:io`; `velt:jsx` too (escaping through `velt:html`). The runtime ABI is documented in
 [the internals](../internals/contracts/rt_abi_async.md).
 

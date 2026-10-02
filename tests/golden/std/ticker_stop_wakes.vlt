@@ -1,0 +1,25 @@
+// check: no leaks
+// Stopping a `Ticker` wakes its pending `tick()` at once, from another task or from the same one,
+// instead of after the period: two 60 s tickers stop within milliseconds, and the program exits
+// right away (the cancelled sleeps don't keep it alive).
+import { Ticker, TickerStop } from "velt:timers";
+
+async function stopLater(s: TickerStop, ms: i64): Promise<void> {
+  await sleep(ms);
+  s.stop();
+}
+
+async function main() {
+  const start = performance.now();
+  const minute = new Ticker(60000);
+  spawn(stopLater(minute.stopper(), 10));
+  console.log("from another task:", await minute.tick());
+  console.log("after stop:", await minute.tick());
+
+  const other = new Ticker(60000);
+  const pending = other.tick();
+  other.stop();
+  console.log("same task:", await pending);
+
+  console.log("well within a period:", performance.now() - start < 5000);
+}

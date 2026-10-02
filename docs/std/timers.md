@@ -11,7 +11,9 @@ it throws is uncaught (catch inside the task).
   `Timer` does not cancel it.
 - `new Ticker(periodMs)`: a drift-free schedule; missed ticks are skipped, not burst.
   - `tick(): Promise<bool>`: resolves false once the ticker is stopped.
-  - `stop()`, `stopper(): TickerStop`: `TickerStop.stop()` works from another task.
+  - `stop()`, `stopper(): TickerStop`: `TickerStop.stop()` works from another task. A stop
+    wakes a pending `tick()` at once, which resolves to false; the sleep it was in is
+    cancelled, so a long period never delays shutdown.
 
 ```ts
 import { setTimeout, Ticker } from "velt:timers";
@@ -37,4 +39,5 @@ async function main() {
 }
 ```
 
-Notes: a stop takes effect when the pending tick is due, at most one period later.
+A `Ticker` stops through an [`AbortController`](task.md): each `tick()` races its sleep against
+the stop signal.
