@@ -53,8 +53,9 @@ fn completion_and_hover_come_from_the_schema() {
     let text = MANIFEST.replace("  native:", "  \n  native:");
     client.open(&doc, &text);
     let (line, _) = pos_of(&text, "  \n", 0);
-    let items = client.request("textDocument/completion", at(&doc, line, 2));
-    let labels: Vec<&str> = items
+    let list = client.request("textDocument/completion", at(&doc, line, 2));
+    assert_eq!(list["isIncomplete"], false);
+    let labels: Vec<&str> = list["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -69,5 +70,20 @@ fn completion_and_hover_come_from_the_schema() {
     // Program features have nothing to say about data.
     let defs = client.request("textDocument/definition", at(&doc, line, character));
     assert_eq!(defs, Value::Null);
+    client.shutdown();
+}
+
+/// `"` triggers completion for manifest versions; in a program it offers nothing.
+#[test]
+fn a_quote_triggers_nothing_in_a_program() {
+    let mut client = Client::start();
+    let doc = uri("quote_trigger.vlt");
+    let text = "function main() {\n  const s = \"\n}\n";
+    client.open(&doc, text);
+    let (line, character) = pos_of(text, "= \"", 3);
+    let mut params = at(&doc, line, character);
+    params["context"] = json!({ "triggerKind": 2, "triggerCharacter": "\"" });
+    let items = client.request("textDocument/completion", params);
+    assert_eq!(items, json!([]));
     client.shutdown();
 }
