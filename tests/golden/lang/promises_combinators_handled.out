@@ -1,8 +1,8 @@
 all rejected: failed after 10 ms
 all lost the race: [ 7 ]
-rejects after 150 ms
+all's input rejects
 allSettled lost the race: 0
 kept race: 3
-rejects after 400 ms
-rejects after 600 ms
+allSettled's input rejects
+kept race's input rejects
 exits normally
