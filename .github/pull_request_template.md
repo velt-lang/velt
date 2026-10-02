@@ -5,6 +5,6 @@ Closes #
 ## What changed
 
 ## How it was tested
-- [ ] `scripts/check-all.sh --fast` / `pwsh scripts/check-all.ps1 -Fast` (or the full gate)
+- [ ] `scripts/check.sh` / `pwsh scripts/check.ps1` (the checks the changes need), or the whole gate
 - [ ] new or updated tests (every bug fix gets a regression test)
 - [ ] docs updated for user-visible changes

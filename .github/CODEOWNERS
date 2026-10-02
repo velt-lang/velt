@@ -6,3 +6,8 @@
 /docs/internals/contracts/            @andtii
 /docs/internals/design/               @andtii
 /.github/                             @andtii
+# What CI runs: the gate and its check selection.
+/crates/xtask/                        @andtii
+/.config/                             @andtii
+/.cargo/                              @andtii
+/scripts/check*                       @andtii

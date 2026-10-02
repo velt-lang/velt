@@ -5,6 +5,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod runtime_support;
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -44,12 +46,7 @@ const CASES: &[(&str, i32, &str)] = &[
 #[test]
 fn panics_report_their_source_location() {
     let root = root();
-    let st = Command::new(env!("CARGO"))
-        .args(["build", "-p", "velt_rt"])
-        .current_dir(&root)
-        .status()
-        .expect("cargo build -p velt_rt");
-    assert!(st.success(), "building velt_rt failed");
+    runtime_support::build_native_runtime(&root);
     let mut modes: Vec<&[&str]> = vec![&[], &["--release"]];
     if velt_codegen_llvm::available() {
         modes.push(&["--release", "--backend", "llvm"]);

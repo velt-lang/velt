@@ -42,7 +42,8 @@ Prompt template for an agent batch:
 Clone https://github.com/velt-lang/velt (or work in your worktree), create a branch named after
 the batch, read CLAUDE.md and CONTRIBUTING.md, then work through issues <list> in order (design
 issues: post a short design as a comment first). Keep changes focused on your issues and merge
-origin/main often. Iterate with the fast gate, run the full gate before each pull request. One
+origin/main often. Run scripts/check.sh (the checks your changes need) while iterating and before
+each pull request; the merge queue runs the whole gate. One
 pull request per issue or a few related ones ("Closes #N") with tests and docs. Follow-ups
 outside scope become focused issues.
 ```
@@ -71,12 +72,21 @@ review.
 
 ## Merging
 
-- `main` only changes through pull requests. Required check: `ci` (fast gate on the pull
-  request). The **merge queue** runs the full gate on Linux, Windows and macOS against the pull
-  request merged with the latest `main`, then squash-merges. Enable it with `gh pr merge <n>
+- `main` only changes through pull requests. Required check: `ci` (on the pull request, the
+  checks its changes need: `cargo xtask check`, rules in `crates/xtask/src/plan.rs`; the label
+  `ci:full` selects everything). The **merge queue** runs the whole gate against the pull request
+  merged with the latest `main`, then squash-merges: two jobs per OS, Linux always, Windows and
+  macOS when the change touches OS-specific code (`crates/xtask/src/os.rs`). Enable it with `gh pr merge <n>
   --auto` once the review is approved.
 - Before queueing, strip any generated footer from the description: it becomes the commit message.
-- A nightly workflow runs the full gate with PostgreSQL and Redis; fix failures first.
+- A nightly workflow runs the whole gate with PostgreSQL and Redis; fix failures first.
+- Each push to `main` (the `main` jobs in `ci.yml`) runs the whole gate on Windows and macOS,
+  which covers the changes the queue checked on Linux only, and opens or updates the issue
+  "main fails on <OS>" when that fails; fix it first. The same jobs refresh the build cache on
+  all three OSes: pull request and merge queue runs restore it but never save their own.
+- A check the selection missed shows up in the merge queue; tighten the rule in
+  `crates/xtask/src/plan.rs` (with a test in `plan_tests.rs`) rather than adding `ci:full`
+  habitually.
 
 ## Keeping the machinery healthy
 
