@@ -5,7 +5,8 @@
 fn linear_memory() -> i64 {
     #[cfg(target_arch = "wasm32")]
     {
-        (core::arch::wasm32::memory_size(0) * 65536) as i64
+        // In i64: 65536 pages of 64 KiB (4 GiB) overflow a 32-bit usize.
+        core::arch::wasm32::memory_size(0) as i64 * 65536
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
