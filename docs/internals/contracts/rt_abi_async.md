@@ -239,9 +239,15 @@ and returns the same `u64`, in argument lists, results and result slots alike.
   pid 0, exit code -1, empty address), and releasing again is a no-op; a stale handle never
   reaches a newer object. In-flight operations hold their own `Arc`, so the object lives until
   they finish.
+- The HTTP handles (`VeltServer`, `VeltReq`, `VeltResp`, `VeltFetchResp`) are registry keys as
+  well, so a stale or forged one never reaches memory (additive): server operations on a closed
+  handle are no-ops (port 0, `shutdown` resolves at once), response builders ignore a dead
+  response (`velt_rt_http_resp_header` returns 0) and the server answers 500 for one, and using a
+  released request or fetch response is a fatal error that says so.
 - The others are the object's address (`velt_rt::handle::Handle<T>`, `repr(transparent)`): an
-  `Arc` (regexes, JSON nodes) or a `Box` (single owner: requests, responses, fetch responses,
-  servers), owned by a class whose `dispose()` releases it exactly once.
+  `Arc` (regexes, JSON nodes) owned by a class whose `dispose()` releases it exactly once. std
+  keeps every handle in a `private` field (the standard library may use the private members of
+  its own types), so user code can neither build nor read one.
 
 ## 4. Byte buffers and string arrays
 

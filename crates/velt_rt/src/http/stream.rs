@@ -13,9 +13,8 @@
 //! `abort` release them.
 
 use super::body::{RespBody, StreamBody};
-use super::response::RespObj;
+use super::response::RespHandle;
 use crate::bytes::VeltBytes;
-use crate::handle::Handle;
 use crate::registry::{Key, Registry};
 use crate::str::VeltStr;
 use crate::task::leaf::new_leaf;
@@ -146,17 +145,17 @@ impl WriterObj {
 /// keeps its empty body and gets no `content-type`: the writer's body end is dropped at once,
 /// so its writes return 0 as if the client had gone away.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_resp_stream_open(r: Handle<RespObj>) -> WriterHandle {
+pub unsafe extern "C" fn velt_rt_http_resp_stream_open(r: RespHandle) -> WriterHandle {
     let (writer, body) = WriterObj::new();
-    let r = r.obj_mut();
-    if super::response::bodiless(r.status()) {
-        drop(body);
-        return WRITERS.insert(writer);
-    }
-    *r.body_mut() = RespBody::Stream(body);
-    r.headers_mut()
-        .entry(CONTENT_TYPE)
-        .or_insert(HeaderValue::from_static("text/plain; charset=utf-8"));
+    super::response::with(r, |r| {
+        if super::response::bodiless(r.status()) {
+            return;
+        }
+        *r.body_mut() = RespBody::Stream(body);
+        r.headers_mut()
+            .entry(CONTENT_TYPE)
+            .or_insert(HeaderValue::from_static("text/plain; charset=utf-8"));
+    });
     WRITERS.insert(writer)
 }
 

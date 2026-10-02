@@ -1,9 +1,8 @@
 //! Server side: accepting a WebSocket upgrade requested through the HTTP server.
 
 use super::{invalid, Ws, WsHandle, WsObj};
-use crate::handle::Handle;
 use crate::http::body::RespBody;
-use crate::http::response::RespObj;
+use crate::http::response::{RespHandle, RespObj};
 use crate::http::upgrade;
 use crate::result::IoResult;
 use crate::str::VeltStr;
@@ -24,7 +23,7 @@ pub struct VeltWsAccept {
     /// The connection (usable once the response has been sent).
     pub ws: WsHandle,
     /// `101 Switching Protocols` with the handshake headers.
-    pub response: Handle<RespObj>,
+    pub response: RespHandle,
 }
 
 /// Waits for the parked upgrade to complete and wraps the raw connection.
@@ -72,7 +71,7 @@ pub unsafe extern "C" fn velt_rt_ws_accept(
     let r = match upgrade::claim(upgrade_key) {
         Some(on) if !sec_key.is_empty() => IoResult::ok(VeltWsAccept {
             ws: super::SOCKETS.insert(WsObj::upgrading(on)),
-            response: Handle::from_box(Box::new(switching_protocols(sec_key))),
+            response: crate::http::response::register(switching_protocols(sec_key)),
         }),
         _ => IoResult::err(invalid("not a WebSocket upgrade request".to_string())),
     };

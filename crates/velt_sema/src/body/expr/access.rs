@@ -1,7 +1,10 @@
 //! Member access rules (docs/reference/classes.md):
 //! - `private` fields, methods and static fields are usable only inside the body of the type
 //!   declaring them (its methods, constructor, field initializers and the closures inside them;
-//!   not subclasses, like TypeScript).
+//!   not subclasses, like TypeScript). The standard library is one trusted unit: its modules may
+//!   use the private members of its own types (one std type builds another's handle, as
+//!   `TcpListener.accept()` builds a `TcpStream`), so no std handle can be built or read by user
+//!   code.
 //! - `get name(): T` accessors are read as properties: `x.name` is a call of the getter (receiver
 //!   borrowed); they cannot be called with `()`, nor assigned unless a setter of the same
 //!   name exists (`setters`).
@@ -22,7 +25,7 @@ impl FnCx<'_, '_> {
     /// Report a use of a private member of `private_to` outside that type's body.
     pub(crate) fn check_private(&mut self, private_to: Option<DefId>, name: &str, span: Span) {
         let Some(owner) = private_to else { return };
-        if self.owner == Some(owner) {
+        if self.private_allowed(owner) {
             return;
         }
         let tn = self
@@ -34,6 +37,16 @@ impl FnCx<'_, '_> {
             Diagnostic::error(format!("`{name}` is private"), span)
                 .with_note(format!("it can only be used inside the body of `{tn}`")),
         );
+    }
+
+    /// May this body use the private members of type `owner`: inside `owner`'s body, or
+    /// anywhere in the standard library for a std type.
+    pub(crate) fn private_allowed(&self, owner: DefId) -> bool {
+        if self.owner == Some(owner) {
+            return true;
+        }
+        let owner_module = self.cx.adt(owner).map(|a| a.module);
+        self.cx.scopes[self.module].is_std && owner_module.is_some_and(|m| self.cx.scopes[m].is_std)
     }
 
     /// `private` check for field `index` of struct/class values of type `t`.
