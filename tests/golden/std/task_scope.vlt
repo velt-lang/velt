@@ -25,10 +25,8 @@ async function failing(ms: i64): Promise<string> throws Failed {
 async function main() {
   const names = await taskScope(
     async (scope: TaskScope<AbortError>): Promise<string> throws AbortError => {
-      // A local for the signal: `scope.spawn(step(..., scope.signal))` is rejected for now (#145).
-      const signal = scope.signal;
-      const a = scope.spawn(step("a", 30, signal));
-      const b = scope.spawn(step("b", 150, signal));
+      const a = scope.spawn(step("a", 30, scope.signal));
+      const b = scope.spawn(step("b", 150, scope.signal));
       return "body done";
     },
   );

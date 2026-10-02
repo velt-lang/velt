@@ -1,0 +1,39 @@
+// check: no leaks
+// An object obtained through a getter is a share of the field it returns, not a move of the
+// receiver: it can go into an argument of a method call on the same receiver
+// (`scope.spawn(work(scope.signal))`).
+
+class Sig {
+  n: i64 = 1;
+}
+
+class Ctl {
+  sig: Sig = new Sig();
+}
+
+async function step(s: Sig): Promise<i64> {
+  return s.n;
+}
+
+class Scope {
+  private ctl: Ctl = new Ctl();
+
+  get signal(): Sig {
+    return this.ctl.sig;
+  }
+
+  start(p: Promise<i64>): Promise<i64> {
+    return spawn(p);
+  }
+
+  bump(s: Sig) {
+    s.n += 1;
+  }
+}
+
+async function main() {
+  const s = new Scope();
+  console.log(await s.start(step(s.signal)));
+  s.bump(s.signal);
+  console.log(await s.start(step(s.signal)), s.signal.n);
+}
