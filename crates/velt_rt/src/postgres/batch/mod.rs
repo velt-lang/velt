@@ -42,7 +42,7 @@ pub enum Mode {
 }
 
 impl Mode {
-    /// The ABI's `mode` byte (rt_abi_async.md §14.17); unknown values read as `Rows`.
+    /// The ABI's `mode` byte (rt_abi_async.md §14.18); unknown values read as `Rows`.
     pub fn from_abi(mode: u8) -> Mode {
         match mode {
             1 => Mode::FirstRow,
