@@ -175,6 +175,7 @@ export class Request {
 }
 
 // An outgoing response (a runtime `VeltResp` handle), built by the static constructors.
+// A 1xx, 204 or 304 status has no body: the body argument is dropped and no `content-type` added.
 export class Response {
   raw: u64;
 
@@ -201,7 +202,9 @@ export class Response {
   // `text/html; charset=utf-8`.
   static html(body: string, status: i64 = 200): Response {
     const r = velt_rt_http_resp_new(status as u32);
-    velt_rt_http_resp_header(r, "content-type", "text/html; charset=utf-8");
+    if (status != 204 && status != 304 && (status < 100 || status >= 200)) {
+      velt_rt_http_resp_header(r, "content-type", "text/html; charset=utf-8");
+    }
     let owned = body;
     velt_rt_http_resp_body_text(r, owned);
     return new Response(r);

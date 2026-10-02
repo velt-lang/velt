@@ -39,6 +39,11 @@ const CASES: &[(&str, i32, &str)] = &[
         1,
         "Uncaught ParseError: bad digit: x at tests/golden/lang/panic_uncaught.vlt:13:3",
     ),
+    (
+        "panic_uncaught_std",
+        1,
+        "Uncaught IoError: ENOENT: no such file or directory, lstat 'velt-missing-file-b' at tests/golden/lang/panic_uncaught_std.vlt:7:3",
+    ),
 ];
 
 #[test]

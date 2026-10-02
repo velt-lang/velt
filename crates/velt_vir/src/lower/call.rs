@@ -325,6 +325,7 @@ impl FnLower<'_, '_> {
         self.switch_to(err_bb);
         let ev = self.cx.view(rty, 1);
         let payload = Operand::Copy(proj(&proj(&rp, Proj::Cast(ev)), Proj::Field(1)));
+        self.fill_throw_loc();
         self.route_error(payload, err);
         self.switch_to(ok_bb);
         if self.cx.is_unit(ret) {

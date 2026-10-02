@@ -8,7 +8,7 @@ PATCH /todos/1 -> 200 (application/json) {"id":1,"title":"Write docs","done":tru
 GET /todos?done=true -> 200 (application/json) [{"id":1,"title":"Write docs","done":true,"priority":"normal","tags":["work","docs"]}]
 GET /todos?tag=docs -> 200 (application/json) [{"id":1,"title":"Write docs","done":true,"priority":"normal","tags":["work","docs"]}]
 GET /todos/7 -> 404 (application/json) {"error":{"code":"not_found","message":"todo 7 not found"}}
-DELETE /todos/2 -> 204 (text/plain; charset=utf-8) 
+DELETE /todos/2 -> 204 (-) 
 PUT /todos/1 -> 405 (application/json) {"error":{"code":"method_not_allowed","message":"PUT is not allowed here"}}
 -- restarted --
 GET /todos -> 200 (application/json) [{"id":1,"title":"Write docs","done":true,"priority":"normal","tags":["work","docs"]}]

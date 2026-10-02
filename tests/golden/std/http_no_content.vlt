@@ -1,0 +1,26 @@
+// A 204 or 304 response has no body, so no body headers: the body argument is dropped and no
+// default `content-type` is added (Node and the Fetch API do the same). Other statuses keep them.
+import { serve, fetch, Request, Response } from "velt:http";
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    if (req.path == "/text") {
+      return Response.text("", 204);
+    }
+    if (req.path == "/json") {
+      return Response.json({ ok: true }, 204);
+    }
+    if (req.path == "/html") {
+      return Response.html("<p>cached</p>", 304);
+    }
+    return Response.text("hello", 200);
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  for (const path of ["/text", "/json", "/html", "/ok"]) {
+    const r = await fetch(`${base}${path}`);
+    const type = r.headers.get("content-type") ?? "none";
+    const length = r.headers.get("content-length") ?? "none";
+    console.log(path, r.status, type, length, `[${await r.text()}]`);
+  }
+  server.close();
+}

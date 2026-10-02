@@ -234,7 +234,9 @@ typedef struct { uint64_t size; double mtime_ms; uint8_t is_file; uint8_t is_dir
 | `velt_rt_fs_exists(path)` | `velt_rt_fs_exists_sync(path) -> u8` | `u8` (never fails) |
 
 All `path`/`from`/`to`/`data` parameters are `const VeltStr*`. Async variants run on tokio's
-blocking pool.
+blocking pool. Error messages are Node's: `<CODE>: <description>, <syscall> '<path>'` (plus
+` -> '<to>'` for `rename`/`copyfile`), e.g. `ENOENT: no such file or directory, lstat 'x'` from
+`fs_remove`; the file streams' `open_read`/`open_write` (§14.7) use the same form.
 
 ## 6. std/net (TCP)
 
@@ -301,7 +303,8 @@ the program entry waits until no keep-alive references remain — like Node, a l
 keeps the process running. (`velt_rt_block_on` itself does not wait.)
 
 `Response.text(b, s)` = `resp_new(s)` + `resp_body_text(r, &b)`; `Response.json(v, s)` = serialize
-`v` (compiler-generated) + `resp_new(s)` + `resp_json`.
+`v` (compiler-generated) + `resp_new(s)` + `resp_json`. For a bodiless status (1xx, 204, 304) the
+body setters and `resp_json` drop the body and add no `content-type`.
 
 **Client** (`http://` only; `https://` fails with `ENOTSUP`):
 

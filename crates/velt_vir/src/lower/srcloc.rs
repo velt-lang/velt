@@ -68,6 +68,14 @@ impl LocMap {
             .unwrap_or(false)
     }
 
+    /// Whether `loc` lies in a standard-library file.
+    pub(super) fn is_std_loc(&self, loc: SrcLoc) -> bool {
+        self.std_files
+            .get(loc.file as usize)
+            .copied()
+            .unwrap_or(false)
+    }
+
     /// `path:line:col`.
     pub(super) fn describe(&self, loc: SrcLoc) -> String {
         let path = self
@@ -101,6 +109,15 @@ impl FnLower<'_, '_> {
     /// current location.
     pub(super) fn panic_loc(&self) -> Option<SrcLoc> {
         self.caller_loc.or(self.loc)
+    }
+
+    /// Whether the code being lowered now is standard-library code (not a caller-tracking
+    /// instance, whose location is its user call site).
+    pub(super) fn in_std(&self) -> bool {
+        match (self.cx.locs.as_ref(), self.caller_loc, self.loc) {
+            (Some(m), None, Some(l)) => m.is_std_loc(l),
+            _ => false,
+        }
     }
 
     /// ` at <path>:<line>:<col>` for a panic raised here (empty without location info).

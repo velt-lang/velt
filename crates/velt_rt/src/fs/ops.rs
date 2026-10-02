@@ -2,12 +2,12 @@
 //! tokio's blocking pool) and the `*_sync` ABI (run on the calling thread).
 
 use crate::bytes::VeltBytes;
-use crate::result::{invalid_utf8, IoResult};
+use crate::result::{fs_error, invalid_utf8, IoResult};
 use crate::str::VeltStr;
 use crate::str_array::VeltStrArray;
 use std::fs;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 /// `fs.stat` result: `{ u64 size; f64 mtime_ms; u8 is_file; u8 is_dir; }` — size 24, align 8.
@@ -44,29 +44,40 @@ fn unit(r: io::Result<()>) -> IoResult<()> {
     IoResult::from_io(r, |()| ())
 }
 
+/// Node's error message for a failed `syscall` on `path` (`ENOENT: …, open 'x'`).
+fn at<'a>(syscall: &'static str, path: &'a Path) -> impl FnOnce(io::Error) -> io::Error + 'a {
+    move |e| fs_error(e, syscall, path, None)
+}
+
 /// `readFile(path)` as UTF-8 text.
 pub fn read_text(path: PathBuf) -> IoResult<VeltStr> {
-    let r = fs::read(&path).and_then(|b| match String::from_utf8(b) {
-        Ok(s) => Ok(s.into_bytes()),
-        Err(_) => Err(invalid_utf8("file")),
-    });
+    let r = fs::read(&path)
+        .map_err(at("open", &path))
+        .and_then(|b| match String::from_utf8(b) {
+            Ok(s) => Ok(s.into_bytes()),
+            Err(_) => Err(invalid_utf8("file")),
+        });
     IoResult::from_io(r, VeltStr::from_vec)
 }
 
 /// `readFile(path)` as bytes.
 pub fn read_bytes(path: PathBuf) -> IoResult<VeltBytes> {
-    IoResult::from_io(fs::read(&path), VeltBytes::from_vec)
+    IoResult::from_io(
+        fs::read(&path).map_err(at("open", &path)),
+        VeltBytes::from_vec,
+    )
 }
 
 /// `writeFile` (truncate) / `appendFile` (create if missing).
 pub fn write(path: PathBuf, data: Vec<u8>, append: bool) -> IoResult<()> {
     if !append {
-        return unit(fs::write(&path, data));
+        return unit(fs::write(&path, data).map_err(at("open", &path)));
     }
     let r = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
+        .map_err(at("open", &path))
         .and_then(|mut f| f.write_all(&data));
     unit(r)
 }
@@ -80,54 +91,61 @@ pub fn read_dir(path: PathBuf) -> IoResult<VeltStrArray> {
         names.sort();
         Ok(names)
     });
+    let r = r.map_err(at("scandir", &path));
     IoResult::from_io(r, VeltStrArray::from_strings)
 }
 
 /// `stat(path)` (follows symlinks).
 pub fn stat(path: PathBuf) -> IoResult<VeltStat> {
-    IoResult::from_io(fs::metadata(&path), |m| VeltStat {
-        size: m.len(),
-        mtime_ms: m
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map_or(0.0, |d| d.as_secs_f64() * 1000.0),
-        is_file: m.is_file() as u8,
-        is_dir: m.is_dir() as u8,
+    IoResult::from_io(fs::metadata(&path).map_err(at("stat", &path)), |m| {
+        VeltStat {
+            size: m.len(),
+            mtime_ms: m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map_or(0.0, |d| d.as_secs_f64() * 1000.0),
+            is_file: m.is_file() as u8,
+            is_dir: m.is_dir() as u8,
+        }
     })
 }
 
 /// `mkdir(path, { recursive })`.
 pub fn mkdir(path: PathBuf, recursive: bool) -> IoResult<()> {
-    unit(if recursive {
+    let r = if recursive {
         fs::create_dir_all(&path)
     } else {
         fs::create_dir(&path)
-    })
+    };
+    unit(r.map_err(at("mkdir", &path)))
 }
 
 /// `rm(path, { recursive })`: files, symlinks, empty directories, or whole trees if `recursive`.
 pub fn remove(path: PathBuf, recursive: bool) -> IoResult<()> {
-    let r = fs::symlink_metadata(&path).and_then(|m| {
-        if !m.is_dir() {
-            fs::remove_file(&path)
-        } else if recursive {
-            fs::remove_dir_all(&path)
-        } else {
-            fs::remove_dir(&path)
-        }
-    });
+    let r = fs::symlink_metadata(&path)
+        .map_err(at("lstat", &path))
+        .and_then(|m| {
+            if !m.is_dir() {
+                fs::remove_file(&path).map_err(at("unlink", &path))
+            } else if recursive {
+                fs::remove_dir_all(&path).map_err(at("rm", &path))
+            } else {
+                fs::remove_dir(&path).map_err(at("rmdir", &path))
+            }
+        });
     unit(r)
 }
 
 /// `rename(from, to)` (replaces an existing file at `to`).
 pub fn rename(from: PathBuf, to: PathBuf) -> IoResult<()> {
-    unit(fs::rename(from, to))
+    unit(fs::rename(&from, &to).map_err(|e| fs_error(e, "rename", &from, Some(&to))))
 }
 
 /// `copyFile(from, to)`.
 pub fn copy(from: PathBuf, to: PathBuf) -> IoResult<()> {
-    unit(fs::copy(from, to).map(|_| ()))
+    let r = fs::copy(&from, &to).map(|_| ());
+    unit(r.map_err(|e| fs_error(e, "copyfile", &from, Some(&to))))
 }
 
 /// `exists(path)`: 1 if anything (file, directory, valid symlink) is there.
