@@ -32,6 +32,7 @@ mod cells;
 mod cfg;
 mod closure;
 mod console;
+mod dispatch;
 mod drops;
 mod entry;
 mod errors;
