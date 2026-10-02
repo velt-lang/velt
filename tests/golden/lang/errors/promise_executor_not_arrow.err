@@ -1,0 +1,2 @@
+promise_executor_not_arrow.vlt:7:45
+error: the executor of `new Promise` must be an arrow function

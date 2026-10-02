@@ -51,7 +51,9 @@ pub(crate) fn infer_modes(cx: &mut Ctx) {
         }
         let before = cx.diags.len();
         let body_changed = with_body(cx, d, |cx, f| {
-            let patched = super::patch::patch_calls(cx, &mut f.body.block, &mut reported);
+            let borrowed = super::fn_values::borrowed_fn_locals(cx, d, f);
+            let patched =
+                super::patch::patch_calls(cx, &mut f.body.block, &borrowed, &mut reported);
             infer_body(cx, d, f) | patched
         });
         errors.extend(cx.diags.drain(before..).map(|e| (position[&d], e)));

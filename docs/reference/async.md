@@ -94,9 +94,54 @@ can reject with: `Promise<T, E>` (a `Promise<T>` never rejects).
   code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`), and a
   stored promise that rejects after it was dropped unawaited (unless a combinator handled it).
 
+## `new Promise`
+
+`new Promise<T, E>((resolve, reject) => …)` runs the executor at once and wraps callback APIs.
+`T` and `E` come from the type arguments or from the expected type (`Promise<T>` cannot reject;
+`new Promise((resolve) => …)` takes no `reject`).
+
+- `resolve` and `reject` are owned handles to the promise's settle-once slot on the heap, not
+  closures from a caller: the executor may store them, capture them in callbacks, pass them to
+  `spawn` or `setTimeout`, and call them later from any task.
+- The first `resolve(value)` or `reject(reason)` settles the promise; later calls do nothing.
+  An error the executor throws rejects it.
+- A value settled on the promise's own task is the same object the awaiter gets (like JS); one
+  settled from another task is copied, like a `spawn` argument. (On single-threaded WebAssembly
+  there is only one thread, so it is shared there too.) A promise passed on to a spawned task
+  and awaited there is not copied yet, as for any promise (#160): don't keep using the value
+  on the settling task then.
+- The executor must be an arrow-function literal (``the executor of `new Promise` must be an
+  arrow function``); it runs at once and is released before the promise waits.
+- A promise whose `resolve` and `reject` are all dropped without settling never settles, like
+  in JS (it can lose a `Promise.race`). Awaiting it directly (`await new Promise(…)`) is
+  reported instead of waiting forever: ``panic: awaiting a promise whose resolve and reject were
+  dropped without settling (created at file:line:col)``, exit code 101.
+
+```ts
+import { setTimeout } from "velt:timers";
+
+class Failed extends Error {}
+
+function after(ms: i64, ok: bool): Promise<string, Failed> {
+  return new Promise((resolve, reject) => {
+    setTimeout(async () => {
+      if (ok) {
+        resolve(`fine after ${ms} ms`);
+      } else {
+        reject(new Failed("not fine"));
+      }
+    }, ms);
+  });
+}
+
+async function main() {
+  console.log(await after(10, true)); // fine after 10 ms
+}
+```
+
 **Planned** ([semantics — promises](../internals/design/semantics.md#promises)): a stored
 promise may borrow its arguments instead of owning them when it provably finishes before they
-change; `new Promise((resolve, reject) => …)` for wrapping callback APIs.
+change.
 
 ## Example
 

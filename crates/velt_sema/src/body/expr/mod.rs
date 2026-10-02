@@ -31,6 +31,7 @@ mod numbers;
 mod object;
 mod ops;
 mod ordering;
+mod promise_new;
 mod setters;
 mod spread;
 mod std_glue;
