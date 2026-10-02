@@ -1,10 +1,15 @@
 //! Inlay hints: the inferred type after `const`/`let`/`for ... of` bindings written without a type
-//! (`const total: i64 = ...`), and parameter names before call arguments (`area(r: 2.0)`).
+//! (`const total: i64 = ...`), parameter names before call arguments (`area(r: 2.0)`), and on
+//! declarations what inference decided but the source does not say: `throws E` after the
+//! signature of a function without a `throws` clause, `modifies this` after the parameters of a
+//! method that modifies its receiver, and `modified` before each parameter whose contents the
+//! function modifies.
 //!
-//! Types come from sema (`type_at` on the binding identifier); parameter names from the callee's
-//! signature ([`callable`]). Hints are left out where they would only repeat the source: bindings
-//! initialized with `new T(...)` / `T { ... }` or an arrow function, and arguments that already are
-//! a name equal to the parameter's.
+//! Types come from sema (`type_at` on the binding identifier), the inferred effects from
+//! `throws_of` / `mutation_of`; parameter names from the callee's signature ([`callable`]).
+//! Hints are left out where they would only repeat the source: bindings initialized with
+//! `new T(...)` / `T { ... }` or an arrow function, and arguments that already are a name equal
+//! to the parameter's.
 
 use lsp_types::{InlayHint, InlayHintKind, InlayHintLabel};
 use velt_common::Span;
@@ -14,6 +19,7 @@ use crate::analysis::Analysis;
 use crate::index::pattern_idents;
 use crate::line_index::LineIndex;
 use crate::syntax_walk::{self, Visit};
+use crate::text_scan::{self, TokenKind};
 use crate::{callable, sema_query};
 
 /// Hints for the document's byte range `lo..hi`.
@@ -28,15 +34,19 @@ pub fn inlay_hints(analysis: &Analysis, lo: u32, hi: u32) -> Vec<InlayHint> {
     let index = LineIndex::new(analysis.text());
     c.hints
         .into_iter()
-        .map(|(at, text, kind)| InlayHint {
-            position: index.position(at),
-            label: InlayHintLabel::String(text),
-            kind: Some(kind),
-            text_edits: None,
-            tooltip: None,
-            padding_left: None,
-            padding_right: (kind == InlayHintKind::PARAMETER).then_some(true),
-            data: None,
+        .map(|(at, text, kind)| {
+            // Effect hints read as words of their own: `) modifies this`, `modified cart`.
+            let words = !text.starts_with(':') && !text.ends_with(':');
+            InlayHint {
+                position: index.position(at),
+                label: InlayHintLabel::String(text),
+                kind: Some(kind),
+                text_edits: None,
+                tooltip: None,
+                padding_left: (words && kind == InlayHintKind::TYPE).then_some(true),
+                padding_right: (kind == InlayHintKind::PARAMETER).then_some(true),
+                data: None,
+            }
         })
         .collect()
 }
@@ -98,7 +108,16 @@ impl Collector<'_> {
 }
 
 impl<'a> Visit<'a> for Collector<'_> {
+    fn function(&mut self, sig: &'a ast::FnSig, _body: &'a ast::Block) {
+        if self.in_range(sig.name.span) {
+            self.effects(sig);
+        }
+    }
+
     fn var_decl(&mut self, v: &'a ast::VarDecl) {
+        if let Some(arrow) = v.init.as_ref().filter(|i| self.in_range(i.span)) {
+            self.arrow_throws(&v.pattern, arrow);
+        }
         let obvious = v.init.as_ref().is_some_and(|init| {
             matches!(
                 init.kind,
@@ -139,6 +158,117 @@ impl<'a> Visit<'a> for Collector<'_> {
             _ => {}
         }
     }
+}
+
+impl Collector<'_> {
+    /// `throws E`, `modifies this` and `modified` hints for a declared function or method.
+    fn effects(&mut self, sig: &ast::FnSig) {
+        let Some(ide) = self.analysis.ide.as_ref() else {
+            return;
+        };
+        let mid = (sig.name.span.lo + sig.name.span.hi) / 2;
+        let Some(def) = sema_query::def_at(self.analysis, mid) else {
+            return;
+        };
+        let after = params_end(self.analysis.text(), sig);
+        if sig.throws.is_none() {
+            if let Some(t) = ide.throws_of(&def) {
+                let at = sig.ret.as_ref().map_or(after, |r| r.span.hi);
+                self.hints
+                    .push((at, format!("throws {t}"), InlayHintKind::TYPE));
+            }
+        }
+        let Some(m) = ide.mutation_of(&def) else {
+            return;
+        };
+        if m.this {
+            let hint = (after, "modifies this".to_string(), InlayHintKind::TYPE);
+            self.hints.push(hint);
+        }
+        for p in sig
+            .params
+            .iter()
+            .filter(|p| m.params.contains(&p.name.name))
+        {
+            let hint = (
+                p.name.span.lo,
+                "modified".to_string(),
+                InlayHintKind::PARAMETER,
+            );
+            self.hints.push(hint);
+        }
+    }
+
+    /// `throws E` before the `=>` of an arrow function that initializes a variable.
+    fn arrow_throws(&mut self, pattern: &ast::Pattern, init: &ast::Expr) {
+        let E::Arrow {
+            throws: None,
+            ret,
+            body,
+            ..
+        } = &init.kind
+        else {
+            return;
+        };
+        let (Some(ide), Some(name)) = (
+            self.analysis.ide.as_ref(),
+            pattern_idents(pattern).first().copied(),
+        ) else {
+            return;
+        };
+        let Some(def) = sema_query::def_at(self.analysis, (name.span.lo + name.span.hi) / 2) else {
+            return;
+        };
+        let Some(t) = ide.throws_of(&def) else {
+            return;
+        };
+        let body_lo = match body {
+            ast::ArrowBody::Expr(e) => e.span.lo,
+            ast::ArrowBody::Block(b) => b.span.lo,
+        };
+        let Some(head) = self
+            .analysis
+            .text()
+            .get(init.span.lo as usize..body_lo as usize)
+        else {
+            return;
+        };
+        let Some(close) = head.rfind(')') else {
+            return;
+        };
+        let at = ret
+            .as_ref()
+            .map_or(init.span.lo + close as u32 + 1, |r| r.span.hi);
+        self.hints
+            .push((at, format!("throws {t}"), InlayHintKind::TYPE));
+    }
+}
+
+/// The offset just after the `)` that closes the parameter list of `sig`: the first `(` after
+/// the name outside the type parameters (whose bounds may hold function types) and its
+/// matching `)`, comments and strings skipped.
+fn params_end(text: &str, sig: &ast::FnSig) -> u32 {
+    let from = sig.name.span.hi;
+    let fallback = sig.params.last().map_or(from, |p| p.span.hi);
+    let (mut angles, mut parens) = (0usize, 0usize);
+    let mut prev: Option<text_scan::Token> = None;
+    for t in text_scan::scan(text, text.len())
+        .into_iter()
+        .filter(|t| t.lo >= from)
+    {
+        let arrow = prev.is_some_and(|p| p.kind == TokenKind::Punct(b'=') && p.hi == t.lo);
+        prev = Some(t);
+        match t.kind {
+            TokenKind::Punct(b'<') if parens == 0 => angles += 1,
+            TokenKind::Punct(b'>') if parens == 0 && !arrow => angles = angles.saturating_sub(1),
+            TokenKind::Punct(b'(') if angles == 0 => parens += 1,
+            TokenKind::Punct(b')') if angles == 0 && parens == 1 => return t.hi,
+            TokenKind::Punct(b')') if angles == 0 => parens = parens.saturating_sub(1),
+            TokenKind::Punct(b'{') if angles == 0 && parens == 0 => break,
+            _ => {}
+        }
+    }
+    fallback
 }
 
 /// Whether a parameter-name hint adds information for `arg`: the parameter has a real name and

@@ -316,3 +316,45 @@ function main() { const o = Outer { inner: Inner { a: 1, b: \"x\" } }; console.l
         .collect();
     assert_eq!(names, ["a", "b"]);
 }
+
+#[test]
+fn inferred_throws_and_mutation() {
+    let src = "class NotFound extends Error {}
+class Cart {
+  items: string[];
+  constructor() { this.items = []; }
+  add(item: string) { this.items.push(item); }
+  count(): usize { return this.items.length; }
+}
+function fill(cart: Cart, xs: string[], n: i64) { cart.add(\"a\"); console.log(xs.length, n); }
+function find(id: string): string { if (id == \"\") throw new NotFound(id); return id; }
+function main() {
+  const c = new Cart();
+  const tag = (xs: string[]) => { xs.push(\"t\"); };
+  const ys: string[] = [];
+  fill(c, ys, 1);
+  tag(ys);
+  try { find(\"x\"); } catch (e) {}
+  console.log(c.count());
+}";
+    let (a, file) = analyze(src);
+    let def = |needle: &str, n: usize| a.def_at(file, at(src, needle, n, 0)).expect(needle);
+    let add = def("add(item", 0);
+    assert_eq!(a.mutation_of(&add).map(|m| m.this), Some(true));
+    let count = def("count()", 0);
+    assert_eq!(a.mutation_of(&count).map(|m| m.any()), Some(false));
+    let fill = def("fill(cart", 0);
+    let m = a.mutation_of(&fill).expect("fill");
+    assert_eq!(
+        (m.this, m.params.clone()),
+        (false, vec!["cart".to_string()])
+    );
+    // Closures take their parameters by the callback convention: nothing is inferred.
+    let tag = def("tag =", 0);
+    assert!(a.mutation_of(&tag).is_none());
+    let find = def("find(id", 0);
+    assert_eq!(a.throws_of(&find), Some("NotFound"));
+    assert_eq!(a.throws_of(&fill), None);
+    let local = def("ys:", 0);
+    assert!(a.mutation_of(&local).is_none());
+}

@@ -1,6 +1,7 @@
 //! Semantic tokens: every identifier sema resolved, colored by what it denotes (type, function,
 //! method, parameter, property, local...) with modifiers for declarations, `const`/`readonly`
-//! bindings, `static` members, `let` bindings (`mutable`) and standard-library definitions.
+//! bindings, `static` members, `let` bindings (`mutable`), standard-library definitions, and
+//! calls of functions that modify their receiver or arguments (`mutating`, as inferred).
 //! Keywords, literals and comments are left to the TextMate grammar.
 
 use lsp_types::{
@@ -35,6 +36,7 @@ const READONLY: u32 = 1 << 1;
 const STATIC: u32 = 1 << 2;
 const DEFAULT_LIBRARY: u32 = 1 << 3;
 const MUTABLE: u32 = 1 << 4;
+const MUTATING: u32 = 1 << 5;
 
 /// The legend announced in the server capabilities.
 pub fn legend() -> SemanticTokensLegend {
@@ -46,6 +48,7 @@ pub fn legend() -> SemanticTokensLegend {
             SemanticTokenModifier::STATIC,
             SemanticTokenModifier::DEFAULT_LIBRARY,
             SemanticTokenModifier::new("mutable"),
+            SemanticTokenModifier::new("mutating"),
         ],
     }
 }
@@ -65,7 +68,10 @@ pub fn semantic_tokens(analysis: &Analysis) -> SemanticTokens {
             continue;
         };
         let span = Span::new(analysis.file(), t.lo, t.hi);
-        let (ty, modifiers) = classify(analysis, &def, span);
+        let (ty, mut modifiers) = classify(analysis, &def, span);
+        if def.span != span && is_call(text, t.hi) && mutates(analysis, &def) {
+            modifiers |= MUTATING;
+        }
         let start = index.position(t.lo);
         let length = text[t.lo as usize..t.hi as usize].encode_utf16().count() as u32;
         let delta_line = start.line - line;
@@ -87,6 +93,21 @@ pub fn semantic_tokens(analysis: &Analysis) -> SemanticTokens {
         result_id: None,
         data,
     }
+}
+
+/// Is the identifier ending at `hi` called (`f(`, `x.add (`)?
+fn is_call(text: &str, hi: u32) -> bool {
+    text.get(hi as usize..)
+        .is_some_and(|rest| rest.trim_start().starts_with('('))
+}
+
+/// Does calling `def` modify its receiver or an argument (as inferred)?
+fn mutates(analysis: &Analysis, def: &DefRef) -> bool {
+    analysis
+        .ide
+        .as_ref()
+        .and_then(|ide| ide.mutation_of(def))
+        .is_some_and(|m| m.any())
 }
 
 /// Token type index and modifier bits of an identifier at `span` naming `def`.
