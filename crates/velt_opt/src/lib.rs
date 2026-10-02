@@ -116,7 +116,7 @@ fn promote_memory(program: &mut vir::Program, t: &mut PassTimings) {
         if changed {
             t.time("constfold", || constfold::run(&signatures, func));
             t.time("copyprop", || copyprop::run(func));
-            t.time("dce", || dce::run(func));
+            t.time("dce", || dce::run(&program.aggs, func));
             t.time("simplify_cfg", || simplify_cfg::run(func));
         }
     }
@@ -137,7 +137,7 @@ fn speed_round(
         changed |= t.time("copyprop", || copyprop::run(func));
         changed |= t.time("addr_forward", || addr_forward::run(&program.aggs, func));
         changed |= t.time("sroa", || sroa::run(&program.aggs, func));
-        changed |= t.time("dce", || dce::run(func));
+        changed |= t.time("dce", || dce::run(&program.aggs, func));
         changed |= t.time("simplify_cfg", || simplify_cfg::run(func));
     }
     changed

@@ -7,17 +7,24 @@
 //! live, and the stores into a live local make their operands live. Calls are always kept
 //! (their destinations too, since the callee runs anyway). Finally locals that no longer
 //! appear anywhere are deleted and the rest renumbered.
+//!
+//! Taking a local's address counts as assigning it (vir.rs invariant 6: an out-pointer callee
+//! writes through it). Once inlining and `addr_forward` turned the writes through such a pointer
+//! into direct writes, the address itself is often dead, but the direct writes may sit on only
+//! some paths (a callee that writes its out-pointer only on success, read by the caller only on
+//! success). Removing the dead `&x` would leave `x` read before it is (syntactically) assigned,
+//! so a still-read `x` gets a zero initialization in the entry block instead.
 
-use velt_vir::vir::{Function, Local, Place, Rvalue, Stmt};
+use velt_vir::vir::{AggLayout, Function, Local, Place, Proj, Rvalue, Stmt, Ty};
 
 use crate::locals::Usage;
-use crate::srclocs::retain_stmts;
+use crate::srclocs::{prepend_stmts, retain_stmts};
 use crate::visit::{derefs, places_mut, stmt_places, term_places, PlaceUse};
 
 /// Remove dead stores and unused locals; returns whether anything changed.
-pub(crate) fn run(func: &mut Function) -> bool {
+pub(crate) fn run(aggs: &[AggLayout], func: &mut Function) -> bool {
     let mut changed = remove_nops(func);
-    changed |= remove_dead_stores(func);
+    changed |= remove_dead_stores(aggs, func);
     changed |= remove_unused_locals(func);
     changed
 }
@@ -58,7 +65,7 @@ fn mark(l: Local, live: &mut [bool], work: &mut Vec<Local>) {
     }
 }
 
-fn remove_dead_stores(func: &mut Function) -> bool {
+fn remove_dead_stores(aggs: &[AggLayout], func: &mut Function) -> bool {
     let usage = Usage::of(func);
     let n = func.locals.len();
     let mut live = vec![false; n];
@@ -95,12 +102,49 @@ fn remove_dead_stores(func: &mut Function) -> bool {
         }
     }
     let mut changed = false;
+    let mut addressed_live: Vec<Local> = vec![];
     for bi in 0..func.blocks.len() {
         changed |= retain_stmts(func, bi, |s| {
-            store_target(&usage, s).is_none_or(|l| live[l.0 as usize])
+            let keep = store_target(&usage, s).is_none_or(|l| live[l.0 as usize]);
+            if let (false, Stmt::Assign(_, Rvalue::AddrOf(q))) = (keep, s) {
+                if !derefs(q) && live[q.local.0 as usize] && !addressed_live.contains(&q.local) {
+                    addressed_live.push(q.local);
+                }
+            }
+            keep
         });
     }
+    let params = func.params.len();
+    let inits: Vec<Stmt> = addressed_live
+        .into_iter()
+        .filter(|l| l.0 as usize >= params)
+        .filter_map(|l| zero_init(aggs, l, func.locals[l.0 as usize].ty))
+        .filter(|s| !func.blocks[0].stmts.contains(s))
+        .collect();
+    if !inits.is_empty() {
+        prepend_stmts(func, 0, inits);
+    }
     changed
+}
+
+/// A statement that assigns local `l` of type `ty` (for definite assignment): zero for a
+/// scalar; for an aggregate, zero into its first scalar field (a field write assigns the local),
+/// or an empty aggregate.
+fn zero_init(aggs: &[AggLayout], l: Local, mut ty: Ty) -> Option<Stmt> {
+    let mut place = Place::local(l);
+    loop {
+        match ty {
+            Ty::Unit => return None,
+            Ty::Agg(id) => match aggs[id.0 as usize].fields.first() {
+                Some(&(field, _)) => {
+                    place.proj.push(Proj::Field(0));
+                    ty = field;
+                }
+                None => return Some(Stmt::Assign(place, Rvalue::Aggregate(id, vec![]))),
+            },
+            scalar => return Some(Stmt::Assign(place, Rvalue::Use(crate::sroa::zero(scalar)))),
+        }
+    }
 }
 
 fn remove_unused_locals(func: &mut Function) -> bool {
@@ -140,7 +184,7 @@ fn remove_unused_locals(func: &mut Function) -> bool {
 mod tests {
     use super::*;
     use crate::testkit::builder::*;
-    use velt_vir::vir::{BinOp, Callee, ExternId, Terminator, Ty};
+    use velt_vir::vir::{BinOp, BlockId, Callee, ExternId, Terminator, Ty};
 
     #[test]
     fn removes_dead_chain_and_renumbers_locals() {
@@ -154,7 +198,7 @@ mod tests {
         fb.assign(bb, c, Rvalue::Use(copy_local(p)));
         fb.ret(bb, copy_local(c));
         let mut f = fb.finish();
-        assert!(run(&mut f));
+        assert!(run(&[], &mut f));
         assert_eq!(f.locals.len(), 2);
         assert_eq!(
             f.blocks[0].stmts,
@@ -183,7 +227,7 @@ mod tests {
         fb.ret(next, int(0, Ty::I64));
         let mut f = fb.finish();
         let before = f.blocks[0].stmts.clone();
-        run(&mut f);
+        run(&[], &mut f);
         assert_eq!(f.blocks[0].stmts, before);
         assert_eq!(f.locals.len(), 4);
     }
@@ -199,8 +243,60 @@ mod tests {
         fb.assign(b1, i, bin(BinOp::Add, copy_local(i), int(1, Ty::I64)));
         fb.goto(b1, b1);
         let mut f = fb.finish();
-        assert!(run(&mut f));
+        assert!(run(&[], &mut f));
         assert!(f.blocks.iter().all(|b| b.stmts.is_empty()));
         assert!(f.locals.is_empty());
+    }
+
+    /// `q = &x` (dead) keeps `x` assigned for the verifier; `x` (or its field 1, for an
+    /// aggregate) is written only when `c` holds and read only when `c` holds again.
+    fn addressed_on_one_path(ty: Ty) -> Function {
+        let mut fb = FuncBuilder::internal("f", &[Ty::Bool], Ty::I64);
+        let c = fb.param(0);
+        let (x, q) = (fb.local(ty), fb.local(Ty::Ptr));
+        let bbs: Vec<BlockId> = (0..6).map(|_| fb.block()).collect();
+        let target = match ty {
+            Ty::Agg(_) => field(x, 1),
+            _ => Place::local(x),
+        };
+        fb.assign(bbs[0], q, Rvalue::AddrOf(Place::local(x)));
+        fb.branch(bbs[0], c, bbs[1], bbs[2]);
+        fb.push(
+            bbs[1],
+            Stmt::Assign(target.clone(), Rvalue::Use(int(5, Ty::I64))),
+        );
+        fb.goto(bbs[1], bbs[3]);
+        fb.goto(bbs[2], bbs[3]);
+        fb.branch(bbs[3], c, bbs[4], bbs[5]);
+        fb.ret(bbs[4], copy_place(target));
+        fb.ret(bbs[5], int(0, Ty::I64));
+        fb.finish()
+    }
+
+    /// Runs dce on `f` (in `pb`'s program): the `&x` goes, the program still verifies.
+    fn removes_address_and_verifies(mut pb: ProgramBuilder, mut f: Function) {
+        assert!(run(&pb.p.aggs, &mut f));
+        assert!(!f
+            .blocks
+            .iter()
+            .flat_map(|b| &b.stmts)
+            .any(|s| matches!(s, Stmt::Assign(_, Rvalue::AddrOf(_)))));
+        pb.add(f);
+        let p = pb.finish();
+        assert_eq!(crate::testkit::validate::validate(&p), Ok(()), "{p}");
+    }
+
+    #[test]
+    fn dead_address_of_a_read_scalar_becomes_a_zero_init() {
+        removes_address_and_verifies(ProgramBuilder::new(), addressed_on_one_path(Ty::I64));
+    }
+
+    #[test]
+    fn dead_address_of_a_read_aggregate_becomes_a_field_init() {
+        // outer { pair { ptr, i64 }, i64 }: the init writes the innermost first field.
+        let mut pb = ProgramBuilder::new();
+        let pair = pb.agg("pair", 16, 8, &[(Ty::Ptr, 0), (Ty::I64, 8)]);
+        let outer = pb.agg("outer", 24, 8, &[(Ty::Agg(pair), 0), (Ty::I64, 16)]);
+        removes_address_and_verifies(pb, addressed_on_one_path(Ty::Agg(outer)));
     }
 }
