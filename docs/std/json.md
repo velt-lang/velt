@@ -4,7 +4,7 @@
 `Value`, the dynamic JSON value (an alias of the prelude's `JsonValue`).
 
 - `JSON.stringify<T>(x)`, `JSON.parse<T>(text): T` (throws `JsonError`, e.g.
-  `expected string at $.name`), `JSON.parseValue(text): Value`.
+  `expected string at $.name`), `JSON.parseValue(text, options?): Value`.
 - `JSON.parse<T>` decodes numbers, `bool`, `string`, arrays, `T | null`, structs, classes, object
   literals and `Value` (any JSON value, kept as a tree). A tuple (`[string, f64]`) is an array
   of exactly its length. A `Map<string, V>` or a `Record<string, V>` is an object with any keys,
@@ -30,8 +30,14 @@
   - `unknownKeys: "reject"` makes an object key the target type has no field for an error
     (`unknown field at $.extra`); the default `"ignore"` skips it.
   - `maxDepth: n` limits how deeply arrays and objects nest, counting from the top-level
-    value (`JSON nested deeper than 64 levels at $.a (byte 812)`); the default is no limit.
-    Use it for documents from untrusted sources.
+    value (`JSON nested deeper than 64 levels at $.a (byte 812)`). The default is 128 (like
+    Rust's serde_json), so a deeply nested document from an untrusted source fails with a
+    `JsonError` instead of crashing. A typed decoder uses stack space for every level: raise
+    the limit only as far as your data needs, since a limit in the thousands can overflow the
+    stack on a deep enough document.
+
+  `JSON.parseValue(text, options)` (and `JsonValue.parse`, `v.as<T>(options)`) take the same
+  options and the same default depth limit; `unknownKeys` has no effect on a `Value`.
 
   Integers stay exact without an option: an integer field reads the digits exactly, also
   beyond 2^53 (up to the `i64` range). There is no `Date` type to decode dates into: dates stay strings.
@@ -48,7 +54,8 @@
   - conversions: `asNumber(): f64 | null`, `asBool()`, `asString()`
   - building: `JsonValue.object()`, `JsonValue.array()`, `JsonValue.of(x)` (a string, number,
     `bool` or `null`; `new JsonValue()` is `null`), `JsonValue.from(x)` (the JSON form of any
-    value `JSON.stringify` accepts), `JsonValue.parse(text)` (same as `JSON.parseValue`)
+    value `JSON.stringify` accepts, at any depth), `JsonValue.parse(text, options?)` (same as
+    `JSON.parseValue`)
   - editing: `set(key, v)` (an existing key keeps its position), `delete(key)`, `push(v)`,
     `setAt(i, v)`; each returns `false` when the value is not an object / array (or `i` is out
     of range)

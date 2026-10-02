@@ -15,6 +15,12 @@
 // generated copy could not take a new reference).
 
 declare function velt_rt_json_parse_value(src: string, out: JsonHandleSlot, err: string): bool;
+declare function velt_rt_json_parse_value_with(
+  src: string,
+  maxDepth: u32,
+  out: JsonHandleSlot,
+  err: string,
+): bool;
 declare function velt_rt_json_value_kind(v: u64): u32;
 declare function velt_rt_json_value_get(v: u64, key: string): u64;
 declare function velt_rt_json_value_at(v: u64, i: u64): u64;
@@ -60,8 +66,27 @@ export class JsonError extends Error {
 // Options of `JSON.parse<T>(text, options)`; every field may be left out.
 // - `unknownKeys`: "reject" makes an object key the target type has no field for an error,
 //   `unknown field at $.key` (default "ignore": it is skipped).
-// - `maxDepth`: the deepest nesting of arrays and objects allowed (default: no limit).
+// - `maxDepth`: the deepest nesting of arrays and objects allowed (default 128, like serde_json:
+//   a typed decoder recurses per level, so a much higher limit can overflow the stack).
 export type JsonParseOptions = { unknownKeys?: "ignore" | "reject"; maxDepth?: i64 };
+
+// `maxDepth` when the options leave it out.
+const DEFAULT_MAX_DEPTH: i64 = 128;
+
+// The `max_depth` the runtime gets for `options` (throws `JsonError` when out of range).
+function jsonMaxDepth(options: JsonParseOptions | null): i64 {
+  if (options == null) {
+    return DEFAULT_MAX_DEPTH;
+  }
+  const d = options.maxDepth;
+  if (d == null) {
+    return DEFAULT_MAX_DEPTH;
+  }
+  if (d < 1 || d > 4294967295) {
+    throw new JsonError(`maxDepth must be between 1 and 4294967295, got ${d}`);
+  }
+  return d;
+}
 
 export class JSON {
   // JS `JSON.stringify`: no whitespace, fields in declaration order, null optional fields omitted.
@@ -73,25 +98,15 @@ export class JSON {
   // `options.unknownKeys` is "reject".
   static parse<T>(text: string, options: JsonParseOptions | null = null): T {
     let flags: i64 = 0;
-    let depth: i64 = 0;
-    if (options != null) {
-      if (options.unknownKeys == "reject") {
-        flags = 1;
-      }
-      const d = options.maxDepth;
-      if (d != null) {
-        if (d < 1 || d > 4294967295) {
-          throw new JsonError(`maxDepth must be between 1 and 4294967295, got ${d}`);
-        }
-        depth = d;
-      }
+    if (options != null && options.unknownKeys == "reject") {
+      flags = 1;
     }
-    return __intrinsic_json_parse<T>(text, flags, depth);
+    return __intrinsic_json_parse<T>(text, flags, jsonMaxDepth(options));
   }
 
-  // Parses any JSON document (throws `JsonError`).
-  static parseValue(text: string): JsonValue {
-    return JsonValue.parse(text);
+  // Parses any JSON document (throws `JsonError`); of the options only `maxDepth` applies.
+  static parseValue(text: string, options: JsonParseOptions | null = null): JsonValue {
+    return JsonValue.parse(text, options);
   }
 }
 
@@ -108,10 +123,11 @@ export class JsonValue {
   }
 
   // Parses any JSON document, like `JSON.parseValue` (throws `JsonError`).
-  static parse(text: string): JsonValue {
+  static parse(text: string, options: JsonParseOptions | null = null): JsonValue {
+    const depth = jsonMaxDepth(options) as u32;
     let slot = JsonHandleSlot { handle: 0 };
     let err = "";
-    if (!velt_rt_json_parse_value(text, slot, err)) {
+    if (!velt_rt_json_parse_value_with(text, depth, slot, err)) {
       throw new JsonError(err);
     }
     return JsonValue.adopt(slot.handle);

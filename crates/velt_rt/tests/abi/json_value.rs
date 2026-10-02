@@ -247,6 +247,38 @@ fn deep_nesting() {
 }
 
 #[test]
+fn depth_limit() {
+    let parse_with = |src: &str, max_depth: u32| {
+        let mut h = MaybeUninit::uninit();
+        let mut err = MaybeUninit::uninit();
+        unsafe {
+            if velt_rt_json_parse_value_with(
+                &borrow(src),
+                max_depth,
+                h.as_mut_ptr(),
+                err.as_mut_ptr(),
+            ) == 1
+            {
+                Ok(stringify(h.assume_init()))
+            } else {
+                Err(owned_text(err.assume_init()))
+            }
+        }
+    };
+    assert_eq!(parse_with(r#"{"a":[[1]]}"#, 3).unwrap(), r#"{"a":[[1]]}"#);
+    assert_eq!(
+        parse_with(r#"{"a":[[1]]}"#, 2).unwrap_err(),
+        "JSON nested deeper than 2 levels at $.a[0] (byte 6)"
+    );
+    // 0: no limit; syntax errors keep their message.
+    assert!(parse_with(&("[".repeat(500) + &"]".repeat(500)), 0).is_ok());
+    assert_eq!(
+        parse_with("[1,]", 5).unwrap_err(),
+        "invalid JSON at $[1]: unexpected character ']' (byte 3)"
+    );
+}
+
+#[test]
 fn builder_embeds_values() {
     let v = parse(r#"{"x":[1,"two"]}"#).unwrap();
     let mut b = MaybeUninit::uninit();

@@ -516,7 +516,9 @@ Paths only need to be built on the failure path (e.g. append segments while retu
 
 With the reader's options: an unknown key (rejected) is `unknown field at <path>` (the decoder
 puts the key in the path), and nesting past `max_depth` is
-`JSON nested deeper than <max_depth> levels at <path> (byte <offset>)`.
+`JSON nested deeper than <max_depth> levels at <path> (byte <offset>)` (also from
+`velt_rt_json_parse_value_with`). The prelude passes `max_depth` 128 unless the program sets
+`maxDepth`.
 
 `<detail>` is one of `unexpected end of input`, `unexpected character 'c'` (control characters as
 `U+XXXX`), `expected ':'`, `expected ',' or '}'`, `expected ',' or ']'`, `expected string key`,
@@ -537,7 +539,8 @@ objects with more than 16 keys get a hash index for `get`.
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_json_parse_value` | `(const VeltStr* src, VeltJson* out, VeltStr* out_err) -> u8` | 1 = ok; 0 = syntax error: `*out` = 0, `*out_err` = owned message (§12.4) |
+| `velt_rt_json_parse_value` | `(const VeltStr* src, VeltJson* out, VeltStr* out_err) -> u8` | 1 = ok; 0 = syntax error: `*out` = 0, `*out_err` = owned message (§12.4). No depth limit (`JsonValue.from`) |
+| `velt_rt_json_parse_value_with` | `(const VeltStr* src, u32 max_depth, VeltJson* out, VeltStr* out_err) -> u8` | the same, failing on arrays/objects nested more than `max_depth` deep (0 = no limit) with the `max_depth` message of §12.4: `JSON.parseValue(text, { maxDepth })`, default 128 (set by the prelude) |
 | `velt_rt_json_value_kind` | `(VeltJson v) -> u32` | 0 none (null handle), 1 null, 2 bool, 3 number, 4 string, 5 array, 6 object |
 | `velt_rt_json_value_get` | `(VeltJson v, const VeltStr* key) -> VeltJson` | member, or null (not an object / missing) |
 | `velt_rt_json_value_at` | `(VeltJson v, u64 i) -> VeltJson` | array element, or the i-th member value of an object; null if out of range |

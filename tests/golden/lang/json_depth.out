@@ -1,0 +1,12 @@
+64
+JSON nested deeper than 128 levels at $.kids[0].ki...ids[0].kids[0] (byte 960)
+100
+JSON nested deeper than 128 levels at $.kids[0].ki...ids[0].kids[0] (byte 960)
+JSON nested deeper than 128 levels at $ (byte 960)
+2
+JSON nested deeper than 128 levels at $.kids[0].ki...ids[0].kids[0] (byte 960)
+JSON nested deeper than 128 levels at $.kids[0].ki...ids[0].kids[0] (byte 960)
+JSON nested deeper than 128 levels at $.kids[0].ki...ids[0].kids[0] (byte 960)
+100
+JSON nested deeper than 2 levels at $[0][0] (byte 2)
+maxDepth must be between 1 and 4294967295, got 0

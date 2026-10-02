@@ -94,8 +94,9 @@ copied).
 
 ## JSON
 
-`JSON.stringify<T>(x)`, `JSON.parse<T>(text)` (throws `JsonError`) and
-`JSON.parseValue(text): JsonValue` ([`velt:json`](json.md)).
+`JSON.stringify<T>(x)`, `JSON.parse<T>(text, options?)` (throws `JsonError`) and
+`JSON.parseValue(text, options?): JsonValue` ([`velt:json`](json.md)); arrays and objects may
+nest 128 levels deep unless `options.maxDepth` says otherwise.
 
 ## Errors
 

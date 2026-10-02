@@ -6,7 +6,7 @@
 //! arbitrarily deep documents cannot overflow the stack.
 
 use super::scan::{number_f64, Scanner, StrTok, SyntaxError};
-use super::walk::{walk, walk_limited, Scalar, Sink};
+use super::walk::{walk_limited, Scalar, Sink};
 use crate::fmt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -222,12 +222,12 @@ pub fn read_limited(sc: &mut Scanner, limit: usize) -> Result<Arc<Value>, Syntax
     Ok(builder.root.expect("ICE: JSON walk produced no value"))
 }
 
-/// Parse a whole document (one value, surrounded only by whitespace). An error comes with the
-/// path of the value it is in.
-pub fn parse(src: &[u8]) -> Result<Arc<Value>, (SyntaxError, String)> {
+/// Parse a whole document (one value, surrounded only by whitespace), nested at most `limit`
+/// deep. An error comes with the path of the value it is in.
+pub fn parse(src: &[u8], limit: usize) -> Result<Arc<Value>, (SyntaxError, String)> {
     let mut sc = Scanner::new(src);
     let mut builder = Builder::default();
-    if let Err(e) = walk(&mut sc, &mut builder) {
+    if let Err(e) = walk_limited(&mut sc, &mut builder, limit) {
         return Err((e, builder.path()));
     }
     if sc.peek_non_ws().is_some() {

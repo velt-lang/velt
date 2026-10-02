@@ -1,5 +1,5 @@
 // JSON.parse<T>(text, options) (issue #20): unknownKeys "reject" and maxDepth (arrays and
-// objects, counted from the top-level value; the default is no limit).
+// objects, counted from the top-level value; the default is 128, see json_depth).
 type User = { name: string; tags: string[] };
 
 class Tree {

@@ -2,8 +2,9 @@
 //! - type mismatch (decoder wanted another kind): `expected <expected> at <path>`
 //! - syntax error (typed decoding and `JSON.parseValue` alike):
 //!   `invalid JSON at <path>: <detail> (byte <offset>)`
+//! - nesting past the depth limit: `JSON nested deeper than <limit> levels at <path> (byte <offset>)`
 
-use super::scan::{SyntaxError, UNEXPECTED_CHAR};
+use super::scan::{SyntaxError, TOO_DEEP, UNEXPECTED_CHAR};
 
 /// `<detail>`, naming the offending character for [`UNEXPECTED_CHAR`] (`U+XXXX` if it is a
 /// control character).
@@ -23,8 +24,15 @@ fn detail(src: &[u8], e: SyntaxError) -> String {
     }
 }
 
-/// Message for a syntax error found at `path` (by the pull reader or `JSON.parseValue`).
-pub fn syntax_message(src: &[u8], e: SyntaxError, path: &str) -> String {
+/// Message for a syntax error found at `path` (by the pull reader or `JSON.parseValue`);
+/// `max_depth` is the nesting limit, for a [`TOO_DEEP`] error.
+pub fn syntax_message(src: &[u8], e: SyntaxError, path: &str, max_depth: usize) -> String {
+    if e.what == TOO_DEEP {
+        return format!(
+            "JSON nested deeper than {max_depth} levels at {path} (byte {})",
+            e.at
+        );
+    }
     format!("invalid JSON at {path}: {} (byte {})", detail(src, e), e.at)
 }
 

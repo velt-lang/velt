@@ -98,12 +98,8 @@ fn key_colon<S: Sink>(sc: &mut Scanner, sink: &mut S) -> Result<(), SyntaxError>
     Ok(())
 }
 
-/// Walk exactly one value starting at the current position (leading whitespace allowed).
-pub fn walk<S: Sink>(sc: &mut Scanner, sink: &mut S) -> Result<(), SyntaxError> {
-    walk_limited(sc, sink, usize::MAX)
-}
-
-/// [`walk`] failing with [`TOO_DEEP`] at an array/object nested more than `limit` deep.
+/// Walk exactly one value starting at the current position (leading whitespace allowed),
+/// failing with [`TOO_DEEP`] at an array/object nested more than `limit` deep.
 pub fn walk_limited<S: Sink>(
     sc: &mut Scanner,
     sink: &mut S,

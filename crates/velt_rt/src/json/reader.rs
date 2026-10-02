@@ -340,11 +340,7 @@ impl Reader {
     /// The `JsonError.message` for the current state (see error.rs for the formats).
     pub fn message(&self, expected: &str, path: &str) -> String {
         match self.error {
-            Some(ReadError::Syntax(e)) if e.what == TOO_DEEP => format!(
-                "JSON nested deeper than {} levels at {path} (byte {})",
-                self.max_depth, e.at
-            ),
-            Some(ReadError::Syntax(e)) => syntax_message(self.sc.src, e, path),
+            Some(ReadError::Syntax(e)) => syntax_message(self.sc.src, e, path, self.max_depth),
             Some(ReadError::Unknown) => format!("unknown field at {path}"),
             _ => mismatch_message(expected, path),
         }
