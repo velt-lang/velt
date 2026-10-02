@@ -1,8 +1,8 @@
 name: setup
 description: >-
   Rust toolchain, a build cache, cargo-nextest and (for the tests) wasmtime, node and clang. On
-  Windows the checkout is copied to a Dev Drive first: run later steps in
-  `${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}`.
+  Windows the checkout is copied to a Dev Drive first: run later steps in the directory in
+  DEV_DRIVE_WORKSPACE when it is set.
 inputs:
   tools:
     description: Install what the tests need besides Rust (wasmtime, node, clang on macOS).
