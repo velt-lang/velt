@@ -3,8 +3,8 @@
 //! - [`check_declares`]: every `declare function` of a package with native code must name one of
 //!   **its own** library's exports, and its lowered signature must equal the signature the SDK
 //!   recorded for that export exactly. A mismatch would be memory corruption at run time, so it
-//!   is a compile error. No package may declare another package's export, and a package with
-//!   native code may not declare `velt_rt_*` runtime functions (only std does). `IoResult` and
+//!   is a compile error. No package may declare another package's export (sema already keeps
+//!   `velt_rt_*` runtime functions to std). `IoResult` and
 //!   `IoStatus` are std's (`velt:io`) types, identified by definition, not by name.
 //! - [`inits`]: the libraries `velt_main` initializes before `main`.
 //! - [`links`]: what the linker adds per library.
@@ -182,16 +182,6 @@ pub fn check_declares(
             continue;
         };
         let what = format!("`{} {}`", lib.meta.package, lib.meta.version);
-        if f.symbol.starts_with("velt_rt_") {
-            diags.push(Diagnostic::error(
-                format!(
-                    "`{}` is a runtime function: a package with native code may only declare its own library's exports",
-                    f.symbol
-                ),
-                f.span,
-            ));
-            continue;
-        }
         let Some(expected) = lib.meta.exports.get(&f.symbol) else {
             let mut d = Diagnostic::error(
                 format!(
