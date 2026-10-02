@@ -119,6 +119,23 @@ impl super::Cx<'_> {
         all
     }
 
+    /// Type args of constructor `ctor` for `new` of class type `ty`: an inherited constructor
+    /// takes those of the base class that declares it (`class D extends B<string>`: `[string]`).
+    pub(super) fn ctor_type_args(&mut self, ctor: DefId, ty: TyId) -> Vec<TyId> {
+        let owner = match self.fn_def(ctor).self_ty.map(|t| self.kind(t)) {
+            Some(TyKind::Adt(d, _)) => d,
+            _ => ice("constructor without a class `this`"),
+        };
+        for cand in self.self_and_bases(ty) {
+            if let TyKind::Adt(d, args) = self.kind(cand) {
+                if d == owner {
+                    return args;
+                }
+            }
+        }
+        ice("constructor of a class outside the instantiated class's ancestry")
+    }
+
     /// `ty` followed by its base classes (an impl for a base class also serves subclasses).
     fn self_and_bases(&mut self, ty: TyId) -> Vec<TyId> {
         let mut out = vec![ty];

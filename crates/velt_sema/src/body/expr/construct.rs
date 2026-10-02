@@ -36,6 +36,9 @@ impl FnCx<'_, '_> {
         let self_ty = crate::collect::self_type(self.cx, d, n);
         let ctor = self.cx.adt(d).and_then(|a| a.ctor);
         let cname = self.cx.adt(d).map(|a| a.name.clone()).unwrap_or_default();
+        // The constructor's type args in terms of the class's params: an inherited constructor
+        // takes those its declaring base class gets (`class D<U> extends B<U[]>`: `[U[]]`).
+        let mut ctor_args = vec![];
         let (params, what) = match ctor {
             Some(c) => {
                 let owner = self.cx.fn_info(c).owner.expect("ICE: ctor owner");
@@ -49,6 +52,7 @@ impl FnCx<'_, '_> {
                 for p in &mut ps {
                     p.ty = self.cx.ty.subst(p.ty, &oargs);
                 }
+                ctor_args = oargs;
                 (ps, format!("the constructor of `{cname}`"))
             }
             None => (vec![], format!("class `{cname}` (it has no constructor)")),
@@ -77,7 +81,11 @@ impl FnCx<'_, '_> {
             self.throw_src(s);
         }
         if let Some(c) = ctor {
-            self.throw_src(ThrowSrc::Call(c, ck.type_args.clone(), span));
+            let targs = ctor_args
+                .iter()
+                .map(|&t| self.cx.ty.subst(t, &ck.type_args))
+                .collect();
+            self.throw_src(ThrowSrc::Call(c, targs, span));
         }
         let kind = H::New {
             def: d,

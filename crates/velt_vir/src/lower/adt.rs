@@ -96,7 +96,7 @@ impl FnLower<'_, '_> {
     }
 
     /// `new C<T>(args)`: allocate, evaluate field defaults (in the class's type context), call
-    /// the constructor with the object as `this`.
+    /// the constructor (with the type args of the class declaring it) with the object as `this`.
     pub(super) fn new_object(&mut self, ty: TyId, args: &[hir::Expr]) -> Operand {
         let ty = self.sub(ty);
         let TyKind::Adt(d, cargs) = self.cx.kind(ty) else {
@@ -114,6 +114,7 @@ impl FnLower<'_, '_> {
         }
         self.targs = saved;
         if let Some(ctor) = adt.ctor {
+            let cargs = self.cx.ctor_type_args(ctor, ty);
             self.call_def(ctor, cargs, vec![Operand::Copy(obj.clone())], args);
         }
         Operand::Copy(obj)
