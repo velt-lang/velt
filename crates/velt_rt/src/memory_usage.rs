@@ -3,8 +3,11 @@
 //!
 //! The release runtime does not count live bytes (that would cost every allocation an atomic
 //! update), so the heap figure is mimalloc's committed-memory counter: what it took from the OS
-//! and committed, including freed blocks it keeps for reuse. On Windows mimalloc reports the
-//! process's private committed bytes instead. Built without mimalloc, it is the RSS.
+//! and committed, including freed blocks it keeps for reuse. On Windows it is the process's
+//! private committed bytes (what mimalloc reports there too), read directly from kernel32:
+//! mimalloc's `mi_process_info` loads `psapi.dll` on its first call, and loading a library while
+//! the runtime's worker threads start can hang on the loader lock. Built without mimalloc, it is
+//! the RSS.
 
 /// Resident set size in bytes (0 if the OS does not say).
 #[no_mangle]
@@ -18,7 +21,7 @@ pub extern "C" fn velt_rt_memory_heap() -> i64 {
     heap_committed().map_or_else(|| velt_rt_memory_rss(), |b| b as i64)
 }
 
-#[cfg(feature = "mimalloc")]
+#[cfg(all(feature = "mimalloc", not(windows)))]
 fn heap_committed() -> Option<usize> {
     extern "C" {
         fn mi_process_info(
@@ -39,7 +42,12 @@ fn heap_committed() -> Option<usize> {
     (commit > 0).then_some(commit)
 }
 
-#[cfg(not(feature = "mimalloc"))]
+#[cfg(windows)]
+fn heap_committed() -> Option<usize> {
+    counters().map(|c| c.pagefile_usage).filter(|&b| b > 0)
+}
+
+#[cfg(not(any(feature = "mimalloc", windows)))]
 fn heap_committed() -> Option<usize> {
     None
 }
@@ -72,24 +80,33 @@ fn rss() -> Option<usize> {
     }
 }
 
-/// Windows: the working set from `GetProcessMemoryInfo` (kernel32's `K32` export, declared here
-/// so the runtime needs no extra windows-sys features).
+/// Windows: the working set from `GetProcessMemoryInfo`.
 #[cfg(windows)]
 fn rss() -> Option<usize> {
-    #[repr(C)]
-    #[derive(Default)]
-    struct ProcessMemoryCounters {
-        cb: u32,
-        page_fault_count: u32,
-        peak_working_set_size: usize,
-        working_set_size: usize,
-        quota_peak_paged_pool_usage: usize,
-        quota_paged_pool_usage: usize,
-        quota_peak_non_paged_pool_usage: usize,
-        quota_non_paged_pool_usage: usize,
-        pagefile_usage: usize,
-        peak_pagefile_usage: usize,
-    }
+    counters().map(|c| c.working_set_size)
+}
+
+/// Windows `PROCESS_MEMORY_COUNTERS`.
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Default)]
+struct ProcessMemoryCounters {
+    cb: u32,
+    page_fault_count: u32,
+    peak_working_set_size: usize,
+    working_set_size: usize,
+    quota_peak_paged_pool_usage: usize,
+    quota_paged_pool_usage: usize,
+    quota_peak_non_paged_pool_usage: usize,
+    quota_non_paged_pool_usage: usize,
+    pagefile_usage: usize,
+    peak_pagefile_usage: usize,
+}
+
+/// The process's memory counters (kernel32's `K32GetProcessMemoryInfo`, declared here so the
+/// runtime needs no extra windows-sys features and loads no library).
+#[cfg(windows)]
+fn counters() -> Option<ProcessMemoryCounters> {
     #[link(name = "kernel32")]
     extern "system" {
         fn GetCurrentProcess() -> isize;
@@ -105,7 +122,7 @@ fn rss() -> Option<usize> {
     };
     // SAFETY: `c` is a correctly sized PROCESS_MEMORY_COUNTERS; the pseudo-handle needs no close.
     let ok = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut c, c.cb) };
-    (ok != 0).then_some(c.working_set_size)
+    (ok != 0).then_some(c)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
