@@ -194,7 +194,7 @@ impl FnLower<'_, '_> {
             );
             for (i, l) in &strs {
                 let LitValue::Str(text) = l else {
-                    unreachable!()
+                    unreachable!("ICE: non-string literal among the string alternatives")
                 };
                 let lit = self.str_lit(text);
                 let la = self.operand_addr(lit, STR);
@@ -223,7 +223,7 @@ impl FnLower<'_, '_> {
                 let v = match l {
                     LitValue::Int(_, n) => *n as f64,
                     LitValue::Float(_, bits) => f64::from_bits(*bits),
-                    _ => unreachable!(),
+                    _ => unreachable!("ICE: non-number literal among the number alternatives"),
                 };
                 let c = Operand::Const(Const::Float(v), Ty::F64);
                 let eq = self.rvalue_temp(
@@ -250,7 +250,7 @@ impl FnLower<'_, '_> {
             self.json_expect(Rt::JsonReadBool, vec![ro.clone(), ba], ctx, &expected, fail);
             for (i, l) in &bools {
                 let LitValue::Bool(want) = l else {
-                    unreachable!()
+                    unreachable!("ICE: non-bool literal among the bool alternatives")
                 };
                 let eq = self.rvalue_temp(
                     Ty::Bool,

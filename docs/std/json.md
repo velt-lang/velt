@@ -8,7 +8,7 @@
 - `JSON.parse<T>` decodes numbers, `bool`, `string`, arrays, `T | null`, structs, classes, object
   literals and `Value` (any JSON value, kept as a tree). A tuple (`[string, f64]`) is an array
   of exactly its length. A `Map<string, V>` or a `Record<string, V>` is an object with any keys,
-  written in insertion order (a repeated key keeps the last value). A record with literal keys
+  written in insertion order. A record with literal keys
   (`Record<"cpu" | "mem", i64>`) needs every key and skips other members. Unlike JavaScript, which writes a `Map` as `{}`,
   Velt writes its entries. Maps with other key types, functions, interfaces, promises and
   `shared` values have no JSON form; using them is a compile error. Values from a fixed set are checked:
@@ -45,7 +45,20 @@
   options and the same default depth limit; `unknownKeys` has no effect on a `Value`.
 
   Integers stay exact without an option: an integer field reads the digits exactly, also
-  beyond 2^53 (up to the `i64` range). There is no `Date` type to decode dates into: dates stay strings.
+  beyond 2^53 (up to the `i64` range). Every integer type reads through `i64`, so a `u64`
+  field stops at `i64::MAX` (9223372036854775807): a larger number fails with
+  `expected u64`. There is no `Date` type to decode dates into: dates stay strings.
+- A key that appears twice in an object keeps its last value, in the position of its first
+  occurrence, like JavaScript: in structs, classes and object literals, `Map`, `Record` (with
+  any key type) and `Value`. Unlike JavaScript, every occurrence must still be valid for the
+  type: `{"age":"x","age":2}` fails with `expected i64 at $.age`. So a repeated literal field or
+  union discriminant with two different values always fails (`{"kind":"leave",...,
+  "kind":"join"}` with `expected "leave" at $.kind`: the first occurrence picks the member,
+  whose literal the second one does not match).
+- String escapes `\uXXXX` decode surrogate pairs to one character. A lone surrogate (a high
+  one without a low one after it, or a low one alone) cannot be stored in UTF-8, so it becomes
+  U+FFFD (`�`), in `JSON.parse` and `JSON.parseValue` alike; JavaScript keeps it as a lone
+  UTF-16 unit.
 - Syntax errors read the same from `JSON.parse<T>` and `JSON.parseValue`:
   `invalid JSON at $.items[2]: unexpected character '}' (byte 41)`.
 - `JSON.parse<T>` treats an absent key and an explicit `null` alike: a `T | null` field

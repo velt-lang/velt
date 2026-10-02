@@ -104,15 +104,15 @@ impl FnLower<'_, '_> {
     }
 }
 
-/// An object key as `console.log` shows it: bare when it is an identifier, else quoted
-/// (the runtime's `velt_rt_strbuf_push_inspect_key` does the same at run time).
+/// An object key as `console.log` shows it: bare when it is an identifier of ASCII letters,
+/// digits and `_` (node quotes `$` and non-ASCII keys), else quoted (the runtime's
+/// `velt_rt_strbuf_push_inspect_key` does the same at run time).
 pub(crate) fn inspect_key(s: &str) -> String {
     let b = s.as_bytes();
     let ident = b
         .first()
-        .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_' || *c == b'$')
-        && b.iter()
-            .all(|c| c.is_ascii_alphanumeric() || *c == b'_' || *c == b'$');
+        .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_')
+        && b.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_');
     if ident {
         s.to_string()
     } else {
@@ -151,4 +151,21 @@ pub(crate) fn inspect_quote(s: &str) -> String {
     }
     out.push(quote);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inspect_key;
+
+    #[test]
+    fn keys_bare_only_when_identifiers_like_node() {
+        for bare in ["a", "_x1", "A_9"] {
+            assert_eq!(inspect_key(bare), bare);
+        }
+        for (key, shown) in [("$", "'$'"), ("$a", "'$a'"), ("1a", "'1a'"), ("é", "'é'")] {
+            assert_eq!(inspect_key(key), shown);
+        }
+        assert_eq!(inspect_key("a b"), "'a b'");
+        assert_eq!(inspect_key(""), "''");
+    }
 }
