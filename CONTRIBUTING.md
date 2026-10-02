@@ -42,10 +42,10 @@ The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
   those of the crates depending on it, the end-to-end tests when a change can affect compiled
   programs (or only the goldens you touched), the documentation tests for docs, clippy for Rust
   changes, and `cargo fmt`, clippy and the unit tests of `tests/difftest` (a crate outside the
-  workspace) when it changes. Changes to the build, the toolchain, CI or the scripts select everything. `cargo xtask
-  affected` prints the plan and why; the rules are in `crates/xtask/src/plan.rs`. Goldens run in
-  debug mode (`--golden-modes release` for the other); `--part` runs some parts (`lint`, `test`,
-  `golden`, comma-separated).
+  workspace) when it changes. Changes to the build, the toolchain, CI or the scripts select
+  everything. `cargo xtask affected` prints the plan and why; the rules are in
+  `crates/xtask/src/plan.rs`. Goldens run in debug mode (`--golden-modes release` for the other);
+  `--part` runs some parts (`lint`, `test`, `golden`, comma-separated).
 - **Everything**: `scripts/check-all.sh` or `pwsh scripts/check-all.ps1` (`--fast` / `-Fast`:
   goldens in debug mode only). The merge queue and `main` run it on Linux, Windows and macOS,
   so you need it locally only when you want that certainty before queueing. On Windows, `-Linux` also runs
