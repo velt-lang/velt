@@ -78,7 +78,8 @@ nothing; `null` means success).
 
 A closure created inside a recursive function that it calls, and a `catch` or promise whose
 error type depends on a function still being checked through recursion, may need a `throws`
-clause (``` the error type of this function is not known yet ```). Error types of interface and
+clause (``` the error type of this function is not known yet ```); when the recursion goes
+through an interface value, the `throws` clause goes on the interface method. Error types of interface and
 overridden methods cannot depend on type parameters.
 
 ## Example

@@ -1,0 +1,4 @@
+throws_recursive_interface.vlt:20:21: error: the error type here is not known yet: it is `DivZero`, found through a recursive call
+  = note: add a `throws` clause to interface method `Expr.eval` (`eval(): T throws DivZero;`)
+throws_recursive_interface.vlt:21:21: error: the error type here is not known yet: it is `DivZero`, found through a recursive call
+  = note: add a `throws` clause to interface method `Expr.eval` (`eval(): T throws DivZero;`)

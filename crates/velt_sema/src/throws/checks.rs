@@ -202,6 +202,25 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
         return;
     }
     let fs = fin.map_or("nothing".to_string(), |t| format!("`{}`", cx.display(t)));
+    // A call through an interface value: its error type is the interface method's.
+    let slot = c.srcs.iter().find_map(|s| match s {
+        ThrowSrc::Slot { iface, slot, .. } => {
+            let i = cx.iface(*iface)?;
+            let m = i.methods.get(*slot as usize)?;
+            Some((i.name.clone(), m.name.clone()))
+        }
+        _ => None,
+    });
+    let note = match slot {
+        Some((i, m)) => {
+            let e = fin.map_or("E".to_string(), |t| cx.display(t));
+            format!("add a `throws` clause to interface method `{i}.{m}` (`{m}(): T throws {e};`)")
+        }
+        None => {
+            "add a `throws` clause to the functions in the recursion (`function f(): T throws E`)"
+                .into()
+        }
+    };
     cx.error(
         Diagnostic::error(
             format!(
@@ -209,9 +228,7 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
             ),
             c.span,
         )
-        .with_note(
-            "add a `throws` clause to the functions in the recursion (`function f(): T throws E`)",
-        ),
+        .with_note(note),
     );
 }
 
