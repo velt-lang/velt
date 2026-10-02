@@ -53,12 +53,9 @@ fn share_a_package_through_the_registry_server() {
     assert!(velt(tmp.path(), &home_a, &["new", "greet", "--lib"])
         .status
         .success());
-    let manifest = std::fs::read_to_string(lib.join("velt.toml")).expect("manifest");
-    std::fs::write(
-        lib.join("velt.toml"),
-        format!("registry = \"{url}\"\n{manifest}"),
-    )
-    .expect("write");
+    let mut manifest = vpm::Manifest::from_dir(&lib).expect("manifest");
+    manifest.registry = Some(url.clone());
+    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).expect("write");
     let denied = velt(&lib, &home_a, &["publish"]);
     assert!(!denied.status.success());
     assert!(String::from_utf8_lossy(&denied.stderr).contains("VELT_REGISTRY_TOKEN"));
@@ -77,12 +74,9 @@ fn share_a_package_through_the_registry_server() {
 
     let app = tmp.path().join("app");
     assert!(velt(tmp.path(), &home_b, &["new", "app"]).status.success());
-    let manifest = std::fs::read_to_string(app.join("velt.toml")).expect("manifest");
-    std::fs::write(
-        app.join("velt.toml"),
-        format!("registry = \"{url}\"\n{manifest}"),
-    )
-    .expect("write");
+    let mut manifest = vpm::Manifest::from_dir(&app).expect("manifest");
+    manifest.registry = Some(url.clone());
+    std::fs::write(app.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).expect("write");
     let added = velt(&app, &home_b, &["add", "greet"]);
     assert!(
         added.status.success(),

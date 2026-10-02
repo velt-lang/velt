@@ -26,5 +26,5 @@ ids print `notes: <message>` and exit 2.
 | `tests/*.test.vlt` | `velt test` |
 | `demo.vlt` / `demo.out` | scripted session; a golden in `cargo test -p veltc --test golden` |
 
-Tests and the demo import the sources as `"@notes/commands"` through the `[paths]` alias
-`"@notes/*" = "src/*"` in `velt.toml`.
+Tests and the demo import the sources as `"@notes/commands"` through the `paths` alias
+`"@notes/*": "src/*"` in `package.vlt`.

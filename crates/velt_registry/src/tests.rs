@@ -11,9 +11,10 @@ use super::*;
 
 fn package(dir: &Path, name: &str, version: &str, deps: &str) {
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    let manifest =
-        format!("[package]\nname = \"{name}\"\nversion = \"{version}\"\n[dependencies]\n{deps}");
-    std::fs::write(dir.join("velt.toml"), manifest).unwrap();
+    let manifest = format!(
+        "export const pkg: Package = {{ name: \"{name}\", version: \"{version}\", dependencies: {{ {deps} }} }};"
+    );
+    std::fs::write(dir.join(vpm::manifest::MANIFEST_FILE), manifest).unwrap();
     std::fs::write(
         dir.join("src/lib.vlt"),
         format!("export const V: i64 = 1; // {version}\n"),
@@ -56,15 +57,12 @@ fn publish_and_install_over_http() {
     assert_eq!(index.versions[0], entry);
     assert_eq!(vpm::registry::read_index(&loc, "nope").unwrap(), None);
 
-    // An app on another "machine" (its own home/cache) names the registry in velt.toml.
+    // An app on another "machine" (its own home/cache) names the registry in package.vlt.
     let app = tmp.path().join("app");
-    package(&app, "app", "0.1.0", "lib = \"1\"\n");
-    let manifest = std::fs::read_to_string(app.join("velt.toml")).unwrap();
-    std::fs::write(
-        app.join("velt.toml"),
-        format!("registry = \"{url}\"\n{manifest}"),
-    )
-    .unwrap();
+    package(&app, "app", "0.1.0", "lib: \"1\"");
+    let mut manifest = vpm::Manifest::from_dir(&app).unwrap();
+    manifest.registry = Some(url.clone());
+    std::fs::write(app.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).unwrap();
     let other = Locations::under(&tmp.path().join("home2"));
     let installed = vpm::install(&app, &other, InstallOptions::default()).unwrap();
     let locked = installed.lockfile.get("lib").unwrap();
@@ -156,12 +154,13 @@ fn native_libraries_over_http() {
 
     let lib = tmp.path().join("n");
     package(&lib, "n", "1.0.0", "");
-    let manifest = std::fs::read_to_string(lib.join("velt.toml")).unwrap();
-    std::fs::write(
-        lib.join("velt.toml"),
-        format!("{manifest}\n[native]\ntargets = [\"{target}\"]\n"),
-    )
-    .unwrap();
+    let mut manifest = vpm::Manifest::from_dir(&lib).unwrap();
+    manifest.native = Some(vpm::manifest::NativeConfig {
+        path: vpm::manifest::DEFAULT_NATIVE_PATH.into(),
+        targets: vec![target.to_string()],
+        wasm: false,
+    });
+    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).unwrap();
     std::fs::create_dir_all(lib.join("native")).unwrap();
     std::fs::write(lib.join("native/Cargo.toml"), "").unwrap();
     std::fs::write(lib.join("native/Cargo.lock"), "").unwrap();
@@ -173,7 +172,7 @@ fn native_libraries_over_http() {
 
     // Another machine installs the prebuilt library.
     let app = tmp.path().join("app");
-    package(&app, "app", "0.1.0", "n = \"1\"\n");
+    package(&app, "app", "0.1.0", "n: \"1\"");
     let other = client(&tmp.path().join("home2"), &url);
     let opts = InstallOptions {
         target: Some(target.into()),

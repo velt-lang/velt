@@ -58,13 +58,13 @@ fn diagnostics() -> String {
     let tmp = tempfile::tempdir().unwrap();
     let (app, demo) = (tmp.path().join("app"), tmp.path().join("demo"));
     write(
-        &app.join("velt.toml"),
-        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        &app.join("package.vlt"),
+        "export const pkg: Package = { name: \"app\", version: \"0.1.0\" };",
     );
     write(&app.join("src/main.vlt"), MAIN);
     write(
-        &demo.join("velt.toml"),
-        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+        &demo.join("package.vlt"),
+        "export const pkg: Package = { name: \"demo\", version: \"0.1.0\" };",
     );
     write(&demo.join("src/lib.vlt"), LIB);
     write(&demo.join("src/real.vlt"), REAL);

@@ -15,7 +15,7 @@ helper), and explain it in your final report.
 | Link API | `crates/velt_link/src/lib.rs` (`link`, `find_runtime_lib`) | tooling → driver |
 | Runtime ABI | `docs/internals/contracts/rt_abi.md` + `rt_abi_async.md` | runtime ↔ IR lowering |
 | CLI | `docs/internals/contracts/cli.md` | tooling ↔ golden tests |
-| Manifest, lockfile, registry | `docs/internals/contracts/velt_toml.md` | vpm ↔ tooling, registries |
+| Manifest, lockfile, registry | `docs/internals/contracts/manifest.md` | vpm ↔ tooling, registries |
 | Native libraries of packages | `docs/internals/contracts/native_abi.md` + `crates/velt_native` | packages' Rust crates ↔ runtime, vpm, compiler |
 | Language semantics | `docs/reference/` + `tests/golden/**` | everyone |
 

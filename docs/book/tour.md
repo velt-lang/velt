@@ -236,8 +236,8 @@ export function describe(file: string): string {
 console.log(describe("/tmp/a.txt"));
 ```
 
-A folder is a module through its `index.vlt`, `import type` imports types only, and `[paths]`
-in `velt.toml` replaces long `../../` chains ([Modules and packages](packages.md)).
+A folder is a module through its `index.vlt`, `import type` imports types only, and `paths`
+in `package.vlt` replaces long `../../` chains ([Modules and packages](packages.md)).
 
 ## Where next
 

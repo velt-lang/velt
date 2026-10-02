@@ -84,7 +84,13 @@ fn files_to_format(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
         let cwd = std::env::current_dir()
             .map_err(|e| format!("cannot read the current directory: {e}"))?;
         let dir = match vpm::manifest::find_package_root(&cwd) {
-            Some(root) => root.join("src"),
+            Some(root) => {
+                let manifest = root.join(vpm::manifest::MANIFEST_FILE);
+                if manifest.is_file() {
+                    out.push(manifest);
+                }
+                root.join("src")
+            }
             None => cwd,
         };
         collect(&dir, &mut out)?;

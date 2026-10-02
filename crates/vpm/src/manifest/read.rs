@@ -26,12 +26,13 @@ use velt_common::{Diagnostic, Diagnostics, FileId, Span};
 use velt_syntax::ast::{self, ExprKind, ItemKind, Lit, ObjectProp, PatternKind, TypeExprKind};
 
 use super::{
-    check_dependency, check_dependency_name, check_import_source, check_name, check_registry,
-    check_version, default_entry, Dependency, DetailedDependency, JsxConfig, Manifest, Package,
+    check_dependency, check_dependency_name, check_entry, check_import_source, check_name,
+    check_registry, check_version, default_entry, Dependency, DetailedDependency, JsxConfig,
+    Manifest, Package,
 };
 
 /// File name of the manifest written in Velt.
-pub const PACKAGE_FILE: &str = "package.vlt";
+pub const PACKAGE_FILE: &str = super::MANIFEST_FILE;
 /// Largest manifest the reader parses (checked before parsing).
 pub const MAX_BYTES: usize = 64 * 1024;
 /// Most values (scalars, arrays, objects) one manifest may contain.
@@ -284,6 +285,7 @@ impl Reader<'_> {
                 }
                 "entry" => {
                     if let Some(s) = self.string(v, "entry") {
+                        self.check(check_entry(s), v.span);
                         manifest.package.entry = s.to_string();
                     }
                 }

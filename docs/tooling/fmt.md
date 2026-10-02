@@ -5,7 +5,7 @@ velt fmt [<file|dir>...] [--check]
 ```
 
 `velt fmt` formats Velt sources in place, with one style and no options, like `gofmt`. Without
-paths it formats the package's `src/`, or every `.vlt` file under the current directory outside
+paths it formats the package's `package.vlt` and `src/`, or every `.vlt` file under the current directory outside
 a package; `target/` and hidden directories are skipped.
 
 - `--check` writes nothing, lists the files that are not formatted, and exits with 1 if there
