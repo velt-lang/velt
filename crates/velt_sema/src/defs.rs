@@ -155,6 +155,10 @@ pub(crate) struct FnInfo<'m> {
     pub is_getter: bool,
     /// Closures: stored or returned (captures by move), as opposed to passed directly.
     pub escaping: bool,
+    /// Closures: the function values passed as parameters are always heap closures, so the
+    /// body may keep them (a share). Set for the executor of `new Promise`, whose `resolve`
+    /// and `reject` the prelude creates (docs/reference/functions.md "Captures").
+    pub keeps_fn_params: bool,
     /// Indices of params that are `Owned` only because the body reassigns them: a caller that
     /// uses the argument again passes a clone (`crate::ownership::mutation`).
     pub soft_params: Vec<usize>,

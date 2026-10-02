@@ -1,0 +1,2 @@
+panic: awaiting a promise whose resolve and reject were dropped without settling (created at 
+promises_new_abandoned.vlt:12:21)

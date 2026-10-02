@@ -20,17 +20,30 @@ use velt_common::{Diagnostic, Span};
 use super::infer::force_move;
 use crate::body::places::{is_place, set_place_mode};
 use crate::ctx::Ctx;
-use crate::hir::{Block, Callee, Def, DefId, Expr, ExprKind as E, PassMode, TyKind, UseMode};
+use crate::hir::{
+    Block, Callee, Def, DefId, Expr, ExprKind as E, LocalId, PassMode, TyKind, UseMode,
+};
 use crate::visit;
 
-/// Patch every call in `b`. Returns whether a use mode changed; errors are reported once per
-/// span (`reported`).
-pub(super) fn patch_calls(cx: &mut Ctx, b: &mut Block, reported: &mut HashSet<Span>) -> bool {
+/// Patch every call in `b`. `borrowed`: the body's borrowed function-typed params and captures
+/// (`fn_values::borrowed_fn_locals`). Returns whether a use mode changed; errors are reported
+/// once per span (`reported`).
+pub(super) fn patch_calls(
+    cx: &mut Ctx,
+    b: &mut Block,
+    borrowed: &HashSet<LocalId>,
+    reported: &mut HashSet<Span>,
+) -> bool {
     let mut changed = false;
     let mut errors = vec![];
     visit::exprs_mut(b, &mut |e: &mut Expr| {
         let (modes, args) = match &mut e.kind {
-            E::Call { callee, args } => (call_modes(cx, callee, args), args),
+            E::Call { callee, args } => {
+                if fixed_callee(cx, callee, args) {
+                    changed |= escape_literal_args(cx, args, borrowed);
+                }
+                (call_modes(cx, callee, args), args)
+            }
             E::New { def, args, .. } => match cx.adt(*def).and_then(|a| a.ctor) {
                 Some(c) => (Some(modes_of(cx, c)[1..].to_vec()), args),
                 None => return,
@@ -64,6 +77,37 @@ pub(super) fn patch_calls(cx: &mut Ctx, b: &mut Block, reported: &mut HashSet<Sp
         let at = d.labels.first().map(|l| l.span);
         if at.is_none_or(|s| reported.insert(s)) {
             cx.diags.push(d);
+        }
+    }
+    changed
+}
+
+/// Is the callee reached through a function value or a dynamically dispatched method? Its
+/// parameter modes are fixed (borrowed), whatever it does with an argument: a generic `T` it
+/// keeps may be instantiated with a function type.
+fn fixed_callee(cx: &Ctx, callee: &Callee, args: &[Expr]) -> bool {
+    match callee {
+        Callee::Indirect(_) => true,
+        Callee::Intrinsic(_) => false,
+        _ => matches!(call_target(cx, callee, args), Some(Target::Iface(..))),
+    }
+}
+
+/// A closure literal passed directly to a callee with fixed modes captures by value and owns a
+/// heap environment: the callee may keep it (functions.md "Captures"). Not one that forwards a
+/// borrowed function (captures one of `borrowed`), which could not keep that function: it stays
+/// in the caller's frame, as the callee's borrowed parameter. Returns whether a closure changed.
+fn escape_literal_args(cx: &mut Ctx, args: &[Expr], borrowed: &HashSet<LocalId>) -> bool {
+    let mut changed = false;
+    for a in args {
+        if let E::Closure(def) = a.kind {
+            let forwards = match &cx.defs[def.0 as usize] {
+                Some(Def::Fn(c)) => c.captures.iter().any(|cap| borrowed.contains(&cap.outer)),
+                _ => false,
+            };
+            if !forwards {
+                changed |= super::fn_values::escape_closure(cx, def);
+            }
         }
     }
     changed

@@ -30,6 +30,8 @@ struct TaskCx {
     /// reached from the task's poll uses it re-entrantly.
     set: *mut *mut LocalSet,
     waker: *const Waker,
+    /// The task's id for `velt_rt_task_id` (0 until first asked for).
+    id: *mut u64,
 }
 
 thread_local! {
@@ -62,13 +64,13 @@ impl Drop for Enter {
 }
 
 /// Owned pointer to a task's local set (null = none yet).
-struct SetPtr(*mut LocalSet);
+struct SetPtr(*mut LocalSet, u64);
 
 // SAFETY: the set moves with its task between workers and is only used by that task's polls.
 unsafe impl Send for SetPtr {}
 
 impl SetPtr {
-    const NONE: SetPtr = SetPtr(std::ptr::null_mut());
+    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0);
 
     /// Poll with this set current: drain its woken promises (resuming the task's root with
     /// `root` when a promise it awaits finishes), then poll the root once more if a promise ran
@@ -80,6 +82,7 @@ impl SetPtr {
         let tcx = TaskCx {
             set: &mut self.0,
             waker,
+            id: &mut self.1,
         };
         let _enter = Enter::new(&tcx);
         if !self.0.is_null() {
@@ -249,5 +252,28 @@ pub unsafe extern "C" fn velt_rt_futs_handled(
 ) {
     for i in 0..n as usize {
         node::mark_handled(*futs.add(i), quiet_drop);
+    }
+}
+
+/// A unique id of the task being polled (0 outside a task): assigned on first use from a global
+/// counter, never reused, and kept by the task's local promises when they outlive it (they stay
+/// on that one logical task). `new Promise` compares it to decide whether a resolved value stays
+/// on its task or must be copied for another one (stage 2: counted objects never cross tasks,
+/// docs/internals/design/semantics-stage2.md §6).
+#[no_mangle]
+pub extern "C" fn velt_rt_task_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let tcx = CURRENT.with(Cell::get);
+    if tcx.is_null() {
+        return 0;
+    }
+    // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`), and `id` points into the
+    // task's own `SetPtr`, which only this task's polls touch.
+    unsafe {
+        let id = &mut *(*tcx).id;
+        if *id == 0 {
+            *id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        *id
     }
 }

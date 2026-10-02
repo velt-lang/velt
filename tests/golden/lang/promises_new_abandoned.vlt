@@ -1,0 +1,13 @@
+// A promise whose `resolve` and `reject` are all dropped without settling never settles, like
+// in JS: it can lose a `Promise.race`. Awaiting it directly is reported, naming where it was
+// created, instead of waiting forever.
+async function fast(): Promise<i64> {
+  await sleep(5);
+  return 1;
+}
+
+async function main() {
+  const never = new Promise<i64>((resolve) => {});
+  console.log("race:", await Promise.race([never, fast()]));
+  console.log(await new Promise<i64>((resolve) => {}));
+}
