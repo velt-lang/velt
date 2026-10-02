@@ -34,6 +34,8 @@ mod ordering;
 mod promise_new;
 mod record;
 mod record_call;
+mod record_compound;
+mod record_literal;
 mod setters;
 mod spread;
 mod std_glue;

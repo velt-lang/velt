@@ -6,7 +6,8 @@
 //!    exports are visible everywhere), type shapes, signatures, vtables, interface impls.
 //! 2. [`body`]: module constants, defaults, then every function body: resolve names, type-check
 //!    bidirectionally (with type-argument inference) and desugar into HIR. Closures become
-//!    their own function defs.
+//!    their own function defs. [`instantiation_cycles`] then rejects generic recursion whose
+//!    type arguments grow (it would have infinitely many instantiations).
 //! 3. [`ownership`]: infer which params / receivers / bindings take ownership (fixpoint) and
 //!    patch call sites; string moves become soft (strings are values); reject moves out of
 //!    borrowed places.
@@ -38,6 +39,7 @@ mod flow;
 mod generic_arrows;
 pub mod ide;
 mod infer;
+mod instantiation_cycles;
 mod json;
 mod known;
 mod literals;
@@ -136,6 +138,11 @@ fn check_on_current_thread(
 fn analyze(cx: &mut ctx::Ctx) {
     collect::collect(cx);
     body::check_bodies(cx);
+    // Growing generic recursion has infinitely many instantiations: the passes below propagate
+    // requirements per instantiation and would never finish.
+    if instantiation_cycles::check(cx) {
+        return;
+    }
     ownership::infer_modes(cx);
     body::expr::jsx::check_prop_copies(cx);
     throws::infer_all(cx);

@@ -86,6 +86,17 @@ console.log(env.HOME ?? "/", Object.keys(env), limits);
 // /home/a [ 'HOME', 'PATH' ] { cpu: 3, mem: 512 }
 ```
 
+A key of a `Record<string, V>` may be missing, so counting needs a starting value:
+`r[k] += 1` is an error there, and `??` supplies it.
+
+```ts
+const seen: Record<string, i64> = {};
+for (const w of ["a", "b", "a"]) {
+  seen[w] = (seen[w] ?? 0) + 1;
+}
+console.log(seen); // { a: 2, b: 1 }
+```
+
 ## Nullable values
 
 On any `T | null`: `isNull()`, `unwrap()` (panics on `null`), `unwrapOr(fallback)`, and

@@ -137,7 +137,11 @@ fn delete_is_a_contextual_prefix_operator() {
     check("delete r[k]", "(delete ([] r k))");
     check("delete this.x", "(delete (. this x))");
     check("!delete r.a", "(! (delete (. r a)))");
+    // A parenthesized operand, as in TypeScript.
+    check("delete (r[\"a\"])", "(delete ([] r \"a\"))");
+    check("delete ((r.a))", "(delete (. r a))");
+    check("delete(x)", "(delete (paren x))");
     // Anywhere else `delete` is an ordinary name.
-    check("delete(x)", "(call delete [x])");
     check("delete + 1", "(+ delete 1)");
+    check("m.delete(k)", "(call (. m delete) [k])");
 }

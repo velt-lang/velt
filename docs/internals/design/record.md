@@ -38,7 +38,8 @@ needed.
 |---|---|---|
 | `r[k]` | `V \| null`: the key may be missing (TS `noUncheckedIndexedAccess`) | `V`: every key is always present |
 | `r.name` (an identifier key) | same as `r["name"]` | same, and only for members of `K` (a typo is an error); for a string enum, the member whose value is `"name"` |
-| `r[k] = v`, `r[k] += 1` | insert or replace | replace |
+| `r[k] = v` | insert or replace | replace |
+| `r[k] += 1`, `r[k]++` | an error: the key may be missing (fix-it `r[k] = (r[k] ?? 0) + 1`); `r[k] ??= v` sets a missing key | replace |
 | `k in r` | presence test (needs the `in` operator from #18) | always true; a warning |
 
 **Construction.** An object literal can be used wherever a `Record` is expected:
@@ -51,7 +52,10 @@ needed.
 **Iteration and helpers.** These follow TypeScript, in insertion order:
 
 - `Object.keys(r)`, `Object.values(r)` and `Object.entries(r)` return arrays.
-- `for (const [k, v] of Object.entries(r))`.
+- `for (const [k, v] of Object.entries(r))`. A record itself is not iterable (`for (const k of
+  r)` is an error suggesting `Object.keys(r)` / `Object.entries(r)`).
+- Given an object literal (`Object.keys({ a: 1 })`), they read it as a `Record<string, V>`
+  with `V` the first value's type, as TypeScript reads an object's keys as strings.
 
 They are prelude functions generic over `Record`. A record has no methods of its own, because in
 TypeScript `r.size` would read the key `"size"`.
@@ -97,3 +101,6 @@ methods are internal: calling one outside the prelude is an error.
 1. `r[k]` on a `string`-keyed record is `V | null` (sound); literal-key records give `V`.
 2. `delete r[k]` removes a key (only on `string`-keyed records).
 3. `r.name` is `r["name"]` on every record.
+4. Compound assignment (`r[k] += 1`, `r[k]++`, …) on an open record is an error with the fix-it
+   `r[k] = (r[k] ?? 0) + 1` (issue #230): reads stay honest, with no `NaN` from a missing key
+   as in JS. Closed records keep it.
