@@ -10,6 +10,19 @@
 export class Set<T> {
   private items: Map<T, bool> = new Map<T, bool>();
 
+  // A set holding each distinct element of `values` (like JS `new Set(values)`), in
+  // first-occurrence order. Takes ownership of the values.
+  constructor(values: T[] = []) {
+    values.reverse();
+    while (true) {
+      const v = values.pop();
+      if (v == null) {
+        return;
+      }
+      this.items.set(v, true);
+    }
+  }
+
   // A set holding each distinct element of `xs` (clones), in first-occurrence order.
   static from(xs: T[]): Set<T> {
     const s = new Set<T>();

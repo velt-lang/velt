@@ -24,9 +24,11 @@ impl FnCx<'_, '_> {
         if let Some(TyKind::Tuple(ts)) = exp.map(|t| self.cx.ty.kind(t).clone()) {
             return self.tuple_lit(elems, &ts, exp.expect("ICE: tuple"), span);
         }
-        let exp_elem = exp
-            .and_then(|t| self.cx.ty.array_elem(t))
-            .filter(|t| !self.cx.ty.has_error(*t));
+        let raw_elem = exp.and_then(|t| self.cx.ty.array_elem(t));
+        let exp_elem = raw_elem.filter(|t| !self.cx.ty.has_error(*t));
+        // A tuple element type that is only partly known (`[K, V][]` while inferring `K` and
+        // `V`) still says the elements are tuples: the first one is checked against it.
+        let tuple_shape = raw_elem.filter(|t| matches!(self.cx.ty.kind(*t), TyKind::Tuple(_)));
         if elems
             .iter()
             .any(|e| matches!(e.kind, ast::ExprKind::Spread(_)))
@@ -44,7 +46,7 @@ impl FnCx<'_, '_> {
             Some(e) => e,
             None => {
                 let first = elems.iter().position(|e| !untyped(e)).unwrap_or(0);
-                let h = self.expr(&elems[first], None, Want::Move);
+                let h = self.expr(&elems[first], tuple_shape, Want::Move);
                 // `[c.kind, "x"]` is a `string[]`: literal types widen for inference.
                 let t = self.cx.widened(h.ty);
                 out[first] = Some(h);
@@ -103,11 +105,30 @@ impl FnCx<'_, '_> {
             self.check_args_loose(elems);
             return self.error_expr(span);
         }
-        let hs = elems
-            .iter()
-            .zip(ts)
-            .map(|(e, t)| self.expr_coerce(e, *t, Want::Move))
-            .collect();
+        if !self.cx.ty.has_error(ty) {
+            let hs = elems
+                .iter()
+                .zip(ts)
+                .map(|(e, t)| self.expr_coerce(e, *t, Want::Move))
+                .collect();
+            return self.mk(H::Tuple(hs), ty, span);
+        }
+        // Partly known (an element type still being inferred): the unknown elements get the
+        // types they have on their own, widened like an array literal's.
+        let mut hs = vec![];
+        let mut tys = vec![];
+        for (e, &t) in elems.iter().zip(ts) {
+            let h = if self.cx.ty.has_error(t) {
+                let h = self.expr(e, None, Want::Move);
+                let w = self.cx.widened(h.ty);
+                self.coerce(h, w)
+            } else {
+                self.expr_coerce(e, t, Want::Move)
+            };
+            tys.push(h.ty);
+            hs.push(h);
+        }
+        let ty = self.cx.ty.intern(TyKind::Tuple(tys));
         self.mk(H::Tuple(hs), ty, span)
     }
 

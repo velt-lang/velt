@@ -1,0 +1,4 @@
+// The entries of `new Map(entries)` are `[key, value]` tuples.
+async function main() {
+  const m = new Map([1, 2]);
+}

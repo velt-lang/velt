@@ -319,7 +319,9 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   `n` elements in one allocation. A bare `new Array<T>(n)` is an error: arrays have no holes.
 - **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. `Promise.all` over tuples of
   different types is not supported.
-- **`Map<K, V>`**: `new Map<K, V>()`, `set`, `get(k): V | null` (the stored value itself, as in
+- **`Map<K, V>`**: `new Map<K, V>()`, `new Map(entries)` from an array of `[key, value]` tuples
+  (`new Map([["a", 1], ["b", 2]])`: the map takes them over, and a repeated key keeps its first
+  position and its last value, as in JS), `set`, `get(k): V | null` (the stored value itself, as in
   JS), `has`, `delete`, `size`, `keys()`, `values()`, `entries()`, `for (const [k, v] of m)`,
   plus single-lookup updates: `upsert(k, init, (v) => v + 1)`,
   `update(k, (v) => { v.push(x); }): bool` (the callback gets the stored value itself) and
@@ -365,4 +367,6 @@ for (const [word, n] of counts) {
   console.log(word, n);
 }
 console.log(moved, first, rest, [3, 1, 2].map((x) => x * 2).filter((x) => x > 2));
+const ports = new Map([["http", 80], ["https", 443]]); // Map<string, i64>
+console.log(ports.get("https")); // 443
 ```

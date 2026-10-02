@@ -73,7 +73,7 @@ instances (compared by identity), and structs, object types and tuples (compared
 
 | Member | Notes |
 |---|---|
-| `new Map<K, V>()`, `size`, `clear()` | |
+| `new Map<K, V>()`, `new Map(entries: [K, V][])`, `size`, `clear()` | `new Map(entries)` takes the entries over |
 | `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself, as in JS |
 | `upsert(k, init, (v) => v + 1)` | insert `init` or replace the value with the callback's result, in one lookup |
 | `update(k, (v) => { … }): bool` | modify the stored value in place; `false` when `k` is absent |

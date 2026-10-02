@@ -53,6 +53,21 @@ export class Map<K, V> {
   // 64 - log2(slots.length): home slot = p >> shift.
   private shift: u64 = 64;
 
+  // A map holding `entries` (like JS `new Map(entries)`), in order; a later entry with the same
+  // key replaces the value of an earlier one but keeps its position. Takes ownership of the
+  // entries.
+  constructor(entries: [K, V][] = []) {
+    entries.reverse();
+    while (true) {
+      const e = entries.pop();
+      if (e == null) {
+        return;
+      }
+      const [k, v] = e;
+      this.set(k, v);
+    }
+  }
+
   // Number of entries (like JS `Map.prototype.size`).
   get size(): usize {
     return this._size;
