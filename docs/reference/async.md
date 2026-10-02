@@ -44,6 +44,8 @@ Promises behave like JavaScript's, at Rust's cost:
   `{ status: "fulfilled"; value: T } | { status: "rejected"; reason: E }`.
 - `Promise.any(ps): Promise<T>`: the first to fulfill; `AggregateError` when all of them reject
   (or the array is empty).
+- `Promise.withResolvers<T, E>()`: a pending promise with its `resolve` and `reject`
+  ([below](#promisewithresolvers)).
 
 All promises in one call must have the same type. Like in JS, every promise passed to a
 combinator is *handled*: one that loses (or is left behind) and rejects later has its error
@@ -163,6 +165,51 @@ function after(ms: i64, ok: bool): Promise<string, Failed> {
 
 async function main() {
   console.log(await after(10, true)); // fine after 10 ms
+}
+```
+
+## `Promise.withResolvers`
+
+`Promise.withResolvers<T, E>()` (ES2024) returns a `PromiseWithResolvers<T, E>`:
+`{ promise: Promise<T, E>; resolve: (value: T) => void; reject: (reason: E) => void }`, a
+pending promise and the functions that settle it, without an executor. `T` and `E` come from
+the type arguments (`E` defaults to `never`: the promise cannot reject) or from the expected
+type.
+
+- `resolve` and `reject` work like a `new Promise` executor's: store them, move them into a
+  spawned task, or send them over a [channel](../std/channel.md) and call them there; the
+  awaiting task wakes. The first settlement wins and later calls do nothing.
+- A value settled from another task is copied, one settled on the promise's own task is the same
+  object, as for `new Promise`.
+- A promise whose `resolve` and `reject` are all dropped without settling never settles, like in
+  JS: it can lose a `Promise.race`, and awaiting it otherwise waits forever. A pending promise
+  keeps the process alive (#147).
+
+A one-shot reply to a request handled on another task, without a channel per request:
+
+```ts
+import { channel, Channel } from "velt:channel";
+
+type Request = { n: i64; reply: (value: i64) => void };
+
+async function doubler(requests: Channel<Request>) {
+  while (true) {
+    const r = await requests.receive();
+    if (r == null) {
+      return;
+    }
+    r.reply(r.n * 2);
+  }
+}
+
+async function main() {
+  const requests = channel<Request>();
+  const server = spawn(doubler(requests));
+  const { promise, resolve } = Promise.withResolvers<i64>();
+  await requests.send({ n: 21, reply: resolve });
+  console.log(await promise); // 42
+  requests.close();
+  await server;
 }
 ```
 

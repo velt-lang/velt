@@ -124,7 +124,8 @@ nest 128 levels deep unless `options.maxDepth` says otherwise.
 ## Async and concurrency
 
 `sleep(ms)`, `yieldNow()`, `spawn(p)`, `Promise.all`, `Promise.race`, `Promise.allSettled`
-(with `PromiseSettledResult<T, E>`), `Promise.any`, `shared(x)`, `Mutex<T>`,
+(with `PromiseSettledResult<T, E>`), `Promise.any`, `Promise.withResolvers` (with
+`PromiseWithResolvers<T, E>`), `shared(x)`, `Mutex<T>`,
 `performance.now()` and `Date.now()` ([Async](../reference/async.md)).
 
 ```ts

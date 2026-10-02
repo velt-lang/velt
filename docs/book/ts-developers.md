@@ -170,8 +170,8 @@ surprise ([Error handling](errors.md)).
 - A promise's type carries its error type: `Promise<T, E>`.
 - Promises have no `then`, `catch` or `finally`: `await` them, inside `try`/`catch`/`finally`
   to handle their errors. *Why*: one way to sequence async code, and errors stay typed.
-- `new Promise((resolve, reject) => …)` works as in JS; `resolve` and `reject` may be kept and
-  called later from any task. No global `setTimeout` (use
+- `new Promise((resolve, reject) => …)` and `Promise.withResolvers()` work as in JS; `resolve`
+  and `reject` may be kept and called later from any task. No global `setTimeout` (use
   `sleep(ms)` or [`velt:timers`](../std/timers.md)), no `for await`, no async generators.
 
 ## Memory

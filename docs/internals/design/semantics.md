@@ -147,7 +147,9 @@ must also prove it is awaited before every exit.
 slot in `shared<Mutex<…>>` plus a runtime latch. `resolve`/`reject` are heap closures over it,
 and sema lets a literal executor keep them (`FnInfo::keeps_fn_params`). A guard both hold
 marks a promise abandoned unsettled: it never settles, and a direct `await` of it is reported
-with the `new Promise` site (`Intrinsic::SourceLocation`).
+with the `new Promise` site (`Intrinsic::SourceLocation`). `Promise.withResolvers<T, E>()` is
+the prelude's `promiseWithResolvers`: the same slot, with `resolve` and `reject` returned as
+fields instead of passed to an executor.
 
 ## JS fidelity decisions
 

@@ -19,7 +19,7 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `Error` | base class of thrown errors: `class Error { message: string }` |
 | `Comparable<T>` | ordering interface ([Comparable](classes.md#comparable)) |
 | `Map<K, V>` | insertion-ordered hash map ([Types](types.md#objects-arrays-tuples-and-maps)) |
-| `sleep(ms)`, `yieldNow()`, `spawn(p)`, `Promise.all/race/allSettled/any` | async ([Async](async.md)) |
+| `sleep(ms)`, `yieldNow()`, `spawn(p)`, `Promise.all/race/allSettled/any/withResolvers` | async ([Async](async.md)) |
 | `shared(x)`, `shared<T>`, `Mutex<T>` | thread-safe shared state ([Async](async.md#thread-safety)) |
 | `performance.now(): f64`, `Date.now(): i64` | monotonic and wall-clock milliseconds |
 | `Symbol.dispose`, `Symbol.asyncDispose` | cleanup method names ([Memory model](memory.md#resource-cleanup-using-and-symboldispose)) |

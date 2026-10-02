@@ -78,6 +78,7 @@ Maintainer-owned, like hir.rs.
   `promiseNew` (or `promiseNewResolveOnly`) with two more arguments: the compiler-internal
   `Intrinsic::SourceLocation` (no arguments; lowered to the `"path:line:col"` string of its
   span) and a `bool` literal, true when the `new Promise` is the direct operand of `Await`.
+  `Promise.withResolvers<T, E>()` is `Call { Def(promiseWithResolvers, [T, E]) }`.
 - A promise used where a promise type with a wider error type is expected (`Promise<T>` or
   `Promise<T, E1>` where `Promise<T, E2>` is expected, every error of `E1` allowed by `E2`) is
   `Call { Intrinsic(PromiseWiden), [p] }`, `p` owned, typed as the expected promise type. The
