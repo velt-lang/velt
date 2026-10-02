@@ -101,6 +101,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let base = proj(&envp, Proj::Deref(Ty::Agg(ea)));
         self.assign(proj(&base, Proj::Field(0)), Rvalue::Use(drop_fn));
         self.assign(proj(&base, Proj::Field(1)), Rvalue::Use(clone_fn));
+        self.note_closure_reach(f);
         for (k, c) in f.captures.iter().enumerate() {
             let Some(outer) = self.local_target(c.outer) else {
                 continue;
@@ -136,6 +137,24 @@ impl<'c, 'h> FnLower<'c, 'h> {
             if c.mode == PassMode::Owned && !c.share {
                 self.mark_moved(c.outer);
             }
+        }
+    }
+
+    /// Record (boxing/) whether a closure created here can reach a counted object through its
+    /// captures (a shared cell, or a value of a type that can): only then are function values
+    /// deep-copied when they cross to another thread (transfer.rs).
+    fn note_closure_reach(&mut self, f: &FnDef) {
+        if self.cx.boxing.fn_values {
+            return;
+        }
+        let reaches = f.captures.iter().any(|c| {
+            let local = &f.body.locals[c.inner.0 as usize];
+            let borrowed = matches!(c.mode, PassMode::Borrow | PassMode::BorrowMut);
+            let ty = self.sub(local.ty);
+            (local.boxed && !borrowed) || self.cx.holds_counted(ty)
+        });
+        if reaches {
+            self.cx.facts.fn_values = true;
         }
     }
 

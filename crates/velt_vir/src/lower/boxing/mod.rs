@@ -29,6 +29,10 @@ pub(super) struct Boxing {
     /// Types of values borrowed in place inside a counted object: a pointer to one may have
     /// other owners, so params of these types are never `noalias`.
     interior: HashSet<TyId>,
+    /// Some closure the program creates can reach a counted object through its captures, so a
+    /// function or closure value may (transfer.rs). Otherwise function values move to another
+    /// thread like unique values.
+    pub(super) fn_values: bool,
 }
 
 /// What a lowering pass observed (see the module docs).
@@ -43,6 +47,8 @@ pub(super) struct Facts {
     /// A share was lowered as a placeholder because its type was not counted yet: the output
     /// of this pass must not be used.
     pub(super) unmet: bool,
+    /// A closure created in this pass reaches a counted object (`Boxing::fn_values`).
+    pub(super) fn_values: bool,
 }
 
 impl Cx<'_> {
@@ -88,6 +94,7 @@ impl Cx<'_> {
     /// The counted types implied by this pass's facts (a superset of the current ones).
     pub(super) fn close_boxing(&mut self) -> Boxing {
         let mut next = self.boxing.clone();
+        next.fn_values |= self.facts.fn_values;
         let mut work: Vec<TyId> = self.facts.shares.iter().copied().collect();
         let mut seen = HashSet::new();
         loop {

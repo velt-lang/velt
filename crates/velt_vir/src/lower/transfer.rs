@@ -28,8 +28,12 @@ impl Cx<'_> {
             return true;
         }
         let parts = match self.kind(t) {
-            // The implementor (or the captures) behind it may be any type.
-            TyKind::Dyn(..) | TyKind::Closure(_) | TyKind::FnPtr { .. } => return true,
+            // The implementor behind it may be any type.
+            TyKind::Dyn(..) => return true,
+            // The captures behind it may be any closure's (boxing/: `fn_values`). A program
+            // whose closures capture only unique values moves function values, so a captured
+            // object with a `[Symbol.dispose]()` is not copied (and disposed twice).
+            TyKind::Closure(_) | TyKind::FnPtr { .. } => return self.boxing.fn_values,
             TyKind::Array(e) | TyKind::Shared(e) => vec![e],
             TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
             _ => self.part_types(t),
