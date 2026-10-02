@@ -9,7 +9,7 @@ inputs:
     default: "true"
   save-cache:
     description: >-
-      Save the build cache. Only the pushes to main do (`cache` job in ci.yml): caches saved
+      Save the build cache. Only the pushes to main do (`main` job in ci.yml): caches saved
       by a pull request or merge queue run can't be restored by any other branch.
     default: "false"
 runs:
@@ -35,6 +35,7 @@ runs:
         workspaces: ${{ env.DEV_DRIVE_WORKSPACE || '.' }}
         shared-key: gate
         save-if: ${{ inputs.save-cache == 'true' }}
+        cache-on-failure: true
     - uses: taiki-e/install-action@v2
       with:
         tool: cargo-nextest

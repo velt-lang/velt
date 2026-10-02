@@ -9,35 +9,59 @@ use crate::doctests;
 use crate::graph::Graph;
 use crate::plan::{Goldens, Plan};
 
+/// The parts of the gate to run: `all`, or a comma-separated list of `lint` (`cargo fmt`,
+/// clippy), `test` (build, unit and integration tests, doctests, `velt fmt --check`, smoke
+/// test) and `golden` (the end-to-end goldens).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Part {
-    All,
-    /// `cargo fmt` and clippy.
+pub struct Parts {
+    lint: bool,
+    test: bool,
+    golden: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Part {
     Lint,
-    /// Build, unit and integration tests, doctests, `velt fmt --check`, smoke test.
     Test,
-    /// The end-to-end goldens.
     Golden,
 }
 
-impl Part {
-    pub fn parse(s: &str) -> Option<Part> {
-        Some(match s {
-            "all" => Part::All,
-            "lint" => Part::Lint,
-            "test" => Part::Test,
-            "golden" => Part::Golden,
-            _ => return None,
-        })
+impl Parts {
+    pub fn parse(s: &str) -> Option<Parts> {
+        if s == "all" {
+            return Some(Parts {
+                lint: true,
+                test: true,
+                golden: true,
+            });
+        }
+        let mut parts = Parts {
+            lint: false,
+            test: false,
+            golden: false,
+        };
+        for name in s.split(',').map(str::trim) {
+            match name {
+                "lint" => parts.lint = true,
+                "test" => parts.test = true,
+                "golden" => parts.golden = true,
+                _ => return None,
+            }
+        }
+        Some(parts)
     }
 
     fn has(self, part: Part) -> bool {
-        self == Part::All || self == part
+        match part {
+            Part::Lint => self.lint,
+            Part::Test => self.test,
+            Part::Golden => self.golden,
+        }
     }
 }
 
 pub struct Options {
-    pub part: Part,
+    pub parts: Parts,
     /// `VELT_GOLDEN_MODES`: `debug`, `release`, or both (`None`).
     pub golden_modes: Option<String>,
     pub smoke: bool,
@@ -62,7 +86,7 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
     // the tests only build `xtask`'s check data and test harness, not the binary.
     let mut build_ws = ws.clone();
     build_ws.extend(["--exclude".into(), "xtask".into()]);
-    let part = opts.part;
+    let part = opts.parts;
     if part.has(Part::Lint) {
         gate.step(
             "cargo fmt --check",

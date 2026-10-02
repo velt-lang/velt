@@ -239,3 +239,49 @@ fn the_rules_name_what_exists_in_this_repository() {
         assert!(file.exists(), "no test binary {}", file.display());
     }
 }
+
+#[test]
+fn os_specific_changes_check_windows_and_macos_in_the_queue() {
+    for path in [
+        "crates/velt_rt/src/http.rs",
+        "crates/veltc/src/main.rs",
+        "std/fs.vlt",
+        "tests/golden/lang/foo.out",
+        "Cargo.lock",
+        ".github/workflows/ci.yml",
+    ] {
+        assert!(plan(&[path]).other_os.is_some(), "{path}");
+    }
+    // A crate the rules don't know counts as OS-specific.
+    let unknown = Graph::from_manifests(&[(
+        "velt_new".to_string(),
+        "[package]\nname = \"velt_new\"\n".to_string(),
+    )]);
+    let paths = vec!["crates/velt_new/src/lib.rs".to_string()];
+    assert!(Plan::for_paths(&unknown, &paths).other_os.is_some());
+}
+
+#[test]
+fn portable_changes_check_linux_only() {
+    for path in [
+        "crates/velt_sema/src/check.rs",
+        "crates/velt_lsp/src/hover.rs",
+        "crates/velt_fmt/src/jsx.rs",
+        "docs/reference/types.md",
+        "CONTRIBUTING.md",
+    ] {
+        assert_eq!(plan(&[path]).other_os, None, "{path}");
+    }
+}
+
+#[test]
+fn the_portable_crates_exist() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let graph = Graph::load(&root).unwrap();
+    for name in crate::os::PORTABLE_CRATES {
+        assert!(
+            graph.deps.contains_key(*name),
+            "no crate `{name}` in crates/"
+        );
+    }
+}

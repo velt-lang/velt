@@ -3,10 +3,15 @@
 # unit and integration tests) and golden (end-to-end, debug mode). The label `ci:full` makes them
 # check everything (add it before pushing, or close and reopen the pull request).
 #
-# The merge queue checks everything on Linux, Windows and macOS against the pull request merged
-# with the latest main, with the parts as parallel jobs. The single required check is `ci`, which
-# summarizes whichever jobs ran. Pushes to main only refresh the build cache every other run
-# restores (a cache saved on a pull request or queue branch can't be restored anywhere else).
+# The merge queue checks everything against the pull request merged with the latest main, as two
+# jobs per OS (lint and tests; goldens in debug and release mode). Linux always; Windows and macOS
+# when the change touches OS-specific code (crates/xtask/src/os.rs). The single required check is
+# `ci`, which summarizes whichever jobs ran.
+#
+# Each push to main checks everything on Windows and macOS (opening an issue when that fails),
+# which covers the changes the queue checked on Linux only, and refreshes the build cache every
+# other run restores (a cache saved on a pull request or queue branch can't be restored anywhere
+# else).
 name: ci
 
 on:
@@ -47,69 +52,111 @@ jobs:
           cargo xtask check --part ${{ matrix.part }} --fast --base HEAD^1
           ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && '--full' || '' }}
 
-  full:
+  # Which OSes the queue checks. xtask has no dependencies, so the runner's stable Rust builds
+  # it in seconds (no pinned toolchain, no cache).
+  queue-plan:
     if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      os: ${{ steps.plan.outputs.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: plan
+        env:
+          RUSTUP_TOOLCHAIN: stable
+          BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          if [ -n "$BASE" ]; then
+            cargo xtask affected --base "$BASE" --github
+          else
+            cargo xtask affected --full --github
+          fi
+
+  queue:
+    needs: queue-plan
     name: ${{ matrix.part }} (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        part: [lint, test, golden-debug, golden-release]
+        os: ${{ fromJSON(needs.queue-plan.outputs.os) }}
+        part: [check, golden]
         include:
-          - part: lint
-            args: --part lint
-          - part: test
-            args: --part test
-          - part: golden-debug
-            args: --part golden --golden-modes debug
-          - part: golden-release
-            args: --part golden --golden-modes release
+          - part: check
+            args: --part lint,test
+          - part: golden
+            args: --part golden
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
-        with:
-          tools: ${{ matrix.part != 'lint' }}
       - name: cargo xtask check --full ${{ matrix.args }}
         shell: bash
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         run: cargo xtask check --full ${{ matrix.args }}
 
-  # The build cache for the runs above: main's dependencies, built and linted the way the gate
-  # builds them (crates/xtask/src/check.rs), plus the WebAssembly runtime the tests build.
-  cache:
+  # After each push to main: the whole gate on Windows and macOS (the queue may have checked the
+  # change on Linux only), and on all three OSes the build cache, saved even when a check fails.
+  main:
     if: github.event_name == 'push'
-    name: cache (${{ matrix.os }})
+    name: main (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
         with:
-          tools: "false"
+          tools: ${{ matrix.os != 'ubuntu-latest' }}
           save-cache: "true"
-      - name: build and lint like the gate
-        shell: bash
-        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+      # Linux: the queue checked it in full, so only build and lint what the gate builds, plus the
+      # WebAssembly runtime the tests build.
+      - name: build the cache (Linux)
+        if: runner.os == 'Linux'
         run: |
           cargo build --workspace --exclude xtask --all-targets
           cargo clippy --workspace --all-targets
           cargo build -p velt_rt_wasm --target wasm32-wasip1
           cargo build -p velt_rt_wasm --target wasm32-unknown-unknown
           cargo build -p xtask
+      - name: cargo xtask check --full
+        if: runner.os != 'Linux'
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: cargo xtask check --full
+      - name: report the failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const os = '${{ runner.os }}';
+            const title = `main fails on ${os}`;
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = `The gate failed on ${os} after ${context.sha.slice(0, 7)}: ${run}`;
+            const open = await github.rest.issues.listForRepo({ ...context.repo, state: 'open', per_page: 100 });
+            const existing = open.data.find(i => i.title === title && !i.pull_request);
+            if (existing) {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body });
+            } else {
+              await github.rest.issues.create({ ...context.repo, title, body });
+            }
 
   ci:
     if: always()
-    needs: [pr, full]
+    needs: [pr, queue-plan, queue]
     runs-on: ubuntu-latest
     steps:
       - name: every gate that ran passed
         run: |
-          for r in "${{ needs.pr.result }}" "${{ needs.full.result }}"; do
+          for r in "${{ needs.pr.result }}" "${{ needs.queue-plan.result }}" "${{ needs.queue.result }}"; do
             case "$r" in success|skipped) ;; *) echo "a gate failed: $r"; exit 1 ;; esac
           done

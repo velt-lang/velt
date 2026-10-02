@@ -74,13 +74,16 @@ review.
 
 - `main` only changes through pull requests. Required check: `ci` (on the pull request, the
   checks its changes need: `cargo xtask check`, rules in `crates/xtask/src/plan.rs`; the label
-  `ci:full` selects everything). The **merge queue** runs the whole gate on Linux, Windows and
-  macOS against the pull request merged with the latest `main`, then squash-merges. Enable it with `gh pr merge <n>
+  `ci:full` selects everything). The **merge queue** runs the whole gate against the pull request
+  merged with the latest `main`, then squash-merges: two jobs per OS, Linux always, Windows and
+  macOS when the change touches OS-specific code (`crates/xtask/src/os.rs`). Enable it with `gh pr merge <n>
   --auto` once the review is approved.
 - Before queueing, strip any generated footer from the description: it becomes the commit message.
 - A nightly workflow runs the whole gate with PostgreSQL and Redis; fix failures first.
-- Each push to `main` refreshes the build cache (the `cache` jobs in `ci.yml`) on all three OSes:
-  pull request and merge queue runs restore it but never save their own.
+- Each push to `main` (the `main` jobs in `ci.yml`) runs the whole gate on Windows and macOS,
+  which covers the changes the queue checked on Linux only, and opens or updates the issue
+  "main fails on <OS>" when that fails; fix it first. The same jobs refresh the build cache on
+  all three OSes: pull request and merge queue runs restore it but never save their own.
 - A check the selection missed shows up in the merge queue; tighten the rule in
   `crates/xtask/src/plan.rs` (with a test in `plan_tests.rs`) rather than adding `ci:full`
   habitually.

@@ -12,12 +12,13 @@ mod changes;
 mod check;
 mod doctests;
 mod graph;
+mod os;
 mod plan;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use check::{Options, Part};
+use check::{Options, Parts};
 use graph::Graph;
 use plan::Plan;
 
@@ -33,8 +34,8 @@ Options:
   --full               Check everything (the merge queue and nightly run this)
   --base <rev>         Compare with this revision (default: origin/main, else main)
   --paths <p>...       Plan for these paths instead of the git changes (with `affected`)
-  --part <part>        all (default), lint (fmt + clippy), test (build, tests, velt fmt,
-                       smoke) or golden (end-to-end goldens)
+  --part <parts>       all (default), or a comma-separated list of: lint (fmt + clippy),
+                       test (build, tests, velt fmt, smoke), golden (end-to-end goldens)
   --fast               Goldens in debug mode only, no smoke test
   --golden-modes <m>   debug or release (default: both, or debug with --fast)
   --no-smoke           Skip the smoke test (it runs only with --full, on Linux and macOS)
@@ -103,7 +104,7 @@ fn run() -> Result<(), String> {
             print!("{}", plan.describe());
             let part = args.part.as_deref().unwrap_or("all");
             let opts = Options {
-                part: Part::parse(part).ok_or(format!("unknown part `{part}`"))?,
+                parts: Parts::parse(part).ok_or(format!("unknown part `{part}`"))?,
                 golden_modes: args
                     .golden_modes
                     .clone()
@@ -169,8 +170,13 @@ fn github_outputs(plan: &Plan) -> Result<(), String> {
             .map_err(|e| format!("{var}: {e}"))
     };
     let flag = |b: bool| if b { "true" } else { "false" };
+    let os = if plan.other_os.is_some() {
+        r#"["ubuntu-latest","windows-latest","macos-latest"]"#
+    } else {
+        r#"["ubuntu-latest"]"#
+    };
     let outputs = format!(
-        "full={}\nlint={}\ntest={}\ngolden={}\n",
+        "full={}\nlint={}\ntest={}\ngolden={}\nos={os}\n",
         flag(plan.full),
         "true",
         flag(plan.needs_build()),

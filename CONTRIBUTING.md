@@ -43,10 +43,11 @@ The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
   programs (or only the goldens you touched), the documentation tests for docs, clippy for Rust
   changes. Changes to the build, the toolchain, CI or the scripts select everything. `cargo xtask
   affected` prints the plan and why; the rules are in `crates/xtask/src/plan.rs`. Goldens run in
-  debug mode (`--golden-modes release` for the other), `--part lint|test|golden` runs one part.
+  debug mode (`--golden-modes release` for the other); `--part` runs some parts (`lint`, `test`,
+  `golden`, comma-separated).
 - **Everything**: `scripts/check-all.sh` or `pwsh scripts/check-all.ps1` (`--fast` / `-Fast`:
-  goldens in debug mode only). The merge queue runs it on Linux, Windows and macOS, so you need
-  it locally only when you want that certainty before queueing. On Windows, `-Linux` also runs
+  goldens in debug mode only). The merge queue and `main` run it on Linux, Windows and macOS,
+  so you need it locally only when you want that certainty before queueing. On Windows, `-Linux` also runs
   the gate in WSL; `scripts/linux-check.sh` runs it in Docker from macOS or Linux (`--services`
   starts PostgreSQL and Redis so the database tests run).
 
@@ -169,9 +170,12 @@ Reference the issue it resolves (`Closes #123`) and say which gate you ran.
 - **CI**: every pull request runs the checks its changes need (as `scripts/check.sh` selects
   them) on Linux, as three parallel jobs: lint, test and golden. The label `ci:full` makes them
   check everything (add it before pushing, or close and reopen the pull request). When a pull
-  request is ready, add it to the **merge queue**: the queue runs the whole gate on Linux,
-  Windows and macOS against the pull request merged with the latest `main`, and merges it when
-  all pass. A nightly run adds PostgreSQL and Redis so the database tests run too.
+  request is ready, add it to the **merge queue**: the queue runs the whole gate against the pull
+  request merged with the latest `main`, and merges it when it passes. It checks Linux, plus
+  Windows and macOS when the change touches OS-specific code (the runtime, code generation and
+  linking, `veltc`, `vpm`, the standard library, goldens; `cargo xtask affected` says which).
+  Every push to `main` then runs the whole gate on Windows and macOS and opens an issue when it
+  fails. A nightly run adds PostgreSQL and Redis so the database tests run too.
 - Pull requests are **squash-merged**: the pull request **title and description become the commit
   message** on `main` (`sema: infer throws through closures in recursive functions`). Keep the
   description to what changed, why, and how it was tested: no tool-generated footers, session

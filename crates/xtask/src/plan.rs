@@ -1,12 +1,14 @@
 //! Which checks a change needs, from the files it touches.
 //!
 //! The rules are conservative: a path they don't know, the build configuration, CI and the
-//! tooling itself select everything. The merge queue and the nightly run always check
-//! everything, so a rule that selects too little is caught before `main`, never after.
+//! tooling itself select everything. The merge queue always checks everything (on Linux, and on
+//! Windows and macOS when crates/xtask/src/os.rs says so), so a rule that selects too little is
+//! caught before `main`, never after.
 
 use std::collections::BTreeSet;
 
 use crate::graph::Graph;
+use crate::os;
 
 /// Crates whose change can change what any compiled Velt program does: every end-to-end test
 /// runs. (A crate not listed here or in [`TOOLING`] is treated like these.)
@@ -141,13 +143,18 @@ pub struct Plan {
     pub goldens: Goldens,
     /// `velt fmt --check std examples`.
     pub vlt_fmt: bool,
+    /// Why the merge queue checks Windows and macOS too; `None`: Linux is enough
+    /// (crates/xtask/src/os.rs).
+    pub other_os: Option<String>,
 }
 
 impl Plan {
     pub fn everything(reason: impl Into<String>) -> Plan {
+        let reason = reason.into();
         Plan {
             full: true,
-            reasons: vec![reason.into()],
+            other_os: Some(reason.clone()),
+            reasons: vec![reason],
             rust: true,
             packages: BTreeSet::new(),
             all_tests: true,
@@ -160,6 +167,7 @@ impl Plan {
     fn nothing() -> Plan {
         Plan {
             full: false,
+            other_os: None,
             reasons: vec![],
             rust: false,
             packages: BTreeSet::new(),
@@ -203,6 +211,7 @@ impl Plan {
             }
         }
         plan.add_crates(graph, &changed_crates);
+        plan.other_os = os::other_os_reason(graph, paths, plan.full);
         plan
     }
 
@@ -353,6 +362,11 @@ impl Plan {
             "  velt fmt --check std examples: {}\n",
             yes(self.vlt_fmt)
         ));
+        let os = match &self.other_os {
+            Some(reason) => format!("Linux, Windows, macOS ({reason})"),
+            None => "Linux (Windows and macOS after merging, on main)".into(),
+        };
+        out.push_str(&format!("  merge queue OSes: {os}\n"));
         out
     }
 }
