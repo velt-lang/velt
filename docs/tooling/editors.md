@@ -22,9 +22,14 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
   attributes (the attribute's or prop's declaration and type).
 - **Signature help** while typing call arguments.
 - **Inlay hints**: inferred types of `const` / `let` / `for...of` bindings and parameter names at
-  call sites.
+  call sites. On declarations, what inference decided ([memory model](../reference/memory.md#mutation-is-inferred),
+  [errors](../reference/errors.md)): `throws E` after a function without a `throws` clause that
+  can throw, `modifies this` after the parameters of a method that modifies its receiver, and
+  `modified` before each parameter whose contents the function modifies.
 - **Semantic highlighting**: types, functions, methods, parameters, properties and enum members;
-  `let` bindings carry a `mutable` modifier you can style.
+  `let` bindings carry a `mutable` modifier, and calls of functions and methods declared in
+  Velt source that modify their receiver or an argument a `mutating` modifier (built-in methods
+  such as `push` are not marked), which you can style.
 - **Quick fixes** for compiler errors: remove `mut`, replace `undefined` with `null`, turn
   `"a" + n` into a template literal, turn `if (count)` into `if (count !== 0)` (or `!== ""`,
   `!== null`, `!== 0.0`, by type), replace `export default` with a named export, and add `await`

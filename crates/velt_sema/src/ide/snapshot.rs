@@ -9,7 +9,7 @@ use velt_common::{FileId, Span};
 use super::defref::{Builder, DefRef};
 use super::display::Names;
 use super::record::{Recorder, Target};
-use super::{members, Analysis};
+use super::{effects, members, Analysis};
 use crate::ctx::{Ctx, Item};
 use crate::defs::{DefInfo, FnKind};
 use crate::hir::{DefId, TyKind};
@@ -62,6 +62,7 @@ pub(super) fn build(mut cx: Ctx) -> Analysis {
     let def_types = def_types(&cx, &rec, no_generics);
     let jsx_tags = jsx_tags(&cx, &names, &mut resolve);
     let members = raw_members.finish(&b);
+    let effects = effects::capture(&cx, &names, &rec.closures);
     let Recorder { types, params, .. } = rec;
     Analysis {
         diagnostics: std::mem::take(&mut cx.diags),
@@ -75,6 +76,7 @@ pub(super) fn build(mut cx: Ctx) -> Analysis {
         files,
         def_types,
         jsx_tags,
+        effects,
         names,
         members,
     }
