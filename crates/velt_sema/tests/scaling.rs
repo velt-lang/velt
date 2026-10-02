@@ -62,13 +62,14 @@ fn sema_cost(loaded: &Loaded) -> u64 {
 /// size alike instead of one of them.
 fn assert_linear(sizes: &[usize], chain: impl Fn(usize) -> usize, slack: f64) {
     const ROUNDS: usize = 7;
+    // Before loading: parsing the programs is work on the process's clock too.
+    let _serial = serial();
     let mut programs = vec![load_src("function main() {}")];
     programs.extend(
         sizes
             .iter()
             .map(|&n| load_src(&generated_program(n, chain(n)))),
     );
-    let _serial = serial();
     let mut best = vec![u64::MAX; programs.len()];
     for _ in 0..ROUNDS {
         for (b, p) in best.iter_mut().zip(&programs) {
