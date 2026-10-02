@@ -39,8 +39,9 @@ const BUILTINS: &[&str] = &[
     "Map",
 ];
 
-/// Completion items at byte `offset` of the document.
-pub fn complete(analysis: &Analysis, offset: u32) -> Vec<CompletionItem> {
+/// Completion items at byte `offset` of the document; with `jsx_only` (completion triggered by
+/// `<`), nothing outside JSX.
+pub fn complete(analysis: &Analysis, offset: u32, jsx_only: bool) -> Vec<CompletionItem> {
     let text = analysis.text();
     let offset = (offset as usize).min(text.len());
     let word_start = text[..offset]
@@ -52,6 +53,9 @@ pub fn complete(analysis: &Analysis, offset: u32) -> Vec<CompletionItem> {
     let at = word_start as u32;
     if let Some(ctx) = jsx_completion::context(text, word_start) {
         return jsx_completion::items(analysis, &ctx, at);
+    }
+    if jsx_only {
+        return vec![];
     }
     if let Some(receiver) = receiver_before(&text[..word_start]) {
         if let Some(items) = sema_query::member_items(analysis, receiver, at) {

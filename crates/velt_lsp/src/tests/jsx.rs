@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use super::client::{at, pos_of, uri, Client};
 
-const RUNTIME: &str = r#"export class Element {
+pub(super) const RUNTIME: &str = r#"export class Element {
   html: string;
   constructor(html: string) {
     this.html = html;
@@ -17,6 +17,7 @@ export type AttrValue = string | bool | null;
 export type IntrinsicElements = {
   a: { href?: string; title?: string };
   div: { class?: string; id?: string };
+  h1: { class?: string };
   dialog: { open?: bool };
 };
 export function jsx(
@@ -44,26 +45,37 @@ export function jsxComponent<P>(
 const PAGE: &str = r#"// @jsxImportSource ./jsx_ui
 type CardProps = { title: string; subtitle?: string };
 
-function Card(props: CardProps): Element {
+function Card(props: CardProps): JSX.Element {
   return <div class="card">{props.title}</div>;
 }
 
-function page(): Element {
+function page(): JSX.Element {
   return <div id="main"><Card title="Hello" /><a href="/x">x</a></div>;
 }
 "#;
 
-/// A client with the runtime and `page.vlt` (returned URI) open.
-fn open(page: &str) -> (Client, Url) {
+/// Components in another module, imported by name and as a namespace.
+pub(super) const CARDS: &str = r#"import { Element } from "./jsx_ui/jsx-runtime";
+
+export type CardProps = { title: string; tone?: string };
+
+export function Card(props: CardProps): Element {
+  return new Element(props.title);
+}
+"#;
+
+/// A client with the runtime, `jsx_cards.vlt` and `page.vlt` (returned URI) open.
+pub(super) fn open(page: &str) -> (Client, Url) {
     let mut client = Client::start();
     client.open(&uri("jsx_ui/jsx-runtime.vlt"), RUNTIME);
+    client.open(&uri("jsx_cards.vlt"), CARDS);
     let doc = uri("jsx_page.vlt");
     client.open(&doc, page);
     client.diagnostics(&doc);
     (client, doc)
 }
 
-fn labels(result: &Value) -> Vec<String> {
+pub(super) fn labels(result: &Value) -> Vec<String> {
     result
         .as_array()
         .unwrap()
@@ -73,7 +85,7 @@ fn labels(result: &Value) -> Vec<String> {
 }
 
 /// Completion labels in `text` (opened as the page) right after `needle`.
-fn complete(text: &str, needle: &str) -> Vec<String> {
+pub(super) fn complete(text: &str, needle: &str) -> Vec<String> {
     let (mut client, doc) = open(text);
     let (line, col) = pos_of(text, needle, needle.len());
     let items = labels(&client.request("textDocument/completion", at(&doc, line, col)));

@@ -12,6 +12,7 @@ use velt_syntax::ast;
 use crate::analysis::Analysis;
 use crate::index::pattern_idents;
 use crate::index::scope::is_component;
+
 use crate::sema_query::{item, kind};
 
 /// How far back an opening tag is looked for.
@@ -30,11 +31,11 @@ pub enum Context<'t> {
 /// The JSX context of a word starting at byte `word_start` of `text`, if any.
 pub fn context(text: &str, word_start: usize) -> Option<Context<'_>> {
     let before = &text[..word_start];
-    let lt = before
-        .strip_suffix("</")
-        .or_else(|| before.strip_suffix('<'));
-    if let Some(lt) = lt {
-        return starts_element(lt).then_some(Context::Tag);
+    if before.ends_with("</") {
+        return Some(Context::Tag);
+    }
+    if let Some(lt) = before.strip_suffix('<') {
+        return tag_may_start(lt).then_some(Context::Tag);
     }
     if !before.ends_with(char::is_whitespace) || before.trim_end().ends_with('=') {
         return None;
@@ -44,7 +45,7 @@ pub fn context(text: &str, word_start: usize) -> Option<Context<'_>> {
         if i < floor {
             break;
         }
-        if !starts_element(&text[..i]) {
+        if !tag_may_start(&text[..i]) {
             continue;
         }
         match opening_tag(&before[i + 1..]) {
@@ -56,13 +57,39 @@ pub fn context(text: &str, word_start: usize) -> Option<Context<'_>> {
     None
 }
 
+/// Can a `<` after `text` open an element: where an expression starts, or in the text between
+/// the tags of an element?
+fn tag_may_start(text: &str) -> bool {
+    starts_element(text) || in_jsx_text(text)
+}
+
+/// Does `text` end in JSX text: after the `>` of a tag (`<p>`, `<a href="x">`, `<br />`,
+/// `</b>`, `<>`) or the `}` of a `{…}` child, with only text since? Text may hold anything but
+/// `<`, `>`, `{` and `}`; a `>` that compares (`a > b`, `x >= 1`) or ends an arrow is not a tag.
+fn in_jsx_text(text: &str) -> bool {
+    let Some(i) = text.rfind(['<', '>', '{', '}']) else {
+        return false;
+    };
+    if text[i..].starts_with('}') {
+        return true;
+    }
+    let ends_tag = text[..i]
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_ascii_alphanumeric() || "_$\"'}/<".contains(c));
+    text[i..].starts_with('>') && ends_tag && !text[i + 1..].starts_with('=')
+}
+
 /// Can an element start after `text` (an operand is expected: not after a name, `)` or `]`,
 /// where `<` compares or starts type arguments, but after a keyword such as `return`)?
 fn starts_element(text: &str) -> bool {
     let text = text.trim_end();
     let word_start = text
-        .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
-        .map_or(0, |i| i + 1);
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| c.is_ascii_alphanumeric() || *c == '_' || *c == '$')
+        .last()
+        .map_or(text.len(), |(i, _)| i);
     let word = &text[word_start..];
     if !word.is_empty() {
         return OPERAND_KEYWORDS.contains(&word);
@@ -111,7 +138,7 @@ fn opening_tag(rest: &str) -> Tag<'_> {
             _ => {}
         }
         match c {
-            '"' | '\'' if depth == 0 => quote = Some(c),
+            '"' | '\'' | '`' => quote = Some(c),
             '{' => depth += 1,
             '}' if depth == 0 => return Tag::Other,
             '}' => depth -= 1,
@@ -165,13 +192,24 @@ pub fn items(analysis: &Analysis, ctx: &Context<'_>, offset: u32) -> Vec<Complet
 }
 
 /// The fields of the props of component `tag` (a function or an arrow-valued constant in scope
-/// at `offset`): the members of its first parameter.
+/// at `offset`, or `ns.Name` of a namespace import): the members of its first parameter.
 fn props_of(analysis: &Analysis, tag: &str, offset: u32) -> Vec<(String, DefRef, String)> {
     let Some(ide) = analysis.ide.as_ref() else {
         return vec![];
     };
-    let scope = ide.scope_at(analysis.file(), offset);
-    let Some((_, component)) = scope.into_iter().find(|(name, _)| name == tag) else {
+    let file = analysis.file();
+    let found = match tag.split_once('.') {
+        // `<ui.Card`: a namespace import's export.
+        Some((ns, name)) => ide
+            .namespace_members(file, ns)
+            .into_iter()
+            .find(|(n, _)| n == name),
+        None => ide
+            .scope_at(file, offset)
+            .into_iter()
+            .find(|(n, _)| n == tag),
+    };
+    let Some((_, component)) = found else {
         return vec![];
     };
     let Some((param, body_lo)) = analysis
@@ -219,6 +257,36 @@ mod tests {
 
     fn ctx(text: &str) -> Option<Context<'_>> {
         context(text, text.len())
+    }
+
+    #[test]
+    fn tags_and_attributes_in_jsx_text() {
+        assert_eq!(ctx("<p>Read the <"), Some(Context::Tag));
+        assert_eq!(ctx("<p>hello</"), Some(Context::Tag));
+        assert_eq!(ctx("<p>Hello, world? {name} and <"), Some(Context::Tag));
+        assert_eq!(
+            ctx("<p>Read the <a "),
+            Some(Context::Attribute {
+                tag: "a",
+                written: vec![]
+            })
+        );
+        assert_eq!(ctx("if (a > b && c <"), None);
+        assert_eq!(ctx("const ok = x >= 1 && y <"), None);
+        // Non-ASCII text before the cursor.
+        assert_eq!(ctx("<p>Grüße 😀 <"), Some(Context::Tag));
+        assert_eq!(ctx("const total = größe <"), None);
+    }
+
+    #[test]
+    fn quotes_inside_braces_do_not_unbalance_them() {
+        assert_eq!(
+            ctx("<a href={() => \"}\"} "),
+            Some(Context::Attribute {
+                tag: "a",
+                written: vec!["href"]
+            })
+        );
     }
 
     #[test]

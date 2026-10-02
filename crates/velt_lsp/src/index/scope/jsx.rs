@@ -45,8 +45,13 @@ impl<'a> Walker<'a> {
     }
 }
 
-/// A tag naming a component rather than an intrinsic element (docs/internals/contracts/jsx.md:
-/// a capitalised simple name).
+/// Does the tag `tag` (as written: `div`, `my-el`, `svg:rect`, `Card`, `ui.Card`) name a
+/// component rather than an intrinsic element? Mirrors sema's rule (`intrinsic_tag`,
+/// docs/internals/contracts/jsx.md): a dotted name is a component, a namespaced one is not, and
+/// a simple name is one unless it starts with a lower-case letter or contains `-`.
 pub(crate) fn is_component(tag: &str) -> bool {
-    tag.starts_with(|c: char| c.is_ascii_uppercase())
+    if tag.contains(':') {
+        return false;
+    }
+    tag.contains('.') || !(tag.starts_with(|c: char| c.is_ascii_lowercase()) || tag.contains('-'))
 }
