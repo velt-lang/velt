@@ -1,8 +1,11 @@
 //! Codegen units: splitting a large program into modules that clang compiles in parallel.
 //!
 //! clang's time is linear in the size of the IR, so a release build of a large program is one
-//! long single-threaded clang run. When asked for (`VELT_CODEGEN_UNITS`), the functions are split,
-//! in program order, into contiguous runs of similar size, one module and one object each:
+//! long single-threaded clang run. When asked for (`VELT_CODEGEN_UNITS`), the functions are split
+//! into units of similar size, one module and one object each:
+//! - placement (`place`) keeps call chains together: mutually recursive functions and small
+//!   callees go to the unit of their first caller, and units are contiguous runs of such groups
+//!   in program order;
 //! - an internal function referenced from another unit (call, address, vtable slot) becomes a
 //!   `hidden` external symbol of its unit (its name is already unique in the program), and the
 //!   other units declare it `hidden` too, so their calls and address computations are direct and
@@ -16,14 +19,20 @@
 //!   `available_externally` copies (like ThinLTO's function import): LLVM can inline them, and
 //!   emits no code for them.
 //!
-//! The rest of cross-unit optimization is lost (inlining of larger callees, interprocedural
-//! analyses of the functions made external, and inlining through recursive calls that cross
-//! units, which imports don't restore: freeing a binary tree runs 13 % slower in four units), so
-//! programs are one unit unless more are requested.
+//! The rest of cross-unit optimization is lost (inlining of larger callees and interprocedural
+//! analyses of the functions made external), so programs are one unit unless more are requested.
+//!
+//! Modules: `graph` (references, the reference graph and its components), `place` (which unit
+//! defines each function).
+
+mod graph;
+mod place;
 
 use std::collections::BTreeSet;
 
-use velt_vir::vir::{self, Callee, Const, Operand, Rvalue, Stmt, Terminator};
+use velt_vir::vir;
+
+use graph::Refs;
 
 /// Functions of at most this weight are imported into the units that call them...
 const IMPORT_WEIGHT: usize = 40;
@@ -69,25 +78,11 @@ pub(crate) fn unit_count(program: &vir::Program, requested: Option<usize>) -> us
     requested.unwrap_or(1).min(program.funcs.len()).max(1)
 }
 
-/// Split `program` into (at most) `count` units of similar weight.
+/// Split `program` into (at most) `count` units of similar weight (see `place`).
 pub(crate) fn plan(program: &vir::Program, count: usize) -> Plan {
     let n = program.funcs.len();
     let weights: Vec<usize> = program.funcs.iter().map(weight).collect();
-    let total: usize = weights.iter().sum();
     let count = count.clamp(1, n.max(1));
-
-    // Contiguous runs: unit k ends once the running total reaches (k + 1) / count of the total.
-    let mut owner = vec![0usize; n];
-    let mut acc = 0usize;
-    let mut unit = 0usize;
-    for (i, w) in weights.iter().enumerate() {
-        owner[i] = unit;
-        acc += w;
-        if unit + 1 < count && acc * count >= total * (unit + 1) {
-            unit += 1;
-        }
-    }
-    let used = owner.last().map_or(1, |&u| u + 1);
 
     // `velt_vir::verify` guarantees valid ids; out-of-range ones are dropped all the same.
     let (n_statics, valid) = (program.statics.len(), |r: Refs| {
@@ -103,6 +98,8 @@ pub(crate) fn plan(program: &vir::Program, count: usize) -> Plan {
         .iter()
         .map(|s| valid(Refs::of_static(s)))
         .collect();
+    let owner = place::owners(program, &weights, &refs, &static_refs, count);
+    let used = owner.iter().max().map_or(1, |&u| u + 1);
     let mut units: Vec<Unit> = (0..used).map(|_| Unit::default()).collect();
     for (i, &u) in owner.iter().enumerate() {
         units[u].defines.push(i);
@@ -174,105 +171,4 @@ pub(crate) fn plan(program: &vir::Program, count: usize) -> Plan {
 /// Size of a function for balancing: statements plus terminators.
 fn weight(f: &vir::Function) -> usize {
     f.blocks.iter().map(|b| b.stmts.len() + 1).sum()
-}
-
-/// Program entities a function or static refers to.
-#[derive(Default)]
-struct Refs {
-    /// Functions called directly.
-    calls: BTreeSet<usize>,
-    /// Functions whose address is taken.
-    addresses: BTreeSet<usize>,
-    statics: BTreeSet<usize>,
-}
-
-impl Refs {
-    /// Without references to functions ≥ `funcs` or statics ≥ `statics`.
-    fn within(mut self, funcs: usize, statics: usize) -> Refs {
-        self.calls.retain(|&f| f < funcs);
-        self.addresses.retain(|&f| f < funcs);
-        self.statics.retain(|&s| s < statics);
-        self
-    }
-
-    fn funcs(&self) -> impl Iterator<Item = usize> + '_ {
-        self.calls.iter().chain(&self.addresses).copied()
-    }
-
-    fn of_function(f: &vir::Function) -> Refs {
-        let mut r = Refs::default();
-        for b in &f.blocks {
-            for s in &b.stmts {
-                match s {
-                    Stmt::Assign(_, rv) => match rv {
-                        Rvalue::Use(a) | Rvalue::Unary(_, a) | Rvalue::Cast(a, _) => r.operand(a),
-                        Rvalue::Binary(_, a, b) => {
-                            r.operand(a);
-                            r.operand(b);
-                        }
-                        Rvalue::Aggregate(_, ops) => ops.iter().for_each(|o| r.operand(o)),
-                        Rvalue::AddrOf(_) => {}
-                    },
-                    Stmt::MemCopy { dst, src, .. } => {
-                        r.operand(dst);
-                        r.operand(src);
-                    }
-                    Stmt::MemCopyDyn { dst, src, len, .. } => {
-                        r.operand(dst);
-                        r.operand(src);
-                        r.operand(len);
-                    }
-                    Stmt::MemSet { dst, byte, len } => {
-                        r.operand(dst);
-                        r.operand(byte);
-                        r.operand(len);
-                    }
-                    Stmt::Nop => {}
-                }
-            }
-            match &b.term {
-                Terminator::Branch { cond: o, .. }
-                | Terminator::Switch { value: o, .. }
-                | Terminator::Return(o) => r.operand(o),
-                Terminator::Call { callee, args, .. } => {
-                    match callee {
-                        Callee::Func(id) => {
-                            r.calls.insert(id.0 as usize);
-                        }
-                        Callee::Extern(_) => {}
-                        Callee::Ptr { target, .. } => r.operand(target),
-                    }
-                    args.iter().for_each(|o| r.operand(o));
-                }
-                Terminator::Goto(_) | Terminator::Unreachable => {}
-            }
-        }
-        r
-    }
-
-    fn of_static(s: &vir::StaticData) -> Refs {
-        let mut r = Refs::default();
-        for (_, target) in &s.relocs {
-            r.constant(target);
-        }
-        r
-    }
-
-    fn operand(&mut self, o: &Operand) {
-        if let Operand::Const(c, _) = o {
-            self.constant(c);
-        }
-    }
-
-    fn constant(&mut self, c: &Const) {
-        match c {
-            Const::Func(id) => {
-                self.addresses.insert(id.0 as usize);
-            }
-            Const::Static(id) => {
-                self.statics.insert(id.0 as usize);
-            }
-            _ => {}
-        }
-    }
 }

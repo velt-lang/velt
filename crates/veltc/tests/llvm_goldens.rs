@@ -48,7 +48,8 @@ fn m1_goldens_with_llvm() {
 
 /// Goldens that depend on symbols shared between codegen units, forced into three units: a
 /// static's address compared across units (the JSON writer's vtable checks), interface and
-/// override dispatch through vtables, and escaping closures with shared captured variables. Each
+/// override dispatch through vtables, escaping closures with shared captured variables, and a
+/// recursive class tree freed through recursive drop glue (kept in one unit). Each
 /// build must have written one object per unit (`VELT_CODEGEN_UNITS` is capped at the core count).
 #[test]
 fn goldens_split_into_codegen_units() {
@@ -64,6 +65,7 @@ fn goldens_split_into_codegen_units() {
         "lang/json_dynamic_generic",
         "lang/errors_dispatch",
         "lang/share_closure_cells",
+        "lang/narrow_nullable_field",
     ]
     .iter()
     .map(|name| root.join("tests/golden").join(format!("{name}.vlt")))

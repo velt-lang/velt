@@ -113,10 +113,10 @@ fn huge_callers_import_nothing() {
     }
     let plan = plan(&p, 3);
     let defines: Vec<&[usize]> = plan.units.iter().map(|u| u.defines.as_slice()).collect();
-    assert_eq!(defines, [&[0, 1][..], &[2, 3]]);
-    let second = &plan.units[1];
-    assert!(second.imports.is_empty());
-    assert_eq!(second.declares, [0, 1]);
+    assert_eq!(defines, [&[0, 1][..], &[2], &[3]]);
+    let main = &plan.units[2];
+    assert!(main.imports.is_empty());
+    assert_eq!(main.declares, [0, 2]);
 }
 
 #[test]
@@ -125,9 +125,9 @@ fn one_unit_unless_requested() {
     assert_eq!(unit_count(&p, None), 1);
     assert_eq!(unit_count(&p, Some(0)), 1);
     assert_eq!(unit_count(&p, Some(3)), 3);
-    // Never more units than functions; uneven weights can leave fewer.
+    // Never more units than functions.
     assert_eq!(unit_count(&p, Some(64)), 4);
-    assert_eq!(plan(&p, 64).units.len(), 3);
+    assert_eq!(plan(&p, 64).units.len(), 4);
 }
 
 #[test]
