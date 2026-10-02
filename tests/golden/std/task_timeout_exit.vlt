@@ -1,0 +1,30 @@
+// check: no leaks
+// `timeout(p, ms)` cancels its timer when `p` wins: the program exits right away instead of
+// waiting out the 300 s timer (the golden runner gives up after 120 s). When the timer wins, a
+// runtime wait raced as `p` is dropped like a `Promise.race` loser, and so is a
+// `whenAborted()` raced directly against work: nothing waits on the signals nobody aborts.
+import { AbortController, timeout } from "velt:task";
+
+async function fast(): Promise<string> {
+  await sleep(5);
+  return "fast";
+}
+
+async function tick(): Promise<void> {
+  await sleep(5);
+}
+
+async function main() {
+  console.log(await timeout(fast(), 300000));
+
+  const ac = new AbortController();
+  try {
+    await timeout(ac.signal.whenAborted(), 20);
+  } catch (e) {
+    console.log("timed out:", e.message);
+  }
+
+  const never = new AbortController();
+  await Promise.race([tick(), never.signal.whenAborted()]);
+  console.log("race done");
+}

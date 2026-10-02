@@ -299,6 +299,35 @@ fn elements_start_wherever_an_expression_does() {
 }
 
 #[test]
+fn elements_start_statements_after_a_block() {
+    // After a `}` that ends a statement an expression may start, so `<` opens an element.
+    let m = parse_ok(
+        "function f(x: boolean) {\n\
+           if (x) {\n\
+           }\n\
+           <div />;\n\
+           while (x) {}\n\
+           <p>a</p>;\n\
+           {}\n\
+           <>{x}</>;\n\
+         }",
+    );
+    let ItemKind::Function(f) = &m.items[0].kind else {
+        panic!("expected a function");
+    };
+    let elements: Vec<String> = f
+        .body
+        .stmts
+        .iter()
+        .filter_map(|s| match &s.kind {
+            StmtKind::Expr(e) if matches!(e.kind, ExprKind::Jsx(_)) => Some(sx(e)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(elements, ["<div/>", r#"<p>["a"]"#, "<>[{x}]"]);
+}
+
+#[test]
 fn jsx_text_is_not_lexed_as_code() {
     // An apostrophe, a backtick or `//` in JSX text: no string, template or comment.
     let src = "const a = <p>don't `x` // y /* z</p>;\nconst b = 1; // real\n";

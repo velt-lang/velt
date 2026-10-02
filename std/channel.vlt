@@ -19,7 +19,7 @@ declare function velt_rt_chan_len(ch: u64): u64;
 // Thrown by `send` on a closed channel.
 export class ChannelClosed extends Error {
   constructor() {
-    super("send on a closed channel");
+    super("Send on a closed channel");
   }
 }
 

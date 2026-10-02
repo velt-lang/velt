@@ -22,8 +22,11 @@ velt dev: restarted (Point gained a field) in 380 ms
 dependencies) plus `package.vlt` and `velt.lock`, and new `.vlt` files next to them (so a module
 that an import was missing is picked up as soon as you create it). Changes come from the
 operating system's file notifications; where those don't work (some network or container file
-systems), set `VELT_DEV_POLL=1` to check the files every 10 ms instead. On a change it builds
-the new version while the old one keeps running:
+systems), set `VELT_DEV_POLL=1` to check the files every 10 ms instead. A file saved while a
+build is running leads to another build once it finishes. Files are compared by modification
+time and length, so on file systems with coarse timestamps (FAT, some network mounts) two saves
+of the same length within one timestamp tick can look like one. On a change it builds the new
+version while the old one keeps running:
 
 - **Hot swap** (the common case): the changed functions are compiled and swapped into the
   running program. In-memory data, open connections, caches and running tasks survive. New

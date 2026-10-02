@@ -28,7 +28,10 @@ variables, calls, spreads) is an error that points at it:
 package.vlt:5:13: error: `null` is not allowed; leave the key out
 ```
 
-Leave out the fields you don't need. A key the manifest doesn't know is an error, with a
+In an editor, the language server ([`velt lsp`](editors.md)) completes the fields valid where
+you type, explains each on hover, and reports exactly the errors `velt` would, as you type. The
+[`Package`](../std/package.md) type documents the same fields. Leave out the fields you don't
+need. A key the manifest doesn't know is an error, with a
 suggestion when it is close to one (`dependecies` → `dependencies`). `velt manifest` checks the
 file and reports these errors without building anything.
 

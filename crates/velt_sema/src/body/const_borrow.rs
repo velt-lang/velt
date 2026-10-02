@@ -39,7 +39,15 @@ impl FnCx<'_, '_> {
             && !self.cx.is_string_value(ty)
             && self.pinned_place(&h);
         if !pinned {
-            self.force_move(&mut h);
+            match &mut h.kind {
+                // A widened promise owns the promise it wraps: that place is moved (and a field
+                // or element can't be).
+                H::Call {
+                    callee: hir::Callee::Intrinsic(hir::Intrinsic::PromiseWiden),
+                    args,
+                } => self.force_move(&mut args[0]),
+                _ => self.force_move(&mut h),
+            }
             return Err(Some(h));
         }
         let local = self.declare_local_mut(name, ty, LocalKind::Bind, false);

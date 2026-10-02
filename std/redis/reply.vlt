@@ -110,7 +110,7 @@ export function checkReply(r: IoResult<RawReply>): RawReply {
 
 // A reply that is not of the kind a command promises (a server bug or an unexpected module).
 function unexpected(r: RawReply): RedisError {
-  return new RedisError("EPROTO", `unexpected Redis reply of kind ${r.tags[0]}`);
+  return new RedisError("EPROTO", `Unexpected Redis reply of kind ${r.tags[0]}`);
 }
 
 // A string or status reply; null for nil.

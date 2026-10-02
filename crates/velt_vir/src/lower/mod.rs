@@ -186,6 +186,10 @@ enum Work {
     /// so it can be started (async_fn/kept.rs).
     RaceBoxPoll(TyId),
     RaceBoxDrop(TyId),
+    /// Poll / drop of the wrapper widening a `Promise<T, E1>` into a `Promise<T, E2>`
+    /// (async_fn/widen.rs).
+    WidenPoll(TyId, TyId),
+    WidenDrop(TyId, TyId),
     /// `(slot: ptr)`: disposes of the unclaimed result of a started promise of a rejecting
     /// promise type (async_fn/start.rs).
     Unclaimed(TyId),

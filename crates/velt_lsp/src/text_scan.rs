@@ -153,7 +153,8 @@ fn is_ident_start(b: u8) -> bool {
     b.is_ascii_alphabetic() || b == b'_' || b == b'$' || b >= 0x80
 }
 
-fn is_ident_byte(b: u8) -> bool {
+/// Can byte `b` continue an identifier (non-ASCII bytes count, as in names like `größe`)?
+pub fn is_ident_byte(b: u8) -> bool {
     is_ident_start(b) || b.is_ascii_digit()
 }
 

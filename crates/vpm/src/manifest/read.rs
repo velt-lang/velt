@@ -27,8 +27,8 @@ use velt_syntax::ast::{self, ExprKind, ItemKind, Lit, ObjectProp, PatternKind, T
 
 use super::{
     check_dependency, check_dependency_name, check_entry, check_import_source, check_name,
-    check_registry, check_version, default_entry, Dependency, DetailedDependency, JsxConfig,
-    Manifest, Package,
+    check_registry, check_version, default_entry, schema, Dependency, DetailedDependency,
+    JsxConfig, Manifest, Package,
 };
 
 /// File name of the manifest written in Velt.
@@ -299,7 +299,7 @@ impl Reader<'_> {
                 "paths" => manifest.paths = self.paths(v),
                 "jsx" => manifest.jsx = self.jsx(v),
                 "native" => manifest.native = self.native(v),
-                _ => self.unknown_key(key, &MANIFEST_KEYS),
+                _ => self.unknown_key(key, schema::PACKAGE),
             }
         }
         for (present, key) in [(name, "name"), (version, "version")] {
@@ -323,7 +323,7 @@ impl Reader<'_> {
                             "version" => &mut detailed.version,
                             "path" => &mut detailed.path,
                             _ => {
-                                self.unknown_key(k, &DEPENDENCY_KEYS);
+                                self.unknown_key(k, schema::DEPENDENCY);
                                 continue;
                             }
                         };
@@ -367,7 +367,7 @@ impl Reader<'_> {
         let mut config = JsxConfig::default();
         for (key, v) in self.object(value, "`jsx`")? {
             if key.name != "importSource" {
-                self.unknown_key(key, &JSX_KEYS);
+                self.unknown_key(key, schema::JSX);
                 continue;
             }
             if let Some(s) = self.string(v, "importSource") {
@@ -415,32 +415,20 @@ impl Reader<'_> {
         }
     }
 
-    fn unknown_key(&mut self, key: &ast::Ident, known: &[&str]) {
+    fn unknown_key(&mut self, key: &ast::Ident, known: &[schema::Field]) {
         let mut d = Diagnostic::error(
             format!("unknown key `{}` in the manifest", key.name),
             key.span,
         );
         // About one edit per three characters: `dependecies` → `dependencies`, but `x` → nothing.
         let max = key.name.chars().count() / 3;
-        if let Some(close) = known.iter().find(|k| edit_distance(k, &key.name) <= max) {
+        let mut keys = known.iter().map(|f| f.key);
+        if let Some(close) = keys.find(|k| edit_distance(k, &key.name) <= max) {
             d = d.with_note(format!("did you mean `{close}`?"));
         }
         self.diags.push(d);
     }
 }
-
-const MANIFEST_KEYS: [&str; 8] = [
-    "name",
-    "version",
-    "entry",
-    "registry",
-    "dependencies",
-    "paths",
-    "jsx",
-    "native",
-];
-const DEPENDENCY_KEYS: [&str; 2] = ["version", "path"];
-const JSX_KEYS: [&str; 1] = ["importSource"];
 
 /// `export const pkg: Package = …`
 fn is_pkg_declaration(item: &ast::Item, var: &ast::VarDecl) -> bool {

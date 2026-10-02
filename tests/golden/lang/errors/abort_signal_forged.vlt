@@ -1,0 +1,7 @@
+// A signal cannot be made from a number: only an AbortController or AbortSignal.timeout/any
+// create one.
+import { AbortSignal } from "velt:task";
+
+function main() {
+  console.log(new AbortSignal(4096).aborted);
+}

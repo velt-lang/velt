@@ -1,0 +1,13 @@
+// A promise converts only to a promise type whose error type allows all of its errors:
+// `Promise<i64, Oops>` is not a `Promise<i64, Other>`.
+class Oops extends Error {}
+class Other extends Error {}
+
+async function failing(): Promise<i64> throws Oops {
+  throw new Oops("bad");
+}
+
+async function main() {
+  const p: Promise<i64, Other> = failing();
+  console.log(await p);
+}

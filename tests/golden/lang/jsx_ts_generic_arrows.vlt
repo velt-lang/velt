@@ -56,7 +56,9 @@ async function main() {
   console.log(
     await render(
       <ul class={small ? "small" : "big"}>
-        {items.map((i) => <li>{identity(i)}</li>)}
+        {items.map((i) => (
+          <li>{identity(i)}</li>
+        ))}
       </ul>,
     ),
   );

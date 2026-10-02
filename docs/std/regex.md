@@ -32,4 +32,7 @@ function main() {
 ```
 
 Notes: lookaround and backreferences are not supported; compiling a pattern that uses them
-throws `RegExpError`. `\d \w \b` match ASCII only, as in JS.
+throws `RegExpError`. `\d \w \b` match ASCII only, as in JS. Without `s`, `.` matches no line
+terminator (`\n`, `\r`, U+2028, U+2029), as in JS. With `m`, `^` and `$` match at `\n` and `\r`
+but, unlike JS, not at U+2028 or U+2029: `new RegExp("^", "gm").replace("a\u2028b", ">")` gives
+`">a\u2028b"` where JS gives `">a\u2028>b"`.

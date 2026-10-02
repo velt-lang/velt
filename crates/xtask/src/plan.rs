@@ -66,6 +66,11 @@ const EVERYTHING: &[&str] = &[
     "crates/xtask/",
 ];
 
+/// The differential tester (`tests/difftest`): a crate of its own outside the workspace, which
+/// drives the `velt` binary as a black box and depends on no workspace crate. Its changes need
+/// only its own build, lints and unit tests.
+pub(crate) const DIFFTEST: &str = "tests/difftest/";
+
 /// Changes to these need no check.
 const NOTHING: &[&str] = &[
     "LICENSE-APACHE",
@@ -143,6 +148,8 @@ pub struct Plan {
     pub goldens: Goldens,
     /// `velt fmt --check std examples`.
     pub vlt_fmt: bool,
+    /// `tests/difftest`: `cargo fmt`, clippy and its unit tests.
+    pub difftest: bool,
     /// Why the merge queue checks Windows and macOS too; `None`: Linux is enough
     /// (crates/xtask/src/os.rs).
     pub other_os: Option<String>,
@@ -161,6 +168,7 @@ impl Plan {
             veltc: Veltc::All,
             goldens: Goldens::All,
             vlt_fmt: true,
+            difftest: true,
         }
     }
 
@@ -175,6 +183,7 @@ impl Plan {
             veltc: Veltc::None,
             goldens: Goldens::None,
             vlt_fmt: false,
+            difftest: false,
         }
     }
 
@@ -186,6 +195,11 @@ impl Plan {
             match classify(graph, path) {
                 Effect::Everything => return Plan::everything(format!("{path} changed")),
                 Effect::Nothing => {}
+                Effect::Difftest => {
+                    plan.reasons
+                        .push(format!("{path}: the differential tester"));
+                    plan.difftest = true;
+                }
                 Effect::Crate(name) => {
                     changed_crates.insert(name);
                 }
@@ -362,6 +376,10 @@ impl Plan {
             "  velt fmt --check std examples: {}\n",
             yes(self.vlt_fmt)
         ));
+        out.push_str(&format!(
+            "  tests/difftest (fmt, clippy, unit tests): {}\n",
+            yes(self.difftest)
+        ));
         let os = match &self.other_os {
             Some(reason) => format!("Linux, Windows, macOS ({reason})"),
             None => "Linux (Windows and macOS after merging, on main)".into(),
@@ -374,6 +392,7 @@ impl Plan {
 enum Effect {
     Everything,
     Nothing,
+    Difftest,
     Crate(String),
     Std,
     ReadByTests(&'static [&'static str], &'static [&'static str]),
@@ -398,6 +417,9 @@ fn classify(graph: &Graph, path: &str) -> Effect {
     }
     if path.starts_with("std/") {
         return Effect::Std;
+    }
+    if under(DIFFTEST) {
+        return Effect::Difftest;
     }
     for (prefix, packages, binaries) in READ_BY_TESTS {
         if under(prefix) {

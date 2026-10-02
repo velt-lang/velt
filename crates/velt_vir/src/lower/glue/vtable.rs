@@ -1,17 +1,18 @@
 //! Vtables as read-only tables of function addresses (static data with relocations). Slot `k`
-//! lives at byte offset `8 * (k + 4)`: the four negative slots are share / format / clone / drop
-//! of the concrete value (glue/mod.rs `SLOT_*`; share only in interface tables), then the class's virtual methods (`AdtDef::vtable`)
-//! or the interface's methods. A virtual/interface call loads the entry and calls it: no
+//! lives at byte offset `8 * (k + 5)`: the five negative slots are the class name (a static
+//! string, class tables only) and share / format / clone / drop of the concrete value
+//! (glue/mod.rs `SLOT_*`; share only in interface tables), then the class's virtual methods
+//! (`AdtDef::vtable`) or the interface's methods. A virtual/interface call loads the entry and calls it: no
 //! dispatcher call in between.
 
 use velt_sema::hir::{DefId, TyId, TyKind};
 
-use super::{Glue, SLOT_CLONE, SLOT_DROP, SLOT_FORMAT, SLOT_SHARE};
+use super::{Glue, SLOT_CLONE, SLOT_DROP, SLOT_FORMAT, SLOT_NAME, SLOT_SHARE};
 use crate::lower::{cint, ice, Cx, FnLower, Work};
-use crate::vir::{BinOp, Const, FuncId, Operand, Place, Proj, Rvalue, StaticData, StaticId, Ty};
+use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, StaticData, StaticId, Ty};
 
 /// Number of negative slots in front of slot 0.
-const HIDDEN: i128 = 4;
+const HIDDEN: i128 = 5;
 
 /// Memo key of a vtable: the class itself, or `Program::impls[i]` for a concrete type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -55,7 +56,7 @@ impl Cx<'_> {
         let n = entries.iter().map(|e| e.0 + HIDDEN + 1).max().unwrap_or(0);
         let relocs = entries
             .into_iter()
-            .map(|(slot, f)| ((8 * (slot + HIDDEN)) as u32, Const::Func(f)))
+            .map(|(slot, c)| ((8 * (slot + HIDDEN)) as u32, c))
             .collect();
         self.statics.push(StaticData {
             bytes: vec![0; 8 * n as usize],
@@ -67,7 +68,7 @@ impl Cx<'_> {
         id
     }
 
-    fn class_entries(&mut self, cls: TyId) -> Vec<(i128, FuncId)> {
+    fn class_entries(&mut self, cls: TyId) -> Vec<(i128, Const)> {
         let TyKind::Adt(d, _) = self.kind(cls) else {
             ice("vtable of a non-class type")
         };
@@ -79,10 +80,16 @@ impl Cx<'_> {
         entries.push((SLOT_DROP, self.func(Work::Glue(Glue::ObjDrop, cls))));
         entries.push((SLOT_CLONE, self.func(Work::Glue(Glue::ObjClone, cls))));
         entries.push((SLOT_FORMAT, self.func(Work::Glue(Glue::ObjFormat, cls))));
+        let name = self.type_name(cls);
+        let mut entries: Vec<(i128, Const)> = entries
+            .into_iter()
+            .map(|(slot, f)| (slot, Const::Func(f)))
+            .collect();
+        entries.push((SLOT_NAME, Const::Static(self.static_str_object(&name))));
         entries
     }
 
-    fn impl_entries(&mut self, index: u32, ty: TyId) -> Vec<(i128, FuncId)> {
+    fn impl_entries(&mut self, index: u32, ty: TyId) -> Vec<(i128, Const)> {
         let n = self.hir.impls[index as usize].methods.len();
         let mut entries = vec![];
         for slot in 0..n {
@@ -98,6 +105,9 @@ impl Cx<'_> {
         entries.push((SLOT_FORMAT, self.func(Work::Glue(Glue::DynFormat, ty))));
         entries.push((SLOT_SHARE, self.func(Work::Glue(Glue::DynShare, ty))));
         entries
+            .into_iter()
+            .map(|(slot, f)| (slot, Const::Func(f)))
+            .collect()
     }
 }
 

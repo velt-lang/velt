@@ -20,11 +20,13 @@ export const hmacSha256 = (key: number[], data: number[]): number[] => hmac("sha
 export const hmacSha1 = (key: number[], data: number[]): number[] => hmac("sha1", key, data);
 export const randomBytes = (n: number): number[] => [...nc.randomBytes(n)];
 
+// Node's own range check and message, thrown as the `CryptoError` Velt throws.
 export function randomInt(min: number, max: number): number {
-  if (max <= min) {
-    throw new CryptoError(`randomInt: max (${max}) must be greater than min (${min})`);
+  try {
+    return nc.randomInt(min, max);
+  } catch (e) {
+    throw new CryptoError((e as Error).message);
   }
-  return nc.randomInt(min, max);
 }
 
 export function timingSafeEqual(a: number[], b: number[]): boolean {

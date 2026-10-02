@@ -375,7 +375,8 @@ fn method_receiver_ty(call: &hir::Expr) -> Option<hir::TyId> {
 
 /// `xs.sort()`, `xs.reverse()` and `xs.fill(v)` on an array change it and return nothing
 /// (returning the array would share it, which makes every array of its type reference
-/// counted): the hint for code that uses their result as in JS.
+/// counted): the hint for code that uses their result as in JS (the copying `toSorted` and
+/// `toReversed` for the first two).
 fn in_place_note(init: &ast::Expr) -> Option<String> {
     let ast::ExprKind::Call { callee, .. } = &init.kind else {
         return None;
@@ -388,17 +389,24 @@ fn in_place_note(init: &ast::Expr) -> Option<String> {
         return None;
     }
     let what = format!("`{m}` changes the array in place and returns nothing (unlike JS)");
+    let copy = match m {
+        "sort" => Some("toSorted"),
+        "reverse" => Some("toReversed"),
+        _ => None,
+    };
+    if let Some(copy) = copy {
+        return Some(format!(
+            "{what}: for a {} copy, call `{copy}` instead of `{m}`",
+            if m == "sort" { "sorted" } else { "reversed" }
+        ));
+    }
     if is_place(object) {
         let xs = crate::body::switch::cases::source_text(object);
         return Some(format!("{what}: call it, then use `{xs}`"));
     }
-    let call = if m == "fill" {
-        "fill(v)".to_string()
-    } else {
-        format!("{m}()")
-    };
+    // Only `fill` is left here (`sort` and `reverse` have copying forms).
     Some(format!(
-        "{what}: store the array in a variable first (`const a = …; a.{call};`), then use `a`"
+        "{what}: store the array in a variable first (`const a = …; a.fill(v);`), then use `a`"
     ))
 }
 

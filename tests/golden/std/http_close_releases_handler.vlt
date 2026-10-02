@@ -2,6 +2,7 @@
 // resource's [Symbol.dispose]() runs (a store captured by the handler used to leak). The store is shared
 // (`shared(new Mutex(...))`) because calling an async closure currently clones its captured
 // class instances per call (tests/golden/bugs/async_closure_call_clones_class_capture.vlt).
+import { channel } from "velt:channel";
 import { serve, fetch, Request, Response } from "velt:http";
 
 class Store {
@@ -22,17 +23,27 @@ async function get(url: string): Promise<string> {
 
 async function main() {
   const store = shared(new Mutex<Store>(new Store("store")));
+  const started = channel<bool>();
+  // The handler captures its own handle: capturing `started`, which `main` uses afterwards, keeps
+  // the handler's captures (the store too) alive until `main` returns.
+  const reached = started;
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
     if (req.path == "/slow") {
+      try {
+        await reached.send(true);
+      } catch (e) {
+        console.log("cannot report the request");
+      }
       await sleep(200);
     }
     return Response.text(`${store.with((s) => s.name)} ${req.path}`);
   });
   const base = `http://127.0.0.1:${server.port}`;
   console.log(await get(`${base}/fast`));
-  // A request still running when shutdown() starts finishes before the handler is dropped.
+  // A request still running when shutdown() starts finishes before the handler is dropped. The
+  // handler reports when the request reached it, so shutdown() starts while it is in flight.
   const slow = spawn(get(`${base}/slow`));
-  await sleep(50);
+  await started.receive();
   console.log("shutting down");
   await server.shutdown();
   console.log("shut down");

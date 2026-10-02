@@ -26,6 +26,12 @@ export const pkg: Package = {
 };
 ```
 
+`velt:package` (`std/package.vlt`) declares the `Package` type (documentation, and the import
+resolves). The reader below is the definition of a valid manifest; its fields are one table,
+`vpm::manifest::schema`, which a test checks against `std/package.vlt`. The language server
+does not analyze a file named `package.vlt` as a program: its diagnostics are the reader's, and
+completion and hover come from the schema (`vpm::manifest::ide`).
+
 ## The data-only subset (`vpm::manifest::read`)
 - At most one import, `import type { … } from "velt:package"` naming at least one type; then
   exactly one `export const pkg: Package = <value>;`, and nothing else.

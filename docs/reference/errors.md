@@ -59,8 +59,11 @@ nothing; `null` means success).
 
 ## Uncaught errors and panics
 
-- An error escaping `main` prints `Uncaught <Type>: <message> at file:line:col` to stderr and
-  exits with code 1.
+- An error escaping `main` prints `Uncaught <Class>: <message> at file:line:col` to stderr and
+  exits with code 1. `<Class>` is the error's actual class (an `IoError` thrown through a
+  function declared `throws Error` prints `IoError`), and the location is where it was thrown;
+  for an error thrown inside the standard library, it is the line of your code that called
+  into it.
 - **Panics** are bugs, not errors: an index out of bounds, integer division by zero,
   `panic(msg)`, a failed `assert`. They print `panic: … at file:line:col` and exit with code
   101. They cannot be caught.

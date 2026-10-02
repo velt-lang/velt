@@ -7,7 +7,8 @@ use lsp_server::{ErrorCode, Request, Response};
 use lsp_types::request::{
     CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest, Formatting,
     GotoDefinition, HoverRequest, InlayHintRequest, References, Rename, Request as LspRequest,
-    SemanticTokensFullRequest, SignatureHelpRequest, WorkspaceSymbolRequest,
+    SemanticTokensFullDeltaRequest, SemanticTokensFullRequest, SemanticTokensRangeRequest,
+    SignatureHelpRequest, WorkspaceSymbolRequest,
 };
 use lsp_types::{
     CodeActionKind, CodeActionOptions, CodeActionProviderCapability, CompletionOptions,
@@ -25,8 +26,8 @@ use super::Server;
 use crate::index::scope;
 use crate::line_index::LineIndex;
 use crate::{
-    completion, definition, highlight, hover, inlay_hints, references, sema_query, semantic_tokens,
-    signature_help, symbols,
+    completion, definition, highlight, hover, inlay_hints, manifest, references, sema_query,
+    semantic_tokens, signature_help, symbols,
 };
 
 /// What the server supports.
@@ -51,7 +52,10 @@ pub fn capabilities() -> ServerCapabilities {
         references_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Left(true)),
         code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
-            code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+            code_action_kinds: Some(vec![
+                CodeActionKind::QUICKFIX,
+                CodeActionKind::SOURCE_FIX_ALL,
+            ]),
             ..Default::default()
         })),
         inlay_hint_provider: Some(OneOf::Left(true)),
@@ -63,7 +67,8 @@ pub fn capabilities() -> ServerCapabilities {
         semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
             SemanticTokensOptions {
                 legend: semantic_tokens::legend(),
-                full: Some(SemanticTokensFullOptions::Bool(true)),
+                full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
+                range: Some(true),
                 ..Default::default()
             },
         )),
@@ -122,6 +127,10 @@ impl Server<'_> {
             HoverRequest::METHOD => {
                 let p: lsp_types::HoverParams = parse(params)?;
                 let pos = &p.text_document_position_params;
+                if let Some(text) = self.manifest_text(&pos.text_document.uri) {
+                    let at = LineIndex::new(text).offset(pos.position);
+                    return Ok(json(manifest::hover(text, at)));
+                }
                 let hover = self
                     .analysis(&pos.text_document.uri)
                     .and_then(|a| hover::hover(a, offset(a, pos)));
@@ -136,6 +145,15 @@ impl Server<'_> {
                     .as_ref()
                     .and_then(|c| c.trigger_character.as_deref())
                     == Some("<");
+                if let Some(text) = self.manifest_text(&pos.text_document.uri) {
+                    let at = LineIndex::new(text).offset(pos.position);
+                    let items = if jsx_only {
+                        vec![]
+                    } else {
+                        manifest::completion(text, at)
+                    };
+                    return Ok(json(Some(items)));
+                }
                 let items = self
                     .analysis(&pos.text_document.uri)
                     .map(|a| completion::complete(a, offset(a, pos), jsx_only));
@@ -179,11 +197,13 @@ impl Server<'_> {
                 Ok(json(help))
             }
             SemanticTokensFullRequest::METHOD => {
-                let p: lsp_types::SemanticTokensParams = parse(params)?;
-                let tokens = self
-                    .analysis(&p.text_document.uri)
-                    .map(semantic_tokens::semantic_tokens);
-                Ok(json(tokens))
+                Ok(json(self.semantic_tokens_full(&parse(params)?)))
+            }
+            SemanticTokensFullDeltaRequest::METHOD => {
+                Ok(json(self.semantic_tokens_delta(&parse(params)?)))
+            }
+            SemanticTokensRangeRequest::METHOD => {
+                Ok(json(self.semantic_tokens_range(&parse(params)?)))
             }
             DocumentHighlightRequest::METHOD => {
                 let p: lsp_types::DocumentHighlightParams = parse(params)?;

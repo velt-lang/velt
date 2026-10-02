@@ -147,10 +147,26 @@ impl FnLower<'_, '_> {
                 }
                 unit()
             }
-            None => v.unwrap_or_else(unit),
+            None => match v {
+                Some(Operand::Copy(p)) if !p.proj.is_empty() => self.read_now(p),
+                v => v.unwrap_or_else(unit),
+            },
         };
         self.emit_drops_from(0);
         self.exit_return(ret_op);
+    }
+
+    /// Copy the returned place into a temporary before the cleanup runs: a projection can point
+    /// into a value that cleanup frees (`return dp[0]` reads `dp`'s buffer), so reading it in the
+    /// `return` terminator would read freed memory.
+    fn read_now(&mut self, p: Place) -> Operand {
+        let ret = self
+            .ret_ty
+            .unwrap_or_else(|| ice("a returned place without a return type"));
+        let ty = self.cx.ty(ret);
+        let t = self.temp(ty);
+        self.assign(Place::local(t), Rvalue::Use(Operand::Copy(p)));
+        Operand::Copy(Place::local(t))
     }
 
     /// The function's final `return` terminator (after the result is stored and scopes are
