@@ -608,3 +608,25 @@ fn bitwise_operators_convert_floats_like_to_int32() {
         "function main() { const a = 41; const q = (a / 13) | 0; const n: i64 = q + 1; console.log(n); }",
     );
 }
+
+#[test]
+fn generic_alias_shows_its_parameter_names() {
+    let r = err_src(
+        r#"type Outcome<T, E> = { status: "ok"; value: T } | { status: "failed"; error: E };
+function describe<T, E>(o: Outcome<T, E>): string { return o.missing; }
+function main() { }"#,
+    );
+    assert!(
+        r.contains(r#"{ status: "ok"; value: T } | { status: "failed"; error: E }"#),
+        "{r}"
+    );
+    let r = err_src(
+        r#"type Outcome<T, E> = { status: "ok"; value: T } | { status: "failed"; error: E };
+function describe<A, B>(o: Outcome<B, A>): string { return o.missing; }
+function main() { }"#,
+    );
+    assert!(
+        r.contains(r#"{ status: "ok"; value: B } | { status: "failed"; error: A }"#),
+        "{r}"
+    );
+}

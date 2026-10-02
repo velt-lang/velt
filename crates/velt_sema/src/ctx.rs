@@ -369,9 +369,14 @@ impl<'m> Ctx<'m> {
 
     /// Human-readable type for diagnostics.
     pub fn display(&self, t: TyId) -> String {
+        self.display_in(t, &self.display_params)
+    }
+
+    /// Display `t` with `Param(i)` named `names[i]`.
+    pub(crate) fn display_in(&self, t: TyId, names: &[String]) -> String {
         let list = |s: &Self, ts: &[TyId]| {
             ts.iter()
-                .map(|t| s.display(*t))
+                .map(|t| s.display_in(*t, names))
                 .collect::<Vec<_>>()
                 .join(", ")
         };
@@ -396,13 +401,19 @@ impl<'m> Ctx<'m> {
             TyKind::Error => "_".into(),
             TyKind::Literal(v) => crate::literals::display_lit(v),
             TyKind::Array(e) => match self.ty.kind(*e) {
-                TyKind::Option(_) | TyKind::FnPtr { .. } => format!("({})[]", self.display(*e)),
-                _ if self.union_def(*e).is_some() => format!("({})[]", self.display(*e)),
-                _ => format!("{}[]", self.display(*e)),
+                TyKind::Option(_) | TyKind::FnPtr { .. } => {
+                    format!("({})[]", self.display_in(*e, names))
+                }
+                _ if self.union_def(*e).is_some() => format!("({})[]", self.display_in(*e, names)),
+                _ => format!("{}[]", self.display_in(*e, names)),
             },
-            TyKind::Map(k, v) => format!("Map<{}, {}>", self.display(*k), self.display(*v)),
+            TyKind::Map(k, v) => format!(
+                "Map<{}, {}>",
+                self.display_in(*k, names),
+                self.display_in(*v, names)
+            ),
             TyKind::Tuple(ts) => format!("[{}]", list(self, ts)),
-            TyKind::Option(t) => format!("{} | null", self.display(*t)),
+            TyKind::Option(t) => format!("{} | null", self.display_in(*t, names)),
             TyKind::Result(a, b) => with_args(self, "Result", &[*a, *b]),
             TyKind::Promise(t, e) if *e == self.ty.never => with_args(self, "Promise", &[*t]),
             TyKind::Promise(t, e) => with_args(self, "Promise", &[*t, *e]),
@@ -412,25 +423,33 @@ impl<'m> Ctx<'m> {
                 ret,
                 throws,
             } => {
-                let ps: Vec<String> = params.iter().map(|p| self.display(*p)).collect();
+                let ps: Vec<String> = params.iter().map(|p| self.display_in(*p, names)).collect();
                 let th = if *throws == self.ty.never {
                     String::new()
                 } else {
-                    format!(" throws {}", self.display(*throws))
+                    format!(" throws {}", self.display_in(*throws, names))
                 };
-                format!("({}) => {}{th}", ps.join(", "), self.display(*ret))
+                format!(
+                    "({}) => {}{th}",
+                    ps.join(", "),
+                    self.display_in(*ret, names)
+                )
             }
             TyKind::Adt(d, args) => match &self.info[d.0 as usize] {
                 DefInfo::Adt(a) if a.kind == AdtKind::Anon => {
+                    // Field types are written over the anon def's own parameters, which
+                    // `args` binds to the parameters in scope.
+                    let bound: Vec<String> =
+                        args.iter().map(|t| self.display_in(*t, names)).collect();
                     let fs: Vec<String> = a
                         .fields
                         .iter()
-                        .map(|f| format!("{}: {}", f.name, self.display(f.ty)))
+                        .map(|f| format!("{}: {}", f.name, self.display_in(f.ty, &bound)))
                         .collect();
                     format!("{{ {} }}", fs.join("; "))
                 }
                 DefInfo::Adt(a) => with_args(self, &a.name, args),
-                DefInfo::Enum(e) if e.is_union => self.display_union(*d, args),
+                DefInfo::Enum(e) if e.is_union => self.display_union(*d, args, names),
                 DefInfo::Enum(e) => with_args(self, &e.name, args),
                 _ => "unknown".into(),
             },
@@ -443,14 +462,13 @@ impl<'m> Ctx<'m> {
                     let ps: Vec<String> = f
                         .params
                         .iter()
-                        .map(|p| format!("{}: {}", p.name, self.display(p.ty)))
+                        .map(|p| format!("{}: {}", p.name, self.display_in(p.ty, names)))
                         .collect();
-                    format!("({}) => {}", ps.join(", "), self.display(f.ret))
+                    format!("({}) => {}", ps.join(", "), self.display_in(f.ret, names))
                 }
                 None => "unknown".into(),
             },
-            TyKind::Param(n) => self
-                .display_params
+            TyKind::Param(n) => names
                 .get(*n as usize)
                 .cloned()
                 .unwrap_or_else(|| format!("T{n}")),
