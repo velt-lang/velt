@@ -100,7 +100,11 @@ can reject with: `Promise<T, E>` (a `Promise<T>` never rejects).
 
 - An async function's `throws` clause (`async function f(): Promise<T> throws E`, or the
   inferred one) is its promise's `E`. In a function type, `throws` after a `Promise` result is
-  the promise's `E`: `() => Promise<T> throws E`.
+  the promise's `E`: `() => Promise<T> throws E`. So it is for an interface method returning a
+  promise (`load(id: string): Promise<User> throws NotFound`, or `Promise<User, NotFound>`):
+  calling it through the interface returns a `Promise<User, NotFound>`, and its
+  implementations are `async` methods (a synchronous one may return a promise only when the
+  method's promise cannot reject).
 - Awaiting rethrows the typed error: a direct `await f()`, a stored promise
   (`const p = f(); … await p`), a spawned task's handle, `await Promise.race(ps)` (the first
   promise to settle), and `await Promise.all(ps)`, which rejects as soon as one promise rejects,

@@ -1,0 +1,1 @@
+async_iface_sync_impl.vlt:10:3: error: `Sync.load` must be `async`: it implements an interface method whose promise rejects with `E`

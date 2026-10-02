@@ -5,7 +5,8 @@
 //!
 //! A group's error type is the interface method's (or the base method's) `throws` clause when
 //! written — the implementations may throw only what it allows — else the union of what the
-//! members throw (inferred). Group error types cannot mention type parameters (every member
+//! members throw (inferred). For an interface method returning a promise it is what the promises
+//! reject with (implemented by async methods), as for async functions. Group error types cannot mention type parameters (every member
 //! would see them differently).
 
 use std::collections::HashMap;
@@ -35,6 +36,10 @@ pub(crate) struct GroupBound {
 pub(crate) struct Group {
     pub members: Vec<DefId>,
     pub bound: Option<GroupBound>,
+    /// It holds an interface method returning a promise: its error type is what the promises
+    /// reject with, and calling an entry never throws (async members; a synchronous member may
+    /// only forward to an async one).
+    pub promise: bool,
 }
 
 /// Every dispatch group of the program.
@@ -49,6 +54,11 @@ impl Groups {
     /// The group of function `d`, if it is dispatched dynamically.
     pub fn group_of(&self, d: DefId) -> Option<usize> {
         self.of.get(&d).copied()
+    }
+
+    /// Does `d` belong to a promise group (see [`Group::promise`])?
+    pub fn in_promise_group(&self, d: DefId) -> bool {
+        self.group_of(d).is_some_and(|g| self.list[g].promise)
     }
 
     /// The group of interface method `slot` of `iface`.
@@ -117,6 +127,13 @@ pub(crate) fn build(cx: &mut Ctx) -> Groups {
             }
             Node::Slot(iface, s) => {
                 groups.slots.insert((iface, s), g);
+                let ret = cx
+                    .iface(iface)
+                    .and_then(|i| i.methods.get(s as usize))
+                    .map(|m| m.ret);
+                if ret.is_some_and(|t| cx.ty.promise_payload(t).is_some()) {
+                    groups.list[g].promise = true;
+                }
             }
         }
     }

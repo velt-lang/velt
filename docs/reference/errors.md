@@ -43,7 +43,8 @@ cannot throw.
 - Interface methods and overridden methods share one error type per method: the interface's (or
   base method's) `throws` clause bounds every implementation
   (``` `Db.get` throws `Forbidden`, but `Store.get` does not allow it ```); without one it is the
-  union of what the implementations throw.
+  union of what the implementations throw. For an interface method returning a promise it is
+  what the promise rejects with ([Async](async.md#errors)).
 - **Higher-order functions** propagate their callback's errors by being generic over them:
   `function run<E>(f: () => i64 throws E): i64 throws E`. The prelude's array methods
   (`forEach`, `map`, `filter`, `reduce`, `find`, `findIndex`, `some`, `every`), `Map` methods

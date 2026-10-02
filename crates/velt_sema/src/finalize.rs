@@ -17,7 +17,12 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
     for i in 0..cx.info.len() {
         let d = DefId(i as u32);
         if cx.defs[i].is_some() {
-            let throws = cx.try_fn(d).and_then(|f| f.throws);
+            let mut throws = cx.try_fn(d).and_then(|f| f.throws);
+            // A synchronous forwarder to an async method: its group's errors reject the promise
+            // it returns, they are not thrown by the call (throws/groups.rs `Group::promise`).
+            if cx.try_fn(d).is_some_and(|f| !f.is_async) && cx.throw_groups().in_promise_group(d) {
+                throws = None;
+            }
             if let Some(Def::Fn(f)) = &mut cx.defs[i] {
                 f.throws = throws;
             }
