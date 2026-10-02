@@ -1,0 +1,32 @@
+// Regression: a `JsonValue` inside a typed `JSON.parse<T>` takes any JSON value as a tree.
+// It used to be decoded as an object with the class's private `handle` field, so
+// `{"v":{"handle":4096}}` became a dangling runtime pointer and arrays were rejected.
+type Wrap = { name: string, v: JsonValue };
+
+class Bag {
+  items: JsonValue[] | null = null;
+}
+
+function main() {
+  const a = JSON.parse<Wrap>('{"v":[1,2,{"x":true}],"name":"n"}');
+  console.log(a.name, a.v.stringify(), a.v.isArray());
+
+  const b = JSON.parse<Wrap>('{"name":"f","v":{"handle":4096}}');
+  console.log(b.v.stringify(), b.v.get("handle")?.asNumber());
+
+  const c = JSON.parse<Bag>('{"items":[null,"s",3.5,{}]}');
+  console.log(JSON.stringify(c));
+
+  console.log(JSON.parse<JsonValue>(' {"k": [true]} ').stringify());
+
+  try {
+    JSON.parse<Wrap>('{"name":"x","v":[1,}');
+  } catch (e) {
+    console.log(e.message);
+  }
+  try {
+    JSON.parse<Wrap>('{"name":"x"}');
+  } catch (e) {
+    console.log(e.message);
+  }
+}

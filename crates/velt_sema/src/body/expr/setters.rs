@@ -27,7 +27,7 @@ fn member_parts(target: &ast::Expr) -> Option<(&ast::Expr, &ast::Ident)> {
 }
 
 /// Evaluating `e` twice is the same as once: a variable, `this` or a field path of those.
-fn side_effect_free(e: &ast::Expr) -> bool {
+pub(super) fn side_effect_free(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
         ast::ExprKind::Paren(x) => side_effect_free(x),
@@ -40,7 +40,7 @@ fn side_effect_free(e: &ast::Expr) -> bool {
     }
 }
 
-fn synth(kind: ast::ExprKind, span: Span) -> ast::Expr {
+pub(super) fn synth(kind: ast::ExprKind, span: Span) -> ast::Expr {
     ast::Expr {
         id: ast::NodeId(u32::MAX),
         kind,

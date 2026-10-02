@@ -82,6 +82,10 @@ Decisions and their rationale, including what is still planned:
   errors, `extend`.
 - [Hot reload](design/hot-reload.md): `velt dev`'s supervisor, JIT host and hot swap.
 - [TSX for server-side rendering](design/tsx.md): the planned JSX support.
+- [`Record<K, V>`](design/record.md): TypeScript object syntax over an insertion-ordered
+  dictionary (implemented).
+- [`unknown` for dynamic JSON](design/unknown.md): narrowing JSON values the TypeScript way
+  (proposed; open questions).
 - [Native code in packages](design/native-packages.md): a `native/` Rust crate in a package, prebuilt
   per-target binaries and the runtime function table.
 - [A package manifest written in Velt](design/package-manifest.md): `package.vlt`, data-only and

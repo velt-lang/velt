@@ -1,0 +1,64 @@
+// The default depth limit (128 arrays and objects, like serde_json): deep documents from
+// untrusted sources fail with a JsonError instead of overflowing the stack (typed decoders
+// recurse per level). `maxDepth` raises it.
+class Tree {
+  v: i64 = 0;
+  kids: Tree[] = [];
+}
+
+// `trees` trees nested inside each other: twice as many JSON levels.
+function nested(trees: i64): string {
+  let s = "";
+  for (let i = 0; i < trees; i++) {
+    s += '{"v":1,"kids":[';
+  }
+  for (let i = 0; i < trees; i++) {
+    s += "]}";
+  }
+  return s;
+}
+
+function height(t: Tree): i64 {
+  let n = 1;
+  let cur = t;
+  while (cur.kids.length > 0) {
+    cur = cur.kids[0];
+    n++;
+  }
+  return n;
+}
+
+// The start and the end of a message whose path is long.
+function short(message: string): string {
+  if (message.length <= 80) {
+    return message;
+  }
+  return `${message.substring(0, 50)}...${message.substring((message.length - 25) as i64)}`;
+}
+
+function show<T>(f: () => T throws JsonError) {
+  try {
+    console.log(f());
+  } catch (e) {
+    console.log(short(e.message));
+  }
+}
+
+function main() {
+  // 128 levels decode; 200 levels fail by default and decode with a raised limit.
+  show(() => height(JSON.parse<Tree>(nested(64))));
+  show(() => height(JSON.parse<Tree>(nested(100))));
+  show(() => height(JSON.parse<Tree>(nested(100), { maxDepth: 200 })));
+  // 10,000 levels (a 150 KB document) fail cleanly.
+  show(() => height(JSON.parse<Tree>(nested(5000))));
+  show(() => JSON.parse<JsonValue>(nested(5000)));
+  // The same default for dynamic values and `as<T>`.
+  show(() => JSON.parseValue(nested(64)).len());
+  show(() => JSON.parseValue(nested(100)).len());
+  show(() => JsonValue.parse(nested(5000)).len());
+  const v = JSON.parseValue(nested(100), { maxDepth: 200 });
+  show(() => height(v.as<Tree>()));
+  show(() => height(v.as<Tree>({ maxDepth: 200 })));
+  show(() => JSON.parseValue("[[[]]]", { maxDepth: 2 }));
+  show(() => JSON.parseValue("[]", { maxDepth: 0 }));
+}

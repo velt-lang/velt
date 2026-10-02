@@ -145,9 +145,10 @@ impl FnLower<'_, '_> {
         self.switch_to(miss);
     }
 
-    /// An unknown key: skip its value (a malformed one fails at `.<key>`).
+    /// An unknown key: skip its value (a malformed one fails at `.<key>`; with unknown keys
+    /// rejected, any does).
     fn json_skip_member(&mut self, r: Local, ctx: Local, key: Local, head: BlockId, fail: BlockId) {
-        let ok = self.rt_u8(Rt::JsonSkipValue, vec![Operand::Copy(Place::local(r))]);
+        let ok = self.rt_u8(Rt::JsonSkipUnknown, vec![Operand::Copy(Place::local(r))]);
         let (next, bad) = (self.new_block(), self.new_block());
         let ka = self.addr(Place::local(key));
         self.branch(ok, next, bad);

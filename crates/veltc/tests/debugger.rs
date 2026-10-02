@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+mod runtime_support;
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -102,12 +104,7 @@ fn lldb_resolves_breakpoints_on_velt_lines() {
         return;
     }
     let root = root();
-    let st = Command::new(env!("CARGO"))
-        .args(["build", "-p", "velt_rt"])
-        .current_dir(&root)
-        .status()
-        .expect("cargo build -p velt_rt");
-    assert!(st.success());
+    runtime_support::build_native_runtime(&root);
     let work = root.join("target/golden-work-debugger");
     std::fs::create_dir_all(&work).expect("work dir");
     let src = work.join("app.vlt");

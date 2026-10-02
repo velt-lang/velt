@@ -14,20 +14,56 @@ fn kitchen_sink_parses_cleanly() {
 }
 
 /// Every prefix of every golden file and of the kitchen sink must parse without panicking.
-#[test]
-fn prefixes_never_panic() {
+///
+/// Quadratic in the file sizes, so the work is cut into shards, one test each: a parallel test
+/// runner runs them as separate processes (threads in one process mostly wait on each other in
+/// the kernel, allocating and freeing the parser's large buffers).
+fn prefixes_never_panic(shard: usize) {
     let mut sources: Vec<String> = golden_files()
         .iter()
         .map(|f| std::fs::read_to_string(f).unwrap())
         .collect();
     sources.push(KITCHEN_SINK.to_string());
+    const CHUNK: usize = 64;
+    let mut k = 0;
     for src in &sources {
-        for (i, _) in src.char_indices() {
-            let _ = parse(&src[..i]);
-            let _ = parse(&src[i..]);
+        let positions: Vec<usize> = src.char_indices().map(|(i, _)| i).collect();
+        for chunk in positions.chunks(CHUNK) {
+            k += 1;
+            if k % PREFIX_SHARDS != shard {
+                continue;
+            }
+            for &i in chunk {
+                let _ = parse(&src[..i]);
+                let _ = parse(&src[i..]);
+            }
         }
     }
 }
+
+const PREFIX_SHARDS: usize = 8;
+
+macro_rules! prefix_shards {
+    ($($name:ident = $shard:literal),*) => {
+        $(
+            #[test]
+            fn $name() {
+                prefixes_never_panic($shard);
+            }
+        )*
+    };
+}
+
+prefix_shards!(
+    prefixes_never_panic_0 = 0,
+    prefixes_never_panic_1 = 1,
+    prefixes_never_panic_2 = 2,
+    prefixes_never_panic_3 = 3,
+    prefixes_never_panic_4 = 4,
+    prefixes_never_panic_5 = 5,
+    prefixes_never_panic_6 = 6,
+    prefixes_never_panic_7 = 7
+);
 
 #[test]
 fn garbage_never_panics() {

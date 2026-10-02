@@ -105,7 +105,10 @@ pub enum Intrinsic {
     // M4 JSON (compile-time generated glue over the rt JSON reader / string builder)
     /// `JSON.stringify(x: borrow T): string`
     JsonStringify,
-    /// `JSON.parse<T>(s: borrow string): T` — throws `JsonError { message }`
+    /// std only: `__intrinsic_json_parse<T>(text: borrow string, flags: i64, max_depth: i64): T`
+    /// — the body of the prelude's `JSON.parse<T>(text, options)`: decodes `text` as `T` with the
+    /// reader options of `velt_rt_json_reader_new_with` (flag 1 = reject unknown keys;
+    /// `max_depth` 0 = no limit); throws `JsonError { message }`.
     JsonParse,
     /// std only: `__intrinsic_http_handler(f: (raw: u64) => Promise<u64>)` → `[u64; 6]` =
     /// `{init, poll, drop, state_size, state_align, env}` for `velt_rt_http_serve` (the closure's

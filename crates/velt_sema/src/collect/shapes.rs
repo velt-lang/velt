@@ -1,7 +1,7 @@
 //! Phase 2: the shape of every type definition — generic bounds, fields (class fields laid out
 //! base-first), base classes, `implements` lists, enum variants, interface fields.
 
-use velt_common::Span;
+use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::ItemDefs;
@@ -187,24 +187,10 @@ fn adt_shape(cx: &mut Ctx, d: DefId) {
         let fi = field_info(cx, d, f, &env);
         push_field(cx, &mut fields, fi);
     }
-    let base = decl.extends.as_ref().and_then(|t| {
-        let bt = cx.resolve_type(t, &env);
-        if kind != AdtKind::Class {
-            cx.err("only classes can `extends` another class", t.span);
-            return None;
-        }
-        if cx.class_of(bt).is_none() {
-            if bt != cx.ty.error {
-                let tn = cx.display(bt);
-                cx.err(
-                    format!("`{tn}` is not a class; a class can only extend a class"),
-                    t.span,
-                );
-            }
-            return None;
-        }
-        Some(bt)
-    });
+    let base = decl
+        .extends
+        .as_ref()
+        .and_then(|t| base_class(cx, t, kind, &env));
     let implements = decl
         .implements
         .iter()
@@ -215,6 +201,38 @@ fn adt_shape(cx: &mut Ctx, d: DefId) {
     a.fields = fields;
     a.base = base;
     a.implements = implements;
+}
+
+/// The class an `extends` clause names, if it may be extended.
+fn base_class(cx: &mut Ctx, t: &ast::TypeExpr, kind: AdtKind, env: &TyEnv) -> Option<TyId> {
+    let bt = cx.resolve_type(t, env);
+    if kind != AdtKind::Class {
+        cx.err("only classes can `extends` another class", t.span);
+        return None;
+    }
+    let Some((bd, _)) = cx.class_of(bt) else {
+        if bt != cx.ty.error {
+            let tn = cx.display(bt);
+            cx.err(
+                format!("`{tn}` is not a class; a class can only extend a class"),
+                t.span,
+            );
+        }
+        return None;
+    };
+    // Their values only come from the runtime (a JSON handle, a record with every key), which a
+    // subclass's constructor would bypass.
+    for sealed in ["Record", "JsonValue"] {
+        if cx.prelude_adt(sealed) == Some(bd) {
+            cx.error(
+                Diagnostic::error(format!("`{sealed}` cannot be extended"), t.span).with_note(
+                    format!("use composition instead: a class with a `{sealed}` field"),
+                ),
+            );
+            return None;
+        }
+    }
+    Some(bt)
 }
 
 fn enum_shape(cx: &mut Ctx, d: DefId) {

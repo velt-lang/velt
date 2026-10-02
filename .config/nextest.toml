@@ -1,0 +1,34 @@
+# cargo-nextest (https://nexte.st) runs the unit and integration tests in `cargo xtask check`:
+# test binaries in parallel, and only the tests a change needs (crates/xtask/src/plan.rs).
+# CI uses the `ci` profile. The end-to-end goldens are a step of their own.
+
+[profile.default]
+# Report every failing test, as `cargo test --no-fail-fast` did.
+fail-fast = false
+slow-timeout = { period = "60s" }
+
+[profile.ci]
+fail-fast = false
+failure-output = "immediate-final"
+# A hung test fails after 20 minutes instead of running into the job's timeout.
+slow-timeout = { period = "60s", terminate-after = 20 }
+
+[test-groups]
+# Tests that build and run many programs on a worker pool of their own, or wait on timeouts
+# (`velt dev` reloads, the debug adapter): two at a time, so they don't starve each other.
+end-to-end = { max-threads = 2 }
+
+[[profile.default.overrides]]
+filter = """
+binary(wasm_goldens) | binary(native_packages) | binary(reload) | binary(debugger) \
+| binary(docs) | binary(llvm_goldens) | binary(panic_locations) | binary(playground)\
+"""
+test-group = "end-to-end"
+
+# The slowest tests (a minute or more each) start first, so they don't finish alone at the end.
+[[profile.default.overrides]]
+filter = """
+test(/^prefixes_never_panic_/) | binary(native_packages) | (package(velt_vir) & binary(native)) \
+| test(=examples_compile_and_run) | test(=random_programs_match_interpreter) | binary(reload)\
+"""
+priority = 100

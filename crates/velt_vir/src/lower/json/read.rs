@@ -8,10 +8,10 @@
 
 use velt_sema::hir::{self, TyId, TyKind};
 
-use super::{Seg, STR};
+use super::{Seg, STR, TOKEN_NULL};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
-use crate::lower::{cint, ice, FnLower, Glue};
+use crate::lower::{cint, ice, unit, FnLower, Glue};
 use crate::vir::{BinOp, BlockId, Const, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
@@ -20,14 +20,19 @@ impl FnLower<'_, '_> {
     pub(in crate::lower) fn json_parse_body(
         &mut self,
         src: Local,
+        (flags, depth): (Local, Local),
         out: Local,
         err: Local,
         ty: TyId,
     ) {
         let r = self.temp(Ty::Ptr);
         self.call_rt(
-            Rt::JsonReaderNew,
-            vec![Operand::Copy(Place::local(src))],
+            Rt::JsonReaderNewWith,
+            vec![
+                Operand::Copy(Place::local(src)),
+                Operand::Copy(Place::local(flags)),
+                Operand::Copy(Place::local(depth)),
+            ],
             Some(Place::local(r)),
         );
         let ca = self.cx.json_ctx_agg();
@@ -111,6 +116,72 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// A tuple from an array of exactly its length. Elements are decoded in place; a failure
+    /// drops the whole tuple (its undecoded elements are still zero).
+    fn json_read_tuple(
+        &mut self,
+        r: Local,
+        place: &Place,
+        ctx: Local,
+        ty: TyId,
+        es: &[TyId],
+        fail: BlockId,
+    ) {
+        let expected = format!("array of length {}", es.len());
+        let ro = Operand::Copy(Place::local(r));
+        self.json_expect(Rt::JsonArrayStart, vec![ro.clone()], ctx, &expected, fail);
+        for (i, &e) in es.iter().enumerate() {
+            let more = self.temp(Ty::U8);
+            self.call_rt(
+                Rt::JsonArrayNext,
+                vec![ro.clone()],
+                Some(Place::local(more)),
+            );
+            let (body, bad) = (self.new_block(), self.new_block());
+            self.terminate(Terminator::Switch {
+                value: Operand::Copy(Place::local(more)),
+                cases: vec![(1, body)],
+                default: bad,
+            });
+            self.switch_to(bad);
+            self.json_fail(ctx, &expected, fail);
+            self.switch_to(body);
+            let fp = self.field_place(place, ty, i as u32);
+            let elem_fail = self.new_block();
+            self.json_read(r, &fp, ctx, e, elem_fail);
+            let next = self.new_block();
+            self.goto(next);
+            self.switch_to(elem_fail);
+            self.json_prepend(ctx, Seg::Index(cint(i as i128, Ty::U64)));
+            self.goto(fail);
+            self.switch_to(next);
+        }
+        let end = self.temp(Ty::U8);
+        self.call_rt(Rt::JsonArrayNext, vec![ro], Some(Place::local(end)));
+        let (done, bad) = (self.new_block(), self.new_block());
+        self.terminate(Terminator::Switch {
+            value: Operand::Copy(Place::local(end)),
+            cases: vec![(0, done)],
+            default: bad,
+        });
+        self.switch_to(bad);
+        self.json_fail(ctx, &expected, fail);
+        self.switch_to(done);
+    }
+
+    /// Make a fresh decode target all-zero. A target that needs no drop is assigned a zero
+    /// value too: once a decoder is inlined, its stores on the success path are all the
+    /// (path-insensitive) definite-assignment check can see.
+    pub(super) fn json_init(&mut self, l: Local, ty: TyId) {
+        if self.cx.needs_drop(ty) {
+            self.json_zero(&Place::local(l), ty);
+        } else {
+            let vt = self.cx.ty(ty);
+            let z = self.zero_value(vt);
+            self.assign(Place::local(l), Rvalue::Use(z));
+        }
+    }
+
     pub(super) fn rt_u8(&mut self, r: Rt, args: Vec<Operand>) -> Operand {
         let d = self.temp(Ty::U8);
         self.call_rt(r, args, Some(Place::local(d)));
@@ -137,10 +208,25 @@ impl FnLower<'_, '_> {
         self.switch_to(next);
     }
 
-    /// Numbers, bools, strings, `void`, options and C-like enums are decoded inline.
+    /// A `JsonValue`: the object is allocated with a null handle, then the runtime builds the
+    /// tree into its handle field.
+    fn json_read_value(&mut self, r: Local, place: &Place, ctx: Local, ty: TyId, fail: BlockId) {
+        let obj = self.alloc_object_raw(ty);
+        self.assign(place.clone(), Rvalue::Use(Operand::Copy(obj)));
+        let h = self.field_place(place, ty, 0);
+        let ha = self.addr(h);
+        let ro = Operand::Copy(Place::local(r));
+        self.json_expect(Rt::JsonReadValue, vec![ro, ha], ctx, "value", fail);
+    }
+
+    /// Numbers, bools, strings, `void`, options, literal types, unions of literal types and
+    /// C-like enums are decoded inline.
     fn json_read_inline(&mut self, ty: TyId) -> bool {
         match self.cx.kind(ty) {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str | TyKind::Unit => true,
+            TyKind::Literal(_) => true,
+            // A union of literal types is just its tag.
+            TyKind::Adt(..) if self.cx.is_union(ty) => self.json_choices(ty).is_some(),
             TyKind::Option(_) => true,
             TyKind::Adt(d, _) => {
                 matches!(self.cx.hir.def(d), hir::Def::Enum(_)) && self.cx.is_c_like_enum(d)
@@ -216,12 +302,33 @@ impl FnLower<'_, '_> {
                 let arr = self.content(place, ty);
                 self.json_read_array(r, &arr, ctx, e, fail)
             }
-            TyKind::Adt(d, _) if self.json_read_inline(ty) => {
-                self.json_read_enum(r, place, ctx, d, fail)
+            TyKind::Tuple(es) => self.json_read_tuple(r, place, ctx, ty, &es, fail),
+            // Literal types, literal unions and C-like enums: one of a fixed set of scalars.
+            TyKind::Literal(_) | TyKind::Adt(..) if self.json_choices(ty).is_some() => {
+                self.json_read_choice(r, place, ctx, ty, fail)
+            }
+            TyKind::Adt(..) if self.cx.is_union(ty) => {
+                self.json_read_union(r, place, ctx, ty, fail)
+            }
+            // `JsonValue` takes any value as a tree, never its private `handle` field.
+            TyKind::Adt(..) if self.cx.is_json_value(ty) => {
+                self.json_read_value(r, place, ctx, ty, fail)
+            }
+            TyKind::Adt(..) if self.prelude_map(ty).is_some() => {
+                let kv = self.prelude_map(ty).unwrap_or_else(|| ice("not a Map"));
+                self.json_read_map(r, place, ctx, ty, kv, fail)
+            }
+            TyKind::Adt(..) if self.prelude_record(ty).is_some() => {
+                let kv = self
+                    .prelude_record(ty)
+                    .unwrap_or_else(|| ice("not a Record"));
+                self.json_read_record(r, place, ctx, ty, kv, fail)
             }
             TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => {
                 self.json_read_object(r, place, ctx, ty, fail)
             }
+            // Unreachable while this match accepts everything `velt_sema::json::unserializable`
+            // lets through for parse: keep the two in sync.
             k => ice(format_args!(
                 "JSON.parse into a non-deserializable type {k:?}"
             )),
@@ -280,7 +387,7 @@ impl FnLower<'_, '_> {
             Rvalue::Binary(
                 BinOp::Eq,
                 Operand::Copy(Place::local(kind)),
-                cint(1, Ty::U32),
+                cint(TOKEN_NULL as i128, Ty::U32),
             ),
         );
         let (null_bb, some_bb, done) = (self.new_block(), self.new_block(), self.new_block());
@@ -293,6 +400,12 @@ impl FnLower<'_, '_> {
             Ty::Agg(_) => {
                 self.json_read(r, &proj(place, Proj::Field(1)), ctx, e, fail);
                 self.assign(proj(place, Proj::Field(0)), Rvalue::Use(Self::ctrue()));
+            }
+            // A zero-sized payload (a literal type): the option is its present flag.
+            Ty::Bool => {
+                let dummy = self.temp(Ty::U8);
+                self.json_read(r, &Place::local(dummy), ctx, e, fail);
+                self.assign(place.clone(), Rvalue::Use(Self::ctrue()));
             }
             // Null niche: the payload is the pointer itself.
             _ => self.json_read(r, place, ctx, e, fail),
@@ -325,15 +438,21 @@ impl FnLower<'_, '_> {
         self.switch_to(bad);
         self.json_fail(ctx, "array", fail);
         self.switch_to(body);
-        let et = match self.cx.ty(e) {
-            Ty::Unit => ice("JSON.parse of a void[]"),
-            t => t,
-        };
-        let elem = self.temp(et);
-        self.json_zero(&Place::local(elem), e);
+        // Zero-sized elements (a literal type) are only checked; a dummy byte is the target.
+        let et = self.cx.ty(e);
+        let zero_sized = et == Ty::Unit;
+        let elem = self.temp(if zero_sized { Ty::U8 } else { et });
+        if !zero_sized {
+            self.json_init(elem, e);
+        }
         let elem_fail = self.new_block();
         self.json_read(r, &Place::local(elem), ctx, e, elem_fail);
-        self.push_value(place, e, Operand::Copy(Place::local(elem)));
+        let v = if zero_sized {
+            unit()
+        } else {
+            Operand::Copy(Place::local(elem))
+        };
+        self.push_value(place, e, v);
         let n = self.rvalue_temp(
             Ty::U64,
             Rvalue::Binary(BinOp::Add, Operand::Copy(Place::local(i)), cint(1, Ty::U64)),
@@ -344,38 +463,5 @@ impl FnLower<'_, '_> {
         self.json_prepend(ctx, Seg::Index(Operand::Copy(Place::local(i))));
         self.goto(fail);
         self.switch_to(done);
-    }
-
-    /// A C-like enum from its discriminant number.
-    fn json_read_enum(
-        &mut self,
-        r: Local,
-        place: &Place,
-        ctx: Local,
-        d: hir::DefId,
-        fail: BlockId,
-    ) {
-        let t = self.temp(Ty::I64);
-        let a = self.addr(Place::local(t));
-        let ro = Operand::Copy(Place::local(r));
-        self.json_expect(Rt::JsonReadI64, vec![ro, a], ctx, "enum", fail);
-        let discs: Vec<i64> = self
-            .cx
-            .enum_def(d)
-            .variants
-            .iter()
-            .map(|v| v.discriminant)
-            .collect();
-        let (ok, bad) = (self.new_block(), self.new_block());
-        let cases = discs.into_iter().map(|v| (v as i128, ok)).collect();
-        self.terminate(Terminator::Switch {
-            value: Operand::Copy(Place::local(t)),
-            cases,
-            default: bad,
-        });
-        self.switch_to(bad);
-        self.json_fail(ctx, "enum", fail);
-        self.switch_to(ok);
-        self.assign(place.clone(), Rvalue::Use(Operand::Copy(Place::local(t))));
     }
 }

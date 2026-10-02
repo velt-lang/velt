@@ -229,6 +229,10 @@ impl FnCx<'_, '_> {
         }
         if optional {
             return self.optional_chain(object, span, |s, recv| {
+                if s.record_internal_call(&recv, prop) {
+                    s.check_args_loose(args);
+                    return s.error_expr(span);
+                }
                 s.method_call_on(recv, prop, type_args, args, None, span)
             });
         }
@@ -236,6 +240,10 @@ impl FnCx<'_, '_> {
             ast::ExprKind::Super => return self.super_method_call(prop, args, exp, span),
             _ => self.expr(object, None, Want::Borrow),
         };
+        if self.record_internal_call(&recv, prop) {
+            self.check_args_loose(args);
+            return self.error_expr(span);
+        }
         self.method_call_on(recv, prop, type_args, args, exp, span)
     }
 

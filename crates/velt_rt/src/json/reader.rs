@@ -6,10 +6,13 @@
 //! `next_key` / `array_next`: the reader only needs to know whether the last consumed token was
 //! an opening bracket.
 
-use super::error::{mismatch_message, reader_syntax_message};
-use super::scan::{number_f64, number_i64, NumTok, Scanner, StrTok, SyntaxError};
-use super::walk::{walk, SkipSink};
+use super::error::{mismatch_message, syntax_message};
+use super::scan::{number_f64, number_i64, NumTok, Scanner, StrTok, SyntaxError, TOO_DEEP};
+use super::value::{read_limited, Value};
+use super::walk::{walk_limited, MemoSink, SkipSink};
 use crate::str::VeltStr;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// `peek` results.
 pub const TOKEN_EOF: u32 = 0;
@@ -34,6 +37,8 @@ pub const STEP_ERROR: u8 = 2;
 pub enum ReadError {
     /// Well-formed so far, but not the kind the decoder asked for.
     Mismatch,
+    /// An object key the target type does not have, with unknown keys rejected.
+    Unknown,
     Syntax(SyntaxError),
 }
 
@@ -44,16 +49,54 @@ pub struct Reader {
     /// The last consumed token was `{` or `[` (so no comma is expected before the next item).
     after_open: bool,
     error: Option<ReadError>,
+    /// Options (`JSON.parse` options): fail on unknown object keys; the deepest nesting allowed
+    /// (`usize::MAX`: no limit), and the containers open now.
+    reject_unknown: bool,
+    max_depth: usize,
+    depth: usize,
+    /// Where each array/object skipped by `skip_lookahead` ends, by the offset of its opening
+    /// bracket (created on first use).
+    skip_ends: Option<HashMap<usize, usize>>,
+    /// Bytes `skip_lookahead` walked (not jumped over): lets tests check that lookahead stays
+    /// linear without timing it.
+    #[cfg(test)]
+    pub(crate) lookahead_walked: usize,
 }
+
+/// `velt_rt_json_reader_new_with` flags.
+pub const FLAG_REJECT_UNKNOWN: u32 = 1;
+
+/// Bits of a mark: position, open containers, `after_open`.
+const MARK_DEPTH_BITS: u32 = 21;
 
 impl Reader {
     /// Reader over `src`, which must outlive it.
     pub fn new(src: &'static [u8]) -> Reader {
+        Reader::with_options(src, 0, 0)
+    }
+
+    /// Reader with `FLAG_*` options and a maximum nesting depth (0: no limit).
+    pub fn with_options(src: &'static [u8], flags: u32, max_depth: u32) -> Reader {
         Reader {
             sc: Scanner::new(src),
             after_open: false,
             error: None,
+            reject_unknown: flags & FLAG_REJECT_UNKNOWN != 0,
+            max_depth: if max_depth == 0 {
+                usize::MAX
+            } else {
+                max_depth as usize
+            },
+            depth: 0,
+            skip_ends: None,
+            #[cfg(test)]
+            lookahead_walked: 0,
         }
+    }
+
+    /// How many more levels a value at the current position may nest.
+    fn depth_left(&self) -> usize {
+        self.max_depth.saturating_sub(self.depth)
     }
 
     /// The sticky error, if any.
@@ -115,8 +158,13 @@ impl Reader {
         if self.value_start(|b| b == bracket).is_none() {
             return 0;
         }
+        if self.depth >= self.max_depth {
+            let e = self.sc.error(TOO_DEEP);
+            return self.fail(ReadError::Syntax(e));
+        }
         self.sc.pos += 1;
         self.after_open = true;
+        self.depth += 1;
         1
     }
 
@@ -126,6 +174,7 @@ impl Reader {
         match self.sc.peek_non_ws() {
             Some(b) if b == close => {
                 self.sc.pos += 1;
+                self.depth = self.depth.saturating_sub(1);
                 Ok(STEP_END)
             }
             Some(b',') if !first => {
@@ -245,8 +294,85 @@ impl Reader {
         if self.value_start(|_| true).is_none() {
             return 0;
         }
-        let r = walk(&mut self.sc, &mut SkipSink);
+        let limit = self.depth_left();
+        let r = walk_limited(&mut self.sc, &mut SkipSink, limit);
         self.syntax(r)
+    }
+
+    /// Skip one value like `skip`, for a union decoder looking ahead for its discriminant: the
+    /// end of every array/object passed is remembered, so the nested unions' own lookahead
+    /// jumps over each of them in O(1) (without this, nested unions with the discriminant last
+    /// rescan every subtree once per enclosing level: quadratic in the depth).
+    pub fn skip_lookahead(&mut self) -> u8 {
+        let Some(first) = self.value_start(|_| true) else {
+            return 0;
+        };
+        let limit = self.depth_left();
+        #[cfg(test)]
+        let start = self.sc.pos;
+        if !matches!(first, b'{' | b'[') {
+            // A scalar: nothing to remember (one peek, like `skip`).
+            let r = walk_limited(&mut self.sc, &mut SkipSink, limit);
+            #[cfg(test)]
+            {
+                self.lookahead_walked += self.sc.pos - start;
+            }
+            return self.syntax(r);
+        }
+        let ends = self.skip_ends.get_or_insert_with(HashMap::new);
+        // A container at a given offset always has the same depth, so an earlier walk over it
+        // already checked the limit.
+        if let Some(&end) = ends.get(&self.sc.pos) {
+            self.sc.pos = end;
+            return 1;
+        }
+        let mut sink = MemoSink {
+            ends,
+            open: Vec::new(),
+        };
+        let r = walk_limited(&mut self.sc, &mut sink, limit);
+        #[cfg(test)]
+        {
+            self.lookahead_walked += self.sc.pos - start;
+        }
+        self.syntax(r)
+    }
+
+    /// Skip the value of an object key the target type does not have (fails when unknown keys
+    /// are rejected).
+    pub fn skip_unknown(&mut self) -> u8 {
+        if self.reject_unknown {
+            return self.fail(ReadError::Unknown);
+        }
+        self.skip()
+    }
+
+    /// The current position, to come back to with `reset` (a decoder looking ahead, e.g. for
+    /// a union's discriminant).
+    pub fn mark(&self) -> u64 {
+        let depth = self.depth.min((1 << MARK_DEPTH_BITS) - 1) as u64;
+        ((self.sc.pos as u64) << (MARK_DEPTH_BITS + 1)) | (depth << 1) | self.after_open as u64
+    }
+
+    /// Go back to `mark` and forget any error since.
+    pub fn reset(&mut self, mark: u64) {
+        self.sc.pos = (mark >> (MARK_DEPTH_BITS + 1)) as usize;
+        self.depth = ((mark >> 1) & ((1 << MARK_DEPTH_BITS) - 1)) as usize;
+        self.after_open = mark & 1 == 1;
+        self.error = None;
+    }
+
+    /// One complete value of any kind, built as a `json.Value` tree.
+    pub fn value(&mut self) -> Option<Arc<Value>> {
+        self.value_start(|_| true)?;
+        let limit = self.depth_left();
+        match read_limited(&mut self.sc, limit) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                self.fail(ReadError::Syntax(e));
+                None
+            }
+        }
     }
 
     /// Only whitespace may follow the top-level value.
@@ -264,7 +390,8 @@ impl Reader {
     /// The `JsonError.message` for the current state (see error.rs for the formats).
     pub fn message(&self, expected: &str, path: &str) -> String {
         match self.error {
-            Some(ReadError::Syntax(e)) => reader_syntax_message(self.sc.src, e, path),
+            Some(ReadError::Syntax(e)) => syntax_message(self.sc.src, e, path, self.max_depth),
+            Some(ReadError::Unknown) => format!("unknown field at {path}"),
             _ => mismatch_message(expected, path),
         }
     }

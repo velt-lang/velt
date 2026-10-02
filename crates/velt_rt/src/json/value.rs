@@ -1,11 +1,12 @@
-//! `json.Value`: an immutable tree of `Arc`'d nodes built by `JSON.parseValue`.
+//! `json.Value`: a tree of `Arc`'d nodes built by `JSON.parseValue` or edited through
+//! `value_edit` (copy-on-write: a node shared with another handle is copied before a change).
 //!
 //! Handles given to generated code are `Arc::into_raw` pointers, so a handle to a child stays
 //! valid after the root handle is freed. Parsing, stringifying and dropping are iterative, so
 //! arbitrarily deep documents cannot overflow the stack.
 
 use super::scan::{number_f64, Scanner, StrTok, SyntaxError};
-use super::walk::{walk, Scalar, Sink};
+use super::walk::{walk_limited, Scalar, Sink};
 use crate::fmt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -41,8 +42,24 @@ impl Object {
         }
     }
 
+    /// Remove `key`, keeping the order of the others; whether it was there. O(number of
+    /// members): the entries after it move down one place and so do their indices.
+    pub fn remove(&mut self, key: &str) -> bool {
+        let Some(i) = self.find(key) else {
+            return false;
+        };
+        let (removed, _) = self.entries.remove(i);
+        if self.entries.len() <= INDEX_THRESHOLD {
+            self.index = None;
+        } else if let Some(index) = &mut self.index {
+            index.remove(&removed);
+            shift_down(index, &self.entries[i..], i);
+        }
+        true
+    }
+
     /// Insert, replacing the value of an existing key in place.
-    fn insert(&mut self, key: Box<str>, value: Arc<Value>) {
+    pub fn insert(&mut self, key: Box<str>, value: Arc<Value>) {
         if let Some(i) = self.find(&key) {
             self.entries[i].1 = value;
             return;
@@ -63,7 +80,41 @@ impl Object {
     }
 }
 
+/// Lower by one the indices of `moved` (the entries now from position `from` on, which were one
+/// further before a removal). Few moved entries are looked up by key; otherwise a pass over all
+/// indices is cheaper than hashing each key.
+fn shift_down(index: &mut HashMap<Box<str>, usize>, moved: &[(Box<str>, Arc<Value>)], from: usize) {
+    if moved.len() * 8 < index.len() {
+        for (k, _) in moved {
+            if let Some(slot) = index.get_mut(k) {
+                *slot -= 1;
+            }
+        }
+    } else {
+        for slot in index.values_mut() {
+            if *slot > from {
+                *slot -= 1;
+            }
+        }
+    }
+}
+
 impl Value {
+    /// A copy of this node sharing its children (O(number of children)).
+    pub fn shallow_clone(&self) -> Value {
+        match self {
+            Value::Null => Value::Null,
+            Value::Bool(b) => Value::Bool(*b),
+            Value::Number(n) => Value::Number(*n),
+            Value::String(s) => Value::String(s.clone()),
+            Value::Array(items) => Value::Array(items.clone()),
+            Value::Object(obj) => Value::Object(Object {
+                entries: obj.entries.clone(),
+                index: obj.index.clone(),
+            }),
+        }
+    }
+
     /// Move out all children (leaves `self` childless).
     fn take_children(&mut self) -> Vec<Arc<Value>> {
         match self {
@@ -120,6 +171,23 @@ struct Builder {
 }
 
 impl Builder {
+    /// Where the builder is: `$` and a segment per open container (`.key` while a member's
+    /// value is being read, `[i]` for the next element), like the typed decoders' paths.
+    fn path(&self) -> String {
+        let mut p = String::from("$");
+        for f in &self.stack {
+            match f {
+                Frame::Array(items) => p.push_str(&format!("[{}]", items.len())),
+                Frame::Object(_, Some(key)) => {
+                    p.push('.');
+                    p.push_str(key);
+                }
+                Frame::Object(_, None) => {}
+            }
+        }
+        p
+    }
+
     fn add(&mut self, value: Value) {
         let value = Arc::new(value);
         match self.stack.last_mut() {
@@ -135,10 +203,10 @@ impl Builder {
 
 impl Sink for Builder {
     const DECODE: bool = true;
-    fn begin_array(&mut self) {
+    fn begin_array(&mut self, _: usize) {
         self.stack.push(Frame::Array(Vec::new()));
     }
-    fn begin_object(&mut self) {
+    fn begin_object(&mut self, _: usize) {
         self.stack.push(Frame::Object(Object::default(), None));
     }
     fn key(&mut self, src: &[u8], key: StrTok) {
@@ -146,7 +214,7 @@ impl Sink for Builder {
             *slot = Some(owned_text(src, key));
         }
     }
-    fn end(&mut self) {
+    fn end(&mut self, _: usize) {
         let value = match self.stack.pop().expect("ICE: unbalanced JSON walk") {
             Frame::Array(items) => Value::Array(items),
             Frame::Object(obj, _) => Value::Object(obj),
@@ -163,13 +231,24 @@ impl Sink for Builder {
     }
 }
 
-/// Parse a whole document (one value, surrounded only by whitespace).
-pub fn parse(src: &[u8]) -> Result<Arc<Value>, SyntaxError> {
+/// Build the tree of the one value starting at the scanner's position, nested at most
+/// `limit` deep.
+pub fn read_limited(sc: &mut Scanner, limit: usize) -> Result<Arc<Value>, SyntaxError> {
+    let mut builder = Builder::default();
+    walk_limited(sc, &mut builder, limit)?;
+    Ok(builder.root.expect("ICE: JSON walk produced no value"))
+}
+
+/// Parse a whole document (one value, surrounded only by whitespace), nested at most `limit`
+/// deep. An error comes with the path of the value it is in.
+pub fn parse(src: &[u8], limit: usize) -> Result<Arc<Value>, (SyntaxError, String)> {
     let mut sc = Scanner::new(src);
     let mut builder = Builder::default();
-    walk(&mut sc, &mut builder)?;
+    if let Err(e) = walk_limited(&mut sc, &mut builder, limit) {
+        return Err((e, builder.path()));
+    }
     if sc.peek_non_ws().is_some() {
-        return Err(sc.error("unexpected trailing characters"));
+        return Err((sc.error("unexpected trailing characters"), "$".into()));
     }
     Ok(builder.root.expect("ICE: JSON walk produced no value"))
 }

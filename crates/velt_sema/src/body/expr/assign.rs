@@ -16,6 +16,8 @@ enum AssignTarget {
     Place(hir::Expr),
     /// `obj.name` where `name` is a setter: the checked receiver.
     Setter(hir::Expr),
+    /// `r[k]` / `r.name` of a `Record`: the checked record.
+    Record(hir::Expr),
 }
 
 impl FnCx<'_, '_> {
@@ -33,6 +35,9 @@ impl FnCx<'_, '_> {
                     return None;
                 }
                 let obj = self.expr(object, None, Want::Borrow);
+                if self.record_args(obj.ty).is_some() {
+                    return Some(AssignTarget::Record(obj));
+                }
                 if self.has_setter(obj.ty, &prop.name) {
                     return Some(AssignTarget::Setter(obj));
                 }
@@ -53,7 +58,11 @@ impl FnCx<'_, '_> {
                 index,
                 optional: false,
             } => {
-                let place = self.index_expr(object, index, false, Want::BorrowMut, target.span);
+                let obj = self.expr(object, None, Want::Borrow);
+                if self.record_args(obj.ty).is_some() {
+                    return Some(AssignTarget::Record(obj));
+                }
+                let place = self.index_of(obj, index, Want::BorrowMut, target.span);
                 if self.cx.ty.is_bottom(place.ty) {
                     return None;
                 }
@@ -231,6 +240,10 @@ impl FnCx<'_, '_> {
             Some(AssignTarget::Setter(obj)) => {
                 return self.setter_assign(obj, op, target, value, span)
             }
+            Some(AssignTarget::Record(obj)) => {
+                let (object, key) = super::record::record_parts(target);
+                return self.record_assign(obj, object, key, op, target, value, span);
+            }
             None => {
                 self.expr(value, None, Want::Borrow);
                 return self.error_expr(span);
@@ -311,6 +324,9 @@ impl FnCx<'_, '_> {
             Some(AssignTarget::Place(place)) => place,
             Some(AssignTarget::Setter(obj)) => {
                 return self.setter_update(obj, op, target, as_value, span)
+            }
+            Some(AssignTarget::Record(obj)) => {
+                return self.record_update(obj, op, target, as_value, span)
             }
             None => return self.error_expr(span),
         };

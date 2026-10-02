@@ -1,0 +1,7 @@
+{"name":"ada","age":36,"tags":["x",true,null]}
+{"name":"bob","tags":["x",true,null],"age":37} {"name":"ada","age":36,"tags":["x",true,null]} ["x",true,null] ["y",true,null]
+true false false false
+bob 37
+{"name":"c","age":1,"extra":[1.5]} {"v":{"name":"c","age":1,"extra":[1.5]}}
+unknown field at $.tags
+{"name":"bob","tags":["x",true,null],"age":37,"x":["y",true,null],"self":{"name":"bob","tags":["x",true,null],"age":37,"x":["y",true,null]}}

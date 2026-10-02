@@ -1,0 +1,124 @@
+// JSON.parse<T> into unions (issue #15): members told apart by the kind of JSON value, literal
+// members by value, object members by a discriminant field anywhere in the object or by a
+// required key only one member has. Errors name the allowed values and the path.
+type Join = { kind: "join"; user: string; room: string };
+type Leave = { kind: "leave"; user: string };
+type Say = { kind: "say"; user: string; text: string; tags: string[] };
+type ClientMessage = Join | Leave | Say;
+type Circle = { r: f64 };
+type Rect = { w: f64; h: f64 };
+
+enum Mode {
+  Fast = "fast",
+  Slow = "slow",
+}
+
+type Setting = string | i64 | bool | null;
+type Size = "auto" | f64;
+type Item = { v: string | Mode | f64[] };
+
+// Nested unions with the discriminant last: each level looks ahead past its subtree once.
+class Leaf {
+  kind: "leaf" = "leaf";
+  v: i64 = 0;
+}
+
+class Node {
+  kids: (Leaf | Node)[] = [];
+  kind: "node" = "node";
+}
+
+function leaves(t: Leaf | Node): i64[] {
+  if (t instanceof Leaf) {
+    return [t.v];
+  }
+  const out: i64[] = [];
+  for (const k of t.kids) {
+    for (const v of leaves(k)) {
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+function chain(levels: i64): string {
+  let s = "";
+  for (let i = 0; i < levels; i++) {
+    s += '{"kids":[{"v":1,"kind":"leaf"},';
+  }
+  s += '{"kind":"leaf","v":2}';
+  for (let i = 0; i < levels; i++) {
+    s += '],"kind":"node"}';
+  }
+  return s;
+}
+
+function msg(text: string) {
+  try {
+    const m = JSON.parse<ClientMessage>(text);
+    switch (m.kind) {
+      case "join":
+        console.log("join", m.user, m.room);
+        break;
+      case "leave":
+        console.log("leave", m.user);
+        break;
+      case "say":
+        console.log("say", m.user, m.text, m.tags);
+        break;
+    }
+    const out = JSON.stringify(m);
+    console.log(out, JSON.stringify(JSON.parse<ClientMessage>(out)) == out);
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+
+function main() {
+  msg('{"kind":"join","user":"a","room":"r1"}');
+  msg('{"user":"b","kind":"leave"}');
+  msg('{"user":"c","text":"hi","tags":["x"],"kind":"say"}');
+  msg('{"kind":"wave","user":"c"}');
+  msg('{"user":"c"}');
+  msg('{"kind":"join","user":"a"}');
+  msg("[1]");
+  console.log(JSON.parse<(Circle | Rect)[]>('[{"r":1},{"h":2,"w":3}]'));
+  console.log(JSON.parse<Setting[]>('["x",3,true,null,9007199254740993]'));
+  console.log(JSON.parse<Size[]>('["auto",1.5,2]'));
+  console.log(JSON.parse<Item[]>('[{"v":"fast"},{"v":"other"},{"v":[1,2]}]'));
+  try {
+    JSON.parse<Setting>("1.5");
+  } catch (e) {
+    console.log(e.message);
+  }
+  try {
+    JSON.parse<Size>('"big"');
+  } catch (e) {
+    console.log(e.message);
+  }
+  try {
+    JSON.parse<Setting>("{}");
+  } catch (e) {
+    console.log(e.message);
+  }
+  try {
+    JSON.parse<(Circle | Rect)[]>('[{"x":1}]');
+  } catch (e) {
+    console.log(e.message);
+  }
+  // Without a discriminant, the first key in the document that only one member requires
+  // decides; the other member's keys are then unknown keys.
+  console.log(JSON.parse<(Circle | Rect)[]>('[{"w":3,"r":1,"h":2},{"h":2,"r":1,"w":3}]'));
+  try {
+    JSON.parse<Circle | Rect>('{"w":3,"r":1,"h":2}', { unknownKeys: "reject" });
+  } catch (e) {
+    console.log(e.message);
+  }
+  console.log(leaves(JSON.parse<Leaf | Node>(chain(3))));
+  console.log(leaves(JSON.parse<Leaf | Node>(chain(100), { maxDepth: 300 })).length);
+  try {
+    JSON.parse<Leaf | Node>(chain(2).replace('"kind":"leaf","v":2', '"kind":"tree","v":2'));
+  } catch (e) {
+    console.log(e.message);
+  }
+}

@@ -1,0 +1,55 @@
+// Record key types are checked where the type is resolved and where a generic is instantiated;
+// with a type-parameter key a record is never built empty or shrunk, and its `__` methods are
+// internal (docs/internals/design/record.md).
+type AB = "a" | "b";
+
+enum Res {
+  Cpu = "cpu",
+  Mem = "mem",
+}
+
+class Box<K> {
+  r: Record<K, i64> = JSON.parse<Record<K, i64>>("{}");
+}
+
+type Named<K> = Record<K, string>;
+
+function f(r: Record<bool, i64>) {}
+
+function dec<K>(s: string): Record<K, i64> {
+  return JSON.parse<Record<K, i64>>(s);
+}
+
+function count<K>(k: K): usize {
+  return Object.keys(dec<K>("{}")).length;
+}
+
+function mk<K, V>(): Record<K, V> {
+  return {};
+}
+
+function mk2<K, V>(): Record<K, V> {
+  return new Record<K, V>();
+}
+
+function copy<K, V>(r: Record<K, V>): Record<K, V> {
+  return { ...r };
+}
+
+function drop<K>(r: Record<K, i64>, k: K) {
+  delete r[k];
+}
+
+function main() {
+  const x = JSON.parse<Record<i64, string>>("{\"1\":\"x\"}");
+  const y = dec<f64>("{}");
+  console.log(count(true), count("x"));
+  const b = new Box<u8>();
+  const n: Named<i64> | null = null;
+  const q: Record<AB, i64> = { a: 1, b: 2 };
+  q.__delete("a");
+  console.log(q.__size(), copy(q).a);
+  const r: Record<Res, i64> = JSON.parse<Record<Res, i64>>("{\"cpu\":1,\"mem\":2}");
+  r.Mem = 1;
+  console.log(r.disk, x, y, b, n);
+}

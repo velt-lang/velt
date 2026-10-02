@@ -1,0 +1,9 @@
+json_errors.vlt:18:3: error: cannot convert to or from JSON: `A` contains `() => void`, which has no JSON form
+json_errors.vlt:19:3: error: cannot convert to or from JSON: `B` contains `Named`, which has no JSON form
+json_errors.vlt:20:3: error: cannot convert to or from JSON: `C` contains `Promise<i64>`, which has no JSON form
+json_errors.vlt:21:3: error: cannot convert to or from JSON: `D` contains `shared<i64>`, which has no JSON form
+json_errors.vlt:22:3: error: cannot convert to or from JSON: `F` contains `Map<i64, string>`, which has no JSON form
+a `Map` converts to a JSON object only with `string` keys
+json_errors.vlt:23:3: error: cannot convert to or from JSON: `G` contains `(i64) => i64`, which has no JSON form
+json_errors.vlt:24:3: error: cannot convert to or from JSON: `Map<i64, string>` has no JSON form
+a `Map` converts to a JSON object only with `string` keys

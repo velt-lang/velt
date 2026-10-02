@@ -210,6 +210,13 @@ impl<'a> Parser<'a> {
             Tok::Minus => self.finish_prefix(UnaryOp::Neg)?,
             Tok::Plus => self.finish_prefix(UnaryOp::Plus)?,
             Tok::Kw(Kw::Typeof) => self.finish_prefix(UnaryOp::TypeOf)?,
+            // `delete` is a contextual word: `delete r[k]`, `delete this.x`.
+            Tok::Ident
+                if self.at_word("delete")
+                    && matches!(self.nth(1), Tok::Ident | Tok::Kw(Kw::This)) =>
+            {
+                self.finish_prefix(UnaryOp::Delete)?
+            }
             Tok::Kw(Kw::Void) => self.void_expr()?,
             Tok::PlusPlus | Tok::MinusMinus => ExprKind::Update {
                 op: self.bump_update_op(),

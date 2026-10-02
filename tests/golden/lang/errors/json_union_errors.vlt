@@ -1,0 +1,40 @@
+// Unions JSON.parse cannot decode: members it cannot tell apart (issue #15).
+type A = { x: i64; y?: string };
+type B = { x: i64; z: f64 | null };
+type C = { a: i64 };
+enum E {
+  A = "a",
+}
+enum F {
+  B = "b",
+  A2 = "a",
+}
+enum N {
+  Zero = 0,
+  One = 1,
+}
+// A discriminant whose values are distinct types but the same JSON number.
+class K1 {
+  kind: 1 = 1;
+  a: i64 = 0;
+}
+class K2 {
+  kind: 1.0 = 1.0;
+  b: i64 = 0;
+}
+
+function main() {
+  JSON.parse<i64 | f64>("1");
+  JSON.parse<A | B>("{}");
+  JSON.parse<C | Map<string, i64>>("{}");
+  JSON.parse<i64[] | string[]>("[]");
+  JSON.parse<C | JsonValue>("{}");
+  JSON.parse<C | string>("{}");
+  // Literal and enum members matched by the same JSON value.
+  JSON.parse<E | "a">('"a"');
+  JSON.parse<E | F>('"a"');
+  JSON.parse<N | 1>("1");
+  JSON.parse<1 | 1.0 | string>("1");
+  JSON.parse<F | "b">('"b"');
+  JSON.parse<K1 | K2>('{"kind":1,"b":5}');
+}

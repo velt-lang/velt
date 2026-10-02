@@ -1,0 +1,25 @@
+// Types without a JSON form are compile errors, never internal errors (issue #17).
+interface Named {
+  name(): string;
+}
+
+class Holder {
+  f: (x: i64) => i64 = (x) => x;
+}
+
+type A = { f: () => void };
+type B = { n: Named };
+type C = { p: Promise<i64> };
+type D = { s: shared<i64> };
+type F = { m: Map<i64, string> };
+type G = { h: Holder };
+
+async function main() {
+  JSON.parse<A>("{}");
+  JSON.parse<B>("{}");
+  JSON.parse<C>("{}");
+  JSON.parse<D>("{}");
+  JSON.parse<F>("{}");
+  JSON.parse<G>("{}");
+  JSON.stringify(new Map<i64, string>());
+}

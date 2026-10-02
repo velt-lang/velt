@@ -1,0 +1,76 @@
+// JSON.parse<T> edge cases documented in docs/std/json.md: a repeated key keeps its last value
+// (in its first position) for every target type, but each occurrence must be valid for the
+// type, so a repeated discriminant or literal field with two values fails; lone `\u`
+// surrogates become U+FFFD; unsigned integers stop at i64::MAX.
+type Join = { kind: "join"; user: string; room: string };
+type Leave = { kind: "leave"; user: string };
+type Msg = Join | Leave;
+type Circle = { r: f64 };
+type Rect = { w: f64; h: f64 };
+
+struct User {
+  name: string;
+  age: i64;
+}
+
+class Task {
+  kind: "task" = "task";
+  n: i64 = 0;
+}
+
+function user(text: string) {
+  try {
+    console.log("user", JSON.stringify(JSON.parse<User>(text)));
+  } catch (e) {
+    console.log("user error:", e.message);
+  }
+}
+
+function msg(text: string) {
+  try {
+    const m = JSON.parse<Msg>(text);
+    console.log("msg", m.kind, JSON.stringify(m));
+  } catch (e) {
+    console.log("msg error:", e.message);
+  }
+}
+
+function task(text: string) {
+  try {
+    console.log("task", JSON.stringify(JSON.parse<Task>(text)));
+  } catch (e) {
+    console.log("task error:", e.message);
+  }
+}
+
+function unsigned(text: string) {
+  try {
+    console.log("u64", JSON.parse<u64>(text));
+  } catch (e) {
+    console.log("u64 error:", e.message);
+  }
+}
+
+function main() {
+  const dup = '{"a":1,"b":2,"a":3}';
+  user('{"name":"a","age":1,"name":"b","age":2}');
+  user('{"name":"a","age":"x","age":2}');
+  console.log("map", JSON.stringify(JSON.parse<Map<string, i64>>(dup)));
+  console.log("record", JSON.stringify(JSON.parse<Record<string, i64>>(dup)));
+  console.log("record keys", JSON.stringify(JSON.parse<Record<"a" | "b", i64>>(dup)));
+  console.log("value", JSON.parseValue(dup).stringify());
+  task('{"kind":"task","n":1,"n":5,"kind":"task"}');
+  task('{"kind":"task","n":1,"kind":"other"}');
+  msg('{"kind":"join","user":"u","kind":"join","room":"r"}');
+  msg('{"kind":"leave","user":"u","kind":"join","room":"r"}');
+  msg('{"kind":"join","user":"u","room":"r","kind":"leave"}');
+  console.log("shape", JSON.stringify(JSON.parse<Circle | Rect>('{"r":1,"r":2}')));
+
+  const lone = JSON.parse<string>('"a\\ud800b\\udc00"');
+  console.log("lone", lone, lone.length, JSON.parseValue('"\\udfff"').stringify());
+  console.log("pair", JSON.parse<string>('"\\ud83d\\ude00"'));
+
+  unsigned("9223372036854775807");
+  unsigned("9223372036854775808");
+  unsigned("-1");
+}

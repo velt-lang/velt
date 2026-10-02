@@ -195,7 +195,7 @@ reference count. Reference cycles are not freed (**planned**: `weak` references)
 
 ## Not supported
 
-`var`, `eval`, prototypes, `delete`, `for...in`, `with`, getters on object literals,
+`var`, `eval`, prototypes, `delete` (other than on a `Record`), `for...in`, `with`, getters on object literals,
 decorators, generators (`function*`, `yield`), `Symbol` (other than `Symbol.dispose` and
 `Symbol.asyncDispose`), `BigInt` literals (use [`velt:bigint`](../std/bigint.md)), Unicode
 identifiers, and the logical assignments `&&=`, `||=`, `??=` (planned). JSX is supported for

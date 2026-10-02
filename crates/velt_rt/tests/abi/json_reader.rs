@@ -398,3 +398,88 @@ fn deep_nesting_is_skipped_without_recursion() {
         "{err}"
     );
 }
+
+#[test]
+fn mark_and_reset_look_ahead() {
+    // A union decoder: find the discriminant anywhere, then decode from the `{` again.
+    let src = lit(r#" {"user":"a","kind":"join"} "#);
+    unsafe {
+        let r = velt_rt_json_reader_new(&src);
+        let mark = velt_rt_json_reader_mark(r);
+        assert_eq!(velt_rt_json_reader_expect_object_start(r), 1);
+        let mut tag = MaybeUninit::uninit();
+        loop {
+            let mut key = MaybeUninit::uninit();
+            assert_eq!(velt_rt_json_reader_next_key(r, key.as_mut_ptr()), STEP_MORE);
+            if owned_text(key.assume_init()) == "kind" {
+                assert_eq!(velt_rt_json_reader_read_string(r, tag.as_mut_ptr()), 1);
+                break;
+            }
+            assert_eq!(velt_rt_json_reader_skip_value(r), 1);
+        }
+        assert_eq!(owned_text(tag.assume_init()), "join");
+        velt_rt_json_reader_reset(r, mark);
+        assert_eq!(velt_rt_json_reader_peek(r), TOKEN_OBJECT_START);
+        assert_eq!(velt_rt_json_reader_skip_value(r), 1);
+        assert_eq!(velt_rt_json_reader_end(r), 1);
+        velt_rt_json_reader_free(r);
+    }
+    // Reset clears an error seen while looking ahead, and keeps the "first element" state.
+    let src = lit("[1.5, 2]");
+    unsafe {
+        let r = velt_rt_json_reader_new(&src);
+        assert_eq!(velt_rt_json_reader_expect_array_start(r), 1);
+        assert_eq!(velt_rt_json_reader_array_next(r), STEP_MORE);
+        let mark = velt_rt_json_reader_mark(r);
+        let mut n = 0i64;
+        assert_eq!(velt_rt_json_reader_read_i64(r, &mut n), 0);
+        velt_rt_json_reader_reset(r, mark);
+        let mut f = 0.0;
+        assert_eq!(velt_rt_json_reader_read_f64(r, &mut f), 1);
+        assert_eq!(f, 1.5);
+        assert_eq!(velt_rt_json_reader_array_next(r), STEP_MORE);
+        assert_eq!(velt_rt_json_reader_read_i64(r, &mut n), 1);
+        assert_eq!(n, 2);
+        assert_eq!(velt_rt_json_reader_array_next(r), STEP_END);
+        velt_rt_json_reader_free(r);
+    }
+}
+
+#[test]
+fn options_reject_unknown_keys_and_limit_depth() {
+    let msg = |r: *const Reader, path: &str| unsafe {
+        let mut out = MaybeUninit::uninit();
+        velt_rt_json_error(r, &lit("value"), &borrow(path), out.as_mut_ptr());
+        owned_text(out.assume_init())
+    };
+    let src = lit(r#"{"a":1,"b":2}"#);
+    unsafe {
+        // Unknown keys skipped by default, an error when rejected.
+        for (flags, want) in [(0, 1), (FLAG_REJECT_UNKNOWN, 0)] {
+            let r = velt_rt_json_reader_new_with(&src, flags, 0);
+            assert_eq!(velt_rt_json_reader_expect_object_start(r), 1);
+            let mut key = MaybeUninit::uninit();
+            assert_eq!(velt_rt_json_reader_next_key(r, key.as_mut_ptr()), STEP_MORE);
+            assert_eq!(velt_rt_json_reader_skip_unknown(r), want);
+            if want == 0 {
+                assert_eq!(msg(r, "$.a"), "unknown field at $.a");
+            }
+            velt_rt_json_reader_free(r);
+        }
+    }
+    // Depth counts the reader's own containers and those inside skipped values.
+    let src = lit(r#"[[1],{"x":[[2]]}]"#);
+    unsafe {
+        let r = velt_rt_json_reader_new_with(&src, 0, 3);
+        assert_eq!(velt_rt_json_reader_expect_array_start(r), 1);
+        assert_eq!(velt_rt_json_reader_array_next(r), STEP_MORE);
+        assert_eq!(velt_rt_json_reader_skip_value(r), 1); // [1]: depth 2
+        assert_eq!(velt_rt_json_reader_array_next(r), STEP_MORE);
+        assert_eq!(velt_rt_json_reader_skip_value(r), 0); // {"x":[[2]]}: depth 4
+        assert_eq!(
+            msg(r, "$[1]"),
+            "JSON nested deeper than 3 levels at $[1] (byte 11)"
+        );
+        velt_rt_json_reader_free(r);
+    }
+}

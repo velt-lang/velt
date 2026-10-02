@@ -1,0 +1,6 @@
+// A user module named `json` with its own `JsonValue` class: an ordinary class to JSON
+// (see json_user_value.vlt).
+export class JsonValue {
+  name: string = "";
+  id: u64 = 0;
+}
