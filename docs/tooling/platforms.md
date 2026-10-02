@@ -65,6 +65,49 @@ and macOS; on Windows `velt_rt_shared.dll` is copied next to the executable). Su
 needs the toolchain it was built with; ship `--release` builds, which link the runtime statically
 and run anywhere. `VELT_RT_LINK=static` makes debug builds static too.
 
+## Installing a release
+
+Every [GitHub release](https://github.com/velt-lang/velt/releases) carries a toolchain archive
+per platform, `SHA256SUMS`, and two installers that download the archive for this machine,
+check its checksum and install it:
+
+```sh
+curl -fsSL https://github.com/velt-lang/velt/releases/latest/download/get-velt.sh | sh
+```
+
+```powershell
+irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | iex
+```
+
+| Archive | Platform |
+|---|---|
+| `velt-<version>-x86_64-unknown-linux-gnu.tar.gz` | Linux x86_64, glibc 2.31 or newer (Ubuntu 20.04+, Debian 11+, RHEL 9+) |
+| `velt-<version>-aarch64-unknown-linux-gnu.tar.gz` | Linux arm64, glibc 2.31 or newer |
+| `velt-<version>-aarch64-apple-darwin.tar.gz` | macOS 11 or newer on Apple silicon |
+| `velt-<version>-x86_64-apple-darwin.tar.gz` | macOS 10.12 or newer on Intel |
+| `velt-<version>-x86_64-pc-windows-msvc.zip` | Windows x64 (also used on Windows arm64, under emulation) |
+
+There is no prebuilt toolchain for musl (Alpine) yet; build it from source there.
+
+| `get-velt.sh` | `get-velt.ps1` | Environment variable | Meaning |
+|---|---|---|---|
+| `--version <v>` | `-Version <v>` | `VELT_INSTALL_VERSION` | the release to install (`0.1.0`); default: the release the installer belongs to |
+| `--prefix <dir>` | `-Prefix <dir>` | `VELT_INSTALL_PREFIX` | where to install; default `~/.velt/toolchain`, `%LOCALAPPDATA%\velt` |
+| `--archive <file>` | `-Archive <file>` | | install an archive you downloaded instead of downloading one |
+| `--no-modify-path` | `-NoModifyPath` | | leave `PATH` alone |
+| | | `VELT_INSTALL_BASE_URL` | the repository to download from (default `https://github.com/velt-lang/velt`) |
+
+Pass options through the pipe with `sh -s --`, for example
+`curl -fsSL .../get-velt.sh | sh -s -- --version 0.1.0`; in PowerShell set the environment
+variables before `irm ... | iex`. Re-running the installer upgrades (or downgrades) in place: it
+replaces `bin/`, `lib/` and `std/` in the prefix. To uninstall, delete the prefix and the `PATH`
+line.
+
+`PATH`: `get-velt.sh` appends `export PATH="<prefix>/bin:$PATH"` to `~/.profile`, to
+`~/.bashrc`, `~/.bash_profile` and `~/.zshrc` when they exist (or `~/.zshrc` when your shell is
+zsh), and adds `~/.config/fish/conf.d/velt.fish` when fish is set up; `get-velt.ps1` adds
+`<prefix>\bin` to the user `Path`. Open a new terminal afterwards.
+
 ## Building and installing a distribution
 
 From a source checkout:

@@ -1,0 +1,221 @@
+# Release: pushing a tag v<version> (the workspace version in Cargo.toml) builds the toolchain
+# for every supported platform, installs each archive with scripts/get-velt.* and smoke-tests it,
+# publishes a GitHub release with the archives, SHA256SUMS and the installers, then installs the
+# published release on every platform. Running the workflow by hand (workflow_dispatch) builds and
+# tests the archives and keeps them as workflow artifacts without publishing anything.
+# See CONTRIBUTING.md "Releases".
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: version (and the tag matches it)
+        run: |
+          version=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -n 1)
+          [ -n "$version" ] || { echo "no version in Cargo.toml"; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the workspace version $version (Cargo.toml)"
+            exit 1
+          fi
+          case "$version" in *-*) prerelease=true ;; *) prerelease=false ;; esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds run in Debian 11 (glibc 2.31), so the toolchain runs on that glibc or
+          # newer (Ubuntu 20.04+, Debian 11+, RHEL 9, Amazon Linux 2023).
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+            container: debian:bullseye
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            container: debian:bullseye
+          - target: aarch64-apple-darwin
+            os: macos-15
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: x86_64-pc-windows-msvc
+            os: windows-2025
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    timeout-minutes: 120
+    steps:
+      - name: build tools (Debian container)
+        if: matrix.container
+        run: |
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends build-essential git curl ca-certificates
+      - uses: actions/checkout@v4
+      - name: rust (pinned)
+        shell: bash
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' -sSf https://sh.rustup.rs |
+              sh -s -- -y --no-modify-path --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          # The checkout belongs to another user inside the container; `velt --version` embeds
+          # the commit only if git trusts it.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          rustup toolchain install
+          rustc -vV
+          host=$(rustc -vV | sed -n 's/^host: *//p')
+          [ "$host" = "${{ matrix.target }}" ] || { echo "::error::host $host, expected ${{ matrix.target }}"; exit 1; }
+
+      - name: package (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: scripts/package.sh
+      - name: package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/package.ps1
+
+      - name: install the archive and smoke-test it (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: |
+          prefix="$RUNNER_TEMP/velt"
+          sh scripts/get-velt.sh --no-modify-path --prefix "$prefix" \
+            --archive "dist/velt-${{ needs.version.outputs.version }}-${{ matrix.target }}.tar.gz"
+          "$prefix/bin/velt" --version
+          scripts/smoke.sh "$prefix/bin/velt"
+      - name: install the archive and smoke-test it (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Prefix = Join-Path $env:RUNNER_TEMP "velt"
+          & ./scripts/get-velt.ps1 -NoModifyPath -Prefix $Prefix `
+            -Archive "dist/velt-${{ needs.version.outputs.version }}-${{ matrix.target }}.zip"
+          $Velt = Join-Path $Prefix "bin\velt.exe"
+          function Run { & $Velt @args; if ($LASTEXITCODE -ne 0) { throw "velt $args failed" } }
+          Run --version
+          Run doctor
+          $Work = Join-Path $env:RUNNER_TEMP "smoke"
+          New-Item -ItemType Directory -Force $Work | Out-Null
+          Set-Location $Work
+          Run new demo
+          Set-Location demo
+          Run run
+          Run run --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: velt-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    if: github.ref_type == 'tag'
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: velt-*
+          path: assets
+          merge-multiple: true
+      - name: installers, checksums and notes
+        run: |
+          for f in get-velt.sh get-velt.ps1; do
+            sed "s/@VELT_RELEASE_VERSION@/$VERSION/" "scripts/$f" > "assets/$f"
+          done
+          (cd assets && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          {
+            echo "## Install"
+            echo
+            echo "Linux and macOS:"
+            echo
+            echo '```sh'
+            echo "curl -fsSL $base/get-velt.sh | sh"
+            echo '```'
+            echo
+            echo "Windows (PowerShell):"
+            echo
+            echo '```powershell'
+            echo "irm $base/get-velt.ps1 | iex"
+            echo '```'
+            echo
+            echo "Then run \`velt doctor\`. Velt needs the system linker: the Build Tools for Visual Studio on"
+            echo "Windows, \`build-essential\` on Linux, the Xcode command line tools on macOS"
+            echo "([Platforms and installation](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/tooling/platforms.md))."
+            echo
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" --jq .body
+          } > notes.md
+      - name: publish the release
+        run: |
+          flags=
+          if [ "${{ needs.version.outputs.prerelease }}" = true ]; then flags=--prerelease; fi
+          gh release create "$GITHUB_REF_NAME" assets/* --verify-tag $flags \
+            --title "Velt $VERSION" --notes-file notes.md
+
+  # Install the published release the way users will, on every platform.
+  verify:
+    needs: [version, publish]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-2025]
+    runs-on: ${{ matrix.os }}
+    env:
+      VELT_INSTALL_BASE_URL: https://github.com/${{ github.repository }}
+    steps:
+      - name: install with get-velt.sh (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL "$VELT_INSTALL_BASE_URL/releases/download/$GITHUB_REF_NAME/get-velt.sh" | sh
+          velt="$HOME/.velt/toolchain/bin/velt"
+          "$velt" --version | grep -F "velt ${{ needs.version.outputs.version }} "
+          "$velt" doctor
+          cd "$RUNNER_TEMP" && "$velt" new demo && cd demo && "$velt" run
+      - name: install with get-velt.ps1 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          irm "$env:VELT_INSTALL_BASE_URL/releases/download/$env:GITHUB_REF_NAME/get-velt.ps1" | iex
+          $Velt = Join-Path $env:LOCALAPPDATA "velt\bin\velt.exe"
+          function Run { & $Velt @args; if ($LASTEXITCODE -ne 0) { throw "velt $args failed" } }
+          $v = Run --version
+          if ($v -notlike "velt ${{ needs.version.outputs.version }} *") { throw "unexpected version: $v" }
+          Run doctor
+          Set-Location $env:RUNNER_TEMP
+          Run new demo
+          Set-Location demo
+          Run run

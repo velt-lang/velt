@@ -60,9 +60,20 @@ garbage collector and no runtime to install.
 
 ## Install
 
-Velt is built from source for now. You need Rust (stable) and a system linker (the Visual Studio
-Build Tools on Windows, `build-essential` on Linux, the Xcode command line tools on macOS);
-LLVM/clang 16 or newer is optional, for optimized release builds.
+Install a released toolchain (Linux x86_64 and arm64, macOS, Windows x64):
+
+```sh
+curl -fsSL https://github.com/velt-lang/velt/releases/latest/download/get-velt.sh | sh   # Linux, macOS
+irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | iex       # Windows (PowerShell)
+velt doctor                       # checks the toolchain, builds and runs a hello world
+```
+
+Velt needs a system linker (the Visual Studio Build Tools on Windows, `build-essential` on Linux,
+the Xcode command line tools on macOS); LLVM/clang 16 or newer is optional, for optimized release
+builds. Options, other platforms and manual installation:
+[Platforms and installation](docs/tooling/platforms.md).
+
+To build from source instead, you also need Rust (stable):
 
 ```sh
 git clone https://github.com/velt-lang/velt
