@@ -1,0 +1,18 @@
+// An error thrown inside the standard library reports its dynamic class (`IoError`, though the
+// function below declares the base `Error`), Node's message (`CODE: description, syscall
+// 'path'`) and the location of the user's call into the standard library, not a line in std.
+import { removeSync } from "velt:fs";
+
+function cleanUp(path: string): void throws Error {
+  removeSync(path);
+}
+
+function main(): void {
+  try {
+    cleanUp("velt-missing-file-a");
+  } catch (e) {
+    console.log(`caught: ${e.message}`);
+  }
+  cleanUp("velt-missing-file-b");
+  console.log("unreachable");
+}

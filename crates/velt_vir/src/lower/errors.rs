@@ -82,12 +82,18 @@ impl FnLower<'_, '_> {
     }
 
     /// Remember where the error being thrown now came from, for an `Uncaught …` report
-    /// (`velt_rt_set_throw_loc`; only when lowering with source locations).
+    /// (`velt_rt_set_throw_loc`; only when lowering with source locations). A throw inside the
+    /// standard library clears the location instead: the user code that called into the
+    /// standard library fills in its call site ([`FnLower::fill_throw_loc`]).
     pub(super) fn record_throw_loc(&mut self) {
         if self.cx.locs.is_none() || self.dead() {
             return;
         }
-        let suffix = self.panic_suffix();
+        let suffix = if self.in_std() {
+            String::new()
+        } else {
+            self.panic_suffix()
+        };
         let at = if suffix.is_empty() {
             cint(0, Ty::Ptr)
         } else {
@@ -95,6 +101,36 @@ impl FnLower<'_, '_> {
             Operand::Const(vir::Const::Static(id), Ty::Ptr)
         };
         self.call_rt(Rt::SetThrowLoc, vec![at], None);
+    }
+
+    /// On the error path of a call in user code: if the error came out of the standard library
+    /// (no location recorded), report this call site as where it was thrown.
+    pub(super) fn fill_throw_loc(&mut self) {
+        if self.cx.locs.is_none() || self.dead() || self.in_std() {
+            return;
+        }
+        let suffix = self.panic_suffix();
+        if suffix.is_empty() {
+            return;
+        }
+        let p = self.temp(Ty::Ptr);
+        self.call_rt(Rt::ThrowLoc, vec![], Some(Place::local(p)));
+        let unset = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(
+                vir::BinOp::Eq,
+                Operand::Copy(Place::local(p)),
+                cint(0, Ty::Ptr),
+            ),
+        );
+        let (set_bb, done) = (self.new_block(), self.new_block());
+        self.branch(unset, set_bb, done);
+        self.switch_to(set_bb);
+        let id = self.cx.static_str_object(&suffix);
+        let at = Operand::Const(vir::Const::Static(id), Ty::Ptr);
+        self.call_rt(Rt::SetThrowLoc, vec![at], None);
+        self.goto(done);
+        self.switch_to(done);
     }
 
     pub(super) fn try_stmt(

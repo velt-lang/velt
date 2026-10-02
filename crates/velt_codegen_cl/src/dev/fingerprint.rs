@@ -9,7 +9,10 @@
 //! recompiled through its reference to that poll function (`classify`), so a child's new
 //! layout does not count as an edit of every function that awaits it (or of `main`).
 //! Source locations are left out: JIT code has no debug info (panic locations are strings,
-//! which are part of the statics).
+//! which are part of the statics). The location an error records for an `Uncaught …` report
+//! (the argument of `velt_rt_set_throw_loc`) is left out too: nearly every call into the
+//! standard library records one, so counting it would make an edit that only moves lines
+//! change `main` and force a restart.
 
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write as _;
@@ -290,7 +293,11 @@ impl<'p> Canon<'p> {
                 let _ = write!(out, " F{}", self.func_name(f.0));
             }
             Callee::Extern(e) => {
-                let _ = write!(out, " E{}", self.extern_name(e.0));
+                let name = self.extern_name(e.0);
+                let _ = write!(out, " E{name}");
+                if name == "velt_rt_set_throw_loc" {
+                    return;
+                }
             }
             Callee::Ptr {
                 target,

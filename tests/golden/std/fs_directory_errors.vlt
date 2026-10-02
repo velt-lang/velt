@@ -1,0 +1,21 @@
+// Reading or writing a directory as a file fails like Node on every system: a read reports
+// `EISDIR … read` without a path (the open succeeded, or Windows refused it), a write reports
+// the failed `open` with the path.
+import { mkdirSync, readFileSync, removeSync, writeFileSync } from "velt:fs";
+import { IoError } from "velt:io";
+
+function main() {
+  const dir = "velt_fs_directory_errors_tmp";
+  mkdirSync(dir, { recursive: true });
+  try {
+    readFileSync(dir);
+  } catch (e) {
+    console.log(e instanceof IoError, e.code, e.message);
+  }
+  try {
+    writeFileSync(dir, "x");
+  } catch (e) {
+    console.log(e instanceof IoError, e.code, e.message);
+  }
+  removeSync(dir, { recursive: true });
+}

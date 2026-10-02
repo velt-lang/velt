@@ -17,9 +17,14 @@ sources.
 - **Errors** are thrown classes extending the prelude `Error { message }`. Catch them with
   `try { … } catch (e) { e.message }`; `e` is the union of the error classes the calls can
   throw, narrowed with `instanceof`. Each module has its own error class (`UrlError`,
-  `CsvError`, …).
+  `CsvError`, …). Messages start with a capital letter (`Invalid URL: …`); `IoError` messages
+  are lowercase, as in Node (`ENOENT: no such file or directory, open 'x'`, `handle is
+  closed`). An error that escapes `main` prints `Uncaught <Class>: <message> at
+  <file>:<line>:<col>`, naming the error's actual class and, for an error thrown inside the
+  standard library, the line of your code that called it.
 - **I/O errors** are `IoError { code, message }` from [`velt:io`](io.md). `code` is a
-  Node-style name: `"ENOENT"`, `"EACCES"`, `"ECONNREFUSED"`, `"EOF"`, …
+  Node-style name: `"ENOENT"`, `"EACCES"`, `"ECONNREFUSED"`, `"EOF"`, … A failed file-system
+  call has Node's message: `ENOENT: no such file or directory, open 'data.txt'`.
 - **Strings** are UTF-8, and string positions (`slice`, `indexOf`, regex match offsets) are
   **byte offsets**.
 - **Async functions return promises that start at once**, like JS (a direct `await` costs

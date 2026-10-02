@@ -9,7 +9,9 @@
 //! - JS `[^]` matches any character and `[]` matches nothing.
 //! - JS line terminators are `\n`, `\r`, U+2028 and U+2029, so without the `s` flag `.` becomes
 //!   a class that excludes all four. (With `m`, the caller turns on CRLF mode so `^`/`$` also
-//!   stop at `\r`; U+2028/2029 are not anchor boundaries, a known gap.)
+//!   stop at `\r`. U+2028/2029 are not anchor boundaries: the engine's anchors take one-byte
+//!   terminators, and no same-length rewrite of a three-byte character can put a boundary on
+//!   both of its sides only. A documented difference: docs/std/regex.md.)
 //! - `\0` (NUL) and `\cX` (control letter) have no Rust spelling.
 //! - Annex B: a `{` that doesn't start a valid quantifier (`x{`, `a{,3}`) and a lone `}` are
 //!   literal text.

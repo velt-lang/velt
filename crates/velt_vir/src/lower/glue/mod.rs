@@ -68,6 +68,9 @@ pub(super) const SLOT_DROP: i128 = -1;
 pub(super) const SLOT_CLONE: i128 = -2;
 pub(super) const SLOT_FORMAT: i128 = -3;
 pub(super) const SLOT_SHARE: i128 = -4;
+/// A class's name, as a static string object (not a function): `Uncaught <Class>` reports the
+/// dynamic class of an error typed as one of its bases.
+pub(in crate::lower) const SLOT_NAME: i128 = -5;
 
 impl Glue {
     fn name(self) -> &'static str {

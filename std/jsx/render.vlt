@@ -51,7 +51,7 @@ function collect(node: Element, pieces: string[]) throws RenderError {
     throw node.rest.failure.clone();
   }
   if (node.rest.pending.length > 0) {
-    throw new RenderError("", "the element has an async component: use `await renderToString`");
+    throw new RenderError("", "The element has an async component: use `await renderToString`");
   }
   for (const part of node.rest.parts) {
     collect(part, pieces);

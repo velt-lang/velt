@@ -8,6 +8,6 @@
 <ul><li>a</li><li>&lt;b&gt;</li><li>c</li>x<li>y</li></ul>
 <main><section class="card"><h2>Hi &lt;ann&gt;</h2><p>a &lt; b</p><p>c</p></section><section class="card"><h2>2nd</h2></section></main>
 <div><span>1</span></div>
-caught component jsx_render#Strict failed: BadInput { message: 'negative: -1' }
+caught Component jsx_render#Strict failed: BadInput { message: 'negative: -1' }
 <div><b>bold</b>&lt;b&gt;escaped&lt;/b&gt;</div>
 <my-widget some-attr="v"><svg:rect width="10"></svg:rect></my-widget>
