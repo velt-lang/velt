@@ -33,5 +33,6 @@ function main(): i32 {
 
 ```ts
 const m = process.memoryUsage();
-console.log(`rss ${m.rss / 1024 / 1024} MiB, heap ${m.heapUsed / 1024 / 1024} MiB`);
+const mib = (bytes: i64): string => ((bytes as f64) / 1048576).toFixed(1);
+console.log(`rss ${mib(m.rss)} MiB, heap ${mib(m.heapUsed)} MiB`);
 ```
