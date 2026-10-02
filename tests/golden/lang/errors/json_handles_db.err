@@ -1,0 +1,10 @@
+json_handles_db.vlt:8:10: error: cannot convert to or from JSON: `Client` has a private field `runtime`, so it has no JSON form
+json_handles_db.vlt:8:30: error: cannot convert to or from JSON: `Database` has a private field `runtime`, so it has no JSON form
+json_handles_db.vlt:12:13: error: cannot convert to or from JSON: `Pool` has a private field `runtime`, so it has no JSON form
+json_handles_db.vlt:13:13: error: cannot convert to or from JSON: `Transaction` has a private field `runtime`, so it has no JSON form
+json_handles_db.vlt:14:13: error: cannot convert to or from JSON: `CopyReader` has a private field `runtime`, so it has no JSON form
+json_handles_db.vlt:15:13: error: cannot convert to or from JSON: `CopyWriter` has a private field `runtime`, so it has no JSON form
+json_handles_db.vlt:16:14: error: cannot convert to or from JSON: `Statement` has a private field `handle`, so it has no JSON form
+json_handles_db.vlt:17:14: error: cannot convert to or from JSON: `RedisClient` has a private field `runtime`, so it has no JSON form
+json_handles_db.vlt:18:14: error: cannot convert to or from JSON: `RedisSubscriber` has a private field `runtime`, so it has no JSON form
+json_handles_db.vlt:19:14: error: cannot convert to or from JSON: `RedisPipeline` has a private field `handle`, so it has no JSON form

@@ -58,8 +58,8 @@ switch (s.kind) { case "circle": return s.r; case "rect": return s.w * s.h; }
   being generic over them (`map<U, E>(f: (x: T) => U throws E): U[] throws E`), as the prelude's
   array, `Map` and nullable callbacks and the std collections do. Interface and overridden
   methods share one error type (the declaring method's clause, else the union of the
-  implementations'). `Promise.all` rethrows the first rejection in array order once all promises
-  settled; a `spawn(...)` statement reports its error as uncaught; `serve` answers 500 for a
+  implementations'). `Promise.all` rejects with the first rejection as soon as it happens, like
+  JS; a `spawn(...)` statement reports its error as uncaught; `serve` answers 500 for a
   throwing handler.
 
 ## 4. `extend` — full power, zero cost, module-scoped

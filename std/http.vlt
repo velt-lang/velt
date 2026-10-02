@@ -177,6 +177,7 @@ export class Request {
 // An outgoing response (a runtime `VeltResp` handle), built by the static constructors.
 export class Response {
   raw: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   constructor(raw: u64) {
     this.raw = raw;
@@ -258,6 +259,7 @@ export class Server {
   // The real port (useful after `port: 0`).
   port: i64;
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   constructor(port: i64, handle: u64) {
     this.port = port;
@@ -336,6 +338,7 @@ export struct FetchOptions {
 // response is alive (i.e. before `text()`/`json()`/`bytes()` consume it or it is dropped).
 export struct FetchHeaders {
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   // The value of header `name` (case-insensitive), or null.
   get(name: string): string | null {
@@ -354,6 +357,7 @@ export class FetchResponse {
   status: i64;
   headers: FetchHeaders;
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   constructor(handle: u64) {
     this.status = velt_rt_http_fetch_resp_status(handle) as i64;
@@ -407,3 +411,8 @@ export async function fetch(url: string, opts: FetchOptions = {}): Promise<Fetch
       : await velt_rt_http_fetch_ca(method, url, method, 0, body, ca);
   return new FetchResponse(unwrapIo(r));
 }
+
+// A field of this type makes a type opaque: a type with a private field has no JSON form,
+// so untrusted JSON can't produce the runtime handle it holds, and `JSON.stringify` doesn't
+// write it. It takes no space.
+struct RuntimeHandle {}

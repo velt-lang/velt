@@ -33,6 +33,31 @@ impl Interp<'_> {
         Ok(0)
     }
 
+    /// `velt_rt_fut_detach(f, quiet_drop)`: a boxed state becomes a started promise without
+    /// being polled now (it runs from the next round); then handled and dropped.
+    pub(super) fn fut_detach(&mut self, f: u64, quiet_drop: u64) -> Result<(), i32> {
+        if let Some(&Fut::Boxed {
+            poll, done: false, ..
+        }) = self.exec.futs.get(&f)
+        {
+            if self.exec.running {
+                let kind = Fut::Started {
+                    poll,
+                    result_drop: quiet_drop,
+                    done: false,
+                    delivered: false,
+                    detached: false,
+                };
+                self.exec.futs.insert(f, kind);
+                self.exec.locals.push(f);
+            }
+        }
+        if let Some(Fut::Started { result_drop, .. }) = self.exec.futs.get_mut(&f) {
+            *result_drop = quiet_drop;
+        }
+        self.fut_drop(f)
+    }
+
     /// `velt_rt_futs_handled(futs, n, quiet_drop)`: the started promises among the `n` at
     /// `futs` dispose of an unclaimed result with `quiet_drop` from now on.
     pub(super) fn futs_handled(&mut self, futs: u64, n: u64, quiet_drop: u64) -> Result<(), i32> {

@@ -76,9 +76,10 @@ impl Cx<'_> {
     }
 
     /// Does `t` have a JSON form? The lowering-side mirror of sema's stringify check
-    /// (`velt_sema::json`): numbers, bool, string, literals, arrays, tuples, `T | null`, C-like enums,
-    /// unions of writable members, `json.Value`, `Map<string, V>`, and structs/classes/object literals
-    /// whose fields are writable. `stack` holds the ADTs being visited (recursive types).
+    /// (`velt_sema::json`): numbers, bool, string, literals, arrays, tuples, `T | null`, C-like
+    /// enums, unions of writable members, `json.Value`, `Map<string, V>`, and structs, classes
+    /// and object literals without private fields whose fields are writable. `stack` holds the
+    /// ADTs being visited (recursive types).
     fn json_writable(&mut self, t: TyId, stack: &mut Vec<TyId>) -> bool {
         match self.kind(t) {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str => true,
@@ -103,7 +104,7 @@ impl Cx<'_> {
 
     /// The parts of ADT `d<args>` that must be writable: fields, union members' payloads, or
     /// the value type of a `Map<string, V>`, or nothing for C-like enums. `None`: no JSON form
-    /// (other maps, payload enums).
+    /// (other maps, payload enums, types with private fields).
     fn json_members(&mut self, d: DefId, args: &[TyId]) -> Option<Vec<TyId>> {
         let tys: Vec<TyId> = match self.hir.def(d) {
             // `Record<K, V>` is an object (sema checked its keys).
@@ -116,6 +117,8 @@ impl Cx<'_> {
                 [k, v] if matches!(self.kind(*k), TyKind::Str) => return Some(vec![*v]),
                 _ => return None,
             },
+            // Private fields (runtime handles in std) are never written.
+            hir::Def::Adt(a) if a.private_fields => return None,
             hir::Def::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
             hir::Def::Enum(e) if e.variants.iter().all(|v| v.payload.is_empty()) => vec![],
             hir::Def::Enum(e) if e.is_union => e

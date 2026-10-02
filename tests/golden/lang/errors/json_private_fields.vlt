@@ -1,0 +1,30 @@
+// A class or struct with a private field has no JSON form, also when the field is inherited or
+// the type is nested; the error names the field. Public data converts as before.
+class Account {
+  name: string;
+  private secret: string;
+
+  constructor(name: string, secret: string) {
+    this.name = name;
+    this.secret = secret;
+  }
+}
+
+class Admin extends Account {
+  level: i64 = 1;
+}
+
+struct Point {
+  x: i64;
+  y: i64;
+}
+
+type Owned = { owner: Account; at: Point };
+
+function main() {
+  const a = new Account("ada", "pw");
+  console.log(JSON.stringify(a));
+  const admins = JSON.parse<Admin[]>("[]");
+  const pair = JSON.parse<Owned>("{}");
+  console.log(JSON.stringify(Point { x: 1, y: 2 }), admins.length, pair.at.x);
+}

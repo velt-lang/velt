@@ -325,8 +325,10 @@ fn modes() -> Vec<Option<&'static str>> {
 }
 
 /// Checks `files` on `VELT_GOLDEN_JOBS` worker threads (default: half the cores, at most 8),
-/// each with its own work directory (programs run with it as their current directory, so files
-/// they write never collide). Returns each file's errors, in `files` order.
+/// each program in a work directory of its own (its current directory, so files programs write
+/// never collide; and no build ever overwrites an executable that has just run, which on Windows
+/// can stay locked for a moment, even when two programs share a name). Returns each file's
+/// errors, in `files` order.
 fn run_parallel(velt: &str, files: &[(PathBuf, String)], work: &Path) -> Vec<Vec<String>> {
     let jobs = std::env::var("VELT_GOLDEN_JOBS")
         .ok()
@@ -338,21 +340,20 @@ fn run_parallel(velt: &str, files: &[(PathBuf, String)], work: &Path) -> Vec<Vec
     let next = std::sync::atomic::AtomicUsize::new(0);
     let results = std::sync::Mutex::new(vec![Vec::new(); files.len()]);
     std::thread::scope(|scope| {
-        for worker in 0..jobs {
+        for _ in 0..jobs {
             let (next, results) = (&next, &results);
-            let dir = work.join(format!("w{worker}"));
-            std::fs::create_dir_all(&dir).unwrap();
             scope.spawn(move || loop {
                 let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let Some((f, rel)) = files.get(i) else {
                     break;
                 };
+                let dir = work.join(format!("p{i}"));
+                let _ = std::fs::remove_dir_all(&dir);
+                std::fs::create_dir_all(&dir).unwrap();
                 let errs = check_file(velt, f, rel, &dir);
                 // Delete this program's build outputs (exe, obj, pdb): kept around they add up
                 // to tens of GB.
-                for sub in ["target", "debug/target", "release/target"] {
-                    let _ = std::fs::remove_dir_all(dir.join(sub));
-                }
+                let _ = std::fs::remove_dir_all(&dir);
                 results.lock().unwrap()[i] = errs;
             });
         }

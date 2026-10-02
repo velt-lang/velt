@@ -167,8 +167,6 @@ surprise ([Error handling](errors.md)).
   *Why*: a forgotten `await` silently loses errors in JS.
 - `spawn(f())` runs a task on another core; the runtime is multi-threaded. Data shared between
   tasks must be `shared(...)` or a `Mutex`, and data races are compile errors.
-- `Promise.all` waits for every promise, then rethrows the first rejection in array order. JS
-  rejects as soon as one promise rejects.
 - A promise's type carries its error type: `Promise<T, E>`.
 - Promises have no `then`, `catch` or `finally`: `await` them, inside `try`/`catch`/`finally`
   to handle their errors. *Why*: one way to sequence async code, and errors stay typed.

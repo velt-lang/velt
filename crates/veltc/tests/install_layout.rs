@@ -137,7 +137,16 @@ fn installed_prefix_runs_doctor_and_programs() {
         "(release build)"
     };
     assert!(report.contains(profile), "no `{profile}` in:\n{report}");
-    let o = velt(&prefix, &work, &home, &["run", "--release", "hello.vlt"]);
+    // From another directory, so the release link writes a new executable instead of the debug
+    // one that just ran (on Windows a just-run executable can stay locked for a moment).
+    let release = work.join("release");
+    std::fs::create_dir_all(&release).unwrap();
+    let o = velt(
+        &prefix,
+        &release,
+        &home,
+        &["run", "--release", "../hello.vlt"],
+    );
     assert_eq!(String::from_utf8_lossy(&o.stdout), "installed ok\n");
     let stderr = String::from_utf8_lossy(&o.stderr);
     assert_eq!(

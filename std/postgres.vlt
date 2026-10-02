@@ -201,6 +201,7 @@ function counts(client: u64, json: string): i64[] {
 // One connection (from `connect`, or dedicated from `pool.connect()`).
 export struct Client {
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   // Every row of `sql` (any statement that returns rows).
   async query<T, P>(sql: string, params: P): Promise<T[]> {
@@ -324,6 +325,7 @@ export struct Client {
 // to the connection) cancels it and the server rolls the statement back.
 export struct CopyWriter {
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   // Sends a chunk (any split: rows may span chunks).
   async write(data: string): Promise<void> {
@@ -350,6 +352,7 @@ export struct CopyWriter {
 // received so far (whole rows in the text and CSV formats), null at the end.
 export struct CopyReader {
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   // The next rows as text, or null at the end (then the reader is released).
   async read(): Promise<string | null> {
@@ -380,6 +383,7 @@ export struct CopyReader {
 // A transaction from `Client.begin()`.
 export struct Transaction {
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
   // 1 for a transaction, 2 and up for savepoints inside one.
   depth: u32;
 
@@ -405,6 +409,7 @@ export struct PoolOptions {
 // for one statement; `connect()` and `transaction` keep one for longer.
 export struct Pool {
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   async query<T, P>(sql: string, params: P): Promise<T[]> {
     const r = await velt_rt_pg_pool_query(this.handle, sql, JSON.stringify(params), false);
@@ -496,3 +501,8 @@ export function createPool(opts: PoolOptions): Pool {
   const max = opts.max ?? 10;
   return Pool { handle: unwrap(velt_rt_pg_pool_new(opts.url, max as u32)) };
 }
+
+// A field of this type makes a type opaque: a type with a private field has no JSON form,
+// so untrusted JSON can't produce the runtime handle it holds, and `JSON.stringify` doesn't
+// write it. It takes no space.
+struct RuntimeHandle {}

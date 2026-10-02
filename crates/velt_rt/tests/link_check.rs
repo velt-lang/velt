@@ -39,7 +39,7 @@ typedef void (*DropFn)(void*);
 VeltFut* velt_rt_sleep(int64_t);
 uint32_t velt_rt_fut_poll(VeltFut*, void*);
 void velt_rt_fut_drop(VeltFut*);
-VeltFut* velt_rt_spawn(PollFn, DropFn, const void*, uint64_t, uint64_t, uint64_t);
+VeltFut* velt_rt_spawn(PollFn, DropFn, const void*, uint64_t, uint64_t, uint64_t, void (*)(void*));
 void velt_rt_block_on(PollFn, void*);
 "#;
 
@@ -100,7 +100,7 @@ static uint32_t main_poll(void* s, void* cx) {
         Square q = { 0, 7 };
         if (!velt_rt_fut_poll(m->f, cx)) return 0;
         velt_rt_fut_drop(m->f);
-        m->f = velt_rt_spawn(square_poll, square_drop, &q, sizeof q, 8, 8);
+        m->f = velt_rt_spawn(square_poll, square_drop, &q, sizeof q, 8, 8, 0);
         m->tag = 2;
         break;
     }
@@ -442,7 +442,7 @@ static uint32_t main_poll(void* s, void* cx) {
         for (i = 0; i < 128; i++) PAD[i] = 'x';
         for (i = 0; i < 64; i++) {
             Printer p = { 0, 0, i, 0 };
-            m->h[i] = velt_rt_spawn(printer_poll, printer_drop, &p, sizeof p, 8, 0);
+            m->h[i] = velt_rt_spawn(printer_poll, printer_drop, &p, sizeof p, 8, 0, 0);
         }
         m->tag = 1;
     }
