@@ -1,5 +1,5 @@
-//! JSX for the scope walker: component tags are value names (`<Card` names the function
-//! `Card`, `<ui.Card` a namespace member), and attribute values, spreads and children are
+//! JSX for the scope walker: component tags are value names (`<Card` and `</Card>` name the
+//! function `Card`, `<ui.Card` a namespace member), and attribute values, spreads and children are
 //! walked like any expression. Intrinsic tags and attribute names are not names in scope; sema
 //! resolves them to the fields of `JSX.IntrinsicElements`.
 
@@ -13,10 +13,13 @@ impl<'a> Walker<'a> {
         if !self.contains(el.span) {
             return;
         }
-        match &el.name {
-            Some(JsxName::Ident(id)) if is_component(&id.name) => self.value_name(id),
-            Some(JsxName::Member(parts)) => self.path(parts),
-            _ => {}
+        // The closing tag names the component too (`</Card>`).
+        for name in el.name.iter().chain(&el.closing_name) {
+            match name {
+                JsxName::Ident(id) if is_component(&id.name) => self.value_name(id),
+                JsxName::Member(parts) => self.path(parts),
+                _ => {}
+            }
         }
         for attr in &el.attrs {
             match attr {

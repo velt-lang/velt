@@ -9,7 +9,7 @@ use velt_common::{FileId, Span};
 use super::defref::{Builder, DefRef};
 use super::display::Names;
 use super::record::{Recorder, Target};
-use super::{effects, members, Analysis};
+use super::{effects, members, Analysis, JsxTags};
 use crate::ctx::{Ctx, Item};
 use crate::defs::{DefInfo, FnKind};
 use crate::hir::{DefId, TyKind};
@@ -88,7 +88,9 @@ fn jsx_tags(
     cx: &Ctx,
     names: &Names,
     resolve: &mut impl FnMut(&Target) -> Option<DefRef>,
-) -> HashMap<FileId, Vec<(String, DefRef, String)>> {
+) -> HashMap<FileId, JsxTags> {
+    // Built once per runtime (by its `IntrinsicElements` type), shared by its modules.
+    let mut by_type: HashMap<DefId, JsxTags> = HashMap::new();
     let mut out = HashMap::new();
     for (&m, provider) in &cx.jsx_providers {
         let Some(p) = provider else { continue };
@@ -96,18 +98,21 @@ fn jsx_tags(
             continue;
         };
         let Some(adt) = cx.adt(*d) else { continue };
-        let mut tags: Vec<(String, DefRef, String)> = adt
-            .fields
-            .iter()
-            .enumerate()
-            .filter_map(|(i, f)| {
-                let def = resolve(&Target::Field(*d, i as u32))?;
-                let ty = names.show_in(f.ty, &adt.generics.names);
-                Some((f.name.clone(), def, ty))
-            })
-            .collect();
-        tags.sort_by(|a, b| a.0.cmp(&b.0));
-        out.insert(cx.modules[m].file, tags);
+        let tags = by_type.entry(*d).or_insert_with(|| {
+            let mut tags: Vec<(String, DefRef, String)> = adt
+                .fields
+                .iter()
+                .enumerate()
+                .filter_map(|(i, f)| {
+                    let def = resolve(&Target::Field(*d, i as u32))?;
+                    let ty = names.show_in(f.ty, &adt.generics.names);
+                    Some((f.name.clone(), def, ty))
+                })
+                .collect();
+            tags.sort_by(|a, b| a.0.cmp(&b.0));
+            tags.into()
+        });
+        out.insert(cx.modules[m].file, tags.clone());
     }
     out
 }

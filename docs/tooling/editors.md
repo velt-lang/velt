@@ -19,14 +19,16 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
   (also while the file doesn't parse). In JSX: tag names after `<` (the elements of the JSX
   runtime's `JSX.IntrinsicElements` and the components in scope) and attribute names inside an
   opening tag (the element's attributes or the component's props, minus those already written).
-  Tags are offered once the file contains JSX that parses, which is when its JSX runtime loads.
-- **JSX**: go to definition and hover on component tags (`<Card` → `function Card`) and on
-  attributes (the attribute's or prop's declaration and type).
+  After `</` the element still open there comes first. Tags are offered once the file contains
+  JSX that parses, which is when its JSX runtime loads.
+- **JSX**: go to definition, hover, references and rename on tags, opening and closing
+  (`<Card` and `</Card>` → `function Card`), and on attributes (the attribute's or prop's
+  declaration and type).
 - **Signature help** while typing call arguments.
 - **Inlay hints**: inferred types of `const` / `let` / `for...of` bindings and parameter names at
   call sites. On declarations, what inference decided ([memory model](../reference/memory.md#mutation-is-inferred),
   [errors](../reference/errors.md)): `throws E` after a function without a `throws` clause that
-  can throw, `modifies this` after the parameters of a method that modifies its receiver, and
+  can throw, `modifies this` after the signature of a method that modifies its receiver, and
   `modified` before each parameter whose contents the function modifies.
 - **Semantic highlighting**: types, functions, methods, parameters, properties and enum members;
   `let` bindings carry a `mutable` modifier, and calls of functions and methods declared in

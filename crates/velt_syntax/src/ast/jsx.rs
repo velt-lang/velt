@@ -14,6 +14,10 @@ pub struct JsxElement {
     pub attrs: Vec<JsxAttr>,
     /// Empty for a self-closing element.
     pub children: Vec<JsxChild>,
+    /// The name in the closing tag, as written (`Card` in `</Card>`, with its own span); `None`
+    /// for a self-closing element and a fragment. It matches `name` (else the parser reports
+    /// an error).
+    pub closing_name: Option<JsxName>,
     pub span: Span,
 }
 

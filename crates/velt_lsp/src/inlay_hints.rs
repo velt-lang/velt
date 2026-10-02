@@ -1,7 +1,7 @@
 //! Inlay hints: the inferred type after `const`/`let`/`for ... of` bindings written without a type
 //! (`const total: i64 = ...`), parameter names before call arguments (`area(r: 2.0)`), and on
 //! declarations what inference decided but the source does not say: `throws E` after the
-//! signature of a function without a `throws` clause, `modifies this` after the parameters of a
+//! signature of a function without a `throws` clause, `modifies this` after the signature of a
 //! method that modifies its receiver, and `modified` before each parameter whose contents the
 //! function modifies.
 //!
@@ -182,7 +182,9 @@ impl Collector<'_> {
             return;
         };
         if m.this {
-            let hint = (after, "modifies this".to_string(), InlayHintKind::TYPE);
+            // After the whole signature: `add(x: T): R modifies this`.
+            let at = sig.ret.as_ref().map_or(after, |r| r.span.hi);
+            let hint = (at, "modifies this".to_string(), InlayHintKind::TYPE);
             self.hints.push(hint);
         }
         for p in sig
@@ -233,15 +235,27 @@ impl Collector<'_> {
         else {
             return;
         };
-        // The last `)` of the head as the scanner sees it (not one inside a comment).
-        let close = text_scan::scan(head, head.len())
-            .into_iter()
+        // After the last `)` of the head as the scanner sees it (not one inside a comment), or
+        // after a bare parameter (`x => …`): the end of the head's last name.
+        let tokens = text_scan::scan(head, head.len());
+        let close = tokens
+            .iter()
             .rev()
             .find(|t| t.kind == TokenKind::Punct(b')'));
-        let Some(close) = close else {
+        let bare = || {
+            let arrow = tokens
+                .iter()
+                .rposition(|t| t.kind == TokenKind::Punct(b'='))?;
+            let name = tokens[..arrow]
+                .iter()
+                .rev()
+                .find(|t| t.kind == TokenKind::Ident)?;
+            Some(name.hi)
+        };
+        let Some(end) = close.map(|c| c.hi).or_else(bare) else {
             return;
         };
-        let at = ret.as_ref().map_or(init.span.lo + close.hi, |r| r.span.hi);
+        let at = ret.as_ref().map_or(init.span.lo + end, |r| r.span.hi);
         self.hints
             .push((at, format!("throws {t}"), InlayHintKind::TYPE));
     }

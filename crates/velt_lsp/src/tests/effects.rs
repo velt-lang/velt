@@ -23,6 +23,10 @@ class Cart {
   count(): usize {
     return this.items.length;
   }
+  addCounted(item: string): usize {
+    this.items.push(item);
+    return this.items.length;
+  }
 }
 
 function fill(cart: Cart, n: i64) {
@@ -99,6 +103,7 @@ fn inlay_hints_show_inferred_throws_and_mutation() {
         effects,
         [
             hint("/* ) */) {", 8, "modifies this"),
+            hint("(item: string): usize {", 21, "modifies this"),
             hint("cart: Cart", 0, "modified"),
             hint(
                 "): string {

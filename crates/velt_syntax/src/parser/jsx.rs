@@ -36,11 +36,12 @@ impl Parser<'_> {
         let open_span = self.cur_span();
         self.bump(); // <
         if self.eat(Tok::JsxGt) {
-            let children = self.jsx_children(None, open_span, false)?;
+            let (children, _) = self.jsx_children(None, open_span, false)?;
             return Ok(JsxElement {
                 name: None,
                 attrs: vec![],
                 children,
+                closing_name: None,
                 span: self.span_from(lo),
             });
         }
@@ -49,8 +50,8 @@ impl Parser<'_> {
         while !matches!(self.peek(), Tok::JsxGt | Tok::JsxSlashGt | Tok::Eof) {
             attrs.push(self.jsx_attr()?);
         }
-        let children = if self.eat(Tok::JsxSlashGt) {
-            vec![]
+        let (children, closing_name) = if self.eat(Tok::JsxSlashGt) {
+            (vec![], None)
         } else {
             self.expect(Tok::JsxGt)?;
             let name_span = name.span();
@@ -62,6 +63,7 @@ impl Parser<'_> {
             name: Some(name),
             attrs,
             children,
+            closing_name,
             span: self.span_from(lo),
         })
     }
@@ -154,13 +156,14 @@ impl Parser<'_> {
 
     /// Children up to and including the closing tag of the element named `name` (`None` for a
     /// fragment); `open_span` is where an unclosed element is reported. `arrow_like`: the opening
-    /// tag could have been the type parameters of a generic arrow.
+    /// tag could have been the type parameters of a generic arrow. Also returns the closing tag's
+    /// name.
     fn jsx_children(
         &mut self,
         name: Option<&JsxName>,
         open_span: Span,
         arrow_like: bool,
-    ) -> PResult<Vec<JsxChild>> {
+    ) -> PResult<(Vec<JsxChild>, Option<JsxName>)> {
         let mut children = Vec::new();
         loop {
             match self.peek() {
@@ -175,8 +178,8 @@ impl Parser<'_> {
                 Tok::LBrace => children.push(self.jsx_child_container()?),
                 Tok::JsxLt => children.push(JsxChild::Element(self.parse_jsx_element()?)),
                 Tok::JsxLtSlash => {
-                    self.jsx_closing_tag(name)?;
-                    return Ok(children);
+                    let closing = self.jsx_closing_tag(name)?;
+                    return Ok((children, closing));
                 }
                 _ => {
                     let msg = match name {
@@ -229,7 +232,8 @@ impl Parser<'_> {
     }
 
     /// `</name>` or `</>`, checked against the opening `name`; the cursor is at `JsxLtSlash`.
-    fn jsx_closing_tag(&mut self, name: Option<&JsxName>) -> PResult<()> {
+    /// Returns the closing name.
+    fn jsx_closing_tag(&mut self, name: Option<&JsxName>) -> PResult<Option<JsxName>> {
         let lo = self.cur_lo();
         self.bump(); // </
         let closing = if self.at(Tok::JsxGt) {
@@ -255,6 +259,6 @@ impl Parser<'_> {
                 self.error("Expected corresponding closing tag for JSX fragment.", span)
             }
         }
-        Ok(())
+        Ok(closing)
     }
 }
