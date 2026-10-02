@@ -279,11 +279,17 @@ fn inline_span<'a>(s: &'a str, out: &mut String) -> Option<&'a str> {
         let close = body.find("](")?;
         let end = body[close..].find(')')? + close;
         let (label, url) = (&body[..close], &body[close + 2..end]);
-        out.push_str(&format!(
-            "<a href=\"{}\">{}</a>",
-            escape(&md_link(url)),
-            inline(label)
-        ));
+        if is_safe_link(url) {
+            out.push_str(&format!(
+                "<a href=\"{}\">{}</a>",
+                escape(&md_link(url)),
+                inline(label)
+            ));
+        } else {
+            // Doc comments come from third-party packages too; a `javascript:` link would
+            // run their script in the reader's browser, so unsafe targets lose the link.
+            out.push_str(&inline(label));
+        }
         return Some(&body[end + 1..]);
     }
     if let Some(body) = s.strip_prefix("**") {
@@ -298,6 +304,23 @@ fn inline_span<'a>(s: &'a str, out: &mut String) -> Option<&'a str> {
     let end = body.find('*')?;
     out.push_str(&format!("<em>{}</em>", inline(&body[..end])));
     Some(&body[end + 1..])
+}
+
+/// Whether `url` is relative, an anchor, or uses an `http`/`https`/`mailto` scheme.
+fn is_safe_link(url: &str) -> bool {
+    // Browsers ignore whitespace and control characters inside a scheme (`java\tscript:`),
+    // so they are dropped before the scheme is read.
+    let normalized: String = url
+        .chars()
+        .filter(|c| !c.is_whitespace() && !c.is_control())
+        .collect();
+    match normalized.find([':', '/', '?', '#']) {
+        Some(k) if normalized[k..].starts_with(':') => {
+            let scheme = normalized[..k].to_ascii_lowercase();
+            matches!(scheme.as_str(), "http" | "https" | "mailto")
+        }
+        _ => true,
+    }
 }
 
 /// `guide.md#x` → `guide.html#x` for relative links.
@@ -350,5 +373,33 @@ mod tests {
         assert_eq!(inline("<script>"), "&lt;script&gt;");
         assert_eq!(slug("Hot reload: `velt dev`"), "hot-reload-velt-dev");
         assert_eq!(md_link("https://x.md"), "https://x.md");
+    }
+
+    #[test]
+    fn only_safe_link_schemes() {
+        for (url, href) in [
+            ("https://velt.dev", "https://velt.dev"),
+            ("HTTP://velt.dev", "HTTP://velt.dev"),
+            ("mailto:a@b.c", "mailto:a@b.c"),
+            ("guide.md", "guide.html"),
+            ("../api/x.html?q=a:b", "../api/x.html?q=a:b"),
+            ("#anchor", "#anchor"),
+        ] {
+            assert_eq!(
+                inline(&format!("[x]({url})")),
+                format!("<a href=\"{href}\">x</a>")
+            );
+        }
+        // Each target stops before `)`, so `alert(1` stands for `alert(1)`.
+        for url in [
+            "javascript:alert(1",
+            " JavaScript:alert(1",
+            "java\tscript:alert(1",
+            "\u{1}javascript:alert(1",
+            "data:text/html,x",
+            "vbscript:msgbox",
+        ] {
+            assert_eq!(inline(&format!("[*click*]({url})")), "<em>click</em>");
+        }
     }
 }

@@ -2,7 +2,8 @@
 //! Manifest format is a contract: docs/internals/contracts/velt_toml.md.
 //!
 //! - [`manifest`]: `velt.toml` model ([`paths`]: its import aliases); [`edit`]: format-preserving
-//!   `velt add`; [`scaffold`]: `velt new`.
+//!   `velt add`; [`scaffold`]: `velt new`. [`manifest::read`] reads `package.vlt`, which replaces
+//!   `velt.toml` (docs/internals/design/package-manifest.md).
 //! - [`registry`]: the registry (`publish`, index), local or remote ([`remote`], packages as
 //!   [`archive`]s over HTTP); [`cache`]: verified extraction.
 //! - [`resolve`]: semver resolution with backtracking; [`lockfile`]: `velt.lock`.
@@ -17,6 +18,7 @@ pub mod install;
 pub mod locations;
 pub mod lockfile;
 pub mod manifest;
+pub mod native;
 pub mod paths;
 pub mod registry;
 pub mod relpath;

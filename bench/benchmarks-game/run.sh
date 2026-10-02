@@ -35,12 +35,14 @@ mkdir -p "$OUT/bin"
 
 echo "building velt (release), the runtime and the Rust programs..." >&2
 cargo build --release -q -p veltc -p velt_rt --manifest-path "$ROOT/Cargo.toml"
-VELT="$ROOT/target/release/velt"
+PYTHON=$(command -v python3)
+# velt is where cargo put it: CARGO_TARGET_DIR, a cargo config, or <repo>/target.
+VELT=$(cargo metadata --format-version 1 --no-deps --manifest-path "$ROOT/Cargo.toml" |
+  "$PYTHON" -c 'import json, sys; sys.stdout.write(json.load(sys.stdin)["target_directory"])')/release/velt
 RUST_TARGET="$OUT/rust-target"
 RUSTFLAGS="-C target-cpu=native" cargo build --release -q \
   --manifest-path "$HERE/rust/Cargo.toml" --target-dir "$RUST_TARGET"
 RUST_BIN="$RUST_TARGET/release"
-PYTHON=$(command -v python3)
 
 # fasta_input <n>: path of the fasta output for n (the stdin of k-nucleotide, reverse-complement, …).
 fasta_input() {

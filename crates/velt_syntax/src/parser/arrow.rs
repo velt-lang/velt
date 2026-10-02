@@ -14,6 +14,16 @@ use crate::lexer::{Kw, Tok};
 type ArrowHead = (Vec<ArrowParam>, Option<TypeExpr>, Option<TypeExpr>);
 
 impl<'a> Parser<'a> {
+    /// Can an arrow start at the cursor: `async`, `<` (type parameters), `(` or `name =>`? A
+    /// cheap check before `try_parse_arrow`.
+    #[inline]
+    pub(super) fn may_start_arrow(&mut self) -> bool {
+        match self.peek() {
+            Tok::Lt | Tok::LParen | Tok::Kw(Kw::Async) => true,
+            t => Self::is_ident_like(t) && self.nth(1) == Tok::FatArrow,
+        }
+    }
+
     /// Parses an arrow function if one starts here; otherwise consumes nothing and returns `None`.
     pub(super) fn try_parse_arrow(&mut self) -> PResult<Option<Expr>> {
         let lo = self.cur_lo();
@@ -69,6 +79,9 @@ impl<'a> Parser<'a> {
             let head = self.parse_arrow_head()?;
             return self.finish_arrow(lo, type_params, head, is_async).map(Some);
         }
+        if !self.may_start_uncommitted_generic_arrow(off) {
+            return Ok(None);
+        }
         let parsed = self.speculate(|p| {
             if is_async {
                 p.bump();
@@ -85,6 +98,18 @@ impl<'a> Parser<'a> {
             }
             None => Ok(None),
         }
+    }
+
+    /// Cheap pre-check before speculating on a `<` at `pos + off` that did not commit: the only
+    /// type parameter lists left are `<T>` and `<>`, and a parameter list must follow. So an
+    /// element (`<p>text`, `<div class=…>`, `<a>{x}`) is ruled out without parsing anything.
+    fn may_start_uncommitted_generic_arrow(&mut self, off: usize) -> bool {
+        let gt = match self.nth(off + 1) {
+            Tok::Gt => off + 1,
+            t if Self::is_ident_like(t) && self.nth(off + 2) == Tok::Gt => off + 2,
+            _ => return false,
+        };
+        self.nth(gt + 1) == Tok::LParen
     }
 
     /// Cheap pre-check before speculating: `()` or `(name`, and the matching `)` is followed by

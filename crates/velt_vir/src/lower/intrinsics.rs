@@ -102,7 +102,10 @@ impl FnLower<'_, '_> {
                 | I::SharedGet
                 | I::SharedSet
                 | I::MutexNew
-                | I::MutexWith,
+                | I::MutexWith
+                | I::ChanSend
+                | I::ChanReceive
+                | I::ChanTryReceive,
                 _,
             ) => self.async_intrinsic(i, args, ty),
             (I::JsonStringify, [a]) => self.json_stringify(a, ty),

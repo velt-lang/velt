@@ -35,8 +35,12 @@ impl<'a> Parser<'a> {
 
     /// Assignment level: arrows, `a = b`, compound assignment (right associative).
     pub(super) fn parse_assign(&mut self) -> PResult<Expr> {
-        if let Some(arrow) = self.try_parse_arrow()? {
-            return Ok(arrow);
+        // Checking first keeps the common case, where no arrow can start, from copying the
+        // large result of an arrow attempt on every expression.
+        if self.may_start_arrow() {
+            if let Some(arrow) = self.try_parse_arrow()? {
+                return Ok(arrow);
+            }
         }
         let lo = self.cur_lo();
         let lhs = self.parse_cond()?;

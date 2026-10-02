@@ -99,6 +99,7 @@ pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Pro
     let mut counted = boxing::Boxing::default();
     for _ in 0..MAX_BOXING_PASSES {
         let mut cx = Cx::new(hir, types, counted.clone());
+        cx.native_inits = opts.native_inits.to_vec();
         cx.locs = opts
             .source_map
             .map(|sm| srcloc::LocMap::new(sm, opts.std_root));
@@ -195,6 +196,8 @@ enum Work {
 /// Program-level lowering state.
 struct Cx<'h> {
     hir: &'h hir::Program,
+    /// Native library inits `velt_main` runs first (entry.rs).
+    native_inits: Vec<crate::NativeInit>,
     /// Copy of the HIR type table, extended with substituted (monomorphic) types.
     types: TyTable,
     aggs: Vec<AggLayout>,

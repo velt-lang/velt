@@ -7,8 +7,10 @@
 //! ```
 //!
 //! so its [`checksum`] equals [`contents::checksum`] of the directory it was packed from or is
-//! unpacked into. Unpacking accepts only `velt.toml` and files under `src/` (no `..`, no
-//! absolute paths), so an archive cannot write outside its destination.
+//! unpacked into. Unpacking accepts only `velt.toml`, files under `src/` and under the `[native]`
+//! crate directory its `velt.toml` names (no `..`, no absolute paths), so an archive cannot write
+//! outside its destination. Native bundles ([`crate::native`]) use the same format with their own
+//! path rule ([`entries_with`]).
 
 use std::path::Path;
 
@@ -30,18 +32,44 @@ pub struct Entry {
 
 /// Pack the package rooted at `root`.
 pub fn pack(root: &Path) -> Result<Vec<u8>, String> {
+    pack_files(root, &contents::list_files(root)?)
+}
+
+/// Pack `files` (relative to `root`, `/`-separated, sorted).
+pub fn pack_files(root: &Path, files: &[String]) -> Result<Vec<u8>, String> {
     let mut out = MAGIC.to_vec();
-    for rel in contents::list_files(root)? {
-        let bytes = std::fs::read(root.join(&rel))
-            .map_err(|e| format!("cannot read `{}`: {e}", root.join(&rel).display()))?;
+    for rel in files {
+        let bytes = std::fs::read(root.join(rel))
+            .map_err(|e| format!("cannot read `{}`: {e}", root.join(rel).display()))?;
         out.extend_from_slice(format!("{rel}\n{}\n", bytes.len()).as_bytes());
         out.extend_from_slice(&bytes);
     }
     Ok(out)
 }
 
-/// Parse and validate an archive.
+/// Parse and validate a package archive.
 pub fn entries(archive: &[u8]) -> Result<Vec<Entry>, String> {
+    let entries = entries_with(archive, |_| true)?;
+    let native = entries
+        .iter()
+        .find(|e| e.path == MANIFEST_FILE)
+        .and_then(|e| std::str::from_utf8(&e.bytes).ok())
+        .and_then(contents::native_dir_of);
+    for e in &entries {
+        let allowed = e.path == MANIFEST_FILE
+            || e.path.starts_with(&format!("{SRC_DIR}/"))
+            || native
+                .as_ref()
+                .is_some_and(|dir| e.path.starts_with(&format!("{dir}/")));
+        if !allowed {
+            return Err(format!("archive contains a disallowed path `{}`", e.path));
+        }
+    }
+    Ok(entries)
+}
+
+/// Parse an archive whose paths are safe relative paths that `allowed` accepts.
+pub fn entries_with(archive: &[u8], allowed: impl Fn(&str) -> bool) -> Result<Vec<Entry>, String> {
     let mut rest = archive
         .strip_prefix(MAGIC)
         .ok_or("not a Velt package archive")?;
@@ -53,7 +81,9 @@ pub fn entries(archive: &[u8]) -> Result<Vec<Entry>, String> {
         if after.len() < len {
             return Err("corrupt archive: truncated file".into());
         }
-        check_path(path)?;
+        if !safe_path(path) || !allowed(path) {
+            return Err(format!("archive contains a disallowed path `{path}`"));
+        }
         entries.push(Entry {
             path: path.to_string(),
             bytes: after[..len].to_vec(),
@@ -72,22 +102,21 @@ fn line(bytes: &[u8]) -> Result<(&str, &[u8]), String> {
     Ok((text, &bytes[end + 1..]))
 }
 
-fn check_path(path: &str) -> Result<(), String> {
-    let allowed = path == MANIFEST_FILE || path.starts_with(&format!("{SRC_DIR}/"));
-    let safe = !path.contains('\\')
+fn safe_path(path: &str) -> bool {
+    !path.contains('\\')
+        && !path.contains(':')
         && path
             .split('/')
-            .all(|seg| !seg.is_empty() && seg != "." && seg != "..");
-    if allowed && safe {
-        Ok(())
-    } else {
-        Err(format!("archive contains a disallowed path `{path}`"))
-    }
+            .all(|seg| !seg.is_empty() && seg != "." && seg != "..")
 }
 
-/// The content checksum of an archive (same as [`contents::checksum`] of the package).
+/// The content checksum of a package archive (same as [`contents::checksum`] of the package).
 pub fn checksum(archive: &[u8]) -> Result<String, String> {
-    let mut entries = entries(archive)?;
+    checksum_of(entries(archive)?)
+}
+
+/// The content checksum of parsed entries (the hash [`contents::checksum`] computes).
+pub fn checksum_of(mut entries: Vec<Entry>) -> Result<String, String> {
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     let mut hasher = Sha256::new();
     for e in &entries {
@@ -104,9 +133,14 @@ pub fn checksum(archive: &[u8]) -> Result<String, String> {
     Ok(format!("sha256:{hex}"))
 }
 
-/// Write the archive's files under `dest` (created).
+/// Write the package archive's files under `dest` (created).
 pub fn unpack(archive: &[u8], dest: &Path) -> Result<(), String> {
-    for e in entries(archive)? {
+    write_entries(entries(archive)?, dest)
+}
+
+/// Write validated entries under `dest` (created).
+pub fn write_entries(entries: Vec<Entry>, dest: &Path) -> Result<(), String> {
+    for e in entries {
         let path = dest.join(&e.path);
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)
@@ -150,10 +184,26 @@ mod tests {
     #[test]
     fn rejects_bad_archives() {
         assert!(entries(b"nope").is_err());
-        for path in ["../x", "/etc/passwd", "src/../../x", "target/x", "src//x"] {
+        for path in [
+            "../x",
+            "/etc/passwd",
+            "src/../../x",
+            "target/x",
+            "src//x",
+            "native/x",
+        ] {
             let bad = [MAGIC, format!("{path}\n1\nx").as_bytes()].concat();
             assert!(entries(&bad).unwrap_err().contains("disallowed"), "{path}");
         }
+        // A native crate directory is allowed only when the manifest names it.
+        let manifest = "[package]\nname = \"p\"\nversion = \"1.0.0\"\n[native]\n";
+        let with_native = [
+            MAGIC,
+            b"native/Cargo.toml\n0\n",
+            format!("velt.toml\n{}\n{manifest}", manifest.len()).as_bytes(),
+        ]
+        .concat();
+        assert_eq!(entries(&with_native).unwrap().len(), 2);
         let truncated = [MAGIC, b"velt.toml\n10\nabc"].concat();
         assert!(entries(&truncated).unwrap_err().contains("truncated"));
     }

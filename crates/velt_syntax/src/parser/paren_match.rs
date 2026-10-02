@@ -24,6 +24,8 @@ pub(super) struct ParenMatches {
     /// The `(`s recorded as unmatched. Their scan ran to the end of the file, past any re-lex
     /// point, so every re-lex invalidates all of them.
     unmatched: Vec<usize>,
+    /// The open `(`s of the scan in progress, kept to reuse its allocation.
+    stack: Vec<usize>,
 }
 
 impl ParenMatches {
@@ -91,7 +93,9 @@ impl Parser<'_> {
         if let Some(known) = self.paren_matches.get(open) {
             return known;
         }
-        let mut stack = vec![open];
+        let mut stack = std::mem::take(&mut self.paren_matches.stack);
+        stack.clear();
+        stack.push(open);
         let mut i = open + 1;
         loop {
             match self.tok(i).kind {
@@ -107,6 +111,7 @@ impl Parser<'_> {
                     let o = stack.pop().expect("ICE: paren stack never empties early");
                     self.paren_matches.insert_pair(o, i);
                     if stack.is_empty() {
+                        self.paren_matches.stack = stack;
                         return Some(i);
                     }
                 }
@@ -115,9 +120,10 @@ impl Parser<'_> {
             }
             i += 1;
         }
-        for o in stack {
+        for &o in &stack {
             self.paren_matches.insert_unmatched(o);
         }
+        self.paren_matches.stack = stack;
         None
     }
 }

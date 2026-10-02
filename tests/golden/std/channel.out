@@ -1,0 +1,15 @@
+sent 0 queued 1
+sent 1 queued 2
+consumer starts
+received 0
+received 1
+sent 2 queued 1
+sent 3 queued 2
+received 2
+received 3
+sent 4 queued 1
+received 4
+handled 20 results 20 total length 1050
+ticket 1 dropped
+caught: send on a closed channel
+closed: true receive: null

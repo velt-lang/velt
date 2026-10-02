@@ -156,6 +156,7 @@ impl FnLower<'_, '_> {
     pub(super) fn none_value(&mut self, opt: TyId) -> Operand {
         match self.cx.ty(opt) {
             Ty::Ptr => cint(0, Ty::Ptr),
+            Ty::Bool => Operand::Const(Const::Bool(false), Ty::Bool),
             Ty::Agg(a) => {
                 let TyKind::Option(inner) = self.cx.kind(opt) else {
                     ice("null of a non-option type")

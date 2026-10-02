@@ -150,6 +150,7 @@ impl FnLower<'_, '_> {
                 let ops = vec![super::FnLower::ctrue(), v];
                 self.assign(res, Rvalue::Aggregate(a, ops));
             }
+            Ty::Bool => self.assign(res, Rvalue::Use(super::FnLower::ctrue())),
             _ => self.assign(res, Rvalue::Use(v)),
         }
     }

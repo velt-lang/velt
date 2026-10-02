@@ -24,6 +24,7 @@
 
 mod all;
 mod all_settle;
+mod channel;
 mod ctor;
 mod handler;
 mod kept;

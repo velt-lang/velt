@@ -199,30 +199,28 @@ impl Ctx<'_> {
         d
     }
 
-    /// `A | B` for diagnostics: the members of union `d` applied to `args`.
-    pub(crate) fn display_union(&self, d: DefId, args: &[TyId]) -> String {
+    /// `A | B` for diagnostics: the members of union `d` applied to `args` (which mention the
+    /// parameters in scope, named `params`).
+    pub(crate) fn display_union(&self, d: DefId, args: &[TyId], params: &[String]) -> String {
         let Some(e) = self.enum_info(d) else {
             return "unknown".into();
         };
+        let names: Vec<String> = args.iter().map(|a| self.display_in(*a, params)).collect();
         let parts: Vec<String> = e
             .variants
             .iter()
-            .map(|v| self.display_applied(v.payload[0], args))
+            .map(|v| self.display_applied(v.payload[0], &names))
             .collect();
         parts.join(" | ")
     }
 
-    /// Display `t` with `Param(i)` read as `args[i]` (for the common member shapes).
-    fn display_applied(&self, t: TyId, args: &[TyId]) -> String {
+    /// Display `t` with `Param(i)` named `names[i]`, parenthesizing arrays of parameters.
+    fn display_applied(&self, t: TyId, names: &[String]) -> String {
         match self.ty.kind(t) {
-            TyKind::Param(i) => match args.get(*i as usize) {
-                Some(a) => self.display(*a),
-                None => self.display(t),
-            },
             TyKind::Array(e) if has_params(&self.ty, *e) => {
-                format!("({})[]", self.display_applied(*e, args))
+                format!("({})[]", self.display_applied(*e, names))
             }
-            _ => self.display(t),
+            _ => self.display_in(t, names),
         }
     }
 }

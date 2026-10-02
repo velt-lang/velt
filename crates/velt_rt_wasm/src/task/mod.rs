@@ -11,6 +11,7 @@
 
 pub mod all;
 pub mod boxed;
+pub mod channel;
 pub mod executor;
 pub mod leaf;
 pub mod local;

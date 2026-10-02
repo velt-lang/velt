@@ -35,6 +35,7 @@ impl CliLoader {
                 let opts = InstallOptions {
                     locked: false,
                     update: false,
+                    target: Some(velt_codegen_cl::host_triple()),
                 };
                 let installed = super::project::Project::open(&root, opts);
                 installed

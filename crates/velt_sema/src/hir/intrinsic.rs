@@ -76,6 +76,16 @@ pub enum Intrinsic {
     /// std only: `__intrinsic_promise_any(ps: Promise<T, E>[]): Promise<T, E>` — the first to
     /// fulfill, or the last rejection when all reject (std/prelude/promise.vlt `promiseAny`).
     PromiseAny,
+    /// std only (std/channel.vlt): `__intrinsic_chan_send<T>(ch: u64, value: T):
+    /// Promise<bool>` — moves `value` into the channel; false (and `value` dropped) if it is
+    /// closed.
+    ChanSend,
+    /// std only: `__intrinsic_chan_receive<T>(ch: u64): Promise<T | null>` — the oldest value,
+    /// or null once the channel is closed and drained.
+    ChanReceive,
+    /// std only: `__intrinsic_chan_try_receive<T>(ch: u64): T | null` — the oldest value if one
+    /// is queued.
+    ChanTryReceive,
     /// `performance.now(): f64`
     PerfNow,
     /// `Date.now(): i64`

@@ -1,0 +1,100 @@
+// sqlite: SQLite databases through a native library (the `native/` Rust crate, published
+// prebuilt for each target). Rows come back as JSON and are decoded into your row type:
+//
+//   import { Database } from "sqlite";
+//   struct User { id: i64; name: string; }
+//   using db = new Database(":memory:");
+//   db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+//   db.query<User>("INSERT INTO users (name) VALUES (?)", "[\"ada\"]");
+//   const users = db.query<User>("SELECT id, name FROM users");
+//
+// A `Database` owns its connection and closes it when it is disposed (`using`, or when the
+// last reference goes away). `db.ref` is a copyable reference for async queries, which run on
+// the runtime's blocking pool; after the database is closed they fail with "SQLITE_MISUSE".
+
+import { IoResult, IoStatus } from "velt:io";
+
+declare function sqlite_open(path: string): IoResult<u64>;
+declare function sqlite_close(db: u64): IoStatus;
+declare function sqlite_exec(db: u64, sql: string): IoStatus;
+declare function sqlite_query(db: u64, sql: string, params: string): IoResult<string>;
+declare async function sqlite_query_async(db: u64, sql: string, params: string): Promise<IoResult<string>>;
+declare function sqlite_version(): string;
+declare function sqlite_error_name(code: i32): string;
+
+// A failed SQLite operation. `code` is SQLite's result code name ("SQLITE_ERROR" for bad SQL,
+// "SQLITE_CONSTRAINT_UNIQUE", "SQLITE_MISUSE" for a closed database, ...).
+export class SqliteError extends Error {
+  code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+function check(s: IoStatus) {
+  if (s.code != 0) {
+    throw new SqliteError(sqlite_error_name(s.code), s.message);
+  }
+}
+
+function unwrap(r: IoResult<string>): string {
+  if (r.code != 0) {
+    throw new SqliteError(sqlite_error_name(r.code), r.message);
+  }
+  return r.value;
+}
+
+// The version of the bundled SQLite library ("3.50.4").
+export function version(): string {
+  return sqlite_version();
+}
+
+// An open database (a file, or ":memory:").
+export class Database {
+  private handle: u64;
+
+  // Opens (creating if needed) the database at `path`; throws `SqliteError`.
+  constructor(path: string) {
+    const r = sqlite_open(path);
+    if (r.code != 0) {
+      throw new SqliteError(sqlite_error_name(r.code), r.message);
+    }
+    this.handle = r.value;
+  }
+
+  // Runs `;`-separated statements without parameters (schema scripts).
+  exec(sql: string) {
+    check(sqlite_exec(this.handle, sql));
+  }
+
+  // Runs one statement with `params` (a JSON array: `"[1, \"two\"]"`) and decodes its rows.
+  query<T>(sql: string, params: string = "[]"): T[] {
+    return JSON.parse<T[]>(unwrap(sqlite_query(this.handle, sql, params)));
+  }
+
+  // A copyable reference for async queries.
+  get ref(): DatabaseRef {
+    return DatabaseRef { handle: this.handle };
+  }
+
+  // Closes the connection. Disposal cannot throw: a failed close is a panic.
+  [Symbol.dispose]() {
+    const s = sqlite_close(this.handle);
+    if (s.code != 0) {
+      panic(`sqlite: closing the database failed: ${s.message}`);
+    }
+  }
+}
+
+// A copyable reference to an open `Database`, for queries that run on the blocking pool.
+export struct DatabaseRef {
+  handle: u64;
+
+  // `Database.query`, without blocking the calling task.
+  async query<T>(sql: string, params: string = "[]"): Promise<T[]> {
+    const json = unwrap(await sqlite_query_async(this.handle, sql, params));
+    return JSON.parse<T[]>(json);
+  }
+}

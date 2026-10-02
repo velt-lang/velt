@@ -1,0 +1,3 @@
+received [ 'apple' ]
+received [ 'apple', 'pear' ]
+sender sees [ 'apple', 'pear' ] total 3

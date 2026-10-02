@@ -117,6 +117,7 @@ fn prefers_locked_version_while_it_satisfies() {
         source: REGISTRY_SOURCE.into(),
         checksum: None,
         dependencies: vec![],
+        native: Default::default(),
     }]);
     assert_eq!(
         versions(&e.resolve("lib = \"^1.0\"\n", Some(&lock)).unwrap()),

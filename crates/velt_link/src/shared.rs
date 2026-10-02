@@ -44,6 +44,37 @@ pub(crate) fn unix_args(lib: &Path) -> Vec<OsString> {
     vec![search, "-lvelt_rt_shared".into(), rpath]
 }
 
+/// Linker arguments for any shared library `lib` (`lib<name>.so` / `.dylib`): `-L<dir> -l<name>`
+/// and an rpath to its directory (native libraries of packages).
+pub(crate) fn unix_lib_args(lib: &Path) -> Vec<OsString> {
+    let dir = absolute_dir(lib);
+    let stem = lib.file_stem().unwrap_or_default().to_string_lossy();
+    let name = stem.strip_prefix("lib").unwrap_or(&stem);
+    let mut search = OsString::from("-L");
+    search.push(&dir);
+    let mut rpath = OsString::from("-Wl,-rpath,");
+    rpath.push(&dir);
+    vec![search, format!("-l{name}").into(), rpath]
+}
+
+/// Windows: copy the DLL `file` beside `output` (unless an up-to-date copy is there).
+pub(crate) fn place_file(file: &Path, output: &Path) -> Result<(), String> {
+    let to_dir = match output.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d,
+        _ => Path::new("."),
+    };
+    let to = to_dir.join(file.file_name().unwrap_or_default());
+    if to == file || same_file_stamp(file, &to) {
+        return Ok(());
+    }
+    copy_atomically(file, &to).map_err(|e| {
+        format!(
+            "cannot copy the native library {} next to the executable: {e}",
+            file.display()
+        )
+    })
+}
+
 fn absolute_dir(lib: &Path) -> PathBuf {
     let lib = std::fs::canonicalize(lib).unwrap_or_else(|_| lib.to_path_buf());
     lib.parent().map_or_else(PathBuf::new, Path::to_path_buf)
@@ -141,6 +172,17 @@ mod tests {
                 "-Wl,-rpath,/opt/velt/lib"
             ]
         );
+    }
+
+    #[test]
+    fn native_library_args() {
+        let args = unix_lib_args(Path::new("/c/native/libvelt_native_db.so"));
+        let args: Vec<String> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args[1], "-lvelt_native_db");
+        assert!(args[0].starts_with("-L") && args[2].starts_with("-Wl,-rpath,"));
     }
 
     #[test]

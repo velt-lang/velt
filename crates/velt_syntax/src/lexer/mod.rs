@@ -72,6 +72,11 @@ pub(crate) struct Lexer<'a> {
     modes: Vec<(u32, Mode)>,
     /// The current mode stack (a node of `modes`).
     ctx: u32,
+    /// The innermost mode of `ctx` (`None` for the empty stack), kept next to it because every
+    /// token reads it.
+    mode: Option<Mode>,
+    /// Has `Eof` been lexed (the last token)?
+    done: bool,
     /// `(token index, mode stack)` of each `<` that may start an element ([`may_start_jsx`]), in
     /// token order: where `relex_jsx` restarts.
     lt_ctx: Vec<(usize, u32)>,
@@ -131,6 +136,8 @@ impl<'a> Lexer<'a> {
             diags: Vec::new(),
             modes: vec![(0, Mode::Brace)],
             ctx: 0,
+            mode: None,
+            done: false,
             lt_ctx: Vec::new(),
             jsx_import_source: None,
             comments: Vec::new(),
@@ -142,29 +149,23 @@ impl<'a> Lexer<'a> {
     /// re-lexed as JSX, which throws away everything lexed after it: a batch stops at such a
     /// `<`, and near one only what is asked for is lexed.
     pub(crate) fn fill(&mut self, i: usize) {
-        let near_jsx = self.last_jsx_candidate_within(JSX_DECISION_TOKENS);
+        if self.done {
+            return;
+        }
+        let near_jsx = self
+            .lt_ctx
+            .last()
+            .is_some_and(|&(j, _)| j + JSX_DECISION_TOKENS >= self.toks.len());
         let end = if near_jsx {
             i
         } else {
             i.saturating_add(LEX_BATCH)
         };
-        while self.toks.len() <= end && !self.at_eof_token() {
-            self.step();
-            if self.toks.len() > i && self.last_jsx_candidate_within(1) {
+        while self.toks.len() <= end {
+            if self.step() && (self.done || self.toks.len() > i) {
                 return;
             }
         }
-    }
-
-    /// Is one of the last `n` tokens a `<` that may start an element?
-    fn last_jsx_candidate_within(&self, n: usize) -> bool {
-        self.lt_ctx
-            .last()
-            .is_some_and(|&(j, _)| j + n >= self.toks.len())
-    }
-
-    fn at_eof_token(&self) -> bool {
-        matches!(self.toks.last(), Some(t) if t.kind == Tok::Eof)
     }
 
     /// Re-lexes from token `i`, a `<`, as the start of a JSX element: drops token `i` and every
@@ -189,7 +190,8 @@ impl<'a> Lexer<'a> {
         self.diags.truncate(keep);
         let keep = self.comments.partition_point(|c| c.start < t.lo);
         self.comments.truncate(keep);
-        self.ctx = ctx;
+        self.set_ctx(ctx);
+        self.done = false;
         self.pos = t.lo as usize + 1;
         self.toks.push(Token {
             kind: Tok::JsxLt,
@@ -200,31 +202,42 @@ impl<'a> Lexer<'a> {
     }
 
     /// The innermost mode, if any.
+    #[inline]
     fn mode(&self) -> Option<Mode> {
-        (self.ctx != 0).then(|| self.modes[self.ctx as usize].1)
+        self.mode
+    }
+
+    /// Makes node `ctx` of `modes` the current mode stack.
+    fn set_ctx(&mut self, ctx: u32) {
+        self.ctx = ctx;
+        self.mode = (ctx != 0).then(|| self.modes[ctx as usize].1);
     }
 
     fn push_mode(&mut self, m: Mode) {
         self.modes.push((self.ctx, m));
         self.ctx = (self.modes.len() - 1) as u32;
+        self.mode = Some(m);
     }
 
     fn pop_mode(&mut self) -> Option<Mode> {
-        let m = self.mode()?;
-        self.ctx = self.modes[self.ctx as usize].0;
+        let m = self.mode?;
+        self.set_ctx(self.modes[self.ctx as usize].0);
         Some(m)
     }
 
-    /// Lexes one token (skipping bad characters) and appends it.
-    fn step(&mut self) {
+    /// Lexes one token (skipping bad characters) and appends it. Returns whether a batch of
+    /// lexing stops there: at `Eof`, or at a `<` that may start an element.
+    /// Inlined into `fill`'s loop, so the lexer state stays in registers from token to token: a
+    /// call per token costs about 7% of the lexing time.
+    #[inline(always)]
+    fn step(&mut self) -> bool {
         loop {
-            let mode = self.mode();
+            let mode = self.mode;
             // JSX text is significant: no whitespace or comments are skipped in children.
             if mode != Some(Mode::JsxChildren) {
                 self.skip_trivia();
             }
             let start = self.pos;
-            let ctx = self.ctx;
             if start >= self.src.len() {
                 let end = self.src.len() as u32;
                 self.toks.push(Token {
@@ -232,7 +245,8 @@ impl<'a> Lexer<'a> {
                     lo: end,
                     hi: end,
                 });
-                return;
+                self.done = true;
+                return true;
             }
             let kind = match mode {
                 Some(Mode::JsxChildren) => Some(self.jsx_children_token()),
@@ -240,15 +254,17 @@ impl<'a> Lexer<'a> {
                 _ => self.next_token(),
             };
             if let Some(kind) = kind {
-                if kind == Tok::Lt && may_start_jsx(self.at(0)) {
-                    self.lt_ctx.push((self.toks.len(), ctx));
+                let jsx_candidate = matches!(kind, Tok::Lt) && may_start_jsx(self.at(0));
+                if jsx_candidate {
+                    // A `<` leaves the mode stack as it is: lexing restarts in `self.ctx`.
+                    self.lt_ctx.push((self.toks.len(), self.ctx));
                 }
                 self.toks.push(Token {
                     kind,
                     lo: start as u32,
                     hi: self.pos as u32,
                 });
-                return;
+                return jsx_candidate;
             }
         }
     }
@@ -299,6 +315,8 @@ impl<'a> Lexer<'a> {
         self.error(format!("unexpected character `{}`", shown), start, self.pos);
     }
 
+    /// Inlined into `step` for the same reason.
+    #[inline(always)]
     fn skip_trivia(&mut self) {
         loop {
             match self.at(0) {

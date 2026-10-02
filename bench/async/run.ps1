@@ -6,22 +6,26 @@
 #   pwsh bench/async/run.ps1 [-Runs 5] [-Only spawn_many]
 #
 # Columns: Velt on all cores (default runtime) and with VELT_THREADS=1, Rust tokio multi-thread
-# and current-thread runtimes, Node. Honors CARGO_TARGET_DIR. A configuration whose first run
-# takes over 10 s is not repeated.
+# and current-thread runtimes, Node. Builds into cargo's target directory (CARGO_TARGET_DIR when
+# set). A configuration whose first run takes over 10 s is not repeated.
 param(
     [int]$Runs = 5,
     [string]$Only = ""
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $root "target" }
+# Cargo's target directory for this workspace: CARGO_TARGET_DIR, a cargo config, or <repo>/target.
+$metadata = cargo metadata --format-version 1 --no-deps --manifest-path (Join-Path $root "Cargo.toml")
+if ($LASTEXITCODE -ne 0) { throw "cargo metadata failed" }
+$target = ($metadata | ConvertFrom-Json).target_directory
 $out = Join-Path $target "bench-async"
 New-Item -ItemType Directory -Force $out | Out-Null
 
 Write-Host "building velt (release), the runtime and the tokio benchmarks..."
 cargo build --release -q -p veltc -p velt_rt --manifest-path (Join-Path $root "Cargo.toml")
 if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
-cargo build --release -q --manifest-path (Join-Path $PSScriptRoot "rust/Cargo.toml")
+# The tokio benchmarks are their own workspace: build them next to velt, where they are run from.
+cargo build --release -q --manifest-path (Join-Path $PSScriptRoot "rust/Cargo.toml") --target-dir $target
 if ($LASTEXITCODE -ne 0) { throw "cargo build of bench/async/rust failed" }
 $velt = Join-Path $target "release/velt.exe"
 
