@@ -55,6 +55,9 @@ struct Moves<'a> {
     boxable: Vec<bool>,
     /// Locals that need a shared cell (`LocalDef::boxed`, see `crate::ownership::cells`).
     boxed: HashSet<LocalId>,
+    /// Per enclosing `try` with a `finally` (innermost last): the states at the `return`,
+    /// `break` and `continue` statements that leave through it (its `finally` runs there too).
+    finally_exits: Vec<Flow>,
 }
 
 /// What the move dataflow found besides errors.
@@ -135,6 +138,7 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
             shared: shared[i].clone(),
             writers: &writers,
             boxed: HashSet::new(),
+            finally_exits: vec![],
             report: false,
             errors: vec![],
             loops: vec![],
@@ -417,6 +421,7 @@ impl Moves<'_> {
                 if let Some(e) = e {
                     self.expr(e, st);
                 }
+                self.leave_through_finally(st);
                 *st = None;
             }
             StmtKind::If { cond, then, els } => {
@@ -434,8 +439,14 @@ impl Moves<'_> {
                 catch,
                 finally,
             } => self.try_stmt(body, catch.as_ref(), finally.as_ref(), st),
-            StmtKind::Break(label) => self.jump(label.as_deref(), true, st),
-            StmtKind::Continue(label) => self.jump(label.as_deref(), false, st),
+            StmtKind::Break(label) => {
+                self.leave_through_finally(st);
+                self.jump(label.as_deref(), true, st)
+            }
+            StmtKind::Continue(label) => {
+                self.leave_through_finally(st);
+                self.jump(label.as_deref(), false, st)
+            }
             StmtKind::Block(b) => self.block(b, st),
         }
     }
@@ -458,8 +469,20 @@ impl Moves<'_> {
         }
     }
 
+    /// A `return`, `break` or `continue` at state `st` leaves through the innermost enclosing
+    /// `finally` (conservatively also for a loop inside the `try`: more shares, never fewer).
+    fn leave_through_finally(&mut self, st: &Flow) {
+        if let Some(top) = self.finally_exits.last_mut() {
+            *top = join(top.take(), st.clone());
+        }
+    }
+
     /// A throw can leave the `try` body anywhere: the handler starts from the join of the
-    /// states at entry and at the end of the body.
+    /// states at entry and at the end of the body. The `finally` runs on every way out: after
+    /// the body or handler, after a throw, and before each `return`, `break` and `continue`
+    /// inside them; it is checked once from the join of all of these (so a value it uses is
+    /// shared, not moved, by a `return f(x)` before it), and the code after the `try` continues
+    /// from the `finally` run on the normal path.
     fn try_stmt(
         &mut self,
         body: &Block,
@@ -468,18 +491,29 @@ impl Moves<'_> {
         st: &mut Flow,
     ) {
         let entry = st.clone();
+        if finally.is_some() {
+            self.finally_exits.push(None);
+        }
         self.block(body, st);
         if let Some((local, handler)) = catch {
-            let mut h = join(entry, st.clone());
+            let mut h = join(entry.clone(), st.clone());
             if let Some(l) = local {
                 Self::init_local(*l, &mut h);
             }
             self.block(handler, &mut h);
             *st = join(st.take(), h);
         }
-        if let Some(f) = finally {
-            self.block(f, st);
-        }
+        let Some(f) = finally else {
+            return;
+        };
+        let exits = self.finally_exits.pop().flatten();
+        let mut every = join(join(exits, entry), st.clone());
+        self.block(f, &mut every);
+        // Leaving this `finally` on an early exit leaves the enclosing ones too.
+        self.leave_through_finally(&every);
+        let report = std::mem::replace(&mut self.report, false);
+        self.block(f, st);
+        self.report = report;
     }
 }
 

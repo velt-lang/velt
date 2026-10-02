@@ -1,0 +1,10 @@
+finally token
+token
+direct finally token
+token
+loop finally 0 token
+loop finally 1 token
+token
+inner finally token
+outer finally token
+token

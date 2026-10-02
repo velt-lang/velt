@@ -1,0 +1,86 @@
+// check: no leaks
+// A `finally` runs after a `return` inside its `try`: a value the `finally` still uses is shared
+// with the returned call, not moved into it. Also through a getter's object handed to a stored
+// promise (the `Promise.race([work(), expire(ms, signal)])` shape), a `break` out of a loop, and
+// nested `try`s.
+
+class Inner {
+  name: string = "token";
+}
+
+class Token {
+  inner: Inner = new Inner();
+}
+
+class Ctl {
+  private tok: Token = new Token();
+
+  get token(): Token {
+    return this.tok;
+  }
+}
+
+async function use(t: Token): Promise<string> {
+  await sleep(1);
+  return t.inner.name;
+}
+
+async function guarded(): Promise<string> {
+  const c = new Ctl();
+  try {
+    const p = use(c.token);
+    return await p;
+  } finally {
+    console.log("finally", c.token.inner.name);
+  }
+}
+
+function keep(t: Token): string {
+  const kept = [t];
+  return kept[0].inner.name;
+}
+
+function direct(): string {
+  const t = new Token();
+  try {
+    return keep(t);
+  } finally {
+    console.log("direct finally", t.inner.name);
+  }
+}
+
+function inLoop(): string {
+  const t = new Token();
+  let out = "";
+  for (let i = 0; i < 3; i++) {
+    try {
+      if (i == 1) {
+        out = keep(t);
+        break;
+      }
+    } finally {
+      console.log("loop finally", i, t.inner.name);
+    }
+  }
+  return out;
+}
+
+function nested(): string {
+  const t = new Token();
+  try {
+    try {
+      return keep(t);
+    } finally {
+      console.log("inner finally", t.inner.name);
+    }
+  } finally {
+    console.log("outer finally", t.inner.name);
+  }
+}
+
+async function main() {
+  console.log(await guarded());
+  console.log(direct());
+  console.log(inLoop());
+  console.log(nested());
+}
