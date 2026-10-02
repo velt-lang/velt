@@ -25,6 +25,14 @@ pub const KIND_STRING: u32 = 4;
 pub const KIND_ARRAY: u32 = 5;
 pub const KIND_OBJECT: u32 = 6;
 
+/// A position given by generated code as `u64`, as a `usize` if it is one. A cast would truncate
+/// on 32-bit targets (wasm32), turning `at(4294967296)` into `at(0)`; a position beyond `usize`
+/// is out of range of every array. Generic over the target so the 32-bit case can be tested on
+/// any host.
+pub fn to_index<U: TryFrom<u64>>(i: u64) -> Option<U> {
+    U::try_from(i).ok()
+}
+
 fn new_handle(v: &Arc<Value>) -> ValueHandle {
     Handle::from_arc(Arc::clone(v))
 }
@@ -107,9 +115,12 @@ pub unsafe extern "C" fn velt_rt_json_value_get(
 /// `v.at(i)`: new handle to array element `i` (or the `i`-th member value of an object), or null.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_value_at(h: ValueHandle, i: u64) -> ValueHandle {
+    let Some(i) = to_index::<usize>(i) else {
+        return Handle::NULL;
+    };
     let child = match h.get() {
-        Some(Value::Array(items)) => items.get(i as usize),
-        Some(Value::Object(obj)) => obj.entries.get(i as usize).map(|(_, v)| v),
+        Some(Value::Array(items)) => items.get(i),
+        Some(Value::Object(obj)) => obj.entries.get(i).map(|(_, v)| v),
         _ => None,
     };
     child.map_or(Handle::NULL, new_handle)
@@ -126,7 +137,7 @@ pub unsafe extern "C" fn velt_rt_json_value_key_at(
     let Some(Value::Object(obj)) = h.get() else {
         return 0;
     };
-    match obj.entries.get(i as usize) {
+    match to_index::<usize>(i).and_then(|i| obj.entries.get(i)) {
         Some((key, _)) => {
             out.write(VeltStr::from_vec(key.as_bytes().to_vec()));
             1

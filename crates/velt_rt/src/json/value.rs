@@ -42,20 +42,18 @@ impl Object {
         }
     }
 
-    /// Remove `key`, keeping the order of the others; whether it was there.
+    /// Remove `key`, keeping the order of the others; whether it was there. O(number of
+    /// members): the entries after it move down one place and so do their indices.
     pub fn remove(&mut self, key: &str) -> bool {
         let Some(i) = self.find(key) else {
             return false;
         };
-        self.entries.remove(i);
-        if self.index.is_some() {
-            self.index = (self.entries.len() > INDEX_THRESHOLD).then(|| {
-                self.entries
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (k, _))| (k.clone(), i))
-                    .collect()
-            });
+        let (removed, _) = self.entries.remove(i);
+        if self.entries.len() <= INDEX_THRESHOLD {
+            self.index = None;
+        } else if let Some(index) = &mut self.index {
+            index.remove(&removed);
+            shift_down(index, &self.entries[i..], i);
         }
         true
     }
@@ -79,6 +77,25 @@ impl Object {
             self.index = Some(index);
         }
         self.entries.push((key, value));
+    }
+}
+
+/// Lower by one the indices of `moved` (the entries now from position `from` on, which were one
+/// further before a removal). Few moved entries are looked up by key; otherwise a pass over all
+/// indices is cheaper than hashing each key.
+fn shift_down(index: &mut HashMap<Box<str>, usize>, moved: &[(Box<str>, Arc<Value>)], from: usize) {
+    if moved.len() * 8 < index.len() {
+        for (k, _) in moved {
+            if let Some(slot) = index.get_mut(k) {
+                *slot -= 1;
+            }
+        }
+    } else {
+        for slot in index.values_mut() {
+            if *slot > from {
+                *slot -= 1;
+            }
+        }
     }
 }
 

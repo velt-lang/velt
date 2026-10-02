@@ -5,7 +5,7 @@
 //! shared). Editors take a pointer to the handle slot, which may get a new node.
 
 use super::value::{Object, Value};
-use super::value_abi::ValueHandle;
+use super::value_abi::{to_index, ValueHandle};
 use crate::handle::Handle;
 use crate::str::VeltStr;
 use std::sync::Arc;
@@ -131,14 +131,17 @@ pub unsafe extern "C" fn velt_rt_json_value_set_at(
     i: u64,
     value: ValueHandle,
 ) -> u8 {
+    let Some(i) = to_index::<usize>(i) else {
+        return 0;
+    };
     match (*slot).get() {
-        Some(Value::Array(items)) if (i as usize) < items.len() => {}
+        Some(Value::Array(items)) if i < items.len() => {}
         _ => return 0,
     }
     let child = shared(value);
     match edit(slot) {
         Some(Value::Array(items)) => {
-            items[i as usize] = child;
+            items[i] = child;
             1
         }
         _ => 0,
