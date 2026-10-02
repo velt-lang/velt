@@ -178,6 +178,7 @@ impl<'a> Lexer<'a> {
         if j != i {
             return; // not a `<`
         }
+        crate::work::add(self.toks.len() - i);
         self.lt_ctx.truncate(at);
         self.toks.truncate(i);
         // Truncating instead of filtering keeps a file full of errors and elements linear. A
@@ -264,6 +265,7 @@ impl<'a> Lexer<'a> {
                     lo: start as u32,
                     hi: self.pos as u32,
                 });
+                crate::work::add(1);
                 return jsx_candidate;
             }
         }
