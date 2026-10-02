@@ -220,7 +220,7 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | `new Promise(...)` | same, with an arrow-function executor; `await` of one abandoned unsettled is reported | `new Promise(...)` |
 | single-threaded event loop | multi-core runtime; `spawn`, `shared`, `Mutex`; data races are compile errors | — |
 | mutable module globals | constants only | — |
-| `arr.sort()` sorts as strings | `sort()` sorts numbers numerically; `sort(cmp)` like TypeScript | — |
+| `arr.sort()` sorts as strings | `sort()` and `toSorted()` sort numbers numerically; with a comparator they work like TypeScript | — |
 | `xs.sort()`, `xs.reverse()`, `xs.fill(v)` return the array | they work in place and return nothing (returning the array would make it reference counted); `xs.toSorted()` and `xs.toReversed()` return sorted / reversed copies, as in ES2023 | — |
 | `xs.length = 0` | `xs.truncate(0)`; `length` is read-only (arrays have no holes) | — |
 | `xs.splice(i, n, a, b)`, `xs.push(a, b)` | `splice(i, n)` removes; one `push(x)` per element | inserting `splice` and `push` with rest parameters |

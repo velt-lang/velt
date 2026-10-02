@@ -404,13 +404,9 @@ fn in_place_note(init: &ast::Expr) -> Option<String> {
         let xs = crate::body::switch::cases::source_text(object);
         return Some(format!("{what}: call it, then use `{xs}`"));
     }
-    let call = if m == "fill" {
-        "fill(v)".to_string()
-    } else {
-        format!("{m}()")
-    };
+    // Only `fill` is left here (`sort` and `reverse` have copying forms).
     Some(format!(
-        "{what}: store the array in a variable first (`const a = …; a.{call};`), then use `a`"
+        "{what}: store the array in a variable first (`const a = …; a.fill(v);`), then use `a`"
     ))
 }
 
