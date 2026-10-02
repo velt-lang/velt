@@ -301,6 +301,8 @@ reading freed memory.
 | `velt_rt_http_req_header` | `(VeltReq r, const VeltStr* name, VeltStr* out) -> u8` | case-insensitive; 0 = absent (`out` untouched) |
 | `velt_rt_http_req_header_count` | `(VeltReq r) -> u64` | |
 | `velt_rt_http_req_header_at` | `(VeltReq r, u64 i, VeltStr* name, VeltStr* value)` | lowercase name |
+| `velt_rt_http_req_header_names` | `(VeltReq r, VeltStrArray* out)` | every header name (lowercase), in received order: `req.headers` in one call (`header_at` per index is O(n) each) |
+| `velt_rt_http_req_header_values` | `(VeltReq r, VeltStrArray* out)` | every value, in the order of `header_names` (non-UTF-8 bytes decoded lossily) |
 | `velt_rt_http_req_drop` | `(VeltReq r)` | |
 | `velt_rt_http_resp_new` | `(u32 status) -> VeltResp` | invalid status ⇒ 500 |
 | `velt_rt_http_resp_header` | `(VeltResp r, const VeltStr* name, const VeltStr* value) -> u8` | append; 0 if invalid |
@@ -906,7 +908,7 @@ Not available on wasm (no sockets): the symbols are not defined by `velt_rt_wasm
 
 ### 14.13 PostgreSQL (`velt:postgres`; stream db, additive)
 
-`crates/velt_rt/src/postgres/` over `tokio-postgres` (`default-features = false`, `runtime`), connected over the runtime's own socket and wire stream (§14.17).
+`crates/velt_rt/src/postgres/` over `tokio-postgres` (`default-features = false`, `runtime`), connected over the runtime's own socket and wire stream (§14.18).
 TLS is a hand-written `TlsConnect` over tokio-rustls with the runtime's `ring` provider and
 roots (§14.8); `sslmode` = `disable`, `prefer` (default), `require` (no certificate check),
 `verify-ca`, `verify-full`, plus `sslrootcert=<PEM file>` (extra roots; turns `require` into
@@ -1027,7 +1029,7 @@ its response open.
 | `velt_rt_http_resp_stream_close` | `(VeltRespWriter w) -> VeltFut*` | result `u8` as `flush`; sends the rest, ends the body normally (final chunk) and releases `w`; 0 on a released handle |
 | `velt_rt_http_resp_stream_abort` | `(VeltRespWriter w)` | ends the body with an error (HTTP/1.1: the connection is closed without the final chunk; HTTP/2: `RST_STREAM`), discarding the buffer, and releases `w`; no-op on a released handle |
 
-### 14.17 PostgreSQL batches (`std/postgres`; stream platform-perf, additive)
+### 14.18 PostgreSQL batches (`std/postgres`; stream platform-perf, additive)
 One prepared statement run with N parameter sets in one message group — `Bind` + `Execute` per
 set and **one** `Sync` (pgx's `Batch`): one round trip and one implicit transaction on the server
 instead of N. tokio-postgres has no API for it, so every connection now runs over a wire stream

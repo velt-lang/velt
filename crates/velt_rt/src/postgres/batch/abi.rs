@@ -1,4 +1,4 @@
-//! The batch ABI (rt_abi_async.md §14.17): `client.batchQuery` & co. and their pool forms
+//! The batch ABI (rt_abi_async.md §14.18): `client.batchQuery` & co. and their pool forms
 //! (a pool runs the whole batch on one of its connections).
 
 use super::Mode;
