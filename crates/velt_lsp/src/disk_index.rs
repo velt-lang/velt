@@ -11,6 +11,7 @@ use std::time::SystemTime;
 
 use lsp_types::WorkspaceSymbol;
 
+use crate::manifest::is_manifest;
 use crate::workspace_symbols::{collect_files, disk_file_symbols, Search, SKIPPED_DIRS};
 
 /// One indexed file.
@@ -85,7 +86,7 @@ impl DiskIndex {
                 let modified = modified(&p);
                 self.files.insert(p.clone(), index_file(&p, modified));
             }
-        } else if path.extension().is_some_and(|e| e == "vlt") {
+        } else if path.extension().is_some_and(|e| e == "vlt") && !is_manifest(path) {
             self.files
                 .insert(path.to_path_buf(), index_file(path, modified(path)));
         }
