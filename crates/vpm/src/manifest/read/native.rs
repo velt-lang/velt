@@ -6,8 +6,6 @@ use crate::manifest::{
     check_native_path, check_native_target, check_native_wasm, default_native_path, NativeConfig,
 };
 
-const NATIVE_KEYS: [&str; 3] = ["path", "targets", "wasm"];
-
 impl Reader<'_> {
     /// `native: { path?: string; targets?: string[]; wasm?: boolean }`.
     pub(super) fn native(&mut self, value: &Value) -> Option<NativeConfig> {
@@ -26,7 +24,7 @@ impl Reader<'_> {
                 }
                 "targets" => config.targets = self.native_targets(v),
                 "wasm" => config.wasm = self.native_wasm(v),
-                _ => self.unknown_key(key, &NATIVE_KEYS),
+                _ => self.unknown_key(key, crate::manifest::schema::NATIVE),
             }
         }
         Some(config)

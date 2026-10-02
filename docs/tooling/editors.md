@@ -30,6 +30,12 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
   `!== null`, `!== 0.0`, by type), replace `export default` with a named export, and add `await`
   or `spawn(...)` to a floating promise.
 
+- **Package manifests**: `package.vlt` is read as data, the way `velt` reads it, not checked as a
+  program. Its diagnostics are exactly `velt`'s; completion offers the fields valid at the cursor
+  and fixed values (native targets, `true`/`false`); hover explains each field. Saving a changed
+  `package.vlt` reinstalls the package's dependencies for the other open files
+  ([`package.vlt`](manifest.md)).
+
 The server answers even when the program has errors, and a failing request never takes the
 server down.
 

@@ -21,7 +21,7 @@ use lsp_types::{PublishDiagnosticsParams, Url};
 
 use crate::analysis::{self, Analysis};
 use crate::documents::{self, Documents};
-use crate::{diagnostics, workspace_symbols, ProgramLoader};
+use crate::{diagnostics, manifest, workspace_symbols, ProgramLoader};
 
 /// Quiet time after an edit before the document is re-analyzed.
 const DEBOUNCE: Duration = Duration::from_millis(150);
@@ -174,14 +174,31 @@ impl Server<'_> {
             return;
         };
         let (path, version) = (doc.path.clone(), doc.version);
+        if manifest::is_manifest(&path) {
+            // Data, not a program: the reader's diagnostics, no analysis.
+            let diags = manifest::diagnostics(&doc.text);
+            self.analyses.remove(uri);
+            self.publish(uri.clone(), diags, Some(version));
+            return;
+        }
         let analysis = analysis::analyze(self.loader, &path, &self.docs.overlay());
         let diags = diagnostics::for_document(&analysis, &|p| self.uri_of(p));
         self.analyses.insert(uri.clone(), analysis);
         self.publish(uri.clone(), diags, Some(version));
     }
 
-    /// The up-to-date analysis of an open document (analyzing it now if an edit is pending).
+    /// The text of an open package manifest (which has no analysis).
+    fn manifest_text(&self, uri: &Url) -> Option<&str> {
+        let doc = self.docs.get(uri)?;
+        manifest::is_manifest(&doc.path).then_some(doc.text.as_str())
+    }
+
+    /// The up-to-date analysis of an open document (analyzing it now if an edit is pending); none
+    /// for a package manifest.
     fn analysis(&mut self, uri: &Url) -> Option<&Analysis> {
+        if self.manifest_text(uri).is_some() {
+            return None;
+        }
         if self.pending.contains_key(uri) || !self.analyses.contains_key(uri) {
             self.refresh(uri);
         }

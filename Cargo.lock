@@ -2081,6 +2081,7 @@ dependencies = [
  "velt_fmt",
  "velt_sema",
  "velt_syntax",
+ "vpm",
 ]
 
 [[package]]

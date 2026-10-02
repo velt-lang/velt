@@ -1,7 +1,7 @@
 # Design: a package manifest written in Velt
 
-Status: implemented (issue #128), except `std/package.vlt` with its sync test (waiting for
-`Record`, #17) and the language server's package-graph refresh. The maintainer's review answered
+Status: implemented (issue #128), except editor support, which is revised in
+[Editors: the manifest document kind](#editors-the-manifest-document-kind). The maintainer's review answered
 the open questions; the answers are in [Decisions](#decisions). The contract is
 [manifest.md](../contracts/manifest.md), which replaced `velt_toml.md`.
 
@@ -51,7 +51,7 @@ such as `@velt/sqlite` are a separate issue.
 **Types.** `velt:package` (`std/package.vlt`) contains only types:
 
 ```ts ignore
-export interface Package {
+export type Package = {
   name: string;
   version: string;
   entry?: string;
@@ -60,27 +60,25 @@ export interface Package {
   paths?: Record<string, string>;
   jsx?: Jsx;
   native?: Native;
-}
+};
 
 export type Dependency = string | DependencySource;
 
-export interface DependencySource {
-  version?: string;
-  path?: string;
-}
+export type DependencySource = { version?: string; path?: string };
 
-export interface Jsx {
-  importSource?: string;
-}
+export type Jsx = { importSource?: string };
 
-export interface Native {
+export type Native = {
   path?: string;          // default "native"
   targets?: string[];     // triples from vpm::manifest::NATIVE_TARGETS
-  wasm?: boolean;         // must be false for now
-}
+  wasm?: bool;            // must be false for now
+};
 ```
 
-- **Doc comments.** Each field has one, so hovering in an editor shows that field's rules.
+- **Role.** The types document the manifest (`velt doc`) and make the import resolve. They are
+  not what checks a manifest in an editor: see
+  [Editors](#editors-the-manifest-document-kind).
+- **Doc comments.** Each field has one.
 - **`native`.** It mirrors the `[native]` table that native packages (#98) add.
 - **Future fields.** `devDependencies` and `workspace` are added when those features exist.
   Adding an optional field doesn't break existing manifests.
@@ -141,9 +139,7 @@ assumes hostile input:
 
 Each limit is an error with a location, never a crash.
 
-**Editors.** The language server already analyzes every open `.vlt` file. Type-checking against
-`Package` gives completion, hover, go-to-definition and errors without any manifest-specific
-code.
+**Editors.** See [Editors: the manifest document kind](#editors-the-manifest-document-kind).
 
 **Editing (`velt add`).** Today `velt add` edits `velt.toml` with `toml_edit`, which keeps
 comments. The new version works like this:
@@ -166,13 +162,62 @@ As today, the original text is restored if the install fails.
 - Build or dev scripts, if they are ever added, are separate explicit files and never run on
   install.
 
+## Editors: the manifest document kind
+
+The first version of this design said that type-checking `package.vlt` against `Package` would
+give editors completion, hover and errors "for free". Building `std/package.vlt` showed that it
+does not:
+
+- **False errors.** Sema allows only constant expressions in a module-level `const` (literals,
+  struct literals of constants): a module constant has no storage, and its initializer is
+  re-evaluated at every use (`velt_vir` `lower/expr.rs`, `global()`), which is only free for
+  values that need no allocation. Records and arrays do, so any manifest with `dependencies`,
+  `paths` or `native.targets` gets "module-level constants must be constant expressions".
+  The rule is right for programs (it is also what keeps module state immutable for data-race
+  freedom and hot reload) and meaningless for a file that is never compiled.
+- **No useful completion.** The language server completes members after `x.` and names in
+  scope; it does not complete object keys from an expected type, so typing inside the manifest
+  object offers `console` and keywords, not `dependencies`.
+- **No live data.** Version completion and "a newer version exists" need the registry, which a
+  type cannot give in any format (a JSON Schema could not either).
+
+So the language server treats `package.vlt` as a **document kind of its own**:
+
+1. **Routing.** A document named `package.vlt` is not analyzed as a program: no loading, no
+   sema, so no program-only rules apply. `velt` never compiles it either.
+2. **Diagnostics** come from `vpm::manifest::read`, the function every `velt` command uses: the
+   editor shows exactly what `velt build` would, at the same places. There is one definition of
+   a valid manifest and nothing to keep in sync with it.
+3. **Position.** The reader's value tree carries spans, so the cursor maps to a path: a key at
+   the top level, the value of `dependencies.sqlite`, an element of `native.targets`.
+4. **Schema.** `vpm` gets one table of the manifest's fields (key, kind, doc text, allowed
+   values); the reader's lists of known keys become that table. Completion offers the keys valid
+   at the cursor that are not written yet, and fixed values (`native.targets` triples,
+   `true`/`false`); hover shows a field's doc. A test checks that `std/package.vlt` declares the
+   same fields.
+5. **Live registry data**, through `vpm` and the package's registry (`registry`,
+   `VELT_REGISTRY`, or the local one), fetched off the request thread and cached per session:
+   - completion of versions at `sqlite: "|"`, newest first (`^0.3.1`, `^0.3`, `0.2.4`);
+   - hover on a dependency: the latest version, whether the requirement matches it, the locked
+     version, whether the package runs native code;
+   - diagnostics: no published version matches, the package is not in the registry, and a hint
+     when a newer version is out of range, with quick fixes;
+   - completion of package names at a new key in `dependencies`: the local registry is a
+     directory and can be listed; a remote registry needs a search endpoint
+     (`GET <url>/api/v1/search?q=…`, a protocol addition to the contract).
+
+   Offline or unreachable registries make these features quiet, never errors.
+
+Plain `.vlt` features (go-to-definition of `Package`, formatting) keep working: formatting
+already goes through `velt fmt`, and the type import still resolves.
+
 ## Comparison
 
 | | `velt.toml` (today) | `velt.json` + JSON schema | `package.vlt` |
 |---|---|---|---|
 | TypeScript familiarity | low: TOML tables | high: like `package.json` | high: a TypeScript object literal |
 | Comments | yes | no (or JSONC, which many tools reject) | yes |
-| Typing and editor support | none today; needs a TOML extension and a schema | completion and validation through a published schema and the editor's JSON support | completion, hover, go-to-definition and errors from the Velt language server, with no extra setup |
+| Typing and editor support | none today; needs a TOML extension and a schema | completion and validation through a published schema and the editor's JSON support | completion, hover and the CLI's own errors from the Velt language server's manifest support, plus live registry data (versions, newer releases) |
 | Errors from `velt` | strings without a location | JSON parser and schema errors with a location | Velt diagnostics with a location and snippet |
 | Safety | data only | data only | data only, enforced by the subset check; nothing runs |
 | Third-party tools | TOML parsers everywhere | JSON parsers everywhere | `velt manifest --json`, or link `velt_syntax` |
@@ -255,9 +300,12 @@ Implementation order:
    steps 2 to 4 of the original plan cannot land separately. It moves `vpm`, `veltc`, the
    registry and the file watchers over, adds the migration error and `velt manifest --json`,
    makes `velt add` splice, and migrates the templates, examples, golden tests and docs.
-3. **Follow-ups:** `std/package.vlt` and the sync test once #17 has landed (until then an editor
-   reports `velt:package` as unknown in a `package.vlt`), and the language server's
-   package-graph refresh when `package.vlt` is saved.
+3. **Editors, part 1:** `std/package.vlt`, the field schema in `vpm`, and the language server's
+   manifest document kind: the reader's diagnostics, key and value completion, hover; plus the
+   package-graph refresh when `package.vlt` is saved, and no `pkg` in workspace symbols.
+4. **Editors, part 2: live registry data:** version completion, dependency hover, version
+   diagnostics and quick fixes.
+5. **Editors, part 3: package-name completion,** with the registry search endpoint.
 
 ## Not proposed
 
@@ -269,6 +317,13 @@ Implementation order:
 - **Keeping `velt.toml` as an alternative.** Two formats would double the tool code and the
   docs.
 - **A `velt migrate` command.** The fix-it prints the new file instead.
+- **Exempting `package.vlt` from sema's constant rule** so the type check passes. It would hide
+  the false error but still give no key completion and no live data.
+- **A JSON manifest (`velt.json` + JSON Schema)**, reconsidered when editor support was revised.
+  It gets static completion from editors' JSON support, but live registry data needs the same
+  custom language-server code, and it loses comments and the Velt-native goal.
+- **`definePackage({ … })`**, as in Vite's `defineConfig`. A call is not a constant expression
+  either, Velt has no `export default`, and it adds no completion over the annotation.
 
 ## Decisions
 
@@ -284,3 +339,6 @@ From the maintainer review on issue #128:
    the reader.
 7. **The registry's limits:** at most 64 KiB, the parser's `MAX_DEPTH`, and at most 10,000
    values.
+8. **Editor support is the manifest document kind** (revised after #153): the language server
+   reads `package.vlt` with `vpm` (diagnostics, schema completion and hover, live registry data)
+   instead of type-checking it. The format stays `package.vlt`.

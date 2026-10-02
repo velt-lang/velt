@@ -12,6 +12,8 @@ use velt_syntax::ast;
 use crate::documents;
 use crate::index::pattern_idents;
 use crate::line_index::LineIndex;
+// A package manifest is data whose only symbol is the `pkg` every package has: not searched.
+use crate::manifest::is_manifest;
 
 /// At most this many symbols are returned (clients re-query as the user types).
 const MAX_RESULTS: usize = 256;
@@ -52,7 +54,7 @@ impl Search {
 
     /// Add the symbols of `file` (once per path).
     pub fn add(&mut self, file: &SourceFile) {
-        if self.is_full() || !self.seen.insert(file.path.to_path_buf()) {
+        if self.is_full() || is_manifest(file.path) || !self.seen.insert(file.path.to_path_buf()) {
             return;
         }
         let Some(uri) = documents::path_to_uri(file.path) else {
@@ -189,7 +191,7 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
             if !name.starts_with('.') && !SKIPPED_DIRS.contains(&name) {
                 collect_files(&path, out);
             }
-        } else if path.extension().is_some_and(|e| e == "vlt") {
+        } else if path.extension().is_some_and(|e| e == "vlt") && !is_manifest(&path) {
             out.push(path);
         }
     }
@@ -211,7 +213,28 @@ pub fn roots_from_init(params: &serde_json::Value) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::fuzzy_match;
+    use super::*;
+
+    #[test]
+    fn package_manifests_are_not_searched() {
+        let text = "export const pkg: Package = { name: \"a\", version: \"1.0.0\" };\nexport function pkgHelper() {}\n";
+        let (ast, _) = velt_syntax::parse_file(velt_common::FileId(0), text);
+        let mut search = Search::new("pkg");
+        let dir = std::env::temp_dir();
+        for path in [dir.join("a/package.vlt"), dir.join("a/src/pkg.vlt")] {
+            search.add(&SourceFile {
+                path: &path,
+                text,
+                ast: &ast,
+            });
+        }
+        let names: Vec<_> = search.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["pkg", "pkgHelper"]);
+        assert!(search.symbols.iter().all(|s| match &s.location {
+            OneOf::Left(l) => l.uri.path().ends_with("/src/pkg.vlt"),
+            OneOf::Right(_) => false,
+        }));
+    }
 
     #[test]
     fn fuzzy_matching_is_ordered_and_case_insensitive() {
