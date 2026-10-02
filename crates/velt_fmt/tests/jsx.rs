@@ -124,12 +124,17 @@ fn components_keep_their_children_as_written() {
     assert_fmt(
         "const b = <Button a=\"1\" b=\"2\">Save </Button>;
 const l = <Label>{\" \"}x</Label>;
+const u = <_Card a=\"1\" b=\"2\">Save </_Card>;
 ",
         "const b = (
   <Button a=\"1\" b=\"2\">
     Save </Button>
 );
 const l = <Label>{\" \"}x</Label>;
+const u = (
+  <_Card a=\"1\" b=\"2\">
+    Save </_Card>
+);
 ",
     );
     assert_fmt(

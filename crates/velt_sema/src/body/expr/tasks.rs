@@ -29,7 +29,9 @@ impl FnCx<'_, '_> {
             );
         }
         let hint = self.hint(exp).map(|t| self.cx.ty.promise(t));
+        self.direct_await = super::promise_new::awaited_new_promise(inner);
         let h = self.expr(inner, hint, Want::Move);
+        self.direct_await = None;
         self.await_throws(&h);
         let ty = match self.cx.ty.kind(h.ty) {
             TyKind::Promise(t, _) => *t,
@@ -73,6 +75,7 @@ impl FnCx<'_, '_> {
         &mut self,
         name: &str,
         what: &str,
+        type_args: &[TyId],
         args: &[ast::Expr],
         exp: Option<TyId>,
         span: Span,
@@ -84,7 +87,10 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         };
         let c = self.fn_callable(d, format!("`{what}`"));
-        let slots = vec![None; c.slot_names.len()];
+        let mut slots = vec![None; c.slot_names.len()];
+        for (slot, t) in slots.iter_mut().zip(type_args) {
+            *slot = Some(*t);
+        }
         let ck = self.check_call(&c, slots, args, exp, span);
         self.note_async_args(d, &ck.args);
         self.call_throws(d, &ck.type_args, ck.ret, span);

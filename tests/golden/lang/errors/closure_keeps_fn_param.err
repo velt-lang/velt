@@ -1,0 +1,2 @@
+closure_keeps_fn_param.vlt:10:16
+error: cannot keep a copy of `cb`, a borrowed function parameter

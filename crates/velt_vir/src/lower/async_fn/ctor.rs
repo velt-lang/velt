@@ -212,18 +212,23 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let cap = f.captures.iter().find(|c| c.inner == p.local);
             let v = cap.and_then(|c| {
                 let outer = self.local_target(c.outer)?;
+                let ty = self.info[c.outer.0 as usize].ty;
                 Some(match c.mode {
-                    PassMode::Borrow | PassMode::BorrowMut => {
-                        let ty = self.info[c.outer.0 as usize].ty;
-                        match self.cx.ty(ty) {
-                            Ty::Agg(_) => self.addr(outer),
-                            _ => Operand::Copy(outer),
-                        }
+                    PassMode::Borrow | PassMode::BorrowMut => match self.cx.ty(ty) {
+                        Ty::Agg(_) => self.addr(outer),
+                        _ => Operand::Copy(outer),
+                    },
+                    // Like a closure environment (closure.rs `build_env`): a shared capture is
+                    // another reference, and a value entering a spawned task is transferred.
+                    PassMode::Owned if c.share => {
+                        let v = self.share_value(Operand::Copy(outer), ty);
+                        self.maybe_transfer(v, ty)
                     }
+                    PassMode::Owned => self.maybe_transfer(Operand::Copy(outer), ty),
                     _ => Operand::Copy(outer),
                 })
             });
-            if let Some(c) = cap.filter(|c| c.mode == PassMode::Owned) {
+            if let Some(c) = cap.filter(|c| c.mode == PassMode::Owned && !c.share) {
                 self.mark_moved(c.outer);
             }
             vals.push(v);

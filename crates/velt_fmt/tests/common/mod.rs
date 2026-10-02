@@ -151,7 +151,9 @@ fn renders_children_only(out: &[String], indent: usize) -> bool {
         Some("Ident(") => rest
             .iter()
             .find_map(|l| l.strip_prefix("name: \""))
-            .is_some_and(|tag| tag.starts_with(|c: char| c.is_ascii_lowercase())),
+            .is_some_and(|tag| {
+                tag.starts_with(|c: char| c.is_ascii_lowercase()) || tag.contains('-')
+            }),
         _ => false,
     }
 }

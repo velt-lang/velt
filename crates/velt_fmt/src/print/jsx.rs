@@ -290,7 +290,10 @@ pub(super) fn is_jsx_operand(op: BinaryOp, rhs: &Expr) -> bool {
 /// whose children are only rendered, may trade a space for `{" "}`.
 fn keeps_children(el: &JsxElement) -> bool {
     match &el.name {
-        Some(JsxName::Ident(id)) => id.name.starts_with(|c: char| c.is_ascii_uppercase()),
+        // Sema's `intrinsic_tag`: a component unless lower-case or dashed (`_Card` is one).
+        Some(JsxName::Ident(id)) => {
+            !(id.name.starts_with(|c: char| c.is_ascii_lowercase()) || id.name.contains('-'))
+        }
         Some(JsxName::Member(_)) => true,
         Some(JsxName::Namespaced(..)) | None => false,
     }

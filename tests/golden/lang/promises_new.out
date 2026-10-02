@@ -1,0 +1,7 @@
+executor runs now
+after the constructor
+42
+resolved by the executor
+caught: rejected by the executor
+caught: the executor threw
+caught: the first settlement wins

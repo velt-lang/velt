@@ -1,0 +1,50 @@
+// `new Promise` wrapping a callback API: the executor's `resolve` and `reject` are owned, so
+// they can be stored in a callback that runs later (a timer) and called from a spawned task.
+import { setTimeout } from "velt:timers";
+
+class Failed extends Error {}
+
+function readLater(name: string, ms: i64, done: (err: string | null, value: string) => void) {
+  const n = name;
+  setTimeout(
+    async () => {
+      if (n == "") {
+        done("empty name", "");
+      } else {
+        done(null, `contents of ${n}`);
+      }
+    },
+    ms,
+  );
+}
+
+function read(name: string, ms: i64): Promise<string, Failed> {
+  return new Promise((resolve, reject) => {
+    readLater(name, ms, (err, value) => {
+      if (err != null) {
+        reject(new Failed(err));
+      } else {
+        resolve(value);
+      }
+    });
+  });
+}
+
+async function main() {
+  const a = read("a.txt", 40);
+  const b = read("b.txt", 10);
+  console.log("both started");
+  console.log(await a, "|", await b);
+  try {
+    await read("", 5);
+  } catch (e) {
+    console.log("read failed:", e.message);
+  }
+  const fromTask = new Promise<i64>((resolve) => {
+    spawn(async () => {
+      await sleep(5);
+      resolve(7);
+    });
+  });
+  console.log("from a task:", await fromTask);
+}

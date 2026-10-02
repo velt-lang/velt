@@ -23,4 +23,7 @@ a package; `target/` and hidden directories are skipped.
   receives them as its `children` prop, so `Save ` and `Save{" "}` differ: spaces next to its
   tags stay on their line), runs of several spaces in text are kept, branches other than
   elements are not given parentheses they did not have, and `<fbt>` gets no special layout.
+- Comments stay next to the code they were written beside: a comment above a statement, member
+  or field stays above it, and one at the end of a line stays at the end of that line. An object
+  type with a comment inside is printed one field per line, like an interface body.
 - The language server formats documents on request ([Editors](editors.md)).

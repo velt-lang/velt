@@ -15,8 +15,10 @@ pub(crate) struct State {
     pub moved: Vec<bool>,
     pub partial: Vec<Vec<Path>>,
     pub uninit: Vec<bool>,
-    /// Where each maybe-moved local was (last) moved, and how.
-    pub moved_at: Vec<Option<(Span, MoveKind)>>,
+    /// Every move that may have left each local moved here, and how (one per path that
+    /// reaches this point: a soft move in a loop body and one before the loop, or one per
+    /// branch). A use blames all of them, so each soft move used again becomes a share.
+    pub moved_at: Vec<Vec<MoveSite>>,
     /// Where an escaping closure (maybe) captured each local by value (and the local holding
     /// that closure, while it is known), and whether such a closure assigns it: assigning the
     /// local afterwards, or reading it after a closure assigned it, needs a shared cell
@@ -35,12 +37,24 @@ pub(crate) enum MoveKind {
     Soft,
 }
 
+/// A move of a local: where, and how.
+pub(crate) type MoveSite = (Span, MoveKind);
+
 impl PartialEq for State {
+    /// Move sites compare as sets (a loop's fixpoint must also have collected every site).
     fn eq(&self, o: &Self) -> bool {
+        let same_sites = |a: &Vec<MoveSite>, b: &Vec<MoveSite>| {
+            a.len() == b.len() && a.iter().all(|x| b.contains(x))
+        };
         self.moved == o.moved
             && self.partial == o.partial
             && self.uninit == o.uninit
             && self.captured == o.captured
+            && self
+                .moved_at
+                .iter()
+                .zip(&o.moved_at)
+                .all(|(a, b)| same_sites(a, b))
     }
 }
 
@@ -56,7 +70,7 @@ impl State {
             moved: vec![false; n],
             partial: vec![vec![]; n],
             uninit: vec![false; n],
-            moved_at: vec![None; n],
+            moved_at: vec![vec![]; n],
             captured: vec![None; n],
         }
     }
@@ -73,14 +87,14 @@ impl State {
         self.moved[i] = false;
         self.partial[i].clear();
         // Else a later join could blame (and soften) this stale move for a new one.
-        self.moved_at[i] = None;
+        self.moved_at[i].clear();
     }
 
     pub fn reinit(&mut self, i: usize, path: &[u32]) {
         if path.is_empty() {
             self.clear(i);
             self.uninit[i] = false;
-            self.moved_at[i] = None;
+            self.moved_at[i].clear();
         } else {
             self.partial[i].retain(|p| !p.starts_with(path));
         }
@@ -111,7 +125,9 @@ impl State {
             self.partial[i].push(path.to_vec());
             self.partial[i].sort();
         }
-        self.moved_at[i] = Some((at, kind));
+        if !self.moved_at[i].contains(&(at, kind)) {
+            self.moved_at[i].push((at, kind));
+        }
     }
 }
 
@@ -128,8 +144,10 @@ pub(crate) fn join(a: Flow, b: Flow) -> Flow {
                     }
                 }
                 a.partial[i].sort();
-                if a.moved_at[i].is_none() {
-                    a.moved_at[i] = b.moved_at[i];
+                for site in &b.moved_at[i] {
+                    if !a.moved_at[i].contains(site) {
+                        a.moved_at[i].push(*site);
+                    }
                 }
                 if let (Some(x), Some(y)) = (&mut a.captured[i], b.captured[i]) {
                     x.2 |= y.2;

@@ -73,6 +73,14 @@ impl Comments {
         self.list[start..self.next].to_vec()
     }
 
+    /// Some not-yet-printed comment starts in `lo..hi`.
+    pub(crate) fn any_within(&self, lo: u32, hi: u32) -> bool {
+        self.list[self.next..]
+            .iter()
+            .take_while(|c| c.lo < hi)
+            .any(|c| c.lo >= lo)
+    }
+
     /// Comments before `limit` that sit on the line where a node ending at `end` ends. Unless
     /// `inline_blocks`, a block comment with more code after it on its line is left for the
     /// next node (`f(a, /* b */ b)`).
@@ -139,5 +147,14 @@ mod tests {
         assert_eq!(c.take_trailing(src, 2, 100, true).len(), 1);
         assert_eq!(c.take_trailing(src, 7, 100, true).len(), 0);
         assert_eq!(c.take_before(13).len(), 1);
+    }
+
+    #[test]
+    fn finds_unprinted_comments_in_a_range() {
+        let src = "// a\nx = { /* b */ };";
+        let mut c = Comments::new(src);
+        assert!(c.any_within(9, 20) && !c.any_within(18, 20));
+        c.take_before(20);
+        assert!(!c.any_within(0, 20));
     }
 }
