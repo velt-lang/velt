@@ -130,7 +130,7 @@ impl FnCx<'_, '_> {
         k: TyId,
         v: TyId,
         props: &[ast::ObjectProp],
-        mut pre: Vec<Option<hir::Expr>>,
+        pre: Vec<Option<hir::Expr>>,
         span: Span,
     ) -> hir::Expr {
         if self.record_literal_unsupported(k, props, span) {
@@ -155,6 +155,31 @@ impl FnCx<'_, '_> {
             },
             span,
         }];
+        let (seen, complete) =
+            self.record_literal_entries((t, ty), k, props, pre, &mut stmts, span);
+        if let (Some(keys), false) = (&keys, complete) {
+            self.record_missing_keys(k, keys, &seen, span);
+        }
+        let value = self.mk(H::Local(t, UseMode::Move), ty, span);
+        let block = hir::Block {
+            stmts,
+            value: Some(Box::new(value)),
+            span,
+        };
+        self.mk(H::Block(block), ty, span)
+    }
+
+    /// The calls that fill the record in the temporary `t` (of type `ty`) from `props`, onto
+    /// `stmts`. Returns the keys set, and whether a spread may have set every key.
+    fn record_literal_entries(
+        &mut self,
+        (t, ty): (hir::LocalId, TyId),
+        k: TyId,
+        props: &[ast::ObjectProp],
+        mut pre: Vec<Option<hir::Expr>>,
+        stmts: &mut Vec<hir::Stmt>,
+        span: Span,
+    ) -> (Vec<String>, bool) {
         let mut seen: Vec<String> = vec![];
         let mut complete = false;
         for (i, p) in props.iter().enumerate() {
@@ -177,27 +202,27 @@ impl FnCx<'_, '_> {
                 span,
             });
         }
-        if let (Some(keys), false) = (&keys, complete) {
-            let missing: Vec<&String> = keys.iter().filter(|k| !seen.contains(k)).collect();
-            if !missing.is_empty() {
-                let list: Vec<String> = missing.iter().map(|k| format!("\"{k}\"")).collect();
-                let kn = self.cx.display(k);
-                self.cx.err(
-                    format!(
-                        "missing key {} in a `Record<{kn}, ...>` literal",
-                        list.join(", ")
-                    ),
-                    span,
-                );
-            }
+        (seen, complete)
+    }
+
+    /// Reports the `keys` of the closed key type `k` that a literal (at `span`) left out.
+    fn record_missing_keys(&mut self, k: TyId, keys: &[String], seen: &[String], span: Span) {
+        let missing: Vec<String> = keys
+            .iter()
+            .filter(|k| !seen.contains(k))
+            .map(|k| format!("\"{k}\""))
+            .collect();
+        if missing.is_empty() {
+            return;
         }
-        let value = self.mk(H::Local(t, UseMode::Move), ty, span);
-        let block = hir::Block {
-            stmts,
-            value: Some(Box::new(value)),
+        let kn = self.cx.display(k);
+        self.cx.err(
+            format!(
+                "missing key {} in a `Record<{kn}, ...>` literal",
+                missing.join(", ")
+            ),
             span,
-        };
-        self.mk(H::Block(block), ty, span)
+        );
     }
 
     /// The `__set` call for key `name` of a record literal (`None`: reported, or not a key of a

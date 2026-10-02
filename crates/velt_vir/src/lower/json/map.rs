@@ -80,27 +80,9 @@ impl FnLower<'_, '_> {
         let TyKind::Adt(map, targs) = self.cx.kind(ty) else {
             ice("JSON map of a non-ADT type")
         };
-        // `new Map()` runs the field initializers, which may create statement temporaries.
-        self.push_scope(ScopeKind::Temps);
-        let obj = self.new_object(ty, &[]);
-        if let Operand::Copy(p) = &obj {
-            self.take_temp(p);
-        }
-        self.assign(place.clone(), Rvalue::Use(obj));
-        self.pop_scope();
+        self.json_new_map(place, ty);
         let set = self.class_method(map, "set");
-        // Literal keys: the allowed key strings, and which of them were seen.
-        let keys: Option<Vec<String>> = match self.cx.kind(kt) {
-            TyKind::Str => None,
-            _ => self.json_choices(kt).map(|alts| {
-                alts.iter()
-                    .map(|l| match l {
-                        LitValue::Str(s) => s.clone(),
-                        _ => ice("record key that is not a string literal"),
-                    })
-                    .collect()
-            }),
-        };
+        let keys = self.record_key_strings(kt);
         let seen = self.temp(Ty::U64);
         self.assign(Place::local(seen), Rvalue::Use(cint(0, Ty::U64)));
         let ro = Operand::Copy(Place::local(r));
@@ -128,19 +110,68 @@ impl FnLower<'_, '_> {
         });
         self.switch_to(bad);
         self.json_fail(ctx, "object", fail);
-
+        let m = MapRead {
+            r,
+            ctx,
+            kt,
+            vt,
+            keys: keys.as_deref(),
+            seen,
+            head,
+            fail,
+        };
         self.switch_to(body);
+        self.json_map_entry(&m, place, ka, (set, targs));
+        self.switch_to(done);
+        self.json_required_keys(&m);
+    }
+
+    /// `new Map()` into `place`.
+    fn json_new_map(&mut self, place: &Place, ty: TyId) {
+        // `new Map()` runs the field initializers, which may create statement temporaries.
+        self.push_scope(ScopeKind::Temps);
+        let obj = self.new_object(ty, &[]);
+        if let Operand::Copy(p) = &obj {
+            self.take_temp(p);
+        }
+        self.assign(place.clone(), Rvalue::Use(obj));
+        self.pop_scope();
+    }
+
+    /// The allowed key strings of a record with literal keys `kt` (`None`: `string` keys).
+    fn record_key_strings(&mut self, kt: TyId) -> Option<Vec<String>> {
+        match self.cx.kind(kt) {
+            TyKind::Str => None,
+            _ => self.json_choices(kt).map(|alts| {
+                alts.iter()
+                    .map(|l| match l {
+                        LitValue::Str(s) => s.clone(),
+                        _ => ice("record key that is not a string literal"),
+                    })
+                    .collect()
+            }),
+        }
+    }
+
+    /// One member, whose key is borrowed at `ka`: decode the key and the value, and `set` them
+    /// into the map at `place` (`set`: the method and the map's type arguments).
+    fn json_map_entry(
+        &mut self,
+        m: &MapRead<'_>,
+        place: &Place,
+        ka: Operand,
+        (set, targs): (DefId, Vec<TyId>),
+    ) {
+        let (r, ctx, kt, vt) = (m.r, m.ctx, m.kt, m.vt);
         let kty = self.cx.ty(kt);
         let kv = self.temp(kty);
-        match &keys {
+        match m.keys {
             // The key borrows the source: keep an owned copy for the map.
             None => {
                 let oa = self.addr(Place::local(kv));
                 self.call_rt(Rt::StrClone, vec![ka.clone(), oa], None);
             }
-            Some(keys) => {
-                self.json_record_key(r, ctx, (ka.clone(), keys), (kv, kt), seen, head, fail)
-            }
+            Some(keys) => self.json_record_key(m, ka.clone(), keys, kv),
         }
         let vty = self.cx.ty(vt);
         let value = (vty != Ty::Unit).then(|| self.temp(vty));
@@ -154,47 +185,40 @@ impl FnLower<'_, '_> {
         self.call_rt(Rt::StrDrop, vec![ka.clone()], None);
         let this = Operand::Copy(place.clone());
         self.json_call_set(set, targs, this, (kv, kt), value, vt);
-        self.goto(head);
+        self.goto(m.head);
         self.switch_to(value_fail);
         self.json_prepend(ctx, Seg::Key(ka.clone()));
         self.call_rt(Rt::StrDrop, vec![ka], None);
         self.drop_glue(Place::local(kv), kt);
-        self.goto(fail);
+        self.goto(m.fail);
+    }
 
-        self.switch_to(done);
-        // Literal keys: every one is required (up to 64 are tracked).
-        if let Some(keys) = keys.filter(|k| k.len() <= 64) {
-            for (i, k) in keys.iter().enumerate() {
-                let s = Operand::Copy(Place::local(seen));
-                let bit = self.rvalue_temp(
-                    Ty::U64,
-                    Rvalue::Binary(BinOp::BitAnd, s, cint(1i128 << i, Ty::U64)),
-                );
-                let has =
-                    self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, bit, cint(0, Ty::U64)));
-                let (next, missing) = (self.new_block(), self.new_block());
-                self.branch(has, next, missing);
-                self.switch_to(missing);
-                self.json_fail(ctx, &format!("field {}", super::json_quote(k)), fail);
-                self.switch_to(next);
-            }
+    /// At the end of the object: with literal keys, every one is required (up to 64 are
+    /// tracked in `seen`).
+    fn json_required_keys(&mut self, m: &MapRead<'_>) {
+        let Some(keys) = m.keys.filter(|k| k.len() <= 64) else {
+            return;
+        };
+        for (i, k) in keys.iter().enumerate() {
+            let s = Operand::Copy(Place::local(m.seen));
+            let bit = self.rvalue_temp(
+                Ty::U64,
+                Rvalue::Binary(BinOp::BitAnd, s, cint(1i128 << i, Ty::U64)),
+            );
+            let has = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, bit, cint(0, Ty::U64)));
+            let (next, missing) = (self.new_block(), self.new_block());
+            self.branch(has, next, missing);
+            self.switch_to(missing);
+            self.json_fail(m.ctx, &format!("field {}", super::json_quote(k)), m.fail);
+            self.switch_to(next);
         }
     }
 
     /// A record member's key (borrowed at `ka`) against the literal `keys`: on a match, store
-    /// the key value into `kv` and mark it in `seen`; otherwise skip the member's value and
-    /// continue at `head`.
-    #[allow(clippy::too_many_arguments)] // reader state + key + record state
-    fn json_record_key(
-        &mut self,
-        r: Local,
-        ctx: Local,
-        (ka, keys): (Operand, &[String]),
-        (kv, kt): (Local, TyId),
-        seen: Local,
-        head: BlockId,
-        fail: BlockId,
-    ) {
+    /// the key value into `kv` and mark it in `m.seen`; otherwise skip the member's value and
+    /// continue at `m.head`.
+    fn json_record_key(&mut self, m: &MapRead<'_>, ka: Operand, keys: &[String], kv: Local) {
+        let (r, ctx, kt, seen, head, fail) = (m.r, m.ctx, m.kt, m.seen, m.head, m.fail);
         let idx = self.temp(Ty::U32);
         let (matched, unknown) = (self.new_block(), self.new_block());
         for (i, k) in keys.iter().enumerate() {
@@ -315,4 +339,18 @@ impl FnLower<'_, '_> {
         let map = self.field_place(place, ty, 0);
         self.json_read_map(r, &map, ctx, map_ty, kv, fail);
     }
+}
+
+/// What decoding the members of a map needs.
+struct MapRead<'a> {
+    r: Local,
+    ctx: Local,
+    kt: TyId,
+    vt: TyId,
+    /// A record's literal keys (`None`: `string` keys), and the bit set of those seen.
+    keys: Option<&'a [String]>,
+    seen: Local,
+    /// The loop over the members: read the next key.
+    head: BlockId,
+    fail: BlockId,
 }
