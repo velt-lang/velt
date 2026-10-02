@@ -90,9 +90,10 @@ fn deleting_many_keys_keeps_order_and_lookups() {
 
 #[test]
 fn deleting_from_the_end_stays_linear() {
-    // Removing the last member moves nothing, so `4 * n` deletions must take about 4 times as
-    // long as `n`, not 16 times (as when every delete rebuilt the key index). Best of five
-    // interleaved runs, so a busy machine slows both sizes.
+    // Removing the last member moves nothing, so `8 * n` deletions must take about 8 times as
+    // long as `n`, not 64 times (as when every delete rebuilt the key index). The wide gap
+    // leaves room for cache effects (the larger object outgrows the caches) and a loaded
+    // machine; best of five interleaved runs, so a busy machine slows both sizes.
     let time = |n: usize| {
         let mut obj = object(n);
         let keys: Vec<VeltStr> = (0..n)
@@ -111,16 +112,16 @@ fn deleting_from_the_end_stays_linear() {
         }
         t
     };
-    let n = 10_000;
+    let n = 5_000;
     let (mut t_small, mut t_large) = (Duration::MAX, Duration::MAX);
     for _ in 0..5 {
         t_small = t_small.min(time(n));
-        t_large = t_large.min(time(4 * n));
+        t_large = t_large.min(time(8 * n));
     }
     assert!(
-        t_large < t_small * 9,
+        t_large < t_small * 32,
         "deleting {n} keys took {t_small:?}, {} took {t_large:?}: not linear",
-        4 * n
+        8 * n
     );
 }
 
