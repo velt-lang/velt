@@ -139,3 +139,35 @@ fn calls_that_modify_are_marked_mutating() {
     assert_eq!(mutating, expected);
     client.shutdown();
 }
+
+#[test]
+fn hints_land_after_the_real_parameter_list() {
+    // A function type in a type parameter's bound has its own parentheses (sema rejects the
+    // bound, but the method is still analyzed).
+    let text = "class Bag {
+  items: string[];
+  constructor() {
+    this.items = [];
+  }
+  addWith<F extends (x: i64) => void>(item: string, f: F) {
+    this.items.push(item);
+  }
+}
+";
+    let mut client = Client::start();
+    let doc = uri("effects_generic.vlt");
+    client.open(&doc, text);
+    client.diagnostics(&doc);
+    let params = json!({
+        "textDocument": { "uri": doc },
+        "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 100, "character": 0 } },
+    });
+    let result = client.request("textDocument/inlayHint", params);
+    let (line, col) = pos_of(text, "f: F)", 5);
+    let found = result.as_array().unwrap().iter().any(|h| {
+        h["label"] == json!("modifies this")
+            && h["position"] == json!({ "line": line, "character": col })
+    });
+    assert!(found, "{result}");
+    client.shutdown();
+}

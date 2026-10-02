@@ -233,12 +233,15 @@ impl Collector<'_> {
         else {
             return;
         };
-        let Some(close) = head.rfind(')') else {
+        // The last `)` of the head as the scanner sees it (not one inside a comment).
+        let close = text_scan::scan(head, head.len())
+            .into_iter()
+            .rev()
+            .find(|t| t.kind == TokenKind::Punct(b')'));
+        let Some(close) = close else {
             return;
         };
-        let at = ret
-            .as_ref()
-            .map_or(init.span.lo + close as u32 + 1, |r| r.span.hi);
+        let at = ret.as_ref().map_or(init.span.lo + close.hi, |r| r.span.hi);
         self.hints
             .push((at, format!("throws {t}"), InlayHintKind::TYPE));
     }
@@ -250,19 +253,20 @@ impl Collector<'_> {
 fn params_end(text: &str, sig: &ast::FnSig) -> u32 {
     let from = sig.name.span.hi;
     let fallback = sig.params.last().map_or(from, |p| p.span.hi);
+    // Only the signature is scanned (offsets relative to `from`).
+    let Some(signature) = text.get(from as usize..sig.span.hi.max(fallback) as usize) else {
+        return fallback;
+    };
     let (mut angles, mut parens) = (0usize, 0usize);
     let mut prev: Option<text_scan::Token> = None;
-    for t in text_scan::scan(text, text.len())
-        .into_iter()
-        .filter(|t| t.lo >= from)
-    {
+    for t in text_scan::scan(signature, signature.len()) {
         let arrow = prev.is_some_and(|p| p.kind == TokenKind::Punct(b'=') && p.hi == t.lo);
         prev = Some(t);
         match t.kind {
             TokenKind::Punct(b'<') if parens == 0 => angles += 1,
             TokenKind::Punct(b'>') if parens == 0 && !arrow => angles = angles.saturating_sub(1),
             TokenKind::Punct(b'(') if angles == 0 => parens += 1,
-            TokenKind::Punct(b')') if angles == 0 && parens == 1 => return t.hi,
+            TokenKind::Punct(b')') if angles == 0 && parens == 1 => return from + t.hi,
             TokenKind::Punct(b')') if angles == 0 => parens = parens.saturating_sub(1),
             TokenKind::Punct(b'{') if angles == 0 && parens == 0 => break,
             _ => {}
