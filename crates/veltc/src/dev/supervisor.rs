@@ -81,9 +81,11 @@ impl Supervisor {
             dev_socket.name().to_os_string(),
         )];
         interrupt::install();
+        let mut watcher = Watcher::default();
+        watcher.seed(program_dirs(args.build.input.as_deref()));
         Ok(Supervisor {
             args,
-            watcher: Watcher::default(),
+            watcher,
             running: None,
             channel: None,
             env,
@@ -427,6 +429,23 @@ fn host_args(args: &DevArgs) -> Vec<OsString> {
 }
 
 /// The package manifest and lockfile, when the program is in a package.
+/// The directories the program's own sources are in, watched from the first build on: the
+/// entry file's directory, or the package root and its `src/`.
+fn program_dirs(input: Option<&Path>) -> Vec<PathBuf> {
+    let start = input
+        .and_then(Path::parent)
+        .filter(|d| !d.as_os_str().is_empty())
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    let mut dirs = vec![start.clone()];
+    if input.is_none() {
+        if let Some(root) = vpm::manifest::find_package_root(&start) {
+            dirs.push(root.join("src"));
+            dirs.push(root);
+        }
+    }
+    dirs
+}
+
 fn manifest_files(input: Option<&Path>) -> Vec<PathBuf> {
     let start = input
         .and_then(Path::parent)

@@ -18,6 +18,8 @@ fn reports_changes(notify: bool) {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("main.vlt");
     std::fs::write(&file, "a").unwrap();
+    // Saved long before the first build (a recent save may have been made during it).
+    touch(&file, SystemTime::now() - Duration::from_secs(60));
     let mut w = Watcher::new(notify);
     assert_eq!(w.notifies(), notify);
     let snap = w.snapshot();
@@ -106,5 +108,69 @@ fn reports_changes_by_polling() {
 fn reports_changes_from_notifications() {
     if Watcher::new(true).notifies() {
         reports_changes(true);
+    }
+}
+
+/// Set `path`'s modification time.
+fn touch(path: &Path, time: SystemTime) {
+    let file = std::fs::File::options().write(true).open(path).unwrap();
+    file.set_modified(time).unwrap();
+}
+
+/// The first build: nothing is watched yet, and file times come from a coarser clock than the
+/// build's start, so a save during the build can look a few milliseconds older than the start.
+fn first_build(notify: bool) {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main.vlt");
+    let module = dir.path().join("module.vlt");
+    let old = SystemTime::now() - Duration::from_secs(60);
+    for f in [&main, &module] {
+        std::fs::write(f, "x").unwrap();
+        touch(f, old);
+    }
+    // Nothing saved recently: no second build.
+    let mut w = Watcher::new(notify);
+    w.set([main.clone(), module.clone()], &w.snapshot());
+    assert!(!wait(&mut w, SETTLE * 3), "nothing changed");
+
+    // A module the first build read, saved during it with a time just before its start.
+    let mut w = Watcher::new(notify);
+    let before = SystemTime::now();
+    let snap = w.snapshot();
+    std::fs::write(&module, "saved during the build").unwrap();
+    touch(&module, before - Duration::from_millis(5));
+    w.set([main.clone(), module.clone()], &snap);
+    assert!(wait(&mut w, Duration::from_secs(5)), "read module saved");
+
+    // A module the first build didn't read, created during it.
+    let mut w = Watcher::new(notify);
+    let before = SystemTime::now();
+    let snap = w.snapshot();
+    let created = dir.path().join("created.vlt");
+    std::fs::write(&created, "x").unwrap();
+    touch(&created, before - Duration::from_millis(5));
+    w.set([main.clone()], &snap);
+    assert!(wait(&mut w, Duration::from_secs(5)), "module created");
+
+    // Seeded with the program's directory, the first build is compared with the snapshot:
+    // a save with an older time but another length is still a change.
+    let mut w = Watcher::new(notify);
+    w.seed([dir.path().to_path_buf()]);
+    let snap = w.snapshot();
+    std::fs::write(&main, "saved during the seeded build").unwrap();
+    touch(&main, old);
+    w.set([main.clone()], &snap);
+    assert!(wait(&mut w, Duration::from_secs(5)), "seeded directory");
+}
+
+#[test]
+fn first_build_by_polling() {
+    first_build(false);
+}
+
+#[test]
+fn first_build_from_notifications() {
+    if Watcher::new(true).notifies() {
+        first_build(true);
     }
 }

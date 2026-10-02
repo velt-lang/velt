@@ -35,6 +35,9 @@ pub struct Watcher {
     /// The watched files' directories and the `.vlt` files each held when last looked at
     /// (polling only; with notifications the operating system reports new files).
     dirs: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
+    /// `.vlt` files that appeared in a watched directory since the last build, with their stamp
+    /// when they appeared (a build that reads one for the first time compares with it).
+    appeared: HashMap<PathBuf, Option<Stamp>>,
     /// Change notifications, while they work.
     notifier: Option<Notifier>,
     /// Canonical spellings of the watched files and directories → their keys above
@@ -115,6 +118,7 @@ impl Watcher {
         Watcher {
             files: BTreeMap::new(),
             dirs: BTreeMap::new(),
+            appeared: HashMap::new(),
             notifier,
             aliases: HashMap::new(),
             dirty_since: None,
@@ -133,6 +137,7 @@ impl Watcher {
     pub fn set(&mut self, paths: impl IntoIterator<Item = PathBuf>, snap: &Snapshot) {
         self.files.clear();
         self.dirs.clear();
+        self.appeared.clear();
         self.dirty_since = None;
         self.last_change = None;
         self.add(paths, snap);
@@ -148,17 +153,17 @@ impl Watcher {
             }
             let s = match snap.stamp_of(&p) {
                 Some(s) => s,
-                // Not in a directory watched before the build: modified after it started
-                // means saved during the build.
+                // Not in a directory watched before the build: modified around its start
+                // may mean saved during the build.
                 None => {
                     let s = stamp(&p);
-                    newer |= s.is_some_and(|(modified, _)| modified > snap.taken);
+                    newer |= snap.maybe_saved_since(s);
                     s
                 }
             };
             self.files.insert(p, s);
         }
-        self.watch_dirs(snap);
+        newer |= self.watch_dirs(snap);
         // Anything saved since the snapshot, including files the build read for the first
         // time and modules that appeared while it ran.
         if self.check_all() || newer {
@@ -170,8 +175,10 @@ impl Watcher {
 
     /// Start watching the directories of the watched files (and stop watching others), with
     /// the `.vlt` files they held at `snap`. A directory the notifier cannot watch switches the
-    /// watcher to polling.
-    fn watch_dirs(&mut self, snap: &Snapshot) {
+    /// watcher to polling. Whether a directory the snapshot doesn't cover holds a `.vlt` file
+    /// that may have been saved during the build.
+    fn watch_dirs(&mut self, snap: &Snapshot) -> bool {
+        let mut newer = false;
         let wanted: BTreeSet<PathBuf> = self
             .files
             .keys()
@@ -186,7 +193,11 @@ impl Watcher {
             .collect();
         for dir in &wanted {
             if !self.dirs.contains_key(dir) {
-                let known = snap.listing(dir).unwrap_or_else(|| sources_in(dir));
+                let known = snap.listing(dir).unwrap_or_else(|| {
+                    let now = sources_in(dir);
+                    newer |= now.iter().any(|f| snap.maybe_saved_since(stamp(f)));
+                    now
+                });
                 self.dirs.insert(dir.clone(), known);
             }
         }
@@ -203,6 +214,7 @@ impl Watcher {
                 self.notifier = None;
             }
         }
+        newer
     }
 
     /// Check once; `Some(first change time)` when changes have settled.
@@ -260,7 +272,12 @@ impl Watcher {
                 Seen::Changed => path.exists(),
             };
             if present {
-                changed |= known.insert(entry);
+                let new = known.insert(entry.clone());
+                changed |= new;
+                // Keep its last state, for a build that reads it for the first time.
+                if new || self.appeared.contains_key(&entry) {
+                    self.appeared.insert(entry.clone(), stamp(&entry));
+                }
             } else {
                 known.remove(&entry);
             }
@@ -281,6 +298,10 @@ impl Watcher {
     /// Polling: every watched file's stamp and every watched directory's `.vlt` files.
     fn check_all(&mut self) -> bool {
         let mut changed = false;
+        // Modules nothing has read yet: their last state, for a build that reads them.
+        for (path, last) in self.appeared.iter_mut() {
+            *last = stamp(path);
+        }
         for (path, old) in self.files.iter_mut() {
             let new = stamp(path);
             if new != *old {
@@ -288,9 +309,15 @@ impl Watcher {
                 changed = true;
             }
         }
+        // A watched file that appears was counted above (notifications don't list it).
+        let files = &self.files;
         for (dir, known) in self.dirs.iter_mut() {
             let now = sources_in(dir);
-            if now.iter().any(|f| !known.contains(f)) {
+            let new = now
+                .iter()
+                .filter(|f| !known.contains(*f) && !files.contains_key(*f));
+            for new in new {
+                self.appeared.insert(new.clone(), stamp(new));
                 changed = true;
             }
             *known = now;
