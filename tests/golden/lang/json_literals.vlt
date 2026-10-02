@@ -4,7 +4,14 @@ type Priority = "low" | "normal" | "high";
 type Mixed = "auto" | 0 | 1.5 | false;
 type Answer = 42;
 type Yes = true;
-type Marks = { k: "x", xs: "x"[] };
+type Marks = { k: "x"; xs: "x"[] };
+// `T | null` of a literal type has no payload (only the present flag).
+type Opt = { x: "x" | null; ab: ("a" | "b") | null; n: 7 | null };
+
+class Tagged {
+  tag?: "t";
+  v: i64 = 0;
+}
 
 enum Color {
   Red = "red",
@@ -17,13 +24,13 @@ enum Level {
 }
 
 type Task = {
-  kind: "task",
-  title: string,
-  priority: Priority,
-  tags: Priority[],
-  color: Color,
-  level: Level,
-  due: Priority | null,
+  kind: "task";
+  title: string;
+  priority: Priority;
+  tags: Priority[];
+  color: Color;
+  level: Level;
+  due: Priority | null;
 };
 
 function show(text: string) {
@@ -37,11 +44,14 @@ function show(text: string) {
 }
 
 function main() {
-  const ok = '{"kind":"task","title":"a","priority":"high","tags":["low","normal"],"color":"green","level":20,"due":null}';
+  const ok =
+    '{"kind":"task","title":"a","priority":"high","tags":["low","normal"],"color":"green","level":20,"due":null}';
   show(ok);
   // A stringify round trip gives the same document.
   console.log(JSON.stringify(JSON.parse<Task>(ok)) == ok);
-  show('{"kind":"task","title":"b","priority":"low","tags":[],"color":"red","level":10,"due":"normal"}');
+  show(
+    '{"kind":"task","title":"b","priority":"low","tags":[],"color":"red","level":10,"due":"normal"}',
+  );
 
   // Errors: wrong literal, wrong member, wrong kind, wrong enum value, nested in an array.
   show('{"kind":"note","title":"c"}');
@@ -66,6 +76,33 @@ function main() {
   console.log(JSON.parse<Marks>('{"k":"x","xs":["x","x"]}'));
   try {
     JSON.parse<Marks>('{"k":"x","xs":["x","y"]}');
+  } catch (e) {
+    console.log(e.message);
+  }
+
+  // Optional literal types: present, null and absent, in fields and at the top level.
+  const o = JSON.parse<Opt>('{"x":"x","ab":"b","n":7}');
+  console.log(o.x, o.ab, o.n, JSON.stringify(o));
+  const p = JSON.parse<Opt>('{"x":null,"ab":null}');
+  console.log(p.x, p.ab, p.n, JSON.stringify(p));
+  const x = JSON.parse<"x" | null>('"x"');
+  const nx = JSON.parse<"x" | null>("null");
+  console.log(x, nx, JSON.stringify(x), JSON.stringify(nx));
+  const ab = JSON.parse<("a" | "b") | null>('"a"');
+  const nab = JSON.parse<("a" | "b") | null>("null");
+  console.log(ab, nab, JSON.stringify(ab), JSON.stringify(nab));
+  const xs = JSON.parse<("x" | null)[]>('["x",null,"x"]');
+  console.log(xs, JSON.stringify(xs));
+  const t = JSON.parse<Tagged>('{"v":1}');
+  const u = JSON.parse<Tagged>('{"tag":"t","v":2}');
+  console.log(t.tag, u.tag, JSON.stringify(t), JSON.stringify(u));
+  try {
+    JSON.parse<Opt>('{"x":"y"}');
+  } catch (e) {
+    console.log(e.message);
+  }
+  try {
+    JSON.parse<"x" | null>('"y"');
   } catch (e) {
     console.log(e.message);
   }
