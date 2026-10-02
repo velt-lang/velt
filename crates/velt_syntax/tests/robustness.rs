@@ -270,20 +270,23 @@ fn jsx_decided_by_the_parser_stays_linear() {
     assert_linear("lexer errors before elements", 10_000, |n| {
         "const x = 1 \u{a7}; const y = <p>a</p>;\n".repeat(n)
     });
-    // Generic arrow attempts that fail late, and unclosed elements, still finish.
-    for src in [
-        format!("x = {};", "<a>(".repeat(20_000)),
-        format!("x = {};", "{<a>(x".repeat(5_000)),
-        format!("x = {};", "<T>(x: T".repeat(5_000)),
-    ] {
-        let start = std::time::Instant::now();
-        let _ = parse(&src);
-        assert!(start.elapsed().as_secs() < 5, "took {:?}", start.elapsed());
-    }
+    // Generic arrow attempts that fail late, and unclosed elements, stay linear too.
+    assert_linear("unclosed generic arrows", 50_000, |n| {
+        format!("x = {};", "<a>(".repeat(n))
+    });
+    assert_linear("unclosed elements in braces", 20_000, |n| {
+        format!("x = {};", "{<a>(x".repeat(n))
+    });
+    assert_linear("unfinished generic arrow parameters", 20_000, |n| {
+        format!("x = {};", "<T>(x: T".repeat(n))
+    });
 }
 
-/// Parsing `make(4 * n)` must take about 4 times as long as `make(n)`, not 16 times: compares
-/// the best of three interleaved runs of each, so a busy machine slows both alike.
+/// Parsing `make(4 * n)` must take about 4 times as long as `make(n)`, not 16 times (quadratic).
+/// No absolute time bound: the best of five interleaved runs of each size is compared, so a busy
+/// machine slows both alike, and a ratio over the bound is measured again (up to three rounds)
+/// before failing, so one burst of load during the small runs does not fail it. A quadratic
+/// regression (re-lexing the rest of the file per element) measures about 15.
 fn assert_linear(what: &str, n: usize, make: impl Fn(usize) -> String) {
     let (small, large) = (make(n), make(4 * n));
     let time = |src: &str| {
@@ -291,15 +294,27 @@ fn assert_linear(what: &str, n: usize, make: impl Fn(usize) -> String) {
         let _ = parse(src);
         start.elapsed()
     };
-    let (mut t_small, mut t_large) = (std::time::Duration::MAX, std::time::Duration::MAX);
+    let mut ratios = vec![];
     for _ in 0..3 {
-        t_small = t_small.min(time(&small));
-        t_large = t_large.min(time(&large));
+        let (mut t_small, mut t_large) = (std::time::Duration::MAX, std::time::Duration::MAX);
+        for _ in 0..5 {
+            t_small = t_small.min(time(&small));
+            t_large = t_large.min(time(&large));
+        }
+        let ratio = t_large.as_secs_f64() / t_small.as_secs_f64().max(1e-9);
+        if ratio < 9.0 {
+            return;
+        }
+        ratios.push(format!("{t_small:?} vs {t_large:?}"));
+        // Clearly quadratic (16): no point measuring again.
+        if ratio >= 13.0 {
+            break;
+        }
     }
-    assert!(
-        t_large < t_small * 9,
-        "{what}: {n} units took {t_small:?}, {} took {t_large:?}: not linear",
-        4 * n
+    panic!(
+        "{what}: {n} units vs {} units took {}: not linear",
+        4 * n,
+        ratios.join(", ")
     );
 }
 
