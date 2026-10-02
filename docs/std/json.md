@@ -61,6 +61,9 @@
   UTF-16 unit.
 - Syntax errors read the same from `JSON.parse<T>` and `JSON.parseValue`:
   `invalid JSON at $.items[2]: unexpected character '}' (byte 41)`.
+  In every message, a path of more than 20 segments keeps its first and last 10 with `…` between
+  (`expected string at $.kids[0].kids[0].kids[0].kids[0].kids[0]…[0].kids[0].kids[0].kids[0].kids[0].name`);
+  the byte offset still points at the exact place.
 - `JSON.parse<T>` treats an absent key and an explicit `null` alike: a `T | null` field
   (including `a?: T`) may be missing and is then `null`; every other field is required.
   `JSON.stringify` omits a `null` optional class field (`a?: T`) and writes other `null`s.

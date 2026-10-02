@@ -539,7 +539,9 @@ puts the key in the path), and nesting past `max_depth` is
 `U+XXXX`), `expected ':'`, `expected ',' or '}'`, `expected ',' or ']'`, `expected string key`,
 `invalid number`, `invalid escape`, `invalid \u escape`, `control character in string`,
 `unexpected trailing characters`. `<offset>` is the byte offset in the source. Path syntax
-(`$`, `$.a.b`, `$.tags[1]`) is the compiler's choice; the runtime inserts it verbatim.
+(`$`, `$.a.b`, `$.tags[1]`) is the compiler's choice; the runtime inserts it, shortened when it
+has more than 20 segments (each starting at `.` or `[`) to the first and last 10 with `…`
+between (`$[0][0]…[0].name`).
 
 ### 12.5 `json.Value` (`JSON.parseValue`)
 
