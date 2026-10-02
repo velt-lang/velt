@@ -835,3 +835,23 @@ Wall times on that machine vary by about ±4% between identical runs, so instruc
 (callgrind, WSL, 20k lines no JSX / 10k lines JSX / std and examples, whole test process) are the
 sharper comparison: no JSX 353.7M → 388.3M → 352.4M, JSX 80.8M → 91.4M → 83.1M, std and examples
 88.5M → 96.0M → 88.6M.
+
+## `velt dev` debug-info cost (#191, 2026-10-02)
+
+Each JIT version registers an in-memory ELF image with DWARF line tables for debuggers (GDB JIT
+interface). The first version holds every function, std included. Release `velt dev --host
+--timings` on an Apple M4 (10 cores, macOS 26) shared with other builds; with and without
+`VELT_DEV_DEBUG_INFO=0`, 15 interleaved runs each, best (median in brackets), ms. Peak RSS from
+`/usr/bin/time -l`. log-pipeline is `examples/apps/log-pipeline` running `src/main.vlt -- gen
+x.log --lines 10`. units_1000 is the 1000-unit program of `bench/compile/run.sh`.
+
+| program | functions (image) | `debug info` step | `jit` stage, on / off | time to first run, on / off | peak RSS, on / off |
+|---|---|---|---|---|---|
+| log-pipeline | 306 (81 KB) | 0.6 (0.7) | 48.5 / 46.6 | 74 (95) / 78 (95) | 28.2 / 27.7 MB |
+| units_1000 | 22,385 (2.9 MB) | 15.7 (24.7) | 855 / 865 | 1241 (1727) / 1134 (2223) | 224.6 / 205.6 MB |
+
+The image takes under 2% of the time to the first run, well inside the noise between runs, and
+less than 50 ms. Its memory is a peak of 9% on the large program (gimli's tables and the
+image), 2% on log-pipeline. Neither crosses the thresholds set in #191 (5% or 50 ms of startup,
+10% of peak RSS), so the image is still built on the startup path. `VELT_DEV_DEBUG_INFO=0`
+turns it off.

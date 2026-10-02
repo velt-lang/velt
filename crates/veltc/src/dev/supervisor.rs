@@ -407,14 +407,17 @@ const SPECULATE: bool = cfg!(any(
     target_vendor = "apple"
 ));
 
-/// Arguments for the JIT host child: `dev --host [<file>] [--locked] [-v] -- <program args>`.
+/// Arguments for the JIT host child:
+/// `dev --host [<file>] [--locked] [-v | --timings] -- <program args>`.
 fn host_args(args: &DevArgs) -> Vec<OsString> {
     let mut out: Vec<OsString> = vec!["dev".into(), "--host".into()];
     out.extend(args.build.input.iter().map(|p| p.into()));
     if args.build.locked {
         out.push("--locked".into());
     }
-    if args.build.verbose {
+    if args.build.timings {
+        out.push("--timings".into());
+    } else if args.build.verbose {
         out.push("-v".into());
     }
     out.push("--".into());

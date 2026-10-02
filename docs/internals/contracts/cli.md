@@ -4,7 +4,7 @@
 velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple>] [--emit vir|llvm|obj|exe] [--locked] [-v] [--timings]
 velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm] [--locked] [-- <program args>...]
 velt check [<file.vlt>] [--json] [--locked] [-v]
-velt dev   [<file.vlt>] [--exe] [--locked] [-v] [-- <program args>...]
+velt dev   [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]
 velt test  [<file|dir>] [--release] [--locked] [--watch]
 velt new   <name> [--template app|cli|api|websocket|lib] [--lib]
 velt init  [--template <t>] [--name <name>] [--force]
@@ -128,6 +128,9 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
     users) that compiles to VIR, JIT-compiles it with Cranelift (debug settings, no link, no new
     executable) and runs it in-process with the runtime linked into `velt`; it reports its build
     over the dev channel and starts only after the old version stopped (rt_abi_async.md §13).
+    `--timings` (additive) breaks its `jit` stage into `compile`, `finalize`, `unwind` and
+    `debug info`; `VELT_DEV_DEBUG_INFO=0` (additive) skips the debug-info image it registers for
+    debuggers.
   - Hot swap (default mode, docs/internals/design/hot-reload.md phase 3): while a host runs, a change goes
     to it first. It builds the new version beside the running program and swaps the changed
     functions in, so in-memory state, open connections and running tasks survive: new calls and

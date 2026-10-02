@@ -212,29 +212,58 @@ fn jit_image_describes_the_code() {
     unsafe { module.free_memory() };
 }
 
-/// Registration links images into the descriptor list, newest first.
+/// Every image registered so far, newest first.
+fn registered_images() -> Vec<Vec<u8>> {
+    let mut images = vec![];
+    // SAFETY: test-only read of the list, which only grows; entries are never freed.
+    unsafe {
+        let descriptor = &*std::ptr::addr_of!(jit::__jit_debug_descriptor);
+        let mut entry = descriptor.first_entry_for_tests();
+        while let Some(e) = entry {
+            images.push(e.image_for_tests().to_vec());
+            entry = e.next_for_tests();
+        }
+    }
+    images
+}
+
+/// Whether a registered image describes the code at `address`.
+fn is_described(address: u64) -> bool {
+    registered_images().iter().any(|image| {
+        let file = object::File::parse(&**image).unwrap();
+        let text = file.section_by_name(".text").expect(".text");
+        (text.address()..text.address() + text.size()).contains(&address)
+    })
+}
+
+/// Registration links images into the descriptor list, newest first, and is timed.
 #[test]
 fn jit_images_are_registered() {
     let program = located_fib();
     let session_symbols = super::jit::stub_symbols();
     let mut session = crate::DevSession::new(&session_symbols);
-    session.load(&program).unwrap();
-    // SAFETY: test-only read of the list, which only grows; entries are never freed.
-    let (first, count) = unsafe {
-        let descriptor = &*std::ptr::addr_of!(jit::__jit_debug_descriptor);
-        let mut count = 0;
-        let mut entry = descriptor.first_entry_for_tests();
-        let first = entry;
-        while let Some(e) = entry {
-            count += 1;
-            entry = e.next_for_tests();
-        }
-        (first.map(|e| e.image_for_tests().to_vec()), count)
-    };
-    assert!(count >= 1);
-    let image = first.unwrap();
-    let file = object::File::parse(&*image).unwrap();
+    let mut steps = vec![];
+    let loaded = session.load_timed(&program, &mut steps).unwrap();
+    let names: Vec<&str> = steps.iter().map(|(step, _)| *step).collect();
+    assert_eq!(names, ["compile", "finalize", "unwind", "debug info"]);
+    assert!(is_described(loaded.main() as usize as u64));
+    let images = registered_images();
+    let file = object::File::parse(&*images[0]).unwrap();
     let (names, _) = read_dwarf(&file);
     // Other tests may register concurrently, but every image is a whole, parsable program.
     assert!(!names.is_empty());
+}
+
+/// A session without debug info registers no image (`VELT_DEV_DEBUG_INFO=0`).
+#[test]
+fn jit_images_can_be_turned_off() {
+    let program = located_fib();
+    let session_symbols = super::jit::stub_symbols();
+    let mut session = crate::DevSession::new(&session_symbols);
+    session.set_debug_info(false);
+    let mut steps = vec![];
+    let loaded = session.load_timed(&program, &mut steps).unwrap();
+    assert!(steps.iter().all(|(step, _)| *step != "debug info"));
+    // Code is never freed, so no other test's image can cover this address.
+    assert!(!is_described(loaded.main() as usize as u64));
 }

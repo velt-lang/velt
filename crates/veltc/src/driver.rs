@@ -144,7 +144,8 @@ impl Session {
         self.timings.push((stage, start.elapsed()));
     }
 
-    fn record_details(&mut self, stage: &'static str, steps: &[(&'static str, Duration)]) {
+    /// Record the breakdown `steps` of `stage` (printed under it with `--timings`).
+    pub fn record_details(&mut self, stage: &'static str, steps: &[(&'static str, Duration)]) {
         let steps = steps.iter().map(|&(step, d)| (stage, step, d));
         self.details.extend(steps);
     }

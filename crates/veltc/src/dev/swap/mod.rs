@@ -13,11 +13,22 @@ use velt_rt_host::http::handler::{update_handlers, InitFn, VeltHandler};
 use velt_rt_host::task::{DropFn, PollFn};
 
 use super::native::{source_files, Fingerprint};
+use crate::cli::BuildArgs;
 use crate::commands::{failure_code, report};
 use crate::driver::{self, BuildOptions, Session};
 
-/// Answer reload requests on `channel` on a background thread for the life of the program.
-pub fn serve_reloads(channel: Stream, opts: BuildOptions, mut session: DevSession, verbose: bool) {
+/// Answer reload requests on `channel` on a background thread for the life of the program;
+/// `args` says what to report (`-v`, `--timings`).
+pub fn serve_reloads(
+    channel: Stream,
+    opts: BuildOptions,
+    mut session: DevSession,
+    args: &BuildArgs,
+) {
+    let flags = Report {
+        verbose: args.verbose,
+        details: args.timings,
+    };
     let natives = Fingerprint::of(opts.packages.as_ref());
     let spawned = std::thread::Builder::new()
         .name("velt-dev-reload".into())
@@ -30,7 +41,7 @@ pub fn serve_reloads(channel: Stream, opts: BuildOptions, mut session: DevSessio
                         files: source_files(opts.packages.as_ref()),
                     }
                 } else {
-                    reload(&mut session, &opts, verbose)
+                    reload(&mut session, &opts, flags)
                 };
                 if reply_reload(&channel, &reply).is_err() {
                     break;
@@ -43,9 +54,20 @@ pub fn serve_reloads(channel: Stream, opts: BuildOptions, mut session: DevSessio
     }
 }
 
+/// What a reload prints about its build.
+#[derive(Clone, Copy)]
+struct Report {
+    /// `-v`: per-stage timings.
+    verbose: bool,
+    /// `--timings`: each stage's breakdown too.
+    details: bool,
+}
+
 /// Build the current sources and take them into the running program if possible.
-fn reload(session: &mut DevSession, opts: &BuildOptions, verbose: bool) -> Reloaded {
+fn reload(session: &mut DevSession, opts: &BuildOptions, flags: Report) -> Reloaded {
+    let verbose = flags.verbose;
     let mut sess = Session::new();
+    sess.show_details = flags.details;
     let program = driver::compile(&mut sess, opts);
     let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
     files.extend(source_files(opts.packages.as_ref()));
@@ -58,8 +80,10 @@ fn reload(session: &mut DevSession, opts: &BuildOptions, verbose: bool) -> Reloa
         }
     };
     let start = Instant::now();
-    let outcome = session.reload(&program);
+    let mut steps = vec![];
+    let outcome = session.reload_timed(&program, &mut steps);
     sess.timings.push(("jit", start.elapsed()));
+    sess.record_details("jit", &steps);
     report(&sess, verbose);
     match outcome {
         Ok(Reload::Swapped { functions }) => {
