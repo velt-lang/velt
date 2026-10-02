@@ -48,6 +48,9 @@ impl Object {
         let Some(i) = self.find(key) else {
             return false;
         };
+        // The search (without an index), then the entries after `i` move down.
+        let searched = if self.index.is_none() { i + 1 } else { 1 };
+        count_work(searched + self.entries.len() - i - 1);
         let (removed, _) = self.entries.remove(i);
         if self.entries.len() <= INDEX_THRESHOLD {
             self.index = None;
@@ -80,17 +83,38 @@ impl Object {
     }
 }
 
+/// Steps [`Object::remove`] took (searched and moved entries, adjusted index slots) on this
+/// thread: lets tests check that deleting stays linear by counting instead of timing.
+#[cfg(test)]
+// velt_rt_wasm compiles this file too, and its tests don't read the count.
+#[allow(dead_code)]
+pub(crate) fn remove_work() -> usize {
+    REMOVE_WORK.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+thread_local! {
+    static REMOVE_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn count_work(_steps: usize) {
+    #[cfg(test)]
+    REMOVE_WORK.with(|w| w.set(w.get() + _steps));
+}
+
 /// Lower by one the indices of `moved` (the entries now from position `from` on, which were one
 /// further before a removal). Few moved entries are looked up by key; otherwise a pass over all
 /// indices is cheaper than hashing each key.
 fn shift_down(index: &mut HashMap<Box<str>, usize>, moved: &[(Box<str>, Arc<Value>)], from: usize) {
     if moved.len() * 8 < index.len() {
+        count_work(moved.len());
         for (k, _) in moved {
             if let Some(slot) = index.get_mut(k) {
                 *slot -= 1;
             }
         }
     } else {
+        count_work(index.len());
         for slot in index.values_mut() {
             if *slot > from {
                 *slot -= 1;
