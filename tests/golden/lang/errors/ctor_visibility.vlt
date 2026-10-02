@@ -1,0 +1,62 @@
+// `private constructor` / `protected constructor`: `new` outside the allowed bodies, and
+// extending a class whose constructor is private, are errors worded like TypeScript's.
+class Token {
+  private constructor(readonly id: i64) {}
+
+  // Allowed: static factories, methods, closures and field initializers in the class body.
+  static make(id: i64): Token {
+    return new Token(id);
+  }
+
+  next(): Token {
+    const f = (n: i64) => new Token(n);
+    return f(this.id + 1);
+  }
+}
+
+class Lazy {
+  private constructor() {}
+
+  // Allowed: a field initializer (here a closure in one) of the class itself.
+  make: () => Lazy = () => new Lazy();
+}
+
+class Base {
+  protected constructor() {}
+}
+
+class Child extends Base {
+  constructor() {
+    super();
+  }
+
+  // Allowed: a subclass body may construct a protected base.
+  make(): Base {
+    return new Base();
+  }
+}
+
+class Implicit extends Base {}
+
+class Other {
+  make(): Base {
+    return new Base();
+  }
+}
+
+class Sub extends Token {}
+
+extend Token {
+  static forge(): Token {
+    return new Token(7);
+  }
+}
+
+function main() {
+  const a = new Token(1);
+  const b = new Base();
+  const c = new Implicit();
+  const d = new Child();
+  const e = Token.make(2).next();
+  console.log(a.id, d.make(), e.id);
+}

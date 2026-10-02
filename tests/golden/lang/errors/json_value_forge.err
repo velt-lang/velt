@@ -1,3 +1,4 @@
-json_value_forge.vlt:4:13: error: the constructor of `JsonValue` takes 0 arguments but 1 argument was supplied
+json_value_forge.vlt:4:17: error: Constructor of class 'JsonValue' is private and only accessible within the class declaration.
 json_value_forge.vlt:6:5: error: `handle` is private
-json_value_forge.vlt:7:23: error: `adopt` is private
+json_value_forge.vlt:7:17: error: Constructor of class 'JsonValue' is private and only accessible within the class declaration.
+json_value_forge.vlt:11:22: error: Cannot extend a class 'JsonValue'. Class constructor is marked as private.

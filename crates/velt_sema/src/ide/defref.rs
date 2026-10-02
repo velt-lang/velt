@@ -234,7 +234,8 @@ impl Builder<'_, '_, '_> {
             FnKind::Ctor => (
                 DefKind::Constructor,
                 format!(
-                    "constructor {}({}){throws}",
+                    "{}constructor {}({}){throws}",
+                    ctor_visibility(self.cx, f.owner),
                     owner.trim_end_matches('.'),
                     ps.join(", ")
                 ),
@@ -317,5 +318,15 @@ fn generics(names: &[String]) -> String {
         String::new()
     } else {
         format!("<{}>", names.join(", "))
+    }
+}
+
+/// `private ` / `protected ` before a constructor's signature (nothing when public).
+fn ctor_visibility(cx: &Ctx, owner: Option<DefId>) -> &'static str {
+    let decl = owner.and_then(|o| cx.adt(o)).and_then(|a| a.decl);
+    match decl.map(|d| d.ctor_visibility) {
+        Some(velt_syntax::ast::CtorVisibility::Private) => "private ",
+        Some(velt_syntax::ast::CtorVisibility::Protected) => "protected ",
+        _ => "",
     }
 }

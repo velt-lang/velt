@@ -2,6 +2,10 @@
 //! - `private` fields, methods and static fields are usable only inside the body of the type
 //!   declaring them (its methods, constructor, field initializers and the closures inside them;
 //!   not subclasses, like TypeScript).
+//! - A `private constructor` is callable (`new C()`) only inside the body of its class; a
+//!   `protected` one also inside the bodies of its subclasses (TypeScript's rules; extending a
+//!   class with a private constructor is rejected in `crate::collect`). A class without a
+//!   constructor of its own inherits its base's, with that constructor's visibility.
 //! - `get name(): T` accessors are read as properties: `x.name` is a call of the getter (receiver
 //!   borrowed); they cannot be called with `()`, nor assigned unless a setter of the same
 //!   name exists (`setters`).
@@ -30,6 +34,44 @@ impl FnCx<'_, '_> {
         self.cx.error(
             Diagnostic::error(format!("`{name}` is private"), span)
                 .with_note(format!("it can only be used inside the body of `{tn}`")),
+        );
+    }
+
+    /// `new` of a class whose constructor `ctor` is `private` or `protected`, outside the bodies
+    /// allowed to call it.
+    pub(crate) fn check_ctor_access(&mut self, ctor: DefId, span: Span) {
+        let Some(class) = self.cx.fn_info(ctor).owner else {
+            return;
+        };
+        let Some(a) = self.cx.adt(class) else { return };
+        let visibility = a.decl.map_or_else(Default::default, |d| d.ctor_visibility);
+        let what = match visibility {
+            ast::CtorVisibility::Public => return,
+            ast::CtorVisibility::Protected => "protected",
+            ast::CtorVisibility::Private => "private",
+        };
+        let name = a.name.clone();
+        let allowed = match (self.owner, visibility) {
+            (Some(o), _) if o == class => true,
+            (Some(o), ast::CtorVisibility::Protected) => self.cx.class_extends(o, class),
+            _ => false,
+        };
+        if allowed {
+            return;
+        }
+        let note = if visibility == ast::CtorVisibility::Private {
+            format!("call a static method of `{name}` that creates one")
+        } else {
+            format!("call a static method of `{name}` that creates one, or create a subclass")
+        };
+        self.cx.error(
+            Diagnostic::error(
+                format!(
+                    "Constructor of class '{name}' is {what} and only accessible within the class declaration."
+                ),
+                span,
+            )
+            .with_note(note),
         );
     }
 

@@ -129,7 +129,8 @@ contents.
 ## Classes
 
 - Single inheritance; `override` is required on redefined methods; there are no abstract
-  classes and no `protected` (`private` is private to the declaring class).
+  classes and no `protected` members (`private` is private to the declaring class); a
+  constructor can be `private` or `protected`, with TypeScript's rules.
 - `static readonly` constants exist; mutable statics don't.
 - A method that is never overridden is called directly; only overridden methods use a vtable.
 - `struct` declares an object type with the same members as a class, built from a literal

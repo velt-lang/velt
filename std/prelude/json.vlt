@@ -113,15 +113,15 @@ export class JSON {
 
 // A JSON value of any shape (see header; std/json calls it `Value`). Accessors on the wrong kind
 // return null / 0. The compiler recognizes this prelude class: JSON glue reads and writes the
-// value's tree, never its `handle` field. The handle is private and only runtime results become
-// one (`adopt`), so safe code cannot forge a runtime pointer.
+// value's tree, never its `handle` field. The handle and the constructor are private and only
+// runtime results become one, so safe code cannot forge a runtime pointer; the private
+// constructor also keeps classes from extending `JsonValue`.
 export class JsonValue {
   private handle: u64;
 
-  // JSON `null` (same as `JsonValue.of(null)`). It holds the runtime's null handle, which every
-  // operation treats as JSON null, so creating one allocates nothing.
-  constructor() {
-    this.handle = 0;
+  // A `JsonValue` owning the runtime handle `h`.
+  private constructor(h: u64) {
+    this.handle = h;
   }
 
   // Parses any JSON document, like `JSON.parseValue` (throws `JsonError`).
@@ -132,14 +132,7 @@ export class JsonValue {
     if (!velt_rt_json_parse_value_with(text, depth, slot, err)) {
       throw new JsonError(err);
     }
-    return JsonValue.adopt(slot.handle);
-  }
-
-  // A `JsonValue` owning the runtime handle `h`.
-  private static adopt(h: u64): JsonValue {
-    const v = new JsonValue();
-    v.handle = h;
-    return v;
+    return new JsonValue(slot.handle);
   }
 
   // A `JsonValue` owning `h`, or null for the runtime's null handle.
@@ -147,31 +140,31 @@ export class JsonValue {
     if (h == 0) {
       return null;
     }
-    return JsonValue.adopt(h);
+    return new JsonValue(h);
   }
 
   // An empty object, to fill with `set`.
   static object(): JsonValue {
-    return JsonValue.adopt(velt_rt_json_value_new_object());
+    return new JsonValue(velt_rt_json_value_new_object());
   }
 
   // An empty array, to fill with `push`.
   static array(): JsonValue {
-    return JsonValue.adopt(velt_rt_json_value_new_array());
+    return new JsonValue(velt_rt_json_value_new_array());
   }
 
   // A string, number, boolean or `null`.
   static of(x: string | f64 | bool | null): JsonValue {
     if (x == null) {
-      return JsonValue.adopt(velt_rt_json_value_new_null());
+      return new JsonValue(velt_rt_json_value_new_null());
     }
     if (typeof x === "string") {
-      return JsonValue.adopt(velt_rt_json_value_new_string(x));
+      return new JsonValue(velt_rt_json_value_new_string(x));
     }
     if (typeof x === "number") {
-      return JsonValue.adopt(velt_rt_json_value_new_number(x));
+      return new JsonValue(velt_rt_json_value_new_number(x));
     }
-    return JsonValue.adopt(velt_rt_json_value_new_bool(x));
+    return new JsonValue(velt_rt_json_value_new_bool(x));
   }
 
   // The JSON form of any value `JSON.stringify` accepts.
@@ -182,7 +175,7 @@ export class JsonValue {
     if (!velt_rt_json_parse_value(text, slot, err)) {
       panic(`JsonValue.from: ${err}`);
     }
-    return JsonValue.adopt(slot.handle);
+    return new JsonValue(slot.handle);
   }
 
   // Decodes this value into a `T`, like `JSON.parse<T>` (throws `JsonError`).
@@ -250,7 +243,7 @@ export class JsonValue {
   }
 
   isNull(): bool {
-    // The null handle (`new JsonValue()`) is JSON null too.
+    // The null handle (from the runtime) is JSON null too.
     return velt_rt_json_value_kind(this.handle) <= KIND_NULL;
   }
 
@@ -318,7 +311,7 @@ export class JsonValue {
 
   // Another reference to the same value: O(1) (edits copy on write, so they stay apart).
   clone(): JsonValue {
-    return JsonValue.adopt(velt_rt_json_value_clone(this.handle));
+    return new JsonValue(velt_rt_json_value_clone(this.handle));
   }
 
   // Drop hook: releases this reference (see header).
