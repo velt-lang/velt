@@ -25,6 +25,22 @@ separately, so there is no boxing and bounds resolve to direct calls. Type argum
 inferred or given explicitly (`f<f64>(2)`). Bounds are interfaces
 ([Generics](classes.md#generics)).
 
+Because each instantiation is compiled, a generic function may call itself (directly or
+through other generic functions) with the same type arguments, but not with growing ones:
+`f<T>` calling `f<T[]>` would need `f<T[][]>`, `f<T[][][]>` and so on without end. The
+compiler reports this at the growing call, like TypeScript's "type instantiation is
+excessively deep":
+
+```ts error
+function nest<T>(x: T, n: i64): i64 {
+  // error: instantiating `nest<T[]>` from `nest<T>` grows without end
+  return n == 0 ? 0 : nest<T[]>([x], n - 1);
+}
+```
+
+Recurse with a fixed type instead: a non-generic helper, or a `JsonValue` for data whose
+shape is only known at run time.
+
 ## Parameters
 
 Parameters behave like `let` locals: reassigning one never affects the caller. Objects are

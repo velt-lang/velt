@@ -1,0 +1,8 @@
+generic_recursion_growing.vlt:9:10: error: instantiating `viaJson<T[]>` from `viaJson<T>` grows without end
+`viaJson` calls itself with `T[]`: Velt compiles each instantiation separately, so this recursion never ends; use a non-generic helper or a `JsonValue`
+
+generic_recursion_growing.vlt:14:23: error: instantiating `direct<{ v: T }>` from `direct<T>` grows without end
+`direct` calls itself with `{ v: T }`: Velt compiles each instantiation separately, so this recursion never ends; use a non-generic helper or a `JsonValue`
+
+generic_recursion_growing.vlt:19:23: error: instantiating `second<T[]>` from `first<T>` grows without end
+`first` calls `second` with `T[]`, which calls `first` again through `third`: Velt compiles each instantiation separately, so this recursion never ends; use a non-generic helper or a `JsonValue`
