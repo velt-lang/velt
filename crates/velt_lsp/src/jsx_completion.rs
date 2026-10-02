@@ -78,7 +78,9 @@ fn in_jsx_text(text: &str, floor: usize) -> bool {
         return false;
     };
     match text.as_bytes()[i] {
-        b'}' => matching_brace(&text[..i], floor).is_some_and(|open| in_jsx_text(&text[..open], floor)),
+        b'}' => {
+            matching_brace(&text[..i], floor).is_some_and(|open| in_jsx_text(&text[..open], floor))
+        }
         b'>' => closes_tag(&text[..i], floor),
         _ => false,
     }
@@ -314,10 +316,16 @@ mod tests {
             })
         );
         assert_eq!(ctx("if (a > b && c <"), None);
-        assert_eq!(ctx("function f() {}
-if (a <"), None);
-        assert_eq!(ctx("if (x) { g(); }
-while (i <"), None);
+        assert_eq!(
+            ctx("function f() {}
+if (a <"),
+            None
+        );
+        assert_eq!(
+            ctx("if (x) { g(); }
+while (i <"),
+            None
+        );
         assert_eq!(ctx("const xs: Array<i64> = f(); if (n <"), None);
         assert_eq!(ctx("const n = i<"), None);
         assert_eq!(ctx("<p><br />then <"), Some(Context::Tag));
