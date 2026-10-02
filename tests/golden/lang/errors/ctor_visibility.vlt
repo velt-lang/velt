@@ -1,5 +1,5 @@
 // `private constructor` / `protected constructor`: `new` outside the allowed bodies, and
-// extending a class whose constructor is private, are errors worded like TypeScript's.
+// extending a class whose constructor is private, are errors (TypeScript's rules).
 class Token {
   private constructor(readonly id: i64) {}
 

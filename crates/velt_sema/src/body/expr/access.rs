@@ -45,11 +45,9 @@ impl FnCx<'_, '_> {
         };
         let Some(a) = self.cx.adt(class) else { return };
         let visibility = a.decl.map_or_else(Default::default, |d| d.ctor_visibility);
-        let what = match visibility {
-            ast::CtorVisibility::Public => return,
-            ast::CtorVisibility::Protected => "protected",
-            ast::CtorVisibility::Private => "private",
-        };
+        if visibility == ast::CtorVisibility::Public {
+            return;
+        }
         let name = a.name.clone();
         let allowed = match (self.owner, visibility) {
             (Some(o), _) if o == class => true,
@@ -59,20 +57,19 @@ impl FnCx<'_, '_> {
         if allowed {
             return;
         }
-        let note = if visibility == ast::CtorVisibility::Private {
-            format!("call a static method of `{name}` that creates one")
-        } else {
-            format!("call a static method of `{name}` that creates one, or create a subclass")
-        };
-        self.cx.error(
-            Diagnostic::error(
-                format!(
-                    "Constructor of class '{name}' is {what} and only accessible within the class declaration."
-                ),
-                span,
+        let (message, note) = if visibility == ast::CtorVisibility::Private {
+            (
+                format!("the constructor of `{name}` is private: only the body of `{name}` can call `new {name}(...)`"),
+                format!("add a static factory method to `{name}` and call that"),
             )
-            .with_note(note),
-        );
+        } else {
+            (
+                format!("the constructor of `{name}` is protected: only `{name}` and its subclasses can call `new {name}(...)`"),
+                format!("add a static factory method to `{name}`, or construct a subclass"),
+            )
+        };
+        self.cx
+            .error(Diagnostic::error(message, span).with_note(note));
     }
 
     /// `private` check for field `index` of struct/class values of type `t`.

@@ -237,12 +237,10 @@ fn base_class(cx: &mut Ctx, t: &ast::TypeExpr, kind: AdtKind, env: &TyEnv) -> Op
         let name = cx.adt(bd).map(|a| a.name.clone()).unwrap_or_default();
         cx.error(
             Diagnostic::error(
-                format!("Cannot extend a class '{name}'. Class constructor is marked as private."),
+                format!("cannot extend `{name}`: its constructor is private"),
                 t.span,
             )
-            .with_note(format!(
-                "use composition instead: a class with a `{name}` field"
-            )),
+            .with_note(format!("use composition: a class with a `{name}` field")),
         );
         return None;
     }

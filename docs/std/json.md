@@ -85,8 +85,8 @@
   handle shares before changing it (copy-on-write, one node at a time). To change a nested
   value, edit the child and `set` it back. There is no `v[k] = x` syntax: use `set`. Only the
   runtime makes `JsonValue`s: the constructor is private, so `new JsonValue(…)` is an error
-  (use the static methods above; `JsonValue.of(null)` is JSON `null`) and a class cannot
-  `extends` `JsonValue` (hold one in a field instead).
+  (use the static methods above; a JSON `null` is made only with `JsonValue.of(null)`), and a
+  class cannot `extends` `JsonValue` (hold one in a field instead).
 
 ```ts
 import { Value } from "velt:json";

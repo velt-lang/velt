@@ -14,12 +14,12 @@ hidden classes and no runtime shape checks.
 - **Private and protected constructors** (TypeScript's rules): `private constructor(…)` can be
   called (`new C(…)`) only inside the class body: its methods, static methods, field
   initializers and the closures in them. Such a class cannot be extended
-  (``Cannot extend a class 'C'. Class constructor is marked as private.``); a public static
-  method is the usual way to create one. `protected constructor(…)` may also be called inside
-  the bodies of subclasses (`super(…)` in their constructors, or `new C(…)`). Elsewhere `new C`
-  is ``Constructor of class 'C' is private and only accessible within the class declaration.``
-  (or `protected`). A subclass without a constructor of its own inherits its base's, with the
-  same rule.
+  (``cannot extend `C`: its constructor is private``); a public static method is the usual way
+  to create one. `protected constructor(…)` may also be called inside the bodies of subclasses
+  (`super(…)` in their constructors, or `new C(…)`). Elsewhere `new C` is an error:
+  ``the constructor of `C` is private: only the body of `C` can call `new C(...)` `` (or
+  ``… is protected: only `C` and its subclasses can …``). A subclass without a constructor of
+  its own inherits its base's, with the same rule.
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
   layout, so upcasts are free. The constructor calls `super(…)` first. Redefining a base method
   requires `override`; `super.m()` calls the base version. There are no abstract classes.
