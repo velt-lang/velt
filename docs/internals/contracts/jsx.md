@@ -7,7 +7,7 @@ one framework; providers live in their own packages.
 ## Choosing the provider
 The import source of a file is, in order:
 1. a `// @jsxImportSource <source>` pragma among the file's leading comments;
-2. `[jsx] importSource = "<source>"` in the package's `velt.toml` (velt_toml.md);
+2. `jsx: { importSource: "<source>" }` in the package's `package.vlt` (manifest.md);
 3. `std/jsx`.
 
 A module that contains JSX implicitly imports `<source>/jsx-runtime` (a package path like
@@ -15,7 +15,7 @@ A module that contains JSX implicitly imports `<source>/jsx-runtime` (a package 
 `JSX` (`JSX.Element`, `JSX.IntrinsicElements`, …) in that module, exactly as if the file had
 `import * as JSX from "<source>/jsx-runtime"`; the factory functions are called by generated
 code only. A file that never uses JSX does not load the runtime. A relative pragma source
-(`./ui`) is relative to the file; a relative `importSource` in velt.toml to the package root. A
+(`./ui`) is relative to the file; a relative `importSource` in package.vlt to the package root. A
 name `JSX` the module declares or imports itself wins over the implicit namespace.
 
 ## Why this differs from TypeScript's `react-jsx` runtime

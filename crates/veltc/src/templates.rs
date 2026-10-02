@@ -1,5 +1,5 @@
 //! Project templates for `velt new` / `velt init`, embedded in the binary. The sources live in
-//! `crates/veltc/templates/<template>/` as ordinary, formatted Velt projects (minus `velt.toml`
+//! `crates/veltc/templates/<template>/` as ordinary, formatted Velt projects (minus `package.vlt`
 //! and `.gitignore`, which are generated); `{{name}}` in a file stands for the package name.
 //! `tests/templates.rs` builds, tests and format-checks every template.
 
@@ -106,7 +106,7 @@ impl Template {
         }
     }
 
-    /// The files of package `name` made from this template: `velt.toml`, `.gitignore` (merged
+    /// The files of package `name` made from this template: `package.vlt`, `.gitignore` (merged
     /// into an existing one), `README.md` (an existing one is kept) and the sources.
     pub fn files(self, name: &str) -> Vec<ScaffoldFile> {
         let mut files = vec![

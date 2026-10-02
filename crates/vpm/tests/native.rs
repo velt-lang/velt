@@ -49,12 +49,12 @@ fn native_packages_end_to_end() {
     let dir = vpm::relpath::absolute(tmp.path());
     let loc = Locations::under(&dir.join("velt-home"));
 
-    // The library: [native] for two targets.
+    // The library: `native` for two targets.
     vpm::scaffold::new_package(&dir, "db", true).unwrap();
     let lib = dir.join("db");
     std::fs::write(
-        lib.join("velt.toml"),
-        format!("[package]\nname = \"db\"\nversion = \"1.0.0\"\n\n[native]\ntargets = [\"{LINUX}\", \"{MAC}\"]\n"),
+        lib.join("package.vlt"),
+        format!("export const pkg: Package = {{ name: \"db\", version: \"1.0.0\", native: {{ targets: [\"{LINUX}\", \"{MAC}\"] }} }};"),
     )
     .unwrap();
     std::fs::create_dir_all(lib.join("native/src")).unwrap();
@@ -215,7 +215,7 @@ fn native_packages_end_to_end() {
     );
 
     // A path dependency with native code needs cargo to build it.
-    std::fs::write(app.join("velt.toml"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ndb = { path = \"../db\" }\n").unwrap();
+    std::fs::write(app.join("package.vlt"), "export const pkg: Package = { name: \"app\", version: \"0.1.0\", dependencies: { db: { path: \"../db\" } } };").unwrap();
     let e = install(
         &app,
         &loc,

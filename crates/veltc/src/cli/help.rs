@@ -64,7 +64,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "new",
         summary: "Create a package in a new directory from a template",
         usage: &["new <name> [--template <name>] [--lib]"],
-        about: "Creates <name>/ with velt.toml, .gitignore, README.md, src/ and tests/. Every \
+        about: "Creates <name>/ with package.vlt, .gitignore, README.md, src/ and tests/. Every \
                 template builds, passes `velt test` and is formatted.",
         options: &[TEMPLATE, ("--lib", "same as --template lib")],
         examples: &[
@@ -96,7 +96,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "build",
         summary: "Compile a file or the current package",
         usage: &["build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--backend <name>] [--emit <kind>] [--locked] [-v] [--timings]"],
-        about: "Without a file, builds the package found by searching upward for velt.toml \
+        about: "Without a file, builds the package found by searching upward for package.vlt \
                 (output: <package>/target/velt/<name>[.exe]). A single file builds to \
                 ./target/velt/<stem>[.exe].",
         options: &[
@@ -151,7 +151,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         summary: "Run, then rebuild and restart on every change",
         usage: &["dev [<file.vlt>] [--exe] [--locked] [-v] [-- <program args>...]"],
         about: "Runs the program like `velt run`, then rebuilds and restarts it whenever a file \
-                it imports (or velt.toml/velt.lock) changes; a failed build leaves the old \
+                it imports (or package.vlt/velt.lock) changes; a failed build leaves the old \
                 version running. The program runs JIT-compiled inside `velt`, and listening \
                 sockets stay open across restarts.",
         options: &[
@@ -189,8 +189,8 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "fmt",
         summary: "Format .vlt files",
         usage: &["fmt [<file|dir>...] [--check]"],
-        about: "Without paths, formats the package's src/ (or every .vlt file under the \
-                current directory).",
+        about: "Without paths, formats the package's package.vlt and src/ (or every .vlt file \
+                under the current directory).",
         options: &[("--check", "write nothing; list unformatted files and exit 1 if any")],
         examples: &[
             ("velt fmt", "format the package"),
@@ -208,7 +208,7 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "add",
-        summary: "Add a dependency to velt.toml and install it",
+        summary: "Add a dependency to package.vlt and install it",
         usage: &["add <pkg>[@<req>] [--path <dir>]"],
         about: "Without a version requirement, uses the latest published version.",
         options: &[("--path <dir>", "a local package instead of a registry one")],
@@ -239,7 +239,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         summary: "Publish the package to the registry",
         usage: &["publish [--native-artifacts <dir>] [--native-only]"],
         about: "Publishes to the package's `registry`, else $VELT_REGISTRY, else the local \
-                registry (~/.velt/registry). A package with a [native] table also publishes a \
+                registry (~/.velt/registry). A package with `native` in package.vlt also publishes a \
                 prebuilt native library for every target it lists: from <dir>/<triple>/, else \
                 target/velt-native/<triple>/ (the host's is built if missing).",
         options: &[
@@ -252,10 +252,19 @@ pub const COMMANDS: &[CommandHelp] = &[
         ],
     },
     CommandHelp {
+        name: "manifest",
+        summary: "Print the package's manifest as JSON",
+        usage: &["manifest --json"],
+        about: "Reads package.vlt (without running anything), validates it and prints it as JSON \
+                with the defaults filled in, for tools that cannot read Velt.",
+        options: &[("--json", "print JSON (required)")],
+        examples: &[("velt manifest --json", "the current package's manifest")],
+    },
+    CommandHelp {
         name: "native",
         summary: "Build the package's native library",
         usage: &["native build [--target <triple>]"],
-        about: "Builds the [native] crate with cargo and writes the bundle `velt publish` uploads \
+        about: "Builds the `native` crate with cargo and writes the bundle `velt publish` uploads \
                 to target/velt-native/<triple>/ (needs Rust; users of the package do not).",
         options: &[("--target <triple>", "the target to build for (default: this machine)")],
         examples: &[(

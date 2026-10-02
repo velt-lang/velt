@@ -1,5 +1,5 @@
-//! Native libraries of packages (docs/internals/contracts/native_abi.md): a package with a
-//! `[native]` table ships a Rust crate whose library is published **prebuilt per target** as a
+//! Native libraries of packages (docs/internals/contracts/native_abi.md): a package with
+//! `native` in its manifest ships a Rust crate whose library is published **prebuilt per target** as a
 //! *bundle*, so users only need `velt`.
 //!
 //! A bundle is a directory (exchanged as an [`crate::archive`]):

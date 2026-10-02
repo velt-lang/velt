@@ -1,0 +1,17 @@
+import type { Package } from "velt:package";
+
+export const pkg: Package = {
+  name: "sqlite",
+  version: "0.1.0",
+  // The driver is a Rust crate (native/) built on rusqlite; `velt publish` uploads a prebuilt
+  // library per target, so users of the package need no Rust toolchain.
+  native: {
+    targets: [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc",
+    ],
+  },
+};

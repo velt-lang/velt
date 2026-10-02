@@ -1,9 +1,9 @@
 //! vpm — the Velt package manager library, used by the `velt` CLI.
-//! Manifest format is a contract: docs/internals/contracts/velt_toml.md.
+//! Manifest format is a contract: docs/internals/contracts/manifest.md.
 //!
-//! - [`manifest`]: `velt.toml` model ([`paths`]: its import aliases); [`edit`]: format-preserving
-//!   `velt add`; [`scaffold`]: `velt new`. [`manifest::read`] reads `package.vlt`, which replaces
-//!   `velt.toml` (docs/internals/design/package-manifest.md).
+//! - [`manifest`]: the `package.vlt` model, read by [`manifest::read`] without running anything
+//!   ([`paths`]: its import aliases); [`edit`]: comment-preserving `velt add`; [`scaffold`]:
+//!   `velt new`.
 //! - [`registry`]: the registry (`publish`, index), local or remote ([`remote`], packages as
 //!   [`archive`]s over HTTP); [`cache`]: verified extraction.
 //! - [`resolve`]: semver resolution with backtracking; [`lockfile`]: `velt.lock`.

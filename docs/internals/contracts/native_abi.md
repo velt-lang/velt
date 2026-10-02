@@ -1,6 +1,6 @@
 # Native libraries of packages — CONTRACT
 
-How a package's Rust crate (`[native]` in [`velt.toml`](velt_toml.md)) talks to Velt code and to
+How a package's Rust crate (`native` in [`package.vlt`](manifest.md)) talks to Velt code and to
 the runtime, how its library is built, published, installed, linked and loaded. Design and
 rationale: [native-packages.md](../design/native-packages.md). Implemented by `crates/velt_rt`
 (`native.rs`), `crates/velt_native` (the SDK), `crates/vpm` (`native/`), `crates/velt_link`
@@ -157,7 +157,7 @@ For the build target (`InstallOptions::target`):
   `sqlite 0.1.0` has no prebuilt native library for <triple> (published: <targets>).
   Install Rust (https://rustup.rs) to build it from source, or ask the package author to publish this target.
   ```
-- A **path** package (or the root package) with `[native]` is built from source into
+- A **path** package (or the root package) with `native` is built from source into
   `<package>/target/velt-native/<triple>/` (cargo's work in `.../cargo`).
 - `wasm32-*` targets: an error naming the package (WebAssembly libraries are not supported).
 - The result is `vpm::GraphPackage::native: Option<NativeLib>`; `velt add`/`velt install` list

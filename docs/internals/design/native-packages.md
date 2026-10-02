@@ -43,7 +43,8 @@ sqlite/
 
 ## Manifest: the `[native]` table
 
-This addition to [`velt.toml`](../contracts/velt_toml.md) is parsed by `vpm::manifest`:
+This addition to `velt.toml` is parsed by `vpm::manifest`. (The manifest is now `package.vlt`,
+where this table is `native: { … }`: [manifest.md](../contracts/manifest.md).)
 
 ```toml
 [native]
@@ -248,7 +249,7 @@ static/sqlite.o        # one prelinked relocatable object
 
 ## Registry and versioning
 
-These additions extend the remote protocol in `velt_toml.md`:
+These additions extend the remote protocol in `manifest.md` (then `velt_toml.md`):
 
 | Request | Meaning |
 |---|---|
@@ -326,7 +327,7 @@ Each step below lands with its own tests:
    - allow `native/**` in archives
    - add the index `native` and `native_abi` fields, the bundle endpoints, the lockfile checksums
      and `cache::fetch_native`
-   - add `GraphPackage.native` with exports and paths (a `velt_toml.md` contract update)
+   - add `GraphPackage.native` with exports and paths (a manifest contract update)
 2. **Author tooling** (`veltc`): `velt native build`, `velt publish --native-artifacts`, the
    prelink step, the cargo fallback and its message, and a `cli.md` update.
 3. **Runtime table** (`crates/velt_rt`):

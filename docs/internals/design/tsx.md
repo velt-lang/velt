@@ -36,7 +36,7 @@ already solved it; add nothing JavaScript-specific that causes bugs; keep Rust-l
 
 Configuration, like TypeScript (`jsx: "react-jsx"` plus `jsxImportSource`):
 
-- `velt.toml` `[jsx] importSource = "sigx"` (a package or `velt:jsx`), or per file
+- `jsx: { importSource: "sigx" }` in `package.vlt` (a package or `velt:jsx`), or per file
   `// @jsxImportSource sigx` on one of the first lines. The default is `velt:jsx`.
 - The provider module `<source>/jsx-runtime` exports the factory functions and the `JSX`
   namespace (types). Nothing is hard-wired to one framework.

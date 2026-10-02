@@ -39,12 +39,11 @@ All rules are in [Modules and packages](../reference/modules.md) in the Referenc
 
 ## Path aliases
 
-In a package, `[paths]` in `velt.toml` replaces long `../../` chains, like TypeScript's
+In a package, `paths` in `package.vlt` replaces long `../../` chains, like TypeScript's
 `compilerOptions.paths`:
 
-```toml
-[paths]
-"@app/*" = "src/*"
+```ts ignore
+paths: { "@app/*": "src/*" },
 ```
 
 ```ts ignore
@@ -53,7 +52,7 @@ import { execute } from "@app/commands";        // src/commands.vlt or src/comma
 
 ## Packages
 
-A package is a directory with a `velt.toml` ([reference](../tooling/manifest.md)). An
+A package is a directory with a `package.vlt` ([reference](../tooling/manifest.md)). An
 application has `src/main.vlt`; a library has `src/lib.vlt`, whose exports are what other
 packages import.
 
@@ -62,14 +61,14 @@ velt new textkit --template lib     # a library: src/lib.vlt, tests, doc comment
 cd textkit
 velt test
 velt doc                            # HTML docs in target/doc from the /// comments
-velt publish                        # to the local registry, or the one in velt.toml
+velt publish                        # to the local registry, or the one in package.vlt
 ```
 
 Using it from another package:
 
 ```sh
 cd ../app
-velt add textkit                    # the latest version, into velt.toml and velt.lock
+velt add textkit                    # the latest version, into package.vlt and velt.lock
 velt add util --path ../util        # or a package from a local directory
 ```
 

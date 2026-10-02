@@ -50,8 +50,9 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
         if p.is_dir() && !helper {
             collect(&p, out);
         } else if p.is_file() && p.extension().is_some_and(|e| e == "vlt")
-            // `_name.vlt` files are imported modules, not programs.
+            // `_name.vlt` files are imported modules and `package.vlt` is a manifest, not programs.
             && !helper
+            && !p.ends_with(vpm::manifest::MANIFEST_FILE)
         {
             out.push(p);
         }

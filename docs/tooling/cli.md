@@ -15,6 +15,7 @@ prints every command's options and examples.
 | `velt fmt` | format `.vlt` files ([Formatter](fmt.md)) |
 | `velt clean` | remove the package's `target/` directory |
 | `velt add`, `install`, `update`, `publish` | packages ([Packages](packages.md)) |
+| `velt manifest --json` | print the package's manifest as JSON, for other tools ([`package.vlt`](manifest.md#other-tools)) |
 | `velt doc` | generate HTML API documentation |
 | `velt lsp` | the language server ([Editors](editors.md)) |
 | `velt playground` | write and run programs in the browser ([WebAssembly](webassembly.md#the-playground)) |
@@ -30,7 +31,7 @@ Every build command works on a single file or on a package:
   relative to the current directory, and runs it. If the file is inside a package, the package's
   dependencies are installed first.
 - **A package**: without a file argument, `velt` searches upward from the current directory for
-  `velt.toml` and builds the package's entry (default `src/main.vlt`) to
+  `package.vlt` and builds the package's entry (default `src/main.vlt`) to
   `<package>/target/velt/<name>`. A library-only package can't be run.
 
 ## `velt build` and `velt run`

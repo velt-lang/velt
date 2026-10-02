@@ -25,8 +25,9 @@ pub fn fetch(
     if dir.is_dir() && contents::checksum(&dir).is_ok_and(|sum| sum == checksum) {
         return Ok(dir);
     }
+    let named = |e: String| format!("`{name}` {version}: {e}");
     if let Some(url) = &loc.remote {
-        return crate::remote::download(url, name, version, checksum, &dir);
+        return crate::remote::download(url, name, version, checksum, &dir).map_err(named);
     }
     let published = loc.registry_package(name, version);
     if !published.is_dir() {
@@ -39,7 +40,7 @@ pub fn fetch(
         std::fs::remove_dir_all(&dir)
             .map_err(|e| format!("cannot clean `{}`: {e}", dir.display()))?;
     }
-    contents::copy_package(&published, &dir)?;
+    contents::copy_package(&published, &dir).map_err(named)?;
     let actual = contents::checksum(&dir)?;
     if actual != checksum {
         let _ = std::fs::remove_dir_all(&dir);
@@ -104,8 +105,8 @@ mod tests {
         let pkg = tmp.path().join("p");
         std::fs::create_dir_all(pkg.join("src")).unwrap();
         std::fs::write(
-            pkg.join("velt.toml"),
-            "[package]\nname = \"p\"\nversion = \"1.0.0\"\n",
+            pkg.join(crate::manifest::MANIFEST_FILE),
+            "export const pkg: Package = { name: \"p\", version: \"1.0.0\" };",
         )
         .unwrap();
         std::fs::write(pkg.join("src/lib.vlt"), "export const X: i64 = 1;\n").unwrap();
@@ -129,5 +130,17 @@ mod tests {
         assert!(fetch(&loc, "p", &Version::new(9, 0, 0), "x")
             .unwrap_err()
             .contains("missing"));
+
+        // A version published before `package.vlt` cannot be installed, and the error says why.
+        let old = loc.registry_package("p", &v);
+        std::fs::rename(
+            old.join(crate::manifest::MANIFEST_FILE),
+            old.join("velt.toml"),
+        )
+        .unwrap();
+        let _ = std::fs::remove_dir_all(&dir); // the failed fetch above may have removed it
+        let err = fetch(&loc, "p", &v, &entry.checksum).unwrap_err();
+        assert!(err.starts_with("`p` 1.0.0: "), "{err}");
+        assert!(err.contains("must publish a new version"), "{err}");
     }
 }
