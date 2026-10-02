@@ -125,24 +125,30 @@ fn check(file: &Path, target: &str, mode: Option<&str>, work: &Path) -> Result<(
     ))
 }
 
-/// Run every (file, mode) pair on a few threads, each in its own work directory.
+/// Run every (file, mode) pair on a few threads. Each pair builds in a directory of its own,
+/// removed afterwards: a build never overwrites a module that has just run (on Windows a file
+/// that was just in use can stay locked for a moment), whether it is the other mode of the same
+/// program or a program with the same name from another directory.
 fn run_all(files: &[PathBuf], target: &str, modes: &[Option<&str>], work: &Path) -> Vec<String> {
     let jobs: Vec<(&PathBuf, Option<&str>)> = files
         .iter()
         .flat_map(|f| modes.iter().map(move |m| (f, *m)))
         .collect();
-    let next = Mutex::new(jobs.into_iter());
+    let next = Mutex::new(jobs.into_iter().enumerate());
     let failures = Mutex::new(vec![]);
     std::thread::scope(|s| {
-        for worker in 0..4 {
-            let dir = work.join(format!("w{worker}"));
-            std::fs::create_dir_all(&dir).expect("work dir");
+        for _ in 0..4 {
             let (next, failures) = (&next, &failures);
             s.spawn(move || loop {
-                let Some((file, mode)) = next.lock().unwrap().next() else {
+                let Some((i, (file, mode))) = next.lock().unwrap().next() else {
                     break;
                 };
-                if let Err(e) = check(file, target, mode, &dir) {
+                let dir = work.join(format!("j{i}"));
+                let _ = std::fs::remove_dir_all(&dir);
+                std::fs::create_dir_all(&dir).expect("work dir");
+                let result = check(file, target, mode, &dir);
+                let _ = std::fs::remove_dir_all(&dir);
+                if let Err(e) = result {
                     failures.lock().unwrap().push(e);
                 }
             });
