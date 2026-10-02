@@ -401,6 +401,12 @@ impl FnLower<'_, '_> {
                 self.json_read(r, &proj(place, Proj::Field(1)), ctx, e, fail);
                 self.assign(proj(place, Proj::Field(0)), Rvalue::Use(Self::ctrue()));
             }
+            // A zero-sized payload (a literal type): the option is its present flag.
+            Ty::Bool => {
+                let dummy = self.temp(Ty::U8);
+                self.json_read(r, &Place::local(dummy), ctx, e, fail);
+                self.assign(place.clone(), Rvalue::Use(Self::ctrue()));
+            }
             // Null niche: the payload is the pointer itself.
             _ => self.json_read(r, place, ctx, e, fail),
         }

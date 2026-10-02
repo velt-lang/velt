@@ -29,6 +29,9 @@ use super::rt::Rt;
 use super::{cint, ice, unit, Cx, FnLower, Glue};
 use crate::vir::{AggId, BlockId, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
+/// Qualified name of the prelude's dynamic JSON value class.
+const PRELUDE_JSON_VALUE: &str = "std/prelude/json::JsonValue";
+
 const STR: Ty = Ty::Agg(STR_AGG);
 
 /// `velt_rt_json_reader_peek` kinds (rt_abi_async.md §12.3).
@@ -90,13 +93,13 @@ impl Cx<'_> {
         self.intern(TyKind::Adt(hir::DefId(d as u32), vec![]))
     }
 
-    /// Is `t` the std `json.Value` handle type (serialized with `velt_rt_strbuf_push_json_value`)?
+    /// Is `t` the prelude's `JsonValue` handle type (serialized with
+    /// `velt_rt_strbuf_push_json_value`)? Matched by its exact qualified name, so a user class
+    /// named `JsonValue` (even in a module named `json`) stays an ordinary class.
     fn is_json_value(&self, t: TyId) -> bool {
         match self.types.kind(t) {
             TyKind::Adt(d, _) => match self.hir.def(*d) {
-                hir::Def::Adt(a) => {
-                    a.name.ends_with("json::JsonValue") || a.name.ends_with("json.JsonValue")
-                }
+                hir::Def::Adt(a) => a.name == PRELUDE_JSON_VALUE,
                 _ => false,
             },
             _ => false,

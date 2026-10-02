@@ -93,11 +93,10 @@ impl Ctx<'_> {
             .any(|p| self.owns_resource_depth(p, depth + 1))
     }
 
-    /// The dynamic JSON value class (std/prelude/json's `JsonValue`),
-    /// recognized by name like the lowering's JSON glue does.
+    /// The dynamic JSON value class: the prelude's `JsonValue` itself, not a user class of the
+    /// same name (that one is an ordinary class to JSON).
     pub fn is_json_value(&self, d: DefId) -> bool {
-        self.adt(d)
-            .is_some_and(|a| a.qual_name.ends_with("json::JsonValue"))
+        self.prelude_adt("JsonValue") == Some(d)
     }
 
     /// `JsonError` (prelude class), the type `JSON.parse` throws.

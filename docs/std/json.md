@@ -47,7 +47,8 @@
   - type tests: `isNull isBool isNumber isString isArray isObject`
   - conversions: `asNumber(): f64 | null`, `asBool()`, `asString()`
   - building: `JsonValue.object()`, `JsonValue.array()`, `JsonValue.of(x)` (a string, number,
-    `bool` or `null`), `JsonValue.from(x)` (the JSON form of any value `JSON.stringify` accepts)
+    `bool` or `null`; `new JsonValue()` is `null`), `JsonValue.from(x)` (the JSON form of any
+    value `JSON.stringify` accepts), `JsonValue.parse(text)` (same as `JSON.parseValue`)
   - editing: `set(key, v)` (an existing key keeps its position), `delete(key)`, `push(v)`,
     `setAt(i, v)`; each returns `false` when the value is not an object / array (or `i` is out
     of range)
