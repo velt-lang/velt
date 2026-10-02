@@ -2,6 +2,8 @@
 //! ternary disambiguation, and parse speed.
 
 mod common;
+#[path = "common/thread_work.rs"]
+mod thread_work;
 
 use common::*;
 
@@ -282,23 +284,26 @@ fn jsx_decided_by_the_parser_stays_linear() {
     }
 }
 
-/// Parsing `make(4 * n)` must take about 4 times as long as `make(n)`, not 16 times: compares
-/// the best of three interleaved runs of each, so a busy machine slows both alike.
+/// Parsing `make(4 * n)` must cost about 4 times as much as `make(n)`, not 16 times. Cost is the
+/// parsing thread's own CPU time ([`thread_work`]), not wall-clock time, which on a loaded machine
+/// mostly measures waiting for a core; the best of several interleaved runs of each size evens out
+/// what is left (cache and frequency effects of other processes).
 fn assert_linear(what: &str, n: usize, make: impl Fn(usize) -> String) {
+    const ROUNDS: usize = 7;
     let (small, large) = (make(n), make(4 * n));
-    let time = |src: &str| {
-        let start = std::time::Instant::now();
-        let _ = parse(src);
-        start.elapsed()
+    let cost = |src: &str| {
+        thread_work::measure(|| {
+            let _ = std::hint::black_box(parse(src));
+        })
     };
-    let (mut t_small, mut t_large) = (std::time::Duration::MAX, std::time::Duration::MAX);
-    for _ in 0..3 {
-        t_small = t_small.min(time(&small));
-        t_large = t_large.min(time(&large));
+    let (mut c_small, mut c_large) = (u64::MAX, u64::MAX);
+    for _ in 0..ROUNDS {
+        c_small = c_small.min(cost(&small));
+        c_large = c_large.min(cost(&large));
     }
     assert!(
-        t_large < t_small * 9,
-        "{what}: {n} units took {t_small:?}, {} took {t_large:?}: not linear",
+        c_large < c_small.saturating_mul(9),
+        "{what}: {n} units cost {c_small}, {} cost {c_large}: not linear",
         4 * n
     );
 }
