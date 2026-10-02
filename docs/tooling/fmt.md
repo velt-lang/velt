@@ -15,4 +15,10 @@ a package; `target/` and hidden directories are skipped.
   (single quotes are kept when the text contains `"`), semicolons, trailing commas in lists that
   break over several lines, at most one blank line between statements. Template literals are
   printed verbatim. Formatting is idempotent and never changes the program.
+- JSX is laid out like Prettier does it: an element that does not fit goes over several lines
+  (in parentheses after `=`, `return` and `=>`), text is reflowed as a paragraph, and a space
+  next to a tag at a line break is written `{" "}` (it would otherwise be lost). A conditional
+  with an element in it puts each element branch in parentheses when it breaks. Unlike
+  Prettier, runs of several spaces in text are kept, and branches other than elements are not
+  given parentheses they did not have.
 - The language server formats documents on request ([Editors](editors.md)).

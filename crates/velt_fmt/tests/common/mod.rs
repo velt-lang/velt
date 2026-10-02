@@ -51,7 +51,8 @@ pub fn parses(src: &str) -> bool {
 }
 
 /// The AST dump of `src` with spans and node ids erased, so two sources that differ only in
-/// layout compare equal.
+/// layout compare equal. JSX text is compared as rendered: neighbouring text and `{" "}` string
+/// children are joined (the formatter moves spaces next to tags between the two, like prettier).
 pub fn ast_shape(src: &str) -> String {
     let (module, _) = velt_syntax::parse_file(FileId(0), src);
     let dump = velt_syntax::dump(&module);
@@ -79,7 +80,102 @@ pub fn ast_shape(src: &str) -> String {
         out.push_str(line);
         out.push('\n');
     }
+    let lines: Vec<&str> = out.lines().collect();
+    let mut joined = jsx_text_joined(&drop_spans(&lines)).join("\n");
+    joined.push('\n');
+    joined
+}
+
+fn indent_of(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+/// `lines` without the `span: Span { … }` blocks (only the file id is left in them).
+fn drop_spans<'a>(lines: &[&'a str]) -> Vec<&'a str> {
+    let mut out = vec![];
+    let mut skip_to: Option<usize> = None;
+    for line in lines {
+        if let Some(indent) = skip_to {
+            if indent_of(line) == indent && line.trim_start().starts_with('}') {
+                skip_to = None;
+            }
+            continue;
+        }
+        if line.trim_start() == "span: Span {" {
+            skip_to = Some(indent_of(line));
+            continue;
+        }
+        out.push(*line);
+    }
     out
+}
+
+/// The dump with every list of JSX children rewritten so that runs of text and `{"  "}`
+/// children become one text child.
+fn jsx_text_joined(lines: &[&str]) -> Vec<String> {
+    let mut out = vec![];
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        out.push(line.to_string());
+        i += 1;
+        if line.trim_start() != "children: [" {
+            continue;
+        }
+        let indent = indent_of(line);
+        let end = (i..lines.len())
+            .find(|&j| indent_of(lines[j]) == indent && lines[j].trim_start().starts_with(']'))
+            .unwrap_or(lines.len());
+        out.extend(joined_children(&lines[i..end], indent + 4));
+        i = end;
+    }
+    out
+}
+
+/// The children (dump lines at `indent`) with text runs joined.
+fn joined_children(lines: &[&str], indent: usize) -> Vec<String> {
+    let pad = " ".repeat(indent);
+    let flush = |out: &mut Vec<String>, text: &mut Option<String>| {
+        if let Some(value) = text.take() {
+            out.push(format!("{pad}Text {{"));
+            out.push(format!("{pad}    value: \"{value}\","));
+            out.push(format!("{pad}}},"));
+        }
+    };
+    let mut out = vec![];
+    let mut text: Option<String> = None;
+    let mut start = 0;
+    while start < lines.len() {
+        let end = if lines[start].trim_end().ends_with(',') {
+            start + 1
+        } else {
+            (start + 1..lines.len())
+                .find(|&j| indent_of(lines[j]) == indent)
+                .map_or(lines.len(), |j| j + 1)
+        };
+        let item = &lines[start..end];
+        start = end;
+        if let Some(value) = text_value(item) {
+            text.get_or_insert_with(String::new).push_str(&value);
+            continue;
+        }
+        flush(&mut out, &mut text);
+        out.extend(jsx_text_joined(item));
+    }
+    flush(&mut out, &mut text);
+    out
+}
+
+/// The (escaped) text of a text child or of a `{"  "}` child.
+fn text_value(item: &[&str]) -> Option<String> {
+    let flat: String = item.iter().map(|l| l.trim()).collect();
+    if let Some(rest) = flat.strip_prefix("Text {value: \"") {
+        return rest.strip_suffix("\",},").map(str::to_string);
+    }
+    let value = flat
+        .strip_prefix("Expr {expr: Some(Expr {id: NodeId(),kind: Lit(Str(\"")?
+        .strip_suffix("\",),),},),},")?;
+    value.chars().all(|c| c == ' ').then(|| value.to_string())
 }
 
 /// First differing line of two texts, for readable assertion messages.

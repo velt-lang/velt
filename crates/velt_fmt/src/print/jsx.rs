@@ -1,22 +1,27 @@
 //! JSX elements, prettier style: attributes on one line or one per line (`>` / `/>` on its own
-//! line), children laid out by [`super::jsx_children`] between the tags (indented, on their own
-//! lines when the element breaks), and multi-line elements wrapped in parentheses after
-//! `return`, `=`, `=>`, `&&`/`||`/`??` and in ternary branches.
+//! line), children laid out by [`super::jsx_children`] and [`super::jsx_layout`] between the
+//! tags (indented, on their own lines when the element breaks), multi-line elements wrapped in
+//! parentheses after `return`, `=`, `=>` and `&&`/`||`/`??`, and conditionals with an element
+//! in them in prettier's JSX mode (element branches wrapped in parentheses when the chain
+//! breaks).
 //!
-//! The AST is never changed: parentheses around an element are not part of it (the parser drops
-//! them), self-closing tags stay self-closing, attribute strings keep their entities, and no
-//! `{" "}` is introduced (a space that matters stays on its line instead).
+//! What an element renders never changes: parentheses around an element are not part of the
+//! AST (the parser drops them), self-closing tags stay self-closing, attribute strings keep their
+//! entities, and text only moves where React's whitespace rules allow it. Like prettier, a space
+//! next to a tag may turn into `{" "}` where the line breaks (and back): the AST then differs
+//! only in how the same text is split between text and string children.
 
 use velt_syntax::ast::{
-    BinaryOp, Expr, ExprKind, JsxAttr, JsxAttrValue, JsxChild, JsxElement, JsxName,
+    ArrowBody, BinaryOp, Expr, ExprKind, JsxAttr, JsxAttrValue, JsxChild, JsxElement, JsxName, Lit,
 };
 
 use super::func::breaks_itself;
-use super::jsx_children::Edge;
+use super::jsx_children::{child_bounds, is_meaningful, Child};
+use super::jsx_layout::{multiline, part_doc, tidy};
 use super::Printer;
 use crate::doc::{
-    break_parent, cat, concat, fill, group, hardline, if_break, indent, join, line, nil, softline,
-    text, Doc,
+    break_parent, cat, concat, conditional, fill, group, group_broken, hardline, if_break, indent,
+    join, line, nil, softline, text, Doc,
 };
 use crate::source::slice;
 
@@ -26,43 +31,86 @@ impl Printer<'_> {
         let ExprKind::Jsx(el) = &e.kind else {
             return self.expr(e);
         };
+        let broken = self.broken_jsx_bodies.contains(&e.span.lo);
         self.with_leading(e.span.lo, |p| {
             let inner = p.jsx_element(el);
-            group(cat![
+            let wrapped = cat![
                 if_break("(", ""),
                 indent(cat![softline(), inner]),
                 softline(),
                 if_break(")", "")
-            ])
+            ];
+            if broken {
+                group_broken(wrapped)
+            } else {
+                group(wrapped)
+            }
         })
     }
 
-    /// An element or fragment.
+    /// An element or fragment (prettier's `printJsxElementInternal`): on one line if it fits
+    /// and nothing forces a break, else the children go on their own lines between the tags.
     pub(super) fn jsx_element(&mut self, el: &JsxElement) -> Doc {
         let name = el.name.as_ref().map(JsxName::to_source).unwrap_or_default();
-        let open_end = el.children.first().map_or(el.span.hi, child_lo);
+        let open_end = el
+            .children
+            .first()
+            .map_or(el.span.hi, |c| child_bounds(c).0);
         let self_closing = el.children.is_empty() && is_self_closing(slice(self.src, el.span));
         let open = self.jsx_opening(&name, &el.attrs, open_end, self_closing);
         if self_closing {
             return open;
         }
-        let children = self.jsx_children(&el.children);
-        let close = self.jsx_closing(&name, el.span.hi);
-        if children.parts.is_empty() {
-            return cat![open, children.start.glue(), close];
+        if let [JsxChild::Expr {
+            expr: Some(e),
+            span,
+        }] = el.children.as_slice()
+        {
+            if matches!(e.kind, ExprKind::Template { .. }) {
+                let child = self.jsx_container(e, span.hi);
+                let close = self.jsx_closing(&name, el.span.hi);
+                return cat![open, child, close];
+            }
         }
-        let forced = forces_break(el);
-        let edge = |e: Edge| match e {
-            Edge::Glue(s) => text(s),
-            Edge::Break if forced => hardline(),
-            Edge::Break => softline(),
+        let children = self.jsx_virtual_children(el);
+        let contains_text = children
+            .iter()
+            .any(|c| matches!(c, Child::Text(raw) if is_meaningful(raw)));
+        let expressions = children
+            .iter()
+            .filter(|c| matches!(c, Child::Node(JsxChild::Expr { .. })))
+            .count();
+        let mut parts = self.jsx_parts(&children);
+        let close = self.jsx_closing(&name, el.span.hi);
+        tidy(&mut parts, contains_text);
+        if parts.is_empty() {
+            return cat![open, close];
+        }
+        let (lines, children_break) = multiline(&parts);
+        let forced = open.breaks()
+            || children_break
+            || el
+                .children
+                .iter()
+                .any(|c| matches!(c, JsxChild::Element(_)))
+            || expressions > 1
+            || (el.name.is_some() && el.attrs.len() > 1);
+        let content = if contains_text {
+            fill(lines)
+        } else {
+            group_broken(concat(lines))
         };
-        group(cat![
-            open,
-            indent(cat![edge(children.start), fill(children.parts)]),
-            edge(children.end),
-            close
-        ])
+        let multi = group(cat![
+            open.clone(),
+            indent(cat![hardline(), content]),
+            hardline(),
+            close.clone()
+        ]);
+        if forced {
+            return multi;
+        }
+        let flat = parts.iter().map(part_doc).collect();
+        conditional(vec![group(cat![open, concat(flat), close]), multi])
     }
 
     /// `<name attrs>` / `<name attrs />`; comments up to `end` stay inside the tag.
@@ -128,6 +176,16 @@ impl Printer<'_> {
     /// `{expr}` ending at `hi`: hugged when the expression breaks well by itself, else the
     /// expression moves inside indented braces when too long.
     pub(super) fn jsx_container(&mut self, expr: &Expr, hi: u32) -> Doc {
+        if let ExprKind::Call { args, .. } = &expr.kind {
+            let bodies = args.iter().filter_map(|a| match &a.kind {
+                ExprKind::Arrow {
+                    body: ArrowBody::Expr(body),
+                    ..
+                } if matches!(body.kind, ExprKind::Jsx(_)) => Some(body.span.lo),
+                _ => None,
+            });
+            self.broken_jsx_bodies.extend(bodies);
+        }
         let inner = self.expr(expr);
         let dangling = self.jsx_dangling(hi);
         if hugs(expr) {
@@ -156,12 +214,44 @@ impl Printer<'_> {
         concat(parts.collect())
     }
 
-    /// `cond ? a : b` where a branch is a JSX element: `cond ? (` … `) : (` … `)`.
+    /// A conditional chain with an element in it, in prettier's JSX mode: `cond ? (` … `) : (`
+    /// … `)`, one group for the whole chain.
     pub(super) fn jsx_conditional(&mut self, cond: &Expr, then: &Expr, els: &Expr) -> Doc {
+        group(self.jsx_conditional_chain(cond, then, els))
+    }
+
+    fn jsx_conditional_chain(&mut self, cond: &Expr, then: &Expr, els: &Expr) -> Doc {
         let cond = self.expr(cond);
-        let then = self.expr_jsx_parens(then);
-        let els = self.expr_jsx_parens(els);
-        group(cat![cond, " ? ", then, " : ", els])
+        let then = self.jsx_branch(then, false);
+        let els = self.jsx_branch(els, true);
+        cat![cond, " ? ", then, " : ", els]
+    }
+
+    /// A branch in JSX mode. An element is wrapped in parentheses when the chain breaks;
+    /// `null` and a conditional continuing the chain as the alternate are printed as they are.
+    /// Prettier wraps any other branch too, but here parentheses are part of the AST (only those
+    /// around an element are layout), so such a branch keeps the parentheses it was written with
+    /// and moves to its own line only when it does not fit.
+    fn jsx_branch(&mut self, e: &Expr, alternate: bool) -> Doc {
+        match &e.kind {
+            ExprKind::Lit(Lit::Null) => self.expr(e),
+            ExprKind::Cond { cond, then, els } if alternate => {
+                self.with_leading(e.span.lo, |p| p.jsx_conditional_chain(cond, then, els))
+            }
+            ExprKind::Jsx(_) => {
+                let inner = self.with_leading(e.span.lo, |p| p.expr(e));
+                cat![
+                    if_break("(", ""),
+                    indent(cat![softline(), inner]),
+                    softline(),
+                    if_break(")", "")
+                ]
+            }
+            _ => {
+                let inner = self.with_leading(e.span.lo, |p| p.expr(e));
+                group(indent(cat![softline(), inner]))
+            }
+        }
     }
 }
 
@@ -170,15 +260,20 @@ impl Printer<'_> {
 pub(super) fn is_jsx_layout(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Jsx(_) => true,
-        ExprKind::Cond { then, els, .. } => is_jsx_conditional(then, els),
+        ExprKind::Cond { cond, then, els } => is_jsx_conditional(cond, then, els),
         ExprKind::Binary { op, rhs, .. } => is_jsx_operand(*op, rhs),
         _ => false,
     }
 }
 
-/// Does a conditional need the JSX layout (a branch is an element)?
-pub(super) fn is_jsx_conditional(then: &Expr, els: &Expr) -> bool {
-    matches!(then.kind, ExprKind::Jsx(_)) || matches!(els.kind, ExprKind::Jsx(_))
+/// Does a conditional need the JSX layout: is there an element among the operands of the
+/// conditionals of its chain (prettier's `conditionalExpressionChainContainsJsx`)?
+pub(super) fn is_jsx_conditional(cond: &Expr, then: &Expr, els: &Expr) -> bool {
+    [cond, then, els].into_iter().any(|e| match &e.kind {
+        ExprKind::Jsx(_) => true,
+        ExprKind::Cond { cond, then, els } => is_jsx_conditional(cond, then, els),
+        _ => false,
+    })
 }
 
 /// `a && <b />`: the element follows the operator on its line (wrapped in parentheses when it
@@ -186,21 +281,6 @@ pub(super) fn is_jsx_conditional(then: &Expr, els: &Expr) -> bool {
 pub(super) fn is_jsx_operand(op: BinaryOp, rhs: &Expr) -> bool {
     matches!(op, BinaryOp::And | BinaryOp::Or | BinaryOp::Nullish)
         && matches!(rhs.kind, ExprKind::Jsx(_))
-}
-
-/// Prettier's rule: an element whose children include an element, several expression
-/// containers, or that has several attributes, always puts its children on their own lines.
-fn forces_break(el: &JsxElement) -> bool {
-    let containers = el
-        .children
-        .iter()
-        .filter(|c| matches!(c, JsxChild::Expr { .. } | JsxChild::Spread { .. }))
-        .count();
-    let has_element = el
-        .children
-        .iter()
-        .any(|c| matches!(c, JsxChild::Element(_)));
-    has_element || containers > 1 || (el.name.is_some() && el.attrs.len() > 1)
 }
 
 /// Expressions printed directly inside `{}` (they break well by themselves).
@@ -223,22 +303,12 @@ fn attr_string(raw: &str) -> String {
 
 /// Was the element written `<a />` (rather than `<a></a>`)? Its source then ends with the
 /// `/>` token, not with the `*/>` of a comment in a closing tag.
-fn is_self_closing(source: &str) -> bool {
+pub(super) fn is_self_closing(source: &str) -> bool {
     source.ends_with("/>") && !source.ends_with("*/>")
 }
 
 fn attr_lo(attr: &JsxAttr) -> u32 {
     match attr {
         JsxAttr::Spread { span, .. } | JsxAttr::Named { span, .. } => span.lo,
-    }
-}
-
-/// Where a child starts in the source.
-fn child_lo(child: &JsxChild) -> u32 {
-    match child {
-        JsxChild::Text { span, .. }
-        | JsxChild::Expr { span, .. }
-        | JsxChild::Spread { span, .. } => span.lo,
-        JsxChild::Element(el) => el.span.lo,
     }
 }
