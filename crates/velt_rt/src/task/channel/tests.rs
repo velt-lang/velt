@@ -112,3 +112,29 @@ fn try_receive_writes_null_when_empty() {
     velt_rt_chan_close(h);
     assert!(CHANNELS.get(h).is_none());
 }
+
+static TRY_DROPPED: AtomicUsize = AtomicUsize::new(0);
+
+unsafe extern "C" fn count_try_drop(item: *mut u8) {
+    TRY_DROPPED.fetch_add(*(item as *const u64) as usize, Ordering::SeqCst);
+}
+
+fn try_send(h: Key<Chan>, v: u64) -> bool {
+    // SAFETY: an 8-byte item.
+    unsafe { velt_rt_chan_try_send(h, &v as *const u64 as *const u8, 8, Some(count_try_drop)) }
+}
+
+#[test]
+fn try_send_queues_only_with_room_and_drops_what_it_refuses() {
+    let h = velt_rt_chan_new(1);
+    assert!(try_send(h, 1));
+    assert!(!try_send(h, 10), "full");
+    assert_eq!(velt_rt_chan_len(h), 1);
+    velt_rt_chan_close(h);
+    assert!(!try_send(h, 100), "closed");
+    assert_eq!(TRY_DROPPED.load(Ordering::SeqCst), 110);
+    let mut slot = [0u8; 16];
+    // SAFETY: a 16-byte `u64 | null` slot.
+    unsafe { velt_rt_chan_try_receive(h, slot.as_mut_ptr(), 8, 8) };
+    assert_eq!((slot[0], slot[8]), (1, 1));
+}

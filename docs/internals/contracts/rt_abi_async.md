@@ -136,8 +136,8 @@ like the socket handles (§3.2): a channel leaves the table once it is closed an
 later use of a copy sees a closed, empty channel. The runtime never sees a `T`, only its bytes:
 every call passes the item size (align <= 16). `receive` results are a `T | null` in the
 compiler's layout: `payload` is the offset of the value after the `bool` present flag, or 0 when
-`T` is pointer-like and null is the zero pointer. `send`, `receive` and `tryReceive` are reached
-through the std-only intrinsics `__intrinsic_chan_{send,receive,try_receive}<T>` (lowering knows
+`T` is pointer-like and null is the zero pointer. `send`, `trySend`, `receive` and `tryReceive` are reached
+through the std-only intrinsics `__intrinsic_chan_{send,try_send,receive,try_receive}<T>` (lowering knows
 `T`'s size, layout and drop glue; it transfers the value first, like a `spawn` argument: a value the
 sender still shares is deep-copied). No code pointers are stored, except the `item_drop` a pending
 `send` future owns (§13.5).
@@ -149,6 +149,7 @@ sender still shares is deep-copied). No code pointers are stored, except the `it
 | `velt_rt_chan_closed` | `(u64 ch) -> bool` | |
 | `velt_rt_chan_len` | `(u64 ch) -> u64` | queued items |
 | `velt_rt_chan_send` | `(u64 ch, const void* src, u64 size, void (*item_drop)(void*)) -> VeltFut*` | moves the item's bytes (and ownership) into the future at the call; `bool` result: queued (after waiting for space), or false when closed. An item not queued is dropped with `item_drop` (null: nothing to drop) |
+| `velt_rt_chan_try_send` | `(u64 ch, const void* src, u64 size, void (*item_drop)(void*)) -> bool` | moves the item's bytes into the channel if it has room now; false when full or closed, and the item is dropped with `item_drop` |
 | `velt_rt_chan_receive` | `(u64 ch, u64 size, u64 payload, u64 slot_size) -> VeltFut*` | result: a `slot_size`-byte `T \| null` (see above), null once closed and drained |
 | `velt_rt_chan_try_receive` | `(u64 ch, void* dst, u64 size, u64 payload)` | writes the oldest item, or null, as a `T \| null` at `dst` |
 

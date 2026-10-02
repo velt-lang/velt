@@ -80,7 +80,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             (I::PerfNow, []) => self.rt_value(Rt::PerfNow, vec![], ty),
             (I::DateNow, []) => self.rt_value(Rt::DateNow, vec![], ty),
             (I::PromiseWiden, [p]) => self.promise_widen(p, ty, false),
-            (I::ChanSend | I::ChanReceive | I::ChanTryReceive, _) => {
+            (I::ChanSend | I::ChanTrySend | I::ChanReceive | I::ChanTryReceive, _) => {
                 self.chan_intrinsic(i, args, ty)
             }
             _ => self.sync_intrinsic(i, args, ty),

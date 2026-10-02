@@ -83,6 +83,9 @@ pub enum Intrinsic {
     /// std only: `__intrinsic_chan_receive<T>(ch: u64): Promise<T | null>` — the oldest value,
     /// or null once the channel is closed and drained.
     ChanReceive,
+    /// std only: `__intrinsic_chan_try_send<T>(ch: u64, value: T): bool` — moves `value` into
+    /// the channel if it has room; false (and `value` dropped) if it is full or closed.
+    ChanTrySend,
     /// std only: `__intrinsic_chan_try_receive<T>(ch: u64): T | null` — the oldest value if one
     /// is queued.
     ChanTryReceive,

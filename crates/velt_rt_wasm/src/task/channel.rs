@@ -173,6 +173,27 @@ pub unsafe extern "C" fn velt_rt_chan_send(
     })
 }
 
+/// `ch.trySend(value)` (see velt_rt): true if the item was queued now; otherwise it is dropped
+/// with `item_drop`.
+///
+/// # Safety
+/// `src` must hold a `size`-byte item.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_chan_try_send(
+    h: u64,
+    src: *const u8,
+    size: u64,
+    item_drop: Option<ResultDropFn>,
+) -> bool {
+    let sent = get(h).is_some_and(|c| c.try_push(src, size as usize) == Some(true));
+    if !sent {
+        if let Some(d) = item_drop {
+            d(src as *mut u8);
+        }
+    }
+    sent
+}
+
 /// `await ch.receive()` (see velt_rt): the result slot gets a `T | null`.
 ///
 /// # Safety
@@ -443,5 +464,21 @@ mod tests {
             ),
             (1, 1)
         );
+    }
+
+    #[test]
+    fn try_send_queues_only_with_room_and_drops_what_it_refuses() {
+        DROPPED.with(|d| d.set(0));
+        let h = velt_rt_chan_new(1);
+        let try_send = |v: u64| {
+            // SAFETY: an 8-byte item.
+            unsafe { velt_rt_chan_try_send(h, &v as *const u64 as *const u8, 8, Some(count_drop)) }
+        };
+        assert!(try_send(1));
+        assert!(!try_send(10), "full");
+        velt_rt_chan_close(h);
+        assert!(!try_send(100), "closed");
+        assert_eq!(DROPPED.with(Cell::get), 110);
+        assert_eq!(received(receive(h)), Some(1));
     }
 }
