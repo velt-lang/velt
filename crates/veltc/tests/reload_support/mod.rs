@@ -11,6 +11,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
+mod job;
+
 /// How long one expectation may take (an `--exe` rebuild in a debug build of `velt` included).
 /// Generous like the golden harness's: under a full gate run the machine is saturated, and a
 /// first `--exe` build took over 30 s there.
@@ -50,10 +53,13 @@ pub struct Mark {
     stderr: usize,
 }
 
-/// A running `velt dev` (in its own process group on Unix, so the program dies with it).
+/// A running `velt dev` (in its own process group on Unix and a job object on Windows, so the
+/// programs it starts end with it).
 pub struct Dev {
     child: Child,
     log: Arc<Mutex<Log>>,
+    #[cfg(windows)]
+    job: job::Job,
 }
 
 impl Dev {
@@ -70,12 +76,19 @@ impl Dev {
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
         let mut child = cmd.spawn().expect("start velt dev");
+        #[cfg(windows)]
+        let job = job::Job::holding(&child);
         let log = Arc::new(Mutex::new(Log::default()));
         let out = child.stdout.take().unwrap();
         let err = child.stderr.take().unwrap();
         capture(out, log.clone(), |l| &mut l.stdout);
         capture(err, log.clone(), |l| &mut l.stderr);
-        Dev { child, log }
+        Dev {
+            child,
+            log,
+            #[cfg(windows)]
+            job,
+        }
     }
 
     /// Send `signal` to the supervisor alone (as a process manager would).
@@ -195,14 +208,22 @@ impl Dev {
 }
 
 impl Drop for Dev {
+    /// End `velt dev` and its programs, and wait until they have exited: on Windows their
+    /// directory can't be removed while they hold files in it.
     fn drop(&mut self) {
         #[cfg(unix)]
         if let Ok(pid) = i32::try_from(self.child.id()) {
             // SAFETY: signals our own process group (the supervisor and the program).
             unsafe { libc::kill(-pid, libc::SIGKILL) };
         }
+        #[cfg(windows)]
+        let ended = self.job.end();
         let _ = self.child.kill();
         let _ = self.child.wait();
+        #[cfg(windows)]
+        if !ended && !std::thread::panicking() {
+            panic!("the programs `velt dev` started did not exit");
+        }
     }
 }
 
@@ -303,4 +324,64 @@ impl Probe {
         let _ = self.thread.join();
         self.refused.load(Ordering::Relaxed)
     }
+}
+
+/// A temporary directory for a `velt dev` session, removed when dropped. `tempfile` ignores a
+/// removal that fails, which on Windows left a directory behind whenever a program still held
+/// a file in it (the shared runtime is about 110 MB with its debug info); here a removal that
+/// still fails after the files were released ([`remove`]) fails the test. Drop the [`Dev`] using
+/// it first.
+pub struct TestDir(Option<tempfile::TempDir>);
+
+impl TestDir {
+    /// A new directory in the system's temporary directory, named `velt-dev-test-*`.
+    pub fn new() -> TestDir {
+        let dir = tempfile::Builder::new().prefix("velt-dev-test-").tempdir();
+        TestDir(Some(dir.expect("temp dir")))
+    }
+
+    /// Where it is.
+    pub fn path(&self) -> &Path {
+        self.0.as_ref().expect("ICE: removed").path()
+    }
+}
+
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        let Some(dir) = self.0.take() else { return };
+        let path = dir.keep();
+        if let Err(e) = remove(&path) {
+            let msg = format!("cannot remove the test directory {}: {e}", path.display());
+            if std::thread::panicking() {
+                eprintln!("{msg}");
+            } else {
+                panic!("{msg}");
+            }
+        }
+    }
+}
+
+/// How long Windows may take to release the files of programs that have exited.
+#[cfg(windows)]
+const RELEASE_LIMIT: Duration = Duration::from_secs(10);
+
+/// Remove `dir` and everything in it. On Windows the executable and DLLs of a program that has
+/// exited, and been waited for, can stay locked for a few more milliseconds (the system tears
+/// down the image mapping, an antivirus scans the closed files): a removal that fails is
+/// repeated until it succeeds or [`RELEASE_LIMIT`] has passed.
+fn remove(dir: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        let deadline = Instant::now() + RELEASE_LIMIT;
+        loop {
+            match std::fs::remove_dir_all(dir) {
+                Err(_) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                result => return result,
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    std::fs::remove_dir_all(dir)
 }

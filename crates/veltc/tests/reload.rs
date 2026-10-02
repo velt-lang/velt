@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use reload_support::{get, Background, Dev, Mark, Probe};
+use reload_support::{get, Background, Dev, Mark, Probe, TestDir};
 
 /// One `expect` line.
 #[derive(Debug)]
@@ -157,7 +157,7 @@ struct Run<'d> {
 }
 
 fn run_case(case: &Path, mode: Mode) -> Result<(), String> {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = TestDir::new();
     let mut dev: Option<Dev> = None;
     let mut probe = None;
     let mut background = HashMap::new();
@@ -296,7 +296,7 @@ fn reload_goldens() {
 #[cfg(unix)]
 #[test]
 fn sigterm_stops_the_program() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = TestDir::new();
     apply(&root().join("tests/reload/hello_server/1"), dir.path());
     let mut dev = Dev::start(dir.path(), &[]);
     let started = dev.wait_stderr(Mark::default(), "velt dev: started");
@@ -317,7 +317,7 @@ fn sigterm_stops_the_program() {
 #[cfg(target_os = "linux")]
 #[test]
 fn spare_host_is_discarded() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = TestDir::new();
     let case = root().join("tests/reload/hello_server/1");
     apply(&case, dir.path());
     let main = std::fs::read_to_string(case.join("main.vlt")).unwrap();
@@ -370,7 +370,7 @@ fn spare_host_is_discarded() {
 /// the same failed build prints its diagnostics.
 #[test]
 fn quiet_host_prints_no_diagnostics() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = TestDir::new();
     let main = std::fs::read_to_string(root().join("tests/reload/hello_server/1/main.vlt"));
     let bad = main.unwrap().replace("Response.text", "Response.txt");
     save(&dir.path().join("main.vlt"), bad);
@@ -399,7 +399,7 @@ fn quiet_host_prints_no_diagnostics() {
 #[cfg(target_os = "linux")]
 #[test]
 fn second_interrupt_kills_the_program() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = TestDir::new();
     apply(&root().join("tests/reload/in_flight/1"), dir.path());
     let mut dev = Dev::start(dir.path(), &[]);
     let started = dev.wait_stderr(Mark::default(), "velt dev: started");
@@ -469,7 +469,7 @@ fn bench_save_to_first_response() {
 /// Sorted save → first response times of 10 edits.
 fn bench(mode: Mode, edit: BenchEdit) -> Vec<Duration> {
     let case = root().join("tests/reload/hello_server/1");
-    let dir = tempfile::tempdir().unwrap();
+    let dir = TestDir::new();
     apply(&case, dir.path());
     let source = std::fs::read_to_string(dir.path().join("main.vlt")).unwrap();
     let dev = Dev::start(dir.path(), mode.flags());
