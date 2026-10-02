@@ -202,6 +202,36 @@ export class Map<K, V> {
 
   // ─────────────── internals (not part of the JS surface) ───────────────
 
+  // `deepEqual` (the compiler's equality glue calls it): the same keys, matched as `get`
+  // matches them, each with a deeply equal value, in any order (Node's `isDeepStrictEqual`).
+  __deepEquals(other: Map<K, V>): bool {
+    if (this._size != other._size) {
+      return false;
+    }
+    for (let e: usize = 0; e < this.entryKeys.length; e++) {
+      if (this.entryValues[e] != null) {
+        const p = __intrinsic_hash(this.entryKeys[e]) * FIB;
+        const o = other.lookup(this.entryKeys[e], p);
+        if (o < 0 || !__intrinsic_eq(this.entryValues[e], other.entryValues[o as usize])) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  // The hash glue's hash of a map, consistent with `__deepEquals`: its size and its keys, in
+  // any order (a map used as a map key compares by content, like an array key).
+  __deepHash(): u64 {
+    let h = this._size as u64;
+    for (let e: usize = 0; e < this.entryKeys.length; e++) {
+      if (this.entryValues[e] != null) {
+        h = h ^ __intrinsic_hash(this.entryKeys[e]);
+      }
+    }
+    return h;
+  }
+
   // Probes for `key` (scrambled hash `p`): its entry position if present, else -(stop + 1)
   // where `stop` is the slot a new entry for `key` goes to (Robin Hood order). A hit returns the
   // position so the caller goes straight to the entry arrays. Terminates because the load

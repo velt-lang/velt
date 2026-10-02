@@ -26,7 +26,8 @@ enum. Any other `K` is an error that suggests `Map<K, V>`. A written key type is
 the type is resolved; a type parameter used as a key is checked at each instantiation, where it
 meets a concrete type (sema `record_keys.rs`, like the JSON check). Like JS objects and `Map`, a record is a
 reference type: assigning one shares it (both names see the same entries, and `==` compares
-identity), and `clone()` copies it.
+identity), and `clone()` copies it. `deepEqual` compares two records by their entries in any
+key order (equality glue: `Map.__deepEquals`).
 
 **Representation.** It is a prelude class over the same insertion-ordered hash table as `Map`. The
 compiler sees it as an ordinary class; the new parts are the typing rules below. No new runtime is

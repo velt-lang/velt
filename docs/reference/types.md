@@ -115,8 +115,8 @@ console.log(label("tea", 3), "a,b".split(","), "  x ".trim().padStart(3, "*"));
   `[1] == [1]` is `false`, and `a == b` is `true` when `b` refers to the same object as `a`.
   `T | null`, unions and tuples compare their parts that way.
 - Content comparison: `deepEqual(a, b)` ([prelude](../std/prelude.md)) compares arrays,
-  structs and object literals by their contents, recursively, and class instances (`Map`
-  included) by identity; `assertEq` uses it.
+  structs and object literals by their contents, recursively; maps and records by their keys
+  and values, in any key order; other class instances by identity. `assertEq` uses it.
 - `<`, `<=`, `>`, `>=` work on numbers and strings, and on a generic `T extends Comparable<T>`
   ([Comparable](classes.md#comparable)).
 
