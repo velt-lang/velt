@@ -287,6 +287,9 @@ Maintainer-owned, like hir.rs.
   its captures (any by-value mode) hold the cell; borrowed captures point into it as usual.
 - `AdtDef::assigned`: a field of the object type is assigned somewhere; such a type is shared as
   one counted object, others may be shared by copying their fields.
+- `AdtDef::private_fields` (additive): some field, own or inherited, is `private`. Such a type has
+  no JSON form: sema rejects it for `JSON.parse`/`JSON.stringify`, and lowering never writes a
+  value of it dynamically (a subclass with private fields is written as its static class).
 - Modifying through a pattern / `for...of` / by-reference `const` binding is allowed (JS):
   mutation inference counts it against the place the binding points into.
 - `==` / `!=` on non-primitive types are `Intrinsic::Same` (JS `===`: objects — class instances,

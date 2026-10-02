@@ -1,0 +1,4 @@
+json_handle_forge.vlt:9:10: error: cannot convert to or from JSON: `{ n: BigInt; patterns: RegExp[] }` contains `BigInt`, which has no JSON form: its field `handle` is private
+json_handle_forge.vlt:13:13: error: cannot convert to or from JSON: `Boxed` contains `BigInt`, which has no JSON form: its field `handle` is private
+json_handle_forge.vlt:14:14: error: cannot convert to or from JSON: `RegExp[]` contains `RegExp`, which has no JSON form: its field `handle` is private
+json_handle_forge.vlt:15:13: error: cannot convert to or from JSON: `Mutex<i64>` has no JSON form: its field `lock` is private

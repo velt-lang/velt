@@ -1,6 +1,8 @@
 //! What `JSON.stringify` / `JSON.parse<T>` can be generated for (after all bodies): numbers,
-//! `bool`, `string`, arrays, `T | null`, C-like enums, unions (stringify only), structs / classes / object literals whose fields are
-//! all serializable, and the prelude's `JsonValue`. The intrinsics sit in generic prelude code
+//! `bool`, `string`, arrays, `T | null`, C-like enums, unions (stringify only), structs / classes
+//! / object literals whose fields are all public and serializable, and the prelude's `JsonValue`.
+//! A type with a private field has no JSON form: std types keep runtime handles (pointers) in
+//! private fields, and decoding one from untrusted input would forge it. The intrinsics sit in generic prelude code
 //! (`JSON.stringify<T>`), so a requirement on a type parameter propagates to every caller (and
 //! from a closure to its enclosing function) until it meets a concrete type, which is checked at
 //! that call site. A method dispatched dynamically (through an interface or a base class) has
@@ -191,20 +193,49 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
         );
         return true;
     }
-    let what = if t == bad {
+    let mut what = if t == bad {
         format!("`{tn}` has no JSON form")
     } else {
         format!("`{tn}` contains `{bn}`, which has no JSON form")
     };
-    let mut d =
-        Diagnostic::error(format!("cannot convert to or from JSON: {what}"), span).with_note(
+    let private = private_field(cx, bad);
+    if let Some(field) = &private {
+        what.push_str(&format!(": its field `{field}` is private"));
+    }
+    let mut d = Diagnostic::error(format!("cannot convert to or from JSON: {what}"), span);
+    d = match private {
+        Some(_) => d.with_note(
+            "a type with private fields (such as a runtime handle) has no JSON form; convert it to a type with public fields first",
+        ),
+        None => d.with_note(
             "JSON supports numbers, bool, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`",
-        );
+        ),
+    };
     if matches!(cx.ty.kind(bad), TyKind::Adt(d, _) if Some(*d) == cx.prelude_adt("Map")) {
         d = d.with_note("a `Map` converts to a JSON object only with `string` keys");
     }
     cx.error(d);
     true
+}
+
+/// The first private field of struct or class type `t`, if it has one.
+fn private_field(cx: &Ctx, t: TyId) -> Option<String> {
+    let TyKind::Adt(d, _) = cx.ty.kind(t) else {
+        return None;
+    };
+    let d = *d;
+    // The prelude's `Map` and `Record` have their own rules (and private fields of their own).
+    if Some(d) == cx.prelude_adt("Map") || Some(d) == cx.prelude_adt("Record") {
+        return None;
+    }
+    match &cx.info[d.0 as usize] {
+        DefInfo::Adt(a) => a
+            .fields
+            .iter()
+            .find(|f| f.private_to.is_some())
+            .map(|f| f.name.clone()),
+        _ => None,
+    }
 }
 
 /// Lowering (`velt_vir` lower/json read.rs and write.rs) handles exactly what this accepts:
@@ -246,6 +277,10 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
                 };
             }
             let tys: Vec<TyId> = match &cx.info[d.0 as usize] {
+                // Private fields hold what a type keeps to itself (runtime handles in std).
+                DefInfo::Adt(a) if a.fields.iter().any(|f| f.private_to.is_some()) => {
+                    return Some(t)
+                }
                 DefInfo::Adt(a)
                     if matches!(a.kind, AdtKind::Struct | AdtKind::Class | AdtKind::Anon) =>
                 {

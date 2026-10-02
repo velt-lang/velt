@@ -59,6 +59,7 @@ function check(s: IoStatus) {
 // A subscribed connection (a Copy handle like `RedisClient`; release it with `close()`).
 export struct RedisSubscriber {
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   // The next message; null once `close()` was called. Throws `RedisError` ("ECONNRESET") if
   // the server closes the connection.
@@ -115,3 +116,8 @@ export async function openSubscriber(
   }
   return RedisSubscriber { handle: r.value };
 }
+
+// A field of this type makes a type opaque: a type with a private field has no JSON form,
+// so untrusted JSON can't produce the runtime handle it holds, and `JSON.stringify` doesn't
+// write it. It takes no space.
+struct RuntimeHandle {}

@@ -1,0 +1,6 @@
+json_handles_http.vlt:7:10: error: cannot convert to or from JSON: `Response` has no JSON form: its field `runtime` is private
+json_handles_http.vlt:7:30: error: cannot convert to or from JSON: `ResponseWriter` has no JSON form: its field `runtime` is private
+json_handles_http.vlt:11:13: error: cannot convert to or from JSON: `Server` has no JSON form: its field `runtime` is private
+json_handles_http.vlt:12:13: error: cannot convert to or from JSON: `FetchResponse` has no JSON form: its field `runtime` is private
+json_handles_http.vlt:13:13: error: cannot convert to or from JSON: `FetchHeaders` has no JSON form: its field `runtime` is private
+json_handles_http.vlt:14:14: error: cannot convert to or from JSON: `WebSocket` has no JSON form: its field `runtime` is private

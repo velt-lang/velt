@@ -115,6 +115,7 @@ fn adt_def(
     let defaults = field_defaults(cx, d, memo);
     let a = cx.adt(d).expect("ICE: adt");
     let n = a.generics.len();
+    let private_fields = a.fields.iter().any(|f| f.private_to.is_some());
     let fields = a
         .fields
         .iter()
@@ -145,6 +146,7 @@ fn adt_def(
         generics: n as u32,
         fields,
         is_copy: cx.is_copy(st),
+        private_fields,
         assigned,
         base,
         ctor,

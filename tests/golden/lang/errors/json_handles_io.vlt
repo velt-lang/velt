@@ -1,0 +1,19 @@
+// The I/O handles of std (sockets, files, processes, channels) have no JSON form.
+import { TcpListener, TcpStream } from "velt:net";
+import { FileReader, FileWriter } from "velt:fs_stream";
+import { UdpSocket } from "velt:udp";
+import { ChildProcess } from "velt:child_process";
+import { Channel } from "velt:channel";
+
+function write(s: TcpStream, w: FileWriter): string {
+  return JSON.stringify(s) + JSON.stringify(w);
+}
+
+function main() {
+  const l = JSON.parse<TcpListener>('{"port":1,"handle":1}');
+  const s = JSON.parse<TcpStream>('{"handle":1}');
+  const r = JSON.parse<FileReader>('{"handle":1}');
+  const u = JSON.parse<UdpSocket>('{"handle":1}');
+  const p = JSON.parse<ChildProcess>('{"handle":1}');
+  const c = JSON.parse<Channel<i64>>('{"handle":1}');
+}

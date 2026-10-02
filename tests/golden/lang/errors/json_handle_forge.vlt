@@ -1,0 +1,17 @@
+// Untrusted JSON can't forge a runtime handle: std types keep theirs in private fields, and a
+// type with a private field has no JSON form, neither for `JSON.parse` nor for `JSON.stringify`.
+import { BigInt } from "velt:bigint";
+import { RegExp } from "velt:regex";
+
+type Boxed = { n: BigInt };
+
+function show(n: BigInt, r: RegExp): string {
+  return JSON.stringify({ n: n, patterns: [r] });
+}
+
+function main() {
+  const v = JSON.parse<Boxed>('{"n":{"handle":4096}}');
+  const rs = JSON.parse<RegExp[]>('[{"handle":4096}]');
+  const m = JSON.parse<Mutex<i64>>('{"lock":0,"value":1}');
+  console.log(v.n, rs.length, show(new BigInt(1), new RegExp("a")));
+}

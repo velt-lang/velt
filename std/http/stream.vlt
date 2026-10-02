@@ -20,6 +20,7 @@ declare function velt_rt_http_resp_stream_abort(w: u64);
 // their data, so a long producer should stop when they do.
 export struct ResponseWriter {
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   // Buffers a copy of `text`; false once the client has gone away or the stream ended.
   write(text: string): bool {
@@ -71,3 +72,8 @@ export function openStream<E>(r: u64, body: (w: ResponseWriter) => Promise<void,
   const w = ResponseWriter { handle: velt_rt_http_resp_stream_open(r) };
   const running = produce(body, w);
 }
+
+// A field of this type makes a type opaque: a type with a private field has no JSON form,
+// so untrusted JSON can't produce the runtime handle it holds, and `JSON.stringify` doesn't
+// write it. It takes no space.
+struct RuntimeHandle {}

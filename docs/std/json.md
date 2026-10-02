@@ -15,6 +15,24 @@
   literal types (`kind: "task"`), unions of literal types (`"low" | "normal" | "high"`), string
   enums (from their strings) and numeric enums (from their values). Anything else fails with
   the allowed values, e.g. `expected one of "low", "normal", "high" at $.tags[1]`.
+- **Private fields:** a class or struct with a `private` field (own or inherited) has no JSON
+  form, for `JSON.parse<T>` and `JSON.stringify` alike; the error names the field. std types
+  keep their runtime handles that way (`BigInt`, `RegExp`, `Mutex`, sockets, files, HTTP,
+  database clients…), so untrusted JSON can never produce one. To send such a value, convert it
+  to a type with public fields first (`n.toString()` for a `BigInt`, or an object literal of the
+  data you need). A value whose static class has a JSON form but whose dynamic class has
+  private fields is written as its static class.
+
+```ts error
+class Account {
+  name: string = "ada";
+  private secret: string = "pw";
+}
+
+// error: cannot convert to or from JSON: `Account` has no JSON form: its field `secret` is private
+const text = JSON.stringify(new Account());
+```
+
 - Unions decode when `JSON.parse` can tell the members apart from the JSON value:
   - by its kind: `string | i64 | bool | null`, an array, or an object;
   - literal and enum members by value, before a plain member of the same kind (`"auto" | f64`);

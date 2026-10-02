@@ -45,6 +45,7 @@ export struct UdpSocket {
   // The bound local port (useful after binding port 0).
   port: i64;
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   // Sends one datagram to "host:port"; resolves with the number of bytes sent.
   async sendTo(data: u8[], addr: string): Promise<i64> {
@@ -78,3 +79,8 @@ export async function bindUdp(addr: string): Promise<UdpSocket> {
   const handle = unwrapIo(await velt_rt_udp_bind(addr));
   return UdpSocket { port: velt_rt_udp_port(handle) as i64, handle: handle };
 }
+
+// A field of this type makes a type opaque: a type with a private field has no JSON form,
+// so untrusted JSON can't produce the runtime handle it holds, and `JSON.stringify` doesn't
+// write it. It takes no space.
+struct RuntimeHandle {}

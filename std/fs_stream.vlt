@@ -32,6 +32,7 @@ declare function velt_rt_fs_writer_free(w: u64);
 // A file open for reading.
 export struct FileReader {
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   // The next 1..max bytes; empty at end of file (`max` 0 = up to 64 KiB).
   async read(max: u64 = 0): Promise<u8[]> {
@@ -62,6 +63,7 @@ export struct FileReader {
 // A file open for writing, buffered (64 KiB).
 export struct FileWriter {
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   async write(data: string): Promise<void> {
     checkIo(await velt_rt_fs_writer_write(this.handle, data));
@@ -98,3 +100,8 @@ export async function openRead(path: string): Promise<FileReader> {
 export async function openWrite(path: string, opts: OpenWriteOptions = {}): Promise<FileWriter> {
   return FileWriter { handle: unwrapIo(await velt_rt_fs_open_write(path, opts.append ?? false)) };
 }
+
+// A field of this type makes a type opaque: a type with a private field has no JSON form,
+// so untrusted JSON can't produce the runtime handle it holds, and `JSON.stringify` doesn't
+// write it. It takes no space.
+struct RuntimeHandle {}
