@@ -1,8 +1,8 @@
 //! AST → [`Doc`]: the formatting rules. One file per concern: [`items`] and [`decls`] (top-level
 //! declarations), [`stmt`], [`for_loop`], [`expr`], [`binary`], [`call`] (arguments, last-argument hugging),
 //! [`chain`] (member chains), [`literals`] (objects, arrays, strings), [`func`] (signatures,
-//! parameters, arrows), [`switch`], [`patterns`], [`types`], [`jsx`] and [`jsx_children`] (JSX
-//! elements and their children); [`lists`] places comments inside
+//! parameters, arrows), [`switch`], [`patterns`], [`types`], [`jsx`], [`jsx_children`] and
+//! [`jsx_layout`] (JSX elements and their children); [`lists`] places comments inside
 //! line-per-entry bodies and delimited lists.
 //!
 //! Comments are interleaved by byte position: every node flushes the not-yet-printed comments
@@ -18,12 +18,15 @@ mod func;
 mod items;
 mod jsx;
 mod jsx_children;
+mod jsx_layout;
 mod lists;
 mod literals;
 mod patterns;
 mod stmt;
 mod switch;
 mod types;
+
+use std::collections::HashSet;
 
 use velt_syntax::ast::Module;
 
@@ -34,6 +37,9 @@ use crate::doc::{cat, concat, hardline, nil, text, Doc};
 pub(crate) struct Printer<'a> {
     src: &'a str,
     comments: Comments,
+    /// Start offsets of the elements that are the body of an arrow passed to a call directly
+    /// inside `{…}` (`{xs.map((x) => <li />)}`): their parentheses always break (prettier).
+    broken_jsx_bodies: HashSet<u32>,
 }
 
 impl<'a> Printer<'a> {
@@ -41,6 +47,7 @@ impl<'a> Printer<'a> {
         Printer {
             src,
             comments: Comments::new(src),
+            broken_jsx_bodies: HashSet::new(),
         }
     }
 

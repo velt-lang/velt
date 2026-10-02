@@ -1,6 +1,8 @@
 //! Snapshot tests for JSX: tags and attributes, children reflow under React's whitespace rules,
-//! parentheses around multi-line elements, comments inside JSX, and the cases where the
-//! formatter must keep the AST (spaces next to tags, entities, self-closing tags, `{" "}`).
+//! parentheses around multi-line elements, comments inside JSX, conditionals, and the cases
+//! where the formatter must keep what an element renders (spaces next to tags and `{" "}`,
+//! runs of spaces, entities, self-closing tags). Expected outputs are prettier's, except where a
+//! test says otherwise.
 //! Every case is also checked for idempotency, AST preservation and comment preservation.
 
 mod common;
@@ -77,7 +79,7 @@ fn text_reflows_like_a_paragraph() {
 }
 
 #[test]
-fn spaces_next_to_tags_stay_on_their_line() {
+fn spaces_next_to_tags_become_containers_where_lines_break() {
     assert_fmt(
         "const y = <p>Hello <b>world</b>, how are <i>you</i> today?</p>;",
         "const y = (
@@ -87,20 +89,204 @@ fn spaces_next_to_tags_stay_on_their_line() {
 );
 ",
     );
+    // Prettier measures a word without the `{" "}` after it, so this line is 102 columns.
     assert_fmt(
         "const t = <p>This is a long paragraph with an <a href=\"https://example.com/a/very/long/link\">inline link</a> and some <em>emphasis</em> right in the middle of it, isn't it?</p>;",
         "const t = (
   <p>
-    This is a long paragraph with
-    an <a href=\"https://example.com/a/very/long/link\">inline link</a> and
-    some <em>emphasis</em> right in the middle of it, isn't it?
+    This is a long paragraph with an <a href=\"https://example.com/a/very/long/link\">inline link</a>{\" \"}
+    and some <em>emphasis</em> right in the middle of it, isn't it?
   </p>
 );
 ",
     );
     assert_fmt(
-        "const s = <pre>  a   b  </pre>;\nconst s2 = <p> <b>x</b> </p>;\nconst s3 = <p>\tx\t</p>;\n",
-        "const s = <pre>  a   b  </pre>;\nconst s2 = <p> <b>x</b> </p>;\nconst s3 = <p> x </p>;\n",
+        "const s2 = <p> <b>x</b> </p>;
+const s3 = <p>	x	</p>;
+const s4 = <p>{\" \"}leading and trailing{\" \"}</p>;
+",
+        "const s2 = (
+  <p>
+    {\" \"}
+    <b>x</b>{\" \"}
+  </p>
+);
+const s3 = <p> x </p>;
+const s4 = <p> leading and trailing </p>;
+",
+    );
+}
+
+#[test]
+fn components_keep_their_children_as_written() {
+    // A component receives one child as itself and several as an array: `Save{" "}` would turn
+    // the string `"Save "` into `["Save", " "]`. Spaces next to its tags stay text.
+    assert_fmt(
+        "const b = <Button a=\"1\" b=\"2\">Save </Button>;
+const l = <Label>{\" \"}x</Label>;
+const u = <_Card a=\"1\" b=\"2\">Save </_Card>;
+",
+        "const b = (
+  <Button a=\"1\" b=\"2\">
+    Save </Button>
+);
+const l = <Label>{\" \"}x</Label>;
+const u = (
+  <_Card a=\"1\" b=\"2\">
+    Save </_Card>
+);
+",
+    );
+    assert_fmt(
+        "const t = <Trans>This is a long paragraph with an <a href=\"https://example.com/a/very/long/link\">inline link</a> and some <em>emphasis</em> right in the middle of it, isn't it?</Trans>;
+const u = <ui.Trans> lead and a long paragraph that keeps going and going until it has to break ok </ui.Trans>;
+",
+        "const t = (
+  <Trans>
+    This is a long paragraph with an <a href=\"https://example.com/a/very/long/link\">inline link</a> and
+    some <em>emphasis</em> right in the middle of it, isn't it?
+  </Trans>
+);
+const u = (
+  <ui.Trans> lead and a long paragraph that keeps going and going until it has to break
+    ok </ui.Trans>
+);
+",
+    );
+}
+
+#[test]
+fn templates_written_over_several_lines_break_the_element() {
+    assert_fmt(
+        "const p = <p>
+  {`a
+b`}
+</p>;
+const q = <p>{`a
+b`}</p>;
+const r = <p>{`a`}</p>;
+",
+        "const p = (
+  <p>
+    {`a
+b`}
+  </p>
+);
+const q = (
+  <p>{`a
+b`}</p>
+);
+const r = <p>{`a`}</p>;
+",
+    );
+}
+
+#[test]
+fn several_spaces_are_kept() {
+    // Prettier would print `<pre> a b </pre>`, which changes the text.
+    assert_fmt(
+        "const s = <pre>  a   b  </pre>;
+",
+        "const s = <pre>  a   b  </pre>;
+",
+    );
+    assert_fmt(
+        "const f = <p>  two leading spaces then a long text that has to break somewhere around here, <b>ok</b>?</p>;",
+        "const f = (
+  <p>
+    {\"  \"}
+    two leading spaces then a long text that has to break somewhere around here, <b>ok</b>?
+  </p>
+);
+",
+    );
+}
+
+#[test]
+fn line_breaks_and_blank_lines_between_children() {
+    assert_fmt(
+        "const a = <div>
+
+  <A />
+
+  <B />
+  <C />
+
+
+  <D />
+</div>;
+const b = <div>
+  text here
+
+  <A />
+  more text
+</div>;
+",
+        "const a = (
+  <div>
+    <A />
+
+    <B />
+    <C />
+
+    <D />
+  </div>
+);
+const b = (
+  <div>
+    text here
+    <A />
+    more text
+  </div>
+);
+",
+    );
+    assert_fmt(
+        "const c = <p>text<br />more text that is quite long and goes past the limit of the line width for sure yes</p>;
+const k = <div>x<input />yyyyyyyyy</div>;
+const h = <div>{a}{b}</div>;
+",
+        "const c = (
+  <p>
+    text
+    <br />
+    more text that is quite long and goes past the limit of the line width for sure yes
+  </p>
+);
+const k = (
+  <div>
+    x<input />
+    yyyyyyyyy
+  </div>
+);
+const h = (
+  <div>
+    {a}
+    {b}
+  </div>
+);
+",
+    );
+}
+
+#[test]
+fn long_containers_get_spaces_as_containers() {
+    assert_fmt(
+        "const a7 = <p>{aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa} {bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}</p>;
+const q = <Trans>Hello <b>{name}</b>, you have {count} new messages and {other} things waiting for you here</Trans>;
+",
+        "const a7 = (
+  <p>
+    {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}{\" \"}
+    {bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
+  </p>
+);
+const q = (
+  <Trans>
+    Hello <b>{name}</b>, you have {count} new messages and {other} things waiting for you here
+  </Trans>
+);
+",
     );
 }
 
@@ -117,6 +303,32 @@ fn callbacks_returning_jsx_are_hugged() {
       </article>
     ))}
   </main>
+);
+",
+    );
+}
+
+#[test]
+fn elements_returned_by_callbacks_inside_braces_always_break() {
+    assert_fmt(
+        "const l = <ul>{items.map((i) => <li>{i}</li>)}</ul>;
+const m = <ul class={f((i) => <b />)}>x</ul>;
+",
+        "const l = (
+  <ul>
+    {items.map((i) => (
+      <li>{i}</li>
+    ))}
+  </ul>
+);
+const m = (
+  <ul
+    class={f((i) => (
+      <b />
+    ))}
+  >
+    x
+  </ul>
 );
 ",
     );
@@ -143,6 +355,92 @@ fn logical_and_conditional_operands() {
   </div>
 ) : null;
 ",
+    );
+}
+
+#[test]
+fn conditionals_in_jsx_mode_wrap_every_branch() {
+    assert_fmt(
+        "function A() { return cond ? <div><span>a</span></div> : <p>b</p>; }",
+        "function A() {
+  return cond ? (
+    <div>
+      <span>a</span>
+    </div>
+  ) : (
+    <p>b</p>
+  );
+}
+",
+    );
+    assert_fmt(
+        "const b2 = cond ? <a /> : <b />;\nconst b5 = <div>{cond ? <span>a</span> : null}</div>;\n",
+        "const b2 = cond ? <a /> : <b />;\nconst b5 = <div>{cond ? <span>a</span> : null}</div>;\n",
+    );
+    assert_fmt(
+        "const b4 = <div>{cond ? <span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</span> : <span>bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb</span>}</div>;",
+        "const b4 = (
+  <div>
+    {cond ? (
+      <span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</span>
+    ) : (
+      <span>bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb</span>
+    )}
+  </div>
+);
+",
+    );
+    // Prettier also wraps `"fallback string"` in parentheses; they would be a new `Paren` node.
+    assert_fmt(
+        "const b6 = veryLongConditionExpressionNameHere ? <span>aaaaaaaaaaaaaaaaaaaaaaa</span> : \"fallback string\";
+const b8 = veryLongConditionExpressionNameHere ? <span>aaaaaaaaaaaaaaaaaaaaaaaaaa</span> : (\"written\");
+",
+        "const b6 = veryLongConditionExpressionNameHere ? (
+  <span>aaaaaaaaaaaaaaaaaaaaaaa</span>
+) : \"fallback string\";
+const b8 = veryLongConditionExpressionNameHere ? (
+  <span>aaaaaaaaaaaaaaaaaaaaaaaaaa</span>
+) : (\"written\");
+",
+    );
+}
+
+#[test]
+fn conditional_chains_with_an_element_break_together() {
+    assert_fmt(
+        "const b7 = a ? <x/> : b ? <y/> : <zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz />;",
+        "const b7 = a ? (
+  <x />
+) : b ? (
+  <y />
+) : (
+  <zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz />
+);
+",
+    );
+    // The element sits in a nested conditional: the whole chain is in JSX mode. Branches that
+    // are not elements are not wrapped in parentheses (see above); they move to their own line
+    // only when they do not fit.
+    assert_fmt(
+        "const c = first ? \"a string value that is long\" : second ? \"another long string value\" : <Fallback />;
+const d = firstCondition ? \"a string value that is quite long\" : secondCondition ? \"another long string value\" : <Fallback />;
+",
+        "const c = first ? \"a string value that is long\" : second ? \"another long string value\" : (
+  <Fallback />
+);
+const d = firstCondition ? \"a string value that is quite long\" : secondCondition ?
+  \"another long string value\" : (
+  <Fallback />
+);
+",
+    );
+}
+
+#[test]
+fn elements_as_statements_after_blocks() {
+    assert_fmt(
+        "function f(x: boolean) {\n  if (x) {\n  }\n  <div />;\n  while (x) {}\n  <p>a</p>;\n}\n",
+        "function f(x: boolean) {\n  if (x) {}\n  <div />;\n  while (x) {}\n  <p>a</p>;\n}\n",
     );
 }
 
@@ -247,8 +545,7 @@ fn written_space_containers_are_kept() {
         "const e = <p>{\"  \"}x{\" \"}<b>y</b></p>;",
         "const e = (
   <p>
-    {\"  \"}x{\" \"}
-    <b>y</b>
+    {\"  \"}x <b>y</b>
   </p>
 );
 ",
