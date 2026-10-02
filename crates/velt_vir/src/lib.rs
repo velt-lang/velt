@@ -101,8 +101,9 @@
 //!
 //! `__intrinsic_http_handler(async (raw) => …)` (std/http) is the `VeltHandler` 6-tuple
 //! `{ init, poll, drop, state_size, state_align, env }`: the closure's state machine is the
-//! per-request state, lowered to *borrow* its captures from the leaked environment that
-//! concurrent requests share (`async_fn/handler.rs`).
+//! per-request state, lowered to *borrow* its captures from the environment that concurrent
+//! requests share and the runtime releases once the server is closed and its last request
+//! finished (`async_fn/handler.rs`).
 //!
 //! # Source locations (`lower_with`)
 //! With a source map, every VIR statement and terminator records the location of the HIR

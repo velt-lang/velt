@@ -128,8 +128,8 @@ and `typeof x === "undefined"` is an error too (test `x === null`). A value that
 has type `T | null`, stored without an extra allocation where possible.
 
 - `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result is nullable),
-  `if (x != null) { … }` and early exits narrow a local `x` to `T`; `switch` supports
-  `case null`.
+  `if (x != null) { … }` and early exits narrow `x` to `T` (a local or a field path of one,
+  see below); `switch` supports `case null`.
 - `a?: T` is `T | null` everywhere: an optional parameter `b?: T` is `b: T | null = null`
   (callers may leave it out or pass `null`; it cannot also have a default), an optional class
   or interface field starts as `null` (and is omitted by `JSON.stringify` when null), and an
