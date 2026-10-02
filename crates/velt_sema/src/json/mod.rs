@@ -112,15 +112,18 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
             if seen.insert(e.ty) {
                 u.types.push((e.ty, e.span));
             }
-            if let E::Call {
-                callee: Callee::Def(_, targs),
-                ..
-            } = &e.kind
-            {
-                for t in targs {
-                    if seen.insert(*t) {
-                        u.types.push((*t, e.span));
-                    }
+            // Type arguments of generic calls and of generic functions used as values.
+            let targs = match &e.kind {
+                E::Call {
+                    callee: Callee::Def(_, targs),
+                    ..
+                }
+                | E::FnRef(_, targs) => targs.as_slice(),
+                _ => &[],
+            };
+            for t in targs {
+                if seen.insert(*t) {
+                    u.types.push((*t, e.span));
                 }
             }
             uses_of(&mut u, e);
@@ -149,6 +152,9 @@ fn uses_of(u: &mut Uses, e: &Expr) {
             callee: Callee::Def(d, targs),
             ..
         } if !targs.is_empty() => u.calls.push((*d, targs.clone(), e.span)),
+        // A generic function used as a value (`const f: (s: string) => T = decode`) needs what
+        // its calls would need at those type arguments.
+        E::FnRef(d, targs) if !targs.is_empty() => u.calls.push((*d, targs.clone(), e.span)),
         E::Closure(c) => u.closures.push(*c),
         _ => {}
     }
@@ -193,18 +199,20 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
         );
         return true;
     }
-    let mut what = if t == bad {
-        format!("`{tn}` has no JSON form")
-    } else {
-        format!("`{tn}` contains `{bn}`, which has no JSON form")
-    };
     let private = private_field(cx, bad);
-    if let Some(field) = &private {
-        what.push_str(&format!(": its field `{field}` is private"));
-    }
+    let what = match (&private, t == bad) {
+        (Some((field, _)), true) => {
+            format!("`{tn}` has a private field `{field}`, so it has no JSON form")
+        }
+        (Some((field, _)), false) => format!(
+            "`{tn}` contains `{bn}`, which has a private field `{field}`, so it has no JSON form"
+        ),
+        (None, true) => format!("`{tn}` has no JSON form"),
+        (None, false) => format!("`{tn}` contains `{bn}`, which has no JSON form"),
+    };
     let mut d = Diagnostic::error(format!("cannot convert to or from JSON: {what}"), span);
     d = match private {
-        Some(_) => d.with_note(
+        Some((_, field_span)) => d.with_label(field_span, "private field").with_note(
             "a type with private fields (such as a runtime handle) has no JSON form; convert it to a type with public fields first",
         ),
         None => d.with_note(
@@ -218,8 +226,8 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
     true
 }
 
-/// The first private field of struct or class type `t`, if it has one.
-fn private_field(cx: &Ctx, t: TyId) -> Option<String> {
+/// The first private field of struct or class type `t` (name and declaration), if it has one.
+fn private_field(cx: &Ctx, t: TyId) -> Option<(String, Span)> {
     let TyKind::Adt(d, _) = cx.ty.kind(t) else {
         return None;
     };
@@ -233,7 +241,7 @@ fn private_field(cx: &Ctx, t: TyId) -> Option<String> {
             .fields
             .iter()
             .find(|f| f.private_to.is_some())
-            .map(|f| f.name.clone()),
+            .map(|f| (f.name.clone(), f.span)),
         _ => None,
     }
 }

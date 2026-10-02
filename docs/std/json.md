@@ -29,7 +29,7 @@ class Account {
   private secret: string = "pw";
 }
 
-// error: cannot convert to or from JSON: `Account` has no JSON form: its field `secret` is private
+// error: cannot convert to or from JSON: `Account` has a private field `secret`, so it has no JSON form
 const text = JSON.stringify(new Account());
 ```
 

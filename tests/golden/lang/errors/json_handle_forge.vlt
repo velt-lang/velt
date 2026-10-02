@@ -9,9 +9,16 @@ function show(n: BigInt, r: RegExp): string {
   return JSON.stringify({ n: n, patterns: [r] });
 }
 
+// A generic function used as a value is checked at its type arguments too.
+function decode<T>(s: string): T {
+  return JSON.parse<T>(s);
+}
+
 function main() {
   const v = JSON.parse<Boxed>('{"n":{"handle":4096}}');
   const rs = JSON.parse<RegExp[]>('[{"handle":4096}]');
   const m = JSON.parse<Mutex<i64>>('{"lock":0,"value":1}');
-  console.log(v.n, rs.length, show(new BigInt(1), new RegExp("a")));
+  const f: (s: string) => BigInt throws JsonError = decode;
+  const forged = f('{"handle":4096}');
+  console.log(v.n, rs.length, forged, show(new BigInt(1), new RegExp("a")));
 }

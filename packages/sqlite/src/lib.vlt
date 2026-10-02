@@ -18,7 +18,11 @@ declare function sqlite_open(path: string): IoResult<u64>;
 declare function sqlite_close(db: u64): IoStatus;
 declare function sqlite_exec(db: u64, sql: string): IoStatus;
 declare function sqlite_query(db: u64, sql: string, params: string): IoResult<string>;
-declare async function sqlite_query_async(db: u64, sql: string, params: string): Promise<IoResult<string>>;
+declare async function sqlite_query_async(
+  db: u64,
+  sql: string,
+  params: string,
+): Promise<IoResult<string>>;
 declare function sqlite_version(): string;
 declare function sqlite_error_name(code: i32): string;
 
@@ -91,6 +95,7 @@ export class Database {
 // A copyable reference to an open `Database`, for queries that run on the blocking pool.
 export struct DatabaseRef {
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   // `Database.query`, without blocking the calling task.
   async query<T>(sql: string, params: string = "[]"): Promise<T[]> {
@@ -98,3 +103,8 @@ export struct DatabaseRef {
     return JSON.parse<T[]>(json);
   }
 }
+
+// A field of this type makes a type opaque: a type with a private field has no JSON form,
+// so untrusted JSON can't produce the runtime handle it holds, and `JSON.stringify` doesn't
+// write it. It takes no space.
+struct RuntimeHandle {}

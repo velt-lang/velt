@@ -325,6 +325,10 @@ impl FnLower<'_, '_> {
                 self.json_read_record(r, place, ctx, ty, kv, fail)
             }
             TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => {
+                // Sema rejects these; decoding one could forge a runtime handle.
+                if self.cx.adt_def(d).private_fields {
+                    ice("JSON of a type with private fields");
+                }
                 self.json_read_object(r, place, ctx, ty, fail)
             }
             // Unreachable while this match accepts everything `velt_sema::json::unserializable`
