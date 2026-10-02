@@ -92,8 +92,7 @@ fn debug_links_are_skipped_when_nothing_changed() {
     // targets cannot build one) the default already is the static one, still up to date.
     let (skipped, err) = build(dir, &[("VELT_RT_LINK", "static")]);
     assert_eq!(skipped, !shared_runtime_built(), "{err}");
-    let run = Command::new(&exe).output().unwrap();
-    assert_eq!(text(&run.stdout), "hi\n");
+    assert_eq!(text(&run_copy(&exe, "hi").stdout), "hi\n");
 
     // A changed program links again; a deleted executable too.
     std::fs::write(dir.join("hello.vlt"), hello.replace("hi", "ho")).unwrap();
@@ -102,8 +101,20 @@ fn debug_links_are_skipped_when_nothing_changed() {
     std::fs::remove_file(&exe).unwrap();
     let (skipped, err) = build(dir, &[]);
     assert!(!skipped, "{err}");
-    let run = Command::new(&exe).output().unwrap();
-    assert_eq!(text(&run.stdout), "ho\n");
+    assert_eq!(text(&run_copy(&exe, "ho").stdout), "ho\n");
+}
+
+/// Run a copy of `exe` named after `tag`, beside it (where Windows finds the runtime DLL). The
+/// test relinks `exe` afterwards, and on Windows a program that has just exited can keep its file
+/// locked for a moment (an antivirus scan), so the relink must never target a file that ran.
+fn run_copy(exe: &Path, tag: &str) -> Output {
+    let mut name = exe.file_stem().unwrap().to_os_string();
+    name.push(format!("-{tag}"));
+    let copy = exe
+        .with_file_name(name)
+        .with_extension(exe.extension().unwrap_or_default());
+    std::fs::copy(exe, &copy).unwrap();
+    Command::new(&copy).output().unwrap()
 }
 
 /// Whether the shared runtime sits next to the `velt` under test (debug links then use it).

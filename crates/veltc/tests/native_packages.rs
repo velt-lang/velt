@@ -144,7 +144,11 @@ fn sqlite_package_with_native_code() {
     }
     reload_support::build_runtime();
     // `velt run` links debug builds against the shared runtime when it exists: keep it current.
-    if !cfg!(target_env = "musl") {
+    // Not under the gate (`VELT_RT_PREBUILT=1`), which built it with the workspace: rebuilding it
+    // there would replace the import library while tests running in parallel link against it.
+    let prebuilt =
+        cfg!(debug_assertions) && std::env::var_os("VELT_RT_PREBUILT").is_some_and(|v| v == "1");
+    if !cfg!(target_env = "musl") && !prebuilt {
         let profile: &[&str] = if cfg!(debug_assertions) {
             &[]
         } else {
@@ -233,13 +237,18 @@ fn sqlite_package_with_native_code() {
     let run = ok(velt(&app, &home, &["run"]), "velt run");
     assert_eq!(String::from_utf8_lossy(&run.stdout), EXPECTED);
 
-    // Release build: self-contained, it runs without the cached library.
+    // Release build: self-contained, it runs without the cached library. Its own output path:
+    // on Windows the debug executable that just ran can stay locked for a moment.
     ok(
-        velt(&app, &home, &["build", "--release"]),
+        velt(
+            &app,
+            &home,
+            &["build", "--release", "-o", "target/velt-release/app"],
+        ),
         "velt build --release",
     );
     let exe = app
-        .join("target/velt/app")
+        .join("target/velt-release/app")
         .with_extension(std::env::consts::EXE_EXTENSION);
     if !cfg!(windows) {
         std::fs::rename(home.join("cache"), home.join("cache.moved")).unwrap();
