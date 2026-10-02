@@ -89,7 +89,9 @@ jobs:
           - part: golden
             args: --part golden
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+    # The slowest job takes about 25 minutes on a cold cache: a runner that hangs fails the queue
+    # entry within the hour instead of holding the queue for two.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
