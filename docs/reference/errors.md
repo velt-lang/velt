@@ -29,6 +29,10 @@ compiler knows exactly what each function and each `try` block can throw.
   it.
 - `throw e;` rethrows; a narrowed `e` rethrows just that member.
 - `catch { … }` without a binding and `finally` (which runs on every path) work as in JS.
+- A `finally` runs after the `return`, `break`, `continue` or throw that leaves its `try`, so it
+  sees what they took: an object, array or string passed on before is shared and still usable
+  there. A value that can't be shared, such as a promise, is gone once a `return` hands it on,
+  and using it in the `finally` is ``use of moved value``.
 - `instanceof` cannot tell apart subclasses of a member (a downcast); make the subclasses
   members of the union instead.
 

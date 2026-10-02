@@ -103,8 +103,12 @@ impl Moves<'_> {
             | ExprKind::WrapSome(expr)
             | ExprKind::Await(expr)
             | ExprKind::Upcast(expr)
-            | ExprKind::ToDyn { expr, .. }
-            | ExprKind::Throw(expr) => self.expr(expr, st),
+            | ExprKind::ToDyn { expr, .. } => self.expr(expr, st),
+            ExprKind::Throw(expr) => {
+                self.expr(expr, st);
+                // The handler (and `finally`) of the enclosing `try` start from here too.
+                self.record_throw(st);
+            }
             ExprKind::Binary { lhs, rhs, .. } => {
                 self.expr(lhs, st);
                 self.expr(rhs, st);

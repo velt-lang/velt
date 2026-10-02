@@ -105,7 +105,8 @@ impl Moves<'_> {
         (join(cond_exit, lf.breaks), s)
     }
 
-    /// `break` (`is_break`) or `continue` to the labelled / innermost loop.
+    /// `break` (`is_break`) or `continue` to the labelled / innermost loop, through the
+    /// `finally`s in between (`super::tries`).
     pub(super) fn jump(&mut self, label: Option<&str>, is_break: bool, st: &mut Flow) {
         let target = match label {
             None => self.loops.len().checked_sub(1),
@@ -114,21 +115,28 @@ impl Moves<'_> {
                 .iter()
                 .rposition(|lp| lp.label.as_deref() == Some(l)),
         };
-        if let Some(i) = target {
-            let mut f = st.take();
-            // The jump leaves the blocks opened inside the loop: closures held there are gone.
-            if let Some(s) = &mut f {
-                for block in &self.open[self.loops[i].depth..] {
-                    block.iter().for_each(|l| s.drop_holder(*l));
+        match target {
+            Some(i) => {
+                // The jump leaves the blocks opened inside the loop: closures held there are gone.
+                if let Some(s) = st {
+                    for block in &self.open[self.loops[i].depth..] {
+                        block.iter().for_each(|l| s.drop_holder(*l));
+                    }
                 }
+                self.leave_jump(i, is_break, st);
             }
-            let lp = &mut self.loops[i];
-            if is_break {
-                lp.breaks = join(lp.breaks.take(), f);
-            } else {
-                lp.conts = join(lp.conts.take(), f);
-            }
+            None => *st = None,
         }
-        *st = None;
+    }
+
+    /// Join `st` into loop `i`'s `break` or `continue` states.
+    pub(super) fn jump_to(&mut self, i: usize, is_break: bool, st: &mut Flow) {
+        let f = st.take();
+        let lp = &mut self.loops[i];
+        if is_break {
+            lp.breaks = join(lp.breaks.take(), f);
+        } else {
+            lp.conts = join(lp.conts.take(), f);
+        }
     }
 }
