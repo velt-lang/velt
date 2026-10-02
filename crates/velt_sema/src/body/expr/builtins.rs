@@ -128,13 +128,14 @@ impl FnCx<'_, '_> {
                 return Some(self.prelude_call(
                     "promiseAllSettled",
                     "Promise.allSettled",
+                    &[],
                     args,
                     exp,
                     span,
                 ));
             }
             ("Promise", "any") => {
-                return Some(self.prelude_call("promiseAny", "Promise.any", args, exp, span));
+                return Some(self.prelude_call("promiseAny", "Promise.any", &[], args, exp, span));
             }
             ("performance", "now") => Some((Intrinsic::PerfNow, "`performance.now`")),
             ("Date", "now") => Some((Intrinsic::DateNow, "`Date.now`")),

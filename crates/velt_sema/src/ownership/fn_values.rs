@@ -9,11 +9,15 @@
 //!   fixed ABI), keeping a copy of a borrowed function value is an error
 //!   ([`borrowed_fn_copy`]); moving it is already one (`super::validate`).
 
-use velt_common::Diagnostic;
+use std::collections::HashSet;
+
+use velt_common::{Diagnostic, Span};
 
 use crate::body::LocalKind;
 use crate::ctx::Ctx;
-use crate::hir::{Def, DefId, Expr, ExprKind as E, FnDef, LocalId, PassMode, TyId, TyKind};
+use crate::hir::{
+    Def, DefId, Expr, ExprKind as E, FnDef, LocalId, PassMode, TyId, TyKind, UseMode,
+};
 
 /// Is `t` a function value (`(..) => T`, or one that may be null)?
 pub(crate) fn is_fn(cx: &Ctx, t: TyId) -> bool {
@@ -50,6 +54,23 @@ pub(super) fn escape_closure(cx: &mut Ctx, def: DefId) -> bool {
     true
 }
 
+/// The borrowed function-typed parameters and captures of `f` (body of `d`): closures that may
+/// live in a caller's frame, which `f` must not keep (see [`borrowed_fn_copy`]).
+pub(super) fn borrowed_fn_locals(cx: &Ctx, d: DefId, f: &FnDef) -> HashSet<LocalId> {
+    let info = cx.fn_info(d);
+    (0..f.body.locals.len())
+        .map(|i| LocalId(i as u32))
+        .filter(|&l| {
+            let e = Expr {
+                kind: E::Local(l, UseMode::Copy),
+                ty: f.body.locals[l.0 as usize].ty,
+                span: Span::default(),
+            };
+            borrowed_fn_copy(cx, f, &info.local_kinds, info.keeps_fn_params, &e).is_some()
+        })
+        .collect()
+}
+
 /// The error for keeping a copy of `e` (an explicit `.clone()` or an async-call argument), if
 /// `e` is a borrowed function-typed parameter or capture of `f`: the closure behind it may live
 /// in a caller's frame.
@@ -57,12 +78,16 @@ pub(super) fn borrowed_fn_copy(
     cx: &Ctx,
     f: &FnDef,
     kinds: &[LocalKind],
+    keeps_fn_params: bool,
     e: &Expr,
 ) -> Option<Diagnostic> {
     let E::Local(l, _) = e.kind else {
         return None;
     };
     if !is_fn(cx, e.ty) {
+        return None;
+    }
+    if keeps_fn_params && matches!(kinds.get(l.0 as usize), Some(LocalKind::Param)) {
         return None;
     }
     let name = &f.body.locals[l.0 as usize].name;

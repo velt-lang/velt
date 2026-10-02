@@ -1,0 +1,49 @@
+// `new Promise((resolve, reject) => ...)`: the executor runs at once; the first `resolve` or
+// `reject` settles the promise and later calls are ignored; an error the executor throws
+// rejects it; `new Promise((resolve) => ...)` cannot reject. `T` and `E` come from the type
+// arguments or from the expected type.
+class Failed extends Error {}
+
+function settled(fail: bool): Promise<string, Failed> {
+  return new Promise((resolve, reject) => {
+    if (fail) {
+      reject(new Failed("rejected by the executor"));
+    } else {
+      resolve("resolved by the executor");
+    }
+  });
+}
+
+async function main() {
+  const p = new Promise<i64>((resolve) => {
+    console.log("executor runs now");
+    resolve(41);
+    resolve(99);
+  });
+  console.log("after the constructor");
+  console.log(await p + 1);
+
+  console.log(await settled(false));
+  try {
+    await settled(true);
+  } catch (e) {
+    console.log("caught:", e.message);
+  }
+
+  try {
+    await new Promise<i64, Failed>((resolve, reject) => {
+      throw new Failed("the executor threw");
+    });
+  } catch (e) {
+    console.log("caught:", e.message);
+  }
+
+  try {
+    await new Promise<string, Failed>((resolve, reject) => {
+      reject(new Failed("the first settlement wins"));
+      resolve("ignored");
+    });
+  } catch (e) {
+    console.log("caught:", e.message);
+  }
+}
