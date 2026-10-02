@@ -141,7 +141,7 @@ fn workspace_symbols_follow_watched_file_events() {
     std::fs::write(&skipped, "function builtArea() {}\n").unwrap();
     client.notify(
         "workspace/didChangeWatchedFiles",
-        json!({ "changes": [event(&file, 2), event(&skipped, 1)] }),
+        json!({ "changes": [event(&file, 2), event(&skipped, 1), event(skipped.parent().unwrap(), 1)] }),
     );
     assert_eq!(symbol_names(&mut client, "area"), ["circleArea"]);
     std::fs::remove_file(&file).unwrap();

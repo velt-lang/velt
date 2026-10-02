@@ -89,7 +89,12 @@ fn watch_files(connection: &Connection, init: &serde_json::Value) {
         let params = serde_json::json!({ "registrations": [{
             "id": "velt-source-files",
             "method": DidChangeWatchedFiles::METHOD,
-            "registerOptions": { "watchers": [{ "globPattern": "**/*.vlt" }] },
+            // Source files, and creations and deletions of anything (folders are reported by
+            // their own path: kind 5 = create + delete).
+            "registerOptions": { "watchers": [
+                { "globPattern": "**/*.vlt" },
+                { "globPattern": "**/*", "kind": 5 },
+            ] },
         }] });
         let id = RequestId::from(WATCH_REQUEST.to_string());
         let req = Request::new(id, RegisterCapability::METHOD.into(), params);

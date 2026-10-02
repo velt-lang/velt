@@ -92,11 +92,17 @@ impl DiskIndex {
     }
 }
 
-/// Is `path` under one of `roots`, outside hidden and skipped directories?
+/// Is `path` under one of `roots`, outside hidden and skipped directories (a directory's own
+/// name included)?
 fn is_indexed(roots: &[PathBuf], path: &Path) -> bool {
     roots.iter().any(|root| {
         path.strip_prefix(root).is_ok_and(|rel| {
-            let mut dirs = rel.parent().into_iter().flat_map(Path::components);
+            let dirs = if path.is_dir() {
+                Some(rel)
+            } else {
+                rel.parent()
+            };
+            let mut dirs = dirs.into_iter().flat_map(Path::components);
             !dirs.any(|c| {
                 let name = c.as_os_str().to_str().unwrap_or("");
                 name.starts_with('.') || SKIPPED_DIRS.contains(&name)

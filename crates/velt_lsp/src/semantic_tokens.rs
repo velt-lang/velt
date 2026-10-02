@@ -63,8 +63,8 @@ pub fn semantic_tokens(analysis: &Analysis) -> Vec<SemanticToken> {
     tokens_in(analysis, 0, len)
 }
 
-/// Tokens starting in the document's byte range `lo..hi` (relative to the first of them, as
-/// `textDocument/semanticTokens/range` answers).
+/// Tokens starting in the document's byte range `lo..hi`, encoded like a full result (the first
+/// relative to the document start), as `textDocument/semanticTokens/range` answers.
 pub fn tokens_in(analysis: &Analysis, lo: u32, hi: u32) -> Vec<SemanticToken> {
     let text = analysis.text();
     let index = LineIndex::new(text);
@@ -77,7 +77,7 @@ pub fn tokens_in(analysis: &Analysis, lo: u32, hi: u32) -> Vec<SemanticToken> {
             .get(hi_usize..)
             .unwrap_or("")
             .bytes()
-            .take_while(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$'))
+            .take_while(|&b| text_scan::is_ident_byte(b))
             .count();
     let scanned = text_scan::scan(text, end);
     for t in scanned.into_iter().filter(|t| t.lo >= lo && t.lo < hi) {

@@ -65,10 +65,12 @@ pub fn fixes(analysis: &Analysis, lo: u32, hi: u32) -> Vec<Fix> {
 /// one fix applying all of them.
 pub fn fix_all_like(analysis: &Analysis, shown: &[Fix]) -> Vec<Fix> {
     let everywhere = fixes(analysis, 0, analysis.text().len() as u32);
-    let mut titles: Vec<&str> = shown.iter().map(|f| f.title.as_str()).collect();
-    titles.dedup();
+    let mut seen = std::collections::HashSet::new();
+    let titles = shown
+        .iter()
+        .map(|f| f.title.as_str())
+        .filter(|t| seen.insert(*t));
     titles
-        .into_iter()
         .filter_map(|title| {
             let same: Vec<&Fix> = everywhere.iter().filter(|f| f.title == title).collect();
             (same.len() > 1).then(|| Fix {
@@ -159,6 +161,13 @@ mod tests {
             spans(&merged(&[&a, &d, &e, &f])),
             [(5, 5), (10, 15), (15, 18)]
         );
+        // The same span twice: the second left out.
+        let same = fix(&[(10, 15, "again")]);
+        assert_eq!(spans(&merged(&[&a, &same])), [(10, 15)]);
+        // An insertion inside another fix's range is left out; one at its start is kept.
+        let (inside, start) = (fix(&[(12, 12, "i")]), fix(&[(10, 10, "s")]));
+        assert_eq!(spans(&merged(&[&a, &inside])), [(10, 15)]);
+        assert_eq!(spans(&merged(&[&a, &start])), [(10, 10), (10, 15)]);
         // A fix whose second edit overlaps is left out with all its edits.
         let g = fix(&[(30, 31, "p"), (11, 12, "q")]);
         assert_eq!(spans(&merged(&[&a, &g])), [(10, 15)]);
