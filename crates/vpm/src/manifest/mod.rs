@@ -178,7 +178,13 @@ impl Manifest {
     /// Read and validate the manifest file at `path`. The file is never read past
     /// [`read::MAX_BYTES`].
     pub fn from_path(path: &Path) -> Result<Manifest, String> {
-        let cannot = |e: &dyn std::fmt::Display| format!("cannot read {}: {e}", path.display());
+        Manifest::from_path_shown_as(path, path)
+    }
+
+    /// [`Manifest::from_path`] with every message naming the file `shown` instead of `path`: the
+    /// registry server reads uploads from a staging directory its clients must not see.
+    pub fn from_path_shown_as(path: &Path, shown: &Path) -> Result<Manifest, String> {
+        let cannot = |e: &dyn std::fmt::Display| format!("cannot read {}: {e}", shown.display());
         let file = std::fs::File::open(path).map_err(|e| cannot(&e))?;
         let mut bytes = Vec::new();
         std::io::Read::read_to_end(
@@ -189,13 +195,13 @@ impl Manifest {
         if bytes.len() > read::MAX_BYTES {
             return Err(format!(
                 "{}: the manifest is larger than {} KiB",
-                path.display(),
+                shown.display(),
                 read::MAX_BYTES / 1024
             ));
         }
         let src = String::from_utf8(bytes)
-            .map_err(|_| format!("{}: the manifest is not valid UTF-8", path.display()))?;
-        Manifest::read(FileId(0), &src).map_err(|d| render(path, &src, &d))
+            .map_err(|_| format!("{}: the manifest is not valid UTF-8", shown.display()))?;
+        Manifest::read(FileId(0), &src).map_err(|d| render(shown, &src, &d))
     }
 
     /// Read the manifest of the package rooted at `dir`. A directory with only a `velt.toml` gets

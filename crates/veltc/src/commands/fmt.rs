@@ -88,6 +88,9 @@ fn files_to_format(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
                 let manifest = root.join(vpm::manifest::MANIFEST_FILE);
                 if manifest.is_file() {
                     out.push(manifest);
+                } else {
+                    // Only a `velt.toml`: report the migration like every other command.
+                    vpm::Manifest::from_dir(&root)?;
                 }
                 root.join("src")
             }
