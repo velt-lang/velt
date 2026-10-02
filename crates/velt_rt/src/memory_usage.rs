@@ -123,12 +123,21 @@ mod tests {
         assert!(velt_rt_memory_heap() > 0);
     }
 
+    /// Other tests of this binary allocate and free concurrently, so one reading can miss the
+    /// growth (another test returned memory meanwhile); one of several attempts must see it.
     #[test]
     fn rss_grows_when_memory_is_touched() {
-        let before = velt_rt_memory_rss();
-        let block = vec![1u8; 64 << 20];
-        let after = velt_rt_memory_rss();
-        assert!(after > before, "{before} -> {after}");
-        drop(block);
+        let mut seen = vec![];
+        for _ in 0..5 {
+            let before = velt_rt_memory_rss();
+            let block = std::hint::black_box(vec![1u8; 64 << 20]);
+            let after = velt_rt_memory_rss();
+            drop(block);
+            if after > before {
+                return;
+            }
+            seen.push((before, after));
+        }
+        panic!("rss never grew: {seen:?}");
     }
 }
