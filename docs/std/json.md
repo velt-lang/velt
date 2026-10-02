@@ -83,7 +83,9 @@
   A `JsonValue` has value semantics: an edit never shows through a clone, through the value it
   was `set` into, or through a child handle from `get`/`at`. The runtime copies a node another
   handle shares before changing it (copy-on-write, one node at a time). To change a nested
-  value, edit the child and `set` it back. There is no `v[k] = x` syntax: use `set`.
+  value, edit the child and `set` it back. There is no `v[k] = x` syntax: use `set`. A class
+  cannot `extends` `JsonValue` (only the runtime makes its values); hold one in a field
+  instead.
 
 ```ts
 import { Value } from "velt:json";

@@ -339,8 +339,9 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   parameter `K`, reads are `V | null` and the record may be closed, so it cannot start empty
   (only a literal with a spread builds one) and `delete` is not allowed. A record has no
   methods of its own: `Object.keys(r)`, `Object.values(r)` and `Object.entries(r)` return
-  arrays in insertion order. `console.log` and `JSON` treat a record as an object. A literal
-  for an enum-keyed record is not supported yet.
+  arrays in insertion order. `console.log` and `JSON` treat a record as an object. A class
+  cannot `extends` a `Record` (its constructor would leave a closed record without its keys);
+  hold one in a field instead. A literal for an enum-keyed record is not supported yet.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,
   strings, literal types, arrays, tuples, enums, nullable values, `Map<string, V>`,
   `Record<K, V>`, structs, classes and anonymous objects
