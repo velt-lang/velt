@@ -5,6 +5,7 @@
 #![allow(dead_code, unused_imports)]
 
 pub mod hir_walk;
+pub mod process_work;
 pub mod programs;
 
 use std::cell::Cell;
