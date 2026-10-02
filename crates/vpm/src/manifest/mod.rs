@@ -27,8 +27,10 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use velt_common::{Diagnostics, FileId, SourceMap};
 
+pub mod ide;
 pub mod legacy;
 pub mod read;
+pub mod schema;
 pub(crate) mod write;
 
 /// File name of the manifest at a package root.

@@ -25,8 +25,8 @@ use super::Server;
 use crate::index::scope;
 use crate::line_index::LineIndex;
 use crate::{
-    completion, definition, highlight, hover, inlay_hints, references, sema_query, semantic_tokens,
-    signature_help, symbols,
+    completion, definition, highlight, hover, inlay_hints, manifest, references, sema_query,
+    semantic_tokens, signature_help, symbols,
 };
 
 /// What the server supports.
@@ -122,6 +122,10 @@ impl Server<'_> {
             HoverRequest::METHOD => {
                 let p: lsp_types::HoverParams = parse(params)?;
                 let pos = &p.text_document_position_params;
+                if let Some(text) = self.manifest_text(&pos.text_document.uri) {
+                    let at = LineIndex::new(text).offset(pos.position);
+                    return Ok(json(manifest::hover(text, at)));
+                }
                 let hover = self
                     .analysis(&pos.text_document.uri)
                     .and_then(|a| hover::hover(a, offset(a, pos)));
@@ -130,6 +134,10 @@ impl Server<'_> {
             Completion::METHOD => {
                 let p: lsp_types::CompletionParams = parse(params)?;
                 let pos = &p.text_document_position;
+                if let Some(text) = self.manifest_text(&pos.text_document.uri) {
+                    let at = LineIndex::new(text).offset(pos.position);
+                    return Ok(json(Some(manifest::completion(text, at))));
+                }
                 let items = self
                     .analysis(&pos.text_document.uri)
                     .map(|a| completion::complete(a, offset(a, pos)));

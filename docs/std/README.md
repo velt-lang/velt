@@ -44,6 +44,7 @@ sources.
 | Security | [crypto](crypto.md) · [uuid](uuid.md) |
 | Text | [regex](regex.md) |
 | Programs and the system | [process](process.md) · [cli](cli.md) · [child_process](child_process.md) · [os](os.md) |
+| Packages | [package](package.md) (the type of `package.vlt`) |
 | Databases (moving to packages) | [sqlite](sqlite.md) · [postgres](postgres.md) · [redis](redis.md) |
 
 The database drivers are part of the standard library today. They are moving to separately

@@ -24,6 +24,7 @@ mod hover;
 mod index;
 mod inlay_hints;
 mod line_index;
+mod manifest;
 mod references;
 mod sema_query;
 mod semantic_tokens;

@@ -1,0 +1,60 @@
+// std/package: the type of the package manifest, `package.vlt` (docs/tooling/manifest.md).
+//
+// Types only. `velt` never compiles a manifest: it reads it as data (vpm::manifest::read). These
+// types give editors completion, hover and errors while writing one:
+//
+//   import type { Package } from "velt:package";
+//
+//   export const pkg: Package = { name: "hello", version: "0.1.0" };
+
+/// A package manifest: the one `export const pkg: Package = { … }` of a `package.vlt`.
+export type Package = {
+  /// The package name: lowercase letters, digits, `_` and `-`, starting with a letter.
+  name: string;
+  /// A semantic version, such as `"0.1.0"`.
+  version: string;
+  /// The program's root file, a `/`-separated path inside the package (default `"src/main.vlt"`).
+  entry?: string;
+  /// The registry for dependencies and `velt publish`: an `http://` or `https://` URL (default:
+  /// the local registry; `VELT_REGISTRY` takes precedence). Only the root package's is used.
+  registry?: string;
+  /// Dependencies by package name: a semver requirement (`"^1.2"`) or a `DependencySource`.
+  dependencies?: Record<string, Dependency>;
+  /// Import aliases, like TypeScript's `compilerOptions.paths`: `{ "@app/*": "src/*" }`. A
+  /// pattern and its target have at most one `*`, at the end; targets stay inside the package.
+  paths?: Record<string, string>;
+  /// How the package's modules compile JSX.
+  jsx?: Jsx;
+  /// A Rust crate in the package, built into a native library.
+  native?: Native;
+};
+
+/// A dependency: a semver requirement such as `"^1.2"`, or where to get it.
+export type Dependency = string | DependencySource;
+
+/// Where a dependency comes from: a registry version, a local directory, or both.
+export type DependencySource = {
+  /// A semver requirement.
+  version?: string;
+  /// A local package directory, relative to this manifest.
+  path?: string;
+};
+
+/// JSX settings of a package.
+export type Jsx = {
+  /// The module whose `jsx-runtime` compiles JSX: a dependency, `"velt:jsx"` (the default), a
+  /// `paths` alias, or `./dir` relative to the package root. A `// @jsxImportSource` comment in
+  /// a file wins.
+  importSource?: string;
+};
+
+/// A package's native library (docs/book/native-packages.md).
+export type Native = {
+  /// The crate's directory, one directory name in the package root (default `"native"`).
+  path?: string;
+  /// The targets `velt publish` publishes a prebuilt library for, such as
+  /// `"x86_64-unknown-linux-gnu"` or `"aarch64-apple-darwin"`.
+  targets?: string[];
+  /// WebAssembly libraries are not supported yet: must be `false` (the default).
+  wasm?: bool;
+};

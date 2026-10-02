@@ -16,34 +16,45 @@ pub fn lsp_command() -> Result<(), String> {
     velt_lsp::serve_stdio(&CliLoader::default())
 }
 
-/// [`ProgramLoader`] over [`loader::load_program`]. Package dependency graphs are installed once per
-/// package per server session (like the first `velt build`; restart the server after changing
-/// dependencies).
+/// [`ProgramLoader`] over [`loader::load_program`]. A package's dependency graph is installed like
+/// the first `velt build` does, and again whenever its saved `package.vlt` changes (so editing the
+/// dependencies needs no server restart).
 #[derive(Default)]
 pub struct CliLoader {
-    /// Package root → its installed graph (`None`: not installable, package imports fail).
-    graphs: Mutex<HashMap<PathBuf, Option<PackageGraph>>>,
+    /// Package root → the manifest it was installed from and its graph (`None`: not installable,
+    /// package imports fail).
+    graphs: Mutex<HashMap<PathBuf, (ManifestStamp, Option<PackageGraph>)>>,
+}
+
+/// When `package.vlt` was last written, and its size: what tells a saved change apart.
+type ManifestStamp = Option<(std::time::SystemTime, u64)>;
+
+fn manifest_stamp(root: &Path) -> ManifestStamp {
+    let meta = std::fs::metadata(root.join(vpm::manifest::MANIFEST_FILE)).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
 }
 
 impl CliLoader {
     fn graph(&self, file: &Path) -> Option<PackageGraph> {
         let root = vpm::manifest::find_package_root(file.parent()?)?;
+        let stamp = manifest_stamp(&root);
         let mut graphs = self.graphs.lock().unwrap_or_else(|e| e.into_inner());
-        graphs
-            .entry(root.clone())
-            .or_insert_with(|| {
-                let opts = InstallOptions {
-                    locked: false,
-                    update: false,
-                    target: Some(velt_codegen_cl::host_triple()),
-                };
-                let installed = super::project::Project::open(&root, opts);
-                installed
-                    .map_err(|e| eprintln!("velt-lsp: cannot install `{}`: {e}", root.display()))
-                    .ok()
-                    .map(|p| p.graph)
-            })
-            .clone()
+        if let Some((installed_from, graph)) = graphs.get(&root) {
+            if *installed_from == stamp {
+                return graph.clone();
+            }
+        }
+        let opts = InstallOptions {
+            locked: false,
+            update: false,
+            target: Some(velt_codegen_cl::host_triple()),
+        };
+        let graph = super::project::Project::open(&root, opts)
+            .map_err(|e| eprintln!("velt-lsp: cannot install `{}`: {e}", root.display()))
+            .ok()
+            .map(|p| p.graph);
+        graphs.insert(root, (stamp, graph.clone()));
+        graph
     }
 }
 
@@ -98,6 +109,45 @@ mod tests {
     fn notify(conn: &Connection, method: &str, params: Value) {
         let n = Notification::new(method.into(), params);
         conn.sender.send(n.into()).unwrap();
+    }
+
+    /// Saving a changed `package.vlt` reinstalls the package's graph: a new dependency resolves
+    /// without restarting the server.
+    #[test]
+    fn a_saved_manifest_change_reinstalls_the_graph() {
+        let dir = tempfile::tempdir().unwrap();
+        let (app, util) = (dir.path().join("app"), dir.path().join("util"));
+        for (root, name) in [(&app, "app"), (&util, "util")] {
+            std::fs::create_dir_all(root.join("src")).unwrap();
+            let manifest =
+                format!("export const pkg: Package = {{ name: \"{name}\", version: \"0.1.0\" }};");
+            std::fs::write(root.join(vpm::manifest::MANIFEST_FILE), manifest).unwrap();
+        }
+        std::fs::write(util.join("src/lib.vlt"), "export const X: i64 = 1;\n").unwrap();
+        let main = app.join("src/main.vlt");
+        std::fs::write(&main, "function main() {}\n").unwrap();
+
+        let loader = CliLoader::default();
+        let graph = loader.graph(&main).expect("the app installs");
+        assert!(graph.dependency_root(&main, "util").is_err());
+        // Unchanged: the cached graph is reused.
+        assert!(loader
+            .graph(&main)
+            .unwrap()
+            .dependency_root(&main, "util")
+            .is_err());
+
+        vpm::edit::add_dependency(
+            &app,
+            "util",
+            &vpm::edit::DependencySpec {
+                version: None,
+                path: Some("../util".into()),
+            },
+        )
+        .unwrap();
+        let graph = loader.graph(&main).expect("the app installs again");
+        assert!(graph.dependency_root(&main, "util").is_ok());
     }
 
     /// The real loader behind the server: unsaved buffers win over the disk, and imports of

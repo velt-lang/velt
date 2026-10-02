@@ -4,6 +4,7 @@
 mod assists;
 mod client;
 mod loader;
+mod manifest;
 mod modules;
 mod navigation;
 mod protocol;

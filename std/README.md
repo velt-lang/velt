@@ -38,6 +38,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `url.vlt` | `std/url`: WHATWG `URL`, `URLSearchParams`, `encodeURIComponent` family (`url/*.vlt`: internal). |
 | `datetime.vlt` | `std/datetime`: UTC-first `DateTime` (ISO/HTTP dates, formatting, calendar math), `Duration` (`datetime/*.vlt`: internal). |
 | `html.vlt` | `std/html`: `escapeHtml` (one runtime pass). |
+| `package.vlt` | `velt:package`: types only, `Package` and its parts: the type of a package's `package.vlt` manifest (docs/tooling/manifest.md). |
 | `jsx.vlt` | `velt:jsx`: server-side TSX rendering, `renderToString renderToStringSync renderToStream raw Fragment`, `Element`, `RenderError`, the `JSX` types. |
 | `jsx/jsx-runtime.vlt` | `velt:jsx/jsx-runtime`: the JSX provider module compiled JSX calls (docs/internals/contracts/jsx.md), with the SSR precompile exports; `jsx/generic/jsx-runtime.vlt` without them. Internal: `jsx/node.vlt` (`Element`), `factory.vlt`, `escape.vlt`, `void_elements.vlt`, `render.vlt`, `intrinsic.vlt` + `attrs/*.vlt` (HTML tags and attributes). |
 | `csv.vlt` | `std/csv`: RFC 4180 `parseCsv parseCsvRecords stringifyCsv`, `CsvError`. |

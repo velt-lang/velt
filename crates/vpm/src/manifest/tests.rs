@@ -194,3 +194,55 @@ fn finds_enclosing_package() {
         Some(tmp.path().join("b"))
     );
 }
+
+/// `std/package.vlt` (the type editors and `velt doc` show) declares exactly the schema's fields,
+/// with the same optionality and types.
+#[test]
+fn std_package_types_match_the_schema() {
+    use velt_syntax::ast::{ItemKind, TypeExprKind};
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/package.vlt");
+    let src = std::fs::read_to_string(&path).unwrap();
+    let (module, diags) = velt_syntax::parse_file(FileId(0), &src);
+    assert!(diags.is_empty(), "{diags:?}");
+    let declared = |name: &str| -> Vec<String> {
+        let alias = module
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                ItemKind::TypeAlias(a) if a.name.name == name && item.exported => Some(a),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("std/package.vlt exports no type `{name}`"));
+        let TypeExprKind::Object(fields) = &alias.ty.kind else {
+            panic!("`{name}` is not an object type");
+        };
+        fields
+            .iter()
+            .map(|f| {
+                let text = &src[f.span.lo as usize..f.span.hi as usize];
+                text.trim_end_matches(';')
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect()
+    };
+    let expected = |fields: &[schema::Field]| -> Vec<String> {
+        fields
+            .iter()
+            .map(|f| format!("{}{}: {}", f.key, if f.required { "" } else { "?" }, f.ty))
+            .collect()
+    };
+    for (name, fields) in [
+        ("Package", schema::PACKAGE),
+        ("DependencySource", schema::DEPENDENCY),
+        ("Jsx", schema::JSX),
+        ("Native", schema::NATIVE),
+    ] {
+        assert_eq!(
+            declared(name),
+            expected(fields),
+            "`{name}` in std/package.vlt"
+        );
+    }
+}
