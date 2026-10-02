@@ -13,6 +13,9 @@ pins them.
 | `velt publish` | publish the current package to its registry (with its prebuilt native libraries) |
 | `velt native build [--target <t>]` | build the package's native library (package authors; needs Rust) |
 | `velt manifest [--json]` | check `package.vlt`, or print it as JSON for other tools |
+| `velt search <text>` | find packages whose name contains the text |
+| `velt yank <pkg>@<version> [--undo]` | withdraw a published version: lockfiles that pin it keep working, new requirements skip it |
+| `velt owner list\|add\|remove <pkg> [<user>]` | who may publish a package on a registry server |
 
 ```sh
 velt new textkit --template lib     # a library with doc comments and tests
@@ -32,15 +35,48 @@ import { slugify } from "textkit";
   Downloads are cached in `~/.velt/cache`.
 - **HTTP**: `registry: "https://…"` in `package.vlt`, or `VELT_REGISTRY` set to an
   `http(s)://` URL. `velt registry serve [--dir <d>] [--port <n>] [--host <addr>]` serves a
-  registry directory (default `127.0.0.1:8091`); uploads need
-  `Authorization: Bearer $VELT_REGISTRY_TOKEN` when the server has that variable set.
+  registry directory (default `127.0.0.1:8091`). `https://` registries are verified against
+  Mozilla's root certificates, plus the PEM file in `$VELT_CA_FILE` for a private CA.
+  `HTTPS_PROXY` and other proxy variables are not honored: `velt` connects to the registry
+  directly.
+- `velt registry serve` speaks plain HTTP, so tokens and packages cross the network unencrypted.
+  Beyond localhost, put it behind a reverse proxy that terminates TLS (Caddy, nginx) and give
+  clients the `https://` URL.
 - Package archives contain `package.vlt`, `src/**` and the sources of a `native` crate. Their checksum is the content hash that
   `velt.lock` records, and every download is verified against it before it enters the cache.
 
+### Users, owners and yanking
+
+A registry server without users is open: anyone who can reach it may publish, which suits a
+laptop or a trusted network. Once it has users, every write needs a user's token, and only a
+package's owners may change the package. `velt registry serve` refuses to start an open
+registry while `VELT_REGISTRY_TOKEN` is set, since that variable no longer protects a server:
+
+```sh
+velt registry user add alice --dir ./registry    # prints alice's token, once
+export VELT_REGISTRY_TOKEN=<the token>           # on alice's machine
+velt publish                                     # alice publishes `textkit` and owns it
+velt owner add textkit bob                       # bob may publish it too
+velt yank textkit@1.2.0                          # withdraw a broken version
+```
+
+`velt registry user token alice` replaces a lost or leaked token, and `velt registry user remove`
+deletes a user; removing the last one opens the registry again and needs `--open`. The server
+stores only a hash of each token. A yanked version stays downloadable, so a project whose
+`velt.lock` pins it keeps building (with a warning), but `velt add`, `velt update` and new
+requirements never pick it; `velt yank <pkg>@<version> --undo` brings it back.
+
+A package published while the server was open has no owners, and nobody may change it until an
+administrator, who has the registry directory, assigns one:
+
+```sh
+velt registry owner add textkit alice --dir ./registry
+```
+
 The HTTP protocol: `GET <url>/api/v1/<name>/index` returns the package's `index.toml`;
 `GET <url>/api/v1/<name>/<version>` returns an archive; `PUT` to the same path uploads one, with
-an `X-Velt-Checksum: sha256:…` header. `https://` goes through the system `curl`; `http://` is
-built in.
+an `X-Velt-Checksum: sha256:…` header. `GET <url>/api/v1/search?q=<text>` searches, and the
+owner and yank endpoints are listed in [the contract](../internals/contracts/manifest.md).
 
 ## Packages with native code
 

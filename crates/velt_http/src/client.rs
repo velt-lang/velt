@@ -1,11 +1,14 @@
-//! The client: one request per call. `http://` goes over `std::net`; `https://` runs the system
-//! `curl` (present on macOS, Windows 10+ and practically every Linux), which brings TLS and the
-//! platform's certificate store without a TLS dependency here.
+//! The client: one request per call, over `std::net`. `https://` goes through rustls with
+//! Mozilla's root certificates ([`crate::tls`]), the TLS stack the Velt runtime uses too, so
+//! nothing depends on a system `curl` or the machine's trust store.
 
-use std::io::{BufReader, Write};
+use std::io::{BufReader, Read, Write};
 use std::net::TcpStream;
-use std::process::Command;
+use std::sync::Arc;
 use std::time::Duration;
+
+use rustls::pki_types::ServerName;
+use rustls::{ClientConfig, ClientConnection, StreamOwned};
 
 use crate::message::{read_response, Response};
 
@@ -23,12 +26,34 @@ pub fn fetch(
     if let Some(rest) = url.strip_prefix("http://") {
         return plain(method, rest, headers, body).map_err(|e| format!("{method} {url}: {e}"));
     }
-    if url.starts_with("https://") {
-        return curl(method, url, headers, body).map_err(|e| format!("{method} {url}: {e}"));
+    if let Some(rest) = url.strip_prefix("https://") {
+        return crate::tls::client_config()
+            .and_then(|config| https(method, rest, headers, body, config))
+            .map_err(|e| format!("{method} {url}: {e}"));
     }
     Err(format!(
         "unsupported URL `{url}` (expected http:// or https://)"
     ))
+}
+
+/// `host[:port]` and `/path?query` of a URL without its scheme.
+fn split(rest: &str) -> (&str, &str) {
+    match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, "/"),
+    }
+}
+
+fn connect(host: &str, default_port: u16) -> Result<TcpStream, String> {
+    let authority = if host.rsplit_once(':').is_some_and(|(_, p)| !p.contains(']')) {
+        host.to_string()
+    } else {
+        format!("{host}:{default_port}")
+    };
+    let stream = TcpStream::connect(&authority).map_err(|e| format!("cannot connect: {e}"))?;
+    let _ = stream.set_read_timeout(Some(TIMEOUT));
+    let _ = stream.set_write_timeout(Some(TIMEOUT));
+    Ok(stream)
 }
 
 fn plain(
@@ -37,17 +62,40 @@ fn plain(
     headers: &[(&str, &str)],
     body: &[u8],
 ) -> Result<Response, String> {
-    let (host, path) = match rest.find('/') {
-        Some(i) => (&rest[..i], &rest[i..]),
-        None => (rest, "/"),
+    let (host, path) = split(rest);
+    let stream = connect(host, 80)?;
+    exchange(stream, method, host, path, headers, body)
+}
+
+/// One request over TLS, verified with `config`.
+pub(crate) fn https(
+    method: &str,
+    rest: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+    config: Arc<ClientConfig>,
+) -> Result<Response, String> {
+    let (host, path) = split(rest);
+    // `[::1]:8443` → `::1`, `example.com:8443` → `example.com`.
+    let name = match host.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(v6),
+        None => host.split(':').next().unwrap_or(host),
     };
-    let authority = if host.contains(':') {
-        host.to_string()
-    } else {
-        format!("{host}:80")
-    };
-    let mut stream = TcpStream::connect(&authority).map_err(|e| format!("cannot connect: {e}"))?;
-    let _ = stream.set_read_timeout(Some(TIMEOUT));
+    let server_name =
+        ServerName::try_from(name.to_string()).map_err(|_| format!("invalid host `{name}`"))?;
+    let conn = ClientConnection::new(config, server_name).map_err(|e| format!("TLS: {e}"))?;
+    let stream = StreamOwned::new(conn, connect(host, 443)?);
+    exchange(stream, method, host, path, headers, body)
+}
+
+fn exchange(
+    mut stream: impl Read + Write,
+    method: &str,
+    host: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+) -> Result<Response, String> {
     let mut head = format!(
         "{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Length: {}\r\nConnection: close\r\n",
         body.len()
@@ -59,74 +107,9 @@ fn plain(
     stream
         .write_all(head.as_bytes())
         .and_then(|()| stream.write_all(body))
+        .and_then(|()| stream.flush())
         .map_err(|e| format!("cannot send: {e}"))?;
     read_response(&mut BufReader::new(stream), MAX_RESPONSE)
-}
-
-fn curl(
-    method: &str,
-    url: &str,
-    headers: &[(&str, &str)],
-    body: &[u8],
-) -> Result<Response, String> {
-    let dir = tempfile_dir()?;
-    let (body_in, head_out, body_out) =
-        (dir.join("request"), dir.join("head"), dir.join("response"));
-    std::fs::write(&body_in, body).map_err(|e| format!("cannot write a temp file: {e}"))?;
-    let mut cmd = Command::new("curl");
-    cmd.args(["-sS", "-X", method, "--max-time", "120"])
-        .arg("--data-binary")
-        .arg(format!("@{}", body_in.display()))
-        .arg("-D")
-        .arg(&head_out)
-        .arg("-o")
-        .arg(&body_out);
-    for (n, v) in headers {
-        cmd.arg("-H").arg(format!("{n}: {v}"));
-    }
-    let out = cmd
-        .arg(url)
-        .output()
-        .map_err(|e| format!("cannot run curl (needed for https:// URLs): {e}"))?;
-    let result = if out.status.success() {
-        let mut wire = std::fs::read(&head_out).map_err(|e| e.to_string())?;
-        let body = std::fs::read(&body_out).unwrap_or_default();
-        wire.extend_from_slice(b"\r\n");
-        last_response_head(&wire, body)
-    } else {
-        Err(format!(
-            "curl failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ))
-    };
-    let _ = std::fs::remove_dir_all(&dir);
-    result
-}
-
-/// curl's `-D` file holds every response head (redirects, `100 Continue`); use the last one.
-fn last_response_head(wire: &[u8], body: Vec<u8>) -> Result<Response, String> {
-    let text = String::from_utf8_lossy(wire).replace("\r\n", "\n");
-    let last = text
-        .split("\n\n")
-        .filter(|h| h.starts_with("HTTP/"))
-        .last()
-        .ok_or("curl returned no HTTP response head")?;
-    let head = format!("{}\r\n\r\n", last.replace('\n', "\r\n"));
-    let mut resp = read_response(&mut head.as_bytes(), 0)?;
-    resp.body = body;
-    Ok(resp)
-}
-
-fn tempfile_dir() -> Result<std::path::PathBuf, String> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "velt-http-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create a temp dir: {e}"))?;
-    Ok(dir)
 }
 
 #[cfg(test)]
@@ -140,13 +123,13 @@ mod tests {
             .contains("unsupported"));
         let err = fetch("GET", "http://127.0.0.1:1/", &[], b"").unwrap_err();
         assert!(err.contains("cannot connect"), "{err}");
+        let err = fetch("GET", "https://127.0.0.1:1/", &[], b"").unwrap_err();
+        assert!(err.contains("cannot connect"), "{err}");
     }
 
     #[test]
-    fn curl_heads_use_the_last_response() {
-        let wire = b"HTTP/1.1 100 Continue\r\n\r\nHTTP/2 201\r\ncontent-type: x\r\n\r\n";
-        let resp = last_response_head(wire, b"ok".to_vec()).unwrap();
-        assert_eq!((resp.status, resp.header("Content-Type")), (201, Some("x")));
-        assert_eq!(resp.body, b"ok");
+    fn urls_split_into_host_and_path() {
+        assert_eq!(split("h:8080/a?b"), ("h:8080", "/a?b"));
+        assert_eq!(split("h"), ("h", "/"));
     }
 }

@@ -13,6 +13,7 @@ mod dev;
 mod fmt;
 pub mod help;
 mod package;
+pub mod registry;
 pub mod suggest;
 mod tools;
 
@@ -176,6 +177,34 @@ pub enum Command {
     /// `velt manifest [--json]`: check the package's manifest, or (`json`) print it as JSON for
     /// other tools.
     Manifest { json: bool },
+    /// `velt yank <pkg>@<version> [--undo]`.
+    Yank {
+        name: String,
+        version: String,
+        undo: bool,
+    },
+    /// `velt owner list|add|remove <pkg> [<user>]`.
+    Owner {
+        action: registry::OwnerAction,
+        package: String,
+    },
+    /// `velt search <text>`.
+    Search { query: String },
+    /// `velt registry owner add|remove <pkg> <user> [--dir <d>]`: an administrator's change.
+    RegistryOwner {
+        add: bool,
+        package: String,
+        user: String,
+        /// Registry directory (`None`: the local registry).
+        dir: Option<PathBuf>,
+    },
+    /// `velt registry user add|remove|token <name> [--dir <d>] [--open]`.
+    RegistryUser {
+        action: registry::UserAction,
+        name: String,
+        /// Registry directory (`None`: the local registry).
+        dir: Option<PathBuf>,
+    },
     /// `velt --version`.
     Version,
     /// `velt --help` or no arguments (`None`), `velt help <cmd>` / `velt <cmd> --help` (`Some`).
@@ -227,6 +256,9 @@ fn parse_command(sub: &str, rest: Vec<OsString>) -> Result<Command, String> {
         "test" | "new" | "init" | "add" | "install" | "update" | "publish" | "native" => {
             package::parse(sub, rest)
         }
+        "yank" => registry::parse_yank(rest),
+        "owner" => registry::parse_owner(rest),
+        "search" => registry::parse_search(rest),
         _ => Err(unknown_command(sub)),
     }
 }
