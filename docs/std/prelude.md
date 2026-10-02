@@ -58,7 +58,8 @@ Byte arrays are plain `u8[]` with faster versions of `indexOf`, `lastIndexOf`, `
 ## Map
 
 `Map<K, V>` is an insertion-ordered hash map. Keys are numbers, `bool`, `string`, class
-instances (compared by identity), and structs, object types and tuples (compared by content).
+instances (compared by identity), and structs, object types, tuples, maps and records (compared
+by content, as `deepEqual` compares them).
 
 | Member | Notes |
 |---|---|
@@ -105,9 +106,17 @@ nest 128 levels deep unless `options.maxDepth` says otherwise.
 - `AggregateError`, thrown by `Promise.any` when every promise rejects.
 - `assert(cond, msg?)`, `assertEq(a, b, msg?)` (compares with `deepEqual`), `panic(msg)`:
   panics, for bugs.
-- `deepEqual(a, b): bool`: content comparison. Arrays, structs and object literals compare
-  their contents recursively, class instances (`Map` included) by identity; `==` compares
-  every object by identity.
+- `deepEqual(a, b): bool`: content comparison, like Node's `util.isDeepStrictEqual`. Arrays,
+  structs and object literals compare their contents recursively. A `Map` or `Record` equals
+  another with the same keys, each with a deeply equal value, in any order (a key is matched
+  as `get` matches it). Other class instances compare by identity; `==` compares every object
+  by identity.
+
+```ts
+const a: Record<string, i64[]> = { x: [1], y: [2] };
+const b: Record<string, i64[]> = { y: [2], x: [1] };
+console.log(deepEqual(a, b), a == b); // true false
+```
 
 ## Async and concurrency
 

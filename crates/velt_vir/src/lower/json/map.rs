@@ -274,7 +274,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The method `name` of class `class` (a prelude class whose methods the glue calls).
-    fn class_method(&mut self, class: DefId, name: &str) -> DefId {
+    pub(in crate::lower) fn class_method(&mut self, class: DefId, name: &str) -> DefId {
         let owner = self.cx.adt_def(class).name.clone();
         let full = format!("{owner}.{name}");
         let found = self.cx.hir.defs.iter().position(|d| match d {
