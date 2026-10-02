@@ -1,8 +1,8 @@
 // Regression (use after free): a function-typed parameter captured by a spawned closure is
 // inferred as owned, so the closure literal passed to `later` captures by value and stays alive
-// until the task runs.
-function later(cb: () => string) {
-  spawn(
+// until the task runs. `main` awaits the task, so its line prints first whatever the timing.
+function later(cb: () => string): Promise<void> {
+  return spawn(
     (async (): Promise<void> => {
       await sleep(10);
       console.log(cb());
@@ -10,17 +10,17 @@ function later(cb: () => string) {
   );
 }
 
-function arm() {
+function arm(): Promise<void> {
   const msg = `captured ${40 + 2}`;
-  later(() => msg.clone());
+  return later(() => msg.clone());
 }
 
 async function main() {
-  arm();
+  const task = arm();
   const junk: string[] = [];
   for (let i = 0; i < 100; i++) {
     junk.push(`overwrite the freed closure environment ${i}`);
   }
-  await sleep(50);
+  await task;
   console.log(junk.length);
 }
