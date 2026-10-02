@@ -50,6 +50,20 @@ const TOOLING: &[(&str, &[&str])] = &[
     ("velt_rt_wasm", &["wasm_goldens", "playground"]),
 ];
 
+/// Packages that compile or read a crate's sources by path, which the dependency graph doesn't
+/// show (`[lib] path`, `build = …`, `#[path]`, tests reading the sources as text): a change to
+/// the crate, comments included, runs their tests too.
+const SHARED_SOURCES: &[(&str, &[&str])] = &[
+    (
+        "velt_rt",
+        &["velt_rt_host", "velt_rt_shared", "velt_rt_wasm"],
+    ),
+    // velt_rt's std_externs test reads velt_rt_wasm's `extern "C"` definitions.
+    ("velt_rt_wasm", &["velt_rt"]),
+    // velt_codegen_llvm's tests build their programs with velt_opt's test builders.
+    ("velt_opt", &["velt_codegen_llvm"]),
+];
+
 /// `vpm` resolves imports and packages for every program, so it runs the goldens too.
 const GOLDENS_TOO: &[&str] = &["vpm"];
 
@@ -241,6 +255,7 @@ impl Plan {
                 .cloned()
                 .collect(),
         );
+        plan.add_source_readers(&changed_crates.union(&comment_crates).cloned().collect());
         let code: Vec<String> = paths
             .iter()
             .filter(|p| !comment_only.contains(*p))
@@ -338,6 +353,19 @@ impl Plan {
             }
         }
         self.add_veltc(&[]);
+    }
+
+    /// The packages that compile or read the changed crates' sources ([`SHARED_SOURCES`]).
+    fn add_source_readers(&mut self, changed: &BTreeSet<String>) {
+        for (name, readers) in SHARED_SOURCES {
+            if changed.contains(*name) && !self.all_tests {
+                self.reasons.push(format!(
+                    "{name}'s sources are also used by: {}",
+                    readers.join(", ")
+                ));
+                self.packages.extend(readers.iter().map(|r| r.to_string()));
+            }
+        }
     }
 
     /// Anything to build and test at all?

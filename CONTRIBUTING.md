@@ -42,9 +42,10 @@ The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
   those of the crates depending on it, the end-to-end tests when a change can affect compiled
   programs (or only the goldens you touched), the documentation tests for docs, clippy for Rust
   changes, and `cargo fmt`, clippy and the unit tests of `tests/difftest` (a crate outside the
-  workspace) when it changes. A Rust file where only comments changed runs its crate's own tests,
-  doctests and clippy, nothing else. Changes to the build, the toolchain, CI or the scripts select
-  everything. `cargo xtask affected` prints the plan and why; the rules are in
+  workspace) when it changes. A Rust file where only comments changed runs the tests and doctests
+  of its crate (and of the crates compiling its sources), clippy, `veltc`'s unit tests and the
+  file-size test (`standards`), nothing else. Changes to the build, the toolchain, CI or the
+  scripts select everything. `cargo xtask affected` prints the plan and why; the rules are in
   `crates/xtask/src/plan.rs`. Goldens run in debug mode (`--golden-modes release` for the other);
   `--part` runs some parts (`lint`, `test`, `golden`, comma-separated).
 - **Everything**: `scripts/check-all.sh` or `pwsh scripts/check-all.ps1` (`--fast` / `-Fast`:
