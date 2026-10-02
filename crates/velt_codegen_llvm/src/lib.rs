@@ -19,6 +19,7 @@
 //! - `clang`: locating `clang` and running it on the emitted IR.
 //! - `llc`: locating LLVM's `opt`/`llc` and running them for the WebAssembly targets.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use velt_vir::vir;
@@ -81,8 +82,9 @@ pub fn emit_object_timed(
 }
 
 /// [`emit_object_timed`] for large programs: one object per codegen unit, compiled by parallel
-/// clang processes (see `units`). `units`: how many (`None`: one). WebAssembly targets always get
-/// one object.
+/// clang processes (see `units`), at most one per core. `units`: how many (`None`: from the size
+/// of the program, one below about 32 000 VIR statements). WebAssembly targets always get one
+/// object.
 pub fn emit_objects_timed(
     program: &vir::Program,
     opts: &CodegenOptions,
@@ -106,28 +108,13 @@ pub fn emit_objects_timed(
     let plan = units::plan(program, count);
     timings.push(("units", start.elapsed()));
     let start = Instant::now();
-    let results: Vec<Result<(Vec<u8>, Duration), String>> = std::thread::scope(|scope| {
-        let workers: Vec<_> = plan
-            .units
-            .iter()
-            .map(|unit| {
-                let (plan, triple) = (&plan, &triple);
-                scope.spawn(move || {
-                    let ir = module::emit_unit(program, triple, opts.optimize, unit, &plan.shared)?;
-                    let start = Instant::now();
-                    let obj = clang::compile(&ir, triple, opts.optimize)?;
-                    Ok((obj, start.elapsed()))
-                })
-            })
-            .collect();
-        workers
-            .into_iter()
-            .map(|w| {
-                w.join()
-                    .unwrap_or_else(|_| Err("ICE: codegen unit thread panicked".into()))
-            })
-            .collect()
-    });
+    let compile = |unit: &units::Unit| -> Result<(Vec<u8>, Duration), String> {
+        let ir = module::emit_unit(program, &triple, opts.optimize, unit, &plan.shared)?;
+        let start = Instant::now();
+        let obj = clang::compile(&ir, &triple, opts.optimize)?;
+        Ok((obj, start.elapsed()))
+    };
+    let results = parallel(&plan.units, compile);
     let mut objects = Vec::with_capacity(results.len());
     let mut slowest = Duration::ZERO;
     for r in results {
@@ -138,6 +125,41 @@ pub fn emit_objects_timed(
     timings.push(("ir + clang (parallel)", start.elapsed()));
     timings.push(("slowest clang", slowest));
     Ok(objects)
+}
+
+/// `f` of every item, in order, on at most one thread per core (each takes the next item left).
+fn parallel<T: Sync, R: Send>(
+    items: &[T],
+    f: impl Fn(&T) -> Result<R, String> + Sync,
+) -> Vec<Result<R, String>> {
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let next = AtomicUsize::new(0);
+    let mut done: Vec<(usize, Result<R, String>)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..cores.min(items.len()))
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut out = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(item) = items.get(i) else {
+                            return out;
+                        };
+                        out.push((i, f(item)));
+                    }
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|w| {
+                w.join().unwrap_or_else(|_| {
+                    vec![(usize::MAX, Err("ICE: codegen unit thread panicked".into()))]
+                })
+            })
+            .collect()
+    });
+    done.sort_by_key(|(i, _)| *i);
+    done.into_iter().map(|(_, r)| r).collect()
 }
 
 /// The program as textual LLVM IR for `target` (empty / `native` / `host` = the host triple);

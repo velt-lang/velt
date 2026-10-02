@@ -188,14 +188,25 @@ fn extern_declarations(program: &vir::Program) -> CodegenResult<String> {
 
 /// `declare` line of a function another unit defines (with its parameter attributes, so calls
 /// here are optimized as they would be in one module).
+///
+/// The function is linked into the same executable, so the declaration says so: without it LLVM
+/// assumes the symbol may be preempted and calls it through the PLT and takes its address through
+/// the GOT. An internal function shared between units is `hidden` in its unit, and is declared
+/// `hidden` too. An exported one (`velt_main`) keeps default visibility, because the shared
+/// runtime of debug builds looks it up by name (a hidden reference would hide the definition on
+/// ELF), and is declared `dso_local` instead.
 fn function_declaration(program: &vir::Program, index: usize) -> CodegenResult<String> {
     let func = program
         .funcs
         .get(index)
         .ok_or_else(|| format!("ICE: unit declares unknown function #{index}"))?;
+    let linkage = match func.linkage {
+        Linkage::Internal => "hidden",
+        Linkage::Export => "dso_local",
+    };
     let params = parameters(func, false)?;
     Ok(format!(
-        "declare {} {}({params}) {FN_ATTRS}\n",
+        "declare {linkage} {} {}({params}) {FN_ATTRS}\n",
         abi_ret(func.ret)?,
         global_name(&func.symbol)
     ))

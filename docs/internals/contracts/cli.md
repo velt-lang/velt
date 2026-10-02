@@ -4,7 +4,7 @@
 velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple>] [--emit vir|llvm|obj|exe] [--locked] [-v] [--timings]
 velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm] [--locked] [-- <program args>...]
 velt check [<file.vlt>] [--json] [--locked] [-v]
-velt dev   [<file.vlt>] [--exe] [--locked] [-v] [-- <program args>...]
+velt dev   [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]
 velt test  [<file|dir>] [--release] [--locked] [--watch]
 velt new   <name> [--template app|cli|api|websocket|lib] [--lib]
 velt init  [--template <t>] [--name <name>] [--force]
@@ -31,12 +31,14 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - Backends: default `llvm` for `--release` when clang is found (`$VELT_CLANG`, PATH, standard install
   dirs), else `cranelift` (with a one-line stderr note). `--emit llvm` prints LLVM IR (no clang needed).
   Release builds run `velt_opt` (Speed) before either backend.
-- Codegen units (additive): with `$VELT_CODEGEN_UNITS` = N > 1, the LLVM backend splits the
-  program into N units (at most the core count) compiled by parallel clang processes
-  (`velt_codegen_llvm::emit_objects_timed`); the first unit's object is `<exe>.o` (`.obj`), the
-  others `<exe>.cgu<N>.o` beside it, and all are linked; objects of higher-numbered units from
-  an earlier build are removed. Unset: one unit. `--emit obj` always writes one object and
-  removes none.
+- Codegen units (additive): the LLVM backend splits a large program into units compiled by
+  parallel clang processes, at most one per core (`velt_codegen_llvm::emit_objects_timed`); the
+  first unit's object is `<exe>.o` (`.obj`), the others `<exe>.cgu<N>.o` beside it, and all are
+  linked; objects of higher-numbered units from an earlier build are removed. With
+  `$VELT_CODEGEN_UNITS` unset, the count depends on the program's size only (not on the
+  machine): one unit below 32 000 VIR statements, else one per 16 000, at most 4.
+  `$VELT_CODEGEN_UNITS` = N overrides it (N units, at most the core count; `1`: no split).
+  `--emit obj` always writes one object and removes none.
 - **WebAssembly** (additive): `--target wasm32-wasip1` (alias `wasm32-wasi`)
   and `--target wasm32-unknown-unknown` build `./target/velt/<stem>.wasm` (object `<stem>.o`) with
   the LLVM backend (always; `--backend cranelift` is an error) using LLVM's `opt`/`llc`
@@ -128,6 +130,9 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
     users) that compiles to VIR, JIT-compiles it with Cranelift (debug settings, no link, no new
     executable) and runs it in-process with the runtime linked into `velt`; it reports its build
     over the dev channel and starts only after the old version stopped (rt_abi_async.md §13).
+    `--timings` (additive) breaks its `jit` stage into `compile`, `finalize`, `unwind` and
+    `debug info`; `VELT_DEV_DEBUG_INFO=0` (additive) skips the debug-info image it registers for
+    debuggers.
   - Hot swap (default mode, docs/internals/design/hot-reload.md phase 3): while a host runs, a change goes
     to it first. It builds the new version beside the running program and swaps the changed
     functions in, so in-memory state, open connections and running tasks survive: new calls and
@@ -203,7 +208,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   folder module `x/index.vlt`; bare names → `paths` aliases of the importing package first,
   then packages via `package.vlt` (`pkg/sub` → `src/sub.vlt` or `src/sub/index.vlt`). `std/prelude/*.vlt` is loaded implicitly before everything else.
 - Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.velt`), `VELT_REGISTRY`
-  (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (linker override), `VELT_CLANG` (clang for the LLVM backend), `VELT_LLVM_OPT` (clang `-O` level of release builds, default 3), `VELT_CODEGEN_UNITS` (codegen units of LLVM release builds).
+  (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (linker override), `VELT_CLANG` (clang for the LLVM backend), `VELT_LLVM_OPT` (clang `-O` level of release builds, default 3), `VELT_CODEGEN_UNITS` (codegen units of LLVM release builds; default from the program's size).
   Set by `velt dev` for the program (not for users): `VELT_DEV_SOCKET` (a Unix socket path, or a
   named pipe `\\.\pipe\velt-dev-<pid>-<n>` on Windows).
 - Lockfile: `version = 1` + `[[package]]` entries with `name`, `version`, `source`

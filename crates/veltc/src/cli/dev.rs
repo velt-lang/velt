@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use super::build::parse_build;
 use super::{Command, DevArgs, DevMode};
 
-/// Parse `velt dev [<file>] [--exe] [--locked] [-v] [-- <program args>...]` (and the internal
+/// Parse `velt dev [<file>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]` (and the internal
 /// `--host`, which the supervisor passes to the JIT host child).
 pub(super) fn parse_dev(args: Vec<OsString>) -> Result<Command, String> {
     let split = args.iter().position(|a| a == "--").unwrap_or(args.len());

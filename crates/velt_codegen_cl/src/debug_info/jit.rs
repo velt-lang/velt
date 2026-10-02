@@ -95,6 +95,24 @@ pub(crate) fn register(
     Ok(())
 }
 
+/// Every image registered so far, newest first, read under [`LOCK`] so it never races a
+/// registration from another test thread.
+#[cfg(test)]
+pub(crate) fn registered_images_for_tests() -> Vec<Vec<u8>> {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut images = vec![];
+    // SAFETY: the list is only written under LOCK, which is held; entries are never freed.
+    unsafe {
+        let descriptor = &*std::ptr::addr_of!(__jit_debug_descriptor);
+        let mut entry = descriptor.first_entry_for_tests();
+        while let Some(e) = entry {
+            images.push(e.image_for_tests().to_vec());
+            entry = e.next_for_tests();
+        }
+    }
+    images
+}
+
 /// A relocatable ELF file for the host holding the DWARF of `functions` at their absolute
 /// `addresses`, plus an absolute symbol per function.
 pub(crate) fn elf_image(
