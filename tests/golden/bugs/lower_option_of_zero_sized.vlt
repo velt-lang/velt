@@ -1,0 +1,23 @@
+// An option of a type with no value (`never`, `void`, a literal type) had no layout: `pop()` on
+// an array instantiated with `never` crashed the compiler with "zero-sized field in aggregate
+// option". Such an option is now just its present flag.
+function first<E>(es: E[]): bool {
+  const e = es.pop();
+  return e != null;
+}
+
+function orElse<E>(es: E[], fallback: E): E {
+  return es.pop() ?? fallback;
+}
+
+function nothing(): void {}
+
+function main() {
+  console.log(first<never>([]));
+  const done: void[] = [nothing()];
+  console.log(first(done), first(done));
+  orElse(done, nothing());
+  const letters: "a"[] = ["a"];
+  console.log(letters.pop());
+  console.log(letters.pop());
+}

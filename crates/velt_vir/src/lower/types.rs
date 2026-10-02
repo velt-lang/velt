@@ -123,7 +123,8 @@ impl<'h> Cx<'h> {
         self.is_class(t) || self.boxed(t) || matches!(self.types.kind(t), TyKind::Shared(_))
     }
 
-    /// VIR type of a concrete HIR type. `Unit` and `Never` map to `Ty::Unit` (no value).
+    /// VIR type of a concrete HIR type. `Unit` and `Never` map to `Ty::Unit` (no value), and
+    /// an option of such a type to `Bool`.
     pub(super) fn ty(&mut self, t: TyId) -> Ty {
         match self.kind(t) {
             TyKind::Int(i) => int_ty(i),
@@ -142,6 +143,8 @@ impl<'h> Cx<'h> {
                 _ => ice("type refers to a non-type definition"),
             },
             TyKind::Option(inner) if self.has_null_niche(inner) => Ty::Ptr,
+            // No payload to store (`void`, `never`, a literal): the option is its present flag.
+            TyKind::Option(inner) if self.ty(inner) == Ty::Unit => Ty::Bool,
             TyKind::Tuple(_) | TyKind::Option(_) | TyKind::Result(..) => Ty::Agg(self.value_agg(t)),
             TyKind::Array(_) => Ty::Agg(self.array_agg()),
             TyKind::Shared(_) | TyKind::Promise(..) => Ty::Ptr,

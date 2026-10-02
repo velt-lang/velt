@@ -175,6 +175,7 @@ impl FnLower<'_, '_> {
                 Ty::Bool,
                 Rvalue::Binary(vir::BinOp::Ne, Operand::Copy(p.clone()), cint(0, Ty::Ptr)),
             ),
+            Ty::Bool => self.rvalue_temp(Ty::Bool, Rvalue::Use(Operand::Copy(p.clone()))),
             _ => self.rvalue_temp(
                 Ty::Bool,
                 Rvalue::Use(Operand::Copy(proj(p, Proj::Field(0)))),

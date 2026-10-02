@@ -139,10 +139,11 @@ impl FnLower<'_, '_> {
         Operand::Copy(self.elem_place_checked(&arr, bty, i, ity))
     }
 
-    /// Place of the payload of an option value at `p` (the value itself for null-niche options).
+    /// Place of the payload of an option value at `p` (the value itself for null-niche options,
+    /// and for flag-only options, whose zero-sized payload is never read).
     pub(super) fn some_payload(&mut self, p: &Place, opt: TyId) -> Place {
         match self.cx.ty(opt) {
-            Ty::Ptr => p.clone(),
+            Ty::Ptr | Ty::Bool => p.clone(),
             _ => proj(p, Proj::Field(1)),
         }
     }

@@ -157,6 +157,7 @@ impl FnLower<'_, '_> {
         let v = self.consume(inner);
         match self.cx.ty(ty) {
             Ty::Ptr => self.own_value(v, ty),
+            Ty::Bool => Operand::Const(Const::Bool(true), Ty::Bool),
             _ => self.build_agg(ty, vec![Operand::Const(Const::Bool(true), Ty::Bool), v]),
         }
     }
