@@ -10,18 +10,6 @@ import { argv } from "velt:process";
 const SOLAR_MASS: f64 = 4.0 * Math.PI * Math.PI;
 const DAYS_PER_YEAR: f64 = 365.24;
 
-// JS `Number.prototype.toFixed` for the magnitudes printed here (|x| * 10^digits < 2^53).
-extend f64 {
-  toFixed(digits: i64): string {
-    const scale = 10.0 ** (digits as f64);
-    const scaled = Math.round(Math.abs(this) * scale) as i64;
-    const unit = scale as i64;
-    const frac = `${scaled % unit}`.padStart(digits, "0");
-    const sign = this < 0.0 && scaled != 0 ? "-" : "";
-    return `${sign}${scaled / unit}.${frac}`;
-  }
-}
-
 const PAIRS = 10;
 
 struct Vec3 {
