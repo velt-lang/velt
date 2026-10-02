@@ -15,4 +15,7 @@ a package; `target/` and hidden directories are skipped.
   (single quotes are kept when the text contains `"`), semicolons, trailing commas in lists that
   break over several lines, at most one blank line between statements. Template literals are
   printed verbatim. Formatting is idempotent and never changes the program.
+- Comments stay next to the code they were written beside: a comment above a statement, member
+  or field stays above it, and one at the end of a line stays at the end of that line. An object
+  type with a comment inside is printed one field per line, like an interface body.
 - The language server formats documents on request ([Editors](editors.md)).

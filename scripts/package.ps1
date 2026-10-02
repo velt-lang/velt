@@ -57,7 +57,8 @@ if (Test-Path $StdDir -PathType Container) {
 @"
 # Velt $Version ($HostTriple)
 
-Install:  pwsh scripts/install.ps1 -Dist <this directory>   (or copy it anywhere)
+Install:  get-velt.ps1 -Archive <this .zip> (an asset of every release), or
+          pwsh scripts/install.ps1 -Dist <this directory> from a source checkout, or copy it anywhere.
 Then add ``<prefix>\bin`` to PATH and run ``velt doctor``.
 
     velt run hello.vlt

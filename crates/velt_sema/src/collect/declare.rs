@@ -79,6 +79,7 @@ pub(crate) fn fn_placeholder<'m>(
         is_private: false,
         is_getter: false,
         escaping: false,
+        keeps_fn_params: false,
         soft_params: vec![],
     }
 }

@@ -1,0 +1,8 @@
+// The executor of `new Promise` must be an arrow-function literal.
+function exec(resolve: (v: i64) => void, reject: (e: Error) => void) {
+  resolve(1);
+}
+
+async function main() {
+  console.log(await new Promise<i64, Error>(exec));
+}

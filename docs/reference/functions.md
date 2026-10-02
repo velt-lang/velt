@@ -63,6 +63,16 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   that stays valid. Closures and overridden or interface methods have fixed borrowed
   parameters, so they cannot keep a function they receive:
   ``cannot keep a copy of `g`, a borrowed function parameter``.
+  The executor of `new Promise((resolve, reject) => …)` is the exception: its `resolve` and
+  `reject` are handles the compiler creates on the heap (never a caller's closure), so it may
+  keep them ([Async](async.md#new-promise)). A spawned or stored closure can't capture a borrowed
+  function parameter either (same error).
+- A closure literal passed directly to a function value or an interface method (whose
+  parameters are fixed, so it may keep them, for example as a generic `T`) is escaping: it
+  owns a heap environment. Unless it captures a borrowed function parameter of the enclosing
+  function, as a middleware forwarding its `next` does (`inner.handle(req, (r) => next(r))`):
+  then it stays non-escaping, like the parameter it forwards, and is safe as long as the callee
+  only calls it.
 - A closure stored in a variable, field or array, or returned, is **escaping** and captures by
   value: objects are shared with it (the closure and the enclosing code see the same object),
   numbers and strings are copied. A variable that the closure or the enclosing code assigns

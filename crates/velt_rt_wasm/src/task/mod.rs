@@ -13,6 +13,7 @@ pub mod all;
 pub mod boxed;
 pub mod channel;
 pub mod executor;
+pub mod latch;
 pub mod leaf;
 pub mod local;
 pub mod race;

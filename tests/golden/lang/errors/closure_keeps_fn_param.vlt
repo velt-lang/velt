@@ -1,0 +1,12 @@
+// Only the executor of `new Promise` may keep the functions it receives: an ordinary closure's
+// function parameters are still borrowed.
+function withCallback(use: (cb: () => void) => void) {
+  use(() => {});
+}
+
+function main() {
+  const saved: (() => void)[] = [];
+  withCallback((cb) => {
+    saved.push(cb);
+  });
+}

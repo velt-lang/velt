@@ -121,6 +121,10 @@ impl FnLower<'_, '_> {
             K::Logical { op, lhs, rhs } => self.logical(*op, lhs, rhs),
             K::Assign { place, value } => self.assign_expr(place, value),
             K::CompoundAssign { op, place, value } => self.compound_assign(*op, place, value),
+            K::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::SourceLocation),
+                ..
+            } => self.source_location(e.span),
             K::Call { callee, args } => self.call_value(callee, args, e.ty),
             K::Cast(inner) => {
                 let v = self.expr(inner);

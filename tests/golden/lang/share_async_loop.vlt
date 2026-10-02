@@ -1,0 +1,68 @@
+// check: no leaks
+// A shared value passed to an async call in a loop (or in one of two branches) after an
+// earlier async call took it: every call gets its own share, so the value outlives them all
+// (#131: a database pool handed to spawned tasks after a query on it).
+struct Handle {
+  id: u64;
+
+  async ping(): Promise<u64> {
+    await sleep(1);
+    return this.id;
+  }
+
+  close() {
+    this.id = 0;
+  }
+}
+
+async function read(h: Handle): Promise<u64> {
+  await sleep(1);
+  return h.id;
+}
+
+async function plusOne(h: Handle): Promise<u64> {
+  return h.id + 1;
+}
+
+function keep(kept: Handle[], h: Handle) {
+  kept.push(h);
+}
+
+async function main() {
+  const h = Handle { id: 7 };
+  console.log("ping", await h.ping());
+
+  // Spawned tasks in a loop, after the call above.
+  const tasks: Promise<u64>[] = [];
+  for (let w = 0; w < 3; w++) {
+    tasks.push(spawn(read(h)));
+  }
+  console.log("spawned", await Promise.all(tasks));
+
+  // Awaited in a `while` loop, with an alias made before it.
+  const alias = h;
+  let n = 0;
+  while (n < 2) {
+    console.log("awaited", await read(h));
+    n++;
+  }
+
+  // One branch or the other, then used again.
+  for (let w = 0; w < 2; w++) {
+    if (w == 0) {
+      console.log("branch", await read(h));
+    } else {
+      console.log("branch", await plusOne(h));
+    }
+  }
+
+  // A synchronous owned parameter in a loop.
+  const kept: Handle[] = [];
+  for (let w = 0; w < 2; w++) {
+    keep(kept, h);
+  }
+  console.log("kept", kept.length, kept[1].id);
+
+  h.close();
+  console.log("closed", h.id, alias.id, kept[0].id);
+}

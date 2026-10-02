@@ -3,10 +3,11 @@
 //! State per program point: see [`state`]. Branches join with OR, so a value moved in one
 //! branch is an error to use after the branch. Loops iterate to a fixpoint silently, then run
 //! one reporting pass ([`loops`]), so a move inside a loop body is reported at its
-//! second-iteration use. Assignment re-initializes. Moves are tracked per place path
-//! (`p.first` and `p.second` can be moved separately; [`expr`]); any use of a place overlapping
-//! a moved path is an error. Escaping closures move the variables they capture by value.
-//! A `using` local is never moved: it is disposed at the end of its block.
+//! second-iteration use. A use blames every move that reaches it (a soft move in a loop body
+//! and one before the loop, one per branch). Assignment re-initializes. Moves are tracked per
+//! place path (`p.first` and `p.second` can be moved separately; [`expr`]); any use of a place
+//! overlapping a moved path is an error. Escaping closures move the variables they capture by
+//! value. A `using` local is never moved: it is disposed at the end of its block.
 
 mod expr;
 mod loops;
@@ -238,15 +239,17 @@ impl Moves<'_> {
             s.clear(i);
         }
         if s.overlaps(i, path) {
-            match s.moved_at[i] {
-                Some((at, MoveKind::Soft)) => {
-                    if self.report {
-                        self.reused.insert(at);
+            // Every move that may have happened is blamed: soft ones become shares; any other
+            // makes this use an error.
+            let sites = &s.moved_at[i];
+            let hard = sites.iter().find(|(_, kind)| *kind != MoveKind::Soft);
+            if self.report {
+                match hard {
+                    None if !sites.is_empty() => {
+                        self.reused.extend(sites.iter().map(|(at, _)| *at));
                     }
-                }
-                moved_at => {
-                    if self.report {
-                        let d = self.moved_error(i, moved_at, span);
+                    _ => {
+                        let d = self.moved_error(i, hard.copied(), span);
                         self.errors.push(d);
                     }
                 }

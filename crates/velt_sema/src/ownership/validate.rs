@@ -32,6 +32,7 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         let mut copied_captures = vec![];
         let kinds = cx.fn_info(d).local_kinds.clone();
         let fixed = cx.fn_info(d).fixed_modes;
+        let keeps_fn_params = cx.fn_info(d).keeps_fn_params;
         let soft: HashSet<Span> = cx.fn_info(d).soft_moves.iter().copied().collect();
         let shared = shared_captures_in(cx, &mut f.body.block);
         let v = Validator {
@@ -39,6 +40,7 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
             f: &f,
             kinds: &kinds,
             fixed,
+            keeps_fn_params,
             shared: &shared,
         };
         let mut block = f.body.block.clone();
@@ -47,7 +49,13 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
                 let mut invalid = vec![];
                 v.check(e, &mut invalid);
                 if !invalid.is_empty() {
-                    match super::fn_values::borrowed_fn_copy(v.cx, v.f, v.kinds, e) {
+                    match super::fn_values::borrowed_fn_copy(
+                        v.cx,
+                        v.f,
+                        v.kinds,
+                        v.keeps_fn_params,
+                        e,
+                    ) {
                         Some(err) => errors.push(err),
                         // An async closure may run on several threads at once (an http
                         // handler) and counts are not atomic: it copies what it captured.
@@ -95,6 +103,8 @@ struct Validator<'a, 'c, 'm> {
     /// Shared captures per closure created in the body.
     shared: &'a HashMap<DefId, Vec<LocalId>>,
     fixed: bool,
+    /// See `FnInfo::keeps_fn_params`.
+    keeps_fn_params: bool,
 }
 
 impl Validator<'_, '_, '_> {
@@ -122,7 +132,11 @@ impl Validator<'_, '_, '_> {
             } => {
                 if let [a] = args.as_slice() {
                     errors.extend(super::fn_values::borrowed_fn_copy(
-                        self.cx, self.f, self.kinds, a,
+                        self.cx,
+                        self.f,
+                        self.kinds,
+                        self.keeps_fn_params,
+                        a,
                     ));
                 }
             }
@@ -130,7 +144,29 @@ impl Validator<'_, '_, '_> {
                 if let Some(Def::Fn(c)) = &self.cx.defs[def.0 as usize] {
                     let shared = self.shared.get(def).cloned().unwrap_or_default();
                     for cap in c.captures.iter().filter(|c| c.mode == PassMode::Owned) {
-                        if !shared.contains(&cap.outer) {
+                        // An escaping closure keeps its by-value captures: a borrowed function
+                        // parameter may be a closure living in a caller's frame (functions.md
+                        // "Captures"). A local one ends with the call, like the parameter.
+                        let escaping = self.cx.fn_info(*def).escaping;
+                        let outer = Expr {
+                            kind: E::Local(cap.outer, UseMode::Copy),
+                            ty: self.f.body.locals[cap.outer.0 as usize].ty,
+                            span: e.span,
+                        };
+                        let kept = escaping
+                            .then(|| {
+                                super::fn_values::borrowed_fn_copy(
+                                    self.cx,
+                                    self.f,
+                                    self.kinds,
+                                    self.keeps_fn_params,
+                                    &outer,
+                                )
+                            })
+                            .flatten();
+                        if let Some(err) = kept {
+                            errors.push(err);
+                        } else if !shared.contains(&cap.outer) {
                             self.root(cap.outer, None, e.span, errors);
                         }
                     }

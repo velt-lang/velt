@@ -9,7 +9,7 @@
 use velt_common::{SourceMap, Span};
 
 use super::FnLower;
-use crate::vir::SrcLoc;
+use crate::vir::{Operand, SrcLoc};
 
 /// Line tables of every source file, plus the paths reported in `vir::Program::files`.
 pub(super) struct LocMap {
@@ -87,6 +87,18 @@ impl LocMap {
 }
 
 impl FnLower<'_, '_> {
+    /// `Intrinsic::SourceLocation`: `"path:line:col"` of `span` as a string constant (the user's
+    /// file as it was given to the compiler).
+    pub(super) fn source_location(&mut self, span: Span) -> Operand {
+        let text = self
+            .cx
+            .locs
+            .as_ref()
+            .and_then(|m| m.loc(span).map(|l| m.describe(l)))
+            .unwrap_or_else(|| "an unknown location".into());
+        self.str_lit(&text)
+    }
+
     /// Make `span` the location of the statements emitted from now on; returns the previous
     /// location for [`FnLower::restore_loc`]. Empty spans (compiler-synthesized nodes,
     /// `Span::DUMMY`) keep the enclosing location.
