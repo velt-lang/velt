@@ -1,7 +1,7 @@
 //! The registry: a local directory, or a remote one over HTTP ([`crate::remote`]) when
 //! [`Locations::remote`] is set. The local layout is also what the registry server stores.
 //!
-//! Layout: `<registry>/<name>/<version>/` holds a copy of the published package (velt.toml + src/**)
+//! Layout: `<registry>/<name>/<version>/` holds a copy of the published package (package.vlt + src/**)
 //! and `<registry>/<name>/index.toml` lists every published version with its content checksum and
 //! dependency requirements, so resolution only reads index files:
 //!
@@ -103,7 +103,7 @@ pub fn publish(root: &Path, loc: &Locations) -> Result<IndexEntry, String> {
 }
 
 /// [`publish`] plus the native bundles (target triple → bundle directory) of a package with a
-/// `[native]` table: one for every target it lists.
+/// `native` object: one for every target it lists.
 pub fn publish_with_native(
     root: &Path,
     loc: &Locations,
@@ -129,7 +129,7 @@ pub fn publish_with_native(
         if !missing.is_empty() || native.targets.is_empty() {
             let list: Vec<&str> = missing.iter().map(|s| s.as_str()).collect();
             return Err(if native.targets.is_empty() {
-                format!("cannot publish `{}`: [native] targets is empty (list the targets to publish prebuilt libraries for)", manifest.package.name)
+                format!("cannot publish `{}`: `native.targets` is empty (list the targets to publish prebuilt libraries for)", manifest.package.name)
             } else {
                 format!(
                     "cannot publish `{}`: no native library for {} (build it with `velt native build --target <triple>` on a machine for that target, then pass the bundles with `--native-artifacts <dir>`)",
@@ -158,7 +158,7 @@ pub fn add_native(
     let loc = &loc.clone().with_manifest(&manifest);
     if manifest.native.is_none() {
         return Err(format!(
-            "package `{}` has no [native] table",
+            "package `{}` has no `native` in package.vlt",
             manifest.package.name
         ));
     }
@@ -179,7 +179,7 @@ fn check_bundles(manifest: &Manifest, bundles: &BTreeMap<String, PathBuf>) -> Re
     let name = &manifest.package.name;
     if manifest.native.is_none() && !bundles.is_empty() {
         return Err(format!(
-            "package `{name}` has no [native] table but native libraries were given"
+            "package `{name}` has no `native` in package.vlt but native libraries were given"
         ));
     }
     for (target, dir) in bundles {
@@ -295,7 +295,7 @@ fn publish_to(root: &Path, loc: &Locations, manifest: &Manifest) -> Result<Index
     let mut index = read_index(loc, name)?.unwrap_or_default();
     if index.versions.iter().any(|v| v.semver() == version) {
         return Err(format!(
-            "`{name}` {version} is already published (bump `version` in velt.toml)"
+            "`{name}` {version} is already published (bump `version` in package.vlt)"
         ));
     }
     if let Some(url) = &loc.remote {
@@ -333,7 +333,7 @@ mod tests {
 
     fn package(dir: &Path, manifest: &str) {
         std::fs::create_dir_all(dir.join("src")).unwrap();
-        std::fs::write(dir.join("velt.toml"), manifest).unwrap();
+        std::fs::write(dir.join(crate::manifest::MANIFEST_FILE), manifest).unwrap();
         std::fs::write(
             dir.join("src/lib.vlt"),
             "export function f(): i64 { return 1; }\n",
@@ -346,7 +346,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let loc = Locations::under(&tmp.path().join("home"));
         let pkg = tmp.path().join("lib");
-        package(&pkg, "[package]\nname = \"lib\"\nversion = \"1.0.0\"\n[dependencies]\nu = { version = \"0.2\", path = \"../u\" }\n");
+        package(&pkg, "export const pkg: Package = { name: \"lib\", version: \"1.0.0\", dependencies: { u: { version: \"0.2\", path: \"../u\" } } };");
         let entry = publish(&pkg, &loc).unwrap();
         assert_eq!(entry.dependencies["u"], "0.2");
         assert!(loc.registry.join("lib/1.0.0/src/lib.vlt").is_file());
@@ -363,7 +363,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let loc = Locations::under(tmp.path());
         let pkg = tmp.path().join("lib");
-        package(&pkg, "[package]\nname = \"lib\"\nversion = \"1.0.0\"\n[dependencies]\nu = { path = \"../u\" }\n");
+        package(&pkg, "export const pkg: Package = { name: \"lib\", version: \"1.0.0\", dependencies: { u: { path: \"../u\" } } };");
         assert!(publish(&pkg, &loc).unwrap_err().contains("only a `path`"));
     }
 }

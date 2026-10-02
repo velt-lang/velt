@@ -1,0 +1,44 @@
+// check: no leaks
+// `new Promise` settles once: a second `resolve` or `reject` does nothing, also from another
+// task; an object resolved on the promise's own task is the same object (JS identity), while
+// one resolved from a spawned task is a copy.
+class Box {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+async function main() {
+  const twice = new Promise<i64, Error>((resolve, reject) => {
+    resolve(1);
+    resolve(2);
+    reject(new Error("ignored"));
+  });
+  console.log("twice:", await twice);
+
+  const box = new Box(5);
+  const same = await new Promise<Box>((resolve) => {
+    resolve(box);
+  });
+  console.log("same object:", same === box);
+
+  const fromTask = new Promise<Box>((resolve) => {
+    spawn(async () => {
+      await sleep(5);
+      resolve(new Box(7));
+      resolve(new Box(8));
+    });
+  });
+  console.log("from a task:", (await fromTask).n);
+
+  const saved: ((v: i64) => void)[] = [];
+  const later = new Promise<i64>((resolve) => {
+    saved.push(resolve);
+  });
+  for (const r of saved) {
+    r(42);
+  }
+  console.log("saved:", await later);
+}

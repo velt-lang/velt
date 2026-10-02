@@ -74,7 +74,10 @@ Maintainer-owned, like hir.rs.
   the last rejection). `Promise.allSettled(ps)` and
   `Promise.any(ps)` are `Call { Def(promiseAllSettled / promiseAny, [T]) }` of the prelude's
   async functions (std/prelude/promise.vlt), so a directly awaited `Promise.any` throws its
-  `AggregateError` like any async call.
+  `AggregateError` like any async call. `new Promise<T, E>(arrow)` is a `Call` of the prelude's
+  `promiseNew` (or `promiseNewResolveOnly`) with two more arguments: the compiler-internal
+  `Intrinsic::SourceLocation` (no arguments; lowered to the `"path:line:col"` string of its
+  span) and a `bool` literal, true when the `new Promise` is the direct operand of `Await`.
 - `async main` → `velt_main` calls `velt_rt_block_on`.
 - std wraps rt I/O with `declare async function` externs (`ExternFnDef::is_async`); rt results
   use `IoResult` layout = Velt `struct { code: i32; message: string; value: T }`.

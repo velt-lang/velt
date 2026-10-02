@@ -10,16 +10,16 @@ use std::path::{Path, PathBuf};
 pub struct GraphPackage {
     /// Package name.
     pub name: String,
-    /// Package root directory (contains velt.toml).
+    /// Package root directory (contains package.vlt).
     pub root: PathBuf,
     /// Dependency name → that dependency's package root.
     pub dependencies: BTreeMap<String, PathBuf>,
-    /// The package's `[paths]` import aliases (`crate::paths`).
+    /// The package's `paths` import aliases (`crate::paths`).
     pub paths: BTreeMap<String, String>,
     /// The package's native library for the build target (packages with native code, when the
     /// install had a target).
     pub native: Option<crate::native::NativeLib>,
-    /// The package's `[jsx] importSource`, as written.
+    /// The package's `jsx.importSource`, as written.
     pub jsx_import_source: Option<String>,
     /// `root`, canonicalized, for matching importing files.
     key: PathBuf,
@@ -72,7 +72,7 @@ impl PackageGraph {
         self.packages.last_mut().expect("ICE: just pushed")
     }
 
-    /// The module path (absolute, no `.vlt` extension) that a `[paths]` alias of the package
+    /// The module path (absolute, no `.vlt` extension) that a `paths` alias of the package
     /// containing `importer` maps `spec` to.
     pub fn path_alias(&self, importer: &Path, spec: &str) -> Option<PathBuf> {
         let package = self.package_of(importer)?;
@@ -80,7 +80,7 @@ impl PackageGraph {
         Some(package.root.join(module))
     }
 
-    /// The `[jsx] importSource` of the package containing `importer`, as a specifier `importer`
+    /// The `jsx.importSource` of the package containing `importer`, as a specifier `importer`
     /// can import from: a relative source (`./ui`) is relative to the package root, so it is
     /// re-expressed relative to `importer`'s directory.
     pub fn jsx_import_source(&self, importer: &Path) -> Option<String> {
@@ -128,7 +128,7 @@ impl PackageGraph {
     }
 }
 
-/// The error for importing a package that is not declared in `[dependencies]`.
+/// The error for importing a package that is not declared in `dependencies`.
 pub fn not_a_dependency(name: &str) -> String {
     format!("package `{name}` is not a dependency (add it with `velt add {name}`)")
 }

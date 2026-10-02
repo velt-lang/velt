@@ -1,38 +1,40 @@
-//! `velt.toml` manifest model (CONTRACT: docs/internals/contracts/velt_toml.md).
+//! The package manifest, `package.vlt` (CONTRACT: docs/internals/contracts/manifest.md):
 //!
-//! ```toml
-//! registry = "https://registry.example.com"   # optional remote registry
+//! ```ts ignore
+//! import type { Package } from "velt:package";
 //!
-//! [package]
-//! name = "hello"
-//! version = "0.1.0"
-//! entry = "src/main.vlt"   # optional, this is the default
-//!
-//! [dependencies]
-//! json = "1.2"                       # registry package, semver requirement
-//! util = { path = "../util" }        # local package
-//! http = { version = "0.3" }         # table form of a version requirement
-//!
-//! [paths]
-//! "@app/*" = "src/*"                 # import aliases (`crate::paths`)
-//!
-//! [jsx]
-//! importSource = "sigx"              # JSX runtime of the package's modules (default `velt:jsx`)
-//!
-//! [native]                           # a Rust crate built into the package's native library
-//! path = "native"                    # (`crate::native`; docs/internals/contracts/native_abi.md)
-//! targets = ["x86_64-unknown-linux-gnu"]
+//! export const pkg: Package = {
+//!   name: "hello",
+//!   version: "0.1.0",
+//!   entry: "src/main.vlt",              // optional, this is the default
+//!   registry: "https://registry.example.com",   // optional remote registry
+//!   dependencies: {
+//!     json: "1.2",                      // registry package, semver requirement
+//!     util: { path: "../util" },        // local package
+//!   },
+//!   paths: { "@app/*": "src/*" },       // import aliases (`crate::paths`)
+//!   jsx: { importSource: "sigx" },      // JSX runtime of the package's modules
+//!   native: { targets: ["x86_64-unknown-linux-gnu"] },  // a Rust crate (`crate::native`)
+//! };
 //! ```
+//!
+//! [`read`] parses it without compiling or running anything. [`legacy`] only turns an old
+//! `velt.toml` into the error that tells its owner what to write instead.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use velt_common::{Diagnostics, FileId, SourceMap};
 
+pub mod legacy;
 pub mod read;
+pub(crate) mod write;
 
 /// File name of the manifest at a package root.
-pub const MANIFEST_FILE: &str = "velt.toml";
+pub const MANIFEST_FILE: &str = "package.vlt";
+/// The manifest's former name: still found, to report how to migrate it ([`legacy`]).
+pub const LEGACY_MANIFEST_FILE: &str = "velt.toml";
 /// Default runnable entry, relative to the package root.
 pub const DEFAULT_ENTRY: &str = "src/main.vlt";
 /// Entry module seen by importers of a library package, relative to the package root.
@@ -40,36 +42,37 @@ pub const LIB_ENTRY: &str = "src/lib.vlt";
 /// Directory holding a package's modules, relative to the package root.
 pub const SRC_DIR: &str = "src";
 
-/// A parsed and validated `velt.toml`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A parsed and validated manifest. The serde attributes describe the legacy `velt.toml` layout
+/// ([`legacy`]); `package.vlt` is decoded by [`read`].
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct Manifest {
     /// Top-level `registry = "https://…"`: the remote registry for this package's registry
     /// dependencies and `velt publish` (default: the local registry).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registry: Option<String>,
-    /// `[package]` table.
+    /// `name`, `version` and `entry` (`[package]` in `velt.toml`).
     pub package: Package,
-    /// `[dependencies]` table, keyed by package name.
+    /// `dependencies`, keyed by package name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub dependencies: BTreeMap<String, Dependency>,
-    /// `[paths]` table: import specifier pattern → module path relative to the package root
+    /// `paths`: import specifier pattern → module path relative to the package root
     /// (`"@app/*" = "src/*"`, see [`crate::paths`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub paths: BTreeMap<String, String>,
-    /// `[native]` table: the package ships a native library built from a Cargo crate.
+    /// `native`: the package ships a native library built from a Cargo crate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native: Option<NativeConfig>,
-    /// `[jsx]` table: how the package's modules compile JSX.
+    /// `jsx`: how the package's modules compile JSX.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jsx: Option<JsxConfig>,
 }
 
-/// The `[jsx]` table (docs/internals/contracts/jsx.md "Choosing the provider").
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// The `jsx` object (docs/internals/contracts/jsx.md "Choosing the provider").
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JsxConfig {
     /// `importSource = "sigx"`: the module whose `jsx-runtime` provides the JSX factories (a
-    /// package, a `std/` module, a `[paths]` alias, or `./dir` relative to the package root);
+    /// package, a `std/` module, a `paths` alias, or `./dir` relative to the package root);
     /// a `// @jsxImportSource` pragma in a file wins.
     #[serde(
         default,
@@ -79,8 +82,8 @@ pub struct JsxConfig {
     pub import_source: Option<String>,
 }
 
-/// The `[native]` table.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// The `native` object.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeConfig {
     /// The Cargo crate's directory: one directory name inside the package root (default `native`).
@@ -94,7 +97,7 @@ pub struct NativeConfig {
     pub wasm: bool,
 }
 
-/// Default `[native] path`.
+/// Default `native.path`.
 pub const DEFAULT_NATIVE_PATH: &str = "native";
 
 fn default_native_path() -> String {
@@ -111,8 +114,8 @@ pub const NATIVE_TARGETS: &[&str] = &[
     "aarch64-pc-windows-msvc",
 ];
 
-/// The `[package]` table.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// The package's identity: `name`, `version` and `entry`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct Package {
     /// Package name, `[a-z][a-z0-9_-]*`.
     pub name: String,
@@ -127,8 +130,8 @@ fn default_entry() -> String {
     DEFAULT_ENTRY.to_string()
 }
 
-/// One `[dependencies]` entry.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// One `dependencies` entry.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(untagged)]
 pub enum Dependency {
     /// `name = "1.2"`
@@ -138,7 +141,7 @@ pub enum Dependency {
 }
 
 /// Table form of a dependency.
-#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, Deserialize)]
 pub struct DetailedDependency {
     /// Semver requirement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -167,29 +170,54 @@ impl Dependency {
 }
 
 impl Manifest {
-    /// Parse and validate manifest text.
+    /// Read and validate `package.vlt` text; errors are rendered against the name `package.vlt`.
     pub fn parse(src: &str) -> Result<Manifest, String> {
-        let m: Manifest =
-            toml::from_str(src).map_err(|e| format!("invalid {MANIFEST_FILE}: {e}"))?;
-        m.validate()?;
-        Ok(m)
+        Manifest::read(FileId(0), src).map_err(|d| render(Path::new(MANIFEST_FILE), src, &d))
     }
 
-    /// Read, parse and validate the manifest file at `path`.
+    /// Read and validate the manifest file at `path`. The file is never read past
+    /// [`read::MAX_BYTES`].
     pub fn from_path(path: &Path) -> Result<Manifest, String> {
-        let src = std::fs::read_to_string(path)
-            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        Manifest::parse(&src).map_err(|e| format!("{}: {e}", path.display()))
+        let cannot = |e: &dyn std::fmt::Display| format!("cannot read {}: {e}", path.display());
+        let file = std::fs::File::open(path).map_err(|e| cannot(&e))?;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(
+            &mut std::io::Read::take(file, read::MAX_BYTES as u64 + 1),
+            &mut bytes,
+        )
+        .map_err(|e| cannot(&e))?;
+        if bytes.len() > read::MAX_BYTES {
+            return Err(format!(
+                "{}: the manifest is larger than {} KiB",
+                path.display(),
+                read::MAX_BYTES / 1024
+            ));
+        }
+        let src = String::from_utf8(bytes)
+            .map_err(|_| format!("{}: the manifest is not valid UTF-8", path.display()))?;
+        Manifest::read(FileId(0), &src).map_err(|d| render(path, &src, &d))
     }
 
-    /// Read the manifest of the package rooted at `dir`.
+    /// Read the manifest of the package rooted at `dir`. A directory with only a `velt.toml` gets
+    /// the migration error ([`legacy::migration_error`]).
     pub fn from_dir(dir: &Path) -> Result<Manifest, String> {
-        Manifest::from_path(&dir.join(MANIFEST_FILE))
+        let path = dir.join(MANIFEST_FILE);
+        if !path.is_file() && dir.join(LEGACY_MANIFEST_FILE).is_file() {
+            return Err(legacy::migration_error(dir));
+        }
+        Manifest::from_path(&path)
     }
 
-    /// Serialize (loses formatting; use [`crate::edit`] to modify a user's file).
-    pub fn to_toml(&self) -> String {
-        toml::to_string(self).expect("ICE: manifest serialization cannot fail")
+    /// The manifest as `package.vlt` text, formatted like `velt fmt` formats it. Defaults are left
+    /// out.
+    pub fn to_vlt(&self) -> String {
+        write::to_vlt(self)
+    }
+
+    /// The manifest as JSON in `package.vlt`'s shape (`velt manifest --json`), with defaults
+    /// filled in.
+    pub fn to_json(&self) -> serde_json::Value {
+        write::to_json(self)
     }
 
     /// The package version as a parsed semver version (validated on parse).
@@ -197,30 +225,34 @@ impl Manifest {
         semver::Version::parse(&self.package.version)
             .expect("ICE: manifest version validated on parse")
     }
-
-    fn validate(&self) -> Result<(), String> {
-        if let Some(url) = &self.registry {
-            check_registry(url)?;
-        }
-        check_name(&self.package.name)?;
-        check_version(&self.package.version).map_err(|e| format!("package.version {e}"))?;
-        crate::paths::validate(&self.paths)?;
-        if let Some(native) = &self.native {
-            check_native_table(native)?;
-        }
-        if let Some(source) = self.jsx.as_ref().and_then(|j| j.import_source.as_deref()) {
-            check_import_source(source).map_err(|e| format!("[jsx] {e}"))?;
-        }
-        for (name, dep) in &self.dependencies {
-            check_dependency_name(name)?;
-            check_dependency(name, dep)?;
-        }
-        Ok(())
-    }
 }
 
-// The checks below are shared by the `velt.toml` reader and the `package.vlt` reader
-// ([`read`]), which attaches a location to their messages.
+/// Diagnostics of the manifest text `src` at `path`, rendered like compiler errors.
+fn render(path: &Path, src: &str, diags: &Diagnostics) -> String {
+    let mut sm = SourceMap::new();
+    sm.add(path, src);
+    let parts: Vec<String> = diags.iter().map(|d| d.render(&sm)).collect();
+    parts.join("\n\n")
+}
+
+// The field checks of [`read`], which attaches a location to their messages.
+
+/// `entry` is a `/`-separated path to a module inside the package.
+fn check_entry(entry: &str) -> Result<(), String> {
+    // Checked on the text, not with `std::path`, so a manifest means the same on every OS
+    // (`C:/x` is a drive on Windows only).
+    let segments: Vec<&str> = entry.split('/').collect();
+    let inside = !entry.contains(['\\', ':'])
+        && segments.iter().all(|s| !s.is_empty() && *s != "..")
+        && segments.iter().any(|s| *s != ".");
+    if inside {
+        Ok(())
+    } else {
+        Err(format!(
+            "entry `{entry}` must be a `/`-separated path to a file inside the package"
+        ))
+    }
+}
 
 fn check_registry(url: &str) -> Result<(), String> {
     if crate::locations::is_url(url) {
@@ -266,7 +298,7 @@ fn check_dependency_name(name: &str) -> Result<(), String> {
     }
 }
 
-fn check_dependency(name: &str, dep: &Dependency) -> Result<(), String> {
+pub(crate) fn check_dependency(name: &str, dep: &Dependency) -> Result<(), String> {
     if dep.version().is_none() && dep.path().is_none() {
         return Err(format!("dependency `{name}` needs a `version` or a `path`"));
     }
@@ -276,15 +308,6 @@ fn check_dependency(name: &str, dep: &Dependency) -> Result<(), String> {
         })?;
     }
     Ok(())
-}
-
-/// The `[native]` checks, with `velt.toml`'s messages.
-fn check_native_table(native: &NativeConfig) -> Result<(), String> {
-    check_native_path(&native.path).map_err(|e| format!("[native] {e}"))?;
-    for target in &native.targets {
-        check_native_target(target).map_err(|e| format!("[native] {e}"))?;
-    }
-    check_native_wasm(native.wasm).map_err(|e| format!("[native] wasm = true {e}"))
 }
 
 /// The message names the value, not the table: callers prefix it.
@@ -334,7 +357,8 @@ pub fn is_valid_package_name(name: &str) -> bool {
 }
 
 /// The root directory of the nearest package enclosing `start` (a file or directory): the first
-/// ancestor containing a `velt.toml`.
+/// ancestor containing a `package.vlt` (or a `velt.toml`, which [`Manifest::from_dir`] then
+/// reports as needing migration).
 pub fn find_package_root(start: &Path) -> Option<PathBuf> {
     let start = if start.is_absolute() {
         start.to_path_buf()
@@ -343,134 +367,9 @@ pub fn find_package_root(start: &Path) -> Option<PathBuf> {
     };
     start
         .ancestors()
-        .find(|d| d.join(MANIFEST_FILE).is_file())
+        .find(|d| d.join(MANIFEST_FILE).is_file() || d.join(LEGACY_MANIFEST_FILE).is_file())
         .map(Path::to_path_buf)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_full_manifest() {
-        let m = Manifest::parse(
-            r#"
-            [package]
-            name = "hello"
-            version = "0.1.0"
-
-            [dependencies]
-            json = "1.2"
-            util = { path = "../util" }
-            http = { version = "0.3" }
-            "#,
-        )
-        .unwrap();
-        assert_eq!(m.package.name, "hello");
-        assert_eq!(m.package.entry, "src/main.vlt");
-        assert_eq!(m.dependencies["json"], Dependency::Version("1.2".into()));
-        assert_eq!(m.dependencies["util"].path(), Some("../util"));
-        assert_eq!(m.dependencies["http"].version(), Some("0.3"));
-        // Round trip.
-        assert_eq!(Manifest::parse(&m.to_toml()).unwrap(), m);
-    }
-
-    #[test]
-    fn path_aliases() {
-        let head = "[package]\nname = \"app\"\nversion = \"1.0.0\"\n[paths]\n";
-        let m = Manifest::parse(&format!(
-            "{head}\"@app/*\" = \"src/*\"\n\"@cfg\" = \"src/config\"\n"
-        ))
-        .unwrap();
-        assert_eq!(m.paths["@app/*"], "src/*");
-        assert_eq!(m.paths["@cfg"], "src/config");
-        assert_eq!(Manifest::parse(&m.to_toml()).unwrap(), m);
-        let e = Manifest::parse(&format!("{head}\"@app/*\" = \"../x/*\"\n")).unwrap_err();
-        assert!(e.contains("`@app/*`"), "{e}");
-    }
-
-    #[test]
-    fn jsx_import_source() {
-        let head = "[package]\nname = \"app\"\nversion = \"1.0.0\"\n";
-        let m = Manifest::parse(&format!("{head}[jsx]\nimportSource = \"sigx\"\n")).unwrap();
-        assert_eq!(
-            m.jsx.as_ref().and_then(|j| j.import_source.as_deref()),
-            Some("sigx")
-        );
-        assert_eq!(Manifest::parse(&m.to_toml()).unwrap(), m);
-        assert_eq!(Manifest::parse(head).unwrap().jsx, None);
-        let e = Manifest::parse(&format!("{head}[jsx]\nimportSource = \"\"\n")).unwrap_err();
-        assert!(e.contains("importSource"), "{e}");
-        let e = Manifest::parse(&format!("{head}[jsx]\nimport_source = \"x\"\n")).unwrap_err();
-        assert!(e.contains("import_source"), "{e}");
-    }
-
-    #[test]
-    fn custom_entry_and_no_deps() {
-        let m = Manifest::parse(
-            "[package]\nname = \"app\"\nversion = \"1.0.0\"\nentry = \"main.vlt\"\n",
-        )
-        .unwrap();
-        assert_eq!(m.package.entry, "main.vlt");
-        assert!(m.dependencies.is_empty());
-    }
-
-    #[test]
-    fn rejects_bad_manifests() {
-        assert!(Manifest::parse("[package]\nname = \"x\"\n")
-            .unwrap_err()
-            .contains("version"));
-        assert!(Manifest::parse("[package]\nname = \"Bad Name\"\nversion = \"1.0.0\"\n").is_err());
-        assert!(
-            Manifest::parse("[package]\nname = \"x\"\nversion = \"1\"\n")
-                .unwrap_err()
-                .contains("semver")
-        );
-        let e = Manifest::parse(
-            "[package]\nname = \"x\"\nversion = \"1.0.0\"\n[dependencies]\ny = {}\n",
-        )
-        .unwrap_err();
-        assert!(e.contains("`y`"), "{e}");
-        let e = Manifest::parse(
-            "[package]\nname = \"x\"\nversion = \"1.0.0\"\n[dependencies]\ny = \"one\"\n",
-        )
-        .unwrap_err();
-        assert!(e.contains("requirement"), "{e}");
-    }
-
-    #[test]
-    fn native_table() {
-        let head = "[package]\nname = \"db-x\"\nversion = \"1.0.0\"\n[native]\n";
-        let m =
-            Manifest::parse(&format!("{head}targets = [\"x86_64-unknown-linux-gnu\"]\n")).unwrap();
-        let native = m.native.as_ref().unwrap();
-        assert_eq!(native.path, "native");
-        assert_eq!(native.targets, ["x86_64-unknown-linux-gnu"]);
-        assert_eq!(Manifest::parse(&m.to_toml()).unwrap(), m);
-        for (bad, msg) in [
-            ("targets = [\"sparc-sun-solaris\"]", "not supported"),
-            ("path = \"../x\"", "directory in the package root"),
-            ("path = \"src\"", "directory in the package root"),
-            ("wasm = true", "WebAssembly"),
-            ("crate = \"x\"", "unknown field"),
-        ] {
-            let e = Manifest::parse(&format!("{head}{bad}\n")).unwrap_err();
-            assert!(e.contains(msg), "{bad}: {e}");
-        }
-    }
-
-    #[test]
-    fn finds_enclosing_package() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join("a/src/deep")).unwrap();
-        std::fs::write(tmp.path().join("a/velt.toml"), "").unwrap();
-        assert_eq!(
-            find_package_root(&tmp.path().join("a/src/deep")),
-            Some(tmp.path().join("a"))
-        );
-        assert_eq!(
-            find_package_root(&tmp.path().join("a/src/deep/x.vlt")),
-            Some(tmp.path().join("a"))
-        );
-    }
-}
+mod tests;

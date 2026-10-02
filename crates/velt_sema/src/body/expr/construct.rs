@@ -21,6 +21,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.mutex_new(class, args, exp, span) {
             return h;
         }
+        if let Some(h) = self.promise_new(class, args, exp, span) {
+            return h;
+        }
         if self.bare_new_array(class, span) {
             self.check_args_loose(args);
             return self.error_expr(span);

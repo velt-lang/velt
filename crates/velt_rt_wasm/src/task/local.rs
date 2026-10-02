@@ -130,6 +130,13 @@ unsafe extern "C" fn started_drop(f: *mut VeltFut) {
     boxed::free(f);
 }
 
+/// The task id `new Promise` compares (see velt_rt): one thread, so values never need copying
+/// between tasks and every task reports the same id.
+#[no_mangle]
+pub extern "C" fn velt_rt_task_id() -> u64 {
+    1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

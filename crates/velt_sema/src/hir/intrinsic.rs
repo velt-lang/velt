@@ -86,6 +86,9 @@ pub enum Intrinsic {
     /// std only: `__intrinsic_chan_try_receive<T>(ch: u64): T | null` — the oldest value if one
     /// is queued.
     ChanTryReceive,
+    /// Compiler-internal (no source syntax): the location of the call's span as a string,
+    /// `"path:line:col"` (the site of a `new Promise`, std/prelude/promise.vlt).
+    SourceLocation,
     /// `performance.now(): f64`
     PerfNow,
     /// `Date.now(): i64`

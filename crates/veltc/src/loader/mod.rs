@@ -5,7 +5,7 @@
 //! - `"./x"`, `"../x"` → `x.vlt` or the folder module `x/index.vlt` relative to the importing
 //!   file ([`spec`]);
 //! - `"std/x"` → `<std root>/x.vlt` or `<std root>/x/index.vlt` ([`std_root`]);
-//! - a `[paths]` alias of the importing package (`"@app/*" = "src/*"` in `velt.toml`) → the
+//! - a `paths` alias of the importing package (`"@app/*": "src/*"` in `package.vlt`) → the
 //!   aliased file, like a relative import ([`PackageResolver::path_alias`]);
 //! - `"pkg"` / `"pkg/sub"` → `src/lib.vlt` / `src/sub.vlt` (or `src/sub/index.vlt`) of a
 //!   dependency of the importing package, found through a [`PackageResolver`] (vpm's installed
@@ -209,7 +209,7 @@ impl Loader<'_, '_> {
                 .packages
                 .and_then(|p| p.jsx_import_source(&self.origins[index].0))
             {
-                Some(s) => (s, "`[jsx] importSource` in velt.toml"),
+                Some(s) => (s, "`jsx.importSource` in package.vlt"),
                 None => (jsx::DEFAULT_IMPORT_SOURCE.to_string(), "the default"),
             },
         };
@@ -289,7 +289,7 @@ impl Loader<'_, '_> {
         Some(new)
     }
 
-    /// The file a `[paths]` alias maps `spec` to (bare specifiers only: relative and `velt:`
+    /// The file a `paths` alias maps `spec` to (bare specifiers only: relative and `velt:`
     /// imports are never aliased).
     fn path_alias(&self, importer: &Path, spec: &str) -> Option<PathBuf> {
         if spec.starts_with("./") || spec.starts_with("../") || spec.starts_with("velt:") {

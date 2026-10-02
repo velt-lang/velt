@@ -1,6 +1,6 @@
 //! The JSX runtime import (docs/contracts/jsx.md "Choosing the provider"): a module containing
 //! JSX implicitly imports `<source>/jsx-runtime`, where the source is the file's
-//! `// @jsxImportSource` pragma, else its package's `[jsx] importSource` (velt.toml), else
+//! `// @jsxImportSource` pragma, else its package's `jsx.importSource` (package.vlt), else
 //! `std/jsx`. A module without JSX loads no runtime.
 
 use velt_common::Span;

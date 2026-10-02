@@ -122,8 +122,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
             hir::ExprKind::Closure(d) if self.cx.is_async_fn(*d) => {
                 let targs = self.targs.clone();
-                self.state_from_closure(*d)
-                    .map(|(info, s)| self.value_future(*d, &targs, &info, s, detached))
+                // The task may run on another thread: its captures are transferred.
+                self.transfer_args = true;
+                let state = self.state_from_closure(*d);
+                self.transfer_args = false;
+                state.map(|(info, s)| self.value_future(*d, &targs, &info, s, detached))
             }
             _ => None,
         };

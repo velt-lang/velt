@@ -114,6 +114,19 @@ Allocation per task: states ≤ 1 KiB (align ≤ 16) live inline in tokio's task
 64/256/1024), so a detached spawn is 1 allocation and a joinable one 2 (task + join handle).
 Panics inside tasks print `panic: <msg>` and exit 101 (same hook as sync code).
 
+### 2.1 Latches (`new Promise`)
+
+A one-shot latch (`u64` handle, §3.2): the waking half of `new Promise` (std/prelude/promise.vlt
+keeps the settled value in Velt code). Thread-safe; no callbacks are stored (§13.5).
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_latch_new` | `() -> u64` | a closed latch |
+| `velt_rt_latch_free` | `(u64 latch)` | releases the handle (a pending wait keeps the latch alive) |
+| `velt_rt_latch_open` | `(u64 latch)` | opens it and wakes every waiter; a no-op when open |
+| `velt_rt_latch_wait` | `(u64 latch) -> VeltFut*` | completes (unit result) once the latch is open |
+| `velt_rt_task_id` | `() -> u64` | a unique id of the task being polled, never reused and kept by its local promises when they outlive it (0 outside a task; always 1 on single-threaded wasm): `resolve` copies a value settled from another task |
+
 ### 2.2 Channels (`velt:channel`)
 
 `Channel<T>` (std/channel.vlt) is a Copy struct around a `u64` handle, a key into a runtime table

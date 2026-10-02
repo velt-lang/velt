@@ -1,5 +1,5 @@
-//! vpm subcommands: `add`, `install`, `update`, `publish`, `native build` (`new`/`init` are in
-//! `create`). Status lines go to stderr (cargo style), so stdout stays free for program output.
+//! vpm subcommands: `add`, `install`, `update`, `publish`, `native build`, `manifest` (`new`/`init`
+//! are in `create`). Status lines go to stderr (cargo style), so stdout stays free for program output.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -11,7 +11,7 @@ use vpm::{InstallOptions, Locations};
 use super::project::Project;
 use crate::style;
 
-/// `velt add <name>[@<req>] [--path <dir>]`: edit velt.toml, then install; the manifest is
+/// `velt add <name>[@<req>] [--path <dir>]`: edit package.vlt, then install; the manifest is
 /// restored if the install fails.
 pub fn add(name: &str, version: Option<String>, path: Option<String>) -> Result<(), String> {
     let project_root = Project::current_root()?;
@@ -47,6 +47,16 @@ pub fn add(name: &str, version: Option<String>, path: Option<String>) -> Result<
     };
     style::status("Adding", &format!("`{name}` {what}"));
     report_native(&installed.graph);
+    Ok(())
+}
+
+/// `velt manifest --json`: the package's validated manifest as JSON on stdout, with defaults
+/// filled in, for tools that cannot read `package.vlt` themselves.
+pub fn manifest_json() -> Result<(), String> {
+    let manifest = vpm::Manifest::from_dir(&Project::current_root()?)?;
+    let json = serde_json::to_string_pretty(&manifest.to_json())
+        .expect("ICE: a manifest serializes to JSON");
+    println!("{json}");
     Ok(())
 }
 
@@ -108,7 +118,7 @@ pub fn install(opts: InstallOptions) -> Result<(), String> {
 }
 
 /// `velt publish`: copy the current package into the local registry, or upload it to the
-/// remote one, with a prebuilt native library for every `[native]` target. `--native-only` adds
+/// remote one, with a prebuilt native library for every `native` target. `--native-only` adds
 /// libraries for targets not yet published to the published version.
 pub fn publish(native_artifacts: Option<&Path>, native_only: bool) -> Result<(), String> {
     let root = Project::current_root()?;
@@ -135,7 +145,7 @@ pub fn publish(native_artifacts: Option<&Path>, native_only: bool) -> Result<(),
     Ok(())
 }
 
-/// The bundle of each `[native]` target: from `artifacts/<triple>/`, else
+/// The bundle of each `native` target: from `artifacts/<triple>/`, else
 /// `target/velt-native/<triple>/`; the host's is built when it is in neither. With
 /// `native_only`, whatever bundles exist (at least one).
 fn collect_bundles(
@@ -147,7 +157,7 @@ fn collect_bundles(
     let Some(native) = &manifest.native else {
         if artifacts.is_some() || native_only {
             return Err(format!(
-                "package `{}` has no [native] table",
+                "package `{}` has no `native` in package.vlt",
                 manifest.package.name
             ));
         }
@@ -215,7 +225,7 @@ pub fn native_build(target: Option<String>) -> Result<(), String> {
     }
     if manifest.native.is_none() {
         return Err(format!(
-            "package `{}` has no [native] table",
+            "package `{}` has no `native` in package.vlt",
             manifest.package.name
         ));
     }

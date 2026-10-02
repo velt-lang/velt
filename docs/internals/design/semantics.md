@@ -143,7 +143,11 @@ captured). Such a promise would be cancelled at scope end on an early exit (`ret
 before its `await`) instead of running to completion, the one observable difference, so sema
 must also prove it is awaited before every exit.
 
-Planned: `new Promise((resolve, reject) => …)`, for wrapping callback-style APIs.
+`new Promise((resolve, reject) => …)` compiles to the prelude's `promiseNew`: a settle-once
+slot in `shared<Mutex<…>>` plus a runtime latch. `resolve`/`reject` are heap closures over it,
+and sema lets a literal executor keep them (`FnInfo::keeps_fn_params`). A guard both hold
+marks a promise abandoned unsettled: it never settles, and a direct `await` of it is reported
+with the `new Promise` site (`Intrinsic::SourceLocation`).
 
 ## JS fidelity decisions
 
@@ -163,7 +167,7 @@ of doing things, even when ported code must change (with a precise error and a f
   (run automatically when the value is dropped); `using x = …` disposes at the end of the
   enclosing block; `await using` and `[Symbol.asyncDispose]()` work too.
 - **Modules** (implemented). `import * as ns`, `export { x } from`, `export * from`, folders
-  through `index.vlt`, `[paths]` aliases in `velt.toml`, `import type`. Named exports only (no
+  through `index.vlt`, `paths` aliases in `package.vlt`, `import type`. Named exports only (no
   `export default`).
 - **One "nothing": `null` only** (implemented). `undefined` is not part of the language: using
   it is a compile error with the fix "use `null`". Code ported from TypeScript changes

@@ -14,14 +14,14 @@ pub trait PackageResolver {
     /// Root directory of dependency `name`, or an error message (`not a dependency`).
     fn dependency_root(&self, importer: &Path, name: &str) -> Result<PathBuf, String>;
 
-    /// The module path (no `.vlt` extension) a `[paths]` alias of the package containing
+    /// The module path (no `.vlt` extension) a `paths` alias of the package containing
     /// `importer` maps `spec` to, if one matches.
     fn path_alias(&self, importer: &Path, spec: &str) -> Option<PathBuf> {
         let _ = (importer, spec);
         None
     }
 
-    /// The `[jsx] importSource` of the package containing `importer`, as a specifier
+    /// The `jsx.importSource` of the package containing `importer`, as a specifier
     /// `importer` can import from.
     fn jsx_import_source(&self, importer: &Path) -> Option<String> {
         let _ = importer;

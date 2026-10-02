@@ -9,20 +9,21 @@ This chapter writes one; `packages/sqlite` in the Velt repository is a complete 
 
 ```text
 greet/
-  velt.toml
+  package.vlt
   src/lib.vlt          # the package's Velt API
   native/Cargo.toml    # the Rust crate
   native/src/lib.rs
 ```
 
-```toml
-# velt.toml
-[package]
-name = "greet"
-version = "0.1.0"
+```ts ignore
+// package.vlt
+import type { Package } from "velt:package";
 
-[native]
-targets = ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
+export const pkg: Package = {
+  name: "greet",
+  version: "0.1.0",
+  native: { targets: ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-pc-windows-msvc"] },
+};
 ```
 
 ```toml
@@ -119,7 +120,7 @@ velt publish                                       # the package plus one librar
 ```
 
 `velt publish` needs the crate's `Cargo.lock` (commit it) and a library for every target in
-`[native] targets`. Build the others on machines for those platforms (a CI matrix), collect their `target/velt-native/<triple>/`
+`native.targets`. Build the others on machines for those platforms (a CI matrix), collect their `target/velt-native/<triple>/`
 directories into one directory, and pass it with `velt publish --native-artifacts <dir>`. A
 target can be added to a published version later (`velt publish --native-only`); a published
 library is never replaced.

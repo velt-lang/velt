@@ -36,8 +36,8 @@ module; importers get the original declaration, and go-to-definition lands there
 |---|---|
 | `"./file"`, `"../dir/file"` | relative to the importing file, without the `.vlt` extension. A folder is a module through its `index.vlt`: `"./shapes"` is `shapes.vlt` or `shapes/index.vlt` |
 | `"velt:x"` | the [standard library](../std/README.md) module `x` (`"velt:fs"`, `"velt:collections/set"`) |
-| an alias from `[paths]` in `velt.toml` | `"@app/*" = "src/*"` makes `"@app/util/strings"` mean `src/util/strings.vlt` ([`velt.toml`](../tooling/manifest.md)) |
-| `"pkg"`, `"pkg/sub"` | a dependency from `velt.toml`: its `src/lib.vlt`, or `src/sub.vlt` / `src/sub/index.vlt` ([Packages](../tooling/packages.md)) |
+| an alias from `paths` in `package.vlt` | `"@app/*": "src/*"` makes `"@app/util/strings"` mean `src/util/strings.vlt` ([`package.vlt`](../tooling/manifest.md)) |
+| `"pkg"`, `"pkg/sub"` | a dependency from `package.vlt`: its `src/lib.vlt`, or `src/sub.vlt` / `src/sub/index.vlt` ([Packages](../tooling/packages.md)) |
 
 The prelude (strings, arrays, `Map`, `Math`, `JSON`, `Error`, `Comparable`, `Mutex`, `assert`,
 …) is always in scope without an import ([Built-ins](builtins.md)).

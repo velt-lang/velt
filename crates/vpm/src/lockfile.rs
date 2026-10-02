@@ -26,7 +26,7 @@
 //! `native` pins the prebuilt library of **every** published target, so the lockfile is the same
 //! on every platform and each machine verifies the one it uses.
 //! Path sources are relative to the root package, `/`-separated. The root package itself is not
-//! listed (its dependencies come from velt.toml).
+//! listed (its dependencies come from package.vlt).
 
 use std::collections::BTreeMap;
 use std::path::Path;

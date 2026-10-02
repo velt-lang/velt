@@ -57,10 +57,10 @@ impl Sandbox {
 
 fn set_version(s: &Sandbox, pkg: &str, version: &str) {
     let manifest = s
-        .read(&format!("{pkg}/velt.toml"))
+        .read(&format!("{pkg}/package.vlt"))
         .replace("0.1.0", version)
         .replace("1.0.0", version);
-    s.write(&format!("{pkg}/velt.toml"), &manifest);
+    s.write(&format!("{pkg}/package.vlt"), &manifest);
 }
 
 #[test]
@@ -78,8 +78,8 @@ fn new_publish_add_install() {
 
     s.ok("", &["new", "app"]);
     s.ok("app", &["add", "mylib@^1.0"]);
-    let manifest = s.read("app/velt.toml");
-    assert!(manifest.contains("mylib = \"^1.0\""), "{manifest}");
+    let manifest = s.read("app/package.vlt");
+    assert!(manifest.contains("mylib: \"^1.0\""), "{manifest}");
     let lock = s.read("app/velt.lock");
     assert!(
         lock.contains("name = \"mylib\"") && lock.contains("version = \"1.2.0\""),
@@ -88,16 +88,16 @@ fn new_publish_add_install() {
     assert!(s.dir.join("home/cache/mylib-1.2.0/src/lib.vlt").is_file());
     s.ok("app", &["install", "--locked"]);
 
-    // Unknown package: error, and velt.toml is left untouched.
+    // Unknown package: error, and package.vlt is left untouched.
     assert!(s
         .fail("app", &["add", "nope"])
         .contains("not in the registry"));
-    assert_eq!(s.read("app/velt.toml"), manifest);
+    assert_eq!(s.read("app/package.vlt"), manifest);
     // Conflict: a requirement nothing satisfies.
     assert!(s
         .fail("app", &["add", "mylib@^2"])
         .contains("no version of `mylib` matches"));
-    assert_eq!(s.read("app/velt.toml"), manifest);
+    assert_eq!(s.read("app/package.vlt"), manifest);
 }
 
 #[test]
@@ -107,13 +107,13 @@ fn add_without_version_uses_latest_and_path_deps_work() {
     s.ok("util", &["publish"]);
     s.ok("", &["new", "app"]);
     s.ok("app", &["add", "util"]);
-    assert!(s.read("app/velt.toml").contains("util = \"0.1.0\""));
+    assert!(s.read("app/package.vlt").contains("util: \"0.1.0\""));
 
     s.ok("", &["new", "local", "--lib"]);
     s.ok("app", &["add", "local", "--path", "../local"]);
     assert!(s
-        .read("app/velt.toml")
-        .contains("local = { path = \"../local\" }"));
+        .read("app/package.vlt")
+        .contains("local: { path: \"../local\" }"));
     assert!(s
         .read("app/velt.lock")
         .contains("source = \"path+../local\""));
@@ -122,8 +122,8 @@ fn add_without_version_uses_latest_and_path_deps_work() {
 #[test]
 fn package_commands_outside_a_package() {
     let s = sandbox();
-    assert!(s.fail("", &["install"]).contains("no `velt.toml`"));
-    assert!(s.fail("", &["build"]).contains("no `velt.toml`"));
+    assert!(s.fail("", &["install"]).contains("no `package.vlt`"));
+    assert!(s.fail("", &["build"]).contains("no `package.vlt`"));
     assert!(s.fail("", &["new", "Bad"]).contains("invalid package name"));
     s.ok("", &["new", "lib", "--lib"]);
     assert!(s.fail("lib", &["build"]).contains("it is a library"));
@@ -184,4 +184,54 @@ fn test_runner_reports_passes_and_failures() {
         assert!(stdout.contains(want), "missing `{want}` in:\n{stdout}");
     }
     assert!(Path::new(&s.dir.join("app/target/velt/test")).is_dir());
+}
+
+#[test]
+fn manifest_json_prints_the_validated_manifest() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    s.ok("", &["new", "util", "--lib"]);
+    s.ok("app", &["add", "util", "--path", "../util"]);
+    let out = s.velt("app/src", &["manifest", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json["name"], "app");
+    assert_eq!(json["entry"], "src/main.vlt");
+    assert_eq!(json["dependencies"]["util"]["path"], "../util");
+
+    assert!(s.fail("app", &["manifest"]).contains("missing `--json`"));
+    s.write(
+        "app/package.vlt",
+        "export const pkg: Package = { name: \"app\" };\n",
+    );
+    let err = s.fail("app", &["manifest", "--json"]);
+    assert!(
+        err.contains("package.vlt:1:29: error: the manifest is missing `version`"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_velt_toml_is_reported_with_its_conversion() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    std::fs::remove_file(s.dir.join("app/package.vlt")).unwrap();
+    s.write(
+        "app/velt.toml",
+        "[package]\nname = \"app\"\nversion = \"0.2.0\"\n\n[paths]\n\"@app/*\" = \"src/*\"\n",
+    );
+    let err = s.fail("app", &["build"]);
+    assert!(
+        err.contains("is no longer read; the manifest is `package.vlt`"),
+        "{err}"
+    );
+    let converted = &err[err.find("import type").expect("the converted manifest")..];
+    assert!(converted.contains("\"@app/*\": \"src/*\""), "{converted}");
+    // Saving the printed file is all the migration takes.
+    s.write("app/package.vlt", converted);
+    s.ok("app", &["build"]);
 }

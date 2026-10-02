@@ -125,7 +125,7 @@ fn from_source_allowed() -> bool {
     std::env::var(FROM_SOURCE_VAR).is_ok_and(|v| v == "1")
 }
 
-/// Native libraries cannot be used for WebAssembly yet (no `[native] wasm` support).
+/// Native libraries cannot be used for WebAssembly yet (no `native.wasm` support).
 fn check_not_wasm(name: &str, target: &str) -> Result<(), String> {
     if target.starts_with("wasm32") {
         return Err(format!(
@@ -335,7 +335,7 @@ fn build_graph(
     graph
 }
 
-/// The per-package compile settings of `manifest`: `[paths]` and `[jsx]`.
+/// The per-package compile settings of `manifest`: `paths` and `jsx`.
 fn configure(package: &mut crate::graph::GraphPackage, manifest: &Manifest) {
     package.paths = manifest.paths.clone();
     package.jsx_import_source = manifest.jsx.as_ref().and_then(|j| j.import_source.clone());
