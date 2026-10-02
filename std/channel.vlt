@@ -26,8 +26,7 @@ export class ChannelClosed extends Error {
 // A channel of `T` values. `channel<T>()` is unbounded; `channel<T>(capacity)` holds at most
 // `capacity` values (at least 1).
 export struct Channel<T> {
-  handle: u64;
-  private runtime: RuntimeHandle = RuntimeHandle {};
+  private handle: u64;
 
   // Queues `value`, waiting while a bounded channel is full. Throws `ChannelClosed` (and drops
   // `value`) if the channel is closed, also while waiting.
@@ -78,8 +77,3 @@ export function channel<T>(capacity: i64 = 0): Channel<T> {
   }
   return { handle: velt_rt_chan_new(capacity as u64) };
 }
-
-// A field of this type makes a type opaque: a type with a private field has no JSON form,
-// so untrusted JSON can't produce the runtime handle it holds, and `JSON.stringify` doesn't
-// write it. It takes no space.
-struct RuntimeHandle {}

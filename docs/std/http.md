@@ -49,6 +49,11 @@ it. For a walkthrough, see [Building an HTTP server](../book/http-server.md).
   (compiled in) plus the PEM CAs in `ca`; HTTP/2 is used when the server offers it.
 - `FetchResponse { status; headers: FetchHeaders }`: `text()`, `json<T>()`, `bytes()`. Reading
   the body consumes the response. `json` throws `IoError` or `JsonError`, so catch `Error`.
+  `headers` is a view of the response: using it after the response was consumed or dropped stops
+  the program with a message saying so (exit code 101), so read the headers you need first.
+- Requests, responses, servers and fetch responses are built only by this module
+  (`Response.text` and the other constructors, `serve`, `fetch`); their runtime handles are
+  private and checked by the runtime, so a stale one never reaches freed memory.
 
 ```ts
 import { serve, fetch, Request, Response } from "velt:http";

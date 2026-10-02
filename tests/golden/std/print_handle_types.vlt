@@ -1,9 +1,0 @@
-// `console.log` of a std handle type shows its public fields; the zero-sized private marker
-// that keeps it out of JSON is not printed.
-import { TcpStream } from "velt:net";
-import { FileReader } from "velt:fs_stream";
-
-function main() {
-  console.log(TcpStream { handle: 7 });
-  console.log([FileReader { handle: 3 }]);
-}

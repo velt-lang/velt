@@ -1,17 +1,15 @@
-// Who is connected: client ids, names and sockets. Plain synchronous state, kept behind a
-// `Mutex` by the server. Methods return errors as values (`string | null`) instead of throwing
+// Who is connected: client ids, names and sockets (`S`: the server's `WebSocket`, numbers in
+// the tests). Plain synchronous state, kept behind a `Mutex` by the server. Methods return errors as values (`string | null`) instead of throwing
 // because they run inside `Mutex.with` callbacks, which cannot throw (the lock is held).
-import { WebSocket } from "velt:websocket";
-
-type Member = { name: string; socket: WebSocket };
+type Member<S> = { name: string; socket: S };
 
 const MAX_NAME: usize = 20;
 
-export class Room {
-  private members: Map<i64, Member> = new Map<i64, Member>();
+export class Room<S> {
+  private members: Map<i64, Member<S>> = new Map<i64, Member<S>>();
 
   // Adds client `id` as `name` (trimmed); returns why it can't, or null.
-  join(id: i64, name: string, socket: WebSocket): string | null {
+  join(id: i64, name: string, socket: S): string | null {
     const clean = name.trim();
     if (clean === "" || clean.length > MAX_NAME) {
       return `name must be 1-${MAX_NAME} characters`;
@@ -52,8 +50,8 @@ export class Room {
   }
 
   // Sockets of every member except `except` (-1: everyone).
-  sockets(except: i64 = -1): WebSocket[] {
-    const out: WebSocket[] = [];
+  sockets(except: i64 = -1): S[] {
+    const out: S[] = [];
     for (const [k, m] of this.members) {
       if (k !== except) {
         out.push(m.socket);
