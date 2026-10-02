@@ -118,6 +118,65 @@ const s4 = <p> leading and trailing </p>;
 }
 
 #[test]
+fn components_keep_their_children_as_written() {
+    // A component receives one child as itself and several as an array: `Save{" "}` would turn
+    // the string `"Save "` into `["Save", " "]`. Spaces next to its tags stay text.
+    assert_fmt(
+        "const b = <Button a=\"1\" b=\"2\">Save </Button>;
+const l = <Label>{\" \"}x</Label>;
+",
+        "const b = (
+  <Button a=\"1\" b=\"2\">
+    Save </Button>
+);
+const l = <Label>{\" \"}x</Label>;
+",
+    );
+    assert_fmt(
+        "const t = <Trans>This is a long paragraph with an <a href=\"https://example.com/a/very/long/link\">inline link</a> and some <em>emphasis</em> right in the middle of it, isn't it?</Trans>;
+const u = <ui.Trans> lead and a long paragraph that keeps going and going until it has to break ok </ui.Trans>;
+",
+        "const t = (
+  <Trans>
+    This is a long paragraph with an <a href=\"https://example.com/a/very/long/link\">inline link</a> and
+    some <em>emphasis</em> right in the middle of it, isn't it?
+  </Trans>
+);
+const u = (
+  <ui.Trans> lead and a long paragraph that keeps going and going until it has to break
+    ok </ui.Trans>
+);
+",
+    );
+}
+
+#[test]
+fn templates_written_over_several_lines_break_the_element() {
+    assert_fmt(
+        "const p = <p>
+  {`a
+b`}
+</p>;
+const q = <p>{`a
+b`}</p>;
+const r = <p>{`a`}</p>;
+",
+        "const p = (
+  <p>
+    {`a
+b`}
+  </p>
+);
+const q = (
+  <p>{`a
+b`}</p>
+);
+const r = <p>{`a`}</p>;
+",
+    );
+}
+
+#[test]
 fn several_spaces_are_kept() {
     // Prettier would print `<pre> a b </pre>`, which changes the text.
     assert_fmt(

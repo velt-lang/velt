@@ -17,11 +17,11 @@ use velt_syntax::ast::{
 
 use super::func::breaks_itself;
 use super::jsx_children::{child_bounds, is_meaningful, Child};
-use super::jsx_layout::{multiline, part_doc, tidy};
+use super::jsx_layout::{element, Children};
 use super::Printer;
 use crate::doc::{
-    break_parent, cat, concat, conditional, fill, group, group_broken, hardline, if_break, indent,
-    join, line, nil, softline, text, Doc,
+    break_parent, cat, concat, group, group_broken, hardline, if_break, indent, join, line, nil,
+    softline, text, Doc,
 };
 use crate::source::slice;
 
@@ -31,7 +31,7 @@ impl Printer<'_> {
         let ExprKind::Jsx(el) = &e.kind else {
             return self.expr(e);
         };
-        let broken = self.broken_jsx_bodies.contains(&e.span.lo);
+        let broken = self.broken_jsx_bodies.remove(&e.span.lo);
         self.with_leading(e.span.lo, |p| {
             let inner = p.jsx_element(el);
             let wrapped = cat![
@@ -61,18 +61,25 @@ impl Printer<'_> {
         if self_closing {
             return open;
         }
-        if let [JsxChild::Expr {
+        let exact = keeps_children(el);
+        let children = self.jsx_virtual_children(el, exact);
+        if let [Child::Node(JsxChild::Expr {
             expr: Some(e),
             span,
-        }] = el.children.as_slice()
+        })] = children.as_slice()
         {
             if matches!(e.kind, ExprKind::Template { .. }) {
                 let child = self.jsx_container(e, span.hi);
                 let close = self.jsx_closing(&name, el.span.hi);
-                return cat![open, child, close];
+                // Like prettier, a template over several lines breaks the parentheses around.
+                let breaks = if self.has_multiline_template(&el.children) {
+                    break_parent()
+                } else {
+                    nil()
+                };
+                return cat![open, child, close, breaks];
             }
         }
-        let children = self.jsx_virtual_children(el);
         let contains_text = children
             .iter()
             .any(|c| matches!(c, Child::Text(raw) if is_meaningful(raw)));
@@ -80,37 +87,32 @@ impl Printer<'_> {
             .iter()
             .filter(|c| matches!(c, Child::Node(JsxChild::Expr { .. })))
             .count();
-        let mut parts = self.jsx_parts(&children);
+        let parts = self.jsx_parts(&children);
         let close = self.jsx_closing(&name, el.span.hi);
-        tidy(&mut parts, contains_text);
-        if parts.is_empty() {
-            return cat![open, close];
-        }
-        let (lines, children_break) = multiline(&parts);
         let forced = open.breaks()
-            || children_break
             || el
                 .children
                 .iter()
                 .any(|c| matches!(c, JsxChild::Element(_)))
             || expressions > 1
-            || (el.name.is_some() && el.attrs.len() > 1);
-        let content = if contains_text {
-            fill(lines)
-        } else {
-            group_broken(concat(lines))
+            || (el.name.is_some() && el.attrs.len() > 1)
+            || self.has_multiline_template(&el.children);
+        let children = Children {
+            parts,
+            contains_text,
+            exact,
         };
-        let multi = group(cat![
-            open.clone(),
-            indent(cat![hardline(), content]),
-            hardline(),
-            close.clone()
-        ]);
-        if forced {
-            return multi;
-        }
-        let flat = parts.iter().map(part_doc).collect();
-        conditional(vec![group(cat![open, concat(flat), close]), multi])
+        element(open, close, children, forced)
+    }
+
+    /// Is a child a template literal written over several lines (prettier: its text forces the
+    /// element to break)?
+    fn has_multiline_template(&self, children: &[JsxChild]) -> bool {
+        children.iter().any(|c| {
+            matches!(c, JsxChild::Expr { expr: Some(e), span }
+                if matches!(e.kind, ExprKind::Template { .. })
+                    && slice(self.src, *span).contains('\n'))
+        })
     }
 
     /// `<name attrs>` / `<name attrs />`; comments up to `end` stay inside the tag.
@@ -281,6 +283,17 @@ pub(super) fn is_jsx_conditional(cond: &Expr, then: &Expr, els: &Expr) -> bool {
 pub(super) fn is_jsx_operand(op: BinaryOp, rhs: &Expr) -> bool {
     matches!(op, BinaryOp::And | BinaryOp::Or | BinaryOp::Nullish)
         && matches!(rhs.kind, ExprKind::Jsx(_))
+}
+
+/// Does `el` keep its children exactly as written? A component receives them as its `children`
+/// prop (one child as itself, several as an array), so only intrinsic elements and fragments,
+/// whose children are only rendered, may trade a space for `{" "}`.
+fn keeps_children(el: &JsxElement) -> bool {
+    match &el.name {
+        Some(JsxName::Ident(id)) => id.name.starts_with(|c: char| c.is_ascii_uppercase()),
+        Some(JsxName::Member(_)) => true,
+        Some(JsxName::Namespaced(..)) | None => false,
+    }
 }
 
 /// Expressions printed directly inside `{}` (they break well by themselves).

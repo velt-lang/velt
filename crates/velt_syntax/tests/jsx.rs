@@ -312,7 +312,19 @@ fn elements_start_statements_after_a_block() {
            <>{x}</>;\n\
          }",
     );
-    assert_eq!(m.items.len(), 1);
+    let ItemKind::Function(f) = &m.items[0].kind else {
+        panic!("expected a function");
+    };
+    let elements: Vec<String> = f
+        .body
+        .stmts
+        .iter()
+        .filter_map(|s| match &s.kind {
+            StmtKind::Expr(e) if matches!(e.kind, ExprKind::Jsx(_)) => Some(sx(e)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(elements, ["<div/>", r#"<p>["a"]"#, "<>[{x}]"]);
 }
 
 #[test]

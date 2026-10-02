@@ -222,9 +222,10 @@ fn is_space_container(src: &str, child: &JsxChild) -> bool {
 }
 
 impl<'a> Printer<'a> {
-    /// The children of `el` as prettier sees them: the AST's children, `{" "}` as text, and the
-    /// whitespace the parser dropped (it decides on line breaks and blank lines).
-    pub(super) fn jsx_virtual_children<'e>(&self, el: &'e JsxElement) -> Vec<Child<'e>>
+    /// The children of `el` as prettier sees them: the AST's children, `{" "}` as text (unless
+    /// the children must stay `exact`, see [`super::jsx_layout`]), and the whitespace the parser
+    /// dropped (it decides on line breaks and blank lines).
+    pub(super) fn jsx_virtual_children<'e>(&self, el: &'e JsxElement, exact: bool) -> Vec<Child<'e>>
     where
         'a: 'e,
     {
@@ -242,7 +243,7 @@ impl<'a> Printer<'a> {
             }
             out.push(if is_text {
                 Child::Text(&src[lo as usize..hi as usize])
-            } else if is_space_container(src, child) {
+            } else if !exact && is_space_container(src, child) {
                 Child::Text(" ")
             } else {
                 Child::Node(child)

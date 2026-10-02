@@ -1,10 +1,18 @@
-//! What prettier does with the children list of [`super::jsx_children`] before laying it out
-//! (`printJsxElementInternal`): neighbouring separators are merged, lines at the edges are
-//! trimmed, and in the multi-line form a space that matters at the start, at the end or after a
-//! forced line break is written `{" "}`, the only way it survives the line break.
+//! What prettier does with the children list of [`super::jsx_children`] (`printJsxElementInternal`):
+//! neighbouring separators are merged, lines at the edges are trimmed, and in the multi-line form
+//! a space that matters at the start, at the end or after a forced line break is written `{" "}`,
+//! the only way it survives the line break; then the element is laid out on one line if it fits,
+//! else over several.
+//!
+//! A component's children are kept as written (`exact`): it receives one child as itself and
+//! several as an array, so splitting `"Save "` into `"Save"` and `{" "}` would change its props.
+//! Such spaces stay text on their line, and a space at an edge stays next to its tag.
 
 use super::jsx_children::Part;
-use crate::doc::{cat, hardline, if_break, line, nil, softline, text, Doc};
+use crate::doc::{
+    cat, concat, conditional, fill, group, group_broken, hardline, if_break, indent, line, nil,
+    softline, text, Doc,
+};
 
 /// Merges neighbouring separators (two separators with nothing between them) and trims lines
 /// and empty contents at both ends. `contains_text`: is any child meaningful text?
@@ -61,10 +69,11 @@ fn raw_space(s: &str) -> Doc {
     text(format!("{{\"{s}\"}}"))
 }
 
-/// A part as a document: a [`Part::Space`] prints as is while its line holds, else as `{"…"}`
-/// and a line break.
-pub(super) fn part_doc(part: &Part) -> Doc {
+/// A part as a document: a [`Part::Space`] prints as is while its line holds, else (unless
+/// `exact`) as `{"…"}` and a line break.
+pub(super) fn part_doc(part: &Part, exact: bool) -> Doc {
     match part {
+        Part::Space(s) if exact => text(s.as_str()),
         Part::Empty => nil(),
         Part::Content(doc) => doc.clone(),
         Part::Line => line(),
@@ -74,12 +83,88 @@ pub(super) fn part_doc(part: &Part) -> Doc {
     }
 }
 
+/// The children of an element, ready to lay out.
+pub(super) struct Children {
+    pub parts: Vec<Part>,
+    /// Is any child meaningful text (then the children are a paragraph fill)?
+    pub contains_text: bool,
+    /// Keep the children as written (a component's).
+    pub exact: bool,
+}
+
+/// An element from its tags and children: on one line if it fits and nothing forces a break
+/// (`forced`), else with the children indented on their own lines between the tags.
+pub(super) fn element(open: Doc, close: Doc, children: Children, forced: bool) -> Doc {
+    let Children {
+        mut parts,
+        contains_text,
+        exact,
+    } = children;
+    tidy(&mut parts, contains_text);
+    let (lead, trail) = if exact {
+        peel_spaces(&mut parts)
+    } else {
+        (None, None)
+    };
+    let edge_text = |s: &Option<String>| s.as_deref().map_or_else(nil, text);
+    if parts.is_empty() {
+        return cat![open, edge_text(&lead), edge_text(&trail), close];
+    }
+    let (mut lines, breaks) = multiline(&parts, exact);
+    // A space before the closing tag stays next to it: the last line measures them together.
+    let tail = match &trail {
+        Some(t) => {
+            glue(&mut lines, cat![text(t.as_str()), close.clone()]);
+            nil()
+        }
+        None => cat![hardline(), close.clone()],
+    };
+    let content = if contains_text {
+        fill(lines)
+    } else {
+        group_broken(concat(lines))
+    };
+    let lead_or_break = lead.as_deref().map_or_else(hardline, text);
+    let multi = group(cat![
+        open.clone(),
+        indent(cat![lead_or_break, content]),
+        tail
+    ]);
+    if forced || breaks {
+        return multi;
+    }
+    let flat: Vec<Doc> = parts.iter().map(|p| part_doc(p, exact)).collect();
+    let flat = cat![
+        open,
+        edge_text(&lead),
+        concat(flat),
+        edge_text(&trail),
+        close
+    ];
+    conditional(vec![group(flat), multi])
+}
+
+/// Takes the spaces at both edges out of `parts` (they stay next to the tags).
+fn peel_spaces(parts: &mut Vec<Part>) -> (Option<String>, Option<String>) {
+    let mut lead = None;
+    if let [Part::Empty, Part::Space(s), ..] = parts.as_slice() {
+        lead = Some(s.clone());
+        parts.drain(..2);
+    }
+    let mut trail = None;
+    if let Some(Part::Space(s)) = parts.last() {
+        trail = Some(s.clone());
+        parts.pop();
+    }
+    (lead, trail)
+}
+
 /// The fill parts of the multi-line form, and whether they contain a forced break.
-pub(super) fn multiline(parts: &[Part]) -> (Vec<Doc>, bool) {
+fn multiline(parts: &[Part], exact: bool) -> (Vec<Doc>, bool) {
     let mut out = vec![nil()];
     let mut breaks = false;
     for (i, part) in parts.iter().enumerate() {
-        if let Part::Space(s) = part {
+        if let (false, Part::Space(s)) = (exact, part) {
             let leading = i == 1 && matches!(parts[0], Part::Empty);
             if leading && parts.len() == 2 {
                 glue(&mut out, raw_space(s));
@@ -97,7 +182,7 @@ pub(super) fn multiline(parts: &[Part]) -> (Vec<Doc>, bool) {
                 continue;
             }
         }
-        let doc = part_doc(part);
+        let doc = part_doc(part, exact);
         breaks |= doc.breaks();
         if i % 2 == 0 {
             glue(&mut out, doc);
@@ -159,7 +244,7 @@ mod tests {
             word("a"),
             Part::Space(" ".into()),
         ];
-        let (docs, breaks) = multiline(&parts);
+        let (docs, breaks) = multiline(&parts, false);
         assert!(!breaks);
         let rendered = crate::doc::render(&crate::doc::fill(docs), 80);
         assert_eq!(rendered, "{\" \"}\na{\" \"}");

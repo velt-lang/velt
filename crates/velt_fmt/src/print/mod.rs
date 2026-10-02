@@ -26,6 +26,8 @@ mod stmt;
 mod switch;
 mod types;
 
+use std::collections::HashSet;
+
 use velt_syntax::ast::Module;
 
 use crate::comments::{Comment, Comments};
@@ -37,7 +39,7 @@ pub(crate) struct Printer<'a> {
     comments: Comments,
     /// Start offsets of the elements that are the body of an arrow passed to a call directly
     /// inside `{…}` (`{xs.map((x) => <li />)}`): their parentheses always break (prettier).
-    broken_jsx_bodies: Vec<u32>,
+    broken_jsx_bodies: HashSet<u32>,
 }
 
 impl<'a> Printer<'a> {
@@ -45,7 +47,7 @@ impl<'a> Printer<'a> {
         Printer {
             src,
             comments: Comments::new(src),
-            broken_jsx_bodies: vec![],
+            broken_jsx_bodies: HashSet::new(),
         }
     }
 

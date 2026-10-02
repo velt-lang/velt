@@ -51,8 +51,9 @@ pub fn parses(src: &str) -> bool {
 }
 
 /// The AST dump of `src` with spans and node ids erased, so two sources that differ only in
-/// layout compare equal. JSX text is compared as rendered: neighbouring text and `{" "}` string
-/// children are joined (the formatter moves spaces next to tags between the two, like prettier).
+/// layout compare equal. The text of intrinsic elements and fragments is compared as rendered:
+/// neighbouring text and `{" "}` string children are joined (the formatter moves spaces next to
+/// tags between the two, like prettier). A component's children must stay exactly as written.
 pub fn ast_shape(src: &str) -> String {
     let (module, _) = velt_syntax::parse_file(FileId(0), src);
     let dump = velt_syntax::dump(&module);
@@ -126,14 +127,37 @@ fn jsx_text_joined(lines: &[&str]) -> Vec<String> {
         let end = (i..lines.len())
             .find(|&j| indent_of(lines[j]) == indent && lines[j].trim_start().starts_with(']'))
             .unwrap_or(lines.len());
-        out.extend(joined_children(&lines[i..end], indent + 4));
+        let join = renders_children_only(&out, indent);
+        out.extend(joined_children(&lines[i..end], indent + 4, join));
         i = end;
     }
     out
 }
 
-/// The children (dump lines at `indent`) with text runs joined.
-fn joined_children(lines: &[&str], indent: usize) -> Vec<String> {
+/// Are the children of the element whose fields are dumped at `indent` (ending `out`) only
+/// rendered: an intrinsic element or a fragment? A component receives them as a prop (one child
+/// as itself, several as an array), so its children must stay exactly as written.
+fn renders_children_only(out: &[String], indent: usize) -> bool {
+    let Some(at) = out
+        .iter()
+        .rposition(|l| indent_of(l) == indent && l.trim_start().starts_with("name: "))
+    else {
+        return false;
+    };
+    let rest: Vec<&str> = out[at..].iter().map(|l| l.trim()).collect();
+    match rest.get(1).copied() {
+        _ if rest[0] == "name: None," => true,
+        Some("Namespaced(") => true,
+        Some("Ident(") => rest
+            .iter()
+            .find_map(|l| l.strip_prefix("name: \""))
+            .is_some_and(|tag| tag.starts_with(|c: char| c.is_ascii_lowercase())),
+        _ => false,
+    }
+}
+
+/// The children (dump lines at `indent`), with text runs joined if `join`.
+fn joined_children(lines: &[&str], indent: usize, join: bool) -> Vec<String> {
     let pad = " ".repeat(indent);
     let flush = |out: &mut Vec<String>, text: &mut Option<String>| {
         if let Some(value) = text.take() {
@@ -155,7 +179,7 @@ fn joined_children(lines: &[&str], indent: usize) -> Vec<String> {
         };
         let item = &lines[start..end];
         start = end;
-        if let Some(value) = text_value(item) {
+        if let Some(value) = text_value(item).filter(|_| join) {
             text.get_or_insert_with(String::new).push_str(&value);
             continue;
         }
