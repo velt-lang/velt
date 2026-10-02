@@ -10,6 +10,7 @@
 
 mod changes;
 mod check;
+mod comments;
 mod doctests;
 mod graph;
 mod os;
@@ -137,21 +138,18 @@ fn plan(root: &Path, args: &Args) -> Result<Plan, String> {
         return Ok(Plan::everything("--full"));
     }
     let graph = Graph::load(root)?;
-    let paths = match &args.paths {
-        Some(paths) => paths.clone(),
-        None => {
-            let Some(base) = args.base.clone().or_else(|| changes::default_base(root)) else {
-                return Ok(Plan::everything(
-                    "no base revision (origin/main or main) to compare with",
-                ));
-            };
-            match changes::changed_paths(root, &base) {
-                Ok(paths) => paths,
-                Err(e) => return Ok(Plan::everything(e)),
-            }
-        }
+    if let Some(paths) = &args.paths {
+        return Ok(Plan::for_paths(&graph, paths));
+    }
+    let Some(base) = args.base.clone().or_else(|| changes::default_base(root)) else {
+        return Ok(Plan::everything(
+            "no base revision (origin/main or main) to compare with",
+        ));
     };
-    Ok(Plan::for_paths(&graph, &paths))
+    match changes::changes(root, &base) {
+        Ok(c) => Ok(Plan::for_changes(&graph, &c.paths, &c.comment_only)),
+        Err(e) => Ok(Plan::everything(e)),
+    }
 }
 
 /// For CI: which parts have anything to do, and the plan as the job summary.

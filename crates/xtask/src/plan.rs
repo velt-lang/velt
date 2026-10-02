@@ -189,8 +189,15 @@ impl Plan {
 
     /// The plan for a change touching `paths` (relative, `/`-separated).
     pub fn for_paths(graph: &Graph, paths: &[String]) -> Plan {
+        Plan::for_changes(graph, paths, &BTreeSet::new())
+    }
+
+    /// The plan for a change touching `paths`, where only comments changed in the Rust files
+    /// `comment_only`.
+    pub fn for_changes(graph: &Graph, paths: &[String], comment_only: &BTreeSet<String>) -> Plan {
         let mut plan = Plan::nothing();
         let mut changed_crates = BTreeSet::new();
+        let mut comment_crates = BTreeSet::new();
         for path in paths {
             match classify(graph, path) {
                 Effect::Everything => return Plan::everything(format!("{path} changed")),
@@ -199,6 +206,9 @@ impl Plan {
                     plan.reasons
                         .push(format!("{path}: the differential tester"));
                     plan.difftest = true;
+                }
+                Effect::Crate(name) if comment_only.contains(path) => {
+                    comment_crates.insert(name);
                 }
                 Effect::Crate(name) => {
                     changed_crates.insert(name);
@@ -225,7 +235,18 @@ impl Plan {
             }
         }
         plan.add_crates(graph, &changed_crates);
-        plan.other_os = os::other_os_reason(graph, paths, plan.full);
+        plan.add_comment_crates(
+            &comment_crates
+                .difference(&changed_crates)
+                .cloned()
+                .collect(),
+        );
+        let code: Vec<String> = paths
+            .iter()
+            .filter(|p| !comment_only.contains(*p))
+            .cloned()
+            .collect();
+        plan.other_os = os::other_os_reason(graph, &code, plan.full);
         plan
     }
 
@@ -298,6 +319,25 @@ impl Plan {
         if affected.contains("veltc") {
             self.add_veltc(&[]);
         }
+    }
+
+    /// Crates where only comments changed: no compiled code changed, so no dependent's tests,
+    /// goldens or other OSes. The comments are still checked (rustfmt, clippy's documentation
+    /// lints, the doctests), and so are the crate's own tests (some read its sources) and the
+    /// file-size rule (`standards`).
+    fn add_comment_crates(&mut self, crates: &BTreeSet<String>) {
+        if crates.is_empty() {
+            return;
+        }
+        self.rust = true;
+        self.reasons
+            .push(format!("only comments changed in: {}", join(crates)));
+        for name in crates {
+            if name != "veltc" {
+                self.packages.insert(name.clone());
+            }
+        }
+        self.add_veltc(&[]);
     }
 
     /// Anything to build and test at all?

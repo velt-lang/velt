@@ -312,3 +312,39 @@ fn the_differential_tester_exists() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     assert!(root.join(DIFFTEST).join("Cargo.toml").is_file());
 }
+
+#[test]
+fn comment_only_changes_check_the_crate_alone_on_linux() {
+    let paths = vec![
+        "crates/velt_rt/src/postgres/batch/abi.rs".to_string(),
+        "crates/velt_sema/src/check.rs".to_string(),
+        "docs/reference/types.md".to_string(),
+    ];
+    let p = Plan::for_changes(&graph(), &paths, &paths[..2].iter().cloned().collect());
+    assert!(!p.full && p.rust);
+    assert_eq!(p.packages, set(&["velt_doc", "velt_rt", "velt_sema"]));
+    assert_eq!(p.veltc, Veltc::Some(set(&["docs"])));
+    assert_eq!(p.goldens, Goldens::None);
+    assert!(!p.vlt_fmt);
+    assert_eq!(p.other_os, None);
+    assert!(
+        p.filterset().unwrap().contains("binary(standards)"),
+        "{:?}",
+        p.filterset()
+    );
+}
+
+#[test]
+fn a_code_change_in_the_same_crate_outweighs_comment_only_files() {
+    let paths = vec![
+        "crates/velt_rt/src/a.rs".to_string(),
+        "crates/velt_rt/src/b.rs".to_string(),
+    ];
+    let p = Plan::for_changes(&graph(), &paths, &set(&["crates/velt_rt/src/a.rs"]));
+    assert_eq!(p.veltc, Veltc::All);
+    assert_eq!(p.goldens, Goldens::All);
+    assert!(p.other_os.is_some());
+    // Comments in the tooling select everything all the same.
+    let tooling = vec!["crates/xtask/src/plan.rs".to_string()];
+    assert!(Plan::for_changes(&graph(), &tooling, &tooling.iter().cloned().collect()).full);
+}

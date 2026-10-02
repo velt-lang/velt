@@ -1,8 +1,20 @@
 //! The files a change touches: everything that differs from where the branch left its base
 //! (`git merge-base <base> HEAD`), plus uncommitted and untracked files.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command;
+
+use crate::comments;
+
+pub struct Changes {
+    /// Relative to the repository root with `/` separators, sorted and deduplicated. Renames
+    /// count as a deletion and an addition, so both paths are seen.
+    pub paths: Vec<String>,
+    /// The Rust files under `crates/` among `paths` whose code is unchanged: only comments
+    /// differ (crates/xtask/src/comments.rs).
+    pub comment_only: BTreeSet<String>,
+}
 
 /// The default base: `origin/main`, else a local `main`.
 pub fn default_base(root: &Path) -> Option<String> {
@@ -12,9 +24,8 @@ pub fn default_base(root: &Path) -> Option<String> {
         .map(String::from)
 }
 
-/// Changed paths, relative to the repository root with `/` separators, sorted and deduplicated.
-/// Renames count as a deletion and an addition, so both paths are seen.
-pub fn changed_paths(root: &Path, base: &str) -> Result<Vec<String>, String> {
+/// The changes since the merge base with `base`, in the working tree.
+pub fn changes(root: &Path, base: &str) -> Result<Changes, String> {
     let merge_base = git(root, &["merge-base", base, "HEAD"])
         .map_err(|e| format!("no merge base with `{base}` ({e}); fetch it, or pass --full"))?;
     let merge_base = merge_base.trim();
@@ -33,7 +44,20 @@ pub fn changed_paths(root: &Path, base: &str) -> Result<Vec<String>, String> {
     paths.retain(|p| !p.is_empty());
     paths.sort();
     paths.dedup();
-    Ok(paths)
+    let comment_only = paths
+        .iter()
+        .filter(|p| p.starts_with("crates/") && p.ends_with(".rs"))
+        .filter(|p| {
+            let old = git(root, &["show", &format!("{merge_base}:{p}")]);
+            let new = std::fs::read_to_string(root.join(p));
+            matches!((old, new), (Ok(old), Ok(new)) if comments::same_code(&old, &new))
+        })
+        .cloned()
+        .collect();
+    Ok(Changes {
+        paths,
+        comment_only,
+    })
 }
 
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
