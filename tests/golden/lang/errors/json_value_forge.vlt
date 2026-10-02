@@ -1,0 +1,9 @@
+// A `JsonValue` wraps a runtime handle that safe code can neither pass in nor change: the
+// constructor makes JSON null, and the handle and the function that adopts one are private.
+function main() {
+  const a = new JsonValue(4096);
+  const b = JsonValue.of(1);
+  b.handle = 4096;
+  const c = JsonValue.adopt(4096);
+  console.log(new JsonValue().isNull(), JsonValue.parse("[1]").len());
+}

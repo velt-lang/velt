@@ -6,6 +6,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod runtime_support;
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -24,15 +26,6 @@ fn m1_programs(root: &Path) -> Vec<PathBuf> {
     files
 }
 
-fn build_runtime(root: &Path) {
-    let st = Command::new(env!("CARGO"))
-        .args(["build", "-p", "velt_rt"])
-        .current_dir(root)
-        .status()
-        .expect("cargo build -p velt_rt");
-    assert!(st.success(), "building velt_rt failed");
-}
-
 #[test]
 fn m1_goldens_with_llvm() {
     if !velt_codegen_llvm::available() {
@@ -40,7 +33,7 @@ fn m1_goldens_with_llvm() {
         return;
     }
     let root = root();
-    build_runtime(&root);
+    runtime_support::build_native_runtime(&root);
     let work = root.join("target/golden-work-llvm");
     std::fs::create_dir_all(&work).expect("work dir");
     let files = m1_programs(&root);

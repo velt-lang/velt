@@ -21,7 +21,7 @@ connection stays open. A client that disconnects without `leave` is removed like
 
 | File | What |
 |---|---|
-| `src/protocol.vlt` | message unions, hand-written decoders (`JSON.parse` can't decode unions), display |
+| `src/protocol.vlt` | message unions decoded with `JSON.parse<ClientMessage>` (picked by `type`), display |
 | `src/room.vlt` | `Room`: members, names, sockets (behind a `Mutex` in the server) |
 | `src/server.vlt` | `serve` + WebSocket upgrade, one spawned `session` per connection, broadcast |
 | `src/client.vlt` | terminal client: a spawned receiver prints, the stdin loop sends |

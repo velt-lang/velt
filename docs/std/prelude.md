@@ -70,6 +70,22 @@ instances (compared by identity), and structs, object types and tuples (compared
 | `keys()`, `values()`, `entries()`, `forEach((v, k) => …)` | in insertion order |
 | `for (const [k, v] of map)` | |
 
+## Record
+
+`Record<K, V>` is a dictionary written with TypeScript object syntax: `r[k]`, `r.name`,
+`r[k] = v`, `delete r[k]` and object literals
+([Reference](../reference/types.md#objects-arrays-tuples-and-maps)). `Object.keys(r)`,
+`Object.values(r)` and `Object.entries(r)` return arrays in insertion order.
+
+```ts
+const env: Record<string, string> = { HOME: "/home/a" };
+env["PATH"] = "/bin";
+const limits: Record<"cpu" | "mem", i64> = { cpu: 2, mem: 512 };
+limits.cpu += 1;
+console.log(env.HOME ?? "/", Object.keys(env), limits);
+// /home/a [ 'HOME', 'PATH' ] { cpu: 3, mem: 512 }
+```
+
 ## Nullable values
 
 On any `T | null`: `isNull()`, `unwrap()` (panics on `null`), `unwrapOr(fallback)`, and
@@ -78,8 +94,9 @@ copied).
 
 ## JSON
 
-`JSON.stringify<T>(x)`, `JSON.parse<T>(text)` (throws `JsonError`) and
-`JSON.parseValue(text): JsonValue` ([`velt:json`](json.md)).
+`JSON.stringify<T>(x)`, `JSON.parse<T>(text, options?)` (throws `JsonError`) and
+`JSON.parseValue(text, options?): JsonValue` ([`velt:json`](json.md)); arrays and objects may
+nest 128 levels deep unless `options.maxDepth` says otherwise.
 
 ## Errors
 

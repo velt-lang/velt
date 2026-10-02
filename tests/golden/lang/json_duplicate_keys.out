@@ -1,0 +1,17 @@
+user {"name":"b","age":2}
+user error: expected i64 at $.age
+map {"a":3,"b":2}
+record {"a":3,"b":2}
+record keys {"a":3,"b":2}
+value {"a":3,"b":2}
+task {"kind":"task","n":5}
+task error: expected "task" at $.kind
+msg join {"kind":"join","user":"u","room":"r"}
+msg error: expected "leave" at $.kind
+msg error: expected "join" at $.kind
+shape {"r":2}
+lone a�b� 8 "�"
+pair 😀
+u64 9223372036854775807
+u64 error: expected u64 at $
+u64 error: expected u64 at $

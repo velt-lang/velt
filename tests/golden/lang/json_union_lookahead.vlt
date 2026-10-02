@@ -1,0 +1,44 @@
+// Nested unions told apart by a discriminant written last in every object. Each level looks
+// ahead for its `kind` and skips the fields before it; the skip remembers where the objects
+// inside end, so the nested unions do not scan them again. That the generated decoder uses
+// this skip is checked by `crates/veltc/tests/json_lookahead.rs`, and that the skip stays
+// linear by the runtime test `union_lookahead_stays_linear` (it counts the bytes walked).
+
+class Leaf {
+  v: i64 = 0;
+  kind: "leaf" = "leaf";
+}
+
+class Node {
+  pad: string = "";
+  child: Leaf | Node = new Leaf();
+  kind: "node" = "node";
+}
+
+function nested(levels: i64): string {
+  const open = `{"pad":"${"x".repeat(100)}","child":`;
+  return open.repeat(levels) + '{"v":7,"kind":"leaf"}' + ',"kind":"node"}'.repeat(levels);
+}
+
+function depth(t: Leaf | Node): i64 {
+  let d = 0;
+  let cur = t;
+  while (cur instanceof Node) {
+    d += 1;
+    cur = cur.child;
+  }
+  return d;
+}
+
+function main() {
+  // Within the default `maxDepth` (128), tag last at every level, then tag first.
+  const t = JSON.parse<Leaf | Node>(nested(120));
+  console.log(depth(t), t instanceof Node);
+  const first = JSON.parse<Leaf | Node>('{"kind":"node","pad":"","child":{"kind":"leaf","v":3}}');
+  console.log(depth(first));
+  try {
+    JSON.parse<Leaf | Node>(nested(200));
+  } catch (e) {
+    console.log(e.message);
+  }
+}

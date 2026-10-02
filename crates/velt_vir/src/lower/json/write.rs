@@ -106,6 +106,16 @@ impl FnLower<'_, '_> {
                 let h = self.cast_to(Operand::Copy(h), ht, Ty::Ptr);
                 self.call_rt(Rt::StrbufPushJsonValue, vec![b, h], None);
             }
+            TyKind::Adt(..) if self.prelude_map(ty).is_some() => {
+                let kv = self.prelude_map(ty).unwrap_or_else(|| ice("not a Map"));
+                self.json_write_map(buf, place, ty, kv)
+            }
+            TyKind::Adt(..) if self.prelude_record(ty).is_some() => {
+                let kv = self
+                    .prelude_record(ty)
+                    .unwrap_or_else(|| ice("not a Record"));
+                self.json_write_record(buf, place, ty, kv)
+            }
             TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => {
                 self.json_write_class(buf, place, ty, |lw| lw.json_write_object(buf, place, ty))
             }

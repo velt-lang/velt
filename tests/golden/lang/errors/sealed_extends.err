@@ -1,0 +1,8 @@
+sealed_extends.vlt:4:24: error: `Record` cannot be extended
+use composition instead: a class with a `Record` field
+sealed_extends.vlt:6:27: error: `Record` cannot be extended
+use composition instead: a class with a `Record` field
+sealed_extends.vlt:7:22: error: `JsonValue` cannot be extended
+use composition instead: a class with a `JsonValue` field
+sealed_extends.vlt:9:25: error: `JsonValue` cannot be extended
+use composition instead: a class with a `JsonValue` field

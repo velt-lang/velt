@@ -1,0 +1,36 @@
+// A generic method that uses a type parameter as a `Record` key, reached only by dynamic
+// dispatch (through an interface or a base class), is checked where its class is instantiated.
+interface I {
+  m(s: string): string;
+}
+class G<K> implements I {
+  m(s: string): string {
+    return JSON.stringify(JSON.parse<Record<K, i64>>(s));
+  }
+}
+function viaInterface(i: I): string {
+  return i.m('{"1":2}');
+}
+
+class B {
+  m(s: string): string {
+    return s;
+  }
+}
+class H<K> extends B {
+  override m(s: string): string {
+    return JSON.stringify(JSON.parse<Record<K, i64>>(s));
+  }
+}
+function viaBase(b: B): string {
+  return b.m('{"1":2}');
+}
+function wrap<K>(): B {
+  return new H<K>();
+}
+
+function main() {
+  console.log(viaInterface(new G<i64>()));
+  console.log(viaBase(wrap<bool>()));
+  console.log(viaInterface(new G<"a" | "b">()));
+}

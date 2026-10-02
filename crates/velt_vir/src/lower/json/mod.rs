@@ -16,8 +16,11 @@
 //! (`.name`, `[3]`) while returning, so paths cost nothing on success.
 
 mod dynamic;
+mod literal;
+mod map;
 mod object;
 mod read;
+mod union;
 mod write;
 
 use velt_sema::hir::{self, AdtKind, TyId, TyKind};
@@ -26,7 +29,34 @@ use super::rt::Rt;
 use super::{cint, ice, unit, Cx, FnLower, Glue};
 use crate::vir::{AggId, BlockId, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
+/// Qualified name of the prelude's dynamic JSON value class.
+const PRELUDE_JSON_VALUE: &str = "std/prelude/json::JsonValue";
+
 const STR: Ty = Ty::Agg(STR_AGG);
+
+/// `velt_rt_json_reader_peek` kinds (rt_abi_async.md §12.3).
+const TOKEN_NULL: u32 = 1;
+const TOKEN_TRUE: u32 = 2;
+const TOKEN_FALSE: u32 = 3;
+const TOKEN_NUMBER: u32 = 4;
+const TOKEN_STRING: u32 = 5;
+
+/// `s` as a JSON string literal (for messages).
+fn json_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
 
 /// A path segment prepended to the failure path while returning from a failed decoder.
 enum Seg<'a> {
@@ -63,13 +93,13 @@ impl Cx<'_> {
         self.intern(TyKind::Adt(hir::DefId(d as u32), vec![]))
     }
 
-    /// Is `t` the std `json.Value` handle type (serialized with `velt_rt_strbuf_push_json_value`)?
+    /// Is `t` the prelude's `JsonValue` handle type (serialized with
+    /// `velt_rt_strbuf_push_json_value`)? Matched by its exact qualified name, so a user class
+    /// named `JsonValue` (even in a module named `json`) stays an ordinary class.
     fn is_json_value(&self, t: TyId) -> bool {
         match self.types.kind(t) {
             TyKind::Adt(d, _) => match self.hir.def(*d) {
-                hir::Def::Adt(a) => {
-                    a.name.ends_with("json::Value") || a.name.ends_with("json.Value")
-                }
+                hir::Def::Adt(a) => a.name == PRELUDE_JSON_VALUE,
                 _ => false,
             },
             _ => false,
@@ -97,23 +127,36 @@ impl FnLower<'_, '_> {
         self.owned_result(Some(out), ty)
     }
 
-    /// `JSON.parse<T>(a)`: the decoded value, or a thrown `JsonError`.
-    pub(super) fn json_parse(&mut self, a: &hir::Expr, ty: TyId) -> Operand {
+    /// `JSON.parse<T>(a)` with reader options `flags` / `depth` (`i64`s): the decoded value,
+    /// or a thrown `JsonError`.
+    pub(super) fn json_parse(
+        &mut self,
+        a: &hir::Expr,
+        flags: &hir::Expr,
+        depth: &hir::Expr,
+        ty: TyId,
+    ) -> Operand {
         let t = self.sub(ty);
         let v = self.expr(a);
+        let flags = self.expr(flags);
+        let depth = self.expr(depth);
         if self.dead() {
             return unit();
         }
-        let vt = match self.cx.ty(t) {
-            Ty::Unit => ice("JSON.parse<void>"),
-            vt => vt,
-        };
+        let flags = self.cast_to(flags, Ty::I64, Ty::U32);
+        let depth = self.cast_to(depth, Ty::I64, Ty::U32);
+        // A zero-sized target (`null`, a literal type) is only checked: decode into a dummy.
+        let vt = self.cx.ty(t);
+        let zero_sized = vt == Ty::Unit;
         let src = self.operand_addr(v, STR);
-        let out = self.temp(vt);
+        let out = self.temp(if zero_sized { Ty::U8 } else { vt });
+        if !zero_sized {
+            self.json_init(out, t);
+        }
         let err = self.temp(STR);
         let oa = self.addr(Place::local(out));
         let ea = self.addr(Place::local(err));
-        let ok = self.call_glue(Glue::JsonParse, t, vec![src, oa, ea]);
+        let ok = self.call_glue(Glue::JsonParse, t, vec![src, flags, depth, oa, ea]);
         let (err_bb, ok_bb) = (self.new_block(), self.new_block());
         self.branch(ok, ok_bb, err_bb);
         self.switch_to(err_bb);
@@ -122,6 +165,9 @@ impl FnLower<'_, '_> {
         let et = self.cx.json_error_ty();
         self.route_error(e, et);
         self.switch_to(ok_bb);
+        if zero_sized {
+            return unit();
+        }
         self.owned_result(Some(out), t)
     }
 

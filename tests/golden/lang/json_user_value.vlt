@@ -1,0 +1,16 @@
+// A user class named `JsonValue` in a module named `json` is an ordinary class: JSON reads and
+// writes its fields. Only the prelude's `JsonValue` is the dynamic JSON value (this used to be
+// matched by name and crashed the compiler, or treated `id` as a runtime handle).
+import { JsonValue } from "./_json_user/json";
+
+function main() {
+  const v = new JsonValue();
+  v.name = "x";
+  v.id = 4096;
+  console.log(JSON.stringify(v));
+  const back = JSON.parse<JsonValue>('{"name":"y","id":7}');
+  console.log(back.name, back.id);
+  // The prelude's class is still the dynamic value.
+  const d = JSON.parseValue('{"k":[1,2]}');
+  console.log(d.stringify(), d.get("k")?.len());
+}

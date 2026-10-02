@@ -1,6 +1,6 @@
 //! Prelude types the compiler knows by name: `Mutex<T>` (the lock-word struct behind
 //! `new Mutex(x)` / `.with`), `JsonError` (thrown by `JSON.parse`), the dynamic JSON value
-//! (`json::Value`), `Map` (not JSON-serializable), the shared-state receiver shapes, and the
+//! (`json::JsonValue`), `Map` (not JSON-serializable), the shared-state receiver shapes, and the
 //! `Comparable<T>` interface behind ordering operators on generic params.
 
 use crate::ctx::{Ctx, Item};
@@ -93,11 +93,10 @@ impl Ctx<'_> {
             .any(|p| self.owns_resource_depth(p, depth + 1))
     }
 
-    /// The dynamic JSON value class (`JsonValue` = std/prelude/json's private `Value`),
-    /// recognized by name like the lowering's JSON glue does.
+    /// The dynamic JSON value class: the prelude's `JsonValue` itself, not a user class of the
+    /// same name (that one is an ordinary class to JSON).
     pub fn is_json_value(&self, d: DefId) -> bool {
-        self.adt(d)
-            .is_some_and(|a| a.qual_name.ends_with("json::Value"))
+        self.prelude_adt("JsonValue") == Some(d)
     }
 
     /// `JsonError` (prelude class), the type `JSON.parse` throws.

@@ -203,7 +203,6 @@ fn manifest_json_prints_the_validated_manifest() {
     assert_eq!(json["entry"], "src/main.vlt");
     assert_eq!(json["dependencies"]["util"]["path"], "../util");
 
-    assert!(s.fail("app", &["manifest"]).contains("missing `--json`"));
     s.write(
         "app/package.vlt",
         "export const pkg: Package = { name: \"app\" };\n",
@@ -234,4 +233,48 @@ fn a_velt_toml_is_reported_with_its_conversion() {
     // Saving the printed file is all the migration takes.
     s.write("app/package.vlt", converted);
     s.ok("app", &["build"]);
+}
+
+#[test]
+fn manifest_checks_and_every_command_reports_the_same_error() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    let checked = s.ok("app/src", &["manifest"]);
+    assert!(
+        checked.contains("Checked") && checked.contains("(app 0.1.0)"),
+        "{checked}"
+    );
+    s.write(
+        "app/package.vlt",
+        "export const pkg: Package = { name: \"app\", version: \"0.1.0\", deps: {} };\n",
+    );
+    for args in [
+        &["manifest"][..],
+        &["manifest", "--json"],
+        &["build"],
+        &["install"],
+    ] {
+        let err = s.fail("app", args);
+        assert!(
+            err.contains("package.vlt:1:62: error: unknown key `deps` in the manifest"),
+            "velt {}: {err}",
+            args.join(" ")
+        );
+    }
+}
+
+#[test]
+fn fmt_reports_a_velt_toml_like_every_command() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    std::fs::remove_file(s.dir.join("app/package.vlt")).unwrap();
+    s.write(
+        "app/velt.toml",
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    );
+    let err = s.fail("app", &["fmt"]);
+    assert!(
+        err.contains("is no longer read; the manifest is `package.vlt`"),
+        "{err}"
+    );
 }

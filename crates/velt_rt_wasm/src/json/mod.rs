@@ -15,5 +15,7 @@ pub mod scan;
 pub mod value;
 #[path = "../../../velt_rt/src/json/value_abi.rs"]
 pub mod value_abi;
+#[path = "../../../velt_rt/src/json/value_edit.rs"]
+pub mod value_edit;
 #[path = "../../../velt_rt/src/json/walk.rs"]
 pub mod walk;

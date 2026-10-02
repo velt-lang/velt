@@ -29,6 +29,11 @@ fn generic_calls_vs_comparisons() {
     check("a < b >= c", "(>= (< a b) c)");
     check("f(a < b, c > d)", "(call f [(< a b) (> c d)])");
     check("x >>= y", "(>>= x y)");
+    check("f<\"x\" | null>(s)", "(call f<(\"x\" | null)> [s])");
+    check("f<1, true>()", "(call f<1, true> [])");
+    check("i < 10 && j > 0", "(&& (< i 10) (> j 0))");
+    check("a < 1 > b", "(> (< a 1) b)");
+    check("a < \"x\" | b", "(| (< a \"x\") b)");
 }
 
 #[test]

@@ -1,5 +1,6 @@
-//! vpm subcommands: `add`, `install`, `update`, `publish`, `native build`, `manifest` (`new`/`init`
-//! are in `create`). Status lines go to stderr (cargo style), so stdout stays free for program output.
+//! vpm subcommands: `add`, `install`, `update`, `publish`, `native build`, `manifest`
+//! (`new`/`init` are in `create`). Status lines go to stderr (cargo style), so stdout stays free
+//! for program output.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -50,13 +51,23 @@ pub fn add(name: &str, version: Option<String>, path: Option<String>) -> Result<
     Ok(())
 }
 
-/// `velt manifest --json`: the package's validated manifest as JSON on stdout, with defaults
-/// filled in, for tools that cannot read `package.vlt` themselves.
-pub fn manifest_json() -> Result<(), String> {
-    let manifest = vpm::Manifest::from_dir(&Project::current_root()?)?;
-    let json = serde_json::to_string_pretty(&manifest.to_json())
-        .expect("ICE: a manifest serializes to JSON");
-    println!("{json}");
+/// `velt manifest [--json]`: read and validate the package's manifest; with `json`, print it on
+/// stdout with defaults filled in, for tools that cannot read `package.vlt` themselves.
+pub fn manifest(json: bool) -> Result<(), String> {
+    let root = Project::current_root()?;
+    let manifest = vpm::Manifest::from_dir(&root)?;
+    if json {
+        let json = serde_json::to_string_pretty(&manifest.to_json())
+            .expect("ICE: a manifest serializes to JSON");
+        println!("{json}");
+    } else {
+        let path = root.join(vpm::manifest::MANIFEST_FILE);
+        let package = &manifest.package;
+        style::status(
+            "Checked",
+            &format!("{} ({} {})", path.display(), package.name, package.version),
+        );
+    }
     Ok(())
 }
 

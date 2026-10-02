@@ -188,7 +188,7 @@ A string, number or bool literal is a type with that one value: `"circle"`, `42`
   `string`). A literal-typed value converts implicitly to its base type (`const s: string = d;`).
 - A literal type is zero-sized; a union of literals is only its tag. Printing, `${}` and
   `JSON.stringify` show the value; `typeof` gives the base type's tag.
-- `JSON.parse` into literal types is not supported yet.
+- `JSON.parse` checks a literal type against its value (`expected "task" at $.kind`).
 
 ## Union types
 
@@ -209,7 +209,8 @@ the nullable type; `void` cannot be a member.
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
 - Printing and template literals show the active member's value. `JSON.stringify` works on
-  unions; `JSON.parse` cannot decode them yet.
+  unions; `JSON.parse` decodes them when the JSON value tells the members apart (discriminated
+  unions by their discriminant; see [`velt:json`](../std/json.md)).
 - A union of numbers, bools, strings and literals is copied; one holding an object refers to
   it like any other variable.
 
@@ -300,7 +301,7 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
 - **Object literals** `{ name: "a", n: 1 }` have anonymous object types
   `{ name: string; n: i64 }` with a fixed layout (a field access is one load). An object type
   accepts exactly its fields: extra fields are a type error, and adding a property later is an
-  error (use a `Map`).
+  error (use a `Map` or a `Record`).
 - **Spread**: `{ ...a, b: 1 }` builds a merged object at compile time (later keys win);
   `[x, ...xs]` builds a new array. Spread arguments, `f(...xs)`, are not supported.
 - **Destructuring**: `const [a, b] = pair;`, `const [head, ...rest] = xs;`,
@@ -325,8 +326,25 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   `getOrInsert(k, () => v)`. Keys: numbers, `bool`, `string`, class instances (by identity),
   and structs, object types and tuples, which compare by content (in JS two equal object
   literals are two different keys). Iteration follows insertion order, like JS.
+- **`Record<K, V>`**: a dictionary written with object syntax, like TypeScript's `Record`.
+  `K` is `string`, a union of string literal types, or a string enum; any other key type is
+  an error (use a `Map`), also when a generic function or class gets it as a type argument.
+  With `string` keys a record is *open*: `r[k]` and `r.name` are `V | null`, `r[k] = v`
+  inserts or replaces, and `delete r[k]` removes. With literal or enum keys it is *closed*: it
+  always holds every key, so `r.cpu` is `V`, a typo is an error, and `delete` is not allowed.
+  On an enum-keyed record, `r.mem` names the member whose value is `"mem"`. Build a record
+  from an object literal where a record is expected (`const r: Record<string, i64> = {}`; a
+  closed record's literal must list every key) or with `new Record<string, V>()`. A literal
+  may spread another record (`{ ...r, x: 1 }`). In generic code, where the key type is a type
+  parameter `K`, reads are `V | null` and the record may be closed, so it cannot start empty
+  (only a literal with a spread builds one) and `delete` is not allowed. A record has no
+  methods of its own: `Object.keys(r)`, `Object.values(r)` and `Object.entries(r)` return
+  arrays in insertion order. `console.log` and `JSON` treat a record as an object. A class
+  cannot `extends` a `Record` (its constructor would leave a closed record without its keys);
+  hold one in a field instead. A literal for an enum-keyed record is not supported yet.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,
-  strings, arrays, enums, nullable values, structs, classes and anonymous objects
+  strings, literal types, arrays, tuples, enums, nullable values, `Map<string, V>`,
+  `Record<K, V>`, structs, classes and anonymous objects
   ([`velt:json`](../std/json.md)).
 
 ```ts

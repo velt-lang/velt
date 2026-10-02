@@ -12,4 +12,5 @@ pub mod reader_abi;
 pub mod scan;
 pub mod value;
 pub mod value_abi;
+pub mod value_edit;
 pub mod walk;

@@ -124,10 +124,35 @@ fn json_types() {
         "struct P { a: i64; b: string[]; c?: f64; }
          function main() { console.log(JSON.stringify(P { a: 1, b: [] })); const q = JSON.parse<P>(\"{}\"); console.log(q.a); }",
     );
-    let r = err_src(
-        "function main() { const m = new Map<string, i64>(); console.log(JSON.stringify(m)); }",
+    // Maps with string keys are objects; tuples are fixed-length arrays.
+    ok_src(
+        "type D = { m: Map<string, i64[]>, t: [string, f64] };
+         function main() { const d = JSON.parse<D>(\"{}\"); console.log(JSON.stringify(d)); }",
     );
-    assert!(r.contains("cannot convert to or from JSON"), "{r}");
+    let r = err_src(
+        "function main() { const m = new Map<i64, i64>(); console.log(JSON.stringify(m)); }",
+    );
+    assert!(r.contains("`Map<i64, i64>` has no JSON form"), "{r}");
+    assert!(r.contains("only with `string` keys"), "{r}");
+    // Everything else without a JSON form is a diagnostic (never an ICE in lowering).
+    for (decl, ty) in [
+        ("interface Named { name(): string; }", "Named"),
+        ("", "Promise<i64>"),
+        ("", "shared<i64>"),
+        ("", "() => void"),
+    ] {
+        let r = err_src(&format!(
+            "{decl} type W = {{ f: {ty} }};
+             async function main() {{ const w = JSON.parse<W>(\"{{}}\"); }}"
+        ));
+        assert!(
+            r.contains(&format!("contains `{ty}`, which has no JSON form")),
+            "{r}"
+        );
+    }
+    // An unknown type is reported once, not again as having no JSON form.
+    let r = err_src("type W = { s: Nope }; function main() { JSON.parse<W>(\"{}\"); }");
+    assert!(!r.contains("JSON"), "{r}");
     let r = err_src(
         "struct W { f: (x: i64) => i64; }
          function main() { const w = JSON.parse<W>(\"{}\"); }",

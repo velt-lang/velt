@@ -18,34 +18,13 @@ export type ServerMessage =
 
 export class ProtocolError extends Error {}
 
-// A client message (throws ProtocolError). `JSON.parse` can't decode unions yet, so the
-// discriminant is read from a `JsonValue` and the member built by hand.
+// A client message (throws ProtocolError). `JSON.parse` picks the member by `type`.
 export function decodeClient(text: string): ClientMessage {
-  let v: JsonValue;
   try {
-    v = JSON.parseValue(text);
+    return JSON.parse<ClientMessage>(text);
   } catch (e) {
     throw new ProtocolError(e.message.clone());
   }
-  const type = v.get("type")?.asString();
-  switch (type) {
-    case "join":
-      return { type: "join", name: field(v, "name") };
-    case "say":
-      return { type: "say", text: field(v, "text") };
-    case "leave":
-      return { type: "leave" };
-    default:
-      throw new ProtocolError(`unknown message type ${type ?? "(none)"}`);
-  }
-}
-
-function field(v: JsonValue, name: string): string {
-  const s = v.get(name)?.asString();
-  if (s == null) {
-    throw new ProtocolError(`"${name}" must be a string`);
-  }
-  return s;
 }
 
 export function encode(msg: ServerMessage): string {
@@ -70,33 +49,9 @@ export function describe(msg: ServerMessage): string {
 
 // A server message, as the client reads it (throws ProtocolError).
 export function decodeServer(text: string): ServerMessage {
-  let v: JsonValue;
   try {
-    v = JSON.parseValue(text);
+    return JSON.parse<ServerMessage>(text);
   } catch (e) {
     throw new ProtocolError(e.message.clone());
-  }
-  const type = v.get("type")?.asString();
-  switch (type) {
-    case "welcome": {
-      const users: string[] = [];
-      const list = v.get("users");
-      if (list != null) {
-        for (let i: i64 = 0; i < list.len(); i++) {
-          users.push(list.at(i)?.asString() ?? "");
-        }
-      }
-      return { type: "welcome", name: field(v, "name"), users };
-    }
-    case "joined":
-      return { type: "joined", name: field(v, "name") };
-    case "message":
-      return { type: "message", from: field(v, "from"), text: field(v, "text") };
-    case "left":
-      return { type: "left", name: field(v, "name") };
-    case "error":
-      return { type: "error", message: field(v, "message") };
-    default:
-      throw new ProtocolError(`unknown message type ${type ?? "(none)"}`);
   }
 }

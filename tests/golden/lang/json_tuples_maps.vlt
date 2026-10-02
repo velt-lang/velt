@@ -1,0 +1,51 @@
+// JSON.parse<T> / JSON.stringify of tuples (fixed-length arrays) and Map<string, V> (objects
+// with arbitrary keys, insertion order) (issue #17).
+type Pair = [string, i64];
+type Row = { id: i64, at: [f64, f64], tag: [string, "x", bool] };
+function showRow(text: string) {
+  try {
+    const r = JSON.parse<Row>(text);
+    console.log(r, JSON.stringify(r));
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+function tuples() {
+  const p = JSON.parse<Pair[]>('[["a",1],["b",2]]');
+  console.log(p, p[1][0], JSON.stringify(p));
+  showRow('{"id":1,"at":[1.5,2],"tag":["t","x",true]}');
+  showRow('{"id":1,"at":[1.5],"tag":["t","x",true]}');
+  showRow('{"id":1,"at":[1.5,2,3],"tag":["t","x",true]}');
+  showRow('{"id":1,"at":[1.5,"2"],"tag":["t","x",true]}');
+  showRow('{"id":1,"at":[1,2],"tag":["t","y",true]}');
+  showRow('{"id":1,"at":{},"tag":["t","x",true]}');
+}
+
+type Doc = { name: string, counts: Map<string, i64>, nested: Map<string, string[]> };
+function show(text: string) {
+  try {
+    const d = JSON.parse<Doc>(text);
+    console.log(d.counts, d.nested, d.counts.get("b"));
+    console.log(JSON.stringify(d));
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+function maps() {
+  show('{"name":"x","counts":{"a":1,"b":2,"a":3},"nested":{"k":["v","w"],"e\\"q":[]}}');
+  show('{"name":"x","counts":{},"nested":{}}');
+  show('{"name":"x","counts":{"a":1,"b":"2"},"nested":{}}');
+  show('{"name":"x","counts":[],"nested":{}}');
+  show('{"name":"x","counts":{"a":1},"nested":{"k":[1]}}');
+  const m = new Map<string, f64>();
+  m.set("z", 1.5);
+  m.set("y", 2);
+  m.delete("z");
+  m.set("x", 3);
+  console.log(JSON.stringify(m), JSON.stringify(JSON.parse<Map<string, f64>>(JSON.stringify(m))));
+}
+
+function main() {
+  tuples();
+  maps();
+}

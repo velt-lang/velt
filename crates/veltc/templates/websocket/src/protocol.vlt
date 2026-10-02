@@ -19,55 +19,23 @@ export type ServerMessage =
 /// A message that is not valid JSON or not part of the protocol.
 export class ProtocolError extends Error {}
 
-// `JSON.parse` can't decode unions, so the decoders read the `type` from a `JsonValue` and
-// build the member by hand.
-function parse(text: string): JsonValue {
+// `JSON.parse` picks the member by its `type`; any error becomes a `ProtocolError`.
+
+/// A client message (throws `ProtocolError`).
+export function decodeClient(text: string): ClientMessage {
   try {
-    return JSON.parseValue(text);
+    return JSON.parse<ClientMessage>(text);
   } catch (e) {
     throw new ProtocolError(e.message.clone());
   }
 }
 
-function field(v: JsonValue, name: string): string {
-  const s = v.get(name)?.asString();
-  if (s == null) {
-    throw new ProtocolError(`"${name}" must be a string`);
-  }
-  return s;
-}
-
-/// A client message (throws `ProtocolError`).
-export function decodeClient(text: string): ClientMessage {
-  const v = parse(text);
-  const type = v.get("type")?.asString();
-  switch (type) {
-    case "join":
-      return { type: "join", name: field(v, "name") };
-    case "say":
-      return { type: "say", text: field(v, "text") };
-    case "leave":
-      return { type: "leave" };
-    default:
-      throw new ProtocolError(`unknown message type ${type ?? "(none)"}`);
-  }
-}
-
 /// A server message (throws `ProtocolError`).
 export function decodeServer(text: string): ServerMessage {
-  const v = parse(text);
-  const type = v.get("type")?.asString();
-  switch (type) {
-    case "joined":
-      return { type: "joined", name: field(v, "name") };
-    case "message":
-      return { type: "message", from: field(v, "from"), text: field(v, "text") };
-    case "left":
-      return { type: "left", name: field(v, "name") };
-    case "error":
-      return { type: "error", message: field(v, "message") };
-    default:
-      throw new ProtocolError(`unknown message type ${type ?? "(none)"}`);
+  try {
+    return JSON.parse<ServerMessage>(text);
+  } catch (e) {
+    throw new ProtocolError(e.message.clone());
   }
 }
 

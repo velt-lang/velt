@@ -1,0 +1,120 @@
+// Record<K, V> (docs/internals/design/record.md, issue #17): TypeScript object syntax over an
+// insertion-ordered dictionary; open (`string` keys, reads are `V | null`) and closed
+// (literal keys, every key present) records, Object.keys/values/entries, delete, JSON.
+type Limit = "cpu" | "mem";
+
+function syntax() {
+  const env: Record<string, string> = { HOME: "/home/a", SHELL: "zsh" };
+  const home = env["HOME"] ?? "/";
+  env["PATH"] = "/bin";
+  env.EDITOR = "vi";
+  console.log(home, env.PATH, env["nope"], Object.keys(env));
+  delete env["SHELL"];
+  for (const [k, v] of Object.entries(env)) {
+    console.log(k, v);
+  }
+  const l: Record<Limit, i64> = { cpu: 2, mem: 512 };
+  l.cpu += 1;
+  l["mem"]++;
+  const k: Limit = "mem";
+  console.log(l.cpu, l[k], Object.values(l));
+  const more: Record<string, string> = { ...env, X: "1" };
+  console.log(Object.keys(more));
+}
+
+function formatting() {
+  const r: Record<string, i64[]> = { a: [1], "b c": [], _x: [2] };
+  const e: Record<string, string> = {};
+  const l: Record<"cpu" | "mem limit", i64> = { cpu: 1, "mem limit": 2 };
+  console.log(r, e, l);
+  console.log([r]);
+}
+
+enum Tier {
+  Free = "free",
+  Pro = "pro",
+}
+
+type Config = {
+  env: Record<string, string>;
+  limits: Record<Limit, i64>;
+  prices: Record<Tier, f64>;
+};
+
+function show(text: string) {
+  try {
+    const c = JSON.parse<Config>(text);
+    console.log(c);
+    console.log(JSON.stringify(c));
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+
+function json() {
+  show(
+    '{"env":{"HOME":"/h","A B":"x"},"limits":{"mem":512,"cpu":2,"gpu":1},"prices":{"pro":9.5,"free":0}}',
+  );
+  show('{"env":{},"limits":{"cpu":2},"prices":{"pro":9.5,"free":0}}');
+  show('{"env":{"a":1},"limits":{"cpu":2,"mem":1},"prices":{"pro":9.5,"free":0}}');
+  show('{"env":{},"limits":{"cpu":"x","mem":1},"prices":{}}');
+  show('{"env":{},"limits":{"cpu":1,"mem":1,"gpu":[1,}],"prices":{}}');
+}
+
+class Counter {
+  n: i64 = 0;
+}
+
+// A read is the stored value itself (as in JS): changing it changes the record's entry.
+function sharing() {
+  const lists: Record<string, i64[]> = { a: [] };
+  lists["a"]?.push(1);
+  lists.a?.push(2);
+  const counters: Record<"hits" | "misses", Counter> = {
+    hits: new Counter(),
+    misses: new Counter(),
+  };
+  counters.hits.n += 1;
+  const m = counters.misses;
+  m.n = 5;
+  console.log(lists, counters);
+}
+
+enum Res {
+  Cpu = "cpu",
+  Mem = "mem",
+}
+
+// `r.name` on an enum-keyed record names the member whose value is "name".
+function enumKeys() {
+  const r = JSON.parse<Record<Res, i64>>('{"cpu":2,"mem":512}');
+  r.mem = 1024;
+  r.cpu += 2;
+  r.mem++;
+  console.log(r.cpu, r.mem, r[Res.Mem], r);
+}
+
+// With a type-parameter key, reads are `V | null` and copies need a spread.
+function lookup<K, V>(r: Record<K, V>, k: K): V | null {
+  return r[k];
+}
+
+function copy<K, V>(r: Record<K, V>): Record<K, V> {
+  return { ...r };
+}
+
+function generic() {
+  const l: Record<Limit, i64> = { cpu: 1, mem: 2 };
+  const c = copy(l);
+  c.cpu = 3;
+  console.log(lookup(l, "mem"), l.cpu, c.cpu, copy<string, string>({ a: "x" }));
+}
+
+function main() {
+  enumKeys();
+  generic();
+  sharing();
+  syntax();
+  formatting();
+  json();
+}

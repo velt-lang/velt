@@ -7,7 +7,7 @@
 //! `velt_rt_json_value_free`; freeing a parent never invalidates handles to its children.
 //! All accessors accept a null handle (the result of a failed `get`/`at`).
 
-use super::error::value_syntax_message;
+use super::error::syntax_message;
 use super::value::{parse, stringify_into, Value};
 use crate::handle::Handle;
 use crate::str::VeltStr;
@@ -25,28 +25,55 @@ pub const KIND_STRING: u32 = 4;
 pub const KIND_ARRAY: u32 = 5;
 pub const KIND_OBJECT: u32 = 6;
 
+/// A position given by generated code as `u64`, as a `usize` if it is one. A cast would truncate
+/// on 32-bit targets (wasm32), turning `at(4294967296)` into `at(0)`; a position beyond `usize`
+/// is out of range of every array. Generic over the target so the 32-bit case can be tested on
+/// any host.
+pub fn to_index<U: TryFrom<u64>>(i: u64) -> Option<U> {
+    U::try_from(i).ok()
+}
+
 fn new_handle(v: &Arc<Value>) -> ValueHandle {
     Handle::from_arc(Arc::clone(v))
 }
 
-/// `JSON.parseValue(src)`: 1 = ok (`*out_handle` set); 0 = syntax error (`*out_handle` = null,
-/// `*out_err` = owned message `invalid JSON: <detail> (byte <offset>)`).
+/// `JSON.parseValue(src)` without a depth limit (`JsonValue.from`, whose text the compiler
+/// wrote): 1 = ok (`*out_handle` set); 0 = syntax error (`*out_handle` = null, `*out_err` =
+/// owned message `invalid JSON at <path>: <detail> (byte <offset>)`).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_parse_value(
     src: *const VeltStr,
     out_handle: *mut ValueHandle,
     out_err: *mut VeltStr,
 ) -> u8 {
+    velt_rt_json_parse_value_with(src, 0, out_handle, out_err)
+}
+
+/// `JSON.parseValue(src, { maxDepth })`: like `velt_rt_json_parse_value`, failing on arrays and
+/// objects nested more than `max_depth` deep (0 = no limit) with
+/// `JSON nested deeper than <max_depth> levels at <path> (byte <offset>)`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_json_parse_value_with(
+    src: *const VeltStr,
+    max_depth: u32,
+    out_handle: *mut ValueHandle,
+    out_err: *mut VeltStr,
+) -> u8 {
     let bytes = (*src).as_bytes();
-    match parse(bytes) {
+    let limit = if max_depth == 0 {
+        usize::MAX
+    } else {
+        max_depth as usize
+    };
+    match parse(bytes, limit) {
         Ok(root) => {
             out_handle.write(Handle::from_arc(root));
             1
         }
-        Err(e) => {
+        Err((e, path)) => {
             out_handle.write(Handle::NULL);
             out_err.write(VeltStr::from_vec(
-                value_syntax_message(bytes, e).into_bytes(),
+                syntax_message(bytes, e, &path, limit).into_bytes(),
             ));
             0
         }
@@ -88,9 +115,12 @@ pub unsafe extern "C" fn velt_rt_json_value_get(
 /// `v.at(i)`: new handle to array element `i` (or the `i`-th member value of an object), or null.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_value_at(h: ValueHandle, i: u64) -> ValueHandle {
+    let Some(i) = to_index::<usize>(i) else {
+        return Handle::NULL;
+    };
     let child = match h.get() {
-        Some(Value::Array(items)) => items.get(i as usize),
-        Some(Value::Object(obj)) => obj.entries.get(i as usize).map(|(_, v)| v),
+        Some(Value::Array(items)) => items.get(i),
+        Some(Value::Object(obj)) => obj.entries.get(i).map(|(_, v)| v),
         _ => None,
     };
     child.map_or(Handle::NULL, new_handle)
@@ -107,7 +137,7 @@ pub unsafe extern "C" fn velt_rt_json_value_key_at(
     let Some(Value::Object(obj)) = h.get() else {
         return 0;
     };
-    match obj.entries.get(i as usize) {
+    match to_index::<usize>(i).and_then(|i| obj.entries.get(i)) {
         Some((key, _)) => {
             out.write(VeltStr::from_vec(key.as_bytes().to_vec()));
             1
