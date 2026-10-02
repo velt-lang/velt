@@ -6,8 +6,8 @@
 //! A group's error type is the interface method's (or the base method's) `throws` clause when
 //! written — the implementations may throw only what it allows — else the union of what the
 //! members throw (inferred). For an interface method returning a promise it is what the promises
-//! reject with (implemented by async methods), as for async functions. Group error types cannot mention type parameters (every member
-//! would see them differently).
+//! reject with (implemented by async methods), as for async functions. Group error types cannot
+//! mention type parameters (every member would see them differently).
 
 use std::collections::HashMap;
 
