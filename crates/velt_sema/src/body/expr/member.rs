@@ -202,13 +202,23 @@ impl FnCx<'_, '_> {
                     "console" | "process" | "Promise" | "performance" | "Date"
                 ) && self.lookup_item(&id.name, id.span).is_none()
                 {
-                    self.cx.err(
+                    let mut d = Diagnostic::error(
                         format!("`{}.{}` can only be called", id.name, prop.name),
                         span,
                     );
+                    if id.name == "process" {
+                        d = d.with_note(process_note(&prop.name));
+                    }
+                    self.cx.error(d);
                     return self.error_expr(span);
                 }
-                if let Some(Item::Def(d)) = self.lookup_item(&id.name, id.span) {
+                let item = self.lookup_item(&id.name, id.span);
+                if let Some(c) = item.and_then(|it| self.companion_class(&id.name, it)) {
+                    if let Some(h) = self.static_field(c, prop, want, span) {
+                        return h;
+                    }
+                }
+                if let Some(Item::Def(d)) = item {
                     if self.cx.enum_info(d).is_some() {
                         return self.variant_value(d, prop, &[], exp, span);
                     }
@@ -415,5 +425,24 @@ impl FnCx<'_, '_> {
     /// Is `t` a class type (for "use `new`" hints)?
     pub(crate) fn is_class_def(&self, d: DefId) -> bool {
         self.cx.adt(d).is_some_and(|a| a.kind == AdtKind::Class)
+    }
+}
+
+/// Where Node's `process.<name>` lives in Velt: the builtin `process` namespace only has
+/// `exit`; the rest is in `velt:process`.
+fn process_note(name: &str) -> String {
+    match name {
+        "stdout" => {
+            "use `import { stdout } from \"velt:process\"`, then `stdout.write(s)`".to_string()
+        }
+        "argv" => "use `args()` from `velt:process`: the arguments after the program, like \
+                   Node's `process.argv.slice(2)`"
+            .to_string(),
+        "env" | "cwd" | "chdir" => {
+            format!("use `import {{ {name} }} from \"velt:process\"`: `{name}` is a function there")
+        }
+        _ => "use the functions of `velt:process` (`args()`, `env(name)`, `cwd()`, \
+              `stdout.write(s)`)"
+            .to_string(),
     }
 }

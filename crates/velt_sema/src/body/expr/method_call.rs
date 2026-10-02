@@ -51,6 +51,7 @@ impl FnCx<'_, '_> {
         let Some(r) = self.resolve_method(recv.ty, &prop.name) else {
             return self.no_method(recv, prop, args, span);
         };
+        self.check_extension_ambiguity(&r, recv.ty, &prop.name, prop.span);
         self.check_private(self.method_private_to(&r), &prop.name, prop.span);
         self.rec_method(prop.span, &r);
         if self.is_getter(&r) && !getter {
@@ -198,6 +199,12 @@ impl FnCx<'_, '_> {
             );
         } else if let Some(note) = self.narrowing_note(recv.ty) {
             d = d.with_note(note);
+        } else if matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..))
+            && matches!(prop.name.as_str(), "then" | "catch" | "finally")
+        {
+            d = d.with_note(
+                "promises take no callbacks: `await` the promise, inside `try`/`catch`/`finally` to handle its error",
+            );
         } else if self.cx.ty.opt_payload(recv.ty).is_some() {
             d = d.with_note(format!(
                 "the value may be null: use `?.{}(...)` or check `!= null` first",

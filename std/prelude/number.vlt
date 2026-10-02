@@ -1,8 +1,5 @@
-// Prelude: JS number globals (`NaN`, `Infinity`, `isNaN`, `isFinite`) and `toFixed` on f64.
-//
-// `Number.NaN` / `Number.POSITIVE_INFINITY` & co. are not provided: `Number` is already the
-// `Number(s)` conversion function (string.vlt), and a name can't be both a function and a
-// class; the globals below cover the same values.
+// Prelude: JS number globals (`NaN`, `Infinity`, `isNaN`, `isFinite`), `toFixed` on f64, and
+// the static members of `Number` (`Number.isInteger`, `Number.MAX_SAFE_INTEGER`, …).
 
 declare function velt_rt_f64_to_fixed(x: f64, digits: i64): string;
 
@@ -28,5 +25,50 @@ extend f64 {
       panic("RangeError: toFixed() digits argument must be between 0 and 100");
     }
     return velt_rt_f64_to_fixed(this, digits);
+  }
+}
+
+// `Number.isInteger(x)`, `Number.MAX_SAFE_INTEGER` & co.: the static members of JS's `Number`.
+// `Number` itself is the `Number(s)` conversion (string.vlt); the compiler looks its members up
+// in this class (TypeScript calls the type of `Number` `NumberConstructor` too).
+export class NumberConstructor {
+  static readonly NaN: f64 = 0.0 / 0.0;
+  static readonly POSITIVE_INFINITY: f64 = 1.0 / 0.0;
+  static readonly NEGATIVE_INFINITY: f64 = -1.0 / 0.0;
+  // 2^53 - 1: the largest integer an f64 holds exactly, and its negation.
+  static readonly MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
+  static readonly MIN_SAFE_INTEGER: f64 = -9007199254740991.0;
+  static readonly MAX_VALUE: f64 = 1.7976931348623157e308;
+  // The smallest positive (subnormal) f64.
+  static readonly MIN_VALUE: f64 = 5e-324;
+  // The gap between 1 and the next f64 (2^-52).
+  static readonly EPSILON: f64 = 2.220446049250313e-16;
+
+  // Whether `x` is NaN. Unlike the global `isNaN` in JS, neither converts its argument.
+  static isNaN(x: f64): bool {
+    return x != x;
+  }
+
+  static isFinite(x: f64): bool {
+    return x - x == 0.0;
+  }
+
+  // Whether `x` is a finite number without a fractional part (`5.0` is an integer).
+  static isInteger(x: f64): bool {
+    return x - x == 0.0 && __intrinsic_trunc(x) == x;
+  }
+
+  // An integer with |x| <= 2^53 - 1.
+  static isSafeInteger(x: f64): bool {
+    return NumberConstructor.isInteger(x) && x <= 9007199254740991.0 && x >= -9007199254740991.0;
+  }
+
+  // The same functions as the globals `parseInt` and `parseFloat`.
+  static parseInt(s: string, radix: i64 = 0): f64 {
+    return parseInt(s, radix);
+  }
+
+  static parseFloat(s: string): f64 {
+    return parseFloat(s);
   }
 }

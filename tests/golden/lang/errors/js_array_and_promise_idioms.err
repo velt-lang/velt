@@ -1,0 +1,13 @@
+js_array_and_promise_idioms.vlt:15:3: error: the length of an array cannot be assigned
+  = note: to shorten it, write `xs.truncate(n)`
+js_array_and_promise_idioms.vlt:16:9: error: variable `sorted` cannot have type `void`
+  = note: `sort` changes the array in place and returns nothing (unlike JS): call it, then use `xs`
+js_array_and_promise_idioms.vlt:17:9: error: variable `copy` cannot have type `void`
+  = note: `reverse` changes the array in place and returns nothing (unlike JS): store the array in a variable first (`const a = …; a.reverse();`), then use `a`
+js_array_and_promise_idioms.vlt:19:9: error: variable `shuffled` cannot have type `void`
+js_array_and_promise_idioms.vlt:20:36: error: no method named `then` found for type `Promise<i64>`
+  = note: promises take no callbacks: `await` the promise, inside `try`/`catch`/`finally` to handle its error
+js_array_and_promise_idioms.vlt:21:3: error: `process.stdout` can only be called
+  = note: use `import { stdout } from "velt:process"`, then `stdout.write(s)`
+js_array_and_promise_idioms.vlt:22:16: error: `process.argv` can only be called
+  = note: use `args()` from `velt:process`: the arguments after the program, like Node's `process.argv.slice(2)`

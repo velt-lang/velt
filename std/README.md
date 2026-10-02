@@ -6,14 +6,16 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | Path | Role |
 |---|---|
 | `prelude/*.vlt` | Implicitly imported into every module. |
-| `prelude/array.vlt` | `T[]` methods: `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat reverse isEmpty`, `join` on `string[]`. Callback methods rethrow their callback's errors (generic `E`). |
+| `prelude/array.vlt` | `T[]` methods: `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat reverse fill splice truncate isEmpty entries join`. Callback methods rethrow their callback's errors (generic `E`). |
+| `prelude/array_nested.vlt` | `flat` and `join` on `T[][]`, `join` on `(T \| null)[]`. |
 | `prelude/sort.vlt` | `sort()` on `i64 i32 u64 usize f64 string` arrays (pdqsort), stable `sort(cmp)` on any array. |
 | `prelude/map.vlt` | `Map<K, V>`: insertion-ordered hash map (dense entries + linear-probing index). |
 | `prelude/math.vlt` | `Math` static methods (f64). |
 | `prelude/nullable.vlt` | `isNull unwrap unwrapOr map` on `T \| null`. |
-| `prelude/assert.vlt` | `assert`, `assertEq`. |
+| `prelude/assert.vlt` | `assert`, `assertEq`, `assertThrows`, `deepEqual`. |
+| `prelude/number.vlt` | `NaN`, `Infinity`, `isNaN`, `isFinite`, `toFixed`, and `Number.*` (`NumberConstructor`). |
 | `prelude/error.vlt` | `Error { message }`, base class of std errors. |
-| `prelude/string.vlt` | `string` methods (`slice indexOf split trim replace padStart …`), `String.fromCharCode`, `parseInt`, `parseFloat`, `Number`. |
+| `prelude/string.vlt` | `string` methods (`slice indexOf split trim replace padStart localeCompare …`), `String.fromCharCode`, `parseInt`, `parseFloat`, `Number`. |
 | `prelude/json.vlt` | `JSON.stringify/parse/parseValue`, `JsonError`, `JsonValue`. |
 | `prelude/sync.vlt` | `Mutex<T>` layout for `new Mutex(x)` / `.with(f)` (compiler-implemented). |
 | `math.vlt` | `std/math`: integer helpers `clamp gcd lcm isPrime fib`. |

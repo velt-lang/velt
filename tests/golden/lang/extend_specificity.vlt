@@ -1,0 +1,41 @@
+// Among applicable `extend` blocks the most specific wins (its target is an instance of the
+// other's), whatever the declaration order; a block that doesn't apply is skipped.
+extend<T> Array<T> {
+  shape(): string {
+    return "any array";
+  }
+}
+
+extend<T> Array<T[]> {
+  shape(): string {
+    return "array of arrays";
+  }
+}
+
+extend Array<i64[]> {
+  shape(): string {
+    return "array of i64 arrays";
+  }
+}
+
+extend<K> Map<K, i64> {
+  describe(): string {
+    return "i64 values";
+  }
+}
+
+extend<T> Map<string, T> {
+  describe(): string {
+    return "string keys";
+  }
+}
+
+function main() {
+  const words = ["a"];
+  const grid = [["a"], ["b"]];
+  const numbers = [[1], [2]];
+  console.log(words.shape(), grid.shape(), numbers.shape());
+  const byId = new Map<i64, i64>();
+  const byName = new Map<string, bool>();
+  console.log(byId.describe(), byName.describe());
+}

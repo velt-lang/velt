@@ -280,7 +280,10 @@ impl FnCx<'_, '_> {
             Some(Item::Def(d)) if self.cx.adt(d).is_some() => {
                 Some(self.static_call(d, prop, type_args, args, exp, span))
             }
-            Some(_) => None,
+            Some(item) => {
+                let d = self.companion_class(&id.name, item)?;
+                Some(self.static_call(d, prop, type_args, args, exp, span))
+            }
             None => self.namespace_builtin(id, prop, args, exp, span),
         }
     }
