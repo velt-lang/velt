@@ -6,22 +6,26 @@
 #   bench/async/run.sh [runs] [only-benchmark]
 #
 # Columns: Velt on all cores and with VELT_THREADS=1, Rust tokio multi-thread and current-thread,
-# Node. Honors CARGO_TARGET_DIR. A configuration whose first run takes over 10 s is not repeated.
+# Node. Builds into cargo's target directory (CARGO_TARGET_DIR when set). A configuration whose
+# first run takes over 10 s is not repeated.
 # Needs: cargo, node, python3 on PATH; clang for the LLVM backend.
 set -euo pipefail
 RUNS=${1:-5}
 ONLY=${2:-}
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
-TARGET=${CARGO_TARGET_DIR:-$ROOT/target}
+PYTHON=$(command -v python3 || command -v python)
+# Cargo's target directory for this workspace: CARGO_TARGET_DIR, a cargo config, or <repo>/target.
+TARGET=$(cargo metadata --format-version 1 --no-deps --manifest-path "$ROOT/Cargo.toml" |
+  "$PYTHON" -c 'import json, sys; sys.stdout.write(json.load(sys.stdin)["target_directory"])')
 OUT="$TARGET/bench-async"
 mkdir -p "$OUT"
 
 echo "building velt (release), the runtime and the tokio benchmarks..." >&2
 cargo build --release -q -p veltc -p velt_rt --manifest-path "$ROOT/Cargo.toml"
-cargo build --release -q --manifest-path "$HERE/rust/Cargo.toml"
+# The tokio benchmarks are their own workspace: build them next to velt, where they are run from.
+cargo build --release -q --manifest-path "$HERE/rust/Cargo.toml" --target-dir "$TARGET"
 VELT="$TARGET/release/velt"
-PYTHON=$(command -v python3 || command -v python)
 
 # measure <expected-output-file|-> <command...>: prints "<best ms> <peak MB>"; with "-" instead
 # of an expected file, writes the output to $OUT/expected; fails on differing output.
