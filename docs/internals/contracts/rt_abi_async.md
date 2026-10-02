@@ -233,7 +233,7 @@ pointer type, so `std` stores them in `u64` fields and passes `u64` arguments; t
 and returns the same `u64`, in argument lists, results and result slots alike.
 - Handles that `std` wraps in **Copy structs** (`VeltListener`, `VeltStream`, `VeltUdp`,
   `VeltChild`, `VeltFileReader`, `VeltFileWriter`, `VeltWs`) are keys into runtime handle tables
-  (`velt_rt::registry::Key<T>`: slot + generation), because Velt code may hold several copies:
+  (`velt_rt::registry::Key<T>`: generation, shard and slot), because Velt code may hold several copies:
   releasing one (`close`/`free`) makes every copy dead. Later operations fail with `EBADF`
   (code 16, "handle is closed"), sync accessors return their documented empty value (port 0,
   pid 0, exit code -1, empty address), and releasing again is a no-op; a stale handle never

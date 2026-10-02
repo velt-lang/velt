@@ -1,6 +1,8 @@
 // Who is connected: client ids, names and sockets (`S`: the server's `WebSocket`, numbers in
-// the tests). Plain synchronous state, kept behind a `Mutex` by the server. Methods return errors as values (`string | null`) instead of throwing
-// because they run inside `Mutex.with` callbacks, which cannot throw (the lock is held).
+// the tests). Plain synchronous state, kept behind a `Mutex` by the server. Methods return
+// errors as values (`string | null`) instead of throwing because they run inside `Mutex.with`
+// callbacks, which cannot throw (the lock is held).
+
 type Member<S> = { name: string; socket: S };
 
 const MAX_NAME: usize = 20;

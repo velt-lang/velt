@@ -244,5 +244,13 @@ fn http_response_cost() {
         }
     });
     let all = t.elapsed().as_nanos() as f64 / (threads as f64 * (n / 10) as f64);
+    let t = Instant::now();
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| build_boxed(n / 10));
+        }
+    });
+    let boxed_all = t.elapsed().as_nanos() as f64 / (threads as f64 * (n / 10) as f64);
+    eprintln!("boxed response build+take: {boxed_all:.0} ns/response ({threads} threads at once)");
     eprintln!("response build+take: {one:.0} ns (1 thread), {all:.0} ns/response ({threads} threads at once)");
 }
