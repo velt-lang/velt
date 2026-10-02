@@ -320,8 +320,10 @@ impl FnLower<'_, '_> {
 
 impl FnLower<'_, '_> {
     /// Arguments for `new C()` of a class whose constructor parameters all default to an
-    /// empty array (the prelude `Map`'s `entries`): sema fills defaults in at call sites, so
-    /// a constructor call made by lowering passes them itself.
+    /// empty array: sema fills defaults in at call sites, so a constructor call made by
+    /// lowering passes them itself. The contract is the prelude `Map`'s constructor,
+    /// `constructor(entries: [K, V][] = [])` in std/prelude/map.vlt: changing its parameters
+    /// means changing this (pinned by tests/golden/lang/json_map_constructor.vlt).
     fn empty_ctor_args(&mut self, ty: TyId) -> Vec<hir::Expr> {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             ice("constructor arguments of a non-ADT type")
