@@ -133,6 +133,17 @@ pub(super) fn new_def<'m>(
             (&f.sig.name, DefInfo::Fn(Box::new(info)))
         }
         ast::ItemKind::ExternFn(s) => {
+            // Runtime functions take raw handles: only std may declare them (user code could
+            // call them with forged ones).
+            if s.name.name.starts_with("velt_rt_") && !cx.scopes[m].is_std {
+                cx.err(
+                    format!(
+                        "`{}` is a runtime function: only the standard library may declare it",
+                        s.name.name
+                    ),
+                    s.name.span,
+                );
+            }
             let info = fn_placeholder(
                 s.name.name.clone(),
                 s.name.span,
@@ -232,7 +243,7 @@ fn iface_info(m: usize, d: &ast::InterfaceDecl, qual: String) -> DefInfo<'_> {
 
 fn collect_prelude(cx: &mut Ctx) {
     for m in 0..cx.modules.len() {
-        if !cx.modules[m].path.starts_with("std/prelude/") {
+        if !cx.scopes[m].is_std || !cx.modules[m].path.starts_with("std/prelude/") {
             continue;
         }
         let mut names: Vec<&String> = cx.scopes[m].exports.iter().collect();

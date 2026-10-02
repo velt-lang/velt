@@ -78,6 +78,7 @@ pub fn load_program(
         modules: vec![],
         origins: vec![],
         by_file: HashMap::new(),
+        std_key: opts.std_root.as_deref().map(file_key),
     };
     if let Some(std) = &opts.std_root {
         for file in prelude_files(std) {
@@ -113,6 +114,8 @@ struct Loader<'a, 'o> {
     origins: Vec<(PathBuf, Origin)>,
     /// Canonical file path → module index.
     by_file: HashMap<PathBuf, usize>,
+    /// [`file_key`] of the std root: std modules are exactly the files below it.
+    std_key: Option<PathBuf>,
 }
 
 impl Loader<'_, '_> {
@@ -163,6 +166,7 @@ impl Loader<'_, '_> {
         self.by_file.insert(key, index);
         self.modules.push(SourceModule {
             path: canonical,
+            is_std: matches!(origin, Origin::Std(_)),
             file,
             ast,
             imports: vec![],
@@ -238,7 +242,9 @@ impl Loader<'_, '_> {
     ) -> Option<usize> {
         let (importer, from) = self.origins[index].clone();
         let dir = importer.parent().unwrap_or(Path::new(""));
-        let module = match self.path_alias(&importer, spec) {
+        let alias = self.path_alias(&importer, spec);
+        let aliased = alias.is_some();
+        let module = match alias {
             Some(file) => ModuleRef::Relative { file },
             None => match resolve_spec(spec, dir) {
                 Ok(m) => m,
@@ -264,6 +270,9 @@ impl Loader<'_, '_> {
             return self.error(format!("cannot find module `{spec}`"), notes, span);
         };
         let key = file_key(&file);
+        if let Err(msg) = self.std_membership(&target.origin, &key, spec) {
+            return self.error(msg, vec![], span);
+        }
         if let Some(&existing) = self.by_file.get(&key) {
             return Some(existing);
         }
@@ -280,6 +289,19 @@ impl Loader<'_, '_> {
         let canonical = target
             .canonical
             .unwrap_or_else(|| target.origin.canonical(&file));
+        // `std/…` names the standard library: a user module with such a path (a `./std/`
+        // directory, a path alias into one) would collide with it.
+        if !matches!(target.origin, Origin::Std(_)) && is_std_path(&canonical) {
+            let fix = if aliased {
+                "change the `paths` alias"
+            } else {
+                "rename its `std` directory"
+            };
+            let msg = format!(
+                "module `{spec}` would have the module path `{canonical}`, which is reserved for the standard library ({fix})"
+            );
+            return self.error(msg, vec![], span);
+        }
         if self.modules.iter().any(|m| m.path == canonical) {
             let msg = format!("module `{spec}` has the same module path `{canonical}` as another module (rename the file)");
             return self.error(msg, vec![], span);
@@ -287,6 +309,32 @@ impl Loader<'_, '_> {
         let new = self.add(&file, key, src, canonical, target.origin);
         queue.push_back(new);
         Some(new)
+    }
+
+    /// A module is std exactly when its file lies below the std root (`key`: its [`file_key`],
+    /// so symlinks and junctions are resolved): a `velt:` path must not leave the root, and user
+    /// code must not load a std file under a non-std origin (deduplication would hand that copy
+    /// to std's own imports).
+    fn std_membership(&self, origin: &Origin, key: &Path, spec: &str) -> Result<(), String> {
+        let Some(std_key) = &self.std_key else {
+            return Ok(());
+        };
+        let inside = key.starts_with(std_key);
+        match origin {
+            Origin::Std(_) if !inside => Err(format!(
+                "module `{spec}` resolves to a file outside the standard library"
+            )),
+            Origin::Std(_) => Ok(()),
+            _ if inside => {
+                let rel = vpm::relpath::relative(key, std_key);
+                let rel = rel.strip_suffix(".vlt").unwrap_or(&rel);
+                let rel = rel.strip_suffix("/index").unwrap_or(rel);
+                Err(format!(
+                    "module `{spec}` is a file of the standard library: import it as `velt:{rel}`"
+                ))
+            }
+            _ => Ok(()),
+        }
     }
 
     /// The file a `paths` alias maps `spec` to (bare specifiers only: relative and `velt:`
@@ -311,6 +359,11 @@ impl Loader<'_, '_> {
         self.diags.push(d);
         None
     }
+}
+
+/// Whether canonical module path `path` is in the standard library's namespace (`std`, `std/…`).
+fn is_std_path(path: &str) -> bool {
+    path == "std" || path.starts_with("std/")
 }
 
 /// Identity of a file for deduplication (canonical path when it exists).

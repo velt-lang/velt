@@ -1,0 +1,1 @@
+relative_std.vlt:3:22: error: module `./std/evil` would have the module path `std/evil`, which is reserved for the standard library (rename its `std` directory)

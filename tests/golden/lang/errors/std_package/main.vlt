@@ -1,0 +1,6 @@
+// A package named `std` would name its modules `std/…`: the name is reserved.
+import { grow } from "std";
+
+function main() {
+  console.log(grow(1).length);
+}

@@ -1,0 +1,6 @@
+// A package without native code can't declare runtime functions either.
+declare function velt_rt_regex_free(r: u64): void;
+
+export function free(r: u64) {
+  velt_rt_regex_free(r);
+}
