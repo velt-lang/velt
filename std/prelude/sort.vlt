@@ -1,4 +1,4 @@
-// Prelude: in-place array sorting.
+// Prelude: in-place array sorting (`sort`), and `toSorted`, which sorts a copy.
 //
 // - `sort()` on arrays of numbers and strings: ascending, pattern-defeating quicksort
 //   (pdqsort, Orson Peters): median-of-3 / ninther pivots, branchless Lomuto partitioning
@@ -25,6 +25,13 @@ extend Array<i64> {
     }
     pdqsort(this, (a, b) => a < b);
   }
+
+  // A sorted copy (ES2023); the receiver is unchanged.
+  toSorted(cmp: ((x: i64, y: i64) => i64) | null = null): i64[] {
+    const out = this.slice();
+    out.sort(cmp);
+    return out;
+  }
 }
 
 extend Array<i32> {
@@ -34,6 +41,13 @@ extend Array<i32> {
       return;
     }
     pdqsort(this, (a, b) => a < b);
+  }
+
+  // A sorted copy (ES2023); the receiver is unchanged.
+  toSorted(cmp: ((x: i32, y: i32) => i64) | null = null): i32[] {
+    const out = this.slice();
+    out.sort(cmp);
+    return out;
   }
 }
 
@@ -45,6 +59,13 @@ extend Array<u64> {
     }
     pdqsort(this, (a, b) => a < b);
   }
+
+  // A sorted copy (ES2023); the receiver is unchanged.
+  toSorted(cmp: ((x: u64, y: u64) => i64) | null = null): u64[] {
+    const out = this.slice();
+    out.sort(cmp);
+    return out;
+  }
 }
 
 extend Array<usize> {
@@ -54,6 +75,13 @@ extend Array<usize> {
       return;
     }
     pdqsort(this, (a, b) => a < b);
+  }
+
+  // A sorted copy (ES2023); the receiver is unchanged.
+  toSorted(cmp: ((x: usize, y: usize) => i64) | null = null): usize[] {
+    const out = this.slice();
+    out.sort(cmp);
+    return out;
   }
 }
 
@@ -66,6 +94,13 @@ extend Array<f64> {
     }
     pdqsort(this, (a, b) => a < b || (b != b && a == a));
   }
+
+  // A sorted copy (ES2023); the receiver is unchanged.
+  toSorted(cmp: ((x: f64, y: f64) => f64) | null = null): f64[] {
+    const out = this.slice();
+    out.sort(cmp);
+    return out;
+  }
 }
 
 extend Array<string> {
@@ -76,12 +111,26 @@ extend Array<string> {
     }
     pdqsort(this, (a, b) => a < b);
   }
+
+  // A sorted copy (ES2023); the receiver is unchanged.
+  toSorted(cmp: ((x: string, y: string) => i64) | null = null): string[] {
+    const out = this.slice();
+    out.sort(cmp);
+    return out;
+  }
 }
 
 extend<T> Array<T> {
   // Stable sort by `cmp` (JS `sort(compareFn)`; there is no default order for arbitrary `T`).
   sort(cmp: (x: T, y: T) => i64) {
     stableSort(this, cmp);
+  }
+
+  // A copy sorted by `cmp` (ES2023); the receiver is unchanged.
+  toSorted(cmp: (x: T, y: T) => i64): T[] {
+    const out = this.slice();
+    out.sort(cmp);
+    return out;
   }
 }
 

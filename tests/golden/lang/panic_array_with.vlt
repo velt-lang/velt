@@ -1,0 +1,7 @@
+// `xs.with(i, v)` with `i` out of range panics with JS's RangeError message (exit code 101).
+function main(): void {
+  const xs = [1, 2, 3];
+  console.log(xs.with(-3, 0));
+  console.log(xs.with(3, 0));
+  console.log("unreachable");
+}
