@@ -18,5 +18,5 @@ record_open_errors.vlt:18:3: error: cannot use `&&=` on a key of a `Record<strin
 read `flags["on"]` into a variable, check it for `null`, then assign the new value
 record_open_errors.vlt:19:21: error: cannot iterate over a `Record<string, i64>` with `for...of`
 iterate its keys with `for (const k of Object.keys(counts))` or its entries with `for (const [k, v] of Object.entries(counts))`
-record_open_errors.vlt:22:15: error: cannot infer type parameters `K` and `V` of `Object.keys`
+record_open_errors.vlt:22:15: error: cannot infer type parameters `K` and `V` of `Object.values`
 add explicit type arguments, e.g. `f<i64>(...)`, or annotate the result

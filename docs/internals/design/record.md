@@ -55,8 +55,13 @@ needed.
 - `Object.keys(r)`, `Object.values(r)` and `Object.entries(r)` return arrays.
 - `for (const [k, v] of Object.entries(r))`. A record itself is not iterable (`for (const k of
   r)` is an error suggesting `Object.keys(r)` / `Object.entries(r)`).
-- Given an object literal (`Object.keys({ a: 1 })`), they read it as a `Record<string, V>`
-  with `V` the first value's type, as TypeScript reads an object's keys as strings.
+- Given an object literal (`Object.values({ a: 1 })`), `Object.values` and `Object.entries`
+  read it as a `Record<string, V>` with `V` the first value's type (widened), which every
+  other value must have.
+- `Object.keys(x)` returns a `string[]` and accepts any object, as in TypeScript (issue #230):
+  a record, an object literal or object type, a struct, or a class instance (its fields in
+  declaration order, base class first; not a class with subclasses, whose dynamic fields sema
+  cannot know).
 
 They are prelude functions generic over `Record`. A record has no methods of its own, because in
 TypeScript `r.size` would read the key `"size"`.

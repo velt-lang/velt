@@ -344,10 +344,15 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   may spread another record (`{ ...r, x: 1 }`). In generic code, where the key type is a type
   parameter `K`, reads are `V | null` and the record may be closed, so it cannot start empty
   (only a literal with a spread builds one) and `delete` is not allowed. A record has no
-  methods of its own and is not iterable: `Object.keys(r)`, `Object.values(r)` and
-  `Object.entries(r)` return arrays in insertion order (`for (const [k, v] of
-  Object.entries(r))`). Given an object literal, they read it as a `Record<string, V>`
-  (`Object.keys({ a: 1 })` is `["a"]`). `console.log` and `JSON` treat a record as an object. A class
+  methods of its own and is not iterable: `Object.keys(r)` (a `string[]`), `Object.values(r)`
+  and `Object.entries(r)` return arrays in insertion order (`for (const [k, v] of
+  Object.entries(r))`). Given an object literal, `Object.values` and `Object.entries` read it
+  as a `Record<string, V>`, so its values need one type. `Object.keys` accepts any object, as
+  in TypeScript: an object literal or object type (`Object.keys({ a: 1, b: "x" })` is `["a",
+  "b"]`), a struct, or a class instance, whose fields it lists in declaration order (base class
+  fields first, `private` ones too; not static fields or methods). A struct's optional field is
+  listed only when it is not `null`. A class with subclasses is an error, because the value may
+  be a subclass instance with more fields. `console.log` and `JSON` treat a record as an object. A class
   cannot `extends` a `Record` (its constructor would leave a closed record without its keys);
   hold one in a field instead. A literal for an enum-keyed record is not supported yet.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,
