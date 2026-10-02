@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use velt_sema::hir::{self, DefId, LocalId, PassMode, TyId};
 
 use super::{AsyncInfo, DROP_BIT};
+use crate::lower::closure::ENV_HEADER;
 use crate::lower::operand::proj;
 use crate::lower::{cint, ice, unit, Cx, FnLower};
 use crate::vir::{self, BinOp, Function, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
@@ -104,7 +105,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let targs = self.targs.clone();
         let ea = self.cx.env_agg(def, &targs);
         let base = proj(&Place::local(env), Proj::Deref(Ty::Agg(ea)));
-        let slot = proj(&base, Proj::Field(2 + k as u32));
+        let slot = proj(&base, Proj::Field(ENV_HEADER + k as u32));
         Some(match c.mode {
             PassMode::Borrow | PassMode::BorrowMut => match vt {
                 Ty::Agg(_) => Operand::Copy(slot),

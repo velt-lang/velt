@@ -1,5 +1,6 @@
 //! Closures. A function value is `{ code, env }`; `code` takes `env` as a hidden first param.
-//! The environment is `{ drop: ptr, clone: ptr, captures… }` (layout.rs): Borrow/BorrowMut
+//! The environment is `{ drop: ptr, clone: ptr, reach: u64, captures… }` (layout.rs; `reach`
+//! is 1 when a capture can reach a counted object, transfer.rs): Borrow/BorrowMut
 //! captures store a pointer to the captured variable, Copy/Owned captures store the value (Owned
 //! ones move it in). Environments of closures that borrow (non-escaping) live in the creating
 //! function's frame with null drop/clone, and so do those of closure literals passed directly
@@ -14,6 +15,10 @@ use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId};
 use super::operand::proj;
 use super::{cfunc, cint, FnLower, LInfo, LState, ThunkKind, Work};
 use crate::vir::{Function, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
+
+/// Header fields of a closure environment in front of its captures: drop entry, clone entry
+/// and `reach` (module docs).
+pub(super) const ENV_HEADER: u32 = 3;
 
 impl super::Cx<'_> {
     /// Heap env unless the closure borrows a variable without owning any capture.
@@ -101,12 +106,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let base = proj(&envp, Proj::Deref(Ty::Agg(ea)));
         self.assign(proj(&base, Proj::Field(0)), Rvalue::Use(drop_fn));
         self.assign(proj(&base, Proj::Field(1)), Rvalue::Use(clone_fn));
-        self.note_closure_reach(f);
+        let reach = self.captures_reach_counted(f);
+        self.assign(
+            proj(&base, Proj::Field(2)),
+            Rvalue::Use(cint(i128::from(reach), Ty::U64)),
+        );
         for (k, c) in f.captures.iter().enumerate() {
             let Some(outer) = self.local_target(c.outer) else {
                 continue;
             };
-            let slot = proj(&base, Proj::Field(2 + k as u32));
+            let slot = proj(&base, Proj::Field(ENV_HEADER + k as u32));
             if self.info[c.outer.0 as usize].cell
                 && c.mode != PassMode::Borrow
                 && c.mode != PassMode::BorrowMut
@@ -140,22 +149,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
-    /// Record (boxing/) whether a closure created here can reach a counted object through its
-    /// captures (a shared cell, or a value of a type that can): only then are function values
-    /// deep-copied when they cross to another thread (transfer.rs).
-    fn note_closure_reach(&mut self, f: &FnDef) {
-        if self.cx.boxing.fn_values {
-            return;
-        }
-        let reaches = f.captures.iter().any(|c| {
+    /// Can a closure's captures reach a counted object (a shared cell, or a value of a type
+    /// that can)? Only then must a uniquely owned closure be copied, not moved, when it
+    /// crosses to another thread (transfer.rs).
+    fn captures_reach_counted(&mut self, f: &FnDef) -> bool {
+        f.captures.iter().any(|c| {
             let local = &f.body.locals[c.inner.0 as usize];
             let borrowed = matches!(c.mode, PassMode::Borrow | PassMode::BorrowMut);
             let ty = self.sub(local.ty);
             (local.boxed && !borrowed) || self.cx.holds_counted(ty)
-        });
-        if reaches {
-            self.cx.facts.fn_values = true;
-        }
+        })
     }
 
     /// Closure body prologue: each captured local is a pointer into the env (value captures) or
@@ -172,7 +175,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let base = proj(&Place::local(env), Proj::Deref(Ty::Agg(ea)));
         for (k, c) in f.captures.iter().enumerate() {
             let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
-            let slot = proj(&base, Proj::Field(2 + k as u32));
+            let slot = proj(&base, Proj::Field(ENV_HEADER + k as u32));
             let vir = (self.cx.ty(ty) != Ty::Unit).then(|| {
                 let name = f.body.locals[c.inner.0 as usize].name.clone();
                 let l = self.new_local(Ty::Ptr, Some(name));
@@ -198,7 +201,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let cell = f.body.locals[c.inner.0 as usize].boxed;
             if matches!(c.mode, PassMode::Copy | PassMode::Owned) && !cell {
                 let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
-                out.push((2 + k as u32, c.mode, ty));
+                out.push((ENV_HEADER + k as u32, c.mode, ty));
             }
         }
         out
@@ -288,7 +291,7 @@ impl FnLower<'_, '_> {
             let cell = f.body.locals[c.inner.0 as usize].boxed;
             if cell && matches!(c.mode, PassMode::Copy | PassMode::Owned) {
                 let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
-                out.push((2 + k as u32, ty));
+                out.push((ENV_HEADER + k as u32, ty));
             }
         }
         out

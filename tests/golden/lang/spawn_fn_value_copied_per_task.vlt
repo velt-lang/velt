@@ -1,0 +1,35 @@
+// check: no leaks
+// One closure handed to eight spawned tasks while main keeps it: each task gets its own copy
+// of the closure and of the object it captures (a closure's environment is counted, and counts
+// are not atomic), so every task counts to 200000 and main's object is untouched (PR #257
+// review: tasks sharing the environment lost updates).
+class Counter {
+  n: i64 = 0;
+}
+
+async function run(f: () => i64): Promise<i64> {
+  let s = 0;
+  for (let i = 0; i < 200000; i++) {
+    s = f();
+  }
+  return s;
+}
+
+async function main() {
+  const c = new Counter();
+  const f = (): i64 => {
+    c.n += 1;
+    return c.n;
+  };
+  const tasks: Promise<i64>[] = [];
+  for (let i = 0; i < 8; i++) {
+    tasks.push(spawn(run(f)));
+  }
+  let mx = 0;
+  for (const v of await Promise.all(tasks)) {
+    if (v > mx) {
+      mx = v;
+    }
+  }
+  console.log(mx, f());
+}

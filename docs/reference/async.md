@@ -34,9 +34,11 @@ Promises behave like JavaScript's, at Rust's cost:
   the program still shares is deep-copied for the task (like a structured clone), so threads
   never share reference counts. That includes the receiver of `spawn(obj.method())` (also
   through a base-class reference or an interface value) and what a closure or interface value
-  passed to the task reaches. Objects the program never shares move instead, so a closure
-  that captures only those (an HTTP handler capturing a disposable resource, say) goes to the
-  task as it is, and a captured value's `[Symbol.dispose]()` runs once.
+  passed to the task reaches. A closure the caller still uses afterwards is copied too, with
+  what it captures, so the task and the caller each run their own copy. Objects the program
+  never shares move instead: a closure handed on for the last time that captures only those
+  (an HTTP handler capturing a disposable resource, say) goes to the task as it is, and a
+  captured value's `[Symbol.dispose]()` runs once.
 
 ## Combinators
 

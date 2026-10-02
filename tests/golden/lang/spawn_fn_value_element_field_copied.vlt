@@ -1,0 +1,43 @@
+// check: no leaks
+// Like spawn_fn_value_copied_per_task, with the closure read from an array element and from a
+// field: each spawned task gets its own copy.
+class Counter {
+  n: i64 = 0;
+}
+
+async function run(f: () => i64): Promise<i64> {
+  let s = 0;
+  for (let i = 0; i < 200000; i++) {
+    s = f();
+  }
+  return s;
+}
+
+class Holder {
+  f: () => i64;
+  constructor(f: () => i64) {
+    this.f = f;
+  }
+}
+
+async function main() {
+  const c = new Counter();
+  const fs: (() => i64)[] = [];
+  fs.push((): i64 => {
+    c.n += 1;
+    return c.n;
+  });
+  const h = new Holder(fs[0]);
+  const tasks: Promise<i64>[] = [];
+  for (let i = 0; i < 8; i++) {
+    tasks.push(spawn(run(fs[0])));
+    tasks.push(spawn(run(h.f)));
+  }
+  let mx = 0;
+  for (const v of await Promise.all(tasks)) {
+    if (v > mx) {
+      mx = v;
+    }
+  }
+  console.log(mx, fs[0](), h.f());
+}

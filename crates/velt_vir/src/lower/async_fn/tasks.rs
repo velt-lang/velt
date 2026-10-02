@@ -171,6 +171,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 self.push_scope(ScopeKind::Temps);
                 self.transfer_call = true;
                 let fut = self.take_promise(p);
+                // The spawned call took the flag (call.rs `call_expr`); it must not leak to a
+                // later call.
+                debug_assert!(
+                    !self.transfer_call,
+                    "ICE: spawned call did not take transfer_call"
+                );
                 self.pop_scope();
                 fut
             }
