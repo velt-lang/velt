@@ -2,12 +2,37 @@
 
 ## Install
 
-Velt has no binary releases yet; you build the toolchain from source. You need:
+You need:
 
-- **Rust** (stable), from [rustup.rs](https://rustup.rs);
 - a **system linker**: the *Build Tools for Visual Studio* ("Desktop development with C++") on
   Windows, `build-essential` (or `gcc`) on Linux, the Xcode command line tools on macOS;
 - optionally **LLVM/clang 16 or newer**, for optimized `--release` builds.
+
+Then install the latest release. On Linux and macOS:
+
+```sh
+curl -fsSL https://github.com/velt-lang/velt/releases/latest/download/get-velt.sh | sh
+```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://github.com/velt-lang/velt/releases/latest/download/get-velt.ps1 | iex
+```
+
+The installer puts the toolchain in `~/.velt/toolchain` (`%LOCALAPPDATA%\velt` on Windows) and
+adds its `bin` directory to your `PATH`. Open a new terminal and check the installation:
+
+```sh
+velt doctor
+```
+
+`velt doctor` checks the toolchain and builds and runs a hello world. Installer options and
+other platforms: [Platforms and installation](../tooling/platforms.md).
+
+### From source
+
+Building Velt yourself also needs **Rust** (stable), from [rustup.rs](https://rustup.rs):
 
 ```sh
 git clone https://github.com/velt-lang/velt
@@ -16,8 +41,7 @@ cargo build --release -p veltc -p velt_rt
 ./target/release/velt doctor
 ```
 
-`velt doctor` checks the toolchain and builds and runs a hello world. Put `target/release` on
-your `PATH`, or build a self-contained toolchain directory with `scripts/package.sh` (Linux,
+Put `target/release` on your `PATH`, or build a self-contained toolchain directory with `scripts/package.sh` (Linux,
 macOS) or `scripts/package.ps1` (Windows) and install it with the matching `install` script
 ([Platforms and installation](../tooling/platforms.md)).
 
