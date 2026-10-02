@@ -80,7 +80,39 @@ function sharing() {
   console.log(lists, counters);
 }
 
+enum Res {
+  Cpu = "cpu",
+  Mem = "mem",
+}
+
+// `r.name` on an enum-keyed record names the member whose value is "name".
+function enumKeys() {
+  const r = JSON.parse<Record<Res, i64>>('{"cpu":2,"mem":512}');
+  r.mem = 1024;
+  r.cpu += 2;
+  r.mem++;
+  console.log(r.cpu, r.mem, r[Res.Mem], r);
+}
+
+// With a type-parameter key, reads are `V | null` and copies need a spread.
+function lookup<K, V>(r: Record<K, V>, k: K): V | null {
+  return r[k];
+}
+
+function copy<K, V>(r: Record<K, V>): Record<K, V> {
+  return { ...r };
+}
+
+function generic() {
+  const l: Record<Limit, i64> = { cpu: 1, mem: 2 };
+  const c = copy(l);
+  c.cpu = 3;
+  console.log(lookup(l, "mem"), l.cpu, c.cpu, copy<string, string>({ a: "x" }));
+}
+
 function main() {
+  enumKeys();
+  generic();
   sharing();
   syntax();
   formatting();

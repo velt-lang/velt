@@ -3,7 +3,7 @@ record_errors.vlt:14:51: error: `Limit` has no key "disk"
 record_errors.vlt:15:17: error: `Limit` has no key "disk"
 record_errors.vlt:16:3: error: cannot `delete` from a `Record<Limit, ...>`: it always has every key
 record_errors.vlt:18:3: error: compound assignment to a `Record` key needs a variable receiver and a variable or literal key
-record_errors.vlt:19:34: error: `i64` cannot be a `Record` key
+record_errors.vlt:19:12: error: `i64` cannot be a `Record` key
 record keys are `string`, a union of string literals or a string enum; use `Map<K, V>` for other keys
 record_errors.vlt:20:33: error: a `Record` keyed by the enum `Color` cannot be written as an object literal yet
 record_errors.vlt:21:13: error: a `Record<Limit, ...>` cannot start empty: it always has every key

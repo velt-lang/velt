@@ -9,49 +9,22 @@
 //! - `delete r[k]`: `r.__delete(k)` (open records only).
 //! - An object literal where a record is expected: `{ let t = new Record(); t.__set("a", ..);
 //!   t.__extend(spread); t }`. A closed record's literal must have every key.
+//! - A type-parameter key may stand for a closed key type: such a record is read as open (`V |
+//!   null`), but cannot start empty (except from a spread) or lose a key.
 //!
-//! Inside the class itself (`this.entries`) none of this applies.
+//! Inside the class itself (`this.entries`) none of this applies. The calls and the rule
+//! against writing them by hand are in `record_call.rs`; key types in `crate::record_keys`.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+pub(super) use super::record_call::{record_parts, RecordKey};
 use super::setters::{side_effect_free, synth};
 use crate::body::{FnCx, LocalKind, Want};
-use crate::hir::{self, DefId, ExprKind as H, LitValue, StmtKind as S, TyId, TyKind, UseMode};
+use crate::hir::{self, DefId, ExprKind as H, StmtKind as S, TyId, TyKind, UseMode};
 
-/// `(object, key)` of a record read or assignment target `object[key]` / `object.name`.
-pub(super) enum RecordKey<'a> {
-    Index(&'a ast::Expr),
-    Name(&'a ast::Ident),
-}
-
-impl RecordKey<'_> {
-    fn expr(&self) -> ast::Expr {
-        match self {
-            RecordKey::Index(e) => (*e).clone(),
-            RecordKey::Name(id) => {
-                synth(ast::ExprKind::Lit(ast::Lit::Str(id.name.clone())), id.span)
-            }
-        }
-    }
-
-    fn side_effect_free(&self) -> bool {
-        match self {
-            RecordKey::Index(e) => side_effect_free(e) || matches!(e.kind, ast::ExprKind::Lit(_)),
-            RecordKey::Name(_) => true,
-        }
-    }
-}
-
-/// `(object, key)` of a record assignment target (parentheses removed).
-pub(super) fn record_parts(target: &ast::Expr) -> (&ast::Expr, RecordKey<'_>) {
-    match &target.kind {
-        ast::ExprKind::Paren(inner) => record_parts(inner),
-        ast::ExprKind::Index { object, index, .. } => (object, RecordKey::Index(index)),
-        ast::ExprKind::Member { object, prop, .. } => (object, RecordKey::Name(prop)),
-        _ => panic!("ICE: record target is not an index or member"),
-    }
-}
+/// The note on rejected constructions and deletions with a type-parameter key.
+const GENERIC_KEY_NOTE: &str = "the key type may be a union of string literals or a string enum, whose records always have every key; build or change the record where its key type is known, or use `Record<string, V>`";
 
 impl FnCx<'_, '_> {
     /// `(K, V)` if `t` is the prelude's `Record<K, V>` and the record syntax applies here (not
@@ -71,23 +44,7 @@ impl FnCx<'_, '_> {
 
     /// The keys of a closed record (`None`: `K` is `string`, a type parameter or an error).
     pub(crate) fn record_keys(&mut self, k: TyId) -> Option<Vec<String>> {
-        if let Some(ms) = self.cx.union_members(k) {
-            return ms
-                .into_iter()
-                .map(|m| match self.cx.ty.kind(m) {
-                    TyKind::Literal(LitValue::Str(s)) => Some(s.clone()),
-                    _ => None,
-                })
-                .collect();
-        }
-        match self.cx.ty.kind(k) {
-            TyKind::Literal(LitValue::Str(s)) => Some(vec![s.clone()]),
-            TyKind::Adt(d, _) => {
-                let e = self.cx.enum_info(*d)?;
-                e.variants.iter().map(|v| v.str_value.clone()).collect()
-            }
-            _ => None,
-        }
+        self.cx.record_key_names(k)
     }
 
     /// `new Record<K, V>()`: only open records start empty.
@@ -95,7 +52,9 @@ impl FnCx<'_, '_> {
         let Some((k, _)) = self.record_args(rec) else {
             return true;
         };
-        if !self.check_record_key(k, span) {
+        if !self.check_record_key(k, span)
+            || self.reject_generic_key(k, "cannot create an empty {R}", span)
+        {
             return false;
         }
         if self.record_keys(k).is_some() {
@@ -114,44 +73,27 @@ impl FnCx<'_, '_> {
 
     /// Is `k` a valid record key type? Reports at `span` if not.
     pub(crate) fn check_record_key(&mut self, k: TyId, span: Span) -> bool {
-        if let TyKind::Literal(LitValue::Str(s)) = self.cx.ty.kind(k) {
-            let s = s.clone();
-            self.cx.error(
-                Diagnostic::error(
-                    format!("a `Record` with the single key \"{s}\" is not supported"),
-                    span,
-                )
-                .with_note(format!("use an object type: `{{ {s}: V }}`")),
-            );
-            return false;
-        }
-        let ok = matches!(
-            self.cx.ty.kind(k),
-            TyKind::Str | TyKind::Param(_) | TyKind::Error
-        ) || self.record_keys(k).is_some();
-        if !ok {
-            let kn = self.cx.display(k);
-            self.cx.error(
-                Diagnostic::error(format!("`{kn}` cannot be a `Record` key"), span).with_note(
-                    "record keys are `string`, a union of string literals or a string enum; use `Map<K, V>` for other keys",
-                ),
-            );
-        }
-        ok
+        self.cx.check_record_key(k, span, None)
     }
 
-    fn record_call(
-        &mut self,
-        obj: hir::Expr,
-        method: &str,
-        args: &[ast::Expr],
-        span: Span,
-    ) -> hir::Expr {
-        let m = ast::Ident {
-            name: method.to_string(),
-            span,
-        };
-        self.method_call_on(obj, &m, &[], args, None, span)
+    /// Reports (at `span`) that `what` (`{R}`: the record type) needs a known key type if `k`
+    /// mentions a type parameter.
+    fn reject_generic_key(&mut self, k: TyId, what: &str, span: Span) -> bool {
+        if !self.cx.is_generic_key(k) {
+            return false;
+        }
+        let kn = self.cx.display(k);
+        self.cx.error(
+            Diagnostic::error(
+                format!(
+                    "{}: the key type `{kn}` is a type parameter",
+                    what.replace("{R}", &format!("`Record<{kn}, ...>`"))
+                ),
+                span,
+            )
+            .with_note(GENERIC_KEY_NOTE),
+        );
+        true
     }
 
     /// `r[k]` / `r.name` (`obj` is the checked record).
@@ -171,7 +113,7 @@ impl FnCx<'_, '_> {
             }
         }
         let method = if closed { "__at" } else { "__get" };
-        self.record_call(obj, method, &[key.expr()], span)
+        self.record_call_keyed(obj, method, key, &[], span)
     }
 
     fn record_has_key(&mut self, k: TyId, name: &str, span: Span) -> bool {
@@ -229,7 +171,7 @@ impl FnCx<'_, '_> {
                 synth(kind, span)
             }
         };
-        self.record_call(obj, "__set", &[key.expr(), value], span)
+        self.record_call_keyed(obj, "__set", key, std::slice::from_ref(&value), span)
     }
 
     /// `r[k]++` / `--r.name` (not used as a value): `r.__set(k, r[k] + 1)`.
@@ -306,10 +248,45 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
+        if self.reject_generic_key(k, "cannot `delete` from a {R}", span) {
+            return self.error_expr(span);
+        }
         if !self.require_mutable(&obj, "delete a key of") {
             return self.error_expr(span);
         }
-        self.record_call(obj, "__delete", &[key.expr()], span)
+        self.record_call_keyed(obj, "__delete", key, &[], span)
+    }
+
+    /// Reports why an object literal cannot build a `Record<k, ...>`, if it cannot: a bad key, an
+    /// enum key, or a type-parameter key without a spread (which would bring every key).
+    fn record_literal_unsupported(
+        &mut self,
+        k: TyId,
+        props: &[ast::ObjectProp],
+        span: Span,
+    ) -> bool {
+        if !self.check_record_key(k, span) {
+            return true;
+        }
+        let enum_keys =
+            matches!(self.cx.ty.kind(k), TyKind::Adt(..)) && self.cx.union_def(k).is_none();
+        if enum_keys {
+            let kn = self.cx.display(k);
+            self.cx.err(
+                format!("a `Record` keyed by the enum `{kn}` cannot be written as an object literal yet"),
+                span,
+            );
+            return true;
+        }
+        let spread = props
+            .iter()
+            .any(|p| matches!(p, ast::ObjectProp::Spread(_)));
+        !spread
+            && self.reject_generic_key(
+                k,
+                "cannot build a {R} from an object literal without a spread",
+                span,
+            )
     }
 
     /// An object literal where `Record<K, V>` (`d`) is expected.
@@ -321,20 +298,10 @@ impl FnCx<'_, '_> {
         props: &[ast::ObjectProp],
         span: Span,
     ) -> hir::Expr {
-        if !self.check_record_key(k, span) {
+        if self.record_literal_unsupported(k, props, span) {
             return self.error_expr(span);
         }
         let keys = self.record_keys(k);
-        let enum_keys =
-            matches!(self.cx.ty.kind(k), TyKind::Adt(..)) && self.cx.union_def(k).is_none();
-        if enum_keys {
-            let kn = self.cx.display(k);
-            self.cx.err(
-                format!("a `Record` keyed by the enum `{kn}` cannot be written as an object literal yet"),
-                span,
-            );
-            return self.error_expr(span);
-        }
         let ty = self.cx.ty.intern(TyKind::Adt(d, vec![k, v]));
         let new = self.mk(
             H::New {
@@ -378,8 +345,8 @@ impl FnCx<'_, '_> {
                         ast::ObjectProp::KeyValue(_, value) => value.clone(),
                         _ => synth(ast::ExprKind::Ident(name.clone()), name.span),
                     };
-                    let key = RecordKey::Name(name).expr();
-                    self.record_call(recv, "__set", &[key, value], span)
+                    let key = RecordKey::Name(name);
+                    self.record_call_keyed(recv, "__set", key, std::slice::from_ref(&value), span)
                 }
             };
             stmts.push(hir::Stmt {

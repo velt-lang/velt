@@ -161,7 +161,8 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
             if stack.contains(&t) || cx.is_json_value(d) {
                 return None;
             }
-            // `Record<K, V>` is an object (its key type was checked where it was built).
+            // `Record<K, V>` is an object (`record_keys` checked `K` where the type was resolved
+            // or instantiated, before this check).
             if Some(d) == cx.prelude_adt("Record") {
                 return match args.as_slice() {
                     [_, v] => unserializable(cx, *v, stack, parse),

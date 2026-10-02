@@ -11,7 +11,8 @@
 //!    patch call sites; string moves become soft (strings are values); reject moves out of
 //!    borrowed places.
 //! 4. [`throws`]: infer each function's thrown type (fixpoint over the call graph); then
-//!    [`json`] (what JSON glue is generated for) and [`void_fields`] (no `void` fields).
+//!    [`record_keys`] (every `Record` key type, per instantiation), [`json`] (what JSON glue is
+//!    generated for) and [`void_fields`] (no `void` fields).
 //! 5. [`moves`]: flow-sensitive use-after-move / use-before-init analysis over the HIR; soft moves
 //!    (async-call arguments, strings) used again become clones (`ownership::clone_reused`); then exclusive
 //!    access per call (`ownership::check_exclusive`).
@@ -41,6 +42,7 @@ mod known;
 mod literals;
 mod moves;
 mod ownership;
+mod record_keys;
 mod resolve;
 mod throws;
 mod types;
@@ -136,6 +138,7 @@ fn analyze(cx: &mut ctx::Ctx) {
     ownership::infer_modes(cx);
     body::expr::jsx::check_prop_copies(cx);
     throws::infer_all(cx);
+    record_keys::check_instantiations(cx);
     json::check_json_types(cx);
     void_fields::check_instantiations(cx);
     ownership::soften_moves(cx);

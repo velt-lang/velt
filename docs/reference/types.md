@@ -327,15 +327,20 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   and structs, object types and tuples, which compare by content (in JS two equal object
   literals are two different keys). Iteration follows insertion order, like JS.
 - **`Record<K, V>`**: a dictionary written with object syntax, like TypeScript's `Record`.
-  `K` is `string`, a union of string literal types, or a string enum. With `string` keys a
-  record is *open*: `r[k]` and `r.name` are `V | null`, `r[k] = v` inserts or replaces, and
-  `delete r[k]` removes. With literal keys it is *closed*: it always holds every key, so
-  `r.cpu` is `V`, a typo is an error, and `delete` is not allowed. Build a record from an
-  object literal where a record is expected (`const r: Record<string, i64> = {}`; a closed
-  record's literal must list every key) or with `new Record<string, V>()`. A literal may
-  spread another record (`{ ...r, x: 1 }`). `Object.keys(r)`, `Object.values(r)` and
-  `Object.entries(r)` return arrays in insertion order. `console.log` and `JSON` treat a
-  record as an object. A literal for an enum-keyed record is not supported yet.
+  `K` is `string`, a union of string literal types, or a string enum; any other key type is
+  an error (use a `Map`), also when a generic function or class gets it as a type argument.
+  With `string` keys a record is *open*: `r[k]` and `r.name` are `V | null`, `r[k] = v`
+  inserts or replaces, and `delete r[k]` removes. With literal or enum keys it is *closed*: it
+  always holds every key, so `r.cpu` is `V`, a typo is an error, and `delete` is not allowed.
+  On an enum-keyed record, `r.mem` names the member whose value is `"mem"`. Build a record
+  from an object literal where a record is expected (`const r: Record<string, i64> = {}`; a
+  closed record's literal must list every key) or with `new Record<string, V>()`. A literal
+  may spread another record (`{ ...r, x: 1 }`). In generic code, where the key type is a type
+  parameter `K`, reads are `V | null` and the record may be closed, so it cannot start empty
+  (only a literal with a spread builds one) and `delete` is not allowed. A record has no
+  methods of its own: `Object.keys(r)`, `Object.values(r)` and `Object.entries(r)` return
+  arrays in insertion order. `console.log` and `JSON` treat a record as an object. A literal
+  for an enum-keyed record is not supported yet.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,
   strings, literal types, arrays, tuples, enums, nullable values, `Map<string, V>`,
   `Record<K, V>`, structs, classes and anonymous objects
