@@ -82,7 +82,8 @@ impl FnLower<'_, '_> {
         };
         // `new Map()` runs the field initializers, which may create statement temporaries.
         self.push_scope(ScopeKind::Temps);
-        let obj = self.new_object(ty, &[]);
+        let args = self.empty_ctor_args(ty);
+        let obj = self.new_object(ty, &args);
         if let Operand::Copy(p) = &obj {
             self.take_temp(p);
         }
@@ -314,5 +315,38 @@ impl FnLower<'_, '_> {
         let map_ty = self.cx.adt_field_tys(ty)[0];
         let map = self.field_place(place, ty, 0);
         self.json_read_map(r, &map, ctx, map_ty, kv, fail);
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// Arguments for `new C()` of a class whose constructor parameters all default to an
+    /// empty array (the prelude `Map`'s `entries`): sema fills defaults in at call sites, so
+    /// a constructor call made by lowering passes them itself.
+    fn empty_ctor_args(&mut self, ty: TyId) -> Vec<hir::Expr> {
+        let TyKind::Adt(d, _) = self.cx.kind(ty) else {
+            ice("constructor arguments of a non-ADT type")
+        };
+        let Some(ctor) = self.cx.adt_def(d).ctor else {
+            return vec![];
+        };
+        let cargs = self.cx.ctor_type_args(ctor, ty);
+        // `params[0]` is `this`.
+        let params: Vec<TyId> = (self.cx.fn_def(ctor).params.iter().skip(1))
+            .map(|p| p.ty)
+            .collect();
+        params
+            .into_iter()
+            .map(|p| {
+                let pt = self.cx.subst(p, &cargs);
+                if !matches!(self.cx.kind(pt), TyKind::Array(_)) {
+                    ice("JSON-decoded class whose constructor needs a non-array argument");
+                }
+                hir::Expr {
+                    kind: hir::ExprKind::ArrayLit(vec![]),
+                    ty: pt,
+                    span: velt_common::Span::DUMMY,
+                }
+            })
+            .collect()
     }
 }
