@@ -1,0 +1,33 @@
+// `console.log` of a `JsonValue` prints the value the way node prints the parsed object
+// (`util.inspect`), never its handle: also inside other values and in template strings, which
+// share the formatter. A string prints raw as a `console.log` argument, quoted inside values.
+class Holder {
+  v: JsonValue;
+  constructor(v: JsonValue) {
+    this.v = v;
+  }
+}
+
+function main() {
+  const v = JSON.parseValue("{\"a\":1,\"b\":[2,\"x\"],\"c\":null,\"d\":{\"e\":true,\"f\":-1.5}}");
+  console.log(v);
+  console.log(v.get("b"), v.get("a"), v.get("c"), v.get("d")?.get("e"));
+  console.log(JsonValue.parse("\"top\""), [JsonValue.parse("\"in\"")]);
+  console.log(JsonValue.parse("[]"), JsonValue.parse("{}"), new JsonValue());
+  console.log(
+    JsonValue.parse("{\"it's\":\"it's\",\"a b\":\"q\\\"\",\"_ok1\":\"\\n\",\"1x\":1e21,\"$\":0.1}"),
+  );
+  console.log(new Holder(JsonValue.parse("{\"k\":[1,2],\"s\":\"t\"}")));
+  console.log([JsonValue.parse("{\"k\":[1,2]}"), JsonValue.parse("[[],{}]")]);
+  // Edited values print their current members in order.
+  let o = JsonValue.object();
+  for (let i = 0; i < 20; i++) {
+    o.set(`k${i}`, JsonValue.of(i as f64));
+  }
+  for (let i = 0; i < 18; i++) {
+    o.delete(`k${i}`);
+  }
+  o.set("k0", JsonValue.of("again"));
+  console.log(o, o.keys());
+  console.log(`v = ${v.get("d")}`);
+}

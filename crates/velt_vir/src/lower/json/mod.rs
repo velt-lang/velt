@@ -96,7 +96,7 @@ impl Cx<'_> {
     /// Is `t` the prelude's `JsonValue` handle type (serialized with
     /// `velt_rt_strbuf_push_json_value`)? Matched by its exact qualified name, so a user class
     /// named `JsonValue` (even in a module named `json`) stays an ordinary class.
-    fn is_json_value(&self, t: TyId) -> bool {
+    pub(in crate::lower) fn is_json_value(&self, t: TyId) -> bool {
         match self.types.kind(t) {
             TyKind::Adt(d, _) => match self.hir.def(*d) {
                 hir::Def::Adt(a) => a.name == PRELUDE_JSON_VALUE,

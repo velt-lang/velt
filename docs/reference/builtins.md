@@ -5,7 +5,7 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 
 | Name | What it is |
 |---|---|
-| `console.log(a, b, …)`, `console.error(…)` | print the arguments separated by spaces to stdout / stderr. Values print like Node: `[ 1, 2 ]`, `{ k: 1, s: 'a' }`, `Map(1) { 'a' => 1 }`, `ClassName { field: value }`, numbers JS-style |
+| `console.log(a, b, …)`, `console.error(…)` | print the arguments separated by spaces to stdout / stderr. Values print like Node: `[ 1, 2 ]`, `{ k: 1, s: 'a' }`, `Map(1) { 'a' => 1 }`, `ClassName { field: value }`, a `JsonValue` like the parsed object, numbers JS-style |
 | `process.exit(code: i32)` | exit immediately |
 | `panic(msg)` | stop with a panic (exit code 101) |
 | `assert(cond, msg)`, `assertEq(a, b)` | panic when the check fails (`assertEq` compares contents) |

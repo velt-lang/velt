@@ -7,7 +7,8 @@
 //! number, string enums and string literal types as their string, `Ok(1)` / `Err('e')`, function
 //! values `[Function (anonymous)]`, unions as their active member. At the top level
 //! (`format_top`) strings are raw, and options and unions are `null` / their payload / member in
-//! top-level style. The prelude `Map` prints like node's (format_map.rs).
+//! top-level style. The prelude `Map` prints like node's (format_map.rs), a `JsonValue` like
+//! node prints the parsed value (`{ a: 1, b: [ 2, 'x' ] }`, a string raw at the top level).
 
 use velt_sema::hir::{AdtKind, TyId, TyKind};
 
@@ -48,6 +49,9 @@ impl FnLower<'_, '_> {
                 let inner = proj(&proj(place, Proj::Deref(Ty::Agg(bx))), Proj::Field(1));
                 self.format_top(buf, &inner, e);
             }
+            TyKind::Adt(..) if self.cx.is_json_value(ty) => {
+                self.format_json_value(buf, place, ty, true)
+            }
             TyKind::Adt(..) if self.cx.is_union(ty) => {
                 self.for_each_variant(place, ty, |lw, v, parts| {
                     if let Some(l) = lw.variant_literal(ty, v) {
@@ -83,11 +87,26 @@ impl FnLower<'_, '_> {
                     None => self.push_scalar(buf, Operand::Copy(place.clone()), ty),
                 }
             }
+            TyKind::Adt(..) if self.cx.is_json_value(ty) => {
+                self.format_json_value(buf, place, ty, false)
+            }
             _ => {
                 let a = self.addr(place.clone());
                 self.call_glue(Glue::Format, ty, vec![buf.clone(), a]);
             }
         }
+    }
+
+    /// A `JsonValue` prints its tree the way node prints the parsed value (never its handle);
+    /// `top`: a string value prints raw, as a `console.log` argument.
+    fn format_json_value(&mut self, buf: &Operand, place: &Place, ty: TyId, top: bool) {
+        // The handle field is a `u64` in Velt, a `const VeltJson*` for the runtime.
+        let h = self.field_place(place, ty, 0);
+        let hty = self.cx.adt_field_tys(ty)[0];
+        let ht = self.cx.ty(hty);
+        let h = self.cast_to(Operand::Copy(h), ht, Ty::Ptr);
+        let top = cint(top as i128, Ty::U8);
+        self.call_rt(Rt::StrbufPushInspectJson, vec![buf.clone(), h, top], None);
     }
 
     pub(super) fn format_body(&mut self, buf: Operand, p: vir::Local, ty: TyId) {
