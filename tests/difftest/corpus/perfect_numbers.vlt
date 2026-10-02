@@ -8,7 +8,7 @@ function divisorSum(n: i64): i64 {
     if (n % d == 0) {
       s += d;
       if (d * d != n) {
-        s += n / d;
+        s += Math.trunc(n / d);
       }
     }
   }

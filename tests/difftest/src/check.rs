@@ -241,7 +241,7 @@ fn build_and_run(
         std::env::consts::EXE_SUFFIX
     ));
     let build = exec::run(
-        Command::new(&cfg.vlt)
+        Command::new(&cfg.velt)
             .arg("build")
             .arg(prog)
             .args(mode.flags())
@@ -274,7 +274,7 @@ fn formatted(
     let copy = scratch.join("prog_fmt.vlt");
     fs::copy(prog, &copy).map_err(|e| format!("cannot copy program: {e}"))?;
     let out = exec::run(
-        Command::new(&cfg.vlt).arg("fmt").arg(&copy),
+        Command::new(&cfg.velt).arg("fmt").arg(&copy),
         scratch,
         cfg.build_timeout,
     )?;

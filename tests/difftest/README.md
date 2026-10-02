@@ -81,10 +81,11 @@ Output is captured through files, not pipes (Node writes pipes asynchronously on
 Differences between the languages that a program must avoid (the generator does all of this):
 
 - **Integer arithmetic.** Untyped integer literals are `i64` in Velt but doubles in JS: keep
-  values small (no overflow, no precision loss), avoid `/` on integers unless it is exact
-  (`(a - a % k) / k`), keep operands of bitwise operators within 32 bits (JS converts to int32),
-  never divide by zero (Velt panics). JS produces `-0` from `*`, `%`, `/`, negation on integers
-  and `console.log` prints it: normalize with `| 0`.
+  values small (no overflow, no precision loss), write integer division as `Math.trunc(a / k)`
+  (one integer division in Velt, the truncated quotient in JS), keep operands of bitwise
+  operators within 32 bits (JS converts to int32), never divide by zero (Velt panics). JS
+  produces `-0` from `*`, `%`, `/`, negation on integers and `console.log` prints it: normalize
+  with `| 0`.
 - **Floats.** `console.log(-0.0)` prints `-0` in Node and `0` in Velt (documented): print floats
   through a template (`${x}`) or `JSON.stringify`. `Math.hypot` isn't correctly rounded in V8.
 - **Printing containers.** Node groups arrays of more than 6 elements into columns (not
