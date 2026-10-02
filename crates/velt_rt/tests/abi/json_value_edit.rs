@@ -90,8 +90,8 @@ fn deleting_many_keys_keeps_order_and_lookups() {
 #[test]
 fn deleting_from_the_end_stays_linear() {
     // Removing the last member moves nothing: `8 * n` deletions take about 8 times the work of
-    // `n`, not 64 times. Counted (entries searched and moved, index slots adjusted), not timed,
-    // so a busy machine cannot make it flaky.
+    // `n`, not 64 times. Counted (entries searched and moved, index slots adjusted, indexes
+    // built, nodes copied on write), not timed, so a busy machine cannot make it flaky.
     let n = 5_000;
     let (small, large) = (
         delete_work(n, Order::FromTheEnd),
@@ -109,6 +109,19 @@ fn deleting_from_the_end_stays_linear() {
         front > n * n / 4,
         "deleting {n} keys from the front counted {front} steps"
     );
+    // It sees copies on write too: deleting from a shared object copies its members once.
+    let mut obj = object(n);
+    let shared = unsafe { velt_rt_json_value_clone(obj) };
+    let before = crate::json::value::edit_work();
+    assert_eq!(delete(&mut obj, "k0"), 1);
+    let copied = crate::json::value::edit_work() - before;
+    assert!(
+        copied >= n,
+        "a delete from a shared object counted {copied} steps"
+    );
+    for h in [obj, shared] {
+        unsafe { velt_rt_json_value_free(h) };
+    }
 }
 
 enum Order {
@@ -123,11 +136,11 @@ fn delete_work(n: usize, order: Order) -> usize {
         Order::FromTheEnd => (0..n).rev().collect(),
         Order::FromTheFront => (0..n).collect(),
     };
-    let before = crate::json::value::remove_work();
+    let before = crate::json::value::edit_work();
     for i in keys {
         assert_eq!(delete(&mut obj, &format!("k{i}")), 1);
     }
-    let work = crate::json::value::remove_work() - before;
+    let work = crate::json::value::edit_work() - before;
     assert_eq!(unsafe { velt_rt_json_value_len(obj) }, 0);
     unsafe { velt_rt_json_value_free(obj) };
     work
