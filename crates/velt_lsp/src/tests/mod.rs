@@ -6,6 +6,7 @@ mod client;
 mod effects;
 mod jsx;
 mod jsx_more;
+mod jsx_tags;
 mod loader;
 mod manifest;
 mod manifest_registry;

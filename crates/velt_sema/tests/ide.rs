@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::programs::{load_src, load_src_at, load_src_lenient, repo_root};
+use common::programs::{load_src, load_src_at, load_src_lenient, load_src_lenient_at, repo_root};
 use velt_common::FileId;
 use velt_sema::ide::{check_for_ide, Analysis, DefKind};
 
@@ -357,4 +357,43 @@ function main() {
     assert_eq!(a.throws_of(&fill), None);
     let local = def("ys:", 0);
     assert!(a.mutation_of(&local).is_none());
+}
+
+#[test]
+fn closing_tags_name_what_their_opening_tags_do() {
+    let src = "// @jsxImportSource ./_jsx_test_provider
+function Card(props: { title: string; children: JSX.Element }): JSX.Element { return <div>{props.title}</div>; }
+function main() { const e = <Card title=\"t\"><p>x</p></Card>; }";
+    let l = load_src_at(&repo_root().join("tests/golden/lang/main.vlt"), src);
+    let file = l.modules[l.root].file;
+    let a = check_for_ide(&l.modules, l.root);
+    let card = a
+        .def_at(file, at(src, "</Card>", 0, 3))
+        .expect("closing component");
+    assert_eq!(card.span.lo, at(src, "Card(props", 0, 0));
+    let p_open = a.def_at(file, at(src, "<p>", 0, 1)).expect("opening tag");
+    let p_close = a.def_at(file, at(src, "</p>", 0, 2)).expect("closing tag");
+    assert!(p_open.same_def(&p_close));
+    // References (and so rename) include the closing tag.
+    let refs: Vec<u32> = a.references(&card).iter().map(|s| s.lo).collect();
+    assert!(refs.contains(&at(src, "</Card>", 0, 2)), "{refs:?}");
+    assert!(refs.contains(&at(src, "<Card title", 0, 1)), "{refs:?}");
+}
+
+#[test]
+fn a_mismatched_closing_tag_names_nothing() {
+    let src = "// @jsxImportSource ./_jsx_test_provider
+function Card(props: { title: string }): JSX.Element { return <div>{props.title}</div>; }
+function main() { const e = <Card title=\"t\"></Other>; }";
+    let l = load_src_lenient_at(&repo_root().join("tests/golden/lang/main.vlt"), src);
+    let file = l.modules[l.root].file;
+    let a = check_for_ide(&l.modules, l.root);
+    let card = a.def_at(file, at(src, "<Card", 0, 1)).expect("opening tag");
+    let other = at(src, "</Other>", 0, 2);
+    let found = a.def_at(file, other);
+    assert!(
+        !found.as_ref().is_some_and(|d| d.same_def(&card)),
+        "{found:?}"
+    );
+    assert!(!a.references(&card).iter().any(|s| s.lo == other));
 }

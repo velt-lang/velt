@@ -21,6 +21,10 @@ use crate::SourceModule;
 pub use defref::{DefKind, DefRef};
 pub use effects::Mutation;
 
+/// The intrinsic tags of a JSX runtime: `(tag, field definition, attribute type)`, shared by the
+/// files using that runtime.
+type JsxTags = std::sync::Arc<[(String, DefRef, String)]>;
+
 /// What a name denotes, the type of each expression, and the visible names — for one program.
 pub struct Analysis {
     diagnostics: Diagnostics,
@@ -43,7 +47,7 @@ pub struct Analysis {
     /// Type of each local / constant / field definition (by declaration span).
     def_types: HashMap<Span, (TyId, u32)>,
     /// Per file with a JSX runtime: its intrinsic tags.
-    jsx_tags: HashMap<FileId, Vec<(String, DefRef, String)>>,
+    jsx_tags: HashMap<FileId, JsxTags>,
     /// Inferred throws and mutation of each named function (by declaring identifier).
     effects: HashMap<Span, effects::Effects>,
     names: display::Names,
@@ -211,7 +215,7 @@ impl Analysis {
     /// `(tag, definition, attribute type)`, sorted by tag; empty when the file has no JSX
     /// runtime. `members_of` on a tag's definition lists its attributes.
     pub fn jsx_intrinsics(&self, file: FileId) -> &[(String, DefRef, String)] {
-        self.jsx_tags.get(&file).map_or(&[], Vec::as_slice)
+        self.jsx_tags.get(&file).map_or(&[], |tags| tags)
     }
 
     /// What the function, method, constructor or closure-valued variable `def` throws
