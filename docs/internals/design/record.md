@@ -84,7 +84,10 @@ methods are internal: calling one outside the prelude is an error.
 - `missing key "mem" in a Record<"cpu" | "mem", i64> literal`.
 - A `Record` with another key type gets the note `use Map<K, V> for keys that are not strings`.
 - `` `f64` cannot be a `Record` key `` at a generic call, with the note ``required because `dec`
-  uses it as a `Record` key``.
+  uses it as a `Record` key``; also where a generic class is instantiated whose method uses
+  the key and may be called through an interface or a base class.
+- `` `Record` cannot be extended ``, with the note to use composition (a `Record` field): a
+  subclass's constructor would leave a closed record without its keys.
 - ``cannot `delete` from a `Record<K, ...>`: the key type `K` is a type parameter``.
 - `` `__delete` is internal to `Record`: a record has no methods of its own ``, with the
   replacement (`delete r[k]`) as a note.

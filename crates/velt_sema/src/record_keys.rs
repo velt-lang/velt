@@ -6,7 +6,9 @@
 //! concrete type: after all bodies, [`check_instantiations`] collects the key types each
 //! function's types mention (through struct, class and union fields too), propagates the generic
 //! ones to every caller (and from a closure to its enclosing function) like the JSON check, and
-//! reports the concrete ones that are not keys. Lowering never sees a record with another key.
+//! to every function that mentions a class type whose methods are dispatched dynamically
+//! ([`crate::dispatch`]), and reports the concrete ones that are not keys. Lowering never sees a
+//! record with another key.
 
 use std::collections::{HashMap, HashSet};
 
@@ -14,6 +16,7 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
+use crate::dispatch::{instantiate, Dispatch};
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, LitValue, TyId, TyKind};
 use crate::types::{children, collect_params};
 use crate::visit;
@@ -90,7 +93,8 @@ impl Ctx<'_> {
 /// Record-key facts of one function body.
 #[derive(Default)]
 struct Uses {
-    /// Every type the body mentions (expressions and locals), with its first span.
+    /// Every type the body mentions (expressions, locals and type arguments of calls), with its
+    /// first span.
     types: Vec<(TyId, Span)>,
     calls: Vec<(DefId, Vec<TyId>, Span)>,
     closures: Vec<DefId>,
@@ -102,6 +106,7 @@ type Need = (TyId, DefId);
 pub(crate) fn check_instantiations(cx: &mut Ctx) {
     let uses = collect(cx);
     let mut memo: HashMap<TyId, Vec<TyId>> = HashMap::new();
+    let mut dispatch = Dispatch::default();
     let mut needs: HashMap<DefId, Vec<Need>> = HashMap::new();
     // Concrete keys per (function, key): the span and origin to report a bad one with.
     let mut concrete: Vec<((DefId, TyId), Span, DefId)> = vec![];
@@ -109,7 +114,9 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
     while changed {
         changed = false;
         for (f, u) in &uses {
-            for (k, span, origin) in requirements(cx, *f, u, &needs, &mut memo) {
+            let mut reqs = requirements(cx, *f, u, &needs, &mut memo);
+            reqs.extend(dispatched(cx, u, &needs, &mut dispatch));
+            for (k, span, origin) in reqs {
                 if cx.is_generic_key(k) {
                     let n = needs.entry(*f).or_default();
                     if !n.contains(&(k, origin)) {
@@ -151,6 +158,27 @@ fn requirements(
     for (t, span) in &u.types {
         for k in keys_in(cx, *t, memo, &mut vec![]) {
             reqs.push((k, *span, f));
+        }
+    }
+    reqs
+}
+
+/// The key types of the methods that the class types `u` mentions dispatch dynamically to,
+/// instantiated with those types' arguments.
+fn dispatched(
+    cx: &mut Ctx,
+    u: &Uses,
+    needs: &HashMap<DefId, Vec<Need>>,
+    dispatch: &mut Dispatch,
+) -> Vec<(TyId, Span, DefId)> {
+    let mut reqs = vec![];
+    for (t, span) in &u.types {
+        for (m, args) in dispatch.targets(cx, *t) {
+            for (k, origin) in needs.get(&m).cloned().unwrap_or_default() {
+                if let Some(k) = instantiate(cx, k, &args) {
+                    reqs.push((k, *span, origin));
+                }
+            }
         }
     }
     reqs
@@ -206,7 +234,14 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
                 E::Call {
                     callee: Callee::Def(d, targs),
                     ..
-                } if !targs.is_empty() => u.calls.push((*d, targs.clone(), e.span)),
+                } if !targs.is_empty() => {
+                    for t in targs {
+                        if seen.insert(*t) {
+                            u.types.push((*t, e.span));
+                        }
+                    }
+                    u.calls.push((*d, targs.clone(), e.span));
+                }
                 E::Closure(c) => u.closures.push(*c),
                 _ => {}
             }

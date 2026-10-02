@@ -3,7 +3,9 @@
 //! all serializable, and the prelude's `JsonValue`. The intrinsics sit in generic prelude code
 //! (`JSON.stringify<T>`), so a requirement on a type parameter propagates to every caller (and
 //! from a closure to its enclosing function) until it meets a concrete type, which is checked at
-//! that call site.
+//! that call site. A method dispatched dynamically (through an interface or a base class) has
+//! no call with type arguments: its requirements are instantiated wherever its class type is
+//! mentioned ([`crate::dispatch`]).
 
 use std::collections::{HashMap, HashSet};
 
@@ -11,6 +13,7 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
+use crate::dispatch::{instantiate, Dispatch};
 use crate::hir::{AdtKind, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
 use crate::types::children;
 use crate::visit;
@@ -26,12 +29,22 @@ struct Uses {
     direct: Vec<(TyId, Span, bool)>,
     calls: Vec<(DefId, Vec<TyId>, Span)>,
     closures: Vec<DefId>,
+    /// Every type the body mentions (expressions and type arguments of calls), with its first
+    /// span: the methods of class types among them may be dispatched dynamically.
+    types: Vec<(TyId, Span)>,
 }
+
+/// Types (and whether `JSON.parse` decodes them) a function needs to have a JSON form.
+type Needs = HashMap<DefId, Vec<(TyId, bool)>>;
 
 pub(crate) fn check_json_types(cx: &mut Ctx) {
     let uses = collect(cx);
-    let mut needs: HashMap<DefId, Vec<(TyId, bool)>> = HashMap::new();
+    let mut needs: Needs = HashMap::new();
+    let mut dispatch = Dispatch::default();
     let mut checked: HashSet<(TyId, Span, bool)> = HashSet::new();
+    // A type without a JSON form is reported once per place, whether it is parsed, written or
+    // both (`JSON.stringify(JSON.parse<T>(s))`).
+    let mut reported: HashSet<(TyId, Span)> = HashSet::new();
     let mut changed = true;
     while changed {
         changed = false;
@@ -47,6 +60,7 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
                     reqs.push((t, cx.def_spans[c.0 as usize], parse));
                 }
             }
+            reqs.extend(dispatched(cx, u, &needs, &mut dispatch));
             for (t, span, parse) in reqs {
                 if has_param(cx, t) {
                     let n = needs.entry(*f).or_default();
@@ -54,12 +68,36 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
                         n.push((t, parse));
                         changed = true;
                     }
-                } else if checked.insert((t, span, parse)) {
-                    check(cx, t, span, parse);
+                } else if !reported.contains(&(t, span))
+                    && checked.insert((t, span, parse))
+                    && check(cx, t, span, parse)
+                {
+                    reported.insert((t, span));
                 }
             }
         }
     }
+}
+
+/// The types the methods that the class types `u` mentions dispatch dynamically to need,
+/// instantiated with those types' arguments.
+fn dispatched(
+    cx: &mut Ctx,
+    u: &Uses,
+    needs: &Needs,
+    dispatch: &mut Dispatch,
+) -> Vec<(TyId, Span, bool)> {
+    let mut reqs = vec![];
+    for (t, span) in &u.types {
+        for (m, args) in dispatch.targets(cx, *t) {
+            for (need, parse) in needs.get(&m).cloned().unwrap_or_default() {
+                if let Some(need) = instantiate(cx, need, &args) {
+                    reqs.push((need, *span, parse));
+                }
+            }
+        }
+    }
+    reqs
 }
 
 fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
@@ -67,29 +105,51 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let mut u = Uses::default();
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| match &e.kind {
-            E::Call {
-                callee: Callee::Intrinsic(Intrinsic::JsonStringify),
-                args,
-            } => {
-                if let Some(a) = args.first() {
-                    u.direct.push((a.ty, e.span, false));
+        let mut seen: HashSet<TyId> = HashSet::new();
+        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+            if seen.insert(e.ty) {
+                u.types.push((e.ty, e.span));
+            }
+            if let E::Call {
+                callee: Callee::Def(_, targs),
+                ..
+            } = &e.kind
+            {
+                for t in targs {
+                    if seen.insert(*t) {
+                        u.types.push((*t, e.span));
+                    }
                 }
             }
-            E::Call {
-                callee: Callee::Intrinsic(Intrinsic::JsonParse),
-                ..
-            } => u.direct.push((e.ty, e.span, true)),
-            E::Call {
-                callee: Callee::Def(d, targs),
-                ..
-            } if !targs.is_empty() => u.calls.push((*d, targs.clone(), e.span)),
-            E::Closure(c) => u.closures.push(*c),
-            _ => {}
+            uses_of(&mut u, e);
         });
         out.push((DefId(i as u32), u));
     }
     out
+}
+
+/// The JSON intrinsic calls, generic calls and closures of one expression.
+fn uses_of(u: &mut Uses, e: &Expr) {
+    match &e.kind {
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::JsonStringify),
+            args,
+        } => {
+            if let Some(a) = args.first() {
+                u.direct.push((a.ty, e.span, false));
+            }
+        }
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::JsonParse),
+            ..
+        } => u.direct.push((e.ty, e.span, true)),
+        E::Call {
+            callee: Callee::Def(d, targs),
+            ..
+        } if !targs.is_empty() => u.calls.push((*d, targs.clone(), e.span)),
+        E::Closure(c) => u.closures.push(*c),
+        _ => {}
+    }
 }
 
 fn has_param(cx: &Ctx, t: TyId) -> bool {
@@ -99,49 +159,52 @@ fn has_param(cx: &Ctx, t: TyId) -> bool {
     }
 }
 
-fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) {
+/// Reports `t` at `span` if it has no JSON form (`true`: reported).
+fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
     let mut stack = vec![];
-    if let Some(bad) = unserializable(cx, t, &mut stack, parse) {
-        let (tn, bn) = (cx.display(t), cx.display(bad));
-        if let Some(why) = cx
-            .union_def(bad)
-            .and_then(|_| union_decode_problem(cx, bad))
-        {
-            let within = if t == bad {
-                String::new()
-            } else {
-                format!(" (in `{tn}`)")
-            };
-            let fix = if why.contains("objects") {
-                "give each object member a literal field such as `kind: \"a\"` (a discriminant), or parse a `JsonValue` and build the union from it"
-            } else if why.contains("are both the JSON") {
-                "give each member its own values, or parse a `JsonValue` and build the union from it"
-            } else {
-                "parse a `JsonValue` and build the union from it"
-            };
-            cx.error(
-                Diagnostic::error(
-                    format!("`JSON.parse` cannot decode the union `{bn}`{within}: {why}"),
-                    span,
-                )
-                .with_note(fix),
-            );
-            return;
-        }
-        let what = if t == bad {
-            format!("`{tn}` has no JSON form")
+    let Some(bad) = unserializable(cx, t, &mut stack, parse) else {
+        return false;
+    };
+    let (tn, bn) = (cx.display(t), cx.display(bad));
+    if let Some(why) = cx
+        .union_def(bad)
+        .and_then(|_| union_decode_problem(cx, bad))
+    {
+        let within = if t == bad {
+            String::new()
         } else {
-            format!("`{tn}` contains `{bn}`, which has no JSON form")
+            format!(" (in `{tn}`)")
         };
-        let mut d =
-            Diagnostic::error(format!("cannot convert to or from JSON: {what}"), span).with_note(
-                "JSON supports numbers, bool, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`",
-            );
-        if matches!(cx.ty.kind(bad), TyKind::Adt(d, _) if Some(*d) == cx.prelude_adt("Map")) {
-            d = d.with_note("a `Map` converts to a JSON object only with `string` keys");
-        }
-        cx.error(d);
+        let fix = if why.contains("objects") {
+            "give each object member a literal field such as `kind: \"a\"` (a discriminant), or parse a `JsonValue` and build the union from it"
+        } else if why.contains("are both the JSON") {
+            "give each member its own values, or parse a `JsonValue` and build the union from it"
+        } else {
+            "parse a `JsonValue` and build the union from it"
+        };
+        cx.error(
+            Diagnostic::error(
+                format!("`JSON.parse` cannot decode the union `{bn}`{within}: {why}"),
+                span,
+            )
+            .with_note(fix),
+        );
+        return true;
     }
+    let what = if t == bad {
+        format!("`{tn}` has no JSON form")
+    } else {
+        format!("`{tn}` contains `{bn}`, which has no JSON form")
+    };
+    let mut d =
+        Diagnostic::error(format!("cannot convert to or from JSON: {what}"), span).with_note(
+            "JSON supports numbers, bool, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`",
+        );
+    if matches!(cx.ty.kind(bad), TyKind::Adt(d, _) if Some(*d) == cx.prelude_adt("Map")) {
+        d = d.with_note("a `Map` converts to a JSON object only with `string` keys");
+    }
+    cx.error(d);
+    true
 }
 
 /// Lowering (`velt_vir` lower/json read.rs and write.rs) handles exactly what this accepts:

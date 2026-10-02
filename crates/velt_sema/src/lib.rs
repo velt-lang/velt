@@ -32,6 +32,7 @@ mod collect;
 mod ctx;
 mod defs;
 mod discriminants;
+mod dispatch;
 mod finalize;
 mod flow;
 mod generic_arrows;
