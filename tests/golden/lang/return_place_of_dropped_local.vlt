@@ -1,0 +1,82 @@
+// check: no leaks
+// A returned element or field of a local that the function frees on return (`return dp[0]`,
+// `return b.v`, an arrow body `new Box(1).v`) is read before the cleanup frees it (#251).
+class Box {
+  v: i64;
+  name: string;
+  constructor(v: i64) {
+    this.v = v;
+    this.name = `box ${v}`;
+  }
+}
+
+function elem(): i64 {
+  const dp: i64[] = [];
+  dp.push(41);
+  return dp[0];
+}
+
+function field(): i64 {
+  const b = new Box(7);
+  return b.v;
+}
+
+function strElem(): string {
+  const xs = [`a${1}`, `b${2}`];
+  return xs[1];
+}
+
+function fieldStr(): string {
+  const b = new Box(9);
+  return b.name;
+}
+
+function nested(n: i64): i64 {
+  const outer: i64[] = [n, n + 1];
+  for (let i = 0; i < 3; i++) {
+    const inner: i64[] = [i * 10, i * 20];
+    if (i == 2) {
+      return inner[1] + outer[1];
+    }
+  }
+  return outer[0];
+}
+
+function fromLoop(): i64 {
+  const xs: i64[] = [5, 6, 7];
+  for (const x of xs) {
+    if (x == 6) {
+      const ys: i64[] = [x * 100];
+      return ys[0];
+    }
+  }
+  return 0;
+}
+
+function makeArr(): i64[] {
+  return [3, 4];
+}
+
+async function asyncElem(): Promise<i64> {
+  const d: i64[] = [];
+  d.push(13);
+  return d[0];
+}
+
+function takes(x: i64): i64 {
+  return x + 1;
+}
+
+async function main() {
+  const lambda = (): i64 => {
+    const d: i64[] = [21];
+    return d[0];
+  };
+  const arrow = (b: Box): i64 => new Box(b.v + 1).v;
+  console.log(elem(), field(), strElem(), fieldStr(), nested(1), fromLoop());
+  console.log(`${elem()} ${field()} ${strElem()}`);
+  console.log(elem() == 41, strElem() == "b2", strElem().length, fieldStr().length);
+  console.log(takes(elem()), takes(makeArr()[1]), makeArr()[0]);
+  const x = makeArr()[1];
+  console.log(x, lambda(), arrow(new Box(1)), await asyncElem());
+}
