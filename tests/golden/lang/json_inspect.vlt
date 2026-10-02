@@ -13,7 +13,7 @@ function main() {
   console.log(v);
   console.log(v.get("b"), v.get("a"), v.get("c"), v.get("d")?.get("e"));
   console.log(JsonValue.parse("\"top\""), [JsonValue.parse("\"in\"")]);
-  console.log(JsonValue.parse("[]"), JsonValue.parse("{}"), new JsonValue());
+  console.log(JsonValue.parse("[]"), JsonValue.parse("{}"), JsonValue.of(null));
   console.log(
     JsonValue.parse("{\"it's\":\"it's\",\"a b\":\"q\\\"\",\"_ok1\":\"\\n\",\"1x\":1e21,\"$\":0.1}"),
   );
