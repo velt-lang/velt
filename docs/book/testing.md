@@ -29,11 +29,13 @@ test result: ok. 2 passed; 0 failed
 
 - A test is an `export function test_*()` with no parameters, or an
   `export async function test_*()`, which the runner awaits.
-- `assert(cond, msg?)` and `assertEq(actual, expected, msg?)` are built in. A failed assertion
-  panics, which fails the test with the message and its source location.
+- `assert(cond, msg?)`, `assertEq(actual, expected, msg?)` and `assertThrows(() => …)` are
+  built in. A failed assertion panics, which fails the test with the message and its source
+  location.
 - A test also fails if it throws an error it doesn't catch.
 - Helpers that are not exported, or don't start with `test_`, are not run.
-- To check that something throws, catch it:
+- To check that something throws, `assertThrows` returns the error (and fails the test if
+  nothing was thrown):
 
 ```ts
 class ParseError extends Error {}
@@ -45,12 +47,10 @@ function parsePort(s: string): i64 throws ParseError {
 }
 
 export function test_rejects_garbage() {
-  try {
+  const e = assertThrows(() => {
     parsePort("x");
-    assert(false, "expected a ParseError");
-  } catch (e) {
-    assertEq(e.message, "bad port: x");
-  }
+  });
+  assertEq(e.message, "bad port: x");
 }
 
 export function test_parses() {

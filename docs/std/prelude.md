@@ -21,6 +21,7 @@ byte offsets; a negative position counts from the end, as in JS.
 | `replace(from, to)`, `replaceAll(from, to)` | plain text; for patterns use [`velt:regex`](regex.md) |
 | `repeat(n)`, `padStart(n, fill = " ")`, `padEnd(n, fill = " ")` | |
 | `charCodeAt(i = 0)` | the byte at `i` |
+| `localeCompare(t): i64` | -1, 0 or 1 in ICU's root collation, like Node without a locale (`"a" < "A" < "b"`, `"e" < "é" < "f"`); exact for Latin text, other scripts after Latin letters; no locale or options arguments |
 
 Conversions: `String.fromCharCode(code)`, `parseInt(s, radix = 0)` and `parseFloat(s)` (both
 return `f64`, `NaN` on failure), `Number(s)`.
@@ -28,6 +29,11 @@ return `f64`, `NaN` on failure), `Number(s)`.
 ## Numbers
 
 - `NaN`, `Infinity`, `isNaN(x)`, `isFinite(x)`.
+- `Number(s)` converts a string; `Number.isInteger(x)`, `Number.isNaN(x)`, `Number.isFinite(x)`,
+  `Number.isSafeInteger(x)`, `Number.parseInt(s, radix = 0)`, `Number.parseFloat(s)` and the
+  constants `Number.MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, `EPSILON`, `MAX_VALUE`, `MIN_VALUE`,
+  `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY` are JS's, on `f64` (they live in the prelude
+  class `NumberConstructor`, TypeScript's name for the type of `Number`).
 - `x.toFixed(digits = 0)` on `f64`, rounded like JS.
 - `Math`: `PI`, `E`, `sqrt floor ceil round trunc abs sign pow hypot`, `max(a, b)` and
   `min(a, b)` (two arguments). On integer operands, `Math.trunc(a / b)` is integer division.
@@ -45,9 +51,13 @@ Callback methods rethrow what their callback throws.
 | `forEach`, `map`, `filter`, `reduce(f, init)` | |
 | `find`, `findIndex`, `findLast`, `findLastIndex`, `some`, `every` | |
 | `indexOf`, `lastIndexOf`, `includes` | structural equality, so `NaN` is never found |
-| `slice(start = 0, end?)`, `concat(other)`, `reverse()`, `fill(v, start?, end?)` | |
+| `slice(start = 0, end?)`, `concat(other)` | |
+| `reverse()`, `fill(v, start?, end?)`, `sort()` | in place, returning nothing (JS returns the array: returning it would share it, which makes every array of its type reference counted) |
+| `splice(start, deleteCount?): T[]` | removes and returns `deleteCount` elements (the rest when omitted); inserting items needs rest parameters (**Planned**) |
+| `truncate(n)` | JS `xs.length = n`: drops the elements from `n` on (`length` is read-only) |
+| `flat()` | on `T[][]`: the inner elements, one level deep |
 | `isEmpty()`, `entries(): [usize, T][]` | |
-| `join(sep = ",")` | any element type, formatted like `${x}` |
+| `join(sep = ",")` | any element type: strings, numbers and booleans like JS, inner arrays joined with `","` and `null` as empty text like JS; other values formatted like `${x}` (JS writes `[object Object]`) |
 | `sort()`, `sort(cmp)` | `sort()` on numbers, strings and `Comparable` elements (unstable, pdqsort); `sort(cmp)` is stable on any element type |
 | `new Array<T>(n).fill(v)`, `Array.from({ length: n }, (_, i) => f(i))` | `n` elements in one allocation |
 
@@ -87,7 +97,8 @@ copied).
 - `attempt(() => f())`: a throwing call as a value, `T | E`.
 - `AggregateError`, thrown by `Promise.any` when every promise rejects.
 - `assert(cond, msg?)`, `assertEq(a, b, msg?)` (compares with `deepEqual`), `panic(msg)`:
-  panics, for bugs.
+  panics, for bugs. `assertThrows(() => f(), msg?)` returns the error `f` throws and panics if
+  it returns normally.
 - `deepEqual(a, b): bool`: content comparison. Arrays, structs and object literals compare
   their contents recursively, class instances (`Map` included) by identity; `==` compares
   every object by identity.

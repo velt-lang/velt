@@ -1,0 +1,10 @@
+js_array_and_promise_idioms.vlt:10:3: error: the length of an array cannot be assigned
+  = note: to shorten it, write `xs.truncate(n)`
+js_array_and_promise_idioms.vlt:11:9: error: variable `sorted` cannot have type `void`
+  = note: `sort` changes the array in place and returns nothing (unlike JS): call it, then use `xs`
+js_array_and_promise_idioms.vlt:12:36: error: no method named `then` found for type `Promise<i64>`
+  = note: promises take no callbacks: `await` the promise, inside `try`/`catch`/`finally` to handle its error
+js_array_and_promise_idioms.vlt:13:3: error: `process.stdout` can only be called
+  = note: use `import { stdout } from "velt:process"`, then `stdout.write(s)`
+js_array_and_promise_idioms.vlt:14:16: error: `process.argv` can only be called
+  = note: `import { argv } from "velt:process"`: `argv` is a function there

@@ -288,10 +288,14 @@ impl FnCx<'_, '_> {
             }
         };
         if ty == self.cx.ty.unit {
-            self.cx.err(
+            let mut d = Diagnostic::error(
                 format!("variable `{}` cannot have type `void`", name.name),
                 name.span,
             );
+            if let Some(note) = v.init.as_ref().and_then(in_place_note) {
+                d = d.with_note(note);
+            }
+            self.cx.error(d);
         }
         let kind = match v.kind {
             ast::VarKind::Const => LocalKind::Const,
@@ -357,4 +361,24 @@ fn is_empty_array(e: &ast::Expr) -> bool {
         ast::ExprKind::Paren(inner) => is_empty_array(inner),
         _ => false,
     }
+}
+
+/// `xs.sort()`, `xs.reverse()` and `xs.fill(v)` change `xs` and return nothing (returning the
+/// array would share it, which makes every array of its type reference counted): the hint for
+/// code that uses their result as in JS.
+fn in_place_note(init: &ast::Expr) -> Option<String> {
+    let ast::ExprKind::Call { callee, .. } = &init.kind else {
+        return None;
+    };
+    let ast::ExprKind::Member { object, prop, .. } = &callee.kind else {
+        return None;
+    };
+    if !matches!(prop.name.as_str(), "sort" | "reverse" | "fill") {
+        return None;
+    }
+    let xs = crate::body::switch::cases::source_text(object);
+    Some(format!(
+        "`{}` changes the array in place and returns nothing (unlike JS): call it, then use `{xs}`",
+        prop.name
+    ))
 }

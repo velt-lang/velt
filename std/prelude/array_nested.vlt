@@ -1,0 +1,50 @@
+// Prelude: `flat` and `join` on arrays of arrays, and `join` on arrays of nullable elements
+// (JS-identical: inner arrays join with ",", `null` joins as ""). The more specific `extend`
+// target wins over `extend<T> Array<T>` (array.vlt).
+
+extend<T> Array<T[]> {
+  // The inner arrays' elements, one level deep (JS `flat()`; deeper levels are not supported).
+  flat(): T[] {
+    let total: usize = 0;
+    for (let i: usize = 0; i < this.length; i++) {
+      total += this[i].length;
+    }
+    const out: T[] = __intrinsic_array_with_capacity(total);
+    for (let i: usize = 0; i < this.length; i++) {
+      const inner = this[i];
+      for (let j: usize = 0; j < inner.length; j++) {
+        out.push(__intrinsic_share(inner[j]));
+      }
+    }
+    return out;
+  }
+
+  // Each inner array joined with "," and the results with `sep`, like JS.
+  join(sep: string = ","): string {
+    let s = "";
+    for (let i: usize = 0; i < this.length; i++) {
+      if (i > 0) {
+        s += sep;
+      }
+      s += this[i].join(",");
+    }
+    return s;
+  }
+}
+
+extend<T> Array<T | null> {
+  // `null` elements join as empty text, like JS; the others as `${x}`.
+  join(sep: string = ","): string {
+    let s = "";
+    for (let i: usize = 0; i < this.length; i++) {
+      if (i > 0) {
+        s += sep;
+      }
+      const x = this[i];
+      if (x != null) {
+        s += `${x}`;
+      }
+    }
+    return s;
+  }
+}

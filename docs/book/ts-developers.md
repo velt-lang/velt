@@ -170,6 +170,8 @@ surprise ([Error handling](errors.md)).
 - `Promise.all` waits for every promise, then rethrows the first rejection in array order. JS
   rejects as soon as one promise rejects.
 - A promise's type carries its error type: `Promise<T, E>`.
+- Promises have no `then`, `catch` or `finally`: `await` them, inside `try`/`catch`/`finally`
+  to handle their errors. *Why*: one way to sequence async code, and errors stay typed.
 - No `new Promise((resolve, reject) => …)` yet (**planned**), no global `setTimeout` (use
   `sleep(ms)` or [`velt:timers`](../std/timers.md)), no `for await`, no async generators.
 
@@ -218,6 +220,12 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | single-threaded event loop | multi-core runtime; `spawn`, `shared`, `Mutex`; data races are compile errors | — |
 | mutable module globals | constants only | — |
 | `arr.sort()` sorts as strings | `sort()` sorts numbers numerically; `sort(cmp)` like TypeScript | — |
+| `xs.sort()`, `xs.reverse()`, `xs.fill(v)` return the array | they work in place and return nothing (returning the array would make it reference counted) | — |
+| `xs.length = 0` | `xs.truncate(0)`; `length` is read-only (arrays have no holes) | — |
+| `xs.splice(i, n, a, b)`, `xs.push(a, b)` | `splice(i, n)` removes; one `push(x)` per element | inserting `splice` and `push` with rest parameters |
+| `p.then(f).catch(g)` | `await p` inside `try`/`catch` | — |
+| `process.stdout.write(s)`, `process.argv` | `import { stdout, argv } from "velt:process"`; the builtin `process` has `exit` | — |
+| `a.localeCompare(b, locale, options)` | `a.localeCompare(b)`: ICU's root collation, no locales | — |
 | `export default` | named exports only | — |
 | string length in UTF-16 units | length and offsets in UTF-8 bytes | — |
 | (no equivalent) | `extend` adds members to any type | module-scoped extensions, retroactive `implements` |

@@ -1,0 +1,15 @@
+// JS idioms that Velt spells differently get an error with the fix: assigning an array's
+// `length`, using the result of an in-place method, `then`/`catch` on a promise, and Node's
+// `process.stdout` / `process.argv`.
+async function fetchCount(): Promise<i64> {
+  return 1;
+}
+
+async function main() {
+  const xs = [3, 1, 2];
+  xs.length = 0;
+  const sorted = xs.sort();
+  const count = await fetchCount().then((n: i64) => n + 1);
+  process.stdout.write("hi");
+  const args = process.argv;
+}

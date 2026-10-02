@@ -187,7 +187,9 @@ builtins included, at zero cost (the calls are direct):
   `extend<T extends Named> T { … }` (every implementor gets the method).
 - **Static methods**: `extend Point { static origin(): Point { … } }` is called as
   `Point.origin()`.
-- A type's own member wins over an extension. `private` is not allowed in `extend`, and an
+- A type's own member wins over an extension, and among extensions the most specific target
+  wins: `extend Array<string>` over `extend<T> Array<T[]>` over `extend<T> Array<T>` (the
+  prelude's `join` on `string[][]` is its own). `private` is not allowed in `extend`, and an
   extension cannot add fields (the layout is fixed).
 - A type becomes `Comparable` by defining `compareTo` in an `extend` block
   ([Comparable](#comparable)).

@@ -10,6 +10,7 @@ use crate::body::FnCx;
 use crate::collect::lookup_method;
 use crate::defs::{Bound, IfaceMethod};
 use crate::hir::{DefId, PassMode, TyId, TyKind};
+use crate::types::children;
 
 /// Builtin methods implemented by intrinsics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,12 +135,17 @@ impl FnCx<'_, '_> {
     }
 
     /// Methods of `extend` blocks whose target type matches `recv`: an exact (non-generic)
-    /// target wins over generic ones (`extend Array<i64>` over `extend<T> Array<T>`), and a
-    /// generic block only applies when its bounds hold.
+    /// target wins over generic ones (`extend Array<i64>` over `extend<T> Array<T>`), a more
+    /// specific generic target over a less specific one (`extend<T> Array<T[]>` over
+    /// `extend<T> Array<T>`), and a generic block only applies when its bounds hold.
     fn extension_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
-        let n_ext = self.cx.extensions.len();
-        let (exact, generic): (Vec<usize>, Vec<usize>) =
-            (0..n_ext).partition(|&i| self.cx.extensions[i].generics.len() == 0);
+        let (exact, mut generic): (Vec<usize>, Vec<usize>) = (0..self.cx.extensions.len())
+            .filter(|&i| self.cx.extensions[i].methods.contains_key(name))
+            .partition(|&i| self.cx.extensions[i].generics.len() == 0);
+        // Stable: equally specific blocks keep their declaration order.
+        generic.sort_by_cached_key(|&i| {
+            std::cmp::Reverse(self.specificity(self.cx.extensions[i].target))
+        });
         for i in exact.into_iter().chain(generic) {
             let Some(m) = self.cx.extensions[i].methods.get(name).copied() else {
                 continue;
@@ -170,6 +176,18 @@ impl FnCx<'_, '_> {
             });
         }
         None
+    }
+
+    /// How much of `t` is fixed: the number of its type constructors that are not parameters.
+    fn specificity(&self, t: TyId) -> usize {
+        let k = self.cx.ty.kind(t);
+        if matches!(k, TyKind::Param(_)) {
+            return 0;
+        }
+        1 + children(k)
+            .into_iter()
+            .map(|c| self.specificity(c))
+            .sum::<usize>()
     }
 
     /// Do the type args `owner` of extension `i` satisfy its generic bounds?

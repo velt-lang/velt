@@ -29,6 +29,7 @@ declare function velt_rt_str_from_char_code(code: i64): string;
 declare function velt_rt_parse_int(s: string, radix: i64): f64;
 declare function velt_rt_parse_float(s: string): f64;
 declare function velt_rt_str_to_number(s: string): f64;
+declare function velt_rt_str_locale_compare(s: string, t: string): i64;
 
 // "Omitted" end / from positions, as the runtime expects them.
 const END: i64 = 9223372036854775807;
@@ -120,6 +121,13 @@ extend string {
 
   padEnd(target: i64, fill: string = " "): string {
     return velt_rt_str_pad_end(this, target, fill);
+  }
+
+  // -1, 0 or 1: the order of `this` and `that` in ICU's root collation, like Node's
+  // `localeCompare` without a locale ("a" < "A" < "b", "e" < "é" < "f"). Exact for Latin text;
+  // other scripts sort after Latin letters by code point. No locale or options arguments.
+  localeCompare(that: string): i64 {
+    return velt_rt_str_locale_compare(this, that);
   }
 
   // The byte at `i` (POC: bytes, not UTF-16 units), or -1 if out of range (JS: NaN).

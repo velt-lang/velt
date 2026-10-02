@@ -23,3 +23,15 @@ export function assertEq<T>(left: T, right: T, msg: string = "assertEq failed") 
 export function deepEqual<T>(a: T, b: T): bool {
   return __intrinsic_eq(a, b);
 }
+
+// Calls `f` and returns the error it throws, so a test can check it
+// (`assertEq(assertThrows(() => parse("x")).message, "bad input")`); panics if `f` returns
+// normally.
+export function assertThrows<E>(f: () => void throws E, msg: string = "expected an error"): E {
+  try {
+    f();
+  } catch (e) {
+    return e;
+  }
+  panic(msg);
+}
