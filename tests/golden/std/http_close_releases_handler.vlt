@@ -1,3 +1,4 @@
+// check: no leaks
 // Closing a server drops its handler closure once in-flight requests finish, so a captured
 // resource's [Symbol.dispose]() runs (a store captured by the handler used to leak). The store is shared
 // (`shared(new Mutex(...))`) because calling an async closure currently clones its captured
