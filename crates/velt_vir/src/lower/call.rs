@@ -17,6 +17,7 @@ impl FnLower<'_, '_> {
         args: &[hir::Expr],
         ty: TyId,
     ) -> Operand {
+        let transfer = std::mem::take(&mut self.transfer_call);
         match callee {
             hir::Callee::Intrinsic(i) => self.intrinsic(*i, args, ty),
             hir::Callee::Def(def, targs) => match self.cx.hir.def(*def) {
@@ -27,9 +28,9 @@ impl FnLower<'_, '_> {
                 hir::Def::ExternFn(_) => self.extern_call(*def, args),
                 _ => ice("call of a non-function definition"),
             },
-            hir::Callee::Indirect(f) => self.call_indirect(f, args, ty),
-            hir::Callee::Virtual { slot } => self.call_virtual(*slot, args, ty),
-            hir::Callee::Dyn { slot } => self.call_dyn(*slot, args, ty),
+            hir::Callee::Indirect(f) => self.call_indirect(f, args, ty, transfer),
+            hir::Callee::Virtual { slot } => self.call_virtual(*slot, args, ty, transfer),
+            hir::Callee::Dyn { slot } => self.call_dyn(*slot, args, ty, transfer),
             hir::Callee::ParamMethod {
                 iface,
                 iface_args,
@@ -228,12 +229,14 @@ impl FnLower<'_, '_> {
     /// moved into the call is dropped by the caller after it). `modes` (when the callee's param
     /// modes are known): Copy aggregates read out of a place are copied first when another
     /// argument (or the receiver: `receiver_mut`) is borrowed mutably, so no pointer argument
-    /// aliases a `noalias` one.
+    /// aliases a `noalias` one. `transfer` (the call starts a spawned task): each argument is a
+    /// copy for the task (transfer.rs).
     pub(super) fn borrow_args(
         &mut self,
         args: &[hir::Expr],
         modes: Option<&[PassMode]>,
         receiver_mut: bool,
+        transfer: bool,
     ) -> (Vec<Operand>, Vec<Ty>) {
         let (mut argv, mut params) = (vec![], vec![]);
         let any_mut = receiver_mut || modes.is_some_and(|m| m.contains(&PassMode::BorrowMut));
@@ -246,6 +249,10 @@ impl FnLower<'_, '_> {
                 self.own_value(v, ty)
             } else {
                 self.stable_borrow(a)
+            };
+            let v = match transfer {
+                true => self.transfer_copy(v, a.ty),
+                false => v,
             };
             match t {
                 Ty::Unit => {}

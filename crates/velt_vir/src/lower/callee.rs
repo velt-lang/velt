@@ -236,19 +236,19 @@ impl FnLower<'_, '_> {
     }
 
     /// Call `target(first, args…)` with the borrow ABI; `modes` are the callee's param modes
-    /// (`this` first) when known.
+    /// (`this` first) when known; `transfer`: the call starts a spawned task (its arguments are
+    /// copied for it, transfer.rs).
     fn call_ptr(
         &mut self,
         target: Operand,
         first: Operand,
         args: &[hir::Expr],
         modes: Option<&[PassMode]>,
-        ret: (TyId, Option<TyId>),
+        (ret, throws, transfer): (TyId, Option<TyId>, bool),
     ) -> Operand {
-        let (ret, throws) = ret;
         let receiver_mut = modes.is_some_and(|m| m.first() == Some(&PassMode::BorrowMut));
         let arg_modes = modes.map(|m| m.get(1..).unwrap_or_default());
-        let (mut argv, mut params) = self.borrow_args(args, arg_modes, receiver_mut);
+        let (mut argv, mut params) = self.borrow_args(args, arg_modes, receiver_mut, transfer);
         argv.insert(0, first);
         params.insert(0, Ty::Ptr);
         let abi = self.cx.ret_abi(ret, throws);
@@ -263,7 +263,13 @@ impl FnLower<'_, '_> {
         self.finish_call(callee, argv, ret, throws)
     }
 
-    pub(super) fn call_indirect(&mut self, f: &hir::Expr, args: &[hir::Expr], ty: TyId) -> Operand {
+    pub(super) fn call_indirect(
+        &mut self,
+        f: &hir::Expr,
+        args: &[hir::Expr],
+        ty: TyId,
+        transfer: bool,
+    ) -> Operand {
         let fty = self.sub(f.ty);
         let fv = self.expr(f);
         let fp = self.place_of(fv, fty);
@@ -281,7 +287,7 @@ impl FnLower<'_, '_> {
             _ => None,
         };
         // The callee is unknown: every non-Copy argument is a plain borrow.
-        self.call_ptr(code, env, args, None, (ret, throws))
+        self.call_ptr(code, env, args, None, (ret, throws, transfer))
     }
 
     /// Load the vtable pointer of the class object `obj` (of static class type `cls`).
@@ -292,7 +298,13 @@ impl FnLower<'_, '_> {
         self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(hdr)))
     }
 
-    pub(super) fn call_virtual(&mut self, slot: u32, args: &[hir::Expr], ty: TyId) -> Operand {
+    pub(super) fn call_virtual(
+        &mut self,
+        slot: u32,
+        args: &[hir::Expr],
+        ty: TyId,
+        transfer: bool,
+    ) -> Operand {
         let recv = args
             .first()
             .unwrap_or_else(|| ice("virtual call without receiver"));
@@ -310,10 +322,22 @@ impl FnLower<'_, '_> {
         let vt = self.obj_vtable(obj.clone(), cls);
         let entry = self.dispatch(vt, slot as i128);
         let ret = self.sub(ty);
-        self.call_ptr(entry, obj, &args[1..], Some(&modes), (ret, throws))
+        self.call_ptr(
+            entry,
+            obj,
+            &args[1..],
+            Some(&modes),
+            (ret, throws, transfer),
+        )
     }
 
-    pub(super) fn call_dyn(&mut self, slot: u32, args: &[hir::Expr], ty: TyId) -> Operand {
+    pub(super) fn call_dyn(
+        &mut self,
+        slot: u32,
+        args: &[hir::Expr],
+        ty: TyId,
+        transfer: bool,
+    ) -> Operand {
         let recv = args
             .first()
             .unwrap_or_else(|| ice("interface call without receiver"));
@@ -337,7 +361,13 @@ impl FnLower<'_, '_> {
         );
         let entry = self.dispatch(vt, slot as i128);
         let ret = self.sub(ty);
-        self.call_ptr(entry, data, &args[1..], modes.as_deref(), (ret, throws))
+        self.call_ptr(
+            entry,
+            data,
+            &args[1..],
+            modes.as_deref(),
+            (ret, throws, transfer),
+        )
     }
 }
 

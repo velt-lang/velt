@@ -66,6 +66,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             retain_hops: false,
             share_binds: false,
             transfer_args: false,
+            transfer_call: false,
             same_mode: false,
         };
         let entry = lw.new_block();

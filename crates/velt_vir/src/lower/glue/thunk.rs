@@ -5,9 +5,10 @@
 //! - `SelfData`: `first` is the receiver's data pointer; the target's `this` is that pointer
 //!   (aggregates, class objects) or the value loaded from it (scalars).
 //!
-//! In both, a target param that takes ownership (`PassMode::Owned` of a droppable type) gets a
-//! deep copy, since the caller keeps its argument; so does an owned receiver (an async method's
-//! `this`, which moves into its future). Methods need no thunk when none of this applies.
+//! In both, a target param that takes ownership (`PassMode::Owned` of a droppable type) gets
+//! another reference (a share), since the caller keeps its argument; so does an owned receiver
+//! (an async method's `this`, which moves into its future). Methods need no thunk when none of
+//! this applies.
 
 use velt_sema::hir::{DefId, PassMode, TyId};
 
@@ -17,7 +18,7 @@ use crate::vir::{self, FuncId, Function, Operand, Place, Proj, Terminator, Ty};
 /// How a thunk forwards one incoming argument to its target.
 enum Incoming {
     Pass,
-    /// The target takes ownership: pass a deep copy.
+    /// The target takes ownership: pass a share.
     Owned,
 }
 

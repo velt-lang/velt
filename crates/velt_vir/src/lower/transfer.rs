@@ -2,7 +2,10 @@
 //! atomic, so a counted object must never be reachable from two threads. Values entering a
 //! spawned task are *transferred*: a value whose type holds no counted part moves (it is unique
 //! by construction); any other is deep-copied — like JS's structured clone at a worker
-//! boundary — and the original released.
+//! boundary — and the original released. A spawned call through a function value, vtable or
+//! interface passes its arguments with the borrow ABI and the callee shares the ones it keeps,
+//! so the caller passes a copy instead and releases it before the task starts
+//! ([`transfer_copy`](FnLower::transfer_copy), `async_fn/tasks.rs` `spawn`).
 
 use std::collections::HashSet;
 
@@ -43,6 +46,17 @@ impl FnLower<'_, '_> {
             }
             false => v,
         }
+    }
+
+    /// A borrow-ABI argument `v` (of type `ty`, still owned by the caller) for a spawned call:
+    /// a deep copy in a temporary of the enclosing scope when it can reach a counted object.
+    pub(super) fn transfer_copy(&mut self, v: Operand, ty: TyId) -> Operand {
+        let ty = self.sub(ty);
+        if self.dead() || !self.cx.holds_counted(ty) {
+            return v;
+        }
+        let copy = self.clone_value(v, ty);
+        self.own_value(copy, ty)
     }
 
     /// The owned value `v` of type `ty`, made safe to hand to another thread (module docs).

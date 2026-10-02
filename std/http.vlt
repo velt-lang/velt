@@ -123,9 +123,9 @@ export class Headers {
 // the `Request`, in anything that outlives the handler. Reading it afterwards is a runtime error
 // (the runtime checks every request handle), never a read of freed memory.
 //
-// Not a `[Symbol.dispose]()` owner: calling the handler (an async closure value) copies its class
-// arguments, so each copy would release the request (tests/golden/bugs/
-// lower_async_closure_call_clones_class_arg.vlt).
+// Not a `[Symbol.dispose]()` owner: `serve` releases the runtime request itself. (Calling the
+// handler, an async closure value, used to copy its class arguments, which ruled that out; it
+// passes the same object since #196.)
 export class Request {
   private raw: u64;
 

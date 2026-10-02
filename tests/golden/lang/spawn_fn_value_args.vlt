@@ -1,0 +1,28 @@
+// check: no leaks
+// A task spawned by calling an async closure value gets its own copy of each object argument
+// (as `spawn(f(x))` of a named async function does), so threads never share a reference count;
+// the caller's object is unchanged.
+class Box {
+  n: i64 = 0;
+}
+
+async function main() {
+  const f = async (b: Box): Promise<i64> => {
+    await sleep(1);
+    b.n += 1;
+    return b.n;
+  };
+  const box = new Box();
+  box.n = 3;
+  const alias = box;
+  const tasks: Promise<i64>[] = [];
+  for (let i = 0; i < 50; i++) {
+    tasks.push(spawn(f(box)));
+  }
+  let sum = 0;
+  for (const r of await Promise.all(tasks)) {
+    sum += r;
+  }
+  console.log(sum, box.n, alias.n);
+  console.log(await f(box), box.n, alias.n);
+}
