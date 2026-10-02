@@ -115,14 +115,17 @@ impl<'a> Parser<'a> {
     /// `<T, U>(args)` after a callee: type arguments only if the matching `>` is followed by `(`.
     fn try_generic_call_args(&mut self) -> PResult<Option<(Vec<TypeExpr>, Vec<Expr>)>> {
         // Cheap pre-check: `i < n;`, `a < -b` etc. can never be type arguments. A literal type
-        // (`f<"x" | null>()`, `f<1>()`) must be followed by `>`, `|` or `,`, so `i < 10` in a
-        // loop condition is not tried.
-        let literal = matches!(
-            self.nth(1),
-            Tok::Str(_) | Tok::Int(_) | Tok::Float(_) | Tok::Kw(Kw::True | Kw::False)
-        );
+        // (`f<"x" | null>()`, `f<1>()`, `f<-1>()`) must be followed by `>`, `|` or `,`, so
+        // `i < 10` or `a < -1` in a loop condition is not tried.
+        let negative = self.nth(1) == Tok::Minus;
+        let at = 1 + usize::from(negative);
+        let literal = match self.nth(at) {
+            Tok::Int(_) | Tok::Float(_) => true,
+            Tok::Str(_) | Tok::Kw(Kw::True | Kw::False) => !negative,
+            _ => false,
+        };
         if literal {
-            if !matches!(self.nth(2), Tok::Gt | Tok::Pipe | Tok::Comma) {
+            if !matches!(self.nth(at + 1), Tok::Gt | Tok::Pipe | Tok::Comma) {
                 return Ok(None);
             }
         } else if !Self::can_start_type(self.nth(1)) {
