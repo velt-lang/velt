@@ -39,32 +39,7 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
             })),
             DefInfo::Adt(_) => Some(Def::Adt(adt_def(cx, d, &mut memo, assigned.contains(&d)))),
             DefInfo::Enum(_) => Some(Def::Enum(enum_def(cx, d))),
-            DefInfo::Iface(i) => Some(Def::Interface(InterfaceDef {
-                name: i.qual_name.clone(),
-                generics: i.generics.len() as u32,
-                fields: i
-                    .fields
-                    .iter()
-                    .map(|f| FieldDef {
-                        name: f.name.clone(),
-                        ty: f.ty,
-                        default: None,
-                    })
-                    .collect(),
-                methods: i
-                    .methods
-                    .iter()
-                    .map(|m| InterfaceMethodDef {
-                        name: m.name.clone(),
-                        default: m.default,
-                    })
-                    .chain(i.fields.iter().map(|f| InterfaceMethodDef {
-                        name: format!("<{}>", f.name),
-                        default: None,
-                    }))
-                    .collect(),
-                span: i.span,
-            })),
+            DefInfo::Iface(_) => Some(Def::Interface(iface_def(cx, d))),
             DefInfo::Global(g) => g.init.clone().map(|init| {
                 Def::Global(GlobalDef {
                     name: g.qual_name.clone(),
@@ -75,6 +50,49 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
             }),
         };
         cx.defs[i] = def;
+    }
+}
+
+/// The `hir::InterfaceDef` of interface `d` (fields become getter slots after the methods).
+fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
+    let n = cx.iface(d).map_or(0, |i| i.methods.len());
+    // The dispatch group's flag, not the method's own return type: one implementation may
+    // serve slots of several interfaces, which then share an error convention.
+    let promise: Vec<bool> = (0..n as u32)
+        .map(|s| {
+            let g = cx.throw_groups();
+            g.slot_group(d, s).is_some_and(|g2| g.list[g2].promise)
+        })
+        .collect();
+    let i = cx.iface(d).expect("ICE: interface info");
+    InterfaceDef {
+        name: i.qual_name.clone(),
+        generics: i.generics.len() as u32,
+        fields: i
+            .fields
+            .iter()
+            .map(|f| FieldDef {
+                name: f.name.clone(),
+                ty: f.ty,
+                default: None,
+            })
+            .collect(),
+        methods: i
+            .methods
+            .iter()
+            .zip(promise)
+            .map(|(m, promise)| InterfaceMethodDef {
+                name: m.name.clone(),
+                default: m.default,
+                promise,
+            })
+            .chain(i.fields.iter().map(|f| InterfaceMethodDef {
+                name: format!("<{}>", f.name),
+                default: None,
+                promise: false,
+            }))
+            .collect(),
+        span: i.span,
     }
 }
 

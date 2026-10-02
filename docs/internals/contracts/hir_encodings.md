@@ -260,7 +260,10 @@ Maintainer-owned, like hir.rs.
 - Dispatch groups share one error type: every method in an interface slot (its default and all
   implementations) and in a vtable slot (the base method and all overrides) has the same
   `FnDef::throws`, with no type params (interface methods whose error type would depend on them
-  are rejected), so `Callee::Dyn` / `Virtual` / `ParamMethod` calls use any member's.
+  are rejected), so `Callee::Dyn` / `Virtual` / `ParamMethod` calls use any member's — except
+  in a promise slot (`InterfaceMethodDef::promise`: the interface method returns a promise that
+  carries the group's errors): its members are async (or synchronous forwarders with no
+  `throws`) and a call through the slot never throws.
 - Promises: `TyKind::Promise(T, E)` resolves to `T` or rejects with `E` (`Never`: cannot reject).
   An async fn's call has type `Promise<ret, throws>`; `await` of a direct call checks the child
   state's `Result<T, E>` (result region at offset 0), and a promise *value* (heap future) holds
