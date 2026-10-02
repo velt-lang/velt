@@ -261,8 +261,8 @@ Maintainer-owned, like hir.rs.
   state's `Result<T, E>` (result region at offset 0), and a promise *value* (heap future) holds
   its result at `+16` as `Result<T, E>` when it can reject, else `T` — also for spawned tasks'
   join handles and the value form of `Promise.all` (which settles to `Result<T[], E>`: the first
-  rejection in array order once every child has finished). A `spawn(...)` in statement position
-  (its handle is dropped at once) reports a rejection as uncaught.
+  rejection, as soon as it happens). A `spawn(...)` in statement position (its handle is dropped
+  at once) reports a rejection as uncaught.
 - `Intrinsic::Attempt` (`attempt(f)`): see hir.rs; lowering calls `f` with the Result ABI and
   converts `Ok(v)` / `Err(e)` into the call's type by widening (`T | E`), or `null` / the error
   for `E | null`.

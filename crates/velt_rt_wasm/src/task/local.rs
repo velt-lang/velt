@@ -36,6 +36,30 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
     if !boxed::is_lazy(f) || !executor::running() {
         return;
     }
+    let (id, st) = adopt(f, result_drop);
+    let w = executor::waker(id);
+    let _ = drive(f, &st, &mut Context::from_waker(&w));
+}
+
+/// The owner gives up promise `f` without cancelling it: a lazy one becomes a started promise
+/// whose task runs at the executor's next turn (not now: the owner's continuation comes first,
+/// like JS's rejection handler), a started one keeps running, and either way its outcome is
+/// handled with `quiet_drop`; anything else is dropped (rt_abi_async.md §1).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fut_detach(f: *mut VeltFut, quiet_drop: Option<ResultDropFn>) {
+    if boxed::is_lazy(f) && executor::running() {
+        let _ = adopt(f, quiet_drop);
+    }
+    let one = [Wide(f)];
+    velt_rt_futs_handled(one.as_ptr(), 1, quiet_drop);
+    super::velt_rt_fut_drop(f);
+}
+
+/// Make lazy `f` a started promise with a task of its own (scheduled, not polled yet).
+unsafe fn adopt(
+    f: *mut VeltFut,
+    result_drop: Option<ResultDropFn>,
+) -> (usize, Rc<RefCell<Started>>) {
     let st = Rc::new(RefCell::new(Started {
         done: false,
         detached: false,
@@ -47,8 +71,7 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
     *f = VeltFut::new(started_poll, started_drop);
     executor::count_local(true);
     let id = executor::spawn(new_leaf(driver(f, st.clone())), 0, None);
-    let w = executor::waker(id);
-    let _ = drive(f, &st, &mut Context::from_waker(&w));
+    (id, st)
 }
 
 /// The driving task's poll closure (it holds its own reference to the shared state, so it never
@@ -225,6 +248,28 @@ mod tests {
         }
         velt_rt_fut_drop(y);
         READY
+    }
+
+    /// `{ result, tag }`: polls a lazy child once, then gives it up without cancelling it (a
+    /// sibling of an early `Promise.all` rejection) and returns.
+    unsafe extern "C" fn detach_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+        let init = [0i64; 2];
+        let f = velt_rt_fut_box(child_poll, no_drop, init.as_ptr() as *const u8, 16, 8);
+        assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
+        velt_rt_fut_detach(f, Some(count_result_drop));
+        log("owner goes on");
+        *(s as *mut i64) = 0;
+        READY
+    }
+
+    #[test]
+    fn a_detached_promise_runs_after_its_owner_and_finishes() {
+        LOG.with(|l| l.borrow_mut().clear());
+        let mut st = [0i64; 2];
+        unsafe { velt_rt_block_on(detach_poll, st.as_mut_ptr() as *mut u8) };
+        let log = LOG.with(|l| l.borrow().clone());
+        assert_eq!(log, ["child start", "owner goes on", "child end"]);
+        assert_eq!(RESULT_DROPS.with(Cell::get), 1);
     }
 
     #[test]

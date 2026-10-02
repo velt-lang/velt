@@ -59,9 +59,11 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_sleep` | `(i64 ms) -> VeltFut*` | `sleep(ms)`; negative = 0; result: none |
 | `velt_rt_all` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results) -> VeltFut*` | `Promise.all(array)`: takes ownership of the `n` futures (not of the pointer array); child `i`'s result is moved to `results + i*result_size` (must stay valid until completion/drop); concurrent, only woken children are re-polled. Result: none. |
 | `velt_rt_all_with_drop` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results, void (*result_drop)(void* slot)) -> VeltFut*` | same as `velt_rt_all` (which = this with `result_drop == NULL`), for results that own resources: if the returned future is dropped **before completing**, `result_drop(results + i*result_size)` runs for every child `i` that had already finished (pending children are cancelled via their own drop). After completion it never runs � all results belong to the awaiter. Use it whenever `T` needs dropping. |
+| `velt_rt_all_or_reject` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results, void (*result_drop)(void* slot)) -> VeltFut*` | `Promise.all` over promises that can reject: like `velt_rt_all_with_drop` over `Result<T, E>` slots (tag byte at offset 0, 0 = fulfilled), but completes as soon as a child rejects. Its result is empty. On a rejection the rejected child's result is moved to slot 0 and is the only initialized slot (so a rejection is an `Err` tag in slot 0, `n > 0`): the runtime drops the other finished results with `result_drop` (null: nothing to drop) and drops the pending children (started promises keep running; mark them with `velt_rt_futs_handled` first). |
 
 | `velt_rt_race` | `(VeltFut* const* futs, u64 n, u64 result_size) -> VeltFut*` | `Promise.race(array)`: takes ownership of the `n` futures (not of the pointer array); the first child to finish moves its `result_size`-byte result to the returned future's slot (+16) and the others are dropped (started promises keep running, §1.1). `n == 0` never completes. |
 | `velt_rt_race_ok` | `(VeltFut* const* futs, u64 n, u64 result_size, void (*reject_drop)(void* slot)) -> VeltFut*` | `Promise.any`: like `velt_rt_race` over `Result<T, E>` slots (tag byte at offset 0, 0 = fulfilled): the first fulfilled child wins; a rejected one is dropped with `reject_drop` (null: nothing to drop) while others are still running, and the last rejection is the result when all reject. |
+| `velt_rt_fut_detach` | `(VeltFut* f, void (*quiet_drop)(void* slot))` | the owner gives up `f` without cancelling it (pending siblings of an early `Promise.all` rejection). A boxed promise that is still lazy, even one its owner has polled, becomes a started promise of the current task without being polled now: it runs at the task's next poll, after the owner's continuation, as in JS, where the rejection handler runs before other woken promises. A started promise keeps running. Either way its result is disposed of with `quiet_drop` (handled, null: nothing to drop). Any other future is dropped as by `velt_rt_fut_drop`. Takes ownership of `f`. |
 | `velt_rt_futs_handled` | `(VeltFut* const* futs, u64 n, void (*quiet_drop)(void* slot))` | the `n` futures are handed to a combinator (`race`, `any`, `all`), which handles their rejections like JS: a started promise among them that is dropped unfinished later disposes of its result with `quiet_drop` (null: nothing to drop) instead of its `result_drop`, so a rejection is not reported (§1.1). No-op for other futures. Called before the combinator takes the futures. |
 
 `Promise.all([a(), b()])` with a static list should be compiled inline instead (children embedded,
@@ -105,9 +107,9 @@ each polled until done, done-flags in the state): no allocation.
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_block_on` | `(PollFn poll, void* state)` | `async main`: `velt_main` builds the state on its stack, calls this, then reads the result at `state+0`. Runs the root as a task on the runtime's workers; returns when READY. Tasks still running afterwards are abandoned when the process exits. Must not be called from inside a task. |
-| `velt_rt_spawn` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size) -> VeltFut*` | `spawn(f(...))`: copies the initial state into the task (caller gives up ownership of its contents), starts it now. Returns the join handle; its result slot (+16) receives `result_size` bytes (≤ 256; box larger results). Dropping the handle **detaches** (task keeps running). |
+| `velt_rt_spawn` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(f(...))`: copies the initial state into the task (caller gives up ownership of its contents), starts it now. Returns the join handle; its result slot (+16) receives `result_size` bytes (≤ 256; box larger results). Dropping the handle **detaches** (task keeps running); a result the handle never claims (dropped before or after the task finished) is dropped with `result_drop` (null: nothing to drop). |
 | `velt_rt_spawn_detached` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align)` | spawn whose result is unused: no handle, one allocation |
-| `velt_rt_spawn_fut` | `(VeltFut* f, u64 result_size) -> VeltFut*` | `spawn(p)` where `p` is already a heap future (boxed promise, leaf); takes ownership of `f` |
+| `velt_rt_spawn_fut` | `(VeltFut* f, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(p)` where `p` is already a heap future (boxed promise, leaf); takes ownership of `f`; `result_drop` as for `velt_rt_spawn` |
 
 Runtime: created lazily, workers = `VELT_THREADS` (positive integer) or the number of cores.
 Allocation per task: states ≤ 1 KiB (align ≤ 16) live inline in tokio's task cell (size classes
@@ -385,7 +387,7 @@ void add1After$drop(void* s) { Add1After* st = s; if (st->tag == 1) velt_rt_fut_
 
 // const h = spawn(add1After(41, 5)); ... await h
 Add1After init = { 0, 0, 41, 5, 0 };
-st->h = velt_rt_spawn(add1After$poll, add1After$drop, &init, sizeof init, 8, sizeof(int64_t));
+st->h = velt_rt_spawn(add1After$poll, add1After$drop, &init, sizeof init, 8, sizeof(int64_t), NULL);
 ... if (!velt_rt_fut_poll(st->h, cx)) return 0;
     int64_t v = *(int64_t*)((char*)st->h + 16); velt_rt_fut_drop(st->h);
 
@@ -665,7 +667,9 @@ one state layout, so all of them change together; `env` stays). In dev builds th
 `init` is that version's code itself, not a trampoline.
 Rule: only vtables (via relocations), `VeltFut` headers and these per-server handler slots may
 store code addresses. New runtime APIs that take callbacks (timers, WebSockets, child processes,
-...) must keep them replaceable the same way.
+...) must keep them replaceable the same way. The one exception is drop glue kept with a value in
+flight (a join's or a spawned task's result, a channel item being sent): it matches that value's
+layout, which a swap doesn't change, and it goes away with the value.
 
 
 ## 14. Standard library breadth (stream std-net; additive)

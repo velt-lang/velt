@@ -1,11 +1,14 @@
 //! Eager promises (`velt_rt_fut_start`): a started promise runs until its first suspension at
 //! once and then progresses while its creator does other things; dropped unawaited, it still
 //! runs to completion (handed to a combinator, with its quiet drop); a cancelled task cancels its
-//! unfinished promises; `velt_rt_race`.
+//! unfinished promises; a lazy promise its owner polled and then detached keeps running after
+//! the owner's continuation (`velt_rt_fut_detach`); `velt_rt_race`.
 
 use super::fake::block_on_fut;
 use crate::task::compiled::{Compiled, Inline};
-use crate::task::local::{velt_rt_fut_box, velt_rt_fut_start, velt_rt_futs_handled};
+use crate::task::local::{
+    velt_rt_fut_box, velt_rt_fut_detach, velt_rt_fut_start, velt_rt_futs_handled,
+};
 use crate::task::race::velt_rt_race;
 use crate::task::runtime::{runtime, velt_rt_block_on};
 use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, VeltFut, PENDING, READY};
@@ -223,6 +226,45 @@ fn a_handled_promise_disposes_of_its_result_quietly() {
         block_on_fut::<()>(velt_rt_sleep(2));
     }
     assert_eq!(events(11..12), [(11, "start"), (11, "end")]);
+}
+
+/// Results of `job(40, ..)` disposed of by the quiet drop given to `velt_rt_fut_detach`.
+static DETACHED_RESULT_DROPS: AtomicUsize = AtomicUsize::new(0);
+
+unsafe extern "C" fn count_detached_drop(slot: *mut u8) {
+    if *(slot as *const i64) == 40 {
+        DETACHED_RESULT_DROPS.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+// The owner of lazy `job(40, 5)` (an inline `Promise.all` child) polls it once, then gives it
+// up without cancelling it (a sibling rejected) and goes on.
+unsafe extern "C" fn detach_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+    let f = job(40, 5);
+    assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
+    velt_rt_fut_detach(f, Some(count_detached_drop));
+    log(41, "owner goes on");
+    *(s as *mut i64) = 0;
+    READY
+}
+
+#[test]
+fn a_detached_promise_keeps_running_after_its_owner() {
+    let mut st = [0i64; 2];
+    unsafe { velt_rt_block_on(detach_poll, st.as_mut_ptr() as *mut u8) };
+    let t = Instant::now();
+    while DETACHED_RESULT_DROPS.load(Ordering::SeqCst) == 0 {
+        assert!(
+            t.elapsed() < Duration::from_secs(10),
+            "detached promise did not finish"
+        );
+        block_on_fut::<()>(velt_rt_sleep(2));
+    }
+    // Its timer held the owner's waker: the set re-polled it, and it finished quietly.
+    assert_eq!(
+        events(40..42),
+        [(40, "start"), (41, "owner goes on"), (40, "end")]
+    );
 }
 
 #[test]

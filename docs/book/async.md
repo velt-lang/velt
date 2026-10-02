@@ -115,9 +115,10 @@ async function main() {
 }
 ```
 
-`Promise.all` waits for every promise, then rethrows the first rejection in array order (in
-JavaScript it rejects as soon as one promise rejects). `Promise.allSettled` reports each result
-as a discriminated union. `Promise.any` gives the first success, or an `AggregateError`.
+`Promise.all` rejects as soon as one promise rejects, like JavaScript. The other promises keep
+running to completion; their results and any later rejections are dropped.
+`Promise.allSettled` reports each result as a discriminated union. `Promise.any` gives the first
+success, or an `AggregateError`.
 
 ## Using every core with `spawn`
 

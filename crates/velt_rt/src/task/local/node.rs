@@ -408,6 +408,11 @@ unsafe extern "C" fn started_drop(f: *mut VeltFut) {
     release(f);
 }
 
+/// Queue started node `f` in its set's ready list, as its waker does.
+pub(super) unsafe fn queue(f: *mut VeltFut) {
+    waker_wake_by_ref(f as *const ());
+}
+
 /// Node wakers queue the node in its set's ready list.
 static NODE_WAKER: RawWakerVTable =
     RawWakerVTable::new(waker_clone, waker_wake, waker_wake_by_ref, waker_drop);
