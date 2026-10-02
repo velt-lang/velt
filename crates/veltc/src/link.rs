@@ -1,4 +1,4 @@
-//! The link step of `velt build`: program object → executable. Picks how the runtime is linked
+//! The link step of `velt build`: program objects → executable. Picks how the runtime is linked
 //! (debug builds: the shared runtime when it is installed, so a link takes milliseconds; release
 //! builds and `$VELT_RT_LIB`: the static one) and skips the link entirely when its inputs are
 //! unchanged since the last link of the same executable (a stamp file beside it), so `velt run`
@@ -17,10 +17,10 @@ pub enum Linked {
     UpToDate,
 }
 
-/// Link `object` into `exe` for `target`.
+/// Link the program's objects (the first is the main one) into `exe` for `target`.
 pub fn link_executable(
     target: &str,
-    object: &Path,
+    program_objects: &[PathBuf],
     exe: &Path,
     release: bool,
     strip_debug: bool,
@@ -35,7 +35,10 @@ pub fn link_executable(
         Some(lib) => lib,
         None => velt_link::find_runtime_lib(target)?,
     };
-    let mut objects = vec![object.to_path_buf()];
+    let object = program_objects
+        .first()
+        .ok_or("ICE: linking a program without objects")?;
+    let mut objects = program_objects.to_vec();
     if velt_link::is_shared_runtime_lib(&runtime_lib, target) {
         let bytes = velt_codegen_cl::emit_entry_object(target)?;
         let entry = entry_object_path(object);

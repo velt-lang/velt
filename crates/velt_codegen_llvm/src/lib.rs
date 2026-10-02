@@ -15,6 +15,7 @@
 //! - `function`: per-function translation (places, operands, ops, casts, terminators).
 //! - `debug`: `!dbg` metadata (CodeView on Windows, DWARF elsewhere) when the VIR carries
 //!   source locations (`vir::Program::files`; debug builds and `velt build -g`).
+//! - `units`: splitting large programs into codegen units compiled in parallel.
 //! - `clang`: locating `clang` and running it on the emitted IR.
 //! - `llc`: locating LLVM's `opt`/`llc` and running them for the WebAssembly targets.
 
@@ -36,6 +37,7 @@ mod runtime;
 mod statics;
 mod target;
 mod types;
+mod units;
 
 #[cfg(test)]
 mod tests;
@@ -76,6 +78,66 @@ pub fn emit_object_timed(
     };
     timings.push((step, start.elapsed()));
     obj
+}
+
+/// [`emit_object_timed`] for large programs: one object per codegen unit, compiled by parallel
+/// clang processes (see `units`). `units`: how many (`None`: one). WebAssembly targets always get
+/// one object.
+pub fn emit_objects_timed(
+    program: &vir::Program,
+    opts: &CodegenOptions,
+    units: Option<usize>,
+    timings: &mut Vec<(&'static str, Duration)>,
+) -> Result<Vec<Vec<u8>>, String> {
+    let triple = target::normalize(&opts.target)?;
+    let count = if triple.is_wasm() {
+        1
+    } else {
+        units::unit_count(program, units)
+    };
+    if count == 1 {
+        return emit_object_timed(program, opts, timings).map(|obj| vec![obj]);
+    }
+    if let Err(errs) = velt_vir::verify(program) {
+        return Err(format!("invalid VIR:\n  {}", errs.join("\n  ")));
+    }
+    types::validate_aggregates(program)?;
+    let start = Instant::now();
+    let plan = units::plan(program, count);
+    timings.push(("units", start.elapsed()));
+    let start = Instant::now();
+    let results: Vec<Result<(Vec<u8>, Duration), String>> = std::thread::scope(|scope| {
+        let workers: Vec<_> = plan
+            .units
+            .iter()
+            .map(|unit| {
+                let (plan, triple) = (&plan, &triple);
+                scope.spawn(move || {
+                    let ir = module::emit_unit(program, triple, opts.optimize, unit, &plan.shared)?;
+                    let start = Instant::now();
+                    let obj = clang::compile(&ir, triple, opts.optimize)?;
+                    Ok((obj, start.elapsed()))
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .map(|w| {
+                w.join()
+                    .unwrap_or_else(|_| Err("ICE: codegen unit thread panicked".into()))
+            })
+            .collect()
+    });
+    let mut objects = Vec::with_capacity(results.len());
+    let mut slowest = Duration::ZERO;
+    for r in results {
+        let (obj, clang) = r?;
+        slowest = slowest.max(clang);
+        objects.push(obj);
+    }
+    timings.push(("ir + clang (parallel)", start.elapsed()));
+    timings.push(("slowest clang", slowest));
+    Ok(objects)
 }
 
 /// The program as textual LLVM IR for `target` (empty / `native` / `host` = the host triple);

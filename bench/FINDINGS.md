@@ -442,5 +442,7 @@ with exactly the Velt loops runs at parity or slower:
 | fasta | 1.95 | integer thresholds bring it to 1.1× | — |
 
 One caveat remains: after the 8.3 fix, n-body is still 1.3× a Rust `Vec` version with the same
-optimized IR. Rust's LLVM 22 vectorizes more of it than Apple clang 21 does. Re-measure with
-`VELT_CLANG` pointing at clang 22.
+optimized IR. It was attributed to Rust's LLVM 22 vectorizing more than Apple clang 21. Re-measured
+on x86_64 (RESULTS "Codegen round"): clang 22 and clang 18 compile `main.vlt` and `main_opt.vlt`
+to equally fast code (1.5–1.6× Rust #3 without `target-cpu`), so the LLVM version does not explain
+the gap there; the loop shape does (see above). Not re-measured on Apple silicon.

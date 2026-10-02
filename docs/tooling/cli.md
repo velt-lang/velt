@@ -44,11 +44,16 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelif
            [--locked] [-v] [-- <program args>...]
 ```
 
-- **Debug builds** (the default) use Cranelift: fast to compile, with function symbols for
-  backtraces.
+- **Debug builds** (the default) use Cranelift: fast to compile, with line tables for debuggers
+  on Linux (macOS untested; function symbols on Windows).
 - **`--release`** runs Velt's optimizer, then LLVM `-O3` when clang 16 or newer is found
   (`VELT_CLANG`, `PATH`, the standard install directories); otherwise Cranelift, with a
   one-line note. `-g` keeps debug info in a release build ([Debugging](debugging.md)).
+  `VELT_CODEGEN_UNITS=N` splits the program into N codegen units (at most the core count) that
+  clang compiles in parallel, one object file each: a large program builds about 3× faster on 4
+  cores, but most calls between units are not inlined, so the program can run slower. In the
+  [measurements](../../bench/RESULTS.md), a large program lost up to 15 %, and a small program
+  split into 4 units up to a third.
 - `--backend llvm` without `--release` gives an unoptimized build with full line information.
 - `--target wasm32-wasip1` and `--target wasm32-unknown-unknown` build WebAssembly
   ([WebAssembly](webassembly.md)); `--target x86_64-apple-darwin` cross-builds on Apple
@@ -153,6 +158,8 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_REGISTRY_TOKEN` | your registry user's token, for `velt publish`, `velt yank` and `velt owner` against a registry server |
 | `VELT_CA_FILE` | PEM file of extra CA certificates to trust for `https://` registries |
 | `VELT_CLANG` | clang for the LLVM backend |
+| `VELT_LLVM_OPT` | clang optimization level for release builds: `3` (default), `2`, `1`, `s` or `z` |
+| `VELT_CODEGEN_UNITS` | how many codegen units (parallel clang processes) a release build uses; default 1, at most the core count |
 | `VELT_RT_LIB` | runtime library (default: next to `velt`, or `<prefix>/lib` when installed) |
 | `VELT_LINKER` | linker override |
 | `VELT_LLVM_BIN` | directory with LLVM's `opt` and `llc`, for WebAssembly |

@@ -10,6 +10,17 @@ use velt_vir::vir;
 use crate::types::{escape_bytes, global_name};
 use crate::CodegenResult;
 
+/// How a static is defined in a module (see `units`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StaticDefinition {
+    /// Private to the module.
+    Own,
+    /// Defined here, used by other codegen units too.
+    Shared,
+    /// Another unit's definition, copied for its contents (`available_externally`).
+    Import,
+}
+
 /// Name of static `i`.
 pub(crate) fn static_name(i: usize) -> String {
     format!("@.s{i}")
@@ -21,8 +32,14 @@ pub(crate) fn static_data(
     program: &vir::Program,
     index: usize,
     data: &vir::StaticData,
+    how: StaticDefinition,
     wide_pointer_slots: bool,
 ) -> CodegenResult<String> {
+    let linkage = match how {
+        StaticDefinition::Own => "private",
+        StaticDefinition::Shared => "hidden",
+        StaticDefinition::Import => "available_externally hidden",
+    };
     let align = data.align.max(1);
     if !align.is_power_of_two() {
         bail!(
@@ -38,14 +55,14 @@ pub(crate) fn static_data(
             &data.bytes
         };
         return Ok(format!(
-            "{name} = private unnamed_addr constant {}, align {align}\n",
+            "{name} = {linkage} unnamed_addr constant {}, align {align}\n",
             byte_run(bytes)
         ));
     }
     let (types, values) = relocated_fields(program, data, wide_pointer_slots)
         .map_err(|e| format!("codegen: static #{index}: {e}"))?;
     Ok(format!(
-        "{name} = private unnamed_addr constant <{{ {} }}> <{{ {} }}>, align {align}\n",
+        "{name} = {linkage} unnamed_addr constant <{{ {} }}> <{{ {} }}>, align {align}\n",
         types.join(", "),
         values.join(", ")
     ))

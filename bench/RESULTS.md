@@ -665,6 +665,157 @@ debug runtime) to 34 KB.
 command incl. process start, std and the prelude, best of 5): chat 24 ms, log-pipeline 24 ms,
 notes-cli 25 ms, todo-api 30 ms (target < 100 ms).
 
+## Codegen round: Cranelift memory, codegen units, -O level, clang 22 (2026-10-01)
+
+Machine: cloud VM, x86_64 Linux (Ubuntu 24.04), 4 × Intel Xeon @ 2.10 GHz, 15 GB; clang 18.1.3
+(Ubuntu) and clang 22.1.8 (conda-forge). Single runs unless stated; the VM was otherwise idle.
+
+### Cranelift memory on huge functions (#42)
+
+`cranelift_frontend` keeps a table indexed by block for every `Variable`, so its memory grew with
+variables × blocks, and VIR names every temporary. Locals assigned exactly once now bypass
+`Variable` (the assignment's SSA value is used directly; VIR's definite-assignment check makes it
+dominate every reachable read). Debug build (`velt build`, Cranelift), peak RSS of the whole
+command and the codegen stage:
+
+| program | before: peak | before: codegen | after: peak | after: codegen |
+|---|---:|---:|---:|---:|
+| long_main_1000 | 429 MB | 3.9 s | 140 MB | 1.3 s |
+| long_main_2000 | 1504 MB | 10.8 s | 218 MB | 2.8 s |
+| long_main_4000 | 5636 MB | 35.9 s | 367 MB | 6.1 s |
+| long_main_8000 | — | — | 645 MB | 11.3 s |
+| long_main_16000 | out of memory | — | 1208 MB | 26.5 s |
+
+Translating `main` itself dropped from 9.8 s to 0.09 s (long_main_2000); what remains is
+Cranelift's own compile (register allocation is mildly super-linear: 0.18 s at 2000, 1.7 s at
+8000) and the ≈ 56 000 other functions. `bench/compile/stress.sh` (`stress.ps1`) builds
+long_main_16000 and fails above 2 GB (1206 MB here).
+
+### Release builds: codegen units and the optimization level (#43)
+
+`VELT_CODEGEN_UNITS=N` splits a program into N codegen units compiled by parallel clang
+processes; without it a program is one unit (see the decision below). `velt build --release`
+codegen stage (IR printing + clang), seconds:
+
+| program | clang 18, 1 unit | clang 18, 4 units | clang 22, 1 unit | clang 22, 4 units |
+|---|---:|---:|---:|---:|
+| units_1000 | 68.8 | 21.3 | 58.3 | 18.0 |
+| chain_1000 | 68.3 | 21.1 | 53.2 | 19.6 |
+| units_2000 | 168.5 | 56.1 | 118.7 | 59.9 |
+| long_main_4000 | 137.6 | 100.2 | 150.4 | — |
+
+long_main_4000 is one 72 000-statement `main` plus small functions: its unit is the critical path.
+Importing small callees into it (as for other units) made that unit take 218 s, so callers over
+5 000 statements import nothing. `-O2` instead of `-O3`: units_1000 60.5 s in one unit, 18.7 s
+in four (−12 %), smaller than what units give.
+
+Run time, CPU seconds, best of 5 interleaved runs (`--release`; reduced sizes: binary-trees 18,
+fannkuch 10, fasta 5M, k-nucleotide and reverse-complement on fasta 2M, mandelbrot 4000, n-body
+1e7, pidigits 3000 / limbs 5000, regex-redux on fasta 500k, spectral-norm 3000; `bench/*.vlt`
+as is). "4 units" forces `VELT_CODEGEN_UNITS=4` on these small programs (by default they are one
+unit): the cost of losing cross-unit inlining.
+
+| program | -O3 clang 18 | -O2 | -O3 clang 22 | -O3, 4 units |
+|---|---:|---:|---:|---:|
+| binary-trees | 0.856 | +3 % | +1 % | −8 % |
+| binary-trees arena | 0.333 | 0 % | −1 % | −2 % |
+| fannkuch-redux | 0.255 | +5 % | +2 % | −14 % |
+| fasta | 0.793 | 0 % | +2 % | −1 % |
+| k-nucleotide | 0.839 | +8 % | +4 % | +2 % |
+| mandelbrot | 1.533 | +3 % | +2 % | 0 % |
+| mandelbrot opt | 0.266 | −2 % | +28 % | −1 % |
+| n-body | 0.701 | −3 % | −12 % | +23 % |
+| n-body opt | 0.733 | 0 % | −2 % | +18 % |
+| pidigits | 0.135 | −1 % | +3 % | +2 % |
+| pidigits limbs | 0.561 | +6 % | −12 % | 0 % |
+| regex-redux | 0.151 | −2 % | 0 % | 0 % |
+| reverse-complement | 0.069 | −16 % | −9 % | −6 % |
+| spectral-norm | 0.512 | −6 % | −5 % | 0 % |
+| classes | 0.274 | +5 % | +2 % | +3 % |
+| closures | 0.346 | +5 % | +2 % | +3 % |
+| fib | 0.029 | 0 % | −4 % | 0 % |
+| floats | 0.077 | +4 % | +3 % | 0 % |
+| hashmap | 0.262 | +20 % | +10 % | +14 % |
+| loops | 0.217 | −3 % | −4 % | −2 % |
+| nbody | 0.255 | +33 % | −15 % | +34 % |
+| shapes | 0.128 | +4 % | −2 % | −11 % |
+| sort | 0.099 | +12 % | −2 % | +1 % |
+| strings | 0.110 | +1 % | +9 % | +5 % |
+
+Programs large enough to split: each program above plus the units_1000 code (called once from
+`main`, so it is compiled), about 150 000 VIR statements, 1 unit against 4, CPU seconds, best of 7
+interleaved runs:
+
+| program | 1 unit | 4 units | change |
+|---|---:|---:|---:|
+| nbody | 0.211 | 0.211 | 0 % |
+| hashmap | 0.253 | 0.254 | +1 % |
+| classes | 0.293 | 0.281 | −4 % |
+| closures | 0.334 | 0.341 | +2 % |
+| sort | 0.085 | 0.087 | +3 % |
+| strings | 0.114 | 0.116 | +1 % |
+| shapes | 0.079 | 0.077 | −3 % |
+| floats | 0.060 | 0.061 | +2 % |
+| loops | 0.228 | 0.230 | +1 % |
+| n-body | 0.515 | 0.510 | −1 % |
+| spectral-norm | 0.462 | 0.457 | −1 % |
+| binary-trees | 0.755 | 0.865 | +15 % |
+| fannkuch-redux | 0.225 | 0.234 | +4 % |
+| mandelbrot | 0.997 | 1.034 | +4 % |
+
+Best of 15 again: binary-trees +13 %, fannkuch-redux +5 %, mandelbrot +1 %. binary-trees frees
+each tree through drop glue that is generated per type and lands far from the class in program
+order: `drop TreeNode` (first unit) → `objdrop TreeNode` → `drop Option<TreeNode>` (last unit) →
+`drop TreeNode`, so the recursion crosses units at every node. Importing small callees
+transitively (four levels) puts `available_externally` copies of all three in both units, but
+LLVM still does not inline through the recursion (+15 % in a second run; one unit inlines the
+whole chain into `objdrop`, internal functions with one caller). A second full run also moved
+classes from −4 % to +10 % and hashmap from +1 % to +6 %: single runs on this cloud VM vary by
+up to ±10 %.
+
+The same comparison on Windows 11 (x86_64, 20 logical cores, clang 22.1.8; the units_1000 code
+appended to each program and called first from `main`), CPU cycles of the process (10⁹,
+`QueryProcessCycleTime`), best of 15 interleaved runs. The machine was fully loaded by other
+builds throughout: max/min of the 15 runs of one binary is 31–80 %, and the best of a single
+earlier round differed from these by up to 30 %, so changes below ±10 % are noise here:
+
+| program | 1 unit | 4 units | change | median 1 unit | median 4 units |
+|---|---:|---:|---:|---:|---:|
+| binary-trees | 3.274 | 3.362 | +3 % | 3.985 | 4.205 |
+| fannkuch-redux | 0.852 | 0.836 | −2 % | 1.002 | 1.037 |
+| mandelbrot | 3.344 | 3.586 | +7 % | 4.118 | 4.034 |
+| n-body | 1.865 | 1.697 | −9 % | 2.213 | 2.409 |
+| nbody | 0.638 | 0.675 | +6 % | 0.866 | 0.897 |
+| hashmap | 0.691 | 0.677 | −2 % | 0.949 | 1.009 |
+| classes | 0.691 | 0.752 | +9 % | 0.860 | 0.850 |
+| closures | 1.036 | 1.042 | +1 % | 1.225 | 1.186 |
+
+This neither confirms nor rules out the Linux losses; the quiet-machine numbers above
+(binary-trees +13–15 %) decide.
+
+Decision: `-O3` stays (`-O2` is 12–33 % slower on nbody, hashmap and sort and saves ≈ 12 % of
+clang time; `VELT_LLVM_OPT` selects another level). Splitting is opt-in (`VELT_CODEGEN_UNITS`),
+because split programs can run up to 15 % slower: forced units cost up to a third on small
+n-body-like programs, where the hot loop calls across the split, and recursive drop glue across
+units costs binary-trees 13–15 % in a program split by size. #192 tracks what splitting by default
+needs.
+
+### n-body with clang 22 (FINDINGS 8.9)
+
+N = 50 000 000, CPU seconds, best of 5:
+
+| implementation | CPU s | × Rust (generic) |
+|---|---:|---:|
+| Rust `n-body.rs` (rustc 1.97, LLVM 22, `-C target-cpu=native`) | 2.11 | 0.92 |
+| Rust `n-body.rs` (same, no `target-cpu`) | 2.29 | 1.00 |
+| Velt `main.vlt`, clang 18 | 3.41–3.60 | 1.49–1.57 |
+| Velt `main.vlt`, clang 22 | 3.39–3.40 | 1.48 |
+| Velt `main_opt.vlt`, clang 18 | 3.75 | 1.64 |
+| Velt `main_opt.vlt`, clang 22 | 3.69 | 1.61 |
+
+clang 22 compiles the same IR to code as fast as clang 18 (within noise) on x86_64: the newer
+LLVM does not close the gap here.
+
 ## Parse time: lexing on demand (#136, 2026-10-02)
 
 `cargo test --release -p velt_syntax --test bench -- --ignored --nocapture` (parse only, the AST

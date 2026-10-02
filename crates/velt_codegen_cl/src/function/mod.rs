@@ -1,8 +1,19 @@
 //! Translation of one VIR function into Cranelift IR.
 //!
-//! Scalar locals whose address is never taken become `cranelift_frontend::Variable`s (SSA
-//! construction is left to `FunctionBuilder`); aggregates and address-taken scalars live in
-//! explicit stack slots. Submodules handle one concern each on the shared `Translator`.
+//! Scalar locals whose address is never taken live in registers: a local assigned exactly once
+//! is the SSA value of its assignment (`Storage::Value`), any other becomes a
+//! `cranelift_frontend::Variable` (SSA construction is left to `FunctionBuilder`). Aggregates and
+//! address-taken scalars live in explicit stack slots. Submodules handle one concern each on the
+//! shared `Translator`.
+//!
+//! Why single assignments bypass `Variable`: `FunctionBuilder` keeps, per variable, a table
+//! indexed by block, so its memory grows with variables × blocks. VIR names every temporary, so
+//! a long function (one `main` of thousands of statements) has tens of thousands of both and
+//! needed gigabytes. A local assigned once is safe to use directly: `velt_vir::verify` checks
+//! definite assignment, so its only assignment dominates every reachable read. Blocks are
+//! translated in VIR order, which need not follow dominance; a read that comes before the
+//! assignment in that order (or a second assignment the count missed) is recorded, and the
+//! function is translated again with those locals as variables.
 
 mod binary;
 mod cast;
@@ -18,7 +29,7 @@ use cranelift_codegen::isa::TargetFrontendConfig;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataId, FuncId, Module};
 use target_lexicon::{Architecture, BinaryFormat};
-use velt_vir::vir::{self, BlockId, Place, Proj, Rvalue, Stmt, Ty};
+use velt_vir::vir::{self, BlockId, Place, Proj, Rvalue, SrcLoc, Stmt, Terminator, Ty};
 
 use crate::abi::{scalar_type, size_align};
 use crate::module::Declarations;
@@ -35,6 +46,8 @@ pub(crate) struct LibFunctions {
 #[derive(Clone, Copy)]
 enum Storage {
     Var(Variable),
+    /// Assigned exactly once: the value of that assignment, once translated (`Translator::values`).
+    Value(u32),
     Slot(ir::StackSlot),
     Unit,
 }
@@ -43,6 +56,8 @@ enum Storage {
 #[derive(Clone, Copy)]
 enum Loc {
     Var(Variable, Ty),
+    /// A single-assignment local (`Storage::Value`).
+    Value(u32, Ty),
     /// Memory at `base + offset` holding a value of type `Ty`.
     Mem(ir::Value, i32, Ty),
     Unit,
@@ -51,7 +66,7 @@ enum Loc {
 impl Loc {
     fn ty(&self) -> Ty {
         match *self {
-            Loc::Var(_, t) | Loc::Mem(_, _, t) => t,
+            Loc::Var(_, t) | Loc::Value(_, t) | Loc::Mem(_, _, t) => t,
             Loc::Unit => Ty::Unit,
         }
     }
@@ -77,6 +92,11 @@ struct Translator<'a, 'b, M: Module> {
     frontend_config: TargetFrontendConfig,
     blocks: Vec<ir::Block>,
     storage: Vec<Storage>,
+    /// Per local: the value of a `Storage::Value` local once its assignment is translated.
+    values: Vec<Option<ir::Value>>,
+    /// `Storage::Value` locals read before their assignment, or assigned twice, in translation
+    /// order: translated again as variables.
+    demote: Vec<u32>,
     func_refs: HashMap<FuncId, ir::FuncRef>,
     /// Function refs used only to take addresses (see `far_addresses`).
     addr_refs: HashMap<FuncId, ir::FuncRef>,
@@ -84,9 +104,15 @@ struct Translator<'a, 'b, M: Module> {
     /// Materialize symbol addresses with absolute relocations instead of PC-relative page
     /// addressing: cranelift-object cannot emit ADRP relocations for aarch64 COFF.
     far_addresses: bool,
+    /// Source locations of the instructions (debug info; empty when the VIR has none): a
+    /// Cranelift `SourceLoc` is an index into this table.
+    srclocs: Vec<SrcLoc>,
+    srcloc_ids: HashMap<SrcLoc, u32>,
 }
 
-/// Translate `function` into `func` (whose signature and name are already set).
+/// Translate `function` into `func` (whose signature and name are already set). Returns the
+/// source locations its instructions carry (Cranelift `SourceLoc` *n* is entry *n*; empty
+/// without debug info).
 pub(crate) fn translate_function<M: Module>(
     module: &mut M,
     program: &vir::Program,
@@ -95,15 +121,55 @@ pub(crate) fn translate_function<M: Module>(
     function: &vir::Function,
     func: &mut ir::Function,
     builder_ctx: &mut FunctionBuilderContext,
-) -> CodegenResult<()> {
+) -> CodegenResult<Vec<SrcLoc>> {
     check_shape(function)?;
     let in_memory = memory_locals(function)?;
+    let mut single = single_assignments(function, &in_memory);
+    let (signature, name) = (func.signature.clone(), func.name.clone());
+    loop {
+        let (demote, srclocs) = translate_once(
+            module,
+            program,
+            decls,
+            libs,
+            function,
+            func,
+            builder_ctx,
+            &in_memory,
+            &single,
+        )?;
+        if demote.is_empty() {
+            return Ok(srclocs);
+        }
+        for local in demote {
+            single[local as usize] = false;
+        }
+        func.clear();
+        func.signature = signature.clone();
+        func.name = name.clone();
+    }
+}
+
+/// One translation attempt; returns the single-assignment locals that must become variables
+/// (then `func` holds a finished but meaningless body), and the source location table.
+#[allow(clippy::too_many_arguments)]
+fn translate_once<M: Module>(
+    module: &mut M,
+    program: &vir::Program,
+    decls: &Declarations,
+    libs: &mut LibFunctions,
+    function: &vir::Function,
+    func: &mut ir::Function,
+    builder_ctx: &mut FunctionBuilderContext,
+    in_memory: &[bool],
+    single: &[bool],
+) -> CodegenResult<(Vec<u32>, Vec<SrcLoc>)> {
     let frontend_config = module.target_config();
     let triple = module.isa().triple();
     let far_addresses = matches!(triple.architecture, Architecture::Aarch64(_))
         && triple.binary_format == BinaryFormat::Coff;
     let mut builder = FunctionBuilder::new(func, builder_ctx);
-    let storage = allocate_locals(&mut builder, program, function, &in_memory)?;
+    let storage = allocate_locals(&mut builder, program, function, in_memory, single)?;
     let mut translator = Translator {
         module,
         program,
@@ -113,16 +179,23 @@ pub(crate) fn translate_function<M: Module>(
         builder,
         frontend_config,
         blocks: Vec::new(),
+        values: vec![None; storage.len()],
         storage,
+        demote: Vec::new(),
         func_refs: HashMap::new(),
         addr_refs: HashMap::new(),
         data_refs: HashMap::new(),
         far_addresses,
+        srclocs: Vec::new(),
+        srcloc_ids: HashMap::new(),
     };
     translator.run()?;
     translator.builder.seal_all_blocks();
     translator.builder.finalize();
-    Ok(())
+    let mut demote = translator.demote;
+    demote.sort_unstable();
+    demote.dedup();
+    Ok((demote, translator.srclocs))
 }
 
 fn check_shape(function: &vir::Function) -> CodegenResult<()> {
@@ -169,11 +242,46 @@ fn memory_locals(function: &vir::Function) -> CodegenResult<Vec<bool>> {
     Ok(in_memory)
 }
 
+/// Which locals are assigned exactly once (parameters count their entry assignment): direct
+/// assignments of the whole local and call results. Only meaningful for register locals.
+fn single_assignments(function: &vir::Function, in_memory: &[bool]) -> Vec<bool> {
+    let mut writes = vec![0u32; function.locals.len()];
+    for w in writes.iter_mut().take(function.params.len()) {
+        *w = 1;
+    }
+    let mut count = |p: &Place| {
+        if p.proj.is_empty() {
+            if let Some(w) = writes.get_mut(p.local.0 as usize) {
+                *w += 1;
+            }
+        }
+    };
+    for block in &function.blocks {
+        for s in &block.stmts {
+            if let Stmt::Assign(p, _) = s {
+                count(p);
+            }
+        }
+        if let Terminator::Call {
+            dest: Some(dest), ..
+        } = &block.term
+        {
+            count(dest);
+        }
+    }
+    writes
+        .iter()
+        .zip(in_memory)
+        .map(|(&w, &mem)| w == 1 && !mem)
+        .collect()
+}
+
 fn allocate_locals(
     builder: &mut FunctionBuilder,
     program: &vir::Program,
     function: &vir::Function,
     in_memory: &[bool],
+    single: &[bool],
 ) -> CodegenResult<Vec<Storage>> {
     let mut storage = Vec::with_capacity(function.locals.len());
     for (i, local) in function.locals.iter().enumerate() {
@@ -188,6 +296,7 @@ fn allocate_locals(
                 ));
                 Storage::Slot(slot)
             }
+            _ if single[i] => Storage::Value(i as u32),
             ty => Storage::Var(builder.declare_var(scalar_type(ty))),
         });
     }
@@ -204,6 +313,7 @@ impl<M: Module> Translator<'_, '_, M> {
             .map(|_| self.builder.create_block())
             .collect();
         self.builder.switch_to_block(entry);
+        self.set_location(self.function.first_loc());
         let params = self.builder.block_params(entry).to_vec();
         for (i, value) in params.into_iter().enumerate() {
             let loc = self.place(&Place::local(vir::Local(i as u32)))?;
@@ -216,13 +326,34 @@ impl<M: Module> Translator<'_, '_, M> {
         for (bi, block) in function.blocks.iter().enumerate() {
             self.builder.switch_to_block(self.blocks[bi]);
             for (si, s) in block.stmts.iter().enumerate() {
+                self.set_location(function.loc(bi, si));
                 self.stmt(s)
                     .map_err(|e| format!("bb{bi} stmt {si} ({s:?}): {e}"))?;
             }
+            self.set_location(function.term_loc(bi));
             self.terminator(&block.term)
                 .map_err(|e| format!("bb{bi} terminator ({:?}): {e}", block.term))?;
         }
         Ok(())
+    }
+
+    /// Tag the instructions that follow with `at` (debug info; a no-op without locations).
+    fn set_location(&mut self, at: Option<SrcLoc>) {
+        if self.program.files.is_empty() {
+            return;
+        }
+        let loc = match at {
+            Some(at) => {
+                let next = self.srclocs.len() as u32;
+                let id = *self.srcloc_ids.entry(at).or_insert(next);
+                if id == next {
+                    self.srclocs.push(at);
+                }
+                ir::SourceLoc::new(id)
+            }
+            None => ir::SourceLoc::default(),
+        };
+        self.builder.set_srcloc(loc);
     }
 
     fn block(&self, id: BlockId) -> CodegenResult<ir::Block> {
