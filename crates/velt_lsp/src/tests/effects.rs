@@ -23,6 +23,19 @@ class Cart {
   count(): usize {
     return this.items.length;
   }
+  addChecked(item: string) {
+    if (item == "") {
+      throw new NotFound(item);
+    }
+    this.items.push(item);
+  }
+  addOrFail(item: string): usize throws NotFound {
+    if (item == "") {
+      throw new NotFound(item);
+    }
+    this.items.push(item);
+    return 1;
+  }
   addCounted(item: string): usize {
     this.items.push(item);
     return this.items.length;
@@ -94,7 +107,8 @@ fn inlay_hints_show_inferred_throws_and_mutation() {
         h.2.starts_with("throws") || h.2.starts_with("modifies") || h.2 == "modified"
     };
     let mut effects: Vec<(u64, u64, String)> = hints.iter().filter(effect).cloned().collect();
-    effects.sort();
+    // By position only, keeping the server's order of hints at the same place.
+    effects.sort_by_key(|h| (h.0, h.1));
     let hint = |needle: &str, delta: usize, label: &str| {
         let (line, col) = at(needle, delta);
         (line, col, label.to_string())
@@ -103,7 +117,10 @@ fn inlay_hints_show_inferred_throws_and_mutation() {
         effects,
         [
             hint("/* ) */) {", 8, "modifies this"),
-            hint("(item: string): usize {", 21, "modifies this"),
+            hint("addChecked(item: string)", 24, "throws NotFound"),
+            hint("addChecked(item: string)", 24, "modifies this"),
+            hint("usize throws NotFound {", 21, "modifies this"),
+            hint("addCounted(item: string): usize", 31, "modifies this"),
             hint("cart: Cart", 0, "modified"),
             hint(
                 "): string {

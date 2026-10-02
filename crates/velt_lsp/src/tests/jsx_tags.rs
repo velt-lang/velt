@@ -9,6 +9,7 @@ use super::jsx::{labels, open};
 
 const PAGE: &str = r#"// @jsxImportSource ./jsx_ui
 import { Card } from "./jsx_cards";
+import * as ui from "./jsx_cards";
 
 function heading(): JSX.Element {
   return <h1>Heading</h1>;
@@ -17,7 +18,7 @@ function heading(): JSX.Element {
 function page(): JSX.Element {
   const Badge = (props: { text: string }): JSX.Element => <h1>{props.text}</h1>;
   const Title = "t";
-  return <div id="main"><Card title="b"></Card><Badge text={Title} /><a href="/x">Grüße 😀 x</a></div>;
+  return <div id="main"><Card title="b"></Card><ui.Card title="c"></ui.Card><Badge text={Title} /><a href="/x">Grüße 😀 x</a></div>;
 }
 "#;
 
@@ -67,6 +68,45 @@ fn closing_tags_name_their_component() {
     assert!(
         cols.contains(&(line as u64, (col - 3 + 2) as u64)),
         "{cols:?}"
+    );
+    client.shutdown();
+}
+
+#[test]
+fn closing_tags_of_namespaced_components() {
+    let (mut client, doc) = open(PAGE);
+    let (line, col) = pos_of(PAGE, "</ui.Card>", 6);
+    let loc = client.request("textDocument/definition", at(&doc, line, col));
+    assert!(
+        loc["uri"]
+            .as_str()
+            .unwrap_or_default()
+            .ends_with("jsx_cards.vlt"),
+        "{loc}"
+    );
+    let mut params = at(&doc, line, col);
+    params["newName"] = json!("Panel");
+    let edit = client.request("textDocument/rename", params);
+    let starts: Vec<(u64, u64)> = edit["changes"][doc.as_str()]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            let start = &e["range"]["start"];
+            (
+                start["line"].as_u64().unwrap(),
+                start["character"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let (open_line, open_col) = pos_of(PAGE, "<ui.Card title", 4);
+    assert!(
+        starts.contains(&(open_line as u64, open_col as u64)),
+        "{starts:?}"
+    );
+    assert!(
+        starts.contains(&(line as u64, (col - 1) as u64)),
+        "{starts:?}"
     );
     client.shutdown();
 }

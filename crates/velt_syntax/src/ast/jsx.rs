@@ -15,8 +15,9 @@ pub struct JsxElement {
     /// Empty for a self-closing element.
     pub children: Vec<JsxChild>,
     /// The name in the closing tag, as written (`Card` in `</Card>`, with its own span); `None`
-    /// for a self-closing element and a fragment. It matches `name` (else the parser reports
-    /// an error).
+    /// for a self-closing element and a fragment. In a tree recovered from errors it may differ
+    /// from `name` (`<A></B>`, which the parser reports); it names something only when it is
+    /// spelled like `name`.
     pub closing_name: Option<JsxName>,
     pub span: Span,
 }

@@ -182,8 +182,10 @@ impl Collector<'_> {
             return;
         };
         if m.this {
-            // After the whole signature: `add(x: T): R modifies this`.
-            let at = sig.ret.as_ref().map_or(after, |r| r.span.hi);
+            // After the whole signature, written `throws` included, and after an inferred
+            // `throws` hint at the same place: `add(x: T): R throws E modifies this`.
+            let end = sig.throws.as_ref().or(sig.ret.as_ref());
+            let at = end.map_or(after, |t| t.span.hi);
             let hint = (at, "modifies this".to_string(), InlayHintKind::TYPE);
             self.hints.push(hint);
         }
@@ -235,24 +237,13 @@ impl Collector<'_> {
         else {
             return;
         };
-        // After the last `)` of the head as the scanner sees it (not one inside a comment), or
-        // after a bare parameter (`x => …`): the end of the head's last name.
-        let tokens = text_scan::scan(head, head.len());
-        let close = tokens
-            .iter()
+        // After the last `)` of the head as the scanner sees it (not one inside a comment). A
+        // bare parameter (`x => …`) needs a written function type, which says what it throws.
+        let close = text_scan::scan(head, head.len())
+            .into_iter()
             .rev()
             .find(|t| t.kind == TokenKind::Punct(b')'));
-        let bare = || {
-            let arrow = tokens
-                .iter()
-                .rposition(|t| t.kind == TokenKind::Punct(b'='))?;
-            let name = tokens[..arrow]
-                .iter()
-                .rev()
-                .find(|t| t.kind == TokenKind::Ident)?;
-            Some(name.hi)
-        };
-        let Some(end) = close.map(|c| c.hi).or_else(bare) else {
+        let Some(end) = close.map(|c| c.hi) else {
             return;
         };
         let at = ret.as_ref().map_or(init.span.lo + end, |r| r.span.hi);

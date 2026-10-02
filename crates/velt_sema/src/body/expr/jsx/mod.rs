@@ -52,8 +52,11 @@ impl FnCx<'_, '_> {
         };
         if self.cx.recording() {
             self.cx.rec_ty(el.span, h.ty);
+            // A mismatched closing tag (`<A></B>`, reported by the parser) names nothing.
             if let (Some(open), Some(close)) = (&el.name, &el.closing_name) {
-                self.mirror_closing_name(mark, open, close);
+                if open.to_source() == close.to_source() {
+                    self.mirror_closing_name(mark, open, close);
+                }
             }
         }
         h

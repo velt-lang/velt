@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::programs::{load_src, load_src_at, load_src_lenient, repo_root};
+use common::programs::{load_src, load_src_at, load_src_lenient, load_src_lenient_at, repo_root};
 use velt_common::FileId;
 use velt_sema::ide::{check_for_ide, Analysis, DefKind};
 
@@ -378,4 +378,22 @@ function main() { const e = <Card title=\"t\"><p>x</p></Card>; }";
     let refs: Vec<u32> = a.references(&card).iter().map(|s| s.lo).collect();
     assert!(refs.contains(&at(src, "</Card>", 0, 2)), "{refs:?}");
     assert!(refs.contains(&at(src, "<Card title", 0, 1)), "{refs:?}");
+}
+
+#[test]
+fn a_mismatched_closing_tag_names_nothing() {
+    let src = "// @jsxImportSource ./_jsx_test_provider
+function Card(props: { title: string }): JSX.Element { return <div>{props.title}</div>; }
+function main() { const e = <Card title=\"t\"></Other>; }";
+    let l = load_src_lenient_at(&repo_root().join("tests/golden/lang/main.vlt"), src);
+    let file = l.modules[l.root].file;
+    let a = check_for_ide(&l.modules, l.root);
+    let card = a.def_at(file, at(src, "<Card", 0, 1)).expect("opening tag");
+    let other = at(src, "</Other>", 0, 2);
+    let found = a.def_at(file, other);
+    assert!(
+        !found.as_ref().is_some_and(|d| d.same_def(&card)),
+        "{found:?}"
+    );
+    assert!(!a.references(&card).iter().any(|s| s.lo == other));
 }
