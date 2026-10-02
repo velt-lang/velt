@@ -7,6 +7,7 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 |---|---|
 | `console.log(a, b, …)`, `console.error(…)` | print the arguments separated by spaces to stdout / stderr. Values print like Node: `[ 1, 2 ]`, `{ k: 1, s: 'a' }`, `Map(1) { 'a' => 1 }`, `ClassName { field: value }`, numbers JS-style |
 | `process.exit(code: i32)` | exit immediately (Node's other `process` members, such as `process.stdout` and `process.argv`, are in [`velt:process`](../std/process.md)) |
+| `process.memoryUsage()` | `{ rss, heapUsed }` in bytes, a `MemoryUsage` ([`velt:process`](../std/process.md#memory-usage)) |
 | `panic(msg)` | stop with a panic (exit code 101) |
 | `assert(cond, msg)`, `assertEq(a, b)` | panic when the check fails (`assertEq` compares contents) |
 | `assertThrows(() => f())` | the error `f` throws; panics if it returns normally |

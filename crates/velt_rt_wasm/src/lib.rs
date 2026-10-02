@@ -9,8 +9,8 @@
 //!   `*_sync` fs calls. Their `repr(C)` types put a pointer only where an 8-byte field
 //!   follows, so on wasm32 each pointer occupies the first half of its 8-byte VIR slot (see
 //!   `velt_codegen_llvm`'s `Target::wide_pointer_slots`): identical layouts, identical behavior.
-//! - **own**: `platform` (host services per target), `entry`, `io`, `panic`, `process`,
-//!   `shared` and the current-thread executor in `task` (no tokio, no threads). Every function
+//! - **own**: `platform` (host services per target), `entry`, `io`, `memory_usage`, `panic`,
+//!   `process`, `shared` and the current-thread executor in `task` (no tokio, no threads). Every function
 //!   has exactly the signature `std/*.vlt` declares (WebAssembly links only exact matches;
 //!   crates/velt_rt/tests/std_externs.rs checks both runtimes).
 //!
@@ -41,6 +41,7 @@ pub mod json;
 pub mod math;
 #[path = "../../velt_rt/src/mem.rs"]
 pub mod mem;
+pub mod memory_usage;
 pub mod panic;
 pub mod platform;
 pub mod process;

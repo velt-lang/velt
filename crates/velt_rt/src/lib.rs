@@ -34,6 +34,7 @@ pub mod json;
 pub mod localtime;
 pub mod math;
 pub mod mem;
+pub mod memory_usage;
 pub mod native;
 pub mod net;
 pub mod os;

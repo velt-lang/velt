@@ -1,4 +1,4 @@
-//! Builtins: `console.log/error`, `process.exit`, `panic`, `shared`, `Ok`/`Err`, enum variant
+//! Builtins: `console.log/error`, `process.exit`, `process.memoryUsage`, `panic`, `shared`, `Ok`/`Err`, enum variant
 //! constructors, the builtin array/`clone` methods, the M3 task builtins (`spawn`, `sleep`,
 //! `yieldNow`, `Promise.all/race/allSettled/any`, `performance.now`, `Date.now`; see `tasks.rs`), and
 //! `__intrinsic_*` (std modules only).
@@ -109,8 +109,8 @@ impl FnCx<'_, '_> {
         self.intrinsic(i, ck.args, ck.ret, span)
     }
 
-    /// `console.log(...)`, `console.error(...)`, `process.exit(code)`, `Promise.all(ps)` (and
-    /// `race`, `allSettled`, `any`),
+    /// `console.log(...)`, `console.error(...)`, `process.exit(code)`, `process.memoryUsage()`,
+    /// `Promise.all(ps)` (and `race`, `allSettled`, `any`),
     /// `performance.now()`, `Date.now()`.
     pub(crate) fn namespace_builtin(
         &mut self,
@@ -133,6 +133,10 @@ impl FnCx<'_, '_> {
                     exp,
                     span,
                 ));
+            }
+            ("process", "memoryUsage") => {
+                let what = "process.memoryUsage";
+                return Some(self.prelude_call("processMemoryUsage", what, &[], args, exp, span));
             }
             ("Promise", "any") => {
                 return Some(self.prelude_call("promiseAny", "Promise.any", &[], args, exp, span));
