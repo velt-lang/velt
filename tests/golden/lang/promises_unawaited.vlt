@@ -1,6 +1,7 @@
 // A stored promise that is never awaited still runs to completion, like in JS: dropping it does
 // not cancel it (its result is dropped when it finishes), and the program waits for it before
-// exiting. Timers are >= 140 ms apart.
+// exiting. Each promise is created after the ones that print before it and sleeps >= 140 ms
+// longer, so the order holds however long `main` takes between creating them.
 async function log(msg: string, ms: i64): Promise<string> {
   await sleep(ms);
   console.log(msg);
@@ -13,12 +14,13 @@ function fireAndForget(): i64 {
 }
 
 async function main() {
-  const kept = log("kept but never awaited", 450);
-  console.log("sync function returned", fireAndForget());
   {
     const scoped = log("dropped at the end of a block", 10);
   }
   const awaited = log("awaited", 150);
+  // Started promises run on this task, so nothing they print comes before this line.
+  console.log("sync function returned", fireAndForget());
+  const kept = log("kept but never awaited", 450);
   console.log(await awaited);
   console.log("main returns");
 }

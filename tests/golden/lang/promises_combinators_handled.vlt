@@ -1,7 +1,10 @@
 // Every promise passed to a combinator is handled, like in JS: once the combinator settled or
 // lost, an input that rejects later is not reported as uncaught. `Promise.allSettled` awaits
-// every input itself. Losing started promises keep running to completion. Timers are >= 40 ms
-// apart.
+// every input itself. Losing started promises keep running to completion. The losers reject
+// only when `main` releases them after their race, and `main` waits until they did, so the
+// order of the output doesn't depend on timing.
+import { channel, Channel } from "velt:channel";
+
 class Boom extends Error {}
 
 async function fail(ms: i64): Promise<i64> throws Boom {
@@ -9,14 +12,33 @@ async function fail(ms: i64): Promise<i64> throws Boom {
   throw new Boom(`failed after ${ms} ms`);
 }
 
-async function failLoudly(ms: i64): Promise<i64> throws Boom {
-  await sleep(ms);
-  console.log("rejects after", ms, "ms");
-  throw new Boom(`failed after ${ms} ms`);
+// Rejects once `release` receives a value, after releasing `next`.
+async function failWhenReleased(
+  name: string,
+  release: Channel<bool>,
+  next: Channel<bool>,
+): Promise<i64> throws Boom {
+  await release.receive();
+  console.log(name, "rejects");
+  await releaseOne(next);
+  throw new Boom(`${name} failed`);
+}
+
+async function releaseOne(gate: Channel<bool>): Promise<void> {
+  try {
+    await gate.send(true);
+  } catch (e) {
+    console.log("release failed");
+  }
 }
 
 async function valueAfter(ms: i64, v: i64): Promise<i64> throws Boom {
   await sleep(ms);
+  return v;
+}
+
+// Settles while it is created, before anything else can run.
+async function valueNow(v: i64): Promise<i64> throws Boom {
   return v;
 }
 
@@ -26,21 +48,33 @@ async function main() {
   } catch (e) {
     console.log("all rejected:", e.message);
   }
-  const all = Promise.all([valueAfter(10, 1), failLoudly(150)]);
+  const first = channel<bool>();
+  const firstDone = channel<bool>();
+  const all = Promise.all([valueAfter(10, 1), failWhenReleased("all's input", first, firstDone)]);
   const fallback = async (): Promise<i64[]> throws Boom => {
     await sleep(100);
     return [7];
   };
   console.log("all lost the race:", await Promise.race([all, fallback()]));
-  const settled = Promise.allSettled([valueAfter(10, 1), failLoudly(400)]);
+  await releaseOne(first);
+  await firstDone.receive();
+  // The second loser releases the third, which releases `done`.
+  const second = channel<bool>();
+  const third = channel<bool>();
+  const done = channel<bool>();
+  const settled = Promise.allSettled([
+    valueAfter(10, 1),
+    failWhenReleased("allSettled's input", second, third),
+  ]);
   const nothing = async (): Promise<PromiseSettledResult<i64, Boom>[]> => {
     await sleep(200);
     return [];
   };
   const r = await Promise.race([settled, nothing()]);
   console.log("allSettled lost the race:", r.length);
-  const kept = Promise.race([valueAfter(10, 3), failLoudly(600)]);
+  const kept = Promise.race([valueNow(3), failWhenReleased("kept race's input", third, done)]);
   console.log("kept race:", await kept);
-  await sleep(800);
+  await releaseOne(second);
+  await done.receive();
   console.log("exits normally");
 }

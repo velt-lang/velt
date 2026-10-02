@@ -1,7 +1,12 @@
-// std/timers: setTimeout ordering and cancellation, tasks owning values from frames that have
-// returned, setImmediate, clearTimeout, and Ticker (fixed count, stop, stop from another task,
-// missed ticks are skipped rather than burst). Gaps between ordered events are >= 100 ms.
+// std/timers: setTimeout callbacks run no earlier than their delay and own heap values from
+// frames that have returned, setImmediate, clearTimeout and clear() before and after a timer
+// started, and Ticker (fixed count, stop, stop from another task, missed ticks are skipped rather
+// than burst). Timer callbacks run as tasks of their own, possibly several at once, so they
+// report over a channel and `main` prints the reports sorted. Every check is a lower bound on
+// time or follows from the order of awaits, so the output doesn't depend on how fast anything
+// runs.
 
+import { channel, Channel } from "velt:channel";
 import {
   setTimeout,
   setImmediate,
@@ -12,8 +17,21 @@ import {
   Timer,
 } from "velt:timers";
 
-async function say(msg: string): Promise<void> {
-  console.log(msg);
+// The delay of timers that are cleared: far beyond the program's run time, so the clear always
+// comes first.
+const CLEARED_MS: i64 = 60000;
+
+async function report(out: Channel<string>, msg: string): Promise<void> {
+  try {
+    await out.send(msg);
+  } catch (e) {
+    console.log("report failed:", msg);
+  }
+}
+
+// Reports `name` and whether at least `ms` passed since `since` (a timer never fires early).
+async function reportAfter(out: Channel<string>, name: string, since: f64, ms: i64): Promise<void> {
+  await report(out, `${name} not early: ${performance.now() - since >= (ms as f64)}`);
 }
 
 class Doc {
@@ -26,44 +44,63 @@ class Doc {
   }
 }
 
-async function save(doc: Doc): Promise<void> {
-  console.log(`saved ${doc.title} (${doc.lines.length} lines)`);
+async function save(out: Channel<string>, doc: Doc): Promise<void> {
+  await report(out, `saved ${doc.title} (${doc.lines.length} lines)`);
 }
 
 // The callbacks own heap values created here; they run after this frame has returned.
-function scheduleFromFrame(): Timer {
+function scheduleFromFrame(out: Channel<string>): Timer {
   const doc = new Doc(`draft ${1 + 1}`, ["a", "b", "c"]);
-  setTimeout(() => save(doc), 250);
+  setTimeout(() => save(out, doc), 30);
   const name = `closure ${7 * 6}`;
   setTimeout(
     async () => {
-      console.log(`${name} ran`);
+      await report(out, `${name} ran`);
     },
-    150,
+    20,
   );
-  return setTimeout(() => say("cancelled task ran (bug)"), 200);
+  return setTimeout(() => report(out, "cancelled task ran (bug)"), CLEARED_MS);
 }
 
 async function timeouts() {
-  const cancelled = scheduleFromFrame();
-  setTimeout(() => say("third (350 ms)"), 350);
-  setTimeout(() => say("first (50 ms)"), 50);
-  const late = setTimeout(() => say("cleared with clearTimeout (bug)"), 100);
+  const out = channel<string>();
+  const start = performance.now();
+  const cancelled = scheduleFromFrame(out);
+  const late = setTimeout(() => report(out, "cleared with clearTimeout (bug)"), CLEARED_MS);
   clearTimeout(late);
   cancelled.clear();
   console.log("cleared:", cancelled.cleared, late.cleared, "started:", cancelled.started);
-  setImmediate(() => say("immediate"));
-  await delay(500);
-  const done = setTimeout(() => say("ran before clear"), 0);
-  await delay(100);
+  setImmediate(() => report(out, "immediate"));
+  setTimeout(() => reportAfter(out, "50 ms", start, 50), 50);
+  setTimeout(() => reportAfter(out, "100 ms", start, 100), 100);
+  const reports: string[] = [];
+  for (let i = 0; i < 5; i++) {
+    const r = await out.receive();
+    if (r != null) {
+      reports.push(r);
+    }
+  }
+  reports.sort();
+  for (const r of reports) {
+    console.log(r);
+  }
+  // Once it has run, a timer can't be cleared any more.
+  const done = setTimeout(() => report(out, "ran before clear"), 0);
+  console.log(await out.receive());
   done.clear();
   console.log("clear after start:", done.cleared, done.started);
+  console.log("cleared ones never started:", cancelled.started, late.started);
+  out.close();
 }
 
-async function stopAfter(s: TickerStop, ms: i64): Promise<void> {
-  await sleep(ms);
+async function stopNow(s: TickerStop): Promise<void> {
   s.stop();
   console.log("stopper fired");
+}
+
+// Settles while it is created: a promise in a race with it wins only if it settled already.
+async function settledNow(): Promise<bool> {
+  return false;
 }
 
 async function tickers() {
@@ -78,20 +115,21 @@ async function tickers() {
   console.log("ticks before stop:", n, "after stop:", await t.tick());
 
   const slow = new Ticker(300);
-  spawn(stopAfter(slow.stopper(), 100));
+  await spawn(stopNow(slow.stopper()));
   console.log("stopped from another task:", await slow.tick());
 
-  // Period 100 ms; the body stalls 250 ms after the first tick. The late tick resolves at once
-  // and the next waits for the next schedule point (400 ms) instead of bursting.
+  // Period 100 ms; the body stalls 250 ms after the first tick, so ticks 2 and 3 are missed. The
+  // late tick resolves at once (it wins a race against a promise that is already settled), and
+  // the next one waits for the first schedule point after the stall (400 ms or later) instead of
+  // resolving at once for the missed tick 3 (300 ms).
+  const start = performance.now();
   const skip = new Ticker(100);
   await skip.tick();
   await delay(250);
-  const a = performance.now();
+  const immediate = await Promise.race([skip.tick(), settledNow()]);
   await skip.tick();
-  const b = performance.now();
-  await skip.tick();
-  const c = performance.now();
-  console.log("late tick immediate:", b - a < 40.0, "next tick waits:", c - b > 15.0);
+  const waited = performance.now() - start >= 400.0;
+  console.log("late tick immediate:", immediate, "next tick waits:", waited);
 }
 
 async function main() {

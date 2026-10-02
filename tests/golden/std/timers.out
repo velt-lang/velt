@@ -1,11 +1,12 @@
 cleared: true true started: false
-immediate
-first (50 ms)
+100 ms not early: true
+50 ms not early: true
 closure 42 ran
+immediate
 saved draft 2 (3 lines)
-third (350 ms)
 ran before clear
 clear after start: false true
+cleared ones never started: false false
 ticks before stop: 3 after stop: false
 stopper fired
 stopped from another task: false
