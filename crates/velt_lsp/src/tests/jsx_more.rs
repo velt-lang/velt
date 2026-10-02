@@ -125,7 +125,8 @@ fn the_server_keeps_answering_on_incomplete_jsx() {
 
 #[test]
 fn the_less_than_trigger_only_completes_tags() {
-    let text = "function main() {\n  const a = 1;\n  if (a <\n}\n";
+    // After a closed block, `<` still compares.
+    let text = "function main() {\n  const a = 1;\n  if (a > 0) {\n    console.log(a);\n  }\n  if (a <\n}\n";
     let mut client = Client::start();
     let doc = uri("jsx_trigger.vlt");
     client.open(&doc, text);

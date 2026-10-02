@@ -60,24 +60,66 @@ pub fn context(text: &str, word_start: usize) -> Option<Context<'_>> {
 /// Can a `<` after `text` open an element: where an expression starts, or in the text between
 /// the tags of an element?
 fn tag_may_start(text: &str) -> bool {
-    starts_element(text) || in_jsx_text(text)
+    let floor = text.len().saturating_sub(MAX_TAG_BYTES);
+    may_start_above(text, floor)
 }
 
-/// Does `text` end in JSX text: after the `>` of a tag (`<p>`, `<a href="x">`, `<br />`,
-/// `</b>`, `<>`) or the `}` of a `{…}` child, with only text since? Text may hold anything but
-/// `<`, `>`, `{` and `}`; a `>` that compares (`a > b`, `x >= 1`) or ends an arrow is not a tag.
-fn in_jsx_text(text: &str) -> bool {
-    let Some(i) = text.rfind(['<', '>', '{', '}']) else {
+/// [`tag_may_start`], looking no further back than byte `floor`.
+fn may_start_above(text: &str, floor: usize) -> bool {
+    starts_element(text) || in_jsx_text(text, floor)
+}
+
+/// Does `text` end in JSX text: after a tag (`<p>`, `<a href="x">`, `<br />`, `</b>`, `<>`)
+/// or a `{…}` child that is itself in JSX text, with only text since? Text may hold anything
+/// but `<`, `>`, `{` and `}`. A `>` that compares, ends an arrow or closes type arguments
+/// (`Array<i64>`) is not a tag, and a `}` that closes a block is not a child.
+fn in_jsx_text(text: &str, floor: usize) -> bool {
+    let Some(i) = text.rfind(['<', '>', '{', '}']).filter(|&i| i >= floor) else {
         return false;
     };
-    if text[i..].starts_with('}') {
+    match text.as_bytes()[i] {
+        b'}' => matching_brace(&text[..i], floor).is_some_and(|open| in_jsx_text(&text[..open], floor)),
+        b'>' => closes_tag(&text[..i], floor),
+        _ => false,
+    }
+}
+
+/// Where the `{` is that a `}` right after `text` closes (not before `floor`).
+fn matching_brace(text: &str, floor: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, c) in text.char_indices().rev() {
+        if i < floor {
+            return None;
+        }
+        match c {
+            '}' => depth += 1,
+            '{' if depth == 0 => return Some(i),
+            '{' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Does a `>` right after `text` close a tag: `<>`, `</name>`, or an opening or self-closing
+/// tag whose `<` can open an element?
+fn closes_tag(text: &str, floor: usize) -> bool {
+    if text.ends_with('<') || text.ends_with("</") {
         return true;
     }
-    let ends_tag = text[..i]
-        .chars()
-        .next_back()
-        .is_some_and(|c| c.is_ascii_alphanumeric() || "_$\"'}/<".contains(c));
-    text[i..].starts_with('>') && ends_tag && !text[i + 1..].starts_with('=')
+    for (lt, _) in text.match_indices('<').rev() {
+        if lt < floor {
+            return false;
+        }
+        let inside = &text[lt + 1..];
+        if let Some(name) = inside.strip_prefix('/') {
+            return !name.is_empty() && name.chars().all(is_name_char);
+        }
+        if let Tag::Open(..) = opening_tag(inside) {
+            return may_start_above(&text[..lt], floor);
+        }
+    }
+    false
 }
 
 /// Can an element start after `text` (an operand is expected: not after a name, `)` or `]`,
@@ -272,6 +314,15 @@ mod tests {
             })
         );
         assert_eq!(ctx("if (a > b && c <"), None);
+        assert_eq!(ctx("function f() {}
+if (a <"), None);
+        assert_eq!(ctx("if (x) { g(); }
+while (i <"), None);
+        assert_eq!(ctx("const xs: Array<i64> = f(); if (n <"), None);
+        assert_eq!(ctx("const n = i<"), None);
+        assert_eq!(ctx("<p><br />then <"), Some(Context::Tag));
+        assert_eq!(ctx("<ul><li>a</li>and <"), Some(Context::Tag));
+        assert_eq!(ctx("<>frag <"), Some(Context::Tag));
         assert_eq!(ctx("const ok = x >= 1 && y <"), None);
         // Non-ASCII text before the cursor.
         assert_eq!(ctx("<p>Grüße 😀 <"), Some(Context::Tag));
