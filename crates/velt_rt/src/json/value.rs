@@ -48,6 +48,9 @@ impl Object {
         let Some(i) = self.find(key) else {
             return false;
         };
+        // The search (without an index), then the entries after `i` move down.
+        let searched = if self.index.is_none() { i + 1 } else { 1 };
+        count_work(searched + self.entries.len() - i - 1);
         let (removed, _) = self.entries.remove(i);
         if self.entries.len() <= INDEX_THRESHOLD {
             self.index = None;
@@ -67,12 +70,7 @@ impl Object {
         if let Some(index) = &mut self.index {
             index.insert(key.clone(), self.entries.len());
         } else if self.entries.len() == INDEX_THRESHOLD {
-            let mut index: HashMap<Box<str>, usize> = self
-                .entries
-                .iter()
-                .enumerate()
-                .map(|(i, (k, _))| (k.clone(), i))
-                .collect();
+            let mut index = build_index(&self.entries);
             index.insert(key.clone(), self.entries.len());
             self.index = Some(index);
         }
@@ -80,17 +78,49 @@ impl Object {
     }
 }
 
+/// The key index of `entries` (O(number of entries), counted as work).
+fn build_index(entries: &[(Box<str>, Arc<Value>)]) -> HashMap<Box<str>, usize> {
+    count_work(entries.len());
+    entries
+        .iter()
+        .enumerate()
+        .map(|(i, (k, _))| (k.clone(), i))
+        .collect()
+}
+
+/// Work done on objects on this thread: entries searched and moved by [`Object::remove`], index
+/// slots adjusted, indexes built and nodes copied on write. Lets tests check that editing stays
+/// linear by counting instead of timing.
+#[cfg(test)]
+// velt_rt_wasm compiles this file too, and its tests don't read the count.
+#[allow(dead_code)]
+pub(crate) fn edit_work() -> usize {
+    EDIT_WORK.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+thread_local! {
+    static EDIT_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn count_work(_steps: usize) {
+    #[cfg(test)]
+    EDIT_WORK.with(|w| w.set(w.get() + _steps));
+}
+
 /// Lower by one the indices of `moved` (the entries now from position `from` on, which were one
 /// further before a removal). Few moved entries are looked up by key; otherwise a pass over all
 /// indices is cheaper than hashing each key.
 fn shift_down(index: &mut HashMap<Box<str>, usize>, moved: &[(Box<str>, Arc<Value>)], from: usize) {
     if moved.len() * 8 < index.len() {
+        count_work(moved.len());
         for (k, _) in moved {
             if let Some(slot) = index.get_mut(k) {
                 *slot -= 1;
             }
         }
     } else {
+        count_work(index.len());
         for slot in index.values_mut() {
             if *slot > from {
                 *slot -= 1;
@@ -100,8 +130,13 @@ fn shift_down(index: &mut HashMap<Box<str>, usize>, moved: &[(Box<str>, Arc<Valu
 }
 
 impl Value {
-    /// A copy of this node sharing its children (O(number of children)).
+    /// A copy of this node sharing its children (O(number of children), counted as work).
     pub fn shallow_clone(&self) -> Value {
+        match self {
+            Value::Array(items) => count_work(items.len()),
+            Value::Object(obj) => count_work(obj.entries.len()),
+            _ => {}
+        }
         match self {
             Value::Null => Value::Null,
             Value::Bool(b) => Value::Bool(*b),
