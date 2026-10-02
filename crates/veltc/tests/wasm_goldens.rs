@@ -7,7 +7,8 @@
 //!
 //! Needs the rustup targets (`rustup target add wasm32-wasip1 wasm32-unknown-unknown`), LLVM's
 //! `opt`/`llc` (`rustup component add llvm-tools`), wasmtime and node; each part is skipped with
-//! a note when its tools are missing. Filter with `VELT_GOLDEN=<substring>`.
+//! a note when its tools are missing. Filter with `VELT_GOLDEN=<substring>` (several separated
+//! by `,`).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -65,7 +66,9 @@ fn build_runtime(root: &Path, triple: &str) {
 }
 
 fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
+    // `VELT_GOLDEN` as in tests/golden.rs: substrings separated by `,`, any of them matches.
     let filter = std::env::var("VELT_GOLDEN").unwrap_or_default();
+    let filters: Vec<&str> = filter.split(',').map(str::trim).collect();
     let mut files = vec![];
     for dir in dirs {
         let Ok(rd) = std::fs::read_dir(root.join("tests/golden").join(dir)) else {
@@ -76,7 +79,10 @@ fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
             p.extension().is_some_and(|e| e == "vlt")
                 && p.with_extension("out").exists()
                 && !skip.contains(&stem.as_ref())
-                && p.to_string_lossy().replace('\\', "/").contains(&filter)
+                && {
+                    let name = p.to_string_lossy().replace('\\', "/");
+                    filters.iter().any(|f| name.contains(f))
+                }
         }));
     }
     files.sort();

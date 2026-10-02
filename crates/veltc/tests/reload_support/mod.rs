@@ -19,6 +19,10 @@ const TIMEOUT: Duration = Duration::from_secs(120);
 /// Build the runtime staticlib `velt --exe` links (as the golden harness does), in this test's
 /// profile: `velt` looks for it next to itself.
 pub fn build_runtime() {
+    // Already built by the gate (see `tests/runtime_support/mod.rs`).
+    if cfg!(debug_assertions) && std::env::var_os("VELT_RT_PREBUILT").is_some_and(|v| v == "1") {
+        return;
+    }
     let profile: &[&str] = if cfg!(debug_assertions) {
         &[]
     } else {

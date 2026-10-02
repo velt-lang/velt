@@ -17,7 +17,9 @@
 //! - A golden whose first lines contain `// check: no leaks` must free every block it allocates
 //!   (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with A = F) in its debug run.
 //!
-//! Filter with `VELT_GOLDEN=<substring>`. A program running longer than `VELT_GOLDEN_TIMEOUT`
+//! Filter with `VELT_GOLDEN=<substring>` (several separated by `,`: a file matching any of them
+//! runs). `VELT_GOLDEN_SHARD=<i>/<n>` checks only the i-th of n interleaved shards (1-based), so
+//! CI can spread the goldens over several machines. A program running longer than `VELT_GOLDEN_TIMEOUT`
 //! seconds (default 120) is killed and fails. Builds go to `target/golden-work` (or
 //! `VELT_GOLDEN_WORK`); each program's outputs are deleted after it runs. Programs are checked
 //! on `VELT_GOLDEN_JOBS` worker threads (default: half the cores, at most 8; `1` = sequential);
@@ -29,6 +31,8 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+mod runtime_support;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -67,15 +71,10 @@ fn norm(s: &str) -> String {
 fn golden() {
     let root = root();
     // The runtime staticlib must exist next to the velt binary before we can link anything.
-    let st = Command::new(env!("CARGO"))
-        .args(["build", "-p", "velt_rt"])
-        .current_dir(&root)
-        .status()
-        .expect("cargo build -p velt_rt");
-    assert!(st.success(), "building velt_rt failed");
+    runtime_support::build_native_runtime(&root);
 
     let velt = env!("CARGO_BIN_EXE_velt");
-    let filter = std::env::var("VELT_GOLDEN").unwrap_or_default();
+    let filters = name_filters();
     // `VELT_GOLDEN_WORK` moves the build directory (e.g. to a disk with more space).
     let work = std::env::var_os("VELT_GOLDEN_WORK")
         .map(PathBuf::from)
@@ -95,11 +94,11 @@ fn golden() {
     let files: Vec<_> = files
         .into_iter()
         .filter(|f| {
-            f.to_string_lossy()
-                .replace(std::path::MAIN_SEPARATOR, "/")
-                .contains(&filter)
+            let name = f.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+            filters.iter().any(|filter| name.contains(filter.as_str()))
         })
         .collect();
+    let files = shard(files);
 
     let strict = std::env::var("VELT_GOLDEN_STRICT").is_ok();
     let mut skipped: Vec<String> = vec![];
@@ -145,6 +144,45 @@ fn golden() {
             )
         );
     }
+}
+
+/// The `VELT_GOLDEN` substrings, split at `,`; no filter matches every file.
+fn name_filters() -> Vec<String> {
+    let all = std::env::var("VELT_GOLDEN").unwrap_or_default();
+    let filters: Vec<String> = all
+        .split(',')
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .map(String::from)
+        .collect();
+    if filters.is_empty() {
+        vec![String::new()]
+    } else {
+        filters
+    }
+}
+
+/// The files of shard `i` of `n` (`VELT_GOLDEN_SHARD=i/n`, 1-based): every n-th file, so slow
+/// directories spread over the shards.
+fn shard(files: Vec<PathBuf>) -> Vec<PathBuf> {
+    let Ok(spec) = std::env::var("VELT_GOLDEN_SHARD") else {
+        return files;
+    };
+    let parsed = spec.split_once('/').and_then(|(i, n)| {
+        Some((
+            i.trim().parse::<usize>().ok()?,
+            n.trim().parse::<usize>().ok()?,
+        ))
+    });
+    let Some((i, n)) = parsed.filter(|&(i, n)| i >= 1 && i <= n) else {
+        panic!("VELT_GOLDEN_SHARD must be <i>/<n> with 1 <= i <= n, not `{spec}`");
+    };
+    files
+        .into_iter()
+        .enumerate()
+        .filter(|(k, _)| k % n == i - 1)
+        .map(|(_, f)| f)
+        .collect()
 }
 
 /// A golden is pending when a directory between it and `tests/golden` contains a `.pending` file:

@@ -6,6 +6,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod runtime_support;
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -64,12 +66,7 @@ fn g_release_binary_maps_addresses_to_velt_lines() {
     };
     let symbolizer = clang.with_file_name(exe_name);
     let root = root();
-    let st = Command::new(env!("CARGO"))
-        .args(["build", "-p", "velt_rt"])
-        .current_dir(&root)
-        .status()
-        .expect("cargo build -p velt_rt");
-    assert!(st.success());
+    runtime_support::build_native_runtime(&root);
     let out = root.join("target/golden-work-debuginfo/panic_div");
     let o = Command::new(env!("CARGO_BIN_EXE_velt"))
         .args(["build", "--release", "-g", "--backend", "llvm", "-o"])
