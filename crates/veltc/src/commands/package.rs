@@ -40,6 +40,7 @@ pub fn add(name: &str, version: Option<String>, path: Option<String>) -> Result<
             return Err(e);
         }
     };
+    warn_yanked(&installed);
     let what = match (version, path) {
         (Some(v), Some(p)) => format!("{v} (path {p})"),
         (Some(v), None) => v,
@@ -71,6 +72,13 @@ pub fn manifest(json: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Warn about installed versions that were yanked after `velt.lock` pinned them.
+pub fn warn_yanked(installed: &vpm::Installed) {
+    for warning in installed.yank_warnings() {
+        style::warning(&warning);
+    }
+}
+
 /// List the packages that run native code (and where their libraries came from).
 fn report_native(graph: &vpm::PackageGraph) {
     for (pkg, lib) in graph.natives() {
@@ -88,7 +96,7 @@ fn report_native(graph: &vpm::PackageGraph) {
     }
 }
 
-/// The newest published version of `name`, as a requirement string.
+/// The newest published version of `name` that is not yanked, as a requirement string.
 fn latest_version(loc: &Locations, name: &str) -> Result<String, String> {
     let index = vpm::registry::read_index(loc, name)?.ok_or_else(|| {
         format!(
@@ -99,18 +107,20 @@ fn latest_version(loc: &Locations, name: &str) -> Result<String, String> {
     let latest = index
         .versions
         .iter()
+        .filter(|e| !e.yanked)
         .map(|e| e.semver())
         .filter(|v| v.pre.is_empty())
         .max();
     latest
         .map(|v| v.to_string())
-        .ok_or_else(|| format!("package `{name}` has no stable version"))
+        .ok_or_else(|| format!("package `{name}` has no stable version that is not yanked"))
 }
 
 /// `velt install [--locked]` and `velt update`.
 pub fn install(opts: InstallOptions) -> Result<(), String> {
     let root = Project::current_root()?;
     let installed = vpm::install(&root, &Locations::from_env()?, opts)?;
+    warn_yanked(&installed);
     let count = installed.lockfile.packages.len();
     let lock = if installed.lock_changed {
         "updated velt.lock"

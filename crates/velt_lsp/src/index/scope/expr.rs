@@ -55,6 +55,7 @@ impl<'a> Walker<'a> {
                 self.expr(expr);
                 self.ty(ty);
             }
+            ast::ExprKind::Jsx(el) => self.jsx(el),
             _ => self.plain_children(e),
         }
     }

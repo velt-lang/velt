@@ -205,4 +205,50 @@ mod tests {
         notify(&conn, "exit", Value::Null);
         server.join().unwrap().unwrap();
     }
+
+    /// JSX completion against std/jsx (its `IntrinsicElements` is re-exported from another
+    /// module and refers to named attribute types).
+    #[test]
+    fn jsx_completion_uses_the_std_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main.vlt");
+        std::fs::write(
+            &main,
+            "function main() {}
+",
+        )
+        .unwrap();
+        let main_uri = lsp_types::Url::from_file_path(&main).unwrap();
+        let (server_conn, conn) = Connection::memory();
+        let server =
+            std::thread::spawn(move || velt_lsp::serve(server_conn, &CliLoader::default()));
+        request(&conn, 1, "initialize", json!({ "capabilities": {} }));
+        notify(&conn, "initialized", json!({}));
+        let text = "function page(): JSX.Element {
+  const x = <p>x</p>;
+  return <a 
+}
+";
+        let doc = json!({ "uri": main_uri, "languageId": "velt", "version": 1, "text": text });
+        notify(
+            &conn,
+            "textDocument/didOpen",
+            json!({ "textDocument": doc }),
+        );
+        let at = json!({ "textDocument": { "uri": main_uri }, "position": { "line": 2, "character": 12 } });
+        let items = request(&conn, 2, "textDocument/completion", at);
+        let labels: Vec<&str> = items
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["label"].as_str().unwrap())
+            .collect();
+        assert!(
+            labels.contains(&"href") && labels.contains(&"class"),
+            "{labels:?}"
+        );
+        request(&conn, 3, "shutdown", Value::Null);
+        notify(&conn, "exit", Value::Null);
+        server.join().unwrap().unwrap();
+    }
 }

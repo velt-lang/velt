@@ -1,5 +1,6 @@
 //! A minimal [`ProgramLoader`] for protocol tests: relative imports only (`./x` → `x.vlt` next to
-//! the importer), sources from the overlay or the disk, no std or packages. The real loader lives in
+//! the importer) and relative JSX runtimes (`// @jsxImportSource ./ui` → `ui/jsx-runtime.vlt`),
+//! sources from the overlay or the disk, no std or packages. The real loader lives in
 //! `veltc` (which depends on this crate) and has its own LSP integration test there.
 
 use std::collections::HashMap;
@@ -33,7 +34,16 @@ impl ProgramLoader for TestLoader {
         let mut next = 0;
         while next < modules.len() {
             let dir = paths[next].parent().unwrap_or(Path::new("")).to_path_buf();
-            for (spec, span) in import_specs(&modules[next].ast) {
+            let mut specs = import_specs(&modules[next].ast);
+            let runtime = modules[next]
+                .ast
+                .jsx_import_source
+                .as_ref()
+                .map(|source| format!("{source}/jsx-runtime"));
+            if let Some(r) = &runtime {
+                specs.push((r.clone(), modules[next].ast.span));
+            }
+            for (spec, span) in specs {
                 let Some(rel) = spec.strip_prefix("./") else {
                     continue;
                 };
@@ -54,7 +64,11 @@ impl ProgramLoader for TestLoader {
                     },
                 };
                 let canonical = modules[index].path.clone();
-                modules[next].imports.push((spec, canonical));
+                if runtime.as_ref() == Some(&spec) {
+                    modules[next].jsx_runtime = Some(canonical);
+                } else {
+                    modules[next].imports.push((spec, canonical));
+                }
             }
             next += 1;
         }

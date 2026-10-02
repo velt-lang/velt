@@ -3,6 +3,8 @@
 
 mod assists;
 mod client;
+mod jsx;
+mod jsx_more;
 mod loader;
 mod manifest;
 mod modules;

@@ -2053,7 +2053,9 @@ dependencies = [
 name = "velt_http"
 version = "0.1.0"
 dependencies = [
+ "rustls",
  "tempfile",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -2111,7 +2113,11 @@ dependencies = [
 name = "velt_registry"
 version = "0.1.0"
 dependencies = [
+ "getrandom 0.2.17",
  "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "velt_http",
  "vpm",

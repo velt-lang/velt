@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::programs::{load_src, load_src_lenient};
+use common::programs::{load_src, load_src_at, load_src_lenient, repo_root};
 use velt_common::FileId;
 use velt_sema::ide::{check_for_ide, Analysis, DefKind};
 
@@ -266,4 +266,53 @@ function main() { try { load(\"x\"); } catch (e) { console.log(e.message); } con
     );
     let safe = a.def_at(file, at(src, "safe()", 1, 0)).expect("safe");
     assert_eq!(safe.detail, "function safe(): i64");
+}
+
+#[test]
+fn jsx_tags_and_attributes() {
+    let src = "// @jsxImportSource ./_jsx_test_provider
+function main() { const e = <a href=\"/x\">x</a>; }";
+    let l = load_src_at(&repo_root().join("tests/golden/lang/main.vlt"), src);
+    let file = l.modules[l.root].file;
+    let a = check_for_ide(&l.modules, l.root);
+    let tags = a.jsx_intrinsics(file);
+    let names: Vec<&str> = tags.iter().map(|(n, _, _)| n.as_str()).collect();
+    assert!(
+        names.starts_with(&["a", "br", "button", "div"]),
+        "{names:?}"
+    );
+    let (_, anchor, ty) = &tags[0];
+    assert_eq!(anchor.kind, DefKind::Field);
+    assert_eq!(
+        ty,
+        "{ href: string | null; class: string | null; title: string | null }"
+    );
+    // The tag in the source names the same field, and its attributes are the members.
+    let used = a.def_at(file, at(src, "<a", 0, 1)).expect("tag");
+    assert!(used.same_def(anchor));
+    let attrs: Vec<(String, String)> = a
+        .members_of(anchor)
+        .into_iter()
+        .map(|(n, _, t)| (n, t))
+        .collect();
+    assert_eq!(attrs[0], ("href".to_string(), "string | null".to_string()));
+    assert_eq!(attrs.len(), 3);
+    // A file without JSX has no tags.
+    let (plain, plain_file) = analyze("function main() {}");
+    assert!(plain.jsx_intrinsics(plain_file).is_empty());
+}
+
+#[test]
+fn members_of_a_field_are_the_members_of_its_type() {
+    let src = "struct Inner { a: i64; b: string; }
+struct Outer { inner: Inner; }
+function main() { const o = Outer { inner: Inner { a: 1, b: \"x\" } }; console.log(o.inner.a); }";
+    let (a, file) = analyze(src);
+    let inner = a.def_at(file, at(src, "inner.a", 0, 0)).expect("field");
+    let names: Vec<String> = a
+        .members_of(&inner)
+        .into_iter()
+        .map(|(n, _, _)| n)
+        .collect();
+    assert_eq!(names, ["a", "b"]);
 }

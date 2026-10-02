@@ -1,5 +1,5 @@
 //! Argument parsing for the developer tools: `velt playground`, `velt doc`,
-//! `velt registry serve`.
+//! `velt registry serve` (`registry user` is in [`super::registry`]).
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -25,10 +25,10 @@ pub(super) fn parse_registry(args: Vec<OsString>) -> Result<Command, String> {
     let mut args = args.into_iter();
     match args.next().as_ref().and_then(|a| a.to_str()) {
         Some("serve") => {}
+        Some("user") => return super::registry::parse_user(args.collect()),
+        Some("owner") => return super::registry::parse_admin_owner(args.collect()),
         _ => {
-            return Err(
-                "usage: velt registry serve [--dir <d>] [--port <n>] [--host <addr>]".into(),
-            )
+            return Err("usage: velt registry serve [--dir <d>] [--port <n>] [--host <addr>] | velt registry user add|remove|token <name> [--dir <d>] | velt registry owner add|remove <pkg> <user> [--dir <d>]".into())
         }
     }
     let (addr, dir) = parse_server(args.collect(), REGISTRY_PORT, true, "registry serve")?;

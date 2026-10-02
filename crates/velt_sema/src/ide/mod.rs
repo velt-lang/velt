@@ -40,6 +40,8 @@ pub struct Analysis {
     files: HashMap<FileId, usize>,
     /// Type of each local / constant / field definition (by declaration span).
     def_types: HashMap<Span, (TyId, u32)>,
+    /// Per file with a JSX runtime: its intrinsic tags.
+    jsx_tags: HashMap<FileId, Vec<(String, DefRef, String)>>,
     names: display::Names,
     members: members::Members,
 }
@@ -199,6 +201,13 @@ impl Analysis {
             Some(&(ty, ctx)) => self.members.instance(self, ty, ctx),
             None => vec![],
         }
+    }
+
+    /// The intrinsic tags of the JSX runtime of `file` (the fields of `JSX.IntrinsicElements`):
+    /// `(tag, definition, attribute type)`, sorted by tag; empty when the file has no JSX
+    /// runtime. `members_of` on a tag's definition lists its attributes.
+    pub fn jsx_intrinsics(&self, file: FileId) -> &[(String, DefRef, String)] {
+        self.jsx_tags.get(&file).map_or(&[], Vec::as_slice)
     }
 
     /// Every span naming `def` (its declaration included), in source order.

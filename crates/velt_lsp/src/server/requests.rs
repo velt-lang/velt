@@ -45,7 +45,7 @@ pub fn capabilities() -> ServerCapabilities {
         definition_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
-            trigger_characters: Some(vec![".".into()]),
+            trigger_characters: Some(vec![".".into(), "<".into()]),
             ..Default::default()
         }),
         references_provider: Some(OneOf::Left(true)),
@@ -134,13 +134,24 @@ impl Server<'_> {
             Completion::METHOD => {
                 let p: lsp_types::CompletionParams = parse(params)?;
                 let pos = &p.text_document_position;
+                // `<` triggers completion for JSX tags only, not after every comparison.
+                let jsx_only = p
+                    .context
+                    .as_ref()
+                    .and_then(|c| c.trigger_character.as_deref())
+                    == Some("<");
                 if let Some(text) = self.manifest_text(&pos.text_document.uri) {
                     let at = LineIndex::new(text).offset(pos.position);
-                    return Ok(json(Some(manifest::completion(text, at))));
+                    let items = if jsx_only {
+                        vec![]
+                    } else {
+                        manifest::completion(text, at)
+                    };
+                    return Ok(json(Some(items)));
                 }
                 let items = self
                     .analysis(&pos.text_document.uri)
-                    .map(|a| completion::complete(a, offset(a, pos)));
+                    .map(|a| completion::complete(a, offset(a, pos), jsx_only));
                 Ok(json(items))
             }
             References::METHOD => {
