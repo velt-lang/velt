@@ -81,9 +81,6 @@ def composite(source):
                           count=1, flags=re.M)
     if not found:
         sys.exit(f"{source}: no `function main()`")
-    # Some benchmarks predate the prelude's `toFixed` and define their own: keep theirs.
-    if re.search(r"^extend f64 \{\n  toFixed\(", text, re.M):
-        text = text.replace("toFixed(", "benchToFixed(")
     call = "await bench_main()" if "async function bench_main" in text else "bench_main()"
     head = "async function" if call.startswith("await") else "function"
     return f"{text}\n{units_code()}\n{head} main() {{\n  units_main();\n  {call};\n}}\n"
