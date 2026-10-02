@@ -14,7 +14,12 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
 - **Hover**: declaration signatures, including inferred `throws` types, and the inferred type of
   locals and expressions.
 - **Completion**: locals, module items, imports, prelude items, keywords, and members after `.`
-  (also while the file doesn't parse).
+  (also while the file doesn't parse). In JSX: tag names after `<` (the elements of the JSX
+  runtime's `JSX.IntrinsicElements` and the components in scope) and attribute names inside an
+  opening tag (the element's attributes or the component's props, minus those already written).
+  Tags are offered once the file contains JSX that parses, which is when its JSX runtime loads.
+- **JSX**: go to definition and hover on component tags (`<Card` → `function Card`) and on
+  attributes (the attribute's or prop's declaration and type).
 - **Signature help** while typing call arguments.
 - **Inlay hints**: inferred types of `const` / `let` / `for...of` bindings and parameter names at
   call sites.

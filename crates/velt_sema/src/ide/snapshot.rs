@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use velt_common::Span;
+use velt_common::{FileId, Span};
 
 use super::defref::{Builder, DefRef};
 use super::display::Names;
@@ -12,7 +12,7 @@ use super::record::{Recorder, Target};
 use super::{members, Analysis};
 use crate::ctx::{Ctx, Item};
 use crate::defs::{DefInfo, FnKind};
-use crate::hir::DefId;
+use crate::hir::{DefId, TyKind};
 
 pub(super) fn build(mut cx: Ctx) -> Analysis {
     declarations(&mut cx);
@@ -60,6 +60,7 @@ pub(super) fn build(mut cx: Ctx) -> Analysis {
     let prelude = sorted_items(cx.prelude.iter(), &mut resolve);
     let files = (0..cx.modules.len()).map(|m| (file_of(m), m)).collect();
     let def_types = def_types(&cx, &rec, no_generics);
+    let jsx_tags = jsx_tags(&cx, &names, &mut resolve);
     let members = raw_members.finish(&b);
     let Recorder { types, params, .. } = rec;
     Analysis {
@@ -73,9 +74,40 @@ pub(super) fn build(mut cx: Ctx) -> Analysis {
         prelude,
         files,
         def_types,
+        jsx_tags,
         names,
         members,
     }
+}
+
+/// Per file with a JSX runtime: the fields of its `JSX.IntrinsicElements` (tag, definition,
+/// attribute type), sorted by tag.
+fn jsx_tags(
+    cx: &Ctx,
+    names: &Names,
+    resolve: &mut impl FnMut(&Target) -> Option<DefRef>,
+) -> HashMap<FileId, Vec<(String, DefRef, String)>> {
+    let mut out = HashMap::new();
+    for (&m, provider) in &cx.jsx_providers {
+        let Some(p) = provider else { continue };
+        let TyKind::Adt(d, _) = cx.ty.kind(p.intrinsics) else {
+            continue;
+        };
+        let Some(adt) = cx.adt(*d) else { continue };
+        let mut tags: Vec<(String, DefRef, String)> = adt
+            .fields
+            .iter()
+            .enumerate()
+            .filter_map(|(i, f)| {
+                let def = resolve(&Target::Field(*d, i as u32))?;
+                let ty = names.show_in(f.ty, &adt.generics.names);
+                Some((f.name.clone(), def, ty))
+            })
+            .collect();
+        tags.sort_by(|a, b| a.0.cmp(&b.0));
+        out.insert(cx.modules[m].file, tags);
+    }
+    out
 }
 
 fn sorted_items<'a>(
@@ -89,7 +121,8 @@ fn sorted_items<'a>(
     out
 }
 
-/// Types of locals (by declaring identifier), constants and static fields.
+/// Types of locals (by declaring identifier), constants, static fields and the fields of
+/// non-generic structs, classes, object types and interfaces.
 fn def_types(cx: &Ctx, rec: &Recorder, no_generics: u32) -> HashMap<Span, (crate::hir::TyId, u32)> {
     let mut out = HashMap::new();
     // Scope entries cover locals never used by name (such as `this` while typing `this.`).
@@ -100,8 +133,17 @@ fn def_types(cx: &Ctx, rec: &Recorder, no_generics: u32) -> HashMap<Span, (crate
         }
     }
     for d in &cx.info {
-        if let DefInfo::Global(g) = d {
-            out.insert(g.span, (g.ty, no_generics));
+        let fields = match d {
+            DefInfo::Global(g) => {
+                out.insert(g.span, (g.ty, no_generics));
+                continue;
+            }
+            DefInfo::Adt(a) if a.generics.names.is_empty() => &a.fields,
+            DefInfo::Iface(x) if x.generics.names.is_empty() => &x.fields,
+            _ => continue,
+        };
+        for f in fields.iter().filter(|f| f.span != Span::DUMMY) {
+            out.entry(f.span).or_insert((f.ty, no_generics));
         }
     }
     out

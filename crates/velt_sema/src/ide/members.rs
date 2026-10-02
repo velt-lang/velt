@@ -1,7 +1,7 @@
 //! Members of types, for completion after `x.` / `Type.`: collected once from the checked
-//! program (instance members of every struct / class / interface in its own generic space —
-//! inherited ones substituted —, static members, `extend` blocks) and displayed for a concrete
-//! receiver type at query time.
+//! program (instance members of every struct / class / interface / object type in its own
+//! generic space — inherited ones substituted —, static members, `extend` blocks) and displayed
+//! for a concrete receiver type at query time.
 
 use std::collections::HashMap;
 
@@ -14,7 +14,7 @@ use super::Analysis;
 use crate::collect::lookup_method;
 use crate::ctx::Ctx;
 use crate::defs::{is_setter_key, DefInfo, FnInfo};
-use crate::hir::{DefId, TyId, TyKind, TyTable};
+use crate::hir::{AdtKind, DefId, TyId, TyKind, TyTable};
 
 /// How a member is shown: a value of a type, or a method signature.
 #[derive(Clone)]
@@ -72,6 +72,8 @@ pub(super) fn collect(cx: &mut Ctx) -> RawMembers {
         let d = DefId(i as u32);
         let entry = match &cx.info[i] {
             DefInfo::Adt(a) if a.decl.is_some() => (d, adt_instance(cx, d), adt_statics(cx, d)),
+            // Object types (`{ href?: string }`) have fields only.
+            DefInfo::Adt(a) if a.kind == AdtKind::Anon => (d, adt_instance(cx, d), vec![]),
             DefInfo::Iface(x) if x.decl.is_some() => (d, iface_members(cx, d), vec![]),
             DefInfo::Enum(e) if e.decl.is_some() => {
                 let vs = (0..e.variants.len())
