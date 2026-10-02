@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use crate::doctests;
 use crate::graph::Graph;
-use crate::plan::{Goldens, Plan};
+use crate::plan::{Goldens, Plan, DIFFTEST};
 
 /// The parts of the gate to run: `all`, or a comma-separated list of `lint` (`cargo fmt`,
 /// clippy), `test` (build, unit and integration tests, doctests, `velt fmt --check`, smoke
@@ -110,8 +110,16 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
             .args(["--all-targets", "--", "-D", "warnings"]);
         gate.step("clippy", &mut clippy)?;
     }
+    if part.has(Part::Lint) && plan.difftest {
+        gate.difftest_lint()?;
+    }
     if part.has(Part::Test) {
         gate.tests(plan, graph, &ws)?;
+    }
+    if part.has(Part::Test) && plan.difftest {
+        let mut tests = cargo(&["test"]);
+        tests.arg("--manifest-path").arg(difftest_manifest(root));
+        gate.step("tests/difftest unit tests", &mut tests)?;
     }
     if part.has(Part::Golden) && plan.goldens != Goldens::None {
         let mut goldens = cargo(&["test"]);
@@ -194,6 +202,20 @@ impl Gate<'_> {
         Ok(())
     }
 
+    /// `cargo fmt --check` and clippy of the differential tester, a crate outside the workspace
+    /// that `--workspace` steps never see.
+    fn difftest_lint(&mut self) -> Result<(), String> {
+        let manifest = difftest_manifest(self.root);
+        let mut fmt = cargo(&["fmt", "--check", "--manifest-path"]);
+        fmt.arg(&manifest);
+        self.step("cargo fmt --check (tests/difftest)", &mut fmt)?;
+        let mut clippy = cargo(&["clippy", "--manifest-path"]);
+        clippy
+            .arg(&manifest)
+            .args(["--all-targets", "--", "-D", "warnings"]);
+        self.step("clippy (tests/difftest)", &mut clippy)
+    }
+
     fn step(&mut self, name: &str, cmd: &mut Command) -> Result<(), String> {
         let shown = show(cmd);
         println!("\x1b[36m==> {name}\x1b[0m");
@@ -249,6 +271,10 @@ fn workspace_args(root: &Path) -> Vec<String> {
         args.extend(["--exclude".into(), "velt_rt_shared".into()]);
     }
     args
+}
+
+fn difftest_manifest(root: &Path) -> PathBuf {
+    root.join(DIFFTEST).join("Cargo.toml")
 }
 
 fn has_nextest() -> bool {
