@@ -55,6 +55,10 @@ pub struct IndexEntry {
     /// Target triple → checksum of the prebuilt native bundle ([`bundle::checksum`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub native: BTreeMap<String, String>,
+    /// Withdrawn by an owner ([`crate::yank`]): still downloadable for lockfiles that pin it,
+    /// never chosen for a new requirement.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub yanked: bool,
 }
 
 impl IndexEntry {
@@ -89,7 +93,7 @@ pub fn parse_index(text: &str, what: &str) -> Result<Index, String> {
     Ok(index)
 }
 
-fn write_index(loc: &Locations, name: &str, index: &Index) -> Result<(), String> {
+pub(crate) fn write_index(loc: &Locations, name: &str, index: &Index) -> Result<(), String> {
     let path = loc.registry.join(name).join(INDEX_FILE);
     let text = toml::to_string(index).expect("ICE: index serialization cannot fail");
     std::fs::write(&path, text).map_err(|e| format!("cannot write `{}`: {e}", path.display()))
@@ -305,6 +309,7 @@ fn publish_to(root: &Path, loc: &Locations, manifest: &Manifest) -> Result<Index
             dependencies,
             native_abi: None,
             native: BTreeMap::new(),
+            yanked: false,
         };
         crate::remote::publish(url, root, name, &entry)?;
         return Ok(entry);
@@ -321,6 +326,7 @@ fn publish_to(root: &Path, loc: &Locations, manifest: &Manifest) -> Result<Index
         dependencies,
         native_abi: None,
         native: BTreeMap::new(),
+        yanked: false,
     };
     index.versions.push(entry.clone());
     write_index(loc, name, &index)?;

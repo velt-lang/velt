@@ -58,6 +58,8 @@ pub struct Resolution {
     pub root_dependencies: Vec<String>,
     /// Every transitive dependency by name (the root package is not included).
     pub packages: BTreeMap<String, ResolvedPackage>,
+    /// Selected registry versions that are yanked (kept only because the lockfile pins them).
+    pub yanked: Vec<(String, Version)>,
 }
 
 /// What a requirement asks for.
@@ -108,14 +110,23 @@ pub fn resolve(
         pending: root_reqs.into(),
     };
     let solved = solve(state, &mut provider)?;
-    let packages = solved
+    let packages: BTreeMap<String, ResolvedPackage> = solved
         .selected
         .into_iter()
         .map(|(name, sel)| (name, sel.pkg))
         .collect();
+    let mut yanked = vec![];
+    for pkg in packages.values() {
+        if matches!(pkg.source, Source::Registry { .. })
+            && provider.is_yanked(&pkg.name, &pkg.version)?
+        {
+            yanked.push((pkg.name.clone(), pkg.version.clone()));
+        }
+    }
     Ok(Resolution {
         root_dependencies,
         packages,
+        yanked,
     })
 }
 

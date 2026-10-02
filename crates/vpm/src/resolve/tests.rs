@@ -154,3 +154,33 @@ fn path_dependencies_and_their_deps() {
         .unwrap_err();
     assert!(err.contains("is the package `mylib`"), "{err}");
 }
+
+#[test]
+fn yanked_versions_are_only_kept_when_locked() {
+    let e = env();
+    e.publish("lib", "1.0.0", "");
+    e.publish("lib", "1.1.0", "");
+    crate::yank::yank(&e.loc, "lib", "1.1.0", true).unwrap();
+    assert_eq!(
+        versions(&e.resolve("lib: \"^1.0\"", None).unwrap()),
+        ["lib 1.0.0"]
+    );
+    let lock = Lockfile::new(vec![LockedPackage {
+        name: "lib".into(),
+        version: "1.1.0".into(),
+        source: REGISTRY_SOURCE.into(),
+        checksum: None,
+        dependencies: vec![],
+        native: Default::default(),
+    }]);
+    let kept = e.resolve("lib: \"^1.0\"", Some(&lock)).unwrap();
+    assert_eq!(versions(&kept), ["lib 1.1.0"]);
+    assert_eq!(kept.yanked, [("lib".to_string(), Version::new(1, 1, 0))]);
+    assert!(e.resolve("lib: \"^1.0\"", None).unwrap().yanked.is_empty());
+    crate::yank::yank(&e.loc, "lib", "1.0.0", true).unwrap();
+    let err = e.resolve("lib: \"^1.0\"", None).unwrap_err();
+    assert!(
+        err.contains("available: 1.0.0 (yanked), 1.1.0 (yanked)"),
+        "{err}"
+    );
+}

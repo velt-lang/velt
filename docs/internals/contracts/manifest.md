@@ -71,13 +71,37 @@ registry: "https://registry.example.com",
   precedence) replaces the local registry directory for resolution, `velt add`, `velt install`
   and `velt publish`. Protocol (`velt registry serve`, crates/vpm/src/remote.rs):
   `GET <url>/api/v1/<name>/index` → `index.toml`; `GET <url>/api/v1/<name>/<version>` → package
-  archive; `PUT` the same path with the archive, `X-Velt-Checksum: sha256:…` and, when the server
-  has a token, `Authorization: Bearer $VELT_REGISTRY_TOKEN`.
+  archive; `PUT` the same path with the archive and `X-Velt-Checksum: sha256:…`.
+- Users (additive): `<dir>/.auth/users.json` maps user names to the `sha256:` of their tokens.
+  While the file exists (even listing no users), every write without `Authorization: Bearer <a
+  user's token>` (scheme case-insensitive) is 401; clients send `$VELT_REGISTRY_TOKEN`. Only a
+  registry without the file is open: every write is allowed. The file is replaced atomically
+  (temporary file + rename); on Unix `.auth/` is mode 0700.
+- Owners (additive): `<dir>/<name>/owners.json` (`{ "owners": ["alice"] }`). The first user to publish
+  a new package owns it. Writes to a package by a user who doesn't own it are 403, also when an
+  existing package has no owners (on a server with users): an administrator assigns them with
+  `velt registry owner add`. `GET <url>/api/v1/<name>/owners` → one owner per line; `PUT`/`DELETE
+  <url>/api/v1/<name>/owners/<user>` add/remove one (400 for a name or user that isn't
+  `[a-z][a-z0-9_-]*`, 404 for an unknown user or a user who isn't an owner, 409 for the last
+  owner, 400 on a server without users).
+- Yank (additive): index entries gain `yanked = true` (absent when false). `PUT`/`DELETE
+  <url>/api/v1/<name>/<version>/yank` set/clear it (owners). Resolution never selects a yanked
+  version unless the lockfile pins it; yanked versions stay downloadable.
+- Search (additive): `GET <url>/api/v1/search?q=<text>` →
+  `{"packages":[{"name":"…","version":"…"}]}`: names containing the text (case-insensitive),
+  exact match first, then prefix matches, then by name; at most 50; the version is the newest
+  not yanked, and packages with only yanked versions are left out.
 - Archives (`vpm::archive`) carry `package.vlt` + `src/**` (+ the `native` crate directory,
   without `target/` and `.git/`); an archive with any other path, such as a `velt.toml`, is
   rejected. Their checksum is the same content hash `velt.lock` records, and every download is
   verified against it before it enters the cache.
-- `https://` goes through the system `curl`; `http://` is built in.
+- `https://` uses rustls (`velt_http::tls`) with Mozilla's roots (`webpki-roots`) plus the PEM
+  certificates in `$VELT_CA_FILE`; `http://` is plain TCP. No redirects, proxies (`HTTPS_PROXY`
+  is not honored) or HTTP/2. `velt registry serve` is plain HTTP; deployments beyond localhost
+  put a TLS-terminating reverse proxy in front of it.
+- Yanked but locked (additive): `vpm::Resolution::yanked` / `vpm::Installed::yanked` list the
+  selected registry versions that are yanked; the CLI prints `warning: `<name>` <version> is
+  yanked (pinned by velt.lock)` for each.
 
 ## JSX import source (additive)
 ```ts ignore
