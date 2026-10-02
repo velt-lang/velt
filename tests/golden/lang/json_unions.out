@@ -16,3 +16,6 @@ expected i64 at $
 expected one of number, "auto" at $
 expected one of boolean, string, number at $
 expected object with one of the fields "r", "w" at $[0]
+[ 1, 1, 1, 2 ]
+101
+expected one of "leaf", "node" at $.kids[1].kids[1].kind

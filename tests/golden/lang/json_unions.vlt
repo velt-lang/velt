@@ -17,6 +17,42 @@ type Setting = string | i64 | bool | null;
 type Size = "auto" | f64;
 type Item = { v: string | Mode | f64[] };
 
+// Nested unions with the discriminant last: each level looks ahead past its subtree once.
+class Leaf {
+  kind: "leaf" = "leaf";
+  v: i64 = 0;
+}
+
+class Node {
+  kids: (Leaf | Node)[] = [];
+  kind: "node" = "node";
+}
+
+function leaves(t: Leaf | Node): i64[] {
+  if (t instanceof Leaf) {
+    return [t.v];
+  }
+  const out: i64[] = [];
+  for (const k of t.kids) {
+    for (const v of leaves(k)) {
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+function chain(levels: i64): string {
+  let s = "";
+  for (let i = 0; i < levels; i++) {
+    s += '{"kids":[{"v":1,"kind":"leaf"},';
+  }
+  s += '{"kind":"leaf","v":2}';
+  for (let i = 0; i < levels; i++) {
+    s += '],"kind":"node"}';
+  }
+  return s;
+}
+
 function msg(text: string) {
   try {
     const m = JSON.parse<ClientMessage>(text);
@@ -67,6 +103,13 @@ function main() {
   }
   try {
     JSON.parse<(Circle | Rect)[]>('[{"x":1}]');
+  } catch (e) {
+    console.log(e.message);
+  }
+  console.log(leaves(JSON.parse<Leaf | Node>(chain(3))));
+  console.log(leaves(JSON.parse<Leaf | Node>(chain(100), { maxDepth: 300 })).length);
+  try {
+    JSON.parse<Leaf | Node>(chain(2).replace('"kind":"leaf","v":2', '"kind":"tree","v":2'));
   } catch (e) {
     console.log(e.message);
   }

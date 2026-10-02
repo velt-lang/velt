@@ -1,8 +1,9 @@
 //! Iterative (no recursion) walk over one JSON value, reporting structure to a [`Sink`], with
-//! an optional limit on nesting. Used by `skip_value` (a no-op sink) and by the `json.Value`
-//! parser (a tree builder).
+//! an optional limit on nesting. Used by `skip_value` (a no-op sink), by union lookahead (a
+//! sink remembering where containers end) and by the `json.Value` parser (a tree builder).
 
 use super::scan::{NumTok, Scanner, StrTok, SyntaxError, TOO_DEEP};
+use std::collections::HashMap;
 
 /// A scalar JSON value.
 #[derive(Debug)]
@@ -17,12 +18,14 @@ pub enum Scalar {
 pub trait Sink {
     /// Whether strings with escapes must be decoded (a skipping sink only validates them).
     const DECODE: bool;
-    fn begin_array(&mut self);
-    fn begin_object(&mut self);
+    /// An array opens; `at` is the byte offset of its `[`.
+    fn begin_array(&mut self, at: usize);
+    /// An object opens; `at` is the byte offset of its `{`.
+    fn begin_object(&mut self, at: usize);
     /// An object key; the next event is its value.
     fn key(&mut self, src: &[u8], key: StrTok);
-    /// Closes the innermost open array/object.
-    fn end(&mut self);
+    /// Closes the innermost open array/object; `at` is the byte offset just past its bracket.
+    fn end(&mut self, at: usize);
     fn scalar(&mut self, src: &[u8], value: Scalar);
 }
 
@@ -31,10 +34,33 @@ pub struct SkipSink;
 
 impl Sink for SkipSink {
     const DECODE: bool = false;
-    fn begin_array(&mut self) {}
-    fn begin_object(&mut self) {}
+    fn begin_array(&mut self, _: usize) {}
+    fn begin_object(&mut self, _: usize) {}
     fn key(&mut self, _: &[u8], _: StrTok) {}
-    fn end(&mut self) {}
+    fn end(&mut self, _: usize) {}
+    fn scalar(&mut self, _: &[u8], _: Scalar) {}
+}
+
+/// Validates like [`SkipSink`] and remembers where each array/object ends (by the offset of
+/// its opening bracket), so a union decoder looking ahead can jump over it the next time.
+pub struct MemoSink<'a> {
+    pub ends: &'a mut HashMap<usize, usize>,
+    pub open: Vec<usize>,
+}
+
+impl Sink for MemoSink<'_> {
+    const DECODE: bool = false;
+    fn begin_array(&mut self, at: usize) {
+        self.open.push(at);
+    }
+    fn begin_object(&mut self, at: usize) {
+        self.open.push(at);
+    }
+    fn key(&mut self, _: &[u8], _: StrTok) {}
+    fn end(&mut self, at: usize) {
+        let start = self.open.pop().expect("ICE: unbalanced JSON walk");
+        self.ends.insert(start, at);
+    }
     fn scalar(&mut self, _: &[u8], _: Scalar) {}
 }
 
@@ -117,16 +143,17 @@ pub fn walk_limited<S: Sink>(
                 if stack.depth >= limit {
                     return Err(sc.error(TOO_DEEP));
                 }
+                let at = sc.pos;
                 sc.pos += 1;
                 let object = open == b'{';
                 if object {
-                    sink.begin_object();
+                    sink.begin_object(at);
                 } else {
-                    sink.begin_array();
+                    sink.begin_array(at);
                 }
                 if sc.peek_non_ws() == Some(if object { b'}' } else { b']' }) {
                     sc.pos += 1;
-                    sink.end();
+                    sink.end(sc.pos);
                 } else {
                     stack.push(object);
                     if object {
@@ -156,12 +183,12 @@ pub fn walk_limited<S: Sink>(
                 Some(b'}') if object => {
                     sc.pos += 1;
                     stack.pop();
-                    sink.end();
+                    sink.end(sc.pos);
                 }
                 Some(b']') if !object => {
                     sc.pos += 1;
                     stack.pop();
-                    sink.end();
+                    sink.end(sc.pos);
                 }
                 _ if object => return Err(sc.error("expected ',' or '}'")),
                 _ => return Err(sc.error("expected ',' or ']'")),

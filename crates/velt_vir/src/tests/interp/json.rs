@@ -295,7 +295,7 @@ impl Interp<'_> {
                     (!r.failed && r.skip()) as u64
                 }
             }
-            "velt_rt_json_reader_skip_value" => {
+            "velt_rt_json_reader_skip_value" | "velt_rt_json_reader_skip_lookahead" => {
                 let r = self.reader(a[0]);
                 (!r.failed && r.skip()) as u64
             }

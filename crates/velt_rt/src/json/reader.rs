@@ -9,8 +9,9 @@
 use super::error::{mismatch_message, syntax_message};
 use super::scan::{number_f64, number_i64, NumTok, Scanner, StrTok, SyntaxError, TOO_DEEP};
 use super::value::{read_limited, Value};
-use super::walk::{walk_limited, SkipSink};
+use super::walk::{walk_limited, MemoSink, SkipSink};
 use crate::str::VeltStr;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// `peek` results.
@@ -53,6 +54,9 @@ pub struct Reader {
     reject_unknown: bool,
     max_depth: usize,
     depth: usize,
+    /// Where each array/object skipped by `skip_lookahead` ends, by the offset of its opening
+    /// bracket (created on first use).
+    skip_ends: Option<HashMap<usize, usize>>,
 }
 
 /// `velt_rt_json_reader_new_with` flags.
@@ -80,6 +84,7 @@ impl Reader {
                 max_depth as usize
             },
             depth: 0,
+            skip_ends: None,
         }
     }
 
@@ -285,6 +290,30 @@ impl Reader {
         }
         let limit = self.depth_left();
         let r = walk_limited(&mut self.sc, &mut SkipSink, limit);
+        self.syntax(r)
+    }
+
+    /// Skip one value like `skip`, for a union decoder looking ahead for its discriminant: the
+    /// end of every array/object passed is remembered, so the nested unions' own lookahead
+    /// jumps over each of them in O(1) (without this, nested unions with the discriminant last
+    /// rescan every subtree once per enclosing level: quadratic in the depth).
+    pub fn skip_lookahead(&mut self) -> u8 {
+        if self.value_start(|_| true).is_none() {
+            return 0;
+        }
+        let limit = self.depth_left();
+        let ends = self.skip_ends.get_or_insert_with(HashMap::new);
+        // A container at a given offset always has the same depth, so an earlier walk over it
+        // already checked the limit.
+        if let Some(&end) = ends.get(&self.sc.pos) {
+            self.sc.pos = end;
+            return 1;
+        }
+        let mut sink = MemoSink {
+            ends,
+            open: Vec::new(),
+        };
+        let r = walk_limited(&mut self.sc, &mut sink, limit);
         self.syntax(r)
     }
 

@@ -186,10 +186,10 @@ impl Builder {
 
 impl Sink for Builder {
     const DECODE: bool = true;
-    fn begin_array(&mut self) {
+    fn begin_array(&mut self, _: usize) {
         self.stack.push(Frame::Array(Vec::new()));
     }
-    fn begin_object(&mut self) {
+    fn begin_object(&mut self, _: usize) {
         self.stack.push(Frame::Object(Object::default(), None));
     }
     fn key(&mut self, src: &[u8], key: StrTok) {
@@ -197,7 +197,7 @@ impl Sink for Builder {
             *slot = Some(owned_text(src, key));
         }
     }
-    fn end(&mut self) {
+    fn end(&mut self, _: usize) {
         let value = match self.stack.pop().expect("ICE: unbalanced JSON walk") {
             Frame::Array(items) => Value::Array(items),
             Frame::Object(obj, _) => Value::Object(obj),

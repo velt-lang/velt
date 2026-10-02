@@ -7,7 +7,9 @@
 //!   `false`: bool literals, else the `bool` member; `[`: the array or tuple member;
 //! - `{`: the only object member, or else the member named by the discriminant field (`kind`,
 //!   found anywhere in the object) or by the first key that only one member requires. The
-//!   decoder looks ahead for that key, goes back to the `{` and decodes the chosen member.
+//!   decoder looks ahead for that key, goes back to the `{` and decodes the chosen member. It
+//!   skips the other values with `skip_lookahead`, which remembers where they end, so a union
+//!   nested in them finds its own key without scanning its subtree again (linear overall).
 //!
 //! Anything else fails with the members' kinds: `expected one of string, number at $.x`.
 
@@ -562,8 +564,9 @@ impl FnLower<'_, '_> {
                 }
             }
         }
-        // Not the key we look for: skip its value.
-        let ok = self.rt_u8(Rt::JsonSkipValue, vec![ro.clone()]);
+        // Not the key we look for: skip its value (remembering where its objects end, so the
+        // lookahead of a union nested in it does not scan it again).
+        let ok = self.rt_u8(Rt::JsonSkipLookahead, vec![ro.clone()]);
         let (next, skip_bad) = (self.new_block(), self.new_block());
         self.branch(ok, next, skip_bad);
         self.switch_to(skip_bad);

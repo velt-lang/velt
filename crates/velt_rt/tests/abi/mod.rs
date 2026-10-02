@@ -10,6 +10,7 @@ mod http;
 mod http_bench;
 mod js_table;
 mod json_reader;
+mod json_union;
 mod json_value;
 mod local;
 mod net;

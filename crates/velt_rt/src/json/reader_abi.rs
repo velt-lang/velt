@@ -127,6 +127,14 @@ pub unsafe extern "C" fn velt_rt_json_reader_skip_value(r: *mut Reader) -> u8 {
     (*r).skip()
 }
 
+/// Skip one value like `skip_value`, remembering where its arrays/objects end so that the next
+/// `skip_lookahead` at one of them jumps to its end (union decoders looking ahead): 1 = ok,
+/// 0 = error.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_json_reader_skip_lookahead(r: *mut Reader) -> u8 {
+    (*r).skip_lookahead()
+}
+
 /// The reader's position, for `reset` (looking ahead and coming back).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_reader_mark(r: *const Reader) -> u64 {
