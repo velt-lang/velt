@@ -20,6 +20,10 @@ pub struct Client {
     next_id: i32,
     /// Notifications received while waiting for something else.
     backlog: Vec<Notification>,
+    /// Methods of the requests the server sent (each answered with `null`, or refused).
+    pub server_requests: Vec<String>,
+    /// Refuse the server's requests with an error instead.
+    pub refuse_server_requests: bool,
     /// Result of `initialize`.
     pub init: Value,
 }
@@ -39,6 +43,8 @@ impl Client {
             server: Some(server),
             next_id: 0,
             backlog: vec![],
+            server_requests: vec![],
+            refuse_server_requests: false,
             init: Value::Null,
         };
         client.init = client.request("initialize", init);
@@ -105,11 +111,26 @@ impl Client {
         }
     }
 
-    fn recv(&self) -> Message {
-        self.conn
-            .receiver
-            .recv_timeout(TIMEOUT)
-            .expect("the server did not answer in time")
+    /// The next message from the server; requests from the server are answered (with `null`)
+    /// and recorded on the way.
+    fn recv(&mut self) -> Message {
+        loop {
+            let msg = self
+                .conn
+                .receiver
+                .recv_timeout(TIMEOUT)
+                .expect("the server did not answer in time");
+            let Message::Request(req) = msg else {
+                return msg;
+            };
+            self.server_requests.push(req.method.clone());
+            let answer = if self.refuse_server_requests {
+                Response::new_err(req.id, -32601, "not supported".into())
+            } else {
+                Response::new_ok(req.id, Value::Null)
+            };
+            self.conn.sender.send(answer.into()).unwrap();
+        }
     }
 
     /// `shutdown` + `exit`; the server must stop cleanly.

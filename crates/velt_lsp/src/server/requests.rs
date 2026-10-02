@@ -7,7 +7,8 @@ use lsp_server::{ErrorCode, Request, Response};
 use lsp_types::request::{
     CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest, Formatting,
     GotoDefinition, HoverRequest, InlayHintRequest, References, Rename, Request as LspRequest,
-    SemanticTokensFullRequest, SignatureHelpRequest, WorkspaceSymbolRequest,
+    SemanticTokensFullDeltaRequest, SemanticTokensFullRequest, SemanticTokensRangeRequest,
+    SignatureHelpRequest, WorkspaceSymbolRequest,
 };
 use lsp_types::{
     CodeActionKind, CodeActionOptions, CodeActionProviderCapability, CompletionOptions,
@@ -51,7 +52,10 @@ pub fn capabilities() -> ServerCapabilities {
         references_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Left(true)),
         code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
-            code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+            code_action_kinds: Some(vec![
+                CodeActionKind::QUICKFIX,
+                CodeActionKind::SOURCE_FIX_ALL,
+            ]),
             ..Default::default()
         })),
         inlay_hint_provider: Some(OneOf::Left(true)),
@@ -63,7 +67,8 @@ pub fn capabilities() -> ServerCapabilities {
         semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
             SemanticTokensOptions {
                 legend: semantic_tokens::legend(),
-                full: Some(SemanticTokensFullOptions::Bool(true)),
+                full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
+                range: Some(true),
                 ..Default::default()
             },
         )),
@@ -192,11 +197,13 @@ impl Server<'_> {
                 Ok(json(help))
             }
             SemanticTokensFullRequest::METHOD => {
-                let p: lsp_types::SemanticTokensParams = parse(params)?;
-                let tokens = self
-                    .analysis(&p.text_document.uri)
-                    .map(semantic_tokens::semantic_tokens);
-                Ok(json(tokens))
+                Ok(json(self.semantic_tokens_full(&parse(params)?)))
+            }
+            SemanticTokensFullDeltaRequest::METHOD => {
+                Ok(json(self.semantic_tokens_delta(&parse(params)?)))
+            }
+            SemanticTokensRangeRequest::METHOD => {
+                Ok(json(self.semantic_tokens_range(&parse(params)?)))
             }
             DocumentHighlightRequest::METHOD => {
                 let p: lsp_types::DocumentHighlightParams = parse(params)?;

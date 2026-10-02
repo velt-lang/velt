@@ -3,9 +3,13 @@
 //! bindings, `static` members, `let` bindings (`mutable`), standard-library definitions, and
 //! calls of functions that modify their receiver or arguments (`mutating`, as inferred).
 //! Keywords, literals and comments are left to the TextMate grammar.
+//!
+//! Besides the whole document, a range of it can be asked for, and a [`delta`] against the
+//! tokens sent last (the server keeps them per document with a result id).
 
 use lsp_types::{
-    SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensLegend,
+    SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokensEdit,
+    SemanticTokensLegend,
 };
 use velt_common::Span;
 use velt_sema::ide::{DefKind, DefRef};
@@ -54,12 +58,29 @@ pub fn legend() -> SemanticTokensLegend {
 }
 
 /// Tokens of the whole document.
-pub fn semantic_tokens(analysis: &Analysis) -> SemanticTokens {
+pub fn semantic_tokens(analysis: &Analysis) -> Vec<SemanticToken> {
+    let len = analysis.text().len() as u32;
+    tokens_in(analysis, 0, len)
+}
+
+/// Tokens starting in the document's byte range `lo..hi`, encoded like a full result (the first
+/// relative to the document start), as `textDocument/semanticTokens/range` answers.
+pub fn tokens_in(analysis: &Analysis, lo: u32, hi: u32) -> Vec<SemanticToken> {
     let text = analysis.text();
     let index = LineIndex::new(text);
     let mut data = vec![];
     let (mut line, mut col) = (0, 0);
-    for t in text_scan::scan(text, text.len()) {
+    // Scan past `hi` to the end of the identifier there, so the last one is not cut short.
+    let hi_usize = (hi as usize).min(text.len());
+    let end = hi_usize
+        + text
+            .get(hi_usize..)
+            .unwrap_or("")
+            .bytes()
+            .take_while(|&b| text_scan::is_ident_byte(b))
+            .count();
+    let scanned = text_scan::scan(text, end);
+    for t in scanned.into_iter().filter(|t| t.lo >= lo && t.lo < hi) {
         if t.kind != TokenKind::Ident || completion::is_keyword(&text[t.lo as usize..t.hi as usize])
         {
             continue;
@@ -89,10 +110,30 @@ pub fn semantic_tokens(analysis: &Analysis) -> SemanticTokens {
             token_modifiers_bitset: modifiers,
         });
     }
-    SemanticTokens {
-        result_id: None,
-        data,
+    data
+}
+
+/// The one edit turning `old` into `new` (`textDocument/semanticTokens/full/delta`): the changed
+/// middle between their common prefix and suffix, in units of the flat integer array (five per
+/// token). Empty when nothing changed.
+pub fn delta(old: &[SemanticToken], new: &[SemanticToken]) -> Vec<SemanticTokensEdit> {
+    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let room = old.len().min(new.len()) - prefix;
+    let suffix = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take(room)
+        .take_while(|(a, b)| a == b)
+        .count();
+    if prefix == old.len() && old.len() == new.len() {
+        return vec![];
     }
+    vec![SemanticTokensEdit {
+        start: (prefix * 5) as u32,
+        delete_count: ((old.len() - prefix - suffix) * 5) as u32,
+        data: Some(new[prefix..new.len() - suffix].to_vec()),
+    }]
 }
 
 /// Is the identifier ending at `hi` called (`f(`, `x.add (`)?
@@ -146,4 +187,36 @@ fn classify(analysis: &Analysis, def: &DefRef, span: Span) -> (u32, u32) {
         modifiers |= DEFAULT_LIBRARY;
     }
     (index, modifiers)
+}
+
+#[cfg(test)]
+mod tests {
+    use lsp_types::SemanticToken;
+
+    use super::delta;
+
+    fn tok(n: u32) -> SemanticToken {
+        SemanticToken {
+            delta_line: n,
+            delta_start: 0,
+            length: 1,
+            token_type: 0,
+            token_modifiers_bitset: 0,
+        }
+    }
+
+    #[test]
+    fn delta_replaces_the_changed_middle() {
+        let old = [tok(1), tok(2), tok(3), tok(4)];
+        let new = [tok(1), tok(9), tok(9), tok(4)];
+        let edits = delta(&old, &new);
+        assert_eq!(edits.len(), 1);
+        assert_eq!((edits[0].start, edits[0].delete_count), (5, 10));
+        assert_eq!(edits[0].data.as_deref(), Some(&new[1..3]));
+        assert!(delta(&old, &old).is_empty());
+        let grown = delta(&old[..2], &old);
+        assert_eq!((grown[0].start, grown[0].delete_count), (10, 0));
+        let shrunk = delta(&[tok(1), tok(1)], &[tok(1)]);
+        assert_eq!((shrunk[0].start, shrunk[0].delete_count), (5, 5));
+    }
 }

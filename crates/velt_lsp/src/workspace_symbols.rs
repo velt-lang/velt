@@ -1,6 +1,7 @@
 //! Workspace symbols: top-level declarations (and the members of types) whose name fuzzy-matches the
 //! query, from every file of the analyzed programs (open documents and what they import, without
-//! the standard library) and from the `.vlt` files under the workspace folders (parsed on demand).
+//! the standard library) and from the `.vlt` files under the workspace folders (indexed once and
+//! kept up to date by [`crate::disk_index`]).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -17,10 +18,10 @@ use crate::manifest::is_manifest;
 
 /// At most this many symbols are returned (clients re-query as the user types).
 const MAX_RESULTS: usize = 256;
-/// At most this many files are read from the workspace folders per query.
+/// At most this many files of the workspace folders are indexed.
 const MAX_DISK_FILES: usize = 2000;
 /// Directories never searched for sources.
-const SKIPPED_DIRS: &[&str] = &["target", "node_modules"];
+pub const SKIPPED_DIRS: &[&str] = &["target", "node_modules"];
 
 /// One searchable file.
 pub struct SourceFile<'a> {
@@ -54,61 +55,66 @@ impl Search {
 
     /// Add the symbols of `file` (once per path).
     pub fn add(&mut self, file: &SourceFile) {
-        if self.is_full() || is_manifest(file.path) || !self.seen.insert(file.path.to_path_buf()) {
-            return;
-        }
-        let Some(uri) = documents::path_to_uri(file.path) else {
-            return;
-        };
-        let index = LineIndex::new(file.text);
-        let mut found = vec![];
-        for item in &file.ast.items {
-            item_symbols(item, &mut found);
-        }
-        for (name, kind, span, container) in found {
-            if self.is_full() || !fuzzy_match(&self.query, &name) {
-                continue;
-            }
-            let range = index.range(span.lo, span.hi);
-            self.symbols.push(WorkspaceSymbol {
-                name,
-                kind,
-                tags: None,
-                container_name: container,
-                location: OneOf::Left(Location::new(uri.clone(), range)),
-                data: None,
-            });
+        if !is_manifest(file.path) && !self.seen.contains(file.path) {
+            self.add_symbols(file.path, &file_symbols(file));
         }
     }
 
-    /// Add the `.vlt` files under `roots` that were not added yet.
-    pub fn add_disk_files(&mut self, roots: &[PathBuf]) {
-        let mut files = vec![];
-        for root in roots {
-            collect_files(root, &mut files);
+    /// Add the matching ones of `symbols`, the symbols of the file at `path` (once per path).
+    pub fn add_symbols(&mut self, path: &Path, symbols: &[WorkspaceSymbol]) {
+        if self.is_full() || !self.seen.insert(path.to_path_buf()) {
+            return;
         }
-        for path in files.into_iter().take(MAX_DISK_FILES) {
+        for symbol in symbols {
             if self.is_full() {
                 return;
             }
-            if self.seen.contains(&path) {
-                continue;
-            }
-            let Ok(src) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let mut sm = SourceMap::new();
-            let file = sm.add(&path, src);
-            let text = &sm.get(file).src;
-            let parsed = std::panic::catch_unwind(|| velt_syntax::parse_file(file, text).0);
-            if let Ok(ast) = parsed {
-                self.add(&SourceFile {
-                    path: &path,
-                    text,
-                    ast: &ast,
-                });
+            if fuzzy_match(&self.query, &symbol.name) {
+                self.symbols.push(symbol.clone());
             }
         }
+    }
+}
+
+/// Every symbol of `file`.
+pub fn file_symbols(file: &SourceFile) -> Vec<WorkspaceSymbol> {
+    let Some(uri) = documents::path_to_uri(file.path) else {
+        return vec![];
+    };
+    let index = LineIndex::new(file.text);
+    let mut found = vec![];
+    for item in &file.ast.items {
+        item_symbols(item, &mut found);
+    }
+    found
+        .into_iter()
+        .map(|(name, kind, span, container)| WorkspaceSymbol {
+            name,
+            kind,
+            tags: None,
+            container_name: container,
+            location: OneOf::Left(Location::new(uri.clone(), index.range(span.lo, span.hi))),
+            data: None,
+        })
+        .collect()
+}
+
+/// Every symbol of the source file at `path` on disk (empty if it cannot be read).
+pub fn disk_file_symbols(path: &Path) -> Vec<WorkspaceSymbol> {
+    let Ok(src) = std::fs::read_to_string(path) else {
+        return vec![];
+    };
+    let mut sm = SourceMap::new();
+    let file = sm.add(path, src);
+    let text = &sm.get(file).src;
+    let parsed = std::panic::catch_unwind(|| velt_syntax::parse_file(file, text).0);
+    match parsed {
+        Ok(ast) => file_symbols(&SourceFile {
+            path,
+            text,
+            ast: &ast,
+        }),
+        Err(_) => vec![],
     }
 }
 
@@ -176,7 +182,7 @@ fn fuzzy_match(query: &str, name: &str) -> bool {
 }
 
 /// `.vlt` files under `dir` (skipping hidden, `target` and `node_modules` directories).
-fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
+pub fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };

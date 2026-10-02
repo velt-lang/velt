@@ -6,20 +6,23 @@
 
 mod features;
 mod requests;
+mod tokens;
 
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use lsp_server::{Connection, Message, Notification};
+use lsp_server::{Connection, Message, Notification, Request, RequestId};
 use lsp_types::notification::{
-    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument,
-    Notification as _, PublishDiagnostics,
+    DidChangeTextDocument, DidChangeWatchedFiles, DidCloseTextDocument, DidOpenTextDocument,
+    DidSaveTextDocument, Notification as _, PublishDiagnostics,
 };
-use lsp_types::{PublishDiagnosticsParams, Url};
+use lsp_types::request::{RegisterCapability, Request as _};
+use lsp_types::{FileChangeType, PublishDiagnosticsParams, Url};
 
 use crate::analysis::{self, Analysis};
+use crate::disk_index::DiskIndex;
 use crate::documents::{self, Documents};
 use crate::{diagnostics, manifest, workspace_symbols, ProgramLoader};
 
@@ -38,6 +41,7 @@ pub fn run(connection: &Connection, loader: &dyn ProgramLoader) -> Result<(), St
     connection
         .initialize_finish(id, result)
         .map_err(|e| format!("language server handshake failed: {e}"))?;
+    watch_files(connection, &params);
     Server {
         connection,
         loader,
@@ -45,6 +49,9 @@ pub fn run(connection: &Connection, loader: &dyn ProgramLoader) -> Result<(), St
         analyses: HashMap::new(),
         pending: HashMap::new(),
         roots: workspace_symbols::roots_from_init(&params),
+        sent_tokens: HashMap::new(),
+        next_result_id: 0,
+        disk_symbols: DiskIndex::default(),
     }
     .main_loop()
 }
@@ -59,6 +66,40 @@ struct Server<'a> {
     pending: HashMap<Url, Instant>,
     /// Workspace folders (searched by workspace symbols).
     roots: Vec<PathBuf>,
+    /// The semantic tokens last sent per document, with their result id (for deltas).
+    sent_tokens: HashMap<Url, (String, Vec<lsp_types::SemanticToken>)>,
+    /// The last semantic tokens result id handed out.
+    next_result_id: u64,
+    /// Symbols of the workspace folders' files.
+    disk_symbols: DiskIndex,
+}
+
+/// Id of the request registering the file watcher.
+const WATCH_REQUEST: &str = "velt-watch";
+
+/// Ask the client to report changes of `.vlt` files if it can (dynamic registration of
+/// `workspace/didChangeWatchedFiles`). The index relies on the events once the client answers
+/// the request successfully.
+fn watch_files(connection: &Connection, init: &serde_json::Value) {
+    let supported = init["capabilities"]["workspace"]["didChangeWatchedFiles"]
+        ["dynamicRegistration"]
+        .as_bool()
+        .unwrap_or(false);
+    if supported {
+        let params = serde_json::json!({ "registrations": [{
+            "id": "velt-source-files",
+            "method": DidChangeWatchedFiles::METHOD,
+            // Source files, and creations and deletions of anything (folders are reported by
+            // their own path: kind 5 = create + delete).
+            "registerOptions": { "watchers": [
+                { "globPattern": "**/*.vlt" },
+                { "globPattern": "**/*", "kind": 5 },
+            ] },
+        }] });
+        let id = RequestId::from(WATCH_REQUEST.to_string());
+        let req = Request::new(id, RegisterCapability::METHOD.into(), params);
+        let _ = connection.sender.send(req.into());
+    }
 }
 
 impl Server<'_> {
@@ -90,7 +131,14 @@ impl Server<'_> {
                 }
                 Some(Message::Notification(n)) if n.method == "exit" => return Ok(()),
                 Some(Message::Notification(n)) => self.notification(n),
-                Some(Message::Response(_)) => {}
+                Some(Message::Response(r)) => {
+                    // The file watcher counts once the client accepted it.
+                    if r.id == RequestId::from(WATCH_REQUEST.to_string())
+                        && r.response_result.is_ok()
+                    {
+                        self.disk_symbols.watched = true;
+                    }
+                }
             }
         }
     }
@@ -126,12 +174,21 @@ impl Server<'_> {
                 let p: lsp_types::DidSaveTextDocumentParams = serde_json::from_value(n.params)?;
                 self.schedule(&p.text_document.uri, Duration::ZERO);
             }
+            DidChangeWatchedFiles::METHOD => {
+                let p: lsp_types::DidChangeWatchedFilesParams = serde_json::from_value(n.params)?;
+                for change in p.changes {
+                    let path = documents::uri_to_path(&change.uri);
+                    let deleted = change.typ == FileChangeType::DELETED;
+                    self.disk_symbols.changed(&self.roots, &path, deleted);
+                }
+            }
             DidCloseTextDocument::METHOD => {
                 let p: lsp_types::DidCloseTextDocumentParams = serde_json::from_value(n.params)?;
                 let uri = p.text_document.uri;
                 self.docs.close(&uri);
                 self.analyses.remove(&uri);
                 self.pending.remove(&uri);
+                self.sent_tokens.remove(&uri);
                 self.publish(uri, vec![], None);
             }
             _ => {}

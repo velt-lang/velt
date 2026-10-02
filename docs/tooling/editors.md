@@ -10,7 +10,9 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
 - **Formatting** with [`velt fmt`](fmt.md).
 - **Navigation**: document outline, go to definition (also through `ns.x` namespace imports and
   re-exports, landing on the original declaration), find references, rename, document highlight
-  (reads and writes), workspace symbols.
+  (reads and writes), workspace symbols (the workspace folders are indexed once and kept up to
+  date from the editor's file change events, or by checking modification times when the editor
+  does not send them).
 - **Hover**: declaration signatures, including inferred `throws` types, and the inferred type of
   locals and expressions.
 - **Completion**: locals, module items, imports, prelude items, keywords, and members after `.`
@@ -33,7 +35,9 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
 - **Quick fixes** for compiler errors: remove `mut`, replace `undefined` with `null`, turn
   `"a" + n` into a template literal, turn `if (count)` into `if (count !== 0)` (or `!== ""`,
   `!== null`, `!== 0.0`, by type), replace `export default` with a named export, and add `await`
-  or `spawn(...)` to a floating promise.
+  or `spawn(...)` to a floating promise. A fix that applies in several places is also offered as
+  "Fix all in file", and **Fix all** (`source.fixAll`, e.g. on save) applies every preferred
+  fix of the file.
 
 - **Package manifests**: `package.vlt` is read as data, the way `velt` reads it, not checked as a
   program. Its diagnostics are exactly `velt`'s; completion offers the fields valid at the cursor
