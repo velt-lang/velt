@@ -883,6 +883,13 @@ typedef struct { uint32_t kind; uint32_t pad; VeltStr text; VeltBytes data; } Ve
 |---|---|---|
 | `velt_rt_html_escape` | `(const VeltStr* s, VeltStr* out)` | owned copy of `s` with `& < > " '` → `&amp; &lt; &gt; &quot; &#39;`, in one pass (output sized once); other bytes unchanged |
 
+Stable hash (`velt:hash`, additive):
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_fnv1a64_str` | `(const VeltStr* s) -> u64` | `velt:hash`: 64-bit FNV-1a of the bytes; stable forever (std contract) |
+| `velt_rt_fnv1a64_bytes` | `(const VeltBytes* data) -> u64` | the same over a `u8[]` |
+
 ### 14.11 SQLite (`velt:sqlite`; stream db, additive)
 
 `crates/velt_rt/src/sqlite/` over `rusqlite` (SQLite compiled in: `bundled`; also

@@ -23,6 +23,7 @@ pub mod debug_alloc;
 pub mod dev;
 pub mod entry;
 pub mod fmt;
+pub mod fnv;
 pub mod fs;
 pub mod handle;
 pub mod hash;

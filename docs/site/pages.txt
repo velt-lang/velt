@@ -45,6 +45,7 @@ velt:dns = ../std/dns.md
 velt:encoding = ../std/encoding.md
 velt:fs = ../std/fs.md
 velt:fs_stream = ../std/fs_stream.md
+velt:hash = ../std/hash.md
 velt:html = ../std/html.md
 velt:http = ../std/http.md
 velt:io = ../std/io.md
