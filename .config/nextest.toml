@@ -28,7 +28,7 @@ test-group = "end-to-end"
 # The slowest tests (a minute or more each) start first, so they don't finish alone at the end.
 [[profile.default.overrides]]
 filter = """
-test(=prefixes_never_panic) | binary(native_packages) | (package(velt_vir) & binary(native)) \
+test(/^prefixes_never_panic_/) | binary(native_packages) | (package(velt_vir) & binary(native)) \
 | test(=examples_compile_and_run) | test(=random_programs_match_interpreter) | binary(reload)\
 """
 priority = 100
