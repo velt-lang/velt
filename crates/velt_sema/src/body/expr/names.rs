@@ -217,7 +217,7 @@ impl FnCx<'_, '_> {
         }
         let ty = self.cx.ty.subst(fn_ty, &args);
         let ty = self.fn_value_errors(d, &args, ty, exp, span);
-        self.cx.fn_values.push((d, span));
+        self.cx.fn_values.push((d, args.clone(), span));
         self.mk(H::FnRef(d, args), ty, span)
     }
 

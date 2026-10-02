@@ -304,10 +304,13 @@ fn array_move(span: Span) -> Diagnostic {
 }
 
 /// Function values borrow their arguments; the value's thunk takes another reference to the
-/// ones a function owns (#224), which a value holding a promise (one owner) cannot give.
+/// ones a function owns (#224), which a value holding a promise (one owner) cannot give. A
+/// generic function is checked at its type arguments; a parameter type that still mentions a
+/// type parameter (a value taken inside a generic function) may hold a promise, so it is
+/// rejected.
 fn fn_values(cx: &mut Ctx) {
     let values = cx.fn_values.clone();
-    for (d, span) in values {
+    for (d, args, span) in values {
         let params: Vec<(String, TyId)> = cx
             .fn_info(d)
             .params
@@ -315,10 +318,22 @@ fn fn_values(cx: &mut Ctx) {
             .filter(|p| p.mode == PassMode::Owned)
             .map(|p| (p.name.clone(), p.ty))
             .collect();
-        let Some((pname, _)) = params
-            .into_iter()
-            .find(|&(_, t)| !cx.is_copy(t) && !cx.is_shared_value(t))
-        else {
+        let mut found = None;
+        for (pname, t) in params {
+            let t = cx.ty.subst(t, &args);
+            if cx.mentions_params(t) {
+                found = Some((
+                    pname,
+                    "its type depends on a type parameter, which may be a promise",
+                ));
+                break;
+            }
+            if !cx.is_copy(t) && !cx.is_shared_value(t) {
+                found = Some((pname, "a promise has one owner"));
+                break;
+            }
+        }
+        let Some((pname, why)) = found else {
             continue;
         };
         let fname = cx.fn_info(d).name.clone();
@@ -327,7 +342,7 @@ fn fn_values(cx: &mut Ctx) {
                 format!("function `{fname}` takes ownership of `{pname}`, so it cannot be used as a function value"),
                 span,
             )
-            .with_note("function values borrow their arguments, and a promise has one owner; call the function directly"),
+            .with_note(format!("function values borrow their arguments, and {why}; call the function directly")),
         );
     }
 }

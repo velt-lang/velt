@@ -69,8 +69,9 @@ pub(crate) struct Ctx<'m> {
     pub closure_counts: HashMap<String, u32>,
     /// Every function-like def, in creation order.
     pub fn_defs: Vec<DefId>,
-    /// Named functions used as values (`FnRef`), checked after ownership inference.
-    pub fn_values: Vec<(DefId, Span)>,
+    /// Named functions used as values (`FnRef`) with their type arguments, checked after
+    /// ownership inference.
+    pub fn_values: Vec<(DefId, Vec<TyId>, Span)>,
     /// Dispatch groups for error types (`crate::throws`), built on first use.
     pub groups: Option<crate::throws::Groups>,
     /// Error types committed to while checking bodies, re-checked after inference.

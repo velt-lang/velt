@@ -90,7 +90,7 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
 fn aliasing_params(cx: &mut Ctx, d: DefId, f: &FnDef) -> Aliases {
     let mut out = Aliases::new();
     let info = cx.fn_info(d);
-    let as_value = info.kind == FnKind::Closure || cx.fn_values.iter().any(|(v, _)| *v == d);
+    let as_value = info.kind == FnKind::Closure || cx.fn_values.iter().any(|(v, ..)| *v == d);
     if !as_value {
         return out;
     }

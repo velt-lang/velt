@@ -74,7 +74,8 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   throw says so: `(x: T) => U throws E` ([Errors](errors.md#dynamic-calls)). Calling a named
   function through a value behaves like calling it directly: an object it keeps or modifies is
   the caller's object. A function whose parameter takes ownership of a promise (one owner)
-  cannot be a value.
+  cannot be a value, and neither can a generic function that keeps a parameter whose type is a
+  promise at the value's type arguments or still depends on a type parameter.
 
 ## Captures
 
