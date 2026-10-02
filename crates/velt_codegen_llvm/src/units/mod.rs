@@ -80,25 +80,45 @@ pub(crate) fn unit_count(program: &vir::Program, requested: Option<usize>) -> us
 
 /// Split `program` into (at most) `count` units of similar weight (see `place`).
 pub(crate) fn plan(program: &vir::Program, count: usize) -> Plan {
-    let n = program.funcs.len();
-    let weights: Vec<usize> = program.funcs.iter().map(weight).collect();
-    let count = count.clamp(1, n.max(1));
+    let count = count.clamp(1, program.funcs.len().max(1));
+    let refs = References::of(program);
+    let owner = place::owners(program, &refs.weights, &refs.funcs, &refs.statics, count);
+    assemble(program, &refs, &owner)
+}
 
-    // `velt_vir::verify` guarantees valid ids; out-of-range ones are dropped all the same.
-    let (n_statics, valid) = (program.statics.len(), |r: Refs| {
-        r.within(n, program.statics.len())
-    });
-    let refs: Vec<Refs> = program
-        .funcs
-        .iter()
-        .map(|f| valid(Refs::of_function(f)))
-        .collect();
-    let static_refs: Vec<Refs> = program
-        .statics
-        .iter()
-        .map(|s| valid(Refs::of_static(s)))
-        .collect();
-    let owner = place::owners(program, &weights, &refs, &static_refs, count);
+/// The plan for a given unit of every function (`owner`; units numbered from 0, none empty).
+#[cfg(test)]
+pub(crate) fn plan_placed(program: &vir::Program, owner: &[usize]) -> Plan {
+    assemble(program, &References::of(program), owner)
+}
+
+/// Weights and references of a program's functions and statics.
+struct References {
+    weights: Vec<usize>,
+    funcs: Vec<Refs>,
+    statics: Vec<Refs>,
+}
+
+impl References {
+    fn of(program: &vir::Program) -> References {
+        let (n, n_statics) = (program.funcs.len(), program.statics.len());
+        // `velt_vir::verify` guarantees valid ids; out-of-range ones are dropped all the same.
+        References {
+            weights: program.funcs.iter().map(weight).collect(),
+            funcs: (program.funcs.iter())
+                .map(|f| Refs::of_function(f).within(n, n_statics))
+                .collect(),
+            statics: (program.statics.iter())
+                .map(|s| Refs::of_static(s).within(n, n_statics))
+                .collect(),
+        }
+    }
+}
+
+/// Imports, declarations and statics of every unit, given the unit of every function.
+fn assemble(program: &vir::Program, refs: &References, owner: &[usize]) -> Plan {
+    let (n, n_statics) = (program.funcs.len(), program.statics.len());
+    let (weights, static_refs, refs) = (&refs.weights, &refs.statics, &refs.funcs);
     let used = owner.iter().max().map_or(1, |&u| u + 1);
     let mut units: Vec<Unit> = (0..used).map(|_| Unit::default()).collect();
     for (i, &u) in owner.iter().enumerate() {

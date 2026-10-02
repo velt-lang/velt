@@ -87,6 +87,17 @@ fn small_callee_lands_with_its_first_caller() {
     assert_ne!(owner[3], owner[10], "{owner:?}");
 }
 
+/// A callee too large to join its caller's group (k-nucleotide's `frequencies`) still starts its
+/// group next to its caller's, so the units are cut around them.
+#[test]
+fn large_callee_lands_next_to_its_caller() {
+    let p = caller_program(vec![spec("frequencies", 600, &[])]);
+    let plan = plan(&p, 3);
+    let owner = owners(&plan, p.funcs.len());
+    assert_eq!(owner[11], owner[3], "{owner:?}");
+    assert_ne!(owner[11], owner[10], "{owner:?}");
+}
+
 /// Mutually recursive functions at the end of the program (drop glue of a recursive type) form
 /// one component, placed with its first caller.
 #[test]

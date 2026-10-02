@@ -17,10 +17,11 @@ use velt_vir::vir::{self, Linkage};
 
 use super::graph::{components, successors, Refs};
 
-/// Components of at most this weight join the group of their first referrer. Big enough for
-/// the generated glue of a type and a typical method chain; larger functions gain little from
-/// being inlined and are better spread over the units.
-const SMALL_COMPONENT_WEIGHT: usize = 500;
+/// Components of at most this weight join the group of their first referrer; larger ones are
+/// better spread over the units. 500 was too small: k-nucleotide's `frequencies` (525 statements
+/// once `velt_opt` has inlined `Map.upsert` into it) then landed in another unit than the
+/// `Map.lookup` its hot loop calls, 12 % slower.
+const SMALL_COMPONENT_WEIGHT: usize = 2_000;
 
 /// The unit of every function (`0..count`; every unit below the largest one defines at least
 /// one function).
@@ -31,18 +32,19 @@ pub(super) fn owners(
     static_refs: &[Refs],
     count: usize,
 ) -> Vec<usize> {
-    let group = groups(program, weights, refs, static_refs, count);
-    cut(weights, &group, count)
+    let (group, parent) = groups(program, weights, refs, static_refs, count);
+    cut(weights, &group, &parent, count)
 }
 
-/// The group of every function (ids are arbitrary).
+/// The group of every function, and the parent of every group: the group of the first referrer
+/// of the component that started it. Groups are numbered callers first.
 fn groups(
     program: &vir::Program,
     weights: &[usize],
     refs: &[Refs],
     static_refs: &[Refs],
     count: usize,
-) -> Vec<usize> {
+) -> (Vec<usize>, Vec<Option<usize>>) {
     let n = weights.len();
     let succ = successors(refs, static_refs);
     let (comp, n_comps) = components(&succ);
@@ -64,6 +66,7 @@ fn groups(
     let mut pos = vec![usize::MAX; succ.len()];
     let mut group = vec![usize::MAX; succ.len()];
     let mut group_weight: Vec<usize> = Vec::new();
+    let mut parent: Vec<Option<usize>> = Vec::new();
     for c in callers_first(&succ, &comp, &members) {
         let nodes = &members[c];
         let weight: usize = nodes.iter().filter(|&&v| v < n).map(|&v| weights[v]).sum();
@@ -79,6 +82,7 @@ fn groups(
         });
         let g = joined.unwrap_or_else(|| {
             group_weight.push(0);
+            parent.push(first.map(|p| group[p]));
             group_weight.len() - 1
         });
         group_weight[g] += weight;
@@ -95,7 +99,7 @@ fn groups(
         }
     }
     group.truncate(n);
-    group
+    (group, parent)
 }
 
 /// The components in topological order, callers before callees (every referrer of a component
@@ -132,20 +136,22 @@ fn callers_first(succ: &[Vec<usize>], comp: &[usize], members: &[Vec<usize>]) ->
     order
 }
 
-/// Units as contiguous runs of groups, in the program order of each group's first function: a
-/// unit ends once it holds its share of what is left (so one huge group does not leave the rest
-/// to a single unit), or when there are only as many groups left as units still empty.
-fn cut(weights: &[usize], group: &[usize], count: usize) -> Vec<usize> {
-    let n_groups = group.iter().map(|&g| g + 1).max().unwrap_or(0);
-    let mut first = vec![usize::MAX; n_groups];
-    let mut weight = vec![0usize; n_groups];
+/// Units as contiguous runs of groups. Groups are ordered depth first: every group right after
+/// its parent and the parent's earlier children (so a large callee that starts a group of its own
+/// still lands next to its caller), roots and siblings callers first, in program order. A unit
+/// ends once it holds its share of what is left (so one huge group does not leave the rest to a
+/// single unit), or when there are only as many groups left as units still empty.
+fn cut(weights: &[usize], group: &[usize], parent: &[Option<usize>], count: usize) -> Vec<usize> {
+    let (mut weight, mut defines) = (vec![0usize; parent.len()], vec![false; parent.len()]);
     for (f, &g) in group.iter().enumerate() {
-        first[g] = first[g].min(f);
         weight[g] += weights[f];
+        defines[g] = true;
     }
-    let mut order: Vec<usize> = (0..n_groups).filter(|&g| first[g] != usize::MAX).collect();
-    order.sort_unstable_by_key(|&g| first[g]);
-    let mut unit_of = vec![0usize; n_groups];
+    let order: Vec<usize> = depth_first(parent)
+        .into_iter()
+        .filter(|&g| defines[g])
+        .collect();
+    let mut unit_of = vec![0usize; parent.len()];
     // What the current unit and the ones after it still have to share.
     let mut rest: usize = weights.iter().sum();
     let (mut acc, mut unit) = (0usize, 0usize);
@@ -161,4 +167,24 @@ fn cut(weights: &[usize], group: &[usize], count: usize) -> Vec<usize> {
         }
     }
     group.iter().map(|&g| unit_of[g]).collect()
+}
+
+/// Pre-order of the forest given by `parent` (children after their parent, in id order),
+/// without recursion.
+fn depth_first(parent: &[Option<usize>]) -> Vec<usize> {
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); parent.len()];
+    let mut stack = Vec::new();
+    for (g, p) in parent.iter().enumerate().rev() {
+        match p {
+            Some(p) => children[*p].push(g),
+            None => stack.push(g),
+        }
+    }
+    // Children were pushed in descending id order: popping visits them ascending.
+    let mut order = Vec::with_capacity(parent.len());
+    while let Some(g) = stack.pop() {
+        order.push(g);
+        stack.extend(children[g].iter().copied());
+    }
+    order
 }

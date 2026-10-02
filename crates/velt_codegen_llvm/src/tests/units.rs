@@ -6,7 +6,7 @@ use velt_vir::vir::*;
 
 use crate::module::emit_unit;
 use crate::target::normalize;
-use crate::units::{plan, unit_count, Unit};
+use crate::units::{plan, plan_placed, unit_count, Unit};
 
 /// `a` (tiny), `b` (calls `a`), `c` (calls `b`; returns a vtable static holding `a`'s address)
 /// and `velt_main` (calls `c` and `a`, reads the vtable): 2 + 62 + 63 + 65 weight.
@@ -61,12 +61,23 @@ fn program() -> Program {
     pb.finish()
 }
 
+/// `a` and `b` in unit 0, `c` in unit 1, main in unit 2.
+const SPLIT: [usize; 4] = [0, 0, 1, 2];
+
 #[test]
-fn split_into_contiguous_balanced_units() {
+fn split_callers_first() {
     let p = program();
     let plan = plan(&p, 3);
     let defines: Vec<&[usize]> = plan.units.iter().map(|u| u.defines.as_slice()).collect();
-    assert_eq!(defines, [&[0, 1][..], &[2], &[3]]);
+    // None of them is small enough to join its caller's group (at most half a unit's share),
+    // so each starts one, and the groups are cut callers first.
+    assert_eq!(defines, [&[2, 3][..], &[1], &[0]]);
+}
+
+#[test]
+fn cross_unit_imports_declarations_and_statics() {
+    let p = program();
+    let plan = plan_placed(&p, &SPLIT);
     // `a` is called from main's unit and sits in c's vtable; `b` is called from c's unit; `c`
     // from main's. main is exported anyway.
     assert_eq!(plan.shared.funcs, [true, true, true, false]);
@@ -111,9 +122,7 @@ fn huge_callers_import_nothing() {
                 .push(Stmt::Assign(Place::local(x), Rvalue::Use(int(i, I64))));
         }
     }
-    let plan = plan(&p, 3);
-    let defines: Vec<&[usize]> = plan.units.iter().map(|u| u.defines.as_slice()).collect();
-    assert_eq!(defines, [&[0, 1][..], &[2], &[3]]);
+    let plan = plan_placed(&p, &SPLIT);
     let main = &plan.units[2];
     assert!(main.imports.is_empty());
     assert_eq!(main.declares, [0, 2]);
@@ -133,7 +142,7 @@ fn one_unit_unless_requested() {
 #[test]
 fn unit_modules_link_across_units() {
     let p = program();
-    let plan = plan(&p, 3);
+    let plan = plan_placed(&p, &SPLIT);
     let target = normalize("x86_64-unknown-linux-gnu").unwrap();
     let ir: Vec<String> = plan
         .units
@@ -187,7 +196,7 @@ fn exported_functions_are_declared_dso_local() {
     let mut p = program();
     p.funcs[2].linkage = Linkage::Export;
     p.funcs[2].symbol = "velt_exported".into();
-    let plan = plan(&p, 3);
+    let plan = plan_placed(&p, &SPLIT);
     let target = normalize("x86_64-unknown-linux-gnu").unwrap();
     let main = emit_unit(&p, &target, true, &plan.units[2], &plan.shared).unwrap();
     assert!(
