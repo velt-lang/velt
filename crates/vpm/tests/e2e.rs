@@ -174,7 +174,7 @@ fn conflicting_transitive_requirements() {
         "{err}"
     );
     assert!(
-        !w.app().join("velt.lock").exists(),
+        !w.app().join("velt.lock.json").exists(),
         "a failed install must not write the lockfile"
     );
 }

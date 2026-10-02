@@ -17,7 +17,7 @@ pub fn is_url(s: &str) -> bool {
 /// Registry and cache directories.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Locations {
-    /// Local registry root: `<name>/index.toml` and `<name>/<version>/`.
+    /// Local registry root: `<name>/index.json` and `<name>/<version>/`.
     pub registry: PathBuf,
     /// Extracted packages: `<name>-<version>/`.
     pub cache: PathBuf,

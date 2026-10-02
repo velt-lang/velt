@@ -151,14 +151,15 @@ mod tests {
     fn publish(root: &Path, name: &str, versions: &[(&str, bool)]) {
         let dir = root.join(name);
         std::fs::create_dir_all(&dir).unwrap();
-        let text: String = versions
+        let entries: Vec<String> = versions
             .iter()
             .map(|(v, yanked)| {
                 format!(
-                    "[[version]]\nversion = \"{v}\"\nchecksum = \"sha256:0\"\nyanked = {yanked}\n"
+                    "{{\"version\": \"{v}\", \"checksum\": \"sha256:0\", \"yanked\": {yanked}}}"
                 )
             })
             .collect();
+        let text = format!("{{\"versions\": [{}]}}", entries.join(", "));
         std::fs::write(dir.join(INDEX_FILE), text).unwrap();
     }
 

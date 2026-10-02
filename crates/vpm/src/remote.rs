@@ -2,7 +2,7 @@
 //!
 //! | Request | Answer |
 //! |---|---|
-//! | `GET  <url>/api/v1/<name>/index` | the package's `index.toml` (see [`crate::registry`]), 404 if unknown |
+//! | `GET  <url>/api/v1/<name>/index` | the package's `index.json` (see [`crate::registry`]), 404 if unknown |
 //! | `GET  <url>/api/v1/<name>/<version>` | the version's [`crate::archive`] |
 //! | `PUT  <url>/api/v1/<name>/<version>` | publish: body = archive, `X-Velt-Checksum: sha256:…`; `Authorization: Bearer <token>` when the server requires one |
 //! | `GET  <url>/api/v1/<name>/<version>/native/<triple>` | a native bundle ([`crate::native::bundle`]) |
@@ -12,9 +12,9 @@
 //! | `PUT` / `DELETE <url>/api/v1/<name>/owners/<user>` | add / remove an owner |
 //! | `GET  <url>/api/v1/search?q=<text>` | packages whose name contains the text ([`crate::search`]), as JSON |
 //!
-//! Every write sends `Authorization: Bearer $VELT_REGISTRY_TOKEN`, the user's own token; a
-//! server with users answers 401 without a valid one and 403 when the user does not own the
-//! package. Downloads are verified against the checksum the index (and `velt.lock`) records before they
+//! Every write sends `Authorization: Bearer $VELT_REGISTRY_TOKEN`, the user's own token; a server
+//! with users answers 401 without a valid one and 403 when the user does not own the package.
+//! Downloads are verified against the checksum the index (and `velt.lock.json`) records before they
 //! are unpacked into the cache.
 
 use std::path::{Path, PathBuf};
@@ -34,7 +34,16 @@ fn api(url: &str, name: &str, rest: &str) -> String {
 pub fn read_index(url: &str, name: &str) -> Result<Option<Index>, String> {
     let resp = velt_http::fetch("GET", &api(url, name, "index"), &[], b"")?;
     match resp.status {
-        200 => parse_index(&resp.body_text(), &format!("{url} ({name})")).map(Some),
+        200 => {
+            let text = resp.body_text();
+            if !text.trim_start().starts_with('{') {
+                // A server from before the index was JSON answers with `index.toml`.
+                return Err(format!(
+                    "registry {url} answered with an `index.toml` for `{name}` (an older `velt registry serve`): upgrade the server, which now serves `index.json`"
+                ));
+            }
+            parse_index(&text, &format!("{url} ({name})")).map(Some)
+        }
         404 => Ok(None),
         s => Err(format!(
             "registry {url}: {s} for `{name}`: {}",

@@ -49,7 +49,7 @@ explicit lifetime (`&'static str`).
 The SDK's `#[velt_native::export]` emits, for each exported function `f`, a data symbol
 `velt_sig_f` holding the NUL-terminated signature of `f`. `velt native build` reads the shared
 library's exports with the `object` crate (any target's ELF, Mach-O or PE) and writes the
-`exports` table of `native.toml`. Building fails when the init function is missing, an export
+`exports` table of `native.json`. Building fails when the init function is missing, an export
 lacks the `p_` prefix, an export has no record, or a record names nothing exported.
 
 ## The function table
@@ -78,7 +78,7 @@ typedef struct VeltRtApi {
   function or helper named in its comment). A library is `dlopen`ed into `velt dev`'s host,
   whose runtime symbols are not exported, and a DLL cannot import from an executable.
 - **Versioning**: the table is append-only; `abi_version` grows by one with each addition. A
-  library records the version it needs (`abi` in `native.toml`, `native_abi` in the index);
+  library records the version it needs (`abi` in `native.json`, `native_abi` in the index);
   vpm refuses a library needing more than the running `velt` provides
   (`vpm::native::NATIVE_ABI` = velt_rt's `NATIVE_ABI_VERSION`), and the SDK's init checks
   `abi_version` and `size` again.
@@ -120,7 +120,7 @@ A bundle is one target's library, a directory exchanged as a `VELTPKG1` archive
 (`vpm::archive`) restricted to these paths:
 
 ```text
-native.toml                   # package, version, target, abi, shared, import_lib?, static?, [exports]
+native.json                   # package, version, target, abi, shared, import_lib?, static?, exports
 shared/libvelt_native_<p>.so  # .dylib (install name @rpath/...) on macOS
 shared/velt_native_<p>.dll    # Windows, with shared/velt_native_<p>.dll.lib
 static/<p>.o                  # Linux and macOS only
@@ -135,17 +135,17 @@ static/<p>.o                  # Linux and macOS only
   std inside it becomes local, so it cannot clash with the runtime's copy or another package's.
   Section groups are turned into plain sections first: otherwise the runtime's copy of a group
   (e.g. `DW.ref.rust_eh_personality`) would replace the library's and leave references dangling.
-- `native.toml` may only name the bundle's own files: `shared` and `import_lib` under `shared/`,
+- `native.json` may only name the bundle's own files: `shared` and `import_lib` under `shared/`,
   `static` under `static/`, no absolute paths or `..` (checked on unpack, publish and load).
 - The checksum of a bundle is the content hash of its files (`vpm::native::bundle::checksum`,
-  the hash `velt.lock` records for packages).
+  the hash `velt.lock.json` records for packages).
 
 ## Install
 
 For the build target (`InstallOptions::target`):
 - A **registry** package with `native` checksums in the lockfile: the bundle for the target is
   fetched into `<cache>/native/<name>-<version>/<triple>/`, after its checksum (and its
-  `native.toml`'s package, version and target) is verified in a staging directory; nothing
+  `native.json`'s package, version and target) is verified in a staging directory; nothing
   unverified is ever where the compiler loads or links it. A cached bundle whose files changed is
   replaced.
 - No bundle for the target: built from the package's sources with `cargo build --locked` (the

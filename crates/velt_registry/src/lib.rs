@@ -1,4 +1,4 @@
-//! A package registry server: vpm's registry directory (`<root>/<name>/index.toml`,
+//! A package registry server: vpm's registry directory (`<root>/<name>/index.json`,
 //! `<root>/<name>/<version>/`) served over the HTTP protocol of `vpm::remote`, so packages can be
 //! shared across machines (`registry: "http://host:port"` in `package.vlt`).
 //!
@@ -111,7 +111,7 @@ impl Registry {
             return Response::text(400, "invalid package name");
         }
         match std::fs::read(self.root.join(name).join(vpm::registry::INDEX_FILE)) {
-            Ok(bytes) => Response::bytes(200, "application/toml", bytes),
+            Ok(bytes) => Response::bytes(200, "application/json", bytes),
             Err(_) => Response::text(404, format!("no package `{name}`")),
         }
     }

@@ -19,7 +19,7 @@ velt dev: restarted (Point gained a field) in 380 ms
 ## What happens on save
 
 `velt dev` watches every file the build read (your modules, the standard library, path
-dependencies) plus `package.vlt` and `velt.lock`, and new `.vlt` files next to them (so a module
+dependencies) plus `package.vlt` and `velt.lock.json`, and new `.vlt` files next to them (so a module
 that an import was missing is picked up as soon as you create it). Changes come from the
 operating system's file notifications; where those don't work (some network or container file
 systems), set `VELT_DEV_POLL=1` to check the files every 10 ms instead. A file saved while a

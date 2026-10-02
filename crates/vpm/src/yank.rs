@@ -68,11 +68,11 @@ mod tests {
 
         yank(&loc, "lib", "1.0.0", true).unwrap();
         assert!(yanked(&loc));
-        let text = std::fs::read_to_string(loc.registry.join("lib/index.toml")).unwrap();
-        assert!(text.contains("yanked = true"), "{text}");
+        let text = std::fs::read_to_string(loc.registry.join("lib/index.json")).unwrap();
+        assert!(text.contains("\"yanked\": true"), "{text}");
         yank(&loc, "lib", "1.0.0", false).unwrap();
         assert!(!yanked(&loc));
-        let text = std::fs::read_to_string(loc.registry.join("lib/index.toml")).unwrap();
+        let text = std::fs::read_to_string(loc.registry.join("lib/index.json")).unwrap();
         assert!(!text.contains("yanked"), "{text}");
 
         assert!(yank(&loc, "lib", "2.0.0", true)

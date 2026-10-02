@@ -1,18 +1,26 @@
 //! The registry: a local directory, or a remote one over HTTP ([`crate::remote`]) when
 //! [`Locations::remote`] is set. The local layout is also what the registry server stores.
 //!
-//! Layout: `<registry>/<name>/<version>/` holds a copy of the published package (package.vlt + src/**)
-//! and `<registry>/<name>/index.toml` lists every published version with its content checksum and
-//! dependency requirements, so resolution only reads index files:
+//! Layout: `<registry>/<name>/<version>/` holds a copy of the published package (package.vlt +
+//! src/**) and `<registry>/<name>/index.json` lists every published version with its content
+//! checksum and dependency requirements, so resolution only reads index files (generated JSON,
+//! [`crate::json_file`]; `native_abi` and `native` only for packages with native code):
 //!
-//! ```toml
-//! [[version]]
-//! version = "1.0.0"
-//! checksum = "sha256:…"
-//! dependencies = { util = "^0.2" }
-//! native_abi = 1                                        # packages with native code only
-//! native = { "x86_64-unknown-linux-gnu" = "sha256:…" }   # prebuilt library per target
+//! ```json
+//! {
+//!   "versions": [
+//!     {
+//!       "version": "1.0.0",
+//!       "checksum": "sha256:…",
+//!       "dependencies": { "util": "^0.2" },
+//!       "native_abi": 1,
+//!       "native": { "x86_64-unknown-linux-gnu": "sha256:…" }
+//!     }
+//!   ]
+//! }
 //! ```
+//!
+//! A registry directory written by an older velt (`index.toml`) is refused with an error.
 //!
 //! A native bundle ([`crate::native`]) of a version is stored at
 //! `<registry>/<name>/<version>.native/<triple>/`. Versions are immutable, except that a target
@@ -29,13 +37,15 @@ use crate::manifest::Manifest;
 use crate::native::{bundle, NativeMeta, NATIVE_ABI};
 
 /// File name of a package's index inside the registry.
-pub const INDEX_FILE: &str = "index.toml";
+pub const INDEX_FILE: &str = "index.json";
+/// The index's former (TOML) name, no longer read.
+pub const LEGACY_INDEX_FILE: &str = "index.toml";
 
 /// All published versions of one package.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Index {
     /// Published versions, in publication order.
-    #[serde(default, rename = "version")]
+    #[serde(default)]
     pub versions: Vec<IndexEntry>,
 }
 
@@ -68,13 +78,21 @@ impl IndexEntry {
     }
 }
 
-/// Read `<name>/index.toml`; `Ok(None)` if the package was never published.
+/// Read `<name>/index.json`; `Ok(None)` if the package was never published.
 pub fn read_index(loc: &Locations, name: &str) -> Result<Option<Index>, String> {
     if let Some(url) = &loc.remote {
         return crate::remote::read_index(url, name);
     }
     let path = loc.registry.join(name).join(INDEX_FILE);
     if !path.is_file() {
+        let old = loc.registry.join(name).join(LEGACY_INDEX_FILE);
+        if old.is_file() {
+            return Err(crate::json_file::legacy_error(
+                &old,
+                INDEX_FILE,
+                "this registry was written by an older velt; publish the package again into a new registry",
+            ));
+        }
         return Ok(None);
     }
     let text = std::fs::read_to_string(&path)
@@ -85,8 +103,7 @@ pub fn read_index(loc: &Locations, name: &str) -> Result<Option<Index>, String> 
 /// Parse index text (`what` names its origin in errors); entries with invalid versions are
 /// dropped.
 pub fn parse_index(text: &str, what: &str) -> Result<Index, String> {
-    let mut index: Index =
-        toml::from_str(text).map_err(|e| format!("corrupt registry index `{what}`: {e}"))?;
+    let mut index: Index = crate::json_file::parse(text, &format!("registry index `{what}`"))?;
     index
         .versions
         .retain(|v| semver::Version::parse(&v.version).is_ok());
@@ -95,8 +112,8 @@ pub fn parse_index(text: &str, what: &str) -> Result<Index, String> {
 
 pub(crate) fn write_index(loc: &Locations, name: &str, index: &Index) -> Result<(), String> {
     let path = loc.registry.join(name).join(INDEX_FILE);
-    let text = toml::to_string(index).expect("ICE: index serialization cannot fail");
-    std::fs::write(&path, text).map_err(|e| format!("cannot write `{}`: {e}", path.display()))
+    std::fs::write(&path, crate::json_file::to_text(index))
+        .map_err(|e| format!("cannot write `{}`: {e}", path.display()))
 }
 
 /// Publish the package rooted at `root` into the registry (uploading it to a remote one). Versions are immutable: publishing an
@@ -345,6 +362,18 @@ mod tests {
             "export function f(): i64 { return 1; }\n",
         )
         .unwrap();
+    }
+
+    #[test]
+    fn a_former_index_toml_is_an_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let loc = Locations::under(&tmp.path().join("home"));
+        assert_eq!(read_index(&loc, "lib").unwrap(), None);
+        let dir = loc.registry.join("lib");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(LEGACY_INDEX_FILE), "[[version]]\n").unwrap();
+        let e = read_index(&loc, "lib").unwrap_err();
+        assert!(e.contains("(the file is now `index.json`)"), "{e}");
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //! A bundle is a directory (exchanged as an [`crate::archive`]):
 //!
 //! ```text
-//! native.toml                       # NativeMeta: package, version, target, ABI, exports
+//! native.json                       # NativeMeta: package, version, target, ABI, exports
 //! shared/libvelt_native_<pkg>.so    # .dylib on macOS; <crate>.dll + <crate>.dll.lib on Windows
 //! static/<pkg>.o                    # Linux/macOS: one prelinked object (only exports global)
 //! ```
@@ -28,8 +28,10 @@ use serde::{Deserialize, Serialize};
 /// `NATIVE_ABI_VERSION`); bundles needing more are refused before download.
 pub const NATIVE_ABI: u32 = 1;
 
-/// File name of a bundle's metadata.
-pub const META_FILE: &str = "native.toml";
+/// File name of a bundle's metadata (generated JSON, [`crate::json_file`]).
+pub const META_FILE: &str = "native.json";
+/// The metadata's former (TOML) name, no longer read.
+pub const LEGACY_META_FILE: &str = "native.toml";
 
 /// Prefix of the signature records the SDK's `#[export]` emits (`velt_sig_<export>`).
 pub const SIG_PREFIX: &str = "velt_sig_";
@@ -65,7 +67,7 @@ pub fn init_symbol(package: &str) -> String {
     format!("velt_native_init_{}", package.replace('-', "_"))
 }
 
-/// The contents of `native.toml`.
+/// The contents of `native.json`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeMeta {
     /// Package name.
@@ -89,22 +91,31 @@ pub struct NativeMeta {
 }
 
 impl NativeMeta {
-    /// Parse `native.toml` text.
+    /// Parse `native.json` text.
     pub fn parse(text: &str, what: &str) -> Result<NativeMeta, String> {
-        toml::from_str(text).map_err(|e| format!("invalid {META_FILE} in {what}: {e}"))
+        crate::json_file::parse(text, &format!("{META_FILE} in {what}"))
     }
 
-    /// Read `<dir>/native.toml`.
+    /// Read `<dir>/native.json` (a bundle built by an older velt, with `native.toml`, is an
+    /// error saying to rebuild it).
     pub fn read(dir: &Path) -> Result<NativeMeta, String> {
         let path = dir.join(META_FILE);
+        let old = dir.join(LEGACY_META_FILE);
+        if !path.is_file() && old.is_file() {
+            return Err(crate::json_file::legacy_error(
+                &old,
+                META_FILE,
+                "rebuild the bundle with `velt native build`",
+            ));
+        }
         let text = std::fs::read_to_string(&path)
             .map_err(|e| format!("cannot read `{}`: {e}", path.display()))?;
         NativeMeta::parse(&text, &path.display().to_string())
     }
 
-    /// Serialized `native.toml`.
-    pub fn to_toml(&self) -> String {
-        toml::to_string(self).expect("ICE: native.toml serialization cannot fail")
+    /// The text of `native.json`.
+    pub fn to_json(&self) -> String {
+        crate::json_file::to_text(self)
     }
 }
 
@@ -223,8 +234,9 @@ mod tests {
             static_obj: Some("static/sqlite.o".into()),
             exports: BTreeMap::from([("sqlite_open".into(), "(string)->IoResult<u64>".into())]),
         };
-        let text = meta.to_toml();
-        assert!(text.contains("static = \"static/sqlite.o\""), "{text}");
+        let text = meta.to_json();
+        assert!(text.contains("\"static\": \"static/sqlite.o\""), "{text}");
+        assert!(text.ends_with("}\n"), "{text}");
         assert_eq!(NativeMeta::parse(&text, "test").unwrap(), meta);
     }
 

@@ -142,7 +142,7 @@ fn native_bundle(dir: &Path, content: &str) -> std::path::PathBuf {
         static_obj: None,
         exports: Default::default(),
     };
-    std::fs::write(b.join("native.toml"), meta.to_toml()).unwrap();
+    std::fs::write(b.join("native.json"), meta.to_json()).unwrap();
     b
 }
 

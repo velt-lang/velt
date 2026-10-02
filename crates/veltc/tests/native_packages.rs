@@ -175,7 +175,7 @@ fn sqlite_package_with_native_code() {
         .expect("velt native build");
     ok(built, "velt native build");
     let artifacts = source.join("target/velt-native");
-    assert!(artifacts.join(&host).join("native.toml").is_file());
+    assert!(artifacts.join(&host).join("native.json").is_file());
 
     // A registry server.
     let served = Command::new(env!("CARGO_BIN_EXE_velt"))
@@ -230,8 +230,8 @@ fn sqlite_package_with_native_code() {
         text.contains("`sqlite` 0.1.0 runs native code (prebuilt, checksum verified"),
         "{text}"
     );
-    let lock = std::fs::read_to_string(app.join("velt.lock")).unwrap();
-    assert!(lock.contains(&format!("{host} = \"sha256:")), "{lock}");
+    let lock = std::fs::read_to_string(app.join("velt.lock.json")).unwrap();
+    assert!(lock.contains(&format!("\"{host}\": \"sha256:")), "{lock}");
 
     // Debug build: linked against the shared library.
     std::fs::write(app.join("src/main.vlt"), PROGRAM).unwrap();

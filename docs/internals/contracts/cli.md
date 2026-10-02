@@ -73,10 +73,10 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - `registry serve` exits 1 without serving when `$VELT_REGISTRY_TOKEN` is set and the registry is
   open (the variable used to protect a server).
 - Commands that install (`add`, `install`, `update`, `build`, `run`, `check`, `test`, `dev`) print
-  `warning: `<name>` <version> is yanked (pinned by velt.lock)` for each yanked locked version.
+  `warning: `<name>` <version> is yanked (pinned by velt.lock.json)` for each yanked locked version.
 - `yank <pkg>@<version> [--undo]` (additive): sets or clears the version's `yanked` flag in the
   package's registry (local, or remote: owners only). Resolution skips yanked versions unless
-  `velt.lock` pins them; `add` without a version picks the newest stable version not yanked.
+  `velt.lock.json` pins them; `add` without a version picks the newest stable version not yanked.
 - `owner list|add|remove <pkg> [<user>]` (additive): a package's owners on a registry server
   (`list` prints one per line on stdout); an error for a local registry.
 - `search <text>` (additive): `name version` lines on stdout for the packages of the package's
@@ -113,7 +113,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - Diagnostics go to stderr as `Diagnostic::render` output.
 - `dev` (docs/internals/design/hot-reload.md, phases 1–2): builds and runs like `run`, then stays up as a
   supervisor. It watches every file the build read (std and path dependencies included) plus
-  `package.vlt`/`velt.lock`, and new `.vlt` files in their directories (OS file notifications,
+  `package.vlt`/`velt.lock.json`, and new `.vlt` files in their directories (OS file notifications,
   checked against mtime and length; polling every 10 ms where notifications fail or with
   `VELT_DEV_POLL=1`; 30 ms settle). On a change it builds the new version
   while the old one keeps running: a failed build prints its diagnostics and
@@ -191,7 +191,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   manifest as pretty JSON on stdout with defaults filled in. A manifest error exits 1.
 - `fmt` without paths in a package that has only a `velt.toml` reports the migration error
   (manifest.md) instead of formatting.
-- `install` resolves + fetches deps and writes `velt.lock`; `--locked` fails if the lock would change.
+- `install` resolves + fetches deps and writes `velt.lock.json`; `--locked` fails if the lock would change.
   `update` re-resolves ignoring the lock. `publish` copies the package into the local registry.
 - Native libraries (additive, native_abi.md): `build`, `run`, `check`, `dev`, `test` and the LSP
   install the packages' native libraries for the target (prebuilt and verified, or built with

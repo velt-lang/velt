@@ -72,7 +72,7 @@ pub fn manifest(json: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Warn about installed versions that were yanked after `velt.lock` pinned them.
+/// Warn about installed versions that were yanked after `velt.lock.json` pinned them.
 pub fn warn_yanked(installed: &vpm::Installed) {
     for warning in installed.yank_warnings() {
         style::warning(&warning);
@@ -123,9 +123,9 @@ pub fn install(opts: InstallOptions) -> Result<(), String> {
     warn_yanked(&installed);
     let count = installed.lockfile.packages.len();
     let lock = if installed.lock_changed {
-        "updated velt.lock"
+        "updated velt.lock.json"
     } else {
-        "velt.lock unchanged"
+        "velt.lock.json unchanged"
     };
     style::status(
         "Installed",
