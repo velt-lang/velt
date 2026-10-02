@@ -1,7 +1,8 @@
 // check: no leaks
 // `new Map(entries)` and `new Set(values)`, as in TypeScript: the key and value types come from
 // the entries (a `[K, V]` tuple literal per entry) or the type arguments; a repeated key keeps
-// its first position and takes the last value; the map takes ownership of the entries.
+// its first position and takes the last value. The argument stays as it was; the map or set
+// shares its keys and values, like JS.
 import { Set } from "velt:collections/set";
 
 class Actor {
@@ -55,4 +56,25 @@ async function main() {
   console.log(ids.values());
   const fromArray = new Set(["z"].concat(["y"]));
   console.log(fromArray.size, new Set<string>().size);
+
+  // The argument is not drained: it still holds its entries, and changes to it later don't
+  // reach the map or set.
+  const e: [string, i64][] = [
+    ["k", 1],
+    ["j", 2],
+  ];
+  const f = new Map(e);
+  console.log(f.size, e.length, e);
+  e.push(["l", 3]);
+  console.log(f.size, e.length, f.get("k"), f.has("l"));
+  const vs = ["p", "q", "p"];
+  const g = new Set(vs);
+  console.log(g.size, vs.length, vs);
+  vs.push("r");
+  console.log(g.size, vs.length, g.has("r"));
+  // Objects are shared: a change through the array shows through the map.
+  const team = pairs();
+  const byName = new Map(team);
+  team[0][1].name = "alice2";
+  console.log(byName.get("a")?.name, team.length);
 }

@@ -5,7 +5,7 @@ semantics plus the ES2025 set algebra. It is built on the prelude `Map`, so elem
 anything a map key can be: numbers, bool, string, class instances (by identity), and structs,
 object types and tuples (by content).
 
-- `new Set<T>()`, `new Set(values)` (takes the array over, like JS `new Set(values)`),
+- `new Set<T>()`, `new Set(values)` (leaves `values` as it is and shares the elements, like JS),
   `Set.from(xs)` (clones the elements), `size`, `isEmpty()`.
 - `add(v)`: takes ownership. `has(v)`, `delete(v): bool`, `clear()`.
 - `values(): T[]` returns clones in insertion order. `forEach(f)` borrows.

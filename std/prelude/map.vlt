@@ -54,16 +54,10 @@ export class Map<K, V> {
   private shift: u64 = 64;
 
   // A map holding `entries` (like JS `new Map(entries)`), in order; a later entry with the same
-  // key replaces the value of an earlier one but keeps its position. Takes ownership of the
-  // entries.
+  // key replaces the value of an earlier one but keeps its position. Leaves `entries` as it is;
+  // the map shares their keys and values, like JS.
   constructor(entries: [K, V][] = []) {
-    entries.reverse();
-    while (true) {
-      const e = entries.pop();
-      if (e == null) {
-        return;
-      }
-      const [k, v] = e;
+    for (const [k, v] of entries) {
       this.set(k, v);
     }
   }
