@@ -212,24 +212,9 @@ fn jit_image_describes_the_code() {
     unsafe { module.free_memory() };
 }
 
-/// Every image registered so far, newest first.
-fn registered_images() -> Vec<Vec<u8>> {
-    let mut images = vec![];
-    // SAFETY: test-only read of the list, which only grows; entries are never freed.
-    unsafe {
-        let descriptor = &*std::ptr::addr_of!(jit::__jit_debug_descriptor);
-        let mut entry = descriptor.first_entry_for_tests();
-        while let Some(e) = entry {
-            images.push(e.image_for_tests().to_vec());
-            entry = e.next_for_tests();
-        }
-    }
-    images
-}
-
 /// Whether a registered image describes the code at `address`.
 fn is_described(address: u64) -> bool {
-    registered_images().iter().any(|image| {
+    jit::registered_images_for_tests().iter().any(|image| {
         let file = object::File::parse(&**image).unwrap();
         let text = file.section_by_name(".text").expect(".text");
         (text.address()..text.address() + text.size()).contains(&address)
@@ -247,7 +232,7 @@ fn jit_images_are_registered() {
     let names: Vec<&str> = steps.iter().map(|(step, _)| *step).collect();
     assert_eq!(names, ["compile", "finalize", "unwind", "debug info"]);
     assert!(is_described(loaded.main() as usize as u64));
-    let images = registered_images();
+    let images = jit::registered_images_for_tests();
     let file = object::File::parse(&*images[0]).unwrap();
     let (names, _) = read_dwarf(&file);
     // Other tests may register concurrently, but every image is a whole, parsable program.

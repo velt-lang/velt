@@ -52,14 +52,7 @@ fn groups(
     for (v, &c) in comp.iter().enumerate() {
         members[c].push(v);
     }
-    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); succ.len()];
-    for (v, out) in succ.iter().enumerate() {
-        for &w in out {
-            if comp[w] != comp[v] {
-                preds[w].push(v);
-            }
-        }
-    }
+    let preds = cross_component_predecessors(&succ, &comp);
     let total: usize = weights.iter().sum();
     let cap = total / (2 * count.max(1));
     // Program position of every node: a function's index; a static takes its first referrer's.
@@ -100,6 +93,19 @@ fn groups(
     }
     group.truncate(n);
     (group, parent)
+}
+
+/// For every node, the nodes of other components that refer to it.
+fn cross_component_predecessors(succ: &[Vec<usize>], comp: &[usize]) -> Vec<Vec<usize>> {
+    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); succ.len()];
+    for (v, out) in succ.iter().enumerate() {
+        for &w in out {
+            if comp[w] != comp[v] {
+                preds[w].push(v);
+            }
+        }
+    }
+    preds
 }
 
 /// The components in topological order, callers before callees (every referrer of a component
