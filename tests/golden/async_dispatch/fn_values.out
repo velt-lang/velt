@@ -15,8 +15,10 @@ array for-of 11
 array for-of 12
 log 12 13 13
 args 4 5 5
-args array 6
-args array 7
+args named 6 7
 args array 8
 args array 9
-args items bump,bump,bump,bump,bump,bump,bump,named,named
+args array 10
+args array 11
+args array 12
+args items bump,bump,bump,bump,bump,named,named,bump,bump,named,named,named
