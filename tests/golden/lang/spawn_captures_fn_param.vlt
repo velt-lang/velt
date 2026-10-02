@@ -1,0 +1,22 @@
+// check: no leaks
+// A spawned async closure that captures a function it owns (here a heap closure passed to an
+// owned parameter) holds its own reference to it: the caller's reference stays valid, and
+// nothing is released twice.
+function startTask(cb: (x: i64) => void): Promise<void> {
+  return spawn(async () => {
+    await sleep(5);
+    cb(1);
+  });
+}
+
+async function main() {
+  const hits = shared(0);
+  const h = hits.clone();
+  const f = (x: i64) => {
+    h.add(x);
+  };
+  const task = startTask(f);
+  f(10);
+  await task;
+  console.log("hits", hits.get());
+}

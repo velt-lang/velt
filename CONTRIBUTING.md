@@ -179,6 +179,26 @@ Reference the issue it resolves (`Closes #123`) and say which gate you ran.
 - Changes to the contracts (`ast.rs`, `hir`, `vir.rs`, `docs/internals/contracts/**`) or to
   language semantics need a maintainer's review (see `.github/CODEOWNERS`).
 
+## Releases
+
+A release is a tag `v<version>` on `main`, where `<version>` is the workspace version in
+`Cargo.toml`:
+
+1. Open a pull request that sets `version` under `[workspace.package]` in `Cargo.toml` (and
+   updates `Cargo.lock` with `cargo build`), and merge it.
+2. Tag the merged commit and push the tag: `git tag v0.2.0 origin/main && git push origin v0.2.0`.
+
+The tag starts the `release` workflow (`.github/workflows/release.yml`). It builds the toolchain
+for Linux x86_64 and arm64 (in Debian 11, so it runs on glibc 2.31 and newer), macOS arm64 and
+x86_64 and Windows x64 with `scripts/package.*`, installs every archive with
+`scripts/get-velt.*` and smoke-tests it, publishes a GitHub release with the archives,
+`SHA256SUMS` and the two installers, and finally installs the published release on every platform
+the way users do. A tag that does not match the `Cargo.toml` version fails before anything is
+built. Versions with a suffix (`0.2.0-rc.1`) become pre-releases; they are not "latest", so the
+`releases/latest/download/...` install commands keep pointing at the last full release. To test
+the pipeline without publishing, run the workflow by hand (Actions → release → Run workflow): it
+builds and smoke-tests the archives and keeps them as workflow artifacts.
+
 Never commit secrets, tokens or personal data.
 
 By contributing, you agree that your contributions are licensed under the project's dual

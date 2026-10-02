@@ -170,7 +170,8 @@ surprise ([Error handling](errors.md)).
 - `Promise.all` waits for every promise, then rethrows the first rejection in array order. JS
   rejects as soon as one promise rejects.
 - A promise's type carries its error type: `Promise<T, E>`.
-- No `new Promise((resolve, reject) => …)` yet (**planned**), no global `setTimeout` (use
+- `new Promise((resolve, reject) => …)` works as in JS; `resolve` and `reject` may be kept and
+  called later from any task. No global `setTimeout` (use
   `sleep(ms)` or [`velt:timers`](../std/timers.md)), no `for await`, no async generators.
 
 ## Memory
@@ -214,7 +215,7 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | `catch (e: unknown)` | `e` is the exact union of what the `try` can throw | — |
 | `Promise<T>` rejects with anything | `Promise<T, E>` carries its rejection type | — |
 | floating promises lose errors | a floating promise is a compile error | — |
-| `new Promise(...)` | not yet | `new Promise(...)` |
+| `new Promise(...)` | same, with an arrow-function executor; `await` of one abandoned unsettled is reported | `new Promise(...)` |
 | single-threaded event loop | multi-core runtime; `spawn`, `shared`, `Mutex`; data races are compile errors | — |
 | mutable module globals | constants only | — |
 | `arr.sort()` sorts as strings | `sort()` sorts numbers numerically; `sort(cmp)` like TypeScript | — |

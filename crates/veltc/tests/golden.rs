@@ -4,6 +4,8 @@
 //!   must equal `foo.out` (CRLF normalized).
 //! - `foo.vlt` + `foo.err`  → `velt build foo.vlt` must fail and stderr must contain every non-empty
 //!   line of `foo.err`.
+//! - `foo.stderr` next to a `foo.out`: the run's stderr must contain every non-empty line of it
+//!   (for programs that report an error at run time). A `.stderr` without a `.out` fails.
 //!
 //! - `examples/*.vlt` with a sibling `.out` are included as well.
 //! - Files whose name starts with `_` are helper modules imported by other goldens; not run directly.
@@ -199,6 +201,12 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
     let mut failures = vec![];
     let err_file = f.with_extension("err");
     let out_file = f.with_extension("out");
+    if f.with_extension("stderr").exists() && !out_file.exists() {
+        failures.push(format!(
+            "{rel}: a .stderr expectation needs a .out file next to it"
+        ));
+        return failures;
+    }
     if err_file.exists() {
         let o = Command::new(velt)
             .arg("build")
@@ -252,6 +260,16 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
                 if let Some(leak) = leaked_blocks(&String::from_utf8_lossy(&o.stderr)) {
                     failures.push(format!("{rel} [debug]: {leak}"));
                 }
+            }
+            let stderr = norm(&String::from_utf8_lossy(&o.stderr));
+            for line in std::fs::read_to_string(f.with_extension("stderr"))
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| !l.is_empty() && !stderr.contains(l))
+            {
+                failures.push(format!(
+                    "{rel}: stderr missing `{line}`\n--- stderr ---\n{stderr}"
+                ));
             }
             let code = o.status.code().unwrap_or(-1);
             if code != want_code || stdout != want {

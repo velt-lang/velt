@@ -1,0 +1,43 @@
+// check: no leaks
+// A closure literal that forwards a borrowed callback to a function value or an interface
+// method stays in the caller's frame, like the callback it forwards (a middleware calling
+// `next`). A literal that captures only the caller's own variables is escaping there.
+interface Handler {
+  handle(req: i64, next: (r: i64) => void): void;
+}
+
+class Inner implements Handler {
+  handle(req: i64, next: (r: i64) => void) {
+    next(req + 1);
+  }
+}
+
+class Outer implements Handler {
+  inner: Handler;
+
+  constructor(inner: Handler) {
+    this.inner = inner;
+  }
+
+  handle(req: i64, next: (r: i64) => void) {
+    this.inner.handle(req * 2, (r) => next(r * 10));
+  }
+}
+
+class Box {
+  n: i64 = 5;
+}
+
+function main() {
+  const h: Handler = new Outer(new Inner());
+  h.handle(3, (r) => console.log("got", r));
+
+  const b = new Box();
+  const each = (g: (x: i64) => void) => {
+    g(7);
+  };
+  const run = (cb: (x: i64) => void) => {
+    each((x) => cb(x));
+  };
+  run((x) => console.log("run", x + b.n));
+}

@@ -1,0 +1,2 @@
+spawn_captures_borrowed_fn.vlt:9:11
+error: cannot keep a copy of `cb`, a borrowed function parameter

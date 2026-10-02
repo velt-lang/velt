@@ -1,0 +1,13 @@
+// A spawned closure cannot keep a function parameter of a closure: it may be a closure living
+// in its caller's frame.
+function start(use: (cb: (x: i64) => void) => void) {
+  use((x) => {});
+}
+
+function main() {
+  start((cb) => {
+    spawn(async () => {
+      cb(1);
+    });
+  });
+}
