@@ -122,26 +122,32 @@ fn remove_dead_stores(aggs: &[AggLayout], func: &mut Function) -> bool {
         .filter(|s| !func.blocks[0].stmts.contains(s))
         .collect();
     if !inits.is_empty() {
+        // After CFG simplification the entry block can be a loop header: the inits must run
+        // once, before it, or they would clobber a loop-carried value.
+        crate::noalias::fresh_entry(func);
         prepend_stmts(func, 0, inits);
     }
     changed
 }
 
 /// A statement that assigns local `l` of type `ty` (for definite assignment): zero for a
-/// scalar; for an aggregate, zero into its first scalar field (a field write assigns the local),
-/// or an empty aggregate.
+/// scalar; for an aggregate, zero into its first non-unit field, innermost (a field write
+/// assigns the local), or an empty aggregate. `None` for a value without bytes (`Unit`, or an
+/// aggregate of only unit fields): there is nothing to read before it is assigned.
 fn zero_init(aggs: &[AggLayout], l: Local, mut ty: Ty) -> Option<Stmt> {
     let mut place = Place::local(l);
     loop {
         match ty {
             Ty::Unit => return None,
-            Ty::Agg(id) => match aggs[id.0 as usize].fields.first() {
-                Some(&(field, _)) => {
-                    place.proj.push(Proj::Field(0));
-                    ty = field;
+            Ty::Agg(id) => {
+                let fields = &aggs[id.0 as usize].fields;
+                if fields.is_empty() {
+                    return Some(Stmt::Assign(place, Rvalue::Aggregate(id, vec![])));
                 }
-                None => return Some(Stmt::Assign(place, Rvalue::Aggregate(id, vec![]))),
-            },
+                let (i, &(field, _)) = fields.iter().enumerate().find(|(_, f)| f.0 != Ty::Unit)?;
+                place.proj.push(Proj::Field(i as u32));
+                ty = field;
+            }
             scalar => return Some(Stmt::Assign(place, Rvalue::Use(crate::sroa::zero(scalar)))),
         }
     }
@@ -298,5 +304,59 @@ mod tests {
         let pair = pb.agg("pair", 16, 8, &[(Ty::Ptr, 0), (Ty::I64, 8)]);
         let outer = pb.agg("outer", 24, 8, &[(Ty::Agg(pair), 0), (Ty::I64, 16)]);
         removes_address_and_verifies(pb, addressed_on_one_path(Ty::Agg(outer)));
+    }
+
+    #[test]
+    fn aggregate_init_skips_unit_fields() {
+        // { unit, i64 }: the init writes field 1.
+        let mut pb = ProgramBuilder::new();
+        let agg = pb.agg("u", 8, 8, &[(Ty::Unit, 0), (Ty::I64, 0)]);
+        let s = zero_init(&pb.p.aggs, Local(0), Ty::Agg(agg));
+        assert_eq!(
+            s,
+            Some(Stmt::Assign(
+                field(Local(0), 1),
+                Rvalue::Use(int(0, Ty::I64))
+            ))
+        );
+        let only_unit = pb.agg("v", 0, 1, &[(Ty::Unit, 0)]);
+        assert_eq!(zero_init(&pb.p.aggs, Local(0), Ty::Agg(only_unit)), None);
+    }
+
+    #[test]
+    fn zero_init_of_a_loop_header_entry_goes_in_a_fresh_entry() {
+        // bb0 (loop header): q = &x; if c { x = 5 }; if c { return x } else goto bb0.
+        let mut fb = FuncBuilder::internal("f", &[Ty::Bool], Ty::I64);
+        let c = fb.param(0);
+        let (x, q) = (fb.local(Ty::I64), fb.local(Ty::Ptr));
+        let bbs: Vec<BlockId> = (0..4).map(|_| fb.block()).collect();
+        fb.assign(bbs[0], q, Rvalue::AddrOf(Place::local(x)));
+        fb.branch(bbs[0], c, bbs[1], bbs[2]);
+        fb.assign(bbs[1], x, Rvalue::Use(int(5, Ty::I64)));
+        fb.goto(bbs[1], bbs[2]);
+        fb.branch(bbs[2], c, bbs[3], bbs[0]);
+        fb.ret(bbs[3], copy_local(x));
+        let mut f = fb.finish();
+        assert!(run(&[], &mut f));
+        // The init runs once, in a new entry that jumps to the old one (now the last block).
+        let header = BlockId(f.blocks.len() as u32 - 1);
+        assert_eq!(f.blocks[0].term, Terminator::Goto(header));
+        assert!(matches!(
+            &f.blocks[0].stmts[..],
+            [Stmt::Assign(_, Rvalue::Use(_))]
+        ));
+        assert!(f.blocks[header.0 as usize].stmts.is_empty());
+        assert_eq!(
+            f.blocks[2].term,
+            Terminator::Branch {
+                cond: copy_local(Local(0)),
+                then: BlockId(3),
+                els: header,
+            }
+        );
+        let mut pb = ProgramBuilder::new();
+        pb.add(f);
+        let p = pb.finish();
+        assert_eq!(crate::testkit::validate::validate(&p), Ok(()), "{p}");
     }
 }
