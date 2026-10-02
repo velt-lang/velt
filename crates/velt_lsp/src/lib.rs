@@ -18,6 +18,7 @@ mod code_actions;
 mod completion;
 mod definition;
 mod diagnostics;
+mod disk_index;
 mod documents;
 mod highlight;
 mod hover;
