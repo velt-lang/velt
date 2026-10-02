@@ -298,12 +298,15 @@ impl Reader {
     /// jumps over each of them in O(1) (without this, nested unions with the discriminant last
     /// rescan every subtree once per enclosing level: quadratic in the depth).
     pub fn skip_lookahead(&mut self) -> u8 {
-        if self.error.is_some() || !matches!(self.sc.peek_non_ws(), Some(b'{' | b'[')) {
-            // A scalar (or a failure): nothing to remember.
-            return self.skip();
-        }
-        self.after_open = false;
+        let Some(first) = self.value_start(|_| true) else {
+            return 0;
+        };
         let limit = self.depth_left();
+        if !matches!(first, b'{' | b'[') {
+            // A scalar: nothing to remember (one peek, like `skip`).
+            let r = walk_limited(&mut self.sc, &mut SkipSink, limit);
+            return self.syntax(r);
+        }
         let ends = self.skip_ends.get_or_insert_with(HashMap::new);
         // A container at a given offset always has the same depth, so an earlier walk over it
         // already checked the limit.

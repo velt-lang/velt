@@ -6,7 +6,8 @@
 // `JsonValue` (at any depth) with `velt_rt_strbuf_push_json_value(b, v.handle)`.
 //
 // `JSON.parseValue` gives a `JsonValue` for data of unknown shape: a tree of reference-counted
-// runtime nodes behind an opaque `u64` handle (rt_abi_async.md §3.2; 0 is the null handle).
+// runtime nodes behind an opaque `u64` handle (rt_abi_async.md §3.2; 0 is the null handle,
+// which a `JsonValue` holds for JSON null).
 // Values have value semantics: `set`/`delete`/`push`/`setAt` copy a node another handle shares
 // before changing it (copy-on-write), so an edit never shows through a clone, a parent or a
 // child handle. Every `JsonValue` owns one reference (`get`/`at`/`clone` return new
@@ -117,9 +118,10 @@ export class JSON {
 export class JsonValue {
   private handle: u64;
 
-  // JSON `null` (same as `JsonValue.of(null)`).
+  // JSON `null` (same as `JsonValue.of(null)`). It holds the runtime's null handle, which every
+  // operation treats as JSON null, so creating one allocates nothing.
   constructor() {
-    this.handle = velt_rt_json_value_new_null();
+    this.handle = 0;
   }
 
   // Parses any JSON document, like `JSON.parseValue` (throws `JsonError`).
@@ -136,7 +138,6 @@ export class JsonValue {
   // A `JsonValue` owning the runtime handle `h`.
   private static adopt(h: u64): JsonValue {
     const v = new JsonValue();
-    velt_rt_json_value_free(v.handle);
     v.handle = h;
     return v;
   }
@@ -249,7 +250,8 @@ export class JsonValue {
   }
 
   isNull(): bool {
-    return velt_rt_json_value_kind(this.handle) == KIND_NULL;
+    // The null handle (`new JsonValue()`) is JSON null too.
+    return velt_rt_json_value_kind(this.handle) <= KIND_NULL;
   }
 
   isBool(): bool {
