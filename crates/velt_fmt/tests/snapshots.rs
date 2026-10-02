@@ -336,3 +336,43 @@ fn optional_params_and_object_type_fields_keep_their_spelling() {
         "function f(a: i64, b?: string, c?: A | B) {}\n\ntype O = { x?: i64; y: string | null };\n",
     );
 }
+
+#[test]
+fn comments_stay_inside_object_types() {
+    assert_fmt(
+        "type Opts = {\n  // what a does\n  a?: bool;\n};\n",
+        "type Opts = {\n  // what a does\n  a?: bool;\n};\n",
+    );
+    assert_fmt(
+        "type Opts = { // the options
+  // what a does
+  a?: bool; b: i64, // b
+
+  /* c */ c: string
+  // last
+};
+function f(o: { /* x */ x: i64 }, e: { /* none */ }): { y: i64 /* y */ } {}
+",
+        "type Opts = {
+  // the options
+  // what a does
+  a?: bool;
+  b: i64; // b
+
+  /* c */ c: string;
+  // last
+};
+
+function f(
+  o: {
+    /* x */ x: i64;
+  },
+  e: {
+    /* none */
+  },
+): {
+  y: i64; /* y */
+} {}
+",
+    );
+}

@@ -1,10 +1,13 @@
 //! Type expressions. The AST drops parentheses in types, so they are re-inserted exactly where the
 //! grammar needs them (`(A | B)[]`, `((x: T) => U) | null`, a union in an `extends` clause), and
 //! function-type parameter names are recovered from the source. Literal types keep their source
-//! spelling; object types are `{ a: T; b: U }`, one field per line when too long.
+//! spelling; object types are `{ a: T; b: U }`, one field per line when too long or when a comment
+//! sits inside (each comment stays with its field, as in a class body).
 
+use velt_common::Span;
 use velt_syntax::ast::{Lit, ObjectTypeField, SignedLit, TypeExpr, TypeExprKind};
 
+use super::decls::braced;
 use super::Printer;
 use crate::doc::{cat, group, if_break, indent, join, line, text, Doc};
 use crate::source::{fn_type_param_name, literal_tokens};
@@ -39,27 +42,30 @@ impl<'a> Printer<'a> {
                 let spelled = literal_tokens(self.src, t.span);
                 text(signed_lit(lit, spelled.first()))
             }
-            TypeExprKind::Object(fields) => self.object_type(fields),
+            TypeExprKind::Object(fields) => self.object_type(fields, t.span),
             TypeExprKind::Null => "null".into(),
             TypeExprKind::Void => "void".into(),
         }
     }
 
-    /// `{ kind: "circle"; r: f64 }`
-    fn object_type(&mut self, fields: &[ObjectTypeField]) -> Doc {
+    /// `{ kind: "circle"; r: f64 }`; with comments inside, one field per line like an interface.
+    fn object_type(&mut self, fields: &[ObjectTypeField], span: Span) -> Doc {
+        if self.comments.any_within(span.lo, span.hi) {
+            // Comments before the `{` that nobody printed yet stay before it.
+            let before = self.comments.take_before(span.lo);
+            let body = self.lines(
+                fields,
+                span.hi,
+                |f| (f.span.lo, f.span.hi),
+                |_, _| false,
+                |p, f| cat![p.object_type_field(f), ";"],
+            );
+            return cat![self.leading_doc(&before), braced(body)];
+        }
         if fields.is_empty() {
             return "{}".into();
         }
-        let docs = fields
-            .iter()
-            .map(|f| {
-                if f.optional {
-                    cat![f.name.name.clone(), "?: ", self.ty_optional(&f.ty)]
-                } else {
-                    cat![f.name.name.clone(), ": ", self.ty(&f.ty)]
-                }
-            })
-            .collect();
+        let docs = fields.iter().map(|f| self.object_type_field(f)).collect();
         group(cat![
             "{",
             indent(cat![line(), join(&cat![";", line()], docs)]),
@@ -67,6 +73,15 @@ impl<'a> Printer<'a> {
             line(),
             "}"
         ])
+    }
+
+    /// `name: T` / `name?: T`
+    fn object_type_field(&mut self, f: &ObjectTypeField) -> Doc {
+        if f.optional {
+            cat![f.name.name.clone(), "?: ", self.ty_optional(&f.ty)]
+        } else {
+            cat![f.name.name.clone(), ": ", self.ty(&f.ty)]
+        }
     }
 
     /// The type of `name?: T` as written: the parser added `| null` (a written `| null` is
