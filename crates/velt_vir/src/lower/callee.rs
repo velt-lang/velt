@@ -298,6 +298,19 @@ impl FnLower<'_, '_> {
         self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(hdr)))
     }
 
+    /// The receiver of a vtable call. Entries borrow it (an owning target, such as an async
+    /// method, takes its own reference in its thunk), so a receiver that sema moved into the
+    /// call (its last use, when the method owns `this`) is a temporary dropped after the call.
+    fn receiver(&mut self, recv: &hir::Expr) -> Operand {
+        if super::call::is_moved(recv) {
+            let v = self.consume(recv);
+            let ty = self.sub(recv.ty);
+            self.own_value(v, ty)
+        } else {
+            self.expr(recv)
+        }
+    }
+
     pub(super) fn call_virtual(
         &mut self,
         slot: u32,
@@ -317,7 +330,7 @@ impl FnLower<'_, '_> {
         let throws = self.cx.call_sig(self.cx.fn_def(method)).1;
         let throws = throws.map(|e| self.cx.subst(e, &cargs));
         let throws = self.cx.error_ty(throws);
-        let rv = self.expr(recv);
+        let rv = self.receiver(recv);
         let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(rv));
         let vt = self.obj_vtable(obj.clone(), cls);
         let entry = self.dispatch(vt, slot as i128);
@@ -349,7 +362,7 @@ impl FnLower<'_, '_> {
             ),
             _ => ice("interface call on a non-interface receiver"),
         };
-        let rv = self.expr(recv);
+        let rv = self.receiver(recv);
         let rp = self.place_of(rv, dty);
         let data = self.rvalue_temp(
             Ty::Ptr,

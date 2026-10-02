@@ -345,7 +345,7 @@ impl FnLower<'_, '_> {
 }
 
 /// A place moved into the call (the caller drops it after the call).
-fn is_moved(a: &hir::Expr) -> bool {
+pub(super) fn is_moved(a: &hir::Expr) -> bool {
     matches!(
         a.kind,
         hir::ExprKind::Local(_, UseMode::Move)
