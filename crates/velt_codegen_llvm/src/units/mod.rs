@@ -1,11 +1,11 @@
 //! Codegen units: splitting a large program into modules that clang compiles in parallel.
 //!
 //! clang's time is linear in the size of the IR, so a release build of a large program is one
-//! long single-threaded clang run. When asked for (`VELT_CODEGEN_UNITS`), the functions are split
+//! long single-threaded clang run. Large programs (or any, with `VELT_CODEGEN_UNITS`) are split
 //! into units of similar size, one module and one object each:
 //! - placement (`place`) keeps call chains together: mutually recursive functions and small
-//!   callees go to the unit of their first caller, and units are contiguous runs of such groups
-//!   in program order;
+//!   callees go to the unit of their first caller, larger callees next to it, and units are
+//!   contiguous runs of such groups;
 //! - an internal function referenced from another unit (call, address, vtable slot) becomes a
 //!   `hidden` external symbol of its unit (its name is already unique in the program), and the
 //!   other units declare it `hidden` too, so their calls and address computations are direct and
@@ -20,7 +20,8 @@
 //!   emits no code for them.
 //!
 //! The rest of cross-unit optimization is lost (inlining of larger callees and interprocedural
-//! analyses of the functions made external), so programs are one unit unless more are requested.
+//! analyses of the functions made external). With placement keeping hot call chains together,
+//! split programs run as fast as unsplit ones, but small programs are one unit (`unit_count`).
 //!
 //! Modules: `graph` (references, the reference graph and its components), `place` (which unit
 //! defines each function).
@@ -73,9 +74,29 @@ pub(crate) struct Plan {
     pub shared: Shared,
 }
 
-/// Number of units for `program`: `requested` (at least 1, at most one per function), else 1.
+/// Statements (VIR, after `velt_opt`) per unit when the count is chosen from the program's size:
+/// a program below twice this is one unit. Small programs build fast in one unit and lose the
+/// most to a split (cross-unit calls in their hot loops); every benchmark program stays one unit
+/// (the largest, `bench/sort.vlt`, has about 4 000 statements).
+const MIN_UNIT_WEIGHT: usize = 16_000;
+/// At most this many units when the count is chosen from the size. Programs split into 4 run as
+/// fast as in one unit (within ±3 %, bench/RESULTS.md); in 8, binary-trees and fib ran 5 % slower
+/// (the same machine code, placed differently).
+const MAX_UNITS: usize = 4;
+
+/// Number of units for `program`: `requested` (at least 1, at most one per function), else one
+/// per `MIN_UNIT_WEIGHT` statements, at most `MAX_UNITS`, one below twice that. The count depends
+/// on the program only, never on the machine, so the objects are the same everywhere.
 pub(crate) fn unit_count(program: &vir::Program, requested: Option<usize>) -> usize {
-    requested.unwrap_or(1).min(program.funcs.len()).max(1)
+    let count = requested.unwrap_or_else(|| {
+        let total: usize = program.funcs.iter().map(weight).sum();
+        if total < 2 * MIN_UNIT_WEIGHT {
+            1
+        } else {
+            (total / MIN_UNIT_WEIGHT).min(MAX_UNITS)
+        }
+    });
+    count.min(program.funcs.len()).max(1)
 }
 
 /// Split `program` into (at most) `count` units of similar weight (see `place`).

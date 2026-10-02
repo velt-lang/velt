@@ -128,8 +128,24 @@ fn huge_callers_import_nothing() {
     assert_eq!(main.declares, [0, 2]);
 }
 
+/// `n` internal functions of 1 000 statements each (weight 1 001).
+fn sized(n: usize) -> Program {
+    let mut pb = ProgramBuilder::new();
+    for i in 0..n {
+        let mut fb = FuncBuilder::internal(&format!("f{i}"), &[], Unit);
+        let b = fb.block();
+        let x = fb.local(I64);
+        for k in 0..1_000 {
+            fb.assign(b, x, Rvalue::Use(int(k, I64)));
+        }
+        fb.ret(b, Operand::Const(Const::Unit, Unit));
+        pb.add(fb.finish());
+    }
+    pb.finish()
+}
+
 #[test]
-fn one_unit_unless_requested() {
+fn unit_count_from_size_unless_requested() {
     let p = program();
     assert_eq!(unit_count(&p, None), 1);
     assert_eq!(unit_count(&p, Some(0)), 1);
@@ -137,6 +153,13 @@ fn one_unit_unless_requested() {
     // Never more units than functions.
     assert_eq!(unit_count(&p, Some(64)), 4);
     assert_eq!(plan(&p, 64).units.len(), 4);
+    // One unit per 16 000 statements, from 32 000 on, at most 4; a request overrides it.
+    assert_eq!(unit_count(&sized(31), None), 1);
+    assert_eq!(unit_count(&sized(32), None), 2);
+    assert_eq!(unit_count(&sized(48), None), 3);
+    assert_eq!(unit_count(&sized(200), None), 4);
+    assert_eq!(unit_count(&sized(200), Some(1)), 1);
+    assert_eq!(unit_count(&sized(200), Some(12)), 12);
 }
 
 #[test]
