@@ -1,0 +1,65 @@
+// check: no leaks
+// An optional chain on a temporary (`f()?.length`) drops the temporary after the chain (#222):
+// property, index, method and value calls, nested chains and `??`, debug and release.
+class Box {
+  name: string;
+  items: i64[];
+  inner: Box | null;
+  constructor(name: string, items: i64[], inner: Box | null) {
+    this.name = name;
+    this.items = items;
+    this.inner = inner;
+  }
+  label(): string {
+    return `box ${this.name}`;
+  }
+  count(): usize {
+    return this.items.length;
+  }
+}
+
+function arr(some: bool): i64[] | null {
+  return some ? [1, 2, 3] : null;
+}
+
+function mk(some: bool): Box | null {
+  if (!some) {
+    return null;
+  }
+  return new Box("outer", [1, 2], new Box("in", [7], null));
+}
+
+function adder(some: bool): ((x: i64) => i64) | null {
+  const k = [10];
+  return some ? (x: i64): i64 => x + k[0] : null;
+}
+
+async function later(some: bool): Promise<i64[] | null> {
+  return arr(some);
+}
+
+async function main() {
+  const m = new Map<string, i64[]>();
+  m.set("a", [4, 5]);
+  console.log(m.get("a")?.length, m.get("b")?.length);
+  console.log((await later(true))?.length, (await later(false))?.length);
+  for (const b of [true, false]) {
+    console.log(arr(b)?.length);
+    console.log(arr(b)?.[1]);
+    console.log(arr(b)?.includes(2));
+    console.log(arr(b)?.length ?? 0);
+    console.log(arr(b)?.join("-") ?? "none");
+    console.log(mk(b)?.name);
+    console.log(mk(b)?.label());
+    console.log(mk(b)?.count());
+    console.log(mk(b)?.items.length);
+    console.log(mk(b)?.inner?.name);
+    console.log(mk(b)?.inner?.items.length);
+    console.log(mk(b)?.inner?.label() ?? "nobody");
+    const s = mk(b)?.name ?? "anon";
+    console.log(s);
+    const it = mk(b)?.items;
+    console.log(it?.length);
+    console.log(adder(b)?.(5));
+  }
+}

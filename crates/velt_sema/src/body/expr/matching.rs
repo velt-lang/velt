@@ -166,7 +166,13 @@ impl FnCx<'_, '_> {
             return f(self, s);
         };
         let (l, mode) = self.option_binding(&s, payload, "<chain>", false);
-        let v = self.mk(H::Local(l, mode), payload, span);
+        // A moved-in payload (the object was a temporary) is owned by the binding, which drops
+        // it after the rest: the rest uses it as a place, moving out of it only if it consumes it.
+        let use_mode = match mode {
+            UseMode::Move => UseMode::Borrow,
+            m => m,
+        };
+        let v = self.mk(H::Local(l, use_mode), payload, span);
         let r = f(self, v);
         self.chain_match(s, l, mode, payload, r, span)
     }
