@@ -137,9 +137,8 @@ impl FnCx<'_, '_> {
     }
 
     /// The method `name` of the `extend` block for `recv`: among the applicable blocks (target
-    /// matches, bounds hold) the most specific one, i.e. the block whose target is an instance
-    /// of every other's (`extend Array<i64>` over `extend<T> Array<T[]>` over
-    /// `extend<T> Array<T>`). Several equally specific blocks are ambiguous
+    /// matches, bounds hold) the most specific one ([`FnCx::most_specific`]; `extend Array<i64>`
+    /// over `extend<T> Array<T[]>` over `extend<T> Array<T>`). Several equally specific blocks are ambiguous
     /// ([`FnCx::check_extension_ambiguity`] reports it at the call); the first is used then.
     fn extension_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
         let candidates = self.applicable_extensions(recv, name);
@@ -229,21 +228,30 @@ impl FnCx<'_, '_> {
 
     /// The candidates (indexes into `candidates`) that no other candidate is strictly more
     /// specific than, in declaration order. A is more specific than B when A's target is an
-    /// instance of B's and not the other way round.
+    /// instance of B's and not the other way round, or when both targets are the same pattern
+    /// and only A has bounds (`extend<T extends Comparable<T>> Array<T>` over
+    /// `extend<T> Array<T>`).
     fn most_specific(&mut self, candidates: &[(usize, Vec<TyId>)]) -> Vec<usize> {
-        let targets: Vec<TyId> = candidates
+        let blocks: Vec<(TyId, bool)> = candidates
             .iter()
-            .map(|(i, _)| self.cx.extensions[*i].target)
+            .map(|(i, _)| {
+                let x = &self.cx.extensions[*i];
+                (x.target, x.generics.bounds.iter().any(|b| !b.is_empty()))
+            })
             .collect();
-        (0..targets.len())
+        (0..blocks.len())
             .filter(|&a| {
-                !(0..targets.len()).any(|b| {
-                    b != a
-                        && self.instance_args(targets[b], targets[a]).is_none()
-                        && self.instance_args(targets[a], targets[b]).is_some()
-                })
+                !(0..blocks.len()).any(|b| b != a && self.more_specific(blocks[b], blocks[a]))
             })
             .collect()
+    }
+
+    /// Is block `a` (target, has bounds) strictly more specific than block `b`?
+    fn more_specific(&mut self, a: (TyId, bool), b: (TyId, bool)) -> bool {
+        if self.instance_args(b.0, a.0).is_none() {
+            return false;
+        }
+        self.instance_args(a.0, b.0).is_none() || (a.1 && !b.1)
     }
 
     /// The highest `Param` index in `t`.

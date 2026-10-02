@@ -191,11 +191,13 @@ builtins included, at zero cost (the calls are direct):
   bounds hold), the most specific wins: block A is more specific than block B when A's target
   is an instance of B's and not the other way round, so `extend Array<string>` wins over
   `extend<T> Array<T[]>`, which wins over `extend<T> Array<T>` (the prelude's `join` on
-  `string[][]` is its own). When no single block is more specific than every other one
-  (`extend<T> Map<string, T>` and `extend<K> Map<K, i64>` on a `Map<string, i64>`, or two
-  blocks with the same target), a call is an error: ``ambiguous extension method `m` ``, with
-  both candidates. `private` is not allowed in `extend`, and an extension cannot add fields
-  (the layout is fixed).
+  `string[][]` is its own). With the same target, a block with bounds
+  (`extend<T extends Comparable<T>> Array<T>`) wins over one without. When no single block is
+  more specific than every other one (`extend<T> Map<string, T>` and `extend<K> Map<K, i64>`
+  on a `Map<string, i64>`, or two blocks with the same target that both have bounds or both
+  have none), a call is an error: ``ambiguous extension method `m` ``, naming both blocks.
+- `private` is not allowed in `extend`, and an extension cannot add fields (the layout is
+  fixed).
 - A type becomes `Comparable` by defining `compareTo` in an `extend` block
   ([Comparable](#comparable)).
 - Scope today: an extension applies wherever its module is loaded; `extend` blocks cannot be

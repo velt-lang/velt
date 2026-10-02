@@ -74,7 +74,8 @@ switch (s.kind) { case "circle": return s.r; case "rect": return s.w * s.h; }
 - **Retroactive implements** (planned): `extend Point implements Comparable<Point> { … }`.
 - **Overlapping extensions** (implemented): among the applicable blocks (target matches,
   bounds hold) the most specific wins, A over B when A's target is an instance of B's and not
-  the reverse (`extend Array<i64>` over `extend<T> Array<T[]>` over `extend<T> Array<T>`).
+  the reverse (`extend Array<i64>` over `extend<T> Array<T[]>` over `extend<T> Array<T>`), or
+  when both have the same target and only A has bounds.
   Otherwise the conflicting applicable extensions are an ambiguity error at the call
   (``ambiguous extension method `m` ``, naming both blocks).
 - **Scoping** (planned): an extension is visible in its module and where it is imported
