@@ -384,8 +384,16 @@ fn iface_methods(cx: &mut Ctx, d: DefId) {
     for m in &decl.methods {
         let name = &m.sig.name;
         let key = member_key(&name.name, m.is_setter);
-        if m.sig.is_async {
-            cx.err("interface methods cannot be `async` yet", name.span);
+        if m.sig.is_async && m.body.is_none() {
+            cx.error(
+                Diagnostic::error(
+                    "only an interface method with a body can be `async`",
+                    name.span,
+                )
+                .with_note(
+                    "declare the method as returning a `Promise`; implementations may be `async`",
+                ),
+            );
         }
         let (own, env) = method_generics(cx, &generics, &m.sig.generics, module);
         if let (Some(gp), Some(_)) = (m.sig.generics.first(), &m.body) {
@@ -395,10 +403,15 @@ fn iface_methods(cx: &mut Ctx, d: DefId) {
             );
         }
         let ps = params(cx, &m.sig.params, &env);
-        let ret = match &m.sig.ret {
+        let mut ret = match &m.sig.ret {
             Some(t) => cx.resolve_type(t, &env),
             None => cx.ty.unit,
         };
+        // An async default: its def (`fill_sig`) reports a result that is not a promise.
+        let not_promise = !matches!(cx.ty.kind(ret), TyKind::Promise(..)) && !cx.ty.is_bottom(ret);
+        if m.sig.is_async && m.body.is_some() && not_promise {
+            ret = cx.ty.promise(ret);
+        }
         let throws = throws_clause(cx, &m.sig, &env);
         // Like an async function (and a function type): the method's promise carries its errors.
         let (ret, throws) = promise_throws(cx, ret, throws, &m.sig);
@@ -480,7 +493,7 @@ fn default_method<'m>(
     let self_ty = cx.ty.param(n);
     info.owner = Some(iface);
     info.is_getter = m.is_getter;
-    info.this = Some(this_sig(self_ty, m.is_setter));
+    info.this = Some(method_this(self_ty, m.is_setter, m.sig.is_async));
     let def = cx.alloc_def(name.span, DefInfo::Fn(Box::new(info)));
     fill_sig(cx, def, &m.sig, &g, module);
     def

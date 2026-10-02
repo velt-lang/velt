@@ -115,6 +115,9 @@ console.log(p.len(), q.len());  // 4 4
 - **Generic methods** (`apply<U>(f: (x: i64) => U): U[]`) are dispatched statically only: call
   them on a concrete class or on a `T extends I` generic, not on an interface value. Generic
   interface methods cannot have default bodies yet.
+- A default body can be `async` (`async load(): Promise<T> { … }`), with the rules of an async
+  class method ([Async](async.md#errors)). A method without a body cannot be: like in TypeScript,
+  it declares a `Promise` result, and implementations may be `async`.
 
 ```ts
 interface Named {
