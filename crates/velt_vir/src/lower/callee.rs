@@ -301,13 +301,20 @@ impl FnLower<'_, '_> {
     /// The receiver of a vtable call. Entries borrow it (an owning target, such as an async
     /// method, takes its own reference in its thunk), so a receiver that sema moved into the
     /// call (its last use, when the method owns `this`) is a temporary dropped after the call.
-    fn receiver(&mut self, recv: &hir::Expr) -> Operand {
-        if super::call::is_moved(recv) {
+    /// `transfer` (the call starts a spawned task): the receiver is a deep copy for the task
+    /// (through the vtable's clone glue when the static type is a base class or an interface),
+    /// which the caller releases before the task starts, as for the arguments (transfer.rs).
+    fn receiver(&mut self, recv: &hir::Expr, transfer: bool) -> Operand {
+        let v = if super::call::is_moved(recv) {
             let v = self.consume(recv);
             let ty = self.sub(recv.ty);
             self.own_value(v, ty)
         } else {
             self.expr(recv)
+        };
+        match transfer {
+            true => self.transfer_copy(v, recv.ty),
+            false => v,
         }
     }
 
@@ -330,7 +337,7 @@ impl FnLower<'_, '_> {
         let throws = self.cx.call_sig(self.cx.fn_def(method)).1;
         let throws = throws.map(|e| self.cx.subst(e, &cargs));
         let throws = self.cx.error_ty(throws);
-        let rv = self.receiver(recv);
+        let rv = self.receiver(recv, transfer);
         let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(rv));
         let vt = self.obj_vtable(obj.clone(), cls);
         let entry = self.dispatch(vt, slot as i128);
@@ -362,7 +369,7 @@ impl FnLower<'_, '_> {
             ),
             _ => ice("interface call on a non-interface receiver"),
         };
-        let rv = self.receiver(recv);
+        let rv = self.receiver(recv, transfer);
         let rp = self.place_of(rv, dty);
         let data = self.rvalue_temp(
             Ty::Ptr,

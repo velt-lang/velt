@@ -32,7 +32,9 @@ Promises behave like JavaScript's, at Rust's cost:
   it on is ``use of moved value``, and an explicit `p.clone()` is ``a promise cannot be copied``.
 - Values handed to `spawn` (and captured by an HTTP handler) go to another thread: an object
   the program still shares is deep-copied for the task (like a structured clone), so threads
-  never share reference counts.
+  never share reference counts. That includes the receiver of `spawn(obj.method())` (also
+  through a base-class reference or an interface value) and what a closure or interface value
+  passed to the task reaches.
 
 ## Combinators
 

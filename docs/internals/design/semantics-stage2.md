@@ -139,7 +139,8 @@ within the copy).
 ## 6. Threads (transfer.rs)
 Counts are not atomic, so no counted object may be reachable from two threads. Values cross
 threads at `spawn(f(args))` (owned arguments; for a call through a function value, vtable
-or interface, every argument) and the HTTP handler environment: a value whose
+or interface, every argument and the receiver; an interface or closure value counts as able
+to reach one) and the HTTP handler environment: a value whose
 type can reach a counted object is **deep-copied** for the task and the original reference
 released (structured clone at a worker boundary); others move as before. Async closures copy
 what they capture per call (deep copies of shared captures, `validate`), since an HTTP handler

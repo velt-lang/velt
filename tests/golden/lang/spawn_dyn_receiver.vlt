@@ -1,0 +1,113 @@
+// check: no leaks
+// A task spawned by an async method called through a vtable (a base-class reference) or an
+// interface value gets its own deep copy of the receiver, as of its arguments (#217): threads
+// never share a reference count, and the caller's object is unchanged.
+interface Reader {
+  read(x: i64): Promise<i64>;
+}
+
+class Plain {
+  n: i64 = 0;
+
+  async read(x: i64): Promise<i64> {
+    await sleep(1);
+    this.n += x;
+    return this.n;
+  }
+}
+
+class Base {
+  n: i64 = 0;
+  tag: string = "a base tag long enough to live on the heap";
+
+  async read(x: i64): Promise<i64> {
+    await sleep(1);
+    this.n += x;
+    return this.n;
+  }
+}
+
+class Derived extends Base {
+  items: i64[] = [1, 2];
+
+  override async read(x: i64): Promise<i64> {
+    await sleep(1);
+    this.n += x * 10;
+    this.items.push(x);
+    return this.n + (this.items.length as i64);
+  }
+}
+
+class Impl implements Reader {
+  n: i64 = 5;
+
+  async read(x: i64): Promise<i64> {
+    await sleep(1);
+    this.n += x;
+    return this.n;
+  }
+}
+
+struct Pt implements Reader {
+  x: i64;
+  label: string;
+
+  async read(x: i64): Promise<i64> {
+    await sleep(1);
+    return this.x + x + (this.label.length as i64);
+  }
+}
+
+class Holder {
+  b: Base = new Derived();
+  r: Reader = new Impl();
+}
+
+async function sum(tasks: Promise<i64>[]): Promise<i64> {
+  let s = 0;
+  for (const v of await Promise.all(tasks)) {
+    s += v;
+  }
+  return s;
+}
+
+async function main() {
+  const b: Base = new Derived();
+  const r: Reader = new Impl();
+  const p: Reader = Pt { x: 7, label: "a struct label long enough to live on the heap" };
+  const tasks: Promise<i64>[] = [];
+  for (let i = 0; i < 50; i++) {
+    tasks.push(spawn(b.read(1)));
+    tasks.push(spawn(r.read(2)));
+    tasks.push(spawn(p.read(3)));
+  }
+  console.log(await sum(tasks), b.n);
+  console.log(await b.read(1), await r.read(1), await p.read(1));
+
+  // The receiver in a field, a Map value, an array element; a non-virtual method.
+  const pl = new Plain();
+  const h = new Holder();
+  const m = new Map<string, Reader>();
+  m.set("k", new Impl());
+  const xs: Base[] = [new Derived(), new Base()];
+  const more: Promise<i64>[] = [];
+  for (let i = 0; i < 20; i++) {
+    more.push(spawn(pl.read(1)));
+    more.push(spawn(h.b.read(1)));
+    more.push(spawn(h.r.read(1)));
+    const v = m.get("k");
+    if (v != null) {
+      more.push(spawn(v.read(1)));
+    }
+    more.push(spawn(xs[i % 2].read(1)));
+  }
+  console.log(await sum(more), pl.n, h.b.n, xs[0].n, xs[1].n);
+  const v = m.get("k");
+  if (v != null) {
+    console.log(await h.r.read(1), await v.read(1));
+  }
+
+  // The receiver's last use: moved into the call.
+  const last: Base = new Derived();
+  console.log(await spawn(last.read(2)));
+}

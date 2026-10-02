@@ -28,6 +28,8 @@ impl Cx<'_> {
             return true;
         }
         let parts = match self.kind(t) {
+            // The implementor (or the captures) behind it may be any type.
+            TyKind::Dyn(..) | TyKind::Closure(_) | TyKind::FnPtr { .. } => return true,
             TyKind::Array(e) | TyKind::Shared(e) => vec![e],
             TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
             _ => self.part_types(t),
