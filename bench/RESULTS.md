@@ -689,7 +689,8 @@ command and the codegen stage:
 Translating `main` itself dropped from 9.8 s to 0.09 s (long_main_2000); what remains is
 Cranelift's own compile (register allocation is mildly super-linear: 0.18 s at 2000, 1.7 s at
 8000) and the ≈ 56 000 other functions. `bench/compile/stress.sh` (`stress.ps1`) builds
-long_main_16000 and fails above 2 GB (1206 MB here).
+long_main_16000 and fails above 2 GB (1206 MB here); the nightly workflow runs it on Linux and
+Windows.
 
 ### Release builds: codegen units and the optimization level (#43)
 
