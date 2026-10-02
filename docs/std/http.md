@@ -87,6 +87,5 @@ async function main() {
 }
 ```
 
-Notes: an untrusted certificate or a TLS failure throws `IoError`. Pass handlers as
-inline async arrows: a named function that takes ownership of `req` can't be used as a
-function value.
+Notes: an untrusted certificate or a TLS failure throws `IoError`. A handler is an async
+arrow or a named async function (`serve({ port: 8080 }, handle)`).

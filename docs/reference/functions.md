@@ -71,7 +71,10 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   ```
 
 - **Function types** `(x: T) => U` accept closures and named functions alike. One that may
-  throw says so: `(x: T) => U throws E` ([Errors](errors.md#dynamic-calls)).
+  throw says so: `(x: T) => U throws E` ([Errors](errors.md#dynamic-calls)). Calling a named
+  function through a value behaves like calling it directly: an object it keeps or modifies is
+  the caller's object. A function whose parameter takes ownership of a promise (one owner)
+  cannot be a value.
 
 ## Captures
 
