@@ -73,11 +73,17 @@ impl<'a> Parser<'a> {
     pub(super) fn literal_at_cursor(&mut self) -> Option<Lit> {
         Some(match self.peek() {
             Tok::Int(i) => match self.payload(i)? {
-                Payload::Int { value, suffix } => Lit::Int { value, suffix },
+                Payload::Int { value, suffix } => Lit::Int {
+                    value: *value,
+                    suffix: suffix.clone(),
+                },
                 _ => return None,
             },
             Tok::Float(i) => match self.payload(i)? {
-                Payload::Float { value, suffix } => Lit::Float { value, suffix },
+                Payload::Float { value, suffix } => Lit::Float {
+                    value: *value,
+                    suffix: suffix.clone(),
+                },
                 _ => return None,
             },
             Tok::Str(i) => Lit::Str(self.payload_text(i)),
@@ -238,7 +244,7 @@ impl Parser<'_> {
     /// `/body/flags` → `new RegExp("body", "flags")` (std/regex's class, which must be imported).
     fn regex_literal(&mut self, idx: u32, span: velt_common::Span) -> ExprKind {
         let (source, flags) = match self.payload(idx) {
-            Some(Payload::Regex { source, flags }) => (source, flags),
+            Some(Payload::Regex { source, flags }) => (source.clone(), flags.clone()),
             _ => (String::new(), String::new()),
         };
         let class = TypeExpr {

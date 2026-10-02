@@ -664,3 +664,22 @@ debug runtime) to 34 KB.
 `velt check` on the example packages (release `velt`, package mode, wall time of the whole
 command incl. process start, std and the prelude, best of 5): chat 24 ms, log-pipeline 24 ms,
 notes-cli 25 ms, todo-api 30 ms (target < 100 ms).
+
+## Parse time: lexing on demand (#136, 2026-10-02)
+
+`cargo test --release -p velt_syntax --test bench -- --ignored --nocapture` (parse only, the AST
+drop not counted), on Windows 11, x86_64, 20 logical cores, a busy machine. Pre-#118 is the commit
+before JSX moved to the parser; the benchmark file was copied onto each commit and run on the same
+files (`VELT_BENCH_ROOT`). Best of 15 interleaved runs, ms (median in brackets):
+
+| input | pre-#118 | main before #136 | after #136 |
+|---|---|---|---|
+| no JSX, 100k lines | 271.3 (279.4) | 292.0 (302.3) | 275.1 (280.8) |
+| std and examples (119 files) | 23.5 (25.1) | 25.9 (26.9) | 24.3 (25.9) |
+| JSX and generics, 50k lines | 57.6 (60.2) | 69.1 (71.0) | 60.7 (64.9) |
+| JSX goldens (25 files) | 3.51 (3.65) | 3.88 (3.97) | 3.63 (3.79) |
+
+Wall times on that machine vary by about ±4% between identical runs, so instruction counts
+(callgrind, WSL, 20k lines no JSX / 10k lines JSX / std and examples, whole test process) are the
+sharper comparison: no JSX 353.7M → 388.3M → 352.4M, JSX 80.8M → 91.4M → 83.1M, std and examples
+88.5M → 96.0M → 88.6M.
