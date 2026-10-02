@@ -44,3 +44,27 @@ fn soft_moves_in_both_branches_are_shared_when_used_again() {
            console.log(a); }";
     assert_eq!(shares(src, "main"), 3);
 }
+
+#[test]
+fn a_finally_after_a_return_keeps_what_it_uses() {
+    // The `finally` runs after `return keep(t)`: `t` is shared with `keep`, not moved (#144).
+    let src = "class T { n: i64 = 1; }
+         function keep(t: T): i64 { const kept = [t]; return kept[0].n; }
+         function f(): i64 { const t = new T(); try { return keep(t); } finally { console.log(t.n); } }
+         function g(): i64 { const t = new T(); try { return keep(t); } finally { console.log(1); } }
+         function main() { console.log(f(), g()); }";
+    assert_eq!(shares(src, "f"), 1);
+    assert_eq!(shares(src, "g"), 0);
+}
+
+#[test]
+fn a_finally_after_a_break_keeps_what_it_uses() {
+    let src = "class T { n: i64 = 1; }
+         function keep(t: T): i64 { const kept = [t]; return kept[0].n; }
+         function f(): i64 {
+           const t = new T(); let out = 0;
+           for (let i = 0; i < 3; i++) { try { out = keep(t); break; } finally { console.log(t.n); } }
+           return out; }
+         function main() { console.log(f()); }";
+    assert_eq!(shares(src, "f"), 1);
+}
