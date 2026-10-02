@@ -211,6 +211,49 @@ extend<T> Array<T> {
     }
   }
 
+  // ES2023 copying forms (`toReversed`, `toSpliced`, `with`; `toSorted` is in sort.vlt): a new
+  // array, the receiver unchanged. Like `slice`, the new array holds the same elements (objects
+  // are shared, as in JS); the arrays themselves are independent.
+
+  // The elements in reverse order.
+  toReversed(): T[] {
+    const out: T[] = __intrinsic_array_with_capacity(this.length);
+    let i = this.length;
+    while (i > 0) {
+      i--;
+      out.push(__intrinsic_share(this[i]));
+    }
+    return out;
+  }
+
+  // `splice(start, deleteCount)` on a copy: the array without the removed elements. Inserting
+  // items needs rest parameters (planned).
+  toSpliced(start: i64, deleteCount: i64 = 9223372036854775807): T[] {
+    const len = this.length;
+    const lo = clampPosition(start, len);
+    const room = (len - lo) as i64;
+    const k: usize = deleteCount <= 0 ? 0 : (deleteCount < room ? deleteCount : room) as usize;
+    const out: T[] = __intrinsic_array_with_capacity(len - k);
+    for (let i: usize = 0; i < len; i++) {
+      if (i < lo || i >= lo + k) {
+        out.push(__intrinsic_share(this[i]));
+      }
+    }
+    return out;
+  }
+
+  // A copy with `value` at `index` (negative counts from the end). Panics like JS's RangeError
+  // when `index` is out of range.
+  with(index: i64, value: T): T[] {
+    const i = index < 0 ? index + (this.length as i64) : index;
+    if (i < 0 || i >= (this.length as i64)) {
+      panic(`RangeError: Invalid index : ${index}`);
+    }
+    const out = this.slice();
+    out[i as usize] = value;
+    return out;
+  }
+
   isEmpty(): bool {
     return this.length == 0;
   }

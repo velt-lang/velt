@@ -1,0 +1,29 @@
+// ES2023's copying array methods (output checked against Node): `toSorted`, `toReversed`,
+// `toSpliced` and `with` return a new array and leave the receiver unchanged. The new array is
+// independent (pushing to it doesn't change the receiver); objects in it are the same objects,
+// as in JS.
+class Item {
+  constructor(public name: string) {}
+}
+
+function main() {
+  const xs = [3, 1, 2];
+  const up = xs.toSorted((a, b) => a - b);
+  const down = xs.toSorted((a, b) => b - a);
+  console.log(up, down, xs);
+  console.log(xs.toReversed(), xs.toSpliced(1, 1), xs.toSpliced(-1), xs.toSpliced(1), xs);
+  console.log(xs.with(0, 7), xs.with(-1, 9), xs);
+  const words = ["pear", "Apple", "fig"];
+  const sortedWords = words.toSorted();
+  const byLength = words.toSorted((a, b) => (a.length as i64) - (b.length as i64));
+  console.log(sortedWords, byLength, words);
+
+  const items = [new Item("b"), new Item("a")];
+  const byName = items.toSorted((a, b) => a.name.localeCompare(b.name));
+  byName.push(new Item("c"));
+  console.log(byName.length, items.length, byName[0] === items[1], items[0].name);
+  const nested = [[1], [2, 3]];
+  const flipped = nested.toReversed();
+  flipped[0].push(4);
+  console.log(flipped, nested);
+}

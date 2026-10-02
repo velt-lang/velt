@@ -53,6 +53,7 @@ Callback methods rethrow what their callback throws.
 | `indexOf`, `lastIndexOf`, `includes` | structural equality, so `NaN` is never found |
 | `slice(start = 0, end?)`, `concat(other)` | |
 | `reverse()`, `fill(v, start?, end?)`, `sort()` | in place, returning nothing (JS returns the array: returning it would share it, which makes every array of its type reference counted) |
+| `toSorted(cmp?)`, `toReversed()`, `toSpliced(start, deleteCount?)`, `with(i, v)` | ES2023's copying forms: a new array, the receiver unchanged (the elements themselves are shared, as in JS); `toSorted()` without a comparator orders like `sort()`; `with` panics on an index out of range (JS's RangeError); `toSpliced` only removes until rest parameters land (**Planned**) |
 | `splice(start, deleteCount?): T[]` | removes and returns `deleteCount` elements (the rest when omitted); inserting items needs rest parameters (**Planned**) |
 | `truncate(n)` | JS `xs.length = n`: drops the elements from `n` on (`length` is read-only) |
 | `flat()` | on `T[][]`: the inner elements, one level deep |
