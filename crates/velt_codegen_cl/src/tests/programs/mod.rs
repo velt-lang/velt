@@ -7,7 +7,7 @@ mod dynmem;
 mod memory;
 
 pub(crate) use arith::{casts, float_ops, int_ops, math};
-pub(crate) use control::{fib, indirect, switch};
+pub(crate) use control::{block_order, fib, indirect, long_chain, switch};
 pub(crate) use dynmem::{mem_ops, vtables};
 pub(crate) use memory::{aggregates, strings};
 
@@ -40,6 +40,7 @@ pub(crate) fn all() -> Vec<TestProgram> {
         strings(),
         vtables(),
         mem_ops(),
+        block_order(),
     ]
 }
 

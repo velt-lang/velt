@@ -36,6 +36,18 @@ pub struct Installed {
     pub lockfile: Lockfile,
     /// Whether `velt.lock` was created or changed.
     pub lock_changed: bool,
+    /// Installed registry versions that are yanked (pinned by `velt.lock`); callers warn.
+    pub yanked: Vec<(String, semver::Version)>,
+}
+
+impl Installed {
+    /// One `<name> <version> is yanked (pinned by velt.lock)` line per yanked version.
+    pub fn yank_warnings(&self) -> Vec<String> {
+        self.yanked
+            .iter()
+            .map(|(name, version)| format!("`{name}` {version} is yanked (pinned by velt.lock)"))
+            .collect()
+    }
 }
 
 /// Install the dependencies of the package rooted at `root`.
@@ -115,6 +127,7 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
         graph,
         lockfile,
         lock_changed,
+        yanked: resolution.yanked.clone(),
     })
 }
 

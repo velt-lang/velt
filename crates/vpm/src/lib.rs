@@ -5,7 +5,7 @@
 //!   ([`paths`]: its import aliases); [`edit`]: comment-preserving `velt add`; [`scaffold`]:
 //!   `velt new`.
 //! - [`registry`]: the registry (`publish`, index), local or remote ([`remote`], packages as
-//!   [`archive`]s over HTTP); [`cache`]: verified extraction.
+//!   [`archive`]s over HTTP); [`yank`] and [`search`]; [`cache`]: verified extraction.
 //! - [`resolve`]: semver resolution with backtracking; [`lockfile`]: `velt.lock`.
 //! - [`install`]: resolve + lock + fetch → [`PackageGraph`] for the compiler's module loader.
 
@@ -25,6 +25,8 @@ pub mod relpath;
 pub mod remote;
 pub mod resolve;
 pub mod scaffold;
+pub mod search;
+pub mod yank;
 
 pub use graph::PackageGraph;
 pub use install::{install, InstallOptions, Installed};

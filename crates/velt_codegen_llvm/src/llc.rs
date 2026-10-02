@@ -96,7 +96,7 @@ fn llvm_major(banner: &str) -> Option<u32> {
         .ok()
 }
 
-/// Compile `ir` to a WebAssembly object file: `opt -O3` (release) then `llc`.
+/// Compile `ir` to a WebAssembly object file: `opt -O3` (or `$VELT_LLVM_OPT`; release) then `llc`.
 pub(crate) fn compile(ir: &str, target: &Target, optimize: bool) -> CodegenResult<Vec<u8>> {
     let Some(tools) = find_wasm_tools() else {
         bail!(
@@ -114,10 +114,13 @@ pub(crate) fn compile(ir: &str, target: &Target, optimize: bool) -> CodegenResul
     if optimize {
         let bc = dir.path.join("module.bc");
         let mut cmd = Command::new(&tools.opt);
-        cmd.args(["-O3", &format!("-mtriple={}", target.triple)])
-            .arg(&input)
-            .arg("-o")
-            .arg(&bc);
+        cmd.args([
+            crate::clang::opt_flag(),
+            &format!("-mtriple={}", target.triple),
+        ])
+        .arg(&input)
+        .arg("-o")
+        .arg(&bc);
         run(cmd, "opt")?;
         input = bc;
     }

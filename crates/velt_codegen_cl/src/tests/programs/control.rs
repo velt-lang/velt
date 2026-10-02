@@ -122,6 +122,104 @@ pub(crate) fn fib() -> TestProgram {
     }
 }
 
+// ───────────── block order: reads before the assignment in VIR order ─────────────
+
+/// Single-assignment locals read in blocks that come before their assignment in VIR order (and
+/// in an unreachable block), next to a local assigned twice: the translator first treats them as
+/// SSA values, then translates `velt_main` again with them as variables.
+pub(crate) fn block_order() -> TestProgram {
+    let (mut pb, rt) = ProgramBuilder::new();
+    let (mut fb, b0) = main_fb();
+    let (x, y, k, c, u) = (
+        fb.local(I64),
+        fb.local(I64),
+        fb.local(I64),
+        fb.local(Bool),
+        fb.local(I64),
+    );
+    let b1 = fb.block();
+    let b2 = fb.block();
+    let b3 = fb.block();
+    let dead = fb.block();
+    fb.assign(b0, k, Rvalue::Use(int(1, I64)));
+    fb.term(b0, Terminator::Goto(b2));
+    // b2 dominates b1 and b3 but follows them in VIR order.
+    fb.assign(b2, x, bin(BinOp::Add, int(40, I64), copy_local(k)));
+    fb.assign(b2, y, bin(BinOp::Add, copy_local(x), int(2, I64)));
+    fb.assign(b2, k, Rvalue::Use(int(2, I64)));
+    fb.assign(b2, c, bin(BinOp::Gt, copy_local(x), int(0, I64)));
+    fb.term(
+        b2,
+        Terminator::Branch {
+            cond: copy_local(c),
+            then: b1,
+            els: b3,
+        },
+    );
+    fb.term(b3, Terminator::Return(int(1, I32)));
+    // Never reached: reads `y` without a dominating assignment.
+    fb.assign(dead, u, bin(BinOp::Add, copy_local(y), int(1, I64)));
+    fb.term(dead, Terminator::Goto(b1));
+    let mut o = Out {
+        fb: &mut fb,
+        rt: &rt,
+        cur: b1,
+    };
+    o.line(copy_local(x), I64);
+    o.line(copy_local(y), I64);
+    o.line(copy_local(k), I64);
+    let cur = o.cur;
+    pb.add(finish_main(fb, cur, 0));
+    TestProgram {
+        name: "block_order",
+        program: pb.p,
+        stdout: "41\n43\n2\n".into(),
+        exit: 0,
+    }
+}
+
+/// One straight-line function of `n` calls, each result feeding the next through a fresh
+/// temporary: as many blocks and single-assignment locals as statements, the shape of a long
+/// generated `main` (compile-time memory used to grow with blocks × locals).
+pub(crate) fn long_chain(n: u32) -> TestProgram {
+    let (mut pb, rt) = ProgramBuilder::new();
+    let inc = {
+        let mut fb = FuncBuilder::internal("inc", &[I64], I64);
+        let r = fb.local(I64);
+        let b = fb.block();
+        fb.assign(b, r, bin(BinOp::Add, copy_local(fb.param(0)), int(1, I64)));
+        fb.term(b, Terminator::Return(copy_local(r)));
+        pb.add(fb.finish())
+    };
+    let (mut fb, mut cur) = main_fb();
+    let mut acc = fb.local(I64);
+    fb.assign(cur, acc, Rvalue::Use(int(0, I64)));
+    for _ in 0..n {
+        let next = fb.local(I64);
+        cur = fb.call(
+            cur,
+            Callee::Func(inc),
+            vec![copy_local(acc)],
+            Some(Place::local(next)),
+        );
+        acc = next;
+    }
+    let mut o = Out {
+        fb: &mut fb,
+        rt: &rt,
+        cur,
+    };
+    o.line(copy_local(acc), I64);
+    let cur = o.cur;
+    pb.add(finish_main(fb, cur, 0));
+    TestProgram {
+        name: "long_chain",
+        program: pb.p,
+        stdout: format!("{n}\n"),
+        exit: 0,
+    }
+}
+
 // ───────────── switch ─────────────
 
 pub(crate) fn switch() -> TestProgram {

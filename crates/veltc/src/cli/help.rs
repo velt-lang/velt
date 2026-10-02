@@ -277,6 +277,39 @@ pub const COMMANDS: &[CommandHelp] = &[
         )],
     },
     CommandHelp {
+        name: "search",
+        summary: "Find packages in the registry",
+        usage: &["search <text>"],
+        about: "Lists the packages whose name contains the text, with their newest version that \
+                is not yanked, from the package's registry (or $VELT_REGISTRY).",
+        options: &[],
+        examples: &[("velt search json", "packages with `json` in their name")],
+    },
+    CommandHelp {
+        name: "yank",
+        summary: "Withdraw a published version (or bring it back)",
+        usage: &["yank <pkg>@<version> [--undo]"],
+        about: "A yanked version is never chosen for a new dependency, but projects whose \
+                velt.lock pins it keep installing it. Only the package's owners may yank.",
+        options: &[("--undo", "unyank the version")],
+        examples: &[
+            ("velt yank json@1.2.0", "withdraw json 1.2.0"),
+            ("velt yank json@1.2.0 --undo", "bring it back"),
+        ],
+    },
+    CommandHelp {
+        name: "owner",
+        summary: "List or change a package's owners",
+        usage: &["owner list <pkg>", "owner add <pkg> <user>", "owner remove <pkg> <user>"],
+        about: "Owners publish versions, yank and change the owners of a package on a registry \
+                server; its first publisher is its first owner. The last owner can't be removed.",
+        options: &[],
+        examples: &[
+            ("velt owner list json", "who may publish json"),
+            ("velt owner add json bob", "let bob publish json too"),
+        ],
+    },
+    CommandHelp {
         name: "doc",
         summary: "Generate HTML API docs",
         usage: &["doc [<file|dir>...] [--std] [-o <dir>]"],
@@ -313,15 +346,29 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "registry",
         summary: "Serve a package registry over HTTP",
-        usage: &["registry serve [--dir <d>] [--port <n>] [--host <addr>]"],
-        about: "Uploads need `Authorization: Bearer $VELT_REGISTRY_TOKEN` when that variable is \
-                set for the server.",
+        usage: &[
+            "registry serve [--dir <d>] [--port <n>] [--host <addr>]",
+            "registry user add|remove|token <name> [--dir <d>] [--open]",
+            "registry owner add|remove <pkg> <user> [--dir <d>]",
+        ],
+        about: "A registry with users needs a user's token for every write (publishing, yanking, \
+                owners), and only a package's owners may change it; without users anyone who \
+                can reach the server may publish. `registry user add` and `token` print the \
+                user's new token once; the user sets it as $VELT_REGISTRY_TOKEN. Removing the \
+                last user needs --open. `registry owner` assigns owners directly (for packages \
+                that have none). The server speaks plain HTTP: beyond localhost, put it behind a \
+                TLS reverse proxy.",
         options: &[
             ("--dir <d>", "registry directory (default: the local registry)"),
             ("--port <n>", "port (default 8091)"),
             ("--host <addr>", "address (default 127.0.0.1)"),
+            ("--open", "let `user remove` delete the last user (the registry becomes open)"),
         ],
-        examples: &[("velt registry serve --dir ./registry", "share a directory of packages")],
+        examples: &[
+            ("velt registry serve --dir ./registry", "share a directory of packages"),
+            ("velt registry owner add json alice --dir ./registry", "give `json` an owner"),
+            ("velt registry user add alice --dir ./registry", "a user, and the token for them"),
+        ],
     },
     CommandHelp {
         name: "doctor",
@@ -374,7 +421,11 @@ const ENVIRONMENT: &[(&str, &str)] = &[
     ),
     (
         "VELT_REGISTRY_TOKEN",
-        "token for `velt publish` to (and uploads accepted by) a registry server",
+        "your registry user's token, for publish, yank and owner against a registry server",
+    ),
+    (
+        "VELT_CA_FILE",
+        "PEM file of extra CA certificates to trust for https:// registries",
     ),
     (
         "VELT_CLANG",

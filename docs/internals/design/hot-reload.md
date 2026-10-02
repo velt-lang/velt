@@ -69,7 +69,9 @@ point directly.
   statics (allocator, stdout buffers, panic hook). A crash ends only the host, and the
   supervisor starts a new one on the next save.
 - On Windows, JIT code registers its unwind information (`RtlAddFunctionTable`), so debuggers and
-  backtraces walk through it.
+  backtraces walk through it; on macOS and Linux, its DWARF CFI (`__register_frame`) and line
+  tables (the GDB JIT interface: an in-memory ELF image per version, `debug_info::jit`), so GDB
+  and LLDB stop on `.vlt` breakpoints in JIT code.
 - JIT code is not position independent. Each module (each loaded version) allocates its code
   and data from one contiguous arena, so references inside it fit 32-bit PC-relative
   relocations. References to anything outside it (the runtime, C library functions, earlier

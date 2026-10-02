@@ -15,6 +15,7 @@ use target_lexicon::BinaryFormat;
 use velt_vir::vir;
 
 use crate::abi::{make_signature, validate_aggregates};
+use crate::debug_info::FunctionLines;
 use crate::function::{translate_function, LibFunctions};
 use crate::unwind::FunctionUnwind;
 use crate::CodegenResult;
@@ -30,6 +31,8 @@ pub(crate) struct Built {
     /// Unwind info per defined function: SystemV CFI for ELF/Mach-O, Windows x64 for x86_64
     /// COFF (none for arm64 COFF yet).
     pub unwind: Vec<FunctionUnwind>,
+    /// Line tables per defined function, when the program has source locations.
+    pub lines: Vec<FunctionLines>,
 }
 
 /// Module-level ids of the program's entities, indexed by VIR id.
@@ -71,6 +74,7 @@ pub(crate) fn build_module<M: Module>(
     let (decls, defs) = declare_all(module, program, naming)?;
 
     let mut unwind = Vec::new();
+    let mut lines = Vec::new();
     let mut libs = LibFunctions::default();
     let mut ctx = module.make_context();
     let mut builder_ctx = FunctionBuilderContext::new();
@@ -79,7 +83,7 @@ pub(crate) fn build_module<M: Module>(
         module.clear_context(&mut ctx);
         ctx.func.signature = make_signature(decls.call_conv, &func.params, func.ret)?;
         ctx.func.name = UserFuncName::user(0, id.as_u32());
-        translate_function(
+        let srclocs = translate_function(
             module,
             program,
             &decls,
@@ -91,12 +95,16 @@ pub(crate) fn build_module<M: Module>(
         .map_err(|e| format!("codegen: in function `{}`: {e}", func.symbol))?;
         define(module, id, &mut ctx, &func.symbol)?;
         unwind.extend(unwind_info(module, id, &ctx, &func.symbol)?);
+        if !program.files.is_empty() {
+            lines.extend(FunctionLines::new(id, func, &ctx, &srclocs));
+        }
     }
     module.clear_context(&mut ctx);
     Ok(Built {
         funcs: defs,
         references: decls.funcs,
         unwind,
+        lines,
     })
 }
 

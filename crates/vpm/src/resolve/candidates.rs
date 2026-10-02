@@ -47,6 +47,8 @@ impl<'a> Provider<'a> {
                 let mut entries: Vec<_> = index
                     .versions
                     .iter()
+                    // A yanked version is only used where the lockfile already pins it.
+                    .filter(|e| !e.yanked || Some(e.semver()) == locked)
                     .filter(|e| version_req.matches(&e.semver()))
                     .collect();
                 entries.sort_by_key(|e| std::cmp::Reverse(e.semver()));
@@ -79,13 +81,19 @@ impl<'a> Provider<'a> {
     pub fn no_match(&mut self, req: &Requirement) -> String {
         let available = match (&req.want, self.index(&req.name)) {
             (Want::Registry(_), Ok(Some(index))) => {
-                let mut versions: Vec<Version> =
-                    index.versions.iter().map(|e| e.semver()).collect();
+                let mut versions: Vec<(Version, bool)> = index
+                    .versions
+                    .iter()
+                    .map(|e| (e.semver(), e.yanked))
+                    .collect();
                 versions.sort();
                 Some(
                     versions
                         .iter()
-                        .map(Version::to_string)
+                        .map(|(v, yanked)| match yanked {
+                            true => format!("{v} (yanked)"),
+                            false => v.to_string(),
+                        })
                         .collect::<Vec<_>>()
                         .join(", "),
                 )
@@ -93,6 +101,16 @@ impl<'a> Provider<'a> {
             _ => None,
         };
         report::no_match(req, available.as_deref(), &self.loc.registry)
+    }
+
+    /// Whether registry version `name` `version` is yanked.
+    pub fn is_yanked(&mut self, name: &str, version: &Version) -> Result<bool, String> {
+        Ok(self.index(name)?.is_some_and(|index| {
+            index
+                .versions
+                .iter()
+                .any(|e| e.yanked && e.semver() == *version)
+        }))
     }
 
     fn locked_version(&self, name: &str) -> Option<Version> {

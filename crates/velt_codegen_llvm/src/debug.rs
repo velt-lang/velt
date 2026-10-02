@@ -77,15 +77,15 @@ impl DebugInfo {
     }
 
     /// The `DISubprogram` of `function` (at its first known location, else line 0 of the
-    /// first file) and the per-function state.
-    pub(crate) fn function(&mut self, function: &vir::Function) -> FnDebug {
+    /// first file) and the per-function state. `local`: the symbol is internal to the module.
+    pub(crate) fn function(&mut self, function: &vir::Function, local: bool) -> FnDebug {
         let at = function.first_loc();
         let file_index = at.map_or(0, |l| l.file) as usize;
         let file = self.files.get(file_index).copied().unwrap_or(self.files[0]);
         let line = at.map_or(0, |l| l.line);
         let local = match function.linkage {
-            Linkage::Internal => " | DISPFlagLocalToUnit",
-            Linkage::Export => "",
+            Linkage::Internal if local => " | DISPFlagLocalToUnit",
+            Linkage::Internal | Linkage::Export => "",
         };
         let name = velt_vir::mangle::demangle(&function.symbol);
         let subprogram = self.node(format!(

@@ -84,7 +84,9 @@ The time includes a 30 ms settle delay after the last write.
   swap.
 - Edits to functions that only ran during startup are swapped, but they don't run again.
 - After 200 hot swaps the host restarts to reclaim the memory of old code.
-- JIT code has no line-level debug information; use `--exe` or a normal build to debug.
+- JIT code has line-level debug information for GDB and LLDB on Linux; macOS is untested (LLDB
+  needs `plugin.jit-loader.gdb.enable on`) ([Debugging](debugging.md#velt-dev-and-the-debugger)).
+  On Windows, use `--exe` or a normal build to debug.
 - JIT code registers its unwind information on Windows x64, macOS and Linux, so debuggers and
   backtraces walk through it; on Windows arm64 it does not yet. On musl (Alpine) the JIT host
   is unavailable, so use `--exe`. Hot swap is tested end to end on Windows x64 and

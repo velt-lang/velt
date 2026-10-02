@@ -65,7 +65,8 @@ fn positional_values(c: &CommandHelp) -> Option<Vec<&'static str>> {
     match c.name {
         "completions" => Some(SHELLS.to_vec()),
         "help" => Some(command_names()),
-        "registry" => Some(vec!["serve"]),
+        "registry" => Some(vec!["serve", "user", "owner"]),
+        "owner" => Some(vec!["list", "add", "remove"]),
         _ => None,
     }
 }

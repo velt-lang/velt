@@ -184,3 +184,39 @@ fn every_target_compiles() {
         }
     }
 }
+
+/// A program split into codegen units (hidden cross-unit symbols, `available_externally`
+/// imports, a vtable defined in one unit and imported by the others) compiles for every target:
+/// one object per unit.
+#[test]
+fn codegen_units_compile_for_every_target() {
+    if harness::tools().is_none() {
+        return;
+    }
+    let mut program = corpus::all()
+        .into_iter()
+        .find(|c| c.name == "vtable_dispatch")
+        .expect("corpus case")
+        .program;
+    let (mut fb, b) = corpus::main_fn();
+    fb.ret(b, common::builder::int(0, velt_vir::vir::Ty::I32));
+    program.funcs.push(fb.finish());
+    for triple in TRIPLES {
+        for optimize in [false, true] {
+            let opts = velt_codegen_llvm::CodegenOptions {
+                target: triple.into(),
+                optimize,
+            };
+            let objects =
+                velt_codegen_llvm::emit_objects_timed(&program, &opts, Some(3), &mut vec![])
+                    .unwrap_or_else(|e| panic!("{triple}: {e}"));
+            assert!(objects.len() > 1, "{triple}: {} object(s)", objects.len());
+            for obj in &objects {
+                assert!(
+                    object_format_ok(triple, obj),
+                    "wrong object format for {triple}"
+                );
+            }
+        }
+    }
+}

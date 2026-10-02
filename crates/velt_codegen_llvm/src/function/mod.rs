@@ -18,7 +18,7 @@ use std::fmt::Write;
 use velt_vir::vir::{self, Ty};
 
 use crate::debug::{DebugInfo, FnDebug};
-use crate::module::{define_prefix, definition_params, Intrinsics, FN_ATTRS};
+use crate::module::{define_prefix, definition_params, Definition, Intrinsics, FN_ATTRS};
 use crate::types::{global_name, scalar_type, size_align};
 use crate::CodegenResult;
 
@@ -79,13 +79,14 @@ struct Emitter<'a> {
 pub(crate) fn emit_function(
     program: &vir::Program,
     function: &vir::Function,
+    how: Definition,
     intrinsics: &mut Intrinsics,
     debug: Option<&mut DebugInfo>,
     wide_pointer_slots: bool,
 ) -> CodegenResult<String> {
     check_shape(function)?;
     let debug = debug.map(|d| {
-        let f = d.function(function);
+        let f = d.function(function, how == Definition::Own);
         (d, f)
     });
     let define_dbg = debug
@@ -118,7 +119,7 @@ pub(crate) fn emit_function(
     }
     Ok(format!(
         "{} {}({}) {FN_ATTRS}{define_dbg} {{\n{}}}\n",
-        define_prefix(function)?,
+        define_prefix(function, how)?,
         global_name(&function.symbol),
         definition_params(function)?,
         emitter.body

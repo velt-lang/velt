@@ -29,6 +29,7 @@ impl<M: Module> Translator<'_, '_, M> {
         };
         let mut loc = match self.storage[index] {
             Storage::Var(v) => Loc::Var(v, decl.ty),
+            Storage::Value(local) => Loc::Value(local, decl.ty),
             Storage::Slot(slot) => {
                 let addr = self.builder.ins().stack_addr(types::I64, slot, 0);
                 Loc::Mem(addr, 0, decl.ty)
@@ -83,6 +84,15 @@ impl<M: Module> Translator<'_, '_, M> {
     pub(super) fn read(&mut self, loc: Loc) -> CodegenResult<Val> {
         Ok(match loc {
             Loc::Var(v, _) => Val::Scalar(self.builder.use_var(v)),
+            Loc::Value(local, ty) => match self.values[local as usize] {
+                Some(v) => Val::Scalar(v),
+                None => {
+                    // Read before its assignment in translation order: this attempt is
+                    // discarded (see the module docs), so any value of the right type will do.
+                    self.demote.push(local);
+                    Val::Scalar(self.zero(scalar_type(ty)))
+                }
+            },
             Loc::Mem(base, offset, ty) => match ty {
                 Ty::Agg(_) => Val::Agg(self.addr(base, offset)),
                 Ty::Unit => Val::Unit,
@@ -93,6 +103,17 @@ impl<M: Module> Translator<'_, '_, M> {
             },
             Loc::Unit => Val::Unit,
         })
+    }
+
+    /// A zero of type `t`.
+    fn zero(&mut self, t: ir::Type) -> ir::Value {
+        if t == types::F32 {
+            self.builder.ins().f32const(0.0)
+        } else if t == types::F64 {
+            self.builder.ins().f64const(0.0)
+        } else {
+            self.builder.ins().iconst(t, 0)
+        }
     }
 
     fn check_scalar_type(&self, v: ir::Value, ty: Ty) -> CodegenResult<()> {
@@ -108,6 +129,12 @@ impl<M: Module> Translator<'_, '_, M> {
             (Loc::Var(v, ty), Val::Scalar(x)) => {
                 self.check_scalar_type(x, ty)?;
                 self.builder.def_var(v, x);
+            }
+            (Loc::Value(local, ty), Val::Scalar(x)) => {
+                self.check_scalar_type(x, ty)?;
+                if self.values[local as usize].replace(x).is_some() {
+                    self.demote.push(local);
+                }
             }
             (Loc::Mem(base, offset, Ty::Agg(id)), Val::Agg(src)) => {
                 let (size, align) = size_align(self.program, Ty::Agg(id))?;
