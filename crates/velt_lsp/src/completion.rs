@@ -51,8 +51,10 @@ pub fn complete(analysis: &Analysis, offset: u32, jsx_only: bool) -> Vec<Complet
         .last()
         .map_or(offset, |(i, _)| i);
     let at = word_start as u32;
-    if let Some(ctx) = jsx_completion::context(text, word_start) {
-        return jsx_completion::items(analysis, &ctx, at);
+    let jsx_start = jsx_completion::word_start(text, offset, word_start);
+    if let Some(ctx) = jsx_completion::context(text, jsx_start) {
+        let replace = (jsx_start < word_start).then_some((jsx_start as u32, offset as u32));
+        return jsx_completion::items(analysis, &ctx, jsx_start as u32, replace);
     }
     if jsx_only {
         return vec![];

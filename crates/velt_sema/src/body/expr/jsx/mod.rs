@@ -42,6 +42,7 @@ impl FnCx<'_, '_> {
 
     /// Lower `el` (an expression, an attribute value or a child) through runtime `p`.
     pub(super) fn jsx_element(&mut self, p: &Provider, el: &ast::JsxElement) -> hir::Expr {
+        let mark = self.cx.rec_mark();
         let h = match &el.name {
             None => self.jsx_fragment(p, el),
             Some(name) => match intrinsic_tag(name) {
@@ -51,8 +52,25 @@ impl FnCx<'_, '_> {
         };
         if self.cx.recording() {
             self.cx.rec_ty(el.span, h.ty);
+            // A mismatched closing tag (`<A></B>`, reported by the parser) names nothing.
+            if let (Some(open), Some(close)) = (&el.name, &el.closing_name) {
+                if open.to_source() == close.to_source() {
+                    self.mirror_closing_name(mark, open, close);
+                }
+            }
         }
         h
+    }
+
+    /// The closing tag's name denotes what the opening one does (`</Card>`, `</ui.Card>`,
+    /// `</div>`): for definition, references and rename.
+    fn mirror_closing_name(&mut self, mark: usize, open: &ast::JsxName, close: &ast::JsxName) {
+        self.cx.rec_mirror(mark, open.span(), close.span());
+        if let (ast::JsxName::Member(opens), ast::JsxName::Member(closes)) = (open, close) {
+            for (o, c) in opens.iter().zip(closes) {
+                self.cx.rec_mirror(mark, o.span, c.span);
+            }
+        }
     }
 
     fn jsx_fragment(&mut self, p: &Provider, el: &ast::JsxElement) -> hir::Expr {

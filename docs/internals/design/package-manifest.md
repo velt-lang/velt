@@ -1,6 +1,6 @@
 # Design: a package manifest written in Velt
 
-Status: implemented (issue #128), except editor support, which is revised in
+Status: implemented (issue #128), including the revised editor support in
 [Editors: the manifest document kind](#editors-the-manifest-document-kind). The maintainer's review answered
 the open questions; the answers are in [Decisions](#decisions). The contract is
 [manifest.md](../contracts/manifest.md), which replaced `velt_toml.md`.
@@ -197,16 +197,22 @@ So the language server treats `package.vlt` as a **document kind of its own**:
    same fields.
 5. **Live registry data**, through `vpm` and the package's registry (`registry`,
    `VELT_REGISTRY`, or the local one), fetched off the request thread and cached per session:
-   - completion of versions at `sqlite: "|"`, newest first (`^0.3.1`, `^0.3`, `0.2.4`);
+   - completion of versions at `sqlite: "|"`: `^<newest>`, then every version that is not
+     yanked, newest first (`"` triggers it);
    - hover on a dependency: the latest version, whether the requirement matches it, the locked
      version, whether the package runs native code;
    - diagnostics: no published version matches, the package is not in the registry, and a hint
      when a newer version is out of range, with quick fixes;
-   - completion of package names at a new key in `dependencies`: the local registry is a
-     directory and can be listed; a remote registry needs a search endpoint
-     (`GET <url>/api/v1/search?q=…`, a protocol addition to the contract).
+   - completion of package names at a new key in `dependencies`, through the registry's search
+     (`vpm::search`: `GET <url>/api/v1/search?q=…` remotely, the directory locally), writing
+     the whole entry (`sqlite: "^0.3.1"`).
 
-   Offline or unreachable registries make these features quiet, never errors.
+   Offline or unreachable registries make these features quiet, never errors. Requirements are
+   checked against the versions that are not yanked plus the one `velt.lock` pins, like
+   resolution does. The pure parts
+   (where the cursor is, what the data means) are `vpm::manifest::ide::registry`; the language
+   server's `registry` module fetches and caches, and re-checks an open manifest while fetches
+   run.
 
 Plain `.vlt` features (go-to-definition of `Package`, formatting) keep working: formatting
 already goes through `velt fmt`, and the type import still resolves.
@@ -303,9 +309,9 @@ Implementation order:
 3. **Editors, part 1:** `std/package.vlt`, the field schema in `vpm`, and the language server's
    manifest document kind: the reader's diagnostics, key and value completion, hover; plus the
    package-graph refresh when `package.vlt` is saved, and no `pkg` in workspace symbols.
-4. **Editors, part 2: live registry data:** version completion, dependency hover, version
-   diagnostics and quick fixes.
-5. **Editors, part 3: package-name completion,** with the registry search endpoint.
+4. **Editors, parts 2 and 3: live registry data:** version and package-name completion,
+   dependency hover, requirement diagnostics and the update fix (the search endpoint came with
+   the registry's own work, #173).
 
 ## Not proposed
 

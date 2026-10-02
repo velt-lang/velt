@@ -20,6 +20,18 @@ impl Server<'_> {
         p: &CodeActionParams,
     ) -> Option<Vec<CodeActionOrCommand>> {
         let uri = &p.text_document.uri;
+        if let Some(text) = self.manifest_text(uri) {
+            let index = LineIndex::new(text);
+            let range = (index.offset(p.range.start), index.offset(p.range.end));
+            let dir = self.docs.get(uri).and_then(|d| d.path.parent());
+            return Some(crate::manifest::code_actions(
+                uri,
+                text,
+                range,
+                &self.registry,
+                dir,
+            ));
+        }
         let analysis = self.analysis(uri)?;
         let index = LineIndex::new(analysis.text());
         let lo = index.offset(p.range.start);
@@ -32,7 +44,7 @@ impl Server<'_> {
             p.context
                 .only
                 .as_ref()
-                .map(|only| only.iter().any(|k| kind.as_str().starts_with(k.as_str())))
+                .map(|only| only.iter().any(|k| covers(k, kind)))
         };
         let wanted =
             |kind: &CodeActionKind| asked(kind).unwrap_or(*kind == CodeActionKind::QUICKFIX);
@@ -103,4 +115,33 @@ fn action(
         is_preferred: fix.preferred.then_some(true),
         ..Default::default()
     })
+}
+
+/// Does a requested kind `asked` cover `kind`: the same kind or a parent of it, by whole
+/// dot-separated segments (`source` covers `source.fixAll`, `source.fix` does not).
+fn covers(asked: &CodeActionKind, kind: &CodeActionKind) -> bool {
+    let (asked, kind) = (asked.as_str(), kind.as_str());
+    kind == asked
+        || kind
+            .strip_prefix(asked)
+            .is_some_and(|rest| rest.starts_with('.'))
+}
+
+#[cfg(test)]
+mod tests {
+    use lsp_types::CodeActionKind;
+
+    use super::covers;
+
+    #[test]
+    fn kinds_match_by_whole_segments() {
+        let fix_all = CodeActionKind::SOURCE_FIX_ALL;
+        assert!(covers(&CodeActionKind::SOURCE, &fix_all));
+        assert!(covers(&fix_all, &fix_all));
+        assert!(!covers(&CodeActionKind::new("source.fix"), &fix_all));
+        assert!(!covers(
+            &CodeActionKind::new("quick"),
+            &CodeActionKind::QUICKFIX
+        ));
+    }
 }

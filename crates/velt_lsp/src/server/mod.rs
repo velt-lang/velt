@@ -24,10 +24,13 @@ use lsp_types::{FileChangeType, PublishDiagnosticsParams, Url};
 use crate::analysis::{self, Analysis};
 use crate::disk_index::DiskIndex;
 use crate::documents::{self, Documents};
+use crate::registry::RegistryData;
 use crate::{diagnostics, manifest, workspace_symbols, ProgramLoader};
 
 /// Quiet time after an edit before the document is re-analyzed.
 const DEBOUNCE: Duration = Duration::from_millis(150);
+/// How often an open manifest is re-checked while registry data is being fetched.
+const REGISTRY_POLL: Duration = Duration::from_millis(250);
 
 /// Handshake with the client, then serve until `exit` or disconnection.
 pub fn run(connection: &Connection, loader: &dyn ProgramLoader) -> Result<(), String> {
@@ -52,6 +55,7 @@ pub fn run(connection: &Connection, loader: &dyn ProgramLoader) -> Result<(), St
         sent_tokens: HashMap::new(),
         next_result_id: 0,
         disk_symbols: DiskIndex::default(),
+        registry: RegistryData::default(),
     }
     .main_loop()
 }
@@ -72,6 +76,8 @@ struct Server<'a> {
     next_result_id: u64,
     /// Symbols of the workspace folders' files.
     disk_symbols: DiskIndex,
+    /// Package indexes and searches for `package.vlt`, fetched in the background.
+    registry: RegistryData,
 }
 
 /// Id of the request registering the file watcher.
@@ -232,10 +238,15 @@ impl Server<'_> {
         };
         let (path, version) = (doc.path.clone(), doc.version);
         if manifest::is_manifest(&path) {
-            // Data, not a program: the reader's diagnostics, no analysis.
-            let diags = manifest::diagnostics(&doc.text);
+            // Data, not a program: the reader's and the registry's diagnostics, no analysis.
+            let diags = manifest::diagnostics(&doc.text, &self.registry, path.parent());
             self.analyses.remove(uri);
             self.publish(uri.clone(), diags, Some(version));
+            if self.registry.busy() {
+                // Registry data is on its way: look again when it may have arrived.
+                self.pending
+                    .insert(uri.clone(), Instant::now() + REGISTRY_POLL);
+            }
             return;
         }
         let analysis = analysis::analyze(self.loader, &path, &self.docs.overlay());

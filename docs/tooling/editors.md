@@ -19,14 +19,16 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
   (also while the file doesn't parse). In JSX: tag names after `<` (the elements of the JSX
   runtime's `JSX.IntrinsicElements` and the components in scope) and attribute names inside an
   opening tag (the element's attributes or the component's props, minus those already written).
-  Tags are offered once the file contains JSX that parses, which is when its JSX runtime loads.
-- **JSX**: go to definition and hover on component tags (`<Card` → `function Card`) and on
-  attributes (the attribute's or prop's declaration and type).
+  After `</` the element still open there comes first. Tags are offered once the file contains
+  JSX that parses, which is when its JSX runtime loads.
+- **JSX**: go to definition, hover, references and rename on tags, opening and closing
+  (`<Card` and `</Card>` → `function Card`), and on attributes (the attribute's or prop's
+  declaration and type).
 - **Signature help** while typing call arguments.
 - **Inlay hints**: inferred types of `const` / `let` / `for...of` bindings and parameter names at
   call sites. On declarations, what inference decided ([memory model](../reference/memory.md#mutation-is-inferred),
   [errors](../reference/errors.md)): `throws E` after a function without a `throws` clause that
-  can throw, `modifies this` after the parameters of a method that modifies its receiver, and
+  can throw, `modifies this` after the signature of a method that modifies its receiver, and
   `modified` before each parameter whose contents the function modifies.
 - **Semantic highlighting**: types, functions, methods, parameters, properties and enum members;
   `let` bindings carry a `mutable` modifier, and calls of functions and methods declared in
@@ -44,6 +46,12 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
   and fixed values (native targets, `true`/`false`); hover explains each field. Saving a changed
   `package.vlt` reinstalls the package's dependencies for the other open files
   ([`package.vlt`](manifest.md)).
+- **Live registry data** in `package.vlt`, from the package's registry: completion of versions
+  (typing `"` after a dependency's name) and of package names in `dependencies`; hover on a
+  dependency shows its newest and locked versions; a requirement no published version matches,
+  or a package the registry doesn't have, is an error, a requirement that leaves out a newer
+  version gets an informational note, and a quick fix moves it to `^<newest>`. The data is fetched in the
+  background; an offline registry just adds nothing.
 
 The server answers even when the program has errors, and a failing request never takes the
 server down.

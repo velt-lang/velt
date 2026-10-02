@@ -34,16 +34,20 @@ impl ProgramLoader for TestLoader {
         let mut next = 0;
         while next < modules.len() {
             let dir = paths[next].parent().unwrap_or(Path::new("")).to_path_buf();
-            let mut specs = import_specs(&modules[next].ast);
-            let runtime = modules[next]
-                .ast
-                .jsx_import_source
-                .as_ref()
-                .map(|source| format!("{source}/jsx-runtime"));
-            if let Some(r) = &runtime {
-                specs.push((r.clone(), modules[next].ast.span));
+            // `(spec, span, is the JSX runtime)`: a file may also import its runtime by name.
+            let mut specs: Vec<_> = import_specs(&modules[next].ast)
+                .into_iter()
+                .map(|(spec, span)| (spec, span, false))
+                .collect();
+            let runtime = modules[next].ast.jsx_import_source.as_ref();
+            if let Some(source) = runtime {
+                specs.push((
+                    format!("{source}/jsx-runtime"),
+                    modules[next].ast.span,
+                    true,
+                ));
             }
-            for (spec, span) in specs {
+            for (spec, span, is_runtime) in specs {
                 let Some(rel) = spec.strip_prefix("./") else {
                     continue;
                 };
@@ -64,7 +68,7 @@ impl ProgramLoader for TestLoader {
                     },
                 };
                 let canonical = modules[index].path.clone();
-                if runtime.as_ref() == Some(&spec) {
+                if is_runtime {
                     modules[next].jsx_runtime = Some(canonical);
                 } else {
                     modules[next].imports.push((spec, canonical));

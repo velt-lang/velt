@@ -1,19 +1,6 @@
-//! Completion inside JSX. The context is read from the text before the cursor (while typing, the
-//! element usually does not parse): right after `<` the tags (the intrinsic elements of the
-//! file's JSX runtime, then the components in scope); inside an opening tag after its name the
-//! attributes of that tag (intrinsic: the fields of `JSX.IntrinsicElements[tag]`; component: the
-//! fields of its props parameter), minus the ones already written. Answers come from sema's IDE
-//! queries ([`velt_sema::ide`]).
-
-use lsp_types::{CompletionItem, CompletionItemKind};
-use velt_sema::ide::{DefKind, DefRef};
-use velt_syntax::ast;
-
-use crate::analysis::Analysis;
-use crate::index::pattern_idents;
-use crate::index::scope::is_component;
-
-use crate::sema_query::{item, kind};
+//! Where in JSX the cursor is, read from the text before it (while typing, the element usually
+//! does not parse): after `<` where an element can start (an expression starts there, or the
+//! text between tags goes on), after `</`, or inside an opening tag after its name.
 
 /// How far back an opening tag is looked for.
 const MAX_TAG_BYTES: usize = 4096;
@@ -21,8 +8,9 @@ const MAX_TAG_BYTES: usize = 4096;
 /// Where in JSX the cursor is.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Context<'t> {
-    /// Typing a tag name after `<` or `</`.
-    Tag,
+    /// Typing a tag name after `<` or `</`; after `</`, `closing` is the innermost element
+    /// still open there (offered first).
+    Tag { closing: Option<&'t str> },
     /// Typing an attribute name in the opening tag of `tag`; `written` are the attributes
     /// already there.
     Attribute { tag: &'t str, written: Vec<&'t str> },
@@ -31,11 +19,13 @@ pub enum Context<'t> {
 /// The JSX context of a word starting at byte `word_start` of `text`, if any.
 pub fn context(text: &str, word_start: usize) -> Option<Context<'_>> {
     let before = &text[..word_start];
-    if before.ends_with("</") {
-        return Some(Context::Tag);
+    if let Some(lt) = before.strip_suffix("</") {
+        return Some(Context::Tag {
+            closing: innermost_open(lt),
+        });
     }
     if let Some(lt) = before.strip_suffix('<') {
-        return tag_may_start(lt).then_some(Context::Tag);
+        return tag_may_start(lt).then_some(Context::Tag { closing: None });
     }
     if !before.ends_with(char::is_whitespace) || before.trim_end().ends_with('=') {
         return None;
@@ -50,7 +40,7 @@ pub fn context(text: &str, word_start: usize) -> Option<Context<'_>> {
         }
         match opening_tag(&before[i + 1..]) {
             Tag::Open(tag, written) => return Some(Context::Attribute { tag, written }),
-            Tag::Closed => return None,
+            Tag::Closed { .. } => return None,
             Tag::Other => {}
         }
     }
@@ -138,7 +128,8 @@ fn starts_element(text: &str) -> bool {
     if !word.is_empty() {
         return OPERAND_KEYWORDS.contains(&word);
     }
-    !text.ends_with([')', ']', '<'])
+    // After `)`, `]`, a string or a postfix `!` an operand just ended: `<` compares.
+    !text.ends_with([')', ']', '<', '"', '\'', '`', '!'])
 }
 
 /// Keywords after which an expression starts.
@@ -149,13 +140,15 @@ const OPERAND_KEYWORDS: &[&str] = &[
 enum Tag<'t> {
     /// Still open at the end: its name and the attribute names written so far.
     Open(&'t str, Vec<&'t str>),
-    /// Its `>` came before the end.
-    Closed,
+    /// Its `>` came before the end, at byte `end` of the text after the `<`; `self_closing`
+    /// for `/>`.
+    Closed { end: usize, self_closing: bool },
     /// Not an element (a comparison, a type argument list, unbalanced braces or quotes).
     Other,
 }
 
-/// `rest` follows a `<`: the tag it opens, if it is still open at the end of `rest`.
+/// `rest` follows a `<`: the tag it opens, if it is still open at the end of `rest`. Strings
+/// and comments (`{/* … */}`, `// …`) are skipped.
 fn opening_tag(rest: &str) -> Tag<'_> {
     let name_len = rest.find(|c: char| !is_name_char(c)).unwrap_or(rest.len());
     if name_len == 0 {
@@ -165,11 +158,19 @@ fn opening_tag(rest: &str) -> Tag<'_> {
     let (mut depth, mut quote) = (0usize, None);
     let mut written = vec![];
     let mut word: Option<usize> = None;
+    let mut skip_to = 0;
     for (i, c) in attrs.char_indices() {
+        if i < skip_to {
+            continue;
+        }
         if let Some(q) = quote {
             if c == q {
                 quote = None;
             }
+            continue;
+        }
+        if let Some(end) = comment_end(&attrs[i..]) {
+            skip_to = i + end;
             continue;
         }
         let in_word = depth == 0 && is_name_char(c);
@@ -186,7 +187,13 @@ fn opening_tag(rest: &str) -> Tag<'_> {
             '{' => depth += 1,
             '}' if depth == 0 => return Tag::Other,
             '}' => depth -= 1,
-            '>' if depth == 0 => return Tag::Closed,
+            '>' if depth == 0 => {
+                let self_closing = attrs[..i].ends_with('/');
+                return Tag::Closed {
+                    end: name_len + i + 1,
+                    self_closing,
+                };
+            }
             _ => {}
         }
     }
@@ -196,103 +203,71 @@ fn opening_tag(rest: &str) -> Tag<'_> {
     Tag::Open(name, written)
 }
 
-fn is_name_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '-' | ':' | '.')
+/// The length of the comment `text` starts with, if it starts with one (an unclosed one runs to
+/// the end).
+fn comment_end(text: &str) -> Option<usize> {
+    if let Some(body) = text.strip_prefix("/*") {
+        return Some(body.find("*/").map_or(text.len(), |i| i + 4));
+    }
+    let body = text.strip_prefix("//")?;
+    Some(body.find('\n').map_or(text.len(), |i| i + 2))
 }
 
-/// Completion items for `ctx` at byte `offset` of the document.
-pub fn items(analysis: &Analysis, ctx: &Context<'_>, offset: u32) -> Vec<CompletionItem> {
-    let Some(ide) = analysis.ide.as_ref() else {
-        return vec![];
-    };
-    let file = analysis.file();
-    match ctx {
-        Context::Tag => {
-            let tags = ide.jsx_intrinsics(file).iter();
-            let mut out: Vec<CompletionItem> = tags
-                .map(|(tag, _, ty)| item(tag, CompletionItemKind::PROPERTY, ty))
-                .collect();
-            let components = ide.scope_at(file, offset).into_iter().filter(|(name, d)| {
-                is_component(name) && (d.kind == DefKind::Function || d.detail.contains("=>"))
-            });
-            out.extend(components.map(|(name, d)| item(&name, kind(d.kind), &d.detail)));
-            out
+/// The innermost element still open at the end of `text` (from `MAX_TAG_BYTES` back): opening
+/// tags push their name, closing tags pop to theirs, self-closing tags do neither.
+fn innermost_open(text: &str) -> Option<&str> {
+    let floor = text.len().saturating_sub(MAX_TAG_BYTES);
+    let mut open: Vec<&str> = vec![];
+    let mut i = floor;
+    while let Some(lt) = text.get(i..).and_then(|t| t.find('<')).map(|lt| i + lt) {
+        let rest = &text[lt + 1..];
+        i = lt + 1;
+        if let Some(name) = rest.strip_prefix('/') {
+            let len = name.find(|c: char| !is_name_char(c)).unwrap_or(name.len());
+            if let Some(at) = open.iter().rposition(|o| *o == &name[..len]) {
+                open.truncate(at);
+            }
+            continue;
         }
-        Context::Attribute { tag, written } => {
-            let attrs = if is_component(tag) {
-                props_of(analysis, tag, offset)
-            } else {
-                let tags = ide.jsx_intrinsics(file);
-                let found = tags.iter().find(|(name, _, _)| name == tag);
-                found.map_or_else(Vec::new, |(_, def, _)| ide.members_of(def))
-            };
-            attrs
-                .into_iter()
-                .filter(|(name, _, _)| !written.contains(&name.as_str()))
-                .map(|(name, _, ty)| item(&name, CompletionItemKind::FIELD, &ty))
-                .collect()
+        if !tag_may_start(&text[..lt]) {
+            continue;
         }
+        if let Tag::Closed { end, self_closing } = opening_tag(rest) {
+            if !self_closing {
+                let len = rest.find(|c: char| !is_name_char(c)).unwrap_or(rest.len());
+                open.push(&rest[..len]);
+            }
+            i = lt + 1 + end;
+        }
+    }
+    open.pop()
+}
+
+/// Where the word ending at `offset` starts, for completion. In an opening tag a word may hold
+/// `-` (`aria-label`, `data-id`); `word_start` is where the identifier ends ordinary words.
+pub fn word_start(text: &str, offset: usize, ident_start: usize) -> usize {
+    let mut start = ident_start;
+    while text[..start].ends_with('-') {
+        let before = &text[..start - 1];
+        let run = before.len()
+            - before
+                .trim_end_matches(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                .len();
+        if run == 0 {
+            break;
+        }
+        start = start - 1 - run;
+    }
+    let attribute = matches!(context(text, start), Some(Context::Attribute { .. }));
+    if start < ident_start && attribute && start <= offset {
+        start
+    } else {
+        ident_start
     }
 }
 
-/// The fields of the props of component `tag` (a function or an arrow-valued constant in scope
-/// at `offset`, or `ns.Name` of a namespace import): the members of its first parameter.
-fn props_of(analysis: &Analysis, tag: &str, offset: u32) -> Vec<(String, DefRef, String)> {
-    let Some(ide) = analysis.ide.as_ref() else {
-        return vec![];
-    };
-    let file = analysis.file();
-    let found = match tag.split_once('.') {
-        // `<ui.Card`: a namespace import's export.
-        Some((ns, name)) => ide
-            .namespace_members(file, ns)
-            .into_iter()
-            .find(|(n, _)| n == name),
-        None => ide
-            .scope_at(file, offset)
-            .into_iter()
-            .find(|(n, _)| n == tag),
-    };
-    let Some((_, component)) = found else {
-        return vec![];
-    };
-    let Some((param, body_lo)) = analysis
-        .modules
-        .get(component.module)
-        .and_then(|m| first_param(&m.ast, &component))
-    else {
-        return vec![];
-    };
-    let inside = ide.scope_at(component.span.file, body_lo + 1);
-    inside
-        .into_iter()
-        .find(|(name, d)| *name == param && d.kind == DefKind::Parameter)
-        .map_or_else(Vec::new, |(_, p)| ide.members_of(&p))
-}
-
-/// The first parameter's name of the function or arrow constant `def` declares, and where its
-/// body starts.
-fn first_param(module: &ast::Module, def: &DefRef) -> Option<(String, u32)> {
-    module.items.iter().find_map(|it| match &it.kind {
-        ast::ItemKind::Function(f) if f.sig.name.span == def.span => {
-            Some((f.sig.params.first()?.name.name.clone(), f.body.span.lo))
-        }
-        ast::ItemKind::Var(v)
-            if pattern_idents(&v.pattern)
-                .iter()
-                .any(|i| i.span == def.span) =>
-        {
-            let ast::ExprKind::Arrow { params, body, .. } = &v.init.as_ref()?.kind else {
-                return None;
-            };
-            let body_lo = match body {
-                ast::ArrowBody::Expr(e) => e.span.lo,
-                ast::ArrowBody::Block(b) => b.span.lo,
-            };
-            Some((params.first()?.name.name.clone(), body_lo))
-        }
-        _ => None,
-    })
+fn is_name_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '-' | ':' | '.')
 }
 
 #[cfg(test)]
@@ -305,9 +280,12 @@ mod tests {
 
     #[test]
     fn tags_and_attributes_in_jsx_text() {
-        assert_eq!(ctx("<p>Read the <"), Some(Context::Tag));
-        assert_eq!(ctx("<p>hello</"), Some(Context::Tag));
-        assert_eq!(ctx("<p>Hello, world? {name} and <"), Some(Context::Tag));
+        assert_eq!(ctx("<p>Read the <"), Some(Context::Tag { closing: None }));
+        assert_eq!(ctx("<p>hello</"), Some(Context::Tag { closing: Some("p") }));
+        assert_eq!(
+            ctx("<p>Hello, world? {name} and <"),
+            Some(Context::Tag { closing: None })
+        );
         assert_eq!(
             ctx("<p>Read the <a "),
             Some(Context::Attribute {
@@ -328,13 +306,68 @@ while (i <"),
         );
         assert_eq!(ctx("const xs: Array<i64> = f(); if (n <"), None);
         assert_eq!(ctx("const n = i<"), None);
-        assert_eq!(ctx("<p><br />then <"), Some(Context::Tag));
-        assert_eq!(ctx("<ul><li>a</li>and <"), Some(Context::Tag));
-        assert_eq!(ctx("<>frag <"), Some(Context::Tag));
+        assert_eq!(ctx("<p><br />then <"), Some(Context::Tag { closing: None }));
+        assert_eq!(
+            ctx("<ul><li>a</li>and <"),
+            Some(Context::Tag { closing: None })
+        );
+        assert_eq!(ctx("<>frag <"), Some(Context::Tag { closing: None }));
         assert_eq!(ctx("const ok = x >= 1 && y <"), None);
         // Non-ASCII text before the cursor.
-        assert_eq!(ctx("<p>Grüße 😀 <"), Some(Context::Tag));
+        assert_eq!(ctx("<p>Grüße 😀 <"), Some(Context::Tag { closing: None }));
         assert_eq!(ctx("const total = größe <"), None);
+    }
+
+    #[test]
+    fn after_a_closing_slash_the_innermost_open_element() {
+        fn closing(text: &str) -> Option<&str> {
+            match ctx(text) {
+                Some(Context::Tag { closing }) => closing,
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(closing("<ul><li><b>x</b><br /></"), Some("li"));
+        assert_eq!(closing("<ul><li>a</li></"), Some("ul"));
+        assert_eq!(closing("<Card title={a > b ? 1 : 2}></"), Some("Card"));
+        assert_eq!(closing("<ui.Card><p>x</p></"), Some("ui.Card"));
+        assert_eq!(
+            closing(
+                "const n = 1;
+</"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_string_or_a_postfix_bang_ends_an_operand() {
+        assert_eq!(ctx("const t = \"a\" < b "), None);
+        assert_eq!(ctx("if (x! < y && "), None);
+        assert_eq!(ctx("f(\"a\" <"), None);
+    }
+
+    #[test]
+    fn comments_inside_a_tag_are_skipped() {
+        assert_eq!(
+            ctx("<a {/* it's here */} href=\"x\" "),
+            Some(Context::Attribute {
+                tag: "a",
+                written: vec!["href"]
+            })
+        );
+    }
+
+    #[test]
+    fn hyphenated_attribute_names_are_one_word() {
+        let text = "<div aria-la";
+        let start = super::word_start(text, text.len(), text.len() - 2);
+        assert_eq!(&text[start..], "aria-la");
+        // Outside a tag `-` still separates words.
+        let text = "const x = y-la";
+        assert_eq!(
+            super::word_start(text, text.len(), text.len() - 2),
+            text.len() - 2
+        );
     }
 
     #[test]
@@ -350,8 +383,13 @@ while (i <"),
 
     #[test]
     fn tags_after_a_less_than_where_an_operand_starts() {
-        assert_eq!(ctx("return <"), Some(Context::Tag));
-        assert_eq!(ctx("<div>\n  </"), Some(Context::Tag));
+        assert_eq!(ctx("return <"), Some(Context::Tag { closing: None }));
+        assert_eq!(
+            ctx("<div>\n  </"),
+            Some(Context::Tag {
+                closing: Some("div")
+            })
+        );
         assert_eq!(ctx("const ok = a <"), None);
         assert_eq!(ctx("f(x) <"), None);
     }

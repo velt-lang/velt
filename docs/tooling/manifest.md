@@ -29,7 +29,10 @@ package.vlt:5:13: error: `null` is not allowed; leave the key out
 ```
 
 In an editor, the language server ([`velt lsp`](editors.md)) completes the fields valid where
-you type, explains each on hover, and reports exactly the errors `velt` would, as you type. The
+you type, explains each on hover, and reports exactly the errors `velt` would, as you type. It
+also asks the package's registry: it completes package names and versions in `dependencies`,
+shows a dependency's newest and locked versions on hover, and flags requirements that no
+published version matches or that leave out a newer one (with a fix). The
 [`Package`](../std/package.md) type documents the same fields. Leave out the fields you don't
 need. A key the manifest doesn't know is an error, with a
 suggestion when it is close to one (`dependecies` → `dependencies`). `velt manifest` checks the
