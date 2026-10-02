@@ -133,6 +133,17 @@ pub(super) fn new_def<'m>(
             (&f.sig.name, DefInfo::Fn(Box::new(info)))
         }
         ast::ItemKind::ExternFn(s) => {
+            // Runtime functions take raw handles: only std may declare them (user code could
+            // call them with forged ones).
+            if s.name.name.starts_with("velt_rt_") && !cx.scopes[m].is_std {
+                cx.err(
+                    format!(
+                        "`{}` is a runtime function: only the standard library may declare it",
+                        s.name.name
+                    ),
+                    s.name.span,
+                );
+            }
             let info = fn_placeholder(
                 s.name.name.clone(),
                 s.name.span,

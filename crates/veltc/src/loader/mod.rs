@@ -163,6 +163,7 @@ impl Loader<'_, '_> {
         self.by_file.insert(key, index);
         self.modules.push(SourceModule {
             path: canonical,
+            is_std: matches!(origin, Origin::Std(_)),
             file,
             ast,
             imports: vec![],
@@ -280,6 +281,14 @@ impl Loader<'_, '_> {
         let canonical = target
             .canonical
             .unwrap_or_else(|| target.origin.canonical(&file));
+        // `std/…` names the standard library: a user module with such a path (a `./std/`
+        // directory, a path alias into one) would collide with it.
+        if !matches!(target.origin, Origin::Std(_)) && is_std_path(&canonical) {
+            let msg = format!(
+                "module `{spec}` would have the module path `{canonical}`, which is reserved for the standard library (rename its `std` directory)"
+            );
+            return self.error(msg, vec![], span);
+        }
         if self.modules.iter().any(|m| m.path == canonical) {
             let msg = format!("module `{spec}` has the same module path `{canonical}` as another module (rename the file)");
             return self.error(msg, vec![], span);
@@ -314,6 +323,11 @@ impl Loader<'_, '_> {
 }
 
 /// Identity of a file for deduplication (canonical path when it exists).
+/// Whether canonical module path `path` is in the standard library's namespace (`std`, `std/…`).
+fn is_std_path(path: &str) -> bool {
+    path == "std" || path.starts_with("std/")
+}
+
 fn file_key(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| vpm::relpath::absolute(path))
 }

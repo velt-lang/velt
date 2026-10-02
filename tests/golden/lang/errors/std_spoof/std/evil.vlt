@@ -1,0 +1,9 @@
+// A user module in a directory named `std` is not the standard library: compiler intrinsics
+// stay out of reach (built on its own here, it is the root module).
+export function grow(n: i64): i64[] {
+  return __intrinsic_array_with_capacity<i64>(n);
+}
+
+function main() {
+  console.log(grow(1).length);
+}

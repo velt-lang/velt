@@ -45,10 +45,15 @@ The prelude (strings, arrays, `Map`, `Math`, `JSON`, `Error`, `Comparable`, `Mut
 ## Runtime declarations
 
 `declare function` / `declare async function` declare runtime (C ABI) functions; the standard
-library uses them to bind `velt_rt_*`. A package with native code declares its own library's
-functions the same way; each such `declare` must match the library's export exactly, or it is a
-compile error ([Packages with native code](../book/native-packages.md)). Compiler intrinsics
-(`__intrinsic_*`) are reserved for the standard library.
+library uses them to bind `velt_rt_*`, and only it may declare those (they take raw runtime
+handles). A package with native code declares its own library's functions the same way; each
+such `declare` must match the library's export exactly, or it is a compile error ([Packages with
+native code](../book/native-packages.md)). Compiler intrinsics (`__intrinsic_*`) are reserved for
+the standard library too.
+
+Whether a module belongs to the standard library depends on where it was loaded from (the std
+root), never on its name: a user module whose path would start with `std/` (a `./std/`
+directory) is an error, and no package may be named `std`.
 
 **Planned** ([TypeScript alignment §4](../internals/design/ts-alignment.md#4-extend--full-power-zero-cost-module-scoped)):
 extensions scoped to the modules that import them.

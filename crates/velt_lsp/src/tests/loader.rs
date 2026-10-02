@@ -87,6 +87,7 @@ fn parse(
     let (ast, parse_diags) = velt_syntax::parse_file(file, &sm.get(file).src);
     diags.extend(parse_diags);
     SourceModule {
+        is_std: canonical.starts_with("std/"),
         path: canonical,
         file,
         ast,

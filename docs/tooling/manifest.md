@@ -37,7 +37,8 @@ file and reports these errors without building anything.
 
 ## `name`, `version`, `entry`
 
-- `name`: lowercase letters, digits, `_` and `-`, starting with a letter.
+- `name`: lowercase letters, digits, `_` and `-`, starting with a letter. `std` is reserved for
+  the standard library.
 - `version`: a semantic version.
 - `entry`: the program's root file, a path inside the package (default `"src/main.vlt"`). A
   package with `src/main.vlt` is runnable; a package with `src/lib.vlt` is a library that other
