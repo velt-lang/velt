@@ -344,8 +344,9 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   hold one in a field instead. A literal for an enum-keyed record is not supported yet.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,
   strings, literal types, arrays, tuples, enums, nullable values, `Map<string, V>`,
-  `Record<K, V>`, structs, classes and anonymous objects
-  ([`velt:json`](../std/json.md)).
+  `Record<K, V>`, structs, classes and anonymous objects ([`velt:json`](../std/json.md)). A
+  struct or class with a `private` field has no JSON form (a compile error naming the field):
+  private fields stay private, and runtime handles can't be forged from JSON.
 
 ```ts
 struct Point {

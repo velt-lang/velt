@@ -1,0 +1,20 @@
+// The database handles of std (PostgreSQL, SQLite, Redis) have no JSON form.
+import { Client, Pool, Transaction, CopyReader, CopyWriter } from "velt:postgres";
+import { Database, Statement } from "velt:sqlite";
+import { RedisClient, RedisSubscriber } from "velt:redis";
+import { RedisPipeline } from "velt:redis/pipeline";
+
+function write(c: Client, d: Database): string {
+  return JSON.stringify(c) + JSON.stringify(d);
+}
+
+function main() {
+  const p = JSON.parse<Pool>('{"handle":1}');
+  const t = JSON.parse<Transaction>('{"handle":1}');
+  const r = JSON.parse<CopyReader>('{"handle":1}');
+  const w = JSON.parse<CopyWriter>('{"handle":1}');
+  const st = JSON.parse<Statement>('{"handle":1}');
+  const rc = JSON.parse<RedisClient>('{"handle":1}');
+  const rs = JSON.parse<RedisSubscriber>('{"handle":1}');
+  const rp = JSON.parse<RedisPipeline>('{"handle":1}');
+}

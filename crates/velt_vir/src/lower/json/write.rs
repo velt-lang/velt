@@ -117,6 +117,10 @@ impl FnLower<'_, '_> {
                 self.json_write_record(buf, place, ty, kv)
             }
             TyKind::Adt(d, _) if matches!(self.cx.hir.def(d), hir::Def::Adt(_)) => {
+                // Sema rejects these; writing one would leak private data (runtime handles).
+                if self.cx.adt_def(d).private_fields {
+                    ice("JSON of a type with private fields");
+                }
                 self.json_write_class(buf, place, ty, |lw| lw.json_write_object(buf, place, ty))
             }
             // A union is written as its active member.

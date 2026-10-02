@@ -34,6 +34,7 @@ export struct TcpListener {
   // The real bound port (useful after listening on port 0).
   port: i64;
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   // Waits for the next connection (TCP_NODELAY is on).
   async accept(): Promise<TcpStream> {
@@ -49,6 +50,7 @@ export struct TcpListener {
 // A connected TCP stream.
 export struct TcpStream {
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   // The next 1..max bytes (`max == 0`: up to 64 KiB); an empty array means end of stream.
   async read(max: u64 = 0): Promise<u8[]> {
@@ -96,3 +98,8 @@ export async function listen(addr: string): Promise<TcpListener> {
 export async function connect(addr: string): Promise<TcpStream> {
   return TcpStream { handle: unwrapIo(await velt_rt_tcp_connect(addr)) };
 }
+
+// A field of this type makes a type opaque: a type with a private field has no JSON form,
+// so untrusted JSON can't produce the runtime handle it holds, and `JSON.stringify` doesn't
+// write it. It takes no space.
+struct RuntimeHandle {}

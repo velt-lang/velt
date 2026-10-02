@@ -1,0 +1,5 @@
+json_private_fields.vlt:26:15: error: cannot convert to or from JSON: `Account` has a private field `secret`, so it has no JSON form
+json_private_fields.vlt:27:18: error: cannot convert to or from JSON: `Admin[]` contains `Admin`, which has a private field `secret`, so it has no JSON form
+json_private_fields.vlt:28:16: error: cannot convert to or from JSON: `Owned` contains `Account`, which has a private field `secret`, so it has no JSON form
+a type with private fields (such as a runtime handle) has no JSON form; convert it to a type with public fields first
+json_private_fields.vlt:5:11: private field
