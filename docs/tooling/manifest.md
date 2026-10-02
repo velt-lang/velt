@@ -29,7 +29,8 @@ package.vlt:5:13: error: `null` is not allowed; leave the key out
 ```
 
 Leave out the fields you don't need. A key the manifest doesn't know is an error, with a
-suggestion when it is close to one (`dependecies` → `dependencies`).
+suggestion when it is close to one (`dependecies` → `dependencies`). `velt manifest` checks the
+file and reports these errors without building anything.
 
 ## `name`, `version`, `entry`
 

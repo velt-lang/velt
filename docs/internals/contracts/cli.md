@@ -157,8 +157,11 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `.vlt` files in the cwd (`velt run <file>`) and `velt init`; a missing input file suggests
   `<name>.vlt` or a similarly named file; a directory input says to build the package inside it.
 - `add` edits `dependencies` in `package.vlt`, keeping comments, then formats the file (latest published version if no req) and installs.
-- `manifest --json` (additive) prints the validated `package.vlt` as pretty JSON on stdout with
-  defaults filled in (manifest.md); `--json` is required. A manifest error exits 1.
+- `manifest [--json]` (additive) reads and validates `package.vlt` (manifest.md). Without flags
+  it prints one `Checked <path> (<name> <version>)` status line on stderr; `--json` prints the
+  manifest as pretty JSON on stdout with defaults filled in. A manifest error exits 1.
+- `fmt` without paths in a package that has only a `velt.toml` reports the migration error
+  (manifest.md) instead of formatting.
 - `install` resolves + fetches deps and writes `velt.lock`; `--locked` fails if the lock would change.
   `update` re-resolves ignoring the lock. `publish` copies the package into the local registry.
 - Native libraries (additive, native_abi.md): `build`, `run`, `check`, `dev`, `test` and the LSP

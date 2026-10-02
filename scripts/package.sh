@@ -64,7 +64,8 @@ fi
 cat > "$out/README.md" <<EOF
 # Velt $version ($host)
 
-Install:  scripts/install.sh <this directory>   (or copy it anywhere)
+Install:  get-velt.sh --archive <this .tar.gz> (an asset of every release), or
+          scripts/install.sh <this directory> from a source checkout, or copy it anywhere.
 Then add \`<prefix>/bin\` to PATH and run \`velt doctor\`.
 
     velt run hello.vlt

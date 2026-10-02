@@ -12,6 +12,7 @@ pins them.
 | `velt update` | resolve again, ignoring `velt.lock` |
 | `velt publish` | publish the current package to its registry (with its prebuilt native libraries) |
 | `velt native build [--target <t>]` | build the package's native library (package authors; needs Rust) |
+| `velt manifest [--json]` | check `package.vlt`, or print it as JSON for other tools |
 
 ```sh
 velt new textkit --template lib     # a library with doc comments and tests
