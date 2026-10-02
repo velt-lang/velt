@@ -38,6 +38,7 @@ impl FnCx<'_, '_> {
         let cname = self.cx.adt(d).map(|a| a.name.clone()).unwrap_or_default();
         let (params, what) = match ctor {
             Some(c) => {
+                self.check_ctor_access(c, class.span);
                 let owner = self.cx.fn_info(c).owner.expect("ICE: ctor owner");
                 let owner_ty = self.ancestor(self_ty, owner);
                 let oargs = match self.cx.ty.kind(owner_ty) {

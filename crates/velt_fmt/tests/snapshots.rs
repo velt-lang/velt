@@ -376,3 +376,22 @@ function f(
 ",
     );
 }
+
+#[test]
+fn constructor_visibility_is_kept() {
+    assert_fmt(
+        "class A { private constructor(private readonly x: i64) {} }\nclass B { protected   constructor() {} }\nclass C { public constructor() {} }",
+        "class A {
+  private constructor(private readonly x: i64) {}
+}
+
+class B {
+  protected constructor() {}
+}
+
+class C {
+  constructor() {}
+}
+",
+    );
+}

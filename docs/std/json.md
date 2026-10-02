@@ -74,7 +74,7 @@
   - type tests: `isNull isBool isNumber isString isArray isObject`
   - conversions: `asNumber(): f64 | null`, `asBool()`, `asString()`
   - building: `JsonValue.object()`, `JsonValue.array()`, `JsonValue.of(x)` (a string, number,
-    `bool` or `null`; `new JsonValue()` is `null`), `JsonValue.from(x)` (the JSON form of any
+    `bool` or `null`), `JsonValue.from(x)` (the JSON form of any
     value `JSON.stringify` accepts, at any depth), `JsonValue.parse(text, options?)` (same as
     `JSON.parseValue`)
   - editing: `set(key, v)` (an existing key keeps its position), `delete(key)`, `push(v)`,
@@ -91,9 +91,10 @@
   A `JsonValue` has value semantics: an edit never shows through a clone, through the value it
   was `set` into, or through a child handle from `get`/`at`. The runtime copies a node another
   handle shares before changing it (copy-on-write, one node at a time). To change a nested
-  value, edit the child and `set` it back. There is no `v[k] = x` syntax: use `set`. A class
-  cannot `extends` `JsonValue` (only the runtime makes its values); hold one in a field
-  instead.
+  value, edit the child and `set` it back. There is no `v[k] = x` syntax: use `set`. Only the
+  runtime makes `JsonValue`s: the constructor is private, so `new JsonValue(…)` is an error
+  (use the static methods above; a JSON `null` is made only with `JsonValue.of(null)`), and a
+  class cannot `extends` `JsonValue` (hold one in a field instead).
 
 ```ts
 import { Value } from "velt:json";

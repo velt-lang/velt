@@ -1,0 +1,55 @@
+// `private constructor` and `protected constructor` (TypeScript's rules): the class body calls a
+// private one (static factories, methods, closures); subclasses may also
+// call a protected one, with `super(...)` or `new`.
+class Money {
+  private constructor(readonly cents: i64, private readonly currency: string) {}
+
+  static of(cents: i64, currency: string): Money | null {
+    return cents < 0 ? null : new Money(cents, currency);
+  }
+
+  static all(amounts: i64[]): Money[] {
+    return amounts.map((c) => new Money(c, "EUR"));
+  }
+
+  plus(other: Money): Money {
+    return new Money(this.cents + other.cents, this.currency);
+  }
+
+  show(): string {
+    return `${this.cents} ${this.currency}`;
+  }
+}
+
+class Shape {
+  protected constructor(readonly name: string) {}
+
+  static unit(): Shape {
+    return new Shape("unit");
+  }
+}
+
+class Square extends Shape {
+  constructor(readonly side: i64) {
+    super("square");
+  }
+
+  // A subclass body may also `new` a protected constructor (TypeScript allows it).
+  base(): Shape {
+    return new Shape("base of square");
+  }
+}
+
+class Cube extends Square {}
+
+function main() {
+  const a = Money.of(250, "EUR");
+  const b = Money.of(-1, "EUR");
+  console.log(a?.show() ?? "none", b == null);
+  const sum = Money.all([1, 2, 3]).reduce((acc, m) => acc.plus(m), Money.all([0])[0]);
+  console.log(sum.show(), sum.cents);
+  const s = new Square(3);
+  console.log(s.name, s.side, s.base().name, Shape.unit().name);
+  const c = new Cube(2);
+  console.log(c.name, c.side);
+}
