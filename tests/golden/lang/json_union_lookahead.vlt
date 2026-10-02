@@ -1,0 +1,60 @@
+// Nested unions told apart by a discriminant written last in every object: decoding must stay
+// linear in the document size. Each level looks ahead for its `kind` and skips the fields
+// before it; the skip remembers where the objects inside end, so the nested unions do not scan
+// them again (skipping each subtree once per level would be quadratic: about 16 times as long
+// for 4 times the depth instead of about 4 times).
+
+class Leaf {
+  v: i64 = 0;
+  kind: "leaf" = "leaf";
+}
+
+class Node {
+  pad: string = "";
+  child: Leaf | Node = new Leaf();
+  kind: "node" = "node";
+}
+
+function nested(levels: i64): string {
+  const open = `{"pad":"${"x".repeat(100)}","child":`;
+  return open.repeat(levels) + '{"v":7,"kind":"leaf"}' + ',"kind":"node"}'.repeat(levels);
+}
+
+function depth(t: Leaf | Node): i64 {
+  let d = 0;
+  let cur = t;
+  while (cur instanceof Node) {
+    d += 1;
+    cur = cur.child;
+  }
+  return d;
+}
+
+// Milliseconds for `reps` decodes of a document `levels` deep: the best of three runs, so a
+// busy machine slows both sizes alike.
+function time(levels: i64, reps: i64): f64 {
+  const src = nested(levels);
+  let best = 1e300;
+  for (let run = 0; run < 3; run += 1) {
+    const start = performance.now();
+    for (let i = 0; i < reps; i += 1) {
+      const t = JSON.parse<Leaf | Node>(src, { maxDepth: 10000 });
+      if (depth(t) != levels) {
+        throw new Error(`decoded ${depth(t)} levels, expected ${levels}`);
+      }
+    }
+    best = Math.min(best, performance.now() - start);
+  }
+  return best;
+}
+
+function main() {
+  const n = 250;
+  const small = time(n, 60);
+  const large = time(4 * n, 60);
+  if (large < small * 8) {
+    console.log("linear");
+  } else {
+    console.log(`${n} levels took ${small} ms, ${4 * n} levels ${large} ms: not linear`);
+  }
+}
