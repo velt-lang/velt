@@ -32,8 +32,8 @@ native objects are `u64` handles (§3.2) that the package wraps in a class with
 **Names**: every export of package `p` starts with `p_` (`-` in the package name becomes `_`),
 plus `velt_native_init_p`. The compiler requires every `declare` in a package with a library
 to name one of **its own** exports with **exactly** the recorded signature; no package may
-declare another package's export, and a package with a library may not declare `velt_rt_*`
-runtime functions (only std does). `IoResult`/`IoStatus` are std's `velt:io` types, identified
+declare another package's export, and no module outside std (a package with or without a
+library, or the root program) may declare `velt_rt_*` runtime functions. `IoResult`/`IoStatus` are std's `velt:io` types, identified
 by definition (a look-alike struct is rejected). Violations are compile errors at the `declare`
 (`veltc/src/native/`).
 
