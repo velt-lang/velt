@@ -1,6 +1,8 @@
 //! Tests: hand-built VIR programs, executed via the JIT (same translation path) and emitted as
 //! objects for all supported targets.
 
+#[cfg(unix)]
+mod debug_info;
 mod entry;
 mod hot_swap;
 mod jit;

@@ -11,6 +11,7 @@
 //! - `abi`: VIR type → Cranelift type / C-ABI signature mapping, layout lookups.
 //! - `function`: per-function translation (places, operands, ops, casts, terminators).
 //! - `entry`: the `main` of executables linked against the shared runtime ([`emit_entry_object`]).
+//! - `debug_info`: DWARF line tables (objects, and JIT code through the GDB JIT interface).
 //! - `unwind`: unwind tables (Windows x64/arm64 `.pdata`/`.xdata`, ELF/Mach-O eh_frame), and their
 //!   run-time registration for JIT code.
 
@@ -25,6 +26,7 @@ macro_rules! bail {
 mod abi;
 #[cfg(unix)]
 mod c_symbols;
+mod debug_info;
 mod dev;
 mod entry;
 mod function;
@@ -67,6 +69,7 @@ pub fn emit_object(program: &vir::Program, opts: &CodegenOptions) -> Result<Vec<
     let built = module::build_module(&mut module, program, &module::Naming::Program)?;
     let mut product = module.finish();
     unwind::add_unwind_info(&mut product, &*isa, &built.unwind)?;
+    debug_info::object::add_debug_info(&mut product, &program.files, &built.lines)?;
     product
         .emit()
         .map_err(|e| format!("codegen: cannot write object file: {e}"))

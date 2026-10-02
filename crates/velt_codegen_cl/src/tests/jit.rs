@@ -240,6 +240,19 @@ fn jit_dynamic_memcopy_memmove_memset() {
     check(programs::mem_ops());
 }
 
+#[test]
+fn jit_block_order() {
+    check(programs::block_order());
+}
+
+/// 50 000 blocks and locals in one function: compiled in well under a second and a few hundred
+/// MB. Before single-assignment locals bypassed `cranelift_frontend` variables, this needed
+/// ≈ 10 GB (variables × blocks).
+#[test]
+fn jit_long_function() {
+    check(programs::long_chain(50_000));
+}
+
 /// `DevSession` (the `velt dev` JIT) runs every test program, one session for all of them.
 #[test]
 fn dev_session_runs_programs() {

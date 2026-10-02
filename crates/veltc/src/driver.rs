@@ -314,23 +314,36 @@ fn build_on_current_thread(
         )));
     }
     let mut steps = vec![];
-    let obj = backend
-        .emit_object(&program, &cg, &mut steps)
+    // `--emit obj` promises one object file.
+    let units = if opts.emit == Emit::Obj {
+        Some(1)
+    } else {
+        codegen_units()
+    };
+    let objects = backend
+        .emit_objects(&program, &cg, units, &mut steps)
         .map_err(|e| BuildError::Failed(format!("code generation failed: {e}")))?;
     sess.record("codegen", t);
     sess.record_details("codegen", &steps);
 
     let t = Instant::now();
-    write_file(&paths.object, &obj)?;
+    let mut object_paths = Vec::with_capacity(objects.len());
+    for (i, obj) in objects.iter().enumerate() {
+        let path = paths.unit_object(i);
+        write_file(&path, obj)?;
+        object_paths.push(path);
+    }
     sess.record("write", t);
     if opts.emit == Emit::Obj {
+        // `-o lib.o` must not delete a `lib.cgu1.o` of the user's.
         return Ok(Artifact::Object(paths.object));
     }
+    paths.remove_unit_objects_from(objects.len());
 
     let t = Instant::now();
     let linked = crate::link::link_executable(
         &target,
-        &paths.object,
+        &object_paths,
         &paths.executable,
         opts.release,
         // Release settings strip debug info (and PDB generation on Windows).
@@ -343,6 +356,17 @@ fn build_on_current_thread(
         sess.record_details("link", &[("up to date", t.elapsed())]);
     }
     Ok(Artifact::Executable(paths.executable))
+}
+
+/// `$VELT_CODEGEN_UNITS`: how many codegen units the LLVM backend splits a program into, at most
+/// the core count (unset or not a positive number: one).
+fn codegen_units() -> Option<usize> {
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    std::env::var("VELT_CODEGEN_UNITS")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .filter(|&n: &usize| n > 0)
+        .map(|n: usize| n.min(cores))
 }
 
 fn write_file(path: &Path, bytes: &[u8]) -> Result<(), BuildError> {
@@ -364,6 +388,36 @@ pub struct OutputPaths {
 }
 
 impl OutputPaths {
+    /// Object file of codegen unit `i`: [`Self::object`] for the first, `<stem>.cgu<i>.<ext>`
+    /// beside it for the others.
+    pub fn unit_object(&self, i: usize) -> PathBuf {
+        if i == 0 {
+            return self.object.clone();
+        }
+        let stem = self
+            .object
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy();
+        match self.object.extension() {
+            Some(ext) => self
+                .object
+                .with_file_name(format!("{stem}.cgu{i}.{}", ext.to_string_lossy())),
+            None => self.object.with_file_name(format!("{stem}.cgu{i}")),
+        }
+    }
+
+    /// Removes the objects of codegen units `count` and above, left by an earlier build with more
+    /// units (so a directory listing or a manual link doesn't pick up stale code).
+    pub fn remove_unit_objects_from(&self, count: usize) {
+        for i in count.max(1).. {
+            let path = self.unit_object(i);
+            if std::fs::remove_file(&path).is_err() {
+                break;
+            }
+        }
+    }
+
     /// Output paths for `input` given `-o`, `--emit` and the target.
     pub fn new(input: &Path, output: Option<&Path>, emit: Emit, target: &str) -> OutputPaths {
         if velt_codegen_llvm::is_wasm(target) {
@@ -445,6 +499,40 @@ mod tests {
     fn paths(input: &str, out: Option<&str>, emit: Emit, target: &str) -> (PathBuf, PathBuf) {
         let p = OutputPaths::new(Path::new(input), out.map(Path::new), emit, target);
         (p.executable, p.object)
+    }
+
+    #[test]
+    fn codegen_unit_objects_sit_beside_the_first() {
+        let p = OutputPaths::new(
+            Path::new("app.vlt"),
+            Some(Path::new("out/app")),
+            Emit::Exe,
+            LINUX,
+        );
+        assert_eq!(p.unit_object(0), PathBuf::from("out/app.o"));
+        assert_eq!(p.unit_object(2), PathBuf::from("out/app.cgu2.o"));
+        let p = OutputPaths::new(Path::new("app.vlt"), None, Emit::Exe, WIN);
+        let dir = Path::new("target").join("velt");
+        assert_eq!(p.unit_object(1), dir.join("app.cgu1.obj"));
+    }
+
+    #[test]
+    fn fewer_codegen_units_remove_stale_objects() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = OutputPaths::new(
+            Path::new("app.vlt"),
+            Some(&dir.path().join("app")),
+            Emit::Exe,
+            LINUX,
+        );
+        for i in 0..4 {
+            std::fs::write(p.unit_object(i), b"obj").unwrap();
+        }
+        p.remove_unit_objects_from(2);
+        let exists: Vec<bool> = (0..4).map(|i| p.unit_object(i).exists()).collect();
+        assert_eq!(exists, [true, true, false, false]);
+        p.remove_unit_objects_from(1);
+        assert!(p.unit_object(0).exists() && !p.unit_object(1).exists());
     }
 
     #[test]

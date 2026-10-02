@@ -1,7 +1,8 @@
 //! One program version in its own `JITModule`: compiles the functions the version defines,
 //! resolves everything else to code that is already loaded (trampolines, pinned code of earlier
 //! versions, runtime symbols, C library functions), and registers the new code's unwind info
-//! with the system (Windows x64, macOS, Linux).
+//! with the system (Windows x64, macOS, Linux) and its line tables with debuggers (macOS, Linux:
+//! `debug_info::jit`).
 
 use cranelift_jit::{JITBuilder, JITModule};
 use velt_vir::vir;
@@ -52,6 +53,13 @@ pub(crate) fn compile(
     unwind.register(&module)?;
     #[cfg(unix)]
     crate::unwind::jit_systemv::register(&module, &built.unwind)?;
+    #[cfg(unix)]
+    {
+        let addresses: Vec<u64> = (built.lines.iter())
+            .map(|f| module.get_finalized_function(f.id) as u64)
+            .collect();
+        crate::debug_info::jit::register(&program.files, &built.lines, &addresses)?;
+    }
     let address = |id| module.get_finalized_function(id) as usize;
     let code = built.funcs.iter().map(|id| id.map(address)).collect();
     let trampolines = names
