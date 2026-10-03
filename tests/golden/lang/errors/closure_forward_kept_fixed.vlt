@@ -1,0 +1,32 @@
+// A closure forwarding a borrowed callback to a parameter that may keep it (a generic `T`)
+// must own a copy of the callback (#167). Where the callback is a parameter with a fixed ABI
+// (an interface method's, a closure's), the closure cannot take it over: an error, not a
+// closure that outlives its frame.
+interface Keeper<T> {
+  keep(x: T): void;
+}
+
+interface Registry {
+  register(k: Keeper<(n: i64) => void>, cb: (n: i64) => void): void;
+}
+
+class K implements Keeper<(n: i64) => void> {
+  keep(x: (n: i64) => void) {
+    x(1);
+  }
+}
+
+class Direct implements Registry {
+  register(k: Keeper<(n: i64) => void>, cb: (n: i64) => void) {
+    k.keep((n) => cb(n + 1));
+  }
+}
+
+function main() {
+  const viaClosure = (k: Keeper<(n: i64) => void>, cb: (n: i64) => void) => {
+    k.keep((n) => cb(n * 2));
+  };
+  const kept = new Direct();
+  console.log("unreachable", kept != kept);
+  viaClosure(new K(), (n) => console.log(n));
+}
