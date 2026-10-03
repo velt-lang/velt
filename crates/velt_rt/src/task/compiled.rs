@@ -173,6 +173,8 @@ impl<S: StateStore> Future for Compiled<S> {
             return Poll::Ready(());
         }
         let (poll, state, transfer) = (this.poll, this.state.ptr(), this.transfer);
+        // The location this task's result carries is of a throw in this poll (panic.rs).
+        crate::panic::ThrowLoc::clear();
         let r = this.locals.poll_root(cx, |cx| {
             // SAFETY: the compiled poll function upholds the ABI for its own state.
             match unsafe { poll(state, raw_cx(cx)) } {
