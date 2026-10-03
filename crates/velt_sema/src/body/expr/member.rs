@@ -453,7 +453,8 @@ fn process_note(name: &str) -> String {
             "call `process.{name}.write(s)`; for bytes, `import {{ stdout }} from \"velt:process\"`"
         ),
         "env" => "read a variable with `process.env.NAME` or `process.env[name]` \
-                  (`string | null`); set one with `setEnv(name, value)` of `velt:process`"
+                  (`string | null`); set one with `setEnv(name, value)` of `velt:process`; list \
+                  them all with `envAll()` of `velt:process` (a `Record<string, string>`)"
             .to_string(),
         "argv" => "use `args()` from `velt:process`: the arguments after the program, like \
                    Node's `process.argv.slice(2)`"

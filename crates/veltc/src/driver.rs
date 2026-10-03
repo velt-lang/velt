@@ -160,8 +160,13 @@ impl Session {
 }
 
 /// Front end only: load + parse + sema → typed HIR (what `velt check` runs). Stops after the
-/// first stage with errors.
-fn check_program(sess: &mut Session, opts: &BuildOptions) -> Result<hir::Program, BuildError> {
+/// first stage with errors. `require_main`: the root must define `main` (everything but
+/// `velt check`, which also checks library modules).
+fn check_program(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    require_main: bool,
+) -> Result<hir::Program, BuildError> {
     let t = Instant::now();
     let load = LoadOptions {
         std_root: loader::std_root(),
@@ -178,7 +183,8 @@ fn check_program(sess: &mut Session, opts: &BuildOptions) -> Result<hir::Program
     sess.stop_if_errors()?;
 
     let t = Instant::now();
-    let (hir, diags) = velt_sema::check(&loaded.modules, loaded.root);
+    let sema_opts = velt_sema::CheckOptions { require_main };
+    let (hir, diags) = velt_sema::check_with(&loaded.modules, loaded.root, sema_opts);
     sess.diagnostics.extend(diags);
     if let Some(hir) = &hir {
         let std_root = loader::std_root();
@@ -204,7 +210,7 @@ fn check_program(sess: &mut Session, opts: &BuildOptions) -> Result<hir::Program
 
 /// Front half of the pipeline: source file → verified VIR. Stops after the first stage with errors.
 pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Program, BuildError> {
-    let hir = check_program(sess, opts)?;
+    let hir = check_program(sess, opts, true)?;
 
     let t = Instant::now();
     let std_root = loader::std_root();
@@ -267,9 +273,9 @@ pub fn compile(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Program, 
 }
 
 /// Parse + sema only (`velt check`), on a large-stack thread: every diagnostic the front end
-/// reports, no lowering, codegen or link.
+/// reports, no lowering, codegen or link. The root need not define `main` (a library module).
 pub fn check(sess: &mut Session, opts: &BuildOptions) -> Result<(), BuildError> {
-    on_pipeline_thread(|| check_program(sess, opts).map(drop))
+    on_pipeline_thread(|| check_program(sess, opts, false).map(drop))
 }
 
 /// Run a pipeline stage on the dedicated large-stack thread.

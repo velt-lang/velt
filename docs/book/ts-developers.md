@@ -228,6 +228,7 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | `xs.splice(i, n, a, b)`, `xs.push(a, b)` | `splice(i, n)` removes; one `push(x)` per element | inserting `splice` and `push` with rest parameters |
 | `p.then(f).catch(g)` | `await p` inside `try`/`catch` | — |
 | `process.stdout.write(s)`, `process.stderr.write(s)`, `process.env.X` | the same on the builtin `process` (`process.env.X` is `string \| null`, with no `undefined`, so `process.env.NOPE !== null` is `false`; assigning to it is `setEnv` and `delete` is `removeEnv`, from `velt:process`) | — |
+| `Object.keys(process.env)`, `{ ...process.env }` | `envAll()` from `velt:process`: a `Record<string, string>` snapshot, in the same order | — |
 | `process.argv` | `args()` from `velt:process`: the arguments after the program, like `process.argv.slice(2)` | — |
 | `a.localeCompare(b, locale, options)` (the host's locale by default) | `a.localeCompare(b)`: the CLDR root collation, like `new Intl.Collator("und").compare(a, b)`; no locales | — |
 | `export default` | named exports only | — |

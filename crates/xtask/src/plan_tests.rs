@@ -19,6 +19,8 @@ fn graph() -> Graph {
         krate("velt_lsp", &["velt_sema", "velt_fmt"]),
         krate("vpm", &["velt_fmt"]),
         krate("velt_rt", &[]),
+        krate("velt_rt_host", &[]),
+        krate("velt_rt_shared", &[]),
         krate("velt_rt_wasm", &[]),
         krate("veltc", &["velt_sema", "velt_lsp", "vpm"]),
         krate("xtask", &[]),
@@ -78,7 +80,11 @@ fn a_pipeline_crate_runs_its_dependents_and_every_end_to_end_test() {
 #[test]
 fn the_runtime_has_no_dependents_but_runs_every_end_to_end_test() {
     let p = plan(&["crates/velt_rt/src/http.rs"]);
-    assert_eq!(p.packages, set(&["velt_rt"]));
+    // The crates compiling the runtime's sources run their tests too.
+    assert_eq!(
+        p.packages,
+        set(&["velt_rt", "velt_rt_host", "velt_rt_shared", "velt_rt_wasm"])
+    );
     assert_eq!(p.veltc, Veltc::All);
     assert_eq!(p.goldens, Goldens::All);
 }
@@ -217,6 +223,11 @@ fn the_rules_name_what_exists_in_this_repository() {
         .chain(TOOLING.iter().map(|(c, _)| c))
         .chain(GOLDENS_TOO)
         .chain(
+            SHARED_SOURCES
+                .iter()
+                .flat_map(|(c, readers)| std::iter::once(c).chain(readers.iter())),
+        )
+        .chain(
             READ_BY_TESTS
                 .iter()
                 .flat_map(|(_, packages, _)| packages.iter()),
@@ -311,4 +322,73 @@ fn the_differential_tester_checks_only_itself() {
 fn the_differential_tester_exists() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     assert!(root.join(DIFFTEST).join("Cargo.toml").is_file());
+}
+
+#[test]
+fn comment_only_changes_check_the_crate_alone_on_linux() {
+    let paths = vec![
+        "crates/velt_rt/src/postgres/batch/abi.rs".to_string(),
+        "crates/velt_sema/src/check.rs".to_string(),
+        "docs/reference/types.md".to_string(),
+    ];
+    let p = Plan::for_changes(&graph(), &paths, &paths[..2].iter().cloned().collect());
+    assert!(!p.full && p.rust);
+    assert_eq!(
+        p.packages,
+        set(&[
+            "velt_doc",
+            "velt_rt",
+            "velt_rt_host",
+            "velt_rt_shared",
+            "velt_rt_wasm",
+            "velt_sema"
+        ])
+    );
+    assert_eq!(p.veltc, Veltc::Some(set(&["docs"])));
+    assert_eq!(p.goldens, Goldens::None);
+    assert!(!p.vlt_fmt);
+    assert_eq!(p.other_os, None);
+    assert!(
+        p.filterset().unwrap().contains("binary(standards)"),
+        "{:?}",
+        p.filterset()
+    );
+}
+
+#[test]
+fn a_code_change_in_the_same_crate_outweighs_comment_only_files() {
+    let paths = vec![
+        "crates/velt_rt/src/a.rs".to_string(),
+        "crates/velt_rt/src/b.rs".to_string(),
+    ];
+    let p = Plan::for_changes(&graph(), &paths, &set(&["crates/velt_rt/src/a.rs"]));
+    assert_eq!(p.veltc, Veltc::All);
+    assert_eq!(p.goldens, Goldens::All);
+    assert!(p.other_os.is_some());
+    // Comments in the tooling select everything all the same.
+    let tooling = vec!["crates/xtask/src/plan.rs".to_string()];
+    assert!(Plan::for_changes(&graph(), &tooling, &tooling.iter().cloned().collect()).full);
+}
+
+/// A comment edit in the runtime can't change its ABI symbol table: velt_rt's build script
+/// scans the sources with comments removed, and velt_rt's own tests (tests/abi_symbols.rs)
+/// check that. The crates compiling the runtime's sources run their tests too.
+#[test]
+fn a_comment_only_runtime_change_runs_the_runtime_crates_tests() {
+    let paths = vec!["crates/velt_rt/src/http/server.rs".to_string()];
+    let p = Plan::for_changes(&graph(), &paths, &paths.iter().cloned().collect());
+    assert_eq!(
+        p.packages,
+        set(&["velt_rt", "velt_rt_host", "velt_rt_shared", "velt_rt_wasm"])
+    );
+    assert_eq!(p.goldens, Goldens::None);
+    assert_eq!(p.other_os, None);
+}
+
+#[test]
+fn crates_reading_other_crates_sources_run_with_them() {
+    let p = plan(&["crates/velt_rt_wasm/src/lib.rs"]);
+    assert!(p.packages.contains("velt_rt"), "{:?}", p.packages);
+    let p = plan(&["crates/velt_rt/src/str/mod.rs"]);
+    assert!(p.packages.contains("velt_rt_wasm") && p.packages.contains("velt_rt_host"));
 }

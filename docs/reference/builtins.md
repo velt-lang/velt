@@ -8,7 +8,7 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `console.log(a, b, …)`, `console.error(…)` | print the arguments separated by spaces to stdout / stderr. Values print like Node: `[ 1, 2 ]`, `{ k: 1, s: 'a' }`, `Map(1) { 'a' => 1 }`, `ClassName { field: value }`, a `JsonValue` like the parsed object, numbers JS-style |
 | `process.exit(code: i32)` | exit immediately |
 | `process.stdout.write(s)`, `process.stderr.write(s)` | write a string without a newline, ordered with `console.log` / `console.error`; return `true` like Node |
-| `process.env.NAME`, `process.env[name]` | an environment variable as `string \| null` (`null` where Node has `undefined`); set one with `setEnv` of [`velt:process`](../std/process.md), which also has `args()`, `cwd()` and byte writes |
+| `process.env.NAME`, `process.env[name]` | an environment variable as `string \| null` (`null` where Node has `undefined`); set one with `setEnv` and list them with `envAll()` of [`velt:process`](../std/process.md), which also has `args()`, `cwd()` and byte writes |
 | `process.memoryUsage()` | `{ rss, heapUsed }` in bytes, a `MemoryUsage` ([`velt:process`](../std/process.md#memory-usage)) |
 | `panic(msg)` | stop with a panic (exit code 101) |
 | `assert(cond, msg)`, `assertEq(a, b)` | panic when the check fails (`assertEq` compares contents) |

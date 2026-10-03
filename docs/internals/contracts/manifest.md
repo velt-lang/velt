@@ -35,8 +35,10 @@ completion and hover come from the schema (`vpm::manifest::ide`). With the packa
 it) it also completes versions and package names, explains dependencies and checks requirements
 against the versions that are not yanked plus the one `velt.lock.json` pins
 (`vpm::manifest::ide::registry`). The data is fetched in the background (at most four fetches at
-once, kept five minutes); completion waits up to 400 ms for data on its way, and an unreachable
-registry adds nothing.
+once, each within 5 s to connect and 15 s in all, kept five minutes); completion waits up to
+400 ms for data on its way, and an unreachable registry adds nothing. A `registry` that is plain
+`http://` to another machine is not asked from the editor (opening a checkout must not make it
+talk to hosts the checkout names); `$VELT_REGISTRY` is always asked.
 
 ## The data-only subset (`vpm::manifest::read`)
 - At most one import, `import type { … } from "velt:package"` naming at least one type; then

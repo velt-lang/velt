@@ -29,8 +29,17 @@ struct Answer {
 
 /// Search `loc`'s registry (remote or local) for `query`.
 pub fn search(loc: &Locations, query: &str) -> Result<Vec<Hit>, String> {
+    search_within(loc, query, velt_http::Limits::DEFAULT)
+}
+
+/// [`search`], asking a remote registry within `limits`.
+pub fn search_within(
+    loc: &Locations,
+    query: &str,
+    limits: velt_http::Limits,
+) -> Result<Vec<Hit>, String> {
     match &loc.remote {
-        Some(url) => crate::remote::search(url, query),
+        Some(url) => crate::remote::search_within(url, query, limits),
         None => search_local(&loc.registry, query),
     }
 }

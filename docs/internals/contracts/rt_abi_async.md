@@ -380,6 +380,7 @@ body setters and `resp_json` drop the body and add no `content-type`.
 | `velt_rt_env_get` | `(const VeltStr* name, VeltStr* out) -> u8` | 0 = unset (`out` untouched) |
 | `velt_rt_env_set` | `(const VeltStr* name, const VeltStr* value)` | not synchronized with concurrent env readers |
 | `velt_rt_env_remove` | `(const VeltStr* name)` | |
+| `velt_rt_env_all` | `(VeltStrArray* out)` | `[name0, value0, name1, value1, …]` in the OS's order; names starting with `=` (Windows' per-drive entries) left out; lossy UTF-8. wasm: WASI's environment, empty in the browser |
 | `velt_rt_process_cwd` | `(IoResult<VeltStr>* out)` | |
 | `velt_rt_process_chdir` | `(const VeltStr* path, VeltErr* out)` | |
 | `velt_rt_perf_now` | `() -> f64` | `performance.now()`: ms since process start, monotonic |

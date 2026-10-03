@@ -59,12 +59,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      os: ${{ steps.plan.outputs.os }}
+      os: ${{ steps.live.outputs.os || steps.plan.outputs.os }}
     steps:
-      - uses: actions/checkout@v4
+      # A queue entry that drops out (fails, is removed, or another one moves ahead of it) makes
+      # the queue test the entries behind it again, under new branches, and deletes the old
+      # ones. Runs already started for a deleted branch keep going and hold runners the live
+      # entries wait for: they check nothing when GitHub says their branch is gone (404 only;
+      # any other answer checks as usual, so a live entry is never skipped).
+      - id: live
+        if: github.event_name == 'merge_group'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/ref/${GITHUB_REF#refs/}" || true)
+          if [ "$status" = 404 ]; then
+            echo "$GITHUB_REF is no longer in the merge queue: nothing to check."
+            echo 'os=[]' >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.live.outputs.os != '[]'
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - id: plan
+        if: steps.live.outputs.os != '[]'
         env:
           RUSTUP_TOOLCHAIN: stable
           BASE: ${{ github.event.merge_group.base_sha }}
@@ -77,9 +95,12 @@ jobs:
 
   queue:
     needs: queue-plan
+    if: needs.queue-plan.outputs.os != '[]'
     name: ${{ matrix.part }} (${{ matrix.os }})
     strategy:
-      fail-fast: false
+      # One failed job drops the pull request from the queue: cancel the others at once, so
+      # their runners go to the next queue entries instead of finishing a result nobody uses.
+      fail-fast: true
       matrix:
         os: ${{ fromJSON(needs.queue-plan.outputs.os) }}
         part: [check, golden]
@@ -116,9 +137,10 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@v4
+      # Tools on Linux too, though it runs no tests: the wasmtime cache saved here is the one
+      # every branch can restore.
       - uses: ./.github/actions/setup
         with:
-          tools: ${{ matrix.os != 'ubuntu-latest' }}
           save-cache: "true"
       # Linux: the queue checked it in full, so only build and lint what the gate builds, plus the
       # WebAssembly runtime the tests build.

@@ -10,6 +10,7 @@ declare function velt_rt_process_args(): string[];
 declare function velt_rt_env_get(name: string, out: string): bool;
 declare function velt_rt_env_set(name: string, value: string);
 declare function velt_rt_env_remove(name: string);
+declare function velt_rt_env_all(): string[];
 declare function velt_rt_process_cwd(): IoResult<string>;
 declare function velt_rt_process_chdir(path: string): IoStatus;
 declare function velt_rt_stdout_write_bytes(bytes: u8[]);
@@ -54,6 +55,19 @@ export function env(name: string): string | null {
     return out;
   }
   return null;
+}
+
+// Every environment variable, as a snapshot (Node's `process.env` as an object): names in the
+// order the OS keeps them, which is Node's order too. On Windows names keep their case, and
+// lookups in the record are case-sensitive (`process.env.NAME` is not); the per-drive `=C:`
+// entries are left out, as in Node.
+export function envAll(): Record<string, string> {
+  const pairs = velt_rt_env_all();
+  const all: Record<string, string> = {};
+  for (let i: usize = 0; i + 1 < pairs.length; i += 2) {
+    all[pairs[i]] = pairs[i + 1];
+  }
+  return all;
 }
 
 // Not synchronized with concurrent `env` reads on other threads: set variables at startup.

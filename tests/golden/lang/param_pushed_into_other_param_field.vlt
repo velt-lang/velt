@@ -1,0 +1,23 @@
+// check: no leaks
+// Storing one parameter in a field of another is ordinary code (registries, event emitters):
+// `s` and `k.kept` cannot alias, so the call is accepted (#242).
+class S {
+  n: i64 = 0;
+}
+
+class Keeper {
+  kept: S[] = [];
+}
+
+function keep(k: Keeper, s: S) {
+  k.kept.push(s);
+}
+
+function main() {
+  const k = new Keeper();
+  const s = new S();
+  s.n = 7;
+  keep(k, s);
+  keep(k, new S());
+  console.log(k.kept[0].n, k.kept[1].n, k.kept.length);
+}

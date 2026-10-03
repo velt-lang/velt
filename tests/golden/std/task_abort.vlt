@@ -1,3 +1,4 @@
+// check: no leaks
 // velt:task: an AbortController stops cooperative work (checked with `throwIfAborted()`, or
 // raced with `whenAborted()`), also in a spawned task sharing the signal; `AbortSignal.timeout`
 // and `AbortSignal.any` (which keeps its sources alive); `throwIfAborted()` throws

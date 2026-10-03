@@ -50,6 +50,20 @@ const TOOLING: &[(&str, &[&str])] = &[
     ("velt_rt_wasm", &["wasm_goldens", "playground"]),
 ];
 
+/// Packages that compile or read a crate's sources by path, which the dependency graph doesn't
+/// show (`[lib] path`, `build = …`, `#[path]`, tests reading the sources as text): a change to
+/// the crate, comments included, runs their tests too.
+const SHARED_SOURCES: &[(&str, &[&str])] = &[
+    (
+        "velt_rt",
+        &["velt_rt_host", "velt_rt_shared", "velt_rt_wasm"],
+    ),
+    // velt_rt's std_externs test reads velt_rt_wasm's `extern "C"` definitions.
+    ("velt_rt_wasm", &["velt_rt"]),
+    // velt_codegen_llvm's tests build their programs with velt_opt's test builders.
+    ("velt_opt", &["velt_codegen_llvm"]),
+];
+
 /// `vpm` resolves imports and packages for every program, so it runs the goldens too.
 const GOLDENS_TOO: &[&str] = &["vpm"];
 
@@ -189,8 +203,15 @@ impl Plan {
 
     /// The plan for a change touching `paths` (relative, `/`-separated).
     pub fn for_paths(graph: &Graph, paths: &[String]) -> Plan {
+        Plan::for_changes(graph, paths, &BTreeSet::new())
+    }
+
+    /// The plan for a change touching `paths`, where only comments changed in the Rust files
+    /// `comment_only`.
+    pub fn for_changes(graph: &Graph, paths: &[String], comment_only: &BTreeSet<String>) -> Plan {
         let mut plan = Plan::nothing();
         let mut changed_crates = BTreeSet::new();
+        let mut comment_crates = BTreeSet::new();
         for path in paths {
             match classify(graph, path) {
                 Effect::Everything => return Plan::everything(format!("{path} changed")),
@@ -199,6 +220,9 @@ impl Plan {
                     plan.reasons
                         .push(format!("{path}: the differential tester"));
                     plan.difftest = true;
+                }
+                Effect::Crate(name) if comment_only.contains(path) => {
+                    comment_crates.insert(name);
                 }
                 Effect::Crate(name) => {
                     changed_crates.insert(name);
@@ -225,7 +249,19 @@ impl Plan {
             }
         }
         plan.add_crates(graph, &changed_crates);
-        plan.other_os = os::other_os_reason(graph, paths, plan.full);
+        plan.add_comment_crates(
+            &comment_crates
+                .difference(&changed_crates)
+                .cloned()
+                .collect(),
+        );
+        plan.add_source_readers(&changed_crates.union(&comment_crates).cloned().collect());
+        let code: Vec<String> = paths
+            .iter()
+            .filter(|p| !comment_only.contains(*p))
+            .cloned()
+            .collect();
+        plan.other_os = os::other_os_reason(graph, &code, plan.full);
         plan
     }
 
@@ -297,6 +333,38 @@ impl Plan {
         }
         if affected.contains("veltc") {
             self.add_veltc(&[]);
+        }
+    }
+
+    /// Crates where only comments changed: no compiled code changed, so no dependent's tests,
+    /// goldens or other OSes. The comments are still checked (rustfmt, clippy's documentation
+    /// lints, the doctests), and so are the crate's own tests (some read its sources) and the
+    /// file-size rule (`standards`).
+    fn add_comment_crates(&mut self, crates: &BTreeSet<String>) {
+        if crates.is_empty() {
+            return;
+        }
+        self.rust = true;
+        self.reasons
+            .push(format!("only comments changed in: {}", join(crates)));
+        for name in crates {
+            if name != "veltc" {
+                self.packages.insert(name.clone());
+            }
+        }
+        self.add_veltc(&[]);
+    }
+
+    /// The packages that compile or read the changed crates' sources ([`SHARED_SOURCES`]).
+    fn add_source_readers(&mut self, changed: &BTreeSet<String>) {
+        for (name, readers) in SHARED_SOURCES {
+            if changed.contains(*name) && !self.all_tests {
+                self.reasons.push(format!(
+                    "{name}'s sources are also used by: {}",
+                    readers.join(", ")
+                ));
+                self.packages.extend(readers.iter().map(|r| r.to_string()));
+            }
         }
     }
 
