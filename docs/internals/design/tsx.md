@@ -111,12 +111,12 @@ Errors where `tsc` rejects the code:
 |---|---|---|---|
 | `velt-number-type` | `i8` … `i64`, `isize`, `u8` … `u64`, `usize`, `f32`, `f64` | `number` (a fix for `f64`, the same type) | |
 | `bool-type` | `bool` | `boolean` (a fix: the same type) | |
-| `number-suffix` | `5i32`, `1.5f32`, also in literal types | a fix drops the suffix | |
-| `int-cast` | `x as i64` (any integer type) | a fix: `Math.trunc(x)` | |
+| `number-suffix` | `5i32`, `1.5f32`, also in literal types | a fix drops the suffix where the value stays the same | |
+| `int-cast` | `x as i64` (any integer type) | `Math.trunc(x)`, with a `number` target | |
 | `struct` | `struct P { … }`, named literals `P { … }` | `class`, or a type with object literals | |
 | `extend` | `extend T { … }` | a function | |
 | `throws` | `throws E` on functions, methods, arrows and function types | a fix removes it where Velt infers it (a body) | |
-| `promise-error-type` | `Promise<T, E>` | a fix: `Promise<T>` | |
+| `promise-error-type` | `Promise<T, E>` | `Promise<T>` (a fix on the return type of a function with a body) | |
 | `interface-body` | default method bodies in an interface | a base class or a function | |
 | `velt-import` | `velt:*` imports | keep them out of the shared files | |
 | `outside-import` | relative imports of files not being linted | lint them too, or keep the import out | |
@@ -150,7 +150,15 @@ Notes on the rules as built, against the issue's first design:
 - `struct` also covers named object literals (`P { … }`), which `tsc` rejects too.
 - `throws` covers arrows and function types as well as declarations; the fix is offered only
   where Velt infers the thrown types without the clause (a function with a body).
-- `int-cast` reports the cast as a whole, not its type again as `velt-number-type`.
+- `int-cast` reports the cast as a whole, not its type again as `velt-number-type`. It has no
+  fix: `Math.trunc(x)` is a `number`, so code that expects an integer (`const i: i64 = …`)
+  needs its type changed too.
+- `number-suffix` offers its fix only when the literal is the same value as a `number`: not for
+  integers past 2^53, nor for an `f32` literal that rounds (`0.1f32`).
+- `promise-error-type` offers its fix only on the return type of a function, method or arrow
+  with a body, where Velt infers what it rejects with (as `throws` does); elsewhere (function
+  types, declarations without a body) dropping `E` would lose it.
+- Defaults are linted too: of parameters (arrows included) and in destructuring patterns.
 - `outside-import` applies to relative specifiers (`./`, `../`); package names and `paths`
   aliases aren't checked yet.
 - `jsx-provider` reports one finding per module, at its first element.

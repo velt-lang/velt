@@ -215,3 +215,28 @@ fn imports_of_linted_files_are_inside() {
     ];
     assert_eq!(lint(&modules, &[case.as_path(), helper.as_path()]), vec![]);
 }
+
+/// Defaults in `for…of` and `catch` patterns parse but `velt check` rejects them today, so they
+/// have no case file; the lint still looks at them.
+#[test]
+fn defaults_in_for_of_and_catch_patterns_are_linted() {
+    let src = "function f(ps: { x: number | null }[]) {\n\
+               \x20 for (const { x = 1.5f64 } of ps) {}\n\
+               \x20 try {} catch ({ message = 2.5f64 }) {}\n\
+               }\n";
+    let codes: Vec<&str> = lint_source(Path::new("patterns.vlt"), src)
+        .iter()
+        .map(|f| f.code)
+        .collect();
+    assert_eq!(codes, ["number-suffix", "number-suffix"]);
+}
+
+#[test]
+fn a_large_integer_literal_has_no_fix_and_says_why() {
+    let findings = lint_source(Path::new("big.vlt"), "const big = 9007199254740993i64;\n");
+    assert_eq!(findings.len(), 1);
+    assert!(findings[0].fix.is_none());
+    assert!(findings[0].notes[1].contains("`i64`"), "{:?}", findings[0]);
+    let findings = lint_source(Path::new("edge.vlt"), "const edge = 9007199254740992i64;\n");
+    assert!(findings[0].fix.is_some());
+}

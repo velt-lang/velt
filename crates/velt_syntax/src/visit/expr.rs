@@ -12,7 +12,9 @@ pub(super) fn opt_expr<'a>(e: Option<&'a ast::Expr>, v: &mut dyn Visit<'a>) {
     }
 }
 
-pub(super) fn walk_expr<'a>(e: &'a ast::Expr, v: &mut dyn Visit<'a>) {
+/// Visit `e`, the types written in it and its sub-expressions (arrow bodies and JSX included;
+/// arrow parameter defaults not, as in [`super::walk_module`]).
+pub fn walk_expr<'a>(e: &'a ast::Expr, v: &mut dyn Visit<'a>) {
     v.expr(e);
     expr_types(e, v);
     match &e.kind {

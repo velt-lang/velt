@@ -3,15 +3,19 @@
 //! every item, statement, expression and written type in source order, nested declarations
 //! included; a tool implements the callbacks it needs on [`Visit`].
 //!
-//! Not visited: the default values of destructuring patterns and of arrow-function parameters,
-//! and the field defaults of interfaces.
+//! Not visited by [`walk_module`]: the default values of destructuring patterns and of
+//! arrow-function parameters, and the field defaults of interfaces. A tool that needs the first
+//! two walks them itself with [`walk_expr`] and [`walk_pattern`] (from its `expr`, `var_decl` and
+//! `stmt` callbacks).
 
 mod expr;
 mod types;
 
 use crate::ast;
 
-use expr::{opt_expr, walk_expr};
+pub use expr::walk_expr;
+
+use expr::opt_expr;
 use types::{opt_type, walk_generics, walk_sig_types, walk_type};
 
 /// Callbacks of [`walk_module`]; each defaults to doing nothing. Every callback runs before the
@@ -62,6 +66,22 @@ fn walk_item<'a>(item: &'a ast::Item, v: &mut dyn Visit<'a>) {
         }
         ast::ItemKind::ExternFn(sig) => walk_sig_types(sig, v),
         ast::ItemKind::Import(_) => {}
+    }
+}
+
+/// Visit the default values in pattern `p` (`{ a = 1 }`, `[x = f()]`), nested ones included,
+/// with [`walk_expr`].
+pub fn walk_pattern<'a>(p: &'a ast::Pattern, v: &mut dyn Visit<'a>) {
+    match &p.kind {
+        ast::PatternKind::Ident(_) | ast::PatternKind::Wildcard => {}
+        ast::PatternKind::Object { fields, .. } => {
+            fields.iter().for_each(|(_, p)| walk_pattern(p, v));
+        }
+        ast::PatternKind::Array { elems, .. } => elems.iter().for_each(|p| walk_pattern(p, v)),
+        ast::PatternKind::Default { pattern, value } => {
+            walk_pattern(pattern, v);
+            walk_expr(value, v);
+        }
     }
 }
 

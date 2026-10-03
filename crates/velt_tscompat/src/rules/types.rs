@@ -4,7 +4,7 @@
 use velt_syntax::ast::{self, TypeExprKind as T};
 
 use super::{decls, exprs, Cx};
-use crate::Fix;
+use crate::{Finding, Fix};
 
 /// Velt's integer types: `tsc` rejects them, and code written with them gets integer
 /// arithmetic (`/` truncates), which `number` doesn't have.
@@ -91,7 +91,11 @@ fn bool_type(t: &ast::TypeExpr, cx: &mut Cx) {
     );
 }
 
-/// `Promise<T, E>`: TypeScript's `Promise` takes one type argument.
+/// The code of the `Promise<T, E>` rule.
+pub(super) const PROMISE_ERROR: &str = "promise-error-type";
+
+/// `Promise<T, E>`: TypeScript's `Promise` takes one type argument. Reported with a fix, which
+/// [`promise_error_without_body`] takes back where the type isn't a body's return type.
 fn promise_error(t: &ast::TypeExpr, value: &ast::TypeExpr, cx: &mut Cx) {
     let replacement = format!("Promise<{}>", cx.text(value.span));
     let fix = Fix {
@@ -100,7 +104,7 @@ fn promise_error(t: &ast::TypeExpr, value: &ast::TypeExpr, cx: &mut Cx) {
         title: format!("replace with `{replacement}`"),
     };
     cx.error_with_fix(
-        "promise-error-type",
+        PROMISE_ERROR,
         t.span,
         "TypeScript's `Promise` takes one type argument".into(),
         &[
@@ -110,4 +114,16 @@ fn promise_error(t: &ast::TypeExpr, value: &ast::TypeExpr, cx: &mut Cx) {
         ],
         fix,
     );
+}
+
+/// A `promise-error-type` finding on a type that isn't the return type of a function with a
+/// body: without a body Velt can't infer what the promise rejects with, so there is no fix.
+pub(super) fn promise_error_without_body(f: &mut Finding) {
+    f.fix = None;
+    f.notes = vec![
+        "Velt's `Promise<T, E>` says the promise rejects with `E`; TypeScript doesn't track \
+         what a promise rejects with, and without a function body Velt can't infer it"
+            .into(),
+        "keep types that need `Promise<T, E>` out of code shared with TypeScript".into(),
+    ];
 }

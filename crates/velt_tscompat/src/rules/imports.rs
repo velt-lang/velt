@@ -47,7 +47,7 @@ fn outside_import(spec: &str, file: &Path, span: Span, cx: &mut Cx) {
     let lint_it = format!(
         "lint `{}` too (pass it to `velt check --ts-compat`), or keep the import out of shared \
          code",
-        file.display()
+        shown(file)
     );
     cx.error(
         "outside-import",
@@ -59,6 +59,29 @@ fn outside_import(spec: &str, file: &Path, span: Span, cx: &mut Cx) {
             &lint_it,
         ],
     );
+}
+
+/// `file` (canonical) relative to the current directory, as the user would name it.
+fn shown(file: &Path) -> String {
+    let Some(cwd) = std::env::current_dir()
+        .ok()
+        .and_then(|d| d.canonicalize().ok())
+    else {
+        return file.display().to_string();
+    };
+    let (path, base): (Vec<_>, Vec<_>) = (file.components().collect(), cwd.components().collect());
+    let common = path.iter().zip(&base).take_while(|(a, b)| a == b).count();
+    if common == 0 {
+        // Another drive: no relative path.
+        return file.display().to_string();
+    }
+    let mut parts: Vec<String> = vec!["..".into(); base.len() - common];
+    parts.extend(
+        path[common..]
+            .iter()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned()),
+    );
+    parts.join("/")
 }
 
 /// One finding per module, at its first JSX element.

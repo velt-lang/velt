@@ -1,6 +1,6 @@
 use velt_common::FileId;
 
-use super::{walk_module, Visit};
+use super::{walk_expr, walk_module, walk_pattern, Visit};
 use crate::ast;
 
 /// Records what each callback saw, as source text.
@@ -100,4 +100,42 @@ fn visits_jsx_and_arrow_bodies() {
     let seen = walk("function v(n: i64) { return <p a={n}>{[1].map((x) => x + 1)}</p>; }\n");
     assert!(seen.exprs.iter().any(|e| e == "x + 1"), "{:?}", seen.exprs);
     assert!(seen.exprs.iter().any(|e| e == "n"));
+}
+
+/// Finds defaults `walk_module` skips, walking them with the public helpers.
+#[derive(Default)]
+struct Defaults(Seen);
+
+impl<'a> Visit<'a> for Defaults {
+    fn expr(&mut self, e: &'a ast::Expr) {
+        self.0.expr(e);
+        if let ast::ExprKind::Arrow { params, .. } = &e.kind {
+            for d in params.iter().filter_map(|p| p.default.as_ref()) {
+                walk_expr(d, self);
+            }
+        }
+    }
+    fn var_decl(&mut self, d: &'a ast::VarDecl) {
+        walk_pattern(&d.pattern, self);
+    }
+}
+
+#[test]
+fn defaults_walk_with_the_public_helpers() {
+    let src = "function f() { const { a = 1, b: [c = 2] } = g(); const h = (x: i64 = 3) => x; }\n\
+               function g() { return { a: null, b: [] }; }\n";
+    let (module, diags) = crate::parse_file(FileId(0), src);
+    assert!(diags.is_empty(), "{diags:?}");
+    let mut d = Defaults(Seen {
+        src: src.to_string(),
+        ..Seen::default()
+    });
+    walk_module(&module, &mut d);
+    for want in ["1", "2", "3"] {
+        assert!(
+            d.0.exprs.iter().any(|e| e == want),
+            "{want} in {:?}",
+            d.0.exprs
+        );
+    }
 }

@@ -28,6 +28,9 @@ pub(super) fn run(
     let Some((first, rest)) = files.split_first() else {
         return (Err(BuildError::Failed("no files to lint".into())), vec![]);
     };
+    if let Err(msg) = one_package(&files) {
+        return (Err(BuildError::Failed(msg)), vec![]);
+    }
     let opts = match super::check::options_for(first, args.locked) {
         Ok(opts) => opts,
         Err(e) => return (Err(e), vec![]),
@@ -36,13 +39,57 @@ pub(super) fn run(
         require_main: false,
         extra_roots: rest.to_vec(),
     };
+    let same_path = super::check::same_path_groups(&files);
     match driver::check_for_lint(sess, &opts, &scope) {
         Ok((loaded, checked)) => {
             let findings = lint_loaded(sess, &loaded, &files);
+            super::check::report_same_path(sess, &same_path, first);
+            let checked = match checked {
+                Ok(()) if !same_path.is_empty() => Err(BuildError::Diagnostics),
+                other => other,
+            };
             (checked, findings)
         }
         Err(e) => (Err(e), vec![]),
     }
+}
+
+/// The package root of `file` (the nearest directory above it with a manifest), if any.
+fn package_of(file: &Path) -> Option<PathBuf> {
+    let root = vpm::manifest::find_package_root(file.parent().unwrap_or(Path::new("")))?;
+    Some(canonical(&root))
+}
+
+/// Every file of `files` is in the same package, or none is in one: the files are checked
+/// together, inside one package's settings and dependencies.
+fn one_package(files: &[PathBuf]) -> Result<(), String> {
+    let Some((first, rest)) = files.split_first() else {
+        return Ok(());
+    };
+    let package = package_of(first);
+    let Some(other) = rest.iter().find(|f| package_of(f) != package) else {
+        return Ok(());
+    };
+    let describe = |root: Option<PathBuf>| match root {
+        Some(root) => {
+            let cwd = std::env::current_dir()
+                .map(|d| canonical(&d))
+                .unwrap_or_default();
+            let shown = vpm::relpath::relative(&root, &cwd);
+            match vpm::Manifest::from_dir(&root) {
+                Ok(m) => format!("package `{}` (`{shown}`)", m.package.name),
+                Err(_) => format!("the package at `{shown}`"),
+            }
+        }
+        None => "no package".to_string(),
+    };
+    Err(format!(
+        "lint one package per run: `{}` is in {}, `{}` in {}",
+        first.display(),
+        describe(package),
+        other.display(),
+        describe(package_of(other))
+    ))
 }
 
 /// The source files `paths` name: files as given, directories' `.vlt`, `.ts` and `.tsx` files
@@ -59,6 +106,11 @@ fn expand(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
                 ));
             }
             files.extend(found);
+        } else if path.to_string_lossy().ends_with(".d.ts") {
+            return Err(format!(
+                "`{}`: declaration files (`.d.ts`) are not modules",
+                path.display()
+            ));
         } else {
             super::project::check_input_file(path)?;
             files.push(path.clone());

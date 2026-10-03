@@ -118,7 +118,9 @@ src/models/user.ts:3:14: error: `f64` is not a TypeScript type
 ```
 
 - The files are checked first, together, as library modules; a file with errors of its own
-  reports them and isn't linted.
+  reports them and isn't linted. They must all be in one package (or none in a package): lint
+  one package per run. Two files with the same module path (`dup.vlt` and `dup.ts`) are an
+  error, as in a package check; a declaration file (`.d.ts`) can't be passed.
 - Every finding says what TypeScript does, why Velt differs and what to write, and ends with a
   note naming its rule, `ts-compat(<code>)`. With `--json`, each finding also carries its `code`
   and, when the replacement is mechanical, a `fix`: `{"location", "replacement", "title"}`.

@@ -1,0 +1,14 @@
+// Defaults are linted like any other expression: of parameters, arrow parameters and
+// destructuring patterns.
+
+export type Pt = { x: number | null; y: number | null };
+
+export function scaled(p: Pt, by: number = 2.0): number { //~ number-suffix
+  const { x = 1.0, y = 0.0 } = p; //~ number-suffix
+  return (x + y) * by;
+}
+
+export function shifted(x: number): number {
+  const shift = (v: number, by: number = 0.5): number => v + by; //~ number-suffix
+  return shift(x);
+}

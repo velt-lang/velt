@@ -71,6 +71,10 @@ fn report_findings(sess: &Session, findings: &[Finding]) {
         .map(|f| super::ts_compat::diagnostic(f).render(&sess.sm))
         .collect();
     if !rendered.is_empty() {
+        // A blank line after the check's diagnostics, as between them.
+        if !sess.diagnostics.is_empty() {
+            eprintln!();
+        }
         eprintln!("{}", rendered.join("\n\n"));
     }
 }
@@ -129,7 +133,7 @@ fn package_scope() -> Result<(PathBuf, CheckScope, Vec<Vec<PathBuf>>), String> {
 /// The files among `files` that share a directory and a module path (`dup.vlt` and `dup.ts`),
 /// in groups of two or more: an import of `./dup` is ambiguous, and they cannot both be the
 /// module `dup`.
-fn same_path_groups(files: &[PathBuf]) -> Vec<Vec<PathBuf>> {
+pub(super) fn same_path_groups(files: &[PathBuf]) -> Vec<Vec<PathBuf>> {
     let mut groups: BTreeMap<(PathBuf, String), Vec<PathBuf>> = BTreeMap::new();
     for file in files {
         let name = file.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -146,7 +150,7 @@ fn same_path_groups(files: &[PathBuf]) -> Vec<Vec<PathBuf>> {
 
 /// One error per [`same_path_groups`] group, located in its first file and naming every file
 /// relative to the package root (the directory of `input`'s package).
-fn report_same_path(sess: &mut Session, groups: &[Vec<PathBuf>], input: &Path) {
+pub(super) fn report_same_path(sess: &mut Session, groups: &[Vec<PathBuf>], input: &Path) {
     let root = vpm::manifest::find_package_root(input.parent().unwrap_or(Path::new("")));
     let shown = |f: &Path| match &root {
         Some(r) => vpm::relpath::relative(&vpm::relpath::absolute(f), r),
