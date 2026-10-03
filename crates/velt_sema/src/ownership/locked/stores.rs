@@ -18,7 +18,7 @@ use crate::body::places::{is_place, place_root};
 use crate::ctx::Ctx;
 use crate::hir::{
     Callee, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, Pat, Stmt, StmtKind as S,
-    UseMode,
+    TyKind, UseMode,
 };
 use crate::visit::{self, VisitMut};
 
@@ -46,11 +46,21 @@ pub(super) fn visit(
     w.unfixable
 }
 
-/// A call storing a part of an argument it also modifies across the lock.
+/// A store across the lock that cannot be made a copy.
 pub(super) struct Unfixable {
     pub(super) span: Span,
-    /// An outside object stored into the value (else a part of the value stored outside).
-    pub(super) inward: bool,
+    pub(super) kind: Cross,
+}
+
+/// Why a store across the lock cannot be made a copy.
+pub(super) enum Cross {
+    /// The call also changes the argument (`inward`: an outside object stored into the
+    /// value; else a part of the value stored outside).
+    Changed { inward: bool },
+    /// A function value whose body is not visible is given both sides.
+    Opaque,
+    /// The part owns a resource without `clone()`.
+    Resource,
 }
 
 struct Stores<'a, 'r, 's, 'm> {
@@ -96,7 +106,10 @@ impl Stores<'_, '_, '_, '_> {
                 self.r.add(self.def, root, b);
             }
         } else if self.rewrite {
-            self.transfer_owned(value, dest);
+            let span = value.span;
+            if let Err(kind) = self.transfer_owned(value, dest) {
+                self.unfixable.push(Unfixable { span, kind });
+            }
         }
     }
 
@@ -122,12 +135,29 @@ impl Stores<'_, '_, '_, '_> {
         }
         let mut done = HashSet::new();
         for (a, b) in call_flows(self.s, callee, args) {
+            let fn_value = match (b, callee) {
+                (None, Callee::Indirect(c)) => Some(c.span),
+                (Some(b), _) if is_fn_value(self.cx, &args[b]) => Some(args[b].span),
+                _ => None,
+            };
+            if let Some(at) = fn_value {
+                // A function value is never given a copy (it may change what it is given): a
+                // closure resolved among the bodies is checked itself, any other one may not be
+                // given both sides.
+                let dest = b.map_or(fn_bits, |b| self.mentions(&args[b]));
+                let cross = crosses(dest, bits[a]) && !self.r.resolved.contains(&at);
+                if cross && self.rewrite && done.insert(a) {
+                    let kind = Cross::Opaque;
+                    self.unfixable.push(Unfixable { span, kind });
+                }
+                continue;
+            }
             let (root, dest) = match b {
                 // Its body is checked where it is (`super::regions`).
                 Some(b) if matches!(args[b].kind, E::Closure(_)) => continue,
                 Some(b) if !holds_shared(self.cx, args[b].ty) => continue,
                 Some(b) => self.dest(&args[b]),
-                None => (None, fn_bits),
+                None => continue,
             };
             if dest == 0 {
                 if let (false, Some(root)) = (self.rewrite, root) {
@@ -138,52 +168,67 @@ impl Stores<'_, '_, '_, '_> {
             if !crosses(dest, bits[a]) || !self.rewrite || !done.insert(a) {
                 continue;
             }
-            if !self.transfer_arg(&mut args[a], dest) {
-                self.unfixable.push(Unfixable {
-                    span,
-                    inward: dest & IN != 0,
-                });
+            if let Err(kind) = self.transfer_arg(&mut args[a], dest) {
+                self.unfixable.push(Unfixable { span, kind });
             }
         }
     }
 
     /// Wrap an owned value in `Transfer`.
-    fn transfer_owned(&mut self, e: &mut Expr, dest: u8) {
+    fn transfer_owned(&mut self, e: &mut Expr, dest: u8) -> Result<(), Cross> {
         let borrowed = is_place(e) && outer_mode(e) != Some(UseMode::Move);
-        if self.transferable(e, dest) && !borrowed {
+        if self.transferable(e, dest)? && !borrowed {
             wrap(e, Intrinsic::Transfer);
         }
+        Ok(())
     }
 
     /// A call argument crossing the boundary: an owned one is transferred, a borrowed place
     /// is passed as a transferred copy. A mutably borrowed one cannot be (the callee changes
-    /// it): false.
-    fn transfer_arg(&mut self, e: &mut Expr, dest: u8) -> bool {
-        if !self.transferable(e, dest) {
-            return true;
+    /// it).
+    fn transfer_arg(&mut self, e: &mut Expr, dest: u8) -> Result<(), Cross> {
+        if !self.transferable(e, dest)? {
+            return Ok(());
         }
         match outer_mode(e) {
             Some(UseMode::Borrow) if is_place(e) => {
                 wrap(e, Intrinsic::Share);
                 wrap(e, Intrinsic::Transfer);
             }
-            Some(UseMode::BorrowMut) if is_place(e) => return false,
+            Some(UseMode::BorrowMut) if is_place(e) => {
+                return Err(Cross::Changed {
+                    inward: dest & IN != 0,
+                })
+            }
             Some(UseMode::Copy) if is_place(e) => {}
             _ => wrap(e, Intrinsic::Transfer),
         }
-        true
+        Ok(())
     }
 
     /// Values that may reach a counted object (strings keep atomic counts; a promise is never
     /// shared, and making one there is an error, `super::promises`). A resource without
-    /// `clone()` stored into the value stays shared: it cannot be copied, and a callback cannot
-    /// move a variable it captured (the design notes' known gaps).
-    fn transferable(&mut self, e: &Expr, dest: u8) -> bool {
-        let inward = dest & IN != 0;
-        self.cx.is_shared_value(e.ty)
-            && !self.cx.is_string_value(e.ty)
-            && !(inward && self.cx.owns_uncopyable(e.ty))
+    /// `clone()` cannot be copied: stored out of the value that is an error, and stored into
+    /// it, it stays shared (a callback cannot move a variable it captured; the design notes'
+    /// known gaps).
+    fn transferable(&mut self, e: &Expr, dest: u8) -> Result<bool, Cross> {
+        if !self.cx.is_shared_value(e.ty) || self.cx.is_string_value(e.ty) {
+            return Ok(false);
+        }
+        if !self.cx.owns_uncopyable(e.ty) {
+            return Ok(true);
+        }
+        match dest & IN != 0 {
+            true => Ok(false),
+            false => Err(Cross::Resource),
+        }
     }
+}
+
+/// Is `e` a function value (not a closure literal, whose body is checked where it is)?
+fn is_fn_value(cx: &Ctx, e: &Expr) -> bool {
+    matches!(cx.ty.kind(e.ty), TyKind::FnPtr { .. } | TyKind::Closure(_))
+        && !matches!(e.kind, E::Closure(_))
 }
 
 impl VisitMut for Stores<'_, '_, '_, '_> {

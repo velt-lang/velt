@@ -245,7 +245,11 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
     stored from one place in the value to another, or from one outside object to another, stays
     the same object. A call that stores a part of an argument it also changes cannot be given a
     copy, and is an error ("this call may store a part of the locked value outside it, and also
-    changes that argument"): return the part from `with` instead.
+    changes that argument"): return the part from `with` instead. A function value the
+    callback calls with the value (`step(v)`, a helper's parameter) gets the value itself, so
+    its changes land in it: the closures it may be are checked like the callback. One whose
+    body cannot be found (a field, an array element) may not be given both the value and
+    something outside the lock.
   - A promise made from the value runs after the lock is released. One that only reads what it
     is given gets a copy, like a spawned call (`m.with((v) => save(v.name))`,
     `m.with((v) => read(v))`: `read` sees the value as it was). One that changes it is an

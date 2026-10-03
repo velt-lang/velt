@@ -27,18 +27,20 @@ mod promises;
 mod regions;
 mod stores;
 mod summary;
+mod values;
 
 use std::collections::HashSet;
 
-use velt_common::Diagnostic;
+use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
-use crate::hir::{Def, DefId, Expr, FnDef, TyKind};
+use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, FnDef, TyKind};
 use crate::visit::{self, VisitMut};
 
 /// Check and rewrite every `with` callback (module docs).
 pub(crate) fn check_locked(cx: &mut Ctx) {
-    let found = callbacks::find(cx);
+    let mut res = values::Resolver::default();
+    let found = callbacks::find(cx, &mut res);
     let mut reported = HashSet::new();
     for cb in &found.opaque {
         if reported.insert(cb.span) {
@@ -61,7 +63,7 @@ pub(crate) fn check_locked(cx: &mut Ctx) {
             }
             continue;
         }
-        check_callback(cx, &summaries, c);
+        check_callback(cx, &summaries, &mut res, c);
     }
 }
 
@@ -95,38 +97,91 @@ fn async_callback_error(cx: &mut Ctx, c: DefId) {
     );
 }
 
-/// Callback `c` and every closure created in it (recursively), taken out of `cx`.
-fn take_bodies(cx: &mut Ctx, c: DefId) -> Vec<(DefId, FnDef)> {
-    struct Closures(Vec<DefId>);
-    impl VisitMut for Closures {
-        fn expr(&mut self, e: &mut Expr) {
-            if let crate::hir::ExprKind::Closure(n) = e.kind {
-                self.0.push(n);
-            }
-        }
-    }
-    let mut out: Vec<(DefId, FnDef)> = vec![];
+/// Callback `c`, every closure made in it, and every closure a function value it calls (or
+/// passes to a call) may be (`values`), recursively, taken out of `cx`; with the spans of the
+/// function values resolved to closures that are not async.
+fn take_bodies(
+    cx: &mut Ctx,
+    res: &mut values::Resolver,
+    c: DefId,
+) -> (Vec<(DefId, FnDef)>, HashSet<Span>) {
+    let mut seen: Vec<DefId> = vec![];
+    let mut resolved = HashSet::new();
     let mut todo = vec![c];
     while let Some(d) = todo.pop() {
-        if out.iter().any(|(x, _)| *x == d) {
+        if seen.contains(&d) {
             continue;
         }
+        seen.push(d);
         let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
             continue;
         };
-        let mut found = Closures(vec![]);
+        let mut found = FnValues {
+            cx,
+            closures: vec![],
+            values: vec![],
+        };
         visit::block(&mut f.body.block, &mut found);
-        todo.extend(found.0);
-        out.push((d, f));
+        let FnValues {
+            closures, values, ..
+        } = found;
+        cx.defs[d.0 as usize] = Some(Def::Fn(f));
+        todo.extend(closures);
+        for v in values {
+            let Some(cs) = res.expr(cx, d, &v) else {
+                continue;
+            };
+            if cs.iter().all(|&n| !cx.fn_info(n).is_async) {
+                resolved.insert(v.span);
+                todo.extend(cs);
+            }
+        }
     }
-    out
+    let mut bodies = vec![];
+    for d in seen {
+        if let Some(Def::Fn(f)) = cx.defs[d.0 as usize].take() {
+            bodies.push((d, f));
+        }
+    }
+    (bodies, resolved)
+}
+
+/// The closures made in a body, and the function values it calls or passes to a call.
+struct FnValues<'a, 'm> {
+    cx: &'a mut Ctx<'m>,
+    closures: Vec<DefId>,
+    values: Vec<Expr>,
+}
+
+impl VisitMut for FnValues<'_, '_> {
+    fn expr(&mut self, e: &mut Expr) {
+        match &e.kind {
+            E::Closure(n) => self.closures.push(*n),
+            E::Call { callee, args } => {
+                if let Callee::Indirect(c) = callee {
+                    self.values.push((**c).clone());
+                }
+                for a in args {
+                    let fn_typed = matches!(
+                        self.cx.ty.kind(a.ty),
+                        TyKind::FnPtr { .. } | TyKind::Closure(_)
+                    );
+                    if fn_typed && !matches!(a.kind, E::Closure(_)) {
+                        self.values.push(a.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Report the promises callback `c` makes from the locked value and transfer what it stores
 /// across the lock (module docs).
-fn check_callback(cx: &mut Ctx, s: &summary::Summaries, c: DefId) {
-    let mut bodies = take_bodies(cx, c);
+fn check_callback(cx: &mut Ctx, s: &summary::Summaries, res: &mut values::Resolver, c: DefId) {
+    let (mut bodies, resolved) = take_bodies(cx, res, c);
     let mut r = regions::Regions::new(c, &mut bodies);
+    r.resolved = resolved;
     loop {
         r.changed = false;
         for (d, f) in bodies.iter_mut() {
@@ -179,15 +234,25 @@ fn promise_error(cx: &mut Ctx, m: promises::Made) {
 }
 
 fn unfixable_error(cx: &mut Ctx, u: stores::Unfixable) {
-    let what = match u.inward {
-        true => "an outside object in the locked value",
-        false => "a part of the locked value outside it",
+    let (msg, note) = match u.kind {
+        stores::Cross::Changed { inward } => {
+            let what = match inward {
+                true => "an outside object in the locked value",
+                false => "a part of the locked value outside it",
+            };
+            (
+                format!("this call may store {what}, and also changes that argument"),
+                "the stored object would be shared by threads without the lock, and an argument the call changes cannot be passed as a copy; return what you need from `with` (it comes out as a copy), or pass a copy (`x.clone()`) of what the call only reads",
+            )
+        }
+        stores::Cross::Opaque => (
+            "this call passes the locked value to a function whose body is not visible here, together with something outside the lock".to_string(),
+            "the function might store a part of one in the other, shared by threads without the lock; call a function or a closure written here (`const f = (s) => ...`), or pass a copy (`x.clone()`)",
+        ),
+        stores::Cross::Resource => (
+            "this would copy an object that owns a resource without `clone()` across the `with` lock".to_string(),
+            "a part of the locked value stored outside it must be copied, and so must one a promise made here keeps; give the resource type a `clone()` method, or use it inside the callback",
+        ),
     };
-    cx.error(
-        Diagnostic::error(
-            format!("this call may store {what}, and also changes that argument"),
-            u.span,
-        )
-        .with_note("the stored object would be shared by threads without the lock, and an argument the call changes cannot be passed as a copy; return what you need from `with` (it comes out as a copy), or pass a copy (`x.clone()`) of what the call only reads"),
-    );
+    cx.error(Diagnostic::error(msg, u.span).with_note(note));
 }

@@ -1,13 +1,14 @@
-//! Which closures `with` calls (super module docs): the closure literal passed to it, a local
-//! bound only to closure literals (`const f = (v) => …`, `let f = …`), the closures a function
-//! returns (`m.with(makeCb(out))`), and, through a function parameter that reaches `with`, the
-//! closures passed for it (to a fixpoint). Any other function value is *opaque*: its body is
+//! Which closures `with` calls (super module docs): the closures the argument may be
+//! (`super::values`: a literal, a local bound only to closure literals, a conditional, a
+//! captured variable, what a function returns: `m.with(makeCb(out))`), and, through a
+//! function parameter that reaches `with`, the closures passed for it (to a fixpoint). Any other function value is *opaque*: its body is
 //! not visible, and only its type is checked.
 
 use std::collections::{HashMap, HashSet};
 
+use super::values::Resolver;
 use crate::ctx::Ctx;
-use crate::defs::BodyState;
+use crate::defs::{BodyState, FnKind};
 use crate::hir::{
     Block, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalId, Stmt, StmtKind as S,
 };
@@ -24,7 +25,7 @@ pub(super) struct Found {
 }
 
 /// Every callback of the program's `with` calls.
-pub(super) fn find(cx: &mut Ctx) -> Found {
+pub(super) fn find(cx: &mut Ctx, res: &mut Resolver) -> Found {
     let fns: Vec<DefId> = cx
         .fn_defs
         .iter()
@@ -36,9 +37,9 @@ pub(super) fn find(cx: &mut Ctx) -> Found {
         let calls = calls_in(cx, d, |c, _| {
             matches!(c, Callee::Intrinsic(Intrinsic::MutexWith))
         });
-        for (args, bound, params) in calls {
+        for (args, params) in calls {
             if let [_, cb] = args.as_slice() {
-                resolve(cx, d, cb, &bound, &params, true, &mut found);
+                resolve(cx, res, d, cb, &params, true, &mut found);
             }
         }
     }
@@ -51,9 +52,9 @@ pub(super) fn find(cx: &mut Ctx) -> Found {
                 d,
                 |c, i| matches!(c, Callee::Def(g, _) if locked.contains(&(*g, i))),
             );
-            for (args, bound, params) in calls {
+            for (args, params) in calls {
                 for a in args {
-                    resolve(cx, d, &a, &bound, &params, false, &mut found);
+                    resolve(cx, res, d, &a, &params, false, &mut found);
                 }
             }
         }
@@ -66,39 +67,30 @@ pub(super) fn find(cx: &mut Ctx) -> Found {
 /// A callback argument of a call in function `d`.
 fn resolve(
     cx: &mut Ctx,
+    res: &mut Resolver,
     d: DefId,
     cb: &Expr,
-    bound: &HashMap<LocalId, Vec<DefId>>,
     params: &[LocalId],
     at_with: bool,
     found: &mut Found,
 ) {
     let direct = at_with && matches!(cb.kind, E::Closure(_));
-    let closures = match &cb.kind {
-        E::Closure(c) => Some(vec![*c]),
-        E::Local(l, _) => match params.iter().position(|p| p == l) {
-            Some(i) => {
-                found.params.insert((d, i));
-                return;
-            }
-            None => bound.get(l).cloned(),
-        },
-        E::Call {
-            callee: Callee::Def(g, _),
-            ..
-        } => returned_closures(cx, *g),
-        _ => None,
-    };
-    match closures {
+    if let E::Local(l, _) = cb.kind {
+        let closure = cx.fn_info(d).kind == FnKind::Closure;
+        if let (Some(i), false) = (params.iter().position(|p| *p == l), closure) {
+            found.params.insert((d, i));
+            return;
+        }
+    }
+    match res.expr(cx, d, cb) {
         Some(cs) => found.callbacks.extend(cs.into_iter().map(|c| (c, direct))),
         None => found.opaque.push(cb.clone()),
     }
 }
 
 /// The arguments of the calls in function `d` that `pick(callee, argument index)` selects
-/// (all of a call's arguments when any is selected), with the locals of `d` bound only to
-/// closures and `d`'s parameters.
-type Calls = Vec<(Vec<Expr>, HashMap<LocalId, Vec<DefId>>, Vec<LocalId>)>;
+/// (all of a call's arguments when any is selected), with `d`'s parameters.
+type Calls = Vec<(Vec<Expr>, Vec<LocalId>)>;
 
 fn calls_in(cx: &mut Ctx, d: DefId, pick: impl Fn(&Callee, usize) -> bool) -> Calls {
     let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
@@ -118,22 +110,17 @@ fn calls_in(cx: &mut Ctx, d: DefId, pick: impl Fn(&Callee, usize) -> bool) -> Ca
             }
         }
     });
-    let bound = if args_found.is_empty() {
-        HashMap::new()
-    } else {
-        closure_locals(&mut f.body.block)
-    };
     let params: Vec<LocalId> = f.params.iter().map(|p| p.local).collect();
     cx.defs[d.0 as usize] = Some(Def::Fn(f));
     args_found
         .into_iter()
-        .map(|a| (a, bound.clone(), params.clone()))
+        .map(|a| (a, params.clone()))
         .collect()
 }
 
 /// Locals every value of which is a closure literal (its `let`/`const` initializer and every
 /// assignment), with those closures.
-fn closure_locals(b: &mut Block) -> HashMap<LocalId, Vec<DefId>> {
+pub(super) fn closure_locals(b: &mut Block) -> HashMap<LocalId, Vec<DefId>> {
     #[derive(Default)]
     struct Lets {
         closures: HashMap<LocalId, Vec<DefId>>,
@@ -178,32 +165,4 @@ fn closure_locals(b: &mut Block) -> HashMap<LocalId, Vec<DefId>> {
         .into_iter()
         .filter(|(l, cs)| !other.contains(l) && !cs.is_empty())
         .collect()
-}
-
-/// The closures function `g` returns, when every value it returns is a closure literal.
-fn returned_closures(cx: &mut Ctx, g: DefId) -> Option<Vec<DefId>> {
-    struct Returns {
-        closures: Vec<DefId>,
-        other: bool,
-    }
-    impl VisitMut for Returns {
-        fn stmt(&mut self, s: &mut Stmt) {
-            if let S::Return(e) = &s.kind {
-                match e.as_ref().map(|e| &e.kind) {
-                    Some(E::Closure(c)) => self.closures.push(*c),
-                    _ => self.other = true,
-                }
-            }
-        }
-    }
-    let Some(Def::Fn(mut f)) = cx.defs[g.0 as usize].take() else {
-        return None;
-    };
-    let mut r = Returns {
-        closures: vec![],
-        other: f.body.block.value.is_some(),
-    };
-    visit::block(&mut f.body.block, &mut r);
-    cx.defs[g.0 as usize] = Some(Def::Fn(f));
-    (!r.other && !r.closures.is_empty()).then_some(r.closures)
 }

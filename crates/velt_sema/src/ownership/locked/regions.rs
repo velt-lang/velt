@@ -9,6 +9,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use velt_common::Span;
+
 use crate::ctx::Ctx;
 use crate::hir::{Callee, DefId, Expr, ExprKind as E, FnDef, LocalId, Pat, PatKind, TyId, TyKind};
 use crate::visit;
@@ -32,6 +34,9 @@ pub(super) struct Regions {
     captured: HashMap<DefId, Vec<LocalId>>,
     /// Parameters of each closure (after its captures).
     pub(super) params: HashMap<DefId, Vec<LocalId>>,
+    /// Function values called or passed in the bodies that are resolved to closures among the
+    /// bodies (their spans): their bodies are checked, so calls need not copy anything.
+    pub(super) resolved: HashSet<Span>,
     /// Set when [`Regions::add`] grew a set (the fixpoint goes on).
     pub(super) changed: bool,
 }
@@ -45,6 +50,7 @@ impl Regions {
             homes: HashSet::new(),
             captured: HashMap::new(),
             params: HashMap::new(),
+            resolved: HashSet::new(),
             changed: false,
         };
         let Sites { parent, passed, .. } = closure_sites(bodies);
@@ -52,11 +58,16 @@ impl Regions {
             let n = f.captures.len();
             let params: Vec<LocalId> = f.params[n..].iter().map(|p| p.local).collect();
             for k in &f.captures {
-                if *d == c {
-                    r.bits.insert((c, k.inner), OUT);
-                    r.homes.insert((c, k.inner));
-                } else if let Some(&p) = parent.get(d) {
-                    r.alias.insert((*d, k.inner), (p, k.outer));
+                match parent.get(d) {
+                    Some(&p) if *d != c => {
+                        r.alias.insert((*d, k.inner), (p, k.outer));
+                    }
+                    // The callback's, or those of a closure made outside it that it calls
+                    // (`super::values`): outside state.
+                    _ => {
+                        r.bits.insert((*d, k.inner), OUT);
+                        r.homes.insert((*d, k.inner));
+                    }
                 }
             }
             if *d == c {

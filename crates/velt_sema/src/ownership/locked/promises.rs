@@ -75,6 +75,13 @@ impl Promises<'_, '_, '_, '_> {
         if self.spawned.contains(&e.span) {
             return;
         }
+        // A closure resolved among the bodies makes its promises in its own body, checked
+        // there (`super::values`).
+        if let Callee::Indirect(c) = callee {
+            if self.r.resolved.contains(&c.span) {
+                return;
+            }
+        }
         if self.cx.holds_promise(e.ty) {
             let used: Vec<usize> = (0..args.len())
                 .filter(|&i| self.reaches_value(&args[i]))
