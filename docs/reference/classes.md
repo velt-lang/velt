@@ -36,7 +36,9 @@ hidden classes and no runtime shape checks.
   overridden methods go through a vtable, and only where the static type is a base class.
 - **Members**: `private` (usable only inside the declaring type's body, including closures
   there, but not in subclasses: ``` `x` is private ```; the standard library's own modules may
-  use the private members of its types, which is how std types build each other's handles),
+  use the private members of its types, which is how std types build each other's handles;
+  `console.log` shows private fields, as Node shows a TypeScript `private` field, except
+  zero-sized ones such as std's `runtime` markers),
   `public` (the default), `readonly`
   fields (assignable only in the constructor), `static` methods, and
   `static readonly NAME: T = const;` constants (`Account.LIMIT`, `Math.PI`). Mutable statics
