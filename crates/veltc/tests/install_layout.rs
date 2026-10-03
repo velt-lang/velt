@@ -5,6 +5,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+mod test_dir;
+
 const RUNTIME_LIB: &str = if cfg!(windows) {
     "velt_rt.lib"
 } else {
@@ -77,7 +79,7 @@ fn velt(prefix: &Path, cwd: &Path, home: &Path, args: &[&str]) -> Output {
 
 #[test]
 fn installed_prefix_runs_doctor_and_programs() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = test_dir::TestDir::new();
     let Some(prefix) = install(tmp.path()) else {
         return;
     };

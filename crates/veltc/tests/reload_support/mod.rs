@@ -11,6 +11,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
+mod job;
+
 /// How long one expectation may take (an `--exe` rebuild in a debug build of `velt` included).
 /// Generous like the golden harness's: under a full gate run the machine is saturated, and a
 /// first `--exe` build took over 30 s there.
@@ -50,10 +53,13 @@ pub struct Mark {
     stderr: usize,
 }
 
-/// A running `velt dev` (in its own process group on Unix, so the program dies with it).
+/// A running `velt dev` (in its own process group on Unix and a job object on Windows, so the
+/// programs it starts end with it).
 pub struct Dev {
     child: Child,
     log: Arc<Mutex<Log>>,
+    #[cfg(windows)]
+    job: job::Job,
 }
 
 impl Dev {
@@ -70,12 +76,19 @@ impl Dev {
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
         let mut child = cmd.spawn().expect("start velt dev");
+        #[cfg(windows)]
+        let job = job::Job::holding(&child);
         let log = Arc::new(Mutex::new(Log::default()));
         let out = child.stdout.take().unwrap();
         let err = child.stderr.take().unwrap();
         capture(out, log.clone(), |l| &mut l.stdout);
         capture(err, log.clone(), |l| &mut l.stderr);
-        Dev { child, log }
+        Dev {
+            child,
+            log,
+            #[cfg(windows)]
+            job,
+        }
     }
 
     /// Send `signal` to the supervisor alone (as a process manager would).
@@ -195,14 +208,22 @@ impl Dev {
 }
 
 impl Drop for Dev {
+    /// End `velt dev` and its programs, and wait until they have exited: on Windows their
+    /// directory can't be removed while they hold files in it.
     fn drop(&mut self) {
         #[cfg(unix)]
         if let Ok(pid) = i32::try_from(self.child.id()) {
             // SAFETY: signals our own process group (the supervisor and the program).
             unsafe { libc::kill(-pid, libc::SIGKILL) };
         }
+        #[cfg(windows)]
+        let ended = self.job.end();
         let _ = self.child.kill();
         let _ = self.child.wait();
+        #[cfg(windows)]
+        if !ended && !std::thread::panicking() {
+            panic!("the programs `velt dev` started did not exit");
+        }
     }
 }
 

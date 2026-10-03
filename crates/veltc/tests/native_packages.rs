@@ -15,6 +15,7 @@
 
 #[allow(dead_code)]
 mod reload_support;
+mod test_dir;
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -161,7 +162,7 @@ fn sqlite_package_with_native_code() {
             .expect("run cargo");
         assert!(status.success(), "cargo build -p velt_rt_shared failed");
     }
-    let tmp = tempfile::tempdir().expect("temp dir");
+    let tmp = test_dir::TestDir::new();
     let host = velt_codegen_cl::host_triple();
 
     // The author's machine: build the library from the repository's package (incremental).

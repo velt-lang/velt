@@ -5,6 +5,8 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+mod test_dir;
+
 fn velt(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_velt"));
     cmd.args(args)
@@ -23,7 +25,7 @@ fn text(bytes: &[u8]) -> String {
 
 #[test]
 fn check_reports_diagnostics_without_building() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     std::fs::write(
         dir.join("good.vlt"),
@@ -75,7 +77,7 @@ fn build(dir: &Path, env: &[(&str, &str)]) -> (bool, String) {
 
 #[test]
 fn debug_links_are_skipped_when_nothing_changed() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     let hello = "function main() {\n  console.log(\"hi\");\n}\n";
     std::fs::write(dir.join("hello.vlt"), hello).unwrap();
@@ -133,7 +135,7 @@ fn debug_builds_use_the_shared_runtime_when_built() {
         eprintln!("skipping: the shared runtime is not built (cargo build -p velt_rt_shared)");
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     std::fs::write(
         dir.join("hello.vlt"),
