@@ -1,0 +1,1 @@
+panic: cannot copy a function value that captured a `Conn`: it owns a resource ([Symbol.dispose]) and has no clone() method

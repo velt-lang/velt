@@ -249,7 +249,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.assign(proj(&dst, Proj::Field(1)), Rvalue::Use(clone));
         let transfer = cfunc(lw.cx.func(Work::EnvTransfer(def, targs.to_vec())));
         lw.assign(proj(&dst, Proj::Field(2)), Rvalue::Use(transfer));
-        for (field, mode, ty) in lw.value_captures(def) {
+        let caps = lw.value_captures(def);
+        let uncopyable = caps
+            .iter()
+            .find(|(_, mode, ty)| *mode == PassMode::Owned && lw.cx.uncopyable(*ty));
+        if let Some(&(_, _, ty)) = uncopyable {
+            lw.panic_cannot_copy("a function value that captured a", ty);
+        }
+        for (field, mode, ty) in caps {
             if mode == PassMode::Owned {
                 lw.clone_into(
                     proj(&src, Proj::Field(field)),

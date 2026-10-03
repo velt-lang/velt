@@ -19,6 +19,10 @@ impl FnLower<'_, '_> {
     }
 
     fn clone_expand(&mut self, s: &Place, d: &Place, ty: TyId) {
+        if !self.cx.is_class(ty) && self.cx.uncopyable_part(ty) == Some(ty) {
+            // A disposable struct or union (classes: `obj_clone_body`).
+            self.panic_cannot_copy("a", ty);
+        }
         if self.cx.boxed(ty) {
             return self.clone_boxed(s, d, ty, |lw, sv, dv| lw.clone_inline(sv, dv, ty));
         }
@@ -178,6 +182,17 @@ impl FnLower<'_, '_> {
         self.switch_to(done);
     }
 
+    /// Stop the program: a deep copy reached `ty`, which owns a resource it cannot duplicate.
+    /// Sema rejects the copies it sees (`x.clone()`, a resource still used after `spawn`);
+    /// this catches the rest (a generic `T`, the captures of a function value, the
+    /// implementor behind an interface value), which would release the resource twice.
+    /// `what` names the copied value ("a", or "a function value that captured a").
+    pub(in crate::lower) fn panic_cannot_copy(&mut self, what: &str, ty: TyId) {
+        let why = self.uncopyable_why(ty);
+        let name = self.cx.type_name(ty);
+        self.panic_msg(&format!("cannot copy {what} `{name}`: {why}"));
+    }
+
     pub(super) fn obj_clone_body(&mut self, obj: vir::Local, ty: TyId) {
         if let Some(m) = self.cx.own_clone(ty) {
             // The class duplicates what it owns itself (a resource handle, #122).
@@ -198,6 +213,9 @@ impl FnLower<'_, '_> {
             self.terminate(Terminator::Return(Operand::Copy(Place::local(out))));
             return;
         }
+        if self.cx.uncopyable_part(ty) == Some(ty) {
+            self.panic_cannot_copy("a", ty);
+        }
         let oa = self.cx.obj_agg(ty);
         let new = self.object_alloc(ty);
         let src = proj(&Place::local(obj), Proj::Deref(Ty::Agg(oa)));
@@ -214,6 +232,9 @@ impl FnLower<'_, '_> {
     }
 
     pub(super) fn dyn_clone_body(&mut self, data: vir::Local, ty: TyId) {
+        if self.cx.uncopyable(ty) {
+            self.panic_cannot_copy("an interface value holding a", ty);
+        }
         let out = self.temp(Ty::Ptr);
         if self.cx.is_class(ty) || self.cx.boxed(ty) {
             self.clone_into(Place::local(data), Place::local(out), ty);

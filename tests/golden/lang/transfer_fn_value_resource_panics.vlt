@@ -1,0 +1,33 @@
+// A function value inside an object the program still uses after `spawn` is copied with the
+// object for the task. A resource without `clone()` it captured cannot be copied: the copy
+// stops the program instead of releasing the resource twice (also an array of closures).
+class Conn {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+class Holder {
+  f: () => i64;
+
+  constructor(f: () => i64) {
+    this.f = f;
+  }
+}
+
+async function use(h: Holder): Promise<i64> {
+  return h.f();
+}
+
+async function main() {
+  const c = new Conn(1);
+  const h = new Holder(() => c.id);
+  console.log(await spawn(use(h)));
+  console.log("main", h.f());
+}

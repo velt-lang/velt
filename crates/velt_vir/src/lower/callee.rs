@@ -228,7 +228,13 @@ impl FnLower<'_, '_> {
         transfer: bool,
     ) -> Operand {
         let fty = self.sub(f.ty);
-        let fv = self.expr(f);
+        let mut fv = self.expr(f);
+        if transfer {
+            // A spawned call: the callee's state takes its captures from the environment (an
+            // async closure copies them, or shares a resource that cannot be copied,
+            // async_fn/ctor.rs `take_capture`), so it gets an environment made for the task.
+            fv = self.transfer_copy(fv, fty);
+        }
         let fp = self.place_of(fv, fty);
         let code = self.rvalue_temp(
             Ty::Ptr,

@@ -1,5 +1,5 @@
 //! `spawn(p)` (docs/reference/async.md "Tasks"). A direct call of a compiled async function
-//! or an async closure literal becomes a task from its initial state, with its arguments or
+//! or an async closure literal (or one called at once) becomes a task from its initial state, with its arguments or
 //! captures transferred (transfer.rs); a call through a function value, vtable or interface
 //! passes the task copies. `spawn(c ? f(x) : g(y))` spawns the chosen call the same way, as
 //! `c ? spawn(f(x)) : spawn(g(y))` would (#270). Any other promise — a stored one, already
@@ -45,15 +45,17 @@ impl FnLower<'_, '_> {
                     None
                 }
             }
-            hir::ExprKind::Closure(d) if self.cx.is_async_fn(*d) => {
-                let targs = self.targs.clone();
-                // The task may run on another thread: its captures are transferred.
-                self.transfer_args = true;
-                let state = self.state_from_closure(*d);
-                self.transfer_args = false;
-                state.map(|(info, s)| self.value_future(*d, &targs, &info, s, detached))
-            }
-            _ => None,
+            _ => match async_closure_literal(p) {
+                Some(d) if self.cx.is_async_fn(d) => {
+                    let targs = self.targs.clone();
+                    // The task may run on another thread: its captures are transferred.
+                    self.transfer_args = true;
+                    let state = self.state_from_closure(d);
+                    self.transfer_args = false;
+                    state.map(|(info, s)| self.value_future(d, &targs, &info, s, detached))
+                }
+                _ => None,
+            },
         };
         // Drops the task's result if nobody claims it (its join handle was dropped). A detached
         // task from an initial state reports its own error (value.rs) and leaves only `T`; a
@@ -156,6 +158,23 @@ fn spawned(e: &hir::Expr) -> &hir::Expr {
     match &e.kind {
         hir::ExprKind::Block(b) if b.stmts.is_empty() => b.value.as_deref().map_or(e, spawned),
         _ => e,
+    }
+}
+
+/// The async closure literal `spawn(p)` runs: `p` itself (`spawn(async () => …)`), or one
+/// called at once without arguments (`spawn((async () => …)())`, the same task: its captures
+/// are transferred, not copied through an environment).
+fn async_closure_literal(p: &hir::Expr) -> Option<hir::DefId> {
+    match &p.kind {
+        hir::ExprKind::Closure(d) => Some(*d),
+        hir::ExprKind::Call {
+            callee: hir::Callee::Indirect(f),
+            args,
+        } if args.is_empty() => match spawned(f).kind {
+            hir::ExprKind::Closure(d) => Some(d),
+            _ => None,
+        },
+        _ => None,
     }
 }
 

@@ -166,7 +166,13 @@ vtable or interface (ownership/boundary.rs); a copy that only turns out to be ne
 time panics. A borrow-ABI argument of a call through a function value, vtable or interface
 (the caller keeps its reference) is always copied. Async closures copy what they capture per
 call (deep copies of shared captures, `validate`), since an HTTP handler runs them
-concurrently (#8, #208). Strings keep their atomic counts (stage 1); `shared<T>` stays atomic.
+concurrently (#8, #208); a capture owning a resource without `clone()` is shared with the call
+instead (`validate` `share_uncopyable`, async_fn/ctor.rs `take_capture`), and a call spawned
+through a function value first copies the closure for the task (callee.rs `call_indirect`), so
+such a capture still referenced by the caller panics in the transfer. `spawn` of an async
+closure literal called at once is the literal's task (captures transferred, async_fn/spawn.rs).
+A deep copy that reaches a resource without `clone()` elsewhere (a generic `T`, a function
+value's captures, an interface value's implementor) panics (glue/clone.rs). Strings keep their atomic counts (stage 1); `shared<T>` stays atomic.
 
 ## 7. Identity and the `struct` keyword
 - `==` / `!=` on objects (classes, arrays, structs, object literals, interface and function

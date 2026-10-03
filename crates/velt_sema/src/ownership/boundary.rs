@@ -4,7 +4,7 @@
 //! resource without one cannot be copied, so passing it to `spawn` while it is still in use is
 //! an error here, where it is visible: an argument of `spawn(f(…))` that became a share
 //! (`Intrinsic::Share`, the variable is used again) and a shared capture of a spawned async
-//! closure literal. Values that only turn out to be shared at run time (another reference made
+//! closure literal (or of one called at once). Values that only turn out to be shared at run time (another reference made
 //! earlier) are checked by the transfer itself, which panics instead of releasing the
 //! resource twice.
 
@@ -93,6 +93,14 @@ fn spawned_copies(
                     }
                 }
             }
+        }
+        // An async closure literal called at once is spawned like the literal itself (its
+        // captures go to the task; velt_vir async_fn/spawn.rs).
+        E::Call {
+            callee: Callee::Indirect(f),
+            args,
+        } if args.is_empty() && matches!(f.kind, E::Closure(_)) => {
+            spawned_copies(cx, f, (locals, names), out);
         }
         // Through a function value, an interface or an overridden method, the callee only
         // borrows its arguments (and receiver): the task always gets copies.

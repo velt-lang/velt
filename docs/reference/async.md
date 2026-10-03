@@ -39,7 +39,13 @@ Promises behave like JavaScript's, at Rust's cost:
   afterwards is copied too, with what it captures (also a variable it assigns), so the task and
   the caller each run their own copy. A closure handed on for the last time that captures only
   values nothing else references (an HTTP handler capturing a disposable resource, say) goes to
-  the task as it is, and a captured value's `[Symbol.dispose]()` runs once.
+  the task as it is. `spawn(async () => …)` and `spawn((async () => …)())` hand the captured
+  values themselves to the task, so a captured resource the program no longer uses moves and
+  its `[Symbol.dispose]()` runs once, on the task. Each call of an async closure otherwise gets
+  its own copy of what the closure captured, except a resource without `clone()`, which the
+  call shares with the closure (it is released once, after both). So `spawn(f())` through an
+  async closure value `f` gives the task a copy of `f`, and stops the program
+  (``panic: cannot copy …``) when `f` captured such a resource.
 - A value owning a `[Symbol.dispose]` resource is copied by its class's own `clone()` method
   ([Classes](classes.md)), so each copy releases its own resource; what the returned object
   still shares with the original (a shallow `clone()`) is deep-copied in turn, and a `clone()`

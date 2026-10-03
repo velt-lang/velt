@@ -48,6 +48,9 @@ async function main() {
   const d = new Conn(3);
   const v = spawn(async (): Promise<i64> => d.id);
   console.log(d.id, await v);
+  const e = new Conn(5);
+  const w = spawn((async (): Promise<i64> => e.id)());
+  console.log(e.id, await w);
   const s: Server = new Echo();
   console.log(await spawn(s.serve(new Conn(4))));
 }

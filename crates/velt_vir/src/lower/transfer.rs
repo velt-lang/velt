@@ -82,29 +82,40 @@ impl Cx<'_> {
     /// field, element or payload)? Function and interface values are checked when they are
     /// copied (their environment's or implementor's own glue).
     pub(super) fn uncopyable(&mut self, t: TyId) -> bool {
+        self.uncopyable_part(t).is_some()
+    }
+
+    /// The part of `t` that makes it `uncopyable`: the resource type or the promise type.
+    pub(super) fn uncopyable_part(&mut self, t: TyId) -> Option<TyId> {
         self.uncopyable_in(t, true, &mut HashSet::new())
     }
 
-    /// `uncopyable`, or with `honour_clones` false: could a field-by-field copy of `t` duplicate
-    /// a resource (whatever `clone()` methods its classes have)?
-    fn uncopyable_in(&mut self, t: TyId, honour_clones: bool, seen: &mut HashSet<TyId>) -> bool {
+    /// `uncopyable_part`, or with `honour_clones` false: the part through which a
+    /// field-by-field copy of `t` would duplicate a resource (whatever `clone()` methods its
+    /// classes have).
+    fn uncopyable_in(
+        &mut self,
+        t: TyId,
+        honour_clones: bool,
+        seen: &mut HashSet<TyId>,
+    ) -> Option<TyId> {
         if !seen.insert(t) {
-            return false;
+            return None;
         }
         let parts = match self.kind(t) {
-            TyKind::Promise(..) => return true,
+            TyKind::Promise(..) => return Some(t),
             TyKind::Shared(_) | TyKind::Dyn(..) | TyKind::Closure(_) | TyKind::FnPtr { .. } => {
-                return false
+                return None
             }
-            TyKind::Adt(..) if honour_clones && self.own_clone(t).is_some() => return false,
-            TyKind::Adt(d, _) if self.dispose_of(d).is_some() => return true,
+            TyKind::Adt(..) if honour_clones && self.own_clone(t).is_some() => return None,
+            TyKind::Adt(d, _) if self.dispose_of(d).is_some() => return Some(t),
             TyKind::Array(e) => vec![e],
             TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
             _ => self.part_types(t),
         };
         parts
             .into_iter()
-            .any(|p| self.uncopyable_in(p, honour_clones, seen))
+            .find_map(|p| self.uncopyable_in(p, honour_clones, seen))
     }
 
     /// The class's own `clone()` method (declared on the class itself, no parameters, not
@@ -127,7 +138,7 @@ impl Cx<'_> {
             self.own_clones = Some(self.find_own_clones());
         }
         let m = self.own_clones.as_ref().and_then(|m| m.get(&d).copied());
-        let m = m.filter(|_| self.uncopyable_in(t, false, &mut HashSet::new()));
+        let m = m.filter(|_| self.uncopyable_in(t, false, &mut HashSet::new()).is_some());
         self.honoured_clones.insert(t, m);
         m
     }
@@ -207,10 +218,33 @@ impl FnLower<'_, '_> {
     /// Panic: a value of `ty` that the program still shares would have to be copied for
     /// another task, but it owns a resource without `clone()` (module docs).
     pub(super) fn panic_uncopyable(&mut self, ty: TyId) {
+        let why = self.uncopyable_why(ty);
         let name = self.cx.type_name(ty);
-        let msg = self.str_lit(&format!(
-            "cannot copy a `{name}` for another task: other references to it are still in use, and it owns a resource ([Symbol.dispose]) without a clone() method"
+        self.panic_msg(&format!(
+            "cannot copy a `{name}` for another task: other references to it are still in use, and {why}"
         ));
+    }
+
+    /// Why a value of `ty` cannot be deep-copied (`Cx::uncopyable_part`): `it owns …` or `it
+    /// holds …`.
+    pub(super) fn uncopyable_why(&mut self, ty: TyId) -> String {
+        let part = self.cx.uncopyable_part(ty).unwrap_or(ty);
+        let promise = matches!(self.cx.kind(part), TyKind::Promise(..));
+        let pname = self.cx.type_name(part);
+        match (part == ty, promise) {
+            (_, true) => "it holds a promise, which cannot be copied".to_string(),
+            (true, false) => {
+                "it owns a resource ([Symbol.dispose]) and has no clone() method".to_string()
+            }
+            (false, false) => format!(
+                "it holds a `{pname}`, which owns a resource ([Symbol.dispose]) and has no clone() method"
+            ),
+        }
+    }
+
+    /// Stop the program with `msg` (a runtime panic).
+    pub(super) fn panic_msg(&mut self, msg: &str) {
+        let msg = self.str_lit(msg);
         let at = self.operand_addr(msg, Ty::Agg(vir::STR_AGG));
         self.call_rt(Rt::Panic, vec![at], None);
     }
