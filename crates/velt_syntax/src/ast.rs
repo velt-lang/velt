@@ -275,7 +275,7 @@ pub enum TypeExprKind {
     Void,
 }
 
-/// `name: T` / `name?: T` in an object type.
+/// `name: T` / `name?: T` / `readonly name: T` in an object type.
 #[derive(Clone, Debug)]
 pub struct ObjectTypeField {
     pub name: Ident,
@@ -284,6 +284,8 @@ pub struct ObjectTypeField {
     /// `name?: T` — parsed as `name: T | null` (the flag only keeps the spelling); an object
     /// literal may leave out any `T | null` field of an object type.
     pub optional: bool,
+    /// `readonly name: T` — the field can't be assigned (docs/internals/design/shared-models.md).
+    pub readonly: bool,
     pub span: Span,
 }
 

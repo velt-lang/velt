@@ -88,6 +88,9 @@ Decisions and their rationale, including what is still planned:
   (proposed; open questions).
 - [Native code in packages](design/native-packages.md): a `native/` Rust crate in a package, prebuilt
   per-target binaries and the runtime function table.
+- [Data models shared with TypeScript](design/shared-models.md): field-only interfaces as object
+  types, `readonly` fields in object types, `Partial`/`Required`/`Readonly`/`Pick`/`Omit`
+  (decided, issue #326).
 - [A package manifest written in Velt](design/package-manifest.md): `package.vlt`, data-only and
   typed, replacing `velt.toml` (implemented, issue #128).
 

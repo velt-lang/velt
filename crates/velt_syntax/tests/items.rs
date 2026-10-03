@@ -228,3 +228,29 @@ fn throws_clauses() {
     // `throws` stays an ordinary identifier elsewhere.
     parse_ok("function f() { const throws = 1; console.log(throws); }");
 }
+
+#[test]
+fn readonly_fields_in_object_types() {
+    let m = parse_ok(
+        "type U = { readonly id: i64; readonly name?: string; readonly: bool, readonly?: i64 };",
+    );
+    let ItemKind::TypeAlias(a) = &m.items[0].kind else {
+        panic!()
+    };
+    let TypeExprKind::Object(fields) = &a.ty.kind else {
+        panic!()
+    };
+    let got: Vec<(&str, bool, bool)> = fields
+        .iter()
+        .map(|f| (f.name.name.as_str(), f.readonly, f.optional))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("id", true, false),
+            ("name", true, true),
+            ("readonly", false, false),
+            ("readonly", false, true)
+        ]
+    );
+}

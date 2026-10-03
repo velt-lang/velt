@@ -144,13 +144,24 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `{ name: T; other: U }` (`,` also separates fields; a trailing separator is allowed).
+    /// `{ name: T; readonly other?: U }` (`,` also separates fields; a trailing separator is
+    /// allowed).
     fn parse_object_type(&mut self) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
         self.expect(Tok::LBrace)?;
         let mut fields = Vec::new();
         while !self.at(Tok::RBrace) {
             let flo = self.cur_lo();
+            // `readonly` is a modifier only when a field name follows (a field may be named
+            // `readonly`).
+            let readonly = self.at(Tok::Kw(Kw::Readonly))
+                && !matches!(
+                    self.nth(1),
+                    Tok::Colon | Tok::Question | Tok::Semi | Tok::Comma | Tok::RBrace
+                );
+            if readonly {
+                self.bump();
+            }
             let name = self.parse_prop_name()?;
             let optional = self.eat(Tok::Question);
             self.expect(Tok::Colon)?;
@@ -162,6 +173,7 @@ impl<'a> Parser<'a> {
                 name,
                 ty,
                 optional,
+                readonly,
                 span: self.span_from(flo),
             });
             if !self.eat(Tok::Semi) && !self.eat(Tok::Comma) {

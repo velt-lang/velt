@@ -305,6 +305,10 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   `{ name: string; n: i64 }` with a fixed layout (a field access is one load). An object type
   accepts exactly its fields: extra fields are a type error, and adding a property later is an
   error (use a `Map` or a `Record`).
+- **`readonly` fields**: in `{ readonly id: i64; name: string }`, assigning `id` is an error
+  (``cannot assign to `id`: it is a readonly field``); like TypeScript's, the check is shallow
+  (`u.tags.push(x)` is fine). A value converts between a type and the same type without
+  `readonly`, in both directions, and stays the same object.
 - **Spread**: `{ ...a, b: 1 }` builds a merged object at compile time (later keys win);
   `[x, ...xs]` builds a new array. Spread arguments, `f(...xs)`, are not supported.
 - **Destructuring**: `const [a, b] = pair;`, `const [head, ...rest] = xs;`,
