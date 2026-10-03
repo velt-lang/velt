@@ -16,8 +16,8 @@ use crate::message::{read_response, Response};
 const MAX_RESPONSE: usize = 256 << 20;
 
 /// How long a request may take.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Limits {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Limits {
     /// Connecting to one address of the host.
     pub connect: Duration,
     /// Waiting for the server in one read or write.
@@ -28,7 +28,8 @@ pub(crate) struct Limits {
 }
 
 impl Limits {
-    pub(crate) const DEFAULT: Limits = Limits {
+    /// The limits of [`fetch`]: 10 s to connect, 60 s of silence, 10 minutes in all.
+    pub const DEFAULT: Limits = Limits {
         connect: Duration::from_secs(10),
         idle: Duration::from_secs(60),
         total: Duration::from_secs(600),
@@ -47,13 +48,28 @@ pub fn fetch(
     fetch_within(method, url, headers, body, Limits::DEFAULT)
 }
 
-pub(crate) fn fetch_within(
+/// [`fetch`] with other [`Limits`] (an editor wants an answer in seconds, not minutes).
+pub fn fetch_within(
     method: &str,
     url: &str,
     headers: &[(&str, &str)],
     body: &[u8],
     limits: Limits,
 ) -> Result<Response, String> {
+    // A line break in the request line or a header would end it early: what follows would be
+    // read as headers of its own (a token from a file or the environment must not inject any).
+    let line_break = |s: &str| s.contains(['\r', '\n']);
+    if line_break(method) || line_break(url) {
+        return Err(format!(
+            "{method:?} {url:?}: a line break in the request line"
+        ));
+    }
+    if let Some((name, _)) = headers.iter().find(|(n, v)| line_break(n) || line_break(v)) {
+        return Err(format!(
+            "{method} {url}: the `{}` header contains a line break",
+            name.trim()
+        ));
+    }
     let deadline = Instant::now() + limits.total;
     if let Some(rest) = url.strip_prefix("http://") {
         return plain(method, rest, headers, body, limits, deadline)
@@ -301,5 +317,21 @@ mod tests {
     fn urls_split_into_host_and_path() {
         assert_eq!(split("h:8080/a?b"), ("h:8080", "/a?b"));
         assert_eq!(split("h"), ("h", "/"));
+    }
+
+    /// A CR or LF in a header (a token, say) would inject headers: nothing is sent at all.
+    #[test]
+    fn line_breaks_never_reach_the_wire() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let injected = "t0ken\r\nX-Admin: yes";
+        for (name, value) in [("Authorization", injected), ("X\nY", "v")] {
+            let err = fetch("GET", &url, &[(name, value)], b"").unwrap_err();
+            assert!(err.contains("contains a line break"), "{err}");
+        }
+        let err = fetch("GET", &format!("{url}x\r\nX: y"), &[], b"").unwrap_err();
+        assert!(err.contains("a line break in the request line"), "{err}");
+        assert!(listener.accept().is_err(), "no connection was made");
     }
 }

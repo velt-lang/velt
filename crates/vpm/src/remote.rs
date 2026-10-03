@@ -32,7 +32,16 @@ fn api(url: &str, name: &str, rest: &str) -> String {
 
 /// The package's index; `Ok(None)` if the registry does not know it.
 pub fn read_index(url: &str, name: &str) -> Result<Option<Index>, String> {
-    let resp = velt_http::fetch("GET", &api(url, name, "index"), &[], b"")?;
+    read_index_within(url, name, velt_http::Limits::DEFAULT)
+}
+
+/// [`read_index`] within `limits`.
+pub fn read_index_within(
+    url: &str,
+    name: &str,
+    limits: velt_http::Limits,
+) -> Result<Option<Index>, String> {
+    let resp = velt_http::fetch_within("GET", &api(url, name, "index"), &[], b"", limits)?;
     match resp.status {
         // A server from before the index was JSON answers with `index.toml`, typed as TOML.
         200 if is_toml(resp.header("content-type")) => Err(format!(
@@ -169,20 +178,26 @@ fn write(
 /// The token may travel only over `https://`, or plain `http://` to this machine: anyone on the
 /// network path could read it otherwise.
 fn check_token_transport(url: &str) -> Result<(), String> {
+    if is_tls_or_loopback(url) {
+        return Ok(());
+    }
+    Err(format!(
+        "not sending ${TOKEN_VAR} to {url}: only an https:// registry, or http:// on this machine, gets it; use the registry's https:// URL (put `velt registry serve` behind a TLS reverse proxy)"
+    ))
+}
+
+/// Whether `url` is `https://`, or plain `http://` to this machine (`localhost` or a loopback
+/// address).
+pub fn is_tls_or_loopback(url: &str) -> bool {
     let scheme_is = |scheme: &str| {
         url.get(..scheme.len())
             .is_some_and(|s| s.eq_ignore_ascii_case(scheme))
     };
     if scheme_is("https://") {
-        return Ok(());
+        return true;
     }
-    let refused = || {
-        format!(
-            "not sending ${TOKEN_VAR} to {url}: only an https:// registry, or http:// on this machine, gets it; use the registry's https:// URL (put `velt registry serve` behind a TLS reverse proxy)"
-        )
-    };
     if !scheme_is("http://") {
-        return Err(refused());
+        return false;
     }
     let rest = &url["http://".len()..];
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
@@ -191,14 +206,10 @@ fn check_token_transport(url: &str) -> Result<(), String> {
         Some(v6) => v6.split(']').next().unwrap_or(v6),
         None => host_port.split(':').next().unwrap_or(host_port),
     };
-    let loopback = host.eq_ignore_ascii_case("localhost")
+    host.eq_ignore_ascii_case("localhost")
         || host
             .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback());
-    if loopback {
-        return Ok(());
-    }
-    Err(refused())
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// Yank (`yanked`) or unyank `name` `version`.
@@ -254,12 +265,21 @@ fn check_names(names: &[&str]) -> Result<(), String> {
 
 /// The registry's answer to a search for `query`.
 pub fn search(url: &str, query: &str) -> Result<Vec<crate::search::Hit>, String> {
+    search_within(url, query, velt_http::Limits::DEFAULT)
+}
+
+/// [`search`] within `limits`.
+pub fn search_within(
+    url: &str,
+    query: &str,
+    limits: velt_http::Limits,
+) -> Result<Vec<crate::search::Hit>, String> {
     let target = format!(
         "{}/api/v1/search?q={}",
         url.trim_end_matches('/'),
         crate::search::encode_query(query)
     );
-    let resp = velt_http::fetch("GET", &target, &[], b"")?;
+    let resp = velt_http::fetch_within("GET", &target, &[], b"", limits)?;
     if resp.status != 200 {
         return Err(format!(
             "registry {url}: {} searching: {}",
