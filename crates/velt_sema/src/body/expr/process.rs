@@ -1,7 +1,7 @@
 //! Node's `process` members that cost nothing at run time, on the builtin `process` namespace:
 //! `process.stdout.write(s)` and `process.stderr.write(s)` (a string, without a newline; `true`
 //! like Node), and `process.env.NAME` / `process.env[name]` (`string | null`: there is no
-//! `undefined`). They are calls of the prelude's `processWrite` / `processEnv`
+//! `undefined`). They are calls of the prelude's `__processWrite` / `__processEnv`
 //! (std/prelude/process.vlt). `process.exit` is an intrinsic (`builtins`); the rest of Node's
 //! `process` lives in `velt:process`.
 
@@ -83,7 +83,7 @@ impl FnCx<'_, '_> {
         let mut full = vec![fd];
         full.extend(args.iter().cloned());
         let what = format!("process.{}.write", stream.name);
-        Some(self.prelude_call("processWrite", &what, &[], &full, exp, span))
+        Some(self.prelude_call("__processWrite", &what, &[], &full, exp, span))
     }
 
     /// `process.env.NAME`; `None` for anything else.
@@ -101,18 +101,23 @@ impl FnCx<'_, '_> {
             ast::ExprKind::Lit(ast::Lit::Str(prop.name.clone())),
             prop.span,
         );
-        Some(self.prelude_call("processEnv", "process.env", &[], &[name], exp, span))
+        Some(self.prelude_call("__processEnv", "process.env", &[], &[name], exp, span))
     }
 
-    /// `process.env.NAME = v` / `process.env[name] = v` (reported): environment variables are
-    /// set with `setEnv` of `velt:process`.
-    pub(super) fn reject_env_assign(&mut self, target: &ast::Expr) -> bool {
+    /// Is `target` `process.env.NAME` or `process.env[name]`?
+    fn is_env_entry(&mut self, target: &ast::Expr) -> bool {
         let (ast::ExprKind::Member { object, .. } | ast::ExprKind::Index { object, .. }) =
             &target.kind
         else {
             return false;
         };
-        if self.process_member(object).is_none_or(|m| m.name != "env") {
+        self.process_member(object).is_some_and(|m| m.name == "env")
+    }
+
+    /// `process.env.NAME = v` / `process.env[name] = v` (reported): environment variables are
+    /// set with `setEnv` of `velt:process`.
+    pub(super) fn reject_env_assign(&mut self, target: &ast::Expr) -> bool {
+        if !self.is_env_entry(target) {
             return false;
         }
         self.cx.error(
@@ -121,6 +126,19 @@ impl FnCx<'_, '_> {
                     "use `setEnv(name, value)` from `velt:process` (not synchronized with reads \
                      on other threads: set variables at startup)",
                 ),
+        );
+        true
+    }
+
+    /// `delete process.env.NAME` / `delete process.env[name]` (reported): environment variables
+    /// are removed with `removeEnv` of `velt:process`.
+    pub(super) fn reject_env_delete(&mut self, target: &ast::Expr) -> bool {
+        if !self.is_env_entry(target) {
+            return false;
+        }
+        self.cx.error(
+            velt_common::Diagnostic::error("cannot `delete` from `process.env`", target.span)
+                .with_note("use `removeEnv(name)` from `velt:process`"),
         );
         true
     }
@@ -136,6 +154,6 @@ impl FnCx<'_, '_> {
             return None;
         }
         let args = std::slice::from_ref(index);
-        Some(self.prelude_call("processEnv", "process.env", &[], args, None, span))
+        Some(self.prelude_call("__processEnv", "process.env", &[], args, None, span))
     }
 }

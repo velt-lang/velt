@@ -1,6 +1,6 @@
 // std/prelude/process: the members of the builtin `process` namespace that the compiler turns
-// into calls: `process.stdout.write(s)` / `process.stderr.write(s)` (`processWrite`),
-// `process.env.NAME` / `process.env[name]` (`processEnv`) and `process.memoryUsage()`
+// into calls: `process.stdout.write(s)` / `process.stderr.write(s)` (`__processWrite`),
+// `process.env.NAME` / `process.env[name]` (`__processEnv`) and `process.memoryUsage()`
 // (`processMemoryUsage`). The rest of Node's `process` is in `velt:process` (docs/std/process.md).
 
 declare function velt_rt_write_str(stream: u32, s: string);
@@ -8,13 +8,13 @@ declare function velt_rt_env_get(name: string, out: string): bool;
 
 // Writes `s` to standard output (`stream` 1) or standard error (2), without a newline, ordered
 // with `console.log` / `console.error`. Returns `true`, like Node's `write`.
-export function processWrite(stream: u32, s: string): bool {
+export function __processWrite(stream: u32, s: string): bool {
   velt_rt_write_str(stream, s);
   return true;
 }
 
 // The value of environment variable `name`, or null if it is unset.
-export function processEnv(name: string): string | null {
+export function __processEnv(name: string): string | null {
   let out = "";
   if (velt_rt_env_get(name, out)) {
     return out;

@@ -192,11 +192,10 @@ impl FnCx<'_, '_> {
             Some(id) if !optional => return self.ident_expr(&id, exp, want),
             _ => {}
         }
-        if let Some(h) = self
-            .process_env_member(object, prop, exp, span)
-            .filter(|_| !optional)
-        {
-            return h;
+        if !optional {
+            if let Some(h) = self.process_env_member(object, prop, exp, span) {
+                return h;
+            }
         }
         if let Some(object) = self.without_namespace(object) {
             return self.member(&object, prop, optional, exp, want, span);
@@ -213,11 +212,14 @@ impl FnCx<'_, '_> {
                         ("process", "stdout" | "stderr" | "env") => {
                             format!("{what} is not a value: use its members")
                         }
-                        ("process", _) => format!("{what} is not supported"),
+                        ("process", p) if !matches!(p, "exit" | "memoryUsage") => {
+                            format!("{what} is not supported")
+                        }
                         _ => format!("{what} can only be called"),
                     };
                     let mut d = Diagnostic::error(msg, span);
-                    if id.name == "process" {
+                    if id.name == "process" && !matches!(prop.name.as_str(), "exit" | "memoryUsage")
+                    {
                         d = d.with_note(process_note(&prop.name));
                     }
                     self.cx.error(d);
@@ -442,9 +444,9 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// Where Node's `process.<name>` lives in Velt: the builtin `process` namespace has `exit`,
-/// `memoryUsage()`, `stdout.write`, `stderr.write` and `env` (`super::process`); the rest is in
-/// `velt:process`.
+/// Where Node's `process.<name>` lives in Velt, for a `name` that is not a value of the builtin
+/// `process`. That namespace has `exit`, `memoryUsage()`, `stdout.write`, `stderr.write` and
+/// `env` (`super::process`); the rest is in `velt:process`.
 fn process_note(name: &str) -> String {
     match name {
         "stdout" | "stderr" => format!(
@@ -459,8 +461,9 @@ fn process_note(name: &str) -> String {
         "cwd" | "chdir" => {
             format!("use `import {{ {name} }} from \"velt:process\"`: `{name}` is a function there")
         }
-        _ => "use the functions of `velt:process` (`args()`, `env(name)`, `cwd()`, \
-              `stdout.write(s)`)"
+        _ => "the builtin `process` has `process.env.NAME`, `process.stdout.write(s)`, \
+              `process.exit(code)` and `process.memoryUsage()`; `args()` and `cwd()` are in \
+              `velt:process`"
             .to_string(),
     }
 }

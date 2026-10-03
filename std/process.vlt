@@ -1,6 +1,8 @@
-// std/process: command-line arguments, environment variables, working directory and exit
-// (rt_abi_async.md §8), and synchronous writes to standard output (`stdout.write`). Strings are
-// UTF-8 (the runtime uses the wide APIs on Windows).
+// std/process: command-line arguments, setting environment variables, working directory and exit
+// (rt_abi_async.md §8), and byte writes to standard output (`stdout.write`). Reading variables
+// (`process.env.NAME`) and writing strings (`process.stdout.write(s)`) are on the builtin
+// `process`, with no import (std/prelude/process.vlt). Strings are UTF-8 (the runtime uses the
+// wide APIs on Windows).
 
 import { IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
 
@@ -13,10 +15,10 @@ declare function velt_rt_process_chdir(path: string): IoStatus;
 declare function velt_rt_stdout_write_bytes(bytes: u8[]);
 declare function velt_rt_write_str(stream: u32, s: string);
 
-// Standard output as a synchronous byte sink (Node's `process.stdout.write`, which Velt spells
-// `stdout.write` after `import { stdout } from "velt:process"`). Writes are ordered with
-// `console.log` and buffered the same way; a large array (64 KiB or more) goes straight to the OS
-// from the caller's buffer, without a copy. Portable: no `/dev/stdout` needed.
+// Standard output as a synchronous byte sink (for strings, `process.stdout.write(s)` needs no
+// import). Writes are ordered with `console.log` and buffered the same way; a large array
+// (64 KiB or more) goes straight to the OS from the caller's buffer, without a copy. Portable: no
+// `/dev/stdout` needed.
 export struct Stdout {
   // Writes raw bytes (the array stays the caller's, ready to be refilled).
   write(bytes: u8[]) {

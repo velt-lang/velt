@@ -2,7 +2,7 @@
 // `length`, using the result of an in-place array method (`toSorted`/`toReversed` for `sort` and
 // `reverse`; for `fill`, the variable or a variable to store a temporary in; other types' `sort`
 // get no array hint), `then`/`catch` on a promise, and Node's `process.argv` (and the
-// `process` members that are not values or not assignable).
+// `process` members that are not values, can only be called, or can't be assigned or deleted).
 class Deck {
   sort() {}
 }
@@ -24,5 +24,9 @@ async function main() {
   const args = process.argv;
   const out = process.stdout;
   process.env.HOME = "/tmp";
+  delete process.env.HOME;
+  const quit = process.exit;
+  const usage = process.memoryUsage;
+  const pid = process.pid;
   process.stdout.end();
 }
