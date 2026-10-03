@@ -12,18 +12,23 @@ import, as in Node:
   `const` and test that. On Windows names ignore case, as in Node.
 - `process.exit(code: i32)`, `process.memoryUsage()` (below).
 
-`import { args, cwd } from "velt:process"` for the rest: command-line arguments, changing
-variables, the working directory and byte writes.
+`import { args, cwd } from "velt:process"` for the rest: command-line arguments, listing and
+changing variables, the working directory and byte writes.
 
 - `args()`: the arguments after the program path. `argv()`: every argument, starting with the
   program path.
+- `envAll(): Record<string, string>`: every variable, as a snapshot (Node's `process.env` read as
+  an object, so `Object.keys(envAll())` and `Object.entries(envAll())` work as in Node). Names
+  are in the order the operating system keeps them, which is Node's order too. On Windows names
+  keep their case and the record's lookups are case-sensitive, unlike `process.env.NAME`; the
+  per-drive `=C:` entries are left out, as in Node. In the browser the record is empty.
 - `setEnv(name, value)`, `removeEnv(name)`. Set variables at startup: writes are not
   synchronized with concurrent reads.
 - `cwd()`, `chdir(path)`: both throw `IoError`. `exit(code: i32)`.
 - `stdout.write(bytes: u8[])`: raw bytes, without a copy for large arrays.
 
 ```ts
-import { args, setEnv, cwd } from "velt:process";
+import { args, envAll, setEnv, cwd } from "velt:process";
 
 function main(): i32 {
   setEnv("GREETING", "hej");
@@ -31,6 +36,7 @@ function main(): i32 {
   process.stdout.write(`${greeting}, ${args().length} arguments
 `);
   console.log(process.env.NO_SUCH_VAR, cwd().length > 0);
+  console.log(Object.keys(envAll()).includes("GREETING"));
   return 0;
 }
 ```

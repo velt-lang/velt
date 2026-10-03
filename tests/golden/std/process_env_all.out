@@ -1,0 +1,9 @@
+[ 'VELT_ENVALL_A', 'VELT_ENVALL_B', 'VELT_ENVALL_C' ]
+VELT_ENVALL_A=1
+VELT_ENVALL_B=two words
+VELT_ENVALL_C=ä=b
+two words unset
+true
+true
+[ 'VELT_ENVALL_A', 'VELT_ENVALL_B', 'VELT_ENVALL_C' ] [ 'VELT_ENVALL_B', 'VELT_ENVALL_C', 'VELT_ENVALL_D' ]
+[]
