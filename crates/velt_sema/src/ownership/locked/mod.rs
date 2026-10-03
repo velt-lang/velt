@@ -18,11 +18,13 @@
 //!   the outside state keep their identity. A call that stores a part of an argument it also
 //!   modifies (`v.addTo(out)`) cannot copy it, and is an error.
 //!
-//! The callbacks are found by [`callbacks`]. The standard
+//! The callbacks are found by [`callbacks`]; one whose body is not found ([`opaque`]) is
+//! accepted when no function it may be crosses the lock ([`candidates`]). The standard
 //! library's own callbacks keep identity through stores: they move values out of the lock
 //! deliberately (std/prelude/promise.vlt `takeSettlement`).
 
 mod callbacks;
+mod candidates;
 mod kept;
 mod later;
 mod opaque;
@@ -44,12 +46,20 @@ use crate::visit::{self, VisitMut};
 pub(crate) fn check_locked(cx: &mut Ctx) {
     let mut res = values::Resolver::default();
     let found = callbacks::find(cx, &mut res);
-    opaque::check(cx, &found.opaque);
-    let callbacks = found.callbacks;
-    if callbacks.is_empty() && found.named.is_empty() {
+    if found.callbacks.is_empty() && found.named.is_empty() && found.opaque.is_empty() {
         return;
     }
     let summaries = summary::Summaries::compute(cx);
+    // Before the callbacks are rewritten: a candidate is checked as written.
+    let direct = found
+        .callbacks
+        .iter()
+        .filter(|c| c.1)
+        .map(|c| c.0)
+        .collect();
+    let mut cands = candidates::Candidates::new(&summaries, direct);
+    opaque::check(cx, &mut cands, &mut res, &found.opaque);
+    let callbacks = found.callbacks;
     let mut seen_named = HashSet::new();
     for &(g, span) in &found.named {
         if seen_named.insert((g, span)) {
@@ -187,18 +197,24 @@ impl VisitMut for FnValues<'_, '_> {
     }
 }
 
-/// Report the promises callback `c` makes from the locked value and transfer what it stores
-/// across the lock (module docs).
-/// `reported`: spans already reported (a closure may be checked with several callbacks).
-fn check_callback(
+/// What a callback does across the lock, found while its bodies are rewritten (transfers and
+/// copies inserted).
+struct Crossings {
+    made: Vec<promises::Made>,
+    unfixable: Vec<stores::Unfixable>,
+    inward: Vec<(crate::hir::LocalId, Span)>,
+}
+
+/// Run the checks of callback `c` on its `bodies` (`take_bodies`), rewriting them.
+fn crossings(
     cx: &mut Ctx,
     s: &summary::Summaries,
-    res: &mut values::Resolver,
     c: DefId,
-    reported: &mut HashSet<Span>,
-) {
-    let (mut bodies, resolved, named) = take_bodies(cx, res, c);
-    let mut r = regions::Regions::new(c, &mut bodies);
+    bodies: &mut [(DefId, FnDef)],
+    resolved: HashSet<Span>,
+    named: HashMap<Span, Vec<DefId>>,
+) -> Crossings {
+    let mut r = regions::Regions::new(c, bodies);
     r.resolved = resolved;
     r.named = named;
     loop {
@@ -230,28 +246,51 @@ fn check_callback(
             inward.extend(i);
         }
     }
+    Crossings {
+        made,
+        unfixable,
+        inward,
+    }
+}
+
+/// Report the promises callback `c` makes from the locked value and transfer what it stores
+/// across the lock (module docs).
+/// `reported`: spans already reported (a closure may be checked with several callbacks).
+fn check_callback(
+    cx: &mut Ctx,
+    s: &summary::Summaries,
+    res: &mut values::Resolver,
+    c: DefId,
+    reported: &mut HashSet<Span>,
+) {
+    let (mut bodies, resolved, named) = take_bodies(cx, res, c);
+    let found = crossings(cx, s, c, &mut bodies, resolved, named);
     for (d, f) in bodies {
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
     }
-    for m in made {
-        let span = match &m {
-            promises::Made::Here(span, _)
-            | promises::Made::ByCall(span, _)
-            | promises::Made::Resource(span, _)
-            | promises::Made::Kept(span) => *span,
-        };
+    for m in found.made {
+        let span = made_span(&m);
         if !reported.insert(span) {
             continue;
         }
         promise_error(cx, m);
     }
-    for u in unfixable {
+    for u in found.unfixable {
         if !reported.insert(u.span) {
             continue;
         }
         unfixable_error(cx, u);
     }
-    later_uses(cx, res, c, inward, reported);
+    later_uses(cx, res, c, found.inward, reported);
+}
+
+fn made_span(m: &promises::Made) -> Span {
+    match m {
+        promises::Made::Here(span, _)
+        | promises::Made::ByCall(span, _)
+        | promises::Made::Resource(span, _)
+        | promises::Made::Kept(span) => *span,
+    }
 }
 
 /// The callback's results that are a part of the value owning a resource without `clone()`:
