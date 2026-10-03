@@ -66,6 +66,7 @@ cannot have both top-level statements and `function main()`.
   for `std/` functions whose skipped parameters have defaults (`Math.max(a = -Infinity, b =
   -Infinity, ...rest)`), where the defaults are identities. The two-argument `Math.max` passes an
   empty array, which allocates nothing (measured: no slower than a hand-written max).
+  `splice` and `toSpliced` take the items to insert as a rest parameter.
 
 ## 4. Syntax
 

@@ -179,24 +179,33 @@ extend<T> Array<T> {
     reverseRange(this, 0, this.length);
   }
 
-  // Removes `deleteCount` elements starting at `start` (a negative `start` counts from the end;
-  // both are clamped, like JS) and returns them in order; omitting `deleteCount` removes the
-  // rest. O(length). Inserting (`splice(i, 0, x)`) needs rest parameters (planned).
-  splice(start: i64, deleteCount: i64 = 9223372036854775807): T[] {
+  // Removes `deleteCount` elements from `start` (positions as in `slice`; omitted: the rest),
+  // inserts `items` there, and returns the removed elements, like JS. O(length).
+  splice(start: i64, deleteCount: i64 = 9223372036854775807, ...items: T[]): T[] {
     const len = this.length;
     const lo = clampPosition(start, len);
     const room = (len - lo) as i64;
     const k: usize = deleteCount <= 0 ? 0 : (deleteCount < room ? deleteCount : room) as usize;
     const out: T[] = __intrinsic_array_with_capacity(k);
-    if (k == 0) {
-      return out;
+    if (k > 0) {
+      // [lo, len) holds the removed block X then the rest Y: reversing it gives rev(Y) rev(X),
+      // reversing rev(Y) back gives Y rev(X), so the removed elements come off the end in order.
+      reverseRange(this, lo, len);
+      reverseRange(this, lo, len - k);
+      for (let i: usize = 0; i < k; i++) {
+        out.push(__intrinsic_array_remove(this, this.length - 1));
+      }
     }
-    // [lo, len) holds the removed block X then the rest Y: reversing it gives rev(Y) rev(X),
-    // reversing rev(Y) back gives Y rev(X), so the removed elements come off the end in order.
-    reverseRange(this, lo, len);
-    reverseRange(this, lo, len - k);
-    for (let i: usize = 0; i < k; i++) {
-      out.push(__intrinsic_array_remove(this, this.length - 1));
+    if (items.length > 0) {
+      // The array is A Y; pushing the items gives A Y I, and the same two reversals of [lo, end)
+      // turn Y I into I Y.
+      const rest = this.length - lo;
+      for (const x of items) {
+        this.push(__intrinsic_share(x));
+      }
+      reverseRange(this, lo, this.length);
+      reverseRange(this, lo, lo + items.length);
+      reverseRange(this, lo + items.length, lo + items.length + rest);
     }
     return out;
   }
@@ -227,18 +236,22 @@ extend<T> Array<T> {
     return out;
   }
 
-  // `splice(start, deleteCount)` on a copy: the array without the removed elements. Inserting
-  // items needs rest parameters (planned).
-  toSpliced(start: i64, deleteCount: i64 = 9223372036854775807): T[] {
+  // `splice(start, deleteCount, ...items)` on a copy: the array with the elements removed and
+  // `items` inserted.
+  toSpliced(start: i64, deleteCount: i64 = 9223372036854775807, ...items: T[]): T[] {
     const len = this.length;
     const lo = clampPosition(start, len);
     const room = (len - lo) as i64;
     const k: usize = deleteCount <= 0 ? 0 : (deleteCount < room ? deleteCount : room) as usize;
-    const out: T[] = __intrinsic_array_with_capacity(len - k);
-    for (let i: usize = 0; i < len; i++) {
-      if (i < lo || i >= lo + k) {
-        out.push(__intrinsic_share(this[i]));
-      }
+    const out: T[] = __intrinsic_array_with_capacity(len - k + items.length);
+    for (let i: usize = 0; i < lo; i++) {
+      out.push(__intrinsic_share(this[i]));
+    }
+    for (const x of items) {
+      out.push(__intrinsic_share(x));
+    }
+    for (let i = lo + k; i < len; i++) {
+      out.push(__intrinsic_share(this[i]));
     }
     return out;
   }

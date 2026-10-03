@@ -1,0 +1,9 @@
+// splice and toSpliced insert items (rest parameters), like JS.
+const xs = ["a", "b", "c", "d"];
+const removed = xs.splice(1, 2, "x", "y", "z");
+console.log(xs, removed);
+xs.splice(0, 0, "first");
+const tail = xs.splice(-2);
+console.log(xs, tail);
+const ys = [1, 2, 3, 4, 5];
+console.log(ys.toSpliced(1, 1, 9, 9), ys.toSpliced(2), ys.toSpliced(0, 0, ...[7, 8]), ys);
