@@ -5,7 +5,10 @@
 //!
 //! Also the per-thread "where was the last error thrown" slot (`velt_rt_set_throw_loc` /
 //! `velt_rt_throw_loc`) that compiled code fills at each `throw` and reads when it reports an
-//! uncaught error (`Uncaught E: msg at file.vlt:3:5`).
+//! uncaught error (`Uncaught E: msg at file.vlt:3:5`). A task's error can be read on another
+//! thread than the one that threw it (`async main` runs on a worker, a spawned task's handle is
+//! awaited anywhere), so finished tasks carry the slot to whoever takes their result
+//! ([`ThrowLoc`]).
 
 use std::cell::Cell;
 
@@ -83,6 +86,25 @@ pub extern "C" fn velt_rt_set_throw_loc(loc: *const VeltStr) {
 #[no_mangle]
 pub extern "C" fn velt_rt_throw_loc() -> *const VeltStr {
     THROW_LOC.with(|c| c.get())
+}
+
+/// The throw location of one thread, carried to another with a task's result.
+#[derive(Clone, Copy)]
+pub(crate) struct ThrowLoc(*const VeltStr);
+
+// SAFETY: compiled code records only static strings (read-only data) or null.
+unsafe impl Send for ThrowLoc {}
+
+impl ThrowLoc {
+    /// This thread's location (of the last `throw` here).
+    pub(crate) fn current() -> ThrowLoc {
+        ThrowLoc(velt_rt_throw_loc())
+    }
+
+    /// Make it this thread's location.
+    pub(crate) fn restore(self) {
+        velt_rt_set_throw_loc(self.0);
+    }
 }
 
 #[no_mangle]

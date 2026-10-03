@@ -13,6 +13,7 @@ use super::all::ResultDropFn;
 use super::compiled::{with_state_store, Compiled, OwnedStore};
 use super::local::Locals;
 use super::{context, raw_cx, DropFn, PollFn, SendPtr, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
+use crate::panic::ThrowLoc;
 use std::ffi::c_void;
 use std::future::Future;
 use std::mem::MaybeUninit;
@@ -84,6 +85,8 @@ impl Drop for FutBody {
 /// A task's output: its result bytes and how to drop them if the join handle never takes them.
 pub struct TaskOutput<const R: usize> {
     bytes: ResultBytes<R>,
+    /// Where the task's error was thrown, for the thread that takes the result.
+    loc: ThrowLoc,
     /// Cleared once the join handle moved the result out.
     result_drop: Option<ResultDropFn>,
 }
@@ -125,6 +128,7 @@ impl<B: TaskBody, const R: usize> Future for TaskFut<B, R> {
         };
         Poll::Ready(TaskOutput {
             bytes: out,
+            loc: ThrowLoc::current(),
             result_drop: this.result_drop,
         })
     }
@@ -145,6 +149,8 @@ unsafe extern "C" fn join_poll<const R: usize>(f: *mut VeltFut, cx: *mut c_void)
         Poll::Ready(Ok(mut out)) => {
             out.result_drop = None;
             obj.result = out.bytes;
+            // An error in the result is rethrown here: report it where the task threw it.
+            out.loc.restore();
             READY
         }
         Poll::Ready(Err(e)) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
