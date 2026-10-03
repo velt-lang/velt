@@ -13,6 +13,13 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
         format!("name: {}", string_lit(&m.package.name)),
         format!("version: {}", string_lit(&m.package.version)),
     ];
+    if let Some(description) = &m.package.description {
+        fields.push(format!("description: {}", string_lit(description)));
+    }
+    if !m.package.keywords.is_empty() {
+        let words: Vec<String> = m.package.keywords.iter().map(|k| string_lit(k)).collect();
+        fields.push(format!("keywords: [{}]", words.join(", ")));
+    }
     if m.package.entry != DEFAULT_ENTRY {
         fields.push(format!("entry: {}", string_lit(&m.package.entry)));
     }
@@ -65,6 +72,12 @@ pub(super) fn to_json(m: &Manifest) -> Value {
     let mut out = Map::new();
     out.insert("name".into(), json!(m.package.name));
     out.insert("version".into(), json!(m.package.version));
+    if let Some(description) = &m.package.description {
+        out.insert("description".into(), json!(description));
+    }
+    if !m.package.keywords.is_empty() {
+        out.insert("keywords".into(), json!(m.package.keywords));
+    }
     out.insert("entry".into(), json!(m.package.entry));
     if let Some(registry) = &m.registry {
         out.insert("registry".into(), json!(registry));

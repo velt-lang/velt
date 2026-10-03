@@ -55,6 +55,17 @@ impl BuildOptions {
     }
 }
 
+/// What [`check_with`] checks besides [`BuildOptions::input`].
+#[derive(Clone, Debug, Default)]
+pub struct CheckScope {
+    /// The root must define `main` (a package's entry); without it the root may be a library
+    /// module (a `main` that is there is validated either way).
+    pub require_main: bool,
+    /// Further modules checked as library modules in the same run (`velt check` in a package:
+    /// every module under `src/` and `tests/`); modules they share are loaded and checked once.
+    pub extra_roots: Vec<PathBuf>,
+}
+
 /// What a successful build produced.
 #[derive(Debug)]
 pub enum Artifact {
@@ -160,8 +171,12 @@ impl Session {
 }
 
 /// Front end only: load + parse + sema → typed HIR (what `velt check` runs). Stops after the
-/// first stage with errors.
-fn check_program(sess: &mut Session, opts: &BuildOptions) -> Result<hir::Program, BuildError> {
+/// first stage with errors. Everything but `velt check` requires `main` and has no extra roots.
+fn check_program(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    scope: &CheckScope,
+) -> Result<hir::Program, BuildError> {
     let t = Instant::now();
     let load = LoadOptions {
         std_root: loader::std_root(),
@@ -172,13 +187,22 @@ fn check_program(sess: &mut Session, opts: &BuildOptions) -> Result<hir::Program
         root_source: opts.root_source.clone(),
         overlay: None,
     };
-    let loaded = loader::load_program(&mut sess.sm, &opts.input, load, &mut sess.diagnostics)
-        .map_err(BuildError::Failed)?;
+    let loaded = loader::load_with_roots(
+        &mut sess.sm,
+        &opts.input,
+        &scope.extra_roots,
+        load,
+        &mut sess.diagnostics,
+    )
+    .map_err(BuildError::Failed)?;
     sess.record("parse", t);
     sess.stop_if_errors()?;
 
     let t = Instant::now();
-    let (hir, diags) = velt_sema::check(&loaded.modules, loaded.root);
+    let sema_opts = velt_sema::CheckOptions {
+        require_main: scope.require_main,
+    };
+    let (hir, diags) = velt_sema::check_with(&loaded.modules, loaded.root, sema_opts);
     sess.diagnostics.extend(diags);
     if let Some(hir) = &hir {
         let std_root = loader::std_root();
@@ -204,7 +228,11 @@ fn check_program(sess: &mut Session, opts: &BuildOptions) -> Result<hir::Program
 
 /// Front half of the pipeline: source file → verified VIR. Stops after the first stage with errors.
 pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Program, BuildError> {
-    let hir = check_program(sess, opts)?;
+    let scope = CheckScope {
+        require_main: true,
+        extra_roots: vec![],
+    };
+    let hir = check_program(sess, opts, &scope)?;
 
     let t = Instant::now();
     let std_root = loader::std_root();
@@ -267,9 +295,19 @@ pub fn compile(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Program, 
 }
 
 /// Parse + sema only (`velt check`), on a large-stack thread: every diagnostic the front end
-/// reports, no lowering, codegen or link.
+/// reports, no lowering, codegen or link. The root need not define `main` (a library module).
 pub fn check(sess: &mut Session, opts: &BuildOptions) -> Result<(), BuildError> {
-    on_pipeline_thread(|| check_program(sess, opts).map(drop))
+    check_with(sess, opts, &CheckScope::default())
+}
+
+/// [`check`] of `opts.input` and `scope`'s extra roots in one front-end run (`velt check` in a
+/// package), with `main` required of the root when `scope` says so.
+pub fn check_with(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    scope: &CheckScope,
+) -> Result<(), BuildError> {
+    on_pipeline_thread(|| check_program(sess, opts, scope).map(drop))
 }
 
 /// Run a pipeline stage on the dedicated large-stack thread.

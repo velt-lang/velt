@@ -467,6 +467,30 @@ fn main_rules() {
 }
 
 #[test]
+fn library_root_needs_no_main_but_is_fully_checked() {
+    let lib = velt_sema::CheckOptions {
+        require_main: false,
+    };
+    let (p, d) = run_with(
+        vec![func("helper", &[], Some("i64"), vec![ret(int(1))])],
+        lib,
+    );
+    assert!(d.iter().all(|d| !d.is_error()), "{d:?}");
+    assert_eq!(p.expect("library accepted").entry, None);
+    // A body nothing calls is still type-checked.
+    let (p, d) = run_with(
+        vec![func("helper", &[], Some("i64"), vec![ret(str_("x"))])],
+        lib,
+    );
+    assert!(p.is_none());
+    assert!(!has_err(&d, "`main` function not found"));
+    assert!(d.iter().any(|d| d.is_error()), "{d:?}");
+    // A `main` that is there is still validated.
+    let (_, d) = run_with(vec![func("main", &[("a", "i64")], None, vec![])], lib);
+    assert!(has_err(&d, "must not take parameters"));
+}
+
+#[test]
 fn const_compound_assign_and_update() {
     let d = errs(main_fn(vec![
         const_("x", int(1)),

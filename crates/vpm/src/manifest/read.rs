@@ -26,9 +26,9 @@ use velt_common::{Diagnostic, Diagnostics, FileId, Span};
 use velt_syntax::ast::{self, ExprKind, ItemKind, Lit, ObjectProp, PatternKind, TypeExprKind};
 
 use super::{
-    check_dependency, check_dependency_name, check_entry, check_import_source, check_name,
-    check_registry, check_version, default_entry, schema, Dependency, DetailedDependency,
-    JsxConfig, Manifest, Package,
+    check_dependency, check_dependency_name, check_description, check_entry, check_import_source,
+    check_keyword, check_name, check_registry, check_version, default_entry, schema, Dependency,
+    DetailedDependency, JsxConfig, Manifest, Package, MAX_KEYWORDS,
 };
 
 /// File name of the manifest written in Velt.
@@ -256,6 +256,8 @@ impl Reader<'_> {
             package: Package {
                 name: String::new(),
                 version: String::new(),
+                description: None,
+                keywords: vec![],
                 entry: default_entry(),
             },
             dependencies: BTreeMap::new(),
@@ -283,6 +285,13 @@ impl Reader<'_> {
                         manifest.package.version = s.to_string();
                     }
                 }
+                "description" => {
+                    if let Some(s) = self.string(v, "description") {
+                        self.check(check_description(s), v.span);
+                        manifest.package.description = Some(s.to_string());
+                    }
+                }
+                "keywords" => manifest.package.keywords = self.keywords(v),
                 "entry" => {
                     if let Some(s) = self.string(v, "entry") {
                         self.check(check_entry(s), v.span);
@@ -308,6 +317,48 @@ impl Reader<'_> {
             }
         }
         manifest
+    }
+
+    /// `keywords`: at most [`MAX_KEYWORDS`] valid, distinct words, in the order written.
+    fn keywords(&mut self, value: &Value) -> Vec<String> {
+        let ValueKind::Array(elems) = &value.kind else {
+            self.error(
+                format!("`keywords` must be an array, not {}", value.kind.describe()),
+                value.span,
+            );
+            return vec![];
+        };
+        if elems.is_empty() {
+            self.error("`keywords` is empty; remove the field instead", value.span);
+        } else if elems.len() > MAX_KEYWORDS {
+            self.error(
+                format!(
+                    "`keywords` has {} entries; at most {MAX_KEYWORDS} are allowed",
+                    elems.len()
+                ),
+                value.span,
+            );
+        }
+        let mut words: Vec<String> = vec![];
+        for elem in elems {
+            let ValueKind::Str(word) = &elem.kind else {
+                self.error(
+                    format!(
+                        "`keywords` entries must be strings, not {}",
+                        elem.kind.describe()
+                    ),
+                    elem.span,
+                );
+                continue;
+            };
+            if words.contains(word) {
+                self.error(format!("duplicate keyword `{word}`"), elem.span);
+                continue;
+            }
+            self.check(check_keyword(word), elem.span);
+            words.push(word.clone());
+        }
+        words
     }
 
     fn dependencies(&mut self, value: &Value) -> BTreeMap<String, Dependency> {

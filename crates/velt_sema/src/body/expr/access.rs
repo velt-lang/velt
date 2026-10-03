@@ -1,7 +1,15 @@
 //! Member access rules (docs/reference/classes.md):
 //! - `private` fields, methods and static fields are usable only inside the body of the type
 //!   declaring them (its methods, constructor, field initializers and the closures inside them;
-//!   not subclasses, like TypeScript).
+//!   not subclasses, like TypeScript). The standard library is one trusted unit: its modules may
+//!   use the private members of its own types (one std type builds another's handle, as
+//!   `TcpListener.accept()` builds a `TcpStream`), so no std handle can be built or read by user
+//!   code.
+//! - A `private constructor` is callable (`new C()`) only inside the body of its class (or, for a
+//!   std class, anywhere in std, like its other private members); a `protected` one also inside
+//!   the bodies of its subclasses (TypeScript's rules; extending a class with a private
+//!   constructor is rejected in `crate::collect`). A class without a constructor of its own
+//!   inherits its base's, with that constructor's visibility.
 //! - `get name(): T` accessors are read as properties: `x.name` is a call of the getter (receiver
 //!   borrowed); they cannot be called with `()`, nor assigned unless a setter of the same
 //!   name exists (`setters`).
@@ -22,7 +30,7 @@ impl FnCx<'_, '_> {
     /// Report a use of a private member of `private_to` outside that type's body.
     pub(crate) fn check_private(&mut self, private_to: Option<DefId>, name: &str, span: Span) {
         let Some(owner) = private_to else { return };
-        if self.owner == Some(owner) {
+        if self.private_allowed(owner) {
             return;
         }
         let tn = self
@@ -34,6 +42,46 @@ impl FnCx<'_, '_> {
             Diagnostic::error(format!("`{name}` is private"), span)
                 .with_note(format!("it can only be used inside the body of `{tn}`")),
         );
+    }
+
+    /// `new` of a class whose constructor `ctor` is `private` or `protected`, outside the bodies
+    /// allowed to call it.
+    pub(crate) fn check_ctor_access(&mut self, ctor: DefId, span: Span) {
+        let Some(class) = self.cx.fn_info(ctor).owner else {
+            return;
+        };
+        let Some(a) = self.cx.adt(class) else { return };
+        let visibility = a.decl.map_or_else(Default::default, |d| d.ctor_visibility);
+        if visibility == ast::CtorVisibility::Public {
+            return;
+        }
+        let name = a.name.clone();
+        let allowed = self.private_allowed(class)
+            || match (self.owner, visibility) {
+                (Some(o), ast::CtorVisibility::Protected) => self.cx.class_extends(o, class),
+                _ => false,
+            };
+        if allowed {
+            return;
+        }
+        let message = if visibility == ast::CtorVisibility::Private {
+            format!("the constructor of `{name}` is private: only the body of `{name}` can call `new {name}(...)`")
+        } else {
+            format!("the constructor of `{name}` is protected: only `{name}` and its subclasses can call `new {name}(...)`")
+        };
+        let note = self.cx.creation_note(class);
+        self.cx
+            .error(Diagnostic::error(message, span).with_note(note));
+    }
+
+    /// May this body use the private members of type `owner`: inside `owner`'s body, or
+    /// anywhere in the standard library for a std type.
+    pub(crate) fn private_allowed(&self, owner: DefId) -> bool {
+        if self.owner == Some(owner) {
+            return true;
+        }
+        let owner_module = self.cx.adt(owner).map(|a| a.module);
+        self.cx.scopes[self.module].is_std && owner_module.is_some_and(|m| self.cx.scopes[m].is_std)
     }
 
     /// `private` check for field `index` of struct/class values of type `t`.

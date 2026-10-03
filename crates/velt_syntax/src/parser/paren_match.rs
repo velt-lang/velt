@@ -61,6 +61,7 @@ impl ParenMatches {
     pub(super) fn forget_from(&mut self, i: usize) {
         let split = i.min(self.partner.len());
         let (before, after) = self.partner.split_at_mut(split);
+        crate::work::add(after.len() + self.unmatched.len());
         for &entry in after.iter() {
             // A `)` at or after `i` whose `(` comes before it.
             if let Some(open) = before.get_mut(entry as usize) {
@@ -98,6 +99,7 @@ impl Parser<'_> {
         stack.push(open);
         let mut i = open + 1;
         loop {
+            crate::work::add(1);
             match self.tok(i).kind {
                 Tok::LParen => match self.paren_matches.get(i) {
                     Some(Some(close)) => {

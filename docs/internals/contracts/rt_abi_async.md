@@ -233,15 +233,21 @@ pointer type, so `std` stores them in `u64` fields and passes `u64` arguments; t
 and returns the same `u64`, in argument lists, results and result slots alike.
 - Handles that `std` wraps in **Copy structs** (`VeltListener`, `VeltStream`, `VeltUdp`,
   `VeltChild`, `VeltFileReader`, `VeltFileWriter`, `VeltWs`) are keys into runtime handle tables
-  (`velt_rt::registry::Key<T>`: slot + generation), because Velt code may hold several copies:
+  (`velt_rt::registry::Key<T>`: generation, shard and slot), because Velt code may hold several copies:
   releasing one (`close`/`free`) makes every copy dead. Later operations fail with `EBADF`
   (code 16, "handle is closed"), sync accessors return their documented empty value (port 0,
   pid 0, exit code -1, empty address), and releasing again is a no-op; a stale handle never
   reaches a newer object. In-flight operations hold their own `Arc`, so the object lives until
   they finish.
+- The HTTP handles (`VeltServer`, `VeltReq`, `VeltResp`, `VeltFetchResp`) are registry keys as
+  well, so a stale or forged one never reaches memory (additive): server operations on a closed
+  handle are no-ops (port 0, `shutdown` resolves at once), response builders ignore a dead
+  response (`velt_rt_http_resp_header` returns 0) and the server answers 500 for one, and using a
+  released request or fetch response is a fatal error that says so.
 - The others are the object's address (`velt_rt::handle::Handle<T>`, `repr(transparent)`): an
-  `Arc` (regexes, JSON nodes) or a `Box` (single owner: requests, responses, fetch responses,
-  servers), owned by a class whose `dispose()` releases it exactly once.
+  `Arc` (regexes, JSON nodes) owned by a class whose `dispose()` releases it exactly once. std
+  keeps every handle in a `private` field (the standard library may use the private members of
+  its own types), so user code can neither build nor read one.
 
 ## 4. Byte buffers and string arrays
 
@@ -477,6 +483,7 @@ buffer) first moves the text to a fresh buffer, so `s += x` never changes anothe
 | `velt_rt_strbuf_push_byte` | `(VeltStrBuf* b, u8 c)` | punctuation in generated glue |
 | `velt_rt_strbuf_push_json_str` | `(VeltStrBuf* b, const VeltStr* s)` | quoted + escaped exactly like `JSON.stringify(s)`: `\"` `\\` `\b \f \n \r \t`, other controls < U+0020 as lowercase 6-char `\u00xx`; everything else verbatim |
 | `velt_rt_strbuf_push_json_value` | `(VeltStrBuf* b, const void* v)` | `JSON.stringify(v)` of a `json.Value` field (null handle ⇒ `null`); emitted by the compiler, which passes the handle's address as a pointer (VIR `ptr`), unlike the `u64` handles of §3.2 |
+| `velt_rt_strbuf_push_inspect_json` | `(VeltStrBuf* b, const void* v, u8 top)` | what `console.log` prints for a `json.Value` (node `util.inspect` of the parsed value: `{ a: 1, b: [ 2, 'x' ] }`, `[]`, `{}`, strings quoted like `push_inspect_str`, keys like `push_inspect_key`, one line at any depth); a string is raw when `top != 0`; null handle ⇒ `null`. The handle is passed like `push_json_value`'s (additive) |
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |
 | `velt_rt_strbuf_drop` | `(VeltStrBuf* b)` | abandon an unfinished builder (exception path); zeroes it |
 
@@ -528,7 +535,7 @@ typedef struct VeltJsonReader VeltJsonReader;   // opaque
 | `velt_rt_json_reader_free` | `(VeltJsonReader* r)` | null ok |
 | `velt_rt_json_reader_peek` | `(VeltJsonReader* r) -> u32` | next token kind, skipping whitespace: 0 EOF, 1 `null`, 2 `true`, 3 `false`, 4 number, 5 string, 6 `[`, 7 `]`, 8 `{`, 9 `}`, 10 error (bad byte, or the reader already failed). Classifies by first byte only; the `read_*` call validates. |
 | `velt_rt_json_reader_expect_object_start` | `(r) -> u8` | consume `{` |
-| `velt_rt_json_reader_next_key` | `(r, VeltStr* out) -> u8` | **1** = `*out` is the next key and its `:` is consumed (read the value next); **0** = `}` consumed (end of object); **2** = error. Handles the commas. The key **borrows** the source (static form) unless it had escapes — compare it, don't keep it (clone if needed); dropping it is always allowed. |
+| `velt_rt_json_reader_next_key` | `(r, VeltStr* out) -> u8` | **1** = `*out` is the next key and its `:` is consumed (read the value next); **0** = `}` consumed (end of object); **2** = error. Handles the commas. The key **borrows** the source (static form) unless it had escapes — compare it, don't keep it (`velt_rt_str_own` makes a copy to keep: `velt_rt_str_clone` keeps the borrow); dropping it is always allowed. |
 | `velt_rt_json_reader_expect_array_start` | `(r) -> u8` | consume `[` |
 | `velt_rt_json_reader_array_next` | `(r) -> u8` | **1** = another element follows (read it next), **0** = `]` consumed, **2** = error |
 | `velt_rt_json_reader_read_string` | `(r, VeltStr* out) -> u8` | owned, decoded (`\u` escapes incl. surrogate pairs; a lone surrogate → U+FFFD since UTF-8 cannot hold it) |
@@ -587,7 +594,9 @@ puts the key in the path), and nesting past `max_depth` is
 `U+XXXX`), `expected ':'`, `expected ',' or '}'`, `expected ',' or ']'`, `expected string key`,
 `invalid number`, `invalid escape`, `invalid \u escape`, `control character in string`,
 `unexpected trailing characters`. `<offset>` is the byte offset in the source. Path syntax
-(`$`, `$.a.b`, `$.tags[1]`) is the compiler's choice; the runtime inserts it verbatim.
+(`$`, `$.a.b`, `$.tags[1]`) is the compiler's choice; the runtime inserts it, shortened when it
+has more than 20 segments (each starting at `.` or `[`) to the first and last 10 with `…`
+between (`$[0][0]…[0].name`).
 
 ### 12.5 `json.Value` (`JSON.parseValue`)
 
@@ -618,7 +627,7 @@ objects with more than 16 keys get a hash index for `get`.
 | `velt_rt_json_value_free` | `(VeltJson v)` | null ok |
 | `velt_rt_json_value_new_null` / `_new_bool(u8)` / `_new_number(f64)` / `_new_string(const VeltStr*)` / `_new_array()` / `_new_object()` | `(…) -> VeltJson` | a new value (the string is copied) |
 | `velt_rt_json_value_set` | `(VeltJson* slot, const VeltStr* key, VeltJson v) -> u8` | object member `key` = `v` (an existing key keeps its position); 0 if `*slot` is not an object. `v` is shared, not consumed (null handle = JSON `null`). `*slot` may be replaced by a copy (copy-on-write); the old handle's reference is released then |
-| `velt_rt_json_value_delete` | `(VeltJson* slot, const VeltStr* key) -> u8` | remove member `key`, keeping the order of the others; 0 if absent or not an object. O(member count) with a small constant (later members move down one place) |
+| `velt_rt_json_value_delete` | `(VeltJson* slot, const VeltStr* key) -> u8` | remove member `key`, keeping the order of the others; 0 if absent or not an object. O(1) amortized: an object with an index leaves a hole (compacted once holes outnumber members). `len` stays O(1), and `at`/`key_at` stay O(1) while the holes are only at the ends; with holes in the middle they cost O(log n) through a Fenwick tree of the live slots, built in O(n) by the first such access after a compaction and updated in O(log n) by each later delete and insert |
 | `velt_rt_json_value_push` | `(VeltJson* slot, VeltJson v) -> u8` | append to an array; 0 if not an array |
 | `velt_rt_json_value_set_at` | `(VeltJson* slot, u64 i, VeltJson v) -> u8` | replace element `i`; 0 if not an array or out of range (as for `at`: never truncated to a smaller index) |
 

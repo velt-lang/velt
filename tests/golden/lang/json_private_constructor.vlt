@@ -1,0 +1,30 @@
+// A class with a private constructor is written like any class, and read back by decoding a
+// plain object type and calling its factory. `JsonValue` (private constructor too) decodes,
+// directly and as a field: the runtime makes it, not its fields.
+class Money {
+  readonly cents: i64;
+
+  private constructor(cents: i64) {
+    this.cents = cents;
+  }
+
+  static of(cents: i64): Money {
+    if (cents < 0) {
+      throw new Error("negative amount");
+    }
+    return new Money(cents);
+  }
+}
+
+type MoneyJson = { cents: i64 };
+type Doc = { v: JsonValue; vs: JsonValue[] };
+
+function main() {
+  const text = JSON.stringify([Money.of(250), Money.of(5)]);
+  console.log(text);
+  const back = JSON.parse<MoneyJson[]>(text).map((m) => Money.of(m.cents));
+  console.log(back.length, back[0].cents + back[1].cents);
+  const v = JSON.parse<JsonValue>("{\"a\": [1, 2]}");
+  const d = JSON.parse<Doc>("{\"v\": true, \"vs\": [null, \"x\"]}");
+  console.log(v, d.v, d.vs.length, JsonValue.parse(text).as<MoneyJson[]>()[0].cents);
+}

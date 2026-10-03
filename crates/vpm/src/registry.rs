@@ -56,6 +56,13 @@ pub struct IndexEntry {
     pub version: String,
     /// `sha256:<hex>` of the package contents (see [`contents::checksum`]).
     pub checksum: String,
+    /// The version's `description` from its `package.vlt` (search and listings use the newest
+    /// version's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The version's `keywords`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keywords: Vec<String>,
     /// Dependency name → semver requirement.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub dependencies: BTreeMap<String, String>,
@@ -80,8 +87,17 @@ impl IndexEntry {
 
 /// Read `<name>/index.json`; `Ok(None)` if the package was never published.
 pub fn read_index(loc: &Locations, name: &str) -> Result<Option<Index>, String> {
+    read_index_within(loc, name, velt_http::Limits::DEFAULT)
+}
+
+/// [`read_index`], asking a remote registry within `limits`.
+pub fn read_index_within(
+    loc: &Locations,
+    name: &str,
+    limits: velt_http::Limits,
+) -> Result<Option<Index>, String> {
     if let Some(url) = &loc.remote {
-        return crate::remote::read_index(url, name);
+        return crate::remote::read_index_within(url, name, limits);
     }
     let path = loc.registry.join(name).join(INDEX_FILE);
     if !path.is_file() {
@@ -344,6 +360,8 @@ fn publish_to(root: &Path, loc: &Locations, manifest: &Manifest) -> Result<Index
         let entry = IndexEntry {
             version: version.to_string(),
             checksum: contents::checksum(root)?,
+            description: manifest.package.description.clone(),
+            keywords: manifest.package.keywords.clone(),
             dependencies,
             native_abi: None,
             native: BTreeMap::new(),
@@ -361,6 +379,8 @@ fn publish_to(root: &Path, loc: &Locations, manifest: &Manifest) -> Result<Index
     let entry = IndexEntry {
         version: version.to_string(),
         checksum: contents::checksum(&dest)?,
+        description: manifest.package.description.clone(),
+        keywords: manifest.package.keywords.clone(),
         dependencies,
         native_abi: None,
         native: BTreeMap::new(),

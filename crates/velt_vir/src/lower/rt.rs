@@ -13,6 +13,7 @@ pub(super) enum Rt {
     StrFromF64,
     StrFromBool,
     StrClone,
+    StrOwn,
     StrDrop,
     StrCmp,
     WriteStr,
@@ -85,6 +86,7 @@ pub(super) enum Rt {
     StrbufPushInspectStr,
     StrbufPushInspectKey,
     StrbufPushJsonValue,
+    StrbufPushInspectJson,
     StrbufFinish,
     StrbufDrop,
     JsonReaderNewWith,
@@ -121,6 +123,7 @@ impl Rt {
             Rt::StrFromF64 => ("velt_rt_str_from_f64", vec![F64, Ptr], Unit, false),
             Rt::StrFromBool => ("velt_rt_str_from_bool", vec![Bool, Ptr], Unit, false),
             Rt::StrClone => ("velt_rt_str_clone", vec![Ptr, Ptr], Unit, false),
+            Rt::StrOwn => ("velt_rt_str_own", vec![Ptr, Ptr], Unit, false),
             Rt::StrDrop => ("velt_rt_str_drop", vec![Ptr], Unit, false),
             Rt::StrCmp => ("velt_rt_str_cmp", vec![Ptr, Ptr], I32, false),
             Rt::WriteStr => ("velt_rt_write_str", vec![U32, Ptr], Unit, false),
@@ -212,6 +215,9 @@ impl Rt {
             Rt::StrbufPushInspectStr => f("velt_rt_strbuf_push_inspect_str", vec![Ptr, Ptr], Unit),
             Rt::StrbufPushInspectKey => f("velt_rt_strbuf_push_inspect_key", vec![Ptr, Ptr], Unit),
             Rt::StrbufPushJsonValue => f("velt_rt_strbuf_push_json_value", vec![Ptr, Ptr], Unit),
+            Rt::StrbufPushInspectJson => {
+                f("velt_rt_strbuf_push_inspect_json", vec![Ptr, Ptr, U8], Unit)
+            }
             Rt::StrbufFinish => f("velt_rt_strbuf_finish", vec![Ptr, Ptr], Unit),
             Rt::StrbufDrop => f("velt_rt_strbuf_drop", vec![Ptr], Unit),
             Rt::JsonReaderNewWith => f("velt_rt_json_reader_new_with", vec![Ptr, U32, U32], Ptr),

@@ -78,9 +78,11 @@ pub(super) fn parse_owner(args: Vec<OsString>) -> Result<Command, String> {
     })
 }
 
-/// `velt search <text>`.
+/// `velt search <text> [--json]`.
 pub(super) fn parse_search(args: Vec<OsString>) -> Result<Command, String> {
-    let args = strings(args)?;
+    let mut args = strings(args)?;
+    let json = args.iter().any(|a| a == "--json");
+    args.retain(|a| a != "--json");
     if let Some(flag) = args.iter().find(|a| a.starts_with('-')) {
         return Err(super::unknown_option("search", flag));
     }
@@ -89,6 +91,7 @@ pub(super) fn parse_search(args: Vec<OsString>) -> Result<Command, String> {
     }
     Ok(Command::Search {
         query: args.join(" "),
+        json,
     })
 }
 
@@ -195,7 +198,15 @@ mod tests {
         assert_eq!(
             p(&["search", "json", "schema"]).unwrap(),
             Command::Search {
-                query: "json schema".into()
+                query: "json schema".into(),
+                json: false
+            }
+        );
+        assert_eq!(
+            p(&["search", "--json", "json"]).unwrap(),
+            Command::Search {
+                query: "json".into(),
+                json: true
             }
         );
         assert!(p(&["search"]).is_err());

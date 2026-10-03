@@ -107,8 +107,7 @@ function unwrap<T>(r: IoResult<T>): T {
 
 // An open connection (see the header for handle rules).
 export struct Database {
-  handle: u64;
-  private runtime: RuntimeHandle = RuntimeHandle {};
+  private handle: u64;
 
   // Runs one or more `;`-separated statements without parameters (schema scripts).
   exec(sql: string) {
@@ -174,8 +173,7 @@ export struct Database {
 
 // A transaction from `Database.begin()`.
 export struct Transaction {
-  handle: u64;
-  private runtime: RuntimeHandle = RuntimeHandle {};
+  private handle: u64;
   // A savepoint inside an outer transaction.
   nested: bool;
 
@@ -287,8 +285,3 @@ export function open(path: string, opts: OpenOptions = {}): Database {
   }
   return db;
 }
-
-// A field of this type makes a type opaque: a type with a private field has no JSON form,
-// so untrusted JSON can't produce the runtime handle it holds, and `JSON.stringify` doesn't
-// write it. It takes no space.
-struct RuntimeHandle {}

@@ -1,0 +1,23 @@
+// Editing: build an object of 10k keys with `set`, then `delete` them all from the front, 4 times.
+function main() {
+  const n: i64 = 10000;
+  const keys: string[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    keys.push(`key${i}`);
+  }
+  let sum: i64 = 0;
+  for (let round = 0; round < 4; round++) {
+    let obj = JsonValue.object();
+    for (let i: i64 = 0; i < n; i++) {
+      obj.set(keys[i], JsonValue.of(i as f64));
+    }
+    sum += obj.len();
+    for (const k of keys) {
+      if (obj.delete(k)) {
+        sum += 1;
+      }
+    }
+    sum += obj.len();
+  }
+  console.log(sum);
+}

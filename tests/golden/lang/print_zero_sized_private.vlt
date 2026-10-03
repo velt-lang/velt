@@ -1,0 +1,18 @@
+// `console.log` of a type with private fields leaves out its zero-sized fields (markers such as
+// one that only keeps a type out of JSON); the other fields, private ones included, are shown.
+struct Opaque {}
+
+struct Ticket {
+  id: i64;
+  private secret: u64;
+  private opaque: Opaque = Opaque {};
+
+  static make(id: i64): Ticket {
+    return Ticket { id: id, secret: 7 };
+  }
+}
+
+function main() {
+  console.log(Ticket.make(1));
+  console.log([Ticket.make(2)]);
+}

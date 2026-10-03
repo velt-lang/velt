@@ -1,14 +1,13 @@
 // Room membership rules.
 import { Room } from "../src/room";
-import { WebSocket } from "velt:websocket";
 
-// Sockets are only stored and handed back here, never used.
-function socket(n: u64): WebSocket {
-  return WebSocket { handle: n };
+// Sockets are only stored and handed back, never used: numbers stand in for them.
+function socket(n: u64): u64 {
+  return n;
 }
 
 export function test_join_and_names() {
-  const r = new Room();
+  const r = new Room<u64>();
   assertEq(r.join(1, " ann ", socket(10u64)), null);
   assertEq(r.join(2, "bo", socket(20u64)), null);
   assertEq(r.names(), ["ann", "bo"]);
@@ -17,7 +16,7 @@ export function test_join_and_names() {
 }
 
 export function test_join_rules() {
-  const r = new Room();
+  const r = new Room<u64>();
   r.join(1, "ann", socket(10u64));
   assertEq(r.join(2, "ann", socket(20u64)), "name ann is taken");
   assertEq(r.join(1, "other", socket(10u64)), "already joined");
@@ -26,13 +25,13 @@ export function test_join_rules() {
 }
 
 export function test_leave_and_sockets() {
-  const r = new Room();
+  const r = new Room<u64>();
   r.join(1, "ann", socket(10u64));
   r.join(2, "bo", socket(20u64));
   r.join(3, "cy", socket(30u64));
-  assertEq(r.sockets(2).map((s) => s.handle), [10u64, 30u64]);
+  assertEq(r.sockets(2), [10u64, 30u64]);
   assertEq(r.leave(2), "bo");
   assertEq(r.leave(2), null);
-  assertEq(r.sockets().map((s) => s.handle), [10u64, 30u64]);
+  assertEq(r.sockets(), [10u64, 30u64]);
   assertEq(r.names(), ["ann", "cy"]);
 }

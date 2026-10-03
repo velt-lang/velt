@@ -52,7 +52,8 @@ impl DefKind { pub fn is_type(self) -> bool } // struct, class, interface, enum,
 ```
 `detail` formats: `function f<T>(a: T, b?: i64): R` (`?` = has a default; a function or method that can
 throw ends with ` throws E`, its declared or inferred error type), `(method) User.greet(): string`,
-`(static) Math.sqrt(x: f64): f64`, `(getter) Map.size: usize`, `constructor User(name: string)`,
+`(static) Math.sqrt(x: f64): f64`, `(getter) Map.size: usize`, `constructor User(name: string)`
+(`private constructor …` / `protected constructor …` when it is),
 `(field) Point.x: i64`, `(static) Math.PI: f64`, `const LIMIT: i64`, `class User`, `struct Point<T>`,
 `interface Named`, `enum Color { Red, Green = 5 }`, `Color.Green = 5`, `type Id`, `let x: i64` / `const x: i64`,
 `(parameter) p: string`. Two `DefRef`s for the same definition may differ in `detail` (inherited

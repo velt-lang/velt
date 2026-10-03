@@ -15,6 +15,12 @@ const LINUX: &str = "x86_64-unknown-linux-gnu";
 const MAC: &str = "aarch64-apple-darwin";
 const WINDOWS: &str = "x86_64-pc-windows-msvc";
 
+/// The shared library `bundle_dir` writes for `content`.
+fn library_of(content: &str) -> Vec<u8> {
+    let exports = BTreeMap::from([("db_open".into(), "(string)->IoResult<u64>".into())]);
+    vpm::native::exports::sample_library("db", &exports, content)
+}
+
 fn bundle_dir(dir: &Path, target: &str, content: &str) -> PathBuf {
     let b = dir.join(target);
     std::fs::create_dir_all(b.join("shared")).unwrap();
@@ -24,10 +30,17 @@ fn bundle_dir(dir: &Path, target: &str, content: &str) -> PathBuf {
         format!("shared/{shared}"),
         import_lib.map(|f| format!("shared/{f}")),
     );
-    for file in std::iter::once(&shared).chain(&import_lib) {
-        std::fs::write(b.join(file), content).unwrap();
+    std::fs::write(b.join(&shared), library_of(content)).unwrap();
+    let exports = BTreeMap::from([("db_open".into(), "(string)->IoResult<u64>".into())]);
+    if let Some(import_lib) = &import_lib {
+        let dll = shared.trim_start_matches("shared/");
+        let names = vpm::native::exports::exported_names(&library_of(content)).unwrap();
+        let imports: Vec<(String, String)> = names.into_iter().map(|n| (n.clone(), n)).collect();
+        let lib = vpm::native::exports::sample_import_library(dll, &imports);
+        std::fs::write(b.join(import_lib), lib).unwrap();
     }
-    std::fs::write(b.join("static/db.o"), content).unwrap();
+    let object = vpm::native::exports::sample_object("db", &exports, content);
+    std::fs::write(b.join("static/db.o"), object).unwrap();
     let meta = NativeMeta {
         package: "db".into(),
         version: "1.0.0".into(),
@@ -113,8 +126,8 @@ fn native_packages_end_to_end() {
     assert_eq!(native.origin, NativeOrigin::Prebuilt);
     assert_eq!(native.meta.exports["db_open"], "(string)->IoResult<u64>");
     assert_eq!(
-        std::fs::read_to_string(native.shared_lib()).unwrap(),
-        "linux v1"
+        std::fs::read(native.shared_lib()).unwrap(),
+        library_of("linux v1")
     );
     assert!(native.static_obj().unwrap().is_file());
     // The lockfile pins both targets.
@@ -130,8 +143,8 @@ fn native_packages_end_to_end() {
     let again = install(&app, &loc, for_linux.clone()).unwrap();
     let (_, native) = again.graph.natives().next().unwrap();
     assert_eq!(
-        std::fs::read_to_string(native.shared_lib()).unwrap(),
-        "linux v1"
+        std::fs::read(native.shared_lib()).unwrap(),
+        library_of("linux v1")
     );
 
     // A tampered registry copy is refused, and nothing unverified lands in the cache.
@@ -196,8 +209,8 @@ fn native_packages_end_to_end() {
     assert!(installed.lock_changed);
     let (_, native) = installed.graph.natives().next().unwrap();
     assert_eq!(
-        std::fs::read_to_string(native.shared_lib()).unwrap(),
-        "windows v1"
+        std::fs::read(native.shared_lib()).unwrap(),
+        library_of("windows v1")
     );
 
     // A library needing a newer runtime table is refused before download.

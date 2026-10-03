@@ -1,11 +1,13 @@
 //! Minimal HTTP client: `fetch(method, url, headers, body)` over hyper-util's pooled client,
 //! `http://` and `https://` (rustls, `tls.rs`; HTTP/2 when the server offers it through ALPN).
 //! The response body is read fully before the future completes, so the resulting
-//! `VeltFetchResp*` accessors are synchronous.
+//! `VeltFetchResp*` accessors are synchronous. A response is a key into a registry
+//! (`crate::registry`): using it after it was released (a `FetchHeaders` copy that outlives its
+//! `FetchResponse`, or a forged key) is a clear runtime error, never a read of freed memory.
 
 use super::owned_str;
 use crate::bytes::VeltBytes;
-use crate::handle::Handle;
+use crate::registry::{Key, Registry};
 use crate::result::{code, invalid_utf8, IoResult, VeltErr};
 use crate::str::VeltStr;
 use crate::task::leaf::new_leaf;
@@ -19,13 +21,28 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// A completed response (`VeltFetchResp` in the ABI docs).
 pub struct FetchResp {
     status: u16,
     headers: HeaderMap,
     body: Bytes,
+}
+
+/// A fetch response handle (a registry key).
+pub type FetchRespHandle = Key<FetchResp>;
+
+static RESPONSES: Registry<FetchResp> = Registry::new();
+
+/// The response behind `r`, or a fatal error when it was already released.
+fn obj(r: FetchRespHandle) -> Arc<FetchResp> {
+    RESPONSES.get(r).unwrap_or_else(|| {
+        crate::panic::fatal(concat!(
+            "a fetch response (or its headers) was used after it was released: keep the ",
+            "FetchResponse alive, or copy what you need first"
+        ))
+    })
 }
 
 type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
@@ -123,7 +140,7 @@ unsafe fn fetch(
     let client = client(ca);
     new_leaf(async move {
         match async { send(client?, req?).await }.await {
-            Ok(r) => IoResult::ok(Handle::from_box(Box::new(r))),
+            Ok(r) => IoResult::ok(RESPONSES.insert(r)),
             Err(e) => IoResult::err(e),
         }
     })
@@ -159,20 +176,19 @@ pub unsafe extern "C" fn velt_rt_http_fetch_ca(
 
 /// Response status code.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_fetch_resp_status(r: Handle<FetchResp>) -> u32 {
-    r.obj().status as u32
+pub unsafe extern "C" fn velt_rt_http_fetch_resp_status(r: FetchRespHandle) -> u32 {
+    obj(r).status as u32
 }
 
 /// Response header by case-insensitive name: returns 1 and writes `out`, or 0 if absent/not text.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_fetch_resp_header(
-    r: Handle<FetchResp>,
+    r: FetchRespHandle,
     name: *const VeltStr,
     out: *mut VeltStr,
 ) -> u8 {
     let name = String::from_utf8_lossy((*name).as_bytes());
-    match r
-        .obj()
+    match obj(r)
         .headers
         .get(name.as_ref())
         .and_then(|v| v.to_str().ok())
@@ -188,10 +204,10 @@ pub unsafe extern "C" fn velt_rt_http_fetch_resp_header(
 /// Body as UTF-8 text (copied). `EILSEQ` in `out` if not UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_fetch_resp_text(
-    r: Handle<FetchResp>,
+    r: FetchRespHandle,
     out: *mut IoResult<VeltStr>,
 ) {
-    let res = match std::str::from_utf8(&r.obj().body) {
+    let res = match std::str::from_utf8(&obj(r).body) {
         Ok(s) => IoResult::ok(owned_str(s)),
         Err(_) => IoResult::err(VeltErr::from_io(&invalid_utf8("response body"))),
     };
@@ -200,12 +216,12 @@ pub unsafe extern "C" fn velt_rt_http_fetch_resp_text(
 
 /// Body as bytes (copied).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_fetch_resp_bytes(r: Handle<FetchResp>, out: *mut VeltBytes) {
-    out.write(VeltBytes::from_vec(r.obj().body.to_vec()));
+pub unsafe extern "C" fn velt_rt_http_fetch_resp_bytes(r: FetchRespHandle, out: *mut VeltBytes) {
+    out.write(VeltBytes::from_vec(obj(r).body.to_vec()));
 }
 
-/// Free a fetch response.
+/// Free a fetch response (a released key is ignored).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_fetch_resp_drop(r: Handle<FetchResp>) {
-    drop(r.into_box());
+pub unsafe extern "C" fn velt_rt_http_fetch_resp_drop(r: FetchRespHandle) {
+    drop(RESPONSES.remove(r));
 }

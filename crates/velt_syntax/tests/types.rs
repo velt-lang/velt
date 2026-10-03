@@ -45,6 +45,9 @@ fn type_expressions() {
         "Promise<Result<i64, string>>"
     );
     assert_eq!(alias_ty("(a: T) => void"), "fn(T) => void");
+    // Number literal types may be negative, as in TypeScript.
+    assert_eq!(alias_ty("-1"), "-1");
+    assert_eq!(alias_ty("-1 | 0 | 1.5"), "(-1 | 0 | 1.5)");
 }
 
 #[test]

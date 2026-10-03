@@ -133,9 +133,12 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "check",
         summary: "Type-check a file or the current package without building it",
         usage: &["check [<file.vlt>] [--json] [--locked] [-v]"],
-        about: "Parses and type-checks like `velt build` (every file the program imports), \
-                prints the diagnostics and exits with 1 if there are errors. Nothing is \
-                lowered, compiled or linked.",
+        about: "Parses and type-checks like `velt build`, prints the diagnostics and exits \
+                with 1 if there are errors. Nothing is lowered, compiled or linked. With a \
+                file, checks it and every file it imports; a library module needs no `main`. \
+                Without one, checks every `.vlt` module under `src/` and `tests/` of the \
+                current package; its entry must define `main` (a library package's root is \
+                `src/lib.vlt`, with no `main`).",
         options: &[
             ("--json", "diagnostics as one JSON document on stdout (for editors and tools)"),
             LOCKED,
@@ -280,11 +283,15 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "search",
         summary: "Find packages in the registry",
-        usage: &["search <text>"],
-        about: "Lists the packages whose name contains the text, with their newest version that \
-                is not yanked, from the package's registry (or $VELT_REGISTRY).",
-        options: &[],
-        examples: &[("velt search json", "packages with `json` in their name")],
+        usage: &["search <text> [--json]"],
+        about: "Lists the packages matching every word of the text in their name, keywords or \
+                description (name matches first), with their newest version that is not yanked \
+                and its description, from the package's registry (or $VELT_REGISTRY).",
+        options: &[("--json", "the registry's answer as JSON on stdout")],
+        examples: &[
+            ("velt search json", "packages about JSON"),
+            ("velt search json parser --json", "for scripts"),
+        ],
     },
     CommandHelp {
         name: "yank",

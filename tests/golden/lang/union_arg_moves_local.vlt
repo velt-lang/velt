@@ -1,7 +1,8 @@
-// Passing a local, at its last use, to a parameter of a wider union type copies it instead of
-// moving it, so a value holding a promise panics with "a promise cannot be copied" (and other
-// values are cloned for nothing). Declaring the local with the union type first moves as
-// expected. Found through std/jsx: compiled JSX passes `{items}` to `jsxEscape(value: Child)`.
+// check: no leaks
+// Passing a local, at its last use, to a parameter of a wider union type moves it, like a local
+// declared with the union type. It used to be copied, so a value holding a promise panicked with
+// "a promise cannot be copied" (#83). Found through std/jsx: compiled JSX passes `{items}` to
+// `jsxEscape(value: Child)`.
 class Task {
   pending: Promise<i64>[] = [];
 }

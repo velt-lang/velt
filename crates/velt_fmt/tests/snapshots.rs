@@ -244,6 +244,22 @@ const neg = - -x;
 }
 
 #[test]
+fn delete_and_negative_literal_types() {
+    assert_fmt(
+        "function f() {\n  delete (r[\"a\"]);\n  delete(r.b);\n  g<-1>(5);\n  const c = a < -1;\n}\ntype N = -1|1;",
+        "function f() {
+  delete r[\"a\"];
+  delete r.b;
+  g<-1>(5);
+  const c = a < -1;
+}
+
+type N = -1 | 1;
+",
+    );
+}
+
+#[test]
 fn types_keep_required_parentheses() {
     assert_fmt(
         "type A = (X|Y)[];\ntype F = ((acc: i64, x: T) => i64)|null;\nfunction g<T extends (A|B)>(x: T) {}",
@@ -373,6 +389,25 @@ function f(
 ): {
   y: i64; /* y */
 } {}
+",
+    );
+}
+
+#[test]
+fn constructor_visibility_is_kept() {
+    assert_fmt(
+        "class A { private constructor(private readonly x: i64) {} }\nclass B { protected   constructor() {} }\nclass C { public constructor() {} }",
+        "class A {
+  private constructor(private readonly x: i64) {}
+}
+
+class B {
+  protected constructor() {}
+}
+
+class C {
+  constructor() {}
+}
 ",
     );
 }

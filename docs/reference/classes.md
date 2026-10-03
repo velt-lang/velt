@@ -14,17 +14,31 @@ hidden classes and no runtime shape checks.
   (tracked in [#273](https://github.com/velt-lang/velt/issues/273)).
 - **Parameter properties**: `constructor(private readonly name: string, public age: i64) {}`
   declares the fields and assigns them, as in TypeScript (`protected` is accepted there and
-  means public: there is no `protected`).
+  means public: there are no `protected` members).
+- **Private and protected constructors** (TypeScript's rules): `private constructor(…)` can be
+  called (`new C(…)`) only inside the class body: its methods, static methods, field
+  initializers and the closures in them. Such a class cannot be extended
+  (``cannot extend `C`: its constructor is private``); a public static method is the usual way
+  to create one. `protected constructor(…)` may also be called inside the bodies of subclasses
+  (`super(…)` in their constructors, or `new C(…)`). Elsewhere `new C` is an error:
+  ``the constructor of `C` is private: only the body of `C` can call `new C(...)` `` (or
+  ``… is protected: only `C` and its subclasses can …``). A subclass without a constructor of
+  its own inherits its base's, with the same rule. `JSON.parse<C>` (and `v.as<C>()`) cannot
+  decode such a class, alone or inside another type, since decoding fills the fields without
+  running a constructor; `JSON.stringify` writes it as usual
+  ([`velt:json`](../std/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
   layout, so upcasts are free. The constructor calls `super(…)` first. Redefining a base method
   requires `override`; `super.m()` calls the base version. There are no abstract classes.
 - **Dispatch**: a method that is never overridden is called directly (and can be inlined). Only
   overridden methods go through a vtable, and only where the static type is a base class.
 - **Members**: `private` (usable only inside the declaring type's body, including closures
-  there, but not in subclasses: ``` `x` is private ```), `public` (the default), `readonly`
+  there, but not in subclasses: ``` `x` is private ```; the standard library's own modules may
+  use the private members of its types, which is how std types build each other's handles),
+  `public` (the default), `readonly`
   fields (assignable only in the constructor), `static` methods, and
   `static readonly NAME: T = const;` constants (`Account.LIMIT`, `Math.PI`). Mutable statics
-  and `protected` don't exist.
+  and `protected` members don't exist (only a constructor can be `protected`).
 - **Getters and setters**: `get size(): T { … }` is read as a property (`x.size`) and cannot be
   called or assigned; `set size(v: T) { … }` runs on `x.size = v`; with both, `x.size += 1` and
   `x.size++` use both. Implementations and overrides of a getter or setter must be accessors
@@ -76,6 +90,36 @@ class Savings extends Account {
 const a: Account = new Savings("ada");
 const ok = a.deposit(100);      // dispatched to Savings.deposit
 console.log(ok, a.total, a.owner, Account.LIMIT);
+```
+
+A private constructor with static factory methods, and a protected one for a base class:
+
+```ts
+class Celsius {
+  private constructor(readonly degrees: f64) {}
+
+  static of(degrees: f64): Celsius | null {
+    return degrees < -273.15 ? null : new Celsius(degrees);
+  }
+
+  static fromFahrenheit(f: f64): Celsius {
+    return new Celsius((f - 32.0) * 5.0 / 9.0);
+  }
+}
+
+class Shape {
+  protected constructor(readonly name: string) {}
+}
+
+class Square extends Shape {
+  constructor(readonly side: f64) {
+    super("square");
+  }
+}
+
+console.log(Celsius.fromFahrenheit(212.0).degrees, Celsius.of(-300.0) == null); // 100 true
+console.log(new Square(2.0).name);                                              // square
+// new Celsius(5.0) and new Shape("x") are errors here; so is `class Kelvin extends Celsius`.
 ```
 
 ## Structs

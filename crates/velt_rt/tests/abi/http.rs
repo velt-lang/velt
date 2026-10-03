@@ -2,7 +2,6 @@
 //! keep-alive requests from plain threads and with the runtime's own `fetch`.
 
 use super::fake::{arg, block_on_fut, ok, take_string};
-use crate::handle::Handle;
 use crate::http::client::*;
 use crate::http::request::*;
 use crate::http::response::*;
@@ -32,7 +31,7 @@ struct Env {
 
 #[repr(C)]
 struct Handler {
-    result: Handle<RespObj>,
+    result: RespHandle,
     tag: u32,
     req: ReqHandle,
     env: *const AtomicU64,
@@ -41,7 +40,7 @@ struct Handler {
 
 unsafe extern "C" fn handler_init(env: *mut c_void, req: *mut ReqObj, state: *mut u8) {
     let h = Handler {
-        result: Handle::NULL,
+        result: RespHandle::NULL,
         tag: 0,
         req: ReqHandle::from_bits(req as usize as u64),
         env: (*(env as *const Env)).hits,
@@ -56,7 +55,7 @@ unsafe fn text_of(f: unsafe extern "C" fn(ReqHandle, *mut VeltStr), req: ReqHand
     take_string(out.assume_init())
 }
 
-unsafe fn respond(req: ReqHandle) -> Handle<RespObj> {
+unsafe fn respond(req: ReqHandle) -> RespHandle {
     let (method, path) = (
         text_of(velt_rt_http_req_method, req),
         text_of(velt_rt_http_req_path, req),
@@ -127,7 +126,7 @@ unsafe extern "C" fn handler_drop(s: *mut u8) {
 fn start_server(
     hits: &'static AtomicU64,
     drop: Option<unsafe extern "C" fn(*mut c_void)>,
-) -> Handle<ServerObj> {
+) -> ServerHandle {
     let env = Box::into_raw(Box::new(Env { drop, hits }));
     let handler = VeltHandler {
         init: handler_init,
@@ -137,7 +136,7 @@ fn start_server(
         state_align: 8,
         env: env as *mut c_void,
     };
-    ok(block_on_fut::<IoResult<Handle<ServerObj>>>(unsafe {
+    ok(block_on_fut::<IoResult<ServerHandle>>(unsafe {
         velt_rt_http_serve(&arg("127.0.0.1:0"), &handler)
     }))
 }
@@ -273,7 +272,7 @@ fn keep_alive_throughput() {
 fn fetch_get_and_post() {
     let port = server_port();
     let url = format!("http://127.0.0.1:{port}/json");
-    let r = ok(block_on_fut::<IoResult<Handle<FetchResp>>>(unsafe {
+    let r = ok(block_on_fut::<IoResult<FetchRespHandle>>(unsafe {
         velt_rt_http_fetch(
             &arg("GET"),
             &arg(&url),
@@ -298,7 +297,7 @@ fn fetch_get_and_post() {
 
     let url = format!("http://127.0.0.1:{port}/post?z");
     let headers = [arg("x-test"), arg("fetch")];
-    let r = ok(block_on_fut::<IoResult<Handle<FetchResp>>>(unsafe {
+    let r = ok(block_on_fut::<IoResult<FetchRespHandle>>(unsafe {
         velt_rt_http_fetch(&arg("POST"), &arg(&url), headers.as_ptr(), 1, &arg("data!"))
     }));
     unsafe {
@@ -312,7 +311,7 @@ fn fetch_get_and_post() {
     }
 
     // Only http:// and https:// are fetched (checked before any connection is made).
-    let ftp = block_on_fut::<IoResult<Handle<FetchResp>>>(unsafe {
+    let ftp = block_on_fut::<IoResult<FetchRespHandle>>(unsafe {
         velt_rt_http_fetch(
             &arg("GET"),
             &arg("ftp://example.com/"),

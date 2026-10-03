@@ -12,7 +12,7 @@ use std::cell::Cell;
 use std::path::PathBuf;
 
 use velt_common::{Diagnostics, FileId, Span};
-use velt_sema::{check, hir, SourceModule};
+use velt_sema::{check_with, hir, CheckOptions, SourceModule};
 use velt_syntax::ast::*;
 
 pub use velt_syntax::ast::BinaryOp as B;
@@ -417,6 +417,11 @@ pub fn func(name: &str, params: &[(&str, &str)], ret: Option<&str>, body: Vec<St
 }
 
 pub fn run(items: Vec<Item>) -> (Option<hir::Program>, Diagnostics) {
+    run_with(items, CheckOptions::default())
+}
+
+/// [`run`] with check options (e.g. a library module without `main`).
+pub fn run_with(items: Vec<Item>, opts: CheckOptions) -> (Option<hir::Program>, Diagnostics) {
     let m = SourceModule {
         path: "main".into(),
         is_std: false,
@@ -429,7 +434,7 @@ pub fn run(items: Vec<Item>) -> (Option<hir::Program>, Diagnostics) {
         imports: vec![],
         jsx_runtime: None,
     };
-    check(&[m], 0)
+    check_with(&[m], 0, opts)
 }
 
 /// Check and require success.

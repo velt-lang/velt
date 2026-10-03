@@ -27,7 +27,7 @@ async function reply(ws: WebSocket, msg: ServerMessage) {
   await sendQuietly(ws, encode(msg));
 }
 
-async function join(ws: WebSocket, id: i64, name: string, room: shared<Mutex<Room>>) {
+async function join(ws: WebSocket, id: i64, name: string, room: shared<Mutex<Room<WebSocket>>>) {
   const err = room.with((r) => r.join(id, name, ws));
   if (err != null) {
     await reply(ws, { type: "error", message: err });
@@ -39,7 +39,7 @@ async function join(ws: WebSocket, id: i64, name: string, room: shared<Mutex<Roo
   await broadcast(room.with((r) => r.sockets(id)), { type: "joined", name: me });
 }
 
-async function say(ws: WebSocket, id: i64, text: string, room: shared<Mutex<Room>>) {
+async function say(ws: WebSocket, id: i64, text: string, room: shared<Mutex<Room<WebSocket>>>) {
   const from = room.with((r) => r.nameOf(id));
   if (from == null) {
     await reply(ws, { type: "error", message: "join first" });
@@ -63,7 +63,7 @@ async function handle(
   ws: WebSocket,
   id: i64,
   text: string,
-  room: shared<Mutex<Room>>,
+  room: shared<Mutex<Room<WebSocket>>>,
 ): Promise<bool> {
   try {
     const msg = decodeClient(text);
@@ -84,7 +84,7 @@ async function handle(
 }
 
 // One client connection, until it closes or leaves.
-async function session(ws: WebSocket, id: i64, room: shared<Mutex<Room>>) {
+async function session(ws: WebSocket, id: i64, room: shared<Mutex<Room<WebSocket>>>) {
   let m = await receive(ws);
   while (m != null) {
     if (!m.isBinary && !(await handle(ws, id, m.text, room))) {
@@ -105,7 +105,7 @@ async function session(ws: WebSocket, id: i64, room: shared<Mutex<Room>>) {
 
 // Serves the chat on `port` (0 = any free port): WebSocket `/chat`, a hint on other paths.
 export async function startChat(port: i64): Promise<Server> {
-  const room = shared(new Mutex<Room>(new Room()));
+  const room = shared(new Mutex<Room<WebSocket>>(new Room<WebSocket>()));
   const ids = shared(0);
   return await serve({ port }, async (req) => {
     if (req.path === "/chat" && isWebSocketRequest(req)) {

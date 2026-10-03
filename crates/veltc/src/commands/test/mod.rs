@@ -2,7 +2,7 @@
 //! file ([`harness`]) and run it, printing `ok <name>` / `FAILED <name>` and a summary.
 //! Exit code 1 if any test failed or did not build.
 
-mod discover;
+pub(crate) mod discover;
 mod harness;
 
 use std::path::{Path, PathBuf};

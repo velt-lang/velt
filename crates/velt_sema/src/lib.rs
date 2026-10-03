@@ -6,7 +6,8 @@
 //!    exports are visible everywhere), type shapes, signatures, vtables, interface impls.
 //! 2. [`body`]: module constants, defaults, then every function body: resolve names, type-check
 //!    bidirectionally (with type-argument inference) and desugar into HIR. Closures become
-//!    their own function defs.
+//!    their own function defs. [`instantiation_cycles`] then rejects generic recursion whose
+//!    type arguments grow (it would have infinitely many instantiations).
 //! 3. [`ownership`]: infer which params / receivers / bindings take ownership (fixpoint) and
 //!    patch call sites; string moves become soft (strings are values); reject moves out of
 //!    borrowed places.
@@ -38,6 +39,7 @@ mod flow;
 mod generic_arrows;
 pub mod ide;
 mod infer;
+mod instantiation_cycles;
 mod json;
 mod known;
 mod literals;
@@ -84,16 +86,40 @@ pub(crate) const SEMA_STACK_BYTES: usize = 64 << 20;
 /// CONTRACT: check a whole program. `modules[root]` must define `main`.
 /// Returns `Some(program)` iff there are no errors; warnings may accompany either outcome.
 pub fn check(modules: &[SourceModule], root: usize) -> (Option<hir::Program>, Diagnostics) {
+    check_with(modules, root, CheckOptions::default())
+}
+
+/// What [`check_with`] requires of the program beyond being well-typed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CheckOptions {
+    /// The root module must define `main` (a program to build or run). Without it a root with no
+    /// `main` is a library module: every body is still checked and the program's `entry` is
+    /// `None`; a `main` that is there is validated either way.
+    pub require_main: bool,
+}
+
+impl Default for CheckOptions {
+    fn default() -> Self {
+        Self { require_main: true }
+    }
+}
+
+/// [`check`] with options (`velt check` checks library modules, which have no `main`).
+pub fn check_with(
+    modules: &[SourceModule],
+    root: usize,
+    opts: CheckOptions,
+) -> (Option<hir::Program>, Diagnostics) {
     std::thread::scope(|s| {
         let spawned = std::thread::Builder::new()
             .name("velt-sema".into())
             .stack_size(SEMA_STACK_BYTES)
-            .spawn_scoped(s, || check_on_current_thread(modules, root));
+            .spawn_scoped(s, || check_on_current_thread(modules, root, opts));
         match spawned {
             Ok(handle) => handle
                 .join()
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(_) => check_on_current_thread(modules, root),
+            Err(_) => check_on_current_thread(modules, root, opts),
         }
     })
 }
@@ -101,6 +127,7 @@ pub fn check(modules: &[SourceModule], root: usize) -> (Option<hir::Program>, Di
 fn check_on_current_thread(
     modules: &[SourceModule],
     root: usize,
+    opts: CheckOptions,
 ) -> (Option<hir::Program>, Diagnostics) {
     let lifted = generic_arrows::lift(modules);
     let modules = lifted.as_deref().unwrap_or(modules);
@@ -110,7 +137,7 @@ fn check_on_current_thread(
     };
     let mut cx = ctx::Ctx::new(modules, root);
     analyze(&mut cx);
-    let entry = check_main(&mut cx, root, root_mod);
+    let entry = check_main(&mut cx, root, root_mod, opts.require_main);
 
     if cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
@@ -140,6 +167,11 @@ fn check_on_current_thread(
 fn analyze(cx: &mut ctx::Ctx) {
     collect::collect(cx);
     body::check_bodies(cx);
+    // Growing generic recursion has infinitely many instantiations: the passes below propagate
+    // requirements per instantiation and would never finish.
+    if instantiation_cycles::check(cx) {
+        return;
+    }
     ownership::infer_modes(cx);
     body::expr::jsx::check_prop_copies(cx);
     throws::infer_all(cx);
@@ -154,9 +186,21 @@ fn analyze(cx: &mut ctx::Ctx) {
     ownership::check_exclusive(cx);
 }
 
-fn check_main(cx: &mut ctx::Ctx, root: usize, root_mod: &SourceModule) -> Option<hir::DefId> {
+/// Validate the root module's `main`; a missing one is an error only when `require_main`.
+fn check_main(
+    cx: &mut ctx::Ctx,
+    root: usize,
+    root_mod: &SourceModule,
+    require_main: bool,
+) -> Option<hir::DefId> {
     let file_start = Span::new(root_mod.file, root_mod.ast.span.lo, root_mod.ast.span.lo);
-    let Some(Item::Def(id)) = cx.scopes[root].items.get("main").copied() else {
+    let main = cx.scopes[root].items.get("main").copied();
+    // A library module may use the name `main` for anything; only a `main` function is checked.
+    let is_fn = |id: hir::DefId| matches!(cx.info[id.0 as usize], DefInfo::Fn(_));
+    if !require_main && !matches!(main, Some(Item::Def(id)) if is_fn(id)) {
+        return None;
+    }
+    let Some(Item::Def(id)) = main else {
         cx.error(Diagnostic::error(
             "`main` function not found in the root module",
             file_start,

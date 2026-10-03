@@ -21,7 +21,7 @@ type-checking the file; these types document the same fields (a test keeps them 
 
 | Type | What it describes |
 |---|---|
-| `Package` | the manifest: `name`, `version`, and the optional `entry`, `registry`, `dependencies`, `paths`, `jsx`, `native` |
+| `Package` | the manifest: `name`, `version`, and the optional `description`, `keywords`, `entry`, `registry`, `dependencies`, `paths`, `jsx`, `native` |
 | `Dependency` | `string` (a semver requirement) or a `DependencySource` |
 | `DependencySource` | `{ version?: string; path?: string }` |
 | `Jsx` | `{ importSource?: string }` |

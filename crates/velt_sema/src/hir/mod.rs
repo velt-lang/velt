@@ -189,6 +189,8 @@ pub struct Program {
     /// Indexed by `DefId`.
     pub defs: Vec<Def>,
     /// The user's `main` function (M1: `function main(): void | i32`; M3: may be async).
+    /// `None` only for a library root checked with `CheckOptions { require_main: false }`
+    /// (`velt check`); lowering requires `Some`.
     pub entry: Option<DefId>,
     /// Interface implementations (M2): which concrete type implements which interface, with
     /// the method defs in `InterfaceDef::methods` order (defaults already substituted).

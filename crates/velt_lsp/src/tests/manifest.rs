@@ -61,7 +61,17 @@ fn completion_and_hover_come_from_the_schema() {
         .iter()
         .map(|i| i["label"].as_str().unwrap())
         .collect();
-    assert_eq!(labels, ["entry", "registry", "paths", "jsx"]);
+    assert_eq!(
+        labels,
+        [
+            "description",
+            "keywords",
+            "entry",
+            "registry",
+            "paths",
+            "jsx"
+        ]
+    );
 
     let (line, character) = pos_of(&text, "wasm", 1);
     let hover = client.request("textDocument/hover", at(&doc, line, character));

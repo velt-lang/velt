@@ -123,10 +123,23 @@ pub struct Package {
     pub name: String,
     /// Semver version (validated).
     pub version: String,
+    /// One line about the package, for `velt search` and registry listings.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Search words (`[a-z0-9][a-z0-9-]{0,31}`, at most [`MAX_KEYWORDS`]).
+    #[serde(default)]
+    pub keywords: Vec<String>,
     /// Entry module, relative to the manifest directory.
     #[serde(default = "default_entry")]
     pub entry: String,
 }
+
+/// Longest `description`, in characters (Unicode scalar values): one line in `velt search`.
+pub const MAX_DESCRIPTION: usize = 200;
+/// Most `keywords`.
+pub const MAX_KEYWORDS: usize = 10;
+/// Longest keyword.
+pub const MAX_KEYWORD: usize = 32;
 
 fn default_entry() -> String {
     DEFAULT_ENTRY.to_string()
@@ -272,12 +285,68 @@ fn check_registry(url: &str) -> Result<(), String> {
     }
 }
 
+/// `description`: one line of at most [`MAX_DESCRIPTION`] characters, without surrounding
+/// whitespace (the stored value is what the file says).
+fn check_description(text: &str) -> Result<(), String> {
+    let chars = text.chars().count();
+    if text.is_empty() {
+        Err("`description` is empty; remove the field instead".into())
+    } else if chars > MAX_DESCRIPTION {
+        Err(format!(
+            "`description` has {chars} characters; at most {MAX_DESCRIPTION} fit on one line"
+        ))
+    } else if text.chars().any(char::is_control) {
+        Err(
+            "`description` must be one line (no line breaks, tabs or other control characters)"
+                .into(),
+        )
+    } else if let Some(c) = text.chars().find(|c| invisible(*c)) {
+        Err(format!(
+            "`description` contains the invisible character U+{:04X} (it can reorder or hide text where the description is shown)",
+            c as u32
+        ))
+    } else if text.trim() != text {
+        Err("`description` starts or ends with whitespace".into())
+    } else {
+        Ok(())
+    }
+}
+
+/// Line and paragraph separators, and format characters that reorder or hide text (bidi
+/// overrides and isolates, zero-width characters, the byte-order mark).
+fn invisible(c: char) -> bool {
+    matches!(c as u32,
+        0x00AD | 0x061C | 0x180E | 0x200B..=0x200F | 0x2028..=0x202E | 0x2060..=0x2064
+        | 0x2066..=0x206F | 0xFEFF | 0xFFF9..=0xFFFB)
+}
+
+/// One keyword: lowercase ASCII letters, digits and `-`, starting with a letter or digit, at most
+/// [`MAX_KEYWORD`] characters.
+fn check_keyword(word: &str) -> Result<(), String> {
+    let mut chars = word.chars();
+    let ok = word.len() <= MAX_KEYWORD
+        && chars
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "keyword `{word}` must be lowercase letters, digits and `-`, starting with a letter or digit (at most {MAX_KEYWORD} characters)"
+        ))
+    }
+}
+
 fn check_name(name: &str) -> Result<(), String> {
     if RESERVED_NAMES.contains(&name) {
         return Err(reserved(name));
     }
     if is_windows_device_name(name) {
         return Err(device_name(name));
+    }
+    if LIBC_PREFIX_NAMES.contains(&name) {
+        return Err(libc_prefix(name));
     }
     if is_valid_package_name(name) {
         Ok(())
@@ -310,6 +379,9 @@ fn check_dependency_name(name: &str) -> Result<(), String> {
     }
     if is_windows_device_name(name) {
         return Err(device_name(name));
+    }
+    if LIBC_PREFIX_NAMES.contains(&name) {
+        return Err(libc_prefix(name));
     }
     if is_valid_package_name(name) {
         Ok(())
@@ -375,6 +447,7 @@ pub fn is_valid_package_name(name: &str) -> bool {
     let mut chars = name.chars();
     !RESERVED_NAMES.contains(&name)
         && !is_windows_device_name(name)
+        && !LIBC_PREFIX_NAMES.contains(&name)
         && matches!(chars.next(), Some('a'..='z'))
         && chars.all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-' | '_'))
 }
@@ -397,6 +470,17 @@ pub fn is_windows_device_name(name: &str) -> bool {
 
 fn device_name(name: &str) -> String {
     format!("the package name `{name}` is a device name on Windows (`con`, `nul`, `com1`, …)")
+}
+
+/// Names whose export prefix (`<name>_`, see `native::export_prefix`) is a C library namespace
+/// (`pthread_create`, `sem_open`, `shm_open`, `posix_spawn`): such a package's native exports
+/// would share names with the C library's functions.
+pub const LIBC_PREFIX_NAMES: &[&str] = &["pthread", "sem", "shm", "posix"];
+
+fn libc_prefix(name: &str) -> String {
+    format!(
+        "the package name `{name}` is reserved: its native functions (`{name}_*`) would share names with the C library's"
+    )
 }
 
 fn reserved(name: &str) -> String {

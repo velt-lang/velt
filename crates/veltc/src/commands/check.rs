@@ -1,18 +1,28 @@
-//! `velt check`: the front end only (load, parse, sema) on a file or the current package, for
-//! fast feedback while editing and for tools (`--json`). Nothing is lowered, compiled or linked.
+//! `velt check`: the front end only (load, parse, sema) on a file and its imports or on every
+//! module of the current package, for fast feedback while editing and for tools (`--json`).
+//! Nothing is lowered, compiled or linked.
 
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use serde_json::{json, Value};
 use velt_common::{Diagnostic, Severity, SourceMap, Span};
 
+use super::project::Project;
+use super::test::discover;
 use crate::cli::{BuildArgs, CheckArgs, Emit};
-use crate::driver::{self, BuildError, Session};
+use crate::driver::{self, BuildError, CheckScope, Session};
+
+/// Directories of a package whose modules `velt check` checks (recursively). Other directories
+/// (`examples/`, `bench/`, scripts at the package root) hold standalone programs with their own
+/// `main`, checked one at a time with `velt check <file>`.
+const PACKAGE_DIRS: [&str; 2] = ["src", "tests"];
 
 /// `velt check`: exit 0 when there are no errors, 1 when there are, 101 on an internal error.
 pub fn check_command(args: &CheckArgs) -> ExitCode {
     let mut sess = Session::new();
-    let result = resolve(args).and_then(|opts| driver::check(&mut sess, &opts));
+    let result =
+        resolve(args).and_then(|(opts, scope)| driver::check_with(&mut sess, &opts, &scope));
     if args.verbose {
         eprint!("{}", sess.render_timings());
     }
@@ -32,20 +42,74 @@ pub fn check_command(args: &CheckArgs) -> ExitCode {
     }
 }
 
-/// The file (inside its package, if any) or the current package's entry, resolved like
-/// `velt build` (package dependencies are installed if needed).
-fn resolve(args: &CheckArgs) -> Result<driver::BuildOptions, BuildError> {
-    if let Some(file) = &args.input {
-        super::project::check_input_file(file).map_err(BuildError::Failed)?;
-    }
+/// The file (inside its package, if any) and its imports, or the current package's modules,
+/// resolved like `velt build` (package dependencies are installed if needed).
+fn resolve(args: &CheckArgs) -> Result<(driver::BuildOptions, CheckScope), BuildError> {
+    let (input, scope) = match &args.input {
+        Some(file) => {
+            super::project::check_input_file(file).map_err(BuildError::Failed)?;
+            (file.clone(), CheckScope::default())
+        }
+        None => package_scope().map_err(BuildError::Failed)?,
+    };
     let build = BuildArgs {
-        input: args.input.clone(),
+        input: Some(input),
         locked: args.locked,
         // No backend is resolved for IR output: checking needs neither clang nor a linker.
         emit: Emit::Vir,
         ..Default::default()
     };
-    super::build::build_options(&build).map_err(BuildError::Failed)
+    let opts = super::build::build_options(&build).map_err(BuildError::Failed)?;
+    Ok((opts, scope))
+}
+
+/// The whole current package, like `tsc` checks a project: its root module (see
+/// [`package_root_module`]) plus every other module under [`PACKAGE_DIRS`] as a library module.
+fn package_scope() -> Result<(PathBuf, CheckScope), String> {
+    let root = Project::current_root()?;
+    let (input, require_main) = package_root_module(&root)?;
+    let mut extra_roots = vec![];
+    for dir in PACKAGE_DIRS
+        .map(|d| root.join(d))
+        .iter()
+        .filter(|d| d.is_dir())
+    {
+        extra_roots.extend(discover::files_with_suffix(dir, ".vlt")?);
+    }
+    extra_roots.retain(|f| *f != input);
+    let scope = CheckScope {
+        require_main,
+        extra_roots,
+    };
+    Ok((input, scope))
+}
+
+/// The root module of the package at `root` and whether it must define `main`: its runnable
+/// entry (`package.entry`, default `src/main.vlt`; `main` required), or `src/lib.vlt` for a
+/// library package (one without a configured entry and without `src/main.vlt`). A configured
+/// entry that is missing is an error, as for `velt build`.
+fn package_root_module(root: &Path) -> Result<(PathBuf, bool), String> {
+    let manifest = vpm::Manifest::from_dir(root)?;
+    let entry = root.join(&manifest.package.entry);
+    let lib = root.join(vpm::manifest::LIB_ENTRY);
+    let default_entry = manifest.package.entry == vpm::manifest::DEFAULT_ENTRY;
+    if entry.is_file() {
+        Ok((entry, true))
+    } else if !default_entry {
+        Err(format!(
+            "package `{}` has no `{}` to check",
+            manifest.package.name, manifest.package.entry
+        ))
+    } else if lib.is_file() {
+        Ok((lib, false))
+    } else {
+        Err(format!(
+            "package `{}` has neither `{}` nor `{}` to check",
+            manifest.package.name,
+            manifest.package.entry,
+            vpm::manifest::LIB_ENTRY
+        ))
+    }
 }
 
 /// `{"diagnostics": [...], "errors": n, "warnings": n}`; a non-source failure (unreadable root,

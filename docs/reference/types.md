@@ -115,8 +115,8 @@ console.log(label("tea", 3), "a,b".split(","), "  x ".trim().padStart(3, "*"));
   `[1] == [1]` is `false`, and `a == b` is `true` when `b` refers to the same object as `a`.
   `T | null`, unions and tuples compare their parts that way.
 - Content comparison: `deepEqual(a, b)` ([prelude](../std/prelude.md)) compares arrays,
-  structs and object literals by their contents, recursively, and class instances (`Map`
-  included) by identity; `assertEq` uses it.
+  structs and object literals by their contents, recursively; maps and records by their keys
+  and values, in any key order; other class instances by identity. `assertEq` uses it.
 - `<`, `<=`, `>`, `>=` work on numbers and strings, and on a generic `T extends Comparable<T>`
   ([Comparable](classes.md#comparable)).
 
@@ -186,6 +186,9 @@ A string, number or bool literal is a type with that one value: `"circle"`, `42`
 - A literal takes a literal type only where one is expected (an annotation, a parameter, a
   field, a union with literal members); elsewhere it has its base type (`const s = "up"` is a
   `string`). A literal-typed value converts implicitly to its base type (`const s: string = d;`).
+- Literal types work as type arguments too, negative numbers included: `f<"x" | null>()`,
+  `g<-1>(5)`. As in TypeScript, `a < -1` stays a comparison: a literal after `<` starts type
+  arguments only when `>`, `|` or `,` follows it.
 - A literal type is zero-sized; a union of literals is only its tag. Printing, `${}` and
   `JSON.stringify` show the value; `typeof` gives the base type's tag.
 - `JSON.parse` checks a literal type against its value (`expected "task" at $.kind`).
@@ -326,22 +329,35 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   `values()`, `entries()`, `for (const [k, v] of m)`, plus single-lookup updates: `upsert(k, init, (v) => v + 1)`,
   `update(k, (v) => { v.push(x); }): bool` (the callback gets the stored value itself) and
   `getOrInsert(k, () => v)`. Keys: numbers, `bool`, `string`, class instances (by identity),
-  and structs, object types and tuples, which compare by content (in JS two equal object
-  literals are two different keys). Iteration follows insertion order, like JS.
+  and structs, object types, tuples, arrays, maps and records, which compare by content (in JS
+  two equal object literals are two different keys). Float keys compare with `==`, so a `NaN`
+  key is never found (JS's SameValueZero finds it), and a content key changed after insertion
+  makes its entry unreachable
+  ([Map](../std/prelude.md#map)). Iteration follows insertion order, like JS.
 - **`Record<K, V>`**: a dictionary written with object syntax, like TypeScript's `Record`.
   `K` is `string`, a union of string literal types, or a string enum; any other key type is
   an error (use a `Map`), also when a generic function or class gets it as a type argument.
   With `string` keys a record is *open*: `r[k]` and `r.name` are `V | null`, `r[k] = v`
-  inserts or replaces, and `delete r[k]` removes. With literal or enum keys it is *closed*: it
-  always holds every key, so `r.cpu` is `V`, a typo is an error, and `delete` is not allowed.
+  inserts or replaces, `r[k] ??= v` sets a missing key, and `delete r[k]` removes. Because a
+  key may be missing, `r[k] += 1`, `r[k]++` and the other compound assignments are errors on an
+  open record: say what a missing key starts from with `r[k] = (r[k] ?? 0) + 1` (JS would give
+  `NaN`). With literal or enum keys it is *closed*: it always holds every key, so `r.cpu` is
+  `V`, `r.cpu += 1` works, a typo is an error, and `delete` is not allowed.
   On an enum-keyed record, `r.mem` names the member whose value is `"mem"`. Build a record
   from an object literal where a record is expected (`const r: Record<string, i64> = {}`; a
   closed record's literal must list every key) or with `new Record<string, V>()`. A literal
   may spread another record (`{ ...r, x: 1 }`). In generic code, where the key type is a type
   parameter `K`, reads are `V | null` and the record may be closed, so it cannot start empty
   (only a literal with a spread builds one) and `delete` is not allowed. A record has no
-  methods of its own: `Object.keys(r)`, `Object.values(r)` and `Object.entries(r)` return
-  arrays in insertion order. `console.log` and `JSON` treat a record as an object. A class
+  methods of its own and is not iterable: `Object.keys(r)` (a `string[]`), `Object.values(r)`
+  and `Object.entries(r)` return arrays in insertion order (`for (const [k, v] of
+  Object.entries(r))`). Given an object literal, `Object.values` and `Object.entries` read it
+  as a `Record<string, V>`, so its values need one type. `Object.keys` accepts any object, as
+  in TypeScript: an object literal or object type (`Object.keys({ a: 1, b: "x" })` is `["a",
+  "b"]`), a struct, or a class instance, whose fields it lists in declaration order (base class
+  fields first, `private` ones too; not static fields or methods). A struct's optional field is
+  listed only when it is not `null`. A class with subclasses is an error, because the value may
+  be a subclass instance with more fields. `console.log` and `JSON` treat a record as an object. A class
   cannot `extends` a `Record` (its constructor would leave a closed record without its keys);
   hold one in a field instead. A literal for an enum-keyed record is not supported yet.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,

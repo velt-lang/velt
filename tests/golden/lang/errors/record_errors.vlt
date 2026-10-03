@@ -15,11 +15,15 @@ function main() {
   console.log(l.disk);
   delete l.cpu;
   const r: Record<string, i64> = {};
-  r[key()] += 1;
+  l[pick()] += 1;
   const n: Record<i64, string> = {};
   const c: Record<Color, i64> = {};
   const e = new Record<Limit, i64>();
   const x = 5;
   delete x;
   console.log(m, n, c, e);
+}
+
+function pick(): Limit {
+  return "cpu";
 }

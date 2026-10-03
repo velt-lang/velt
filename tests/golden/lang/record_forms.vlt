@@ -1,0 +1,35 @@
+// Forms around open records and literal types that follow TypeScript (#230).
+type N = -1;
+type Sign = -1 | 0 | 1;
+
+function pick<T>(x: i64): i64 {
+  return x;
+}
+
+function sign(n: i64): Sign {
+  return n < 0 ? -1 : n == 0 ? 0 : 1;
+}
+
+function main() {
+  const counts: Record<string, i64> = {};
+  // `??=` is defined for a missing key: it sets it only then.
+  counts["a"] ??= 5;
+  counts["a"] ??= 7;
+  // The fix-it for `+=` on an open record.
+  counts["b"] = (counts["b"] ?? 0) + 1;
+  counts["b"] = (counts["b"] ?? 0) + 1;
+  console.log(counts);
+
+  // Parentheses around the operand of `delete`, as in TypeScript (`velt fmt` drops them).
+  delete (counts["a"]);
+  console.log(counts, Object.keys(counts));
+
+  // `Object.keys` and friends on an object literal: its keys are strings.
+  console.log(Object.keys({ x: 1, y: 2 }), Object.values({ x: "p" }));
+
+  // Negative number literal types, also as type arguments.
+  const n: N = -1;
+  console.log(n, pick<-1>(5), sign(-3), sign(4));
+  const a = 3;
+  console.log(a < -1, a > -1);
+}

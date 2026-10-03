@@ -10,7 +10,6 @@
 //! `BENCH_OHA=1` additionally runs `oha` (on PATH) with the same connections and duration.
 
 use super::fake::{arg, block_on_fut, ok};
-use crate::handle::Handle;
 use crate::http::request::*;
 use crate::http::response::*;
 use crate::http::server::*;
@@ -26,13 +25,13 @@ use tokio::net::TcpStream;
 
 #[repr(C)]
 struct Hello {
-    result: Handle<RespObj>,
+    result: RespHandle,
     req: ReqHandle,
 }
 
 unsafe extern "C" fn hello_init(_env: *mut c_void, req: *mut ReqObj, state: *mut u8) {
     (state as *mut Hello).write(Hello {
-        result: Handle::NULL,
+        result: RespHandle::NULL,
         req: ReqHandle::from_bits(req as usize as u64),
     });
 }
@@ -68,7 +67,7 @@ fn start_rt_server() -> String {
         state_align: 8,
         env: std::ptr::null_mut(),
     };
-    let server = ok(block_on_fut::<IoResult<Handle<ServerObj>>>(unsafe {
+    let server = ok(block_on_fut::<IoResult<ServerHandle>>(unsafe {
         velt_rt_http_serve(&arg("127.0.0.1:0"), &handler)
     }));
     format!("127.0.0.1:{}", unsafe { velt_rt_http_server_port(server) })
@@ -195,4 +194,63 @@ fn run_oha(addr: &str, conns: usize, secs: u64) {
     {
         eprintln!("oha {addr}: {}", line.trim());
     }
+}
+
+/// The cost of building and taking back one response through the ABI (what every request adds
+/// on top of hyper), alone and with every worker thread doing it at once (registry contention):
+/// `cargo test -p velt_rt --release --lib http_response_cost -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn http_response_cost() {
+    fn build(n: u32) {
+        for _ in 0..n {
+            let resp = velt_rt_http_resp_new(200);
+            let mut body = VeltStr::from_static(b"Hello, World!");
+            unsafe { velt_rt_http_resp_body_text(resp, &mut body) };
+            std::hint::black_box(take(resp));
+        }
+    }
+    // What the same work cost when a response was a raw `Box` pointer (before the registry).
+    fn build_boxed(n: u32) {
+        for _ in 0..n {
+            let mut resp = Box::new(hyper::Response::new(crate::http::body::RespBody::full(
+                bytes::Bytes::new(),
+            )));
+            *resp.status_mut() = hyper::StatusCode::OK;
+            let mut body = VeltStr::from_static(b"Hello, World!");
+            let text = unsafe { crate::http::take_text(&mut body) };
+            *resp.body_mut() = crate::http::body::RespBody::full(text);
+            resp.headers_mut()
+                .entry(hyper::header::CONTENT_TYPE)
+                .or_insert(hyper::header::HeaderValue::from_static("text/plain"));
+            std::hint::black_box(*resp);
+        }
+    }
+    let n = 1_000_000u32;
+    build_boxed(n / 10);
+    let t = Instant::now();
+    build_boxed(n);
+    let boxed = t.elapsed().as_nanos() as f64 / n as f64;
+    eprintln!("boxed response build+take: {boxed:.0} ns (1 thread)");
+    build(n / 10);
+    let t = Instant::now();
+    build(n);
+    let one = t.elapsed().as_nanos() as f64 / n as f64;
+    let threads = env_or("BENCH_THREADS", 16);
+    let t = Instant::now();
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| build(n / 10));
+        }
+    });
+    let all = t.elapsed().as_nanos() as f64 / (threads as f64 * (n / 10) as f64);
+    let t = Instant::now();
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| build_boxed(n / 10));
+        }
+    });
+    let boxed_all = t.elapsed().as_nanos() as f64 / (threads as f64 * (n / 10) as f64);
+    eprintln!("boxed response build+take: {boxed_all:.0} ns/response ({threads} threads at once)");
+    eprintln!("response build+take: {one:.0} ns (1 thread), {all:.0} ns/response ({threads} threads at once)");
 }
