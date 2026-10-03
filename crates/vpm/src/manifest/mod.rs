@@ -279,6 +279,9 @@ fn check_name(name: &str) -> Result<(), String> {
     if is_windows_device_name(name) {
         return Err(device_name(name));
     }
+    if LIBC_PREFIX_NAMES.contains(&name) {
+        return Err(libc_prefix(name));
+    }
     if is_valid_package_name(name) {
         Ok(())
     } else {
@@ -310,6 +313,9 @@ fn check_dependency_name(name: &str) -> Result<(), String> {
     }
     if is_windows_device_name(name) {
         return Err(device_name(name));
+    }
+    if LIBC_PREFIX_NAMES.contains(&name) {
+        return Err(libc_prefix(name));
     }
     if is_valid_package_name(name) {
         Ok(())
@@ -375,6 +381,7 @@ pub fn is_valid_package_name(name: &str) -> bool {
     let mut chars = name.chars();
     !RESERVED_NAMES.contains(&name)
         && !is_windows_device_name(name)
+        && !LIBC_PREFIX_NAMES.contains(&name)
         && matches!(chars.next(), Some('a'..='z'))
         && chars.all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-' | '_'))
 }
@@ -397,6 +404,17 @@ pub fn is_windows_device_name(name: &str) -> bool {
 
 fn device_name(name: &str) -> String {
     format!("the package name `{name}` is a device name on Windows (`con`, `nul`, `com1`, …)")
+}
+
+/// Names whose export prefix (`<name>_`, see `native::export_prefix`) is a C library namespace
+/// (`pthread_create`, `sem_open`, `shm_open`, `posix_spawn`): such a package's native exports
+/// would share names with the C library's functions.
+pub const LIBC_PREFIX_NAMES: &[&str] = &["pthread", "sem", "shm", "posix"];
+
+fn libc_prefix(name: &str) -> String {
+    format!(
+        "the package name `{name}` is reserved: its native functions (`{name}_*`) would share names with the C library's"
+    )
 }
 
 fn reserved(name: &str) -> String {

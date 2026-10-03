@@ -107,9 +107,103 @@ fn check(
     }
 }
 
+/// A minimal ELF shared library (x86-64) whose dynamic symbols are `velt_native_init_<package>`,
+/// each of `exports` and its signature record, with `note` as unreferenced data: what [`read`]
+/// sees in a library built with the SDK. For tests that need a valid bundle without cargo; it
+/// cannot be loaded or linked.
+#[doc(hidden)]
+pub fn sample_library(package: &str, exports: &BTreeMap<String, String>, note: &str) -> Vec<u8> {
+    // Section 1 (.rodata) holds the signature strings and the note; it is placed at file
+    // offset == address.
+    const RODATA: usize = 64;
+    let mut rodata = Vec::new();
+    let mut syms: Vec<(String, u8, u64)> = vec![(init_symbol(package), 2, RODATA as u64)];
+    for (name, sig) in exports {
+        let at = (RODATA + rodata.len()) as u64;
+        rodata.extend_from_slice(sig.as_bytes());
+        rodata.push(0);
+        syms.push((name.clone(), 2, RODATA as u64)); // STT_FUNC
+        syms.push((format!("{SIG_PREFIX}{name}"), 1, at)); // STT_OBJECT
+    }
+    rodata.extend_from_slice(note.as_bytes());
+    rodata.push(0);
+    let mut dynstr = vec![0u8];
+    let mut dynsym = vec![0u8; 24];
+    for (name, kind, value) in &syms {
+        let name_at = dynstr.len() as u32;
+        dynstr.extend_from_slice(name.as_bytes());
+        dynstr.push(0);
+        dynsym.extend_from_slice(&name_at.to_le_bytes());
+        dynsym.push((1 << 4) | kind); // STB_GLOBAL
+        dynsym.push(0);
+        dynsym.extend_from_slice(&1u16.to_le_bytes()); // .rodata
+        dynsym.extend_from_slice(&value.to_le_bytes());
+        dynsym.extend_from_slice(&0u64.to_le_bytes());
+    }
+    let shstrtab = b"\0.rodata\0.dynstr\0.dynsym\0.shstrtab\0".to_vec();
+    let align = |n: usize| n.div_ceil(8) * 8;
+    let rodata_at = RODATA;
+    let dynstr_at = align(rodata_at + rodata.len());
+    let dynsym_at = align(dynstr_at + dynstr.len());
+    let shstrtab_at = align(dynsym_at + dynsym.len());
+    let sh_at = align(shstrtab_at + shstrtab.len());
+    let mut out = vec![0u8; sh_at];
+    // ELF header: 64-bit, little endian, ET_DYN, x86-64, 5 sections, names in section 4.
+    out[..16].copy_from_slice(&[0x7f, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    out[16..18].copy_from_slice(&3u16.to_le_bytes());
+    out[18..20].copy_from_slice(&62u16.to_le_bytes());
+    out[20..24].copy_from_slice(&1u32.to_le_bytes());
+    out[40..48].copy_from_slice(&(sh_at as u64).to_le_bytes());
+    out[52..54].copy_from_slice(&64u16.to_le_bytes());
+    out[58..60].copy_from_slice(&64u16.to_le_bytes());
+    out[60..62].copy_from_slice(&5u16.to_le_bytes());
+    out[62..64].copy_from_slice(&4u16.to_le_bytes());
+    for (at, data) in [
+        (rodata_at, &rodata),
+        (dynstr_at, &dynstr),
+        (dynsym_at, &dynsym),
+        (shstrtab_at, &shstrtab),
+    ] {
+        out[at..at + data.len()].copy_from_slice(data);
+    }
+    // Section headers: name, type, flags, addr, offset, size, link, info, align, entsize (the
+    // fields of an `Elf64_Shdr`, in their sizes below).
+    let (ro, ds, sy, sh) = (
+        rodata_at as u64,
+        dynstr_at as u64,
+        dynsym_at as u64,
+        shstrtab_at as u64,
+    );
+    let headers: [[u64; 10]; 5] = [
+        [0; 10],
+        [1, 1, 2, ro, ro, rodata.len() as u64, 0, 0, 1, 0], // .rodata: PROGBITS, ALLOC
+        [9, 3, 2, 0, ds, dynstr.len() as u64, 0, 0, 1, 0],  // .dynstr: STRTAB
+        [17, 11, 2, 0, sy, dynsym.len() as u64, 2, 1, 8, 24], // .dynsym: DYNSYM
+        [25, 3, 0, 0, sh, shstrtab.len() as u64, 0, 0, 1, 0], // .shstrtab: STRTAB
+    ];
+    const SIZES: [usize; 10] = [4, 4, 8, 8, 8, 8, 4, 4, 8, 8];
+    for header in headers {
+        for (value, size) in header.iter().zip(SIZES) {
+            out.extend_from_slice(&value.to_le_bytes()[..size]);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sample_library_reads_back() {
+        let exports = BTreeMap::from([
+            ("db_open".to_string(), "(string)->IoResult<u64>".to_string()),
+            ("db_close".to_string(), "(u64)->void".to_string()),
+        ]);
+        let bytes = sample_library("db", &exports, "v1");
+        assert_eq!(read(&bytes, "db").unwrap(), exports);
+        assert_ne!(bytes, sample_library("db", &exports, "v2"));
+    }
 
     fn set(names: &[&str]) -> BTreeSet<String> {
         names.iter().map(|s| s.to_string()).collect()

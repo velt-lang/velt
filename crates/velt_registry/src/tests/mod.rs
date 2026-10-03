@@ -131,7 +131,9 @@ fn native_bundle(dir: &Path, content: &str) -> std::path::PathBuf {
     let target = "x86_64-unknown-linux-gnu";
     let b = dir.join(target);
     std::fs::create_dir_all(b.join("shared")).unwrap();
-    std::fs::write(b.join("shared/libvelt_native_n.so"), content).unwrap();
+    let exports = std::collections::BTreeMap::from([("n_get".into(), "()->u64".into())]);
+    let library = vpm::native::exports::sample_library("n", &exports, content);
+    std::fs::write(b.join("shared/libvelt_native_n.so"), library).unwrap();
     let meta = vpm::native::NativeMeta {
         package: "n".into(),
         version: "1.0.0".into(),
@@ -140,7 +142,7 @@ fn native_bundle(dir: &Path, content: &str) -> std::path::PathBuf {
         shared: "shared/libvelt_native_n.so".into(),
         import_lib: None,
         static_obj: None,
-        exports: Default::default(),
+        exports,
     };
     std::fs::write(b.join("native.json"), meta.to_json()).unwrap();
     b
@@ -176,7 +178,11 @@ fn native_libraries_over_http() {
     };
     let installed = vpm::install(&app, &other, opts).unwrap();
     let (_, native) = installed.graph.natives().next().unwrap();
-    assert_eq!(std::fs::read_to_string(native.shared_lib()).unwrap(), "v1");
+    let library = std::fs::read(native.shared_lib()).unwrap();
+    assert_eq!(
+        library,
+        vpm::native::exports::sample_library("n", &native.meta.exports, "v1")
+    );
     assert_eq!(installed.lockfile.get("n").unwrap().native, entry.native);
 
     // Uploads are checked: checksum, and a published target is never replaced.

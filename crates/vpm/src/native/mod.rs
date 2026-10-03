@@ -150,6 +150,10 @@ impl NativeLib {
         );
         let what = format!("`{}`", dir.display());
         bundle::check_meta(&meta, id, &bundle::list_files(dir)?, &what)?;
+        let shared = dir.join(&meta.shared);
+        let library = std::fs::read(&shared)
+            .map_err(|e| format!("cannot read `{}`: {e}", shared.display()))?;
+        bundle::check_exports(&meta, &library, &what)?;
         Ok(NativeLib {
             dir: dir.to_path_buf(),
             meta,

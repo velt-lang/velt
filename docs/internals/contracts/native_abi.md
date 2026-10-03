@@ -138,6 +138,10 @@ static/<p>.o                  # Linux and macOS only
   (e.g. `DW.ref.rust_eh_personality`) would replace the library's and leave references dangling.
 - `native.json` may only name the bundle's own files: `shared` and `import_lib` under `shared/`,
   `static` under `static/`, no absolute paths or `..` (checked on unpack, publish and load).
+- A prebuilt bundle's `exports` list is not trusted as written: on unpack, publish and load, every
+  listed name must start with `<pkg>_`, and the shared library's exports, read back with
+  `vpm::native::exports::read`, must equal the list, signatures included. A `declare` of a listed
+  name therefore always binds to the package's own library, never to a C library function.
 - The checksum of a bundle is the content hash of its files (`vpm::native::bundle::checksum`,
   the hash `velt.lock.json` records for packages).
 
