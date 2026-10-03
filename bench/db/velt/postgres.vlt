@@ -3,7 +3,7 @@
 // `RESULT <workload> <ops> <checksum> <ms>` per workload; the time covers only the timed loop.
 // `quick` as the first argument runs 1/20 of the sizes.
 import { connect, createPool, Client, Pool } from "velt:postgres";
-import { args, env } from "velt:process";
+import { args } from "velt:process";
 import { uuidv4 } from "velt:uuid";
 
 const POOL_SIZE: i64 = 8;
@@ -120,7 +120,7 @@ async function warm(pool: Pool) {
 async function main() {
   const argv = args();
   const scale: i64 = argv.length > 0 && argv[0] == "quick" ? 20 : 1;
-  const url = env("BENCH_PG_URL") ?? "";
+  const url = process.env.BENCH_PG_URL ?? "";
   const table = `bench_db_velt_${uuidv4().replaceAll("-", "")}`;
   const c = await connect(url);
   await c.batch(

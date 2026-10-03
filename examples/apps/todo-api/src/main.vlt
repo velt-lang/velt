@@ -2,12 +2,11 @@
 // picked by the file name (see README.md).
 //   PORT=8090 TODO_DB=todos.json velt run
 //   PORT=8090 TODO_DB=todos.sqlite velt run
-import { env } from "velt:process";
 import { startServer } from "./server";
 
 async function main() {
-  const port = parseInt(env("PORT") ?? "8090", 10) as i64;
-  const server = await startServer(env("TODO_DB") ?? "todos.json", port);
+  const port = parseInt(process.env.PORT ?? "8090", 10) as i64;
+  const server = await startServer(process.env.TODO_DB ?? "todos.json", port);
   console.log(`todo api on http://127.0.0.1:${server.port}`);
   await sleep(1000000000);
 }

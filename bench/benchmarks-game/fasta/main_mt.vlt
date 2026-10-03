@@ -108,7 +108,7 @@ async function main() {
   const argv = args();
   const n = argv.length > 0 ? parseInt(argv[0]) as i64 : 1000;
 
-  stdout.writeString(">ONE Homo sapiens alu\n");
+  process.stdout.write(">ONE Homo sapiens alu\n");
   const alu = new Repeat(ALU);
   for (let left = 2 * n; left > 0; left -= BLOCK_SIZE) {
     stdout.write(alu.next(left < BLOCK_SIZE ? left : BLOCK_SIZE));
@@ -150,7 +150,7 @@ async function main() {
     },
   ];
   for (const section of sections) {
-    stdout.writeString(section.title);
+    process.stdout.write(section.title);
     let left = section.count;
     while (left > 0) {
       const tasks: Promise<u8[]>[] = [];

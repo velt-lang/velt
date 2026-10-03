@@ -1,7 +1,6 @@
 // requires-env: VELT_TEST_PG_URL
 // std/postgres COPY streaming: copyFrom writes rows in chunks (split anywhere), copyTo reads
 // them back as they arrive; abort() cancels a copy, a bad row fails end() and a transaction.
-import { env } from "velt:process";
 import { uuidv4 } from "velt:uuid";
 import { connect } from "velt:postgres";
 
@@ -14,7 +13,7 @@ class Count {
 }
 
 async function main() {
-  const db = await connect(env("VELT_TEST_PG_URL") ?? "");
+  const db = await connect(process.env.VELT_TEST_PG_URL ?? "");
   const t = `copy_${uuidv4().replaceAll("-", "")}`;
   await db.batch(`CREATE TEMP TABLE ${t} (id int PRIMARY KEY, name text, score float8)`);
 

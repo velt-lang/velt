@@ -61,10 +61,14 @@ fn exported_item(
         return Some(it);
     }
     if !cx.scopes[t].items.contains_key(&n.name.name) {
-        cx.err(
+        let mut d = Diagnostic::error(
             format!("module `{}` has no member `{}`", imp.from, n.name.name),
             n.name.span,
         );
+        if let Some(note) = removed_export(&imp.from, &n.name.name) {
+            d = d.with_note(note);
+        }
+        cx.error(d);
         return None;
     }
     cx.error(
@@ -78,6 +82,17 @@ fn exported_item(
         )),
     );
     None
+}
+
+/// What replaced an export the standard library removed.
+fn removed_export(from: &str, name: &str) -> Option<&'static str> {
+    match (from, name) {
+        ("velt:process", "env") => Some(
+            "`env` was removed: read a variable with `process.env.NAME` or `process.env[name]` \
+             (`string | null`, no import)",
+        ),
+        _ => None,
+    }
 }
 
 fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::ImportName) {
