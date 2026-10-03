@@ -57,7 +57,7 @@ Promises behave like JavaScript's, at Rust's cost:
   reference, give the class a `clone()`, or share it with `shared(new Mutex(conn))` (a class
   is shared behind a [`Mutex`](#thread-safety)). When another reference is only found at run time
   (the value is also in an array, say), the program stops with ``panic: cannot copy a `Conn`
-  for another task …``.
+  for another thread …``.
 
 ## Combinators
 
@@ -143,8 +143,12 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
   change the value inside the callback). A function value stored in the value must not have
   captured a resource without `clone()` (the program stops when the lock is released).
 
-`shared(x)` is a thread boundary like `spawn`: `x` is transferred (moved, or copied when the
-program still references it elsewhere). A function value in it, and an HTTP handler, may be
+`shared(x)` is a thread boundary like `spawn`, and it takes `x` itself: a variable used after
+it went into `shared(...)` (also inside `new Mutex(o)`, a literal or a constructor call there)
+is an error ("`o` is still used after `shared(...)`; `shared` takes the value itself …"):
+use it through the `shared` value from then on, or pass `o.clone()`. A reference the compiler
+cannot see (the object is also in an array, say) gets a copy at run time, and a resource
+without `clone()` then stops the program. A function value in it, and an HTTP handler, may be
 called from several threads at once, and each call gets its own copy of what the function
 captured, so a captured resource needs a `clone()`: capturing one without it there is an
 error ("this function captures `store`, and it handles HTTP requests, …"), or, when the

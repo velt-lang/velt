@@ -44,20 +44,27 @@ pub(crate) fn check_boundaries(cx: &mut Ctx) {
         };
         let locals = f.body.locals.clone();
         let mut found: Vec<(Span, TyId, Copied)> = vec![];
+        let mut kept: Vec<(Span, String, bool, TyId)> = vec![];
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
-            if let E::Call {
-                callee: Callee::Intrinsic(Intrinsic::Spawn),
+            let E::Call {
+                callee: Callee::Intrinsic(i),
                 args,
             } = &e.kind
-            {
-                if let [p] = args.as_slice() {
-                    spawned_copies(cx, p, &locals, &mut found);
-                }
+            else {
+                return;
+            };
+            match (i, args.as_slice()) {
+                (Intrinsic::Spawn, [p]) => spawned_copies(cx, p, &locals, &mut found),
+                (Intrinsic::SharedNew, [x]) => shared_kept(cx, x, &locals, &mut kept),
+                _ => {}
             }
         });
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
         for (span, ty, why) in found {
             report(cx, span, ty, why);
+        }
+        for (span, name, local, ty) in kept {
+            report_shared(cx, span, &name, local, ty);
         }
     }
 }
@@ -183,4 +190,74 @@ fn report(cx: &mut Ctx, span: Span, ty: TyId, why: Copied) {
         }
     };
     cx.error(d);
+}
+
+/// The values the program still uses that `shared(x)` would take into the `shared`: `x`, and
+/// what it is built from in place (a `Mutex`, an object, array or union literal, a `new`
+/// whose constructor keeps the argument, a closure's captures), as shares of a variable used
+/// again. `shared` takes the value itself (semantics stage 2, §6): a copy made for it would
+/// silently stop aliasing the variable.
+fn shared_kept(cx: &Ctx, x: &Expr, locals: &[LocalDef], out: &mut Vec<(Span, String, bool, TyId)>) {
+    let parts: Vec<&Expr> = match &x.kind {
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::Share),
+            args,
+        } => {
+            let shared_ty = matches!(cx.ty.kind(x.ty), TyKind::Str | TyKind::Shared(_));
+            if !shared_ty {
+                if let Some(p) = args.first() {
+                    let local = matches!(p.kind, E::Local(..));
+                    out.push((x.span, place_text(cx, locals, p), local, x.ty));
+                }
+            }
+            return;
+        }
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::MutexNew),
+            args,
+        }
+        | E::AdtLit { fields: args, .. }
+        | E::Variant { args, .. }
+        | E::ArrayLit(args)
+        | E::Tuple(args)
+        | E::New { args, .. } => args.iter().collect(),
+        E::WrapSome(e) | E::Upcast(e) | E::ToDyn { expr: e, .. } => vec![e],
+        E::Closure(c) => {
+            if let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] {
+                for k in f
+                    .captures
+                    .iter()
+                    .filter(|k| k.mode == PassMode::Owned && k.share)
+                {
+                    let l = &locals[k.outer.0 as usize];
+                    out.push((x.span, l.name.clone(), true, l.ty));
+                }
+            }
+            return;
+        }
+        _ => return,
+    };
+    for p in parts {
+        shared_kept(cx, p, locals, out);
+    }
+}
+
+fn report_shared(cx: &mut Ctx, span: Span, name: &str, local: bool, ty: TyId) {
+    let msg = match local {
+        true => format!("`{name}` is still used after `shared(...)`; `shared` takes the value itself (move it in, or share a clone)"),
+        false => format!("`{name}` stays where it is held; `shared(...)` takes the value itself (share a clone)"),
+    };
+    let copy = match cx.owns_uncopyable(ty) {
+        true => {
+            let part = cx.uncopyable_part(ty).unwrap_or(ty);
+            format!(
+                ", or give `{}` a `clone()` and pass `{name}.clone()`",
+                cx.display(part)
+            )
+        }
+        false => format!(", or pass a copy: `{name}.clone()`"),
+    };
+    cx.error(Diagnostic::error(msg, span).with_note(format!(
+        "use it through the `shared` value from now on (`m.with((v) => …)`){copy}"
+    )));
 }
