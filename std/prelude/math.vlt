@@ -62,6 +62,12 @@ export class Math {
     return m;
   }
 
+  // Uniform in [0, 1), like JS: the per-thread generator of `velt:random` (not for secrets; use
+  // `velt:crypto`).
+  static random(): f64 {
+    return velt_rt_prng_f64();
+  }
+
   static pow(base: f64, exponent: f64): f64 {
     return base ** exponent;
   }
@@ -100,6 +106,7 @@ export class Math {
 }
 
 declare function velt_rt_math_umulh(a: u64, b: u64): u64;
+declare function velt_rt_prng_f64(): f64;
 
 function max2(a: f64, b: f64): f64 {
   if (a > b) {

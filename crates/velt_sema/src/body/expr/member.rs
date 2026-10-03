@@ -321,6 +321,14 @@ impl FnCx<'_, '_> {
                 self.record_read(obj, super::record::RecordKey::Index(index), span)
             }
             TyKind::Array(elem) => self.array_index(obj, elem, index, want, span),
+            // `s[i]` is `s.charAt(i)` (a string, as in JS).
+            TyKind::Str => {
+                let prop = ast::Ident {
+                    name: "charAt".into(),
+                    span,
+                };
+                self.method_call_on(obj, &prop, &[], std::slice::from_ref(index), None, span)
+            }
             TyKind::Tuple(ts) => self.tuple_index(obj, &ts, index, want, span),
             TyKind::Error | TyKind::Never => {
                 self.expr(index, None, Want::Borrow);
