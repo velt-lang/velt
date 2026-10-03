@@ -221,8 +221,8 @@ impl FnCx<'_, '_> {
     fn instance_args(&mut self, pattern: TyId, t: TyId) -> Option<Vec<Option<TyId>>> {
         let n = self.max_param(pattern).map_or(0, |p| p + 1);
         let mut slots = vec![None; n];
-        let ok = self.cx.match_ty(pattern, t, &mut slots)
-            && self.cx.ty.subst_known(pattern, &slots) == t;
+        let ok =
+            self.cx.match_ty(pattern, t, &mut slots) && self.cx.subst_known(pattern, &slots) == t;
         ok.then_some(slots)
     }
 
@@ -273,7 +273,7 @@ impl FnCx<'_, '_> {
             bs.iter().all(|b| {
                 let b = Bound {
                     iface: b.iface,
-                    args: b.args.iter().map(|a| self.cx.ty.subst(*a, owner)).collect(),
+                    args: b.args.iter().map(|a| self.cx.subst(*a, owner)).collect(),
                 };
                 self.cx.satisfies(t, &b, &self.bounds)
             })

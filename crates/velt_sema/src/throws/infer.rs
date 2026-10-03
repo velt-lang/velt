@@ -108,7 +108,7 @@ pub(super) fn src_final(cx: &mut Ctx, s: &ThrowSrc) -> Option<TyId> {
             (t, args.clone())
         }
     };
-    let t = t.map(|t| cx.ty.subst(t, &args));
+    let t = t.map(|t| cx.subst(t, &args));
     cx.canon_error(t)
 }
 

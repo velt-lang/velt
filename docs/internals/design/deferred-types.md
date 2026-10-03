@@ -33,20 +33,39 @@ Monomorphization happens later, in `velt_vir`, which has no diagnostics.
 
 Three changes have to land first. Each one is useful without this note.
 
-**P1. Canonical instantiation.** Substituting into a generic anonymous object type or union
-doesn't produce the type that would have been written directly. This is a bug today:
+**P1. Canonical instantiation.** Substituting into a generic anonymous object type has to
+produce the type that would have been written directly. Until the change that comes with this
+note, that wasn't the case:
 
 ```ts ignore
 function wrap<U>(x: U): { a: U } { return { a: x }; }
 const o: { a: string } = wrap<string>("hi");
-// error: mismatched types: expected { a: string }, found { a: string }
+// was: error: mismatched types: expected { a: string }, found { a: string }
 ```
 
-`U | null` with `U = string | null` gives `string | null | null`, and a generic union `P0 | P1`
-with `P0 = P1 = "a"` keeps a duplicate member. Substitution in sema must re-canonicalize these
-forms: re-intern anonymous shapes from their substituted fields, flatten and deduplicate
-unions, and collapse nested `null`. `velt_vir`'s `Cx::subst` must do the same. Every reduction
-below relies on this.
+This part is done.
+
+- **Sema** (`anon.rs`): `Ctx::subst` re-interns each anonymous object type from its substituted
+  fields after substituting.
+- **Inference:** two anonymous defs of one shape match field by field.
+- **`velt_vir`** (`Cx::canon`): every shape maps to one type, preferring sema's concrete def, so
+  the generic and the written forms share a layout and their values flow between them
+  unconverted.
+- **`assigned`:** anonymous defs with the same field names agree on `AdtDef::assigned`, so the
+  two forms are always shared the same way.
+
+The regression test is `tests/golden/lang/anon_generic_instantiation.vlt`.
+
+Still open:
+
+- `U | null` with `U = string | null` gives `string | null | null`. Collapsing it changes the
+  layout (`{ some, { some, value } }` becomes `{ some, value }`), so `velt_vir` must treat wrapping
+  and unwrapping a nullable payload as the identity. That has to land together with the
+  collapse in sema.
+- Generic unions are not re-canonicalized either. Today they convert at run time where they
+  meet a written union (`coerce.rs`), so they are only a problem inside other types.
+
+Every reduction below relies on these.
 
 **P2. `?:` is a flag, not a type.** Today `name?: T` is parsed as `name: T | null`, and the
 flag only keeps the spelling (`ast.rs`, `anon.rs`). Instead, `FieldInfo` keeps the declared type

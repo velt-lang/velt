@@ -147,7 +147,7 @@ impl FnCx<'_, '_> {
             if f.private_to.is_some_and(|o| !self.private_allowed(o)) {
                 continue;
             }
-            let fty = self.cx.ty.subst(f.ty, &args);
+            let fty = self.cx.subst(f.ty, &args);
             out.push((
                 f.name.clone(),
                 self.field_read(&base, i as u32, fty, moves, e.span),
@@ -228,7 +228,7 @@ impl FnCx<'_, '_> {
                     self.check_private(fields[i].private_to, &k.name, k.span);
                     self.cx
                         .rec_ref(k.span, crate::ide::record::Target::Field(d, i as u32));
-                    let expected = self.cx.ty.subst_known(fields[i].ty, &slots);
+                    let expected = self.cx.subst_known(fields[i].ty, &slots);
                     self.prop_value(&k, value, Some(expected))
                 }
                 (Value::Prop(k, value), None) => {

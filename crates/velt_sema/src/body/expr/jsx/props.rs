@@ -72,13 +72,13 @@ impl FnCx<'_, '_> {
         let what = format!("in the props of type '{shown}'");
         let mut values = vec![];
         for (i, v) in filled.values.into_iter().enumerate() {
-            let target = self.cx.ty.subst(filled.fields[i].1, &type_args);
+            let target = self.cx.subst(filled.fields[i].1, &type_args);
             values.push(v.map(|h| self.jsx_coerce(h, target, &what)));
         }
         let args = self.adt_of(c.props).map(|(_, a)| a).unwrap_or_default();
         let slots = args
             .into_iter()
-            .map(|a| Some(self.cx.ty.subst(a, &type_args)))
+            .map(|a| Some(self.cx.subst(a, &type_args)))
             .collect();
         Some((
             self.finish_struct(d, slots, values, None, el.span),
@@ -153,7 +153,7 @@ impl FnCx<'_, '_> {
                     );
                 }
                 filled.written.push(i);
-                let exp = self.cx.ty.subst_known(filled.fields[i].1, &filled.slots);
+                let exp = self.cx.subst_known(filled.fields[i].1, &filled.slots);
                 let (h, _) = self.attr_value(p, value, Some(exp), *span);
                 self.set_prop(filled, i, n, h);
             }
@@ -189,7 +189,7 @@ impl FnCx<'_, '_> {
             }
             return;
         };
-        let exp = self.cx.ty.subst_known(filled.fields[i].1, &filled.slots);
+        let exp = self.cx.subst_known(filled.fields[i].1, &filled.slots);
         let h = self.children_prop(p, &kids, exp, tag);
         self.set_prop(filled, i, p.children_field.clone(), h);
     }

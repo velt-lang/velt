@@ -3,6 +3,13 @@
 //! in order), generic over the type parameters its fields mention (renumbered by first
 //! occurrence). Shapes that differ only in `readonly` convert to each other
 //! ([`Ctx::same_layout`]).
+//!
+//! Substitution keeps types canonical: `{ a: U }` is the def `{ a: T0 }` applied to `[U]`, and
+//! with `U = string` it must be the same type as a written `{ a: string }` (the def
+//! `{ a: string }`, no arguments). [`Ctx::subst`] substitutes and then re-interns every
+//! anonymous object type from its substituted fields ([`Ctx::canon`]). Both forms have the same
+//! fields in the same order, so they lay out alike (`velt_vir` maps both to one type), and
+//! `assigned_fields.rs` makes them agree on `AdtDef::assigned`.
 
 use std::collections::HashMap;
 
@@ -13,6 +20,100 @@ use crate::defs::{AdtInfo, DefInfo, FieldInfo, Generics};
 use crate::hir::{AdtKind, DefId, TyId, TyKind};
 
 impl Ctx<'_> {
+    /// Replace `Param(i)` by `args[i]` in `t`, keeping anonymous object types canonical.
+    pub fn subst(&mut self, t: TyId, args: &[TyId]) -> TyId {
+        let t = self.ty.subst(t, args);
+        self.canon(t)
+    }
+
+    /// [`Types::subst_known`](crate::types::Types::subst_known), keeping anonymous object
+    /// types canonical.
+    pub fn subst_known(&mut self, t: TyId, slots: &[Option<TyId>]) -> TyId {
+        let t = self.ty.subst_known(t, slots);
+        self.canon(t)
+    }
+
+    /// `t` with every anonymous object type in its canonical form: the def of its substituted
+    /// field list, as if written directly.
+    pub fn canon(&mut self, t: TyId) -> TyId {
+        self.canon_depth(t, 0)
+    }
+
+    fn canon_depth(&mut self, t: TyId, depth: u32) -> TyId {
+        if let Some(&c) = self.canon_memo.get(&t) {
+            return c;
+        }
+        // Anonymous types never contain themselves (type aliases can't refer to themselves),
+        // so this only guards against an ICE elsewhere.
+        if depth > 64 {
+            return t;
+        }
+        let c = |cx: &mut Self, x: TyId| cx.canon_depth(x, depth + 1);
+        let k = match self.ty.kind(t).clone() {
+            TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|a| c(self, *a)).collect()),
+            TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| c(self, *a)).collect()),
+            TyKind::Array(e) => TyKind::Array(c(self, e)),
+            TyKind::Map(a, b) => TyKind::Map(c(self, a), c(self, b)),
+            TyKind::Tuple(ts) => TyKind::Tuple(ts.iter().map(|a| c(self, *a)).collect()),
+            TyKind::Option(e) => TyKind::Option(c(self, e)),
+            TyKind::Result(a, b) => TyKind::Result(c(self, a), c(self, b)),
+            TyKind::Promise(v, e) => TyKind::Promise(c(self, v), c(self, e)),
+            TyKind::Shared(e) => TyKind::Shared(c(self, e)),
+            TyKind::FnPtr {
+                params,
+                ret,
+                throws,
+            } => TyKind::FnPtr {
+                params: params.iter().map(|a| c(self, *a)).collect(),
+                ret: c(self, ret),
+                throws: c(self, throws),
+            },
+            _ => {
+                self.canon_memo.insert(t, t);
+                return t;
+            }
+        };
+        let mut out = self.ty.intern(k);
+        if let TyKind::Adt(d, args) = self.ty.kind(out).clone() {
+            if let Some(r) = self.canon_anon(d, &args, depth) {
+                out = r;
+            }
+        }
+        self.canon_memo.insert(t, out);
+        out
+    }
+
+    /// The canonical type of anonymous def `d` applied to (canonical) `args`, if `d` is an
+    /// anonymous def and that is a different type.
+    fn canon_anon(&mut self, d: DefId, args: &[TyId], depth: u32) -> Option<TyId> {
+        // `Error` arguments (unknown slots of an expected type) stay as they are: a def over
+        // error fields would only be noise, and errors match anything anyway.
+        if args.is_empty() || args.iter().any(|a| self.ty.has_error(*a)) {
+            return None;
+        }
+        let a = self.adt(d).filter(|a| a.kind == AdtKind::Anon)?;
+        let module = a.module;
+        let templ: Vec<(String, TyId, bool)> = a
+            .fields
+            .iter()
+            .map(|f| (f.name.clone(), f.ty, f.readonly))
+            .collect();
+        // `readonly` flags are part of the shape: `{ readonly v: T0 }` at `string` is
+        // `{ readonly v: string }`, not the writable `{ v: string }`.
+        let fields: Vec<(String, TyId, bool)> = templ
+            .into_iter()
+            .map(|(n, ft, ro)| {
+                let ft = self.ty.subst(ft, args);
+                (n, self.canon_depth(ft, depth + 1), ro)
+            })
+            .collect();
+        let (d2, args2) = self.anon_def_with(&fields, module);
+        if d2 == d && args2 == args {
+            return None;
+        }
+        Some(self.ty.intern(TyKind::Adt(d2, args2)))
+    }
+
     /// The anonymous object type with these fields (none readonly).
     pub fn anon_type(&mut self, fields: &[(String, TyId)], module: usize) -> TyId {
         let (d, args) = self.anon_def(fields, module);
@@ -46,6 +147,24 @@ impl Ctx<'_> {
         let mut cache = HashMap::new();
         crate::readonly::erase_ty(&mut self.ty, &twins, &mut cache, a)
             == crate::readonly::erase_ty(&mut self.ty, &twins, &mut cache, b)
+
+    }
+
+    /// Are `a` and `b` anonymous defs with the same field names, in order?
+    pub(crate) fn same_anon_shape(&self, a: DefId, b: DefId) -> bool {
+        let names = |d: DefId| {
+            self.adt(d)
+                .filter(|x| x.kind == AdtKind::Anon)
+                .map(|x| x.fields.iter().map(|f| f.name.as_str()).collect::<Vec<_>>())
+        };
+        a != b && names(a).is_some_and(|n| Some(n) == names(b))
+    }
+
+    /// Field types of anonymous def `d`, over its own parameters.
+    pub(crate) fn anon_field_tys(&self, d: DefId) -> Vec<TyId> {
+        self.adt(d)
+            .map(|a| a.fields.iter().map(|f| f.ty).collect())
+            .unwrap_or_default()
     }
 
     /// Record where the fields of anonymous object type `t` are written (for editors), if no

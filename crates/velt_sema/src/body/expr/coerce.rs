@@ -33,6 +33,13 @@ impl FnCx<'_, '_> {
         {
             return Ok(h);
         }
+        // Two forms of one anonymous object type (a generic shape at concrete arguments and the
+        // written shape, crate::anon): the same values, so only the type changes.
+        if self.cx.canon(h.ty) == self.cx.canon(exp) {
+            let mut h = h;
+            h.ty = exp;
+            return Ok(h);
+        }
         if self.widens_promise(h.ty, exp) {
             let span = h.span;
             let call = H::Call {

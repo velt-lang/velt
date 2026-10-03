@@ -14,6 +14,8 @@
 //!   future (`VeltFut*`, result at +16; rt_abi_async.md), dropped with `velt_rt_fut_drop`;
 //! - function values and closures → `{ code: ptr, env: ptr }`; interface values → `{ data, vtable }`.
 
+use std::collections::HashMap;
+
 use velt_sema::hir::{self, AdtKind, DefId, FloatTy, IntTy, TyId, TyKind};
 
 use super::{ice, Cx};
@@ -28,12 +30,102 @@ impl<'h> Cx<'h> {
         self.types.intern(k)
     }
 
-    /// Replace `TyKind::Param(n)` by `targs[n]` throughout `t`.
+    /// Replace `TyKind::Param(n)` by `targs[n]` throughout `t`, with anonymous object types in
+    /// their canonical form (`canon`).
     pub(super) fn subst(&mut self, t: TyId, targs: &[TyId]) -> TyId {
+        let t = self.subst_raw(t, targs);
+        self.canon(t)
+    }
+
+    /// `t` with every anonymous object type replaced by the one type of its shape (field names
+    /// and canonical field types, in order). Substitution makes several types of one shape:
+    /// `{ a: U }` at `U = string` is the generic anonymous def applied to `[string]`, while a
+    /// written `{ a: string }` is a def of its own. Sema canonicalizes the types it computes
+    /// (velt_sema `anon.rs`), but instantiating a generic body happens here. The type of a shape
+    /// is sema's concrete def of it when there is one, else the first one seen. The forms have
+    /// the same layout; this keeps them one type, so values flow between them unconverted.
+    pub(super) fn canon(&mut self, t: TyId) -> TyId {
+        if let Some(&c) = self.anon.memo.get(&t) {
+            return c;
+        }
+        let c = |cx: &mut Self, x: TyId| cx.canon(x);
+        let k = match self.kind(t) {
+            TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|&a| c(self, a)).collect()),
+            TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|&a| c(self, a)).collect()),
+            TyKind::Array(e) => TyKind::Array(c(self, e)),
+            TyKind::Map(k, v) => TyKind::Map(c(self, k), c(self, v)),
+            TyKind::Tuple(es) => TyKind::Tuple(es.iter().map(|&a| c(self, a)).collect()),
+            TyKind::Option(e) => TyKind::Option(c(self, e)),
+            TyKind::Result(a, b) => TyKind::Result(c(self, a), c(self, b)),
+            TyKind::Promise(v, e) => TyKind::Promise(c(self, v), c(self, e)),
+            TyKind::Shared(e) => TyKind::Shared(c(self, e)),
+            TyKind::FnPtr {
+                params,
+                ret,
+                throws,
+            } => TyKind::FnPtr {
+                params: params.iter().map(|&a| c(self, a)).collect(),
+                ret: c(self, ret),
+                throws: c(self, throws),
+            },
+            _ => {
+                self.anon.memo.insert(t, t);
+                return t;
+            }
+        };
+        let mut out = self.intern(k);
+        if let TyKind::Adt(d, args) = self.kind(out) {
+            let anon = match self.hir.def(d) {
+                hir::Def::Adt(a) if a.kind == AdtKind::Anon && !args.is_empty() => Some(a),
+                _ => None,
+            };
+            if let Some(a) = anon {
+                let fields: Vec<(String, TyId)> =
+                    a.fields.iter().map(|f| (f.name.clone(), f.ty)).collect();
+                let key: Vec<(String, TyId)> = fields
+                    .into_iter()
+                    .map(|(n, ft)| {
+                        let ft = self.subst_raw(ft, &args);
+                        (n, self.canon(ft))
+                    })
+                    .collect();
+                out = match self.concrete_anon(&key) {
+                    Some(dc) => self.intern(TyKind::Adt(dc, vec![])),
+                    None => *self.anon.reps.entry(key).or_insert(out),
+                };
+            }
+        }
+        self.anon.memo.insert(t, out);
+        out
+    }
+
+    /// Sema's anonymous def with exactly these (concrete) fields, if it made one.
+    fn concrete_anon(&mut self, key: &[(String, TyId)]) -> Option<DefId> {
+        if self.anon.concrete.is_none() {
+            let mut m = HashMap::new();
+            for (i, d) in self.hir.defs.iter().enumerate() {
+                if let hir::Def::Adt(a) = d {
+                    if a.kind == AdtKind::Anon && a.generics == 0 {
+                        let k: Vec<(String, TyId)> =
+                            a.fields.iter().map(|f| (f.name.clone(), f.ty)).collect();
+                        m.entry(k).or_insert(DefId(i as u32));
+                    }
+                }
+            }
+            self.anon.concrete = Some(m);
+        }
+        self.anon
+            .concrete
+            .as_ref()
+            .and_then(|m| m.get(key).copied())
+    }
+
+    /// [`subst`](Self::subst) without canonicalizing.
+    fn subst_raw(&mut self, t: TyId, targs: &[TyId]) -> TyId {
         if targs.is_empty() {
             return t;
         }
-        let s = |cx: &mut Self, x: TyId| cx.subst(x, targs);
+        let s = |cx: &mut Self, x: TyId| cx.subst_raw(x, targs);
         let k = match self.kind(t) {
             TyKind::Param(n) => {
                 return *targs
@@ -295,4 +387,14 @@ pub(super) fn int_ty(i: IntTy) -> Ty {
         IntTy::U32 => Ty::U32,
         IntTy::U64 | IntTy::USize => Ty::U64,
     }
+}
+
+/// Canonical anonymous object types (`Cx::canon`).
+#[derive(Default)]
+pub(super) struct AnonShapes {
+    memo: HashMap<TyId, TyId>,
+    /// The type of each shape that sema has no concrete def for.
+    reps: HashMap<Vec<(String, TyId)>, TyId>,
+    /// Sema's concrete anonymous defs by shape, built on first use.
+    concrete: Option<HashMap<Vec<(String, TyId)>, DefId>>,
 }

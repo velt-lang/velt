@@ -18,7 +18,7 @@ impl Ctx<'_> {
         let a = self.adt(d)?;
         let (i, f) = a.fields.iter().enumerate().find(|(_, f)| f.name == name)?;
         let fty = f.ty;
-        Some((i as u32, self.ty.subst(fty, &args)))
+        Some((i as u32, self.subst(fty, &args)))
     }
 
     /// The literal value of field `prop` in each member of union `u` (variant order), if `prop`

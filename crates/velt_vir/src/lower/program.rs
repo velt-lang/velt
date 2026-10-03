@@ -48,6 +48,7 @@ impl<'h> Cx<'h> {
             facts: Default::default(),
             iface_impls: None,
             dyn_modes_memo: HashMap::new(),
+            anon: Default::default(),
         }
     }
 

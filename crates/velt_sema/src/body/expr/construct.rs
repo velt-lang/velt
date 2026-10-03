@@ -51,7 +51,7 @@ impl FnCx<'_, '_> {
                 crate::body::defaults::param_defaults(self.cx, c);
                 let mut ps = self.cx.fn_info(c).params.clone();
                 for p in &mut ps {
-                    p.ty = self.cx.ty.subst(p.ty, &oargs);
+                    p.ty = self.cx.subst(p.ty, &oargs);
                 }
                 ctor_args = oargs;
                 (ps, format!("the constructor of `{cname}`"))
@@ -86,7 +86,7 @@ impl FnCx<'_, '_> {
         if let Some(c) = ctor {
             let targs = ctor_args
                 .iter()
-                .map(|&t| self.cx.ty.subst(t, &ck.type_args))
+                .map(|&t| self.cx.subst(t, &ck.type_args))
                 .collect();
             self.throw_src(ThrowSrc::Call(c, targs, span));
         }
@@ -115,10 +115,10 @@ impl FnCx<'_, '_> {
         let base = a.base;
         let mut out: Vec<ThrowSrc> = own
             .iter()
-            .map(|s| s.used_at(span, |t| self.cx.ty.subst(t, &args)))
+            .map(|s| s.used_at(span, |t| self.cx.subst(t, &args)))
             .collect();
         if let Some(b) = base {
-            let b = self.cx.ty.subst(b, &args);
+            let b = self.cx.subst(b, &args);
             out.extend(self.class_default_throws(b, span));
         }
         out

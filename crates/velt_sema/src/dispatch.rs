@@ -51,7 +51,7 @@ pub(crate) fn instantiate(cx: &mut Ctx, need: TyId, args: &[TyId]) -> Option<TyI
     collect_params(&cx.ty, need, &mut ps);
     ps.iter()
         .all(|p| (*p as usize) < args.len())
-        .then(|| cx.ty.subst(need, args))
+        .then(|| cx.subst(need, args))
 }
 
 /// The vtable entries and interface implementations of `Adt(d, args)` and its base classes.
@@ -79,7 +79,7 @@ fn adt_targets(cx: &mut Ctx, d: DefId, args: Vec<TyId>, out: &mut Vec<Target>) {
         };
         for m in methods {
             let a = if cx.iface(owner(cx, m)).is_some() {
-                let mut a: Vec<TyId> = iface_args.iter().map(|t| cx.ty.subst(*t, &cargs)).collect();
+                let mut a: Vec<TyId> = iface_args.iter().map(|t| cx.subst(*t, &cargs)).collect();
                 a.push(cx.ty.intern(TyKind::Adt(c, cargs.clone())));
                 Some(a)
             } else {
@@ -109,7 +109,7 @@ fn class_chain(cx: &mut Ctx, d: DefId, args: Vec<TyId>) -> Vec<(DefId, Vec<TyId>
         let Some(base) = cx.adt(c).and_then(|x| x.base) else {
             break;
         };
-        let base = cx.ty.subst(base, &a);
+        let base = cx.subst(base, &a);
         let Some(next) = cx.class_of(base) else { break };
         chain.push(next);
     }

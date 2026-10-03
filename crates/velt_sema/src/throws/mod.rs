@@ -76,7 +76,7 @@ fn srcs_now_in(cx: &mut Ctx, srcs: &[ThrowSrc], visited: &mut HashSet<DefId>) ->
 }
 
 fn subst_error(cx: &mut Ctx, t: Option<TyId>, targs: &[TyId]) -> Option<TyId> {
-    let t = t.map(|t| cx.ty.subst(t, targs));
+    let t = t.map(|t| cx.subst(t, targs));
     cx.canon_error(t)
 }
 
