@@ -62,7 +62,7 @@ interface Iterable<T, E = never> {
 - A [generator](functions.md#generators) (`function*`) is the short way to write an iterable:
   `for (const x of gen(a))` over a direct call needs no iterator object at all, and a class
   whose `[Symbol.iterator]` is a generator method (`*[Symbol.iterator]()`) is iterable without
-  an iterator class. Leaving the loop early closes the generator (its `finally` blocks run).
+  an iterator class (so is a type whose `extend` block has one: it becomes an `Iterable<T>`). Leaving the loop early closes the generator (its `finally` blocks run).
 - `AsyncIterator<T, E>` (`next(): Promise<IteratorResult<T>, E>`) and `AsyncIterable<T, E>`
   (`[Symbol.asyncIterator]()`) are their async counterparts, iterated with
   [`for await`](#for-await).

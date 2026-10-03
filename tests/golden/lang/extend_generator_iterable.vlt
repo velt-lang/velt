@@ -1,0 +1,125 @@
+// check: no leaks
+// A generator `[Symbol.iterator]` / `[Symbol.asyncIterator]` method in an `extend` block makes
+// the type an `Iterable` (`AsyncIterable`), whether its result is written `Generator<T, E>` or
+// `Iterator<T, E>` (#424): it converts to the interface and satisfies an `Iterable<T>` bound.
+type Trio = { a: i64; b: i64; c: i64 };
+
+extend Trio {
+  *[Symbol.iterator](): Generator<i64> {
+    yield this.a;
+    yield this.b;
+    yield this.c;
+  }
+}
+
+class Pair {
+  constructor(public x: string, public y: string) {}
+}
+
+extend Pair {
+  *[Symbol.iterator](): Iterator<string> {
+    yield this.x;
+    yield this.y;
+  }
+}
+
+function sumAll(xs: Iterable<i64>): i64 {
+  let t = 0;
+  for (const x of xs) {
+    t += x;
+  }
+  return t;
+}
+
+function totalOf<T extends Iterable<i64>>(xs: T): i64 {
+  let t = 0;
+  for (const x of xs) {
+    t += x;
+  }
+  return t;
+}
+
+class Bad extends Error {}
+
+class Cell<T> {
+  constructor(public items: T[]) {}
+}
+
+extend<T> Cell<T> {
+  *[Symbol.iterator](): Generator<T> {
+    for (const x of this.items) {
+      yield x;
+    }
+  }
+}
+
+type Strict = { n: i64 };
+
+extend Strict {
+  *[Symbol.iterator](): Generator<i64, Bad> {
+    for (let i = 0; i < this.n; i++) {
+      yield i;
+    }
+    throw new Bad("too far");
+  }
+}
+
+type Ticks = { n: i64 };
+
+extend Ticks {
+  async *[Symbol.asyncIterator](): AsyncGenerator<i64> {
+    for (let i = 0; i < this.n; i++) {
+      yield i;
+    }
+  }
+}
+
+function all<T>(xs: Iterable<T>): T[] {
+  const out: T[] = [];
+  for (const x of xs) {
+    out.push(x);
+  }
+  return out;
+}
+
+function upTo(xs: Iterable<i64, Bad>): i64 {
+  let last = -1;
+  try {
+    for (const x of xs) {
+      last = x;
+    }
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+  return last;
+}
+
+async function count(xs: AsyncIterable<i64>): Promise<i64> {
+  let n = 0;
+  for await (const x of xs) {
+    n += x;
+  }
+  return n;
+}
+
+async function main() {
+  const t: Trio = { a: 1, b: 2, c: 3 };
+  for (const v of t) {
+    console.log(v);
+  }
+  console.log([...t], Array.from(t), sumAll(t), totalOf(t));
+  const [first, ...rest] = t;
+  console.log(first, rest);
+  const p = new Pair("l", "r");
+  console.log([...p], Array.from(p));
+  const it: Iterable<string> = p;
+  for (const s of it) {
+    console.log(s);
+  }
+  const c = new Cell<string>(["a", "b"]);
+  console.log(all(c), all(new Cell<i64>([4, 5])));
+  const s: Strict = { n: 3 };
+  console.log(upTo(s));
+  const ticks: Ticks = { n: 4 };
+  console.log(await count(ticks));
+}

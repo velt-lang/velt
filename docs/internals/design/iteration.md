@@ -487,7 +487,14 @@ two-argument `IteratorResult<T, TReturn>` exist.
 block defining `[Symbol.iterator](): Iterator<T, E>` makes its target implement `Iterable<T, E>`,
 and one defining `[Symbol.asyncIterator](): AsyncIterator<T, E>` makes it an `AsyncIterable<T,
 E>` (`collect/iterable.rs`: an entry in `Program::impls`, generic when the block is). The rule
-applies to user blocks too. The prelude (std/prelude/iter.vlt) has the blocks:
+applies to user blocks too, also to a generator method: one returning `Iterator<T, E>` is the
+impl's entry itself, and one returning `Generator<T, E>` (`AsyncGenerator<T, E>`) gets a
+synthesized adapter `X.<dyn [Symbol.iterator]>` (`forwarders.rs` `Target::Generator`) that
+returns the generator as an `Iterator<T, E>` (`ToDyn` through `Generator`'s impl). A generator
+method implementing an interface method (here or in a class) whose error type is inferred must
+turn out not to throw (`throws/checks.rs` `iface_generator`): the impl's `E` comes from the
+result as written, before bodies are checked; a throwing one is an error asking to write `E`
+(before, it silently stopped at the error). The prelude (std/prelude/iter.vlt) has the blocks:
 
 | Type | `[Symbol.iterator]()` returns | Iterates |
 |---|---|---|
@@ -698,7 +705,8 @@ closest workable form is a literal whose *one* member is the iterator method: se
   of `yield` / `yield*` and `{ done: true, value: undefined }`.
 - Child process stdout/stderr lines and HTTP streaming request/response bodies have chunk pull
   APIs only; a `lines()` method there would follow the same pattern.
-- A generator method implementing an interface with an inferred (unwritten) `E` must write it.
+- A generator method implementing an interface with an inferred (unwritten) `E` must write it
+  when it throws (an error says so).
 - Keeping an embedded async generator's state in registers across steps (section 4, Cost).
 - Generators cannot cross tasks; stored `Iterable<T>` values backed by one are checked at run
   time.
