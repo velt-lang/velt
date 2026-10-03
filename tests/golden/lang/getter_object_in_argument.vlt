@@ -1,7 +1,8 @@
 // check: no leaks
 // An object obtained through a getter is a share of the field it returns, not a move of the
 // receiver: it can go into an argument of a method call on the same receiver
-// (`scope.spawn(work(scope.signal))`).
+// (`scope.spawn(work(scope.signal))`), even one that modifies the receiver and replaces the field
+// (the argument keeps the old value alive).
 
 class Sig {
   n: i64 = 1;
@@ -29,6 +30,12 @@ class Scope {
   bump(s: Sig) {
     s.n += 1;
   }
+
+  // Modifies its receiver while holding the old signal: the argument is a share that keeps it.
+  replace(s: Sig) {
+    this.ctl = new Ctl();
+    console.log("old", s.n, "new", this.signal.n);
+  }
 }
 
 async function main() {
@@ -36,4 +43,5 @@ async function main() {
   console.log(await s.start(step(s.signal)));
   s.bump(s.signal);
   console.log(await s.start(step(s.signal)), s.signal.n);
+  s.replace(s.signal);
 }
