@@ -40,9 +40,12 @@ file and reports these errors without building anything.
 
 ## `name`, `version`, `description`, `keywords`, `entry`
 
-- `name`: lowercase letters, digits, `_` and `-`, starting with a letter. `std` is reserved for
-  the standard library, and `rt`, `sig` and `native` because a package's native functions are
-  named `velt_<name>_…` and those prefixes are Velt's own (`velt_rt_…` is the runtime).
+- `name`: lowercase letters and digits, starting with a letter, with single `-` or `_` between
+  words (`text-kit`, `text_kit`; not `text--kit`, `text_-kit` or `textkit-`). Names that differ
+  only in `-` versus `_` count as the same in a registry. `std` is reserved for the standard
+  library, and names whose first word is `rt`, `sig` or `native` (`rt`, `rt-str`) because a
+  package's native functions are named `velt_<name>__…` and those prefixes are Velt's own
+  (`velt_rt_…` is the runtime).
 - `version`: a semantic version.
 - `description`: one line about the package, shown by `velt search` and registry listings: at most
   300 characters, no line breaks, no surrounding whitespace.

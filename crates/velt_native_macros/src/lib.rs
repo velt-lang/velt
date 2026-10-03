@@ -269,16 +269,16 @@ mod tests {
     #[test]
     fn rejects_explicit_lifetimes_on_borrowed_parameters() {
         let e = err(syn::parse_quote!(
-            fn velt_p_f(s: &'static str) {}
+            fn velt_p__f(s: &'static str) {}
         ));
         assert!(e.contains("without a lifetime"), "{e}");
         let e = err(syn::parse_quote!(
-            fn velt_p_f<'a>(b: &'a [u8]) {}
+            fn velt_p__f<'a>(b: &'a [u8]) {}
         ));
         assert!(!e.is_empty(), "generic lifetime accepted");
         assert_eq!(
             err(syn::parse_quote!(
-                fn velt_p_f(s: &str, b: &[u8]) {}
+                fn velt_p__f(s: &str, b: &[u8]) {}
             )),
             ""
         );

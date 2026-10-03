@@ -293,10 +293,40 @@ fn names_whose_native_prefix_is_velts_own_are_reserved() {
             "{err}"
         );
     }
+    // A reserved first component reserves the name: `rt-str` would export `velt_rt_str__…`.
+    for name in ["rt-str", "rt_str", "native-init", "sig-x", "sig_velt"] {
+        assert!(is_native_prefix_name(name), "{name}");
+        assert!(!is_valid_package_name(name), "{name}");
+        let text =
+            format!("export const pkg: Package = {{ name: \"{name}\", version: \"1.0.0\" }};");
+        let err = Manifest::parse(&text).unwrap_err();
+        assert!(
+            err.contains("rename the package (for example `my-"),
+            "{err}"
+        );
+    }
     // The C library's prefixes are ordinary names now: exports start with `velt_`.
     for name in [
-        "pthread", "sem", "shm", "posix", "runtime", "signal", "natives",
+        "pthread", "sem", "shm", "posix", "runtime", "signal", "natives", "rtx",
     ] {
         assert!(is_valid_package_name(name), "{name}");
     }
+}
+
+#[test]
+fn separators_are_single_and_inside_the_name() {
+    for name in ["my--pkg", "my__pkg", "my-_pkg", "my_-pkg", "pkg-", "pkg_"] {
+        assert!(!is_valid_package_name(name), "{name}");
+        let text =
+            format!("export const pkg: Package = {{ name: \"{name}\", version: \"1.0.0\" }};");
+        let err = Manifest::parse(&text).unwrap_err();
+        assert!(
+            err.contains("with single `-` or `_` between words"),
+            "{err}"
+        );
+    }
+    for name in ["my-pkg", "my_pkg", "a-b_c", "a1-2"] {
+        assert!(is_valid_package_name(name), "{name}");
+    }
+    assert_eq!(normalized_name("my-pkg"), normalized_name("my_pkg"));
 }

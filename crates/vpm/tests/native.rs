@@ -17,7 +17,7 @@ const WINDOWS: &str = "x86_64-pc-windows-msvc";
 
 /// The shared library `bundle_dir` writes for `content`.
 fn library_of(content: &str) -> Vec<u8> {
-    let exports = BTreeMap::from([("velt_db_open".into(), "(string)->IoResult<u64>".into())]);
+    let exports = BTreeMap::from([("velt_db__open".into(), "(string)->IoResult<u64>".into())]);
     vpm::native::exports::sample_library("db", &exports, content)
 }
 
@@ -31,7 +31,7 @@ fn bundle_dir(dir: &Path, target: &str, content: &str) -> PathBuf {
         import_lib.map(|f| format!("shared/{f}")),
     );
     std::fs::write(b.join(&shared), library_of(content)).unwrap();
-    let exports = BTreeMap::from([("velt_db_open".into(), "(string)->IoResult<u64>".into())]);
+    let exports = BTreeMap::from([("velt_db__open".into(), "(string)->IoResult<u64>".into())]);
     if let Some(import_lib) = &import_lib {
         let dll = shared.trim_start_matches("shared/");
         let names = vpm::native::exports::exported_names(&library_of(content)).unwrap();
@@ -49,7 +49,7 @@ fn bundle_dir(dir: &Path, target: &str, content: &str) -> PathBuf {
         shared,
         import_lib,
         static_obj: Some("static/db.o".into()),
-        exports: BTreeMap::from([("velt_db_open".into(), "(string)->IoResult<u64>".into())]),
+        exports: BTreeMap::from([("velt_db__open".into(), "(string)->IoResult<u64>".into())]),
     };
     std::fs::write(b.join("native.json"), meta.to_json()).unwrap();
     b
@@ -125,7 +125,7 @@ fn native_packages_end_to_end() {
     assert_eq!(pkg.name, "db");
     assert_eq!(native.origin, NativeOrigin::Prebuilt);
     assert_eq!(
-        native.meta.exports["velt_db_open"],
+        native.meta.exports["velt_db__open"],
         "(string)->IoResult<u64>"
     );
     assert_eq!(

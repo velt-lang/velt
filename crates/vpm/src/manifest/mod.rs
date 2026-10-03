@@ -345,14 +345,14 @@ fn check_name(name: &str) -> Result<(), String> {
     if is_windows_device_name(name) {
         return Err(device_name(name));
     }
-    if NATIVE_PREFIX_NAMES.contains(&name) {
+    if is_native_prefix_name(name) {
         return Err(native_prefix(name));
     }
     if is_valid_package_name(name) {
         Ok(())
     } else {
         Err(format!(
-            "invalid package name `{name}` (use lowercase letters, digits, `-` and `_`, starting with a letter)"
+            "invalid package name `{name}` (use lowercase letters and digits, starting with a letter, with single `-` or `_` between words: not doubled, mixed or at the end)"
         ))
     }
 }
@@ -380,13 +380,15 @@ fn check_dependency_name(name: &str) -> Result<(), String> {
     if is_windows_device_name(name) {
         return Err(device_name(name));
     }
-    if NATIVE_PREFIX_NAMES.contains(&name) {
+    if is_native_prefix_name(name) {
         return Err(native_prefix(name));
     }
     if is_valid_package_name(name) {
         Ok(())
     } else {
-        Err(format!("invalid dependency name `{name}`"))
+        Err(format!(
+            "invalid dependency name `{name}` (lowercase letters and digits, starting with a letter, with single `-` or `_` between words)"
+        ))
     }
 }
 
@@ -447,7 +449,8 @@ pub fn is_valid_package_name(name: &str) -> bool {
     let mut chars = name.chars();
     !RESERVED_NAMES.contains(&name)
         && !is_windows_device_name(name)
-        && !NATIVE_PREFIX_NAMES.contains(&name)
+        && !is_native_prefix_name(name)
+        && name_separators_ok(name)
         && matches!(chars.next(), Some('a'..='z'))
         && chars.all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-' | '_'))
 }
@@ -472,15 +475,46 @@ fn device_name(name: &str) -> String {
     format!("the package name `{name}` is a device name on Windows (`con`, `nul`, `com1`, …)")
 }
 
-/// Names whose native export prefix (`velt_<name>_`, see `native::export_prefix`) is Velt's
-/// own: `velt_rt_` (runtime functions), `velt_sig_` (signature records) and `velt_native_` (init
-/// functions).
+/// First name components whose native export prefix would be Velt's own: `velt_rt_`
+/// (runtime functions), `velt_sig_` (signature records) and `velt_native_` (init functions).
 pub const NATIVE_PREFIX_NAMES: &[&str] = &["rt", "sig", "native"];
 
+/// Whether `name` is reserved by [`NATIVE_PREFIX_NAMES`]: one of them, or one followed by `-` or
+/// `_` (`rt-str` would export `velt_rt_str__…`, next to the runtime's `velt_rt_str_…`).
+pub fn is_native_prefix_name(name: &str) -> bool {
+    NATIVE_PREFIX_NAMES.iter().any(|r| {
+        name.strip_prefix(r)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(['-', '_']))
+    })
+}
+
 fn native_prefix(name: &str) -> String {
+    let first = NATIVE_PREFIX_NAMES
+        .iter()
+        .find(|r| name.starts_with(*r))
+        .copied()
+        .unwrap_or(name);
     format!(
-        "the package name `{name}` is reserved: a package's native functions are named `velt_<package>_…`, and `velt_{name}_…` is Velt's own"
+        "the package name `{name}` is reserved: a package's native functions are named `velt_<package>__…`, and `velt_{first}_…` is Velt's own; rename the package (for example `my-{name}`)"
     )
+}
+
+/// `-` and `_` separate words, one at a time and never at the end: `my--pkg`, `my__pkg`, `my-_pkg`
+/// and `pkg-` are refused, so that a name's export prefix (`velt_<name>__`) is never the start of
+/// another's. `-` and `_` count as the same character where names must be unique.
+fn name_separators_ok(name: &str) -> bool {
+    let sep = |c: char| c == '-' || c == '_';
+    !name.ends_with(sep)
+        && !name
+            .as_bytes()
+            .windows(2)
+            .any(|w| sep(w[0] as char) && sep(w[1] as char))
+}
+
+/// `name` with `-` turned into `_`: two packages whose names normalise the same would share an
+/// export prefix, an init function and library file names.
+pub fn normalized_name(name: &str) -> String {
+    name.replace('-', "_")
 }
 
 fn reserved(name: &str) -> String {

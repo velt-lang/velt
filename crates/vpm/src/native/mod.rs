@@ -38,10 +38,23 @@ pub const LEGACY_META_FILE: &str = "native.toml";
 /// Prefix of the signature records the SDK's `#[export]` emits (`velt_sig_<export>`).
 pub const SIG_PREFIX: &str = "velt_sig_";
 
-/// `velt_<pkg>_`: what every export of package `pkg`'s library starts with (`-` becomes `_`).
-/// No C library or system function starts with `velt_`, so an export can't take one's name.
+/// `velt_<pkg>__`: what every export of package `pkg`'s library starts with (`-` becomes `_`,
+/// then a double underscore). No C library or system function starts with `velt_`, so an export
+/// can't take one's name; package names never contain `__` (nor `-_`, `_-` or `--`) or end in `_`
+/// or `-`, so the prefix of one package is never the start of another's.
 pub fn export_prefix(package: &str) -> String {
-    format!("velt_{}_", package.replace('-', "_"))
+    format!("velt_{}__", package.replace('-', "_"))
+}
+
+/// The name an export of `package` written with an older prefix (`<pkg>_x` or `velt_<pkg>_x`)
+/// has under [`export_prefix`], for fix-its; `None` when `name` is neither.
+pub fn renamed_export(package: &str, name: &str) -> Option<String> {
+    let norm = package.replace('-', "_");
+    let rest = name
+        .strip_prefix(&format!("velt_{norm}_"))
+        .or_else(|| name.strip_prefix(&format!("{norm}_")))?;
+    (!rest.is_empty() && !rest.starts_with('_'))
+        .then(|| format!("{}{rest}", export_prefix(package)))
 }
 
 /// `velt_native_<pkg>`: the name the package's native crate gives its library (`[lib] name`), so
@@ -225,8 +238,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn old_prefix_exports_get_their_new_name() {
+        assert_eq!(
+            renamed_export("pg-lite", "pg_lite_open").as_deref(),
+            Some("velt_pg_lite__open")
+        );
+        assert_eq!(
+            renamed_export("db", "velt_db_open").as_deref(),
+            Some("velt_db__open")
+        );
+        assert_eq!(renamed_export("db", "velt_db__open"), None);
+        assert_eq!(renamed_export("db", "free"), None);
+        assert_eq!(renamed_export("db", "db_"), None);
+    }
+
+    #[test]
     fn names() {
-        assert_eq!(export_prefix("pg-lite"), "velt_pg_lite_");
+        assert_eq!(export_prefix("pg-lite"), "velt_pg_lite__");
         assert_eq!(init_symbol("pg-lite"), "velt_native_init_pg_lite");
     }
 
@@ -241,7 +269,7 @@ mod tests {
             import_lib: None,
             static_obj: Some("static/sqlite.o".into()),
             exports: BTreeMap::from([(
-                "velt_sqlite_open".into(),
+                "velt_sqlite__open".into(),
                 "(string)->IoResult<u64>".into(),
             )]),
         };
