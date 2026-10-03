@@ -190,7 +190,9 @@ labeled `switch` can be left with `break label` from nested loops. Each case bod
 block scope.
 
 - **Case values**: literals (numbers, also negative ones; strings; bools), `null`, enum members,
-  or any expression of the discriminant's type (compared with `==`). Duplicates are an error.
+  or any expression that `===` can compare with the discriminant (and compared like it: a
+  `string | null` case value on a `string` discriminant, or the reverse). Duplicates are an
+  error.
 - **Narrowing**: `switch (x.kind)` on a discriminated union narrows `x` in each case (a case
   reached by fallthrough sees the union of the members that can get there); `switch (typeof x)`
   narrows like `typeof` tests; `switch (x)` on a union narrows by literal member and by

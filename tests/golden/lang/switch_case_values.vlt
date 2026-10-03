@@ -1,0 +1,57 @@
+// check: no leaks
+// A `case` value that is not a literal compares with the discriminant like `===` (#337), in both
+// directions: a `T` next to a `T | null`, and a length next to a declared integer.
+
+class Item {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+function plain(s: string, t: string | null): string {
+  switch (s) {
+    case t:
+      return "match";
+    default:
+      return "no match";
+  }
+}
+
+function nullable(s: string | null, t: string): string {
+  switch (s) {
+    case t:
+      return "match";
+    case null:
+      return "null";
+    default:
+      return "no match";
+  }
+}
+
+function sameItem(a: Item, b: Item | null): string {
+  switch (a) {
+    case b:
+      return "same " + a.name;
+    default:
+      return "other";
+  }
+}
+
+function count(xs: string[], three: i64): string {
+  switch (xs.length) {
+    case three:
+      return "three";
+    default:
+      return "not three";
+  }
+}
+
+function main() {
+  console.log(plain("a", "a"), plain("a", "b"), plain("a", null));
+  console.log(nullable("a", "a"), nullable(null, "a"), nullable("b", "a"));
+  const x = new Item("x");
+  console.log(sameItem(x, x), sameItem(x, new Item("x")), sameItem(x, null));
+  console.log(count(["a", "b", "c"], 3), count([], 3));
+}

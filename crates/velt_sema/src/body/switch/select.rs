@@ -1,6 +1,6 @@
 //! What each `case` of a `switch` selects: literal cases select the slots (members) whose
 //! discriminant / `typeof` tag / literal they name, `case null` the `null` slot, `case E.Member`
-//! an enum member; any other case value is compared with `==` in a guard.
+//! an enum member; any other case value is compared with `===` in a guard (`eq_values`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -243,7 +243,12 @@ impl FnCx<'_, '_> {
             UseMode::Borrow
         };
         let l = self.new_local("<case>", ty, false, span, LocalKind::Bind);
-        let v = self.expr_coerce(test, ty, Want::Borrow);
+        // A JS number (`switch (xs.length)`) stays one in the comparison.
+        self.note_inferred_local(l, &s.expr);
+        // Converted to the discriminant's type where it can be (`case 1:` on a `u8`); otherwise
+        // the values compare like `===` does (`case t:` with `t: string | null`, #337).
+        let v = self.expr(test, Some(ty), Want::Borrow);
+        let v = self.try_coerce(v, ty).unwrap_or_else(|v| v);
         let cur = self.mk(hir::ExprKind::Local(l, mode), ty, span);
         let guard = self.eq_values(cur, v, span);
         Sel {

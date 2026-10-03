@@ -274,8 +274,18 @@ impl FnCx<'_, '_> {
         )
     }
 
-    /// `l == r` of two checked values of the same type (a `switch` case compared by value).
+    /// `l === r` of two checked values (a `switch` case compared with its discriminant): the
+    /// operands adapt as for `===` (a `T` next to a `T | null`, an inferred integer next to
+    /// another number type, literal types as their base), and a mismatch is reported once.
     pub(crate) fn eq_values(&mut self, l: hir::Expr, r: hir::Expr, span: Span) -> hir::Expr {
+        let (l, r) = self.nullable_operands(l, r);
+        let (l, r) = if l.ty != r.ty {
+            (self.widen_value(l), self.widen_value(r))
+        } else {
+            (l, r)
+        };
+        let (l, r) = self.mix_numbers(l, r);
+        let (l, r) = self.mix_ints(l, r);
         let Some(t) = self.check_operands(ast::BinaryOp::Eq, l.ty, &r, span) else {
             return self.error_expr(span);
         };
