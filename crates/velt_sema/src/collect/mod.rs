@@ -50,6 +50,7 @@ pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     declare::declare_all(cx, &mut items);
     field_only::declare(cx);
     shapes::resolve_shapes(cx, &items);
+    cx.shapes_done = true;
     sigs::resolve_sigs(cx, &items);
     iface_extends::flatten_all(cx);
     field_only::fill(cx);

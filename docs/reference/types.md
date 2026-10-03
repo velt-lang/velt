@@ -309,6 +309,36 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   (``cannot assign to `id`: it is a readonly field``); like TypeScript's, the check is shallow
   (`u.tags.push(x)` is fine). A value converts between a type and the same type without
   `readonly`, in both directions, and stays the same object.
+- **Utility types** build an object type from a concrete one (an object type, an interface
+  with only fields, or a class or struct, whose public fields are used):
+  `Partial<T>` (every field optional), `Required<T>` (every nullable field non-null),
+  `Readonly<T>` (every field `readonly`), `Pick<T, K>` (only the fields named in `K`) and
+  `Omit<T, K>` (every other field). `K` is a string literal type or a union of them
+  (`"id" | "email"`); a name that is not a field is an error in both `Pick` and `Omit`. The
+  results are ordinary object types: `Pick<User, "name">` *is* `{ name: string }`.
+  Differences from TypeScript: `Required` also removes `null` from fields written `a: T | null`
+  (in Velt `a?: T` is `T | null`); an operator on a type parameter (`Partial<T>` in a generic
+  function) is not supported yet; and a field type can only apply one to a type declared before
+  it.
+
+```ts
+interface User {
+  readonly id: i64;
+  name: string;
+  email?: string;
+}
+
+type Patch = Partial<User>;               // { readonly id?: i64; name?: string; email?: string }
+type Summary = Pick<User, "id" | "name">; // { readonly id: i64; name: string }
+
+function apply(u: User, p: Patch): User {
+  return { id: u.id, name: p.name ?? u.name, email: p.email ?? u.email };
+}
+
+const s: Summary = { id: 1, name: "ann" };
+console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
+```
+
 - **Spread**: `{ ...a, b: 1 }` builds a merged object at compile time (later keys win);
   `[x, ...xs]` builds a new array. Spread arguments, `f(...xs)`, are not supported.
 - **Destructuring**: `const [a, b] = pair;`, `const [head, ...rest] = xs;`,

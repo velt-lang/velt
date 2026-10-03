@@ -48,9 +48,11 @@ mod ownership;
 mod readonly;
 mod record_keys;
 mod resolve;
+mod suggest;
 mod throws;
 mod types;
 mod unions;
+mod utility_types;
 mod visit;
 mod void_fields;
 

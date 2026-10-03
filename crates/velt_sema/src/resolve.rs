@@ -212,6 +212,9 @@ impl Ctx<'_> {
             "Promise" if args.len() == 2 => 2,
             "Promise" => 1,
             "Result" => return Some(self.removed_result(t)),
+            n if crate::utility_types::OPERATORS.contains(&n) => {
+                return Some(self.resolve_utility(t, name, args, env))
+            }
             _ => return None,
         };
         let args: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, env)).collect();

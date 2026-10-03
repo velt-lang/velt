@@ -61,6 +61,9 @@ pub(crate) struct Ctx<'m> {
     pub field_only: HashMap<DefId, DefId>,
     /// The reverse of `field_only`.
     pub field_only_of: HashMap<DefId, DefId>,
+    /// Every declared type's fields are resolved (`collect::shapes`); before that, a utility
+    /// type (`crate::utility_types`) may only read the fields of types already shaped.
+    pub shapes_done: bool,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: HashMap<Vec<TyId>, DefId>,
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
@@ -128,6 +131,7 @@ impl<'m> Ctx<'m> {
             readonly_twins: HashMap::new(),
             field_only: HashMap::new(),
             field_only_of: HashMap::new(),
+            shapes_done: false,
             unions: HashMap::new(),
             alias_names: HashMap::new(),
             generic_overrides: vec![],

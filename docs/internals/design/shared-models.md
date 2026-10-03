@@ -1,8 +1,8 @@
 # Design: data models shared with TypeScript
 
 Status: decided (issue #326, "Blockers for shared models"; answers #61). The maintainer's
-decisions are in [Decisions](#decisions). Steps 1 (`readonly` fields in object types) and 2
-(field-only interfaces) are implemented; step 3 (utility types) is not yet.
+decisions are in [Decisions](#decisions). All three steps are implemented: `readonly` fields in
+object types, field-only interfaces, and utility types.
 
 ## Problem
 
@@ -133,6 +133,11 @@ struct, whose public fields are used) and gives a new object type:
 - **Results are ordinary object types:** they intern like any other, so
   `Pick<User, "name">` and `{ name: string }` are the same type, and they serialize to JSON.
 - **Name lookup:** a user type named `Partial` (or the others) wins, as for every built-in.
+- **Order:** types are resolved in phases, and a field's type is resolved while declarations
+  are still being shaped. So a field type can only apply an operator to a type declared
+  earlier (in an interface, before its parents are flattened, the inherited fields are read
+  from the parents directly). A later one is an error that says to reorder, not an empty
+  type. Signatures, bodies and aliases used from them see every type.
 - **Not in this step:** applying an operator to a type parameter (`Partial<T>` inside a generic
   function). Velt resolves types eagerly and has no deferred type evaluation, so this is an
   error: ```Partial` needs a concrete object type; `T` is a type parameter``. It is the main
