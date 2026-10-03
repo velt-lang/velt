@@ -1,6 +1,6 @@
 # Design: data models shared with TypeScript
 
-Status: decided (issue #326, "Blockers for shared models"; answers #61). The maintainer's
+Status: implemented (issue #326, "Blockers for shared models"; answers #61). The maintainer's
 decisions are in [Decisions](#decisions). All three steps are implemented: `readonly` fields in
 object types, field-only interfaces, and utility types.
 
