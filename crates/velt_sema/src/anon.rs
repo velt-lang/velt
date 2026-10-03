@@ -25,26 +25,24 @@ impl Ctx<'_> {
         self.ty.intern(TyKind::Adt(d, args))
     }
 
-    /// Whether `a` and `b` are anonymous object types with the same fields (names, types and
-    /// order), differing at most in `readonly`: the same layout, so one converts to the other.
+    /// Whether `a` and `b` are anonymous object types that are one type for lowering
+    /// (`crate::readonly`): the same fields, differing at most in `readonly`. A value converts
+    /// from one to the other and stays the same object. Equal fields alone are not enough: a
+    /// generic alias's instance (`Box<number>`) and the concrete type (`{ v: number }`) are
+    /// different definitions after erasure, so converting between them would be a type
+    /// mismatch in lowering.
     pub fn same_layout(&mut self, a: TyId, b: TyId) -> bool {
-        let (TyKind::Adt(d, xs), TyKind::Adt(e, ys)) =
-            (self.ty.kind(a).clone(), self.ty.kind(b).clone())
-        else {
+        let anon = |cx: &Self, t: TyId| match cx.ty.kind(t) {
+            TyKind::Adt(d, _) => cx.adt(*d).is_some_and(|x| x.kind == AdtKind::Anon),
+            _ => false,
+        };
+        if a == b || !anon(self, a) || !anon(self, b) || self.readonly_twins.is_empty() {
             return false;
-        };
-        let fields = |cx: &Self, d: DefId| {
-            cx.adt(d)
-                .filter(|x| x.kind == AdtKind::Anon)
-                .map(|x| x.fields.clone())
-        };
-        let (Some(x), Some(y)) = (fields(self, d), fields(self, e)) else {
-            return false;
-        };
-        x.len() == y.len()
-            && x.iter().zip(&y).all(|(f, g)| {
-                f.name == g.name && self.ty.subst(f.ty, &xs) == self.ty.subst(g.ty, &ys)
-            })
+        }
+        let twins = self.readonly_twins.clone();
+        let mut cache = HashMap::new();
+        crate::readonly::erase_ty(&mut self.ty, &twins, &mut cache, a)
+            == crate::readonly::erase_ty(&mut self.ty, &twins, &mut cache, b)
     }
 
     /// Record where the fields of anonymous object type `t` are written (for editors), if no

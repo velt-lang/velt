@@ -92,7 +92,7 @@ pub(crate) fn erase(cx: &mut Ctx) {
 }
 
 /// `t` with every readonly object type replaced by its twin, at any depth.
-fn erase_ty(
+pub(crate) fn erase_ty(
     ty: &mut Types,
     twins: &HashMap<DefId, DefId>,
     cache: &mut HashMap<TyId, TyId>,

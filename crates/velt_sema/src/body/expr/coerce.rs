@@ -211,6 +211,13 @@ impl FnCx<'_, '_> {
         if let TyKind::Dyn(..) = self.cx.ty.kind(expected) {
             d = d.with_note(format!("`{f}` does not declare `implements {e}`"));
         }
+        if e == f {
+            // An instance of a generic alias (`Box<number>`) and the object type it spells out
+            // (`{ v: number }`) are separate types today.
+            d = d.with_note(
+                "the two object types have the same fields but come from different declarations (a generic type's instance and a written object type don't convert yet); use one of them for both",
+            );
+        }
         self.cx.error(d);
     }
 
