@@ -110,6 +110,9 @@ const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
     ("README.md", &[], &["docs"]),
     ("bench/", &["velt_sema"], &[]),
     ("fuzz/", &["velt_fmt"], &[]),
+    // The `tsc` oracle's samples and configuration: velt_tscompat's tests read them (and skip
+    // the `tsc` run without its Node packages), `veltc`'s check that the samples are valid Velt.
+    ("tests/tscompat-oracle/", &["velt_tscompat"], &["ts_compat"]),
     ("packages/", &[], &["native_packages"]),
     ("playground/", &[], &["playground"]),
     ("editors/vscode/templates/", &[], &["debugger"]),

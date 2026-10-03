@@ -97,6 +97,24 @@ fn every_fixed_case_passes_velt_check() {
     }
 }
 
+/// The `tsc` oracle's samples of what `tsc` rejects (tests/tscompat-oracle/rejected) are valid
+/// Velt too, so they show what the lint sees. (Its behaviour sample, `declare function`, is
+/// valid only in a package with a native library.)
+#[test]
+fn every_rejected_sample_passes_velt_check() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/tscompat-oracle/rejected");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    files.sort();
+    assert!(files.len() > 5, "{files:?}");
+    for file in files {
+        let o = velt(&dir, &["check", file.to_str().unwrap()]);
+        assert!(o.status.success(), "{}:\n{}", file.display(), stderr(&o));
+    }
+}
+
 #[test]
 fn findings_print_as_diagnostics_with_their_code_and_fail() {
     let tmp = test_dir::TestDir::new();

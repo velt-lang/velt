@@ -164,11 +164,38 @@ Notes on the rules as built, against the issue's first design:
 - `jsx-provider` reports one finding per module, at its first element.
 - `declare-fn` is valid Velt only in a package with a native library.
 
+**The oracle.** The claims are checked against the real `tsc` every night
+(`crates/velt_tscompat/tests/oracle.rs`, `gh workflow run nightly -f only=oracle`). It uses a
+pinned `typescript` (`tests/tscompat-oracle/package.json` and its lock file, installed with
+`npm ci`) and the baseline above (`tests/tscompat-oracle/tsconfig.base.json`; JSX goes to a
+stand-in provider declared in `jsx/jsx-runtime.d.ts`, so nothing is fetched). `tsc` reads each
+file through its API (`diagnostics.mjs`), which lists type errors even in a file with syntax
+errors.
+
+- Every rule has a claim: `tsc` rejects it (a sample in `rejected/<code>.ts`), `tsc` accepts it
+  but JavaScript runs it differently (`behaviour/<code>.ts`; `declare-fn` today), or `tsc` can't
+  decide it, with the reason in the test (`outside-import`: `tsc` follows relative imports
+  anywhere, and the rule is about which files the client shares; `jsx-provider`: `tsc` uses the
+  provider the client configures, the rule is that `velt:jsx` has no JavaScript runtime). A rule
+  in `velt_tscompat::RULES` without a claim and its sample fails `cargo test -p velt_tscompat`,
+  with or without Node.
+- A sample reports only its own rule, is valid Velt (`rejected/`; `veltc`'s `ts_compat` test),
+  and `tsc` reports an error on every line the lint reports. A behaviour sample compiles.
+- Every rule fixture, its `.fixed` snapshot and `clean.ts` go through `tsc` a top-level
+  declaration at a time: a declaration the lint passes must compile, and one it reports with a
+  rule `tsc` rejects must not.
+- Behaviour samples should also differ under Node while their fixes don't; that runs through
+  `tests/difftest` once the typed rules (step 2) bring samples with a `main`.
+
+Without Node or the installed packages the `tsc` part is skipped with a message, so the pull
+request gate doesn't need Node; the nightly job sets `VELT_TSC_ORACLE=1`, which makes a missing
+`tsc` a failure.
+
 Documented but not linted: `i64` past 2^53, integer `/ 0`, out-of-bounds indexing, `-0` printing,
 exit codes.
 
-**Planned:** the typed rules (a type query, `ide::type_of(span)`, on the checked program), a
-`nightly` oracle running the cases through `tsc` and Node, `tsCompat: ["src/models", …]` in
+**Planned:** the typed rules (a type query, `ide::type_of(span)`, on the checked program), the
+oracle's Node runs for behaviour samples, `tsCompat: ["src/models", …]` in
 `package.vlt` for `velt check --ts-compat` without paths, and the findings with quick fixes in
 the language server.
 
