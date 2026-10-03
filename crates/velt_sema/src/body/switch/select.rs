@@ -9,7 +9,7 @@ use super::cases::{source_text, strip_parens, Scrut, ScrutKind, Slot};
 use crate::body::narrow::literal_of;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::ctx::Item;
-use crate::hir::{self, DefId, PatKind as P, UseMode};
+use crate::hir::{self, DefId, LitValue, PatKind as P, UseMode};
 use crate::literals::lit_matches;
 use crate::unions::TYPEOF_TAGS;
 
@@ -28,7 +28,10 @@ pub(crate) struct Sel {
 impl FnCx<'_, '_> {
     /// What `case test:` selects.
     pub(super) fn case_sel(&mut self, s: &Scrut, test: &ast::Expr) -> Sel {
-        let lit = literal_of(test);
+        let lit = literal_of(test).or_else(|| match s.kind {
+            ScrutKind::Plain | ScrutKind::Enum(_) => None,
+            _ => self.literal_const(test),
+        });
         let null = matches!(strip_parens(test).kind, ast::ExprKind::Lit(ast::Lit::Null));
         match (&s.kind, lit) {
             (_, _) if null => self.null_sel(s, test.span),
@@ -71,6 +74,35 @@ impl FnCx<'_, '_> {
             }
             (ScrutKind::Plain, None) => self.guard_sel(s, test),
         }
+    }
+
+    /// A local of a literal type (`const y = "y"`, `y: "y"`) used as a case value: like the
+    /// literal, as in TypeScript (it narrows and counts toward exhaustiveness).
+    fn literal_const(&mut self, test: &ast::Expr) -> Option<ast::SignedLit> {
+        let ast::ExprKind::Ident(id) = &strip_parens(test).kind else {
+            return None;
+        };
+        let lit = match self.cx.lit_value(self.peek_local_ty(&id.name)?)? {
+            LitValue::Str(v) => ast::SignedLit {
+                lit: ast::Lit::Str(v),
+                negative: false,
+            },
+            LitValue::Bool(b) => ast::SignedLit {
+                lit: ast::Lit::Bool(b),
+                negative: false,
+            },
+            LitValue::Int(_, v) => ast::SignedLit {
+                lit: ast::Lit::Int {
+                    value: v.unsigned_abs(),
+                    suffix: None,
+                },
+                negative: v < 0,
+            },
+            LitValue::Float(..) => return None,
+        };
+        // Checked as a value too, so the local counts as used (captures, editors).
+        self.expr(test, None, Want::Borrow);
+        Some(lit)
     }
 
     /// The slots satisfying `pred` as one (or-)pattern; `None` if there are none.
