@@ -111,6 +111,25 @@ impl Ctx<'_> {
         }
         let mut members = self.union_members(pat).unwrap_or_default();
         members.sort_by_key(|m| matches!(self.ty.kind(*m), TyKind::Param(_)));
+        // A union against a union (`{ ok: true; v: T } | { ok: false; e: string }` against the
+        // same union at `T = i64`): every member of `actual` matches some member of `pat`.
+        if let Some(actual_members) = self.union_members(actual) {
+            let mut trial = slots.to_vec();
+            let all = actual_members.iter().all(|a| {
+                members.iter().any(|m| {
+                    let mut t = trial.clone();
+                    let ok = self.match_ty(*m, *a, &mut t);
+                    if ok {
+                        trial = t;
+                    }
+                    ok
+                })
+            });
+            if all {
+                slots.copy_from_slice(&trial);
+                return true;
+            }
+        }
         for m in members {
             let mut trial = slots.to_vec();
             if self.match_ty(m, actual, &mut trial) {

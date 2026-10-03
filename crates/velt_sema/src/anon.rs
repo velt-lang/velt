@@ -77,10 +77,41 @@ impl Ctx<'_> {
         if let TyKind::Adt(d, args) = self.ty.kind(out).clone() {
             if let Some(r) = self.canon_anon(d, &args, depth) {
                 out = r;
+            } else if let Some(r) = self.canon_union(d, &args, depth) {
+                out = r;
             }
         }
         self.canon_memo.insert(t, out);
         out
+    }
+
+    /// The canonical type of union def `d` applied to (canonical) `args`: the union of the
+    /// substituted members, as if written directly (`A | B` at `A = B = string` is `string`, at
+    /// `[i64, string]` the written `string | i64`). Only when every member is a plain type: a
+    /// member that is itself a union or nullable would flatten into its parts, and lowering maps
+    /// one generic variant onto one canonical variant (velt_vir `Cx::canon`, `union_variant`).
+    fn canon_union(&mut self, d: DefId, args: &[TyId], depth: u32) -> Option<TyId> {
+        if args.is_empty() || args.iter().any(|a| self.ty.has_error(*a)) {
+            return None;
+        }
+        let t = self.ty.intern(TyKind::Adt(d, args.to_vec()));
+        self.union_def(t)?;
+        let members: Vec<TyId> = self
+            .union_members(t)?
+            .into_iter()
+            .map(|m| self.canon_depth(m, depth + 1))
+            .collect();
+        let plain = |cx: &Self, m: TyId| {
+            !matches!(
+                cx.ty.kind(m),
+                TyKind::Option(_) | TyKind::Unit | TyKind::Never | TyKind::Error
+            ) && cx.union_def(m).is_none()
+        };
+        if !members.iter().all(|m| plain(self, *m)) {
+            return None;
+        }
+        let u = self.union_of(&members, false, velt_common::Span::DUMMY);
+        (u != t).then_some(u)
     }
 
     /// The canonical type of anonymous def `d` applied to (canonical) `args`, if `d` is an
@@ -301,6 +332,20 @@ pub(crate) fn concrete_shapes(cx: &Ctx) -> HashMap<Vec<(String, TyId)>, DefId> {
             if a.kind == AdtKind::Anon && a.generics == 0 && !cx.readonly_twins.contains_key(&id) {
                 let key = a.fields.iter().map(|f| (f.name.clone(), f.ty)).collect();
                 out.entry(key).or_insert(id);
+            }
+        }
+    }
+    out
+}
+
+/// `hir::Program::union_shapes`: every concrete union def by its member list (sorted by type id,
+/// as `Ctx::union_of` orders concrete members).
+pub(crate) fn concrete_unions(cx: &Ctx) -> HashMap<Vec<TyId>, DefId> {
+    let mut out = HashMap::new();
+    for (key, d) in &cx.unions {
+        if let Some(crate::hir::Def::Enum(e)) = &cx.defs[d.0 as usize] {
+            if e.generics == 0 {
+                out.entry(key.clone()).or_insert(*d);
             }
         }
     }

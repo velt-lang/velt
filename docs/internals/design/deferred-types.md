@@ -46,7 +46,7 @@ The owner's decisions on the review's questions (#395, section F):
 
 ## Prerequisites
 
-### P1. Canonical instantiation (done, except unions)
+### P1. Canonical instantiation (done)
 
 Substituting into a generic type produces the type that would have been written directly:
 
@@ -67,14 +67,18 @@ Substituting into a generic type produces the type that would have been written 
   JavaScript (before, `id<string | null>(null) === null` was `false`). `velt_vir` treats wrapping
   and unwrapping a payload that already is the option as the identity: `WrapSome`, `UnwrapSome`,
   `Some` patterns (`??`, narrowing), `Array.pop`, and channels of nullable items.
-- **Generic unions (open).** `{ a: U | string }` at `U = i64` is not yet the written
-  `{ a: string | i64 }`. A generic union's variants are in the generic def's order, and HIR
-  refers to variants by index, so canonicalizing needs a per-instance variant remapping in
-  `velt_vir` (injections, `UnwrapVariant`, matches, `typeof` tests), and a union whose members
-  collapse to one type disappears. Distributing `Partial` over unions depends on it.
+- **Generic unions.** `{ a: U | string }` at `U = i64` is the written `{ a: string | i64 }`, and
+  `A | B` at `A = B = string` is `string`. Sema re-canonicalizes a union instance through
+  `union_of` and exports the concrete union of each member list (`Program::union_shapes`);
+  `velt_vir` maps instances onto it and remaps the generic union's variants by member type
+  (`Cx::union_variant`: injections, `UnwrapVariant`, variant patterns, switch keys), a variant of a
+  union that collapsed to one member being the value itself. Inference matches a union against
+  a union member by member. Still open: a generic union instantiated with a member that is a union
+  or nullable (`U | string` at `U = i64 | bool`) keeps its own variants, because one generic
+  variant would spread over several canonical ones.
 
 Regression tests: `lang/anon_generic_instantiation`, `lang/generic_object_alias_instance`,
-`lang/nullable_generic_payload`.
+`lang/nullable_generic_payload`, `lang/generic_union_instance`.
 
 ### P2. `?:` is a flag, not a type
 
@@ -307,8 +311,8 @@ and is monomorphized, so the callee receives the same object. Storage positions
 
 ## Implementation order
 
-1. **P1 on `main`** — done except generic unions: R1 (readonly flags), R2 (erased defs), nested
-   `T | null`, structural `type_key`, the exported shape table, decision 1.
+1. **P1 on `main`** — done: R1 (readonly flags), R2 (erased defs), nested `T | null`, generic
+   unions with plain members, structural `type_key`, the exported shape tables, decision 1.
 2. **P2** with the presence-flag representation (decision 2).
 3. **Concrete operators** per [Reconciled concrete rules](#reconciled-concrete-rules).
 4. **Stuck operators, `FieldByName`, `DeferredObject`**, with R3, R6, the overlay, termination.

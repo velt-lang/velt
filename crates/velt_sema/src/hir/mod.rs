@@ -211,6 +211,9 @@ pub struct Program {
     /// (readonly erasure). Lowering maps every instance of a generic anonymous def onto these,
     /// so one shape is one type (velt_vir `Cx::canon`).
     pub anon_shapes: HashMap<Vec<(String, TyId)>, DefId>,
+    /// The concrete union def of each member list (sorted by type id). Lowering maps an instance
+    /// of a generic union whose members are plain types onto it (velt_vir `Cx::canon`).
+    pub union_shapes: HashMap<Vec<TyId>, DefId>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).

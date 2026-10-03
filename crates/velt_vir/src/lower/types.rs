@@ -93,10 +93,93 @@ impl<'h> Cx<'h> {
                     Some(dc) => self.intern(TyKind::Adt(dc, vec![])),
                     None => *self.anon.reps.entry(key).or_insert(out),
                 };
+            } else if let Some(u) = self.canon_union(d, &args) {
+                out = u;
             }
         }
         self.anon.memo.insert(t, out);
         out
+    }
+
+    /// The canonical type of union def `d` at (canonical) `args` (velt_sema `anon.rs`
+    /// `canon_union`): with plain members only, the deduplicated members' union (sema's def of
+    /// that member list, else the first type seen with it), or the single member itself.
+    fn canon_union(&mut self, d: DefId, args: &[TyId]) -> Option<TyId> {
+        if args.is_empty() {
+            return None;
+        }
+        let hir::Def::Enum(e) = self.hir.def(d) else {
+            return None;
+        };
+        if !e.is_union {
+            return None;
+        }
+        let payloads: Vec<TyId> = e.variants.iter().map(|v| v.payload[0]).collect();
+        let mut members: Vec<TyId> = vec![];
+        for p in payloads {
+            let m = self.subst_raw(p, args);
+            let m = self.canon(m);
+            let plain = !matches!(
+                self.kind(m),
+                TyKind::Option(_) | TyKind::Unit | TyKind::Never | TyKind::Error
+            ) && !self.is_union(m);
+            if !plain {
+                return None;
+            }
+            if !members.contains(&m) {
+                members.push(m);
+            }
+        }
+        if members.len() == 1 {
+            return Some(members[0]);
+        }
+        members.sort_by_key(|t| t.0);
+        let t = self.intern(TyKind::Adt(d, args.to_vec()));
+        Some(match self.hir.union_shapes.get(&members) {
+            Some(&u) => self.intern(TyKind::Adt(u, vec![])),
+            None => *self.anon.union_reps.entry(members).or_insert(t),
+        })
+    }
+
+    /// Where variant `variant` of the HIR union type `hir_ty` (of the current instance) lives in
+    /// its canonical type `ty` (`canon_union`): another variant index, or the whole value when
+    /// the union collapsed to that member. Unchanged for every other enum.
+    pub(super) fn union_variant(
+        &mut self,
+        hir_ty: TyId,
+        targs: &[TyId],
+        variant: u32,
+        ty: TyId,
+    ) -> VariantAt {
+        let raw = self.subst_raw(hir_ty, targs);
+        if raw == ty {
+            return VariantAt::Index(variant);
+        }
+        let TyKind::Adt(d, args) = self.kind(raw) else {
+            return VariantAt::Index(variant);
+        };
+        let payload = self.enum_def(d).variants[variant as usize].payload[0];
+        let m = self.subst_raw(payload, &args);
+        let m = self.canon(m);
+        if m == ty {
+            return VariantAt::Whole;
+        }
+        let TyKind::Adt(cd, cargs) = self.kind(ty) else {
+            ice("union variant of a non-union type")
+        };
+        let cps: Vec<TyId> = self
+            .enum_def(cd)
+            .variants
+            .iter()
+            .map(|v| v.payload[0])
+            .collect();
+        for (i, p) in cps.into_iter().enumerate() {
+            let p = self.subst_raw(p, &cargs);
+            if self.canon(p) == m {
+                return VariantAt::Index(i as u32);
+            }
+        }
+        ice("union variant not in its canonical union")
     }
 
     /// Sema's anonymous def with exactly these (concrete) fields, if lowering sees one.
@@ -379,4 +462,14 @@ pub(super) struct AnonShapes {
     memo: HashMap<TyId, TyId>,
     /// The type of each shape that sema has no concrete def for.
     reps: HashMap<Vec<(String, TyId)>, TyId>,
+    /// The same for unions, by sorted member list.
+    union_reps: HashMap<Vec<TyId>, TyId>,
+}
+
+/// Where a generic union's variant lives in the canonical union (`Cx::union_variant`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum VariantAt {
+    Index(u32),
+    /// The union collapsed to this member: the value itself.
+    Whole,
 }

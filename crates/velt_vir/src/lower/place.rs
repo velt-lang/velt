@@ -9,6 +9,7 @@ use velt_sema::hir::{self, LocalId, Pat, PatKind, TyId, TyKind, UseMode};
 
 use super::expr::may_write;
 use super::operand::proj;
+use super::types::VariantAt;
 use super::{ice, unit, FnLower};
 use crate::vir::{Operand, Place, Proj, Rvalue, Ty};
 
@@ -206,15 +207,23 @@ impl FnLower<'_, '_> {
         mode: UseMode,
     ) -> Operand {
         let ety = self.sub(inner.ty);
+        let at = self.variant_at(inner.ty, variant, ety);
         if mode == UseMode::Move && self.through_counted(inner, ety) {
             let v = self.unwrap_variant(inner, variant, UseMode::Borrow);
-            let pty = self.cx.variant_tys(ety, variant)[0];
+            let pty = match at {
+                VariantAt::Index(i) => self.cx.variant_tys(ety, i)[0],
+                VariantAt::Whole => ety,
+            };
             let s = self.share_value(v, pty);
             return self.own_value(s, pty);
         }
         let v = self.expr(inner);
         let p = self.place_of(v, ety);
-        let (payload, pty) = self.variant_part(&p, ety, variant, 0);
+        let (payload, pty) = match at {
+            VariantAt::Index(i) => self.variant_part(&p, ety, i, 0),
+            // The union collapsed to this member: the value itself.
+            VariantAt::Whole => (p.clone(), ety),
+        };
         if self.cx.is_unit(pty) {
             // A zero-sized payload (a literal member like `"mid"`) has no field to read.
             return unit();
@@ -321,7 +330,10 @@ impl FnLower<'_, '_> {
             K::UnwrapVariant { expr, variant, .. } => {
                 let ety = self.sub(expr.ty);
                 let p = self.place_expr_with(expr, pre);
-                self.variant_part(&p, ety, *variant, 0).0
+                match self.variant_at(expr.ty, *variant, ety) {
+                    VariantAt::Index(i) => self.variant_part(&p, ety, i, 0).0,
+                    VariantAt::Whole => p,
+                }
             }
             _ => {
                 let v = self.expr(e);
