@@ -44,6 +44,27 @@ fn generic_calls_vs_comparisons() {
     check("a < -b > (c)", "(> (< a (- b)) (paren c))");
 }
 
+/// Object type literals as explicit type arguments (#238, #277), with either separator and
+/// generic member types; a comparison with an object literal stays a comparison.
+#[test]
+fn object_type_arguments() {
+    check("f<{ n: i64 }>(x)", "(call f<{n: i64}> [x])");
+    check(
+        "JSON.parse<{ k: i64, m: Map<string, i64> }>(s)",
+        "(call (. JSON parse)<{k: i64; m: Map<string, i64>}> [s])",
+    );
+    check(
+        "JSON.parse<{ k: i64; m: Map<string, i64>; }>(s)",
+        "(call (. JSON parse)<{k: i64; m: Map<string, i64>}> [s])",
+    );
+    check(
+        "f<{ a: Array<Map<K, V>> }, { b?: string }>()",
+        "(call f<{a: Array<Map<K, V>>}, {b: (string | null)}> [])",
+    );
+    check("f<{ p: { q: i64[] } }[]>()", "(call f<{p: {q: i64[]}}[]> [])");
+    check("a < { n: 1 }", "(< a {n: 1})");
+}
+
 #[test]
 fn new_expressions() {
     check("new Foo()", "(new Foo [])");

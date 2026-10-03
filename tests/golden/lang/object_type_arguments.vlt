@@ -1,0 +1,18 @@
+// Object type literals as explicit type arguments (#238, #277): `,` and `;` separators,
+// generic member types, nested object types.
+function first<T>(xs: T[]): T {
+  return xs[0];
+}
+
+function main() {
+  const a = JSON.parse<{ n: i64 }>('{"n":1}');
+  console.log(a.n);
+  const b = JSON.parse<{ k: i64; m: Map<string, i64> }>(`{"k":2,"m":{"x":3}}`);
+  console.log(b.k, b.m.get("x"));
+  const c = JSON.parse<{ k: i64; m: Map<string, i64> }>(`{"k":4,"m":{}}`);
+  console.log(c.k, c.m.size);
+  const d = JSON.parse<{ p: { q: i64[] }; s?: string }>(`{"p":{"q":[5,6]}}`);
+  console.log(d.p.q.length, d.s ?? "none");
+  const e = first<{ id: i64 }>([{ id: 7 }, { id: 8 }]);
+  console.log(e.id);
+}
