@@ -189,7 +189,7 @@ pub enum Command {
         package: String,
     },
     /// `velt search <text>`.
-    Search { query: String },
+    Search { query: String, json: bool },
     /// `velt registry owner add|remove <pkg> <user> [--dir <d>]`: an administrator's change.
     RegistryOwner {
         add: bool,

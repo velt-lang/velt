@@ -125,6 +125,14 @@ fn template_websocket() {
 #[test]
 fn template_lib() {
     check_template("lib", false);
+    // A library starts with a description to edit (it is shown by `velt search`).
+    let s = sandbox();
+    s.ok("", &["new", "textkit", "--template", "lib"]);
+    let manifest = std::fs::read_to_string(s.path("textkit").join("package.vlt")).unwrap();
+    assert!(
+        manifest.contains("description: \"What textkit does, in one sentence.\""),
+        "{manifest}"
+    );
 }
 
 #[test]

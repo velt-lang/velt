@@ -13,6 +13,12 @@ export type Package = {
   name: string;
   /// A semantic version, such as `"0.1.0"`.
   version: string;
+  /// One line about the package, shown by `velt search` and registry listings: at most 200
+  /// characters, no line breaks, no surrounding whitespace.
+  description?: string;
+  /// Search words, such as `["json", "parser"]`: at most 10, each lowercase letters, digits and
+  /// `-` (at most 32 characters).
+  keywords?: string[];
   /// The program's root file, a `/`-separated path inside the package (default `"src/main.vlt"`).
   entry?: string;
   /// The registry for dependencies and `velt publish`: an `http://` or `https://` URL (default:

@@ -13,7 +13,7 @@ pins them.
 | `velt publish` | publish the current package to its registry (with its prebuilt native libraries) |
 | `velt native build [--target <t>]` | build the package's native library (package authors; needs Rust) |
 | `velt manifest [--json]` | check `package.vlt`, or print it as JSON for other tools |
-| `velt search <text>` | find packages whose name contains the text |
+| `velt search <text>` | find packages by name, keywords and description (`--json` for scripts) |
 | `velt yank <pkg>@<version> [--undo]` | withdraw a published version: lockfiles that pin it keep working, new requirements skip it |
 | `velt owner list\|add\|remove <pkg> [<user>]` | who may publish a package on a registry server |
 

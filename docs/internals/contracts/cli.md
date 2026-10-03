@@ -82,10 +82,12 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   (the newest pre-release not yanked if there is no stable one).
 - `owner list|add|remove <pkg> [<user>]` (additive): a package's owners on a registry server
   (`list` prints one per line on stdout); an error for a local registry.
-- `search <text>` (additive): `name version` lines on stdout for the packages of the package's
-  registry (or `$VELT_REGISTRY`) whose name contains the text, each with the version `add` picks:
-  the newest stable version not yanked (the newest pre-release not yanked if it has no stable
-  one).
+- `search <text> [--json]` (additive): `name  version  description` lines on stdout (columns
+  aligned; the description cut to the terminal's width with `…`, not cut when stdout is not a
+  terminal) for the packages of the package's registry (or `$VELT_REGISTRY`) that match the text
+  by name, keywords or description (ranking in manifest.md "Search"), each with the version `add`
+  picks: the newest stable version not yanked (the newest pre-release not yanked if it has no
+  stable one). `--json` prints the registry's answer (`{"packages": [...]}`) instead.
 - `check` (additive): parse + sema of a file or the current package (same
   input resolution as `build`, package dependencies installed), every diagnostic the front end
   reports (all files' syntax errors; if there are none, all type errors), no lowering, codegen or

@@ -73,7 +73,7 @@ impl RegistryData {
         }
     }
 
-    /// The packages of `loc`'s registry whose name contains `query`.
+    /// The packages of `loc`'s registry that match `query` (by name, keywords or description).
     pub fn search(&self, loc: &Locations, query: &str) -> Lookup<Vec<Hit>> {
         let query = query.trim().to_lowercase();
         let key = Key::Search {

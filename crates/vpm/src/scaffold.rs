@@ -61,11 +61,18 @@ pub struct Written {
 
 /// `package.vlt` of a new package.
 pub fn manifest_text(name: &str) -> String {
+    manifest_text_with(name, None)
+}
+
+/// `package.vlt` of a new package with a `description` (a library's placeholder, say).
+pub fn manifest_text_with(name: &str, description: Option<&str>) -> String {
     Manifest {
         registry: None,
         package: Package {
             name: name.to_string(),
             version: "0.1.0".into(),
+            description: description.map(str::to_string),
+            keywords: vec![],
             entry: DEFAULT_ENTRY.into(),
         },
         dependencies: BTreeMap::new(),

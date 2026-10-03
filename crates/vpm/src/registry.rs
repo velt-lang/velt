@@ -56,6 +56,13 @@ pub struct IndexEntry {
     pub version: String,
     /// `sha256:<hex>` of the package contents (see [`contents::checksum`]).
     pub checksum: String,
+    /// The version's `description` from its `package.vlt` (search and listings use the newest
+    /// version's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The version's `keywords`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keywords: Vec<String>,
     /// Dependency name → semver requirement.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub dependencies: BTreeMap<String, String>,
@@ -344,6 +351,8 @@ fn publish_to(root: &Path, loc: &Locations, manifest: &Manifest) -> Result<Index
         let entry = IndexEntry {
             version: version.to_string(),
             checksum: contents::checksum(root)?,
+            description: manifest.package.description.clone(),
+            keywords: manifest.package.keywords.clone(),
             dependencies,
             native_abi: None,
             native: BTreeMap::new(),
@@ -361,6 +370,8 @@ fn publish_to(root: &Path, loc: &Locations, manifest: &Manifest) -> Result<Index
     let entry = IndexEntry {
         version: version.to_string(),
         checksum: contents::checksum(&dest)?,
+        description: manifest.package.description.clone(),
+        keywords: manifest.package.keywords.clone(),
         dependencies,
         native_abi: None,
         native: BTreeMap::new(),

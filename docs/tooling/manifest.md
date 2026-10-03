@@ -38,11 +38,19 @@ need. A key the manifest doesn't know is an error, with a
 suggestion when it is close to one (`dependecies` → `dependencies`). `velt manifest` checks the
 file and reports these errors without building anything.
 
-## `name`, `version`, `entry`
+## `name`, `version`, `description`, `keywords`, `entry`
 
 - `name`: lowercase letters, digits, `_` and `-`, starting with a letter. `std` is reserved for
   the standard library.
 - `version`: a semantic version.
+- `description`: one line about the package, shown by `velt search` and registry listings: at most
+  200 characters, no line breaks, no surrounding whitespace.
+- `keywords`: search words, such as `["json", "parser"]`: at most 10, each lowercase letters,
+  digits and `-` (at most 32 characters, starting with a letter or digit). `velt search` matches
+  every word of its text against names, keywords and descriptions, names first.
+
+  The registry keeps both per published version, so changing them means publishing a new
+  version.
 - `entry`: the program's root file, a path inside the package (default `"src/main.vlt"`). A
   package with `src/main.vlt` is runnable; a package with `src/lib.vlt` is a library that other
   packages import. A package can have both.

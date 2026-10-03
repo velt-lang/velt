@@ -8,6 +8,8 @@ fn entry(version: &str, yanked: bool) -> IndexEntry {
     IndexEntry {
         version: version.into(),
         checksum: "sha256:00".into(),
+        description: None,
+        keywords: vec![],
         dependencies: BTreeMap::new(),
         native_abi: None,
         native: BTreeMap::new(),
@@ -127,14 +129,17 @@ fn names_write_the_whole_entry() {
         Hit {
             name: "sqlite".into(),
             version: "0.2.5".into(),
+            ..Default::default()
         },
         Hit {
             name: "sql-kit".into(),
             version: "1.0.0".into(),
+            ..Default::default()
         },
         Hit {
             name: "json".into(),
             version: "2.0.0".into(),
+            ..Default::default()
         },
     ];
     let (src, offset) = at(&format!("{HEAD}{{ dependencies: {{ json: \"2\", sq| }} }}"));
@@ -146,6 +151,18 @@ fn names_write_the_whole_entry() {
         "json is taken"
     );
     assert!(items.iter().all(|i| i.snippet));
+    let described = Hit {
+        name: "sqlite".into(),
+        version: "0.2.5".into(),
+        description: Some("SQLite for Velt".into()),
+        ..Default::default()
+    };
+    let items = name_completions(&cursor(&src, offset).unwrap(), &[described]);
+    assert!(
+        items[0].doc.starts_with("SQLite for Velt"),
+        "{}",
+        items[0].doc
+    );
 }
 
 #[test]
@@ -265,6 +282,7 @@ fn a_pre_release_is_not_written_by_name_completion() {
     let hits = vec![Hit {
         name: "next".into(),
         version: "1.0.0-rc.1".into(),
+        ..Default::default()
     }];
     let (src, offset) = at(&format!("{HEAD}{{ dependencies: {{ ne| }} }}"));
     let items = name_completions(&cursor(&src, offset).unwrap(), &hits);

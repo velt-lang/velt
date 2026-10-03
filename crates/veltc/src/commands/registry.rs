@@ -154,19 +154,129 @@ pub fn owner_command(action: &OwnerAction, package: &str) -> Result<(), String> 
     Ok(())
 }
 
-/// `velt search <text>`: `name version` lines on stdout.
-pub fn search_command(query: &str) -> Result<(), String> {
+/// `velt search <text>`: `name  version  description` lines on stdout (the description cut to
+/// the terminal's width), or with `--json` the registry's answer as one JSON document.
+pub fn search_command(query: &str, json: bool) -> Result<(), String> {
     let loc = locations()?;
     let hits = vpm::search::search(&loc, query)?;
+    if json {
+        println!("{}", vpm::search::to_json(&hits));
+        return Ok(());
+    }
     if hits.is_empty() {
         style::status(
             "Searched",
             &format!("{}: no package matches `{query}`", loc.describe()),
         );
     }
-    let width = hits.iter().map(|h| h.name.len()).max().unwrap_or(0);
+    let name_width = hits.iter().map(|h| h.name.len()).max().unwrap_or(0);
+    let version_width = hits.iter().map(|h| h.version.len()).max().unwrap_or(0);
+    let columns = terminal_columns();
     for hit in hits {
-        println!("{:width$}  {}", hit.name, hit.version);
+        let line = format!("{:name_width$}  {:version_width$}", hit.name, hit.version);
+        let left = columns.map(|c| c.saturating_sub(line.chars().count() + 2));
+        match hit.description.as_deref().map(|d| fit(d, left)) {
+            Some(d) if !d.is_empty() => println!("{line}  {d}"),
+            _ => println!("{}", line.trim_end()),
+        }
     }
     Ok(())
+}
+
+/// The terminal's width when stdout is one (`$COLUMNS` overrides it; 100 when it can't be
+/// asked); `None` when stdout is piped (nothing is cut then).
+fn terminal_columns() -> Option<usize> {
+    use std::io::IsTerminal;
+    if !std::io::stdout().is_terminal() {
+        return None;
+    }
+    let env = std::env::var("COLUMNS").ok().and_then(|c| c.parse().ok());
+    Some(env.or_else(asked_columns).unwrap_or(100))
+}
+
+#[cfg(unix)]
+fn asked_columns() -> Option<usize> {
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    // SAFETY: TIOCGWINSZ writes one `winsize` into `size`, which outlives the call.
+    let ok = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut size) } == 0;
+    (ok && size.ws_col > 0).then_some(size.ws_col as usize)
+}
+
+#[cfg(windows)]
+fn asked_columns() -> Option<usize> {
+    use windows_sys::Win32::System::Console::{
+        GetConsoleScreenBufferInfo, GetStdHandle, CONSOLE_SCREEN_BUFFER_INFO, STD_OUTPUT_HANDLE,
+    };
+    // SAFETY: the handle is the process's own stdout; the call fills `info`, which outlives it.
+    unsafe {
+        let mut info: CONSOLE_SCREEN_BUFFER_INFO = std::mem::zeroed();
+        if GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &mut info) == 0 {
+            return None;
+        }
+        let columns = info.srWindow.Right - info.srWindow.Left + 1;
+        (columns > 0).then_some(columns as usize)
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn asked_columns() -> Option<usize> {
+    None
+}
+
+/// Fewest columns worth showing a description in.
+const MIN_DESCRIPTION: usize = 10;
+
+/// `text` cut to `width` display columns with a `…` when it is longer (`None`: no limit); empty
+/// when fewer than [`MIN_DESCRIPTION`] columns are left.
+fn fit(text: &str, width: Option<usize>) -> String {
+    let Some(width) = width else {
+        return text.to_string();
+    };
+    if width < MIN_DESCRIPTION {
+        return String::new();
+    }
+    if text.chars().map(columns).sum::<usize>() <= width {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for c in text.chars() {
+        if used + columns(c) > width - 1 {
+            break;
+        }
+        used += columns(c);
+        out.push(c);
+    }
+    out.push('…');
+    out
+}
+
+/// Display columns of `c` in a terminal: 2 for East Asian wide and full-width characters and most
+/// emoji, else 1 (an approximation of Unicode's East Asian Width that needs no table).
+fn columns(c: char) -> usize {
+    let wide = matches!(c as u32,
+        0x1100..=0x115F | 0x2E80..=0x303E | 0x3041..=0x33FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF
+        | 0xA000..=0xA4CF | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF | 0xFE30..=0xFE4F | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6 | 0x1F300..=0x1F64F | 0x1F900..=0x1F9FF | 0x20000..=0x3FFFD);
+    if wide {
+        2
+    } else {
+        1
+    }
+}
+
+#[cfg(test)]
+mod search_output_tests {
+    use super::fit;
+
+    #[test]
+    fn descriptions_fit_the_columns_left() {
+        assert_eq!(fit("short", Some(40)), "short");
+        assert_eq!(fit("a fairly long description", Some(12)), "a fairly lo…");
+        // Wide characters take two columns each.
+        assert_eq!(fit("日本語のパッケージです", Some(11)), "日本語のパ…");
+        // Too narrow to be useful: left out; piped: never cut.
+        assert_eq!(fit("anything", Some(3)), "");
+        assert_eq!(fit(&"x".repeat(300), None).len(), 300);
+    }
 }
