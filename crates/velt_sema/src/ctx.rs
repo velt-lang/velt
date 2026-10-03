@@ -96,6 +96,9 @@ pub(crate) struct Ctx<'m> {
     pub nested_locals: HashMap<DefId, Vec<String>>,
     /// Name spans of the nested functions made from local generic arrows (`generic_arrows`).
     pub generic_arrow_fns: HashSet<Span>,
+    /// Name spans of every function made from a generic arrow, module-level ones included
+    /// (diagnostics show them as arrows).
+    pub generic_arrow_all: HashSet<Span>,
     /// The JSX runtime of each module that uses JSX, resolved on first use (`None` after its
     /// errors were reported).
     pub jsx_providers: HashMap<usize, Option<std::rc::Rc<crate::body::expr::jsx::Provider>>>,
@@ -157,6 +160,7 @@ impl<'m> Ctx<'m> {
             nested: vec![],
             nested_locals: HashMap::new(),
             generic_arrow_fns: HashSet::new(),
+            generic_arrow_all: HashSet::new(),
             jsx_providers: HashMap::new(),
             jsx_adapters: vec![],
             ide: None,

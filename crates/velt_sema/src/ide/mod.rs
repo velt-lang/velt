@@ -77,6 +77,7 @@ fn check_on_current_thread(modules: &[SourceModule], root: usize) -> Analysis {
     let mut cx = crate::ctx::Ctx::new(modules, root.min(modules.len().saturating_sub(1)));
     if let Some(l) = &lifted {
         cx.generic_arrow_fns = l.local_fns.clone();
+        cx.generic_arrow_all = l.all_fns.clone();
     }
     cx.ide = Some(Box::default());
     if !modules.is_empty() {

@@ -2,9 +2,9 @@ return_type_recursive.vlt:5:10
 error: function `fib` needs a return type annotation
 return_type_recursive.vlt:9:10: used here before its return type is known
 note: its return type is inferred from its `return` expressions, which use `fib` itself
-note: write the return type: `function fib(n: i64): T`
+note: write the return type: `function fib(n: i64): …`
 return_type_recursive.vlt:12:10
 error: function `sumTo` needs a return type annotation
 return_type_recursive.vlt:16:16: used here before its return type is known
 note: its return type is inferred from its `return` expressions, which use `sumTo` itself
-note: write the return type: `function sumTo(n: i64, acc: i64): T`
+note: write the return type: `function sumTo(n: i64, acc: i64): …`

@@ -1,6 +1,13 @@
-jsx_generic_arrow_local.vlt:5:22: error: a generic arrow function must be the value of a `const` with typed parameters and a return type
-jsx_generic_arrow_local.vlt:14:19: error: cannot infer the type arguments of generic function `id`
-use it where a function type is expected
-jsx_generic_arrow_local.vlt:15:21: error: a generic arrow function must be the value of a `const` with typed parameters and a return type
-jsx_generic_arrow_local.vlt:16:40: error: `k` cannot be captured by a generic arrow function
-pass `k` as a parameter
+jsx_generic_arrow_local.vlt:6:22: error: a generic arrow function must be the value of a `const` with typed parameters
+  = note: a function value has one type; declare it as `const id = <T>(x: T) => x;` and call it, or write a generic `function`
+jsx_generic_arrow_local.vlt:7:7: error: function `selfReturning` needs a return type annotation
+  jsx_generic_arrow_local.vlt:7:37: used here before its return type is known
+  = note: its return type is inferred from its `return` expressions, which use `selfReturning` itself
+  = note: write the return type: `const selfReturning = <T>(x: T): … =>`
+jsx_generic_arrow_local.vlt:16:19: error: cannot infer the type arguments of generic function `id`
+  = note: use it where a function type is expected, e.g. `const f: (x: i64) => i64 = ...`
+jsx_generic_arrow_local.vlt:17:21: error: a generic arrow function must be the value of a `const` with typed parameters
+  = note: a function value has one type; declare it as `const id = <T>(x: T) => x;` and call it, or write a generic `function`
+jsx_generic_arrow_local.vlt:18:40: error: `k` cannot be captured by a generic arrow function
+  = note: a local generic arrow function is a generic function nested in this one: it cannot use the local variables of enclosing functions
+  = note: pass `k` as a parameter, or drop the type parameters to make it a closure

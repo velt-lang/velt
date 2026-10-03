@@ -141,6 +141,7 @@ fn check_on_current_thread(
     let mut cx = ctx::Ctx::new(modules, root);
     if let Some(l) = &lifted {
         cx.generic_arrow_fns = l.local_fns.clone();
+        cx.generic_arrow_all = l.all_fns.clone();
     }
     analyze(&mut cx);
     let entry = check_main(&mut cx, root, root_mod, opts.require_main);

@@ -21,6 +21,8 @@ pub(crate) struct Lifted {
     pub modules: Vec<SourceModule>,
     /// Name spans of the functions made from local (non-module-level) generic arrows.
     pub local_fns: HashSet<Span>,
+    /// Name spans of every function made from a generic arrow, module-level ones included.
+    pub all_fns: HashSet<Span>,
 }
 
 /// The modules with their liftable generic arrow constants rewritten into functions, or `None`
@@ -36,8 +38,17 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
         return None;
     }
     let mut locals = local::Rewriter::default();
+    let mut module_fns = vec![];
     let mut lift_item = |i: &ast::Item| {
-        let mut i = as_function(i).unwrap_or_else(|| i.clone());
+        let mut i = match as_function(i) {
+            Some(f) => {
+                if let ast::ItemKind::Function(f) = &f.kind {
+                    module_fns.push(f.sig.name.span);
+                }
+                f
+            }
+            None => i.clone(),
+        };
         locals.item(&mut i);
         i
     };
@@ -56,9 +67,12 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
             jsx_runtime: m.jsx_runtime.clone(),
         })
         .collect();
+    let local_fns: HashSet<Span> = locals.lifted.into_iter().collect();
+    let all_fns = local_fns.iter().copied().chain(module_fns).collect();
     Some(Lifted {
         modules,
-        local_fns: locals.lifted.into_iter().collect(),
+        local_fns,
+        all_fns,
     })
 }
 

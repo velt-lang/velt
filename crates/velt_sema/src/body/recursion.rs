@@ -170,17 +170,7 @@ fn report_cycle(cx: &mut Ctx, d: DefId, p: &Pending) {
             chain.join(" → ")
         )
     };
-    let params: Vec<String> = f
-        .params
-        .iter()
-        .map(|p| format!("{}: {}", p.name, cx.display(p.ty)))
-        .collect();
-    let keyword = if what == "function" { "function " } else { "" };
-    let simple = name.rsplit('.').next().unwrap_or(&name);
-    let fix = format!(
-        "write the return type: `{keyword}{simple}({}): T`",
-        params.join(", ")
-    );
+    let fix = format!("write the return type: `{}`", annotated_signature(cx, d));
     let span = f.name_span;
     cx.error(
         Diagnostic::error(
@@ -191,6 +181,38 @@ fn report_cycle(cx: &mut Ctx, d: DefId, p: &Pending) {
         .with_note(why)
         .with_note(fix),
     );
+}
+
+/// `d`'s declaration with a placeholder return type, as the user writes it: a function, a
+/// generic arrow constant or a method, with its own type parameters and its parameters.
+fn annotated_signature(cx: &Ctx, d: DefId) -> String {
+    let f = cx.fn_info(d);
+    let names = &f.generics.names;
+    let owner = f
+        .owner
+        .and_then(|o| cx.adt(o))
+        .map_or(0, |a| a.generics.len());
+    let own = &names[owner.min(names.len())..];
+    let generics = if own.is_empty() {
+        String::new()
+    } else {
+        format!("<{}>", own.join(", "))
+    };
+    let params: Vec<String> = f
+        .params
+        .iter()
+        .map(|p| format!("{}: {}", p.name, cx.display_in(p.ty, names)))
+        .collect();
+    let params = params.join(", ");
+    let name = short_name(cx, d);
+    let simple = name.rsplit('.').next().unwrap_or(&name);
+    if cx.generic_arrow_all.contains(&f.name_span) {
+        format!("const {simple} = {generics}({params}): … =>")
+    } else if f.kind == FnKind::Free {
+        format!("function {simple}{generics}({params}): …")
+    } else {
+        format!("{simple}{generics}({params}): …")
+    }
 }
 
 pub(crate) fn short_name(cx: &Ctx, d: DefId) -> String {

@@ -34,8 +34,12 @@ const depth = <T>(xs: T[], n: number) => {
   return total;
 };
 
+async function tick(): Promise<number> {
+  return 0;
+}
+
 const later = async <T>(x: T) => {
-  await Promise.resolve(0);
+  await tick();
   return x;
 };
 
