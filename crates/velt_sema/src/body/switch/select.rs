@@ -260,6 +260,32 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// `l === r` of two checked values (a `switch` case compared with its discriminant): the
+    /// operands adapt as for `===` (a `T` next to a `T | null`, an inferred integer next to
+    /// another number type, literal types as their base), and a mismatch is reported once.
+    fn eq_values(&mut self, l: hir::Expr, r: hir::Expr, span: Span) -> hir::Expr {
+        let (l, r) = self.nullable_operands(l, r);
+        let (l, r) = if l.ty != r.ty {
+            (self.widen_value(l), self.widen_value(r))
+        } else {
+            (l, r)
+        };
+        let (l, r) = self.mix_numbers(l, r);
+        let (l, r) = self.mix_ints(l, r);
+        let Some(t) = self.check_operands(ast::BinaryOp::Eq, l.ty, &r, span) else {
+            return self.error_expr(span);
+        };
+        if !self.primitive_eq(t) {
+            return self.structural_eq(l, r, false, span);
+        }
+        let kind = hir::ExprKind::Binary {
+            op: hir::BinOp::Eq,
+            lhs: Box::new(l),
+            rhs: Box::new(r),
+        };
+        self.mk(kind, self.cx.ty.bool_, span)
+    }
+
     /// A case that can never be selected (after an error).
     fn never_sel(&mut self, s: &Scrut, span: Span) -> Sel {
         let b = self.cx.ty.bool_;
