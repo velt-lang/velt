@@ -443,7 +443,8 @@ impl FnCx<'_, '_> {
 }
 
 /// Where Node's `process.<name>` lives in Velt: the builtin `process` namespace has `exit`,
-/// `stdout.write`, `stderr.write` and `env` (`super::process`); the rest is in `velt:process`.
+/// `memoryUsage()`, `stdout.write`, `stderr.write` and `env` (`super::process`); the rest is in
+/// `velt:process`.
 fn process_note(name: &str) -> String {
     match name {
         "stdout" | "stderr" => format!(
