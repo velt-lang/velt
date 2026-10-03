@@ -61,6 +61,10 @@ impl Cx<'_> {
     /// Report an error (every syntax rule is one: `tsc` rejects the code or JavaScript runs it
     /// differently).
     fn error(&mut self, code: &'static str, span: Span, message: String, notes: &[&str]) {
+        debug_assert!(
+            crate::RULES.contains(&code),
+            "ICE: `{code}` is not in RULES"
+        );
         self.findings.push(Finding {
             code,
             severity: Severity::Error,
