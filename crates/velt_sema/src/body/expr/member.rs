@@ -381,6 +381,14 @@ impl FnCx<'_, '_> {
             }
             self.cx.error(d);
         }
+        // A promise element can be replaced in place (`arr[i] = p`) or read in place
+        // (`console.log(arr[i])`), not moved out: that would leave a hole, and it can't be
+        // copied. (Binding it by reference is checked in `borrowed_const`.)
+        let rejected = want == Want::Move && self.cx.holds_promise(elem);
+        if rejected {
+            self.promise_out_of_array(elem, span);
+            return self.error_expr(span);
+        }
         set_place_mode(&mut obj, base_mode(want));
         let mode = self.use_mode(elem, want);
         let kind = H::Index {

@@ -1,0 +1,14 @@
+promise_out_of_map.vlt:16:13: error: `get` would copy a `Promise<string>` out of the `Map`
+  = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212): store the awaited result (`m.set(k, await p)`), or keep the promises in an array and take them out with `pop()` or `splice(i, 1)`
+promise_out_of_map.vlt:17:15: error: `values` would copy a `Promise<string>` out of the `Map`
+  = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212): store the awaited result (`m.set(k, await p)`), or keep the promises in an array and take them out with `pop()` or `splice(i, 1)`
+promise_out_of_map.vlt:18:17: error: `entries` would copy a `Promise<string>` out of the `Map`
+  = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212): store the awaited result (`m.set(k, await p)`), or keep the promises in an array and take them out with `pop()` or `splice(i, 1)`
+promise_out_of_map.vlt:19:24: error: iterating the `Map` would copy a `Promise<string>`
+  = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212): store the awaited result (`m.set(k, await p)`), or keep the promises in an array and take them out with `pop()` or `splice(i, 1)`
+promise_out_of_map.vlt:24:13: error: `get` would copy a `Task` out of the `Map`
+  = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212), nor can a value type that holds one: store the awaited result instead of the promise, or make `Task` a class (a class instance is shared, not copied)
+promise_out_of_map.vlt:27:13: error: reading `r[k]` would copy a `Promise<string>` out of the `Record`
+  = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212): store the awaited result (`m.set(k, await p)`), or keep the promises in an array and take them out with `pop()` or `splice(i, 1)`
+promise_out_of_map.vlt:28:16: error: `Object.values` would copy a `Promise<string>` out of the `Record`
+  = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212): store the awaited result (`m.set(k, await p)`), or keep the promises in an array and take them out with `pop()` or `splice(i, 1)`

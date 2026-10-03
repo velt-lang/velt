@@ -200,12 +200,14 @@ extend<T> Array<T> {
       // The array is A Y; pushing the items gives A Y I, and the same two reversals of [lo, end)
       // turn Y I into I Y.
       const rest = this.length - lo;
-      for (const x of items) {
-        this.push(__intrinsic_share(x));
+      // Moved in, not shared: `items` is the call's own array (and may hold promises).
+      const n = items.length;
+      for (let i: usize = 0; i < n; i++) {
+        this.push(__intrinsic_array_remove(items, 0));
       }
       reverseRange(this, lo, this.length);
-      reverseRange(this, lo, lo + items.length);
-      reverseRange(this, lo + items.length, lo + items.length + rest);
+      reverseRange(this, lo, lo + n);
+      reverseRange(this, lo + n, lo + n + rest);
     }
     return out;
   }
