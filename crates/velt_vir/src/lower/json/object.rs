@@ -87,6 +87,21 @@ impl FnLower<'_, '_> {
             if !nullable {
                 self.json_require(ctx, seen, i as u32, name, fail);
             }
+            // `a?: T | null`: present when its key was there, `null` included.
+            if let Some(slot) = self.cx.presence_slot(ty, i as u32) {
+                let mut f = self.field_place(place, ty, i as u32);
+                if let Some(crate::vir::Proj::Field(x)) = f.proj.last_mut() {
+                    *x = slot;
+                }
+                let s = Operand::Copy(Place::local(seen));
+                let bit = self.rvalue_temp(
+                    Ty::U64,
+                    Rvalue::Binary(BinOp::BitAnd, s, cint(1i128 << i, Ty::U64)),
+                );
+                let set =
+                    self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, bit, cint(0, Ty::U64)));
+                self.assign(f, Rvalue::Use(set));
+            }
         }
     }
 

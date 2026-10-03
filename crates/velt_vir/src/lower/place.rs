@@ -365,6 +365,7 @@ impl FnLower<'_, '_> {
         let ty = self.sub(place.ty);
         let shared = self.through_counted(place, ty);
         let p = self.place_expr_with(place, &mut pre);
+        let flag = self.presence_place(place, &p);
         if shared && self.cx.needs_drop(ty) {
             // Other owners see the place: store first, then drop the old value (its `dispose`
             // may reach the place's container and must find it consistent).
@@ -380,7 +381,26 @@ impl FnLower<'_, '_> {
         } else {
             self.store(p, v);
         }
+        // A write to a `presence` field makes it present.
+        if let Some(fp) = flag {
+            self.assign(fp, Rvalue::Use(FnLower::ctrue()));
+        }
         unit()
+    }
+
+    /// The presence flag of the `presence` field the HIR `place` (at VIR place `p`) names.
+    pub(super) fn presence_place(&mut self, place: &hir::Expr, p: &Place) -> Option<Place> {
+        let hir::ExprKind::Field { base, index, .. } = &place.kind else {
+            return None;
+        };
+        let bt = self.sub(base.ty);
+        let slot = self.cx.presence_slot(bt, *index)?;
+        let mut fp = p.clone();
+        match fp.proj.last_mut() {
+            Some(Proj::Field(f)) => *f = slot,
+            _ => ice("presence of a field place without a field projection"),
+        }
+        Some(fp)
     }
 
     /// Assigning a field that was moved out of a local re-initializes it (nothing to drop).

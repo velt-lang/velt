@@ -20,7 +20,30 @@ impl FnLower<'_, '_> {
             }
             return Operand::Copy(obj);
         }
-        let ops: Vec<Operand> = fields.iter().map(|f| self.consume(f)).collect();
+        let mut ops: Vec<Operand> = vec![];
+        let mut flags: Vec<Operand> = vec![];
+        for (i, f) in fields.iter().enumerate() {
+            if self.cx.presence_slot(ty, i as u32).is_none() {
+                ops.push(self.consume(f));
+                continue;
+            }
+            // A `presence` field: absent (`null`, flag clear) or given (flag set).
+            let absent = matches!(
+                f.kind,
+                hir::ExprKind::Call {
+                    callee: hir::Callee::Intrinsic(hir::Intrinsic::FieldAbsent),
+                    ..
+                }
+            );
+            if absent {
+                let fty = self.sub(f.ty);
+                ops.push(self.none_value(fty));
+            } else {
+                ops.push(self.consume(f));
+            }
+            flags.push(Operand::Const(Const::Bool(!absent), Ty::Bool));
+        }
+        ops.extend(flags);
         self.build_agg(ty, ops)
     }
 

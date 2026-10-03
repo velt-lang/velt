@@ -77,6 +77,7 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
                 default: None,
                 private: false,
                 optional: f.optional,
+                presence: false,
             })
             .collect(),
         methods: i
@@ -151,6 +152,7 @@ fn adt_def(
             default,
             private: f.private_to.is_some(),
             optional: f.optional,
+            presence: crate::anon::has_presence(&cx.ty, a.kind, f),
         })
         .collect();
     let (name, kind, base, ctor, vtable, span) = (

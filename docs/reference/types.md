@@ -170,7 +170,10 @@ has type `T | null`, stored without an extra allocation where possible.
   may leave it out or pass `null`; it cannot also have a default), and an optional field starts
   as `null`, meaning absent: `JSON.stringify` and `console.log` leave it out, and a spread
   (`{ ...a, ...b }`) doesn't copy it over an earlier value, as JavaScript skips a missing key.
-  A field declared `a?: T | null` can't yet tell an absent key from a present `null` (#350).
+  A field declared `a?: T | null` (in an object type) keeps an absent key apart from a present
+  `null`, as JavaScript does: it prints and serializes `null` when present, `JSON.parse` keeps
+  the difference, and a spread copies a present `null` (`update(u, { deletedAt: null })` clears
+  the field).
   An object literal may leave out any `T | null` field of an object type
   (`{ port: i64; host?: string }` accepts `{ port: 80 }`).
 - In an object type, `?` is part of the type: `{ a?: string }` and `{ a: string | null }` read

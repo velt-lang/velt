@@ -326,7 +326,7 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         crate::body::field_defaults(self.cx, d);
         let a = self.cx.adt(d).expect("ICE: struct");
-        let (sname, fields) = (a.name.clone(), a.fields.clone());
+        let (sname, fields, kind) = (a.name.clone(), a.fields.clone(), a.kind);
         // Object types (anonymous ones and field-only interfaces) may leave out nullable fields.
         let anon = a.kind == AdtKind::Anon || self.cx.field_only_of.contains_key(&d);
         if let Some(e) = exp {
@@ -356,6 +356,10 @@ impl FnCx<'_, '_> {
             let fty = self.cx.subst(f.ty, &type_args);
             let h = match (values[i].take(), &f.default) {
                 (Some(h), _) => self.coerce(h, fty),
+                // `a?: T | null` left out is absent, not a present `null`.
+                (None, _) if crate::anon::has_presence(&self.cx.ty, kind, f) => {
+                    self.intrinsic(hir::Intrinsic::FieldAbsent, vec![], fty, span)
+                }
                 (None, Some(dflt)) => {
                     let mut h = dflt.clone();
                     crate::visit::map_expr_types(&mut h, &mut |t| self.cx.subst(t, &type_args));

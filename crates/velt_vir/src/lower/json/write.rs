@@ -210,6 +210,14 @@ impl FnLower<'_, '_> {
         for (i, ((name, optional), fty)) in names.into_iter().zip(tys).enumerate() {
             let fp = self.field_place(place, ty, i as u32);
             let key = json_key(&name);
+            // `a?: T | null`: written when present, `null` included (`hir::FieldDef::presence`).
+            let flag_place = self.cx.presence_slot(ty, i as u32).map(|slot| {
+                let mut f = fp.clone();
+                if let Some(vir::Proj::Field(x)) = f.proj.last_mut() {
+                    *x = slot;
+                }
+                f
+            });
             match (optional, self.cx.kind(fty)) {
                 (true, TyKind::Option(e)) => {
                     let flag = match sep {
@@ -228,17 +236,30 @@ impl FnLower<'_, '_> {
                         }
                     };
                     let prev = sep;
-                    self.if_some(
-                        &fp,
-                        fty,
-                        |lw, p| {
-                            lw.json_member_sep(buf, prev);
-                            lw.assign(Place::local(flag), Rvalue::Use(Self::ctrue()));
-                            lw.push_text(buf, &key);
-                            lw.json_write(buf, &p, e);
-                        },
-                        |_| {},
-                    );
+                    match flag_place {
+                        Some(present) => {
+                            let (yes, done) = (self.new_block(), self.new_block());
+                            self.branch(Operand::Copy(present), yes, done);
+                            self.switch_to(yes);
+                            self.json_member_sep(buf, prev);
+                            self.assign(Place::local(flag), Rvalue::Use(Self::ctrue()));
+                            self.push_text(buf, &key);
+                            self.json_write(buf, &fp, fty);
+                            self.goto(done);
+                            self.switch_to(done);
+                        }
+                        None => self.if_some(
+                            &fp,
+                            fty,
+                            |lw, p| {
+                                lw.json_member_sep(buf, prev);
+                                lw.assign(Place::local(flag), Rvalue::Use(Self::ctrue()));
+                                lw.push_text(buf, &key);
+                                lw.json_write(buf, &p, e);
+                            },
+                            |_| {},
+                        ),
+                    }
                     sep = Sep::Maybe(flag);
                 }
                 _ => {

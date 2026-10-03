@@ -80,7 +80,7 @@ Substituting into a generic type produces the type that would have been written 
 Regression tests: `lang/anon_generic_instantiation`, `lang/generic_object_alias_instance`,
 `lang/nullable_generic_payload`, `lang/generic_union_instance`.
 
-### P2. `?:` is a flag, not a type
+### P2. `?:` is a flag, not a type (done)
 
 Today `name?: T` is `name: T | null`. Instead, a field keeps its declared type `F` and an
 `optional` flag, and the flag is part of an anonymous type's identity:
@@ -101,6 +101,17 @@ Today `name?: T` is `name: T | null`. Instead, a field keeps its declared type `
   suggests `{ ...x }`. `hir::FieldDef` gains the `optional` flag, and lowering keeps the types
   apart.
 - The reference's "`a?: T` is `T | null` everywhere" (types.md) is rewritten.
+
+How it is implemented: `FieldInfo` keeps the declared type and the anonymous key is
+(name, declared type, `FieldFlags`); `hir::FieldDef` gains `optional` and `presence`. A
+`presence` field's flag is stored after the fields of the VIR aggregate (`Cx::presence_slot`,
+`part_types`, so copy, clone and equality glue carry it); a literal leaves the field absent with
+`Intrinsic::FieldAbsent`, any write sets the flag, and spreads test `Intrinsic::FieldPresent`
+(sema `spread.rs` sets such a field after the literal, source by source). Regression tests:
+`lang/optional_fields`, `lang/optional_presence` (both identical to Node). Not covered yet: classes
+(an optional class field is still absent when `null`), a generic object type whose field is
+`a?: T` instantiated at a nullable `T` without a concrete def of that shape, and `Object.keys`,
+which lists a present `null` presence field as absent.
 
 ### P3. Structural field-only bounds
 
@@ -313,7 +324,7 @@ and is monomorphized, so the callee receives the same object. Storage positions
 
 1. **P1 on `main`** — done: R1 (readonly flags), R2 (erased defs), nested `T | null`, generic
    unions with plain members, structural `type_key`, the exported shape tables, decision 1.
-2. **P2** with the presence-flag representation (decision 2).
+2. **P2** with the presence-flag representation (decision 2) — done.
 3. **Concrete operators** per [Reconciled concrete rules](#reconciled-concrete-rules).
 4. **Stuck operators, `FieldByName`, `DeferredObject`**, with R3, R6, the overlay, termination.
 5. **`keyof`/`T[K]`** with decision 4's writes, and inference through operators.

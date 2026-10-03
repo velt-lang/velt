@@ -28,14 +28,24 @@ pub(super) fn has_spread(props: &[ast::ObjectProp]) -> bool {
         .any(|p| matches!(p, ast::ObjectProp::Spread(_)))
 }
 
+/// Where a spread field's value comes from.
+#[derive(Clone)]
+struct Src {
+    /// The source field is optional (`a?: T`): it may be absent.
+    optional: bool,
+    /// It keeps "absent" apart from a present `null` (`a?: T | null`, `hir::FieldDef::presence`).
+    presence: bool,
+    /// The source field as a place, for the presence or null test of an optional one.
+    place: Option<hir::Expr>,
+}
+
 /// A field value of a spread object literal.
 enum Value<'e> {
-    /// Read out of a spread source; `true` for a source field that is optional (`a?: T`), which
-    /// may be absent (`null`).
-    Read(hir::Expr, bool),
+    /// Read out of a spread source.
+    Read(hir::Expr, Src),
     /// An optional source field over an earlier value: the earlier value stays when the field
-    /// is absent, as a JavaScript spread copies only the keys an object has (`read ?? earlier`).
-    Over(hir::Expr, Box<Value<'e>>),
+    /// is absent, as a JavaScript spread copies only the keys an object has.
+    Over(hir::Expr, Src, Box<Value<'e>>),
     /// An explicit property (`key: value` or shorthand `key`).
     Prop(ast::Ident, Option<&'e ast::Expr>),
 }
@@ -57,7 +67,7 @@ impl FnCx<'_, '_> {
                 ast::ObjectProp::Spread(e) => self
                     .spread_fields(e, &mut lets)
                     .into_iter()
-                    .map(|(n, h, opt)| (n, Value::Read(h, opt)))
+                    .map(|(n, h, src)| (n, Value::Read(h, src)))
                     .collect(),
                 ast::ObjectProp::KeyValue(k, v) => {
                     vec![(k.name.clone(), Value::Prop(k.clone(), Some(v)))]
@@ -79,12 +89,19 @@ impl FnCx<'_, '_> {
                 }
                 match entries.iter_mut().find(|(n, _)| *n == name) {
                     Some(slot) => {
+                        let none = Src {
+                            optional: false,
+                            presence: false,
+                            place: None,
+                        };
                         let prev = std::mem::replace(
                             &mut slot.1,
-                            Value::Read(self.error_expr(span), false),
+                            Value::Read(self.error_expr(span), none),
                         );
                         slot.1 = match v {
-                            Value::Read(h, true) => Value::Over(h, Box::new(prev)),
+                            Value::Read(h, src) if src.optional => {
+                                Value::Over(h, src, Box::new(prev))
+                            }
                             v => v,
                         };
                     }
@@ -144,7 +161,7 @@ impl FnCx<'_, '_> {
         &mut self,
         e: &ast::Expr,
         lets: &mut Vec<hir::Stmt>,
-    ) -> Vec<(String, hir::Expr, bool)> {
+    ) -> Vec<(String, hir::Expr, Src)> {
         let h = self.expr(e, None, Want::Borrow);
         let Some((d, args)) = self.adt_of(h.ty) else {
             if !self.cx.ty.is_bottom(h.ty) {
@@ -166,18 +183,35 @@ impl FnCx<'_, '_> {
             _ => (self.temp("<spread>", h, lets), !is_class),
         };
         set_place_mode(&mut base, UseMode::Borrow);
-        let fields = self.cx.adt(d).map(|a| a.fields.clone()).unwrap_or_default();
+        let (fields, kind) = self
+            .cx
+            .adt(d)
+            .map(|a| (a.fields.clone(), a.kind))
+            .unwrap_or((vec![], crate::hir::AdtKind::Struct));
         let mut out = vec![];
         for (i, f) in fields.iter().enumerate() {
             if f.private_to.is_some_and(|o| !self.private_allowed(o)) {
                 continue;
             }
             let fty = self.cx.subst(f.ty, &args);
-            out.push((
-                f.name.clone(),
-                self.field_read(&base, i as u32, fty, moves, e.span),
-                f.optional,
-            ));
+            let presence = crate::anon::has_presence(&self.cx.ty, kind, f);
+            // An optional field is read only when present, so it is shared rather than moved
+            // (a conditional move would leave the source half-owned).
+            let read = self.field_read(&base, i as u32, fty, moves && !f.optional, e.span);
+            let place = f.optional.then(|| {
+                let field = H::Field {
+                    base: Box::new(base.clone()),
+                    index: i as u32,
+                    mode: UseMode::Borrow,
+                };
+                self.mk(field, fty, e.span)
+            });
+            let src = Src {
+                optional: f.optional,
+                presence,
+                place,
+            };
+            out.push((f.name.clone(), read, src));
         }
         out
     }
@@ -220,11 +254,20 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let mut fields: Vec<crate::defs::AnonField> = vec![];
         let mut hs = vec![];
-        for (name, v) in entries {
-            // A field that may still be absent stays optional (`{ ...p }` with `p: Partial<T>`).
-            let absent = matches!(v, Value::Read(_, true));
-            let h = self.spread_value(v, None, span, lets);
+        let mut posts = vec![];
+        for (i, (name, v)) in entries.into_iter().enumerate() {
+            // A field that may still be absent stays optional (`{ ...p }` with `p: Partial<T>`),
+            // and keeps "absent" apart from `null` when a source does (`a?: T | null`).
+            let (absent, presence) = (may_be_absent(&v), any_presence(&v));
+            let h = if absent && presence {
+                let rt = last_read_ty(&v).expect("ICE: an absent field is read");
+                posts.push((i as u32, v));
+                self.intrinsic(hir::Intrinsic::FieldAbsent, vec![], rt, span)
+            } else {
+                self.spread_value(v, None, span, lets)
+            };
             let (declared, optional) = match self.cx.ty.opt_payload(h.ty) {
+                _ if absent && presence => (h.ty, true),
                 Some(p) if absent => (p, true),
                 _ => (h.ty, false),
             };
@@ -242,7 +285,8 @@ impl FnCx<'_, '_> {
             type_args,
             fields: hs,
         };
-        self.mk(kind, ty, span)
+        let lit = self.mk(kind, ty, span);
+        self.apply_posts(lit, posts, span, lets)
     }
 
     fn spread_struct(
@@ -255,13 +299,24 @@ impl FnCx<'_, '_> {
         lets: &mut Vec<hir::Stmt>,
     ) -> hir::Expr {
         let a = self.cx.adt(d).expect("ICE: struct");
-        let (sname, fields) = (a.name.clone(), a.fields.clone());
+        let (sname, fields, kind) = (a.name.clone(), a.fields.clone(), a.kind);
         let mut values: Vec<Option<hir::Expr>> = fields.iter().map(|_| None).collect();
+        let mut posts = vec![];
         for (name, v) in entries {
             let i = fields.iter().position(|f| f.name == name);
             let h = match (v, i) {
                 // Extra fields of a spread source are not part of the target type.
                 (Value::Read(..) | Value::Over(..), None) => continue,
+                // A target field that keeps "absent" apart from `null` (`a?: T | null`): left
+                // absent in the literal, then set from each source that has it, in order.
+                (v @ (Value::Read(..) | Value::Over(..)), Some(i))
+                    if may_be_absent(&v)
+                        && crate::anon::has_presence(&self.cx.ty, kind, &fields[i]) =>
+                {
+                    let expected = self.cx.subst_known(fields[i].ty, &slots);
+                    posts.push((i as u32, v));
+                    self.intrinsic(hir::Intrinsic::FieldAbsent, vec![], expected, span)
+                }
                 (v @ (Value::Read(..) | Value::Over(..)), Some(i)) => {
                     let expected = self.cx.subst_known(fields[i].ty, &slots);
                     self.spread_value(v, Some(expected), span, lets)
@@ -284,7 +339,113 @@ impl FnCx<'_, '_> {
             self.cx.match_ty(fields[i].ty, h.ty, &mut slots);
             values[i] = Some(h);
         }
-        self.finish_struct(d, slots, values, exp, span)
+        let lit = self.finish_struct(d, slots, values, exp, span);
+        self.apply_posts(lit, posts, span, lets)
+    }
+
+    /// `lit`, with the fields in `posts` set afterwards from their sources in order: an explicit
+    /// property or a field every source has always, an optional source field only when it is
+    /// present (a presence flag, or not `null`). The literal goes to a temporary in `lets`.
+    fn apply_posts(
+        &mut self,
+        lit: hir::Expr,
+        posts: Vec<(u32, Value)>,
+        span: Span,
+        lets: &mut Vec<hir::Stmt>,
+    ) -> hir::Expr {
+        if posts.is_empty() {
+            return lit;
+        }
+        let ty = lit.ty;
+        let field_tys: Vec<TyId> = match self.cx.ty.kind(ty).clone() {
+            TyKind::Adt(d, args) => {
+                let tys: Vec<TyId> = self
+                    .cx
+                    .adt(d)
+                    .map(|a| a.fields.iter().map(|f| f.ty).collect())
+                    .unwrap_or_default();
+                tys.into_iter().map(|t| self.cx.subst(t, &args)).collect()
+            }
+            _ => return lit,
+        };
+        let l = self.new_local("<spread>", ty, true, span, LocalKind::Temp);
+        lets.push(hir::Stmt {
+            kind: S::Let {
+                local: l,
+                init: Some(lit),
+            },
+            span,
+        });
+        for (i, v) in posts {
+            let fty = field_tys[i as usize];
+            for part in chain(v) {
+                let stmt = self.post_assign(l, ty, i, fty, part, span);
+                lets.push(stmt);
+            }
+        }
+        self.mk(H::Local(l, UseMode::Move), ty, span)
+    }
+
+    /// `tmp.f = value` for one part of a field's spread chain, guarded when the part may be
+    /// absent.
+    fn post_assign(
+        &mut self,
+        l: hir::LocalId,
+        ty: TyId,
+        index: u32,
+        fty: TyId,
+        part: Value,
+        span: Span,
+    ) -> hir::Stmt {
+        let (value, guard) = match part {
+            Value::Prop(k, value) => (self.prop_value(&k, value, Some(fty)), None),
+            Value::Read(h, src) | Value::Over(h, src, _) => {
+                let guard = match src.place {
+                    Some(p) if src.presence => {
+                        let b = self.cx.ty.bool_;
+                        Some(self.intrinsic(hir::Intrinsic::FieldPresent, vec![p], b, span))
+                    }
+                    Some(p) if src.optional => Some(self.null_test(p, false, span)),
+                    _ => None,
+                };
+                (self.coerce(h, fty), guard)
+            }
+        };
+        let base = self.mk(H::Local(l, UseMode::Borrow), ty, span);
+        let place = H::Field {
+            base: Box::new(base),
+            index,
+            mode: UseMode::Borrow,
+        };
+        let place = self.mk(place, fty, span);
+        let unit = self.cx.ty.unit;
+        let assign = H::Assign {
+            place: Box::new(place),
+            value: Box::new(value),
+        };
+        let assign = self.mk(assign, unit, span);
+        let Some(cond) = guard else {
+            return hir::Stmt {
+                kind: S::Expr(assign),
+                span,
+            };
+        };
+        let then = hir::Block {
+            stmts: vec![hir::Stmt {
+                kind: S::Expr(assign),
+                span,
+            }],
+            value: None,
+            span,
+        };
+        hir::Stmt {
+            kind: S::If {
+                cond,
+                then,
+                els: None,
+            },
+            span,
+        }
     }
 
     /// The HIR value of a spread field (`expected`: the target field's type, if known).
@@ -298,7 +459,7 @@ impl FnCx<'_, '_> {
         match v {
             Value::Read(h, _) => h,
             Value::Prop(k, value) => self.prop_value(&k, value, expected),
-            Value::Over(h, prev) => {
+            Value::Over(h, src, prev) => {
                 let prev = match *prev {
                     // A property under an optional field is evaluated whether or not the field
                     // is present, as in JavaScript: into a temporary, after the spread sources.
@@ -318,7 +479,22 @@ impl FnCx<'_, '_> {
                 if self.cx.ty.opt_payload(h.ty).is_none() {
                     return h;
                 }
-                self.nullish_exprs(h, prev, span)
+                match src.place {
+                    // A present `null` overrides; only an absent field keeps the earlier value.
+                    Some(p) if src.presence => {
+                        let b = self.cx.ty.bool_;
+                        let cond = self.intrinsic(hir::Intrinsic::FieldPresent, vec![p], b, span);
+                        let ty = h.ty;
+                        let prev = self.coerce(prev, ty);
+                        let kind = H::If {
+                            cond: Box::new(cond),
+                            then: Box::new(h),
+                            els: Box::new(prev),
+                        };
+                        self.mk(kind, ty, span)
+                    }
+                    _ => self.nullish_exprs(h, prev, span),
+                }
             }
         }
     }
@@ -481,5 +657,44 @@ impl FnCx<'_, '_> {
             },
             span,
         }
+    }
+}
+
+/// The parts of a field's spread value, earliest first (an `Over` unfolds into what it is
+/// over, then itself).
+fn chain(v: Value) -> Vec<Value> {
+    match v {
+        Value::Over(h, src, prev) => {
+            let mut out = chain(*prev);
+            out.push(Value::Read(h, src));
+            out
+        }
+        v => vec![v],
+    }
+}
+
+/// Every part of `v` is an optional source field, so the field may be absent.
+fn may_be_absent(v: &Value) -> bool {
+    match v {
+        Value::Read(_, src) => src.optional,
+        Value::Over(_, src, prev) => src.optional && may_be_absent(prev),
+        Value::Prop(..) => false,
+    }
+}
+
+/// Some part of `v` keeps "absent" apart from `null` (`a?: T | null`).
+fn any_presence(v: &Value) -> bool {
+    match v {
+        Value::Read(_, src) => src.presence,
+        Value::Over(_, src, prev) => src.presence || any_presence(prev),
+        Value::Prop(..) => false,
+    }
+}
+
+/// The type of the latest source read in `v`.
+fn last_read_ty(v: &Value) -> Option<TyId> {
+    match v {
+        Value::Read(h, _) | Value::Over(h, _, _) => Some(h.ty),
+        Value::Prop(..) => None,
     }
 }

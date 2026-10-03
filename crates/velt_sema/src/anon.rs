@@ -383,3 +383,10 @@ pub(crate) fn anon_field(f: &FieldInfo) -> AnonField {
     };
     (f.name.clone(), f.declared, flags)
 }
+
+/// Whether field `f` of a type of kind `kind` keeps "absent" apart from a present `null`
+/// (`hir::FieldDef::presence`): an optional field whose declared type is nullable
+/// (`a?: T | null`), in an object type or struct (P2b, deferred-types.md).
+pub(crate) fn has_presence(ty: &crate::types::Types, kind: AdtKind, f: &FieldInfo) -> bool {
+    f.optional && kind != AdtKind::Class && ty.opt_payload(f.declared).is_some()
+}

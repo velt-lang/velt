@@ -348,6 +348,11 @@ pub struct FieldDef {
     /// JavaScript leaves out a missing key; a `T | null` field with a `null` default is not
     /// optional.
     pub optional: bool,
+    /// An optional field whose declared type is nullable (`a?: T | null`) in a struct or object
+    /// type: it keeps "absent" apart from a present `null` with a presence flag, which lowering
+    /// stores after the fields. A literal leaves it absent with `Intrinsic::FieldAbsent`, a
+    /// write makes it present, and `Intrinsic::FieldPresent` reads the flag.
+    pub presence: bool,
 }
 
 #[derive(Clone, Debug)]

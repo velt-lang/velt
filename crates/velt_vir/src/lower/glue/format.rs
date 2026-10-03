@@ -303,7 +303,18 @@ impl FnLower<'_, '_> {
             let fp = self.field_place(place, ty, *index);
             let skip = self.new_block();
             if *opt {
-                let some = self.option_is_some(&fp, *t);
+                // `a?: T | null` shows when present, `null` included; other optional fields
+                // when not `null`.
+                let some = match self.cx.presence_slot(ty, *index) {
+                    Some(slot) => {
+                        let mut f = fp.clone();
+                        if let Some(Proj::Field(x)) = f.proj.last_mut() {
+                            *x = slot;
+                        }
+                        Operand::Copy(f)
+                    }
+                    None => self.option_is_some(&fp, *t),
+                };
                 let print = self.new_block();
                 self.branch(some, print, skip);
                 self.switch_to(print);

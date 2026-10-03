@@ -350,7 +350,17 @@ impl<'h> Cx<'h> {
     pub(super) fn part_types(&mut self, t: TyId) -> Vec<TyId> {
         match self.kind(t) {
             TyKind::Adt(d, args) => match self.hir.def(d) {
-                hir::Def::Adt(_) => self.adt_field_tys(t),
+                hir::Def::Adt(a) => {
+                    // A struct / object value stores a presence flag per `presence` field after
+                    // its fields (`hir::FieldDef::presence`, `presence_slot`).
+                    let flags = a.fields.iter().filter(|f| f.presence).count();
+                    let mut tys = self.adt_field_tys(t);
+                    if flags > 0 && a.kind != AdtKind::Class {
+                        let b = self.intern(TyKind::Bool);
+                        tys.extend(std::iter::repeat_n(b, flags));
+                    }
+                    tys
+                }
                 hir::Def::Enum(e) => {
                     let tys: Vec<TyId> =
                         e.variants.iter().flat_map(|v| v.payload.clone()).collect();
@@ -363,6 +373,27 @@ impl<'h> Cx<'h> {
             TyKind::Option(e) => vec![e],
             _ => vec![],
         }
+    }
+
+    /// The VIR field index of the presence flag of field `i` of struct / object type `t`, if
+    /// that field keeps one (`hir::FieldDef::presence`): after the stored fields, in field order.
+    pub(super) fn presence_slot(&mut self, t: TyId, i: u32) -> Option<u32> {
+        let TyKind::Adt(d, _) = self.kind(t) else {
+            return None;
+        };
+        let hir::Def::Adt(a) = self.hir.def(d) else {
+            return None;
+        };
+        if a.kind == AdtKind::Class || !a.fields.get(i as usize)?.presence {
+            return None;
+        }
+        let rank = a.fields[..i as usize].iter().filter(|f| f.presence).count() as u32;
+        let stored = self
+            .adt_field_tys(t)
+            .into_iter()
+            .filter(|&f| !self.is_unit(f))
+            .count() as u32;
+        Some(stored + rank)
     }
 
     /// Field types of a struct/class/anon instance, substituted with its type args.
