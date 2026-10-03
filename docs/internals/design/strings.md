@@ -1,6 +1,7 @@
 # Design: JavaScript string semantics (UTF-16 code units)
 
-Status: proposed (issue #326). Nothing here is implemented. Today a string is UTF-8, and every
+Status: decided (issue #377, from #326); the decisions are listed at the end. Nothing here is
+implemented yet. Today a string is UTF-8, and every
 length and position counts **bytes** ([types](../../reference/types.md#strings),
 [rt_abi.md "Strings"](../contracts/rt_abi.md)).
 
@@ -271,13 +272,13 @@ One PR each:
    for native packages, regex offsets; difftest over non-ASCII strings.
 5. Later, measured: strength reduction of index loops; the last-index cache.
 
-## Open questions
+## Decisions
 
-1. `s[i]` out of range: panic like arrays (recommended, consistent with `xs[i]`), or
-   `string | null` (TypeScript's `noUncheckedIndexedAccess`)? `at(i)` already returns
+1. `s[i]` out of range panics `index out of bounds`, like `xs[i]`; `s.at(i)` returns
    `string | null`.
-2. `charCodeAt` out of range returns -1 today, where JS returns `NaN`. This belongs to the
-   number-semantics decision in #214, not to this design.
-3. Regex without the `u` flag: keep code-point matching as a documented difference (recommended),
-   or emulate code-unit matching for patterns that can observe it (`.` and negated classes
-   against astral characters)?
+2. `charCodeAt` out of range keeps returning -1 for now; `NaN` belongs to the number-semantics
+   decision in #214, not to this design.
+3. Regex keeps whole-code-point matching (like JavaScript's `u` flag), documented as a
+   difference; only offsets change to code units.
+4. There is no per-module or per-project switch: one meaning of `length`.
+5. The type of `length` and of positions follows #214's decision for `Array.length`.
