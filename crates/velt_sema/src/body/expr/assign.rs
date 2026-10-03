@@ -252,6 +252,19 @@ impl FnCx<'_, '_> {
                 self.expr(value, None, Want::Borrow);
                 return self.error_expr(span);
             }
+            // A record key has rules of its own (a key may be missing): the record path handles
+            // every compound form. A target in error is reported once, here.
+            match self.assign_target(target, span) {
+                Some(AssignTarget::Record(obj)) => {
+                    let (object, key) = super::record::record_parts(target);
+                    return self.record_assign(obj, object, key, Some(op), target, value, span);
+                }
+                None => {
+                    self.expr(value, None, Want::Borrow);
+                    return self.error_expr(span);
+                }
+                Some(AssignTarget::Place(_) | AssignTarget::Setter(_)) => {}
+            }
             let rhs = ast::Expr {
                 id: ast::NodeId(u32::MAX),
                 kind: ast::ExprKind::Binary {
