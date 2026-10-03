@@ -122,14 +122,19 @@ console.log(text, m.cents); // {"cents":250} 250
     `JSON.parseValue`)
   - editing: `set(key, v)` (an existing key keeps its position), `delete(key)`, `push(v)`,
     `setAt(i, v)`; each returns `false` when the value is not an object / array (or `i` is out
-    of range). `delete` costs O(1) amortized wherever the key is, and `get`, `at` and
-    `len` stay O(1) after it
+    of range). `delete` costs O(1) amortized wherever the key is; `get` and `len` stay O(1)
+    after it, and so does `at` on an object emptied from either end. After deletes in the
+    middle of a large object (more than 16 members), `at` on it costs O(log n): the first such
+    `at` takes O(n) to index the remaining members, and later edits keep that index up to date
+    in O(log n) each, until the object is compacted
   - `as<T>(options?)`: decode into a `T`, like `JSON.parse<T>`
   - `stringify()` (keys in insertion order); `clone()` is O(1)
   - `console.log(v)` prints the value the way node prints the parsed object
     (`{ a: 1, b: [ 2, 'x' ], c: null }`; a string prints raw as a `console.log` argument and
-    quoted inside other values), on one line at any depth like Velt's other values. A template
-    string (`${v}`) shows the same text; `stringify()` gives the JSON
+    quoted inside other values), on one line at any depth like Velt's other values
+  - a template string prints a `JsonValue` exactly as `console.log` does, not as JSON:
+    `` `v = ${v}` `` is `v = { a: 1, b: [ 2, 'x' ], c: null }`, and a JSON string `"hi"`
+    shows as `hi`. Call `stringify()` for the JSON text (`{"a":1,"b":[2,"x"],"c":null}`)
 
   A `JsonValue` has value semantics: an edit never shows through a clone, through the value it
   was `set` into, or through a child handle from `get`/`at`. The runtime copies a node another
