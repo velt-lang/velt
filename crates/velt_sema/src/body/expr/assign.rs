@@ -23,6 +23,9 @@ enum AssignTarget {
 impl FnCx<'_, '_> {
     /// Resolve an assignment target to a writable place or a setter. Reports errors.
     fn assign_target(&mut self, target: &ast::Expr, span: Span) -> Option<AssignTarget> {
+        if self.reject_env_assign(target) {
+            return None;
+        }
         let place = match &target.kind {
             ast::ExprKind::Paren(inner) => return self.assign_target(inner, span),
             ast::ExprKind::Ident(id) => self.assign_local(id, span),

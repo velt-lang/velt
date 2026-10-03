@@ -192,6 +192,11 @@ impl FnCx<'_, '_> {
             Some(id) if !optional => return self.ident_expr(&id, exp, want),
             _ => {}
         }
+        if !optional {
+            if let Some(h) = self.process_env_member(object, prop, exp, span) {
+                return h;
+            }
+        }
         if let Some(object) = self.without_namespace(object) {
             return self.member(&object, prop, optional, exp, want, span);
         }
@@ -202,11 +207,19 @@ impl FnCx<'_, '_> {
                     "console" | "process" | "Promise" | "performance" | "Date"
                 ) && self.lookup_item(&id.name, id.span).is_none()
                 {
-                    let mut d = Diagnostic::error(
-                        format!("`{}.{}` can only be called", id.name, prop.name),
-                        span,
-                    );
-                    if id.name == "process" {
+                    let what = format!("`{}.{}`", id.name, prop.name);
+                    let msg = match (id.name.as_str(), prop.name.as_str()) {
+                        ("process", "stdout" | "stderr" | "env") => {
+                            format!("{what} is not a value: use its members")
+                        }
+                        ("process", p) if !matches!(p, "exit" | "memoryUsage") => {
+                            format!("{what} is not supported")
+                        }
+                        _ => format!("{what} can only be called"),
+                    };
+                    let mut d = Diagnostic::error(msg, span);
+                    if id.name == "process" && !matches!(prop.name.as_str(), "exit" | "memoryUsage")
+                    {
                         d = d.with_note(process_note(&prop.name));
                     }
                     self.cx.error(d);
@@ -287,6 +300,9 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         if optional {
             return self.optional_chain(object, span, |s, v| s.index_of(v, index, want, span));
+        }
+        if let Some(h) = self.process_env_index(object, index, span) {
+            return h;
         }
         let obj = self.expr(object, None, Want::Borrow);
         self.index_of(obj, index, want, span)
@@ -428,21 +444,26 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// Where Node's `process.<name>` lives in Velt: the builtin `process` namespace only has
-/// `exit`; the rest is in `velt:process`.
+/// Where Node's `process.<name>` lives in Velt, for a `name` that is not a value of the builtin
+/// `process`. That namespace has `exit`, `memoryUsage()`, `stdout.write`, `stderr.write` and
+/// `env` (`super::process`); the rest is in `velt:process`.
 fn process_note(name: &str) -> String {
     match name {
-        "stdout" => {
-            "use `import { stdout } from \"velt:process\"`, then `stdout.write(s)`".to_string()
-        }
+        "stdout" | "stderr" => format!(
+            "call `process.{name}.write(s)`; for bytes, `import {{ stdout }} from \"velt:process\"`"
+        ),
+        "env" => "read a variable with `process.env.NAME` or `process.env[name]` \
+                  (`string | null`); set one with `setEnv(name, value)` of `velt:process`"
+            .to_string(),
         "argv" => "use `args()` from `velt:process`: the arguments after the program, like \
                    Node's `process.argv.slice(2)`"
             .to_string(),
-        "env" | "cwd" | "chdir" => {
+        "cwd" | "chdir" => {
             format!("use `import {{ {name} }} from \"velt:process\"`: `{name}` is a function there")
         }
-        _ => "use the functions of `velt:process` (`args()`, `env(name)`, `cwd()`, \
-              `stdout.write(s)`)"
+        _ => "the builtin `process` has `process.env.NAME`, `process.stdout.write(s)`, \
+              `process.exit(code)` and `process.memoryUsage()`; `args()` and `cwd()` are in \
+              `velt:process`"
             .to_string(),
     }
 }
