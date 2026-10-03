@@ -5,17 +5,16 @@
 //! nullable; no value gives `void`, only values that never complete give `never`.
 //!
 //! Callers ask for a function's result with [`ret_of`], which checks the body first when
-//! needed (bodies are checked on demand, see `driver`), so every body is still checked once. A
-//! function whose body uses it, directly or through other functions whose results are being
-//! inferred, needs a written return type (TypeScript asks only when the use is in a `return`
-//! expression; bodies are checked in one pass here): the use is reported where it happens.
+//! needed (bodies are checked on demand, see `driver`). A use of a function while its own body
+//! is being checked is handled by `body::recursion`: only uses that its `return` expressions
+//! depend on need a written return type.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::{ensure_body, FnCx, Want};
 use crate::ctx::Ctx;
-use crate::defs::{BodyState, FnKind, RetSource, RetWant};
+use crate::defs::{BodyState, RetSource, RetWant};
 use crate::hir::{self, DefId, ExprKind as H, StmtKind as S, TyId};
 use crate::visit::{self, VisitMut};
 
@@ -47,7 +46,7 @@ pub(crate) fn ret_of(cx: &mut Ctx, d: DefId, at: Span) -> TyId {
     match f.ret_source.clone() {
         RetSource::Known => f.ret,
         RetSource::Body if f.state == BodyState::InProgress => {
-            report_cycle(cx, d, at);
+            super::recursion::placeholder(cx, d, at);
             cx.ty.error
         }
         RetSource::Body if f.state == BodyState::Unchecked && cx.checking.len() >= MAX_NESTING => {
@@ -69,59 +68,10 @@ pub(crate) fn ret_of(cx: &mut Ctx, d: DefId, at: Span) -> TyId {
     }
 }
 
-/// `d`'s result is needed at `at` while its body, which decides it, is being checked.
-fn report_cycle(cx: &mut Ctx, d: DefId, at: Span) {
-    if !cx.ret_cycles.insert(d) {
-        return;
-    }
-    let start = cx.checking.iter().position(|x| *x == d).unwrap_or(0);
-    let mut chain: Vec<String> = cx.checking[start..]
-        .iter()
-        .map(|x| format!("`{}`", short_name(cx, *x)))
-        .collect();
-    let f = cx.fn_info(d);
-    let name = short_name(cx, d);
-    let what = if f.kind == FnKind::Free {
-        "function"
-    } else {
-        "method"
-    };
-    let why = if chain.len() <= 1 {
-        format!("its return type is inferred from its body, which uses `{name}` itself")
-    } else {
-        chain.push(format!("`{name}`"));
-        format!(
-            "its return type is inferred from its body, which uses it again: {}",
-            chain.join(" → ")
-        )
-    };
-    let params: Vec<String> = f
-        .params
-        .iter()
-        .map(|p| format!("{}: {}", p.name, cx.display(p.ty)))
-        .collect();
-    let keyword = if what == "function" { "function " } else { "" };
-    let simple = name.rsplit('.').next().unwrap_or(&name);
-    let fix = format!(
-        "write the return type: `{keyword}{simple}({}): T`",
-        params.join(", ")
-    );
-    let span = f.name_span;
-    cx.error(
-        Diagnostic::error(
-            format!("{what} `{name}` needs a return type annotation"),
-            span,
-        )
-        .with_label(at, "used here before its return type is known")
-        .with_note(why)
-        .with_note(fix),
-    );
-}
-
 /// `d`'s result is needed at `at`, inside a chain of bodies checked for their result types
 /// that is too long.
 fn report_too_deep(cx: &mut Ctx, d: DefId, at: Span) {
-    let name = short_name(cx, d);
+    let name = super::recursion::short_name(cx, d);
     cx.error(
         Diagnostic::error(
             format!("inferring the return type of `{name}` nests too many functions"),
@@ -132,11 +82,6 @@ fn report_too_deep(cx: &mut Ctx, d: DefId, at: Span) {
              write the return type of `{name}`"
         )),
     );
-}
-
-fn short_name(cx: &Ctx, d: DefId) -> String {
-    let name = &cx.fn_info(d).name;
-    name.rsplit("::").next().unwrap_or(name).to_string()
 }
 
 /// Signature comparisons that waited for inferred results (`collect::ret_infer`).
@@ -181,7 +126,9 @@ impl FnCx<'_, '_> {
                     .find(|t| *t != never)
             })
             .flatten();
+        let outer = std::mem::replace(&mut self.cx.rec.in_return, true);
         let h = self.expr(e, hint, Want::Move);
+        self.cx.rec.in_return = outer;
         let ty = self.cx.widened(h.ty);
         let inferred_int = self.is_inferred_int(&h);
         self.f.returns.values.push(Value {

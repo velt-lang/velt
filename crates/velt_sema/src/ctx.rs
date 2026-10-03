@@ -100,8 +100,8 @@ pub(crate) struct Ctx<'m> {
     pub checking: Vec<DefId>,
     /// Signature comparisons waiting for inferred result types (`body::returns`).
     pub ret_checks: Vec<crate::defs::RetCheck>,
-    /// Functions whose self-referring inferred return type was reported.
-    pub ret_cycles: HashSet<DefId>,
+    /// Uses of functions whose return types are being inferred (`body::recursion`).
+    pub rec: crate::body::recursion::RecState,
     pub diags: Diagnostics,
 }
 
@@ -148,7 +148,7 @@ impl<'m> Ctx<'m> {
             matching_context: false,
             checking: vec![],
             ret_checks: vec![],
-            ret_cycles: HashSet::new(),
+            rec: Default::default(),
             diags: vec![],
         }
     }

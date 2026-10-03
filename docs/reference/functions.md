@@ -55,11 +55,30 @@ the same rules when no function type is expected; where one is, its result type 
 A `return;` next to `return value;` is an error: TypeScript would return `undefined`, which
 Velt doesn't have. Return `null` and give the function a `T | null` type instead.
 
-A function with a `return` value whose body uses the function itself, directly or through other
-functions whose return types are being inferred, needs an annotation. TypeScript asks for one
-("implicitly has return type 'any'") only when the use is in a `return` expression; Velt also
-asks when it is elsewhere in the body (`total += count(child)`), since it checks a body once,
-in order:
+A function may use itself (or other functions whose return types are being inferred) anywhere
+outside its `return` expressions, as in TypeScript: `count` below returns `i64`. Only when its
+`return` expressions depend on the function itself, directly, through a local (`const m = f(x);
+return m;`) or through other functions whose `return` expressions use it in turn (`isEven`
+returning `isOdd(n - 1)`, which returns `isEven(n - 1)`), it needs an annotation, as
+TypeScript's "implicitly has return type 'any'" does:
+
+```ts
+class TreeNode {
+  kids: TreeNode[] = [];
+}
+
+function count(n: TreeNode) {
+  let total = 1;
+  for (const c of n.kids) {
+    total += count(c); // fine: not in a `return` expression
+  }
+  return total;
+}
+
+function main() {
+  console.log(count(new TreeNode())); // 1
+}
+```
 
 ```ts error
 function fib(n: i64) {
@@ -72,7 +91,9 @@ function fib(n: i64) {
 ```
 
 Write the type: `function fib(n: i64): i64`. A function without a `return` value is `void`
-before its body is checked, so it may call itself freely (a recursive `walk(child);`).
+before its body is checked, so it may call itself freely (a recursive `walk(child);`). A body
+that uses itself outside its `return`s is checked twice: once to find the return type, then
+against it.
 
 ## Generic functions
 

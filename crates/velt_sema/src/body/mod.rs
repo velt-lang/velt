@@ -45,6 +45,7 @@ mod loops;
 pub(crate) mod narrow;
 mod pattern;
 pub(crate) mod places;
+pub(crate) mod recursion;
 pub(crate) mod returns;
 mod stmt;
 pub(crate) mod switch;

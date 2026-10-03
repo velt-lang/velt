@@ -4,7 +4,7 @@
 
 use velt_common::{Diagnostic, Span};
 
-use super::{FnCx, Frame, LocalKind, Want};
+use super::{recursion, FnCx, Frame, LocalKind, Want};
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo, FnKind, FnSource, RetSource};
 use crate::hir::{self, Def, DefId, ExprKind as H};
@@ -157,7 +157,8 @@ fn is_const_expr(e: &hir::Expr) -> bool {
     }
 }
 
-/// Check `def`'s body now unless it is already checked or being checked.
+/// Check `def`'s body now unless it is already checked or being checked. A body whose
+/// inferred return type was needed before it was known is checked again (`body::recursion`).
 pub(crate) fn ensure_body(cx: &mut Ctx, def: DefId) {
     let f = cx.fn_info(def);
     if f.state != BodyState::Unchecked {
@@ -167,15 +168,28 @@ pub(crate) fn ensure_body(cx: &mut Ctx, def: DefId) {
         cx.fn_info_mut(def).state = BodyState::Done;
         return;
     };
+    let inferred = f.ret_source == RetSource::Body;
     cx.fn_info_mut(def).state = BodyState::InProgress;
+    let mark = recursion::Mark::new(cx);
+    let mut fndef = check_body(cx, def, src);
+    if recursion::needs_second_pass(cx, def, &mark) {
+        fndef = check_body(cx, def, src);
+    }
+    cx.defs[def.0 as usize] = Some(Def::Fn(fndef));
+    cx.fn_info_mut(def).state = BodyState::Done;
+    recursion::completed(cx, def, inferred);
+}
+
+fn check_body(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     cx.checking.push(def);
+    let in_return = std::mem::take(&mut cx.rec.in_return);
     let names = cx.fn_info(def).generics.names.clone();
     let saved = std::mem::replace(&mut cx.display_params, names);
     let fndef = check_fn(cx, def, src);
     cx.display_params = saved;
+    cx.rec.in_return = in_return;
     cx.checking.pop();
-    cx.defs[def.0 as usize] = Some(Def::Fn(fndef));
-    cx.fn_info_mut(def).state = BodyState::Done;
+    fndef
 }
 
 fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
