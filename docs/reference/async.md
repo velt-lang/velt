@@ -52,8 +52,10 @@ Promises behave like JavaScript's, at Rust's cost:
   that returns `this` stops the program. Classes without a resource are copied field by
   field, whatever their `clone()` does. One without `clone()` cannot
   be copied: passing it to `spawn` and using it afterwards is an error ("`r` is still used
-  after `spawn`, so the task would get a copy, …"); pass the last reference, give the class a
-  `clone()`, or share it with `shared(...)`. When another reference is only found at run time
+  after `spawn`, so the task would get a copy, …"), and so is passing one an object still
+  holds (`spawn(serve(this.conn))`: "`this.conn` stays where it is held, …"); pass the last
+  reference, give the class a `clone()`, or share it with `shared(new Mutex(conn))` (a class
+  is shared behind a [`Mutex`](#thread-safety)). When another reference is only found at run time
   (the value is also in an array, say), the program stops with ``panic: cannot copy a `Conn`
   for another task …``.
 

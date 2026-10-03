@@ -1,0 +1,2 @@
+spawn_field_resource.vlt:19:24: error: `this.conn` stays where it is held, so the task would get a copy, but `Conn` owns a resource (`[Symbol.dispose]`) and has no `clone()`
+  = note: the task cannot take it from where it is held; give `Conn` a `clone()` method that duplicates the resource, or share it instead of copying: `shared(new Mutex(…))`

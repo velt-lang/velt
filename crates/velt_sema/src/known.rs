@@ -100,20 +100,26 @@ impl Ctx<'_> {
     ///
     /// [`own_clone`]: Self::own_clone
     pub fn owns_uncopyable(&mut self, t: TyId) -> bool {
-        self.owns_uncopyable_depth(t, 0)
+        self.uncopyable_part(t).is_some()
     }
 
-    fn owns_uncopyable_depth(&mut self, t: TyId, depth: u32) -> bool {
+    /// The part of `t` that makes it [`owns_uncopyable`](Self::owns_uncopyable): the resource
+    /// type without `clone()`, or the promise type (`t` itself, or a field, element or payload).
+    pub fn uncopyable_part(&mut self, t: TyId) -> Option<TyId> {
+        self.uncopyable_part_depth(t, 0)
+    }
+
+    fn uncopyable_part_depth(&mut self, t: TyId, depth: u32) -> Option<TyId> {
         if depth > 32 {
-            return false;
+            return None;
         }
         let parts: Vec<TyId> = match self.ty.kind(t).clone() {
-            TyKind::Shared(_) | TyKind::FnPtr { .. } => return false,
-            TyKind::Promise(..) => return true,
-            TyKind::Adt(d, _) if self.own_clone(d).is_some() => return false,
+            TyKind::Shared(_) | TyKind::FnPtr { .. } => return None,
+            TyKind::Promise(..) => return Some(t),
+            TyKind::Adt(d, _) if self.own_clone(d).is_some() => return None,
             TyKind::Adt(d, args) => {
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
-                    DefInfo::Adt(a) if a.has_dispose => return true,
+                    DefInfo::Adt(a) if a.has_dispose => return Some(t),
                     DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
                     DefInfo::Enum(e) => e
                         .variants
@@ -128,7 +134,29 @@ impl Ctx<'_> {
         };
         parts
             .into_iter()
-            .any(|p| self.owns_uncopyable_depth(p, depth + 1))
+            .find_map(|p| self.uncopyable_part_depth(p, depth + 1))
+    }
+
+    /// Why a `t` cannot be deep-copied, for a diagnostic: "`Conn` owns a resource
+    /// (`[Symbol.dispose]`) and has no `clone()`", "`Pair` holds a `Conn`, which …", or "…
+    /// holds a promise, which cannot be copied".
+    pub fn uncopyable_why(&mut self, t: TyId) -> String {
+        let tn = self.display(t);
+        let part = self.uncopyable_part(t).unwrap_or(t);
+        let resource = "owns a resource (`[Symbol.dispose]`) and has no `clone()`";
+        if matches!(self.ty.kind(part), TyKind::Promise(..)) {
+            return match part == t {
+                true => "a promise cannot be copied".to_string(),
+                false => format!("`{tn}` holds a promise, which cannot be copied"),
+            };
+        }
+        match part == t {
+            true => format!("`{tn}` {resource}"),
+            false => {
+                let pn = self.display(part);
+                format!("`{tn}` holds a `{pn}`, which {resource}")
+            }
+        }
     }
 
     /// The class's own `clone()` method: declared on class `d` itself, without parameters,
