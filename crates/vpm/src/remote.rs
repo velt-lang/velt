@@ -198,7 +198,7 @@ pub fn yank(url: &str, name: &str, version: &str, yanked: bool) -> Result<(), St
 
 /// The owners of `name`.
 pub fn owners(url: &str, name: &str) -> Result<Vec<String>, String> {
-    check_names(&[name])?;
+    check_names(&[name], &[])?;
     let resp = velt_http::fetch("GET", &api(url, name, "owners"), &[], b"")?;
     match resp.status {
         200 => Ok(resp.body_text().lines().map(str::to_string).collect()),
@@ -209,7 +209,7 @@ pub fn owners(url: &str, name: &str) -> Result<Vec<String>, String> {
 
 /// Add (`add`) or remove `user` as an owner of `name`.
 pub fn set_owner(url: &str, name: &str, user: &str, add: bool) -> Result<(), String> {
-    check_names(&[name, user])?;
+    check_names(&[name], &[user])?;
     let method = if add { "PUT" } else { "DELETE" };
     write(
         url,
@@ -221,14 +221,18 @@ pub fn set_owner(url: &str, name: &str, user: &str, add: bool) -> Result<(), Str
     .map(drop)
 }
 
-/// Package and user names go into URL paths: only `[a-z][a-z0-9_-]*` ones are sent.
-fn check_names(names: &[&str]) -> Result<(), String> {
-    match names
+/// Package and user names go into URL paths: only valid ones are sent (package names by the
+/// package rules, user names by [`crate::manifest::is_valid_user_name`]).
+fn check_names(packages: &[&str], users: &[&str]) -> Result<(), String> {
+    for name in packages {
+        crate::manifest::check_name(name)?;
+    }
+    match users
         .iter()
-        .find(|n| !crate::manifest::is_valid_package_name(n))
+        .find(|n| !crate::manifest::is_valid_user_name(n))
     {
         Some(bad) => Err(format!(
-            "invalid name `{bad}` (use lowercase letters, digits, `-` and `_`, starting with a letter)"
+            "invalid user name `{bad}` (use lowercase letters, digits, `-` and `_`, starting with a letter)"
         )),
         None => Ok(()),
     }

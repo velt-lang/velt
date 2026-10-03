@@ -68,22 +68,32 @@ fn kind(template: Template) -> &'static str {
     }
 }
 
-/// The package name `velt init` derives from directory `dir`: lower-cased, with characters a
-/// package name can't have turned into `-`.
+/// The package name `velt init` derives from directory `dir`: lower-cased, every run of
+/// characters a package name can't have (and of `-` and `_`) turned into one `-`, trimmed.
+fn name_from_text(raw: &str) -> String {
+    let mut name = String::new();
+    // The current run of separators: a lone `-` or `_` is kept, any other run becomes one `-`.
+    let mut run = String::new();
+    for c in raw.to_lowercase().chars() {
+        if c.is_ascii_lowercase() || c.is_ascii_digit() {
+            if !name.is_empty() && !run.is_empty() {
+                name.push_str(if run == "_" { "_" } else { "-" });
+            }
+            run.clear();
+            name.push(c);
+        } else {
+            run.push(c);
+        }
+    }
+    name
+}
+
 fn name_from_dir(dir: &Path) -> Result<String, String> {
     let raw = dir
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let name: String = raw
-        .to_lowercase()
-        .chars()
-        .map(|c| match c {
-            'a'..='z' | '0'..='9' | '-' | '_' => c,
-            _ => '-',
-        })
-        .collect();
-    let name = name.trim_matches('-').to_string();
+    let name = name_from_text(&raw);
     vpm::scaffold::check_name(&name).map_err(|_| {
         format!("cannot derive a package name from the directory `{raw}`; pass one with `--name <name>`")
     })?;
@@ -115,6 +125,13 @@ mod tests {
         assert_eq!(name_from_dir(Path::new("/x/my-app")).unwrap(), "my-app");
         assert_eq!(name_from_dir(Path::new("/x/My App")).unwrap(), "my-app");
         assert_eq!(name_from_dir(Path::new("/x/tool_2")).unwrap(), "tool_2");
+        // Runs of separators collapse to one `-`, and none is left at either end.
+        assert_eq!(
+            name_from_dir(Path::new("/x/my project (2)")).unwrap(),
+            "my-project-2"
+        );
+        assert_eq!(name_from_dir(Path::new("/x/foo_ bar")).unwrap(), "foo-bar");
+        assert_eq!(name_from_dir(Path::new("/x/_a--b__c-")).unwrap(), "a-b-c");
         assert!(name_from_dir(Path::new("/x/2fast"))
             .unwrap_err()
             .contains("--name"));

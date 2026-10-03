@@ -9,7 +9,8 @@
 
 /// A package manifest: the one `export const pkg: Package = { … }` of a `package.vlt`.
 export type Package = {
-  /// The package name: lowercase letters, digits, `_` and `-`, starting with a letter.
+  /// The package name: lowercase letters and digits, starting with a letter, words joined by single
+  /// `-` or `_` (`text-kit`). Names starting with `rt`, `sig` or `native` are reserved.
   name: string;
   /// A semantic version, such as `"0.1.0"`.
   version: string;

@@ -16,7 +16,7 @@ use crate::native::{export_prefix, init_symbol, SIG_PREFIX};
 pub const TOOLCHAIN_EXPORTS: &[&str] = &["rust_eh_personality", "_fltused", "__rust_probestack"];
 
 /// The exports of library `bytes` with their signatures; checks the naming rules for `package`:
-/// `velt_native_init_<pkg>`, signature records, and `<pkg>_*` functions that each have one.
+/// `velt_native_init_<pkg>`, signature records, and `velt_<pkg>__*` functions that each have one.
 pub fn read(bytes: &[u8], package: &str) -> Result<BTreeMap<String, String>, String> {
     let file = object::File::parse(bytes).map_err(|e| format!("cannot read the library: {e}"))?;
     let mut names = BTreeSet::new();
@@ -271,8 +271,12 @@ fn check(
             continue;
         }
         if !name.starts_with(&prefix) {
+            let hint = match crate::native::renamed_export(package, &name) {
+                Some(new) => format!("; rename it `{new}`"),
+                None => String::new(),
+            };
             problems.push(format!(
-                "`{name}` does not start with `{prefix}` (every export of package `{package}` must)"
+                "`{name}` does not start with `{prefix}` (every export of package `{package}` must){hint}"
             ));
             continue;
         }
@@ -309,7 +313,7 @@ mod tests {
     use super::*;
 
     fn db_exports() -> BTreeMap<String, String> {
-        BTreeMap::from([("db_open".to_string(), "(string)->u64".to_string())])
+        BTreeMap::from([("velt_db__open".to_string(), "(string)->u64".to_string())])
     }
 
     #[test]
@@ -327,7 +331,7 @@ mod tests {
             elf.symbols.push(("free".into(), info, other, shndx, 0));
             let e = read(&elf.bytes(), "db").unwrap_err();
             assert!(
-                e.contains("`free` does not start with `db_`"),
+                e.contains("`free` does not start with `velt_db__`"),
                 "{info:#x} {shndx:#x}: {e}"
             );
         }
@@ -360,24 +364,28 @@ mod tests {
         let own: Vec<(String, String)> = names.iter().map(|n| (n.clone(), n.clone())).collect();
         let dll = "velt_native_db.dll";
         check_import_library(&sample_import_library(dll, &own), dll, &names).unwrap();
-        // `db_open` mapped to the C runtime's `free` (IMPORT_OBJECT_NAME_EXPORTAS).
+        // `velt_db__open` mapped to the C runtime's `free` (IMPORT_OBJECT_NAME_EXPORTAS).
         let mut renamed = own.clone();
-        renamed.iter_mut().find(|(s, _)| s == "db_open").unwrap().1 = "free".into();
+        renamed
+            .iter_mut()
+            .find(|(s, _)| s == "velt_db__open")
+            .unwrap()
+            .1 = "free".into();
         let e =
             check_import_library(&sample_import_library(dll, &renamed), dll, &names).unwrap_err();
-        assert!(e.contains("`db_open` is imported as `free`"), "{e}");
+        assert!(e.contains("`velt_db__open` is imported as `free`"), "{e}");
         // Another DLL's.
         let e = check_import_library(&sample_import_library("ucrtbase.dll", &own), dll, &names)
             .unwrap_err();
         assert!(e.contains("is imported from `ucrtbase.dll`"), "{e}");
         // Missing and extra imports.
         let mut changed = own.clone();
-        changed.retain(|(s, _)| s != "db_open");
+        changed.retain(|(s, _)| s != "velt_db__open");
         changed.push(("free".into(), "free".into()));
         let e =
             check_import_library(&sample_import_library(dll, &changed), dll, &names).unwrap_err();
         assert!(
-            e.contains("`db_open` is exported by the DLL but not imported"),
+            e.contains("`velt_db__open` is exported by the DLL but not imported"),
             "{e}"
         );
         assert!(
@@ -435,7 +443,7 @@ mod tests {
     fn import_library_symbol_maps_point_at_their_definitions() {
         let dll = "velt_native_db.dll";
         let imports = [
-            ("db_open", Some("db_open")),
+            ("velt_db__open", Some("velt_db__open")),
             ("velt_native_init_db", Some("velt_native_init_db")),
         ];
         let members: Vec<Vec<u8>> = imports
@@ -443,9 +451,9 @@ mod tests {
             .map(|(s, i)| sample_short_import(s, dll, *i))
             .collect();
         let names: BTreeSet<String> = imports.iter().map(|(s, _)| s.to_string()).collect();
-        let ok = [("db_open".to_string(), MapTarget::Member(0))];
+        let ok = [("velt_db__open".to_string(), MapTarget::Member(0))];
         check_import_library(&sample_archive(&members, &ok), dll, &names).unwrap();
-        // The linker would take `free` from the `db_open` member.
+        // The linker would take `free` from the `velt_db__open` member.
         let wrong = [("free".to_string(), MapTarget::Member(0))];
         let e = check_import_library(&sample_archive(&members, &wrong), dll, &names).unwrap_err();
         assert!(
@@ -455,7 +463,7 @@ mod tests {
         // An offset inside a member's data, where another header could hide.
         let lib = sample_archive(&members, &ok);
         let inside = (lib.len() - 10) as u32;
-        let hidden = [("db_open".to_string(), MapTarget::Offset(inside))];
+        let hidden = [("velt_db__open".to_string(), MapTarget::Offset(inside))];
         let e = check_import_library(&sample_archive(&members, &hidden), dll, &names).unwrap_err();
         assert!(e.contains("where no member starts"), "{e}");
     }
@@ -463,13 +471,16 @@ mod tests {
     #[test]
     fn ordinal_imports_and_foreign_definitions_are_refused() {
         let dll = "velt_native_db.dll";
-        let names = BTreeSet::from(["db_open".to_string()]);
-        let by_ordinal = sample_archive(&[sample_short_import("db_open", dll, None)], &[]);
+        let names = BTreeSet::from(["velt_db__open".to_string()]);
+        let by_ordinal = sample_archive(&[sample_short_import("velt_db__open", dll, None)], &[]);
         let e = check_import_library(&by_ordinal, dll, &names).unwrap_err();
-        assert!(e.contains("`db_open` is imported by ordinal 1"), "{e}");
+        assert!(
+            e.contains("`velt_db__open` is imported by ordinal 1"),
+            "{e}"
+        );
         // A long-format member may define only the import descriptor names.
         let members = [
-            sample_short_import("db_open", dll, Some("db_open")),
+            sample_short_import("velt_db__open", dll, Some("velt_db__open")),
             written_object(
                 object::BinaryFormat::Coff,
                 &["__IMPORT_DESCRIPTOR_velt_native_db", "free"],
@@ -492,9 +503,9 @@ mod tests {
         assert!(e.contains("`free`"), "{e}");
         // Mach-O: a tentative `_free` (N_UNDF | N_EXT, n_value = its size).
         let macho = object::BinaryFormat::MachO;
-        let good = written_object(macho, &["velt_native_init_db", "db_open"], &[]);
+        let good = written_object(macho, &["velt_native_init_db", "velt_db__open"], &[]);
         check_static_object(&good, "db", &exports).unwrap();
-        let bad = written_object(macho, &["velt_native_init_db", "db_open"], &["free"]);
+        let bad = written_object(macho, &["velt_native_init_db", "velt_db__open"], &["free"]);
         let e = check_static_object(&bad, "db", &exports).unwrap_err();
         assert!(e.contains("not the package's exports: `free`"), "{e}");
     }
@@ -502,8 +513,11 @@ mod tests {
     #[test]
     fn a_sample_library_reads_back() {
         let exports = BTreeMap::from([
-            ("db_open".to_string(), "(string)->IoResult<u64>".to_string()),
-            ("db_close".to_string(), "(u64)->void".to_string()),
+            (
+                "velt_db__open".to_string(),
+                "(string)->IoResult<u64>".to_string(),
+            ),
+            ("velt_db__close".to_string(), "(u64)->void".to_string()),
         ]);
         let bytes = sample_library("db", &exports, "v1");
         assert_eq!(read(&bytes, "db").unwrap(), exports);
@@ -516,26 +530,49 @@ mod tests {
 
     #[test]
     fn naming_rules() {
-        let sigs = BTreeMap::from([("db_open".to_string(), "(string)->u64".to_string())]);
+        let sigs = BTreeMap::from([("velt_db__open".to_string(), "(string)->u64".to_string())]);
         let ok = check(
-            set(&["velt_native_init_db", "db_open", "rust_eh_personality"]),
+            set(&[
+                "velt_native_init_db",
+                "velt_db__open",
+                "rust_eh_personality",
+            ]),
             sigs.clone(),
             "db",
         )
         .unwrap();
         assert_eq!(ok, sigs);
 
-        let e = check(set(&["db_open"]), sigs.clone(), "db").unwrap_err();
+        let e = check(set(&["velt_db__open"]), sigs.clone(), "db").unwrap_err();
         assert!(e.contains("velt_native::package!(db)"), "{e}");
 
         let e = check(
-            set(&["velt_native_init_db", "db_open", "helper", "db_close"]),
+            set(&[
+                "velt_native_init_db",
+                "velt_db__open",
+                "helper",
+                "velt_db__close",
+            ]),
             sigs,
             "db",
         )
         .unwrap_err();
-        assert!(e.contains("`helper` does not start with `db_`"), "{e}");
-        assert!(e.contains("`db_close` has no signature record"), "{e}");
+        assert!(
+            e.contains("`helper` does not start with `velt_db__`"),
+            "{e}"
+        );
+        // An export with the older prefix gets its new name.
+        let old = check(
+            set(&["velt_native_init_db", "velt_db_open"]),
+            BTreeMap::from([("velt_db_open".to_string(), "()->u64".to_string())]),
+            "db",
+        )
+        .unwrap_err();
+        assert!(old.contains("rename it `velt_db__open`"), "{old}");
+        assert!(
+            e.contains("`velt_db__close` has no signature record"),
+            "{e}"
+        );
     }
 
     #[test]

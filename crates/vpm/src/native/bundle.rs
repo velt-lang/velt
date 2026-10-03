@@ -165,7 +165,7 @@ pub fn check_meta(
     check_export_names(meta, what)
 }
 
-/// Every export listed in the metadata carries the package's prefix (`<pkg>_`): a `declare` of a
+/// Every export listed in the metadata carries the package's prefix (`velt_<pkg>__`): a `declare` of a
 /// listed name must resolve to the package's own library, never to a C library function such as
 /// `free` that an unprefixed name would bind to.
 fn check_export_names(meta: &NativeMeta, what: &str) -> Result<(), String> {
@@ -180,8 +180,22 @@ fn check_export_names(meta: &NativeMeta, what: &str) -> Result<(), String> {
     if bad.is_empty() {
         return Ok(());
     }
+    let hints: Vec<String> = bad
+        .iter()
+        .filter_map(|n| {
+            crate::native::renamed_export(&meta.package, n).map(|new| format!("`{n}` → `{new}`"))
+        })
+        .collect();
+    let hint = if hints.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " (an older prefix; rebuild with `velt native build` after renaming {})",
+            hints.join(", ")
+        )
+    };
     Err(format!(
-        "{what}: {META_FILE} lists exports that are not package `{}`'s functions (each must start with `{prefix}`): `{}`",
+        "{what}: {META_FILE} lists exports that are not package `{}`'s functions (each must start with `{prefix}`): `{}`{hint}",
         meta.package,
         bad.join("`, `")
     ))
@@ -278,7 +292,7 @@ mod tests {
             shared: "shared/libvelt_native_p.so".into(),
             import_lib: None,
             static_obj: Some("static/p.o".into()),
-            exports: BTreeMap::from([("p_open".into(), "()->u64".into())]),
+            exports: BTreeMap::from([("velt_p__open".into(), "()->u64".into())]),
         };
         std::fs::create_dir_all(dir.join("shared")).unwrap();
         std::fs::create_dir_all(dir.join("static")).unwrap();
@@ -309,18 +323,24 @@ mod tests {
         let cases: [(&[(&str, &str)], &str); 4] = [
             // A C library function: a `declare` of it would bind to libc.
             (
-                &[("p_open", "()->u64"), ("free", "(u64)->void")],
-                "(each must start with `p_`): `free`",
+                &[("velt_p__open", "()->u64"), ("free", "(u64)->void")],
+                "(each must start with `velt_p__`): `free`",
             ),
             (
-                &[("p_open", "()->u64"), ("p_close", "(u64)->void")],
-                "`p_close` is listed but the library does not export it",
+                &[
+                    ("velt_p__open", "()->u64"),
+                    ("velt_p__close", "(u64)->void"),
+                ],
+                "`velt_p__close` is listed but the library does not export it",
             ),
             (
-                &[("p_open", "(u64)->u64")],
-                "`p_open` is listed as `(u64)->u64`, but the library records `()->u64`",
+                &[("velt_p__open", "(u64)->u64")],
+                "`velt_p__open` is listed as `(u64)->u64`, but the library records `()->u64`",
             ),
-            (&[], "the library exports `p_open`, which is not listed"),
+            (
+                &[],
+                "the library exports `velt_p__open`, which is not listed",
+            ),
         ];
         for (listed, expected) in cases {
             with_listed_exports(&b, listed);

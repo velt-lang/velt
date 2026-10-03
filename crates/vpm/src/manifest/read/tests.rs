@@ -243,7 +243,10 @@ fn field_rules_point_at_the_value() {
         "{message}"
     );
     let (message, covered) = error(&with("dependencies: { Y: \"1\" }"));
-    assert_eq!(message, "invalid dependency name `Y`");
+    assert_eq!(
+        message,
+        "invalid dependency name `Y` (lowercase letters and digits, starting with a letter, with single `-` or `_` between words)"
+    );
     assert_eq!(covered, "Y");
     let (message, _) = error(&with("registry: \"ftp://x\""));
     assert!(
