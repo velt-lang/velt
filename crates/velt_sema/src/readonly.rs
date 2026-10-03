@@ -2,11 +2,12 @@
 //! `readonly` fields in object types are a check, not a layout, and a field-only interface's
 //! object type is the anonymous object type of its fields.
 //!
-//! `readonly` fields are a check, not a layout. `{ readonly id: number }` and `{ id: number }` are different types while bodies are
-//! checked (an assignment through the first is an error), and a value converts between them with
-//! an `Upcast` that keeps its identity. Before the program goes to lowering, every object type
-//! with readonly fields is replaced by its twin without them ([`Ctx::readonly_twins`]), so lowering
-//! sees one type per layout: the conversion is a no-op and both views share one object.
+//! `{ readonly id: number }` and `{ id: number }` are different types while bodies are checked
+//! (an assignment through the first is an error), and a value converts between them with an
+//! `Upcast` that keeps its identity. Before the program goes to lowering, every object type with
+//! readonly fields, and every field-only interface's object type, is replaced by its twin
+//! ([`Ctx::readonly_twins`]), so lowering sees one type per layout: the conversion is a no-op
+//! and both views share one object.
 
 use std::collections::HashMap;
 
