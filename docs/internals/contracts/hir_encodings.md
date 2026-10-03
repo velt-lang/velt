@@ -141,6 +141,18 @@ Maintainer-owned, like hir.rs.
   `Callee::ParamMethod::method_type_args` carries their arguments; lowering appends them to
   the implementing method's owner type args (`Program::impls` entry, a generic `Def::Fn`).
   Sema never emits `Callee::Dyn` for them; interface vtables leave their slots empty.
+- `x instanceof C` where `x` is a base class of `C`, an interface value, or a union member of
+  such a type: a `Match` whose arm pattern is `PatKind::InstanceOf(C)` (inside `Some` /
+  `Variant` patterns as for any member test). It matches when the dynamic class is `C` or a
+  subclass of `C` (type arguments are not compared). Lowering numbers all classes in a
+  pre-order walk of the hierarchy, so `C` and its subclasses have the ids `lo..=hi`, and every
+  vtable's first word (slot -6) holds the class id of its concrete type: 0 for non-classes;
+  in an interface table of a class whose objects carry a vtable pointer, `u64::MAX` (read
+  the object's own table, which may be a subclass's).
+- A local (or a path of `readonly` fields) narrowed by such a test reads as
+  `ExprKind::Downcast(read)` typed as `C<args>`. It is a place like its operand (same use
+  mode, no projection of its own); on a class it is the same pointer, on an interface value
+  the data pointer. Nothing is checked at run time.
 - Generic class methods never get a vtable slot (an `override` of one is recorded by sema only);
   calls are `Callee::Def` on the static class. Sema rejects calls through a class that has a
   subclass overriding the generic method.

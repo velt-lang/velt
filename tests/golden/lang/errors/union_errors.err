@@ -7,8 +7,6 @@ missing cases: "boolean"
 add `case "boolean":` or a `default:` clause
 union_errors.vlt:27:10: error: this `typeof` test is always false: no member of `string | i64` is a "boolean"
 union_errors.vlt:31:10: error: `typeof` never returns "strng"
-union_errors.vlt:35:10: error: `instanceof Dog` would need a downcast from `Animal`
-downcasts are not supported; use a union of the subclasses (e.g. `Dog | Cat`) and narrow it
 union_errors.vlt:39:18: error: mismatched types
 expected i64, found string | i64
 `string | i64` is a union: narrow it to one member first with `switch`, `typeof`, `instanceof` or `==`

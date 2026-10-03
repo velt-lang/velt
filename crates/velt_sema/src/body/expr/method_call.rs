@@ -161,7 +161,7 @@ impl FnCx<'_, '_> {
             _ => recv,
         };
         let target = match &mut recv.kind {
-            H::Upcast(inner) => &mut **inner,
+            H::Upcast(inner) | H::Downcast(inner) => &mut **inner,
             _ => &mut recv,
         };
         match mode {
@@ -198,6 +198,8 @@ impl FnCx<'_, '_> {
                 prop.span,
             );
         } else if let Some(note) = self.narrowing_note(recv.ty) {
+            d = d.with_note(note);
+        } else if let Some(note) = self.unnarrowed_note(recv.span) {
             d = d.with_note(note);
         } else if matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..))
             && matches!(prop.name.as_str(), "then" | "catch" | "finally")

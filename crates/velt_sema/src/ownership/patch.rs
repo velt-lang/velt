@@ -183,7 +183,7 @@ fn iface_modes(cx: &Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
 /// Borrow argument place `e` mutably (through an upcast); returns whether a mode changed.
 fn borrow_mut(cx: &Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
     let target = match &mut e.kind {
-        E::Upcast(inner) => &mut **inner,
+        E::Upcast(inner) | E::Downcast(inner) => &mut **inner,
         _ => e,
     };
     if !is_place(target) || outer_mode(target) != Some(UseMode::Borrow) {
@@ -210,6 +210,7 @@ fn outer_mode(e: &Expr) -> Option<UseMode> {
         | E::Index { mode: m, .. }
         | E::UnwrapSome(_, m)
         | E::UnwrapVariant { mode: m, .. } => Some(m),
+        E::Downcast(ref x) => outer_mode(x),
         E::Global(_) => Some(UseMode::Borrow),
         _ => None,
     }
@@ -222,7 +223,8 @@ fn global_root(cx: &Ctx, e: &Expr) -> Option<String> {
         E::Field { base, .. }
         | E::Index { base, .. }
         | E::UnwrapSome(base, _)
-        | E::UnwrapVariant { expr: base, .. } => global_root(cx, base),
+        | E::UnwrapVariant { expr: base, .. }
+        | E::Downcast(base) => global_root(cx, base),
         _ => None,
     }
 }

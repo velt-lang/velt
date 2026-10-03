@@ -109,6 +109,7 @@ fn expr_panics(e: &hir::Expr, callees: &mut Vec<DefId>) -> bool {
         | K::UnwrapSome(x, _)
         | K::UnwrapVariant { expr: x, .. }
         | K::Upcast(x)
+        | K::Downcast(x)
         | K::ToDyn { expr: x, .. }
         | K::Throw(x)
         | K::Field { base: x, .. } => expr_panics(x, callees),

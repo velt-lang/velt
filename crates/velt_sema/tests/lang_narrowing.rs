@@ -85,3 +85,28 @@ fn nullable_fields_narrow() {
     );
     assert!(r.contains("may be null"), "{r}");
 }
+
+#[test]
+fn instanceof_downcasts_test_the_class_and_read_as_the_subclass() {
+    use common::hir_walk::{exprs, func, pats};
+    use velt_sema::hir::{ExprKind, PatKind};
+    let p = ok_src(
+        "class A {} class B extends A { x: i64 = 1; }
+         function f(a: A): i64 { if (a instanceof B) { return a.x; } return 0; }
+         function main() { console.log(f(new B())); }",
+    );
+    let f = func(&p, "f");
+    assert!(pats(f)
+        .iter()
+        .any(|p| matches!(p.kind, PatKind::InstanceOf(_))));
+    assert!(exprs(f)
+        .iter()
+        .any(|e| matches!(e.kind, ExprKind::Downcast(_))));
+    // Reassigned, the local is the base class again.
+    let r = err_src(
+        "class A {} class B extends A { x: i64 = 1; }
+         function f(a: A): i64 { if (a instanceof B) { a = new A(); return a.x; } return 0; }
+         function main() { console.log(f(new B())); }",
+    );
+    assert!(r.contains("no field `x` on type `A`"), "{r}");
+}

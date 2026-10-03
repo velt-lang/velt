@@ -264,7 +264,8 @@ impl FnLower<'_, '_> {
         match &e.kind {
             K::Field { base, .. }
             | K::UnwrapSome(base, _)
-            | K::UnwrapVariant { expr: base, .. } => self.place_indices(base, out),
+            | K::UnwrapVariant { expr: base, .. }
+            | K::Downcast(base) => self.place_indices(base, out),
             K::Index { base, index, .. } => {
                 self.place_indices(base, out);
                 let i = self.expr(index);
@@ -310,6 +311,10 @@ impl FnLower<'_, '_> {
                 let ety = self.sub(expr.ty);
                 let p = self.place_expr_with(expr, pre);
                 self.variant_part(&p, ety, *variant, 0).0
+            }
+            K::Downcast(inner) => {
+                let p = self.place_expr_with(inner, pre);
+                self.downcast_place(p, inner.ty)
             }
             _ => {
                 let v = self.expr(e);
@@ -501,7 +506,7 @@ fn moved_field_pat(index: u32, ty: TyId) -> Pat {
 pub(super) fn member_root(e: &hir::Expr) -> Option<LocalId> {
     match &e.kind {
         hir::ExprKind::UnwrapVariant { expr, .. } => unwrap_root(expr),
-        hir::ExprKind::UnwrapSome(base, _) => member_root(base),
+        hir::ExprKind::UnwrapSome(base, _) | hir::ExprKind::Downcast(base) => member_root(base),
         _ => None,
     }
 }
@@ -511,9 +516,9 @@ pub(super) fn member_root(e: &hir::Expr) -> Option<LocalId> {
 pub(super) fn unwrap_root(e: &hir::Expr) -> Option<LocalId> {
     match &e.kind {
         hir::ExprKind::Local(id, _) => Some(*id),
-        hir::ExprKind::UnwrapSome(base, _) | hir::ExprKind::UnwrapVariant { expr: base, .. } => {
-            unwrap_root(base)
-        }
+        hir::ExprKind::UnwrapSome(base, _)
+        | hir::ExprKind::UnwrapVariant { expr: base, .. }
+        | hir::ExprKind::Downcast(base) => unwrap_root(base),
         _ => None,
     }
 }
@@ -524,7 +529,8 @@ pub(super) fn part_root(e: &hir::Expr) -> Option<LocalId> {
         hir::ExprKind::Local(id, _) => Some(*id),
         hir::ExprKind::Field { base, .. }
         | hir::ExprKind::UnwrapSome(base, _)
-        | hir::ExprKind::UnwrapVariant { expr: base, .. } => part_root(base),
+        | hir::ExprKind::UnwrapVariant { expr: base, .. }
+        | hir::ExprKind::Downcast(base) => part_root(base),
         _ => None,
     }
 }

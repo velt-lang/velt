@@ -15,6 +15,7 @@ mod coerce;
 mod construct;
 mod discriminated;
 mod dispose_call;
+pub(crate) mod downcast;
 mod errors;
 mod iface_call;
 mod intrinsics;

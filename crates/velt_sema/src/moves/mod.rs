@@ -384,7 +384,7 @@ impl Moves<'_> {
             }
             PatKind::Adt { fields } => fields.iter().for_each(|(_, x)| Self::init_pat(x, st)),
             PatKind::Some(x) => Self::init_pat(x, st),
-            PatKind::Wildcard | PatKind::Lit(_) | PatKind::None => {}
+            PatKind::Wildcard | PatKind::Lit(_) | PatKind::None | PatKind::InstanceOf(_) => {}
         }
     }
 

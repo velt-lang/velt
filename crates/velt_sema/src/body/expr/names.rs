@@ -1,5 +1,6 @@
 //! Name expressions: locals (narrowed `T | null` locals read as `UnwrapSome`, union locals
-//! narrowed to one member as `UnwrapVariant`), `this`, module
+//! narrowed to one member as `UnwrapVariant`, locals narrowed to a subclass by `instanceof` as
+//! `Downcast`), `this`, module
 //! constants (`Global`) and named functions used as values (`FnRef`).
 
 use velt_common::{Diagnostic, Span};
@@ -24,7 +25,8 @@ impl FnCx<'_, '_> {
         let member = self.narrowed_member(l, payload.unwrap_or(ty), payload.is_some());
         if payload.is_none() && member.is_none() {
             let mode = self.use_mode(ty, want);
-            return self.mk(H::Local(l, mode), ty, span);
+            let e = self.mk(H::Local(l, mode), ty, span);
+            return self.downcast_narrowed(l, e);
         }
         let base_mode = if want == Want::BorrowMut {
             UseMode::BorrowMut
@@ -48,7 +50,29 @@ impl FnCx<'_, '_> {
             };
             e = self.mk(kind, m, span);
         }
-        e
+        self.downcast_narrowed(l, e)
+    }
+
+    /// The read `e` of local `l` as the subclass `l` is narrowed to by `instanceof`, when `e`
+    /// is of a base class of it or an interface type (not, say, a union of several members).
+    pub(crate) fn downcast_narrowed(&mut self, l: LocalId, e: hir::Expr) -> hir::Expr {
+        let Some(target) = self.narrowed_class(l) else {
+            return e;
+        };
+        if !self.downcast_applies(e.ty, target) {
+            return e;
+        }
+        let span = e.span;
+        self.mk(H::Downcast(Box::new(e)), target, span)
+    }
+
+    /// Does a value of type `from` read as the subclass `to` it is narrowed to (`from` is a
+    /// base class of `to`, or an interface type)?
+    pub(crate) fn downcast_applies(&self, from: TyId, to: TyId) -> bool {
+        match (self.cx.class_of(from), self.cx.class_of(to)) {
+            (Some((f, _)), Some((t, _))) => f != t && self.cx.class_extends(t, f),
+            _ => matches!(self.cx.ty.kind(from), TyKind::Dyn(..)),
+        }
     }
 
     /// Has flow narrowing ruled out every member of union local `l` (and `null`)?

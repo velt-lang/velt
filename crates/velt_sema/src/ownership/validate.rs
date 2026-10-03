@@ -197,7 +197,8 @@ impl Validator<'_, '_, '_> {
                 E::Index { .. } => return errors.push(array_move(e.span)),
                 E::Field { base, .. }
                 | E::UnwrapSome(base, _)
-                | E::UnwrapVariant { expr: base, .. } => cur = base,
+                | E::UnwrapVariant { expr: base, .. }
+                | E::Downcast(base) => cur = base,
                 E::Global(_) => {
                     return errors.push(
                         Diagnostic::error("cannot move out of a module constant", e.span)
@@ -280,7 +281,7 @@ impl Validator<'_, '_, '_> {
 pub(super) fn place_text(cx: &Ctx, locals: &[LocalDef], e: &Expr) -> String {
     match &e.kind {
         E::Local(l, _) => locals[l.0 as usize].name.clone(),
-        E::UnwrapSome(base, _) | E::UnwrapVariant { expr: base, .. } => {
+        E::UnwrapSome(base, _) | E::UnwrapVariant { expr: base, .. } | E::Downcast(base) => {
             place_text(cx, locals, base)
         }
         E::Index { base, .. } => format!("{}[..]", place_text(cx, locals, base)),

@@ -1,0 +1,9 @@
+instanceof_downcast.vlt:28:10: error: this `instanceof` test is always false: no `Animal` value is a `Rock`
+`Animal` values are instances of `Animal` or of its subclasses, and `Rock` is neither
+instanceof_downcast.vlt:32:10: error: this `instanceof` test is always false: no `Named` value is a `Dog`
+neither `Dog` nor any of its subclasses implements `Named`
+instanceof_downcast.vlt:36:10: error: `instanceof Pair` cannot narrow a `Box<i64>`: the type arguments of `Pair` do not follow from it
+test for a class that is not generic, or give `Pair` exactly the type parameters it passes to `Box` (`class Pair<T> extends Box<T>`)
+instanceof_downcast.vlt:40:10: error: `instanceof` needs a class instance, an interface value or a union with class members, found `i64`
+instanceof_downcast.vlt:45:23: error: no method named `bark` found for type `Animal`
+`instanceof` does not narrow this field: it is not `readonly`, so it could change between the test and this read; copy it into a local and test the local

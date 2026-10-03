@@ -118,6 +118,8 @@ pub(crate) struct Scope {
     pub narrowed: Vec<LocalId>,
     /// Union locals narrowed to some of their variants inside this scope (see `narrow::Fact`).
     pub members: Vec<(LocalId, Vec<u32>)>,
+    /// Class (or interface) locals known by `instanceof` to hold this subclass inside this scope.
+    pub classes: Vec<(LocalId, TyId)>,
     /// Source offset where the scope ends (its locals' visibility, for `crate::ide`).
     pub hi: u32,
 }
@@ -163,6 +165,10 @@ pub(crate) struct Frame {
     pub field_tokens: Vec<field_narrow::FieldToken>,
     /// `const`s bound by reference (`const_borrow`).
     pub const_refs: std::collections::HashSet<LocalId>,
+    /// Tokens of field paths tested by `instanceof` that are not narrowed (a field on the path
+    /// is not `readonly`), and the reads of them since (`field_narrow`, for error notes).
+    pub mutable_tests: Vec<LocalId>,
+    pub unnarrowed_reads: Vec<Span>,
 }
 
 impl Frame {
@@ -186,6 +192,8 @@ impl Frame {
             super_called: false,
             field_tokens: vec![],
             const_refs: Default::default(),
+            mutable_tests: vec![],
+            unnarrowed_reads: vec![],
         }
     }
 }

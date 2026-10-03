@@ -209,7 +209,7 @@ impl FnCx<'_, '_> {
             let mut place = a;
             loop {
                 place = match &place.kind {
-                    H::WrapSome(x) | H::Upcast(x) => x,
+                    H::WrapSome(x) | H::Upcast(x) | H::Downcast(x) => x,
                     // A narrowed union value passed as the union (the member re-wrapped).
                     H::Variant { args, .. } if args.len() == 1 && is_place(&args[0]) => &args[0],
                     _ => break,

@@ -122,6 +122,64 @@ console.log(new Square(2.0).name);                                              
 // new Celsius(5.0) and new Shape("x") are errors here; so is `class Kelvin extends Celsius`.
 ```
 
+### `instanceof` downcasts
+
+`x instanceof C` on a value of a base class of `C` tests the object's actual class: it is true
+for a `C` and for instances of `C`'s subclasses. Where it holds, `x` reads as a `C`, with the
+same narrowing rules as for unions (`if`/`else`, early returns, `&&`, `||`, `!`, ternaries,
+until `x` is reassigned). The same works on an interface value (a `Shape` holding a `Circle`),
+on `C | null` (true means not `null`) and on a union member whose class is a base of `C`, so
+`catch (e)` chains can tell error subclasses apart. A path of `readonly` fields
+(`node.left instanceof Num`) narrows too; a mutable field could change before it is read, so
+copy it into a local first. The test reads the class id in the object's vtable: one load and
+one comparison, whatever the depth of the hierarchy.
+
+- The narrowed type keeps the type arguments: a `Box<i64>` tested for
+  `class Labeled<T> extends Box<T>` is a `Labeled<i64>`. A generic class whose type arguments
+  do not follow from the tested type is an error.
+- A test that can never be true is an error, as in a union: `a instanceof Rock` on an
+  `Animal` when `Rock` does not extend `Animal`, or on an interface value when neither the
+  class nor its subclasses implement the interface. (TypeScript accepts these; in Velt classes
+  are nominal, so the answer is known.)
+
+```ts
+class AppError extends Error {}
+
+class NotFound extends AppError {
+  constructor(readonly id: string) {
+    super(`no item ${id}`);
+  }
+}
+
+class Timeout extends AppError {
+  constructor(readonly ms: i64) {
+    super(`timed out after ${ms}ms`);
+  }
+}
+
+function fetchItem(id: string): string throws AppError {
+  if (id == "") {
+    throw new Timeout(30);
+  }
+  throw new NotFound(id);
+}
+
+function describe(id: string): string {
+  try {
+    return fetchItem(id);
+  } catch (e) {                   // e: AppError
+    if (e instanceof NotFound) {
+      return `missing ${e.id}`;
+    } else if (e instanceof Timeout) {
+      return `timeout after ${e.ms}ms`;
+    }
+    return e.message;
+  }
+}
+
+console.log(describe("a"), "/", describe("")); // missing a / timeout after 30ms
+```
+
 ## Structs
 
 `struct` declares an object type with the same members as a class (methods, getters,
@@ -162,8 +220,10 @@ console.log(p.len(), q.len());  // 4 4
   (direct calls). Used as a **value type** (`Named[]` holding different classes), it is a fat
   pointer (data plus vtable), like Rust's `dyn`.
 - **Generic methods** (`apply<U>(f: (x: i64) => U): U[]`) are dispatched statically only: call
-  them on a concrete class or on a `T extends I` generic, not on an interface value. Generic
-  interface methods cannot have default bodies yet.
+  them on a concrete class or on a `T extends I` generic, not on an interface value
+  (``generic method `apply` cannot be called on an interface value``): make the calling
+  function generic over the receiver (`<T extends Mapper>(m: T)` instead of `(m: Mapper)`), or
+  call a method that is not generic. Generic interface methods cannot have default bodies yet.
 - A default body can be `async` (`async load(): Promise<T> { … }`), with the rules of an async
   class method ([Async](async.md#errors)). A method without a body cannot be: like in TypeScript,
   it declares a `Promise` result, and implementations may be `async`.

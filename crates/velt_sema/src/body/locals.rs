@@ -4,8 +4,12 @@ use velt_syntax::ast;
 
 use super::narrow::Fact;
 
-/// Per open scope: its non-null locals and union member facts (see `FnCx::narrow_state`).
-pub(crate) type NarrowState = Vec<(Vec<LocalId>, Vec<(LocalId, Vec<u32>)>)>;
+/// Per open scope: its non-null locals, union member facts and subclass facts (see
+/// `FnCx::narrow_state`).
+pub(crate) type NarrowState = Vec<(Vec<LocalId>, Vec<(LocalId, Vec<u32>)>, Vec<(LocalId, TyId)>)>;
+
+/// What a local is narrowed to: non-null, union members, a subclass.
+type Narrowing = (bool, Option<Vec<u32>>, Option<TyId>);
 use super::{CaptureCx, FnCx, Frame, LocalKind, Scope};
 use crate::ctx::Item;
 use crate::hir::{LocalDef, LocalId, TyId};
@@ -18,8 +22,8 @@ fn frame_lookup(f: &Frame, name: &str) -> Option<LocalId> {
         .find_map(|s| s.names.get(name).copied())
 }
 
-/// Narrowing of local `l` in frame `f`: (non-null, union members).
-fn frame_narrowing(f: &Frame, l: LocalId) -> (bool, Option<Vec<u32>>) {
+/// Narrowing of local `l` in frame `f`: (non-null, union members, subclass).
+fn frame_narrowing(f: &Frame, l: LocalId) -> Narrowing {
     let non_null = f.scopes.iter().any(|s| s.narrowed.contains(&l));
     let members = f.scopes.iter().rev().find_map(|s| {
         s.members
@@ -28,7 +32,18 @@ fn frame_narrowing(f: &Frame, l: LocalId) -> (bool, Option<Vec<u32>>) {
             .find(|(x, _)| *x == l)
             .map(|(_, vs)| vs.clone())
     });
-    (non_null, members)
+    (non_null, members, scope_class(&f.scopes, l))
+}
+
+/// The subclass local `l` is narrowed to in `scopes` (the innermost fact).
+fn scope_class(scopes: &[Scope], l: LocalId) -> Option<TyId> {
+    scopes.iter().rev().find_map(|s| {
+        s.classes
+            .iter()
+            .rev()
+            .find(|(x, _)| *x == l)
+            .map(|(_, t)| *t)
+    })
 }
 
 /// Capture `outer` into closure frame `f` with `outer`'s narrowing where the closure is created
@@ -40,17 +55,20 @@ fn add_narrowed_capture(
     outer: LocalId,
     ty: TyId,
     span: Span,
-    narrowing: (bool, Option<Vec<u32>>),
+    narrowing: Narrowing,
 ) -> LocalId {
     let inner = add_capture(f, name, outer, ty, span);
-    let (non_null, members) = narrowing;
+    let (non_null, members, class) = narrowing;
     let root = &mut f.scopes[0];
     if non_null {
         root.narrowed.push(inner);
     }
-    let narrowed = non_null || members.is_some();
+    let narrowed = non_null || members.is_some() || class.is_some();
     if let Some(vs) = members {
         root.members.push((inner, vs));
+    }
+    if let Some(t) = class {
+        root.classes.push((inner, t));
     }
     if let Some(c) = f.captures.last_mut() {
         c.narrowed = narrowed;
@@ -227,7 +245,13 @@ impl FnCx<'_, '_> {
                 };
                 self.innermost_scope().members.push((*l, vs));
             }
+            Fact::Class(l, t) => self.innermost_scope().classes.push((*l, *t)),
         }
+    }
+
+    /// The subclass a local is narrowed to here by `instanceof` (`None`: not narrowed).
+    pub fn narrowed_class(&self, l: LocalId) -> Option<TyId> {
+        scope_class(&self.f.scopes, l)
     }
 
     fn innermost_scope(&mut self) -> &mut super::Scope {
@@ -267,23 +291,25 @@ impl FnCx<'_, '_> {
         self.f
             .scopes
             .iter()
-            .map(|s| (s.narrowed.clone(), s.members.clone()))
+            .map(|s| (s.narrowed.clone(), s.members.clone(), s.classes.clone()))
             .collect()
     }
 
     pub fn restore_narrowing(&mut self, st: &NarrowState) {
-        for (s, (n, m)) in self.f.scopes.iter_mut().zip(st) {
+        for (s, (n, m, c)) in self.f.scopes.iter_mut().zip(st) {
             s.narrowed = n.clone();
             s.members = m.clone();
+            s.classes = c.clone();
         }
     }
 
     /// After sibling branches that both continue: keep only the facts `other` (the state at the
     /// end of the other branch) still has.
     pub fn meet_narrowing(&mut self, other: &NarrowState) {
-        for (s, (n, m)) in self.f.scopes.iter_mut().zip(other) {
+        for (s, (n, m, c)) in self.f.scopes.iter_mut().zip(other) {
             s.narrowed.retain(|l| n.contains(l));
             s.members.retain(|f| m.contains(f));
+            s.classes.retain(|f| c.contains(f));
         }
     }
 
@@ -293,6 +319,7 @@ impl FnCx<'_, '_> {
         for s in &mut self.f.scopes {
             s.narrowed.retain(|x| *x != l && !fields.contains(x));
             s.members.retain(|(x, _)| *x != l);
+            s.classes.retain(|(x, _)| *x != l);
         }
     }
 
