@@ -3,9 +3,10 @@
 //! module also runs through the JS glue and exits 0. Skipped (with a note) without LLVM's
 //! opt/llc or the `wasm32-unknown-unknown` Rust target.
 
+mod no_window;
+
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 // Not `canonicalize()`: on Windows that yields a verbatim `\\?\D:\…` path, from which Node
 // cannot load a main script (`EISDIR: lstat 'D:'`).
@@ -43,7 +44,7 @@ fn find_closing_backtick(s: &str) -> usize {
 }
 
 fn tools_available() -> bool {
-    let target = Command::new("rustc")
+    let target = crate::no_window::command("rustc")
         .args(["--print", "sysroot"])
         .output()
         .ok()
@@ -66,7 +67,7 @@ fn examples_compile_and_run() {
         eprintln!("note: opt/llc or the wasm32-unknown-unknown target missing; skipping");
         return;
     }
-    let st = Command::new(env!("CARGO"))
+    let st = crate::no_window::command(env!("CARGO"))
         .args([
             "build",
             "-p",
@@ -78,7 +79,7 @@ fn examples_compile_and_run() {
         .status()
         .expect("cargo build");
     assert!(st.success());
-    let node = Command::new("node")
+    let node = crate::no_window::command("node")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success());
@@ -93,7 +94,7 @@ fn examples_compile_and_run() {
         if node {
             let file = work.join("example.wasm");
             std::fs::write(&file, &module).expect("write module");
-            let o = Command::new("node")
+            let o = crate::no_window::command("node")
                 .arg(vpm::relpath::plain(&glue))
                 .arg(vpm::relpath::plain(&file))
                 .output()

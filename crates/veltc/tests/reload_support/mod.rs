@@ -5,7 +5,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -31,7 +31,7 @@ pub fn build_runtime() {
     } else {
         &["--release"]
     };
-    let status = Command::new(env!("CARGO"))
+    let status = crate::no_window::command(env!("CARGO"))
         .args(["build", "-q", "-p", "velt_rt"])
         .args(profile)
         .status()
@@ -65,7 +65,7 @@ pub struct Dev {
 impl Dev {
     /// `velt dev <mode flags> main.vlt` in `dir`.
     pub fn start(dir: &Path, mode: &[&str]) -> Dev {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_velt"));
+        let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
         cmd.arg("dev")
             .args(mode)
             .arg("main.vlt")

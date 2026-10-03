@@ -2,8 +2,9 @@
 //! `new` → `publish` → `add` → `install` → lockfile, plus `build`/`run`/`test` in package mode.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
+mod no_window;
 mod test_dir;
 
 struct Sandbox {
@@ -20,7 +21,7 @@ fn sandbox() -> Sandbox {
 impl Sandbox {
     fn velt(&self, cwd: &str, args: &[&str]) -> Output {
         let cwd = self.dir.join(cwd);
-        Command::new(env!("CARGO_BIN_EXE_velt"))
+        crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
             .args(args)
             .current_dir(&cwd)
             .env("VELT_HOME", self.dir.join("home"))
