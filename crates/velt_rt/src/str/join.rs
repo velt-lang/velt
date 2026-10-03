@@ -4,7 +4,7 @@
 //! exactly when the result is not ASCII). A builder fed piece by piece would start an ASCII
 //! buffer and move it at the first non-ASCII piece.
 
-use super::{fits_inline, heap, invariants, pack, wtf8, Summary, VeltStr, INLINE_MAX};
+use super::{fits_inline, heap, invariants, pack, wtf8, Summary, VeltStr, INLINE_MAX, MAX_LEN};
 
 impl VeltStr {
     /// `parts.join(sep)`: a new string (one part: that string, shared).
@@ -18,23 +18,9 @@ impl VeltStr {
         if rest.is_empty() {
             return first.share();
         }
-        let gaps = rest.len();
-        let sep_sum = sep.summary();
-        let mut len = sep.len() * gaps;
-        let mut total = Summary {
-            units: sep_sum.units * gaps,
-            lone: sep_sum.lone.saturating_mul(gaps),
+        let Some((len, total, low_start)) = VeltStr::join_sums(parts, sep) else {
+            crate::panic::fatal("string too long")
         };
-        // A seam can join two halves of a pair only where a low surrogate starts a piece.
-        let mut low_start = wtf8::starts_with_low(sep.as_bytes());
-        for p in parts {
-            let sum = p.summary();
-            invariants::check_piece(p.as_bytes(), Some(sum));
-            len += p.len();
-            total.units += sum.units;
-            total.lone = total.lone.saturating_add(sum.lone);
-            low_start |= wtf8::starts_with_low(p.as_bytes());
-        }
         if low_start {
             // A seam may join two halves of a pair: append piece by piece.
             return VeltStr::join_pushing(first, rest, sep);
@@ -55,7 +41,8 @@ impl VeltStr {
         let s = if fits_inline(len, total.units) {
             let mut text = [0u8; INLINE_MAX];
             write(text.as_mut_ptr());
-            VeltStr::inline(&text[..len], total.units, false)
+            // The flag covers an unknown lone count too (`usize::MAX`).
+            VeltStr::inline(&text[..len], total.units, total.lone > 0)
         } else {
             let header = total.units != len;
             let data = heap::alloc(len, header);
@@ -71,6 +58,37 @@ impl VeltStr {
         };
         invariants::check_whole(&s);
         s
+    }
+
+    /// The byte length, summary and "a piece or the separator starts with a low surrogate" of
+    /// `parts.join(sep)` (at least two parts), or `None` when the length passes the string
+    /// limit. The sums are checked: on a 32-bit target (wasm) they could wrap around and pick a
+    /// buffer too small for the text.
+    ///
+    /// # Safety
+    /// Every string must be valid.
+    pub(super) unsafe fn join_sums(
+        parts: &[VeltStr],
+        sep: &VeltStr,
+    ) -> Option<(usize, Summary, bool)> {
+        let gaps = parts.len() - 1;
+        let sep_sum = sep.summary();
+        let mut len = sep.len().checked_mul(gaps)?;
+        let mut total = Summary {
+            units: sep_sum.units.checked_mul(gaps)?,
+            lone: sep_sum.lone.saturating_mul(gaps),
+        };
+        // A seam can join two halves of a pair only where a low surrogate starts a piece.
+        let mut low_start = wtf8::starts_with_low(sep.as_bytes());
+        for p in parts {
+            let sum = p.summary();
+            invariants::check_piece(p.as_bytes(), Some(sum));
+            len = len.checked_add(p.len())?;
+            total.units = total.units.checked_add(sum.units)?;
+            total.lone = total.lone.saturating_add(sum.lone);
+            low_start |= wtf8::starts_with_low(p.as_bytes());
+        }
+        (len <= MAX_LEN).then_some((len, total, low_start))
     }
 
     /// [`Self::join`] through the builder, whose pushes join halves at the seams.

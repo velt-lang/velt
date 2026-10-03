@@ -313,6 +313,21 @@ fn joins_sum_their_pieces() {
     );
     let pair = Owned(unsafe { VeltStr::join(&[hi, lo], &VeltStr::empty()) });
     assert_eq!(bytes(&pair.0), "😀".as_bytes());
+    // A short result holding a lone surrogate that joins nothing keeps the inline flag (the
+    // test runtime's whole-string check in `join` rejects a missing flag), so a later low half
+    // still joins it.
+    let (hi, a) = (VeltStr::from_bytes(&enc3(HI)), VeltStr::from_static(b"a"));
+    let lone = Owned(unsafe { VeltStr::join(&[a, hi], &VeltStr::from_static(b",")) });
+    assert!(lone.0.is_inline());
+    let mut grown = Owned(VeltStr::from_bytes(&[b'x'; 30]));
+    unsafe {
+        grown.0.push_str(&lone.0);
+        grown.0.push_wtf8(&enc3(LO), None);
+    }
+    assert_eq!(
+        bytes(&grown.0),
+        [&[b'x'; 30][..], b"a,", "😀".as_bytes()].concat()
+    );
     for mut p in parts {
         unsafe { p.release() };
     }
@@ -343,4 +358,14 @@ fn appending_a_view_of_itself_joins_and_grows_safely() {
     unsafe { velt_rt_str_append(sp, sp) };
     assert_eq!(s.len(), 2 * (want.len() + 30));
     unsafe { s.release() };
+}
+
+#[test]
+fn join_lengths_past_the_limit_are_refused() {
+    // A 1 MiB separator between 4096 empty parts: 4 GiB, past the 2 GiB limit (and past
+    // `usize::MAX` on a 32-bit target, where an unchecked sum would wrap around).
+    let sep = VeltStr::from_static(Box::leak(vec![b'-'; 1 << 20].into_boxed_slice()));
+    let parts: Vec<VeltStr> = (0..4096).map(|_| VeltStr::empty()).collect();
+    assert!(unsafe { VeltStr::join_sums(&parts, &sep) }.is_none());
+    assert!(unsafe { VeltStr::join_sums(&parts[..2], &sep) }.is_some());
 }
