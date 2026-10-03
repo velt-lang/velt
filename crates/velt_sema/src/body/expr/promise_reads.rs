@@ -1,12 +1,16 @@
 //! Reading a promise out of a collection: an array element moved out by indexing, or a method
 //! of `Map` / arrays that returns copies of the elements (`m.get(k)`, `arr.at(i)`,
-//! `arr.slice()`, …). A promise has one owner and can't be copied, so these are compile-time
-//! errors pointing at what works instead.
+//! `arr.slice()`, …). TypeScript allows these; a Velt promise has one owner and can't be copied
+//! or shared, so they are compile-time errors that say so and point at what works instead.
 
 use velt_common::{Diagnostic, Span};
 
 use crate::body::FnCx;
 use crate::hir::{TyId, TyKind};
+
+/// How every note starts: TypeScript allows the read, and why Velt doesn't.
+const WHY: &str = "TypeScript allows this, but a Velt promise has one owner (`await` takes its \
+                   result) and can't be copied or shared";
 
 /// `Map` methods whose result copies stored values.
 const MAP_COPYING: &[&str] = &["get", "getOrInsert", "values", "entries"];
@@ -36,11 +40,10 @@ impl FnCx<'_, '_> {
                 format!("cannot read a `{tn}` out of an array element"),
                 span,
             )
-            .with_note(
-                "a promise has one owner and can't be copied: take it out of the array with \
-                 `pop()` or `splice(i, 1)`, or await the promises together with \
-                 `Promise.all(arr)`",
-            ),
+            .with_note(format!(
+                "{WHY}: take it out of the array with `pop()` or `splice(i, 1)`, or await the \
+                 promises together with `Promise.all(arr)`"
+            )),
         );
     }
 
@@ -57,8 +60,8 @@ impl FnCx<'_, '_> {
             TyKind::Array(elem) if ARRAY_COPYING.contains(&method) => (
                 elem,
                 "array",
-                "a promise has one owner and can't be copied: take promises out with `pop()` or \
-                 `splice(i, 1)`, or await them together with `Promise.all(arr)`",
+                "take promises out with `pop()` or `splice(i, 1)`, or await them together with \
+                 `Promise.all(arr)`",
             ),
             TyKind::Adt(d, args)
                 if Some(d) == map && args.len() == 2 && MAP_COPYING.contains(&method) =>
@@ -66,9 +69,8 @@ impl FnCx<'_, '_> {
                 (
                     args[1],
                     "`Map`",
-                    "a promise has one owner and can't be copied: store the awaited result \
-                     (`m.set(k, await p)`), or keep the promises in an array and take them out \
-                     with `pop()`",
+                    "store the awaited result (`m.set(k, await p)`), or keep the promises in an \
+                     array and take them out with `pop()`",
                 )
             }
             _ => return false,
@@ -82,7 +84,7 @@ impl FnCx<'_, '_> {
                 format!("`{method}` would copy a `{tn}` out of the {what}"),
                 span,
             )
-            .with_note(note),
+            .with_note(format!("{WHY}: {note}")),
         );
         true
     }

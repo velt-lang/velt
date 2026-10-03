@@ -367,8 +367,15 @@ impl FnCx<'_, '_> {
         }
         // A promise element can be replaced in place (`arr[i] = p`), not read: moving it out
         // would leave a hole, a reference to it could be awaited (a move) later, and it can't
-        // be copied.
-        if want != Want::BorrowMut && self.cx.holds_promise(elem) {
+        // be copied. Values that only hold one (an object with a promise field) may be read in
+        // place (`arr[i].name`), not moved out.
+        let is_promise = matches!(self.cx.ty.kind(elem), TyKind::Promise(..));
+        let rejected = match want {
+            Want::Move => self.cx.holds_promise(elem),
+            Want::Borrow => is_promise,
+            Want::BorrowMut => false,
+        };
+        if rejected {
             self.promise_out_of_array(elem, span);
             return self.error_expr(span);
         }
