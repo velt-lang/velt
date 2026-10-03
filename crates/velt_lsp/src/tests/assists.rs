@@ -241,6 +241,13 @@ fn workspace_symbols_search_open_programs_and_folders() {
     )
     .unwrap();
     std::fs::write(dir.join("target/skip.vlt"), "function areaSkipped() {}\n").unwrap();
+    std::fs::write(dir.join("src/shapes.ts"), "export function areaOfTs() {}\n").unwrap();
+    std::fs::write(dir.join("src/card.tsx"), "export function areaCard() {}\n").unwrap();
+    std::fs::write(
+        dir.join("src/types.d.ts"),
+        "declare function areaDecl(): void;\n",
+    )
+    .unwrap();
     let root = Url::from_file_path(&dir).unwrap();
 
     let mut client = Client::start_with(json!({ "capabilities": {}, "rootUri": root }));
@@ -263,7 +270,9 @@ fn workspace_symbols_search_open_programs_and_folders() {
         names,
         [
             ("area".to_string(), "assist_ws.vlt".to_string()),
+            ("areaCard".to_string(), "card.tsx".to_string()),
             ("areaOfSquare".to_string(), "geometry.vlt".to_string()),
+            ("areaOfTs".to_string(), "shapes.ts".to_string()),
         ]
     );
     let members = client.request("workspace/symbol", json!({ "query": "scaled" }));

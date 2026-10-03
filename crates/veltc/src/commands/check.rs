@@ -74,7 +74,7 @@ fn package_scope() -> Result<(PathBuf, CheckScope), String> {
         .iter()
         .filter(|d| d.is_dir())
     {
-        extra_roots.extend(discover::files_with_suffix(dir, ".vlt")?);
+        extra_roots.extend(discover::source_files(dir)?);
     }
     extra_roots.retain(|f| *f != input);
     let scope = CheckScope {

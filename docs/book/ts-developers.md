@@ -194,6 +194,9 @@ reference count. Reference cycles are not freed (**planned**: `weak` references)
 - Standard library modules use the `velt:` prefix: `import { readFile } from "velt:fs"`.
 - Relative imports drop the extension: `import { x } from "./util"`. A folder is a module
   through its `index.vlt`. `paths` aliases in `package.vlt` work like `compilerOptions.paths`.
+- Modules can be `.ts` and `.tsx` files as well as `.vlt`, so a folder can be shared with a
+  TypeScript project; as in TypeScript, JSX needs `.tsx`, and `"./x.js"` names `x.ts`
+  ([TypeScript files](../reference/modules.md#typescript-files-ts-and-tsx)).
 
 ## Not supported
 

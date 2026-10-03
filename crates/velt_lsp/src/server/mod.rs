@@ -83,7 +83,7 @@ struct Server<'a> {
 /// Id of the request registering the file watcher.
 const WATCH_REQUEST: &str = "velt-watch";
 
-/// Ask the client to report changes of `.vlt` files if it can (dynamic registration of
+/// Ask the client to report changes of source files (`.vlt`, `.ts`, `.tsx`) if it can (dynamic registration of
 /// `workspace/didChangeWatchedFiles`). The index relies on the events once the client answers
 /// the request successfully.
 fn watch_files(connection: &Connection, init: &serde_json::Value) {
@@ -98,7 +98,7 @@ fn watch_files(connection: &Connection, init: &serde_json::Value) {
             // Source files, and creations and deletions of anything (folders are reported by
             // their own path: kind 5 = create + delete).
             "registerOptions": { "watchers": [
-                { "globPattern": "**/*.vlt" },
+                { "globPattern": "**/*.{vlt,ts,tsx}" },
                 { "globPattern": "**/*", "kind": 5 },
             ] },
         }] });

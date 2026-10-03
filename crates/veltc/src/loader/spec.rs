@@ -12,7 +12,9 @@ pub enum ModuleRef {
     },
     /// `./x` or `../x` — a file relative to the importing module's directory.
     Relative {
-        /// The resolved file (lexically normalized, `.vlt` appended).
+        /// The specifier's path joined to the importer's directory, lexically normalized, with
+        /// its extension as written (`./util` → `<dir>/util`, `./card.tsx` → `<dir>/card.tsx`);
+        /// the loader picks the file (`util.vlt`, `util.ts`, …).
         file: PathBuf,
     },
     /// Bare name — a package dependency (`name`) and optional sub-module path.
@@ -28,11 +30,6 @@ pub enum ModuleRef {
 pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String> {
     if spec.is_empty() {
         return Err("empty module specifier".into());
-    }
-    if spec.ends_with(".vlt") {
-        return Err(format!(
-            "module specifier `{spec}` should not include the `.vlt` extension"
-        ));
     }
     if let Some(rel) = spec.strip_prefix("std/") {
         return Err(format!(
@@ -54,10 +51,8 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
         if spec.ends_with('/') || spec.contains('\\') {
             return Err(format!("invalid module specifier `{spec}`"));
         }
-        // Append rather than `set_extension`: `./math.test` names `math.test.vlt`.
-        let file = importer_dir.join(format!("{spec}.vlt"));
         return Ok(ModuleRef::Relative {
-            file: vpm::relpath::normalize(&file),
+            file: vpm::relpath::normalize(&importer_dir.join(spec)),
         });
     }
     if spec.starts_with('/') || spec.contains('\\') || spec.contains(':') {
@@ -72,6 +67,14 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
     if !vpm::manifest::is_valid_package_name(name) {
         return Err(format!(
             "invalid package name `{name}` in module specifier `{spec}`"
+        ));
+    }
+    if let Some(ext) = vpm::sources::SOURCE_EXTENSIONS
+        .iter()
+        .find(|ext| spec.ends_with(&format!(".{ext}")))
+    {
+        return Err(format!(
+            "module specifier `{spec}` should not include the `.{ext}` extension (only relative imports may name one)"
         ));
     }
     if sub.as_deref().is_some_and(|s| !is_clean_subpath(s)) {
@@ -155,19 +158,25 @@ mod tests {
         assert_eq!(
             resolve_spec("./util", dir).unwrap(),
             ModuleRef::Relative {
-                file: Path::new("proj/src").join("util.vlt")
+                file: Path::new("proj/src").join("util")
             }
         );
         assert_eq!(
             resolve_spec("../lib/math", dir).unwrap(),
             ModuleRef::Relative {
-                file: Path::new("proj").join("lib").join("math.vlt")
+                file: Path::new("proj").join("lib").join("math")
             }
         );
         assert_eq!(
             resolve_spec("./math.test", dir).unwrap(),
             ModuleRef::Relative {
-                file: Path::new("proj/src").join("math.test.vlt")
+                file: Path::new("proj/src").join("math.test")
+            }
+        );
+        assert_eq!(
+            resolve_spec("./card.tsx", dir).unwrap(),
+            ModuleRef::Relative {
+                file: Path::new("proj/src").join("card.tsx")
             }
         );
         assert_eq!(
@@ -197,9 +206,10 @@ mod tests {
             "/abs",
             "C:\\x",
             "Bad",
-            "./x.vlt",
             "./",
             "pkg/../x",
+            "pkg/x.vlt",
+            "pkg/x.ts",
         ] {
             assert!(
                 resolve_spec(bad, dir).is_err(),

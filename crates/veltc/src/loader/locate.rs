@@ -14,7 +14,7 @@ pub trait PackageResolver {
     /// Root directory of dependency `name`, or an error message (`not a dependency`).
     fn dependency_root(&self, importer: &Path, name: &str) -> Result<PathBuf, String>;
 
-    /// The module path (no `.vlt` extension) a `paths` alias of the package containing
+    /// The module path (no source extension) a `paths` alias of the package containing
     /// `importer` maps `spec` to, if one matches.
     fn path_alias(&self, importer: &Path, spec: &str) -> Option<PathBuf> {
         let _ = (importer, spec);
@@ -60,7 +60,8 @@ pub enum Origin {
 }
 
 impl Origin {
-    /// Canonical module path of `file` (a `.vlt` file inside this origin).
+    /// Canonical module path of `file` (a source file inside this origin): its path relative to
+    /// the origin, without the source extension (`.vlt`, `.ts`, `.tsx`) or a final `/index`.
     pub fn canonical(&self, file: &Path) -> String {
         let (base, prefix) = match self {
             Origin::Root(dir) => (dir, None),
@@ -68,8 +69,7 @@ impl Origin {
             Origin::Package { name, src } => (src, Some(name.as_str())),
         };
         let rel = vpm::relpath::relative(file, base);
-        let rel = rel.strip_suffix(".vlt").unwrap_or(&rel);
-        let rel = rel.strip_suffix("/index").unwrap_or(rel);
+        let rel = module_path(&rel);
         match (prefix, self) {
             (Some(name), Origin::Package { .. }) if rel == "lib" => name.to_string(),
             (Some(p), _) => format!("{p}/{rel}"),
@@ -78,9 +78,18 @@ impl Origin {
     }
 }
 
-/// A module to load: the files to try (first existing wins), plus its canonical path and origin.
+/// `rel` (a `/`-separated file path) as a module path: without its source extension and a final
+/// `/index` (`shapes/index.ts` → `shapes`).
+pub fn module_path(rel: &str) -> &str {
+    let rel = vpm::sources::strip_source_extension(rel).unwrap_or(rel);
+    rel.strip_suffix("/index").unwrap_or(rel)
+}
+
+/// A module to load: the files to try, in groups (the first group with an existing file wins;
+/// two existing files in one group make the import ambiguous), plus its canonical path and
+/// origin.
 pub struct Target {
-    pub candidates: Vec<PathBuf>,
+    pub candidates: Vec<Vec<PathBuf>>,
     pub canonical: Option<String>,
     pub origin: Origin,
 }
@@ -123,7 +132,10 @@ pub fn target(
             };
             let src = root.join(vpm::manifest::SRC_DIR);
             let (candidates, canonical) = match &sub {
-                None => (vec![root.join(vpm::manifest::LIB_ENTRY)], name.clone()),
+                None => (
+                    vec![vec![root.join(vpm::manifest::LIB_ENTRY)]],
+                    name.clone(),
+                ),
                 Some(s) => (module_files(&src, s), format!("{name}/{s}")),
             };
             Ok(Target {
@@ -135,25 +147,47 @@ pub fn target(
     }
 }
 
-/// `<dir>/<rel>.vlt`, then the folder module `<dir>/<rel>/index.vlt`.
-fn module_files(dir: &Path, rel: &str) -> Vec<PathBuf> {
+/// `<dir>/<rel>.vlt`, then the folder module `<dir>/<rel>/index.vlt` (standard library and
+/// package modules are `.vlt` files).
+fn module_files(dir: &Path, rel: &str) -> Vec<Vec<PathBuf>> {
     vec![
-        dir.join(format!("{rel}.vlt")),
-        dir.join(rel).join(INDEX_FILE),
+        vec![dir.join(format!("{rel}.vlt"))],
+        vec![dir.join(rel).join("index.vlt")],
     ]
 }
 
-/// `x.vlt`, then the folder module `x/index.vlt`.
-fn relative_files(file: PathBuf) -> Vec<PathBuf> {
-    let folder = file
-        .to_str()
-        .and_then(|f| f.strip_suffix(".vlt"))
-        .map(|dir| Path::new(dir).join(INDEX_FILE));
-    std::iter::once(file).chain(folder).collect()
+/// The files a relative import of `file` (the specifier's path, extension as written) may name:
+/// - with a source extension (`./x.ts`, `./x.tsx`, `./x.vlt`), exactly that file;
+/// - with `.js` or `.jsx`, the TypeScript file it is compiled to, as TypeScript resolves it
+///   (`./x.js` → `x.ts` or `x.tsx`, `./x.jsx` → `x.tsx`);
+/// - otherwise `x.vlt`, `x.ts` or `x.tsx`, then the folder module `x/index.vlt`, `x/index.ts`
+///   or `x/index.tsx`.
+fn relative_files(file: PathBuf) -> Vec<Vec<PathBuf>> {
+    let Some(name) = file.to_str() else {
+        return vec![vec![file]];
+    };
+    if vpm::sources::is_source_name(name) {
+        return vec![vec![file]];
+    }
+    if let Some(stem) = name.strip_suffix(".js") {
+        return vec![vec![
+            format!("{stem}.ts").into(),
+            format!("{stem}.tsx").into(),
+        ]];
+    }
+    if let Some(stem) = name.strip_suffix(".jsx") {
+        return vec![vec![format!("{stem}.tsx").into()]];
+    }
+    let with_extensions = |base: &str| {
+        vpm::sources::SOURCE_EXTENSIONS
+            .iter()
+            .map(|ext| PathBuf::from(format!("{base}.{ext}")))
+            .collect()
+    };
+    let index = file.join("index");
+    let index = index.to_str().unwrap_or(name);
+    vec![with_extensions(name), with_extensions(index)]
 }
-
-/// The file that makes a folder a module (`import … from "./dir"` loads `dir/index.vlt`).
-const INDEX_FILE: &str = "index.vlt";
 
 #[cfg(test)]
 mod tests {

@@ -1,13 +1,14 @@
 //! Change detection for `velt dev` / `velt test --watch`: the exact files the last build read
 //! (plus the manifest and lockfile), not a directory tree, so edits to std or path dependencies
-//! count and unrelated files don't. A `.vlt` file that appears next to one of them counts too:
-//! it may be the module a failed build was missing, which no build has read yet.
+//! count and unrelated files don't. A source file (`.vlt`, `.ts`, `.tsx`) that appears next to
+//! one of them counts too: it may be the module a failed build was missing, which no build has
+//! read yet.
 //!
 //! The operating system reports changes in the watched files' directories (`notify`: inotify,
 //! FSEvents, ReadDirectoryChangesW); each report is checked against the file's modification
 //! time and length, so a report that changed nothing is ignored. Where notifications are not
 //! available (or `VELT_DEV_POLL=1`, e.g. on network file systems that don't deliver them), the
-//! files' stamps and the directories' `.vlt` listings are polled every [`POLL`] instead.
+//! files' stamps and the directories' source file listings are polled every [`POLL`] instead.
 //! A change is reported once the files have been quiet for [`SETTLE`], so an editor's
 //! write-rename-touch sequence triggers one rebuild.
 
@@ -32,10 +33,10 @@ pub const POLL_ENV: &str = "VELT_DEV_POLL";
 /// The watched files and the state each had when last looked at.
 pub struct Watcher {
     files: BTreeMap<PathBuf, Option<Stamp>>,
-    /// The watched files' directories and the `.vlt` files each held when last looked at
+    /// The watched files' directories and the source files each held when last looked at
     /// (polling only; with notifications the operating system reports new files).
     dirs: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
-    /// `.vlt` files that appeared in a watched directory since the last build, with their stamp
+    /// Source files that appeared in a watched directory since the last build, with their stamp
     /// when they appeared (a build that reads one for the first time compares with it).
     appeared: HashMap<PathBuf, Option<Stamp>>,
     /// Change notifications, while they work.
@@ -77,10 +78,10 @@ fn stamp(path: &Path) -> Option<Stamp> {
 }
 
 fn is_source(path: &Path) -> bool {
-    path.extension().is_some_and(|e| e == "vlt")
+    vpm::sources::is_source_file(path)
 }
 
-/// The `.vlt` files in `dir`.
+/// The source files in `dir`.
 fn sources_in(dir: &Path) -> BTreeSet<PathBuf> {
     std::fs::read_dir(dir)
         .map(|entries| {
@@ -174,8 +175,8 @@ impl Watcher {
     }
 
     /// Start watching the directories of the watched files (and stop watching others), with
-    /// the `.vlt` files they held at `snap`. A directory the notifier cannot watch switches the
-    /// watcher to polling. Whether a directory the snapshot doesn't cover holds a `.vlt` file
+    /// the source files they held at `snap`. A directory the notifier cannot watch switches the
+    /// watcher to polling. Whether a directory the snapshot doesn't cover holds a source file
     /// that may have been saved during the build.
     fn watch_dirs(&mut self, snap: &Snapshot) -> bool {
         let mut newer = false;
@@ -243,7 +244,7 @@ impl Watcher {
     }
 
     /// Notifications: whether any of `paths` is a watched file whose stamp changed, or a new
-    /// `.vlt` file in a watched directory.
+    /// source file in a watched directory.
     /// A file that was deleted and created again (`git stash`, a branch switch) is new again.
     fn check_paths(&mut self, paths: Vec<(Seen, PathBuf)>) -> bool {
         let mut changed = false;
@@ -295,7 +296,7 @@ impl Watcher {
             .unwrap_or(path)
     }
 
-    /// Polling: every watched file's stamp and every watched directory's `.vlt` files.
+    /// Polling: every watched file's stamp and every watched directory's source files.
     fn check_all(&mut self) -> bool {
         let mut changed = false;
         // Modules nothing has read yet: their last state, for a build that reads them.

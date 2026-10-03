@@ -13,7 +13,7 @@ prints every command's options and examples.
 | `velt check [--json]` | type-check a file or the current package without building it ([`velt check`](#velt-check)) |
 | `velt dev` | run, then hot-swap or restart on every change ([`velt dev`](dev.md)) |
 | `velt test` | run the tests ([Testing](../book/testing.md)) |
-| `velt fmt` | format `.vlt` files ([Formatter](fmt.md)) |
+| `velt fmt` | format `.vlt` (and `.ts`, `.tsx`) files ([Formatter](fmt.md)) |
 | `velt clean` | remove the package's `target/` directory |
 | `velt add`, `install`, `update`, `publish` | packages ([Packages](packages.md)) |
 | `velt manifest [--json]` | check the package's manifest, or print it as JSON for other tools ([`package.vlt`](manifest.md#other-tools)) |
@@ -30,7 +30,8 @@ prints every command's options and examples.
 Every build command works on a single file or on a package:
 
 - **A file**: `velt run hello.vlt` builds `./target/velt/hello` (`hello.exe` on Windows),
-  relative to the current directory, and runs it. If the file is inside a package, the package's
+  relative to the current directory, and runs it. The file, and the modules it imports, may also
+  be `.ts` or `.tsx` files ([TypeScript files](../reference/modules.md#typescript-files-ts-and-tsx)). If the file is inside a package, the package's
   dependencies are installed first.
 - **A package**: without a file argument, `velt` searches upward from the current directory for
   `package.vlt` and builds the package's entry (default `src/main.vlt`) to
@@ -80,14 +81,15 @@ It exits with 0 when there are no errors (warnings are allowed) and with 1 when 
 - A **library module** needs no `main`: `velt check lib.vlt` checks every function in it,
   including exported functions nothing calls. `velt build` and `velt run` still require `main`.
 - In a package, `velt check` without a file checks the whole package, like `tsc` checks a
-  project: every `.vlt` module under `src/` and `tests/` (recursively, skipping `target/`, hidden
-  and symlinked directories), including `src/lib.vlt` next to `src/main.vlt`, modules nothing
-  imports, and test files. The entry (`package.entry`, default `src/main.vlt`) must define a
-  valid `main`; every other module is checked as a library module. A library package (no
-  configured entry and no `src/main.vlt`) checks `src/lib.vlt` and the rest the same way. All
-  modules are checked together, so a module several of them import is checked, and its errors
-  reported, once. Other directories (`examples/`, `bench/`, scripts next to `package.vlt`)
-  usually hold programs of their own: check them with `velt check <file>`.
+  project: every `.vlt`, `.ts` and `.tsx` module under `src/` and `tests/` (recursively,
+  skipping `target/`, `node_modules/`, hidden and symlinked directories; `.d.ts` files are not
+  modules), including `src/lib.vlt` next to `src/main.vlt`, modules nothing imports, and test
+  files. The entry (`package.entry`, default `src/main.vlt`) must define a valid `main`; every
+  other module is checked as a library module. A library package (no configured entry and no
+  `src/main.vlt`) checks `src/lib.vlt` and the rest the same way. All modules are checked
+  together, so a module several of them import is checked, and its errors reported, once. Other
+  directories (`examples/`, `bench/`, scripts next to `package.vlt`) usually hold programs of
+  their own: check them with `velt check <file>`.
 - `velt check <file>` checks that file and the files it imports, and nothing else.
 - `--json` prints one JSON document on stdout instead, for editors and other tools:
   `{"diagnostics": [...], "errors": n, "warnings": n}`, each diagnostic with its `severity`,
@@ -122,7 +124,8 @@ velt doc [<file|dir>...] [--std] [-o <dir>]
 
 Generates HTML documentation for exported items: their signatures and the `///` comment block
 right above each declaration (a comment block at the top of a file documents the module).
-Without paths, it documents the package's `src/` into `<package>/target/doc`; `--std` documents
+Without paths, it documents the package's `src/` (`.vlt`, `.ts` and `.tsx` files) into
+`<package>/target/doc`; `--std` documents
 the standard library. The output has one page per module and a client-side search.
 
 - **Signatures** are shown in one canonical form whatever the source's layout:

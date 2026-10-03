@@ -1,4 +1,4 @@
-//! The symbols of the `.vlt` files under the workspace folders, for workspace symbol queries:
+//! The symbols of the source files (`.vlt`, `.ts`, `.tsx`) under the workspace folders, for workspace symbol queries:
 //! each file is parsed once and its symbols kept with its modification time. When the client
 //! reports file changes (`workspace/didChangeWatchedFiles`, registered at startup when the
 //! client supports it), the index follows the events and a query reads nothing from disk;
@@ -86,7 +86,7 @@ impl DiskIndex {
                 let modified = modified(&p);
                 self.files.insert(p.clone(), index_file(&p, modified));
             }
-        } else if path.extension().is_some_and(|e| e == "vlt") && !is_manifest(path) {
+        } else if vpm::sources::is_source_file(path) && !is_manifest(path) {
             self.files
                 .insert(path.to_path_buf(), index_file(path, modified(path)));
         }

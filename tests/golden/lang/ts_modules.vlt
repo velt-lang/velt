@@ -1,0 +1,15 @@
+// @jsxImportSource ./_jsx_test_provider
+
+// A program mixing module kinds: `./_ts_shapes` is `_ts_shapes.ts`, `./_ts_badge` is the JSX
+// component `_ts_badge.tsx`, and `./_ts_shapes.js` is TypeScript's spelling of the same `.ts` file.
+
+import { render } from "./_jsx_test_provider/render";
+import { Badge } from "./_ts_badge";
+import { area, type Rect } from "./_ts_shapes";
+import { perimeter } from "./_ts_shapes.js";
+
+async function main() {
+  const r: Rect = { width: 3, height: 4.5 };
+  console.log(area(r), perimeter(r));
+  console.log(await render(<Badge label="ts" count={2} />));
+}
