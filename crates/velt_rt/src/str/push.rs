@@ -289,7 +289,10 @@ impl VeltStr {
     unsafe fn append_unique(&mut self, len: usize, bytes: &[u8], sum: Summary) {
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr().add(len), bytes.len());
         self.w1 += pack(sum.units, bytes.len());
-        if sum.lone != 0 {
+        if sum.lone == wtf8::LONE_UNKNOWN {
+            // A plain store: reading the count first would chain one append to the next.
+            heap::set_lone(self.ptr(), wtf8::LONE_UNKNOWN);
+        } else if sum.lone != 0 {
             heap::set_lone(self.ptr(), heap::lone(self.ptr()).saturating_add(sum.lone));
         }
     }
