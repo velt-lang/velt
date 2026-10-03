@@ -48,9 +48,13 @@ mod ownership;
 mod readonly;
 mod record_keys;
 mod resolve;
+mod suggest;
 mod throws;
+mod ts_protocol;
+mod type_defaults;
 mod types;
 mod unions;
+mod utility_types;
 mod visit;
 mod void_fields;
 
@@ -140,6 +144,7 @@ fn check_on_current_thread(
     analyze(&mut cx);
     let entry = check_main(&mut cx, root, root_mod, opts.require_main);
     check_imported_scripts(&mut cx, root, modules);
+    resolve::check_unused_aliases(&mut cx);
 
     if cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
@@ -187,6 +192,8 @@ fn analyze(cx: &mut ctx::Ctx) {
     ownership::clone_reused(cx, &moved.reused);
     ownership::box_cells(cx, &moved.boxed);
     ownership::check_exclusive(cx);
+    ownership::check_boundaries(cx);
+    ownership::check_many_threads(cx);
 }
 
 /// Top-level statements run only in the root file: the parser turned an imported module's into

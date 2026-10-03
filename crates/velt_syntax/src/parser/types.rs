@@ -277,10 +277,13 @@ impl<'a> Parser<'a> {
         }
         let mut args = vec![];
         if self.at(Tok::Lt) {
+            let ts = path.len() == 1 && PROTOCOL_TYPES.contains(&path[0].name.as_str());
             if speculative_args {
-                args = self.speculate(|p| p.parse_type_args()).unwrap_or_default();
+                args = self
+                    .speculate(|p| p.parse_type_args_with(ts))
+                    .unwrap_or_default();
             } else {
-                args = self.parse_type_args()?;
+                args = self.parse_type_args_with(ts)?;
             }
         }
         Ok(TypeExpr {
@@ -291,12 +294,52 @@ impl<'a> Parser<'a> {
 
     /// `<A, B>`
     pub(super) fn parse_type_args(&mut self) -> PResult<Vec<TypeExpr>> {
+        self.parse_type_args_with(false)
+    }
+
+    /// `<A, B>`; with `ts_return` (a protocol type's arguments), a later argument may be
+    /// `undefined`.
+    fn parse_type_args_with(&mut self, ts_return: bool) -> PResult<Vec<TypeExpr>> {
         self.expect(Tok::Lt)?;
-        let args = self.parse_type_seq(Tok::Gt)?;
+        let mut args = Vec::new();
+        while !self.at(Tok::Gt) {
+            if ts_return && !args.is_empty() && self.at_ts_undefined_arg() {
+                let name = self.take_ident();
+                args.push(TypeExpr {
+                    span: name.span,
+                    kind: TypeExprKind::Named {
+                        path: vec![name],
+                        args: vec![],
+                    },
+                });
+            } else {
+                args.push(self.parse_type()?);
+            }
+            if !self.eat(Tok::Comma) {
+                break;
+            }
+        }
         self.expect(Tok::Gt)?;
         Ok(args)
     }
+
+    /// `undefined` as a whole later type argument of a protocol type: TypeScript's `TReturn` /
+    /// `TNext` (`Generator<number, undefined>`), which sema drops (velt_sema `ts_protocol`).
+    fn at_ts_undefined_arg(&mut self) -> bool {
+        self.at_word("undefined") && matches!(self.nth(1), Tok::Comma | Tok::Gt)
+    }
 }
+
+/// The prelude's iteration protocol types, whose later type arguments may be TypeScript's
+/// `TReturn` / `TNext` (velt_sema `ts_protocol`).
+const PROTOCOL_TYPES: [&str; 6] = [
+    "Generator",
+    "AsyncGenerator",
+    "Iterator",
+    "AsyncIterator",
+    "Iterable",
+    "AsyncIterable",
+];
 
 /// `T | null` for the written type of an optional parameter or field (`name?: T`), keeping
 /// `T`'s span; a type that already admits `null` stays as it is.

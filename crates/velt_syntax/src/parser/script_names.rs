@@ -227,6 +227,7 @@ impl Names {
                     }
                 }
             }
+            ExprKind::Yield { arg, .. } => arg.iter().for_each(|e| self.expr(e)),
             ExprKind::Jsx(el) => self.jsx(el),
         }
     }

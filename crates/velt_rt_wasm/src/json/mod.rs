@@ -1,6 +1,8 @@
 //! JSON support (rt_abi_async.md §12): velt_rt's reader, `json.Value` tree, accessors and
 //! escaping, compiled from its sources.
 
+#[path = "../../../velt_rt/src/json/cycle.rs"]
+pub mod cycle;
 #[path = "../../../velt_rt/src/json/error.rs"]
 pub mod error;
 #[path = "../../../velt_rt/src/json/escape.rs"]

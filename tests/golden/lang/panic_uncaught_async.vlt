@@ -1,0 +1,17 @@
+// An error escaping `async function main()` reports where it was thrown, like a synchronous
+// `main` (#162): the program runs on a worker thread, the report is written on the main thread.
+class ParseError extends Error {}
+
+async function digit(s: string): Promise<i64> {
+  await sleep(1);
+  if (s == "1") {
+    return 1;
+  }
+  throw new ParseError(`bad digit: ${s}`);
+}
+
+async function main() {
+  console.log(await digit("1"));
+  console.log(await digit("x"));
+  console.log("unreachable");
+}

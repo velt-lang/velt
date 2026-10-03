@@ -7,14 +7,19 @@
 
 use velt_sema::hir::{self, TyId, TyKind};
 
+use super::operand::proj;
 use super::{FnLower, Glue};
-use crate::vir::{BinOp, Operand, Place, Rvalue, Ty};
+use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
     /// `a === b` for the values of concrete type `ty` at two places (Bool operand).
     pub(super) fn same_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         if self.cx.is_object(ty) {
-            self.cx.note_identity(ty);
+            // Function and interface values keep their identity (a code / data pointer) when
+            // copied: no fact (one would box them).
+            if !self.cx.is_fn_or_dyn(ty) {
+                self.cx.note_identity(ty);
+            }
             return self.identity(a, b, ty);
         }
         match self.cx.kind(ty) {
@@ -34,8 +39,27 @@ impl FnLower<'_, '_> {
         let (x, y) = match self.cx.ty(ty) {
             // Class objects and counted boxes: the pointer is the object.
             Ty::Ptr => (Operand::Copy(a.clone()), Operand::Copy(b.clone())),
-            // Function and interface values: their first word (code / data pointer).
-            _ if self.cx.is_fn_or_dyn(ty) => return self.eq_values(a, b, ty),
+            // Interface values: their data pointer (the object). Function values: code and
+            // environment pointers both (closures of one arrow share the code). Compared here,
+            // not through `eq_values`: inside `same` glue (`same_mode`) that comes back to
+            // `same_values` for objects, without end.
+            _ if self.cx.is_fn_or_dyn(ty) => {
+                let words = match self.cx.kind(ty) {
+                    TyKind::Dyn(..) => 1,
+                    _ => 2,
+                };
+                let mut all: Option<Operand> = None;
+                for i in 0..words {
+                    let f = Proj::Field(i);
+                    let (x, y) = (Operand::Copy(proj(a, f.clone())), Operand::Copy(proj(b, f)));
+                    let eq = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y));
+                    all = Some(match all {
+                        None => eq,
+                        Some(p) => self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, p, eq)),
+                    });
+                }
+                return all.expect("ICE: a function or interface value has a first word");
+            }
             // A uniquely owned inline object: the address of its one home.
             _ => (self.addr(a.clone()), self.addr(b.clone())),
         };

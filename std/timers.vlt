@@ -10,7 +10,7 @@
 // so `velt dev` hot reload needs no special handling.
 //
 // An interval can't re-create its promise every tick without a stored closure, so it is pulled:
-// `const t = new Ticker(100); while (await t.tick()) { ... }`.
+// `const t = new Ticker(100); while (await t.tick()) { ... }`, or `for await (const n of t)`.
 
 import { AbortController, AbortSignal } from "velt:task";
 
@@ -102,7 +102,7 @@ export class TickerStop {
 // skipped, not burst: a `tick()` that is already late resolves at once, and the next one is
 // the first schedule point after that. A stop wakes a pending tick at once: its sleep races the
 // stop signal (velt:task), and the losing sleep is cancelled.
-export class Ticker {
+export class Ticker implements AsyncIterable<i64> {
   private periodMs: f64;
   private nextDue: f64;
   private control: AbortController = new AbortController();
@@ -127,6 +127,16 @@ export class Ticker {
     this.nextDue = next;
     const waitMs = due > now ? Math.ceil(due - now) as i64 : 0;
     return waitTick(waitMs, this.control.signal);
+  }
+
+  // `for await (const n of ticker)`: each tick as `tick()` waits for it, numbered from 1,
+  // until the ticker is stopped. Leaving the loop early does not stop the ticker.
+  async *[Symbol.asyncIterator](): AsyncIterator<i64> {
+    let n = 0;
+    while (await this.tick()) {
+      n++;
+      yield n;
+    }
   }
 
   // Stops the ticker (see `TickerStop.stop`).

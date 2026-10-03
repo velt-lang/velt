@@ -2,7 +2,8 @@
 //!
 //! Only diagnostics whose primary label lies in the document are shown on it (errors in an imported
 //! file appear when that file is open). Location-less diagnostics (`Span::DUMMY`, e.g. an unreadable
-//! prelude) are shown at the top of the document so they are not lost.
+//! prelude) are shown at the top of the document so they are not lost. The TypeScript-compatibility
+//! findings follow the compiler's ([`crate::ts_compat`]).
 
 use lsp_types::{DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString, Url};
 use velt_common::{Diagnostic, Severity, Span};
@@ -31,6 +32,12 @@ pub fn for_document(
             };
             Some(convert(analysis, d, range, uri_of))
         })
+        .chain(
+            analysis
+                .ts_compat
+                .iter()
+                .map(|f| crate::ts_compat::diagnostic(&index, f)),
+        )
         .collect()
 }
 

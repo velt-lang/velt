@@ -1,4 +1,5 @@
-//! `for` statements: C-style `for (init; cond; update)` and `for (const x of xs)`.
+//! `for` statements: C-style `for (init; cond; update)`, `for (const x of xs)` and
+//! `for await (const x of xs)`.
 //!
 //! Comma lists in the head (`for (let i = 0, j = n; i < j; i++, j--)`) have no AST node of
 //! their own; the parser desugars them into constructs the rest of the compiler knows:
@@ -17,15 +18,28 @@ use crate::ast::*;
 use crate::lexer::{Kw, Tok};
 
 impl<'a> Parser<'a> {
-    /// C-style `for (init; cond; update)` or `for (const x of xs)`.
+    /// C-style `for (init; cond; update)`, `for (const x of xs)` or `for await (const x of xs)`.
     pub(super) fn parse_for(&mut self) -> PResult<StmtKind> {
         let lo = self.cur_lo();
         self.bump(); // for
+        let await_span = self.at_kw(Kw::Await).then(|| self.cur_span());
+        if await_span.is_some() {
+            self.bump();
+        }
         self.expect(Tok::LParen)?;
         let init = match self.parse_for_init()? {
-            ForInit::Of(kind, pattern) => return self.finish_for_of(kind, pattern),
+            ForInit::Of(kind, pattern) => {
+                return self.finish_for_of(kind, pattern, await_span.is_some())
+            }
             ForInit::Stmts(stmts) => stmts,
         };
+        if let Some(span) = await_span {
+            self.error(
+                "`for await` needs `of`: write `for await (const x of source)`",
+                span,
+            );
+            return Err(Fail);
+        }
         let cond = if self.at(Tok::Semi) {
             None
         } else {
@@ -161,7 +175,12 @@ impl<'a> Parser<'a> {
         Ok(self.mk_expr(call, span))
     }
 
-    fn finish_for_of(&mut self, kind: VarKind, pattern: Pattern) -> PResult<StmtKind> {
+    fn finish_for_of(
+        &mut self,
+        kind: VarKind,
+        pattern: Pattern,
+        is_await: bool,
+    ) -> PResult<StmtKind> {
         let iter = self.parse_expr()?;
         self.expect(Tok::RParen)?;
         let body = self.parse_body()?;
@@ -170,6 +189,7 @@ impl<'a> Parser<'a> {
             pattern,
             iter,
             body,
+            is_await,
         })
     }
 }

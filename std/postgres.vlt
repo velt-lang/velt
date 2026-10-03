@@ -348,7 +348,7 @@ export struct CopyWriter {
 
 // The data side of `client.copyTo(sql)`, as it arrives: each `read()` returns what has been
 // received so far (whole rows in the text and CSV formats), null at the end.
-export struct CopyReader {
+export struct CopyReader implements AsyncIterable<string, PgError> {
   private handle: u64;
 
   // The next rows as text, or null at the end (then the reader is released).
@@ -359,6 +359,18 @@ export struct CopyReader {
       return null;
     }
     return chunk;
+  }
+
+  // `for await (const chunk of r)`: the text chunks `read()` returns, until the end. Leaving
+  // the loop early keeps the reader open: `close()` it.
+  async *[Symbol.asyncIterator](): AsyncIterator<string, PgError> {
+    while (true) {
+      const chunk = await this.read();
+      if (chunk == null) {
+        return;
+      }
+      yield chunk;
+    }
   }
 
   // The next bytes (the binary format), or null at the end (then the reader is released).

@@ -11,6 +11,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::time::Duration;
 
 const PRELUDE: &str = r#"
 #include <stdint.h>
@@ -23,6 +24,7 @@ void velt_rt_write_bool(uint32_t, uint8_t);
 void velt_rt_write_byte(uint32_t, uint8_t);
 void velt_rt_flush(void);
 void velt_rt_str_concat(const VeltStr*, const VeltStr*, VeltStr*);
+void velt_rt_str_append(VeltStr*, const VeltStr*);
 void velt_rt_str_from_f64(double, VeltStr*);
 void velt_rt_str_drop(VeltStr*);
 int32_t velt_rt_str_cmp(const VeltStr*, const VeltStr*);
@@ -47,6 +49,7 @@ const HELLO: &str = r#"
 int32_t velt_main(void) {
     VeltStr a = LIT("Hello, "), b = LIT("world"), c, f;
     velt_rt_str_concat(&a, &b, &c);
+    velt_rt_str_append(&c, &b);
     velt_rt_write_str(1, &c); velt_rt_write_byte(1, '\n');
     velt_rt_str_drop(&c);
     velt_rt_write_i64(1, -42); velt_rt_write_byte(1, ' ');
@@ -276,7 +279,7 @@ fn staticlib_links_and_runs() {
     let out = run(&exe);
     assert_eq!(
         text(&out.stdout),
-        "Hello, world\n-42 18446744073709551615 0.30000000000000004 1e+21 true 4611686018427387904\n1.5e-7\n"
+        "Hello, worldworld\n-42 18446744073709551615 0.30000000000000004 1e+21 true 4611686018427387904\n1.5e-7\n"
     );
     assert_eq!(text(&out.stderr), "to stderr\n");
     assert_eq!(out.status.code(), Some(3));
@@ -419,7 +422,7 @@ fn piped_output_is_flushed_when_workers_idle() {
         let _ = tx.send(read.map(|_| line));
     });
     let line = rx
-        .recv_timeout(std::time::Duration::from_secs(120))
+        .recv_timeout(Duration::from_secs(120))
         .expect("no output after 120 s: buffered output is not flushed when the workers idle")
         .unwrap();
     assert_eq!(line.trim_end(), "ready");
@@ -497,22 +500,36 @@ fn parse_stress_line(line: &str) -> (usize, usize) {
     (id, no)
 }
 
+/// Lines from 64 tasks on 8 workers arrive whole and in order per task, and piped output is
+/// written in large blocks: each run must stay under 250 ms of CPU time. It takes about 20 ms
+/// (debug runtime, also with every core busy); one write per line takes about 500 ms. CPU time,
+/// not wall-clock time, which on a loaded machine mostly measures waiting for a core (and on
+/// macOS includes the first launch's code-signature check, over a second).
 #[test]
 fn concurrent_tasks_never_interleave_within_a_line() {
+    use std::io::Read;
     let Some(exe) = build("stdout_stress", STDOUT_STRESS) else {
         eprintln!("NOTE: no C toolchain found; stdout stress check skipped");
         return;
     };
     for _ in 0..3 {
         let start = std::time::Instant::now();
-        let out = Command::new(&exe)
+        let mut child = Command::new(&exe)
             .env("VELT_THREADS", "8")
             .stdout(std::process::Stdio::piped())
-            .output()
+            .spawn()
             .unwrap();
+        let mut stdout = Vec::new();
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_end(&mut stdout)
+            .unwrap();
+        let (status, cpu) = wait_with_cpu_time(child);
         let elapsed = start.elapsed();
-        assert!(out.status.success());
-        let text = text(&out.stdout);
+        assert!(status.success(), "{status}");
+        let text = text(&stdout);
         let mut next = vec![0usize; 64];
         let mut count = 0;
         for line in text.lines() {
@@ -523,9 +540,70 @@ fn concurrent_tasks_never_interleave_within_a_line() {
         }
         assert_eq!(count, 64_000);
         eprintln!(
-            "stdout stress: 64000 lines, {} bytes in {elapsed:?}",
+            "stdout stress: 64000 lines, {} bytes in {elapsed:?} ({cpu:?} CPU)",
             text.len()
         );
-        assert!(elapsed.as_secs() < 5, "stdout stress too slow: {elapsed:?}");
+        assert!(
+            cpu < Duration::from_millis(250),
+            "stdout stress too slow: {cpu:?} CPU"
+        );
     }
+}
+
+/// Waits for `child` and returns its exit status and the CPU time it used (user + system).
+#[cfg(unix)]
+fn wait_with_cpu_time(child: std::process::Child) -> (std::process::ExitStatus, Duration) {
+    use std::os::unix::process::ExitStatusExt;
+    let pid = child.id() as libc::pid_t;
+    let mut status = 0;
+    // SAFETY: a zeroed `rusage` is valid; `wait4` writes the status and usage of our child.
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    while unsafe { libc::wait4(pid, &mut status, 0, &mut usage) } != pid {
+        let e = std::io::Error::last_os_error();
+        assert_eq!(e.kind(), std::io::ErrorKind::Interrupted, "wait4: {e}");
+    }
+    let time = |t: libc::timeval| Duration::new(t.tv_sec as u64, t.tv_usec as u32 * 1000);
+    (
+        std::process::ExitStatus::from_raw(status),
+        time(usage.ru_utime) + time(usage.ru_stime),
+    )
+}
+
+/// Waits for `child` and returns its exit status and the CPU time it used (user + kernel).
+#[cfg(windows)]
+fn wait_with_cpu_time(mut child: std::process::Child) -> (std::process::ExitStatus, Duration) {
+    use std::os::windows::io::AsRawHandle;
+    /// `FILETIME`: 100 ns ticks.
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetProcessTimes(
+            process: *mut std::ffi::c_void,
+            creation: *mut FileTime,
+            exit: *mut FileTime,
+            kernel: *mut FileTime,
+            user: *mut FileTime,
+        ) -> i32;
+    }
+    let status = child.wait().unwrap();
+    let mut t = [FileTime::default(); 4];
+    let [c, e, k, u] = &mut t;
+    // SAFETY: the handle stays open until `child` drops; the four outputs are writable.
+    let ok = unsafe { GetProcessTimes(child.as_raw_handle(), c, e, k, u) };
+    assert_ne!(
+        ok,
+        0,
+        "GetProcessTimes: {}",
+        std::io::Error::last_os_error()
+    );
+    let ticks = |t: FileTime| (t.high as u64) << 32 | t.low as u64;
+    (
+        status,
+        Duration::from_nanos((ticks(t[2]) + ticks(t[3])) * 100),
+    )
 }

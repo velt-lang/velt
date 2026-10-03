@@ -1,0 +1,21 @@
+// `as` to an integer type converts in Velt; TypeScript's `as` never changes a value. No fix:
+// `Math.trunc(x)` is a `number`, and code that expects an integer would need its type changed.
+
+export function whole(x: number): number {
+  const n = x as i64; //~ int-cast
+  const m = x as i32; //~ int-cast
+  return (n as number) + (m as number);
+}
+
+function half(n: i64): i64 { //~ velt-number-type velt-number-type
+  return n / 2;
+}
+
+export function typed(x: number): number {
+  const i: i64 = x as i64; //~ velt-number-type int-cast
+  return half(x as i64) as number; //~ int-cast
+}
+
+export function same(x: number): number {
+  return x as number;
+}

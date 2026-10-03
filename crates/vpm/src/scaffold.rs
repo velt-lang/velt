@@ -4,9 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::manifest::{
-    is_valid_package_name, Manifest, Package, DEFAULT_ENTRY, LIB_ENTRY, MANIFEST_FILE,
-};
+use crate::manifest::{Manifest, Package, DEFAULT_ENTRY, LIB_ENTRY, MANIFEST_FILE};
 
 const MAIN_TEMPLATE: &str = "function main() {\n  console.log(\"Hello, world!\");\n}\n";
 const LIB_TEMPLATE: &str =
@@ -79,18 +77,14 @@ pub fn manifest_text_with(name: &str, description: Option<&str>) -> String {
         paths: BTreeMap::new(),
         native: None,
         jsx: None,
+        ts_compat: vec![],
     }
     .to_vlt()
 }
 
 /// `Err` with an actionable message unless `name` is a valid package name.
 pub fn check_name(name: &str) -> Result<(), String> {
-    if is_valid_package_name(name) {
-        return Ok(());
-    }
-    Err(format!(
-        "invalid package name `{name}` (use lowercase letters, digits, `-` and `_`, starting with a letter)"
-    ))
+    crate::manifest::check_name(name)
 }
 
 /// Create package `<parent>/<name>`; `lib` selects `src/lib.vlt` instead of `src/main.vlt`.

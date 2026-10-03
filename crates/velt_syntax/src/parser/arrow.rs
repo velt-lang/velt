@@ -42,6 +42,7 @@ impl<'a> Parser<'a> {
                 self.bump();
             }
             let name = self.take_ident();
+            self.check_binding_name(&name);
             self.bump(); // =>
             let params = vec![ArrowParam {
                 name,
@@ -139,7 +140,7 @@ impl<'a> Parser<'a> {
         let mut params = Vec::new();
         while !self.at(Tok::RParen) {
             self.reject_mut_modifier();
-            let name = self.parse_ident()?;
+            let name = self.parse_binding_ident()?;
             let optional = self.eat(Tok::Question);
             let ty = if self.eat(Tok::Colon) {
                 Some(self.parse_type()?)

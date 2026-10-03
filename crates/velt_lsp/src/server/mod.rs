@@ -3,6 +3,8 @@
 //! Diagnostics are debounced: an edit schedules its document (and every other open document, which
 //! may import it) for analysis [`DEBOUNCE`] later; further edits push the deadline back. A request
 //! on a document with a pending analysis runs it first, so answers always match the latest text.
+//! Closing a `package.vlt`, a manifest changing on disk and a folder appearing or disappearing
+//! schedule every open document too: they decide which files are in `tsCompat` folders.
 
 mod features;
 mod requests;
@@ -25,7 +27,7 @@ use crate::analysis::{self, Analysis};
 use crate::disk_index::DiskIndex;
 use crate::documents::{self, Documents};
 use crate::registry::RegistryData;
-use crate::{diagnostics, manifest, workspace_symbols, ProgramLoader};
+use crate::{diagnostics, manifest, ts_compat, workspace_symbols, ProgramLoader};
 
 /// Quiet time after an edit before the document is re-analyzed.
 const DEBOUNCE: Duration = Duration::from_millis(150);
@@ -56,6 +58,7 @@ pub fn run(connection: &Connection, loader: &dyn ProgramLoader) -> Result<(), St
         next_result_id: 0,
         disk_symbols: DiskIndex::default(),
         registry: RegistryData::default(),
+        ts_folders: Default::default(),
     }
     .main_loop()
 }
@@ -78,6 +81,8 @@ struct Server<'a> {
     disk_symbols: DiskIndex,
     /// Package indexes and searches for `package.vlt`, fetched in the background.
     registry: RegistryData,
+    /// The packages' `tsCompat` folders (cleared when folders appear or disappear on disk).
+    ts_folders: ts_compat::FolderCache,
 }
 
 /// Id of the request registering the file watcher.
@@ -106,6 +111,27 @@ fn watch_files(connection: &Connection, init: &serde_json::Value) {
         let req = Request::new(id, RegisterCapability::METHOD.into(), params);
         let _ = connection.sender.send(req.into());
     }
+}
+
+/// Whether a watched-file event for `path` can change which files are in `tsCompat` folders, or
+/// which folders an open manifest misses: a manifest saved elsewhere, or a folder created or
+/// deleted in a package (a deleted path is gone, so anything but a source file counts). Paths
+/// the source walk never enters (`.git/`, `node_modules/`, `target/`, …) don't, which keeps a
+/// busy `.git/` from re-analyzing the open documents.
+pub(crate) fn affects_packages(path: &Path, created: bool, deleted: bool) -> bool {
+    if manifest::is_manifest(path) {
+        return true;
+    }
+    let Some(root) = path.parent().and_then(vpm::manifest::find_package_root) else {
+        return false;
+    };
+    let skipped = path.strip_prefix(&root).map_or(true, |rel| {
+        rel.components().any(|c| {
+            let name = c.as_os_str().to_string_lossy();
+            name.starts_with('.') || vpm::sources::SKIPPED_DIRS.contains(&name.as_ref())
+        })
+    });
+    !skipped && ((created && path.is_dir()) || (deleted && !vpm::sources::is_source_file(path)))
 }
 
 impl Server<'_> {
@@ -182,10 +208,17 @@ impl Server<'_> {
             }
             DidChangeWatchedFiles::METHOD => {
                 let p: lsp_types::DidChangeWatchedFilesParams = serde_json::from_value(n.params)?;
+                let mut packages_changed = false;
                 for change in p.changes {
                     let path = documents::uri_to_path(&change.uri);
                     let deleted = change.typ == FileChangeType::DELETED;
                     self.disk_symbols.changed(&self.roots, &path, deleted);
+                    let created = change.typ == FileChangeType::CREATED;
+                    packages_changed |= affects_packages(&path, created, deleted);
+                }
+                if packages_changed {
+                    self.ts_folders.clear();
+                    self.schedule_open();
                 }
             }
             DidCloseTextDocument::METHOD => {
@@ -195,7 +228,12 @@ impl Server<'_> {
                 self.analyses.remove(&uri);
                 self.pending.remove(&uri);
                 self.sent_tokens.remove(&uri);
+                let closed_manifest = manifest::is_manifest(&documents::uri_to_path(&uri));
                 self.publish(uri, vec![], None);
+                if closed_manifest {
+                    // Its unsaved text no longer counts: the file on disk does.
+                    self.schedule_open();
+                }
             }
             _ => {}
         }
@@ -209,6 +247,15 @@ impl Server<'_> {
         self.pending.insert(uri.clone(), due);
         for other in self.docs.uris() {
             self.pending.entry(other).or_insert(due + DEBOUNCE);
+        }
+    }
+
+    /// Schedule every open document for analysis after [`DEBOUNCE`] (a package's manifest or
+    /// folders changed under them), keeping earlier deadlines.
+    fn schedule_open(&mut self) {
+        let due = Instant::now() + DEBOUNCE;
+        for uri in self.docs.uris() {
+            self.pending.entry(uri).or_insert(due);
         }
     }
 
@@ -249,7 +296,8 @@ impl Server<'_> {
             }
             return;
         }
-        let analysis = analysis::analyze(self.loader, &path, &self.docs.overlay());
+        let overlay = self.docs.overlay();
+        let analysis = analysis::analyze(self.loader, &path, &overlay, &mut self.ts_folders);
         let diags = diagnostics::for_document(&analysis, &|p| self.uri_of(p));
         self.analyses.insert(uri.clone(), analysis);
         self.publish(uri.clone(), diags, Some(version));

@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use velt_sema::hir::{self, DefId, LocalId, PassMode, TyId};
 
-use super::{AsyncInfo, DROP_BIT};
+use super::{AsyncInfo, CLOSE_BIT, DROP_BIT};
 use crate::lower::closure::ENV_HEADER;
 use crate::lower::operand::proj;
 use crate::lower::{cint, ice, unit, Cx, FnLower};
@@ -42,6 +42,24 @@ impl<'c, 'h> FnLower<'c, 'h> {
         def: DefId,
         targs: &[TyId],
     ) -> Function {
+        let (mut lw, params, info, s, _) = Self::ctor_state(cx, def, targs, false);
+        let form = lw.value_future(def, targs, &info, s, false);
+        let fut = lw.box_future(form);
+        lw.terminate(Terminator::Return(fut));
+        let sym = lw.cx.instance_symbol(&lw.cx.fn_def(def).name, targs);
+        lw.finish(sym, params, Ty::Ptr)
+    }
+
+    /// A constructor of `def<targs>`'s state machine (async function or generator) with the
+    /// ordinary calling convention: its VIR params, the layout, a local holding the initial
+    /// state built from the arguments, and (with `out`) the trailing out-pointer param, which
+    /// the caller adds to the params.
+    pub(in crate::lower) fn ctor_state(
+        cx: &'c mut Cx<'h>,
+        def: DefId,
+        targs: &[TyId],
+        out: bool,
+    ) -> (Self, Vec<Ty>, AsyncInfo, Local, Option<Local>) {
         let f = cx.fn_def(def);
         let info = cx
             .async_info(def, targs)
@@ -74,6 +92,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             });
             incoming.push(l.map(|l| (l, vt, ty, p.mode)));
         }
+        let out = out.then(|| lw.new_local(Ty::Ptr, Some("ret.out".into())));
         let mut vals = vec![];
         for (p, inc) in f.params.iter().zip(incoming) {
             vals.push(match (caps.get(&p.local), inc, env) {
@@ -86,11 +105,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let s = lw.temp(Ty::Agg(info.state));
         lw.init_state(&info, &Place::local(s), vals);
-        let form = lw.value_future(def, targs, &info, s, false);
-        let fut = lw.box_future(form);
-        lw.terminate(Terminator::Return(fut));
-        let sym = lw.cx.instance_symbol(&f.name, targs);
-        lw.finish(sym, params, Ty::Ptr)
+        (lw, params, info, s, out)
     }
 
     /// Capture `k` of async closure `def`, taken from the environment for the state.
@@ -116,6 +131,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 }
             },
             PassMode::Copy => Operand::Copy(slot),
+            // A resource that cannot be copied is shared with the state instead (#122): the
+            // call runs on the task that owns the environment, and a call spawned through a
+            // function value works on a copy of the closure made for the task (callee.rs
+            // `call_indirect`), whose transfer rejects a resource still referenced here.
+            PassMode::Owned if self.cx.uncopyable(ty) => self.share_value(Operand::Copy(slot), ty),
             PassMode::Owned => self.clone_value(Operand::Copy(slot), ty),
         })
     }
@@ -147,11 +167,31 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
-    /// `f$drop(state)`: cancel through the poll function's cancel blocks.
+    /// [`Work::AsyncDrop`]: set `DROP_BIT` in the tag and run the poll function.
     pub(in crate::lower) fn build_async_drop(
         cx: &'c mut Cx<'h>,
         def: DefId,
         targs: &[TyId],
+    ) -> Function {
+        Self::build_tag_bit(cx, def, targs, DROP_BIT, "drop")
+    }
+
+    /// [`Work::AsyncCloseStart`]: set `CLOSE_BIT` in the tag; the closer then polls.
+    pub(in crate::lower) fn build_close_start(
+        cx: &'c mut Cx<'h>,
+        def: DefId,
+        targs: &[TyId],
+    ) -> Function {
+        Self::build_tag_bit(cx, def, targs, CLOSE_BIT, "close")
+    }
+
+    /// `f$<what>(state)`: set `bit` in the tag; for `DROP_BIT` also run the poll function.
+    fn build_tag_bit(
+        cx: &'c mut Cx<'h>,
+        def: DefId,
+        targs: &[TyId],
+        bit: i128,
+        what: &str,
     ) -> Function {
         let info = cx
             .async_info(def, targs)
@@ -165,23 +205,21 @@ impl<'c, 'h> FnLower<'c, 'h> {
         };
         let t = lw.rvalue_temp(
             Ty::U32,
-            Rvalue::Binary(
-                BinOp::BitOr,
-                Operand::Copy(tag.clone()),
-                cint(DROP_BIT, Ty::U32),
-            ),
+            Rvalue::Binary(BinOp::BitOr, Operand::Copy(tag.clone()), cint(bit, Ty::U32)),
         );
         lw.assign(tag, Rvalue::Use(t));
-        let d = lw.temp(Ty::U32);
-        let args = vec![Operand::Copy(Place::local(st)), cint(0, Ty::Ptr)];
-        lw.call(
-            vir::Callee::Func(info.poll),
-            args,
-            Some(Place::local(d)),
-            false,
-        );
+        if bit == DROP_BIT {
+            let d = lw.temp(Ty::U32);
+            let args = vec![Operand::Copy(Place::local(st)), cint(0, Ty::Ptr)];
+            lw.call(
+                vir::Callee::Func(info.poll),
+                args,
+                Some(Place::local(d)),
+                false,
+            );
+        }
         lw.terminate(Terminator::Return(unit()));
-        let sym = format!("{}$drop", lw.cx.instance_symbol(&name, targs));
+        let sym = format!("{}${what}", lw.cx.instance_symbol(&name, targs));
         lw.finish(sym, vec![Ty::Ptr], Ty::Unit)
     }
 

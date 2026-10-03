@@ -3,8 +3,9 @@
 //! and std are copied into a temp prefix, then `velt doctor` and `velt run` run from there.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
+mod no_window;
 mod test_dir;
 
 const RUNTIME_LIB: &str = if cfg!(windows) {
@@ -65,7 +66,7 @@ fn install(root: &Path) -> Option<PathBuf> {
 }
 
 fn velt(prefix: &Path, cwd: &Path, home: &Path, args: &[&str]) -> Output {
-    Command::new(prefix.join("bin").join(EXE))
+    crate::no_window::command(prefix.join("bin").join(EXE))
         .args(args)
         .current_dir(cwd)
         .env("VELT_HOME", home)

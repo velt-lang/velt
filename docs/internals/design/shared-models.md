@@ -1,8 +1,8 @@
 # Design: data models shared with TypeScript
 
-Status: decided (issue #326, "Blockers for shared models"; answers #61). The maintainer's
-decisions are in [Decisions](#decisions). Steps 1 (`readonly` fields in object types) and 2
-(field-only interfaces) are implemented; step 3 (utility types) is not yet.
+Status: implemented (issue #326, "Blockers for shared models"; answers #61). The maintainer's
+decisions are in [Decisions](#decisions). All three steps are implemented: `readonly` fields in
+object types, field-only interfaces, and utility types.
 
 ## Problem
 
@@ -51,8 +51,13 @@ types with the same fields, and stays the same object: like `readonly` views, it
 the anonymous object type of its fields before lowering (`velt_sema::readonly`), and the
 conversion is an `Upcast`. Two limits:
 
-- **Recursion through a direct field** (`next?: Node`) has infinite size, as for a struct: an
-  error, tracked in #376. Recursion through an array (`children: Node[]`) works.
+- **Recursion through a direct field** (`next?: Node`) works (#376): lowering stores an object
+  type that reaches itself through inline fields (nested objects, nullable values, tuples,
+  union payloads) as a counted box in every instance (`velt_vir::lower::boxing`, the
+  `recursive` set), so the field holds a pointer. Sema's infinite-size check stops at
+  field-only interfaces. `JSON.stringify` tracks the boxes being written and panics on a cycle
+  ("converting circular structure to JSON", as JavaScript throws). Cycles are reference
+  cycles, so they leak like cyclic class graphs do.
 - **A generic interface's instance** (`Pair<string, number>`) does not convert to the object
   type it spells out (`{ first: string; second: number }`): after erasure they are different
   definitions. The same holds for generic type aliases today; the error says so.
@@ -125,14 +130,27 @@ struct, whose public fields are used) and gives a new object type:
 | `Omit<T, K>` | every field except those named in `K` |
 
 - **`K`** is a string literal type or a union of them (`"id" | "email"`), also through an alias.
-  A name that is not a field of `T` is an error for both `Pick` and `Omit`. TypeScript's `Omit`
-  accepts any string; catching typos is worth the difference.
+  In `Pick`, a name that is not a field of `T` is an error (TypeScript's TS2344). In `Omit` it is
+  a warning with a "did you mean": TypeScript accepts any key there, and generic aliases rely
+  on it (`type WithoutChildren<P> = Omit<P, "children">` used on a type without `children`).
+  This was an error at first; #418 aligned it with TypeScript.
 - **`Required`:** in Velt `a?: T` *is* `a: T | null` (documented: "`a?: T` is `T | null`
   everywhere"), so `Required` makes every nullable field non-null, also one written
   `a: T | null`. TypeScript only changes `?` fields. This is the documented difference.
 - **Results are ordinary object types:** they intern like any other, so
   `Pick<User, "name">` and `{ name: string }` are the same type, and they serialize to JSON.
 - **Name lookup:** a user type named `Partial` (or the others) wins, as for every built-in.
+- **Order:** types are resolved in phases, and a field's type is resolved while declarations
+  are still being shaped. An operator in a field type shapes the type it reads first (and the
+  interfaces it extends or its base classes), so declaration order doesn't matter (#418). The
+  one case left is a type that needs its own fields through an operator, directly or through
+  other types (`interface Node { patches: Partial<Node>[] }`): an error, where TypeScript
+  accepts it. Before interfaces are flattened, a field-only interface's inherited fields are
+  read from its parents directly.
+- **Generic aliases:** an alias is expanded at each use, so an operator in its body
+  (`type WithoutChildren<P> = Omit<P, "children">`) reads the alias's type arguments at that
+  use. Inside a generic function, where the argument is itself a type parameter, it is still
+  the #350 error.
 - **Not in this step:** applying an operator to a type parameter (`Partial<T>` inside a generic
   function). Velt resolves types eagerly and has no deferred type evaluation, so this is an
   error: ```Partial` needs a concrete object type; `T` is a type parameter``. It is the main
@@ -160,7 +178,8 @@ struct, whose public fields are used) and gives a new object type:
 
 - `an `Admin` instance is not a `User` value`, with the notes above.
 - ``cannot assign to `id`: it is a readonly field`` (existing wording).
-- ```Pick`: `emial` is not a field of `User` `` (with "did you mean").
+- ``` `User` has no field `emial` (in `Pick`) ``` (with "did you mean"); in `Omit`, the same text
+  as a warning.
 - ```Partial` needs a concrete object type; `T` is a type parameter``.
 - ``a type argument of `Omit` must be a string literal or a union of them``.
 - The existing ``does not declare `implements I` `` note stays for interfaces with methods, and
@@ -181,12 +200,15 @@ Each step updates `docs/reference/classes.md`, `docs/reference/types.md` and
 
 1. **A class instance does not convert to a field-only interface:** an error with a fix-it, not
    a silent copy (`implements` still checks the fields).
-2. **A key that is not a field is an error in both `Pick` and `Omit`,** stricter than
-   TypeScript's `Omit`, to catch typos.
+2. **A key that is not a field is an error in `Pick` and a warning in `Omit`.** First decided as
+   an error in both, to catch typos; #418 (after the #395 review) made `Omit` match TypeScript,
+   which generic aliases need. `Required` clearing only `?` waits for `?:` as a flag (P2 in
+   #395).
 3. **Utility types on a type parameter come later,** with `keyof`, in their own design: #350.
 4. **A field-only interface is a named object type** (so it can be recursive through arrays and
    messages name it), converting to and from object types of the same layout.
-5. **Recursion through a direct field stays an error for now:** automatic boxing is #376.
+5. **Recursion through a direct field** was an error at first; #376 boxes recursive object
+   types automatically.
 
 ## Open questions
 

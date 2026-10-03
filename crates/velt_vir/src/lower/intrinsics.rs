@@ -14,6 +14,26 @@ impl FnLower<'_, '_> {
     pub(super) fn intrinsic(&mut self, i: Intrinsic, args: &[hir::Expr], ty: TyId) -> Operand {
         use Intrinsic as I;
         match (i, args) {
+            (I::Yield, [a]) => self.yield_value(a),
+            (I::GeneratorResume, [g]) => self.gen_resume(g),
+            (I::GeneratorValue, [g]) => self.gen_value(g),
+            (I::GeneratorReturn, [g]) => self.gen_return(g),
+            (I::AsyncGeneratorValue, [g]) => self.gen_value(g),
+            (I::AsyncGeneratorDispose, [g]) => self.gen_return(g),
+            (I::AsyncGeneratorResume | I::AsyncGeneratorReturn, _) => {
+                crate::lower::ice("async generator resume/return outside `await`")
+            }
+            (I::GeneratorEmbed, [_]) => {
+                let e = hir::Expr {
+                    kind: hir::ExprKind::Call {
+                        callee: hir::Callee::Intrinsic(i),
+                        args: args.to_vec(),
+                    },
+                    ty,
+                    span: args[0].span,
+                };
+                self.gen_embed_value(&e)
+            }
             (I::Print, _) => self.print(1, args),
             (I::PrintErr, _) => self.print(2, args),
             (I::ToString, [a]) => self.stringify(a, ty),
@@ -64,6 +84,16 @@ impl FnLower<'_, '_> {
                 let t = self.sub(a.ty);
                 let c = self.clone_value(v, t);
                 self.own_value(c, t)
+            }
+            (I::Transfer, [a]) => {
+                let v = self.consume(a);
+                let t = self.sub(a.ty);
+                let v = self.transfer_value(v, t);
+                self.own_value(v, t)
+            }
+            (I::NeedsTransfer, [a]) => {
+                let t = self.sub(a.ty);
+                Operand::Const(crate::vir::Const::Bool(self.cx.holds_counted(t)), Ty::Bool)
             }
             (I::Share, [a]) => {
                 let v = self.expr(a);

@@ -68,6 +68,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             transfer_args: false,
             transfer_call: false,
             same_mode: false,
+            ctor_self: None,
+            init_stack: vec![],
         };
         let entry = lw.new_block();
         lw.live[entry.0 as usize] = true;
@@ -82,11 +84,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::Thunk(kind, def, targs) => Self::build_thunk(cx, *kind, *def, targs),
             Work::EnvDrop(def, targs) => Self::build_env_drop(cx, *def, targs),
             Work::EnvClone(def, targs) => Self::build_env_clone(cx, *def, targs),
+            Work::EnvTransfer(def, targs) => Self::build_env_transfer(cx, *def, targs),
             Work::Oob(signed) => Self::build_oob(cx, *signed),
             Work::ArrayGrow => Self::build_array_grow(cx),
             Work::Main => Self::build_main(cx),
             Work::Poll(def, targs) => Self::build_poll(cx, *def, targs),
             Work::AsyncDrop(def, targs) => Self::build_async_drop(cx, *def, targs),
+            Work::AsyncCloseStart(def, targs) => Self::build_close_start(cx, *def, targs),
             Work::ValuePoll(def, targs) => Self::build_value_poll(cx, *def, targs),
             Work::ValueDrop(def, targs) => Self::build_value_drop(cx, *def, targs),
             Work::AllPoll(t) => Self::build_all_poll(cx, *t),
@@ -97,6 +101,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::WidenDrop(from, to) => Self::build_widen_drop(cx, *from, *to),
             Work::HandlerInit(def, targs) => Self::build_handler_init(cx, *def, targs),
             Work::Unclaimed(t) => Self::build_unclaimed(cx, *t),
+            Work::Init(t, e) => Self::build_init(cx, *t, *e),
+            Work::GenNew(def, targs) => Self::build_gen_new(cx, *def, targs),
+            Work::GenFree(def, targs) => Self::build_gen_free(cx, *def, targs),
         }
     }
 
@@ -135,6 +142,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let hir::Def::Fn(f) = hir_prog.def(def) else {
             ice("function instance is not a Def::Fn")
         };
+        if f.is_generator {
+            return Self::build_gen_fn(cx, def, targs);
+        }
         if f.is_async {
             return Self::build_async_new(cx, def, targs);
         }
@@ -144,6 +154,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let ret = lw.sub(f.ret);
         lw.ret_ty = Some(ret);
         lw.throws = lw.cx.fn_throws(f, targs);
+        lw.ctor_self = lw.ctor_class(def, f);
         let scan = FlagScan::run(hir_prog, &f.body);
         lw.ref_bindings = scan.ref_bindings.iter().copied().collect();
         let (params, attrs) = lw.declare_locals(def, f);
@@ -245,6 +256,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 let droppable = cell || vir.is_some() && !by_ref && self.cx.needs_drop(ty);
                 let mut li = LInfo::new(vir, ty, indirect, droppable, LState::Uninit);
                 li.cell = cell;
+                li.in_cell = cell;
                 info[i] = Some(li);
             }
         }
@@ -289,10 +301,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.cancel_before_start(f);
         }
         self.push_scope(ScopeKind::Block);
+        self.ctor_entry_inits();
         for s in &f.body.block.stmts {
             self.stmt(s);
         }
-        let returns_value = !self.returns_unit();
+        // A generator's body yields its values and returns nothing.
+        let returns_value = !self.returns_unit() && !self.in_generator();
         if let Some(v) = &f.body.block.value {
             // A trailing value expression of a function body is its return value.
             self.push_scope(ScopeKind::Temps);
@@ -386,6 +400,8 @@ impl LInfo {
             moved_fields: vec![],
             zero_parts: false,
             cell: false,
+            in_cell: false,
+            gen: None,
         }
     }
 }

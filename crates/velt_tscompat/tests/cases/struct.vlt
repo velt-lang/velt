@@ -1,0 +1,17 @@
+// `struct` declarations and named object literals are Velt-only.
+
+export struct Point {
+  //~^ struct
+  x: number;
+  y: number;
+}
+
+export function origin(): Point {
+  return Point { x: 0, y: 0 }; //~ struct
+}
+
+export type Size = { w: number; h: number };
+
+export function unit(): Size {
+  return { w: 1, h: 1 };
+}

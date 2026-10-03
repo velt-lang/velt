@@ -1,0 +1,86 @@
+// Field initializers and constructors run in JavaScript's order: a class's initializers run
+// once its base class is constructed (after `super(...)` returns, or after the inherited
+// constructor with an implicit one), before the rest of its constructor body.
+
+function log(s: string): i64 {
+  console.log(s);
+  return 1;
+}
+
+class A {
+  a: i64 = log("A field");
+  constructor(n: i64) {
+    log(`A ctor ${n}`);
+  }
+}
+
+// Implicit constructor: A's constructor runs, then B's initializers.
+class B extends A {
+  b: i64 = log("B field");
+}
+
+class C extends B {
+  c1: i64 = log("C field 1");
+  c2: i64 = log("C field 2");
+  constructor() {
+    super(log("C super arg"));
+    log("C ctor");
+  }
+}
+
+// Implicit constructor below an explicit one.
+class D extends C {
+  d: i64 = log("D field");
+}
+
+// No constructor anywhere in the chain.
+class P {
+  p: i64 = log("P field");
+}
+
+class Q extends P {
+  q: i64 = log("Q field");
+}
+
+// A constructor whose base class has none.
+class R extends P {
+  r: i64 = log("R field");
+  constructor() {
+    super();
+    log("R ctor");
+  }
+}
+
+// Generic classes: the initializers see the instance's type arguments.
+class Box<T> {
+  items: T[] = [];
+  constructor(first: T) {
+    log("Box ctor");
+    this.items.push(first);
+  }
+}
+
+class Pair<T> extends Box<T> {
+  count: usize = log("Pair field") as usize;
+  constructor(a: T, b: T) {
+    super(a);
+    this.items.push(b);
+    this.count = this.items.length;
+  }
+}
+
+function main() {
+  console.log("-- new B");
+  console.log(new B(1));
+  console.log("-- new C");
+  console.log(new C());
+  console.log("-- new D");
+  console.log(new D());
+  console.log("-- new Q");
+  console.log(new Q());
+  console.log("-- new R");
+  console.log(new R());
+  console.log("-- new Pair");
+  const p = new Pair<string>("x", "y");
+  console.log(p.items, p.count);
+}

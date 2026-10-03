@@ -30,7 +30,8 @@ fn top_level_keys_not_yet_written() {
             "dependencies",
             "paths",
             "jsx",
-            "native"
+            "native",
+            "tsCompat"
         ]
     );
     // While typing a key, including when the file does not parse.

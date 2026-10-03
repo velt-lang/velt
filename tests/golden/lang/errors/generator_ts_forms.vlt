@@ -1,0 +1,73 @@
+// TypeScript generator forms Velt rejects, each with an error saying why and what to write:
+// using the value of `yield` (`next(value)`) or `yield*` (a return value), `next(value)`,
+// `throw(e)`, a missing result type, `return value`, and `yield`, `throw` or `break` in a
+// `finally` block.
+function* inner(): Generator<i64> {
+  yield 1;
+}
+
+function* a(): Generator<i64> {
+  const x = yield 1;
+  console.log(x);
+}
+
+function* b(): Generator<i64> {
+  const r = yield* inner();
+}
+
+function* c(): Generator<i64> {
+  let y = 0;
+  y = yield 2;
+  take(yield 3);
+}
+
+function take(x: i64) {}
+
+// Statement position, also as branches of a conditional: fine.
+function* d(flag: boolean): Generator<i64> {
+  flag ? yield 1 : yield 2;
+  (yield 3);
+}
+
+class Boom extends Error {}
+
+function main(): void {
+  const it = inner();
+  it.next(5);
+  it.throw(new Boom("x"));
+}
+
+function* noType() {
+  yield 1;
+}
+
+function* returns(): Generator<i64> {
+  yield 1;
+  return 2;
+}
+
+function* yieldInFinally(): Generator<i64> {
+  try {
+    yield 1;
+  } finally {
+    yield 2;
+  }
+}
+
+function* throwInFinally(): Generator<i64> {
+  try {
+    yield 1;
+  } finally {
+    throw new Boom("cleanup");
+  }
+}
+
+function* breakInFinally(): Generator<i64> {
+  while (true) {
+    try {
+      yield 1;
+    } finally {
+      break;
+    }
+  }
+}

@@ -19,6 +19,8 @@ pub(super) struct Trailer {
     pub live: u64,
     /// A started promise's state shared with its driver (`Rc::into_raw`), null while lazy.
     pub started: *const std::cell::RefCell<super::local::Started>,
+    /// Transfers the result in place as the state finishes (`velt_rt_fut_transfer`).
+    pub transfer: Option<super::all::ResultDropFn>,
 }
 
 /// The trailer's size rounded up to the allocation alignment.
@@ -65,8 +67,16 @@ unsafe extern "C" fn boxed_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     let r = (t.poll)(state(f), cx);
     if r == READY {
         t.live = 0;
+        run_transfer(f);
     }
     r
+}
+
+/// Apply boxed future `f`'s result transfer, if it has one (its state just finished).
+pub(super) unsafe fn run_transfer(f: *mut VeltFut) {
+    if let Some(t) = (*trailer(f)).transfer {
+        t(state(f));
+    }
 }
 
 unsafe extern "C" fn boxed_drop(f: *mut VeltFut) {
@@ -101,6 +111,7 @@ pub unsafe extern "C" fn velt_rt_fut_box(
         state_size,
         live: 1,
         started: std::ptr::null(),
+        transfer: None,
     });
     let f = base.add(TRAILER) as *mut VeltFut;
     f.write(VeltFut::new(boxed_poll, boxed_drop));

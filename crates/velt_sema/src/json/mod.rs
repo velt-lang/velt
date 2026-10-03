@@ -205,6 +205,18 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
     if parse && report_restricted_ctor(cx, t, bad, span) {
         return true;
     }
+    if matches!(cx.ty.kind(bad), TyKind::Adt(d, _) if cx.is_generator_class(*d)) {
+        let what = match t == bad {
+            true => format!("`{tn}` is a generator"),
+            false => format!("`{tn}` contains the generator `{bn}`"),
+        };
+        cx.error(
+            Diagnostic::error(format!("cannot convert to or from JSON: {what}"), span).with_note(
+                "TypeScript allows this (`JSON.stringify` writes a generator as `{}`); Velt doesn't because a generator is a paused computation, not data; write the values it yields instead (collect them into an array with `for...of`)",
+            ),
+        );
+        return true;
+    }
     let private = private_field(cx, bad);
     let what = match (&private, t == bad) {
         (Some((field, _)), true) => {

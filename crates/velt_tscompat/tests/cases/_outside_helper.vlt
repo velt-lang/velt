@@ -1,0 +1,5 @@
+// Imported by `outside_import.vlt`; not a case itself (a leading `_`).
+
+export function helper(x: number): number {
+  return x + 1;
+}

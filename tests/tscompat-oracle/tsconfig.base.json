@@ -1,0 +1,17 @@
+{
+  "//": "The baseline of docs/internals/design/tsx.md \"The common subset\". The oracle (crates/velt_tscompat/tests/oracle.rs) extends it with the files to check.",
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "lib": ["ES2023", "ESNext.Disposable", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "oracle-jsx",
+    "paths": { "oracle-jsx/jsx-runtime": ["./jsx/jsx-runtime.d.ts"] },
+    "types": []
+  }
+}

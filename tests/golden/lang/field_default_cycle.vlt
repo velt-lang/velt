@@ -1,0 +1,100 @@
+// check: no leaks
+// Field initializers that construct each other in a cycle (#266) compile and run like
+// JavaScript: the recursion ends at run time, and what an initializer deep in the cycle throws
+// reaches the outer `new`.
+import { setEnv } from "velt:process";
+
+class Oops extends Error {}
+
+// The program from the issue (`random() > 2.0` there): the cycle is never taken at run time.
+class A {
+  b: B | null = process.env.CYCLE_NEVER != null ? new B() : null;
+}
+
+class B {
+  a: A | null = process.env.CYCLE_NEVER == null ? new A() : null;
+}
+
+// The recursion's run-time budget (an environment variable: module-level state is constant).
+function budget(): i64 {
+  return parseInt(process.env.CYCLE_BUDGET ?? "0", 10) as i64;
+}
+
+function setBudget(n: i64) {
+  setEnv("CYCLE_BUDGET", `${n}`);
+}
+
+function take(): bool {
+  setBudget(budget() - 1);
+  return budget() >= 0;
+}
+
+function check(n: i64): i64 throws Oops {
+  if (n < 0) {
+    throw new Oops("budget exhausted");
+  }
+  return n;
+}
+
+// A class constructing itself, and two classes taking turns.
+class Chain {
+  id: i64 = budget();
+  next: Chain | null = take() ? new Chain() : null;
+}
+
+class Ping {
+  label: string = "ping";
+  pong: Pong | null = take() ? new Pong() : null;
+}
+
+class Pong {
+  ping: Ping | null = take() ? new Ping() : null;
+  n: i64 = check(process.env.CYCLE_FAIL == null ? budget() + 1 : -1);
+}
+
+// With constructors and inheritance: Leaf's initializers run after Base's constructor.
+class Base {
+  tag: string;
+  constructor() {
+    this.tag = "base";
+  }
+}
+
+class Leaf extends Base {
+  depth: i64 = budget();
+  child: Leaf | null = take() ? new Leaf() : null;
+}
+
+function chainIds(c: Chain): string {
+  let out = `${c.id}`;
+  let cur = c.next;
+  while (cur != null) {
+    out = `${out} ${cur.id}`;
+    cur = cur.next;
+  }
+  return out;
+}
+
+function main() {
+  console.log(new A().b == null, new B().a != null);
+  setBudget(3);
+  console.log(chainIds(new Chain()));
+  setBudget(3);
+  try {
+    const p = new Ping();
+    console.log(p.label, p.pong != null);
+  } catch (e) {
+    console.log("caught:", e.message);
+  }
+  setBudget(4);
+  setEnv("CYCLE_FAIL", "1");
+  try {
+    const p = new Ping();
+    console.log(p.label, p.pong?.n);
+  } catch (e) {
+    console.log("caught:", e.message);
+  }
+  setBudget(2);
+  const l = new Leaf();
+  console.log(l.tag, l.depth, l.child?.depth, l.child?.child?.depth);
+}

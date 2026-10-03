@@ -1,0 +1,7 @@
+// The Velt standard library doesn't exist for TypeScript.
+
+import { join } from "velt:path"; //~ velt-import
+
+export function under(dir: string, file: string): string {
+  return join(dir, file);
+}

@@ -3,12 +3,13 @@
 //! static with `VELT_RT_LINK=static`, skipped when nothing changed).
 
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 
+mod no_window;
 mod test_dir;
 
 fn velt(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_velt"));
+    let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
     cmd.args(args)
         .current_dir(cwd)
         .env_remove("VELT_RT_LIB")
@@ -181,7 +182,7 @@ fn run_copy(exe: &Path, tag: &str) -> Output {
         .with_file_name(name)
         .with_extension(exe.extension().unwrap_or_default());
     std::fs::copy(exe, &copy).unwrap();
-    Command::new(&copy).output().unwrap()
+    crate::no_window::command(&copy).output().unwrap()
 }
 
 /// Whether the shared runtime sits next to the `velt` under test (debug links then use it).
@@ -217,6 +218,6 @@ fn debug_builds_use_the_shared_runtime_when_built() {
     let exe = dir
         .join("target/velt")
         .join(if cfg!(windows) { "hello.exe" } else { "hello" });
-    let run = Command::new(&exe).output().unwrap();
+    let run = crate::no_window::command(&exe).output().unwrap();
     assert_eq!(text(&run.stdout), "shared\n", "{}", text(&run.stderr));
 }

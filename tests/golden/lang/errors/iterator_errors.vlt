@@ -1,0 +1,41 @@
+// `next()` must return an `IteratorResult<T>` of the declared `T`, and a `for...of` throws what
+// the iterator's `next()` throws (`E` of `Iterable<T, E>`): a `throws` clause must allow it.
+class BadIter implements Iterator<string> {
+  next(): IteratorResult<string> {
+    return { value: 1, done: false };
+  }
+}
+
+class Read extends Error {}
+
+class LineIter implements Iterator<string, Read> {
+  next(): IteratorResult<string> throws Read {
+    throw new Read("no input");
+  }
+}
+
+class Lines implements Iterable<string, Read> {
+  [Symbol.iterator](): Iterator<string, Read> {
+    return new LineIter();
+  }
+}
+
+class Other extends Error {}
+
+function total(ls: Lines): i64 throws Other {
+  let n = 0;
+  for (const l of ls) {
+    n += l.length as i64;
+  }
+  return n;
+}
+
+class Quiet implements Iterator<i64> {
+  next(): IteratorResult<i64> throws Read {
+    throw new Read("loud");
+  }
+}
+
+function main() {
+  console.log(total(new Lines()));
+}

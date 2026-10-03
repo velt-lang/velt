@@ -82,7 +82,9 @@ program may mix them freely, and `velt run app.ts` works like `velt run app.vlt`
   TypeScript, `"./util.js"` means `util.ts` or `util.tsx`, and `"./card.jsx"` means `card.tsx`.
 - JSX is allowed in `.tsx` and `.vlt` files. In a `.ts` file it is an error, as in TypeScript;
   rename the file to `.tsx`. The [JSX provider](../internals/contracts/jsx.md#choosing-the-provider) is chosen the same way for every file:
-  the `// @jsxImportSource` comment, else the package's `jsx.importSource`, else `velt:jsx`.
+  the `/** @jsxImportSource x */` comment before the first token, else the package's
+  `jsx.importSource`, else `velt:jsx`. Velt also reads the comment as `// @jsxImportSource x`;
+  `tsc` reads only the block comment, so code shared with TypeScript uses that form.
 - Two files in one directory whose names differ only in the extension (`dup.vlt` and
   `dup.ts`) have the same module path: an import without an extension can't tell them apart,
   and one program can't load both. `velt check` in a package reports every such pair under

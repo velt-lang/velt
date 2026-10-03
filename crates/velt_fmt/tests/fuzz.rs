@@ -4,22 +4,33 @@
 //! Whitespace is only added where it cannot change what the formatter keeps from the layout:
 //! never inside literals, comments, JSX text or JSX attribute strings, never on a line that has a
 //! comment after the insertion point (a comment's line decides whether it trails the code before
-//! it), and at most one newline into a run of whitespace that holds none (two would make a blank
-//! line, which is preserved).
+//! it), and at most one newline into a run of whitespace that holds none (two would create a
+//! blank line, which is preserved).
 //!
 //! Each file gets its own random sequence, seeded from its path, so adding a corpus file doesn't
-//! change what other files are tested with. A perturbed file must also keep its syntax tree: a
-//! difference there is lost or changed code, reported apart from a layout difference.
+//! change what the other files are tested with, and a failure reproduces on its own.
+//!
+//! When the output differs, the syntax trees tell lost or changed code ("CODE CHANGED") apart
+//! from a layout difference.
 
 mod common;
 
-use common::{ast_shape, corpus, first_difference, parses, root};
+use common::{ast_shape, corpus, first_difference, parses};
 use velt_fmt::format_source;
 
 /// Deterministic xorshift generator (no external dependency needed).
 struct Rng(u64);
 
 impl Rng {
+    /// A generator seeded from `path` (FNV-1a; never zero, which xorshift can't leave).
+    fn for_path(path: &std::path::Path) -> Rng {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in path.to_string_lossy().replace('\\', "/").bytes() {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+        Rng(h | 1)
+    }
+
     fn next(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
@@ -32,21 +43,9 @@ impl Rng {
     }
 }
 
-/// The random sequence for `path`: seeded from its path relative to the workspace (with `/`
-/// separators, so every OS tests the same perturbations).
-fn rng_for(path: &std::path::Path) -> Rng {
-    let rel = path.strip_prefix(root()).unwrap_or(path);
-    let text = rel.to_string_lossy().replace('\\', "/");
-    // FNV-1a; xorshift needs a non-zero state.
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in text.bytes() {
-        h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
-    }
-    Rng(h | 1)
-}
-
 /// Byte offsets where whitespace may be inserted, with whether a newline is allowed there and
-/// where the whitespace run around the offset starts (one newline per run at most).
+/// where the surrounding whitespace run starts (one run gets at most one inserted newline: two
+/// would make a blank line, which the formatter keeps).
 fn insertion_points(src: &str) -> Vec<(usize, bool, usize)> {
     let bytes = src.as_bytes();
     let mut code = vec![false; bytes.len() + 1];
@@ -266,8 +265,8 @@ fn perturb(src: &str, rng: &mut Rng) -> String {
     let points = insertion_points(src);
     let mut out = String::with_capacity(src.len() * 2);
     let mut last = 0;
-    // The whitespace run that already got a newline: a second one would make a blank line.
-    let mut newline_in: Option<usize> = None;
+    // The run that already got its newline.
+    let mut broken_run = None;
     for (at, newline_ok, run) in points {
         if rng.below(3) != 0 {
             continue;
@@ -275,15 +274,14 @@ fn perturb(src: &str, rng: &mut Rng) -> String {
         out.push_str(&src[last..at]);
         last = at;
         for _ in 0..=rng.below(3) {
-            let newline_ok = newline_ok && newline_in != Some(run);
-            let choices: &[char] = if newline_ok {
+            let choices: &[char] = if newline_ok && broken_run != Some(run) {
                 &[' ', '\t', '\n']
             } else {
                 &[' ', '\t']
             };
             let c = choices[rng.below(choices.len() as u64) as usize];
             if c == '\n' {
-                newline_in = Some(run);
+                broken_run = Some(run);
             }
             out.push(c);
         }
@@ -296,12 +294,15 @@ fn perturb(src: &str, rng: &mut Rng) -> String {
 fn extra_whitespace_does_not_change_the_output() {
     let mut failures = vec![];
     for path in corpus() {
+        let mut rng = Rng::for_path(
+            path.strip_prefix(env!("CARGO_MANIFEST_DIR"))
+                .unwrap_or(&path),
+        );
         let src = std::fs::read_to_string(&path).unwrap();
         if !parses(&src) {
             continue;
         }
         let expected = format_source(&src).unwrap();
-        let mut rng = rng_for(&path);
         for round in 0..3 {
             let noisy = perturb(&src, &mut rng);
             match format_source(&noisy) {
@@ -342,34 +343,30 @@ fn jsx_text_and_attribute_strings_are_not_perturbed() {
     assert!(points.contains(&after("<T,")), "{points:?}");
 }
 
-/// #414: two insertion points in one whitespace run (after `;` and in the space after it) each
-/// added a newline, which made a blank line between two interface members. The formatter keeps
-/// blank lines, so the output differed; the member itself was never lost.
 #[test]
-fn one_newline_per_whitespace_run() {
-    let src = "interface User extends Base { name: string; email?: string }\n";
-    let expected = format_source(src).unwrap();
+fn perturbing_never_adds_a_blank_line() {
+    // Members on one line: every gap between them may get a newline, but never two.
+    let src = "interface Page<T> { items: T[]; total: number; email?: string }\n";
     for seed in 1..2000u64 {
-        let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
-        let noisy = perturb(src, &mut rng);
-        assert!(!noisy.contains("\n\n"), "blank line made: {noisy:?}");
-        let got = format_source(&noisy).unwrap();
-        assert_eq!(got, expected, "seed {seed}: {noisy:?}");
+        let noisy = perturb(src, &mut Rng(seed));
+        assert!(!noisy.contains("\n\n"), "seed {seed}:\n{noisy}");
+        assert_eq!(
+            format_source(&noisy).unwrap(),
+            format_source(src).unwrap(),
+            "seed {seed}"
+        );
     }
-    // The input from #414, with the blank line: kept as a blank line, nothing dropped.
-    let blank = "interface User extends\n\t  Base {\n \n name: \t string;\t\n\n email?: string }\n";
-    let got = format_source(blank).unwrap();
+}
+
+/// The perturbed input from #414 (two newlines in one gap made a blank line): the formatter keeps
+/// the blank line and both members. The fuzz failure was a layout difference, not lost code.
+#[test]
+fn a_blank_line_between_members_keeps_both() {
+    let src = "interface User extends\n\t  Base {\n \n name: \t string;\t\n\n email?: string }\n";
+    let got = format_source(src).unwrap();
     assert_eq!(
         got,
         "interface User extends Base {\n  name: string;\n\n  email?: string;\n}\n"
     );
-    assert_eq!(ast_shape(&got), ast_shape(blank));
-}
-
-#[test]
-fn each_file_has_its_own_sequence() {
-    let a = rng_for(&root().join("tests/golden/lang/a.vlt")).next();
-    let b = rng_for(&root().join("tests/golden/lang/b.vlt")).next();
-    assert_ne!(a, b);
-    assert_eq!(a, rng_for(&root().join("tests/golden/lang/a.vlt")).next());
+    assert_eq!(ast_shape(&got), ast_shape(src));
 }

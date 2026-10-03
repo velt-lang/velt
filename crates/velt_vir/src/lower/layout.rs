@@ -13,7 +13,7 @@
 //!   class hierarchy has more than one class or any virtual slot; it points to a dispatcher
 //!   function (see glue/vtable.rs).
 //! - Shared boxes: `{ count: u64, value: T }`; closure environments: `{ drop: ptr, clone: ptr,
-//!   reach: u64, captures... }` (borrowed captures are pointers; closure.rs).
+//!   transfer: ptr, captures... }` (borrowed captures are pointers; closure.rs).
 
 use std::collections::{HashMap, HashSet};
 
@@ -35,6 +35,8 @@ pub(super) struct Layouts {
     array: Option<AggId>,
     closure: Option<AggId>,
     dyn_value: Option<AggId>,
+    /// Tables of generator instances (async_fn/gen_object.rs).
+    pub(super) gen_tables: HashMap<(DefId, Vec<TyId>), crate::vir::StaticId>,
     /// State of the `Promise.all` wrapper future (async_fn/tasks.rs).
     pub(super) all_wrap: Option<AggId>,
     /// State of the settling `Promise.all` wrapper per child result type (all_settle.rs).
@@ -330,8 +332,8 @@ impl Cx<'_> {
             })
             .collect();
         let name = format!("{} env", f.name);
-        // closure.rs `ENV_HEADER`: drop entry, clone entry, `reach`.
-        let mut tys = vec![Ty::Ptr, Ty::Ptr, Ty::U64];
+        // closure.rs `ENV_HEADER`: drop, clone and transfer entries.
+        let mut tys = vec![Ty::Ptr, Ty::Ptr, Ty::Ptr];
         for (mode, t) in caps {
             let t = self.subst(t, targs);
             tys.push(match mode {

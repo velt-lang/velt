@@ -45,8 +45,9 @@ export const pkg: Package = {
 Every field keeps the meaning and validation of the `velt.toml` field it replaces
 ([manifest.md](../contracts/manifest.md)). `[package]`'s `name`, `version` and `entry` move to
 the top level, and the `[dependencies]`, `[paths]`, `[jsx]` and `[native]` tables become
-`dependencies`, `paths`, `jsx` and `native`. Package names stay `[a-z][a-z0-9_-]*`; scoped names
-such as `@velt/sqlite` are a separate issue.
+`dependencies`, `paths`, `jsx` and `native`. Package names follow the
+manifest contract (lowercase words joined by single `-` or `_`, since #314); scoped names such as
+`@velt/sqlite` are a separate issue.
 
 **Types.** `velt:package` (`std/package.vlt`) contains only types:
 

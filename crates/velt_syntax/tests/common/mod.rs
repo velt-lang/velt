@@ -309,6 +309,13 @@ pub fn sx(e: &Expr) -> String {
         ExprKind::StructLit { name, props: ps } => format!("{} {{{}}}", ty(name), props(ps)),
         ExprKind::Spread(e) => format!("...{}", sx(e)),
         ExprKind::Await(e) => format!("(await {})", sx(e)),
+        ExprKind::Yield { arg, delegate } => {
+            let kw = if *delegate { "yield*" } else { "yield" };
+            match arg {
+                Some(a) => format!("({kw} {})", sx(a)),
+                None => format!("({kw})"),
+            }
+        }
         ExprKind::Cast { expr, ty: t } => format!("(as {} {})", sx(expr), ty(t)),
         ExprKind::InstanceOf { expr, ty: t } => format!("(instanceof {} {})", sx(expr), ty(t)),
         ExprKind::Paren(e) => format!("(paren {})", sx(e)),
@@ -381,6 +388,9 @@ pub fn golden_files() -> Vec<PathBuf> {
     collect(&workspace_root().join("tests/golden"), &mut out);
     out
 }
+
+/// One function of ordinary code (six lines): arithmetic, control flow, templates, a generic call.
+pub const PLAIN_UNIT: &str = "function f(a: i64, b: i64): i64 {\n  let x = a * 2 + b / 3 - (a % 7);\n  if (x > 10 && b < 3) { return x; } else { x += 1; }\n  for (let i = 0; i < 10; i++) { console.log(`i=${i} x=${x}`, \"s\\n\"); }\n  return g<i64>(x, [1, 2, 3], { a: 1, b }) as i64;\n}\n";
 
 /// Three items whose JSX elements and generic arrows the parser, not the lexer, decides: every
 /// element is re-lexed once where the parser finds it.

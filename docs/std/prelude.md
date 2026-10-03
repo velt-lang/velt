@@ -152,6 +152,20 @@ On any `T | null`: `isNull()`, `unwrap()` (panics on `null`), `unwrapOr(fallback
 `map(f)`. The value-extracting helpers return the payload itself (an object is shared, not
 copied).
 
+## Iteration
+
+The iteration protocol behind `for...of` and `for await` ([Control flow](../reference/control-flow.md#iterables)):
+
+| Declaration | Notes |
+|---|---|
+| `type IteratorResult<T> = { value: T; done: false } \| { done: true }` | narrows on `r.done`; a done result has no `value` (unnarrowed, `r.value` is `T \| null`) |
+| `interface Iterator<T, E = never>` | `next(): IteratorResult<T> throws E`; `return(): IteratorResult<T>` (default: returns `{ done: true }`) runs when a loop leaves early |
+| `interface Iterable<T, E = never>` | `[Symbol.iterator](): Iterator<T, E>`; what `for...of` iterates |
+| `class Generator<T, E = never>` | what calling a [generator](../reference/functions.md#generators) (`function*`) creates: `implements Iterator<T, E>, Iterable<T, E>` (`[Symbol.iterator]()` returns itself); `return()` (which returns `{ done: true }`) and `[Symbol.dispose]()` close it. Only generator calls create one (`new Generator` is an error) |
+| `interface AsyncIterator<T, E = never>` | `next(): Promise<IteratorResult<T>, E>`; `async return(): Promise<IteratorResult<T>>` (default: resolves to `{ done: true }`) |
+| `interface AsyncIterable<T, E = never>` | `[Symbol.asyncIterator](): AsyncIterator<T, E>`; what [`for await`](../reference/control-flow.md#for-await) iterates |
+| `class AsyncGenerator<T, E = never>` | what calling an [async generator](../reference/functions.md#async-generators) (`async function*`) creates: `implements AsyncIterator<T, E>, AsyncIterable<T, E>`; `return()` and `[Symbol.asyncDispose]()` close it (awaiting its cleanup), `[Symbol.dispose]()` closes it without awaiting. Overlapping `next()` / `return()` calls are queued and served in call order, like JS. Only async generator calls create one |
+
 ## JSON
 
 `JSON.stringify<T>(x)`, `JSON.parse<T>(text, options?)` (throws `JsonError`) and

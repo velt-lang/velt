@@ -11,6 +11,9 @@ the handle exactly once. Failures throw `IoError`.
   - `readString(max = 0): Promise<string>`: `""` at end of file
   - `readLine(): Promise<string | null>`: the line without `\n` / `\r\n`, or null at end of
     file; don't mix it with `readString`
+  - `lines(): AsyncGenerator<string, IoError>`: the remaining lines, as `readLine` reads them,
+    for `for await (const line of r.lines())`. Leaving the loop early keeps the reader open at
+    the next line (like Node's `filehandle.readLines()`, but the file is not closed for you)
   - `close()`
 - `openWrite(path, { append? } = {}): Promise<FileWriter>`: creates or truncates the file,
   unless `append` is set.
@@ -32,11 +35,7 @@ async function main() {
   await w.close();
   const r = await openRead(path);
   let n = 0;
-  while (true) {
-    const line = await r.readLine();
-    if (line == null) {
-      break;
-    }
+  for await (const line of r.lines()) {
     n++;
     console.log(n, line);
   }

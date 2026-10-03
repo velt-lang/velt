@@ -1,0 +1,34 @@
+// check: no leaks
+// `new` without type arguments infers them from the constructor's arguments and the expected
+// type; a parameter nothing infers takes its default, as in TypeScript.
+class D<T = i64> {
+  items: T[] = [];
+  constructor(n: i64) {
+    console.log("D", n);
+  }
+}
+
+class Pair<A = string, B = A[]> {
+  a: A[] = [];
+  b: B[] = [];
+}
+
+class Box<T = string> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+const d = new D(1);
+d.items.push(5);
+console.log(d.items);
+const p = new Pair();
+p.a.push("x");
+p.b.push(["y"]);
+console.log(p.a, p.b);
+const b = new Box(2.5);
+console.log(b.v);
+const e: D<string> = new D(2);
+e.items.push("s");
+console.log(e.items);

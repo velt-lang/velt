@@ -62,7 +62,7 @@ pub const PACKAGE: &[Field] = &[
         ty: "string",
         required: false,
         doc: "One line about the package, shown by `velt search` and registry listings: at most \
-              200 characters, no line breaks, no surrounding whitespace.",
+              300 characters, no line breaks, no surrounding whitespace.",
     },
     Field {
         key: "keywords",
@@ -119,6 +119,15 @@ pub const PACKAGE: &[Field] = &[
         ty: "Native",
         required: false,
         doc: "A Rust crate in the package, built into a native library.",
+    },
+    Field {
+        key: "tsCompat",
+        kind: Kind::StrArray { values: &[] },
+        ty: "string[]",
+        required: false,
+        doc: "Folders whose modules stay valid TypeScript too, such as \
+              `[\"src/components\", \"src/models\"]`: `/`-separated paths relative to the \
+              package root. `velt check --ts-compat` and the editor lint them.",
     },
 ];
 

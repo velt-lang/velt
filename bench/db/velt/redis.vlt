@@ -3,7 +3,7 @@
 // loop. `quick` as the first argument runs 1/20 of the sizes. Keys live under a per-run prefix
 // and are deleted at the end (never FLUSHALL).
 import { connect, RedisClient } from "velt:redis";
-import { args, env } from "velt:process";
+import { args } from "velt:process";
 import { uuidv4 } from "velt:uuid";
 
 const BATCH: i64 = 100;
@@ -111,7 +111,7 @@ async function cleanup(c: RedisClient, p: string, keys: i64) {
 async function main() {
   const argv = args();
   const scale: i64 = argv.length > 0 && argv[0] == "quick" ? 20 : 1;
-  const c = await connect(env("BENCH_REDIS_URL") ?? "redis://127.0.0.1:6379");
+  const c = await connect(process.env.BENCH_REDIS_URL ?? "redis://127.0.0.1:6379");
   const p = `velt-bench-db:${uuidv4()}:`;
   // Distinct keys; every write of key j stores `value-j`.
   const keys = 20000 / scale;

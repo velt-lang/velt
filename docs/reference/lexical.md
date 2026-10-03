@@ -29,6 +29,9 @@ Source files are UTF-8. Each file is a module ([Modules](modules.md)).
 
 `[A-Za-z_$][A-Za-z0-9_$]*`, ASCII only.
 
+Velt code is strict-mode code, as in TypeScript modules: no function, class, enum, variable,
+parameter or import may be named `arguments` or `eval` (properties and methods may).
+
 ## Literals
 
 - **Numbers**: `123`, `1_000_000`, `0xff`, `0b1010`, `0o17`, `1.5`, `1e21`, `2.5e-3`, with an

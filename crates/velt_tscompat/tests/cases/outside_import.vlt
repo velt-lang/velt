@@ -1,0 +1,7 @@
+// A relative import must stay inside the linted files.
+
+import { helper } from "./_outside_helper"; //~ outside-import
+
+export function twice(x: number): number {
+  return helper(x) * 2;
+}

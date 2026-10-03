@@ -44,7 +44,7 @@ impl FnCx<'_, '_> {
                 None
             }
         };
-        let fin = finally.map(|f| self.block(f));
+        let fin = finally.map(|f| self.finally_block(f));
         let kind = S::Try {
             body: b,
             catch: c,

@@ -13,6 +13,7 @@ use super::all::ResultDropFn;
 use super::compiled::{with_state_store, Compiled, OwnedStore};
 use super::local::Locals;
 use super::{context, raw_cx, DropFn, PollFn, SendPtr, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
+use crate::panic::ThrowLoc;
 use std::ffi::c_void;
 use std::future::Future;
 use std::mem::MaybeUninit;
@@ -55,6 +56,7 @@ impl Future for FutBody {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         let this = self.get_mut();
         let f = this.fut.0;
+        ThrowLoc::clear();
         let r = this.locals.poll_root(cx, |cx| {
             // SAFETY: an owned, live heap future.
             match unsafe { ((*f).poll)(f, raw_cx(cx)) } {
@@ -84,6 +86,8 @@ impl Drop for FutBody {
 /// A task's output: its result bytes and how to drop them if the join handle never takes them.
 pub struct TaskOutput<const R: usize> {
     bytes: ResultBytes<R>,
+    /// Where the task's error was thrown, for the thread that takes the result.
+    loc: ThrowLoc,
     /// Cleared once the join handle moved the result out.
     result_drop: Option<ResultDropFn>,
 }
@@ -125,6 +129,7 @@ impl<B: TaskBody, const R: usize> Future for TaskFut<B, R> {
         };
         Poll::Ready(TaskOutput {
             bytes: out,
+            loc: ThrowLoc::current(),
             result_drop: this.result_drop,
         })
     }
@@ -145,6 +150,8 @@ unsafe extern "C" fn join_poll<const R: usize>(f: *mut VeltFut, cx: *mut c_void)
         Poll::Ready(Ok(mut out)) => {
             out.result_drop = None;
             obj.result = out.bytes;
+            // An error in the result is rethrown here: report it where the task threw it.
+            out.loc.restore_if_known();
             READY
         }
         Poll::Ready(Err(e)) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
@@ -218,9 +225,41 @@ pub unsafe extern "C" fn velt_rt_spawn(
     result_size: u64,
     result_drop: Option<ResultDropFn>,
 ) -> *mut VeltFut {
+    velt_rt_spawn_transfer(
+        poll,
+        drop,
+        state,
+        state_size,
+        state_align,
+        result_size,
+        result_drop,
+        None,
+    )
+}
+
+/// `velt_rt_spawn` whose result reaches objects: `result_transfer` (compiled transfer glue)
+/// runs on the result in place as the task's state finishes, on the task (inside its local
+/// set), so the joining task gets a value nothing on this task references any more (moved,
+/// or copied where a promise the task started still uses it).
+///
+/// # Safety
+/// As `velt_rt_spawn`; `result_transfer` must accept the task's result slot.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)] // the C ABI: velt_rt_spawn plus the transfer glue
+pub unsafe extern "C" fn velt_rt_spawn_transfer(
+    poll: PollFn,
+    drop: DropFn,
+    state: *const u8,
+    state_size: u64,
+    state_align: u64,
+    result_size: u64,
+    result_drop: Option<ResultDropFn>,
+    result_transfer: Option<ResultDropFn>,
+) -> *mut VeltFut {
     let (size, align) = (state_size as usize, state_align as usize);
     with_state_store!(size, align, |S| {
-        let body = Compiled::<S>::copy_from(poll, drop, state, size, align);
+        let body =
+            Compiled::<S>::copy_from(poll, drop, state, size, align).with_transfer(result_transfer);
         spawn_sized(body, result_size, result_drop)
     })
 }

@@ -119,7 +119,8 @@ fn parent_iface(cx: &Ctx, module: usize, t: &ast::TypeExpr) -> Option<DefId> {
 
 /// After interface inheritance is flattened: the object type's fields are the interface's,
 /// inherited ones first (as a subclass lists its base class's fields first), with the
-/// interface's generic bounds. A type that contains itself by value is reported here.
+/// interface's generic bounds. It may contain itself (`next?: Node`): lowering stores such a
+/// type behind a pointer (#376).
 pub(super) fn fill(cx: &mut Ctx) {
     let pairs: Vec<(DefId, DefId)> = cx.field_only.iter().map(|(i, a)| (*i, *a)).collect();
     for (iface, adt) in &pairs {
@@ -131,9 +132,6 @@ pub(super) fn fill(cx: &mut Ctx) {
         let a = cx.adt_mut(*adt);
         a.fields = fields;
         a.generics.bounds = bounds;
-    }
-    for (_, adt) in &pairs {
-        super::shapes::check_finite(cx, *adt);
     }
     // The anonymous object type of the same fields replaces it before lowering.
     for (_, adt) in pairs {

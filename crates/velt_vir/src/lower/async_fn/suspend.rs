@@ -15,12 +15,13 @@
 //! - a direct call of a compiled async function embeds the child state (a VIR local that the
 //!   spill pass moves into this state) — no allocation;
 //! - `yieldNow()` calls `velt_rt_yield_now(cx)` and suspends once;
+//! - an async generator's resume and close poll its state (generator.rs);
 //! - anything else is a promise value (`VeltFut*`: rt leaf futures, join handles, boxed
 //!   promises), polled with `velt_rt_fut_poll`, result at `+16`.
 
 use velt_sema::hir::{self, DefId, Intrinsic, PassMode, TyId, TyKind, UseMode};
 
-use super::{AsyncInfo, DROP_BIT};
+use super::AsyncInfo;
 use crate::lower::expr::may_write;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
@@ -42,6 +43,12 @@ impl FnLower<'_, '_> {
                     }
                 }
                 hir::Callee::Intrinsic(Intrinsic::YieldNow) => return self.await_yield(),
+                hir::Callee::Intrinsic(Intrinsic::AsyncGeneratorResume) => {
+                    return self.agen_resume(&args[0]);
+                }
+                hir::Callee::Intrinsic(Intrinsic::AsyncGeneratorReturn) => {
+                    return self.agen_close(&args[0]);
+                }
                 hir::Callee::Intrinsic(Intrinsic::PromiseAll) => {
                     if let [hir::Expr {
                         kind: hir::ExprKind::ArrayLit(es),
@@ -88,9 +95,9 @@ impl FnLower<'_, '_> {
         self.switch_to(d);
         drop_child(self);
         self.emit_cancel_drops();
-        self.terminate(Terminator::Return(cint(0, Ty::U32)));
+        self.finish_cancel();
         self.switch_to(saved);
-        self.actx().cases.push((DROP_BIT | k, d));
+        self.cancel_cases(k, d);
     }
 
     /// After polling the child (`r`: u32): suspend if pending, else continue when ready.

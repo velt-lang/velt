@@ -94,12 +94,20 @@ pub(crate) enum ThrowSrc {
         args: Vec<TyId>,
         span: Span,
     },
+    /// The field initializers of class `C<args>` run by a `new` or a constructor: what `C`'s
+    /// own initializers throw (a base class's have a source of their own). Kept unexpanded
+    /// until resolved ([`crate::throws`]), so classes whose initializers construct each other
+    /// in a cycle get the whole cycle's errors whatever order they are checked in.
+    Defaults(DefId, Vec<TyId>, Span),
 }
 
 impl ThrowSrc {
     pub fn span(&self) -> Span {
         match self {
-            ThrowSrc::Direct(_, s) | ThrowSrc::Call(_, _, s) | ThrowSrc::Slot { span: s, .. } => *s,
+            ThrowSrc::Direct(_, s)
+            | ThrowSrc::Call(_, _, s)
+            | ThrowSrc::Defaults(_, _, s)
+            | ThrowSrc::Slot { span: s, .. } => *s,
         }
     }
 
@@ -110,6 +118,9 @@ impl ThrowSrc {
             ThrowSrc::Direct(t, _) => ThrowSrc::Direct(f(*t), span),
             ThrowSrc::Call(d, args, _) => {
                 ThrowSrc::Call(*d, args.iter().map(|&t| f(t)).collect(), span)
+            }
+            ThrowSrc::Defaults(d, args, _) => {
+                ThrowSrc::Defaults(*d, args.iter().map(|&t| f(t)).collect(), span)
             }
             ThrowSrc::Slot {
                 iface, slot, args, ..
@@ -165,6 +176,14 @@ pub(crate) struct FnInfo<'m> {
     pub owner: Option<DefId>,
     /// `declare async function` (M3 rt futures); other async functions are rejected in M2.
     pub is_async: bool,
+    /// `function*` / `*name()`: a generator. `ret` is the declared result (`Generator<T>`,
+    /// `Iterator<T>` or `Iterable<T>`, its `E` moved into `declared_throws`); a call returns it
+    /// with the generator's final error type as `E` (`generators.rs`).
+    pub is_generator: bool,
+    /// `async function*` / `async *name()`: an async generator (`is_generator` is set too, and
+    /// `is_async` is not: a call creates an `AsyncGenerator<T>`, not a promise). Its body may
+    /// `await`; HIR `FnDef::is_async` is set for it.
+    pub is_async_gen: bool,
     /// Arguments (spans of their places) moved into async calls: if the place is used again
     /// (or cannot be moved from), the argument becomes a clone (`crate::ownership::soft`).
     pub soft_moves: Vec<Span>,
@@ -323,6 +342,9 @@ pub(crate) struct AliasInfo<'m> {
     pub module: usize,
     pub decl: &'m ast::TypeAlias,
     pub expanding: bool,
+    /// Expanded at least once; an alias never used is checked on its own at the end
+    /// ([`crate::resolve::check_unused_aliases`]).
+    pub used: bool,
 }
 
 /// An `extend<G> Target { methods }` block.

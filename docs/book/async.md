@@ -154,7 +154,9 @@ compile errors. Share state explicitly:
 - `shared(x)` creates an atomically reference-counted value: tasks that capture it refer to the
   same value. On 64-bit integers, `add`, `get` and `set` are atomic.
 - `shared(new Mutex<T>(x))` guards any value; `m.with((v) => …)` locks it for the callback, which
-  gets the value itself and may return a result.
+  gets the value itself and may return a result (a copy of anything that is part of the value).
+  `shared` takes `x` itself: after `shared(new Mutex(o))`, use `o` only through the `shared`
+  value (or pass `o.clone()` to keep your own).
 
 ```ts
 async function main() {
@@ -176,11 +178,50 @@ async function main() {
 
 A `with` callback is synchronous: keep it short and don't `await` inside it.
 
+## Streams with `for await`
+
+Work that arrives over time — jobs on a [channel](../std/channel.md), lines of a file,
+WebSocket messages, ticks — is consumed with `for await`, as in TypeScript. A channel passes
+values between tasks and ends the loop once it is closed and drained:
+
+```ts
+import { channel, Channel, ChannelClosed } from "velt:channel";
+
+async function worker(id: i64, jobs: Channel<string>, results: Channel<string>): Promise<void> throws ChannelClosed {
+  for await (const job of jobs) {
+    await results.send(`worker ${id} did ${job}`);
+  }
+}
+
+async function main() {
+  const jobs = channel<string>(8);
+  const results = channel<string>();
+  const workers = [spawn(worker(1, jobs, results)), spawn(worker(2, jobs, results))];
+  for (const job of ["resize", "upload", "notify"]) {
+    await jobs.send(job);
+  }
+  jobs.close();                    // the workers' loops end once the queue is drained
+  await Promise.all(workers);
+  results.close();
+  let n = 0;
+  for await (const line of results) {
+    n++;
+  }
+  console.log(n);                  // 3
+}
+```
+
+Leaving a loop early (`break`) does not close the channel: the values still queued stay there
+for other receivers. Your own sources are `async function*` generators
+([Async generators](../reference/functions.md#async-generators)); the
+[async iteration](../reference/async.md#async-iteration) reference lists the std ones.
+
 ## Timers
 
 `sleep(ms)` pauses the current async function. [`velt:timers`](../std/timers.md) has
-`setTimeout` (with `clear()`), `setImmediate` and `Ticker`, a drift-free interval you pull
-with `await ticker.tick()`. There is no global `setTimeout`.
+`setTimeout` (with `clear()`), `setImmediate` and `Ticker`, a drift-free interval you iterate
+with `for await (const n of ticker)` or pull with `await ticker.tick()`. There is no global
+`setTimeout`.
 
 ## Performance
 

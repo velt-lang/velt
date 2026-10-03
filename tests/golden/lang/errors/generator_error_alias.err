@@ -1,0 +1,6 @@
+generator_error_alias.vlt:21:3: error: `g` throws `B`, which its `throws` clause does not allow
+  = note: add `B` to the `throws` clause, or catch it
+generator_error_alias.vlt:26:3: error: `ag` throws `B`, which its `throws` clause does not allow
+  = note: add `B` to the `throws` clause, or catch it
+generator_error_alias.vlt:30:3: error: `h` throws `B`, which its `throws` clause does not allow
+  = note: add `B` to the `throws` clause, or catch it

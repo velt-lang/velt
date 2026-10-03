@@ -1,0 +1,20 @@
+// A generator behind an interface value cannot go to another thread either: its suspended
+// state may share objects with this one, and cannot be copied or moved over. The compiler
+// rejects a visible generator (`errors/generator_shared.vlt`); behind an `Iterator` the
+// transfer stops the program.
+function* nums(): Iterator<i64> {
+  yield 1;
+  yield 2;
+}
+
+async function use(m: shared<Mutex<Iterator<i64>>>) {
+  m.with((g) => {
+    console.log(g.next());
+    return 0;
+  });
+}
+
+async function main() {
+  console.log("start");
+  await spawn(use(shared(new Mutex<Iterator<i64>>(nums()))));
+}

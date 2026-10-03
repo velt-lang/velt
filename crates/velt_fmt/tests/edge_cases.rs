@@ -49,6 +49,34 @@ async function f(r: R) {
 }
 
 #[test]
+fn generators() {
+    holds(
+        "function*   gen(): Generator<i64> { yield 1; yield; yield*  other(); const x = (yield 2); }
+export function *ex(): Generator<i64> {}
+class C { *items(): Generator<i64> { yield this.x; } static  *make(): Generator<i64> {} *[Symbol.iterator](): Iterator<i64> {} }",
+    );
+}
+
+#[test]
+fn async_generators() {
+    holds(
+        "async   function*   gen(): AsyncGenerator<i64> { yield await f(); yield*  other(); }
+class C { async  *items(): AsyncGenerator<i64> { yield 1; } static async *make(): AsyncGenerator<i64> {} async *[Symbol.asyncIterator](): AsyncIterator<i64> {} }
+async function g() { for  await  (const x of xs) { use(x); } for await (let [a, b] of pairs()) {} for (const y of ys) {} }",
+    );
+}
+
+#[test]
+fn iteration_protocol() {
+    holds(
+        "interface It<T, E   = never> { next(): IteratorResult<T> throws E; }
+class R implements Iterable<i64> { [Symbol.iterator](): Iterator<i64> { return new I(); } }
+type P<T, U=T[]> = U;
+function f(r: R) { const it = r[Symbol.iterator](); }",
+    );
+}
+
+#[test]
 fn statements() {
     holds(
         "function f() {

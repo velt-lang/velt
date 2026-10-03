@@ -7,14 +7,12 @@
 import { IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
 
 declare function velt_rt_process_args(): string[];
-declare function velt_rt_env_get(name: string, out: string): bool;
 declare function velt_rt_env_set(name: string, value: string);
 declare function velt_rt_env_remove(name: string);
 declare function velt_rt_env_all(): string[];
 declare function velt_rt_process_cwd(): IoResult<string>;
 declare function velt_rt_process_chdir(path: string): IoStatus;
 declare function velt_rt_stdout_write_bytes(bytes: u8[]);
-declare function velt_rt_write_str(stream: u32, s: string);
 
 // Standard output as a synchronous byte sink (for strings, `process.stdout.write(s)` needs no
 // import). Writes are ordered with `console.log` and buffered the same way; a large array
@@ -24,11 +22,6 @@ export struct Stdout {
   // Writes raw bytes (the array stays the caller's, ready to be refilled).
   write(bytes: u8[]) {
     velt_rt_stdout_write_bytes(bytes);
-  }
-
-  // Writes a string as UTF-8, without a newline.
-  writeString(s: string) {
-    velt_rt_write_str(1, s);
   }
 }
 
@@ -48,15 +41,6 @@ export function args(): string[] {
   return all;
 }
 
-// The value of environment variable `name`, or null if it is unset.
-export function env(name: string): string | null {
-  let out = "";
-  if (velt_rt_env_get(name, out)) {
-    return out;
-  }
-  return null;
-}
-
 // Every environment variable, as a snapshot (Node's `process.env` as an object): names in the
 // order the OS keeps them, which is Node's order too. On Windows names keep their case, and
 // lookups in the record are case-sensitive (`process.env.NAME` is not); the per-drive `=C:`
@@ -70,7 +54,7 @@ export function envAll(): Record<string, string> {
   return all;
 }
 
-// Not synchronized with concurrent `env` reads on other threads: set variables at startup.
+// Not synchronized with concurrent `process.env` reads on other threads: set variables at startup.
 export function setEnv(name: string, value: string) {
   velt_rt_env_set(name, value);
 }

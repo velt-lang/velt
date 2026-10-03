@@ -228,6 +228,11 @@ impl FnCx<'_, '_> {
             Some(LitEq::Operands(l, r)) => (l, r),
             None => self.operands(lhs, rhs, hint, Want::Borrow),
         };
+        let (l, r) = if matches!(op, B::Eq | B::NotEq) {
+            self.nullable_operands(l, r)
+        } else {
+            (l, r)
+        };
         // Literal types take part in operators as their base type (`c.kind + "!"`).
         let (l, r) = if l.ty != r.ty || self.cx.lit_value(l.ty).is_some() {
             (self.widen_value(l), self.widen_value(r))
@@ -283,6 +288,27 @@ impl FnCx<'_, '_> {
             rhs: Box::new(r),
         };
         self.mk(kind, self.cx.ty.bool_, span)
+    }
+
+    /// `a === b` where one side is `T | null` and the other a `T` (#264): the `T` side
+    /// converts to `T | null` (as at any typed position), so the comparison is the one two
+    /// `T | null` values get: identity for classes, by value for primitives, `false` for `null`
+    /// against a value. Operands that do not convert are left for the mismatch report.
+    fn nullable_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+        let t = &self.cx.ty;
+        let nullable = |x: TyId| t.opt_payload(x).is_some();
+        if nullable(l.ty) == nullable(r.ty) || t.is_bottom(l.ty) || t.is_bottom(r.ty) {
+            return (l, r);
+        }
+        if nullable(l.ty) {
+            let to = l.ty;
+            let r = self.try_coerce(r, to).unwrap_or_else(|r| r);
+            (l, r)
+        } else {
+            let to = r.ty;
+            let l = self.try_coerce(l, to).unwrap_or_else(|l| l);
+            (l, r)
+        }
     }
 
     fn primitive_eq(&self, t: TyId) -> bool {

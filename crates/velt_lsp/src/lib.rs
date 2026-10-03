@@ -4,7 +4,9 @@
 //! Features: diagnostics (parse + imports + sema, debounced, per open document), formatting
 //! (`velt_fmt`), document symbols, go to definition, hover, completion (JSX tags and attributes
 //! included), find references, rename, quick fixes (code actions), inlay hints, signature help,
-//! semantic tokens, document highlight and workspace symbols.
+//! semantic tokens, document highlight and workspace symbols. Documents in a package's
+//! `tsCompat` folders also get the TypeScript-compatibility lint's findings and fixes
+//! ([`ts_compat`]).
 //! Program loading is injected through [`ProgramLoader`] (the CLI's loader lives in `veltc`, which
 //! depends on this crate). Editor queries come from sema's IDE API ([`sema_query`] over
 //! `velt_sema::ide`, which answers even when the program has errors); the AST-based [`index`]
@@ -35,8 +37,8 @@ mod server;
 mod signature;
 mod signature_help;
 mod symbols;
-mod syntax_walk;
 mod text_scan;
+mod ts_compat;
 mod workspace_symbols;
 
 #[cfg(test)]

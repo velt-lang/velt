@@ -7,6 +7,7 @@
 //! self-references until they have been polled, so that copy is sound. After the first poll the
 //! future is pinned and the state never moves again.
 
+use super::all::ResultDropFn;
 use super::local::Locals;
 use super::{raw_cx, DropFn, PollFn, SendPtr, READY};
 use std::alloc::Layout;
@@ -96,6 +97,9 @@ pub struct Compiled<S: StateStore> {
     drop: DropFn,
     live: bool,
     state: S,
+    /// Transfers the result in place for the task that joins this one (compiled transfer glue,
+    /// `velt_rt_spawn_transfer`), run as the state finishes, inside the task's local set.
+    transfer: Option<ResultDropFn>,
     /// Dropped after the state (a cancelled root first releases the promises it owns).
     locals: Locals,
     _pinned: PhantomPinned,
@@ -109,9 +113,16 @@ impl<S: StateStore> Compiled<S> {
             drop,
             live: true,
             state,
+            transfer: None,
             locals: Locals::default(),
             _pinned: PhantomPinned,
         }
+    }
+
+    /// Run `transfer` on the result as the state finishes (see the field).
+    pub fn with_transfer(mut self, transfer: Option<ResultDropFn>) -> Self {
+        self.transfer = transfer;
+        self
     }
 
     /// Address of the state (the result is at offset 0 once `poll` returned `Ready`).
@@ -161,11 +172,22 @@ impl<S: StateStore> Future for Compiled<S> {
         if !this.live {
             return Poll::Ready(());
         }
-        let (poll, state) = (this.poll, this.state.ptr());
+        let (poll, state, transfer) = (this.poll, this.state.ptr(), this.transfer);
+        // The location this task's result carries is of a throw in this poll (panic.rs).
+        crate::panic::ThrowLoc::clear();
         let r = this.locals.poll_root(cx, |cx| {
             // SAFETY: the compiled poll function upholds the ABI for its own state.
             match unsafe { poll(state, raw_cx(cx)) } {
-                READY => Poll::Ready(()),
+                READY => {
+                    if let Some(t) = transfer {
+                        // SAFETY: the finished state's result is at offset 0. The glue runs
+                        // here, inside this task's set, while promises the task started (which
+                        // may still reference the result's objects) are on this thread; a
+                        // promise it starts joins the set (see `velt_rt_fut_transfer`).
+                        unsafe { t(state) }
+                    }
+                    Poll::Ready(())
+                }
                 _ => Poll::Pending,
             }
         });

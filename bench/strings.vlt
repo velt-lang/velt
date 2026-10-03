@@ -1,4 +1,5 @@
-// Strings: build 1M lines with template literals, join them, and scan the result.
+// Strings: build 1M lines with template literals, join them, and scan the result; then build
+// two strings by appending in a loop (`+=` and a template that starts with the string itself).
 function main() {
   const lines: string[] = [];
   for (let i = 0; i < 1000000; i++) {
@@ -14,4 +15,11 @@ function main() {
     }
   }
   console.log(lines.length, text.length, digits, lines[123456]);
+  let html = "";
+  let tpl = "";
+  for (let i = 0; i < 100000; i++) {
+    html += "<div class=\"lvl\">leaf</div>";
+    tpl = `${tpl}<p>${i % 100}</p>`;
+  }
+  console.log(html.length, tpl.length);
 }

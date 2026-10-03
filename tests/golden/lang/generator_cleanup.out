@@ -1,0 +1,42 @@
+open break
+got 0
+got 1
+finally break
+dispose break
+open return
+finally return
+dispose return
+first 0
+open throw
+finally throw
+dispose throw
+stop at 0
+open complete
+all 0
+all 1
+all 2
+finally complete
+done complete
+dispose complete
+open manual
+false
+finally manual
+dispose manual
+true
+open using
+using got 0
+finally using
+dispose using
+after using
+open dropped
+dropping
+finally dropped
+dispose dropped
+after drop
+inner
+inner finally
+between
+outer finally
+inner finally
+outer finally
+end

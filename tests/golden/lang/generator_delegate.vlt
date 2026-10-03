@@ -1,0 +1,94 @@
+// check: no leaks
+// `yield*` delegates to any iterable: another generator (resumed directly), an array, or a
+// user `Iterable` (through its iterator). Closing the outer generator while it is inside a
+// `yield*` closes the inner iterator too (`return()`), as in JS. Recursive generators walk
+// trees.
+class TreeNode {
+  value: i64;
+  left: TreeNode | null;
+  right: TreeNode | null;
+
+  constructor(value: i64, left: TreeNode | null, right: TreeNode | null) {
+    this.value = value;
+    this.left = left;
+    this.right = right;
+  }
+}
+
+function* inOrder(t: TreeNode | null): Generator<i64> {
+  if (t == null) {
+    return;
+  }
+  yield* inOrder(t.left);
+  yield t.value;
+  yield* inOrder(t.right);
+}
+
+class Steps implements Iterator<string> {
+  n: i64 = 0;
+
+  next(): IteratorResult<string> {
+    this.n++;
+    if (this.n > 3) {
+      return { done: true };
+    }
+    return { value: `step${this.n}`, done: false };
+  }
+
+  return(): IteratorResult<string> {
+    console.log("steps closed");
+    return { done: true };
+  }
+}
+
+class Walk implements Iterable<string> {
+  [Symbol.iterator](): Iterator<string> {
+    return new Steps();
+  }
+}
+
+function* inner(tag: string): Generator<string> {
+  try {
+    yield `${tag}1`;
+    yield `${tag}2`;
+  } finally {
+    console.log(`inner ${tag} closed`);
+  }
+}
+
+function* all(): Generator<string> {
+  yield* ["a", "b"];
+  yield* inner("x");
+  yield* new Walk();
+  yield "last";
+}
+
+function main(): void {
+  const t = new TreeNode(
+    4,
+    new TreeNode(2, new TreeNode(1, null, null), new TreeNode(3, null, null)),
+    new TreeNode(6, new TreeNode(5, null, null), new TreeNode(7, null, null)),
+  );
+  const seen: i64[] = [];
+  for (const v of inOrder(t)) {
+    seen.push(v);
+  }
+  console.log(seen.join(" "));
+  const walker = inOrder(t);
+  console.log(walker.next().done);
+
+  for (const s of all()) {
+    console.log(s);
+  }
+  // Leave the outer loop while it delegates: the inner iterator is closed first.
+  for (const s of all()) {
+    if (s == "x1") {
+      break;
+    }
+  }
+  for (const s of all()) {
+    if (s == "step2") {
+      break;
+    }
+  }
+}

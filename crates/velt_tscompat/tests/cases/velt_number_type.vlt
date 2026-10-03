@@ -1,0 +1,17 @@
+// Velt's number type names; `number` is the only one TypeScript knows.
+
+export function scale(x: f64, by: i32): number {
+  //~^ velt-number-type velt-number-type
+  return x * 2 + (by as number);
+}
+
+export type Pixel = { r: u8; g: u8; b: u8 }; //~ velt-number-type velt-number-type velt-number-type
+
+export function sizes(xs: Map<string, usize[]>): f32 {
+  //~^ velt-number-type velt-number-type
+  return xs.size;
+}
+
+export function fine(x: number): number {
+  return x / 2;
+}

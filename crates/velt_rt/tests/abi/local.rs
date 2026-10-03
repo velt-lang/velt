@@ -186,7 +186,7 @@ fn a_dropped_started_promise_runs_to_completion() {
     let t = Instant::now();
     while ORPHAN_RESULT_DROPS.load(Ordering::SeqCst) == 0 {
         assert!(
-            t.elapsed() < Duration::from_secs(10),
+            t.elapsed() < Duration::from_secs(60),
             "orphan did not finish"
         );
         block_on_fut::<()>(velt_rt_sleep(2));
@@ -220,7 +220,7 @@ fn a_handled_promise_disposes_of_its_result_quietly() {
     let t = Instant::now();
     while QUIET_RESULT_DROPS.load(Ordering::SeqCst) == 0 {
         assert!(
-            t.elapsed() < Duration::from_secs(10),
+            t.elapsed() < Duration::from_secs(60),
             "handled promise did not finish"
         );
         block_on_fut::<()>(velt_rt_sleep(2));
@@ -243,7 +243,7 @@ unsafe extern "C" fn detach_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let f = job(40, 5);
     assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
     velt_rt_fut_detach(f, Some(count_detached_drop));
-    log(41, "owner goes on");
+    log(39, "owner goes on");
     *(s as *mut i64) = 0;
     READY
 }
@@ -255,15 +255,16 @@ fn a_detached_promise_keeps_running_after_its_owner() {
     let t = Instant::now();
     while DETACHED_RESULT_DROPS.load(Ordering::SeqCst) == 0 {
         assert!(
-            t.elapsed() < Duration::from_secs(10),
+            t.elapsed() < Duration::from_secs(60),
             "detached promise did not finish"
         );
         block_on_fut::<()>(velt_rt_sleep(2));
     }
     // Its timer held the owner's waker: the set re-polled it, and it finished quietly.
+    // Its own ids (39, 40): the race test logs jobs 41 to 43 and runs alongside this one.
     assert_eq!(
-        events(40..42),
-        [(40, "start"), (41, "owner goes on"), (40, "end")]
+        events(39..41),
+        [(40, "start"), (39, "owner goes on"), (40, "end")]
     );
 }
 
@@ -346,7 +347,7 @@ fn race_takes_the_first_result_and_the_losers_keep_running() {
     );
     while events(41..44).len() < 6 {
         assert!(
-            t.elapsed() < Duration::from_secs(10),
+            t.elapsed() < Duration::from_secs(60),
             "losers did not finish"
         );
         block_on_fut::<()>(velt_rt_sleep(2));

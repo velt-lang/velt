@@ -5,7 +5,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -31,7 +31,7 @@ pub fn build_runtime() {
     } else {
         &["--release"]
     };
-    let status = Command::new(env!("CARGO"))
+    let status = crate::no_window::command(env!("CARGO"))
         .args(["build", "-q", "-p", "velt_rt"])
         .args(profile)
         .status()
@@ -65,7 +65,7 @@ pub struct Dev {
 impl Dev {
     /// `velt dev <mode flags> main.vlt` in `dir`.
     pub fn start(dir: &Path, mode: &[&str]) -> Dev {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_velt"));
+        let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
         cmd.arg("dev")
             .args(mode)
             .arg("main.vlt")
@@ -97,6 +97,22 @@ impl Dev {
         let pid = i32::try_from(self.child.id()).expect("pid");
         // SAFETY: plain syscall on our own child's pid (not yet reaped, so not reused).
         unsafe { libc::kill(pid, signal) };
+    }
+
+    /// Whether `signal` was sent to the supervisor and not yet delivered (Linux: the pending
+    /// sets in `/proc/<pid>/status`). Two signals sent before the first is delivered count as
+    /// one, so a test that sends a second one waits for the first to be delivered.
+    #[cfg(target_os = "linux")]
+    pub fn signal_pending(&self, signal: i32) -> bool {
+        let pid = self.child.id();
+        let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap_or_default();
+        status.lines().any(|line| {
+            let mask = match line.split_once(':') {
+                Some(("SigPnd" | "ShdPnd", mask)) => mask.trim(),
+                _ => return false,
+            };
+            u64::from_str_radix(mask, 16).is_ok_and(|m| m & (1 << (signal - 1)) != 0)
+        })
     }
 
     /// The supervisor's child processes (Linux: `/proc/<pid>/task/<pid>/children`).

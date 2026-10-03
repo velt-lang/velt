@@ -20,6 +20,9 @@
 //! The common case — a promise that finishes during its first poll (`fanout_all`) — costs one
 //! atomic read-modify-write: the node takes a counted reference to its set only when it
 //! suspends (or when a waker raced with its completion), and the owner's side is plain memory.
+//!
+//! The owner's side of a started node is in `owner.rs`, its wakers in `waker.rs`, and result
+//! transfers for another task in `transfer.rs`.
 
 use std::alloc::Layout;
 use std::cell::Cell;
@@ -27,13 +30,23 @@ use std::ffi::c_void;
 use std::future::Future;
 use std::sync::atomic::{fence, AtomicPtr, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+use std::task::{Context, Poll, RawWaker, Waker};
 
 use futures_util::task::AtomicWaker;
 
-use super::set::{LocalSet, Shared};
+mod owner;
+mod transfer;
+mod waker;
+
+pub(super) use self::transfer::set_transfer;
+pub(super) use self::waker::{local_awaiter, queue};
+
+use self::owner::{started_drop, started_poll};
+use self::transfer::run_transfer;
+use self::waker::NODE_WAKER;
+use super::set::Shared;
 use crate::task::all::ResultDropFn;
-use crate::task::{context, DropFn, PollFn, VeltFut, PENDING, READY};
+use crate::task::{DropFn, PollFn, VeltFut, READY};
 
 /// The state finished; its result is in the slot (unless it was handed out).
 pub(super) const DONE: u32 = 1;
@@ -80,6 +93,11 @@ pub(super) struct Head {
     next: AtomicPtr<VeltFut>,
     /// Waker of the owner while it waits for a started node.
     pub awaiter: AtomicWaker,
+    /// Transfers the result in place for another task (a `ResultDropFn`-shaped glue; null:
+    /// the result stays on the task that produced it). Set by the owner when the promise
+    /// crosses to another task (`velt_rt_fut_transfer`), run by the driving task as the state
+    /// finishes, so the copy is made where the result's objects live.
+    transfer: AtomicPtr<()>,
 }
 
 const HEAD: usize = std::mem::size_of::<Head>();
@@ -136,6 +154,7 @@ pub(super) unsafe fn alloc_node(
         set: std::ptr::null(),
         next: AtomicPtr::new(std::ptr::null_mut()),
         awaiter: AtomicWaker::new(),
+        transfer: AtomicPtr::new(std::ptr::null_mut()),
     });
     let f = base.add(HEAD) as *mut VeltFut;
     f.write(VeltFut {
@@ -190,6 +209,7 @@ unsafe extern "C" fn lazy_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     }
     let r = (h.poll)(state(f), cx);
     if r == READY {
+        run_transfer(f);
         h.owner.set(OWNER_DONE);
     }
     r
@@ -252,6 +272,7 @@ pub(super) unsafe fn count_set(f: *mut VeltFut) {
 /// Started node `f` finished during its first poll: nobody can await it yet. A waker that fired
 /// meanwhile may still be on its way into the set's queue, so then the set is kept alive.
 pub(super) unsafe fn finish_first(f: *mut VeltFut) {
+    run_transfer(f);
     if head(f).flags.fetch_or(DONE, Ordering::AcqRel) & QUEUED != 0 {
         count_set(f);
     }
@@ -260,6 +281,7 @@ pub(super) unsafe fn finish_first(f: *mut VeltFut) {
 /// The state of started node `f` finished: publish it to the owner (returning the waker of an
 /// owner waiting for it), or drop the result if the owner is gone.
 pub(super) unsafe fn finish(f: *mut VeltFut) -> Option<Waker> {
+    run_transfer(f);
     let h = head(f);
     let prev = h.flags.fetch_or(DONE, Ordering::AcqRel);
     if prev & DETACHED != 0 {
@@ -267,19 +289,6 @@ pub(super) unsafe fn finish(f: *mut VeltFut) -> Option<Waker> {
         return None;
     }
     h.awaiter.take()
-}
-
-/// The started node of set `shared` that waker `w` belongs to, if it is one that is still
-/// running (its awaiter can then be run directly instead of being queued).
-pub(super) unsafe fn local_awaiter(w: &Waker, shared: &Arc<Shared>) -> Option<*mut VeltFut> {
-    if !std::ptr::eq(w.vtable(), &NODE_WAKER) {
-        return None;
-    }
-    let g = w.data() as *mut VeltFut;
-    let h = head(g);
-    let running = h.flags.load(Ordering::Acquire) & (DONE | CANCELLED) == 0;
-    let member = h.member.load(Ordering::Relaxed) != NO_MEMBER;
-    (std::ptr::eq(h.set, Arc::as_ptr(shared)) && running && member).then_some(g)
 }
 
 /// The driving task went away before `f` finished: cancel the state.
@@ -323,127 +332,4 @@ unsafe fn is_started(f: *mut VeltFut) -> bool {
         (*f).poll,
         started_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32,
     )
-}
-
-/// The owner awaits a started node: ready once it finished. Awaited from inside the task that
-/// drives it and not woken meanwhile, the owner polls the state itself ("adopts" it, like a
-/// parent polling its children: the leaves then wake the owner directly, with no trip through
-/// the set); otherwise it waits for the set to finish it.
-unsafe extern "C" fn started_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
-    let h = head(f);
-    let fl = h.flags.load(Ordering::Acquire);
-    if fl & DONE == 0 {
-        let done = match adoptable(f, fl) {
-            Some(set) => drive_adopted(set, f, cx, fl),
-            None => wait(f, cx, fl),
-        };
-        if !done {
-            return PENDING;
-        }
-    }
-    h.owner.set(OWNER_DELIVERED);
-    READY
-}
-
-/// The set of the task being polled, if it drives unfinished, un-woken node `f`.
-unsafe fn adoptable(f: *mut VeltFut, fl: u32) -> Option<*mut LocalSet> {
-    let h = head(f);
-    if fl & (QUEUED | CANCELLED) != 0 || h.member.load(Ordering::Relaxed) == NO_MEMBER {
-        return None;
-    }
-    let set = super::current_set();
-    (!set.is_null() && std::ptr::eq(Arc::as_ptr(&(*set).shared), h.set)).then_some(set)
-}
-
-/// Poll adopted node `f` with its owner's context; true when it finished.
-unsafe fn drive_adopted(set: *mut LocalSet, f: *mut VeltFut, cx: *mut c_void, fl: u32) -> bool {
-    let h = head(f);
-    if fl & ADOPTED == 0 {
-        h.flags.fetch_or(ADOPTED, Ordering::Relaxed);
-    }
-    if (h.poll)(state(f), cx) != READY {
-        return false;
-    }
-    super::set::finish_adopted(set, f);
-    true
-}
-
-/// Wait for the set to finish `f`; true when it did. An adopted node goes back to its set (its
-/// leaves would wake an owner that no longer polls it).
-unsafe fn wait(f: *mut VeltFut, cx: *mut c_void, fl: u32) -> bool {
-    let h = head(f);
-    if fl & ADOPTED != 0 {
-        h.flags.fetch_and(!ADOPTED, Ordering::Relaxed);
-        waker_wake_by_ref(f as *const ());
-    }
-    let ready = |h: &Head| {
-        let fl = h.flags.load(Ordering::Acquire);
-        if fl & CANCELLED != 0 && fl & DONE == 0 {
-            crate::panic::fatal("a promise was awaited after the task running it was cancelled");
-        }
-        fl & DONE != 0
-    };
-    if ready(h) {
-        return true;
-    }
-    h.awaiter.register(context(cx).waker());
-    ready(h)
-}
-
-/// The owner drops a started node. JS semantics: an unfinished promise keeps running (its set
-/// drives it to completion and drops the result); a finished, unclaimed result is dropped here.
-unsafe extern "C" fn started_drop(f: *mut VeltFut) {
-    let h = head(f);
-    // Finished: the set is done with the result, no need to tell it the owner is gone.
-    let fl = h.flags.load(Ordering::Acquire);
-    if fl & (ADOPTED | DONE) == ADOPTED {
-        // Its leaves would wake this owner: let the set poll it (and re-register) instead.
-        h.flags.fetch_and(!ADOPTED, Ordering::Relaxed);
-        waker_wake_by_ref(f as *const ());
-    }
-    let done = fl & DONE != 0 || h.flags.fetch_or(DETACHED, Ordering::AcqRel) & DONE != 0;
-    if done && h.owner.get() & OWNER_DELIVERED == 0 {
-        drop_result(f);
-    }
-    release(f);
-}
-
-/// Queue started node `f` in its set's ready list, as its waker does.
-pub(super) unsafe fn queue(f: *mut VeltFut) {
-    waker_wake_by_ref(f as *const ());
-}
-
-/// Node wakers queue the node in its set's ready list.
-static NODE_WAKER: RawWakerVTable =
-    RawWakerVTable::new(waker_clone, waker_wake, waker_wake_by_ref, waker_drop);
-
-unsafe fn waker_clone(p: *const ()) -> RawWaker {
-    retain(p as *mut VeltFut);
-    RawWaker::new(p, &NODE_WAKER)
-}
-
-unsafe fn waker_wake(p: *const ()) {
-    waker_wake_by_ref(p);
-    waker_drop(p);
-}
-
-unsafe fn waker_wake_by_ref(p: *const ()) {
-    let f = p as *mut VeltFut;
-    let h = head(f);
-    let prev = h.flags.fetch_or(QUEUED, Ordering::AcqRel);
-    if prev & (QUEUED | DONE | CANCELLED) != 0 {
-        if prev & QUEUED == 0 {
-            h.flags.fetch_and(!QUEUED, Ordering::AcqRel);
-        }
-        return;
-    }
-    retain(f);
-    if !(*h.set).push(f) {
-        h.flags.fetch_and(!QUEUED, Ordering::AcqRel);
-        release(f);
-    }
-}
-
-unsafe fn waker_drop(p: *const ()) {
-    release(p as *mut VeltFut);
 }

@@ -36,6 +36,15 @@ typedef struct VeltFut {                             // every runtime-owned futu
   into tasks); it must not contain pointers into itself until it has been polled. After the first
   poll it never moves.
 - `cx` is the Rust `&mut Context`; generated code only passes it on.
+- Generators (`function*`) reuse this state-machine shape without the runtime: their poll
+  function is called with a null `cx` and returns 0 (done), 1 (a value is in the result slot)
+  or 2 (the slot holds the `Err`), and `$drop` closes a suspended generator (it runs `finally`
+  blocks). Async generators (`async function*`) are polled with the awaiting function's `cx`
+  and return 0 (pending: the waker is registered, as for any poll), 1 (done), 2 (a value) or 3
+  (an `Err`); setting tag bit `0x4000_0000` (`$close`) and polling to completion closes one,
+  awaiting its `finally` blocks. Nothing of this crosses the runtime ABI either (velt_vir
+  `async_fn/generator.rs`): the runtime never sees an async generator, only the futures of
+  the functions that drive it.
 
 **Awaiting** (inside a poll function):
 - *Compiled child, fast path (no allocation):* the child state is a field of the parent state.
@@ -54,6 +63,7 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_fut_drop` | `(VeltFut* f)` | cancel if pending, free; never drops the result slot |
 | `velt_rt_fut_box` | `(PollFn, DropFn, const void* state, u64 size, u64 align) -> VeltFut*` | moves a compiled initial state into a heap future (for `Promise<T>` values that are stored, put in arrays, returned); result at +16 = state offset 0. `align ≤ 16`. Lazy until polled or started (§1.1). |
 | `velt_rt_fut_start` | `(VeltFut* f, void (*result_drop)(void* slot))` | start a boxed promise now (§1.1); no-op for any other future, or outside a task. `result_drop` disposes of an unclaimed result (null if nothing to do); for a promise that can reject it reports an `Err` like an unhandled rejection. |
+| `velt_rt_fut_transfer` | `(VeltFut* f, void (*transfer)(void* slot))` | the owner hands `f` to another task: `transfer` (compiled transfer glue, in place) runs on the result slot on the task that produces the result, as it finishes (at once if a started promise already finished); a race passes it to its children; no-op for join handles (a task transfers its own result: `velt_rt_spawn_transfer`, or the mark of the promise `velt_rt_spawn_fut` runs) and runtime leaves. WebAssembly does the same on its one thread, so values are moved or copied where native targets move or copy them. |
 | `velt_rt_yield_now` | `(void* cx)` | `await yieldNow()` inline: call it, then `return 0`; resumes after other ready tasks. No allocation. |
 | `velt_rt_yield_now_fut` | `() -> VeltFut*` | `yieldNow()` as a value; result: none |
 | `velt_rt_sleep` | `(i64 ms) -> VeltFut*` | `sleep(ms)`; negative = 0; result: none |
@@ -108,6 +118,7 @@ each polled until done, done-flags in the state): no allocation.
 |---|---|---|
 | `velt_rt_block_on` | `(PollFn poll, void* state)` | `async main`: `velt_main` builds the state on its stack, calls this, then reads the result at `state+0`. Runs the root as a task on the runtime's workers; returns when READY. Tasks still running afterwards are abandoned when the process exits. Must not be called from inside a task. |
 | `velt_rt_spawn` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(f(...))`: copies the initial state into the task (caller gives up ownership of its contents), starts it now. Returns the join handle; its result slot (+16) receives `result_size` bytes (≤ 256; box larger results). Dropping the handle **detaches** (task keeps running); a result the handle never claims (dropped before or after the task finished) is dropped with `result_drop` (null: nothing to drop). |
+| `velt_rt_spawn_transfer` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size, void (*result_drop)(void* slot), void (*result_transfer)(void* slot)) -> VeltFut*` | `velt_rt_spawn` for a result that can reach counted objects: `result_transfer` (compiled transfer glue, in place) runs on the result as the task's state finishes, on the task and inside its local set (so promises the task started, which may still use the result's objects, are on the same thread, and a promise the glue starts joins the set), before the join handle can see it. Null: as `velt_rt_spawn`. |
 | `velt_rt_spawn_detached` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align)` | spawn whose result is unused: no handle, one allocation |
 | `velt_rt_spawn_fut` | `(VeltFut* f, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(p)` where `p` is already a heap future (boxed promise, leaf); takes ownership of `f`; `result_drop` as for `velt_rt_spawn` |
 
@@ -466,13 +477,29 @@ typedef VeltStr VeltStrBuf;   // same layout; any owned VeltStr is a valid build
 Template literals, `a + b + c` chains and generated `JSON.stringify`/print glue build with one
 builder: O(total length), amortized doubling. A push appends in place to an inline builder with
 room or a heap buffer with count 1; anything else (static text, a full inline string, a shared
-buffer) first moves the text to a fresh buffer, so `s += x` never changes another copy of `s`.
-`finish` moves the text out (a heap result of ≤ 23 bytes becomes inline, freeing the buffer).
+buffer) first moves the text to a fresh buffer, so a push never changes another copy of the
+string. `finish` moves the text out (a heap result of ≤ 23 bytes becomes inline, freeing the
+buffer).
+
+Appending to a variable or field (`s += x`, `s = s + x`, `` s = `${s}${x}` ``, where the old
+value of `s` is dead after the assignment) uses the same in-place path on `s` itself: the text
+after the leading `s` is pushed straight onto `s` when no part of it can throw, else built into
+a builder of its own and appended with `velt_rt_str_append` (rt_abi.md), so a throwing part
+leaves `s` unchanged. When the text may change `s` (it reads `s`, or calls code that could reach
+it), lowering shares the old value before evaluating it and puts it back afterwards, which
+leaves the count at 1 again unless the text kept a copy. Every push ends in the one append
+routine of the runtime (`VeltStr::push_bytes`), so a per-string header can be maintained there.
+
+**Invariant:** a count-1 buffer is appended to (and so possibly reallocated) only while no
+borrowed static-form view into it is live. The only such views today are the JSON reader's
+borrowed keys (§12.3), which point into the source text, and generated decode glue never
+appends to the text it is reading. Appended text may lie in the target's own buffer (a share,
+an uncounted copy or a static-form view of it): it is copied out before the buffer grows.
 
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_strbuf_new` | `(u64 cap, VeltStrBuf* out)` | `cap` = initial capacity hint (≤ 23: starts inline, else allocates up front) |
-| `velt_rt_strbuf_push_str` | `(VeltStrBuf* b, const VeltStr* s)` | `s` may be `b` itself |
+| `velt_rt_strbuf_push_str` | `(VeltStrBuf* b, const VeltStr* s)` | `s` may be `b` itself or lie in its buffer |
 | `velt_rt_strbuf_push_bytes` | `(VeltStrBuf* b, const u8* p, u64 len)` | static text chunks of a template; `len == 0` ⇒ `p` unused |
 | `velt_rt_strbuf_push_i64` / `_u64` | `(VeltStrBuf* b, i64 / u64 v)` | decimal |
 | `velt_rt_strbuf_push_f64` | `(VeltStrBuf* b, f64 v)` | JS `String(v)` (same formatter as `velt_rt_write_f64`) |

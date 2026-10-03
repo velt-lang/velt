@@ -37,7 +37,7 @@ fn sql_error(e: rusqlite::Error) -> Error {
 }
 
 #[export]
-fn sqlite_open(path: &str) -> Result<u64, Error> {
+fn velt_sqlite__open(path: &str) -> Result<u64, Error> {
     let c = Connection::open(path).map_err(sql_error)?;
     let mut t = table().lock().unwrap_or_else(|e| e.into_inner());
     t.0 += 1;
@@ -47,7 +47,7 @@ fn sqlite_open(path: &str) -> Result<u64, Error> {
 }
 
 #[export]
-fn sqlite_close(db: u64) -> Result<(), Error> {
+fn velt_sqlite__close(db: u64) -> Result<(), Error> {
     let removed = table()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -60,7 +60,7 @@ fn sqlite_close(db: u64) -> Result<(), Error> {
 }
 
 #[export]
-fn sqlite_exec(db: u64, sql: &str) -> Result<(), Error> {
+fn velt_sqlite__exec(db: u64, sql: &str) -> Result<(), Error> {
     let c = conn(db)?;
     let c = c.lock().unwrap_or_else(|e| e.into_inner());
     c.execute_batch(sql).map_err(sql_error)
@@ -118,25 +118,25 @@ fn query(db: u64, sql: &str, params: &str) -> Result<String, Error> {
 }
 
 #[export]
-fn sqlite_query(db: u64, sql: &str, params: &str) -> Result<String, Error> {
+fn velt_sqlite__query(db: u64, sql: &str, params: &str) -> Result<String, Error> {
     query(db, sql, params)
 }
 
 /// The same query on the runtime's blocking pool (`declare async function`).
 #[export(blocking)]
-fn sqlite_query_async(db: u64, sql: String, params: String) -> Result<String, Error> {
+fn velt_sqlite__query_async(db: u64, sql: String, params: String) -> Result<String, Error> {
     query(db, &sql, &params)
 }
 
 #[export]
-fn sqlite_version() -> String {
+fn velt_sqlite__version() -> String {
     rusqlite::version().to_string()
 }
 
 /// SQLite's name for a result code (`SQLITE_CONSTRAINT_UNIQUE`); Velt's own codes (bad
 /// parameters) are `SQLITE_ERROR`.
 #[export]
-fn sqlite_error_name(code: i32) -> String {
+fn velt_sqlite__error_name(code: i32) -> String {
     let name = match code {
         2067 => "SQLITE_CONSTRAINT_UNIQUE",
         1555 => "SQLITE_CONSTRAINT_PRIMARYKEY",

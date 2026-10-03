@@ -34,6 +34,7 @@ const PIPELINE: &[&str] = &[
 const TOOLING: &[(&str, &[&str])] = &[
     ("velt_lsp", &[]),
     ("velt_doc", &[]),
+    ("velt_tscompat", &["ts_compat"]),
     ("velt_fmt", &["templates", "cli_package"]),
     (
         "vpm",
@@ -43,6 +44,8 @@ const TOOLING: &[(&str, &[&str])] = &[
             "native_packages",
             "templates",
             "install_layout",
+            // `velt check --ts-compat` in a package reads `tsCompat` from the manifest.
+            "ts_compat",
         ],
     ),
     ("velt_registry", &["registry_cli", "cli_package"]),
@@ -109,6 +112,9 @@ const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
     ("README.md", &[], &["docs"]),
     ("bench/", &["velt_sema"], &[]),
     ("fuzz/", &["velt_fmt"], &[]),
+    // The `tsc` oracle's samples and configuration: velt_tscompat's tests read them (and skip
+    // the `tsc` run without its Node packages), `veltc`'s check that the samples are valid Velt.
+    ("tests/tscompat-oracle/", &["velt_tscompat"], &["ts_compat"]),
     ("packages/", &[], &["native_packages"]),
     ("playground/", &[], &["playground"]),
     ("editors/vscode/templates/", &[], &["debugger"]),

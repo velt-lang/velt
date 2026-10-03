@@ -1,0 +1,1 @@
+panic: cannot copy a `Conn` for another thread (`spawn`, a channel, `shared(...)` or `Mutex.with`'s result): other references to it are still in use, and it owns a resource ([Symbol.dispose]) without a clone() method

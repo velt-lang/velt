@@ -278,7 +278,11 @@ impl<'a> Parser<'a> {
         if self.speculating > 0 {
             return;
         }
-        let msg = format!("expected {}, found {}", what, self.found());
+        let msg = if self.at_kw(Kw::Yield) && matches!(what, "identifier" | "pattern") {
+            "`yield` is a reserved word and cannot be used as a name (as in TypeScript): choose another name".to_string()
+        } else {
+            format!("expected {}, found {}", what, self.found())
+        };
         let span = self.cur_span();
         self.error(msg, span);
     }

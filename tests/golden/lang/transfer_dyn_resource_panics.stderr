@@ -1,0 +1,1 @@
+panic: cannot copy an interface value holding a `ConnSource`: it holds a `Conn`, which owns a resource ([Symbol.dispose]) without a clone() method

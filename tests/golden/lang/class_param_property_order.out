@@ -1,0 +1,8 @@
+B.z
+B ctor
+P.a
+P ctor
+P { y: 5, z: 1, b: 2, c: 'three', a: 1, d: 4 }
+{"y":5,"z":1,"b":2,"c":"three","a":1,"d":4}
+Point { x: 1.5, y: 2, label: 'pt' }
+{"x":1.5,"y":2,"label":"pt"}

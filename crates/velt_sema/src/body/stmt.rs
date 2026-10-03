@@ -7,6 +7,7 @@ use velt_syntax::ast;
 use super::narrow::Fact;
 use super::pattern::BindCtx;
 use super::{FnCx, LocalKind, Want};
+use crate::defs::FnKind;
 use crate::hir::{self, StmtKind as S};
 
 impl FnCx<'_, '_> {
@@ -48,7 +49,16 @@ impl FnCx<'_, '_> {
     }
 
     pub fn stmt(&mut self, s: &ast::Stmt, out: &mut Vec<hir::Stmt>) {
+        // `super(args)` only as a statement of the constructor's body itself, once: never
+        // inside a block, `if`, `try` or loop, where a path could skip it (and the field
+        // initializers that run right after it) or run it twice.
+        self.f.super_ok = self.f.kind == FnKind::Ctor
+            && self.f.stmt_depth == 0
+            && !self.f.super_called
+            && is_super_call(s);
+        self.f.stmt_depth += 1;
         self.stmt_inner(s, out);
+        self.f.stmt_depth -= 1;
         self.f.super_ok = false;
     }
 
@@ -161,6 +171,7 @@ impl FnCx<'_, '_> {
                 self.expr_stmt(inner)
             }
             _ => {
+                self.stmt_yields(e);
                 let h = self.expr(e, None, Want::Borrow);
                 self.check_floating(e, &h);
                 h
@@ -320,6 +331,9 @@ impl FnCx<'_, '_> {
             }
         }
         let local = self.declare_local(name, ty, kind);
+        if v.kind == ast::VarKind::AwaitUsing {
+            self.f.await_using.insert(local);
+        }
         if let (None, Some(h)) = (ann, &init) {
             self.note_inferred_local(local, h);
         }
@@ -335,6 +349,25 @@ impl FnCx<'_, '_> {
     }
 
     fn return_stmt(&mut self, e: Option<&ast::Expr>, span: Span, out: &mut Vec<hir::Stmt>) {
+        if self.f.before_super {
+            self.cx.error(
+                Diagnostic::error(
+                    "a constructor cannot `return` before it calls `super(...)`",
+                    span,
+                )
+                .with_note("a derived class's constructor calls `super(...)` on every path"),
+            );
+        }
+        if let (Some(e), Some(_)) = (e, self.f.yield_ty) {
+            self.cx.error(
+                Diagnostic::error("a generator cannot return a value", e.span).with_note(
+                    "TypeScript allows this (the value becomes the `value` of the result with `done: true`); Velt doesn't because a finished `IteratorResult` carries no value; write `yield value;` before `return;` to produce a last value",
+                ),
+            );
+            self.expr(e, None, Want::Move);
+            Self::push(out, S::Return(None), span);
+            return;
+        }
         match (e, self.f.ret) {
             (None, ret) => {
                 let ret = ret.unwrap_or(self.cx.ty.unit);
@@ -436,4 +469,12 @@ fn is_place(e: &ast::Expr) -> bool {
         ast::ExprKind::Paren(inner) => is_place(inner),
         _ => false,
     }
+}
+
+/// Is `s` the statement `super(args);`?
+pub(super) fn is_super_call(s: &ast::Stmt) -> bool {
+    let ast::StmtKind::Expr(e) = &s.kind else {
+        return false;
+    };
+    matches!(&e.kind, ast::ExprKind::Call { callee, .. } if matches!(callee.kind, ast::ExprKind::Super))
 }

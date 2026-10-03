@@ -1,0 +1,5 @@
+strict_mode_names.vlt:2:16: error: invalid use of `arguments` in strict mode: a declaration cannot be named `arguments` or `eval`
+strict_mode_names.vlt:4:7: error: invalid use of `eval` in strict mode: a declaration cannot be named `arguments` or `eval`
+strict_mode_names.vlt:6:12: error: invalid use of `eval` in strict mode: a declaration cannot be named `arguments` or `eval`
+strict_mode_names.vlt:7:9: error: invalid use of `arguments` in strict mode: a declaration cannot be named `arguments` or `eval`
+strict_mode_names.vlt:8:14: error: invalid use of `arguments` in strict mode: a declaration cannot be named `arguments` or `eval`

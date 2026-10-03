@@ -79,9 +79,11 @@ review.
   macOS when the change touches OS-specific code (`crates/xtask/src/os.rs`). Enable it with `gh pr merge <n>
   --auto` once the review is approved.
 - Before queueing, strip any generated footer from the description: it becomes the commit message.
-- A nightly workflow runs the whole gate with PostgreSQL and Redis, and the Cranelift memory stress
-  run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and Windows;
-  fix failures first. Run one part alone with `gh workflow run nightly -f only=stress` (or `gate`).
+- A nightly workflow runs the whole gate with PostgreSQL and Redis, the Cranelift memory stress
+  run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and Windows,
+  and the `tsc` oracle for `velt check --ts-compat` (`crates/velt_tscompat/tests/oracle.rs`
+  against the `typescript` pinned in `tests/tscompat-oracle`); fix failures first. Run one part
+  alone with `gh workflow run nightly -f only=stress` (or `gate`, `oracle`).
 - Each push to `main` (the `main` jobs in `ci.yml`) runs the whole gate on Windows and macOS,
   which covers the changes the queue checked on Linux only, and opens or updates the issue
   "main fails on <OS>" when that fails; fix it first. The same jobs refresh the build cache on
@@ -94,9 +96,13 @@ review.
 
 - **Toolchain**: Rust is pinned in `rust-toolchain.toml`. Upgrade it in its own pull request
   (new versions bring new lints; clippy runs with `-D warnings`).
-- **Flaky tests are bugs**: fix the cause (timing tests compare interleaved measurements; tests
-  that build executables must not reuse a path a crashed process may still lock) instead of
-  re-running.
+- **Flaky tests are bugs**: fix the cause instead of re-running. No wall-clock limits: a cost
+  test counts the work (polls, buffer growths, bytes sent) or measures CPU time (a process's in
+  `tests/common/process_work.rs`, compared between interleaved sizes; a thread's or a child
+  process's against a generous bound), and a speed check belongs in `bench/`. Tests and goldens
+  order events by awaits, channels or observed state, not by sleeps; a wait loop's deadline is a
+  hang guard (a minute), not an assertion. Tests that build executables must not reuse a path a
+  crashed process may still lock.
 - **Platform gaps** found by CI (e.g. a test that is skipped on one OS) get an issue, and any CI
   workaround references it and is removed with the fix.
 - **Disk**: builds are large. On small system disks put `CARGO_TARGET_DIR`, `VELT_GOLDEN_WORK`

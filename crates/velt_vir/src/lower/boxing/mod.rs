@@ -12,7 +12,7 @@ mod kinds;
 
 use std::collections::HashSet;
 
-use velt_sema::hir::{DefId, TyId, TyKind};
+use velt_sema::hir::{self, AdtKind, DefId, TyId, TyKind};
 
 use super::Cx;
 
@@ -29,6 +29,67 @@ pub(super) struct Boxing {
     /// Types of values borrowed in place inside a counted object: a pointer to one may have
     /// other owners, so params of these types are never `noalias`.
     interior: HashSet<TyId>,
+    /// Object types that contain themselves by value (`interface Node { next?: Node }`, #376):
+    /// every instance is a counted box, so the field holds a pointer and the size is finite.
+    recursive: HashSet<DefId>,
+}
+
+impl Boxing {
+    /// The counted types before any share is observed: the recursive object types.
+    pub(super) fn initial(hir: &hir::Program) -> Boxing {
+        Boxing {
+            recursive: recursive_objects(hir),
+            ..Boxing::default()
+        }
+    }
+}
+
+/// Object types (anonymous ones, which field-only interfaces are by now) that reach themselves
+/// through fields stored inline: nested object types, nullable values, tuples and union
+/// payloads, not arrays, classes or other pointers.
+fn recursive_objects(hir: &hir::Program) -> HashSet<DefId> {
+    let objects: Vec<DefId> = (0..hir.defs.len() as u32)
+        .map(DefId)
+        .filter(|d| matches!(hir.def(*d), hir::Def::Adt(a) if a.kind == AdtKind::Anon))
+        .collect();
+    objects
+        .into_iter()
+        .filter(|&d| {
+            let mut seen = HashSet::new();
+            fields_of(hir, d)
+                .into_iter()
+                .any(|t| reaches(hir, t, d, &mut seen))
+        })
+        .collect()
+}
+
+fn fields_of(hir: &hir::Program, d: DefId) -> Vec<TyId> {
+    match hir.def(d) {
+        hir::Def::Adt(a) if a.kind != AdtKind::Class => a.fields.iter().map(|f| f.ty).collect(),
+        hir::Def::Enum(e) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
+        _ => vec![],
+    }
+}
+
+/// Does a value of type `t` hold a `target` inline?
+fn reaches(hir: &hir::Program, t: TyId, target: DefId, seen: &mut HashSet<TyId>) -> bool {
+    if !seen.insert(t) {
+        return false;
+    }
+    match hir.types.kind(t) {
+        TyKind::Adt(d, args) => {
+            *d == target
+                || args.iter().any(|a| reaches(hir, *a, target, seen))
+                    && matches!(hir.def(*d), hir::Def::Adt(a) if a.kind != AdtKind::Class)
+                || fields_of(hir, *d)
+                    .into_iter()
+                    .any(|f| reaches(hir, f, target, seen))
+        }
+        TyKind::Option(x) => reaches(hir, *x, target, seen),
+        TyKind::Tuple(ts) => ts.iter().any(|x| reaches(hir, *x, target, seen)),
+        TyKind::Result(a, b) => reaches(hir, *a, target, seen) || reaches(hir, *b, target, seen),
+        _ => false,
+    }
 }
 
 /// What a lowering pass observed (see the module docs).
@@ -80,7 +141,15 @@ impl Cx<'_> {
             _ => "?".into(),
         });
         let boxes = self.boxing.boxes.iter().map(|&t| self.type_name(t));
-        let mut out: Vec<String> = roots.chain(boxes).collect();
+        let recursive = self
+            .boxing
+            .recursive
+            .iter()
+            .map(|d| match self.hir.def(*d) {
+                velt_sema::hir::Def::Adt(a) => format!("{} (recursive)", a.name),
+                _ => "?".into(),
+            });
+        let mut out: Vec<String> = roots.chain(boxes).chain(recursive).collect();
         out.sort();
         out
     }
@@ -138,13 +207,22 @@ impl Cx<'_> {
     fn counted_in(&self, b: &Boxing, t: TyId) -> bool {
         match self.types.kind(t) {
             TyKind::Adt(d, _) if self.is_class(t) => b.roots.contains(&self.class_root(*d)),
+            TyKind::Adt(d, _) if b.recursive.contains(d) => true,
             _ => b.boxes.contains(&t),
         }
     }
 
+    /// Is `d` an object type that contains itself (always boxed; its values can form cycles)?
+    pub(super) fn recursive_object(&self, d: DefId) -> bool {
+        self.boxing.recursive.contains(&d)
+    }
+
     /// Is `t` an array or object type stored as a counted box (a `Ptr` to its inline value)?
     pub(super) fn boxed(&self, t: TyId) -> bool {
-        self.boxing.boxes.contains(&t)
+        match self.types.kind(t) {
+            TyKind::Adt(d, _) if self.boxing.recursive.contains(d) => true,
+            _ => self.boxing.boxes.contains(&t),
+        }
     }
 
     /// The inline layout of a boxed type's value (what the box holds).

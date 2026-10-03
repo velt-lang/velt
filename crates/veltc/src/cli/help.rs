@@ -132,21 +132,34 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "check",
         summary: "Type-check a file or the current package without building it",
-        usage: &["check [<file.vlt>] [--json] [--locked] [-v]"],
+        usage: &[
+            "check [<file.vlt>] [--json] [--locked] [-v]",
+            "check --ts-compat [<file|dir>...] [--json] [--locked] [-v]",
+        ],
         about: "Parses and type-checks like `velt build`, prints the diagnostics and exits \
                 with 1 if there are errors. Nothing is lowered, compiled or linked. With a \
                 file, checks it and every file it imports; a library module needs no `main`. \
                 Without one, checks every `.vlt` module under `src/` and `tests/` of the \
                 current package; its entry must define `main` (a library package's root is \
-                `src/lib.vlt`, with no `main`).",
+                `src/lib.vlt`, with no `main`). With `--ts-compat`, checks the given files \
+                (directories: their `.vlt`, `.ts` and `.tsx` files), or without paths the \
+                folders the package's `tsCompat` lists, then reports what in them `tsc` would \
+                reject or run differently, for code shared with TypeScript.",
         options: &[
             ("--json", "diagnostics as one JSON document on stdout (for editors and tools)"),
+            (
+                "--ts-compat [<file|dir>...]",
+                "lint the given files and directories (default: the package's `tsCompat` \
+                 folders) for the TypeScript/Velt common subset",
+            ),
             LOCKED,
             VERBOSE,
         ],
         examples: &[
             ("velt check", "check the current package"),
             ("velt check app.vlt --json", "machine-readable diagnostics for one file"),
+            ("velt check --ts-compat src/models", "check code shared with a TypeScript client"),
+            ("velt check --ts-compat", "lint the folders `tsCompat` lists in package.vlt"),
         ],
     },
     CommandHelp {

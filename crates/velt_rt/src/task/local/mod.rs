@@ -14,6 +14,9 @@
 
 mod node;
 mod set;
+mod timers;
+
+pub(crate) use timers::TimerLeaf;
 
 use std::cell::Cell;
 use std::future::Future;
@@ -21,8 +24,10 @@ use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 
 use self::set::LocalSet;
+use self::timers::Timers;
 use super::all::ResultDropFn;
 use super::{DropFn, PollFn, VeltFut};
+use std::sync::Arc;
 
 /// What `velt_rt_fut_start` needs from the task being polled.
 struct TaskCx {
@@ -32,6 +37,8 @@ struct TaskCx {
     waker: *const Waker,
     /// The task's id for `velt_rt_task_id` (0 until first asked for).
     id: *mut u64,
+    /// The task's timers (none until its first `sleep`; timers.rs).
+    timers: *mut Option<Arc<Timers>>,
 }
 
 thread_local! {
@@ -46,6 +53,19 @@ fn current_set() -> *mut LocalSet {
     }
     // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
     unsafe { *(*tcx).set }
+}
+
+/// Run `f` with the timers of the task being polled, created on first use; `None` outside a task.
+/// `f` also gets the task's waker.
+fn with_timers<R>(f: impl FnOnce(&Arc<Timers>, &Waker) -> R) -> Option<R> {
+    let tcx = CURRENT.with(Cell::get);
+    if tcx.is_null() {
+        return None;
+    }
+    // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`); `timers` points into the
+    // task's own `SetPtr`, which only this task's polls touch.
+    let (timers, task) = unsafe { (&mut *(*tcx).timers, &*(*tcx).waker) };
+    Some(f(timers.get_or_insert_with(Default::default), task))
 }
 
 /// Makes a task's set current for the duration of a poll (restores the previous one on drop).
@@ -63,14 +83,14 @@ impl Drop for Enter {
     }
 }
 
-/// Owned pointer to a task's local set (null = none yet).
-struct SetPtr(*mut LocalSet, u64);
+/// Owned pointer to a task's local set (null = none yet), its id and its timers.
+struct SetPtr(*mut LocalSet, u64, Option<Arc<Timers>>);
 
 // SAFETY: the set moves with its task between workers and is only used by that task's polls.
 unsafe impl Send for SetPtr {}
 
 impl SetPtr {
-    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0);
+    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0, None);
 
     /// Poll with this set current: drain its woken promises (resuming the task's root with
     /// `root` when a promise it awaits finishes), then poll the root once more if a promise ran
@@ -83,15 +103,23 @@ impl SetPtr {
             set: &mut self.0,
             waker,
             id: &mut self.1,
+            timers: &mut self.2,
         };
         let _enter = Enter::new(&tcx);
-        if !self.0.is_null() {
+        let timers = self.2.as_deref();
+        if self.0.is_null() {
+            // Only the root can wait for timers here; it is polled below.
+            if let Some(t) = timers {
+                t.fire(&*waker);
+            }
+        } else {
             // A live set owned by this task; compiled code run from the drain reaches it only
             // through `tcx`.
             set::drain(&mut set::Driver {
                 set: self.0,
                 task: &*waker,
                 root,
+                timers,
             });
         }
         root();
@@ -238,6 +266,21 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
         node::count_set(f);
         set::add_member(set, f);
     }
+}
+
+/// The owner hands promise `f` to another task (`spawn`, a channel, a settled promise): its
+/// result is transferred with `transfer` (in place, compiled transfer glue) on the task that
+/// produces it, so the other task never sees an object the producing task still references
+/// (#160). A started or lazy promise node keeps the function for when its state finishes; a
+/// race passes it on to its children (the winner's result is theirs); anything else (a join
+/// handle, whose task already had its inputs transferred, or a runtime leaf) produces nothing
+/// to transfer.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: ResultDropFn) {
+    if crate::task::race::pass_transfer(f, transfer) {
+        return;
+    }
+    node::set_transfer(f, transfer);
 }
 
 /// The owner gives up promise `f` without cancelling it (the pending siblings of an early

@@ -10,7 +10,7 @@ use velt_syntax::ast::{self, BinaryOp, ExprKind as E};
 
 use crate::analysis::Analysis;
 use crate::sema_query;
-use crate::syntax_walk::{self, Visit};
+use velt_syntax::visit::{self, Visit};
 
 /// `(title, edits)` converting the `+` chain that `d` (primary label `span`) reports on.
 pub fn for_diagnostic(
@@ -23,7 +23,7 @@ pub fn for_diagnostic(
         return None;
     }
     let mut adds = Adds(vec![]);
-    syntax_walk::walk_module(&analysis.module().ast, &mut adds);
+    visit::walk_module(&analysis.module().ast, &mut adds);
     let mut chain = adds
         .0
         .iter()

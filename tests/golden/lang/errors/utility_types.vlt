@@ -1,0 +1,29 @@
+// Utility type errors: a key that isn't a field in Pick (in Omit it is only a warning), keys
+// that aren't string literals, a non-object type, a type parameter (#350), writing a Readonly
+// field, and a type that needs its own fields through an operator.
+interface User {
+  id: number;
+  name: string;
+}
+
+type Typo = Pick<User, "nmae">;
+type Extra = Omit<User, "id" | "age">;
+type Wide = Pick<User, string>;
+type Num = Partial<number>;
+
+function patch<T>(x: T, p: Partial<T>) {}
+
+function main() {
+  const a: Typo = { name: "a" };
+  const b: Extra = { name: "b" };
+  const w: Wide = { id: 1, name: "w" };
+  const n: Num = 1;
+  const r: Readonly<User> = { id: 1, name: "r" };
+  r.name = "s";
+}
+
+// TypeScript allows this; Velt resolves `Partial<Node>` while `Node`'s fields are resolved.
+interface Node {
+  value: number;
+  patches: Partial<Node>[];
+}

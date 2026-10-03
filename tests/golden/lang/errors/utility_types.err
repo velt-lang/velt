@@ -1,0 +1,10 @@
+utility_types.vlt:9:24: error: `User` has no field `nmae` (in `Pick`)
+did you mean `name`?
+utility_types.vlt:10:25: warning: `User` has no field `age` (in `Omit`)
+utility_types.vlt:11:24: error: `Pick` takes the field names as a string literal type; found `string`
+utility_types.vlt:12:20: error: `Partial` needs an object type; found `f64`
+utility_types.vlt:14:36: error: `Partial` needs a concrete object type; `T` is a type parameter
+utility types on type parameters are not supported yet (#350)
+utility_types.vlt:22:5: error: cannot assign to `name`: it is a readonly field
+utility_types.vlt:28:20: error: `Partial<Node>` needs the fields of `Node` while they are being resolved
+`Node` refers to itself through a utility type in a field; TypeScript allows this, but Velt doesn't yet: write the fields out

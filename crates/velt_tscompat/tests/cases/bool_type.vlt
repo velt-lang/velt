@@ -1,0 +1,11 @@
+// `bool` is Velt's other name for `boolean`.
+
+export function both(a: bool, b: boolean): boolean {
+  //~^ bool-type
+  return a && b;
+}
+
+export function flags(): bool[] {
+  //~^ bool-type
+  return [true, false];
+}

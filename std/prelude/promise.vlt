@@ -111,8 +111,11 @@ class AbandonGuard<T, E> {
 
 // A promise's `resolve` and `reject`: heap closures over its slot, so they may be stored,
 // returned and moved to other tasks; both hold the guard. A value settled on the promise's own
-// task is shared with the awaiter, like JS; one settled from another task is copied (counted
-// objects never cross tasks, like `spawn` arguments).
+// task is shared with the awaiter, like JS. One settled from another task crosses threads, so it
+// is transferred like a `spawn` argument (moved if nothing else references it, copied if it is
+// still shared): after the settling statement has finished with it (`fulfillLater`), so a value
+// made just for the call moves (#263). A value that cannot reach a counted object (a number, a
+// string) has nothing to transfer and settles at once, so the reply costs no extra step.
 type Settlers<T, E> = { resolve: (value: T) => void; reject: (reason: E) => void };
 
 function settlers<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlers<T, E> {
@@ -122,14 +125,49 @@ function settlers<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlers<T, E> 
   const forReject = slot.clone();
   const guardReject = guard.clone();
   const resolve = (value: T) => {
-    const v = velt_rt_task_id() == home ? value : value.clone();
-    guard.with((g) => forResolve.with((s) => s.settle({ status: "fulfilled", value: v })));
+    const here = velt_rt_task_id();
+    if (here == home || here == 0 || !__intrinsic_needs_transfer(value)) {
+      const v = here == home ? value : __intrinsic_transfer(value);
+      guard.with((g) => forResolve.with((s) => s.settle({ status: "fulfilled", value: v })));
+    } else {
+      const later = fulfillLater<T, E>(forResolve.clone(), guard.clone(), value);
+    }
   };
   const reject = (reason: E) => {
-    const r = velt_rt_task_id() == home ? reason : reason.clone();
-    guardReject.with((g) => forReject.with((s) => s.settle({ status: "rejected", reason: r })));
+    const here = velt_rt_task_id();
+    if (here == home || here == 0 || !__intrinsic_needs_transfer(reason)) {
+      const r = here == home ? reason : __intrinsic_transfer(reason);
+      guardReject.with((g) => forReject.with((s) => s.settle({ status: "rejected", reason: r })));
+    } else {
+      const later = rejectLater<T, E>(forReject.clone(), guardReject.clone(), reason);
+    }
   };
   return { resolve: resolve, reject: reject };
+}
+
+// Settle `slot` from a task other than the promise's own, once the settling task is done with
+// the current step: a promise this task drives (kept unawaited, it still runs to completion)
+// that resumes at the task's next poll, when the caller has released its own reference to a
+// value made for the call. The transfer then moves what nothing else references.
+async function fulfillLater<T, E>(
+  slot: shared<Mutex<PromiseSlot<T, E>>>,
+  guard: shared<Mutex<AbandonGuard<T, E>>>,
+  value: T,
+): Promise<void> {
+  await yieldNow();
+  const v = __intrinsic_transfer(value);
+  guard.with((g) => slot.with((s) => s.settle({ status: "fulfilled", value: v })));
+}
+
+// `fulfillLater` for a rejection.
+async function rejectLater<T, E>(
+  slot: shared<Mutex<PromiseSlot<T, E>>>,
+  guard: shared<Mutex<AbandonGuard<T, E>>>,
+  reason: E,
+): Promise<void> {
+  await yieldNow();
+  const r = __intrinsic_transfer(reason);
+  guard.with((g) => slot.with((s) => s.settle({ status: "rejected", reason: r })));
 }
 
 // Run the executor with its `resolve` and `reject`. A function of its own, so that once it
@@ -163,6 +201,23 @@ export function promiseNew<T, E>(
   return settlement<T, E>(slot, site, direct);
 }
 
+// The slot's settlement, moved out. A plain value comes out as `with`'s result. One that
+// reaches an object is taken out through `taken` instead: `with`'s result is transferred as it
+// leaves the lock (a copy where it is still shared), but a value settled on this promise's own
+// task is the awaiter's same object (JS identity), and one settled from another task was
+// transferred when it was settled.
+function takeSettlement<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlement<T, E> {
+  const probe: Settlement<T, E> = { status: "pending" };
+  if (!__intrinsic_needs_transfer(probe)) {
+    return slot.with((s) => s.takeOutcome());
+  }
+  const taken: Settlement<T, E>[] = [];
+  slot.with((s) => {
+    taken.push(s.takeOutcome());
+  });
+  return taken.pop() ?? probe;
+}
+
 // Waits for the slot to be settled (holding only the slot, not the executor).
 async function settlement<T, E>(
   slot: shared<Mutex<PromiseSlot<T, E>>>,
@@ -170,7 +225,7 @@ async function settlement<T, E>(
   direct: bool,
 ): Promise<T> throws E {
   await velt_rt_latch_wait(slot.with((s) => s.latch));
-  const outcome = slot.with((s) => s.takeOutcome());
+  const outcome = takeSettlement<T, E>(slot);
   switch (outcome.status) {
     case "fulfilled":
       return outcome.value;

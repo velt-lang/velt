@@ -1,0 +1,42 @@
+// check: no leaks
+// What `with` returns leaves the lock like a value crossing to another thread (#373): a part
+// of the protected value comes out as a copy (another task may use the value as soon as the
+// lock is released), and a value the callback made moves out. 8 tasks read and change their
+// copies while updating the protected value only under the lock.
+class Inner {
+  n: i64 = 0;
+}
+
+class Outer {
+  inner: Inner = new Inner();
+}
+
+async function worker(m: shared<Mutex<Outer>>): Promise<i64> {
+  let seen: i64 = 0;
+  for (let k = 0; k < 2000; k++) {
+    const i = m.with((v) => v.inner);
+    i.n += 1000000;
+    seen += i.n >= 1000000 ? 1 : 0;
+    m.with((v) => {
+      v.inner.n += 1;
+    });
+    const fresh = m.with((v) => {
+      const f = new Inner();
+      f.n = v.inner.n;
+      return f;
+    });
+    seen += fresh.n > 0 ? 0 : 1;
+    await yieldNow();
+  }
+  return seen;
+}
+
+async function main() {
+  const m = shared(new Mutex<Outer>(new Outer()));
+  const ts: Promise<i64>[] = [];
+  for (let i = 0; i < 8; i++) {
+    ts.push(spawn(worker(m.clone())));
+  }
+  const r = await Promise.all(ts);
+  console.log(r.length, r[0], m.with((v) => v.inner.n));
+}

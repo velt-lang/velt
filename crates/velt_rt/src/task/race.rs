@@ -72,7 +72,7 @@ unsafe extern "C" fn race_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
             }
             continue;
         }
-        t.children = None;
+        drop_in_order(t.children.take());
         return READY;
     }
 }
@@ -80,8 +80,21 @@ unsafe extern "C" fn race_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
 unsafe extern "C" fn race_drop(f: *mut VeltFut) {
     let t = tail(f);
     let l = layout(t.result_size);
+    drop_in_order(t.children.take());
     std::ptr::drop_in_place(t);
     std::alloc::dealloc((f as *mut u8).sub(TAIL), l);
+}
+
+/// Drop the losers in array order: a started promise among them is handed back to its task,
+/// which resumes it in that order (`FuturesUnordered` would drop them newest first). With timers
+/// due in the same tick, they resume in timer order, like in JS (#157).
+fn drop_in_order(children: Option<FuturesUnordered<Child>>) {
+    let Some(children) = children else {
+        return;
+    };
+    let mut losers: Vec<Child> = children.into_iter().collect();
+    losers.sort_unstable_by_key(|c| c.index);
+    drop(losers);
 }
 
 unsafe fn new_race(
@@ -116,6 +129,21 @@ unsafe fn new_race(
         drop: race_drop,
     });
     f
+}
+
+/// If `f` is a race, mark each of its children to transfer its result with `transfer`
+/// (`velt_rt_fut_transfer`): the winner's result is a child's. Whether `f` was one.
+pub(super) unsafe fn pass_transfer(f: *mut VeltFut, transfer: ResultDropFn) -> bool {
+    let race = race_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32;
+    if !std::ptr::fn_addr_eq((*f).poll, race) {
+        return false;
+    }
+    if let Some(children) = tail(f).children.as_ref() {
+        for c in children.iter() {
+            crate::task::local::velt_rt_fut_transfer(c.fut.0, transfer);
+        }
+    }
+    true
 }
 
 /// `Promise.race(array)`: takes ownership of the `n` futures in `futs` (not of the pointer array)

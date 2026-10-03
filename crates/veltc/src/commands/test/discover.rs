@@ -19,8 +19,8 @@ pub fn is_test_file(name: &str) -> bool {
     vpm::sources::strip_source_extension(name).is_some_and(|stem| stem.ends_with(".test"))
 }
 
-/// Test files under `path` (recursively, skipping `target/`, `node_modules/`, hidden and symlinked
-/// directories), sorted. An explicitly named file is used even without the `.test` suffix.
+/// Test files under `path` (recursively, as [`vpm::sources::walks_into`] walks: skipping
+/// `target/`, `node_modules/`, hidden and symlinked directories and nested packages), sorted. An explicitly named file is used even without the `.test` suffix.
 pub fn find_test_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     if path.is_file() {
         return Ok(vec![path.to_path_buf()]);
@@ -31,15 +31,15 @@ pub fn find_test_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     files_where(path, &is_test_file)
 }
 
-/// Source modules under `dir` (`.vlt`, `.ts`, `.tsx`; recursively, skipping `target/`,
-/// `node_modules/`, hidden and symlinked directories), sorted.
+/// Source modules under `dir` (`.vlt`, `.ts`, `.tsx`, not `package.vlt`; recursively, skipping
+/// `target/`, `node_modules/`, hidden and symlinked directories and nested packages), sorted.
 pub fn source_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
-    files_where(dir, &vpm::sources::is_source_name)
+    files_where(dir, &vpm::sources::walk_keeps)
 }
 
-/// Files under `dir` whose names satisfy `keep` (recursively, skipping `target/`,
-/// `node_modules/`, hidden and symlinked directories), sorted. A symlinked directory can lead
-/// back up (`src/up -> ..`), which would walk the package again, or forever.
+/// Files under `dir` whose names satisfy `keep`, sorted: recursively, into the directories
+/// [`vpm::sources::walks_into`] enters (the walk the language server's `tsCompat` folder
+/// membership follows, [`vpm::sources::in_folder`]). A nested package's files are its own.
 fn files_where(dir: &Path, keep: &dyn Fn(&str) -> bool) -> Result<Vec<PathBuf>, String> {
     let mut out = vec![];
     collect(dir, keep, &mut out)?;
@@ -54,8 +54,7 @@ fn collect(dir: &Path, keep: &dyn Fn(&str) -> bool, out: &mut Vec<PathBuf>) -> R
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         if path.is_dir() {
-            let link = entry.file_type().is_ok_and(|t| t.is_symlink());
-            if !link && name != "target" && name != "node_modules" && !name.starts_with('.') {
+            if vpm::sources::walks_into(&path) {
                 collect(&path, keep, out)?;
             }
         } else if keep(&name) {
@@ -164,6 +163,40 @@ mod tests {
         assert_eq!(
             found,
             [tmp.path().join("b.vlt"), link, sub.join("a.test.vlt")]
+        );
+    }
+
+    #[test]
+    fn nested_packages_and_manifests_are_not_sources() {
+        let tmp = tempfile::tempdir().unwrap();
+        for f in [
+            "package.vlt",
+            "src/a.vlt",
+            "src/a.test.vlt",
+            "src/inner/package.vlt",
+            "src/inner/b.vlt",
+            "src/inner/b.test.vlt",
+        ] {
+            let p = tmp.path().join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "").unwrap();
+        }
+        assert_eq!(
+            source_files(tmp.path()).unwrap(),
+            [
+                tmp.path().join("src/a.test.vlt"),
+                tmp.path().join("src/a.vlt")
+            ]
+        );
+        assert_eq!(
+            find_test_files(tmp.path()).unwrap(),
+            [tmp.path().join("src/a.test.vlt")]
+        );
+        // Named directly, the nested package's folder is walked (without its manifest).
+        let inner = tmp.path().join("src/inner");
+        assert_eq!(
+            source_files(&inner).unwrap(),
+            [inner.join("b.test.vlt"), inner.join("b.vlt")]
         );
     }
 

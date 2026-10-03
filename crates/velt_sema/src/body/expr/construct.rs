@@ -32,6 +32,17 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         };
+        if self.cx.is_generator_class(d) && !self.cx.scopes[self.module].is_std {
+            let fix = match Some(d) == self.cx.generator_class() {
+                true => "write a generator function (`function* f(): Generator<T> { ... }`) and call it",
+                false => "write an async generator function (`async function* f(): AsyncGenerator<T> { ... }`) and call it",
+            };
+            self.cx.error(
+                Diagnostic::error("generators cannot be created with `new`", span).with_note(fix),
+            );
+            self.check_args_loose(args);
+            return self.error_expr(span);
+        }
         let n = slots.len();
         let self_ty = crate::collect::self_type(self.cx, d, n);
         let ctor = self.cx.adt(d).and_then(|a| a.ctor);
@@ -71,6 +82,7 @@ impl FnCx<'_, '_> {
             bounds: names.bounds,
             js_numbers: false,
             rest: false,
+            defaults: self.cx.adt_param_defaults(d),
         };
         let ck = self.check_call(&c, slots, args, self.hint(exp), span);
         if Some(d) == self.cx.prelude_adt("Record") && self.owner != Some(d) {
@@ -79,8 +91,10 @@ impl FnCx<'_, '_> {
                 return self.error_expr(span);
             }
         }
-        // `new` evaluates every field default (own and inherited) before the constructor.
-        for s in self.class_default_throws(ck.ret, span) {
+        // `new` runs the constructor, which runs the field initializers of its class and the
+        // classes above it, then those of the classes below the one declaring it.
+        let owner = ctor.and_then(|c| self.cx.fn_info(c).owner);
+        for s in self.class_default_throws(ck.ret, owner, span) {
             self.throw_src(s);
         }
         if let Some(c) = ctor {
@@ -98,28 +112,36 @@ impl FnCx<'_, '_> {
         self.mk(kind, ck.ret, span)
     }
 
-    /// What the field defaults of class type `ty` (and of its base classes) may throw, as
-    /// thrown by the `new` at `span`.
-    fn class_default_throws(&mut self, ty: TyId, span: Span) -> Vec<ThrowSrc> {
-        let TyKind::Adt(d, args) = self.cx.ty.kind(ty).clone() else {
-            return vec![];
-        };
-        crate::body::field_defaults(self.cx, d);
-        let Some(a) = self.cx.adt(d) else {
-            return vec![];
-        };
-        let own: Vec<ThrowSrc> = a.fields[a.own_fields_start..]
-            .iter()
-            .flat_map(|f| f.default_throws.iter().cloned())
-            .collect();
-        let base = a.base;
-        let mut out: Vec<ThrowSrc> = own
-            .iter()
-            .map(|s| s.used_at(span, |t| self.cx.ty.subst(t, &args)))
-            .collect();
-        if let Some(b) = base {
-            let b = self.cx.ty.subst(b, &args);
-            out.extend(self.class_default_throws(b, span));
+    /// What the field initializers of class type `ty` and of its base classes up to (not
+    /// including) class `stop` may throw, as thrown at `span`: one deferred source per class.
+    /// The initializers are checked first (diagnostics in source order); what they throw is
+    /// resolved later, since initializers that construct each other in a cycle are still
+    /// being checked here (`crate::throws::defaults_srcs`).
+    pub(crate) fn class_default_throws(
+        &mut self,
+        ty: TyId,
+        stop: Option<DefId>,
+        span: Span,
+    ) -> Vec<ThrowSrc> {
+        let mut out = vec![];
+        let mut cur = Some(ty);
+        while let Some((d, args)) = cur.and_then(|t| self.cx.class_of(t)) {
+            // Inheritance cycles are broken when layouts are computed (`class inheritance
+            // cycle`), so the chain ends; the check on classes already listed only guards that
+            // invariant (unlike a depth limit, it never cuts a deep but finite chain short).
+            let listed = out
+                .iter()
+                .any(|s| matches!(s, ThrowSrc::Defaults(o, ..) if *o == d));
+            if Some(d) == stop || listed {
+                break;
+            }
+            crate::body::field_defaults(self.cx, d);
+            cur = self
+                .cx
+                .adt(d)
+                .and_then(|a| a.base)
+                .map(|b| self.cx.ty.subst(b, &args));
+            out.push(ThrowSrc::Defaults(d, args, span));
         }
         out
     }
@@ -153,17 +175,17 @@ impl FnCx<'_, '_> {
             return None;
         }
         let n = a.generics.len();
-        if !args.is_empty() && args.len() != n {
+        if args.is_empty() {
+            return Some((d, vec![None; n]));
+        }
+        let written: Vec<TyId> = args.iter().map(|a| self.resolve(a)).collect();
+        let full = self.cx.adt_with_defaults(d, written);
+        if full.len() != n {
             self.cx
                 .err(format!("class `{name}` takes {n} type argument(s)"), t.span);
             return None;
         }
-        let slots = if args.is_empty() {
-            vec![None; n]
-        } else {
-            args.iter().map(|a| Some(self.resolve(a))).collect()
-        };
-        Some((d, slots))
+        Some((d, full.into_iter().map(Some).collect()))
     }
 
     /// The ancestor type of class type `t` whose def is `owner` (`t` itself if none).

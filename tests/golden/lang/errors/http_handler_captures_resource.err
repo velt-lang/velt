@@ -1,0 +1,2 @@
+http_handler_captures_resource.vlt:18:43: error: this function captures `store`, and it handles HTTP requests, which run on several threads at once: each call would share `store` across threads, but `Store` owns a resource (`[Symbol.dispose]`) and has no `clone()`
+  = note: give `Store` a `clone()` method that duplicates the resource (each call then gets its own copy), or capture a shared one: `shared(new Mutex(…))`

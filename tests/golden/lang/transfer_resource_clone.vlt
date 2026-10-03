@@ -1,0 +1,72 @@
+// check: no leaks
+// A value that is still in use when it enters another task is deep-copied for the task; a
+// resource in it is copied by its type's own `clone()`, so each copy releases its own
+// resource once (#122): a `spawn` argument, a part of one, a capture of a spawned closure, a
+// channel send, and `x.clone()` of an array of resources.
+import { channel, Channel } from "velt:channel";
+
+class Handle {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  clone(): Handle {
+    console.log("clone", this.id);
+    return new Handle(this.id + 100);
+  }
+
+  [Symbol.dispose]() {
+    console.log("release", this.id);
+  }
+}
+
+class Holder {
+  h: Handle;
+  tag: string;
+
+  constructor(h: Handle, tag: string) {
+    this.h = h;
+    this.tag = tag;
+  }
+}
+
+async function use(h: Handle): Promise<i64> {
+  return h.id;
+}
+
+async function useHolder(x: Holder): Promise<string> {
+  return `${x.tag} ${x.h.id}`;
+}
+
+async function receiveOne(ch: Channel<Handle>): Promise<i64> {
+  const h = await ch.receive();
+  return h == null ? -1 : h.id;
+}
+
+async function main() {
+  const a = new Handle(1);
+  console.log("task saw", await spawn(use(a)));
+  console.log("main has", a.id);
+
+  const holder = new Holder(new Handle(2), "holder");
+  console.log("task saw", await spawn(useHolder(holder)));
+  console.log("main has", holder.h.id);
+
+  const c = new Handle(3);
+  console.log("task saw", await spawn(async (): Promise<i64> => c.id));
+  console.log("main has", c.id);
+
+  const ch = channel<Handle>();
+  const t = spawn(receiveOne(ch));
+  const d = new Handle(4);
+  await ch.send(d);
+  console.log("task saw", await t);
+  console.log("main has", d.id);
+
+  const hs = [new Handle(5)];
+  const copies = hs.clone();
+  console.log("copied", copies[0].id, "from", hs[0].id);
+  console.log("end");
+}
