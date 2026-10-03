@@ -32,6 +32,7 @@ pub const RULES: &[&str] = &[
     "velt-import",
     "outside-import",
     "jsx-provider",
+    "jsx-pragma-comment",
     "declare-fn",
 ];
 

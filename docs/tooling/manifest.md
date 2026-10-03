@@ -86,7 +86,8 @@ jsx: { importSource: "sigx" },
 
 The module whose `jsx-runtime` compiles the package's JSX: a dependency, `"velt:jsx"` (the
 default), a `paths` alias, or `./dir` relative to the package root. A
-`// @jsxImportSource x` comment at the top of a file wins ([JSX](../std/jsx.md)).
+`/** @jsxImportSource x */` comment at the top of a file wins ([JSX](../std/jsx.md)); Velt also
+reads it from a `//` comment, `tsc` only from a block comment.
 
 ## `native`
 

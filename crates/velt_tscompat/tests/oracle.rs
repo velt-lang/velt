@@ -9,7 +9,10 @@
 //!   `tsc` a declaration at a time: one the lint passes must compile, and one it reports with a
 //!   rule `tsc` rejects must not.
 //! - Each rejected sample reports only its rule, and `tsc` has an error on every line the lint
-//!   reports. Each behaviour sample compiles.
+//!   reports. Each behaviour sample compiles; one that compiles because `tsc` ignores the
+//!   construct ([`IGNORED`]) gets the error it names once the lint's fixes are applied.
+//! - A directory in `tests/cases` is a JSX provider the cases name (`./_jsx_pragma`); the
+//!   project gets a TypeScript stand-in for it that re-exports the oracle's provider.
 //!
 //! Without Node or `tests/tscompat-oracle/node_modules` the `tsc` part is skipped with a
 //! message (the pull request gate has no Node packages); `VELT_TSC_ORACLE=1` (the nightly run)
@@ -22,7 +25,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use common::{cases_dir, line_of, lint_module, lint_source, parse};
+use common::{apply_fixes, cases_dir, line_of, lint_module, lint_source, parse};
 use velt_tscompat::{Finding, RULES};
 
 /// What the oracle proves about a rule.
@@ -62,7 +65,18 @@ const CLAIMS: &[(&str, Claim)] = &[
         ),
     ),
     ("declare-fn", Claim::Behaviour),
+    ("jsx-pragma-comment", Claim::Behaviour),
 ];
+
+/// Behaviour samples `tsc` accepts because it ignores the construct: `(code, TS error, why)`.
+/// The sample with the lint's fixes applied is checked too: there `tsc` reads the construct and
+/// reports the error, so the sample compiled only because `tsc` ignored it.
+const IGNORED: &[(&str, &str, &str)] = &[(
+    "jsx-pragma-comment",
+    "2875",
+    "the sample's line-comment pragma names a provider that doesn't exist; as a block comment, \
+     `tsc` reads it and can't find the runtime",
+)];
 
 /// Lines where `tsc` rejects code the lint passes, each a rule still to write: `(file in the
 /// project, line, why)`. The oracle fails when one of them compiles, so the entry goes when the
@@ -125,6 +139,12 @@ fn every_rule_has_a_claim_and_its_sample() {
             "tests/tscompat-oracle/{kind}: one sample per rule"
         );
     }
+    for (code, _, _) in IGNORED {
+        assert!(
+            matches!(claim(code), Claim::Behaviour),
+            "`{code}` in IGNORED is a behaviour claim"
+        );
+    }
 }
 
 /// A sample shows its rule and nothing else, so `tsc`'s verdict on it is about that rule.
@@ -176,12 +196,14 @@ fn tsc_agrees_with_the_lint() {
     let project = std::env::temp_dir().join(format!("velt-tsc-oracle-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&project);
     let (cases, rejected, behaviour) = write_project(&oracle, &project);
+    let ignored = write_ignored_fixes(&project, &behaviour);
     let diags = run_tsc(&oracle, &project);
     // The project's own diagnostics, and the stand-in JSX provider's.
     let checked: BTreeSet<&str> = cases
         .iter()
         .chain(&rejected)
         .chain(&behaviour)
+        .chain(ignored.iter().map(|(file, _)| file))
         .map(|c| c.name.as_str())
         .collect();
     let mut failures: Vec<String> = diags
@@ -204,6 +226,9 @@ fn tsc_agrees_with_the_lint() {
                 .iter()
                 .map(|d| format!("tsc rejects a behaviour sample: {d}")),
         );
+    }
+    for (file, (_, wanted, why)) in &ignored {
+        check_ignored(file, wanted, why, &of(&file.name), &mut failures);
     }
     for (code, claim) in CLAIMS {
         if let Claim::Unprovable(why) = claim {
@@ -240,6 +265,10 @@ fn write_project(oracle: &Path, project: &Path) -> (Vec<Checked>, Vec<Checked>, 
         .collect();
     entries.sort();
     for path in &entries {
+        if path.is_dir() {
+            provider_stand_in(&project.join(path.file_name().unwrap()));
+            continue;
+        }
         let (stem, ext) = (stem(path), path.extension().unwrap().to_string_lossy());
         let (name, lint_as) = match ext.as_ref() {
             "vlt" => (format!("{stem}.ts"), path.clone()),
@@ -290,6 +319,55 @@ fn write_project(oracle: &Path, project: &Path) -> (Vec<Checked>, Vec<Checked>, 
     );
     std::fs::write(project.join("tsconfig.json"), tsconfig).expect("write tsconfig.json");
     (cases, rejected, behaviour)
+}
+
+/// A TypeScript stand-in for a JSX provider directory of the cases: the oracle's provider.
+fn provider_stand_in(dir: &Path) {
+    std::fs::create_dir_all(dir).expect("create a provider directory");
+    let reexport = "export * from \"oracle-jsx/jsx-runtime\";\n";
+    std::fs::write(dir.join("jsx-runtime.d.ts"), reexport).expect("write a provider stand-in");
+}
+
+/// Writes each [`IGNORED`] sample with its fixes applied (`behaviour/<code>.fixed.<ext>`);
+/// returns them with their entries.
+fn write_ignored_fixes(
+    project: &Path,
+    behaviour: &[Checked],
+) -> Vec<(Checked, &'static (&'static str, &'static str, &'static str))> {
+    let mut out = vec![];
+    for entry in IGNORED {
+        let sample = behaviour
+            .iter()
+            .find(|c| stem(&c.lint_as) == entry.0)
+            .unwrap_or_else(|| panic!("`{}` in IGNORED has no behaviour sample", entry.0));
+        let src = apply_fixes(&sample.src, &lint_source(&sample.lint_as, &sample.src));
+        assert_ne!(src, sample.src, "{}: the lint has no fix", sample.name);
+        let ext = sample.lint_as.extension().unwrap().to_string_lossy();
+        let name = format!("behaviour/{}.fixed.{ext}", entry.0);
+        std::fs::write(project.join(&name), &src).expect("write a fixed sample");
+        let lint_as = sample.lint_as.clone();
+        out.push((Checked { name, src, lint_as }, entry));
+    }
+    out
+}
+
+/// The fixed form of an [`IGNORED`] sample has the error that shows `tsc` reads it now.
+fn check_ignored(
+    file: &Checked,
+    wanted: &str,
+    why: &str,
+    diags: &[&Diag],
+    failures: &mut Vec<String>,
+) {
+    if diags.iter().any(|d| d.code == wanted) {
+        eprintln!("{}: tsc reports TS{wanted}: {why}", file.name);
+    } else {
+        let got: Vec<String> = diags.iter().map(|d| d.to_string()).collect();
+        failures.push(format!(
+            "{}: the fix should make tsc report TS{wanted} ({why}), but it reports {got:?}",
+            file.name
+        ));
+    }
 }
 
 fn stem(path: &Path) -> String {
@@ -351,6 +429,9 @@ fn check_case(file: &Checked, diags: &[&Diag], failures: &mut Vec<String>) {
             .find(|d| d.lines.0 <= line && line <= d.lines.1)
         {
             Some(d) => d.findings.push(f),
+            // A comment before the declarations (a pragma): only a rejected claim needs the
+            // declaration `tsc` reports.
+            None if !matches!(claim(f.code), Claim::Rejected) => {}
             None => failures.push(format!(
                 "{}:{line}: a finding outside declarations",
                 file.name

@@ -37,7 +37,10 @@ already solved it; add nothing JavaScript-specific that causes bugs; keep Rust-l
 Configuration, like TypeScript (`jsx: "react-jsx"` plus `jsxImportSource`):
 
 - `jsx: { importSource: "sigx" }` in `package.vlt` (a package or `velt:jsx`), or per file
-  `// @jsxImportSource sigx` on one of the first lines. The default is `velt:jsx`.
+  `/** @jsxImportSource sigx */` among the comments before the first token. The default is
+  `velt:jsx`. Velt reads the pragma from a line comment (`// @jsxImportSource sigx`) too, but
+  `tsc` reads it only from a block comment, so files shared with a client use the block form
+  (`jsx-pragma-comment` below).
 - The provider module `<source>/jsx-runtime` exports the factory functions and the `JSX`
   namespace (types). Nothing is hard-wired to one framework.
 
@@ -132,6 +135,7 @@ Accepted by `tsc`, but behaves differently:
 | Code | Construct | Severity | |
 |---|---|---|---|
 | `declare-fn` | `declare function` (a `ReferenceError` in JS) | error | |
+| `jsx-pragma-comment` | `// @jsxImportSource x`: `tsc` reads the pragma only from a block comment and builds with the client's configured provider | error (a fix: `/** @jsxImportSource x */`) | |
 | `int-division` | `/` on integer types (Velt truncates) | error | Planned |
 | `strict-null-eq` | `=== null` on values that are `undefined` in JS | error | Planned |
 | `object-in-template` | `${obj}` / `${xs}` | error | Planned |
@@ -163,6 +167,9 @@ Notes on the rules as built, against the issue's first design:
   aliases aren't checked yet.
 - `jsx-provider` reports one finding per module, at its first element.
 - `declare-fn` is valid Velt only in a package with a native library.
+- `jsx-pragma-comment` reports the pragma Velt uses: the first one in the comments before the
+  first token, in a module with JSX (Velt loads no runtime for one without). Its fix rewrites a
+  comment holding only the pragma; a line comment with other text gets the finding without one.
 
 **The oracle.** The claims are checked against the real `tsc` every night
 (`crates/velt_tscompat/tests/oracle.rs`, `gh workflow run nightly -f only=oracle`). It uses a
@@ -173,14 +180,19 @@ file through its API (`diagnostics.mjs`), which lists type errors even in a file
 errors.
 
 - Every rule has a claim: `tsc` rejects it (a sample in `rejected/<code>.ts`), `tsc` accepts it
-  but JavaScript runs it differently (`behaviour/<code>.ts`; `declare-fn` today), or `tsc` can't
+  but JavaScript runs it differently (`behaviour/<code>.ts`; `declare-fn` and
+  `jsx-pragma-comment` today), or `tsc` can't
   decide it, with the reason in the test (`outside-import`: `tsc` follows relative imports
   anywhere, and the rule is about which files the client shares; `jsx-provider`: `tsc` uses the
   provider the client configures, the rule is that `velt:jsx` has no JavaScript runtime). A rule
   in `velt_tscompat::RULES` without a claim and its sample fails `cargo test -p velt_tscompat`,
   with or without Node.
 - A sample reports only its own rule, is valid Velt (`rejected/`; `veltc`'s `ts_compat` test),
-  and `tsc` reports an error on every line the lint reports. A behaviour sample compiles.
+  and `tsc` reports an error on every line the lint reports. A behaviour sample compiles. One
+  that compiles only because `tsc` ignores the construct is checked with the lint's fix applied
+  too, where `tsc` must report the error the test names: `jsx-pragma-comment`'s sample names a
+  provider that doesn't exist, which `tsc` reports (TS2875) only once the pragma is a block
+  comment.
 - Every rule fixture, its `.fixed` snapshot and `clean.ts` go through `tsc` a top-level
   declaration at a time: a declaration the lint passes must compile, and one it reports with a
   rule `tsc` rejects must not.

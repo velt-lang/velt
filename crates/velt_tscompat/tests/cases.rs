@@ -8,7 +8,7 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use common::{cases_dir, imports, lint_source, parse};
+use common::{apply_fixes, cases_dir, imports, lint_source, parse};
 use velt_common::{FileId, Span};
 use velt_tscompat::{lint, Finding, LintModule};
 
@@ -56,17 +56,6 @@ fn expected(src: &str) -> Vec<(usize, Vec<String>)> {
             Some((line, codes.split_whitespace().map(String::from).collect()))
         })
         .collect()
-}
-
-/// `src` with every fix applied (fixes never overlap in the cases).
-fn apply_fixes(src: &str, findings: &[Finding]) -> String {
-    let mut fixes: Vec<_> = findings.iter().filter_map(|f| f.fix.as_ref()).collect();
-    fixes.sort_by_key(|f| std::cmp::Reverse(f.span.lo));
-    let mut out = src.to_string();
-    for fix in fixes {
-        out.replace_range(fix.span.lo as usize..fix.span.hi as usize, &fix.replacement);
-    }
-    out
 }
 
 fn check_fixed(path: &Path, src: &str, findings: &[Finding]) -> Result<(), String> {
@@ -135,9 +124,52 @@ fn declare_function_is_reported() {
 
 #[test]
 fn jsx_with_a_named_provider_is_not_reported() {
-    let src = "// @jsxImportSource some-provider\n\
+    let src = "/** @jsxImportSource some-provider */\n\
                export function A(): JSX.Element { return <a />; }\n";
     assert!(lint_source(Path::new("named.tsx"), src).is_empty());
+}
+
+/// The fix of `jsx-pragma-comment` keeps the provider: Velt reads the block comment as it read
+/// the line comment.
+#[test]
+fn a_fixed_jsx_pragma_names_the_same_provider() {
+    let case = cases_dir().join("jsx_pragma_comment.tsx");
+    let src = std::fs::read_to_string(&case).expect("read case");
+    let fixed = std::fs::read_to_string(case.with_extension("fixed")).expect("read fixed");
+    let (before, after) = (parse(&case, &src), parse(&case, &fixed));
+    assert_eq!(before.jsx_import_source.as_deref(), Some("./_jsx_pragma"));
+    assert_eq!(before.jsx_import_source, after.jsx_import_source);
+    assert!(lint_source(&case, &fixed).is_empty());
+}
+
+/// Velt reads a pragma only for a module with JSX, from the comments before the first token, so
+/// the rule reports nothing elsewhere; a line comment with more than the pragma has no fix.
+#[test]
+fn only_a_pragma_velt_reads_is_reported() {
+    let codes = |src: &str| -> Vec<&str> {
+        lint_source(Path::new("p.tsx"), src)
+            .iter()
+            .map(|f| f.code)
+            .collect()
+    };
+    assert!(codes("// @jsxImportSource x\nexport const a = 1;\n").is_empty());
+    assert!(codes("/* @jsxImportSource x */\nexport const a = <b />;\n").is_empty());
+    let late = "export const a = <b />;\n// @jsxImportSource x\n";
+    assert_eq!(codes(late), ["jsx-provider"]);
+    let src = "// see the docs; @jsxImportSource x\nexport const a = <b />;\n";
+    let findings = lint_source(Path::new("p.tsx"), src);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(
+        (findings[0].code, findings[0].fix.is_none()),
+        ("jsx-pragma-comment", true)
+    );
+    let crlf = "// @jsxImportSource x\r\nexport const a = <b />;\r\n";
+    let fix = lint_source(Path::new("p.tsx"), crlf)[0]
+        .fix
+        .clone()
+        .expect("a fix");
+    assert_eq!((fix.span.lo, fix.span.hi), (0, 21));
+    assert_eq!(fix.replacement, "/** @jsxImportSource x */");
 }
 
 #[test]
