@@ -14,6 +14,13 @@ use vpm::Locations;
 /// How long fetched data is used before it is fetched again (in the background, while the old
 /// data keeps answering).
 const FRESH: Duration = Duration::from_secs(300);
+/// How long one fetch may take: an editor wants an answer in seconds, not the CLI's minutes, and a
+/// stuck registry must not hold a fetch slot for long.
+const LIMITS: velt_http::Limits = velt_http::Limits {
+    connect: Duration::from_secs(5),
+    idle: Duration::from_secs(10),
+    total: Duration::from_secs(15),
+};
 /// Most fetches running at once (a slow registry must not collect a thread per keystroke).
 const MAX_FETCHES: usize = 4;
 
@@ -64,7 +71,7 @@ impl RegistryData {
         };
         let (loc, name) = (loc.clone(), name.to_string());
         match self.get(key, move || {
-            vpm::registry::read_index(&loc, &name).map(Value::Index)
+            vpm::registry::read_index_within(&loc, &name, LIMITS).map(Value::Index)
         }) {
             Lookup::Ready(Value::Index(index)) => Lookup::Ready(index),
             Lookup::Ready(Value::Search(_)) => unreachable!("ICE: an index slot holds a search"),
@@ -82,7 +89,7 @@ impl RegistryData {
         };
         let loc = loc.clone();
         match self.get(key, move || {
-            vpm::search::search(&loc, &query).map(Value::Search)
+            vpm::search::search_within(&loc, &query, LIMITS).map(Value::Search)
         }) {
             Lookup::Ready(Value::Search(hits)) => Lookup::Ready(hits),
             Lookup::Ready(Value::Index(_)) => unreachable!("ICE: a search slot holds an index"),
@@ -157,18 +164,34 @@ impl RegistryData {
 }
 
 /// The registry a manifest's dependencies come from: `$VELT_REGISTRY`, else its `registry`
-/// field, else the local registry. `None` when no registry can be located.
+/// field, else the local registry. `None` when no registry can be located, and when the
+/// manifest names a plain `http://` registry on another machine: opening a checkout must not
+/// make the editor talk to hosts it names (an internal network address, say) unless the
+/// connection is TLS or stays on this machine. `velt install` still uses such a registry.
 pub fn locations_for(manifest_text: &str) -> Option<Locations> {
-    let mut loc = Locations::from_env().ok()?;
-    if loc.remote.is_none() {
-        loc.remote = vpm::manifest::ide::registry::top_level_string(manifest_text, "registry")
-            .filter(|url| vpm::locations::is_url(url));
+    let loc = Locations::from_env().ok()?;
+    registry_for(loc, manifest_text)
+}
+
+fn registry_for(mut loc: Locations, manifest_text: &str) -> Option<Locations> {
+    if loc.remote.is_some() {
+        return Some(loc); // the user's own $VELT_REGISTRY
     }
-    Some(loc)
+    let named = vpm::manifest::ide::registry::top_level_string(manifest_text, "registry")
+        .filter(|url| vpm::locations::is_url(url));
+    match named {
+        Some(url) if !vpm::remote::is_tls_or_loopback(&url) => None,
+        named => {
+            loc.remote = named;
+            Some(loc)
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
     #[test]
@@ -188,6 +211,41 @@ mod tests {
         assert_eq!(data.index(&loc, "nothing-here"), Lookup::Ready(None));
         // A name that is not a package name is never looked up.
         assert_eq!(data.index(&loc, "../x"), Lookup::Unavailable);
+    }
+
+    #[test]
+    fn a_manifests_registry_is_asked_over_tls_or_on_this_machine_only() {
+        let local = Locations::under(Path::new("/h"));
+        let with = |url: &str| format!("export const pkg: Package = {{ registry: \"{url}\" }};");
+        let remote = |text: &str| registry_for(local.clone(), text).map(|l| l.remote);
+        assert_eq!(
+            remote(&with("https://r.example")),
+            Some(Some("https://r.example".into()))
+        );
+        assert_eq!(
+            remote(&with("http://127.0.0.1:8091")),
+            Some(Some("http://127.0.0.1:8091".into()))
+        );
+        assert_eq!(
+            remote(&with("http://10.0.0.5")),
+            None,
+            "plain http to another machine"
+        );
+        assert_eq!(
+            remote("export const pkg: Package = {};"),
+            Some(None),
+            "the local registry"
+        );
+        // `$VELT_REGISTRY` is the user's choice and always wins.
+        let mut env = local.clone();
+        env.remote = Some("http://10.0.0.5".into());
+        assert_eq!(
+            registry_for(env, &with("https://r.example"))
+                .unwrap()
+                .remote
+                .as_deref(),
+            Some("http://10.0.0.5")
+        );
     }
 
     #[test]

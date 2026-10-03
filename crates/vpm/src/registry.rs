@@ -80,8 +80,17 @@ impl IndexEntry {
 
 /// Read `<name>/index.json`; `Ok(None)` if the package was never published.
 pub fn read_index(loc: &Locations, name: &str) -> Result<Option<Index>, String> {
+    read_index_within(loc, name, velt_http::Limits::DEFAULT)
+}
+
+/// [`read_index`], asking a remote registry within `limits`.
+pub fn read_index_within(
+    loc: &Locations,
+    name: &str,
+    limits: velt_http::Limits,
+) -> Result<Option<Index>, String> {
     if let Some(url) = &loc.remote {
-        return crate::remote::read_index(url, name);
+        return crate::remote::read_index_within(url, name, limits);
     }
     let path = loc.registry.join(name).join(INDEX_FILE);
     if !path.is_file() {

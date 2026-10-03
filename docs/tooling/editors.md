@@ -52,7 +52,9 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
   dependency shows its newest and locked versions; a requirement no published version matches,
   or a package the registry doesn't have, is an error, a requirement that leaves out a newer
   version gets an informational note, and a quick fix moves it to `^<newest>`. The data is fetched in the
-  background; an offline registry just adds nothing.
+  background; an offline registry just adds nothing. A manifest's `registry` is asked only when
+  it is `https://` or on this machine (`$VELT_REGISTRY` always is), so opening a checkout never
+  makes the editor contact a plain-HTTP host it names.
 
 The server answers even when the program has errors, and a failing request never takes the
 server down.
