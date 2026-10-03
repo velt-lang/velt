@@ -87,7 +87,9 @@ pub(crate) fn ensure_fields(cx: &mut Ctx, d: DefId) -> Result<(), DefId> {
     Ok(())
 }
 
-/// Structs and enums are stored inline, so one cannot contain itself by value.
+/// Structs and enums are stored inline, so one cannot contain itself by value. A field-only
+/// interface's object type is the exception: lowering boxes one that contains itself (#376),
+/// so the search stops there.
 pub(super) fn check_finite(cx: &mut Ctx, d: DefId) {
     let (name, span, n) = match &cx.info[d.0 as usize] {
         DefInfo::Adt(a) if a.kind != AdtKind::Class => (a.name.clone(), a.span, a.generics.len()),
@@ -118,7 +120,9 @@ fn contains_by_value(
     let parts: Vec<TyId> = match cx.ty.kind(t).clone() {
         TyKind::Adt(d, args) => {
             let tys: Vec<TyId> = match &cx.info[d.0 as usize] {
-                DefInfo::Adt(a) if a.kind != AdtKind::Class => {
+                DefInfo::Adt(a)
+                    if a.kind != AdtKind::Class && !cx.field_only_of.contains_key(&d) =>
+                {
                     a.fields.iter().map(|f| f.ty).collect()
                 }
                 DefInfo::Enum(e) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),

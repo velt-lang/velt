@@ -133,8 +133,8 @@ contents.
   type, like `type User = { … }`, so model interfaces work as in TypeScript: literals satisfy
   them, `JSON.parse<User>` reads them, and as a bound (`<T extends HasId>`) any type with the
   fields fits. Unlike TypeScript, a class instance is not a `User` value (it is shared by
-  reference; build a `User` from its fields), and an interface that refers to itself through a
-  field (`next?: Node`) needs an array or a class (#376).
+  reference; build a `User` from its fields). Recursive models (`next?: Node`) work, and
+  `JSON.stringify` of one that contains itself fails as in JavaScript.
 - Interfaces may have **default method bodies**. `extend` adds methods to any type, including
   `string`, arrays and your unions.
 - `as` converts numbers only; there are no type assertions. Narrow with `typeof`, `instanceof`,

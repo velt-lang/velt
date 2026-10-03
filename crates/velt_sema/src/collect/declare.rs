@@ -164,6 +164,7 @@ pub(super) fn new_def<'m>(
                 module: m,
                 decl: a,
                 expanding: false,
+                used: false,
             });
             return Some((&a.name, Item::Alias(id)));
         }

@@ -306,6 +306,7 @@ impl Ctx<'_> {
             return self.ty.error;
         }
         let names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
+        self.aliases[a as usize].used = true;
         self.aliases[a as usize].expanding = true;
         let mut env = TyEnv::new(module, &names);
         env.args = args.clone();
@@ -326,4 +327,23 @@ impl Ctx<'_> {
             || matches!(self.ty.kind(t), TyKind::Adt(d, _)
                 if self.adt(*d).is_some_and(|a| a.kind == crate::hir::AdtKind::Anon))
     }
+}
+
+/// Resolve every type alias that nothing expanded, so its errors are reported too
+/// (`type X = Nope;` used nowhere is still an error, as in TypeScript). Aliases that are used
+/// were checked at their uses.
+pub(crate) fn check_unused_aliases(cx: &mut Ctx) {
+    cx.checking_unused_aliases = true;
+    for a in 0..cx.aliases.len() {
+        if cx.aliases[a].used {
+            continue;
+        }
+        let (module, decl) = (cx.aliases[a].module, cx.aliases[a].decl);
+        let names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
+        cx.aliases[a].used = true;
+        cx.aliases[a].expanding = true;
+        cx.resolve_type(&decl.ty, &TyEnv::new(module, &names));
+        cx.aliases[a].expanding = false;
+    }
+    cx.checking_unused_aliases = false;
 }

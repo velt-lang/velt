@@ -1,0 +1,4 @@
+unused_type_alias.vlt:3:16: error: cannot find type `Nope` in this scope
+unused_type_alias.vlt:4:19: error: type `Array` takes 1 type argument(s) but 2 were supplied
+unused_type_alias.vlt:5:33: error: `{ a: f64 }` has no field `b` (in `Pick`)
+unused_type_alias.vlt:6:13: error: type alias `Loop` refers to itself

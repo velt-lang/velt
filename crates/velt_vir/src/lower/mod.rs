@@ -98,7 +98,7 @@ const MAX_BOXING_PASSES: usize = 8;
 /// ids in the counted set stay valid.
 pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Program {
     let mut types = hir.types.clone();
-    let mut counted = boxing::Boxing::default();
+    let mut counted = boxing::Boxing::initial(hir);
     for _ in 0..MAX_BOXING_PASSES {
         let mut cx = Cx::new(hir, types, counted.clone());
         cx.native_inits = opts.native_inits.to_vec();

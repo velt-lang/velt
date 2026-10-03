@@ -334,6 +334,9 @@ pub(crate) struct AliasInfo<'m> {
     pub module: usize,
     pub decl: &'m ast::TypeAlias,
     pub expanding: bool,
+    /// Expanded at least once; an alias never used is checked on its own at the end
+    /// ([`crate::resolve::check_unused_aliases`]).
+    pub used: bool,
 }
 
 /// An `extend<G> Target { methods }` block.

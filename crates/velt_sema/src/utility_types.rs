@@ -120,6 +120,7 @@ impl Ctx<'_> {
                         .collect(),
                 )
             }
+            TyKind::Param(_) if self.checking_unused_aliases => None,
             TyKind::Param(_) => {
                 let shown = written.unwrap_or(shown);
                 self.error(

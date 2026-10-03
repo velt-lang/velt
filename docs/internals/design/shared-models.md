@@ -51,8 +51,13 @@ types with the same fields, and stays the same object: like `readonly` views, it
 the anonymous object type of its fields before lowering (`velt_sema::readonly`), and the
 conversion is an `Upcast`. Two limits:
 
-- **Recursion through a direct field** (`next?: Node`) has infinite size, as for a struct: an
-  error, tracked in #376. Recursion through an array (`children: Node[]`) works.
+- **Recursion through a direct field** (`next?: Node`) works (#376): lowering stores an object
+  type that reaches itself through inline fields (nested objects, nullable values, tuples,
+  union payloads) as a counted box in every instance (`velt_vir::lower::boxing`, the
+  `recursive` set), so the field holds a pointer. Sema's infinite-size check stops at
+  field-only interfaces. `JSON.stringify` tracks the boxes being written and panics on a cycle
+  ("converting circular structure to JSON", as JavaScript throws). Cycles are reference
+  cycles, so they leak like cyclic class graphs do.
 - **A generic interface's instance** (`Pair<string, number>`) does not convert to the object
   type it spells out (`{ first: string; second: number }`): after erasure they are different
   definitions. The same holds for generic type aliases today; the error says so.
@@ -202,7 +207,8 @@ Each step updates `docs/reference/classes.md`, `docs/reference/types.md` and
 3. **Utility types on a type parameter come later,** with `keyof`, in their own design: #350.
 4. **A field-only interface is a named object type** (so it can be recursive through arrays and
    messages name it), converting to and from object types of the same layout.
-5. **Recursion through a direct field stays an error for now:** automatic boxing is #376.
+5. **Recursion through a direct field** was an error at first; #376 boxes recursive object
+   types automatically.
 
 ## Open questions
 
