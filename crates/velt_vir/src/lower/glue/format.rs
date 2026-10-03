@@ -204,22 +204,23 @@ impl FnLower<'_, '_> {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             crate::lower::ice("field format of a non-struct type")
         };
-        let private_fields = self.cx.adt_def(d).private_fields;
-        let all: Vec<(u32, String, TyId)> = self
+        let all: Vec<(u32, String, TyId, bool)> = self
             .cx
             .adt_def(d)
             .fields
             .iter()
-            .map(|f| f.name.clone())
+            .map(|f| (f.name.clone(), f.private))
             .zip(self.cx.adt_field_tys(ty))
             .enumerate()
-            .map(|(i, (n, t))| (i as u32, n, t))
+            .map(|(i, ((n, private), t))| (i as u32, n, t, private))
             .collect();
-        // A type with private fields hides its zero-sized markers (std's `runtime:
-        // RuntimeHandle`, which only makes a handle type opaque to JSON).
+        // Private zero-sized fields are hidden (std's `runtime: RuntimeHandle` marker, which
+        // only makes a handle type opaque to JSON). Other private fields show, as Node shows a
+        // TypeScript `private` field.
         let shown: Vec<(u32, String, TyId)> = all
             .into_iter()
-            .filter(|(_, _, t)| !(private_fields && self.is_empty_struct(*t)))
+            .filter(|(_, _, t, private)| !(*private && self.is_empty_struct(*t)))
+            .map(|(i, n, t, _)| (i, n, t))
             .collect();
         let names: Vec<&String> = shown.iter().map(|(_, n, _)| n).collect();
         let open = match &name {

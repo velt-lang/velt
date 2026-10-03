@@ -75,6 +75,7 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
                 name: f.name.clone(),
                 ty: f.ty,
                 default: None,
+                private: false,
             })
             .collect(),
         methods: i
@@ -147,6 +148,7 @@ fn adt_def(
             name: f.name.clone(),
             ty: f.ty,
             default,
+            private: f.private_to.is_some(),
         })
         .collect();
     let (name, kind, base, ctor, vtable, span) = (
