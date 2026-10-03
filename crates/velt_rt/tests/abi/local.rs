@@ -243,7 +243,7 @@ unsafe extern "C" fn detach_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let f = job(40, 5);
     assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
     velt_rt_fut_detach(f, Some(count_detached_drop));
-    log(41, "owner goes on");
+    log(39, "owner goes on");
     *(s as *mut i64) = 0;
     READY
 }
@@ -261,9 +261,10 @@ fn a_detached_promise_keeps_running_after_its_owner() {
         block_on_fut::<()>(velt_rt_sleep(2));
     }
     // Its timer held the owner's waker: the set re-polled it, and it finished quietly.
+    // Its own ids (39, 40): the race test logs jobs 41 to 43 and runs alongside this one.
     assert_eq!(
-        events(40..42),
-        [(40, "start"), (41, "owner goes on"), (40, "end")]
+        events(39..41),
+        [(40, "start"), (39, "owner goes on"), (40, "end")]
     );
 }
 
