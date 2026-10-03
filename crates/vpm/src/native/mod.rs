@@ -18,6 +18,8 @@
 pub mod build;
 pub mod bundle;
 pub mod exports;
+#[doc(hidden)]
+pub mod samples;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
