@@ -7,6 +7,9 @@ inputs:
   tools:
     description: Install what the tests need besides Rust (wasmtime, node, clang on macOS).
     default: "true"
+  wasmtime:
+    description: The wasmtime release the tests run under (with `tools`).
+    default: v49.0.1
   save-cache:
     description: >-
       Save the build cache. Only the pushes to main do (`main` job in ci.yml): caches saved
@@ -39,9 +42,49 @@ runs:
     - uses: taiki-e/install-action@v2
       with:
         tool: cargo-nextest
-    # wasmtime and node enable the WebAssembly and playground tests.
+    # wasmtime and node enable the WebAssembly and playground tests. wasmtime is a pinned
+    # release kept in the Actions cache: a release download from GitHub fails now and then
+    # (HTTP 504 three times in a row dropped a pull request from the merge queue), and failing
+    # setup fails the job, so the download happens once per version and retries for minutes.
     - if: inputs.tools == 'true'
-      uses: bytecodealliance/actions/wasmtime/setup@v1
+      id: wasmtime-cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.tool_cache }}/wasmtime-ci
+        key: wasmtime-${{ inputs.wasmtime }}-${{ runner.os }}-${{ runner.arch }}
+    - name: wasmtime ${{ inputs.wasmtime }}
+      if: inputs.tools == 'true'
+      shell: bash
+      env:
+        VERSION: ${{ inputs.wasmtime }}
+        DIR: ${{ runner.tool_cache }}/wasmtime-ci
+        CACHED: ${{ steps.wasmtime-cache.outputs.cache-hit }}
+      run: |
+        if [ "$CACHED" != true ]; then
+          case "$RUNNER_OS-$RUNNER_ARCH" in
+            Linux-X64) target=x86_64-linux ;;
+            Linux-ARM64) target=aarch64-linux ;;
+            macOS-X64) target=x86_64-macos ;;
+            macOS-ARM64) target=aarch64-macos ;;
+            Windows-X64) target=x86_64-windows ;;
+            *) echo "no wasmtime release for $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
+          esac
+          name="wasmtime-$VERSION-$target"
+          ext=tar.xz exe=
+          [ "$RUNNER_OS" = Windows ] && ext=zip exe=.exe
+          archive="$RUNNER_TEMP/$name.$ext"
+          curl -fsSL --retry 8 --retry-all-errors --retry-delay 15 -o "$archive" \
+            "https://github.com/bytecodealliance/wasmtime/releases/download/$VERSION/$name.$ext"
+          if [ "$ext" = zip ]; then
+            pwsh -NoProfile -Command "Expand-Archive -Path '$archive' -DestinationPath '$RUNNER_TEMP'"
+          else
+            tar -xJf "$archive" -C "$RUNNER_TEMP"
+          fi
+          mkdir -p "$DIR"
+          cp "$RUNNER_TEMP/$name/wasmtime$exe" "$DIR/"
+        fi
+        echo "$DIR" >> "$GITHUB_PATH"
+        "$DIR/wasmtime" --version
     - if: inputs.tools == 'true'
       uses: actions/setup-node@v4
       with:
