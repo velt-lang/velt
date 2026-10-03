@@ -26,7 +26,8 @@ library keeps Rust-style integer code. Then:
   `usize` wins, otherwise both become `i64` (`let i = -1; i < xs.length` is `true`). Where an
   integer type is expected (arguments, returns), it converts to it. In a compound assignment
   (`total += s.length`) the target keeps its type, so the value converts to it when either side
-  is inferred (#421).
+  is inferred (#421); a signed value never converts to an unsigned target. A local declared
+  without a type from such a value (`let n = xs.length`) is an `i64`, so it can go negative.
 - A float index converts through the prelude's `__floatIndex`: whole numbers index, anything else
   panics like an out-of-bounds index. A quotient index (`xs[n / 2]`) stays an error.
 - A float argument for an integer parameter of a `std/` function converts like

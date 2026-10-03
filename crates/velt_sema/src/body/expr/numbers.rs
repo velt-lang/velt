@@ -132,14 +132,17 @@ impl FnCx<'_, '_> {
     /// The right operand `v` of `place op= v`, adapted like `place = place op v` would be (#421):
     /// an inferred integer next to a float place converts to it, and two integer types adapt
     /// when either side is inferred (`let total = 0; total += s.length`). The place keeps its
-    /// type, so the operand converts to it.
+    /// type, so the operand converts to it; a signed value never converts to an unsigned place
+    /// (`let k: usize = 0; k -= i` stays an error instead of wrapping a negative result).
     pub(crate) fn compound_operand(&mut self, place: &hir::Expr, v: hir::Expr) -> hir::Expr {
         let (ty, lty) = (&self.cx.ty, place.ty);
         if ty.is_float(lty) && self.is_inferred_int(&v) {
             return self.int_to_float(v, lty);
         }
         let ints = ty.is_int(lty) && ty.is_int(v.ty) && lty != v.ty;
-        if ints && (self.is_inferred_int(&v) || self.is_inferred_int(place)) {
+        let signed = |t: TyId| ty.int_ty(t).is_some_and(|i| i.is_signed());
+        let wraps = signed(v.ty) && !signed(lty);
+        if ints && !wraps && (self.is_inferred_int(&v) || self.is_inferred_int(place)) {
             return self.int_as(v, lty);
         }
         v
@@ -157,6 +160,18 @@ impl FnCx<'_, '_> {
     /// An integer that behaves like a JS number (not declared with an integer type).
     pub(crate) fn is_inferred_int(&self, h: &hir::Expr) -> bool {
         self.cx.ty.is_int(h.ty) && self.int_origin(h) != IntOrigin::Declared
+    }
+
+    /// The initializer of `let x = init` without a type: an inferred `usize` (`xs.length`,
+    /// `m.size`) becomes an `i64`, so the local is a JS number that can go negative
+    /// (`let n = xs.length; n -= 5` is `-2`). Other integer types were chosen by the program
+    /// (a suffix: `const a = 10u8; const b = 1 + a`) and stay.
+    pub(crate) fn inferred_local_init(&mut self, init: hir::Expr) -> hir::Expr {
+        let (i64_, usize_) = (self.cx.ty.i64, self.cx.ty.usize);
+        if init.ty == usize_ && self.int_origin(&init) == IntOrigin::Inferred {
+            return self.int_as(init, i64_);
+        }
+        init
     }
 
     /// `let x = init` without a type: `x` is an inferred integer when `init` is one.

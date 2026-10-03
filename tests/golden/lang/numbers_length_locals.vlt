@@ -1,0 +1,35 @@
+// check: no leaks
+// A local declared from a length or size is a JS number (an inferred `i64`), not a `usize`: it can
+// go negative, in compound assignments and plain ones (#421).
+
+function main() {
+  const xs = [1, 2, 3];
+  let i = -1;
+  let w = xs.length;
+  w += i * 10;
+  console.log(w);
+  let total = 6;
+  let neg = "ab".length;
+  neg -= total;
+  console.log(neg);
+
+  let n = xs.length;
+  n -= 5;
+  console.log(n);
+  let d = xs.length;
+  d = d - 5;
+  console.log(d);
+  let j = xs.length;
+  j -= xs.length;
+  j -= 1;
+  console.log(j);
+
+  const m = new Map<string, number>();
+  m.set("a", 1);
+  let s = m.size;
+  s -= 3;
+  console.log(s, xs[n + 4], "abc".slice(0, d + 3));
+  for (let k = xs.length - 1; k >= 0; k--) {
+    console.log(k, xs[k]);
+  }
+}

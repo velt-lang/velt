@@ -56,7 +56,8 @@ keep integer speed. Every integer value is either **declared** or **inferred**:
   wrote no integer type for those, so they are JS numbers (inside `std/` they stay declared).
 
 Both are stored as integers (inferred ones as `i64`), so loop counters, indexes and counts run
-at integer speed. The rules:
+at integer speed; a local declared from a length (`let n = xs.length`) is an `i64` like any
+other inferred one, so `n -= 5` can go below zero. The rules:
 
 - **`/` yields `f64` unless both operands are declared integers**: `const a = 7; a / 2` is
   `3.5`, `7 / 2` is `3.5`, `xs.length / 2` is `1.5` for three elements, and
