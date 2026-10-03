@@ -89,6 +89,8 @@ Decisions and their rationale, including what is still planned:
   dictionary (implemented).
 - [`unknown` for dynamic JSON](design/unknown.md): narrowing JSON values the TypeScript way
   (proposed; open questions).
+- [JavaScript string semantics](design/strings.md): UTF-16 code-unit lengths and positions over
+  WTF-8 storage with a cached UTF-16 view (proposed, issue #326).
 - [Native code in packages](design/native-packages.md): a `native/` Rust crate in a package, prebuilt
   per-target binaries and the runtime function table.
 - [Data models shared with TypeScript](design/shared-models.md): field-only interfaces as object
