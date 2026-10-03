@@ -223,6 +223,8 @@ mod no_echo {
         actions: UnsafeCell::new([std::mem::MaybeUninit::uninit(); 3]),
     };
     static SAVED: AtomicBool = AtomicBool::new(false);
+    /// Which of `SIGNALS` got the handler (a signal the process ignores keeps being ignored).
+    static INSTALLED: [AtomicBool; 3] = [const { AtomicBool::new(false) }; 3];
     const SIGNALS: [libc::c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
 
     /// Restores the terminal, then lets the signal end the process as it would have.
@@ -254,10 +256,19 @@ mod no_echo {
             SAVED.store(true, Ordering::SeqCst);
             let actions = &mut *STATE.actions.get();
             for (i, signal) in SIGNALS.into_iter().enumerate() {
+                // Leave an ignored signal ignored (`nohup`, a parent's choice).
+                let mut current: libc::sigaction = std::mem::zeroed();
+                if libc::sigaction(signal, std::ptr::null(), &mut current) != 0
+                    || current.sa_sigaction == libc::SIG_IGN
+                {
+                    continue;
+                }
                 let mut action: libc::sigaction = std::mem::zeroed();
                 action.sa_sigaction = on_signal as *const () as libc::sighandler_t;
                 libc::sigemptyset(&mut action.sa_mask);
-                libc::sigaction(signal, &action, actions[i].as_mut_ptr());
+                if libc::sigaction(signal, &action, actions[i].as_mut_ptr()) == 0 {
+                    INSTALLED[i].store(true, Ordering::SeqCst);
+                }
             }
             t.c_lflag &= !libc::ECHO;
             if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &t) != 0 {
@@ -269,11 +280,13 @@ mod no_echo {
     }
 
     pub fn stop() {
-        // SAFETY: restores what `start` saved, then the previous signal actions.
+        if !SAVED.load(Ordering::SeqCst) {
+            return;
+        }
+        // SAFETY: restores what `start` saved: the terminal first (a signal arriving meanwhile
+        // finds the handler still installed and SAVED still set), then the previous actions of
+        // the signals that got the handler, and only then clears SAVED.
         unsafe {
-            if !SAVED.swap(false, Ordering::SeqCst) {
-                return;
-            }
             libc::tcsetattr(
                 libc::STDIN_FILENO,
                 libc::TCSANOW,
@@ -281,9 +294,12 @@ mod no_echo {
             );
             let actions = &*STATE.actions.get();
             for (i, signal) in SIGNALS.into_iter().enumerate() {
-                libc::sigaction(signal, actions[i].as_ptr(), std::ptr::null_mut());
+                if INSTALLED[i].swap(false, Ordering::SeqCst) {
+                    libc::sigaction(signal, actions[i].as_ptr(), std::ptr::null_mut());
+                }
             }
         }
+        SAVED.store(false, Ordering::SeqCst);
     }
 }
 
@@ -333,14 +349,16 @@ mod no_echo {
     }
 
     pub fn stop() {
-        if !SAVED.swap(false, Ordering::SeqCst) {
+        if !SAVED.load(Ordering::SeqCst) {
             return;
         }
-        // SAFETY: restores the mode `start` read, then removes the handler it added.
+        // SAFETY: restores the mode `start` read first, then removes the handler it added; SAVED
+        // is cleared last, so an event meanwhile still restores the mode.
         unsafe {
             SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), MODE.load(Ordering::SeqCst));
             SetConsoleCtrlHandler(Some(on_event), 0);
         }
+        SAVED.store(false, Ordering::SeqCst);
     }
 }
 

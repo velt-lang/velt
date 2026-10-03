@@ -25,19 +25,33 @@ pub const CREDENTIALS_FILE: &str = "credentials.json";
 /// Environment variable whose token overrides the stored ones (for CI).
 pub const TOKEN_VAR: &str = "VELT_REGISTRY_TOKEN";
 
-/// The contents of `credentials.json`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// The contents of `credentials.json`. `Debug` never prints a token.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Credentials {
     /// Registry URL ([`registry_key`]) → its credential.
     #[serde(default)]
     pub registries: BTreeMap<String, Credential>,
 }
 
-/// The user's credential for one registry.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// The user's credential for one registry. `Debug` never prints the token.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Credential {
     /// The token `velt registry user add` printed.
     pub token: String,
+}
+
+impl std::fmt::Debug for Credential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credential").field("token", &"…").finish()
+    }
+}
+
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credentials")
+            .field("registries", &self.registries)
+            .finish()
+    }
 }
 
 /// `$VELT_HOME/credentials.json`.
@@ -111,6 +125,13 @@ pub fn login(path: &Path, url: &str, token: &str) -> Result<(), String> {
     let token = token.trim();
     if token.is_empty() {
         return Err("the token is empty".into());
+    }
+    // A token goes into an HTTP header: never quoted back, since it may be a real one.
+    if token.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(
+            "the token contains a space, a line break or another control character; paste only the token that `velt registry user add` printed"
+                .into(),
+        );
     }
     check_transport(&key, "a registry token")?;
     let mut creds = Credentials::read(path)?;
@@ -187,6 +208,34 @@ mod tests {
         );
         assert!(registry_key("reg.example.com").is_err());
         assert!(registry_key("https:///x").is_err());
+    }
+
+    #[test]
+    fn tokens_are_never_printed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(CREDENTIALS_FILE);
+        login(&path, "https://a.example.com", "tok-s3cret").unwrap();
+        let creds = Credentials::read(&path).unwrap();
+        let shown = format!("{creds:?} {:?}", creds.registries["https://a.example.com"]);
+        assert!(!shown.contains("s3cret"), "{shown}");
+        assert!(
+            shown.contains("https://a.example.com") && shown.contains('…'),
+            "{shown}"
+        );
+        for bad in [
+            "tok s3cret",
+            "tok\ts3cret",
+            "tok\u{7f}s3cret",
+            "tok\r\ns3cret",
+        ] {
+            let e = login(&path, "https://b.example.com", bad).unwrap_err();
+            assert!(
+                e.contains("a space, a line break or another control character"),
+                "{e}"
+            );
+            assert!(!e.contains("s3cret"), "the token is not quoted: {e}");
+        }
+        assert_eq!(Credentials::read(&path).unwrap().registries.len(), 1);
     }
 
     #[test]
