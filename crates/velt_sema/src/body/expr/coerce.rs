@@ -75,6 +75,12 @@ impl FnCx<'_, '_> {
         if self.cx.class_of(exp).is_some() && self.cx.class_of(h.ty).is_some() {
             return self.upcast(h, exp);
         }
+        if self.cx.same_layout(h.ty, exp) {
+            // Object types that differ only in `readonly`: the same object, seen through the
+            // other type (`crate::readonly` makes them one type before lowering).
+            let span = h.span;
+            return Ok(self.mk(H::Upcast(Box::new(h)), exp, span));
+        }
         if let TyKind::Dyn(iface, args) = self.cx.ty.kind(exp).clone() {
             return self.dyn_value(h, exp, iface, &args);
         }

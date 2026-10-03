@@ -43,6 +43,7 @@ mod known;
 mod literals;
 mod moves;
 mod ownership;
+mod readonly;
 mod record_keys;
 mod resolve;
 mod throws;
@@ -141,6 +142,7 @@ fn check_on_current_thread(
         return (None, cx.diags);
     }
     finalize::build_defs(&mut cx);
+    readonly::erase(&mut cx);
     let ctx::Ctx {
         ty,
         defs,
