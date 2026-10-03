@@ -99,7 +99,10 @@ impl FnCx<'_, '_> {
         if let Some(e) = exp {
             self.cx.match_ty(c.ret, e, &mut slots);
         }
-        let type_args = self.solve_slots(c, &slots, span);
+        // An argument that is already an error (reported) leaves its slots unknown: no second
+        // error about inferring them.
+        let quiet = checked.iter().any(|h| h.ty == self.cx.ty.error);
+        let type_args = self.solve_slots(c, &slots, quiet, span);
         let mut hargs = vec![];
         for (h, p) in checked.into_iter().zip(&c.params) {
             let target = self.cx.ty.subst(p.ty, &type_args);
@@ -216,11 +219,13 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Unknown slots are errors; check bounds of the known ones.
+    /// Unknown slots are errors (unless `quiet`: an argument's error was reported); check bounds
+    /// of the known ones.
     pub(super) fn solve_slots(
         &mut self,
         c: &Callable,
         slots: &[Option<TyId>],
+        quiet: bool,
         span: Span,
     ) -> Vec<TyId> {
         let mut out = vec![];
@@ -231,6 +236,10 @@ impl FnCx<'_, '_> {
                 .cloned()
                 .unwrap_or_else(|| format!("T{k}"));
             let Some(t) = *s else {
+                if quiet {
+                    out.push(self.cx.ty.error);
+                    continue;
+                }
                 self.cx.error(
                     Diagnostic::error(
                         format!("cannot infer type parameter `{name}` of {}", c.what),
