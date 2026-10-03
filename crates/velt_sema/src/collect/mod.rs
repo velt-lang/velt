@@ -12,7 +12,8 @@
 //!    defining `compareTo` implement the builtin `Comparable<T>`.
 //!
 //! [`field_only`]: field-only interfaces are object types (declared after phase 1, filled after
-//! phase 3).
+//! phase 3). Type-parameter defaults are resolved and checked after phase 1
+//! (`crate::type_defaults`).
 //!
 //! [`lookup`] finds a class's methods (own, inherited, interface defaults) for all of the above.
 
@@ -50,6 +51,7 @@ pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     let mut items = ItemDefs::new();
     declare::declare_all(cx, &mut items);
     field_only::declare(cx);
+    crate::type_defaults::check_all(cx);
     shapes::resolve_shapes(cx, &items);
     cx.shapes_done = true;
     sigs::resolve_sigs(cx, &items);

@@ -11,6 +11,7 @@ use velt_syntax::ast;
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
 use crate::hir::{TyId, TyKind};
+use crate::type_defaults::DefaultsOf;
 
 /// Generic parameter names in scope (`Param(i)` is `params[i]`) and the module for lookups.
 #[derive(Clone, Default)]
@@ -281,7 +282,7 @@ impl Ctx<'_> {
             }
         };
         let args = match decl {
-            Some((module, gs)) => self.with_defaults(module, gs, args),
+            Some((module, gs)) => self.with_defaults(DefaultsOf::Def(d), module, gs, args),
             None => args,
         };
         if args.len() != arity {
@@ -313,7 +314,7 @@ impl Ctx<'_> {
             );
             return self.ty.error;
         }
-        let args = self.with_defaults(module, &decl.generics, args);
+        let args = self.with_defaults(DefaultsOf::Alias(a), module, &decl.generics, args);
         if args.len() != decl.generics.len() {
             self.arity_error(&decl.name.name, decl.generics.len(), args.len(), t);
             return self.ty.error;
@@ -341,32 +342,9 @@ impl Ctx<'_> {
             _ => None,
         };
         match decl {
-            Some((module, x)) => self.with_defaults(module, &x.generics, args),
+            Some((module, x)) => self.with_defaults(DefaultsOf::Def(d), module, &x.generics, args),
             None => args,
         }
-    }
-
-    /// `args` completed with the defaults of the parameters `gs` they leave out (`E = never`;
-    /// a default may mention the parameters before it). Unchanged when a missing parameter has
-    /// no default (the caller reports the arity).
-    fn with_defaults(
-        &mut self,
-        module: usize,
-        gs: &[ast::GenericParam],
-        mut args: Vec<TyId>,
-    ) -> Vec<TyId> {
-        if args.len() >= gs.len() || gs[args.len()..].iter().any(|g| g.default.is_none()) {
-            return args;
-        }
-        let names: Vec<String> = gs.iter().map(|g| g.name.name.clone()).collect();
-        let env = TyEnv::new(module, &names);
-        for g in &gs[args.len()..] {
-            let Some(d) = &g.default else { break };
-            let t = self.resolve_type(d, &env);
-            let t = self.ty.subst(t, &args);
-            args.push(t);
-        }
-        args
     }
 
     /// A type without a name of its own (a union or an anonymous object type).

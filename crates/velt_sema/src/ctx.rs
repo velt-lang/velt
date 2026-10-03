@@ -110,6 +110,8 @@ pub(crate) struct Ctx<'m> {
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
     pub shared_memo: HashMap<TyId, bool>,
+    /// Resolved type-parameter defaults (`crate::type_defaults`).
+    pub type_defaults: crate::type_defaults::TypeDefaults,
     pub diags: Diagnostics,
 }
 
@@ -159,6 +161,7 @@ impl<'m> Ctx<'m> {
             jsx_adapters: vec![],
             ide: None,
             shared_memo: HashMap::new(),
+            type_defaults: Default::default(),
             diags: vec![],
         }
     }

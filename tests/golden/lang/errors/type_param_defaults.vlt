@@ -1,0 +1,26 @@
+// Type-parameter defaults are checked once, at the declaration, as in TypeScript: a default
+// may only use the parameters declared before it (not itself, not a later one), must not need
+// its own declaration's defaults again (directly or through another declaration), and must
+// name known types even when no use leaves the parameter out.
+class S<T = S> {}
+
+interface I<T = I> {}
+
+type A<T = A<T>> = T[];
+
+class B<X = Y, Y = i64> {
+  f: X[] = [];
+}
+
+class D<T = Nope> {}
+
+class P<T = Q> {}
+
+class Q<U = P> {}
+
+type Al<T = Al> = T[];
+
+function main() {
+  const b = new B<string>();
+  console.log(b.f);
+}

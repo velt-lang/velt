@@ -50,6 +50,7 @@ mod record_keys;
 mod resolve;
 mod suggest;
 mod throws;
+mod type_defaults;
 mod types;
 mod unions;
 mod utility_types;
