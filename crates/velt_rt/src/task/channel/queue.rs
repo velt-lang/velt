@@ -82,6 +82,7 @@ impl Chan {
             .extend(std::slice::from_raw_parts(src, size).iter().copied());
         s.len += 1;
         drop(s);
+        crate::io::publish_before_handoff();
         self.items.notify_one();
         Push::Sent
     }
@@ -101,6 +102,7 @@ impl Chan {
         s.len -= 1;
         drop(s);
         if self.capacity != 0 {
+            crate::io::publish_before_handoff();
             self.space.notify_one();
         }
         Pop::Item
@@ -114,6 +116,7 @@ impl Chan {
         }
         s.closed = true;
         drop(s);
+        crate::io::publish_before_handoff();
         self.items.notify_waiters();
         self.space.notify_waiters();
     }

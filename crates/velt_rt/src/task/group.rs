@@ -54,6 +54,7 @@ pub extern "C" fn velt_rt_group_enter(g: Key<Group>) -> bool {
 pub extern "C" fn velt_rt_group_leave(g: Key<Group>) {
     if let Some(grp) = GROUPS.get(g) {
         if grp.live.fetch_sub(1, Ordering::AcqRel) == 1 {
+            crate::io::publish_before_handoff();
             grp.idle.notify_waiters();
         }
     }

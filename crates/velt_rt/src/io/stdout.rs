@@ -2,10 +2,12 @@
 //!
 //! Each thread appends to its own buffer (no lock per `write_*` call, and a `console.log` line built
 //! from several calls is never interleaved with another thread's). A thread's buffer is *published*
-//! into one shared buffer (one mutex acquisition) when it fills, when stdout is flushed, and at the
-//! end of every task poll (`publish_thread_output`) — before the task can resume on another worker,
-//! so `log a; await; log b` always prints `a` before `b`. The shared buffer reaches the OS when it
-//! fills, on explicit flushes, and when a worker goes idle. On an interactive terminal every
+//! into one shared buffer (one mutex acquisition) when it fills, when stdout is flushed, at the end
+//! of every task poll (`publish_thread_output`) — before the task can resume on another worker, so
+//! `log a; await; log b` always prints `a` before `b` — and before the task hands work to another
+//! (`publish_before_handoff`: spawn, channel send, settling a promise, aborting a signal), so a line
+//! logged before `spawn(f())` prints before anything `f` prints. The shared buffer reaches the OS
+//! when it fills, on explicit flushes, and when a worker goes idle. On an interactive terminal every
 //! completed line is written through immediately (line buffering, like C stdio).
 
 use std::cell::RefCell;

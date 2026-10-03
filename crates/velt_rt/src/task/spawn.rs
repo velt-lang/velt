@@ -163,6 +163,7 @@ fn spawn_body<B: TaskBody, const R: usize>(
     result_size: usize,
     result_drop: Option<ResultDropFn>,
 ) -> JoinHandle<TaskOutput<R>> {
+    crate::io::publish_before_handoff();
     super::runtime::handle().spawn(TaskFut::<B, R> {
         body,
         result_size,

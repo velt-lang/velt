@@ -54,6 +54,7 @@ impl Signal {
             *r = reason.clone();
             self.aborted.store(true, Ordering::Release);
         }
+        crate::io::publish_before_handoff();
         self.notify.notify_waiters();
         drop(std::mem::take(&mut *lock(&self.sources)));
         let children = std::mem::take(&mut *lock(&self.children));

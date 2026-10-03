@@ -36,6 +36,13 @@ pub fn publish_thread_output() {
     stdout::publish_local();
 }
 
+/// Called before this task hands work to another one (spawns a task, sends on a channel, settles
+/// a promise, aborts a signal): what it printed so far becomes visible before anything the other
+/// task prints, which may run on another worker at once.
+pub fn publish_before_handoff() {
+    stdout::publish_local();
+}
+
 /// Runtime idle hook (a worker is about to park): write pending output to the OS.
 pub fn flush_idle() {
     stdout::flush_idle();
