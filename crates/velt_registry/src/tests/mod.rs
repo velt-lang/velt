@@ -240,6 +240,49 @@ fn a_registry_written_by_an_older_velt() {
     check_dir(&root).unwrap();
 }
 
+#[test]
+fn names_the_current_rules_refuse_keep_the_server_from_starting() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("server");
+    let index = |name: &str| {
+        std::fs::create_dir_all(root.join(name)).unwrap();
+        std::fs::write(root.join(name).join("index.json"), "{\"versions\": []}\n").unwrap();
+    };
+    index("fine");
+    check_dir(&root).unwrap();
+    // Published before the rules changed: an invalid name and a `-`/`_` pair.
+    index("rt-utils");
+    index("my-pkg");
+    index("my_pkg");
+    let e = check_dir(&root).unwrap_err();
+    assert!(
+        e.contains("`rt-utils` is no longer a valid package name"),
+        "{e}"
+    );
+    assert!(
+        e.contains("`my-pkg` and `my_pkg` differ only in `-` and `_`"),
+        "{e}"
+    );
+    assert!(
+        e.contains("rename or remove those package directories"),
+        "{e}"
+    );
+    // A directory without an index is not a package.
+    std::fs::remove_dir_all(root.join("rt-utils")).unwrap();
+    std::fs::remove_file(root.join("my_pkg").join("index.json")).unwrap();
+    check_dir(&root).unwrap();
+}
+
+#[test]
+fn user_names_have_their_own_rules() {
+    for ok in ["rt", "native", "john_", "a--b", "sig-x"] {
+        auth::check_user_name(ok).unwrap_or_else(|e| panic!("{ok}: {e}"));
+    }
+    for bad in ["Rt", "1a", "con", "a b"] {
+        assert!(auth::check_user_name(bad).is_err(), "{bad}");
+    }
+}
+
 /// A stub server answering every request with `content_type` and `body`.
 fn stub(content_type: &'static str, body: &'static str) -> Server {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

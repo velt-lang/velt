@@ -121,10 +121,10 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
             }
         }
     }
+    check_native_names(&natives)?;
     if lock_changed {
         lockfile.write(&root)?;
     }
-    check_native_names(&natives)?;
     let graph = build_graph(&manifest, &root, &resolution, &dirs, natives);
     Ok(Installed {
         graph,

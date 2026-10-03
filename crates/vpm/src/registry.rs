@@ -139,6 +139,33 @@ pub fn legacy_index_error(registry: &Path, name: &str) -> Option<String> {
     })
 }
 
+/// Names in the registry at `root` that the current name rules refuse: invalid names (published
+/// before the rules changed) and pairs that differ only in `-` versus `_`. One line each.
+pub fn name_problems(root: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(root)
+        .map(|rd| {
+            rd.flatten()
+                .filter(|e| e.path().join(INDEX_FILE).is_file())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    let mut problems = vec![];
+    let mut seen: BTreeMap<String, String> = BTreeMap::new();
+    for name in &names {
+        if !crate::manifest::is_valid_package_name(name) {
+            problems.push(format!("`{name}` is no longer a valid package name"));
+            continue;
+        }
+        let norm = crate::manifest::normalized_name(name);
+        if let Some(other) = seen.insert(norm, name.clone()) {
+            problems.push(format!("`{other}` and `{name}` differ only in `-` and `_`"));
+        }
+    }
+    problems
+}
+
 /// The packages of a registry directory written by an older velt (see [`legacy_index_error`]).
 pub fn legacy_packages(registry: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(registry)
@@ -343,6 +370,10 @@ pub fn publish_local(root: &Path, loc: &Locations) -> Result<IndexEntry, String>
 /// (`my_pkg` when `my-pkg` exists): their native functions, init functions and library files
 /// would share names.
 fn check_name_is_free(registry: &Path, name: &str) -> Result<(), String> {
+    // A package the registry already has keeps publishing (a pair from before this rule too).
+    if registry.join(name).join(INDEX_FILE).is_file() {
+        return Ok(());
+    }
     let norm = crate::manifest::normalized_name(name);
     let Ok(entries) = std::fs::read_dir(registry) else {
         return Ok(());
@@ -447,6 +478,11 @@ mod tests {
         );
         let e = publish(&b, &loc).unwrap_err();
         assert!(e.contains("the registry has `my-pkg`"), "{e}");
+        // A pair that already exists (published before this rule) keeps publishing both.
+        let dir = loc.registry.join("my_pkg");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(INDEX_FILE), "{\"versions\": []}\n").unwrap();
+        publish(&b, &loc).unwrap();
         // The same package publishes new versions as before.
         package(
             &a,

@@ -109,8 +109,8 @@ registry: "https://registry.example.com",
   Writes to a package by a user who doesn't own it are 403, also when an existing package has no
   owners (on a server with users): an administrator assigns them with
   `velt registry owner add`. `GET <url>/api/v1/<name>/owners` → one owner per line; `PUT`/`DELETE
-  <url>/api/v1/<name>/owners/<user>` add/remove one (400 for a name or user that isn't
-  `[a-z][a-z0-9_-]*`, 404 for an unknown user or a user who isn't an owner, 409 for the last
+  <url>/api/v1/<name>/owners/<user>` add/remove one (400 for an invalid package name, or a user
+  name that isn't `[a-z][a-z0-9_-]*`, 404 for an unknown user or a user who isn't an owner, 409 for the last
   owner, 400 on a server without users).
 - Yank (additive): index entries gain `yanked = true` (absent when false). `PUT`/`DELETE
   <url>/api/v1/<name>/<version>/yank` set/clear it (owners). Resolution never selects a yanked

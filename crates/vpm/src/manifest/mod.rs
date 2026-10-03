@@ -119,7 +119,8 @@ pub const NATIVE_TARGETS: &[&str] = &[
 /// The package's identity: `name`, `version` and `entry`.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct Package {
-    /// Package name, `[a-z][a-z0-9_-]*`.
+    /// Package name: lowercase words of letters and digits joined by single `-` or `_`
+    /// ([`is_valid_package_name`]).
     pub name: String,
     /// Semver version (validated).
     pub version: String,
@@ -338,7 +339,7 @@ fn check_keyword(word: &str) -> Result<(), String> {
     }
 }
 
-fn check_name(name: &str) -> Result<(), String> {
+pub(crate) fn check_name(name: &str) -> Result<(), String> {
     if RESERVED_NAMES.contains(&name) {
         return Err(reserved(name));
     }
@@ -443,8 +444,9 @@ fn check_native_wasm(wasm: bool) -> Result<(), String> {
     }
 }
 
-/// Whether `name` is a valid package name: `[a-z][a-z0-9_-]*`, not reserved and not a Windows
-/// device name (a package is a directory named after it).
+/// Whether `name` is a valid package name: lowercase letters and digits starting with a letter,
+/// words joined by single `-` or `_` (never doubled, mixed or at the end), not reserved and not a
+/// Windows device name (a package is a directory named after it).
 pub fn is_valid_package_name(name: &str) -> bool {
     let mut chars = name.chars();
     !RESERVED_NAMES.contains(&name)
@@ -473,6 +475,16 @@ pub fn is_windows_device_name(name: &str) -> bool {
 
 fn device_name(name: &str) -> String {
     format!("the package name `{name}` is a device name on Windows (`con`, `nul`, `com1`, …)")
+}
+
+/// Whether `name` is a valid registry user name: `[a-z][a-z0-9_-]*` and not a Windows device
+/// name. User names don't name native functions, so the package rules about separators and
+/// reserved words don't apply.
+pub fn is_valid_user_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    !is_windows_device_name(name)
+        && matches!(chars.next(), Some('a'..='z'))
+        && chars.all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-' | '_'))
 }
 
 /// First name components whose native export prefix would be Velt's own: `velt_rt_`
