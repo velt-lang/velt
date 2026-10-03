@@ -817,10 +817,10 @@ are `IoResult` errors whose message starts with `spawn <program>: `.
 | `velt_rt_child_close` | `(VeltChild c)` | releases the handle only |
 | `velt_rt_child_read` | `(VeltChild c, u32 which, u64 max) -> VeltFut*` | `which` 1 stdout / 2 stderr; `IoResult<VeltBytes>`, empty = EOF, `max` 0 = 64 KiB; `EINVAL` if not piped |
 | `velt_rt_child_read_string` | `(VeltChild c, u32 which, u64 max) -> VeltFut*` | `IoResult<VeltStr>`, split characters completed on the next read, `""` = EOF |
-| `velt_rt_child_write` | `(VeltChild c, const VeltBytes* data) -> VeltFut*` | `IoResult<()>` to stdin (copied) |
+| `velt_rt_child_write` | `(VeltChild c, const VeltStr* data) -> VeltFut*` | `IoResult<()>` to stdin (copied) |
 | `velt_rt_child_close_stdin` | `(VeltChild c) -> VeltFut*` | `IoResult<()>`; idempotent |
-| `velt_rt_child_output` | `(const VeltCommand* spec, const VeltBytes* input) -> VeltFut*` | run to completion: stdout/stderr piped and drained concurrently, `input` (empty = none, stdin is then null) written then closed; `IoResult<VeltOutput>`, output decoded lossily; `spec.stdio` ignored |
-| `velt_rt_child_output_sync` | `(const VeltCommand* spec, const VeltBytes* input, IoResult<VeltOutput>* out)` | same, blocking |
+| `velt_rt_child_output` | `(const VeltCommand* spec, const VeltStr* input) -> VeltFut*` | run to completion: stdout/stderr piped and drained concurrently, `input` (empty = none, stdin is then null) written then closed; `IoResult<VeltOutput>`, output decoded lossily; `spec.stdio` ignored |
+| `velt_rt_child_output_sync` | `(const VeltCommand* spec, const VeltStr* input, IoResult<VeltOutput>* out)` | same, blocking |
 
 ### 14.4 Standard input (`velt:stdin`)
 
