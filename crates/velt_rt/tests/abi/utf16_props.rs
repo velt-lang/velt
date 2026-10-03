@@ -5,7 +5,9 @@
 //!
 //! The runtime counts UTF-8 bytes until phase 2 of #377, where only ASCII agrees with the model,
 //! so the runtime is checked on [`RUNTIME_ALPHABETS`]. Phase 2 adds the other alphabets; the model
-//! checks below already run on all of them.
+//! checks below already run on all of them. Every runtime string the checks touch must also carry
+//! its model length as its unit count (phase 1), on every alphabet the runtime can already hold
+//! ([`WELL_FORMED_ALPHABETS`]).
 //!
 //! `VELT_UTF16_SEED` replays a failing run (the failure message prints the seed);
 //! `VELT_UTF16_CASES` changes the number of operations.
@@ -44,6 +46,9 @@ const ALL_ALPHABETS: &[Alphabet] = &[
 /// The alphabets on which the runtime agrees with the model. Phase 2 of #377 makes this
 /// `ALL_ALPHABETS`.
 const RUNTIME_ALPHABETS: &[Alphabet] = &[Alphabet::Ascii];
+
+/// The alphabets the runtime holds before phase 2 of #377 (it can't make lone surrogates yet).
+const WELL_FORMED_ALPHABETS: &[Alphabet] = &[Alphabet::Ascii, Alphabet::Bmp, Alphabet::Astral];
 
 /// Lengths in code units around the inline limit and the breadcrumb stride; other lengths are
 /// random up to 200.
@@ -121,10 +126,16 @@ fn gen_string(rng: &mut Rng, alphabets: &[Alphabet]) -> Vec<u16> {
 }
 
 /// A needle for `s`: often a piece of `s` (so that searches find it), else a short random string.
+/// Without [`Alphabet::Lone`] the piece never cuts a surrogate pair.
 fn gen_needle(rng: &mut Rng, s: &[u16], alphabets: &[Alphabet]) -> Vec<u16> {
     if !s.is_empty() && rng.chance(60) {
-        let a = rng.below(s.len() + 1);
-        let b = (a + rng.below(4)).min(s.len());
+        let mut a = rng.below(s.len() + 1);
+        let mut b = (a + rng.below(4)).min(s.len());
+        if !alphabets.contains(&Alphabet::Lone) {
+            let inside_pair = |i: usize| i > 0 && i < s.len() && (0xDC00..0xE000).contains(&s[i]);
+            a -= inside_pair(a) as usize;
+            b += inside_pair(b) as usize;
+        }
         return s[a..b].to_vec();
     }
     let mut n = Vec::new();
@@ -156,7 +167,7 @@ impl Drop for Rt {
 /// The model string `s` as a runtime string, in a random form.
 fn to_rt(rng: &mut Rng, s: &[u16]) -> Rt {
     let bytes = wtf8_encode(s);
-    Rt(match rng.below(3) {
+    let r = Rt(match rng.below(3) {
         // A literal or a borrowed sub-range (static form). Leaked: tests only.
         0 => VeltStr::from_static(Box::leak(bytes.into_boxed_slice())),
         // Inline when it fits, else a heap buffer of exactly its size.
@@ -164,15 +175,25 @@ fn to_rt(rng: &mut Rng, s: &[u16]) -> Rt {
         // A heap buffer with spare room, as a builder leaves it.
         _ => {
             let mut h = VeltStr::with_capacity(24 + bytes.len() + rng.below(16));
-            unsafe { h.push_bytes(&bytes) };
+            unsafe { h.push_wtf8(&bytes, None) };
             h
         }
-    })
+    });
+    assert_eq!(units(&r.0), s);
+    r
 }
 
-/// The code units of a runtime string; panics unless its bytes are canonical WTF-8.
+/// The code units of a runtime string; panics unless its bytes are canonical WTF-8 and the unit
+/// count stored in the value is their number.
 fn units(s: &VeltStr) -> Vec<u16> {
-    wtf8_decode(unsafe { s.as_bytes() })
+    let u = wtf8_decode(unsafe { s.as_bytes() });
+    assert_eq!(
+        s.units(),
+        u.len(),
+        "stored unit count of {} ({s:?})",
+        show(&u)
+    );
+    u
 }
 
 /// `s.length` as compiled code reads it. Bytes until phase 2 of #377, then code units.
@@ -450,6 +471,17 @@ fn run(
 fn runtime_matches_model() {
     run("runtime vs model", RUNTIME_ALPHABETS, 20_000, |rng| {
         check_one(rng, RUNTIME_ALPHABETS)
+    });
+}
+
+#[test]
+fn every_string_carries_its_unit_count() {
+    run("unit counts", WELL_FORMED_ALPHABETS, 20_000, |rng| {
+        // Off ASCII the results differ from the model until phase 2 (byte positions); what is
+        // checked here is that every input and result decodes to as many units as it stores
+        // (`units` and `to_rt` panic otherwise).
+        let _ = check_one(rng, WELL_FORMED_ALPHABETS);
+        Ok(())
     });
 }
 

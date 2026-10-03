@@ -68,7 +68,7 @@ export has no record, or a record names nothing exported.
 typedef struct VeltRtApi {
     uint32_t abi_version;                    // 1
     uint32_t size;                           // sizeof(VeltRtApi) of the runtime
-    void (*str_new)(const uint8_t* p, size_t len, VeltStr* out);     // owned copy of UTF-8 bytes
+    void (*str_new)(const uint8_t* p, size_t len, VeltStr* out);     // owned copy, decoded lossily
     const uint8_t* (*str_bytes)(const VeltStr* s, size_t* len);      // a string's bytes (borrowed)
     void (*str_drop)(VeltStr* s);                                     // velt_rt_str_drop
     void (*bytes_new)(const uint8_t* p, size_t len, VeltBytes* out); // owned copy (rt allocator)
@@ -84,6 +84,11 @@ typedef struct VeltRtApi {
 } VeltRtApi;
 ```
 
+- `str_new` decodes the bytes as UTF-8 from outside the program: an invalid sequence becomes
+  U+FFFD by the WHATWG rule (Rust's `String::from_utf8_lossy`), and that includes a surrogate
+  encoded on its own (`ED A0..BF xx`), so `ED A0 BD ED B8 80` gives six U+FFFD and two halves of
+  a pair are never joined. The result is a canonical string (rt_abi.md "Strings") with its UTF-16
+  length counted.
 - The library never links a `velt_rt_*` symbol: it gets this table (every entry is the runtime
   function or helper named in its comment). A library is `dlopen`ed into `velt dev`'s host,
   whose runtime symbols are not exported, and a DLL cannot import from an executable.

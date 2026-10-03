@@ -326,8 +326,10 @@ pub(crate) fn strings() -> TestProgram {
     let addr = |id: StaticId| Rvalue::Cast(Operand::Const(Const::Static(id), Ptr), U64);
     out.fb.assign(b0, hello_w0, addr(hello));
     out.fb.assign(b0, empty_w0, addr(empty));
+    // ASCII literals: `w1` is `units << 32 | len` with units == len.
     let lit = |w0: Local, len: i128| {
-        Rvalue::Aggregate(STR_AGG, vec![copy_local(w0), int(len, U64), int(0, U64)])
+        let w1 = int((len << 32) | len, U64);
+        Rvalue::Aggregate(STR_AGG, vec![copy_local(w0), w1, int(0, U64)])
     };
     out.fb.assign(b0, s, lit(hello_w0, 12));
     out.fb.assign(b0, ps, Rvalue::AddrOf(Place::local(s)));
@@ -348,7 +350,13 @@ pub(crate) fn strings() -> TestProgram {
     );
     out.bool(Operand::Const(Const::Bool(true), Bool));
     out.byte(b' ');
-    out.u64(copy_place(place(s, vec![Proj::Field(1)])));
+    // The byte length: the low half of word 1.
+    let len = out.fb.local(U64);
+    let w1 = copy_place(place(s, vec![Proj::Field(1)]));
+    let cur = out.cur;
+    out.fb
+        .assign(cur, len, bin(BinOp::BitAnd, w1, int(0xffff_ffff, U64)));
+    out.u64(copy_local(len));
     out.nl();
     out.cur = out.fb.call(
         out.cur,

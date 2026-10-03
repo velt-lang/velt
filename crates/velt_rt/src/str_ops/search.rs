@@ -64,5 +64,5 @@ pub unsafe extern "C" fn velt_rt_str_ends_with(s: *const VeltStr, suffix: *const
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_str_eq(a: *const VeltStr, b: *const VeltStr) -> u8 {
     let (a, b) = (&*a, &*b);
-    (a.len() == b.len() && a.as_bytes() == b.as_bytes()) as u8
+    (a.as_bytes() == b.as_bytes()) as u8
 }

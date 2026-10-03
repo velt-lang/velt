@@ -118,7 +118,8 @@ impl Interp<'_> {
         let p = self.raw_alloc(s.len().max(1) as u64);
         self.write_bytes(p, s.as_bytes());
         self.write_bytes(out, &p.to_le_bytes());
-        self.write_bytes(out + 8, &(s.len() as u64).to_le_bytes());
+        let w1 = ((s.encode_utf16().count() as u64) << 32) | s.len() as u64;
+        self.write_bytes(out + 8, &w1.to_le_bytes());
         self.write_bytes(out + 16, &0u64.to_le_bytes());
     }
 

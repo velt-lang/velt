@@ -3,7 +3,6 @@
 use super::command::VeltCommand;
 use super::output::{velt_rt_child_output_sync, VeltOutput};
 use super::*;
-use crate::bytes::VeltBytes;
 use crate::str_array::VeltStrArray;
 use std::mem::MaybeUninit;
 
@@ -31,13 +30,12 @@ unsafe fn text(s: &VeltStr) -> String {
 
 fn output_sync(
     spec: &VeltCommand,
-    input: &'static [u8],
+    input: &VeltStr,
 ) -> Result<(i32, String, String), (i32, String)> {
-    let input = VeltBytes::from_vec(input.to_vec());
     let mut out = MaybeUninit::<IoResult<VeltOutput>>::uninit();
     // SAFETY: valid spec and buffers; results are read according to the code.
     unsafe {
-        velt_rt_child_output_sync(spec, &input, out.as_mut_ptr());
+        velt_rt_child_output_sync(spec, input, out.as_mut_ptr());
         let r = out.assume_init();
         if r.err.code != 0 {
             return Err((r.err.code, text(&r.err.message)));
@@ -55,12 +53,23 @@ fn output_sync_collects_everything() {
         &["-c", "cat; echo \"env=$VELT_T\"; echo oops >&2; exit 3"],
         0,
     );
-    assert_eq!(
-        output_sync(&s, b"input\n"),
-        Ok((3, "input\nenv=42\n".to_string(), "oops\n".to_string()))
-    );
+    // The input in every string form (regression: it was read as a `u8[]`, which only the
+    // static form resembled).
+    let long = "a line longer than the inline form\n";
+    let mut inputs = [
+        VeltStr::from_static(b"input\n"),
+        VeltStr::from_bytes(b"input\n"),
+        VeltStr::from_bytes(long.as_bytes()),
+    ];
+    for (input, text) in inputs.iter().zip(["input\n", "input\n", long]) {
+        assert_eq!(
+            output_sync(&s, input),
+            Ok((3, format!("{text}env=42\n"), "oops\n".to_string()))
+        );
+    }
+    inputs.iter_mut().for_each(|i| unsafe { i.release() });
     let missing = spec("velt-no-such-program", &[], 0);
-    let (code, message) = output_sync(&missing, b"").unwrap_err();
+    let (code, message) = output_sync(&missing, &VeltStr::empty()).unwrap_err();
     assert_eq!(code, crate::result::code::NOT_FOUND);
     assert!(
         message.starts_with("spawn velt-no-such-program: "),

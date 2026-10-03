@@ -89,12 +89,9 @@ fn async_roundtrip() {
         )));
         assert_eq!(names(listing), ["c.bin", "y"]);
 
+        // Bytes that are not UTF-8, which no string can hold: written from outside.
         let raw = [0u8, 0xff, 7];
-        let bytes = VeltStr::borrowed(raw.as_ptr(), 3);
-        ok(block_on_fut::<IoResult<()>>(velt_rt_fs_write_file(
-            &arg(&c),
-            &bytes,
-        )));
+        std::fs::write(&c, raw).unwrap();
         let mut got = ok(block_on_fut::<IoResult<VeltBytes>>(
             velt_rt_fs_read_file_bytes(&arg(&c)),
         ));

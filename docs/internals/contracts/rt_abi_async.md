@@ -489,7 +489,12 @@ a builder of its own and appended with `velt_rt_str_append` (rt_abi.md), so a th
 leaves `s` unchanged. When the text may change `s` (it reads `s`, or calls code that could reach
 it), lowering shares the old value before evaluating it and puts it back afterwards, which
 leaves the count at 1 again unless the text kept a copy. Every push ends in the one append
-routine of the runtime (`VeltStr::push_bytes`), so a per-string header can be maintained there.
+routine of the runtime (`VeltStr::push_wtf8`, rt_abi.md "Strings"), which keeps the string's
+UTF-16 unit count, lone-surrogate count and form up to date per append in O(1) (the appended
+text's counts come from its value when it is a string, as in `velt_rt_str_append`).
+Appended text lying in the target's own buffer (the target itself, a share, an uncounted copy or
+a static-form view of it) is copied out before the buffer grows, moves behind a header or has a
+surrogate pair joined at its end.
 
 **Invariant:** a count-1 buffer is appended to (and so possibly reallocated) only while no
 borrowed static-form view into it is live. The only such views today are the JSON reader's
@@ -501,7 +506,7 @@ an uncounted copy or a static-form view of it): it is copied out before the buff
 |---|---|---|
 | `velt_rt_strbuf_new` | `(u64 cap, VeltStrBuf* out)` | `cap` = initial capacity hint (≤ 23: starts inline, else allocates up front) |
 | `velt_rt_strbuf_push_str` | `(VeltStrBuf* b, const VeltStr* s)` | `s` may be `b` itself or lie in its buffer |
-| `velt_rt_strbuf_push_bytes` | `(VeltStrBuf* b, const u8* p, u64 len)` | static text chunks of a template; `len == 0` ⇒ `p` unused |
+| `velt_rt_strbuf_push_bytes` | `(VeltStrBuf* b, const u8* p, u64 len)` | static text chunks of a template; `len == 0` ⇒ `p` unused. The low 32 bits of `len` are the byte count; the high 32 bits may carry the UTF-16 unit count (as a string's `w1`): equal to the byte count, the text is ASCII and is not scanned; 0 means unknown (counted) |
 | `velt_rt_strbuf_push_i64` / `_u64` | `(VeltStrBuf* b, i64 / u64 v)` | decimal |
 | `velt_rt_strbuf_push_f64` | `(VeltStrBuf* b, f64 v)` | JS `String(v)` (same formatter as `velt_rt_write_f64`) |
 | `velt_rt_strbuf_push_json_f64` | `(VeltStrBuf* b, f64 v)` | like `JSON.stringify`: JS format, `null` for NaN/±Infinity |
@@ -531,6 +536,7 @@ exactly. "Omitted" JS arguments are passed as the value given in Notes.
 | `velt_rt_str_includes` | `(const VeltStr* s, const VeltStr* needle) -> u8` | (a `position` arg ⇒ use `index_of(s, n, pos) >= 0`) |
 | `velt_rt_str_starts_with` / `_ends_with` | `(const VeltStr* s, const VeltStr* affix) -> u8` | |
 | `velt_rt_str_eq` | `(const VeltStr* a, const VeltStr* b) -> u8` | `==` fast path: length check + one memcmp |
+| `velt_rt_str_join` | `(const VeltStrArray* parts, const VeltStr* sep, VeltStr* out)` | `parts.join(sep)`: sums the pieces' lengths and unit counts, then writes the result once (inline, or a heap buffer of exactly its size) |
 | `velt_rt_str_split` | `(const VeltStr* s, const VeltStr* sep, VeltStrArray* out)` | JS semantics: `"a,b,".split(",")` = `["a","b",""]`, `"".split(",")` = `[""]`, `"".split("")` = `[]`, `split("")` = characters. Drop with `velt_rt_str_array_drop` (§4). |
 | `velt_rt_str_trim` / `_trim_start` / `_trim_end` | `(const VeltStr* s, VeltStr* out)` | JS WhiteSpace + LineTerminator set (includes U+FEFF, U+00A0, U+2028/9, Zs; not U+0085) |
 | `velt_rt_str_to_upper` / `_to_lower` | `(const VeltStr* s, VeltStr* out)` | full Unicode default case mapping (`ß` → `SS`, final sigma), like JS; ASCII fast path |
@@ -820,10 +826,10 @@ are `IoResult` errors whose message starts with `spawn <program>: `.
 | `velt_rt_child_close` | `(VeltChild c)` | releases the handle only |
 | `velt_rt_child_read` | `(VeltChild c, u32 which, u64 max) -> VeltFut*` | `which` 1 stdout / 2 stderr; `IoResult<VeltBytes>`, empty = EOF, `max` 0 = 64 KiB; `EINVAL` if not piped |
 | `velt_rt_child_read_string` | `(VeltChild c, u32 which, u64 max) -> VeltFut*` | `IoResult<VeltStr>`, split characters completed on the next read, `""` = EOF |
-| `velt_rt_child_write` | `(VeltChild c, const VeltBytes* data) -> VeltFut*` | `IoResult<()>` to stdin (copied) |
+| `velt_rt_child_write` | `(VeltChild c, const VeltStr* data) -> VeltFut*` | `IoResult<()>` to stdin (copied) |
 | `velt_rt_child_close_stdin` | `(VeltChild c) -> VeltFut*` | `IoResult<()>`; idempotent |
-| `velt_rt_child_output` | `(const VeltCommand* spec, const VeltBytes* input) -> VeltFut*` | run to completion: stdout/stderr piped and drained concurrently, `input` (empty = none, stdin is then null) written then closed; `IoResult<VeltOutput>`, output decoded lossily; `spec.stdio` ignored |
-| `velt_rt_child_output_sync` | `(const VeltCommand* spec, const VeltBytes* input, IoResult<VeltOutput>* out)` | same, blocking |
+| `velt_rt_child_output` | `(const VeltCommand* spec, const VeltStr* input) -> VeltFut*` | run to completion: stdout/stderr piped and drained concurrently, `input` (empty = none, stdin is then null) written then closed; `IoResult<VeltOutput>`, output decoded lossily; `spec.stdio` ignored |
+| `velt_rt_child_output_sync` | `(const VeltCommand* spec, const VeltStr* input, IoResult<VeltOutput>* out)` | same, blocking |
 
 ### 14.4 Standard input (`velt:stdin`)
 

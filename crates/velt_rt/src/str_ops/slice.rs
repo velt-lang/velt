@@ -59,15 +59,15 @@ pub unsafe extern "C" fn velt_rt_str_from_char_code(code: i64, out: *mut VeltStr
     ));
 }
 
-/// `s.repeat(n)`: 1 = ok; 0 = JS `RangeError` (negative count or a result too large to
-/// allocate), with `*out` empty.
+/// `s.repeat(n)`: 1 = ok; 0 = JS `RangeError` (negative count or a result longer than a string
+/// can be), with `*out` empty.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_str_repeat(s: *const VeltStr, n: i64, out: *mut VeltStr) -> u8 {
     let t = text(s);
     let total = usize::try_from(n)
         .ok()
         .and_then(|n| n.checked_mul(t.len()))
-        .filter(|&total| total <= isize::MAX as usize);
+        .filter(|&total| total <= crate::str::MAX_LEN);
     let Some(total) = total else {
         out.write(VeltStr::empty());
         return 0;
