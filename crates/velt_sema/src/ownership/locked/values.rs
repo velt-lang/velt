@@ -1,15 +1,18 @@
-//! Which closures a function value may be (super module docs): a closure literal, either
-//! branch of a conditional, a local bound only to closure literals, a variable a closure
-//! captured (resolved where the closure is made), a parameter of a function (the closures
-//! every call passes for it, when every call is a direct one), and a call's result (what the
-//! function may return). Anything else — a field, an
-//! array element, a parameter of a closure or a method — is not resolved.
+//! Which functions a function value may be (super module docs): closures and named functions.
+//! A closure literal or a named function used as a value, either branch of a conditional, a
+//! local bound only to those, a variable a closure captured (resolved where the closure is
+//! made), a parameter of a function (what every call passes for it, when every call is a
+//! direct one), and a call's result (what the function may return). Anything else — a field,
+//! an array element, a parameter of a closure or a method — is not resolved. The result mixes
+//! closures (`FnKind::Closure`) and named functions; tell them apart with `cx.fn_info`.
 
 use std::collections::{HashMap, HashSet};
 
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, FnKind};
-use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, LocalId};
+use crate::hir::{
+    Block, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalId, Stmt, StmtKind as S,
+};
 use crate::visit;
 
 /// Resolves function values to closures, caching what it learns about the program.
@@ -26,10 +29,10 @@ pub(super) struct Resolver {
 }
 
 impl Resolver {
-    /// The closures `e`, evaluated in body `d`, may be.
+    /// The functions `e`, evaluated in body `d`, may be.
     pub(super) fn expr(&mut self, cx: &mut Ctx, d: DefId, e: &Expr) -> Option<Vec<DefId>> {
-        match &e.kind {
-            E::Closure(n) => Some(vec![*n]),
+        match &unwrap(e).kind {
+            E::Closure(n) | E::FnRef(n, _) => Some(vec![*n]),
             E::If { then, els, .. } => {
                 let mut a = self.expr(cx, d, then)?;
                 a.extend(self.expr(cx, d, els)?);
@@ -89,7 +92,7 @@ impl Resolver {
         let ncap = f.captures.len();
         let captured = pos.filter(|&i| i < ncap).map(|i| f.captures[i].outer);
         let bound = match pos {
-            None => super::callbacks::closure_locals(&mut f.body.block).remove(&l),
+            None => fn_locals(&mut f.body.block).remove(&l),
             Some(_) => None,
         };
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
@@ -133,6 +136,66 @@ impl Resolver {
         }
         self.parents.as_ref()?.get(&n).copied()
     }
+}
+
+/// `e` without the shares and copies around a function value (the same function).
+fn unwrap(e: &Expr) -> &Expr {
+    match &e.kind {
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::Share | Intrinsic::Clone | Intrinsic::Transfer),
+            args,
+        } if args.len() == 1 => unwrap(&args[0]),
+        E::Upcast(x) => unwrap(x),
+        _ => e,
+    }
+}
+
+/// Locals every value of which is a closure literal or a named function (their `let`/`const`
+/// initializer and every assignment), with those functions.
+fn fn_locals(b: &mut Block) -> HashMap<LocalId, Vec<DefId>> {
+    #[derive(Default)]
+    struct Lets {
+        fns: HashMap<LocalId, Vec<DefId>>,
+        other: HashSet<LocalId>,
+    }
+    impl Lets {
+        fn value(&mut self, l: LocalId, e: &Expr) {
+            match unwrap(e).kind {
+                E::Closure(c) | E::FnRef(c, _) => self.fns.entry(l).or_default().push(c),
+                _ => {
+                    self.other.insert(l);
+                }
+            }
+        }
+    }
+    impl visit::VisitMut for Lets {
+        fn stmt(&mut self, s: &mut Stmt) {
+            match &s.kind {
+                S::Let {
+                    local,
+                    init: Some(init),
+                } => self.value(*local, init),
+                S::Let { local, init: None } => {
+                    self.fns.entry(*local).or_default();
+                }
+                _ => {}
+            }
+        }
+        fn expr(&mut self, e: &mut Expr) {
+            if let E::Assign { place, value } = &e.kind {
+                if let E::Local(l, _) = place.kind {
+                    let value = (**value).clone();
+                    self.value(l, &value);
+                }
+            }
+        }
+    }
+    let mut v = Lets::default();
+    visit::block(b, &mut v);
+    let Lets { fns, other } = v;
+    fns.into_iter()
+        .filter(|(l, fs)| !other.contains(l) && !fs.is_empty())
+        .collect()
 }
 
 /// The body making each closure of the program.

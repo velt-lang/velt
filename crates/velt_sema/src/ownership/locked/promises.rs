@@ -83,6 +83,10 @@ impl Promises<'_, '_, '_, '_> {
         // there (`super::values`).
         if let Callee::Indirect(c) = callee {
             if self.r.resolved.contains(&c.span) {
+                // Its named functions are checked like direct calls of them.
+                for g in self.r.named.get(&c.span).cloned().unwrap_or_default() {
+                    self.call(e, &Callee::Def(g, vec![]), args);
+                }
                 return;
             }
         }

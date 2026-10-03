@@ -37,6 +37,8 @@ pub(super) struct Regions {
     /// Function values called or passed in the bodies that are resolved to closures among the
     /// bodies (their spans): their bodies are checked, so calls need not copy anything.
     pub(super) resolved: HashSet<Span>,
+    /// The named functions among what each resolved function value may be.
+    pub(super) named: HashMap<Span, Vec<DefId>>,
     /// Set when [`Regions::add`] grew a set (the fixpoint goes on).
     pub(super) changed: bool,
 }
@@ -51,6 +53,7 @@ impl Regions {
             captured: HashMap::new(),
             params: HashMap::new(),
             resolved: HashSet::new(),
+            named: HashMap::new(),
             changed: false,
         };
         let Sites { parent, passed, .. } = closure_sites(bodies);

@@ -249,9 +249,11 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
     callback calls with the value (`step(v)`, a helper's parameter) gets the value itself, so
     its changes land in it: the closures it may be are checked like the callback. One whose
     body cannot be found (a field, an array element) may not be given both the value and
-    something outside the lock. A callback itself found only through a field or an array
-    element (`m.with(hooks.cb)`) may be any closure with its parameter types, so each of those
-    is checked as a callback.
+    something outside the lock. The callback itself is a closure written where it is passed, a
+    named function (`m.with(update)`), or a variable or helper parameter bound to those; one
+    found only through a field, an array element or a `Map` value (`m.with(hooks.cb)`) cannot
+    be checked, and is an error when the value can hold objects ("the function passed to
+    `with` comes from an object's field …").
   - A promise made from the value runs after the lock is released. One that only reads what it
     is given gets a copy, like a spawned call (`m.with((v) => save(v.name))`,
     `m.with((v) => read(v))`: `read` sees the value as it was; a copy of a resource without

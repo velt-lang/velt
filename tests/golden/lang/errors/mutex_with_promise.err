@@ -7,6 +7,7 @@ mutex_with_promise.vlt:66:17
 mutex_with_promise.vlt:68:26
 mutex_with_promise.vlt:70:17
 mutex_with_promise.vlt:72:15
+mutex_with_promise.vlt:74:13
 mutex_with_promise.vlt:75:19
 mutex_with_promise.vlt:77:17
 error: this `Promise<i64>` uses the locked value, and would run after `with` releases the lock
@@ -14,5 +15,6 @@ error: `fire` starts a promise with the locked value, which would run after `wit
 error: the function passed to `with` returns `Promise<i64>`, which would run after the lock is released
 error: this call may store a part of the locked value outside it, and also changes that argument
 error: this call passes the locked value to a function whose body is not visible here, together with something outside the lock
-error: `first` passes `Mutex.with` a function returning `Promise<i64>` here, which would run after the lock is released
+error: the function passed to `with` (through `first`) returns `Promise<i64>`, which would run after the lock is released
+error: the function passed to `with` (through `first`) comes from an array element, so what it does with the locked `Outer` cannot be checked
 await outside `with`, and store the result with another `with`

@@ -134,7 +134,20 @@ impl Stores<'_, '_, '_, '_> {
             }
         }
         let mut done = HashSet::new();
-        for (a, b) in call_flows(self.s, callee, args) {
+        let flows = match callee {
+            // A resolved function value: its closures' bodies are checked; its named functions
+            // store what their summaries say.
+            Callee::Indirect(c) if self.r.resolved.contains(&c.span) => {
+                let named = self.r.named.get(&c.span).cloned().unwrap_or_default();
+                let mut flows = vec![];
+                for g in named {
+                    flows.extend(call_flows(self.s, &Callee::Def(g, vec![]), args));
+                }
+                flows
+            }
+            _ => call_flows(self.s, callee, args),
+        };
+        for (a, b) in flows {
             let fn_value = match (b, callee) {
                 (None, Callee::Indirect(c)) => Some(c.span),
                 (Some(b), _) if is_fn_value(self.cx, &args[b]) => Some(args[b].span),

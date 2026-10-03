@@ -245,8 +245,9 @@ value's captures, an interface value's implementor) panics (glue/clone.rs). Stri
   the new task with its arguments as they were passed, not transferred (a gap: the caller must
   not use them afterwards).
 - `Mutex.with` callbacks and `attempt(f)` are not stabilized like ordinary calls.
-- `Mutex.with` (#398): a callback, or a function value it calls, that sema cannot resolve to
-  closures (ownership/locked/values.rs) is treated as any closure with its parameter types;
+- `Mutex.with` (#398): a callback that sema cannot resolve to closures or named functions
+  (ownership/locked/values.rs) is an error when the value can hold objects, and a function
+  value it calls that way may not be given both sides of the lock;
   calls through virtual and interface methods are assumed to store any argument into any
   argument they modify; summaries cover direct calls only. A resource without `clone()`
   stored into the value from a captured variable stays shared with the variable (it cannot

@@ -4,20 +4,20 @@
 //! function parameter that reaches `with`, the closures passed for it (to a fixpoint). Any other function value is *opaque*: its body is
 //! not visible, and only its type is checked.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use super::values::Resolver;
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, FnKind};
-use crate::hir::{
-    Block, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalId, Stmt, StmtKind as S,
-};
-use crate::visit::{self, VisitMut};
+use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalId};
+use crate::visit;
 
 #[derive(Default)]
 pub(super) struct Found {
     /// Closures `with` calls, and whether the literal is `with`'s argument itself.
     pub(super) callbacks: Vec<(DefId, bool)>,
+    /// Named functions `with` calls, and where they are passed.
+    pub(super) named: Vec<(DefId, velt_common::Span)>,
     /// Opaque callbacks: the function passing them, and the argument expressions.
     pub(super) opaque: Vec<(DefId, Expr)>,
     /// `(function, parameter index)` of parameters passed to `with` as the callback.
@@ -83,7 +83,14 @@ fn resolve(
         }
     }
     match res.expr(cx, d, cb) {
-        Some(cs) => found.callbacks.extend(cs.into_iter().map(|c| (c, direct))),
+        Some(cs) => {
+            for c in cs {
+                match cx.fn_info(c).kind {
+                    FnKind::Closure => found.callbacks.push((c, direct)),
+                    _ => found.named.push((c, cb.span)),
+                }
+            }
+        }
         None => found.opaque.push((d, cb.clone())),
     }
 }
@@ -115,54 +122,5 @@ fn calls_in(cx: &mut Ctx, d: DefId, pick: impl Fn(&Callee, usize) -> bool) -> Ca
     args_found
         .into_iter()
         .map(|a| (a, params.clone()))
-        .collect()
-}
-
-/// Locals every value of which is a closure literal (its `let`/`const` initializer and every
-/// assignment), with those closures.
-pub(super) fn closure_locals(b: &mut Block) -> HashMap<LocalId, Vec<DefId>> {
-    #[derive(Default)]
-    struct Lets {
-        closures: HashMap<LocalId, Vec<DefId>>,
-        other: HashSet<LocalId>,
-    }
-    impl Lets {
-        fn value(&mut self, l: LocalId, e: &Expr) {
-            match e.kind {
-                E::Closure(c) => self.closures.entry(l).or_default().push(c),
-                _ => {
-                    self.other.insert(l);
-                }
-            }
-        }
-    }
-    impl VisitMut for Lets {
-        fn stmt(&mut self, s: &mut Stmt) {
-            match &s.kind {
-                S::Let {
-                    local,
-                    init: Some(init),
-                } => self.value(*local, init),
-                S::Let { local, init: None } => {
-                    self.closures.entry(*local).or_default();
-                }
-                _ => {}
-            }
-        }
-        fn expr(&mut self, e: &mut Expr) {
-            if let E::Assign { place, value } = &e.kind {
-                if let E::Local(l, _) = place.kind {
-                    let value = (**value).clone();
-                    self.value(l, &value);
-                }
-            }
-        }
-    }
-    let mut v = Lets::default();
-    visit::block(b, &mut v);
-    let Lets { closures, other } = v;
-    closures
-        .into_iter()
-        .filter(|(l, cs)| !other.contains(l) && !cs.is_empty())
         .collect()
 }

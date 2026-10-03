@@ -30,7 +30,7 @@ mod stores;
 mod summary;
 mod values;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use velt_common::{Diagnostic, Span};
 
@@ -42,16 +42,18 @@ use crate::visit::{self, VisitMut};
 pub(crate) fn check_locked(cx: &mut Ctx) {
     let mut res = values::Resolver::default();
     let found = callbacks::find(cx, &mut res);
-    opaque::check_results(cx, &found.opaque);
-    let mut callbacks = found.callbacks;
-    for (_, cb) in &found.opaque {
-        let like = opaque::closures_like(cx, cb.ty);
-        callbacks.extend(like.into_iter().map(|c| (c, false)));
-    }
-    if callbacks.is_empty() {
+    opaque::check(cx, &found.opaque);
+    let callbacks = found.callbacks;
+    if callbacks.is_empty() && found.named.is_empty() {
         return;
     }
     let summaries = summary::Summaries::compute(cx);
+    let mut seen_named = HashSet::new();
+    for &(g, span) in &found.named {
+        if seen_named.insert((g, span)) {
+            named_callback(cx, &summaries, g, span);
+        }
+    }
     let mut done = HashSet::new();
     let mut reported = HashSet::new();
     for (c, direct) in callbacks {
@@ -69,6 +71,23 @@ pub(crate) fn check_locked(cx: &mut Ctx) {
     }
 }
 
+/// A named function passed to `with` (`m.with(fire)`), checked like `(v) => fire(v)`: it has
+/// nothing captured to store into, but a promise it starts from the value, or returns, would
+/// run after the lock is released.
+fn named_callback(cx: &mut Ctx, s: &summary::Summaries, g: DefId, span: Span) {
+    let name = cx.fn_info(g).name.clone();
+    let ret = cx.fn_info(g).ret;
+    let msg = if cx.holds_promise(ret) {
+        let r = cx.display(ret);
+        format!("the function passed to `with` returns `{r}`, which would run after the lock is released")
+    } else if s.get(g).is_some_and(|s| s.promises & 1 != 0) {
+        format!("`{name}` starts a promise with the locked value, which would run after `with` releases the lock")
+    } else {
+        return;
+    };
+    cx.error(Diagnostic::error(msg, span).with_note(AWAIT_OUTSIDE));
+}
+
 pub(super) const AWAIT_OUTSIDE: &str = "`with` holds the lock only while the function runs, and a promise made there keeps running without it; take what you need out of the value (`const x = m.with((v) => v.x)` gives a copy), await outside `with`, and store the result with another `with`";
 
 fn async_callback_error(cx: &mut Ctx, c: DefId) {
@@ -81,14 +100,18 @@ fn async_callback_error(cx: &mut Ctx, c: DefId) {
 
 /// Callback `c`, every closure made in it, and every closure a function value it calls (or
 /// passes to a call) may be (`values`), recursively, taken out of `cx`; with the spans of the
-/// function values resolved to closures that are not async.
-fn take_bodies(
-    cx: &mut Ctx,
-    res: &mut values::Resolver,
-    c: DefId,
-) -> (Vec<(DefId, FnDef)>, HashSet<Span>) {
+/// function values resolved (to closures that are not async, and named functions) and the
+/// named functions of each.
+type Bodies = (
+    Vec<(DefId, FnDef)>,
+    HashSet<Span>,
+    HashMap<Span, Vec<DefId>>,
+);
+
+fn take_bodies(cx: &mut Ctx, res: &mut values::Resolver, c: DefId) -> Bodies {
     let mut seen: Vec<DefId> = vec![];
     let mut resolved = HashSet::new();
+    let mut named: HashMap<Span, Vec<DefId>> = HashMap::new();
     let mut todo = vec![c];
     while let Some(d) = todo.pop() {
         if seen.contains(&d) {
@@ -113,9 +136,13 @@ fn take_bodies(
             let Some(cs) = res.expr(cx, d, &v) else {
                 continue;
             };
-            if cs.iter().all(|&n| !cx.fn_info(n).is_async) {
+            let (closures, fns): (Vec<DefId>, Vec<DefId>) = cs
+                .into_iter()
+                .partition(|&n| cx.fn_info(n).kind == crate::defs::FnKind::Closure);
+            if closures.iter().all(|&n| !cx.fn_info(n).is_async) {
                 resolved.insert(v.span);
-                todo.extend(cs);
+                todo.extend(closures);
+                named.insert(v.span, fns);
             }
         }
     }
@@ -125,7 +152,7 @@ fn take_bodies(
             bodies.push((d, f));
         }
     }
-    (bodies, resolved)
+    (bodies, resolved, named)
 }
 
 /// The closures made in a body, and the function values it calls or passes to a call.
@@ -168,9 +195,10 @@ fn check_callback(
     c: DefId,
     reported: &mut HashSet<Span>,
 ) {
-    let (mut bodies, resolved) = take_bodies(cx, res, c);
+    let (mut bodies, resolved, named) = take_bodies(cx, res, c);
     let mut r = regions::Regions::new(c, &mut bodies);
     r.resolved = resolved;
+    r.named = named;
     loop {
         r.changed = false;
         for (d, f) in bodies.iter_mut() {
