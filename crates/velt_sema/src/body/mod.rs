@@ -158,8 +158,10 @@ pub(crate) struct Frame {
     /// Throw sources of the enclosing `try` bodies (innermost last).
     pub tries: Vec<Vec<ThrowSrc>>,
     pub uncaught: Vec<ThrowSrc>,
-    /// `super(...)` is allowed here (first statement of a constructor).
+    /// `super(...)` is allowed here (the constructor's first statement is `super(...);`).
     pub super_ok: bool,
+    /// Checking the constructor's first statement (`super(...)` nested in it is an error).
+    pub super_first: bool,
     pub super_called: bool,
     /// Field paths that conditions narrow (`field_narrow`).
     pub field_tokens: Vec<field_narrow::FieldToken>,
@@ -189,6 +191,7 @@ impl Frame {
             tries: vec![],
             uncaught: vec![],
             super_ok: false,
+            super_first: false,
             super_called: false,
             field_tokens: vec![],
             const_refs: Default::default(),
@@ -216,6 +219,8 @@ pub(crate) struct FnCx<'a, 'm> {
     pub outer: Vec<Frame>,
     /// The span of a `new Promise` that is the operand of the `await` being checked.
     pub direct_await: Option<Span>,
+    /// Checking the arguments of `super(...)`: `this` is not usable yet.
+    pub super_args: bool,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -231,6 +236,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             f: frame,
             outer: vec![],
             direct_await: None,
+            super_args: false,
         }
     }
 

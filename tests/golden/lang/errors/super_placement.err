@@ -1,0 +1,25 @@
+super_placement.vlt:17:7: error: `super(...)` must be a statement of its own at the top of the constructor
+inside a condition, a loop or another expression, the base constructor could run never or more than once
+call `super(...);` unconditionally as the first statement, and compute its arguments with expressions such as `c ? a : b`
+super_placement.vlt:25:7: error: `super(...)` must be a statement of its own at the top of the constructor
+inside a condition, a loop or another expression, the base constructor could run never or more than once
+call `super(...);` unconditionally as the first statement, and compute its arguments with expressions such as `c ? a : b`
+super_placement.vlt:32:21: error: `super(...)` cannot be called inside a function
+the base constructor must run exactly once, before `this` is used: call `super(...)` as the first statement of the constructor itself
+super_placement.vlt:40:5: error: `super(...)` is called more than once
+the base constructor must run exactly once; remove this call
+super_placement.vlt:47:5: error: `super(...)` must be the first statement of the constructor
+the statements before it would run before the base constructor has initialized the object; move them after the call
+super_placement.vlt:54:11: error: `this` cannot be used before `super(...)` has run
+the base constructor has not initialized the object yet: compute the arguments of `super(...)` without `this`
+super_placement.vlt:60:11: error: `super.get(...)` cannot be called before `super(...)` has run
+the base constructor has not initialized the object yet: compute the arguments of `super(...)` without `this` or `super`
+super_placement.vlt:66:9: error: `super(...)` must be a statement of its own at the top of the constructor
+inside a condition, a loop or another expression, the base constructor could run never or more than once
+call `super(...);` unconditionally as the first statement, and compute its arguments with expressions such as `c ? a : b`
+super_placement.vlt:66:20: error: `super(...)` must be a statement of its own at the top of the constructor
+inside a condition, a loop or another expression, the base constructor could run never or more than once
+call `super(...);` unconditionally as the first statement, and compute its arguments with expressions such as `c ? a : b`
+super_placement.vlt:72:5: error: `super(...)` can only be called in the constructor of a class that `extends` another
+super_placement.vlt:77:3: error: the constructor of `Missing` must call `super(...)` first
+the base class has a constructor that must run

@@ -4,20 +4,17 @@
 use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
-use crate::defs::ThrowSrc;
+use crate::defs::{FnKind, ThrowSrc};
 use crate::hir::{self, Callee, ExprKind as H, PassMode, TyId, TyKind};
-use velt_common::Span;
+use velt_common::{Diagnostic, Span};
 
 impl FnCx<'_, '_> {
     /// `super(args)`: the base class constructor on `this`, first statement of a constructor.
     pub(super) fn super_ctor_call(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
         let base = self.this_base();
-        let ok = self.f.super_ok;
+        let ok = std::mem::take(&mut self.f.super_ok);
         let Some(base) = base.filter(|_| ok) else {
-            self.cx.err(
-                "`super(...)` must be the first statement of a constructor of a class that `extends` another",
-                span,
-            );
+            self.misplaced_super(base.is_some(), span);
             self.check_args_loose(args);
             return self.error_expr(span);
         };
@@ -40,7 +37,9 @@ impl FnCx<'_, '_> {
         };
         let c = self.fn_callable(ctor, "the base class constructor".into());
         let slots = ctor_args.iter().map(|t| Some(*t)).collect();
+        let outer = std::mem::replace(&mut self.super_args, true);
         let ck = self.check_call(&c, slots, args, None, span);
+        self.super_args = outer;
         let this = self.this_expr(Want::BorrowMut, span);
         let recv = self.receiver(this, Some(ctor_ty), PassMode::BorrowMut);
         let mut all = vec![recv];
@@ -53,8 +52,69 @@ impl FnCx<'_, '_> {
         self.mk(kind, self.cx.ty.unit, span)
     }
 
+    /// Reports a `super(...)` call where it is not allowed (`derived`: the class extends another).
+    fn misplaced_super(&mut self, derived: bool, span: Span) {
+        let ctor_frame = self.outer.iter().rposition(|f| f.kind == FnKind::Ctor);
+        let d = if self.f.kind == FnKind::Closure && ctor_frame.is_some() {
+            // The constructor itself is reported here, not as missing its call.
+            if let Some(i) = ctor_frame {
+                self.outer[i].super_called = true;
+            }
+            Diagnostic::error("`super(...)` cannot be called inside a function", span).with_note(
+                "the base constructor must run exactly once, before `this` is used: call `super(...)` as the first statement of the constructor itself",
+            )
+        } else if !derived {
+            Diagnostic::error(
+                "`super(...)` can only be called in the constructor of a class that `extends` another",
+                span,
+            )
+        } else if self.f.kind != FnKind::Ctor {
+            Diagnostic::error("`super(...)` can only be called in a constructor", span)
+                .with_note("to call a base class method, write `super.method(...)`")
+        } else if self.f.super_first {
+            // Reported once: the constructor does call `super(...)`, just not on every path.
+            self.f.super_called = true;
+            Diagnostic::error(
+                "`super(...)` must be a statement of its own at the top of the constructor",
+                span,
+            )
+            .with_note("inside a condition, a loop or another expression, the base constructor could run never or more than once")
+            .with_note("call `super(...);` unconditionally as the first statement, and compute its arguments with expressions such as `c ? a : b`")
+        } else if self.f.super_called {
+            Diagnostic::error("`super(...)` is called more than once", span)
+                .with_note("the base constructor must run exactly once; remove this call")
+        } else {
+            self.f.super_called = true;
+            Diagnostic::error("`super(...)` must be the first statement of the constructor", span)
+                .with_note("the statements before it would run before the base constructor has initialized the object; move them after the call")
+        };
+        self.cx.error(d);
+    }
+
     /// `super.method(args)`: the base class's implementation, called directly.
     pub(super) fn super_method_call(
+        &mut self,
+        prop: &ast::Ident,
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let outer = std::mem::replace(&mut self.super_args, false);
+        let call = self.super_method_call_inner(prop, args, exp, span);
+        if outer {
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`super.{}(...)` cannot be called before `super(...)` has run", prop.name),
+                    span,
+                )
+                .with_note("the base constructor has not initialized the object yet: compute the arguments of `super(...)` without `this` or `super`"),
+            );
+        }
+        self.super_args = outer;
+        call
+    }
+
+    fn super_method_call_inner(
         &mut self,
         prop: &ast::Ident,
         args: &[ast::Expr],
@@ -97,6 +157,20 @@ impl FnCx<'_, '_> {
             .collect();
         let recv_ty = found.recv_ty(self.cx);
         self.def_method_call(recv, def, slots, recv_ty, &[], args, exp, span)
+    }
+
+    /// `this` (or `super.m()`) inside the arguments of `super(...)`: the object is not
+    /// initialized yet.
+    pub(crate) fn check_this_ready(&mut self, span: Span) {
+        if self.super_args {
+            self.cx.error(
+                Diagnostic::error(
+                    "`this` cannot be used before `super(...)` has run",
+                    span,
+                )
+                .with_note("the base constructor has not initialized the object yet: compute the arguments of `super(...)` without `this`"),
+            );
+        }
     }
 
     /// Base class type of the enclosing method's `this`.

@@ -28,7 +28,11 @@ hidden classes and no runtime shape checks.
   running a constructor; `JSON.stringify` writes it as usual
   ([`velt:json`](../std/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
-  layout, so upcasts are free. The constructor calls `super(…)` first. Redefining a base method
+  layout, so upcasts are free. A subclass constructor calls `super(…)` exactly once, as its
+  first statement and on its own (not inside an `if`, a loop, a ternary or a closure, where it
+  could run never or twice), and the arguments cannot use `this` or `super.m()`. TypeScript
+  also accepts statements before `super(…)` in a class without initialized fields or parameter
+  properties; Velt always wants it first. Redefining a base method
   requires `override`; `super.m()` calls the base version. There are no abstract classes.
 - **Dispatch**: a method that is never overridden is called directly (and can be inlined). Only
   overridden methods go through a vtable, and only where the static type is a base class.

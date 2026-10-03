@@ -97,6 +97,7 @@ impl FnCx<'_, '_> {
     }
 
     pub(crate) fn this_expr(&mut self, want: Want, span: Span) -> hir::Expr {
+        self.check_this_ready(span);
         match self.lookup_local("this", span) {
             Some(l) => {
                 self.rec_local(span, l);
