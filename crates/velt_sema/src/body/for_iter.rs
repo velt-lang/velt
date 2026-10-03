@@ -49,6 +49,15 @@ use super::{FnCx, LocalKind};
 use crate::defs::ThrowSrc;
 use crate::hir::{self, Callee, ExprKind as H, Intrinsic, StmtKind as S, TyId, TyKind, UseMode};
 
+/// How an iterable is iterated (`FnCx::iter_source`).
+pub(super) enum IterSource {
+    /// A direct generator call (or a generator `[Symbol.iterator]()` method call): its state is
+    /// embedded in the frame.
+    Embedded(hir::Expr),
+    /// The checked `[Symbol.iterator]()` call: the protocol loop.
+    Protocol(hir::Expr),
+}
+
 /// The source pieces of one `for...of` (or `for await`) statement.
 #[derive(Clone, Copy)]
 pub(super) struct ForOfParts<'a> {
@@ -85,18 +94,52 @@ impl FnCx<'_, '_> {
         p: ForOfParts<'_>,
         out: &mut Vec<hir::Stmt>,
     ) {
+        match self.iter_source(src, p.iter_span) {
+            Some(s) => self.iter_source_loop(s, p, out),
+            None => self.check_body_only(&p),
+        }
+    }
+
+    /// How the checked iterable `src` is iterated: embedded when it is a direct generator call
+    /// (or its `[Symbol.iterator]()` is a generator method), else through the protocol. `None`
+    /// after an error (reported).
+    pub(super) fn iter_source(&mut self, src: hir::Expr, span: Span) -> Option<IterSource> {
         if self.is_generator_call(&src) {
-            return self.for_of_generator(src, p, out);
+            return Some(IterSource::Embedded(src));
         }
-        let call = self.method_call_hir(src, SYMBOL_ITERATOR, p.iter_span);
-        let Some(call) = call.filter(|c| self.is_iterator(c.ty, p.iter_span)) else {
-            return self.check_body_only(&p);
+        let call = self.method_call_hir(src, SYMBOL_ITERATOR, span)?;
+        if !self.is_iterator(call.ty, span) {
+            return None;
+        }
+        Some(match self.is_generator_call(&call) {
+            true => IterSource::Embedded(call),
+            false => IterSource::Protocol(call),
+        })
+    }
+
+    /// The type of the values `s` produces (`None` after an error).
+    pub(super) fn iter_source_elem(&mut self, s: &IterSource) -> Option<TyId> {
+        let args = match s {
+            IterSource::Embedded(call) => self.cx.generator_result(call.ty).map(|(_, a)| a),
+            IterSource::Protocol(call) => self.iterator_args(call.ty),
         };
-        if self.is_generator_call(&call) {
-            return self.for_of_generator(call, p, out);
+        args.and_then(|a| a.first().copied())
+    }
+
+    /// `for (kind pattern of <s>) body`.
+    pub(super) fn iter_source_loop(
+        &mut self,
+        s: IterSource,
+        p: ForOfParts<'_>,
+        out: &mut Vec<hir::Stmt>,
+    ) {
+        match s {
+            IterSource::Embedded(call) => self.for_of_generator(call, p, out),
+            IterSource::Protocol(call) => {
+                let await_value = p.await_each && self.yields_promises(call.ty, "Iterator");
+                self.protocol_loop(call, p, false, await_value, out);
+            }
         }
-        let await_value = p.await_each && self.yields_promises(call.ty, "Iterator");
-        self.protocol_loop(call, p, false, await_value, out);
     }
 
     /// The protocol loop (module docs) over `call`, the checked `[Symbol.iterator]()` (or, with
@@ -227,6 +270,7 @@ impl FnCx<'_, '_> {
         let value = self.intrinsic_hir(value_i, vec![use_g(self)], t, names.at);
         let value = self.await_each(value, &p);
         self.push_scope_until(span.hi);
+        let value = self.destructured(p.pattern, value);
         let mutable = p.kind == ast::VarKind::Let;
         let ctx = BindCtx::Let {
             mutable,

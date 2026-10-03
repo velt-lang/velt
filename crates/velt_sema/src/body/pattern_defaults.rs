@@ -3,6 +3,8 @@
 //! through hidden temporaries, each checked before the next is built, so field and element types
 //! are known: a field's default applies when it is `null` (`opts.a ?? 1`), an array element's
 //! when the array is too short (`#t.length > 0 ? #t[0] : 0`), where JS reads `undefined`.
+//! A non-array iterable is first collected into a second temporary holding the values the
+//! pattern needs (`consume.rs`).
 
 use velt_common::Span;
 use velt_syntax::ast::{self, Expr, ExprKind as E, Pattern, PatternKind as P, VarDecl, VarKind};
@@ -52,6 +54,7 @@ impl FnCx<'_, '_> {
                     // A tuple always has its elements: the defaults never apply.
                     return self.tuple_decl(kind, pattern, tmp, out);
                 }
+                let tmp = self.collected_temp(tmp, rest.is_none().then_some(elems.len()), out);
                 for (k, sub) in elems.iter().enumerate() {
                     let elem = index(&tmp, k);
                     let value = match &sub.kind {
@@ -155,6 +158,35 @@ impl FnCx<'_, '_> {
             span,
         };
         self.var_decl(&v, span, out);
+    }
+
+    /// A temporary holding a non-array iterable (`const [a, b = 0] = gen()`): a second one
+    /// holding the values the pattern needs (at most `limit`), as an array (`consume.rs`).
+    fn collected_temp(
+        &mut self,
+        tmp: Expr,
+        limit: Option<usize>,
+        out: &mut Vec<hir::Stmt>,
+    ) -> Expr {
+        let E::Ident(name) = &tmp.kind else {
+            return tmp;
+        };
+        let Some(local) = self.lookup_local(&name.name, name.span) else {
+            return tmp;
+        };
+        let ty = self.f.locals[local.0 as usize].ty;
+        if !self.is_iterable(ty) {
+            return tmp;
+        }
+        let span = tmp.span;
+        let src = self.mk(hir::ExprKind::Local(local, hir::UseMode::Borrow), ty, span);
+        let values = match self.consumable(src) {
+            Some(c) => self.collect(c, limit),
+            None => self.error_expr(span),
+        };
+        let name = ident(&format!("#d{}", self.f.locals.len()), span);
+        self.hidden_local(name.clone(), values, false, out);
+        mk(E::Ident(name), span)
     }
 
     fn is_tuple_value(&mut self, tmp: &Expr) -> bool {

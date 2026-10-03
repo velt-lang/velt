@@ -259,6 +259,8 @@ impl FnCx<'_, '_> {
             Some(t) => self.expr_coerce(e, t, Want::Borrow),
             None => self.expr(e, None, Want::Borrow),
         };
+        // `const [a, b] = gen()`: the values the pattern needs, as an array.
+        let init = self.destructured(&v.pattern, init);
         let place = super::places::is_place(&init);
         let ctx = BindCtx::Let {
             mutable: v.kind == ast::VarKind::Let,

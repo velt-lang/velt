@@ -280,6 +280,9 @@ impl FnCx<'_, '_> {
                 self.cx.ty.error
             }
         };
+        if matches!(p.pattern.kind, ast::PatternKind::Array { .. }) && self.is_iterable(elem) {
+            return self.for_of_destructuring(it, p, out);
+        }
         let consume = self.consumes(&it, elem);
         self.push_scope_until(p.span.hi);
         let mutable = p.kind == ast::VarKind::Let;
@@ -304,6 +307,35 @@ impl FnCx<'_, '_> {
             consume,
         };
         Self::push(out, f, p.span);
+    }
+
+    /// `for (kind [a, b] of xs)` over an array of iterables: `for (const <value> of xs) {
+    /// kind [a, b] = <value>; body }`, the declaration taking each iterable apart.
+    fn for_of_destructuring(&mut self, it: hir::Expr, p: ForOfParts<'_>, out: &mut Vec<hir::Stmt>) {
+        let syn = super::consume::Synth::new(p.span, self.f.locals.len());
+        let decl = ast::Stmt {
+            kind: ast::StmtKind::Var(ast::VarDecl {
+                kind: p.kind,
+                pattern: p.pattern.clone(),
+                ty: None,
+                init: Some(syn.name(&syn.value)),
+                span: p.pattern.span,
+            }),
+            span: p.pattern.span,
+        };
+        let body = ast::Stmt {
+            kind: ast::StmtKind::Block(p.body.clone()),
+            span: p.body.span,
+        };
+        let pattern = syn.ident_pat(&syn.value);
+        let body = syn.block(vec![decl, body]);
+        let parts = ForOfParts {
+            kind: ast::VarKind::Const,
+            pattern: &pattern,
+            body: &body,
+            ..p
+        };
+        self.for_of(it, parts, out);
     }
 
     fn not_iterable(&mut self, t: TyId, span: Span, is_await: bool) {
@@ -341,7 +373,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `for (const c of s)` over a string iterates its characters, `s.split("")`, as in JS.
-    fn chars_of(&mut self, s: hir::Expr, span: Span) -> hir::Expr {
+    pub(super) fn chars_of(&mut self, s: hir::Expr, span: Span) -> hir::Expr {
         let prop = ast::Ident {
             name: "split".into(),
             span,
@@ -355,7 +387,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `for (const [k, v] of m)` over a class value iterates `m.entries()`.
-    fn entries_of(&mut self, recv: hir::Expr, span: Span) -> hir::Expr {
+    pub(super) fn entries_of(&mut self, recv: hir::Expr, span: Span) -> hir::Expr {
         match self.method_call_hir(recv, "entries", span) {
             Some(e) => e,
             None => self.error_expr(span),

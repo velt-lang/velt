@@ -35,6 +35,7 @@
 
 mod assigned;
 mod const_borrow;
+mod consume;
 mod defaults;
 mod driver;
 pub(crate) mod expr;
@@ -249,6 +250,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The arrow being checked is an argument of a `std/` function called from user code: its
     /// unannotated integer parameters (an index, a `reduce` accumulator) are JS numbers.
     pub std_callback: bool,
+    /// The call about to be checked is `new Map(...)` / `new Set(...)`: an iterable argument
+    /// for its array parameter is collected into an array (`consume.rs`).
+    pub collect_iterable_args: bool,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -265,6 +269,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             outer: vec![],
             direct_await: None,
             std_callback: false,
+            collect_iterable_args: false,
         }
     }
 
