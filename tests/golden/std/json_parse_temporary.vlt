@@ -1,0 +1,47 @@
+// check: no leaks
+// `JSON.parse` of a temporary string (a template literal, `JSON.stringify(...)`, a
+// concatenation): the decoded map keys own their bytes, so they stay valid after the temporary
+// is freed right after the parse. Run under the debug allocator, which poisons freed memory.
+class Person {
+  name: string;
+  city: string;
+  constructor(name: string, city: string) {
+    this.name = name;
+    this.city = city;
+  }
+}
+
+function show(label: string, m: Map<string, string>) {
+  for (const [k, v] of m) {
+    console.log(label, k, v);
+  }
+}
+
+function keep(): Map<string, string> {
+  const n = 2;
+  return JSON.parse<Map<string, string>>(`{"returned${n}":"kept${n}"}`);
+}
+
+function main() {
+  const one = 1;
+  show("template", JSON.parse<Map<string, string>>(`{"key${one}":"v${one}"}`));
+  const source = new Map<string, string>();
+  source.set("a long key that does not fit inline", "x");
+  source.set("b", "a long value that does not fit inline either");
+  show("stringify", JSON.parse<Map<string, string>>(JSON.stringify(source)));
+  const tail = `"c":"3"}`;
+  show("concat", JSON.parse<Map<string, string>>("{" + tail));
+  show("returned", keep());
+
+  const r = JSON.parse<Record<string, string>>(`{"r${one}":"x","s${one}":"y"}`);
+  console.log(Object.keys(r), Object.values(r));
+
+  const p = JSON.parse<Person>(`{"name":"Ada${one}","city":"London"}`);
+  console.log(p.name, p.city);
+  const people = JSON.parse<Map<string, Person>>(
+    JSON.stringify(new Map<string, Person>([["first", new Person("Bo", "Oslo")]])),
+  );
+  for (const [k, v] of people) {
+    console.log(k, v.name, v.city);
+  }
+}

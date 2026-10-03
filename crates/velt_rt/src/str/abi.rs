@@ -57,6 +57,20 @@ pub unsafe extern "C" fn velt_rt_str_clone(s: *const VeltStr, out: *mut VeltStr)
     write_out(out, (*s).share());
 }
 
+/// A copy of `s` that owns its bytes: a borrowed string (the static form, e.g. a JSON object key
+/// that points into the text being parsed) is copied; inline and heap strings as in
+/// `velt_rt_str_clone`. For a value kept after the memory it may borrow from is freed.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_str_own(s: *const VeltStr, out: *mut VeltStr) {
+    let s = &*s;
+    let owned = if s.is_static() {
+        VeltStr::from_bytes(s.as_bytes())
+    } else {
+        s.share()
+    };
+    write_out(out, owned);
+}
+
 /// Release `*s` (the last reference to a heap buffer frees it), then zero `*s`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_str_drop(s: *mut VeltStr) {
@@ -105,6 +119,31 @@ mod tests {
             std::mem::size_of::<VeltStr>(),
             3 * std::mem::size_of::<u64>()
         );
+    }
+
+    #[test]
+    fn owned_copies_outlive_what_they_borrowed() {
+        for src in ["key1", LONG] {
+            let buf = src.as_bytes().to_vec();
+            let view = unsafe { VeltStr::borrowed(buf.as_ptr(), buf.len()) };
+            let mut owned = MaybeUninit::<VeltStr>::uninit();
+            unsafe { velt_rt_str_own(&view, owned.as_mut_ptr()) };
+            let mut owned = unsafe { owned.assume_init() };
+            drop(buf);
+            assert!(!owned.is_static());
+            assert_eq!(text(&owned), src);
+            unsafe { velt_rt_str_drop(&mut owned) };
+        }
+        // Inline and heap strings are shared, as by `velt_rt_str_clone`.
+        let mut h = VeltStr::from_bytes(LONG.as_bytes());
+        let mut copy = MaybeUninit::<VeltStr>::uninit();
+        unsafe { velt_rt_str_own(&h, copy.as_mut_ptr()) };
+        let mut copy = unsafe { copy.assume_init() };
+        assert_eq!(copy.ptr(), h.ptr());
+        unsafe {
+            velt_rt_str_drop(&mut copy);
+            velt_rt_str_drop(&mut h);
+        }
     }
 
     #[test]
