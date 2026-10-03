@@ -12,8 +12,10 @@
 //! | `PUT` / `DELETE <url>/api/v1/<name>/owners/<user>` | add / remove an owner |
 //! | `GET  <url>/api/v1/search?q=<text>` | packages whose name contains the text ([`crate::search`]), as JSON |
 //!
-//! Every write sends `Authorization: Bearer $VELT_REGISTRY_TOKEN`, the user's own token; a server
-//! with users answers 401 without a valid one and 403 when the user does not own the package.
+//! Every write sends `Authorization: Bearer <token>` with the user's own token for this registry
+//! (`velt login`, or `$VELT_REGISTRY_TOKEN`; see [`crate::credentials`]), never over plain
+//! `http://` to another machine. A server with users answers 401 without a valid one and 403
+//! when the user does not own the package.
 //! Downloads are verified against the checksum the index (and `velt.lock.json`) records before they
 //! are unpacked into the cache.
 
@@ -23,8 +25,8 @@ use crate::archive;
 use crate::native::bundle;
 use crate::registry::{parse_index, Index, IndexEntry};
 
-/// Environment variable holding the token for `velt publish` to a remote registry.
-pub const TOKEN_VAR: &str = "VELT_REGISTRY_TOKEN";
+/// Environment variable whose token overrides the stored ones ([`crate::credentials`]).
+pub use crate::credentials::TOKEN_VAR;
 
 fn api(url: &str, name: &str, rest: &str) -> String {
     format!("{}/api/v1/{name}/{rest}", url.trim_end_matches('/'))
@@ -157,11 +159,11 @@ fn write(
     headers: &[(&str, &str)],
     body: &[u8],
 ) -> Result<String, String> {
-    let token = std::env::var(TOKEN_VAR).unwrap_or_default();
-    let auth = format!("Bearer {token}");
+    let stored = crate::credentials::default_path().ok();
+    let token = crate::credentials::token_for(stored.as_deref(), url)?;
+    let auth = format!("Bearer {}", token.as_deref().unwrap_or_default());
     let mut headers = headers.to_vec();
-    if !token.is_empty() {
-        check_token_transport(url)?;
+    if token.is_some() {
         headers.push(("Authorization", auth.as_str()));
     }
     let resp = velt_http::fetch(method, target, &headers, body)?;
@@ -169,47 +171,16 @@ fn write(
     match resp.status {
         200..=299 => Ok(text),
         401 => Err(format!(
-            "registry {url} refused the request ({text}): set ${TOKEN_VAR} to your token"
+            "registry {url} refused the request ({text}): run `velt login {url}` with your token (or set ${TOKEN_VAR})"
         )),
         s => Err(format!("registry {url}: {s}: {text}")),
     }
 }
 
-/// The token may travel only over `https://`, or plain `http://` to this machine: anyone on the
-/// network path could read it otherwise.
-fn check_token_transport(url: &str) -> Result<(), String> {
-    if is_tls_or_loopback(url) {
-        return Ok(());
-    }
-    Err(format!(
-        "not sending ${TOKEN_VAR} to {url}: only an https:// registry, or http:// on this machine, gets it; use the registry's https:// URL (put `velt registry serve` behind a TLS reverse proxy)"
-    ))
-}
-
 /// Whether `url` is `https://`, or plain `http://` to this machine (`localhost` or a loopback
-/// address).
+/// address): [`crate::credentials::is_tls_or_loopback`], the one parser of this rule.
 pub fn is_tls_or_loopback(url: &str) -> bool {
-    let scheme_is = |scheme: &str| {
-        url.get(..scheme.len())
-            .is_some_and(|s| s.eq_ignore_ascii_case(scheme))
-    };
-    if scheme_is("https://") {
-        return true;
-    }
-    if !scheme_is("http://") {
-        return false;
-    }
-    let rest = &url["http://".len()..];
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    let host = match host_port.strip_prefix('[') {
-        Some(v6) => v6.split(']').next().unwrap_or(v6),
-        None => host_port.split(':').next().unwrap_or(host_port),
-    };
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback())
+    crate::credentials::is_tls_or_loopback(url)
 }
 
 /// Yank (`yanked`) or unyank `name` `version`.
@@ -288,38 +259,4 @@ pub fn search_within(
         ));
     }
     crate::search::from_json(&resp.body_text()).map_err(|e| format!("registry {url}: {e}"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::check_token_transport;
-
-    #[test]
-    fn tokens_travel_only_over_tls_or_to_this_machine() {
-        for url in [
-            "https://registry.example.com",
-            "HTTPS://registry.example.com",
-            "http://127.0.0.1:8091",
-            "HTTP://localhost",
-            "http://127.1.2.3",
-            "http://localhost:8091/",
-            "http://LOCALHOST",
-            "http://[::1]:8091",
-        ] {
-            assert!(check_token_transport(url).is_ok(), "{url}");
-        }
-        for url in [
-            "http://registry.example.com",
-            "http://192.168.1.10:8091",
-            "http://[2001:db8::1]:8091",
-            "http://localhost.example.com",
-            "http://127.0.0.1@evil.example.com",
-            "HTTP://registry.example.com",
-            "ftp://registry.example.com",
-            "registry.example.com",
-        ] {
-            let err = check_token_transport(url).unwrap_err();
-            assert!(err.contains("https://"), "{url}: {err}");
-        }
-    }
 }

@@ -95,6 +95,25 @@ pub(super) fn parse_search(args: Vec<OsString>) -> Result<Command, String> {
     })
 }
 
+/// `velt login <registry-url>` / `velt logout <registry-url>`.
+pub(super) fn parse_login(sub: &str, args: Vec<OsString>) -> Result<Command, String> {
+    let args = strings(args)?;
+    if let Some(flag) = args.iter().find(|a| a.starts_with('-')) {
+        return Err(super::unknown_option(sub, flag));
+    }
+    let [url] = args.as_slice() else {
+        return Err(format!(
+            "usage: velt {sub} <registry-url> (e.g. `velt {sub} https://registry.example.com`)"
+        ));
+    };
+    let url = url.clone();
+    Ok(if sub == "login" {
+        Command::Login { url }
+    } else {
+        Command::Logout { url }
+    })
+}
+
 /// The words, `--dir` and `--open` of a `velt registry user|owner …` command.
 fn admin_args(args: Vec<OsString>) -> Result<(Vec<String>, Option<PathBuf>, bool), String> {
     let (mut words, mut dir, mut open) = (vec![], None, false);

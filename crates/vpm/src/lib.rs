@@ -12,6 +12,7 @@
 pub mod archive;
 pub mod cache;
 pub mod contents;
+pub mod credentials;
 pub mod edit;
 pub mod graph;
 pub mod install;
