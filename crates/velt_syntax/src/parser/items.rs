@@ -11,6 +11,7 @@ impl<'a> Parser<'a> {
     /// Parses the whole file, recovering from errors item by item.
     pub(crate) fn parse_module(&mut self) -> Module {
         let mut items = Vec::new();
+        let mut stmts = Vec::new();
         while !self.at(Tok::Eof) {
             let start = self.pos;
             match self.peek() {
@@ -20,6 +21,7 @@ impl<'a> Parser<'a> {
                     self.error("unexpected `}`", span);
                     self.bump();
                 }
+                _ if !self.at_item_start() => self.parse_stmt_recovering(&mut stmts),
                 _ => match self.parse_item(true) {
                     Ok(item) => items.push(item),
                     Err(Fail) => self.sync_item(start),
@@ -28,6 +30,9 @@ impl<'a> Parser<'a> {
             if self.pos == start {
                 self.bump();
             }
+        }
+        if !stmts.is_empty() {
+            self.finish_script(&mut items, stmts);
         }
         Module {
             items,

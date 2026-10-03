@@ -19,6 +19,7 @@ mod patterns;
 mod postfix;
 mod primary;
 mod recovery;
+mod script;
 mod stmt;
 mod switch;
 mod symbol_keys;
