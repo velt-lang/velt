@@ -32,4 +32,5 @@ async function main() {
   process.stdout.end();
   process.argv.push("x");
   process.argv[2] = "y";
+  process.argv = ["a"];
 }

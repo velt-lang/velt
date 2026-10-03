@@ -5,6 +5,9 @@
 use std::path::Path;
 use std::process::Command;
 
+use no_window::command;
+
+mod no_window;
 mod runtime_support;
 mod test_dir;
 
@@ -18,7 +21,7 @@ const PROGRAM: &str = r#"function main() {
 "#;
 
 fn velt() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_velt"))
+    command(env!("CARGO_BIN_EXE_velt"))
 }
 
 fn stdout(o: &std::process::Output) -> String {
@@ -63,13 +66,13 @@ fn run_and_built_program_follow_node() {
         .output()
         .unwrap();
     stdout(&build);
-    let built = stdout(&Command::new(&exe).args(args).output().unwrap());
+    let built = stdout(&command(&exe).args(args).output().unwrap());
     assert_eq!(built, "4 [ 'one', 'two words' ]\nfalse\ntrue\ntrue\n");
 
     // Node, when installed, prints what `velt run` prints.
     let ts = dir.path().join("argv_prog.ts");
     std::fs::write(&ts, format!("{PROGRAM}main();\n")).unwrap();
-    if let Ok(node) = Command::new("node")
+    if let Ok(node) = command("node")
         .arg("--experimental-strip-types")
         .arg(&ts)
         .args(args)

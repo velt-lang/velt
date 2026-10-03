@@ -140,7 +140,11 @@ impl FnCx<'_, '_> {
     }
 
     /// `process.argv.push(x)` and other in-place array methods (reported; returns whether).
-    pub(super) fn reject_argv_mutation_call(&mut self, object: &ast::Expr, prop: &ast::Ident) -> bool {
+    pub(super) fn reject_argv_mutation_call(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+    ) -> bool {
         const MUTATING: &[&str] = &[
             "push",
             "pop",

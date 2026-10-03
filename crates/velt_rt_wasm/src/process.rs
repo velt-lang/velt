@@ -18,7 +18,8 @@ pub unsafe extern "C" fn velt_rt_process_args(out: *mut VeltStrArray) {
 }
 
 /// Node's `process.argv`: `[program, program, ...args]` (WebAssembly has no separate runtime
-/// path or script; the browser passes no arguments).
+/// path or script). Under WASI the program is the module's path; the browser passes no
+/// arguments, so it is `["", ""]`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_process_node_argv(out: *mut VeltStrArray) {
     let args = platform::args();
