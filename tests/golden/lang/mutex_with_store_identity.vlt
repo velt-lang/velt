@@ -1,0 +1,87 @@
+// check: no leaks
+// Stores across a `with` lock (#398), one thread: a part of the protected value stored into
+// captured state is a copy, and so is an outside object stored into the value; stores within
+// the value, and within the outside state, keep their identity like in JavaScript.
+class Inner {
+  n: i64 = 0;
+}
+
+class Pair {
+  a: Inner | null = null;
+}
+
+class Outer {
+  inner: Inner = new Inner();
+  byId: Map<string, Inner> = new Map<string, Inner>();
+  recent: Inner[] = [];
+  pairs: Pair[] = [];
+}
+
+async function snapshot(o: Outer): Promise<i64> {
+  await yieldNow();
+  o.inner.n += 1;
+  return o.inner.n;
+}
+
+function inside(m: shared<Mutex<Outer>>): i64 {
+  return m.with((v) => {
+    let t = v.inner.n;
+    for (const x of v.recent) {
+      t += x.n;
+    }
+    for (const p of v.pairs) {
+      t += p.a!.n;
+    }
+    return t;
+  });
+}
+
+async function main() {
+  const m = shared(new Mutex<Outer>(new Outer()));
+
+  // Out of the value: a fresh object holding a part of it is copied with that part.
+  const kept: Pair[] = [];
+  m.with((v) => {
+    const tmp = new Pair();
+    tmp.a = v.inner;
+    kept.push(tmp);
+  });
+  kept[0].a!.n += 1;
+  console.log("out", inside(m));
+
+  // Into the value: the value gets its own copy of an outside object (using `item` afterwards
+  // would be an error, see errors/mutex_with_later_use).
+  const item = new Inner();
+  item.n = 7;
+  m.with((v) => {
+    v.recent.push(item);
+    const p = new Pair();
+    p.a = item;
+    v.pairs.push(p);
+  });
+  console.log("in", inside(m));
+
+  // Within the value: one object in two places.
+  const n = m.with((v) => {
+    v.byId.set("a", v.inner);
+    const u = v.byId.get("a")!;
+    v.recent.push(u);
+    u.n += 10;
+    return v.inner.n;
+  });
+  console.log("within", n, inside(m));
+
+  // Within the outside state: the same object.
+  const fresh = new Inner();
+  const list: Inner[] = [];
+  m.with((v) => {
+    fresh.n = v.inner.n;
+    list.push(fresh);
+  });
+  fresh.n += 1;
+  console.log("outside", list[0].n, fresh.n);
+
+  // A spawned task gets a copy of what it is given.
+  const h = m.with((v) => spawn(snapshot(v)));
+  console.log("spawned", await h, inside(m));
+}

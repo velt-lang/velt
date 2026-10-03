@@ -53,7 +53,9 @@ pub enum Intrinsic {
     Share,
     /// std only (std/prelude/promise.vlt): `__intrinsic_transfer<T>(value: T) -> T`, the value
     /// made safe for another task (moved where this task held the only reference, deep-copied
-    /// where it is still shared; velt_vir transfer.rs), like a `spawn` argument
+    /// where it is still shared; velt_vir transfer.rs), like a `spawn` argument. Also emitted
+    /// by sema around a value a `Mutex.with` callback stores across the lock
+    /// (ownership/locked).
     Transfer,
     /// std only (std/prelude/promise.vlt): `__intrinsic_needs_transfer<T>(value: borrow T) ->
     /// bool`, a constant: can a `T` reach a counted object, so that `Transfer` has work to do

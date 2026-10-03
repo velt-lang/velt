@@ -157,6 +157,18 @@ the settling statement released its own reference (std/prelude/promise.vlt, #263
 whose type cannot reach a counted object (`Intrinsic::NeedsTransfer`, a constant) settles at
 once, so plain replies cost no extra step.
 
+`Mutex.with` is a boundary too (#373, #398): its result is transferred while the lock is still
+held (async_fn/sync.rs `leave_lock`), and sema (ownership/locked) transfers what the callback
+stores from the value into its captured state or from that state into the value, tracking which
+side each local of the callback may reach, and following per-function summaries (which
+parameter a function may store into which, and which ones a promise it leaves running may use)
+into the functions it calls. A promise made from the value is given copies when the function
+making it only reads them, and rejected otherwise, since it would run after the lock is
+released. Holding the lock until such a promise settles (an async `with`, like `runExclusive`)
+would need an asynchronous lock that synchronous `with` callers cannot starve, and a way to
+cancel a started promise together with its holder (a dropped one keeps running, §1.1 of
+rt_abi_async.md); until then the error keeps such programs out.
+
 A deep copy of a class with its own `clone()` calls it when a field-by-field copy would
 duplicate a resource (a `[Symbol.dispose]` hook of its own or of a part, or a promise), so a
 resource is duplicated by its type (#122); other classes are copied field by field (a
@@ -238,6 +250,13 @@ value's captures, an interface value's implementor) panics (glue/clone.rs). Stri
   the new task with its arguments as they were passed, not transferred (a gap: the caller must
   not use them afterwards).
 - `Mutex.with` callbacks and `attempt(f)` are not stabilized like ordinary calls.
+- `Mutex.with` (#398): a callback that sema cannot resolve to closures or named functions
+  (ownership/locked/values.rs) is an error when the value can hold objects, and a function
+  value it calls that way may not be given both sides of the lock;
+  calls through virtual and interface methods are assumed to store any argument into any
+  argument they modify; summaries cover direct calls only. A resource without `clone()`
+  stored into the value from a captured variable stays shared with the variable (it cannot
+  be copied, and a callback cannot move what it captured even though `with` calls it once).
 - `Map` (and `Set`) keys of struct, object-literal and tuple type compare by content
   (`__intrinsic_eq` with the structural hash), not by identity as in JS; class instances
   compare by identity.

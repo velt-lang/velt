@@ -98,7 +98,7 @@ fn src_final_in(cx: &mut Ctx, s: &ThrowSrc, visited: &mut InitsSeen) -> Option<T
     let (t, args) = match s {
         ThrowSrc::Direct(t, _) => return cx.canon_error(Some(*t)),
         ThrowSrc::Defaults(d, args, span) => {
-            if !visited.insert(*d, args) {
+            if !visited.enter(&cx.ty, *d, args) {
                 return None;
             }
             let mut acc = None;
@@ -106,6 +106,7 @@ fn src_final_in(cx: &mut Ctx, s: &ThrowSrc, visited: &mut InitsSeen) -> Option<T
                 let t = src_final_in(cx, &s, visited);
                 acc = cx.join_errors(acc, t);
             }
+            visited.leave();
             return acc;
         }
         ThrowSrc::Call(g, targs, _) => (cx.try_fn(*g).and_then(|f| f.throws), targs.clone()),

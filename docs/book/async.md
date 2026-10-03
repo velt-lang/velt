@@ -176,7 +176,11 @@ async function main() {
 }
 ```
 
-A `with` callback is synchronous: keep it short and don't `await` inside it.
+A `with` callback is synchronous: keep it short and don't `await` inside it. What it hands
+out — its result, or a part of the value it stores into a variable or array it captured — is a
+copy. A promise started from the value runs after the lock is released, so it gets a copy
+too, and one that would change the value is a compile error: take a copy out, await, and put
+the result back with another `with`.
 
 ## Streams with `for await`
 

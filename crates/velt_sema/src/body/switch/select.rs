@@ -1,6 +1,6 @@
 //! What each `case` of a `switch` selects: literal cases select the slots (members) whose
 //! discriminant / `typeof` tag / literal they name, `case null` the `null` slot, `case E.Member`
-//! an enum member; any other case value is compared with `==` in a guard.
+//! an enum member; any other case value is compared with `===` in a guard (`eq_values`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -9,7 +9,7 @@ use super::cases::{source_text, strip_parens, Scrut, ScrutKind, Slot};
 use crate::body::narrow::literal_of;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::ctx::Item;
-use crate::hir::{self, DefId, PatKind as P, UseMode};
+use crate::hir::{self, DefId, LitValue, PatKind as P, UseMode};
 use crate::literals::lit_matches;
 use crate::unions::TYPEOF_TAGS;
 
@@ -28,7 +28,10 @@ pub(crate) struct Sel {
 impl FnCx<'_, '_> {
     /// What `case test:` selects.
     pub(super) fn case_sel(&mut self, s: &Scrut, test: &ast::Expr) -> Sel {
-        let lit = literal_of(test);
+        let lit = literal_of(test).or_else(|| match s.kind {
+            ScrutKind::Plain | ScrutKind::Enum(_) => None,
+            _ => self.literal_const(test),
+        });
         let null = matches!(strip_parens(test).kind, ast::ExprKind::Lit(ast::Lit::Null));
         match (&s.kind, lit) {
             (_, _) if null => self.null_sel(s, test.span),
@@ -57,7 +60,9 @@ impl FnCx<'_, '_> {
                     .unwrap_or_else(|| self.guard_sel(s, test)),
                 None => self.guard_sel(s, test),
             },
-            (ScrutKind::Discriminant(_) | ScrutKind::TypeOf | ScrutKind::Union, None) => {
+            // A union value compares with any value `===` accepts (`case y:` with `y: "y"`).
+            (ScrutKind::Union, None) => self.guard_sel(s, test),
+            (ScrutKind::Discriminant(_) | ScrutKind::TypeOf, None) => {
                 self.cx.err(
                     format!(
                         "`case` values must be literals when switching on `{}`",
@@ -69,6 +74,35 @@ impl FnCx<'_, '_> {
             }
             (ScrutKind::Plain, None) => self.guard_sel(s, test),
         }
+    }
+
+    /// A local of a literal type (`const y = "y"`, `y: "y"`) used as a case value: like the
+    /// literal, as in TypeScript (it narrows and counts toward exhaustiveness).
+    fn literal_const(&mut self, test: &ast::Expr) -> Option<ast::SignedLit> {
+        let ast::ExprKind::Ident(id) = &strip_parens(test).kind else {
+            return None;
+        };
+        let lit = match self.cx.lit_value(self.peek_local_ty(&id.name)?)? {
+            LitValue::Str(v) => ast::SignedLit {
+                lit: ast::Lit::Str(v),
+                negative: false,
+            },
+            LitValue::Bool(b) => ast::SignedLit {
+                lit: ast::Lit::Bool(b),
+                negative: false,
+            },
+            LitValue::Int(_, v) => ast::SignedLit {
+                lit: ast::Lit::Int {
+                    value: v.unsigned_abs(),
+                    suffix: None,
+                },
+                negative: v < 0,
+            },
+            LitValue::Float(..) => return None,
+        };
+        // Checked as a value too, so the local counts as used (captures, editors).
+        self.expr(test, None, Want::Borrow);
+        Some(lit)
     }
 
     /// The slots satisfying `pred` as one (or-)pattern; `None` if there are none.
@@ -243,16 +277,14 @@ impl FnCx<'_, '_> {
             UseMode::Borrow
         };
         let l = self.new_local("<case>", ty, false, span, LocalKind::Bind);
+        // A JS number (`switch (xs.length)`) stays one in the comparison.
+        self.note_inferred_local(l, &s.expr);
+        // Converted to the discriminant's type where it can be (`case 1:` on a `u8`); otherwise
+        // the values compare like `===` does (`case t:` with `t: string | null`, #337).
         let v = self.expr(test, Some(ty), Want::Borrow);
+        let v = self.try_coerce(v, ty).unwrap_or_else(|v| v);
         let cur = self.mk(hir::ExprKind::Local(l, mode), ty, span);
-        let guard = match self.case_operands(cur, v) {
-            Some((cur, v)) => self.eq_values(cur, v, span),
-            None => self.mk(
-                hir::ExprKind::Lit(hir::Lit::Bool(false)),
-                self.cx.ty.bool_,
-                span,
-            ),
-        };
+        let guard = self.eq_values(cur, v, span);
         Sel {
             pat: self.pat(P::Binding(l, mode), ty, span),
             guard: Some(guard),
@@ -262,28 +294,30 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// The scrutinee `cur` and case value `v` as operands of one `===` (#337): a `T | null`
-    /// case on a `T` scrutinee compares the scrutinee converted to `T | null` (TypeScript
-    /// accepts it; `null` matches no value), any other case value converts to the scrutinee's
-    /// type. `None` after reporting a case value of another type (once: the comparison is not
-    /// checked again).
-    fn case_operands(&mut self, cur: hir::Expr, v: hir::Expr) -> Option<(hir::Expr, hir::Expr)> {
-        let t = &self.cx.ty;
-        let cur = if t.opt_payload(cur.ty).is_none() && t.opt_payload(v.ty).is_some() {
-            match self.try_coerce(cur, v.ty) {
-                Ok(cur) => return Some((cur, v)),
-                Err(cur) => cur,
-            }
+    /// `l === r` of two checked values (a `switch` case compared with its discriminant): the
+    /// operands adapt as for `===` (a `T` next to a `T | null`, an inferred integer next to
+    /// another number type, literal types as their base), and a mismatch is reported once.
+    fn eq_values(&mut self, l: hir::Expr, r: hir::Expr, span: Span) -> hir::Expr {
+        let (l, r) = self.nullable_operands(l, r);
+        let (l, r) = if l.ty != r.ty {
+            (self.widen_value(l), self.widen_value(r))
         } else {
-            cur
+            (l, r)
         };
-        match self.try_coerce(v, cur.ty) {
-            Ok(v) => Some((cur, v)),
-            Err(v) => {
-                self.report_mismatch(cur.ty, &v);
-                None
-            }
+        let (l, r) = self.mix_numbers(l, r);
+        let (l, r) = self.mix_ints(l, r);
+        let Some(t) = self.check_operands(ast::BinaryOp::Eq, l.ty, &r, span) else {
+            return self.error_expr(span);
+        };
+        if !self.primitive_eq(t) {
+            return self.structural_eq(l, r, false, span);
         }
+        let kind = hir::ExprKind::Binary {
+            op: hir::BinOp::Eq,
+            lhs: Box::new(l),
+            rhs: Box::new(r),
+        };
+        self.mk(kind, self.cx.ty.bool_, span)
     }
 
     /// A case that can never be selected (after an error).

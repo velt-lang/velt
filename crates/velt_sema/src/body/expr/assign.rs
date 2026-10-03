@@ -326,11 +326,7 @@ impl FnCx<'_, '_> {
             return self.mk(kind, unit, span);
         }
         let v = self.expr(value, Some(lty), Want::Borrow);
-        let v = if self.cx.ty.is_float(lty) && self.is_inferred_int(&v) {
-            self.int_to_float(v, lty)
-        } else {
-            v
-        };
+        let v = self.compound_operand(&place, v);
         if self.check_operands(op, lty, &v, span).is_none() {
             return self.error_expr(span);
         }

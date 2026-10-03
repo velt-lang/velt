@@ -290,7 +290,10 @@ impl FnCx<'_, '_> {
             Err(Some(h)) => Some(h),
             Err(None) => v.init.as_ref().map(|e| match ann {
                 Some(t) => self.expr_coerce(e, t, Want::Move),
-                None => self.expr(e, None, Want::Move),
+                None => {
+                    let h = self.expr(e, None, Want::Move);
+                    self.inferred_local_init(h)
+                }
             }),
         };
         let ty = match (ann, &init) {
