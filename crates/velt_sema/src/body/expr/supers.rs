@@ -38,7 +38,7 @@ impl FnCx<'_, '_> {
             TyKind::Adt(_, a) => a.clone(),
             _ => bargs,
         };
-        let c = self.fn_callable(ctor, "the base class constructor".into());
+        let c = self.fn_callable(ctor, "the base class constructor".into(), span);
         let slots = ctor_args.iter().map(|t| Some(*t)).collect();
         let ck = self.check_call(&c, slots, args, None, span);
         let this = self.this_expr(Want::BorrowMut, span);

@@ -4,7 +4,8 @@
 //! annotation, a parameter, field or return type, a literal suffix, a cast, an API result such
 //! as `.length`, or a literal typed by such a context) or *inferred* (an integer literal with no
 //! context, a local declared without a type from such a value — `const a = 7`, `let i = 0` —
-//! and arithmetic involving one). Both are stored as integers, so counters and indexes keep
+//! a call of a function whose inferred return type comes from such values, and arithmetic
+//! involving one). Both are stored as integers, so counters and indexes keep
 //! integer speed; inferred ones behave like JS numbers where that is observable:
 //! - `/` is float division unless both operands are declared integers (`a / 2` is `3.5`);
 //! - mixed with a float, or used where a float is expected, they convert to it;
@@ -62,6 +63,11 @@ impl FnCx<'_, '_> {
                 callee: hir::Callee::Def(d, _),
                 ..
             } if self.cx.fn_info(*d).name == "__toInt32" => IntOrigin::Inferred,
+            // A call of a function whose result type is inferred from such integers.
+            H::Call {
+                callee: hir::Callee::Def(d, _),
+                ..
+            } if self.cx.fn_info(*d).ret_inferred_int => IntOrigin::Inferred,
             _ => IntOrigin::Declared,
         }
     }

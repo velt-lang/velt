@@ -1,0 +1,17 @@
+// An annotated override of a method whose return type is inferred is compared with it once the
+// base body is checked (#75).
+class Base {
+  m() {
+    return 1;
+  }
+}
+
+class Derived extends Base {
+  override m(): string {
+    return "x";
+  }
+}
+
+function main() {
+  console.log(new Derived().m());
+}

@@ -1,0 +1,13 @@
+// A function whose inferred return type depends on itself needs an annotation (#75), like
+// TypeScript's "implicitly has return type 'any' because ... referenced directly or
+// indirectly in one of its return expressions".
+function fib(n: i64) {
+  if (n < 2) {
+    return n;
+  }
+  return fib(n - 1) + fib(n - 2);
+}
+
+function main() {
+  console.log(fib(10));
+}

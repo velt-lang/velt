@@ -137,7 +137,7 @@ impl FnCx<'_, '_> {
             Some(Resolved::Virtual { def, slot, slots }) => (def, slots, None, Some(slot)),
             _ => panic!("ICE: `Record` has no method `{method}`"),
         };
-        let mut c = self.fn_callable(def, format!("method `{method}`"));
+        let mut c = self.fn_callable(def, format!("method `{method}`"), span);
         let kp = c.params.remove(0);
         let vp = checked.as_ref().map(|_| c.params.remove(0));
         let kty = self.cx.ty.subst_known(kp.ty, &slots);

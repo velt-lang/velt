@@ -80,7 +80,7 @@ impl FnCx<'_, '_> {
                 self.def_method_call(recv, def, slots, recv_ty, type_args, args, exp, span)
             }
             Resolved::Virtual { def, slot, slots } => {
-                let c = self.fn_callable(def, format!("method `{}`", prop.name));
+                let c = self.fn_callable(def, format!("method `{}`", prop.name), span);
                 let ck = self.check_call(&c, slots, args, exp, span);
                 let recv = self.receiver(recv, None, self.this_mode(def));
                 let mut all = vec![recv];
@@ -132,7 +132,7 @@ impl FnCx<'_, '_> {
             .next()
             .unwrap_or("")
             .to_string();
-        let c = self.fn_callable(def, format!("method `{name}`"));
+        let c = self.fn_callable(def, format!("method `{name}`"), span);
         let mut slots = slots;
         let own = slots.iter().filter(|s| s.is_none()).count();
         self.explicit_type_args(&mut slots, own, type_args, span);

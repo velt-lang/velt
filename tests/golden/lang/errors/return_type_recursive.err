@@ -1,0 +1,5 @@
+return_type_recursive.vlt:4:10
+error: function `fib` needs a return type annotation
+return_type_recursive.vlt:8:10: used here before its return type is known
+note: its return type is inferred from its body, which uses `fib` itself
+note: write the return type: `function fib(n: i64): T`

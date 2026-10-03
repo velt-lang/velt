@@ -11,8 +11,8 @@ use super::shapes::{resolve_bounds, self_type};
 use super::ItemDefs;
 use crate::ctx::Ctx;
 use crate::defs::{
-    member_key, Bound, DeclaredThrows, DefInfo, Extension, FnKind, FnSource, Generics, IfaceMethod,
-    MethodRef, ParamSig, ThisSig,
+    is_setter_key, member_key, Bound, DeclaredThrows, DefInfo, Extension, FnKind, FnSource,
+    Generics, IfaceMethod, MethodRef, ParamSig, RetSource, ThisSig,
 };
 use crate::hir::{DefId, PassMode, TyId, TyKind};
 use crate::resolve::TyEnv;
@@ -112,8 +112,10 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
     generics.bounds.extend(own_bounds);
     let kind = cx.fn_info(d).kind;
     let mut ps = params(cx, &sig.params, &env);
+    let inferred = sig.ret.is_none() && infers_ret(cx, d);
     let (mut ret, ret_span) = match &sig.ret {
         Some(t) => (cx.resolve_type(t, &env), Some(t.span)),
+        None if inferred => (cx.ty.error, None),
         None => (cx.ty.unit, None),
     };
     let mut throws = throws_clause(cx, sig, &env);
@@ -140,6 +142,26 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
     f.params = ps;
     f.ret = ret;
     f.ret_span = ret_span;
+    if inferred {
+        f.ret_source = RetSource::Body;
+    }
+    // Interface getters are reported with the interface's methods.
+    if f.is_getter && sig.ret.is_none() && !inferred && kind != FnKind::IfaceDefault {
+        cx.error(
+            Diagnostic::error("a getter must return a value", sig.name.span)
+                .with_note("return the property's value, or write its type: `get name(): T`"),
+        );
+    }
+}
+
+/// Does `d`, written without a return type, take it from its body? Functions and methods
+/// (not setters) whose body has a `return` with a value; the others return `void`.
+fn infers_ret(cx: &Ctx, d: DefId) -> bool {
+    let f = cx.fn_info(d);
+    let key = f.name.rsplit('.').next().unwrap_or_default();
+    matches!(f.kind, FnKind::Free | FnKind::Method | FnKind::Static)
+        && !is_setter_key(key)
+        && super::ret_infer::returns_value(f.source)
 }
 
 /// The result and error type of a function whose promise carries its errors (an async function,
@@ -393,6 +415,12 @@ fn iface_methods(cx: &mut Ctx, d: DefId) {
                 .with_note(
                     "declare the method as returning a `Promise`; implementations may be `async`",
                 ),
+            );
+        }
+        if m.is_getter && m.sig.ret.is_none() {
+            cx.error(
+                Diagnostic::error("an interface getter must declare its type", name.span)
+                    .with_note(format!("write `get {}(): T`", name.name)),
             );
         }
         let (own, env) = method_generics(cx, &generics, &m.sig.generics, module);

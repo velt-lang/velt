@@ -131,8 +131,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Accessor shapes: a getter takes no parameters or type parameters and declares its type;
-    /// a setter takes exactly one parameter and declares no return type. Neither is `static`
+    /// Accessor shapes: a getter takes no parameters or type parameters (its type may be
+    /// inferred from its body, as for other methods); a setter takes exactly one parameter and
+    /// declares no return type. Neither is `static`
     /// or `async`.
     fn check_accessor(&mut self, sig: &FnSig, mods: &Modifiers) {
         let span = sig.name.span;
@@ -147,9 +148,6 @@ impl<'a> Parser<'a> {
         };
         if mods.is_getter && (!sig.params.is_empty() || !sig.generics.is_empty()) {
             self.error("a getter cannot have parameters", span);
-        }
-        if mods.is_getter && sig.ret.is_none() {
-            self.error("a getter must declare its return type", span);
         }
         if mods.is_setter && (sig.params.len() != 1 || !sig.generics.is_empty()) {
             self.error("a setter must have exactly one parameter", span);

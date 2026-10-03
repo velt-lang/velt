@@ -121,11 +121,11 @@ fn impl_method(cx: &mut Ctx, p: &Pair, m: &IfaceMethod) -> Option<DefId> {
             let def = f.def();
             let mut full_args = p.bound.args.clone();
             full_args.push(p.self_ty);
-            check_method_sig(cx, def, &f.owner_args(), m, &full_args, &p.iname);
+            let want = check_method_sig(cx, def, &f.owner_args(), m, &full_args, &p.iname);
             cx.fn_info_mut(def).fixed_modes = true;
             let slot = cx.adt(p.d).and_then(|a| a.vslots.get(&m.name).copied());
             Some(match slot {
-                Some(slot) => trampoline(cx, p.d, p.self_ty, &f, slot),
+                Some(slot) => trampoline(cx, p.d, p.self_ty, &f, (slot, want)),
                 None => def,
             })
         }
@@ -158,8 +158,15 @@ fn mutates_this(cx: &Ctx, def: DefId) -> bool {
 }
 
 /// A virtually dispatching impl entry for a method with a vtable slot (a subclass instance
-/// boxed as the interface still runs its override).
-fn trampoline(cx: &mut Ctx, d: DefId, self_ty: TyId, f: &Found, slot: u32) -> DefId {
+/// boxed as the interface still runs its override); `want` is the interface method's result,
+/// used while the method's own is still being inferred.
+fn trampoline(
+    cx: &mut Ctx,
+    d: DefId,
+    self_ty: TyId,
+    f: &Found,
+    (slot, want): (u32, Option<TyId>),
+) -> DefId {
     let def = f.def();
     let owner_args = f.owner_args();
     let (name, params, ret) = {
@@ -175,7 +182,10 @@ fn trampoline(cx: &mut Ctx, d: DefId, self_ty: TyId, f: &Found, slot: u32) -> De
             p
         })
         .collect();
-    let ret = cx.ty.subst(ret, &owner_args);
+    let ret = match want.filter(|_| super::ret_infer::is_pending(cx, def)) {
+        Some(want) => want,
+        None => cx.ty.subst(ret, &owner_args),
+    };
     let qual = cx.adt(d).map(|a| a.qual_name.clone()).unwrap_or_default();
     let host = Host::adt(cx, d);
     synth_method(
@@ -190,6 +200,8 @@ fn trampoline(cx: &mut Ctx, d: DefId, self_ty: TyId, f: &Found, slot: u32) -> De
     )
 }
 
+/// Checks `def` against interface method `m`; returns `m`'s result type in the implementing
+/// type's context (`None` after a mismatch of the type parameters).
 fn check_method_sig(
     cx: &mut Ctx,
     def: DefId,
@@ -197,23 +209,18 @@ fn check_method_sig(
     m: &IfaceMethod,
     iface_args: &[TyId],
     iname: &str,
-) {
-    let (ps, ret, span, is_getter) = {
+) -> Option<TyId> {
+    let (ps, span, is_getter) = {
         let f = cx.fn_info(def);
         (
             f.params.iter().map(|p| p.ty).collect::<Vec<_>>(),
-            f.ret,
             f.name_span,
             f.is_getter,
         )
     };
-    let Some(iface_args) = own_generics_match(cx, def, owner_args.len(), m, iface_args, iname)
-    else {
-        return;
-    };
+    let iface_args = own_generics_match(cx, def, owner_args.len(), m, iface_args, iname)?;
     let iface_args = &iface_args[..];
     let ps: Vec<TyId> = ps.into_iter().map(|t| cx.ty.subst(t, owner_args)).collect();
-    let ret = cx.ty.subst(ret, owner_args);
     let want_ps: Vec<TyId> = m
         .params
         .iter()
@@ -221,11 +228,11 @@ fn check_method_sig(
         .collect();
     let want_ret = cx.ty.subst(m.ret, iface_args);
     let name = &m.name;
-    if ps != want_ps || ret != want_ret {
-        cx.err(
-            format!("method `{name}` has a different signature than required by `{iname}`"),
-            span,
-        );
+    let message = format!("method `{name}` has a different signature than required by `{iname}`");
+    let at = (span, message.clone());
+    let ret_ok = super::ret_infer::impl_ret(cx, (def, owner_args), want_ret, at);
+    if ps != want_ps || !ret_ok {
+        cx.err(message, span);
     } else if is_getter != m.is_getter {
         let what = if m.is_getter { "a getter" } else { "a method" };
         cx.err(
@@ -233,6 +240,7 @@ fn check_method_sig(
             span,
         );
     }
+    Some(want_ret)
 }
 
 /// A generic interface method is implemented by a method with as many own type params and the

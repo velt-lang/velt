@@ -44,6 +44,7 @@ mod loops;
 pub(crate) mod narrow;
 mod pattern;
 pub(crate) mod places;
+pub(crate) mod returns;
 mod stmt;
 pub(crate) mod switch;
 mod using;
@@ -143,8 +144,10 @@ pub(crate) struct Frame {
     pub loops: Vec<LoopCx>,
     /// Loops and `switch`es entered so far (numbers synthesized labels).
     pub loop_count: u32,
-    /// Declared/expected return type; `None` while a closure's return type is being inferred.
+    /// Declared/expected return type; `None` while it is inferred from the body's `return`s
+    /// (recorded in `returns`).
     pub ret: Option<TyId>,
+    pub returns: returns::Returns,
     pub captures: Vec<CaptureCx>,
     pub escaping: bool,
     /// Body of an `async` function / arrow: `await` is allowed.
@@ -175,6 +178,7 @@ impl Frame {
             loops: vec![],
             loop_count: 0,
             ret,
+            returns: Default::default(),
             captures: vec![],
             escaping: false,
             is_async: false,

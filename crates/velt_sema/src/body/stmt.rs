@@ -321,12 +321,13 @@ impl FnCx<'_, '_> {
     }
 
     fn return_stmt(&mut self, e: Option<&ast::Expr>, span: Span, out: &mut Vec<hir::Stmt>) {
-        match (e, self.f.ret) {
-            (None, ret) => {
-                let ret = ret.unwrap_or(self.cx.ty.unit);
-                if self.f.ret.is_none() {
-                    self.f.ret = Some(ret);
-                }
+        let Some(ret) = self.f.ret else {
+            let h = self.infer_return(e, span);
+            Self::push(out, S::Return(h), span);
+            return;
+        };
+        match e {
+            None => {
                 if ret != self.cx.ty.unit && !self.cx.ty.is_bottom(ret) {
                     let rn = self.cx.display(ret);
                     self.cx.error(
@@ -336,15 +337,8 @@ impl FnCx<'_, '_> {
                 }
                 Self::push(out, S::Return(None), span);
             }
-            (Some(e), Some(ret)) => {
+            Some(e) => {
                 let h = self.expr_coerce(e, ret, Want::Move);
-                Self::push(out, S::Return(Some(h)), span);
-            }
-            (Some(e), None) => {
-                let h = self.expr(e, None, Want::Move);
-                if h.ty != self.cx.ty.never {
-                    self.f.ret = Some(h.ty);
-                }
                 Self::push(out, S::Return(Some(h)), span);
             }
         }

@@ -42,7 +42,8 @@ hidden classes and no runtime shape checks.
 - **Getters and setters**: `get size(): T { … }` is read as a property (`x.size`) and cannot be
   called or assigned; `set size(v: T) { … }` runs on `x.size = v`; with both, `x.size += 1` and
   `x.size++` use both. Implementations and overrides of a getter or setter must be accessors
-  too. Getters cannot be `static` or `async`.
+  too. Getters cannot be `static` or `async`. A getter's type may be inferred from its `return`
+  like a method's ([Return types](functions.md#return-types)); an interface getter writes it.
 - Instances are references, as in JS ([Memory model](memory.md#values-and-references)):
   `const b = a` refers to the same object. `x.clone()` makes an independent deep copy of any
   class, struct or union (like `structuredClone`), except values owning a `[Symbol.dispose]`

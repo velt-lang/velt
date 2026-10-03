@@ -61,7 +61,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
         on_mismatch: &mut OnMismatch<'_, 'a, 'm>,
     ) -> hir::Expr {
         let name = self.cx.fn_info(d).name.clone();
-        let c = self.fn_callable(d, format!("`{name}`"));
+        let c = self.fn_callable(d, format!("`{name}`"), span);
         let mut slots = vec![None; c.slot_names.len()];
         for (h, param) in args.iter().zip(&c.params) {
             self.cx.match_ty(param.ty, h.ty, &mut slots);

@@ -25,6 +25,7 @@ mod impls;
 mod imports;
 mod lookup;
 mod nested;
+mod ret_infer;
 mod shapes;
 mod sigs;
 

@@ -9,14 +9,70 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
 ```
 
 - `function name(p: T, q: U = default): R { … }`, optionally with a `throws E` clause after the
-  return type ([Errors](errors.md)). Parameter types are required; a missing return type
-  means `void`.
+  return type ([Errors](errors.md)). Parameter types are required; a missing return type is
+  inferred from the body ([Return types](#return-types)).
 - Default values work on functions, methods, constructors and interface methods; calls through
   an interface use the interface's defaults.
 - An optional parameter `q?: T` is `q: T | null = null`.
 - There are no rest parameters and no overloads.
 - **Nested functions** may be declared inside blocks but cannot capture locals
   (``` `x` cannot be captured by a nested function```); use an arrow function.
+
+## Return types
+
+As in TypeScript, a function or method without a return type returns the type of its `return`
+expressions (exported ones too):
+
+- one type when they agree, or the one the others convert to: `return 1` and `return 0.5` give
+  `f64`, a class and its base class give the base;
+- otherwise their union (`return "positive"` and `return n` give `string | i64`), made
+  nullable by a `return null`;
+- `void` when no `return` has a value, `never` when every returned value never completes
+  (`return fail()`);
+- `Promise<T>` for an `async` function, `T` from its returns.
+
+```ts
+function describe(n: i64) {
+  if (n > 0) {
+    return "positive";
+  }
+  return n; // describe returns string | i64
+}
+
+async function double(n: i64) {
+  return n * 2; // Promise<i64>
+}
+
+function main() {
+  console.log(describe(3), describe(-1)); // positive -1
+}
+```
+
+An unannotated method that overrides a base class method or implements an interface method
+returns that method's type, and its `return`s are checked against it. Arrow functions follow
+the same rules when no function type is expected; where one is, its result type applies.
+
+A `return;` next to `return value;` is an error: TypeScript would return `undefined`, which
+Velt doesn't have. Return `null` and give the function a `T | null` type instead.
+
+A function with a `return` value whose body uses the function itself, directly or through other
+functions whose return types are being inferred, needs an annotation. TypeScript asks for one
+("implicitly has return type 'any'") only when the use is in a `return` expression; Velt also
+asks when it is elsewhere in the body (`total += count(child)`), since it checks a body once,
+in order:
+
+```ts error
+function fib(n: i64) {
+  // error: function `fib` needs a return type annotation
+  if (n < 2) {
+    return n;
+  }
+  return fib(n - 1) + fib(n - 2);
+}
+```
+
+Write the type: `function fib(n: i64): i64`. A function without a `return` value is `void`
+before its body is checked, so it may call itself freely (a recursive `walk(child);`).
 
 ## Generic functions
 

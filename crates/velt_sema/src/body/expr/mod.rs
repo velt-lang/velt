@@ -53,6 +53,7 @@ use velt_syntax::ast;
 
 use super::{FnCx, Want};
 use crate::hir::{self, TyId};
+pub(crate) use args::deferred;
 
 impl FnCx<'_, '_> {
     /// Check `e` against `exp`, converting (`WrapSome`/`Upcast`/`ToDyn`) or reporting a mismatch.

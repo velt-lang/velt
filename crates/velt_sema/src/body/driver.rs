@@ -6,7 +6,7 @@ use velt_common::{Diagnostic, Span};
 
 use super::{FnCx, Frame, LocalKind, Want};
 use crate::ctx::Ctx;
-use crate::defs::{BodyState, DefInfo, FnKind, FnSource};
+use crate::defs::{BodyState, DefInfo, FnKind, FnSource, RetSource};
 use crate::hir::{self, Def, DefId, ExprKind as H, LocalId, StmtKind as S};
 use crate::resolve::TyEnv;
 
@@ -28,6 +28,7 @@ pub(crate) fn check_bodies(cx: &mut Ctx) {
     for d in fns {
         ensure_body(cx, d);
     }
+    super::returns::check_deferred(cx);
 }
 
 /// A checker for an expression outside any function body (defaults, constants).
@@ -167,25 +168,28 @@ pub(crate) fn ensure_body(cx: &mut Ctx, def: DefId) {
         return;
     };
     cx.fn_info_mut(def).state = BodyState::InProgress;
+    cx.checking.push(def);
     let names = cx.fn_info(def).generics.names.clone();
     let saved = std::mem::replace(&mut cx.display_params, names);
     let fndef = check_fn(cx, def, src);
     cx.display_params = saved;
+    cx.checking.pop();
     cx.defs[def.0 as usize] = Some(Def::Fn(fndef));
     cx.fn_info_mut(def).state = BodyState::Done;
 }
 
 fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
+    // An unannotated override takes the result of the method it overrides.
+    let declared = match cx.fn_info(def).ret_source {
+        RetSource::Body => None,
+        _ => Some(super::returns::ret_of(cx, def, cx.fn_info(def).name_span)),
+    };
     let f = cx.fn_info(def).clone();
     let env = TyEnv::new(f.module, &f.generics.names);
     // An async body returns the promise's payload, which is also the HIR `ret` (the signature,
-    // `FnInfo::ret`, and the type of a call stay `Promise<T>`).
-    let body_ret = if f.is_async {
-        cx.ty.async_result(f.ret)
-    } else {
-        f.ret
-    };
-    let mut frame = Frame::new(f.kind, Some(body_ret));
+    // `FnInfo::ret`, and the type of a call stay `Promise<T>`); `None` while it is inferred.
+    let body_ret = declared.map(|r| if f.is_async { cx.ty.async_result(r) } else { r });
+    let mut frame = Frame::new(f.kind, body_ret);
     frame.is_async = f.is_async;
     let enclosing_locals = cx
         .nested_locals
@@ -207,7 +211,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     let mut stmts = vec![];
     fcx.f.super_ok = f.kind == FnKind::Ctor;
     fcx.stmts_into(&body.stmts, &mut stmts);
-    let block = hir::Block {
+    let mut block = hir::Block {
         stmts,
         value: None,
         span: body.span,
@@ -215,6 +219,10 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     if f.kind == FnKind::Ctor {
         fcx.check_ctor(&f, &block);
     }
+    let body_ret = match body_ret {
+        Some(r) => r,
+        None => fcx.inferred_fn_ret(def, &mut block),
+    };
     fcx.check_returns(&f.name, body_ret, f.name_span, &block);
     fcx.rec_frame_scopes();
     let frame = std::mem::replace(&mut fcx.f, Frame::new(f.kind, None));
@@ -264,6 +272,24 @@ impl FnCx<'_, '_> {
             });
         }
         params
+    }
+
+    /// The result of function `def` inferred from its checked body `block`, recorded as its
+    /// signature (`Promise<T>` for an async function).
+    fn inferred_fn_ret(&mut self, def: DefId, block: &mut hir::Block) -> hir::TyId {
+        let short = self.fn_name.rsplit("::").next().unwrap_or(&self.fn_name);
+        let who = format!("`{short}`");
+        let (ret, inferred_int) = self.finish_inferred_ret(block, &who);
+        let sig = if self.f.is_async {
+            self.cx.ty.promise(ret)
+        } else {
+            ret
+        };
+        let info = self.cx.fn_info_mut(def);
+        info.ret = sig;
+        info.ret_source = RetSource::Known;
+        info.ret_inferred_int = inferred_int;
+        ret
     }
 
     /// "must return a value on every path" for non-void functions.

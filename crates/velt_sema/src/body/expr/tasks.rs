@@ -86,7 +86,7 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         };
-        let c = self.fn_callable(d, format!("`{what}`"));
+        let c = self.fn_callable(d, format!("`{what}`"), span);
         let mut slots = vec![None; c.slot_names.len()];
         for (slot, t) in slots.iter_mut().zip(type_args) {
             *slot = Some(*t);

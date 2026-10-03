@@ -212,12 +212,18 @@ impl FnCx<'_, '_> {
             ast::ArrowBody::Block(b) => {
                 let mut stmts = vec![];
                 self.stmts_into(&b.stmts, &mut stmts);
-                let block = hir::Block {
+                let mut block = hir::Block {
                     stmts,
                     value: None,
                     span: b.span,
                 };
-                let ret = self.f.ret.unwrap_or(self.cx.ty.unit);
+                let ret = match self.f.ret {
+                    Some(r) => r,
+                    None => {
+                        self.finish_inferred_ret(&mut block, "this arrow function")
+                            .0
+                    }
+                };
                 self.check_returns("closure", ret, span, &block);
                 block
             }

@@ -1,0 +1,27 @@
+// Inferred return types that depend on each other name the cycle (#75).
+function isEven(n: i64) {
+  if (n == 0) {
+    return true;
+  }
+  return isOdd(n - 1);
+}
+
+function isOdd(n: i64) {
+  if (n == 0) {
+    return false;
+  }
+  return isEven(n - 1);
+}
+
+class Countdown {
+  count(n: i64) {
+    if (n == 0) {
+      return 0;
+    }
+    return this.count(n - 1);
+  }
+}
+
+function main() {
+  console.log(isEven(4), new Countdown().count(3));
+}

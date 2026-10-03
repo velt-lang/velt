@@ -146,7 +146,12 @@ contents.
 - No `function` expressions (use arrows), no `this` rebinding, no `arguments`.
 - No rest parameters, no spread arguments (`f(...xs)`), no overloads. Optional and default
   parameters work.
-- Parameter types are required; the return type is inferred only as `void` when omitted.
+- Parameter types are required. As in TypeScript, an omitted return type is inferred from the
+  `return` expressions (a union when they differ, `Promise<T>` for `async`, `void` without a
+  value). A function with a `return` value whose body uses the function itself needs an
+  annotation (TypeScript asks only when the use is in a `return` expression). A `return;` next
+  to `return value;` is an error rather than `T | undefined`: return `null` with a `T | null`
+  type.
 - Generics are compiled per instantiation (monomorphized), so generic code is as fast as
   hand-written code. Bounds are interfaces.
 

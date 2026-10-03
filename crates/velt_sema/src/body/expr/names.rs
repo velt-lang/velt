@@ -191,12 +191,12 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
-        let (n, params, ret, is_async) = (
+        let (n, params, is_async) = (
             f.generics.len(),
             f.params.iter().map(|p| p.ty).collect::<Vec<_>>(),
-            f.ret,
             f.is_async,
         );
+        let ret = crate::body::returns::ret_of(self.cx, d, span);
         let fn_ty = self.fn_value_type(d, params, ret, is_async);
         let mut slots = vec![None; n];
         if let Some(e) = self.hint(exp) {
