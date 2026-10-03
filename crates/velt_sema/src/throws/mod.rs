@@ -49,7 +49,7 @@ const MAX_INIT_DEPTH: usize = 16;
 /// How many instantiations of one class a resolution counts in all: a bound on initializers that
 /// construct their class in several growing ways (`Box<Pair<T>>` and `Box<Box<T>>`), whose
 /// instantiations within [`MAX_INIT_DEPTH`] grow exponentially.
-const MAX_INIT_INSTANCES: usize = 1024;
+const MAX_INIT_INSTANCES: usize = 64;
 
 /// The classes whose field initializers ([`ThrowSrc::Defaults`]) are already counted, keyed on
 /// the class and its type arguments (`Box<E1>` and `Box<E2>` throw different errors), and how

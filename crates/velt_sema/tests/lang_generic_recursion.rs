@@ -131,3 +131,34 @@ fn growing_field_initializers_in_two_ways_finish() {
     rx.recv_timeout(Duration::from_secs(30))
         .expect("checking growing field initializers did not finish");
 }
+
+/// The error union of initializers growing in three ways is long; the message shows its first
+/// members and a count instead of hundreds of kilobytes.
+#[test]
+fn a_long_error_union_is_shortened_in_messages() {
+    let e = quick_errors(
+        "class E1 extends Error {}
+         function call<E>(f: () => i64 throws E): i64 throws E { return f(); }
+         function mkf<E>(): () => i64 throws E { return (): i64 throws E => 1; }
+         function never(): bool { return false; }
+         class Pair<T> { a: i64 = 0; }
+         class Tri<T> { a: i64 = 0; }
+         class Grow<E> {
+           n: i64 = never()
+             ? new Grow<Grow<E>>().n + new Grow<Pair<E>>().n + new Grow<Tri<E>>().n
+             : call<E>(mkf<E>());
+         }
+         class Grow2<E> {
+           n: i64 = never()
+             ? new Grow2<Grow<E>>().n + new Grow2<Pair<E>>().n + new Grow<Tri<E>>().n + new Grow2<Tri<E>>().n
+             : call<E>(mkf<E>());
+         }
+         function f1(): void {
+           try { console.log(new Grow<E1>().n + new Grow2<E1>().n); } catch (e) { console.log(\"caught\"); }
+         }
+         function main() { f1(); }",
+    );
+    assert!(e.contains("the error type here is not known yet"), "{e}");
+    assert!(e.contains("more)`"), "{e}");
+    assert!(e.len() < 2000, "{e}");
+}
