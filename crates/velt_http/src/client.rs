@@ -3,9 +3,9 @@
 //! nothing depends on a system `curl` or the machine's trust store.
 
 use std::io::{BufReader, Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
@@ -14,21 +14,54 @@ use crate::message::{read_response, Response};
 
 /// Largest response body accepted (packages and API answers are far smaller).
 const MAX_RESPONSE: usize = 256 << 20;
-const TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How long a request may take.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Limits {
+    /// Connecting to one address of the host.
+    pub connect: Duration,
+    /// Waiting for the server in one read or write.
+    pub idle: Duration,
+    /// The whole exchange, from connecting to the last byte of the answer: a server that sends
+    /// a byte now and then can't hold a fetch forever.
+    pub total: Duration,
+}
+
+impl Limits {
+    pub(crate) const DEFAULT: Limits = Limits {
+        connect: Duration::from_secs(10),
+        idle: Duration::from_secs(60),
+        total: Duration::from_secs(600),
+    };
+}
 
 /// Send `method url` with extra `headers` and `body`; any status is returned as a response.
+/// Connecting may take 10 s per address, the server may be silent for 60 s at a time, and the
+/// whole exchange may take 10 minutes.
 pub fn fetch(
     method: &str,
     url: &str,
     headers: &[(&str, &str)],
     body: &[u8],
 ) -> Result<Response, String> {
+    fetch_within(method, url, headers, body, Limits::DEFAULT)
+}
+
+pub(crate) fn fetch_within(
+    method: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+    limits: Limits,
+) -> Result<Response, String> {
+    let deadline = Instant::now() + limits.total;
     if let Some(rest) = url.strip_prefix("http://") {
-        return plain(method, rest, headers, body).map_err(|e| format!("{method} {url}: {e}"));
+        return plain(method, rest, headers, body, limits, deadline)
+            .map_err(|e| format!("{method} {url}: {e}"));
     }
     if let Some(rest) = url.strip_prefix("https://") {
         return crate::tls::client_config()
-            .and_then(|config| https(method, rest, headers, body, config))
+            .and_then(|config| https_within(method, rest, headers, body, config, limits, deadline))
             .map_err(|e| format!("{method} {url}: {e}"));
     }
     Err(format!(
@@ -44,16 +77,104 @@ fn split(rest: &str) -> (&str, &str) {
     }
 }
 
-fn connect(host: &str, default_port: u16) -> Result<TcpStream, String> {
+/// A connection to `host` (each of its addresses in turn, `limits.connect` each but never past
+/// `deadline`), whose reads
+/// and writes fail once `deadline` has passed.
+fn connect(
+    host: &str,
+    default_port: u16,
+    limits: Limits,
+    deadline: Instant,
+) -> Result<Deadlined, String> {
     let authority = if host.rsplit_once(':').is_some_and(|(_, p)| !p.contains(']')) {
         host.to_string()
     } else {
         format!("{host}:{default_port}")
     };
-    let stream = TcpStream::connect(&authority).map_err(|e| format!("cannot connect: {e}"))?;
-    let _ = stream.set_read_timeout(Some(TIMEOUT));
-    let _ = stream.set_write_timeout(Some(TIMEOUT));
-    Ok(stream)
+    let addrs = authority
+        .to_socket_addrs()
+        .map_err(|e| format!("cannot connect: {e}"))?;
+    let mut last = None;
+    for addr in addrs {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(format!("cannot connect: {}", too_long()));
+        }
+        match TcpStream::connect_timeout(&addr, limits.connect.min(left)) {
+            Ok(stream) => {
+                return Ok(Deadlined {
+                    stream,
+                    idle: limits.idle,
+                    deadline,
+                })
+            }
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(match last {
+        Some(e) => format!("cannot connect: {e}"),
+        None => format!("cannot connect: `{host}` has no address"),
+    })
+}
+
+/// A TCP stream whose every read and write waits at most `idle`, and fails once `deadline`
+/// has passed.
+struct Deadlined {
+    stream: TcpStream,
+    idle: Duration,
+    deadline: Instant,
+}
+
+impl Deadlined {
+    /// The time the next read or write may wait, or the error once the deadline has passed.
+    fn wait(&self) -> std::io::Result<Duration> {
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(too_long());
+        }
+        Ok(left.min(self.idle))
+    }
+
+    /// A read or write that timed out because the deadline passed says so.
+    fn explain<T>(&self, result: std::io::Result<T>) -> std::io::Result<T> {
+        match result {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) && Instant::now() >= self.deadline =>
+            {
+                Err(too_long())
+            }
+            other => other,
+        }
+    }
+}
+
+fn too_long() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::TimedOut, "the request took too long")
+}
+
+impl Read for Deadlined {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let wait = self.wait()?;
+        self.stream.set_read_timeout(Some(wait))?;
+        let read = self.stream.read(buf);
+        self.explain(read)
+    }
+}
+
+impl Write for Deadlined {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let wait = self.wait()?;
+        self.stream.set_write_timeout(Some(wait))?;
+        let written = self.stream.write(buf);
+        self.explain(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.stream.flush()
+    }
 }
 
 fn plain(
@@ -61,19 +182,37 @@ fn plain(
     rest: &str,
     headers: &[(&str, &str)],
     body: &[u8],
+    limits: Limits,
+    deadline: Instant,
 ) -> Result<Response, String> {
     let (host, path) = split(rest);
-    let stream = connect(host, 80)?;
+    let stream = connect(host, 80, limits, deadline)?;
     exchange(stream, method, host, path, headers, body)
 }
 
-/// One request over TLS, verified with `config`.
+/// One request over TLS, verified with `config`, within the default limits.
+#[cfg(test)]
 pub(crate) fn https(
     method: &str,
     rest: &str,
     headers: &[(&str, &str)],
     body: &[u8],
     config: Arc<ClientConfig>,
+) -> Result<Response, String> {
+    let limits = Limits::DEFAULT;
+    let deadline = Instant::now() + limits.total;
+    https_within(method, rest, headers, body, config, limits, deadline)
+}
+
+/// One request over TLS, verified with `config`.
+fn https_within(
+    method: &str,
+    rest: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+    config: Arc<ClientConfig>,
+    limits: Limits,
+    deadline: Instant,
 ) -> Result<Response, String> {
     let (host, path) = split(rest);
     // `[::1]:8443` → `::1`, `example.com:8443` → `example.com`.
@@ -84,7 +223,7 @@ pub(crate) fn https(
     let server_name =
         ServerName::try_from(name.to_string()).map_err(|_| format!("invalid host `{name}`"))?;
     let conn = ClientConnection::new(config, server_name).map_err(|e| format!("TLS: {e}"))?;
-    let stream = StreamOwned::new(conn, connect(host, 443)?);
+    let stream = StreamOwned::new(conn, connect(host, 443, limits, deadline)?);
     exchange(stream, method, host, path, headers, body)
 }
 
@@ -125,6 +264,37 @@ mod tests {
         assert!(err.contains("cannot connect"), "{err}");
         let err = fetch("GET", "https://127.0.0.1:1/", &[], b"").unwrap_err();
         assert!(err.contains("cannot connect"), "{err}");
+    }
+
+    /// A server that answers one byte at a time, never pausing long enough for the idle timeout.
+    #[test]
+    fn a_dripping_server_hits_the_deadline() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut request = [0u8; 1024];
+            let _ = conn.read(&mut request);
+            for b in b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n"
+                .iter()
+                .cycle()
+            {
+                if conn.write_all(&[*b]).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        let limits = Limits {
+            connect: Duration::from_secs(5),
+            idle: Duration::from_secs(5),
+            total: Duration::from_millis(700),
+        };
+        let started = Instant::now();
+        let err = fetch_within("GET", &format!("http://{addr}/"), &[], b"", limits).unwrap_err();
+        assert!(err.contains("took too long"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        server.join().unwrap();
     }
 
     #[test]

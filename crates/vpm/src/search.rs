@@ -1,5 +1,6 @@
-//! `velt search`: the packages of a registry whose name contains a text, each with its newest
-//! version that is not yanked. A remote registry answers `GET /api/v1/search?q=<text>` with the
+//! `velt search`: the packages of a registry whose name contains a text, each with the version
+//! `velt add` picks: its newest stable version that is not yanked (a pre-release only when it has
+//! no stable one). A remote registry answers `GET /api/v1/search?q=<text>` with the
 //! JSON of [`to_json`]; a local one (and the server itself) is searched by [`search_local`].
 
 use std::path::Path;
@@ -17,7 +18,7 @@ pub const MAX_HITS: usize = 50;
 pub struct Hit {
     /// Package name.
     pub name: String,
-    /// Its newest version that is not yanked.
+    /// Its newest stable version that is not yanked, else its newest pre-release that is not.
     pub version: String,
 }
 
@@ -56,12 +57,7 @@ pub fn search_local(root: &Path, query: &str) -> Result<Vec<Hit>, String> {
         let Ok(index) = parse_index(&text, &path.display().to_string()) else {
             continue;
         };
-        let newest = index
-            .versions
-            .iter()
-            .filter(|v| !v.yanked)
-            .map(|v| v.semver())
-            .max();
+        let newest = crate::manifest::ide::registry::newest(&index);
         if let Some(version) = newest {
             hits.push(Hit {
                 name,
@@ -164,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn finds_names_ranks_and_skips_yanked() {
+    fn finds_names_ranks_and_picks_versions_like_add() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         publish(
@@ -173,6 +169,13 @@ mod tests {
             &[("1.0.0", false), ("1.2.0", false), ("2.0.0", true)],
         );
         publish(root, "json-schema", &[("0.1.0", false)]);
+        // `velt add` picks the stable version; a pre-release shows only when there is no other.
+        publish(
+            root,
+            "json-next",
+            &[("1.0.0", false), ("2.0.0-beta.1", false)],
+        );
+        publish(root, "json-pre", &[("0.1.0-alpha.1", false)]);
         publish(root, "fastjson", &[("3.0.0", false)]);
         publish(root, "gone-json", &[("1.0.0", true)]);
         publish(root, "http", &[("1.0.0", false)]);
@@ -187,6 +190,8 @@ mod tests {
             found,
             [
                 ("json", "1.2.0"),
+                ("json-next", "1.0.0"),
+                ("json-pre", "0.1.0-alpha.1"),
                 ("json-schema", "0.1.0"),
                 ("fastjson", "3.0.0")
             ]

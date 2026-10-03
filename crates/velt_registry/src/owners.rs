@@ -70,12 +70,53 @@ pub fn authorize(root: &Path, name: &str, caller: &Caller) -> Result<(), Respons
     Err(Response::text(403, why))
 }
 
-/// After `caller` published `name`: the first user to publish a new package owns it.
-pub fn claim(root: &Path, name: &str, caller: &Caller) -> Result<(), String> {
+/// Before `caller` publishes `name`: the first user to publish a new package owns it. Returns
+/// whether this made `caller` the owner, so a failed publish can [`unclaim`] it.
+pub fn claim(root: &Path, name: &str, caller: &Caller) -> Result<bool, String> {
     match caller {
-        Caller::User(user) if read(root, name)?.is_empty() => write(root, name, vec![user.clone()]),
-        _ => Ok(()),
+        Caller::User(user) if read(root, name)?.is_empty() => {
+            let dir = root.join(name);
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| format!("cannot create `{}`: {e}", dir.display()))?;
+            write(root, name, vec![user.clone()])?;
+            Ok(true)
+        }
+        _ => Ok(false),
     }
+}
+
+/// Undo a [`claim`] after the publish failed: the owners file goes, and the package's directory
+/// too if nothing else is in it.
+pub fn unclaim(root: &Path, name: &str) {
+    let _ = std::fs::remove_file(path(root, name));
+    let _ = std::fs::remove_dir(root.join(name));
+}
+
+/// Drop `user` from the owners of every package (the user was removed).
+pub(crate) fn drop_user(root: &Path, user: &str) -> Result<auth::Removed, String> {
+    let mut removed = auth::Removed::default();
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Ok(removed);
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| vpm::manifest::is_valid_package_name(n))
+        .collect();
+    names.sort();
+    for name in names {
+        let mut owners = read(root, &name)?;
+        if !owners.iter().any(|o| o == user) {
+            continue;
+        }
+        owners.retain(|o| o != user);
+        if owners.is_empty() {
+            removed.unowned.push(name.clone());
+        }
+        write(root, &name, owners)?;
+        removed.owned.push(name);
+    }
+    Ok(removed)
 }
 
 /// `GET /api/v1/<name>/owners`: one owner per line.
@@ -129,6 +170,7 @@ pub fn set_by_admin(root: &Path, name: &str, user: &str, add: bool) -> Result<Ve
         return Err(format!("invalid package name `{name}`"));
     }
     auth::check_user_name(user)?;
+    let _lock = crate::lock(root)?;
     if !published(root, name) {
         return Err(format!("no package `{name}` in `{}`", root.display()));
     }

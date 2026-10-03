@@ -246,3 +246,29 @@ fn std_package_types_match_the_schema() {
         );
     }
 }
+
+#[test]
+fn windows_device_names_are_not_package_names() {
+    for name in [
+        "con", "prn", "aux", "nul", "com0", "com1", "com9", "lpt1", "lpt9",
+    ] {
+        assert!(is_windows_device_name(name), "{name}");
+        assert!(!is_valid_package_name(name), "{name}");
+        let err = check_name(name).unwrap_err();
+        assert!(err.contains("device name on Windows"), "{err}");
+    }
+    assert!(is_windows_device_name("CON") && is_windows_device_name("Lpt3"));
+    for name in [
+        "console",
+        "con-utils",
+        "null",
+        "com",
+        "com10",
+        "comx",
+        "lpt",
+        "auxiliary",
+    ] {
+        assert!(!is_windows_device_name(name), "{name}");
+        assert!(is_valid_package_name(name), "{name}");
+    }
+}
