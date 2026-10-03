@@ -41,7 +41,8 @@ pub const INLINE_MAX: usize = 23;
 /// Longest non-ASCII string stored inline (byte 22 holds its unit count).
 pub const INLINE_MAX_NON_ASCII: usize = 22;
 
-/// Longest string, in bytes: `w1` packs the unit and byte counts in 32 bits each.
+/// Longest string, in bytes (below 2 GiB): `w1` packs the unit and byte counts in 32 bits each,
+/// and compiled code reads the byte count as a signed 32-bit number.
 pub const MAX_LEN: usize = heap::MAX_CAP;
 
 /// Byte 23 of an inline string: this bit, plus [`NON_ASCII`] and the byte length.
@@ -232,6 +233,7 @@ impl VeltStr {
     ///
     /// # Safety
     /// `self` must be valid.
+    #[inline]
     unsafe fn lone(&self) -> usize {
         if self.is_ascii() {
             0
@@ -246,6 +248,7 @@ impl VeltStr {
     ///
     /// # Safety
     /// `self` must be valid.
+    #[inline]
     pub unsafe fn summary(&self) -> Summary {
         Summary {
             units: self.units(),

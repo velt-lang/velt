@@ -21,14 +21,15 @@ const COUNT: usize = 8;
 /// Bytes before the text of a non-ASCII buffer (crumbs, lone, count).
 const HEADER: usize = 24;
 
-/// Largest capacity: string lengths are 32-bit (`w1` packs units and bytes), and the layout
-/// (size rounded up to 8) must stay within `isize::MAX`.
+/// Largest capacity: below 2 GiB, so a length fits in the 31 bits that compiled code reads
+/// (`w1` packs units and bytes in 32 bits each, and the length read sign-extends the low half),
+/// and the layout (size rounded up to 8) stays within `isize::MAX`.
 pub(super) const MAX_CAP: usize = {
     let fits = isize::MAX as usize - 2 * HEADER;
-    if fits < u32::MAX as usize {
+    if fits < i32::MAX as usize {
         fits
     } else {
-        u32::MAX as usize
+        i32::MAX as usize
     }
 };
 

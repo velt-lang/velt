@@ -51,12 +51,18 @@ pub fn count_lone(bytes: &[u8]) -> usize {
     }
 }
 
-/// The summary of `bytes`, counted.
-#[inline]
+/// The summary of `bytes`, counted: inline for the ASCII check, out of line for the rest.
+#[inline(always)]
 pub fn summarize(bytes: &[u8]) -> Summary {
     if bytes.is_ascii() {
-        return Summary::ascii(bytes.len());
+        Summary::ascii(bytes.len())
+    } else {
+        summarize_non_ascii(bytes)
     }
+}
+
+#[inline(never)]
+fn summarize_non_ascii(bytes: &[u8]) -> Summary {
     Summary {
         units: count_units(bytes),
         lone: count_lone(bytes),

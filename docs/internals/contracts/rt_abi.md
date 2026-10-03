@@ -42,9 +42,9 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 | heap | byte 23 < 0x80 and `w2 != 0` | `{ptr, units << 32 \| len, cap}`; `ptr` points into a refcounted buffer | count +1 / count −1, free at 0 |
 
 - `w1` of the static and heap forms packs the unit count in its high 32 bits and the byte length
-  in its low 32 bits. A string is limited to `u32::MAX` bytes: allocating a larger buffer is a
-  fatal `string too long` (checked once, where the runtime computes a buffer's layout), and so is
-  a borrowed view that long.
+  in its low 32 bits. A string is shorter than 2 GiB (at most `i32::MAX` bytes): allocating a
+  larger buffer is a fatal `string too long` (checked once, where the runtime computes a buffer's
+  layout), and so is a borrowed view that long.
 - The all-zero value is the empty static string. Literals are built by lowering as
   `{ &static_bytes, units << 32 | len, 0 }` (units counted from the literal's text). Sub-ranges of
   static strings may borrow them (same lifetime).
@@ -71,8 +71,10 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   lone surrogates: units are unchanged, bytes and lone count shrink by 2). Code outside the
   runtime's string module never writes `w1`/`w2`.
 - Generated code reads the length inline, branch-free:
-  `byte23 ≥ 0x80 ? byte23 & 0x1f : w1 & 0xffff_ffff` (bytes until #377 phase 2, then units:
-  `byte23 & 0x40 ? byte22 : byte23 & 0x1f` and `w1 >> 32`), and passes strings to the runtime by
+  `byte23 ≥ 0x80 ? byte23 & 0x1f : (int64_t)(w1 << 32) >> 32` (the low half sign-extended,
+  exact because strings are below 2 GiB; a zero-extending read lets LLVM vectorize index loops
+  badly) — bytes until #377 phase 2, then units (`byte23 & 0x40 ? byte22 : byte23 & 0x1f` and
+  `w1 >> 32`) — and passes strings to the runtime by
   pointer for everything else. Test a form through byte 23: inline appends write single bytes
   into `w2`, and reading `w2` as a word right after would stall on store forwarding.
 - Invariants, checked by a **debug** runtime on every append (each appended piece is canonical

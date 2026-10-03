@@ -108,8 +108,11 @@ units, so **a string is ASCII exactly when `units == bytes`**; no flag bit is ne
 
 - The `length` read stays branch-free: two selects over byte 23 and `w1 >> 32`
   (`velt_vir/src/lower/strings.rs`).
-- A string is limited to 4 GiB of bytes. Node caps strings at 2²⁹ − 24 units
-  (`MAX_STRING_LENGTH`), so no program that works on Node loses. The producers that can reach the
+- A string is limited to 2 GiB of bytes (2³¹ − 1). Node caps strings at 2²⁹ − 24 units
+  (`MAX_STRING_LENGTH`), at most about 1.6 GB of WTF-8, so no program that works on Node loses.
+  (Phase 1 first allowed 4 GiB; compiled code now reads the byte count sign-extended from the
+  low half of `w1`, because a zero-extended read let LLVM vectorize `charCodeAt` scan loops into
+  slower SSE2 code, 16% on `bench/strings`.) The producers that can reach the
   limit (file reads, HTTP bodies, child output, stdin, the builder) report "string too long",
   checked once in `heap::layout`.
 - A **borrowed** non-ASCII view (a `split` piece of a literal, a JSON key pointing into the parsed

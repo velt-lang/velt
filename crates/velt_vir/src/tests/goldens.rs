@@ -472,7 +472,7 @@ fn snapshot_greet() {
     _3 = &_2
     call extern#3 velt_rt_strbuf_new(24_u64, _3) -> bb1
   bb1:
-    call extern#4 velt_rt_strbuf_push_bytes(_3, static#15, 7_u64) -> bb2
+    call extern#4 velt_rt_strbuf_push_bytes(_3, static#15, 30064771079_u64) -> bb2
   bb2:
     call extern#13 velt_rt_strbuf_push_str(_3, _0) -> bb3
   bb3:

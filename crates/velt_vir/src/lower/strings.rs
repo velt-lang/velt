@@ -11,8 +11,8 @@ use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty, UnOp, STR_AGG};
 /// `w1` of a static string holding `text`: its UTF-16 length in the high half and its byte
 /// length in the low half.
 pub(super) fn str_w1(text: &str) -> u64 {
-    let Ok(len) = u32::try_from(text.len()) else {
-        ice("a string literal longer than 4 GiB")
+    let Ok(len) = i32::try_from(text.len()) else {
+        ice("a string literal of 2 GiB or more")
     };
     let units = text.encode_utf16().count() as u64;
     (units << 32) | len as u64
@@ -44,7 +44,13 @@ impl FnLower<'_, '_> {
         let inline = self.rvalue_temp(Ty::U64, Rvalue::Cast(fill, Ty::U64));
         let top = self.u64_op(BinOp::UShr, w2, cint(56, Ty::U64));
         let short = self.u64_op(BinOp::BitAnd, top, cint(0x1f, Ty::U64));
-        let long = self.u64_op(BinOp::BitAnd, w1, cint(0xffff_ffff, Ty::U64));
+        // The low half of `w1`, sign-extended: strings are shorter than 2 GiB, so this is the byte
+        // length. Zero-extending it (`w1 & 0xffff_ffff`) would tell LLVM the length fits in 32
+        // bits, which lets it vectorize `charCodeAt` scan loops into slower SSE2 code (#377 phase
+        // 1 measured bench/strings 16% slower).
+        let low = self.rvalue_temp(Ty::I32, Rvalue::Cast(w1, Ty::I32));
+        let low = self.rvalue_temp(Ty::I64, Rvalue::Cast(low, Ty::I64));
+        let long = self.rvalue_temp(Ty::U64, Rvalue::Cast(low, Ty::U64));
         let len = self.select(inline.clone(), short, long);
         (len, inline)
     }

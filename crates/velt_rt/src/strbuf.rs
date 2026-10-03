@@ -36,16 +36,31 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_str(buf: *mut VeltStrBuf, s: *const
     (*buf).push_str(&*s);
 }
 
-/// Append `len` bytes at `ptr` (canonical WTF-8: generated code pushes literal text).
+/// Append the bytes at `ptr` (canonical WTF-8: generated code pushes literal text). The low half
+/// of `len` is the byte count; the high half may be the UTF-16 unit count, as in a string's `w1`:
+/// equal to the byte count, the text is ASCII and needs no scan; 0 means unknown.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_bytes(buf: *mut VeltStrBuf, ptr: *const u8, len: u64) {
-    if len == 0 {
+    let (bytes, units) = (len as u32 as usize, (len >> 32) as usize);
+    if bytes == 0 {
         return;
     }
-    (*buf).push_wtf8(std::slice::from_raw_parts(ptr, len as usize), None);
+    let text = std::slice::from_raw_parts(ptr, bytes);
+    if units == bytes {
+        push_ascii(buf, text);
+    } else {
+        push_counted(buf, text);
+    }
+}
+
+/// Append text whose summary is unknown (counted; out of line, off the hot ASCII paths).
+#[inline(never)]
+unsafe fn push_counted(buf: *mut VeltStrBuf, text: &[u8]) {
+    (*buf).push_wtf8(text, None);
 }
 
 /// Append ASCII text (numbers, keywords): its summary is known, so nothing is counted.
+#[inline(always)]
 unsafe fn push_ascii(buf: *mut VeltStrBuf, text: &[u8]) {
     (*buf).push_wtf8(text, Some(Summary::ascii(text.len())));
 }
@@ -88,7 +103,11 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_bool(buf: *mut VeltStrBuf, v: u8) {
 /// Append one byte (ASCII punctuation in generated glue: `{`, `,`, `:`, `"`…).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_byte(buf: *mut VeltStrBuf, byte: u8) {
-    (*buf).push_wtf8(&[byte], None);
+    if byte.is_ascii() {
+        push_ascii(buf, &[byte]);
+    } else {
+        push_counted(buf, &[byte]);
+    }
 }
 
 /// Append `s` as a JSON string literal: quoted and escaped exactly like `JSON.stringify(s)`.

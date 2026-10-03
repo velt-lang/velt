@@ -20,11 +20,8 @@ impl VeltStr {
     /// `self` must be valid; `bytes` must be canonical WTF-8, and `summary`, if given, must be
     /// its own. `bytes` may lie in `self`'s own heap buffer (a share or an uncounted view of it):
     /// they are copied out before the buffer grows, moves or is rewritten.
-    #[inline]
+    #[inline(always)]
     pub unsafe fn push_wtf8(&mut self, bytes: &[u8], summary: Option<Summary>) {
-        if bytes.is_empty() {
-            return;
-        }
         invariants::check_piece(bytes, summary);
         let sum = match summary {
             Some(sum) => sum,
@@ -32,22 +29,60 @@ impl VeltStr {
         };
         #[cfg(debug_assertions)]
         let seam = self.len();
-        if sum.lone > 0 && self.joins(bytes) {
-            self.push_joined(bytes, sum);
-        } else {
+        if sum.lone == 0 {
             self.append(bytes, sum);
+        } else {
+            self.push_lone(bytes, sum);
         }
         #[cfg(debug_assertions)]
         invariants::check_seam(self, seam);
         invariants::check_whole(self);
     }
 
+    /// [`Self::push_wtf8`] of a piece with lone surrogates, which may join the end of `self`.
+    #[cold]
+    #[inline(never)]
+    unsafe fn push_lone(&mut self, bytes: &[u8], sum: Summary) {
+        if self.joins(bytes) {
+            self.push_joined(bytes, sum);
+        } else {
+            self.append(bytes, sum);
+        }
+    }
+
     /// Append another string (`s` must not be `self` itself; a share or view of it is fine).
     ///
     /// # Safety
     /// Both strings must be valid.
-    #[inline]
+    #[inline(always)]
     pub unsafe fn push_str(&mut self, s: &VeltStr) {
+        // One test of the form gives the text and whether it is ASCII.
+        let tag = s.tag();
+        let (data, len, ascii) = if tag & INLINE != 0 {
+            let len = (tag & INLINE_LEN) as usize;
+            (s as *const VeltStr as *const u8, len, tag & NON_ASCII == 0)
+        } else {
+            let len = s.w1 as u32 as usize;
+            (
+                s.ptr() as *const u8,
+                len,
+                (s.w1 >> 32) as u32 as usize == len,
+            )
+        };
+        if !ascii {
+            return self.push_non_ascii_str(s);
+        }
+        let bytes = if len == 0 {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(data, len)
+        };
+        self.push_wtf8(bytes, Some(Summary::ascii(len)));
+    }
+
+    /// [`Self::push_str`] of a non-ASCII string, whose lone surrogates may need counting.
+    #[inline(never)]
+    unsafe fn push_non_ascii_str(&mut self, s: &VeltStr) {
         self.push_wtf8(s.as_bytes(), Some(s.summary()));
     }
 
@@ -145,7 +180,7 @@ impl VeltStr {
     }
 
     /// Append without a seam join, in place when there is room.
-    #[inline]
+    #[inline(always)]
     unsafe fn append(&mut self, bytes: &[u8], sum: Summary) {
         let n = bytes.len();
         let tag = self.tag();
@@ -158,7 +193,7 @@ impl VeltStr {
                     && (!ascii || sum.units == n)
                     && heap::is_unique(self.ptr())
                 {
-                    self.append_unique(bytes, sum);
+                    self.append_unique(len, bytes, sum);
                     return;
                 }
             }
@@ -183,11 +218,10 @@ impl VeltStr {
         self.append_slow(bytes, sum);
     }
 
-    /// Copy into a unique heap buffer that has room and the right kind (a header if the result
-    /// is not ASCII).
-    #[inline]
-    unsafe fn append_unique(&mut self, bytes: &[u8], sum: Summary) {
-        let len = self.len();
+    /// Copy into a unique heap buffer of `len` bytes that has room and the right kind (a header
+    /// if the result is not ASCII).
+    #[inline(always)]
+    unsafe fn append_unique(&mut self, len: usize, bytes: &[u8], sum: Summary) {
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr().add(len), bytes.len());
         self.w1 += pack(sum.units, bytes.len());
         if sum.lone != 0 {
@@ -199,6 +233,7 @@ impl VeltStr {
     /// full grows; anything else (static, full inline, shared heap, an ASCII buffer getting its
     /// first non-ASCII text) moves to a new string.
     #[cold]
+    #[inline(never)]
     unsafe fn append_slow(&mut self, bytes: &[u8], sum: Summary) {
         if bytes.is_empty() {
             return;
@@ -216,7 +251,7 @@ impl VeltStr {
             let cap = grown(self.w2 as usize, need);
             self.w0 = heap::grow(self.ptr(), self.w2 as usize, cap, header) as usize as u64;
             self.w2 = cap as u64;
-            self.append_unique(bytes, sum);
+            self.append_unique(need - bytes.len(), bytes, sum);
             return;
         }
         let pieces = [self.as_bytes(), bytes];
