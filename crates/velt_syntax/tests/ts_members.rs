@@ -21,7 +21,7 @@ fn field_types_come_from_initializers() {
     assert_eq!(
         tys,
         [
-            "bool",
+            "boolean",
             "i64",
             "f64",
             "string",

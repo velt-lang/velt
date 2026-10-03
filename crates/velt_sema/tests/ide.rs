@@ -173,7 +173,8 @@ fn members_of_values_and_types() {
     assert!(
         arr_members
             .iter()
-            .any(|(n, _, t)| n == "map" && t.starts_with("(f: (arg0: i64) => U throws E)")),
+            .any(|(n, _, t)| n == "map"
+                && t.starts_with("(f: (arg0: i64, arg1: i64) => U throws E)")),
         "{arr_members:?}"
     );
 }

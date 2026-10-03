@@ -76,6 +76,7 @@ fn as_function(item: &ast::Item) -> Option<ast::Item> {
                 ty,
                 default: None,
                 optional: false,
+                rest: false,
             })
         })
         .collect::<Option<Vec<_>>>()?;

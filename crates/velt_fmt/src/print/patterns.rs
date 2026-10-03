@@ -17,6 +17,9 @@ impl<'a> Printer<'a> {
                 docs.extend(rest.iter().map(|r| text(format!("...{}", r.name))));
                 bracketed("[", docs, "]", softline())
             }
+            PatternKind::Default { pattern, value } => {
+                cat![self.pattern(pattern), " = ", self.expr(value)]
+            }
         }
     }
 
@@ -25,6 +28,11 @@ impl<'a> Printer<'a> {
             .iter()
             .map(|(key, pat)| match &pat.kind {
                 PatternKind::Ident(id) if id.name == key.name => text(key.name.clone()),
+                PatternKind::Default { pattern, value }
+                    if matches!(&pattern.kind, PatternKind::Ident(id) if id.name == key.name) =>
+                {
+                    cat![key.name.clone(), " = ", self.expr(value)]
+                }
                 _ => cat![key.name.clone(), ": ", self.pattern(pat)],
             })
             .collect();

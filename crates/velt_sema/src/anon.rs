@@ -28,7 +28,10 @@ impl Ctx<'_> {
     /// Whether `a` and `b` are object types (anonymous ones, or field-only interfaces') that are
     /// one type for lowering (`crate::readonly`): the same fields, differing at most in
     /// `readonly` or in being a field-only interface. A value converts from one to the other and
-    /// stays the same object.
+    /// stays the same object. Equal fields alone are not enough: a generic type's instance
+    /// (`Box<number>`) and the object type it spells out (`{ v: number }`) are different
+    /// definitions after erasure, so converting between them would be a type mismatch in
+    /// lowering.
     pub fn same_layout(&mut self, a: TyId, b: TyId) -> bool {
         let object = |cx: &Self, t: TyId| match cx.ty.kind(t) {
             TyKind::Adt(d, _) => cx
@@ -157,6 +160,7 @@ impl Ctx<'_> {
                 default: None,
                 default_throws: vec![],
                 private_to: None,
+                inferred_int: false,
             })
             .collect();
         self.adt_mut(d).fields = fields;

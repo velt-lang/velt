@@ -87,6 +87,12 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_float(exp) && self.is_inferred_int(&h) {
             return Ok(self.int_to_float(h, exp));
         }
+        // A JS number held as an integer adapts to the integer type expected (`s.slice(0,
+        // s.length - 1)`, where `slice` takes `i64` and the length is a `usize`).
+        let inferred = self.int_origin(&h) == super::numbers::IntOrigin::Inferred;
+        if self.cx.ty.is_int(exp) && self.cx.ty.is_int(h.ty) && inferred {
+            return Ok(self.int_as(h, exp));
+        }
         Err(h)
     }
 
@@ -209,6 +215,13 @@ impl FnCx<'_, '_> {
             d = d.with_note(format!("`{e}` has only fields, so it is a data type, like `type {e} = {{ … }}`: a class instance is shared by reference and is not one"))
                 .with_note(note);
         }
+        if e == f && self.is_anon(expected) && self.is_anon(found.ty) {
+            // An instance of a generic alias (`Box<number>`) and the object type it spells out
+            // (`{ v: number }`) are separate types today.
+            d = d.with_note(
+                "the two object types have the same fields but come from different declarations (a generic type's instance and a written object type don't convert yet); use one of them for both",
+            );
+        }
         self.cx.error(d);
     }
 
@@ -237,6 +250,12 @@ impl FnCx<'_, '_> {
             "build one from it: `{{ {} }}`, or give `{e}` a method to make it an interface classes implement",
             fields.join(", ")
         ))
+    }
+
+    /// Is `t` an anonymous object type (`{ v: number }`, a generic alias's instance)?
+    fn is_anon(&self, t: TyId) -> bool {
+        matches!(self.cx.ty.kind(t), TyKind::Adt(d, _)
+            if self.cx.adt(*d).is_some_and(|a| a.kind == crate::hir::AdtKind::Anon))
     }
 
     /// Is `found` acceptable where `expected` is required (without conversion)?

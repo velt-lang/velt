@@ -19,8 +19,12 @@ fn diagnostic_wording() {
         "{:?}",
         e
     );
-    let e = errors("console.log(1);");
-    assert!(e[0].contains("expected item"), "{:?}", e);
+    let e = errors("console.log(1);\nfunction main() {}");
+    assert!(
+        e[0].contains("cannot be combined with `function main()`"),
+        "{:?}",
+        e
+    );
     let e = errors("}");
     assert!(e[0].contains("unexpected `}`"), "{:?}", e);
 }
@@ -154,4 +158,28 @@ fn file_id_propagates_into_spans() {
     let (m, d) = parse_file(FileId(7), "function f() { x(; }");
     assert_eq!(m.span.file, FileId(7));
     assert_eq!(d[0].labels[0].span.file, FileId(7));
+}
+
+#[test]
+fn top_level_statements_become_main() {
+    let src = "const xs = [1];\nconst LIMIT = 2;\nfunction f(): i64 {\n  return LIMIT;\n}\nxs.push(f());\nawait g();\n";
+    let (m, d) = parse(src);
+    assert!(d.is_empty(), "{:?}", d);
+    let names: Vec<_> = m
+        .items
+        .iter()
+        .map(|i| match &i.kind {
+            ItemKind::Function(f) => f.sig.name.name.as_str(),
+            ItemKind::Var(_) => "var",
+            _ => "other",
+        })
+        .collect();
+    // `LIMIT` stays (the function mentions it); `xs` moves into the generated `main`.
+    assert_eq!(names, vec!["var", "f", "main"]);
+    let Some(ItemKind::Function(main)) = m.items.last().map(|i| &i.kind) else {
+        panic!()
+    };
+    assert!(main.sig.is_async);
+    assert_eq!(main.sig.name.span.lo, main.sig.name.span.hi);
+    assert_eq!(main.body.stmts.len(), 3);
 }

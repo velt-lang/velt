@@ -92,6 +92,8 @@ impl FnCx<'_, '_> {
             ret,
             bounds: vec![vec![]; slot_names.len().max(1)],
             slot_names,
+            js_numbers: false,
+            rest: false,
         }
     }
 

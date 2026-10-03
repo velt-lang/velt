@@ -489,3 +489,94 @@ fn search_matches_descriptions_and_prints_json() {
     assert_eq!(json["packages"][0]["description"], "Wrap and pad text");
     assert_eq!(json["packages"][0]["keywords"][0], "strings");
 }
+
+/// `.ts` and `.tsx` modules next to `.vlt` ones (#354): imported, run as the root file, tested,
+/// checked with the whole package and formatted. Needs the full compiler pipeline.
+#[test]
+fn ts_and_tsx_modules_in_a_package() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    let manifest = s.read("app/package.vlt").replacen(
+        "version: \"0.1.0\"",
+        "version: \"0.1.0\", jsx: { importSource: \"./ui\" }",
+        1,
+    );
+    s.write("app/package.vlt", &manifest);
+    s.write(
+        "app/src/model.ts",
+        "export function greet(name: string): string {\n  return `Hello, ${name}!`;\n}\n",
+    );
+    s.write(
+        "app/src/card.tsx",
+        "export function Card(props: { title: string }): JSX.Element {\n  return <h1>{props.title}</h1>;\n}\n",
+    );
+    s.write(
+        "app/src/main.vlt",
+        "import { renderToStringSync } from \"velt:jsx/render\";\nimport { Card } from \"./card\";\nimport { greet } from \"./model\";\n\nfunction main() {\n  console.log(greet(\"ts\"));\n  console.log(renderToStringSync(<Card title=\"tsx\" />));\n}\n",
+    );
+    // The package's JSX provider applies to `.tsx` modules.
+    let err = s.fail("app", &["check"]);
+    assert!(
+        err.contains("card.tsx:2:10") && err.contains("from `jsx.importSource` in package.vlt"),
+        "{err}"
+    );
+    std::fs::create_dir_all(s.dir.join("app/ui")).unwrap();
+    s.write(
+        "app/ui/jsx-runtime.vlt",
+        "export * from \"velt:jsx/jsx-runtime\";\n",
+    );
+    s.ok("app", &["check"]);
+    let o = s.velt("app", &["run"]);
+    assert_eq!(
+        String::from_utf8_lossy(&o.stdout),
+        "Hello, ts!\n<h1>tsx</h1>\n",
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+
+    // A `.ts` root file, and a `.test.ts` test file.
+    s.write(
+        "app/src/hello.ts",
+        "import { greet } from \"./model\";\n\nfunction main() {\n  console.log(greet(\"root\"));\n}\n",
+    );
+    let o = s.velt("app", &["run", "src/hello.ts"]);
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "Hello, root!\n");
+    s.write(
+        "app/tests/model.test.ts",
+        "import { greet } from \"../src/model\";\n\nexport function test_greet() {\n  assertEq(greet(\"a\"), \"Hello, a!\");\n}\n",
+    );
+    // `velt test` runs `model.test.ts` and `model.test.vlt` side by side.
+    s.write(
+        "app/tests/model.test.vlt",
+        "export function test_vlt() {\n  assertEq(1, 1);\n}\n",
+    );
+    let o = s.velt("app", &["test"]);
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        o.status.success() && stdout.contains("ok test_greet") && stdout.contains("ok test_vlt"),
+        "{stdout}"
+    );
+    s.ok("app", &["fmt", "--check"]);
+    // Whole-package `velt check` reports files with the same module path, whatever imports them.
+    s.write("app/src/dup.vlt", "export function d() {}\n");
+    s.write("app/src/dup.ts", "export function d() {}\n");
+    let err = s.fail("app", &["check"]);
+    for msg in [
+        "`src/dup.ts` and `src/dup.vlt` have the same module path",
+        "`tests/model.test.ts` and `tests/model.test.vlt` have the same module path",
+    ] {
+        assert!(err.contains(msg), "missing `{msg}` in:\n{err}");
+    }
+    let out = s.velt("app", &["check", "--json"]);
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json["errors"], 2, "{json}");
+    for file in ["src/dup.ts", "tests/model.test.vlt"] {
+        std::fs::remove_file(s.dir.join("app").join(file)).unwrap();
+    }
+    s.ok("app", &["check"]);
+
+    // Whole-package `velt check` reports a `.ts` module nothing imports.
+    s.write("app/src/extra.ts", BAD);
+    let err = s.fail("app", &["check"]);
+    assert!(err.contains("extra.ts:2:"), "{err}");
+}

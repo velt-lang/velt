@@ -1,6 +1,6 @@
 record_key_dispatch.vlt:33:28: error: `i64` cannot be a `Record` key
 record keys are `string`, a union of string literals or a string enum; use `Map<K, V>` for other keys
 required because `G.m` uses it as a `Record` key
-record_key_dispatch.vlt:34:23: error: `bool` cannot be a `Record` key
+record_key_dispatch.vlt:34:23: error: `boolean` cannot be a `Record` key
 record keys are `string`, a union of string literals or a string enum; use `Map<K, V>` for other keys
 required because `H.m` uses it as a `Record` key

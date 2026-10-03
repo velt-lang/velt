@@ -79,7 +79,9 @@ From highest to lowest precedence, with JavaScript's associativity:
 | `&&` | |
 | `\|\|` `??` | |
 | `?:` | |
-| `=` `+=` `-=` `*=` `/=` `%=` `**=` `<<=` `>>=` `>>>=` `&=` `\|=` `^=` | assignment |
+| `=` `+=` `-=` `*=` `/=` `%=` `**=` `<<=` `>>=` `>>>=` `&=` `\|=` `^=` `&&=` `\|\|=` `??=` | assignment |
 | `=>` | arrow function |
 
-The logical assignments `&&=`, `||=` and `??=` parse but are rejected ("not supported yet").
+The logical assignments `&&=`, `||=` and `??=` assign when `&&`, `||` or `??` would take their
+right side: `x ??= d` is `x = x ?? d` ([Types](types.md#null)). A postfix `!` after an
+expression on the same line is the non-null assertion (`m.get(k)!`).

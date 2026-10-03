@@ -1,7 +1,8 @@
-//! Ordering operators on generic params: with `T extends Comparable<T>` (the prelude's builtin
-//! ordering interface, directly or through an interface extending it), `a < b` on two `T`s is
-//! `a.compareTo(b) < 0` — a `Callee::ParamMethod` call with both operands borrowed, compared
-//! with `0` (likewise `<=`, `>`, `>=`). No HIR node of its own.
+//! Ordering operators on `Comparable` values: with `T extends Comparable<T>` (the prelude's
+//! builtin ordering interface, directly or through an interface extending it), or a class or
+//! struct implementing it (`Date`, `DateTime`), `a < b` is `a.compareTo(b) < 0` — a
+//! `Callee::ParamMethod` call with both operands borrowed, compared with `0` (likewise `<=`, `>`,
+//! `>=`). No HIR node of its own.
 
 use velt_common::Span;
 
@@ -12,9 +13,10 @@ use crate::hir::{self, BinOp, Callee, ExprKind as H, Lit, PassMode, TyId, TyKind
 use crate::known::COMPARE_TO;
 
 impl FnCx<'_, '_> {
-    /// The `Comparable<t>` bound of type param `t` and its `compareTo` slot, if `t` has it.
+    /// The `Comparable<t>` bound of `t` (a type param, class or struct) and its `compareTo` slot,
+    /// if `t` has it. Numbers and strings compare with their own operators.
     fn comparable_slot(&mut self, t: TyId) -> Option<(Bound, u32)> {
-        if !matches!(self.cx.ty.kind(t), TyKind::Param(_)) {
+        if !matches!(self.cx.ty.kind(t), TyKind::Param(_) | TyKind::Adt(..)) {
             return None;
         }
         let iface = self.cx.comparable_iface()?;
@@ -34,7 +36,7 @@ impl FnCx<'_, '_> {
         Some((b, slot as u32))
     }
 
-    /// Is `lt op rt` an ordering on a Comparable type param? Its bound and `compareTo` slot.
+    /// Is `lt op rt` an ordering on a Comparable type? Its bound and `compareTo` slot.
     pub(super) fn param_ordering(&mut self, op: BinOp, lt: TyId, rt: TyId) -> Option<(Bound, u32)> {
         let ordering = matches!(op, BinOp::Lt | BinOp::LtEq | BinOp::Gt | BinOp::GtEq);
         if !ordering || lt != rt {

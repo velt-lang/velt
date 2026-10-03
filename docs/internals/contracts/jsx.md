@@ -18,6 +18,10 @@ code only. A file that never uses JSX does not load the runtime. A relative prag
 (`./ui`) is relative to the file; a relative `importSource` in package.vlt to the package root. A
 name `JSX` the module declares or imports itself wins over the implicit namespace.
 
+JSX is allowed in `.vlt` and `.tsx` modules; in a `.ts` module it is a loader error ("JSX is not
+allowed in a `.ts` file", at the first element, with a note to rename the file to `.tsx`), as in
+TypeScript. The provider is chosen the same way for every kind of file.
+
 ## Why this differs from TypeScript's `react-jsx` runtime
 TS calls one `jsx(type, props, key)` for both tags and components and lets the runtime iterate
 `props`. Velt has no overloads and no runtime reflection over object fields (objects have

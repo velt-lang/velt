@@ -80,6 +80,9 @@ Decisions and their rationale, including what is still planned:
   hybrid promises, the staged move to shared references, cycles, the JS fidelity decisions.
 - [TypeScript alignment](design/ts-alignment.md): inferred mutation, discriminated unions, typed
   errors, `extend`.
+- [TypeScript compatibility, round 1](design/ts-compat.md): JS numbers from the standard
+  library, scripts, callback indexes, arrow defaults, rest parameters, `x!`, `??=`, destructuring
+  defaults, `Date`.
 - [Hot reload](design/hot-reload.md): `velt dev`'s supervisor, JIT host and hot swap.
 - [TSX for server-side rendering](design/tsx.md): the planned JSX support.
 - [`Record<K, V>`](design/record.md): TypeScript object syntax over an insertion-ordered

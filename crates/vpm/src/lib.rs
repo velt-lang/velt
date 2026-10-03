@@ -27,6 +27,7 @@ pub mod remote;
 pub mod resolve;
 pub mod scaffold;
 pub mod search;
+pub mod sources;
 pub mod yank;
 
 pub use graph::PackageGraph;

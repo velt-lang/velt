@@ -17,6 +17,11 @@ impl<'a> Parser<'a> {
         let kind = match self.peek() {
             Tok::Template(..) => self.parse_template()?,
             Tok::Lt if self.jsx_starts_here() => {
+                if self.plain_ts {
+                    if let Some(operand) = self.try_type_assertion()? {
+                        return Ok(operand);
+                    }
+                }
                 self.relex_jsx();
                 ExprKind::Jsx(Box::new(self.parse_jsx_element()?))
             }

@@ -1,4 +1,4 @@
-record_key_errors.vlt:17:15: error: `bool` cannot be a `Record` key
+record_key_errors.vlt:17:15: error: `boolean` cannot be a `Record` key
 record keys are `string`, a union of string literals or a string enum; use `Map<K, V>` for other keys
 record_key_errors.vlt:28:10: error: cannot build a `Record<K, ...>` from an object literal without a spread: the key type `K` is a type parameter
 the key type may be a union of string literals or a string enum, whose records always have every key; build or change the record where its key type is known, or use `Record<string, V>`
@@ -7,7 +7,7 @@ record_key_errors.vlt:40:3: error: cannot `delete` from a `Record<K, ...>`: the 
 record_key_errors.vlt:44:24: error: `i64` cannot be a `Record` key
 record_key_errors.vlt:45:13: error: `f64` cannot be a `Record` key
 required because `dec` uses it as a `Record` key
-record_key_errors.vlt:46:15: error: `bool` cannot be a `Record` key
+record_key_errors.vlt:46:15: error: `boolean` cannot be a `Record` key
 record_key_errors.vlt:47:9: error: `u8` cannot be a `Record` key
 record_key_errors.vlt:48:9: error: `i64` cannot be a `Record` key
 record_key_errors.vlt:50:5: error: `__delete` is internal to `Record`: a record has no methods of its own

@@ -222,7 +222,7 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
             "a type with private fields (such as a runtime handle) has no JSON form; convert it to a type with public fields first",
         ),
         None => d.with_note(
-            "JSON supports numbers, bool, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`",
+            "JSON supports numbers, boolean, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`",
         ),
     };
     if matches!(cx.ty.kind(bad), TyKind::Adt(d, _) if Some(*d) == cx.prelude_adt("Map")) {
