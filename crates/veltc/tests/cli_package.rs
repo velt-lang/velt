@@ -224,6 +224,79 @@ fn check_validates_the_entry_main_but_not_other_modules() {
 }
 
 #[test]
+fn check_accepts_an_unimported_main_next_to_a_custom_entry() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    let manifest = s.read("app/package.vlt").replacen(
+        "version: \"0.1.0\"",
+        "version: \"0.1.0\", entry: \"src/app.vlt\"",
+        1,
+    );
+    s.write("app/package.vlt", &manifest);
+    s.write("app/src/app.vlt", "function main() {}\n");
+    // `src/main.vlt` (from `velt new`) and `src/main/index.vlt` would both be module `main`.
+    std::fs::create_dir_all(s.dir.join("app/src/main")).unwrap();
+    s.write("app/src/main/index.vlt", "export function f() {}\n");
+    s.ok("app", &["build"]);
+    s.ok("app", &["check"]);
+    s.write("app/src/main.vlt", BAD);
+    let err = s.fail("app", &["check"]);
+    let at = format!("{}:2:", Path::new("src").join("main.vlt").display());
+    assert!(err.contains(&at), "missing `{at}` in:\n{err}");
+}
+
+#[test]
+fn check_accepts_a_module_named_like_a_dependency() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    s.ok("", &["new", "util", "--lib"]);
+    s.write(
+        "util/src/lib.vlt",
+        "export function u(): i64 {\n  return 1;\n}\n",
+    );
+    s.ok("app", &["add", "util", "--path", "../util"]);
+    s.write("app/src/util.vlt", "export function local() {}\n");
+    s.write(
+        "app/tests/u.test.vlt",
+        "import { u } from \"util\";\nexport function test_u() {\n  assertEq(u(), 1);\n}\n",
+    );
+    s.write(
+        "app/src/main.vlt",
+        "import { u } from \"util\";\nfunction main() {\n  console.log(`${u()}`);\n}\n",
+    );
+    s.ok("app", &["build"]);
+    s.ok("app", &["check"]);
+    // Without the entry importing it, `src/util.vlt` is loaded before the test's `util`.
+    s.write("app/src/main.vlt", "function main() {}\n");
+    s.ok("app", &["check"]);
+    s.ok("app", &["test"]);
+}
+
+#[test]
+fn check_checks_modules_under_a_std_directory() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    std::fs::create_dir_all(s.dir.join("app/src/std")).unwrap();
+    s.write("app/src/std/x.vlt", "export function x() {}\n");
+    s.ok("app", &["build"]);
+    s.ok("app", &["check"]);
+    s.write("app/src/std/x.vlt", BAD);
+    let err = s.fail("app", &["check"]);
+    let at = format!("{}:2:", Path::new("std").join("x.vlt").display());
+    assert!(err.contains(&at), "missing `{at}` in:\n{err}");
+}
+
+#[cfg(unix)]
+#[test]
+fn check_does_not_follow_symlinked_directories() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    std::os::unix::fs::symlink("..", s.dir.join("app/src/up")).unwrap();
+    s.write("app/examples.vlt", BAD);
+    s.ok("app", &["check"]);
+}
+
+#[test]
 fn a_missing_custom_entry_is_named_without_calling_the_package_a_library() {
     let s = sandbox();
     s.ok("", &["new", "util", "--lib"]);

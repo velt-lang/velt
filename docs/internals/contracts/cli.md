@@ -92,14 +92,17 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   that file and its imports (the file's package, if any, supplies dependencies); the root module
   need not define `main` (a library module; every function body is still checked), a `main` that
   is there is validated as for `build`, which, like `run`, still requires one. Without a file, in
-  a package: every `.vlt` module under `src/` and `tests/` (recursively, skipping `target/` and
-  hidden directories; no other directory), loaded together in one front-end run with the
-  package's root module: the entry (`package.entry`, default `src/main.vlt`), which must define
-  a valid `main`, or, when there is no configured entry and no `src/main.vlt`, `src/lib.vlt` as a
-  library module. Every other module is a library module. A configured entry that is missing is
-  an error naming it (as for `build`). Package dependencies are installed. Every diagnostic the
-  front end reports appears once, even for a module several roots import (all files' syntax
-  errors; if there are none, all type errors). Exit 0 without errors (warnings allowed), 1 with errors, 101 on an internal error.
+  a package: every `.vlt` module under `src/` and `tests/` (recursively, skipping `target/`,
+  hidden and symlinked directories; no other directory), loaded together in one front-end run
+  with the package's root module: the entry (`package.entry`, default `src/main.vlt`), which must
+  define a valid `main`, or, when there is no configured entry and no `src/main.vlt`,
+  `src/lib.vlt` as a library module. Every other module is a library module; one whose module
+  path is taken or reserved (`src/std/x.vlt`, a `src/util.vlt` next to a dependency `util`) gets
+  a name no import can write instead of an error (`build` does not load it). A configured entry
+  that is missing is an error naming it (as for `build`). Package dependencies are installed.
+  Every diagnostic the front end reports appears once, even for a module several roots import
+  (all files' syntax errors; if there are none, all type errors). Exit 0 without errors (warnings
+  allowed), 1 with errors, 101 on an internal error.
   Diagnostics go to stderr as for `build`; `--json` prints instead one JSON document on stdout:
   `{"diagnostics": [{"severity": "error"|"warning"|"note", "message", "location", "labels":
   [{"location", "message"}], "notes": [string]}], "errors": n, "warnings": n}` where a
@@ -167,10 +170,10 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - `test --watch`: runs the tests, then again after every change to a file the test builds read,
   a test file or the manifest/lockfile (each run discovers test files anew). Runs until
   interrupted.
-- `test`: finds `*.test.vlt`; every `export function test_*()` (no params) is a test
-  (additive: `export async function test_*()` too; the harness awaits it). Prints
-  `ok <name>` / `FAILED <name>` and a summary; exit 1 on any failure. Test binaries in
-  `<pkg or cwd>/target/velt/test/`.
+- `test`: finds `*.test.vlt` (recursively, skipping `target/`, hidden and symlinked directories);
+  every `export function test_*()` (no params) is a test (additive: `export async function
+  test_*()` too; the harness awaits it). Prints `ok <name>` / `FAILED <name>` and a summary; exit
+  1 on any failure. Test binaries in `<pkg or cwd>/target/velt/test/`.
 - `new` creates `<name>/package.vlt`, `src/main.vlt` (or `src/lib.vlt` with `--lib`), `.gitignore`.
 - **Templates** (additive, tooling): `new --template <t>` (default `app`; `--lib` = `--template
   lib`) also writes `README.md` and `tests/*.test.vlt`; every template builds, passes `velt test`

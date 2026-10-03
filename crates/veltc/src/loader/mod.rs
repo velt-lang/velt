@@ -73,8 +73,11 @@ pub fn load_program(
 /// [`load_program`] plus `extra_roots`: further files loaded as if the root imported them
 /// (`velt check` in a package loads every module under `src/` and `tests/`), so modules they
 /// share with the root and with each other are loaded once. Their canonical paths are relative
-/// to the root's directory, like the root's own relative imports. An extra root that cannot be
-/// read, or whose module path is taken or reserved, is reported in `diags`.
+/// to the root's directory, like the root's own relative imports. A module loaded for an extra
+/// root whose module path is taken or reserved gets a fallback path no import can name
+/// ([`Loader::fallback_name`]): those paths differ from the ones `velt build` and `velt test`
+/// give the module, so a clash here is not one there. An extra root that cannot be read is
+/// reported in `diags`, located in that file.
 pub fn load_with_roots(
     sm: &mut SourceMap,
     root: &Path,
@@ -95,6 +98,7 @@ pub fn load_with_roots(
         origins: vec![],
         by_file: HashMap::new(),
         std_key: opts.std_root.as_deref().map(file_key),
+        extra_phase: false,
     };
     if let Some(std) = &opts.std_root {
         for file in prelude_files(std) {
@@ -112,6 +116,7 @@ pub fn load_with_roots(
     let root_index = loader.add(root, file_key(root), src, "main".into(), origin.clone());
     let mut queue: VecDeque<usize> = (0..loader.modules.len()).collect();
     loader.resolve_all(&mut queue);
+    loader.extra_phase = true;
     for file in extra_roots {
         loader.add_extra_root(file, &origin, &mut queue);
         loader.resolve_all(&mut queue);
@@ -135,6 +140,8 @@ struct Loader<'a, 'o> {
     by_file: HashMap<PathBuf, usize>,
     /// [`file_key`] of the std root: std modules are exactly the files below it.
     std_key: Option<PathBuf>,
+    /// Loading extra roots: a taken or reserved module path gets a fallback instead of an error.
+    extra_phase: bool,
 }
 
 impl Loader<'_, '_> {
@@ -208,29 +215,43 @@ impl Loader<'_, '_> {
         if self.by_file.contains_key(&key) {
             return;
         }
-        let shown = file.display();
-        let canonical = origin.canonical(file);
-        let taken = self.modules.iter().any(|m| m.path == canonical);
-        let problem = if is_std_path(&canonical) {
-            Some(format!("module `{shown}` would have the module path `{canonical}`, which is reserved for the standard library (rename its `std` directory)"))
-        } else if taken {
-            Some(format!("module `{shown}` has the same module path `{canonical}` as another module (rename the file)"))
+        let natural = origin.canonical(file);
+        let canonical = if is_std_path(&natural) || self.is_taken(&natural) {
+            self.fallback_name(&natural)
         } else {
-            None
+            natural
         };
-        if let Some(msg) = problem {
-            self.error(msg, vec![], Span::DUMMY);
-            return;
-        }
         match self.read(file) {
             Ok(src) => {
                 let index = self.add(file, key, src, canonical, origin.clone());
                 queue.push_back(index);
             }
             Err(e) => {
-                self.error(format!("cannot read `{shown}`: {e}"), vec![], Span::DUMMY);
+                // Located in the file itself (registered empty), so the location names it.
+                let shown = shown_in_package(file);
+                let span = Span::new(self.sm.add(file, String::new()), 0, 0);
+                self.error(format!("cannot read `{shown}`: {e}"), vec![], span);
             }
         }
+    }
+
+    /// Whether a loaded module has module path `path`.
+    fn is_taken(&self, path: &str) -> bool {
+        self.modules.iter().any(|m| m.path == path)
+    }
+
+    /// A unique module path for a module whose natural path `natural` is taken or reserved:
+    /// `#natural` (then `#natural#2`, …). Imports resolve to files, never to these names, and
+    /// diagnostics show the file's path, so the name appears nowhere a user writes or reads it.
+    fn fallback_name(&self, natural: &str) -> String {
+        let base = format!("#{natural}");
+        let mut name = base.clone();
+        let mut n = 2;
+        while self.is_taken(&name) {
+            name = format!("{base}#{n}");
+            n += 1;
+        }
+        name
     }
 
     /// Resolve every import of module `index`, loading new modules (queued for their own imports).
@@ -348,7 +369,13 @@ impl Loader<'_, '_> {
             .unwrap_or_else(|| target.origin.canonical(&file));
         // `std/…` names the standard library: a user module with such a path (a `./std/`
         // directory, a path alias into one) would collide with it.
-        if !matches!(target.origin, Origin::Std(_)) && is_std_path(&canonical) {
+        let reserved = !matches!(target.origin, Origin::Std(_)) && is_std_path(&canonical);
+        let canonical = if self.extra_phase && (reserved || self.is_taken(&canonical)) {
+            self.fallback_name(&canonical)
+        } else {
+            canonical
+        };
+        if reserved && !self.extra_phase {
             let fix = if aliased {
                 "change the `paths` alias"
             } else {
@@ -359,7 +386,7 @@ impl Loader<'_, '_> {
             );
             return self.error(msg, vec![], span);
         }
-        if self.modules.iter().any(|m| m.path == canonical) {
+        if self.is_taken(&canonical) {
             let msg = format!("module `{spec}` has the same module path `{canonical}` as another module (rename the file)");
             return self.error(msg, vec![], span);
         }
@@ -421,6 +448,16 @@ impl Loader<'_, '_> {
 /// Whether canonical module path `path` is in the standard library's namespace (`std`, `std/…`).
 fn is_std_path(path: &str) -> bool {
     path == "std" || path.starts_with("std/")
+}
+
+/// `file` as shown in a message: relative to its package's root (the directory with
+/// `package.vlt`), or as given outside a package.
+fn shown_in_package(file: &Path) -> String {
+    let dir = file.parent().unwrap_or(Path::new(""));
+    match vpm::manifest::find_package_root(dir) {
+        Some(root) => vpm::relpath::relative(&vpm::relpath::absolute(file), &root),
+        None => file.display().to_string(),
+    }
 }
 
 /// Identity of a file for deduplication (canonical path when it exists).

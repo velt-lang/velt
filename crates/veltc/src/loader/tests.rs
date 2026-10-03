@@ -520,21 +520,47 @@ fn extra_roots_load_once_after_the_root_program() {
 }
 
 #[test]
-fn extra_roots_with_taken_paths_or_missing_files_are_reported() {
+fn extra_roots_with_taken_or_reserved_paths_get_fallback_names() {
     let t = Tree::new();
+    t.write("package.vlt", "");
     let root = t.write("src/app.vlt", "function main() {}\n");
     let main = t.write("src/main.vlt", "");
     let std = t.write("src/std/x.vlt", "");
+    let b = t.write(
+        "src/b.vlt",
+        "import { f } from \"./main\";\nimport { g } from \"./main/index\";\n",
+    );
+    t.write("src/main/index.vlt", "");
     let mut sm = SourceMap::new();
     let mut diags = vec![];
-    let extra = [main, std, t.path("src/gone.vlt")];
+    let extra = [main.clone(), std, b];
+    let l = load_with_roots(&mut sm, &root, &extra, LoadOptions::default(), &mut diags).unwrap();
+    assert!(diags.is_empty(), "{:?}", messages(&diags));
+    assert_eq!(paths(&l), ["main", "#main", "#std/x", "b", "#main#2"]);
+    // The relative import finds the extra root by its file, under its fallback name.
+    let b_imports: Vec<String> = imports(&l, "b").into_iter().map(|(_, p)| p).collect();
+    assert_eq!(b_imports, ["#main", "#main#2"]);
+    // Diagnostics show the file, not the name.
+    assert_eq!(sm.get(l.modules[1].file).path, main);
+}
+
+#[test]
+fn unreadable_extra_roots_are_reported_in_their_file() {
+    let t = Tree::new();
+    t.write("package.vlt", "");
+    let root = t.write("src/main.vlt", "function main() {}\n");
+    let gone = t.path("src/gone.vlt");
+    let mut sm = SourceMap::new();
+    let mut diags = vec![];
+    let extra = [gone.clone()];
     let l = load_with_roots(&mut sm, &root, &extra, LoadOptions::default(), &mut diags).unwrap();
     assert_eq!(paths(&l), ["main"]);
     let msgs = messages(&diags);
-    assert!(msgs[0].contains("same module path `main`"), "{msgs:?}");
+    assert_eq!(msgs.len(), 1, "{msgs:?}");
     assert!(
-        msgs[1].contains("reserved for the standard library"),
+        msgs[0].starts_with("cannot read `src/gone.vlt`: "),
         "{msgs:?}"
     );
-    assert!(msgs[2].starts_with("cannot read"), "{msgs:?}");
+    let span = diags[0].labels[0].span;
+    assert_eq!(sm.get(span.file).path, gone);
 }

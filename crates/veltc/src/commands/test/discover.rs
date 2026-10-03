@@ -12,8 +12,8 @@ use velt_syntax::ast;
 /// Suffix of test files.
 pub const TEST_SUFFIX: &str = ".test.vlt";
 
-/// Test files under `path` (recursively, skipping `target/` and hidden directories), sorted. An
-/// explicitly named file is used even without the `.test.vlt` suffix.
+/// Test files under `path` (recursively, skipping `target/`, hidden and symlinked directories),
+/// sorted. An explicitly named file is used even without the `.test.vlt` suffix.
 pub fn find_test_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     if path.is_file() {
         return Ok(vec![path.to_path_buf()]);
@@ -24,8 +24,9 @@ pub fn find_test_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     files_with_suffix(path, TEST_SUFFIX)
 }
 
-/// Files under `dir` whose names end in `suffix` (recursively, skipping `target/` and hidden
-/// directories), sorted.
+/// Files under `dir` whose names end in `suffix` (recursively, skipping `target/`, hidden and
+/// symlinked directories), sorted. A symlinked directory can lead back up (`src/up -> ..`),
+/// which would walk the package again, or forever.
 pub fn files_with_suffix(dir: &Path, suffix: &str) -> Result<Vec<PathBuf>, String> {
     let mut out = vec![];
     collect(dir, suffix, &mut out)?;
@@ -40,7 +41,8 @@ fn collect(dir: &Path, suffix: &str, out: &mut Vec<PathBuf>) -> Result<(), Strin
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         if path.is_dir() {
-            if name != "target" && !name.starts_with('.') {
+            let link = entry.file_type().is_ok_and(|t| t.is_symlink());
+            if !link && name != "target" && !name.starts_with('.') {
                 collect(&path, suffix, out)?;
             }
         } else if name.ends_with(suffix) {
@@ -124,6 +126,27 @@ mod tests {
             1
         );
         assert!(find_test_files(&tmp.path().join("nope")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_directories_are_not_walked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sub = tmp.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("a.test.vlt"), "").unwrap();
+        std::fs::write(tmp.path().join("b.vlt"), "").unwrap();
+        std::os::unix::fs::symlink("..", sub.join("up")).unwrap();
+        std::os::unix::fs::symlink("b.vlt", tmp.path().join("link.vlt")).unwrap();
+        let found = files_with_suffix(&sub, ".vlt").unwrap();
+        assert_eq!(found, [sub.join("a.test.vlt")]);
+        // A symlinked file is still a file.
+        let found = files_with_suffix(tmp.path(), ".vlt").unwrap();
+        let link = tmp.path().join("link.vlt");
+        assert_eq!(
+            found,
+            [tmp.path().join("b.vlt"), link, sub.join("a.test.vlt")]
+        );
     }
 
     #[test]
