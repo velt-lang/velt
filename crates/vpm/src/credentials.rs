@@ -167,33 +167,10 @@ pub fn check_transport(url: &str, what: &str) -> Result<(), String> {
 }
 
 /// Whether `url` is `https://`, or plain `http://` to this machine (`localhost` or a loopback
-/// address). The host is everything between the scheme and the first `/`, as the HTTP client
-/// reads it; one containing `@`, `?`, `#` or `\` is not loopback (another parser could see
-/// `localhost` in `http://localhost?.attacker.example/`, the client connects elsewhere).
+/// address). The host is read by [`velt_http::url_host`], the HTTP client's own parser, so the
+/// rule and the connection agree on it; a URL it refuses is neither.
 pub fn is_tls_or_loopback(url: &str) -> bool {
-    let scheme_is = |scheme: &str| {
-        url.get(..scheme.len())
-            .is_some_and(|s| s.eq_ignore_ascii_case(scheme))
-    };
-    if scheme_is("https://") {
-        return true;
-    }
-    if !scheme_is("http://") {
-        return false;
-    }
-    let rest = &url["http://".len()..];
-    let authority = rest.split('/').next().unwrap_or("");
-    if authority.contains(['@', '?', '#', '\\']) {
-        return false;
-    }
-    let host = match authority.strip_prefix('[') {
-        Some(v6) => v6.split(']').next().unwrap_or(v6),
-        None => authority.split(':').next().unwrap_or(authority),
-    };
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback())
+    velt_http::url_host(url).is_ok_and(|h| h.tls || h.is_loopback())
 }
 
 #[cfg(test)]
