@@ -48,7 +48,13 @@ impl FnCx<'_, '_> {
     }
 
     pub fn stmt(&mut self, s: &ast::Stmt, out: &mut Vec<hir::Stmt>) {
+        // `super(args)` only as the constructor's first statement, on its own: never inside a
+        // block, `if`, `try` or loop, where a path could skip it (and the field initializers
+        // that run right after it) or run it twice.
+        self.f.super_ok = self.f.super_ok && is_super_call(s);
+        self.f.stmt_depth += 1;
         self.stmt_inner(s, out);
+        self.f.stmt_depth -= 1;
         self.f.super_ok = false;
     }
 
@@ -436,4 +442,12 @@ fn is_place(e: &ast::Expr) -> bool {
         ast::ExprKind::Paren(inner) => is_place(inner),
         _ => false,
     }
+}
+
+/// Is `s` the statement `super(args);`?
+fn is_super_call(s: &ast::Stmt) -> bool {
+    let ast::StmtKind::Expr(e) = &s.kind else {
+        return false;
+    };
+    matches!(&e.kind, ast::ExprKind::Call { callee, .. } if matches!(callee.kind, ast::ExprKind::Super))
 }

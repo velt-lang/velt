@@ -4,20 +4,18 @@
 use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
-use crate::defs::ThrowSrc;
+use crate::defs::{FnKind, ThrowSrc};
 use crate::hir::{self, Callee, ExprKind as H, PassMode, TyId, TyKind};
-use velt_common::Span;
+use velt_common::{Diagnostic, Span};
 
 impl FnCx<'_, '_> {
     /// `super(args)`: the base class constructor on `this`, first statement of a constructor.
     pub(super) fn super_ctor_call(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
         let base = self.this_base();
-        let ok = self.f.super_ok;
+        // Taken: a `super(...)` among the arguments is not the first statement.
+        let ok = std::mem::take(&mut self.f.super_ok);
         let Some(base) = base.filter(|_| ok) else {
-            self.cx.err(
-                "`super(...)` must be the first statement of a constructor of a class that `extends` another",
-                span,
-            );
+            self.misplaced_super(base.is_some(), span);
             self.check_args_loose(args);
             return self.error_expr(span);
         };
@@ -57,6 +55,34 @@ impl FnCx<'_, '_> {
             args: all,
         };
         self.mk(kind, self.cx.ty.unit, span)
+    }
+
+    /// The error for a `super(args)` that is not the first statement of a derived class's
+    /// constructor, saying where it is.
+    fn misplaced_super(&mut self, derived: bool, span: Span) {
+        let msg = if self.f.kind == FnKind::Closure {
+            "`super(...)` cannot be called inside a closure; call it as the first statement of the constructor"
+        } else if !derived {
+            "`super(...)` is only available in a constructor of a class that `extends` another"
+        } else if self.f.kind != FnKind::Ctor {
+            "`super(...)` can only be called by the constructor itself, not by a closure or method"
+        } else if self.f.super_called {
+            "`super(...)` is called once, as the first statement of the constructor"
+        } else if self.f.stmt_depth > 1 {
+            "`super(...)` must be the first statement of the constructor, not inside a block, `if`, `try`, `switch` or loop"
+        } else {
+            "`super(...)` must be the first statement of the constructor, as a statement of its own"
+        };
+        let d = Diagnostic::error(msg, span);
+        let d = match derived && self.f.kind == FnKind::Ctor {
+            true => d.with_note(
+                "the base constructor and this class's field initializers run there, exactly once on every path",
+            ),
+            false => d,
+        };
+        self.cx.error(d);
+        // Reported here: not again as a missing call.
+        self.f.super_called |= self.f.kind == FnKind::Ctor;
     }
 
     /// `super.method(args)`: the base class's implementation, called directly.

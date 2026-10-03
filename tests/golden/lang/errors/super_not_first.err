@@ -1,0 +1,23 @@
+super_not_first.vlt:10:7: error: `super(...)` must be the first statement of the constructor, not inside a block, `if`, `try`, `switch` or loop
+  = note: the base constructor and this class's field initializers run there, exactly once on every path
+super_not_first.vlt:18:7: error: `super(...)` must be the first statement of the constructor, not inside a block, `if`, `try`, `switch` or loop
+  = note: the base constructor and this class's field initializers run there, exactly once on every path
+super_not_first.vlt:27:7: error: `super(...)` must be the first statement of the constructor, not inside a block, `if`, `try`, `switch` or loop
+  = note: the base constructor and this class's field initializers run there, exactly once on every path
+super_not_first.vlt:34:7: error: `super(...)` must be the first statement of the constructor, not inside a block, `if`, `try`, `switch` or loop
+  = note: the base constructor and this class's field initializers run there, exactly once on every path
+super_not_first.vlt:42:9: error: `super(...)` must be the first statement of the constructor, not inside a block, `if`, `try`, `switch` or loop
+  = note: the base constructor and this class's field initializers run there, exactly once on every path
+super_not_first.vlt:49:7: error: `super(...)` must be the first statement of the constructor, not inside a block, `if`, `try`, `switch` or loop
+  = note: the base constructor and this class's field initializers run there, exactly once on every path
+super_not_first.vlt:58:7: error: `super(...)` cannot be called inside a closure; call it as the first statement of the constructor
+super_not_first.vlt:65:5: error: `super(...)` must be the first statement of the constructor, as a statement of its own
+  = note: the base constructor and this class's field initializers run there, exactly once on every path
+super_not_first.vlt:71:5: error: `super(...)` is called once, as the first statement of the constructor
+  = note: the base constructor and this class's field initializers run there, exactly once on every path
+super_not_first.vlt:77:15: error: `super(...)` must be the first statement of the constructor, as a statement of its own
+  = note: the base constructor and this class's field initializers run there, exactly once on every path
+super_not_first.vlt:83:11: error: `super(...)` is called once, as the first statement of the constructor
+  = note: the base constructor and this class's field initializers run there, exactly once on every path
+super_not_first.vlt:88:5: error: `super(...)` is only available in a constructor of a class that `extends` another
+super_not_first.vlt:96:5: error: `super(...)` can only be called by the constructor itself, not by a closure or method

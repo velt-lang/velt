@@ -160,9 +160,12 @@ pub(crate) struct Frame {
     /// Throw sources of the enclosing `try` bodies (innermost last).
     pub tries: Vec<Vec<ThrowSrc>>,
     pub uncaught: Vec<ThrowSrc>,
-    /// `super(...)` is allowed here (first statement of a constructor).
+    /// `super(...)` is allowed here: the first statement of a constructor, when that statement
+    /// is the call itself (`stmt` narrows it; the call takes it).
     pub super_ok: bool,
     pub super_called: bool,
+    /// How many statements enclose the one being checked (1 at the body's root).
+    pub stmt_depth: u32,
     /// Field paths that conditions narrow (`field_narrow`).
     pub field_tokens: Vec<field_narrow::FieldToken>,
     /// `const`s bound by reference (`const_borrow`).
@@ -189,6 +192,7 @@ impl Frame {
             uncaught: vec![],
             super_ok: false,
             super_called: false,
+            stmt_depth: 0,
             field_tokens: vec![],
             const_refs: Default::default(),
         }

@@ -1,0 +1,99 @@
+// `super(args)` runs the base constructor and this class's field initializers, so it must be the
+// constructor's first statement, on its own: never on a path that could skip it or run it twice (#330).
+class Oops extends Error {}
+class Item { v: i64 = 7; }
+class B { constructor(n: i64) throws Oops { if (n < 0) { throw new Oops("b"); } } }
+class InIf extends B {
+  it: Item = new Item();
+  constructor(f: bool) {
+    if (f) {
+      super(1);
+    }
+  }
+}
+class InTry extends B {
+  it: Item = new Item();
+  constructor(n: i64) {
+    try {
+      super(n);
+    } catch (e) {
+      console.log("caught");
+    }
+  }
+}
+class InLoop extends B {
+  constructor() {
+    for (let i = 0; i < 2; i++) {
+      super(i);
+    }
+  }
+}
+class InBlock extends B {
+  constructor() {
+    {
+      super(1);
+    }
+  }
+}
+class InSwitch extends B {
+  constructor(n: i64) {
+    switch (n) {
+      default:
+        super(n);
+    }
+  }
+}
+class InWhile extends B {
+  constructor() {
+    while (true) {
+      super(1);
+      break;
+    }
+  }
+}
+class InClosure extends B {
+  constructor() {
+    super(1);
+    const f = (): void => {
+      super(2);
+    };
+  }
+}
+class Later extends B {
+  constructor() {
+    console.log("first");
+    super(1);
+  }
+}
+class Twice extends B {
+  constructor() {
+    super(1);
+    super(2);
+  }
+}
+class InExpr extends B {
+  n: i64;
+  constructor() {
+    const u = super(1);
+    this.n = 1;
+  }
+}
+class InArgs extends B {
+  constructor() {
+    super(super(1));
+  }
+}
+class NoBase {
+  constructor() {
+    super();
+  }
+}
+class Method extends B {
+  constructor() {
+    super(1);
+  }
+  m(): void {
+    super(1);
+  }
+}
+function main() {}
