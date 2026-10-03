@@ -53,9 +53,9 @@ conversion is an `Upcast`. Two limits:
 
 - **Recursion through a direct field** (`next?: Node`) has infinite size, as for a struct: an
   error, tracked in #376. Recursion through an array (`children: Node[]`) works.
-- **A generic interface's instance** (`Pair<string, number>`) does not convert to the object
-  type it spells out (`{ first: string; second: number }`): after erasure they are different
-  definitions. The same holds for generic type aliases today; the error says so.
+- **A generic interface's instance** (`Pair<string, number>`) is the object type it spells out
+  (`{ first: string; second: number }`), as for generic type aliases: instances are
+  canonicalized (deferred-types.md, P1).
 
 - **Fields** come in declaration order, inherited ones first (`interface B extends A` puts `A`'s
   fields first). Generic field-only interfaces are generic object types

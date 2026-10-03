@@ -1,10 +1,10 @@
 # Design: utility types and `keyof` on type parameters
 
-Status: proposed (issue #350). Nothing here is implemented. The utility types for concrete object
-types are planned separately (issue #326, `shared-models.md`), but that note is not written yet.
-This note therefore specifies the concrete rules too ("Meaning"), so that the generic rules have
-something to reduce to. If #326 settles them differently, the two notes must be reconciled. The
-TypeScript behaviour cited here was checked with `tsc` 6.0.2 `--strict`.
+Status: accepted with the review in #395, being implemented in the order of
+[Implementation order](#implementation-order). Issue #350. It builds on the merged utility types
+for concrete object types ([shared-models.md](shared-models.md), `velt_sema::utility_types`) and
+changes some of their rules; [Reconciled concrete rules](#reconciled-concrete-rules) lists which.
+The TypeScript behaviour cited here was checked with `tsc` 6.0 and 7.0 `--strict` and Node 22.
 
 ## Problem
 
@@ -25,148 +25,141 @@ class Form<T> {
 ```
 
 Velt resolves every type eagerly. Inside `update`, `T` is `TyKind::Param(0)`: it has no fields,
-and only its bounds are known. Generic bodies are checked once, with `T` opaque
-(`body/driver.rs`). Substitution is structural (`Types::subst`, and `Cx::subst` in `velt_vir`).
-Monomorphization happens later, in `velt_vir`, which has no diagnostics.
+and only its bounds are known. Generic bodies are checked once, with `T` opaque, and
+monomorphization happens later, in `velt_vir`, which has no diagnostics. Today `Partial<T>` is
+the error ``Partial` needs a concrete object type; `T` is a type parameter``.
+
+## Decisions
+
+The owner's decisions on the review's questions (#395, section F):
+
+1. **An instance of a generic object type is the object type it spells out.** `Box<number>` with
+   `type Box<T> = { v: T }` is `{ v: number }`, as in TypeScript. This reverses #390's type error
+   (its golden is now `lang/generic_object_alias_instance`).
+2. **An optional field whose type is nullable keeps "absent" apart from `null`**
+   (`deletedAt?: string | null`), which is what PATCH APIs need. See P2.
+3. **Implicit generic parameters for `Partial`/`Pick`/`Omit` parameters** (C3) come as a
+   follow-up.
+4. **Writes through `T[K]`:** a write whose value is a read through the same `k` is allowed;
+   any other write gets a run-time tag check (it panics exactly where TypeScript would store a
+   value of the wrong type), rather than an error at instantiation.
 
 ## Prerequisites
 
-Three changes have to land first. Each one is useful without this note.
+### P1. Canonical instantiation (done, except unions)
 
-**P1. Canonical instantiation.** Substituting into a generic anonymous object type has to
-produce the type that would have been written directly. Until the change that comes with this
-note, that wasn't the case:
+Substituting into a generic type produces the type that would have been written directly:
 
-```ts ignore
-function wrap<U>(x: U): { a: U } { return { a: x }; }
-const o: { a: string } = wrap<string>("hi");
-// was: error: mismatched types: expected { a: string }, found { a: string }
-```
+- **Anonymous object types.** `{ a: U }` at `U = string` is `{ a: string }`. Sema's `Ctx::subst`
+  re-interns each anonymous object type from its substituted fields, `readonly` flags included
+  (`anon.rs`); inference matches two anonymous defs of one shape field by field; `coerce` accepts
+  two forms of one shape. Field-only interfaces' instances (`Pair<string, number>`) canonicalize
+  after readonly erasure (`Ctx::same_layout`).
+- **One table of shapes.** Sema exports the concrete anonymous def of every shape lowering sees
+  (`hir::Program::anon_shapes`, after readonly erasure, so erased defs are never chosen).
+  `velt_vir`'s `Cx::canon` maps every instance onto it, so one shape is one VIR type.
+  Anonymous defs with the same field names agree on `AdtDef::assigned`.
+- **Symbols.** `velt_vir`'s `type_key` spells anonymous object types structurally
+  (`{ a: string }`), so a symbol doesn't depend on which def represents a shape (`velt dev`
+  matches functions by symbol).
+- **Nested null.** `T | null | null` is `T | null`: `TyTable::intern` makes an option of an option
+  the inner option, so a generic `U | null` at `U = string | null` holds `null` as itself, as in
+  JavaScript (before, `id<string | null>(null) === null` was `false`). `velt_vir` treats wrapping
+  and unwrapping a payload that already is the option as the identity: `WrapSome`, `UnwrapSome`,
+  `Some` patterns (`??`, narrowing), `Array.pop`, and channels of nullable items.
+- **Generic unions (open).** `{ a: U | string }` at `U = i64` is not yet the written
+  `{ a: string | i64 }`. A generic union's variants are in the generic def's order, and HIR
+  refers to variants by index, so canonicalizing needs a per-instance variant remapping in
+  `velt_vir` (injections, `UnwrapVariant`, matches, `typeof` tests), and a union whose members
+  collapse to one type disappears. Distributing `Partial` over unions depends on it.
 
-This part is done.
+Regression tests: `lang/anon_generic_instantiation`, `lang/generic_object_alias_instance`,
+`lang/nullable_generic_payload`.
 
-- **Sema** (`anon.rs`): `Ctx::subst` re-interns each anonymous object type from its substituted
-  fields after substituting.
-- **Inference:** two anonymous defs of one shape match field by field.
-- **`velt_vir`** (`Cx::canon`): every shape maps to one type, preferring sema's concrete def, so
-  the generic and the written forms share a layout and their values flow between them
-  unconverted.
-- **`assigned`:** anonymous defs with the same field names agree on `AdtDef::assigned`, so the
-  two forms are always shared the same way.
+### P2. `?:` is a flag, not a type
 
-The regression test is `tests/golden/lang/anon_generic_instantiation.vlt`.
+Today `name?: T` is `name: T | null`. Instead, a field keeps its declared type `F` and an
+`optional` flag, and the flag is part of an anonymous type's identity:
 
-Still open:
+| Declared | Reads as | Layout | Absent vs `null` |
+|---|---|---|---|
+| `a?: F`, `F` not nullable | `F \| null` | `F \| null` (absent is `null`) | the same value: TypeScript doesn't allow an explicit `null` here |
+| `a?: F \| null` | `F \| null` | `{ present: bool, value: F \| null }` | kept apart |
+| `a: F \| null` | `F \| null` | `F \| null` | — |
 
-- `U | null` with `U = string | null` gives `string | null | null`. Collapsing it changes the
-  layout (`{ some, { some, value } }` becomes `{ some, value }`), so `velt_vir` must treat wrapping
-  and unwrapping a nullable payload as the identity. That has to land together with the
-  collapse in sema.
-- Generic unions are not re-canonicalized either. Today they convert at run time where they
-  meet a written union (`coerce.rs`), so they are only a problem inside other types.
+- `Required` clears the flag and keeps the declared type (TypeScript: `Required<{ a?: string | null }>`
+  is `{ a: string | null }`).
+- A spread copies an optional field only when it is present; a present `null` is copied. So
+  `update(u, { deletedAt: null })` clears `deletedAt`, as in Node, and `update(u, {})` keeps it.
+- JSON and `console.log` omit an absent field and print a present `null`.
+- `{ a?: F }` and `{ a: F | null }` are different types with no implicit conversion between them
+  (the #390 lesson: two types of one layout with a free conversion crash lowering). The error
+  suggests `{ ...x }`. `hir::FieldDef` gains the `optional` flag, and lowering keeps the types
+  apart.
+- The reference's "`a?: T` is `T | null` everywhere" (types.md) is rewritten.
 
-Every reduction below relies on these.
+### P3. Structural field-only bounds
 
-**P2. `?:` is a flag, not a type.** Today `name?: T` is parsed as `name: T | null`, and the
-flag only keeps the spelling (`ast.rs`, `anon.rs`). Instead, `FieldInfo` keeps the declared type
-`T` plus `optional: true`, and the flag becomes part of an anonymous type's identity. The field
-still holds `T | null`, with the same layout and the same reads. This is what lets `Required`
-remove exactly what `?` added (TypeScript keeps an explicit `| null`), and lets spreads tell an
-absent key from a `null` value (see "Spreads").
+`T extends { name: string; id?: number }`, or a field-only interface bound, means that `T` has
+at least these public fields, each assignable to the bound's type, a required field satisfying an
+optional one, as TypeScript checks it. Object types, field-only interfaces, classes and structs
+satisfy it (shared-models.md). Write `B(T)` for the fields the bounds declare. Inside the body,
+`x.name` with `x: T` reads and writes the field by name (`ExprKind::FieldByName`).
 
-`{ a?: T }` and `{ a: T | null }` become two types with the same layout. Converting between
-them at the top level of a value is free (a coercion in `coerce.rs`), so existing code keeps
-compiling. They are not interchangeable inside other types (`{ a?: T }[]`), like any two
-different object types.
+## Reconciled concrete rules
 
-**P3. Structural field-only bounds.** `T extends { name: string; id?: i64 }` means that `T` is
-an anonymous object type with at least these fields, each with exactly this type and
-optionality. Velt has no depth subtyping between object types. Interface bounds stay as they
-are. Write `B(T)` for the fields that `T`'s bounds declare. Inside the body, `x.name` with `x: T`
-reads and writes the field by name (`ExprKind::FieldByName`, below). At a call site, the bound is
-checked like an interface bound. A class doesn't satisfy a structural bound: its fields can be
-private or getters, and it is a reference with its own identity.
+`utility_types.rs` implements shared-models.md. Where this note differs, TypeScript decides:
 
-## Meaning
+| Topic | Rule | Change to what is merged |
+|---|---|---|
+| Operands | object types, field-only interfaces, classes and structs (public fields), and literal-keyed `Record`s | `Record<"a" \| "b", V>` added |
+| `Partial`, `Required`, `Readonly` of a primitive | the primitive (`Partial<number>` is `number`) | new |
+| `Readonly<T[]>` | `T[]` seen read-only, inferring through it | new |
+| `Omit` with a key that isn't a field | allowed, with a warning ("`emial` is not a field of `User`") | was an error |
+| `Required` | clears `?` only (P2) | cleared every `\| null` |
+| `Readonly<X>` | readonly field flags, erased before lowering like any readonly type | as merged |
+| `Pick`, `Omit`, `keyof` of a union | the common keys; each field's type is the union of the members' types | was an error |
+| Class instance → object type | error with the fix-it `{ ...x }` | fix-it changed |
 
-The operators apply to **object types**: anonymous object types and aliases of them. A class,
-`Record`, an array or a primitive is not an object type.
+`keyof X` is the union of `X`'s keys as literal types: string literals, and number literals for
+numeric keys (`keyof { 0: string }` contains `0`).
 
-| Type | Result |
-|---|---|
-| `Partial<X>` | every field of `X`, with `optional` set |
-| `Required<X>` | every field of `X`, with `optional` cleared (`a?: T` becomes `a: T`; `a: T \| null` stays) |
-| `Readonly<X>` | `X` seen through a read-only view (below) |
-| `Pick<X, K>` | the fields of `X` named by `K`, in `X`'s order; every member of `K` must be a field |
-| `Omit<X, K>` | the fields of `X` not named by `K`; members of `K` that are not fields are ignored, as in TypeScript |
-| `keyof X` | the union of `X`'s field names as string literal types |
-| `X[K]` | the union of the types of the fields named by `K` (an optional field contributes `T \| null`) |
+## Stuck operators
 
-- **Unions.** `Partial`, `Required` and `Readonly` distribute over unions, as TypeScript's
-  homomorphic mapped types do: `Partial<A | B>` is `Partial<A> | Partial<B>`, and
-  `Partial<X | null>` is `Partial<X> | null`. `Pick`, `Omit` and `keyof` of a union are errors
-  that suggest writing the union of the picks.
-- **Keys.** A key type `K` is a string literal or a union of them.
-- **Precedence.** As in TypeScript, postfix `[]` and `[K]` bind tighter than `keyof`: `keyof X[]`
-  is the keys of an array, which is an error.
-- **Combined forms.** `keyof Partial<X>`, `keyof Required<X>` and `keyof Readonly<X>` are
-  `keyof X`. `keyof Pick<X, K>` is `K`. `Partial<X>[K]` is `X[K] | null`.
-- **`Readonly<X>`** is a view, not a new shape. Writes through it are errors. `X` converts to
-  `Readonly<X>` and back for free, because they are the same value. TypeScript allows both
-  directions, so `readonly` is a shallow lint there and here. It is the one operator that stays
-  in the type after reduction: `velt_vir` lays it out as `X`.
-
-## Representation: a stuck operator
+### Representation
 
 `TyKind` gets one variant:
 
 ```rust
-/// A type operator that can't be reduced yet, because an argument it inspects is a type
-/// parameter or another stuck operator. Also the permanent form of `Readonly`.
+/// A type operator that can't be reduced yet: an argument it inspects is a type parameter or
+/// another stuck operator.
 Op(TyOp, Vec<TyId>),
 
-pub enum TyOp { Partial, Required, Readonly, Pick, Omit, KeyOf, Index }
+pub enum TyOp { Partial, Required, Readonly, Pick, Omit, KeyOf, Index, NonNullable, Exclude, Extract, Awaited }
 ```
 
-- **Stuck.** An operator is stuck when an argument it inspects has a `Param` or a stuck `Op` at
-  its head. For `Partial<T>`, `Pick<T, K>` and `T[K]` that is the object operand. For
-  `Pick<User, K>`, `Omit<User, K>` and `User[K]` it is the key operand, as in the common
-  `get<K extends keyof User>(u: User, k: K): User[K]`. Everything else reduces where it is
-  written, generic or not. `Partial<{ a: U }>` is `{ a?: U }` inside `f<U>`, and that holds for
-  every `U` (P1, P2). `Partial<U[]>` is an error where it is written, because no `U` makes an
-  array an object type.
-- **Resolution.** `resolve.rs` builds operators through one constructor, `Ctx::op(op, args)`.
-  It reduces when it can, and otherwise interns the stuck form. `keyof` and `T[K]` need parser
-  support. The other operators are names, resolved like the builtins `Array` and `Promise`, and a
-  user item with the same name shadows them.
-- **Every substitution normalizes.** Substitution in sema goes through `Ctx::subst`, which
-  re-applies `Ctx::op` bottom-up after substituting. `Types::subst` becomes private to it. So the
-  invariant "no reducible `Op` is ever interned" holds everywhere, including the sites that
-  substitute today:
-  - argument and default types (`args.rs`);
-  - impl-signature matching (`collect/impls.rs`);
-  - interface inheritance (`iface_extends.rs`);
-  - `dispatch.rs`;
-  - the record-key, JSON and `void` instantiation passes.
+- **Stuck** means an inspected argument has a `Param` or a stuck `Op` at its head: the object
+  operand of `Partial<T>`, or the key operand of `Pick<User, K>` and `User[K]`. Everything else
+  reduces through `utility_types.rs` where it is written. `Partial<{ a: U }>` is `{ a?: U }` inside
+  `f<U>`.
+- **Every substitution normalizes.** `Types::subst` is renamed `subst_raw` and banned outside
+  `anon.rs` (clippy `disallowed-methods`); `Ctx::subst` substitutes, canonicalizes (P1) and
+  re-applies `Ctx::op` bottom-up. So no reducible `Op` is ever interned.
+- **No silent catch-alls.** Every walker over types (`children`, `map`, `canon`, `collect_params`,
+  `readonly::erase_ty`, `without_error_types`, `has_error`, and `velt_vir`'s `subst_raw`/`canon`)
+  handles `Op` through one shared helper; their `_ => t` arms go, so a new variant is a compile
+  error rather than an unsubstituted type at lowering.
+- **Laws** that normalization applies must commute with substitution:
+  `norm(subst(norm(t))) == norm(subst(t))` for every law, checked by a property test. So
+  `Partial<Partial<T>>` is `Partial<T>`, but `Partial<Readonly<T>>` keeps `readonly` (TypeScript
+  does).
+- **Errors.** An operator over `Error` reduces to `Error` without a second diagnostic.
 
-  A form over a callee's still-unknown slot becomes `Error` with the slot (`subst_known`). It
-  reduces to `Error` without a second diagnostic.
-- **Simplification.** These laws hold for every `T` under P2, and normalization applies them:
-  - `Partial<Partial<T>>`, `Partial<Required<T>>` and `Partial<Readonly<T>>` are `Partial<T>`;
-  - likewise with `Required` outside;
-  - `Readonly<Readonly<T>>` is `Readonly<T>`.
+### Member access in the generic body
 
-  They keep stuck forms small, and they make polymorphic recursion through an operator visible
-  (see "Errors at instantiation").
-- **Equality.** Equal stuck forms have equal ids. `Pick<T, keyof T>` and `T` are different types
-  in the body, although they reduce to the same type. TypeScript relates them, but Velt doesn't
-  need to.
-
-## Member access in the generic body
-
-A value of a stuck `Partial`, `Required`, `Pick` or `Omit` type is always an anonymous object
-once it is reduced, so its fields are read *and written* by name. A `Readonly` value is read only.
-In the table, `F` and `opt` are the field's type and optionality in `B(T)`:
+A stuck `Partial`, `Required`, `Pick` or `Omit` value is an anonymous object once reduced, so its
+fields are read and written by name (`ExprKind::FieldByName`). A `Readonly` one is read only.
+`F` and `opt` are the field's type and optionality in `B(T)`:
 
 | Type of `p` | Fields `p.f` can name | Type of `p.f` | `p.f = v` |
 |---|---|---|---|
@@ -176,26 +169,23 @@ In the table, `F` and `opt` are the field's type and optionality in `B(T)`:
 | `Readonly<T>` | `B(T)` | as for `T` | no |
 | `Pick<T, K>`, `K` a literal union | `B(T)` ∩ `K` | as for `T` | yes |
 | `Omit<T, K>`, `K` a literal union | `B(T)` minus `K` | as for `T` | yes |
-| `Pick<T, K>` or `Omit<T, K>`, `K` a parameter | none | — | — |
+| `Pick<T, K>` or `Omit<T, K>`, `K` a parameter | none (TypeScript: TS2339) | — | — |
 
-`Pick<T, K>` names no field when `K` is a parameter, even with `K extends "a" | "b"`: a bound is
-only an upper bound, and `K = "a"` leaves `b` out. TypeScript rejects `x.a` there too (TS2339),
-and also for `Omit<T, K>`. `p[k]` with `k: K` is the way to read or write those fields.
+Reading a non-copyable field through `FieldByName` or `x[k]` shares it; a partial move by name is
+an error.
 
-**HIR.** `ExprKind::FieldByName { base, name }` reads or writes a field of a value whose type is
-a parameter with structural bounds, or a stuck form. `velt_vir` resolves the name to a field
-index after substitution. It compiles to the same load or store as a written field.
+**Sharing (R6).** `assigned_fields.rs` sees writes through generic code too: a `FieldByName`
+write marks every anonymous def with a field of that name, an `x[k]` write through a parameter
+`K` marks every anonymous def, and defs the reducer creates take part.
 
-## Object literals and spreads at a deferred type
+### Object literals and spreads at a deferred type
 
-`{ ...x, ...patch }` typed as `T` can't be desugared into a struct literal the way `spread.rs`
-does today, because the field list isn't known. Sema checks it symbolically and emits
-`ExprKind::DeferredObject { ty, parts }`, where `parts` are the spreads and named properties in
-source order. `velt_vir` expands it after substitution into the merged struct that `spread.rs`
-would build for the concrete type. A later key wins, and a key keeps its first position. Fields a
-spread provides that the target doesn't have are ignored, as today.
+`{ ...x, ...patch }` typed as `T` is checked symbolically and emitted as
+`ExprKind::DeferredObject { ty, parts }`, each part with its use mode (move, share or copy), so
+the moves pass decides for the whole value. `velt_vir` expands it after substitution into the
+merged struct `spread.rs` builds for a concrete type, before drop elaboration and async lowering.
 
-**Coverage.** What a literal must provide depends on its target type:
+What a literal must provide depends on its target:
 
 | Target | Must cover |
 |---|---|
@@ -203,247 +193,130 @@ spread provides that the target doesn't have are ignored, as today.
 | `Required<T>` | `keyof T` |
 | `Pick<T, K>` | `K` |
 | `Omit<T, K>` | `keyof T` minus `K` |
-| `Partial<T>` | nothing, so `draft: Partial<T> = {}` is fine |
+| `Partial<T>` | nothing (`draft: Partial<T> = {}`) |
 
-These parts cover fields:
+`...x` with `x: T`, `Required<T>` or `Readonly<T>` covers `keyof T`; `...p` with `p: Pick<T, K>`
+covers `K`; `Omit<T, K>` covers `keyof T` minus `K`; `Partial<T>` covers nothing and may override
+(P2's presence rule); `name: e` covers `name`. `{ ...x }` with `x: T | null` is allowed
+(`{ ...null }` is `{}`), and `function copy<T>(x: T): T { return { ...x }; }` requires `T` to be an
+object type although no operator is written.
 
-| Part | Covers |
-|---|---|
-| `...x` with `x: T`, `Required<T>` or `Readonly<T>` | `keyof T` |
-| `...p` with `p: Pick<T, K>` | `K` |
-| `...p` with `p: Omit<T, K>` | `keyof T` minus `K` |
-| `...p` with `p: Partial<T>` | nothing; it may override fields |
-| `name: e` | `name`, which must be in `B(T)`, with `e` of the field's type |
+Object rest at a deferred type, `const { id, ...rest } = x` with `x: T`, gives `rest: Omit<T, "id">`
+through the same lowering.
 
-`{ ...p }` with `p: Partial<T>`, as a `T`, is rejected. TypeScript rejects it too (TS2322).
+### `keyof T` and `T[K]`
 
-**Spreads skip absent keys.** In TypeScript, `{ ...x, ...patch }` copies the keys that are
-present in `patch` and nothing else. A present key is copied even when its value is `null` or
-`undefined`:
+- **Syntax:** `keyof` is a contextual prefix in type position, looser than postfix `[]` and `[K]`
+  and tighter than `|` (`keyof X[]` is the keys of an array). `X[K]` is a postfix; `T[number]`
+  indexes arrays and tuples.
+- **Key bounds:** `K extends keyof T` is a new bound kind. `x[k]` with `k: K` (or `k: keyof T`)
+  has type `T[K]`, opaque in the body except with a literal key (`T["name"]` is the field's
+  type). Key types are always literal unions, so they are copyable.
+- **Inference** keeps literal keys: `pluck(users, "name")` infers `K = "name"`; arguments of
+  key-bounded slots are checked in the last round of `args.rs`, after the object slots.
+- **Run time:** a single-key `K` is zero-sized and `x[k]` is a load; a union `K` is a tag and
+  `x[k]` one switch.
+- **Writes** follow decision 4: `dst[k] = src[k]` (a read through the same immutable `k`) is
+  always allowed, so `copyField` and the standard `pick` body compile; any other `x[k] = v`
+  checks in the switch that `v`'s member matches the field and panics otherwise.
+- **`pick`'s body** (open): TypeScript writes `const r = {} as Pick<T, K>; for (…) r[k] = o[k];`.
+  Velt has no `as` for this, and `{}` doesn't cover `K`. The candidate is building a
+  `Partial<Pick<T, K>>` and converting it with a run-time check that every key was set; it is
+  decided in step 5.
 
-```text
-update(u, {})                   → {"id":1,"name":"a"}
-update(u, { name: "b" })        → {"id":1,"name":"b"}
-{ ...n, ...{ a: null } }        → {"a":null}
-```
+### Inference through operators
 
-Velt has no `undefined`. Under P2, an absent optional key is `null`. So spreading an **optional**
-(`?:`) field copies it only when it is not `null`, and a non-optional field is always copied,
-`null` included. This rule applies to every spread, concrete or generic, and it is decided by
-the source field's `optional` flag after reduction, so both agree. It gives TypeScript's result
-in every case but one: a patch can't set an optional field to `null`, because `{ a: null }` and
-`{}` are the same value of type `Partial<X>`. `Partial` exists to describe absent keys, so this
-case is rare, and the reference documents it with the fix (`{ ...update(u, p), a: null }`).
+As in TypeScript, with its canonical choice where several `T` fit:
 
-Under the rule, a field read from an optional source becomes a branch:
-`if (p.f != null) { out.f = p.f; /* x.f dropped */ } else { out.f = x.f }`. Both sources are
-consumed by the literal, as they are today. The branch decides which of the two values is
-dropped. That is local to the generated code and needs no drop flags.
+- `p: Partial<T>` with `{ a: 1 }` gives `T = { a: number }` (the argument with `?` cleared);
+- `Readonly<T>`, `Required<T>`: `T` is the argument;
+- `Pick<T, K>`: `T` is the argument and `K` its keys;
+- `Record<K, V>`: `K` and `V` from a literal-keyed record.
 
-**No implicit conversions.** A `T` doesn't convert to `Partial<T>`, `Pick<T, K>` or
-`Omit<T, K>`, because they have different layouts. TypeScript allows all three, because there
-it is the same object. In Velt a conversion would have to make a new object, and with shared
-references (semantics stage 2) the difference shows as soon as either object is changed. The
-error suggests `{ ...x }`, which makes a copy in TypeScript too. `T` and `Readonly<T>` convert
-both ways, because they are the same value.
+### Errors at instantiation
 
-## `keyof T` and `T[K]`
+Requirements are implicit (TypeScript doesn't ask for `T extends object`): an operand is an
+object type (or a primitive for `Partial`/`Required`/`Readonly`), keys are fields, `T[K]` has no
+`void` field. They are checked by one generalized pass, onto which `record_keys` and the JSON pass
+move: each generic def records its stuck forms with spans; a fixpoint over call sites
+substitutes and normalizes them; a failure is reported at the concrete call site with
+``required because `update` uses `Partial<T>` ``; a still stuck one moves to the caller.
 
-**Syntax.** `keyof` becomes a contextual keyword in type position: a prefix that binds looser
-than postfix `[]` and `[K]`, and tighter than `|`. Indexed access `X[K]` is a postfix in type
-position: `[]` with nothing inside is an array, and `[K]` is indexed access. `TypeExprKind`
-gains `KeyOf(Box<TypeExpr>)` and `Index(Box<TypeExpr>, Box<TypeExpr>)`. The bound
-`K extends keyof T` then parses with no further change.
+**Termination** reuses `instantiation_cycles.rs` (#336), which rejects every growing edge in a
+strongly connected component. `f<T>` calling `f<Partial<T>>` is finite after simplification; an
+edge whose argument normalizes to a form already seen is marked as not growing.
 
-**Key bounds.** `K extends keyof T` is a new kind of bound, next to interface bounds and
-structural bounds. In the body:
+### What `velt_vir` sees
 
-- `x[k]` with `x: T` and `k: K` has type `T[K]`, and so does `k: keyof T`, with no `K`
-  parameter. `p[k]` on a `Partial<T>` has type `T[K] | null`.
-- `T[K]` is opaque. It can be moved, stored, returned and passed to generics. The one exception
-  is a literal key: `T["name"]` with `name` in `B(T)` is that field's type.
-- `keyof T` and `K` are always unions of literals, so they are copyable, which a `Param` isn't
-  today.
-- `xs[k]` on an array is unchanged.
+The reducer's state lives in `hir::Program`, since sema's `Ctx` is gone when `lower` runs:
 
-**Inference.** A parameter with a key bound is inferred without widening. In
-`pluck(users, "name")`, `K` is `"name"`, not `string`, as in TypeScript. Arguments whose
-parameter type is a key-bounded slot are checked in the last round of `args.rs`, after the
-object slots are solved, so the literal is checked against `keyof User` and not widened first.
-TypeScript gives `string[]` for `pluck(users, "name")`, and `(string | number)[]` for
-`k: "id" | "name"`. Velt gives the same.
+- **One shared, create-on-demand shape table** extends `Program::anon_shapes` (P1): `velt_vir`
+  asks it for the def of a shape, and a shape it doesn't have is created in an append-only owned
+  overlay of defs (DefIds after `hir.defs.len()`), read through one `Cx::def` accessor that
+  replaces the direct `hir.def(` calls.
+- `Cx::subst` substitutes an `Op`'s arguments, canonicalizes, and reduces through the table.
+  After lowering there are no operators.
 
-**Run time.**
+## C6: forms used together with these
 
-- A literal type is zero-sized (`velt_vir/src/lower/types.rs`), so `k: K` with `K = "name"`
-  costs nothing. `x[k]` becomes the same load as `x.name`.
-- With `K = "a" | "b"`, `k` is a union value. `x[k]` becomes a switch on its tag that loads the
-  field and wraps it as a member of `T[K]`. The arms are matched by literal value, so the order
-  of the union's members doesn't matter.
+In order: `NonNullable<T>`, `Exclude`/`Extract<T, U>` (a union filter; the object-pattern form
+reuses P3), `Record<keyof T, V>` and `Record<K, V>` with a parameter `K`, `T[number]`,
+`Awaited<T>`, object rest at a `T`, then `typeof x` / `keyof typeof X` (which need value lookup
+and `as const` literal types). `ReturnType`/`Parameters` belong with #209.
 
-**Writes.** `x[k] = v` with `v: T[K]` is allowed in the body. When `K` is instantiated with
-several keys whose fields have different types, that instantiation is an error. TypeScript
-accepts this call and corrupts the object at run time:
+## C3: implicit generic parameters (follow-up)
 
-```ts ignore
-function setField<T, K extends keyof T>(x: T, k: K, v: T[K]) { x[k] = v; }
-const r = { id: 1, name: "a" };
-const k: "id" | "name" = pick();
-setField(r, k, "oops");   // tsc: no error; at run time r is {"id":"oops","name":"a"}
-```
-
-Velt can't store a `string` in an `i64` field. The other choice would be a run-time check on
-every such write. The error is cheaper and is reported where the call is written. Calls with a
-single literal key, which are the common case, are unaffected.
-
-## Errors at instantiation
-
-These requirements are implicit, as in TypeScript, which doesn't ask for `T extends object`:
-
-- `Partial`, `Required`, `Readonly`, `Pick`, `Omit`, `keyof` and `T[K]`: the operand is an
-  object type, or for the first three a union of object types.
-- `Pick<T, K>`, `T[K]`, and the bound `K extends keyof T`: every member of `K` is a field of `T`.
-- `T[K]`: no field named by `K` is `void`, since a union can't hold `void`.
-- A write `x[k] = v` through a parameter `K`: the fields named by `K` have one type.
-
-They are checked like generic `Record` keys today, and `record_keys.rs` is generalized into one
-pass for all requirements, for `Record` keys and for JSON:
-
-1. Each generic def records its stuck forms (signature, locals, expression types, closures),
-   with the span where each one was written.
-2. A fixpoint over call sites substitutes each caller's type arguments into its callees'
-   requirements, and normalizes them. A requirement that holds is dropped. One that fails is
-   reported at the concrete call site, with ``required because `update` uses `Partial<T>` ``
-   pointing at the use. One that is still stuck moves to the caller.
-3. Instantiations through interfaces and base classes come from `dispatch.rs`. A generic class's
-   field types are checked where the class type is resolved with concrete arguments
-   (`def_type`).
-
-**Termination.** A requirement that is still stuck and moves to the caller has the same
-operators as before, or fewer after simplification. The fixpoint only grows when the call graph
-substitutes a parameter with a type built from itself. An example is `f<T>` calling
-`f<Pick<T, "a">>`, or `f<T[]>`. Monomorphization can't compile that either, because the set of
-instantiations is infinite. The pass detects it, since a def's requirement set keeps growing in
-operator depth, and reports
-`` `f` calls itself with `Pick<T, "a">`, which instantiates it without end ``. `velt_vir` has no
-such check today. The same diagnostic covers the operator-free cases.
-
-**Completeness is not required.** The pass is for errors. Reductions don't come from a table it
-fills (see "What `velt_vir` sees"). So a gap in the pass, such as an instantiation path it
-doesn't model, is not an ICE. It only means that an invalid instantiation is reported late, by
-the reducer, as an `ICE:` that names the requirement. The tests check that the pass and
-monomorphization reach the same instantiations.
-
-```text
-error: `Partial<T>` needs an object type, found `i64`
-   --> src/main.vlt:20:10
-    |
- 20 |   update(5, {});
-    |          ^ `T = i64`
-   --> src/lib.vlt:3:33
-    |
-  3 | function update<T>(x: T, patch: Partial<T>): T {
-    |                                 ---------- required because `update` uses `Partial<T>`
-```
-
-## What `velt_vir` sees
-
-`velt_vir` can intern types but can't create definitions, and reducing `Partial<User>` creates
-an anonymous definition. Sema therefore passes a reducer to lowering:
-
-```rust
-pub trait TypeOps {
-    /// Reduce a fully concrete operator type; the result mentions no `Op` except `Readonly`.
-    fn reduce(&mut self, op: TyOp, args: &[TyId]) -> TyId;
-    /// Definitions created by reductions, which `adt_def` falls back to.
-    fn def(&self, d: DefId) -> &hir::AdtDef;
-}
-```
-
-Sema implements it over a copy of the anonymous-type cache, so a shape that sema already made
-gets the same `DefId`. `Cx::subst` substitutes an `Op`'s arguments, canonicalizes them (P1), and
-calls `reduce`. `Readonly<X>` is laid out as `X`. After lowering, VIR has no operators: layouts,
-drop glue, printing and JSON see ordinary anonymous objects, unions and literals.
+`toDto(u): Pick<User, "id" | "name"> { return u; }` and entities passed as patches compile in
+TypeScript and keep the same object (`toDto(u) === u`). For **parameters**, a
+`p: Partial<User>` / `Pick<…>` / `Omit<…>` becomes an implicit generic `<S satisfying it>(p: S)`
+and is monomorphized, so the callee receives the same object. Storage positions
+(`Partial<User>[]`, fields) keep the `{ ...x }` error.
 
 ## Differences from TypeScript
 
 | TypeScript | Velt | Why |
 |---|---|---|
-| `Partial<number>` is `number`, so `update(5, 6)` type-checks | error: needs an object type | Velt has no mapped types over primitives; a primitive is never what such code means |
-| `Pick` and `Omit` of a union | error, with the fix | `keyof` of a union is its common keys in TS, which is rarely intended |
-| `T` assignable to `Partial<T>`, `Pick<T, K>`, `Omit<T, K>` | error, suggesting `{ ...x }` | different layouts; a conversion would make a new object |
-| a patch can set an optional key to `null` / `undefined` | it can't: `null` is absent for an optional field | Velt has no `undefined` |
-| `x[k] = v` with a union `K` writes any member | error at that instantiation | it would store a value of the wrong type |
-| classes and `Record` are valid operands | not object types | class fields can be private or getters; `keyof Record<string, V>` is `string` |
+| `T` assignable to `Partial<T>`, `Pick<T, K>`, `Omit<T, K>` in storage positions | error, suggesting `{ ...x }` (parameters: C3) | different layouts; a conversion makes a new object |
+| `{ a: F \| null }` assignable to `{ a?: F \| null }` | error, suggesting `{ ...x }` | different layouts (P2) |
+| `x[k] = v` with a union `K` stores any member | panics when the member doesn't match | it would store a value of the wrong type |
+| an optional class field without an initializer is an own key holding `undefined` | it is absent | Velt has no `undefined` |
 
 ## Cost
 
-- **Run time:** none for the types. Every operator is reduced before code is generated. A field
-  of a `Partial<T>` is one load, like a written field. `x[k]` is a load, or one switch when `K`
-  is a union. The added work is what the source asks for: a null test per optional field that a
-  spread reads, and the copies `{ ...x }` makes.
-- **Compile time:** one more `TyKind` variant, normalization in `Ctx::subst`, and requirements
-  in the existing fixpoint pass. That pass is bounded by the generic defs that mention a stuck
-  form.
+- **Run time:** none for the types. A field of a `Partial<T>` is one load. `x[k]` is a load, or one
+  switch for a union `K`. Added work is what the source asks for: a presence test per optional
+  field a spread reads, the tag check of decision 4, and copies `{ ...x }` makes.
+- **Compile time:** one `TyKind` variant, normalization in `Ctx::subst`, requirements in the
+  existing fixpoint pass.
 
 ## Contract changes
 
-These need maintainer sign-off (CLAUDE.md rule 1):
+- **HIR** (`hir/mod.rs`, `contracts/hir_encodings.md`): `TyKind::Op`/`TyOp` and their display;
+  `FieldDef` `optional` and `readonly` flags; `ExprKind::FieldByName`, `DeferredObject` (with per-part
+  use modes) and `KeyIndex`; `Program::anon_shapes` (done) growing into the shared shape table;
+  `TyTable::intern` collapsing nested options (done).
+- **AST** (`ast.rs`): `TypeExprKind::KeyOf` and `Index`. Consumers: sema `ast_walk.rs`,
+  `velt_lsp` (`index/scope/mod.rs`, `inlay_hints.rs`), `velt_doc` `sig.rs`, `velt_fmt`
+  `print/types.rs`, the `velt_syntax` test tree printer.
+- **`velt_vir`:** one `Cx::def` accessor over the overlay; `Cx::subst` canonicalizes (done) and
+  reduces; JSON and format glue for optional fields.
+- **Sema:** `Types::subst` → `subst_raw`, restricted.
+- **IDE** (`contracts/sema_ide.md`): the stuck form in a body, the reduced form at an
+  instantiated call.
+- **Goldens:** #390's error golden became `lang/generic_object_alias_instance` (done).
 
-- **HIR** (`hir/mod.rs`, `contracts/hir_encodings.md`):
-  - `TyKind::Op` and `TyOp`, and their display;
-  - `FieldInfo.optional` as part of anonymous identity (P2);
-  - `ExprKind::FieldByName`, `DeferredObject` and `KeyIndex`;
-  - every sema pass over HIR handles the new expressions: visit, moves, ownership and flow.
-- **AST** (`ast.rs`): `TypeExprKind::KeyOf` and `TypeExprKind::Index`. `velt_fmt`, `velt_doc` and
-  `velt_lsp` consume these.
-- **`velt_vir`:** `lower` takes `&mut dyn TypeOps`. `Cx::subst` canonicalizes (P1) and reduces.
-  The new expressions are lowered.
-- **`contracts/sema_ide.md`:** hover and completion show stuck forms, and complete the fields of
-  `B(T)` on a `Partial<T>`.
+## Implementation order
 
-## Diagnostics
-
-- `` `Partial<T>` has no known field `email` ``, with the note "inside `update`, `T` has the
-  fields of `{ name: string }`" and the help "add the field to the bound".
-- `` `Pick<T, K>` names no fields while `K` is a type parameter ``, with the help "read the field
-  with `p[k]`".
-- `` a `T` literal may lack the fields of `T` ``, with the uncovered spreads or fields, and the
-  help ``spread a value of type `T` first``.
-- `` `Partial<U[]>`: `U[]` is not an object type ``, where it is written.
-- `` `Partial<T>` needs an object type, found `i64` ``, and `` `"emial"` is not a key of
-  `User` `` with the keys in source order, at a concrete call site. Both carry ``required
-  because `f` uses …``.
-- The `T[K]` write error, with the differing field types in the notes.
-- The polymorphic recursion error above.
-- ``cannot infer type parameter `T` of `f` ``, when `T` appears only under an operator, gets
-  the help `` `T` appears only inside `Partial<T>`; write `f<User>(…)` ``. Operators are not
-  inference sites, because `Partial<A>` and `Partial<B>` can be the same type for different `A`
-  and `B`.
-- `` `T` doesn't convert to `Partial<T>` ``, with the help `copy it: { ...x }`.
-- `` cannot assign to `name` through `Readonly<T>` ``.
-- The `Pick` / `Omit` / `keyof` union error, with the fix.
+1. **P1 on `main`** — done except generic unions: R1 (readonly flags), R2 (erased defs), nested
+   `T | null`, structural `type_key`, the exported shape table, decision 1.
+2. **P2** with the presence-flag representation (decision 2).
+3. **Concrete operators** per [Reconciled concrete rules](#reconciled-concrete-rules).
+4. **Stuck operators, `FieldByName`, `DeferredObject`**, with R3, R6, the overlay, termination.
+5. **`keyof`/`T[K]`** with decision 4's writes, and inference through operators.
+6. **C6's forms.**
+7. **C3's implicit generic parameters.**
 
 ## Not proposed
 
-- **Mapped and conditional types** (`{ [P in keyof T]: … }`, `T extends U ? X : Y`). They are
-  general type-level programs. The five operators and `keyof` cover the common uses without one,
-  and `Op` can take more operators later.
-- **Inferring through operators** (TypeScript's reverse mapping for homomorphic mapped types).
-- **Re-checking generic bodies per instantiation**, C++ template style. Errors would point into
-  library code, compile time would grow with every instantiation, and it would break the rule that
-  a generic body is checked once.
-- **Classes as operands**, or as types that satisfy structural bounds.
-
-## Decisions
-
-These were open questions in the first draft. TypeScript's behaviour settled them:
-
-1. **A spread copies an optional field only when it is not `null`.** TypeScript copies present
-   keys and skips absent ones, and in Velt an absent key is `null` (P2). Non-optional fields are
-   always copied, which keeps TypeScript's `null` override.
-2. **`Pick<T, K>` and `Omit<T, K>` with a parameter `K` are allowed but name no fields.** This
-   matches TypeScript (TS2339). Their fields are read and written through `p[k]`.
-3. **Writes through `T[K]` are allowed. An instantiation whose keys have different field types
-   is an error.** TypeScript accepts it and corrupts the value. Rejecting writes in generic code
-   altogether would also reject the common single-key calls.
+- Mapped and conditional types (`{ [P in keyof T]: … }`, `T extends U ? X : Y`).
+- Re-checking generic bodies per instantiation (C++ templates).

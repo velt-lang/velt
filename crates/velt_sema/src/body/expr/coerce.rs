@@ -223,10 +223,10 @@ impl FnCx<'_, '_> {
                 .with_note(note);
         }
         if e == f && self.is_anon(expected) && self.is_anon(found.ty) {
-            // An instance of a generic alias (`Box<number>`) and the object type it spells out
-            // (`{ v: number }`) are separate types today.
+            // Instances are canonical (crate::anon), except a generic union inside them: `U | string`
+            // at `U = i64` is not yet the written `string | i64` (#350).
             d = d.with_note(
-                "the two object types have the same fields but come from different declarations (a generic type's instance and a written object type don't convert yet); use one of them for both",
+                "the two object types look the same but a field's union type was built differently (a generic union's instance and a written union are not the same type yet); write the union type the same way in both",
             );
         }
         self.cx.error(d);

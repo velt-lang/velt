@@ -70,7 +70,17 @@ impl FnLower<'_, '_> {
     /// The item size of `T | null` (`opt`) and the offset of its payload: 0 when `T` is
     /// pointer-like and null is the zero pointer, else the offset of the value after the
     /// `present` flag.
+    ///
+    /// A nullable item type is its own `T | null` (TyTable::intern): the item is the whole value
+    /// (payload offset 0), and the runtime zeroes the slot for "nothing", which is that option's
+    /// `null`, as in JavaScript. The intrinsics are only called from `Channel<T>`'s methods
+    /// (std/channel.vlt), so the instance's first type argument is the item type.
     fn option_payload(&mut self, opt: TyId) -> (Operand, Operand) {
+        if self.targs.first() == Some(&opt) {
+            let vt = self.cx.ty(opt);
+            let size = self.cx.size_align(vt).0;
+            return (cint(size as i128, Ty::U64), cint(0, Ty::U64));
+        }
         let TyKind::Option(t) = self.cx.kind(opt) else {
             ice("channel item type is not `T | null`")
         };

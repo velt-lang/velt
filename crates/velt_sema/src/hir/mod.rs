@@ -31,6 +31,8 @@
 
 mod intrinsic;
 
+use std::collections::HashMap;
+
 use velt_common::Span;
 
 pub use intrinsic::Intrinsic;
@@ -154,6 +156,15 @@ impl TyTable {
     }
 
     pub fn intern(&mut self, kind: TyKind) -> TyId {
+        // `T | null | null` is `T | null`: an option of an option is the inner option (one
+        // `null`, as in JavaScript), however it was built (substituting `U | null` with a
+        // nullable `U`, for instance). Wrapping a value whose type is already that option is the
+        // identity (`ExprKind::WrapSome`, `UnwrapSome`).
+        if let TyKind::Option(inner) = kind {
+            if matches!(self.kinds[inner.0 as usize], TyKind::Option(_)) {
+                return inner;
+            }
+        }
         if let Some(&id) = self.map.get(&kind) {
             return id;
         }
@@ -195,6 +206,11 @@ pub struct Program {
     /// Interface implementations (M2): which concrete type implements which interface, with
     /// the method defs in `InterfaceDef::methods` order (defaults already substituted).
     pub impls: Vec<ImplDef>,
+    /// The anonymous object def of each concrete shape (field names and types, in order) that
+    /// lowering sees: no type parameters, and none replaced by a twin before lowering
+    /// (readonly erasure). Lowering maps every instance of a generic anonymous def onto these,
+    /// so one shape is one type (velt_vir `Cx::canon`).
+    pub anon_shapes: HashMap<Vec<(String, TyId)>, DefId>,
 }
 
 /// `ty` implements `iface<iface_args>` using `methods` (one per interface method, in order).
