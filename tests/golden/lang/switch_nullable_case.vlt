@@ -1,0 +1,62 @@
+// `case` values compare with the discriminant like `===`: a `T | null` case on a `T`
+// discriminant (and the reverse) selects the case when both hold the same value.
+// check: no leaks
+
+class Job {
+  constructor(public name: string) {}
+}
+
+function pick(s: string, t: string | null): string {
+  switch (s) {
+    case t:
+      return "match";
+    case "b":
+      return "b";
+    default:
+      return "none";
+  }
+}
+
+function count(n: number, m: number | null): string {
+  switch (n) {
+    case m:
+      return `${n} equals`;
+    default:
+      return `${n} differs`;
+  }
+}
+
+function same(j: Job, k: Job | null): string {
+  switch (j) {
+    case k:
+      return `same ${j.name}`;
+    default:
+      return `other ${j.name}`;
+  }
+}
+
+function reverse(t: string | null, s: string): string {
+  switch (t) {
+    case s:
+      return "match";
+    case null:
+      return "null";
+    default:
+      return "none";
+  }
+}
+
+function main() {
+  const s: string = "a";
+  const t: string | null = "a";
+  switch (s) {
+    case t:
+      console.log("match");
+      break;
+  }
+  console.log(pick("a", "a"), pick("a", null), pick("b", null), pick("c", "d"));
+  console.log(count(1, 1), count(2, null), count(3, 4));
+  const j = new Job("x");
+  console.log(same(j, j), same(j, new Job("x")), same(j, null));
+  console.log(reverse("a", "a"), reverse(null, "a"), reverse("b", "a"));
+}

@@ -202,6 +202,22 @@ fn super_method_calls_are_direct() {
 // ─────────────────────── switch, enums, discriminated unions ───────────────────────
 
 #[test]
+fn case_values_compare_like_strict_equality() {
+    // A `T | null` case on a `T` discriminant compares (#337), as does the reverse.
+    ok_src(
+        "function f(s: string, t: string | null, u: string | null): i64 {
+           switch (s) { case t: return 1; } switch (u) { case s: return 2; } return 0; }
+         function main() {}",
+    );
+    // A case of another type is reported once.
+    let r = err_src(
+        "function f(s: string, n: i64): i64 { switch (s) { case n: return 1; } return 0; }
+         function main() {}",
+    );
+    assert_eq!(r.matches("mismatched types").count(), 1, "{r}");
+}
+
+#[test]
 fn non_exhaustive_switch_lists_missing_cases() {
     let r = err_src(
         "type S = { kind: \"a\"; n: i64 } | { kind: \"b\" } | { kind: \"c\" };
