@@ -61,6 +61,24 @@ impl Cx<'_> {
                 stack.pop();
                 format!("{{ {} }}", fs.join("; "))
             }
+            // Unions likewise: their members, sorted (a generic union's instance and the written
+            // union are one type, Cx::canon).
+            TyKind::Adt(d, args) if self.is_union_def(*d) => {
+                let env: Vec<String> = args
+                    .iter()
+                    .map(|a| self.type_key_in(*a, env, stack))
+                    .collect();
+                let velt_sema::hir::Def::Enum(e) = self.hir.def(*d) else {
+                    unreachable!("union def")
+                };
+                let mut ms: Vec<String> = e
+                    .variants
+                    .iter()
+                    .map(|v| self.type_key_in(v.payload[0], &env, stack))
+                    .collect();
+                ms.sort();
+                ms.join(" | ")
+            }
             TyKind::Adt(d, args) => with_args(&self.def_name(*d), &list(args, stack)),
             TyKind::Dyn(d, args) => {
                 with_args(&format!("dyn {}", self.def_name(*d)), &list(args, stack))
@@ -114,6 +132,10 @@ impl Cx<'_> {
             .map(|t| self.type_key(*t))
             .collect::<Vec<_>>()
             .join(", ")
+    }
+
+    fn is_union_def(&self, d: velt_sema::hir::DefId) -> bool {
+        matches!(self.hir.def(d), velt_sema::hir::Def::Enum(e) if e.is_union)
     }
 
     fn is_anon_def(&self, d: velt_sema::hir::DefId) -> bool {

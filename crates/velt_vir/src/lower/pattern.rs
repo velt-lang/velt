@@ -6,6 +6,7 @@
 use velt_sema::hir::{self, Lit, Pat, PatKind, TyId, TyKind, UseMode};
 
 use super::operand::proj;
+use super::types::VariantAt;
 use super::{cint, ice, FnLower};
 use crate::vir::{BinOp, BlockId, Operand, Place, Proj, Rvalue, Ty};
 
@@ -65,9 +66,10 @@ impl FnLower<'_, '_> {
                 let ok = self.lit_eq(l, place, ty);
                 self.cond_jump(ok, fail);
             }
-            PatKind::Variant { variant, args, .. } => {
-                self.test_variant(*variant, args, place, ty, fail)
-            }
+            PatKind::Variant { variant, args, .. } => match self.variant_at(pat.ty, *variant, ty) {
+                VariantAt::Index(v) => self.test_variant(v, args, place, ty, fail),
+                VariantAt::Whole => self.test_pat(&args[0], place, ty, fail),
+            },
             PatKind::Adt { fields } => {
                 for (i, p) in fields {
                     let fty = self.cx.adt_field_tys(ty)[*i as usize];
@@ -190,12 +192,15 @@ impl FnLower<'_, '_> {
                 let moving = *mode == UseMode::Move;
                 self.bind_local(*id, moving && register, moving, place)
             }
-            PatKind::Variant { variant, args, .. } => {
-                for (k, p) in args.iter().enumerate() {
-                    let (sp, st) = self.variant_part(place, ty, *variant, k);
-                    self.bind_pat(p, &sp, st, register);
+            PatKind::Variant { variant, args, .. } => match self.variant_at(pat.ty, *variant, ty) {
+                VariantAt::Index(v) => {
+                    for (k, p) in args.iter().enumerate() {
+                        let (sp, st) = self.variant_part(place, ty, v, k);
+                        self.bind_pat(p, &sp, st, register);
+                    }
                 }
-            }
+                VariantAt::Whole => self.bind_pat(&args[0], place, ty, register),
+            },
             PatKind::Adt { fields } => {
                 for (i, p) in fields {
                     let fty = self.cx.adt_field_tys(ty)[*i as usize];
@@ -297,12 +302,15 @@ impl FnLower<'_, '_> {
         }
         match &pat.kind {
             PatKind::Binding(..) => {}
-            PatKind::Variant { variant, args, .. } => {
-                for (k, p) in args.iter().enumerate() {
-                    let (sp, st) = self.variant_part(&place, ty, *variant, k);
-                    self.drop_rest(sp, st, p);
+            PatKind::Variant { variant, args, .. } => match self.variant_at(pat.ty, *variant, ty) {
+                VariantAt::Index(v) => {
+                    for (k, p) in args.iter().enumerate() {
+                        let (sp, st) = self.variant_part(&place, ty, v, k);
+                        self.drop_rest(sp, st, p);
+                    }
                 }
-            }
+                VariantAt::Whole => self.drop_rest(place, ty, &args[0]),
+            },
             PatKind::Adt { fields } => self.drop_rest_fields(place, ty, fields),
             PatKind::Tuple(ps) => {
                 let TyKind::Tuple(tys) = self.cx.kind(ty) else {
@@ -372,6 +380,15 @@ fn binds_anything(p: &Pat) -> bool {
 }
 
 impl FnLower<'_, '_> {
+    /// Where variant `variant` of the HIR union type `hir_ty` lives in its canonical type `ty`
+    /// in this instance (`Cx::union_variant`).
+    pub(super) fn variant_at(&mut self, hir_ty: TyId, variant: u32, ty: TyId) -> VariantAt {
+        let targs = std::mem::take(&mut self.targs);
+        let at = self.cx.union_variant(hir_ty, &targs, variant, ty);
+        self.targs = targs;
+        at
+    }
+
     /// The payload place and type a `Some(p)` pattern matches in the option at `place` (of
     /// type `ty`). When `p`'s type is the option itself (a generic `U | null` at a nullable `U`,
     /// `TyTable::intern`), that is the whole value.

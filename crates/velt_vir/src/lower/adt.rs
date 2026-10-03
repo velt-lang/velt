@@ -122,8 +122,13 @@ impl FnLower<'_, '_> {
         Operand::Copy(obj)
     }
 
-    pub(super) fn variant(&mut self, ty: TyId, variant: u32, args: &[hir::Expr]) -> Operand {
-        let ty = self.sub(ty);
+    pub(super) fn variant(&mut self, hir_ty: TyId, variant: u32, args: &[hir::Expr]) -> Operand {
+        let ty = self.sub(hir_ty);
+        let variant = match self.variant_at(hir_ty, variant, ty) {
+            super::types::VariantAt::Index(v) => v,
+            // The union collapsed to this member (`A | B` at `A = B`): the value itself.
+            super::types::VariantAt::Whole => return self.consume(&args[0]),
+        };
         let tag_ty = match self.cx.kind(ty) {
             TyKind::Adt(d, _) if self.cx.is_c_like_enum(d) => {
                 let disc = self.cx.enum_def(d).variants[variant as usize].discriminant;

@@ -83,6 +83,7 @@ impl PB {
             entry: self.entry,
             impls: self.impls,
             anon_shapes: Default::default(),
+            union_shapes: Default::default(),
         }
     }
 }

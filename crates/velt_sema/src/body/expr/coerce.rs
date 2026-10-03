@@ -223,10 +223,11 @@ impl FnCx<'_, '_> {
                 .with_note(note);
         }
         if e == f && self.is_anon(expected) && self.is_anon(found.ty) {
-            // Instances are canonical (crate::anon), except a generic union inside them: `U | string`
-            // at `U = i64` is not yet the written `string | i64` (#350).
+            // Instances are canonical (crate::anon), except a generic union whose members are
+            // themselves unions or nullable: `U | string` at `U = i64 | bool` keeps its own
+            // variants (#350).
             d = d.with_note(
-                "the two object types look the same but a field's union type was built differently (a generic union's instance and a written union are not the same type yet); write the union type the same way in both",
+                "the two object types look the same but a field's union type was built differently (a generic union instantiated with a union or nullable member is not the written union yet); write the union type the same way in both",
             );
         }
         self.cx.error(d);
