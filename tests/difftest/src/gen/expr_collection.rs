@@ -270,6 +270,14 @@ impl Gen {
                 }
                 None => "\"[]\"".into(),
             },
+            // `K0` has a private field, so it has no JSON form in Velt (it is not part of the
+            // TS-compatible subset): stringify one of its public fields instead.
+            Ty::ObjArr => {
+                let field = *self.rng.pick(&["a", "s"]);
+                let xs = self.array(ty, d).text;
+                let o = self.scope.fresh("p");
+                format!("JSON.stringify({xs}.map(({o}) => {o}.{field}))")
+            }
             _ => format!("JSON.stringify({})", self.array(ty, d).text),
         }
     }
