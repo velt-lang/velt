@@ -5,7 +5,7 @@
 
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
-use crate::hir::{DefId, IntTy, TyId, TyKind};
+use crate::hir::{self, DefId, IntTy, TyId, TyKind};
 
 /// The method of the prelude's `Comparable<T>`; `a < b` on a bounded `T` calls it.
 pub(crate) const COMPARE_TO: &str = "compareTo";
@@ -91,6 +91,64 @@ impl Ctx<'_> {
         parts
             .into_iter()
             .any(|p| self.owns_resource_depth(p, depth + 1))
+    }
+
+    /// Does a value of type `t` own a resource that no deep copy can duplicate: a value with a
+    /// `[Symbol.dispose]` drop hook whose type has no `clone()` of its own ([`own_clone`]), or
+    /// a promise (directly, or in a field, element or payload)? A deep copy (`x.clone()`, a
+    /// copy for another task) calls a resource type's own `clone()`.
+    ///
+    /// [`own_clone`]: Self::own_clone
+    pub fn owns_uncopyable(&mut self, t: TyId) -> bool {
+        self.owns_uncopyable_depth(t, 0)
+    }
+
+    fn owns_uncopyable_depth(&mut self, t: TyId, depth: u32) -> bool {
+        if depth > 32 {
+            return false;
+        }
+        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
+            TyKind::Shared(_) | TyKind::FnPtr { .. } => return false,
+            TyKind::Promise(..) => return true,
+            TyKind::Adt(d, _) if self.own_clone(d).is_some() => return false,
+            TyKind::Adt(d, args) => {
+                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
+                    DefInfo::Adt(a) if a.has_dispose => return true,
+                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                    DefInfo::Enum(e) => e
+                        .variants
+                        .iter()
+                        .flat_map(|v| v.payload.iter().copied())
+                        .collect(),
+                    _ => vec![],
+                };
+                tys.into_iter().map(|f| self.ty.subst(f, &args)).collect()
+            }
+            k => crate::types::children(&k),
+        };
+        parts
+            .into_iter()
+            .any(|p| self.owns_uncopyable_depth(p, depth + 1))
+    }
+
+    /// The class's own `clone()` method: declared on class `d` itself, without parameters,
+    /// neither async nor throwing, returning the class. Deep copies call it (velt_vir
+    /// `Cx::own_clone` finds the same method).
+    pub fn own_clone(&self, d: DefId) -> Option<DefId> {
+        let DefInfo::Adt(a) = &self.info[d.0 as usize] else {
+            return None;
+        };
+        if a.kind != hir::AdtKind::Class {
+            return None;
+        }
+        let m = a.methods.get("clone").filter(|m| !m.is_static)?;
+        let f = self.try_fn(m.def)?;
+        let returns_self = matches!(self.ty.kind(f.ret), TyKind::Adt(r, _) if *r == d);
+        let throws = f.declared_throws.is_some()
+            || f.throws
+                .is_some_and(|e| !matches!(self.ty.kind(e), TyKind::Never));
+        (f.owner == Some(d) && f.params.is_empty() && !f.is_async && !throws && returns_self)
+            .then_some(m.def)
     }
 
     /// The dynamic JSON value class: the prelude's `JsonValue` itself, not a user class of the

@@ -270,14 +270,14 @@ impl FnCx<'_, '_> {
                     "it runs once and has one owner; pass the promise itself on, or await it and copy the result",
                 ),
             );
-        } else if i == Intrinsic::Clone && self.cx.owns_resource(recv.ty) {
+        } else if i == Intrinsic::Clone && self.cx.owns_uncopyable(recv.ty) {
             let tn = self.cx.display(recv.ty);
             self.cx.error(
                 Diagnostic::error(
                     format!("`{tn}` owns a resource (a `[Symbol.dispose]` drop hook or a promise), so it has no automatic `clone()`"),
                     prop.span,
                 )
-                .with_note("a copy would share the resource and release it twice; define a `clone()` method that duplicates the resource"),
+                .with_note("a copy would share the resource and release it twice; define a `clone()` method that duplicates the resource (a deep copy then calls it)"),
             );
         }
         let mut all = vec![recv];

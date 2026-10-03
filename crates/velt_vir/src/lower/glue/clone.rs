@@ -1,7 +1,8 @@
 //! Clone glue bodies (`x.clone()`, owned copies of borrowed values): a bitwise copy first, then
-//! every part that owns resources is replaced by its own deep copy.
+//! every part that owns resources is replaced by its own deep copy. A class with a `clone()` of
+//! its own (`Cx::own_clone`, transfer.rs) is copied by that method.
 
-use velt_sema::hir::{TyId, TyKind};
+use velt_sema::hir::{PassMode, TyId, TyKind};
 
 use super::{Glue, SLOT_CLONE};
 use crate::lower::operand::proj;
@@ -178,6 +179,25 @@ impl FnLower<'_, '_> {
     }
 
     pub(super) fn obj_clone_body(&mut self, obj: vir::Local, ty: TyId) {
+        if let Some(m) = self.cx.own_clone(ty) {
+            // The class duplicates what it owns itself (a resource handle, #122).
+            let this = Operand::Copy(Place::local(obj));
+            let this = match self.cx.fn_def(m).params[0].mode {
+                PassMode::Owned => self.share_value(this, ty),
+                _ => this,
+            };
+            let targs = self.cx.method_targs(m, ty);
+            let f = self.cx.func_for(m, targs);
+            let out = self.temp(Ty::Ptr);
+            self.call(
+                vir::Callee::Func(f),
+                vec![this],
+                Some(Place::local(out)),
+                false,
+            );
+            self.terminate(Terminator::Return(Operand::Copy(Place::local(out))));
+            return;
+        }
         let oa = self.cx.obj_agg(ty);
         let new = self.object_alloc(ty);
         let src = proj(&Place::local(obj), Proj::Deref(Ty::Agg(oa)));

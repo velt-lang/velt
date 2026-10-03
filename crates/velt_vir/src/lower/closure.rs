@@ -1,6 +1,6 @@
 //! Closures. A function value is `{ code, env }`; `code` takes `env` as a hidden first param.
-//! The environment is `{ drop: ptr, clone: ptr, reach: u64, captures… }` (layout.rs; `reach`
-//! is 1 when a capture can reach a counted object, transfer.rs): Borrow/BorrowMut
+//! The environment is `{ drop: ptr, clone: ptr, transfer: ptr, captures… }` (layout.rs; the
+//! transfer entry makes it safe for another thread, glue/transfer.rs): Borrow/BorrowMut
 //! captures store a pointer to the captured variable, Copy/Owned captures store the value (Owned
 //! ones move it in). Environments of closures that borrow (non-escaping) live in the creating
 //! function's frame with null drop/clone, and so do those of closure literals passed directly
@@ -16,8 +16,8 @@ use super::operand::proj;
 use super::{cfunc, cint, FnLower, LInfo, LState, ThunkKind, Work};
 use crate::vir::{Function, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
-/// Header fields of a closure environment in front of its captures: drop entry, clone entry
-/// and `reach` (module docs).
+/// Header fields of a closure environment in front of its captures: drop, clone and transfer
+/// entries (module docs).
 pub(super) const ENV_HEADER: u32 = 3;
 
 impl super::Cx<'_> {
@@ -106,11 +106,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let base = proj(&envp, Proj::Deref(Ty::Agg(ea)));
         self.assign(proj(&base, Proj::Field(0)), Rvalue::Use(drop_fn));
         self.assign(proj(&base, Proj::Field(1)), Rvalue::Use(clone_fn));
-        let reach = self.captures_reach_counted(f);
-        self.assign(
-            proj(&base, Proj::Field(2)),
-            Rvalue::Use(cint(i128::from(reach), Ty::U64)),
-        );
+        let transfer = match self.cx.closure_env_is_heap(def) {
+            true => cfunc(self.cx.func(Work::EnvTransfer(def, targs.clone()))),
+            false => cint(0, Ty::Ptr),
+        };
+        self.assign(proj(&base, Proj::Field(2)), Rvalue::Use(transfer));
         for (k, c) in f.captures.iter().enumerate() {
             let Some(outer) = self.local_target(c.outer) else {
                 continue;
@@ -149,18 +149,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
-    /// Can a closure's captures reach a counted object (a shared cell, or a value of a type
-    /// that can)? Only then must a uniquely owned closure be copied, not moved, when it
-    /// crosses to another thread (transfer.rs).
-    fn captures_reach_counted(&mut self, f: &FnDef) -> bool {
-        f.captures.iter().any(|c| {
-            let local = &f.body.locals[c.inner.0 as usize];
-            let borrowed = matches!(c.mode, PassMode::Borrow | PassMode::BorrowMut);
-            let ty = self.sub(local.ty);
-            (local.boxed && !borrowed) || self.cx.holds_counted(ty)
-        })
-    }
-
     /// Closure body prologue: each captured local is a pointer into the env (value captures) or
     /// the pointer stored in it (borrowed captures).
     pub(super) fn bind_captures(
@@ -194,7 +182,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// Value captures of closure `def` with their env field index and concrete type (shared
     /// cells are `cell_captures`).
-    fn value_captures(&mut self, def: DefId) -> Vec<(u32, PassMode, TyId)> {
+    pub(super) fn value_captures(&mut self, def: DefId) -> Vec<(u32, PassMode, TyId)> {
         let f = self.cx.fn_def(def);
         let mut out = vec![];
         for (k, c) in f.captures.iter().enumerate() {
@@ -259,6 +247,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let clone = cfunc(lw.cx.func(Work::EnvClone(def, targs.to_vec())));
         lw.assign(proj(&dst, Proj::Field(0)), Rvalue::Use(drop));
         lw.assign(proj(&dst, Proj::Field(1)), Rvalue::Use(clone));
+        let transfer = cfunc(lw.cx.func(Work::EnvTransfer(def, targs.to_vec())));
+        lw.assign(proj(&dst, Proj::Field(2)), Rvalue::Use(transfer));
         for (field, mode, ty) in lw.value_captures(def) {
             if mode == PassMode::Owned {
                 lw.clone_into(
@@ -284,7 +274,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
 impl FnLower<'_, '_> {
     /// Captures of closure `def` that hold a shared cell (escaping by-value captures of a
     /// `LocalDef::boxed` variable): env field index and the variable's concrete type.
-    fn cell_captures(&mut self, def: DefId) -> Vec<(u32, TyId)> {
+    pub(super) fn cell_captures(&mut self, def: DefId) -> Vec<(u32, TyId)> {
         let f = self.cx.fn_def(def);
         let mut out = vec![];
         for (k, c) in f.captures.iter().enumerate() {
@@ -298,7 +288,7 @@ impl FnLower<'_, '_> {
     }
 }
 
-fn closure_name(hir: &hir::Program, def: DefId) -> String {
+pub(super) fn closure_name(hir: &hir::Program, def: DefId) -> String {
     match hir.def(def) {
         hir::Def::Fn(f) => f.name.clone(),
         _ => format!("def{}", def.0),

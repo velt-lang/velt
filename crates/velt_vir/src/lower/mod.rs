@@ -165,6 +165,9 @@ enum Work {
     /// Drop / clone of a heap closure environment for closure `(def, targs)`.
     EnvDrop(DefId, Vec<TyId>),
     EnvClone(DefId, Vec<TyId>),
+    /// `(env: ptr) -> ptr`: the environment of closure `(def, targs)` made safe for another
+    /// thread (glue/transfer.rs).
+    EnvTransfer(DefId, Vec<TyId>),
     /// `(len: u64, index: i64|u64, at: ptr)`: index-out-of-bounds panic (true = signed index;
     /// `at` points to the ` at <location>` string suffix).
     Oob(bool),
@@ -238,6 +241,9 @@ struct Cx<'h> {
     facts: boxing::Facts,
     /// `Program::impls` indexes per interface (`impls_of`), built on first use.
     iface_impls: Option<HashMap<DefId, Rc<[u32]>>>,
+    /// Classes with a `clone()` of their own, and that method (`own_clone`, transfer.rs),
+    /// found on first use.
+    own_clones: Option<HashMap<DefId, DefId>>,
     /// Memoized `dyn_modes` per (interface, slot).
     dyn_modes_memo: HashMap<(DefId, u32), Option<Vec<hir::PassMode>>>,
 }

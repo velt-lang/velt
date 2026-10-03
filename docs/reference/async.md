@@ -30,15 +30,23 @@ Promises behave like JavaScript's, at Rust's cost:
   the promise (objects) or copied (numbers, strings), otherwise moved, because the promise may
   outlive the caller's frame. A promise has one owner: using a promise variable after handing
   it on is ``use of moved value``, and an explicit `p.clone()` is ``a promise cannot be copied``.
-- Values handed to `spawn` (and captured by an HTTP handler) go to another thread: an object
-  the program still shares is deep-copied for the task (like a structured clone), so threads
-  never share reference counts. That includes the receiver of `spawn(obj.method())` (also
-  through a base-class reference or an interface value) and what a closure or interface value
-  passed to the task reaches. A closure the caller still uses afterwards is copied too, with
-  what it captures, so the task and the caller each run their own copy. Objects the program
-  never shares move instead: a closure handed on for the last time that captures only those
-  (an HTTP handler capturing a disposable resource, say) goes to the task as it is, and a
-  captured value's `[Symbol.dispose]()` runs once.
+- Values handed to `spawn` (and captured by an HTTP handler, or sent over a channel) go to
+  another thread. What the program no longer references anywhere else moves as it is; an object
+  it still shares is deep-copied for the task (like a structured clone), so threads never share
+  reference counts. That includes the receiver of `spawn(obj.method())` (also through a
+  base-class reference or an interface value) and what a closure or interface value passed to
+  the task reaches. A closure the caller still uses afterwards is copied too, with what it
+  captures (also a variable it assigns), so the task and the caller each run their own copy. A
+  closure handed on for the last time that captures only values nothing else references (an
+  HTTP handler capturing a disposable resource, say) goes to the task as it is, and a captured
+  value's `[Symbol.dispose]()` runs once.
+- A value owning a `[Symbol.dispose]` resource is copied by its class's own `clone()` method
+  ([Classes](classes.md)), so each copy releases its own resource. One without `clone()` cannot
+  be copied: passing it to `spawn` and using it afterwards is an error ("`r` is still used
+  after `spawn`, so the task would get a copy, …"); pass the last reference, give the class a
+  `clone()`, or share it with `shared(...)`. When another reference is only found at run time
+  (the value is also in an array, say), the program stops with ``panic: cannot copy a `Conn`
+  for another task …``.
 
 ## Combinators
 

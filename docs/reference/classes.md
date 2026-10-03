@@ -70,7 +70,10 @@ hidden classes and no runtime shape checks.
 - Instances are references, as in JS ([Memory model](memory.md#values-and-references)):
   `const b = a` refers to the same object. `x.clone()` makes an independent deep copy of any
   class, struct or union (like `structuredClone`), except values owning a `[Symbol.dispose]`
-  resource, which may define `clone()` themselves.
+  resource, which may define `clone()` themselves: a class's own `clone()` (no parameters,
+  returning the class) is what every deep copy of it calls, `x.clone()` of an array or object
+  holding it too, and so does the copy a value gets when it goes to another task
+  ([Async](async.md#promises)).
 - Async methods take `this` by value: the promise owns it.
 - An overridden method returning a promise reports its errors through the promise: when the
   base method or any override can fail, all of them must be `async`

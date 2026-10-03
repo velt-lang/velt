@@ -47,6 +47,7 @@ impl<'h> Cx<'h> {
             boxing,
             facts: Default::default(),
             iface_impls: None,
+            own_clones: None,
             dyn_modes_memo: HashMap::new(),
         }
     }

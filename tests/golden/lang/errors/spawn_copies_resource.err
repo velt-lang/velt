@@ -1,0 +1,8 @@
+  = note: call a function directly to hand the value over (`spawn(f(x))`), give the resource type a `clone()` method that duplicates it, or share it with `shared(...)`
+  = note: pass the last reference (don't use `c` after the `spawn`), give the resource type a `clone()` method that duplicates it, or share it with `shared(...)`
+  = note: pass the last reference (don't use `d` after the `spawn`), give the resource type a `clone()` method that duplicates it, or share it with `shared(...)`
+  = note: pass the last reference (don't use `p` after the `spawn`), give the resource type a `clone()` method that duplicates it, or share it with `shared(...)`
+spawn_copies_resource.vlt:43:25: error: `c` is still used after `spawn`, so the task would get a copy, but `Conn` owns a resource (`[Symbol.dispose]`) and has no `clone()`
+spawn_copies_resource.vlt:46:29: error: `p` is still used after `spawn`, so the task would get a copy, but `Pair` owns a resource (`[Symbol.dispose]`) and has no `clone()`
+spawn_copies_resource.vlt:49:19: error: `d` is still used after `spawn`, so the task would get a copy, but `Conn` owns a resource (`[Symbol.dispose]`) and has no `clone()`
+spawn_copies_resource.vlt:52:35: error: the spawned task would get a copy of this value (a call through a function value, an interface or an overridden method only borrows it), but `Conn` owns a resource (`[Symbol.dispose]`) and has no `clone()`

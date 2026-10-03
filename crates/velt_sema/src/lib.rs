@@ -189,6 +189,7 @@ fn analyze(cx: &mut ctx::Ctx) {
     ownership::clone_reused(cx, &moved.reused);
     ownership::box_cells(cx, &moved.boxed);
     ownership::check_exclusive(cx);
+    ownership::check_boundaries(cx);
 }
 
 /// Top-level statements run only in the root file: the parser turned an imported module's into

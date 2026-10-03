@@ -83,6 +83,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::Thunk(kind, def, targs) => Self::build_thunk(cx, *kind, *def, targs),
             Work::EnvDrop(def, targs) => Self::build_env_drop(cx, *def, targs),
             Work::EnvClone(def, targs) => Self::build_env_clone(cx, *def, targs),
+            Work::EnvTransfer(def, targs) => Self::build_env_transfer(cx, *def, targs),
             Work::Oob(signed) => Self::build_oob(cx, *signed),
             Work::ArrayGrow => Self::build_array_grow(cx),
             Work::Main => Self::build_main(cx),
