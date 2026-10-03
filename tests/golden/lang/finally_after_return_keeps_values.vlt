@@ -170,6 +170,74 @@ async function asyncBreak(): Promise<string> {
   return out + " " + t.inner.name;
 }
 
+// A rethrow from a `catch`, a call that throws and a diverging call are throw points too: the
+// outer handler sees what was taken before them.
+function rethrown(): string {
+  const t = new Token();
+  try {
+    try {
+      throw new Error("a");
+    } catch (e) {
+      keep(t);
+      throw e;
+    }
+  } catch (e) {
+    return "rethrown " + t.inner.name;
+  }
+}
+
+function fail(): never {
+  throw new Error("fail");
+}
+
+function mayThrow(n: i64) {
+  if (n > 0) {
+    throw new Error("may");
+  }
+}
+
+function diverging(): string {
+  const t = new Token();
+  try {
+    keep(t);
+    fail();
+  } catch (e) {
+    return "diverging " + t.inner.name;
+  }
+}
+
+function throwing(): string {
+  const t = new Token();
+  try {
+    keep(t);
+    mayThrow(1);
+    return "no";
+  } catch (e) {
+    return "throwing " + t.inner.name;
+  }
+}
+
+// Each exit gets the `finally` on its own path: the promise returned on one path is still
+// there after the `break` on the other.
+async function oneAsync(): Promise<string> {
+  return "one";
+}
+
+function exits(c: bool): Promise<string> {
+  const p = oneAsync();
+  while (true) {
+    try {
+      if (c) {
+        return p;
+      }
+      break;
+    } finally {
+      console.log("exits finally", c);
+    }
+  }
+  return p;
+}
+
 async function main() {
   console.log(await guarded());
   console.log(direct());
@@ -181,4 +249,8 @@ async function main() {
   console.log(throwThroughFinally());
   console.log(labelled());
   console.log(await asyncBreak());
+  console.log(rethrown());
+  console.log(diverging());
+  console.log(throwing());
+  console.log(await exits(true), await exits(false));
 }

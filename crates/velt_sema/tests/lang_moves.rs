@@ -110,3 +110,35 @@ fn a_promise_returned_in_a_try_is_gone_in_its_finally() {
     );
     assert!(err.contains("use of moved value `p`"), "{err}");
 }
+
+#[test]
+fn a_rethrow_and_calls_that_throw_reach_the_handler() {
+    let src = "class T { n: i64 = 1; }
+         function keep(t: T): i64 { const kept = [t]; return kept[0].n; }
+         function fail(): never { throw new Error(\"x\"); }
+         function mayThrow(n: i64) { if (n > 0) { throw new Error(\"y\"); } }
+         function rethrown(): i64 {
+           const t = new T();
+           try { try { throw new Error(\"a\"); } catch (e) { keep(t); throw e; } }
+           catch (e) { return t.n; } }
+         function diverging(): i64 { const t = new T(); try { keep(t); fail(); } catch (e) { return t.n; } }
+         function throwing(): i64 { const t = new T(); try { keep(t); mayThrow(1); return 0; } catch (e) { return t.n; } }
+         function main() { console.log(rethrown(), diverging(), throwing()); }";
+    assert_eq!(shares(src, "rethrown"), 1);
+    assert_eq!(shares(src, "diverging"), 1);
+    assert_eq!(shares(src, "throwing"), 1);
+}
+
+#[test]
+fn each_exit_of_a_finally_keeps_its_own_state() {
+    // `return p` moves the promise only on the way to the function's exit; the `break` to the
+    // loop's end still has it, so the `await` after the loop is fine.
+    common::programs::ok_src(
+        "async function one(): Promise<i64> { return 1; }
+         function f(c: bool): Promise<i64> {
+           const p = one();
+           while (true) { try { if (c) { return p; } break; } finally { console.log(\"f\"); } }
+           return p; }
+         async function main() { console.log(await f(true), await f(false)); }",
+    );
+}
