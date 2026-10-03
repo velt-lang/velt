@@ -1,0 +1,33 @@
+// check: no leaks
+// `envAll()` lists every environment variable as a `Record<string, string>`, like Node's
+// `process.env` read as an object: names in the order the OS keeps them, and a snapshot that
+// later `setEnv` / `removeEnv` calls don't change. The variables are set in name order, so the
+// output is the same on every OS.
+import { envAll, setEnv, removeEnv } from "velt:process";
+
+function ours(env: Record<string, string>): string[] {
+  return Object.keys(env).filter((k: string) => k.startsWith("VELT_ENVALL_"));
+}
+
+function main() {
+  setEnv("VELT_ENVALL_A", "1");
+  setEnv("VELT_ENVALL_B", "two words");
+  setEnv("VELT_ENVALL_C", "ä=b");
+  const env = envAll();
+  console.log(ours(env));
+  for (const [k, v] of Object.entries(env)) {
+    if (k.startsWith("VELT_ENVALL_")) {
+      console.log(`${k}=${v}`);
+    }
+  }
+  console.log(env.VELT_ENVALL_B ?? "unset", env["VELT_ENVALL_NOPE"] ?? "unset");
+  console.log(Object.keys(env).length > 3);
+  console.log(Object.keys(env).every((k: string) => !k.startsWith("=")));
+  removeEnv("VELT_ENVALL_A");
+  setEnv("VELT_ENVALL_D", "new");
+  console.log(ours(env), ours(envAll()));
+  removeEnv("VELT_ENVALL_B");
+  removeEnv("VELT_ENVALL_C");
+  removeEnv("VELT_ENVALL_D");
+  console.log(ours(envAll()));
+}

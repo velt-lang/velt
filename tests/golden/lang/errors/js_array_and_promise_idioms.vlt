@@ -23,6 +23,7 @@ async function main() {
   const count = await fetchCount().then((n: i64) => n + 1);
   const args = process.argv;
   const out = process.stdout;
+  const names = Object.keys(process.env);
   process.env.HOME = "/tmp";
   delete process.env.HOME;
   const quit = process.exit;
