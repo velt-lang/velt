@@ -210,10 +210,26 @@ impl FnCx<'_, '_> {
                 "the value may be null: use `?.{}(...)` or check `!= null` first",
                 prop.name
             ));
+        } else if prop.name == "writeString" && self.is_std_stdout(recv.ty) {
+            d = d.with_note(
+                "`writeString` was removed: write a string with `process.stdout.write(s)` (no \
+                 import); `stdout.write` of `velt:process` takes bytes",
+            );
         }
         self.cx.error(d);
         self.check_args_loose(args);
         self.error_expr(span)
+    }
+
+    /// Is `t` the `Stdout` of `velt:process` (the byte sink `stdout`)?
+    fn is_std_stdout(&self, t: TyId) -> bool {
+        match self.cx.ty.kind(t) {
+            TyKind::Adt(d, _) => self
+                .cx
+                .adt(*d)
+                .is_some_and(|a| a.qual_name == "std/process::Stdout"),
+            _ => false,
+        }
     }
 
     /// Call a zero-argument method on a checked receiver (desugarings such as `entries()`).

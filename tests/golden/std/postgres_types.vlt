@@ -2,7 +2,6 @@
 // uuid, dates and timestamps as ISO strings, json/jsonb decoded into nested types, bytea as
 // u8[], arrays, NULL, domains and enums; parameters converted for their types.
 // requires-env: VELT_TEST_PG_URL
-import { env } from "velt:process";
 import { connect } from "velt:postgres";
 
 class Numbers {
@@ -127,7 +126,7 @@ class Echo {
 }
 
 async function main() {
-  const db = await connect(env("VELT_TEST_PG_URL") ?? "");
+  const db = await connect(process.env.VELT_TEST_PG_URL ?? "");
   const n: Numbers | null = await db.selectOne(`
     SELECT 7::int2 AS small, 9007199254740993::int8 AS big, 0.1::float8 + 0.2 AS real,
       12345678901234567890.0100::numeric AS exact, true AS flag, NULL::int AS nothing

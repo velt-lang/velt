@@ -1,7 +1,6 @@
 // requires-env: VELT_TEST_PG_URL
 // std/postgres: interval, money, inet/cidr and macaddr columns decode without a ::text cast
 // (to the text PostgreSQL prints for them), also inside arrays and as NULL.
-import { env } from "velt:process";
 import { connect } from "velt:postgres";
 
 class Row {
@@ -36,7 +35,7 @@ class Row {
 }
 
 async function main() {
-  const db = await connect(env("VELT_TEST_PG_URL") ?? "");
+  const db = await connect(process.env.VELT_TEST_PG_URL ?? "");
   const r: Row | null = await db.selectOne(
     `SELECT interval '1 year 2 months 3 days 04:05:06.5' AS span,
             CASE WHEN false THEN interval '1 day' END AS neg,

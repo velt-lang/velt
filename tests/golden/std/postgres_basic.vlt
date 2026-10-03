@@ -1,7 +1,6 @@
 // std/postgres basics: connect, batch, query/queryOne/execute with positional and named
 // parameters, the no-parameter forms, and close.
 // requires-env: VELT_TEST_PG_URL
-import { env } from "velt:process";
 import { connect } from "velt:postgres";
 
 class User {
@@ -27,7 +26,7 @@ class Count {
 }
 
 async function main() {
-  const db = await connect(env("VELT_TEST_PG_URL") ?? "");
+  const db = await connect(process.env.VELT_TEST_PG_URL ?? "");
   await db.batch(`
     CREATE TEMP TABLE users (
       id BIGSERIAL PRIMARY KEY,
