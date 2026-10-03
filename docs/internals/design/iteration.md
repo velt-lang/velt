@@ -350,17 +350,23 @@ Without it, two `next()` promises polled the same suspended `await` with differe
 values went to the wrong caller, a lost wakeup could hang the program, and `return()` during a
 pending `next()` skipped `finally` blocks.
 
-The queue is a ticket lock in the prelude class (std/prelude/iter.vlt): three `u64` fields
-after the table pointer — tickets handed out, the ticket being served, and a runtime latch
-(`velt_rt_latch_*`, the one `new Promise` uses) that waiting calls wait on, created by the
-first waiter and opened and released by the call that finishes. All callers of one generator
-run on its task (a generator cannot cross tasks), so the fields need no atomics. An
-uncontended call costs two field updates and a compare; nothing is allocated unless calls
-overlap. The generator object's state now follows the class's fields (`Cx::gen_state_off`:
-the class object's size; 8 for `Generator`, 32 for `AsyncGenerator`), and `Work::GenNew`
-zeroes the fields after the table pointer. The embedded `for await` loop over a direct call has
-no object and no queue. A call cancelled while it waits for its turn (only when its whole task
-is dropped) leaves its ticket unserved; everything else on that task is dropped with it.
+The queue lives in the prelude class (std/prelude/iter.vlt): three `u64` fields after the
+table pointer — whether a call is running, `head` and `tail`, runtime latches
+(`velt_rt_latch_*`, the ones `new Promise` uses). A call that finds none running runs at once
+and allocates nothing. A call that has to wait creates the latch it will open when it finishes
+and leaves it in `tail`, and waits on the latch of the call before it: the previous `tail`, or,
+when only a call that started alone is ahead, `head`, which it creates for that call. A
+finished call opens and releases its latch (`head` for one that started alone), which wakes
+only the next call in line, or, when nobody queued behind it, clears `running`. So n
+overlapping calls cost n wake-ups (a single shared latch woke every waiter on each turn:
+O(n²)). `next()` and `return()` pass the turn on in a `finally`. All callers of one generator
+run on its task (a generator cannot cross tasks), so the fields need no atomics, and a pending
+call keeps the object alive, so none is queued when it is dropped. The generator object's state
+now follows the class's fields (`Cx::gen_state_off`: the class object's size; 8 for
+`Generator`, 32 for `AsyncGenerator`), and `Work::GenNew` zeroes the fields after the table
+pointer. The embedded `for await` loop over a direct call has no object and no queue. A call
+cancelled while it waits for its turn (only when its whole task is dropped) never opens its
+latch; everything else on that task is dropped with it.
 
 ### Cost
 
