@@ -130,7 +130,7 @@ impl FnCx<'_, '_> {
             }
         }
         let Some((index, fty)) = self.field_of(obj.ty, &prop.name) else {
-            self.no_field(obj.ty, prop);
+            self.no_field(obj.ty, obj.span, prop);
             return None;
         };
         self.check_field_private(obj.ty, index, prop);
@@ -150,7 +150,7 @@ impl FnCx<'_, '_> {
         ))
     }
 
-    fn no_field(&mut self, t: TyId, prop: &ast::Ident) {
+    fn no_field(&mut self, t: TyId, obj: Span, prop: &ast::Ident) {
         if self.has_setter(t, &prop.name) {
             return self.cx.err(
                 format!("cannot read `{}`: it has a setter but no getter", prop.name),
@@ -168,6 +168,9 @@ impl FnCx<'_, '_> {
             );
         }
         if let Some(note) = self.narrowing_note(t) {
+            d = d.with_note(note);
+        }
+        if let Some(note) = self.unnarrowed_note(obj) {
             d = d.with_note(note);
         }
         if self.method_exists(t, &prop.name) {
@@ -256,7 +259,8 @@ impl FnCx<'_, '_> {
         }
         let obj = self.expr(object, None, Want::Borrow);
         let h = self.member_of(obj, prop, want, span);
-        self.narrowed_field(object, prop, h, want)
+        let h = self.narrowed_field(object, prop, h, want);
+        self.downcast_field(object, prop, h)
     }
 
     /// `.prop` on an already checked value.

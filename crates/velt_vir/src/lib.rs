@@ -70,7 +70,9 @@
 //!   closures; stack-allocated with null drop/clone when the closure only borrows);
 //! * interface values → `{ data: ptr, vtable: ptr }` (data = the object for classes, else a heap box).
 //! * Vtables are read-only tables of function addresses (static data with relocations): slot `k`
-//!   at byte `8 * (k + 3)`; slots -1/-2/-3 are drop/clone/print of the concrete value.
+//!   at byte `8 * (k + 6)`; slots -1 to -5 are drop/clone/format/share/class name of the
+//!   concrete value, and the first word (-6) is its class id for `instanceof`
+//!   (`lower/glue/vtable.rs`, `lower/class_test.rs`).
 //! * Every type's all-zero bit pattern is a valid "owns nothing" value for its drop glue. A
 //!   struct/class with a `dispose()` hook runs it before its fields are dropped.
 //! * `Promise<T>` values → `Ptr` to a heap future (`VeltFut*`, result at +16).

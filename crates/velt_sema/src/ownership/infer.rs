@@ -175,7 +175,8 @@ fn through_class(cx: &Ctx, e: &Expr) -> bool {
         cur = match &cur.kind {
             E::Field { base, .. }
             | E::UnwrapSome(base, _)
-            | E::UnwrapVariant { expr: base, .. } => base,
+            | E::UnwrapVariant { expr: base, .. }
+            | E::Downcast(base) => base,
             _ => return false,
         };
         if cx.class_of(cur.ty).is_some() {
@@ -297,7 +298,7 @@ impl VisitMut for Flip<'_> {
 /// Consume place `e` (through `Upcast` / `WrapSome`); returns whether a mode changed.
 pub(crate) fn force_move(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
     match &mut e.kind {
-        E::Upcast(inner) | E::WrapSome(inner) => force_move(cx, inner, errors),
+        E::Upcast(inner) | E::Downcast(inner) | E::WrapSome(inner) => force_move(cx, inner, errors),
         E::Closure(def) => super::fn_values::escape_closure(cx, *def),
         E::Global(d) => {
             let (ty, name) = cx
@@ -340,6 +341,7 @@ fn current_mode(e: &Expr) -> Option<UseMode> {
         | E::Index { mode: m, .. }
         | E::UnwrapSome(_, m)
         | E::UnwrapVariant { mode: m, .. } => Some(m),
+        E::Downcast(ref x) => current_mode(x),
         _ => None,
     }
 }

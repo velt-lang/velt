@@ -630,3 +630,35 @@ function main() { }"#,
         "{r}"
     );
 }
+
+#[test]
+fn super_runs_exactly_once_before_this() {
+    let base = "class A { n: i64; constructor(n: i64) { this.n = n; } }";
+    for (ctor, want) in [
+        (
+            "constructor(c: bool) { if (c) { super(1); } }",
+            "must be a statement of its own",
+        ),
+        (
+            "constructor() { for (const i of [1]) { super(i); } }",
+            "must be a statement of its own",
+        ),
+        (
+            "constructor() { const f = () => super(1); f(); }",
+            "cannot be called inside a function",
+        ),
+        (
+            "constructor() { super(1); super(2); }",
+            "is called more than once",
+        ),
+        (
+            "constructor() { super(this.n); }",
+            "`this` cannot be used before `super(...)` has run",
+        ),
+    ] {
+        let r = err_src(&format!(
+            "{base} class B extends A {{ {ctor} }} function main() {{}}"
+        ));
+        assert!(r.contains(want), "{ctor}: {r}");
+    }
+}

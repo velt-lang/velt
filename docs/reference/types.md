@@ -206,8 +206,9 @@ the nullable type; `void` cannot be a member.
   - `typeof x === "string" | "number" | "boolean" | "object" | "function"` (and `!==`): all
     number types are `"number"`; classes, structs, arrays, maps and `null` are `"object"`;
     closures are `"function"`. An impossible tag is an error.
-  - `x instanceof C` matches members whose class is `C` or a subclass. A downcast (testing a
-    base-class value for a subclass) is an error: use a union of the subclasses.
+  - `x instanceof C` matches members whose class is `C` or a subclass. A member of a base
+    class of `C`, or an interface value, is tested at run time and narrows to `C`
+    ([downcasts](classes.md#instanceof-downcasts)).
   - `x == literal` / `x != literal` selects the literal's member.
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
@@ -360,8 +361,8 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   in TypeScript: an object literal or object type (`Object.keys({ a: 1, b: "x" })` is `["a",
   "b"]`), a struct, or a class instance, whose fields it lists in declaration order (base class
   fields first, `private` ones too; not static fields or methods). A struct's optional field is
-  listed only when it is not `null`. A class with subclasses is an error, because the value may
-  be a subclass instance with more fields. `console.log` and `JSON` treat a record as an object. A class
+  listed only when it is not `null`. On a class with subclasses it lists the fields of the
+  object's actual class (a `Shape` holding a `Rect` lists the `Rect` fields too). `console.log` and `JSON` treat a record as an object. A class
   cannot `extends` a `Record` (its constructor would leave a closed record without its keys);
   hold one in a field instead. A literal for an enum-keyed record is not supported yet.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,

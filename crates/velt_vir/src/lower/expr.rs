@@ -14,7 +14,9 @@ pub(super) fn may_write(e: &hir::Expr) -> bool {
     use hir::ExprKind as K;
     match &e.kind {
         K::Lit(_) | K::Local(..) | K::Global(_) | K::FnRef(..) => false,
-        K::Unary { expr, .. } | K::Cast(expr) | K::Upcast(expr) => may_write(expr),
+        K::Unary { expr, .. } | K::Cast(expr) | K::Upcast(expr) | K::Downcast(expr) => {
+            may_write(expr)
+        }
         K::Field { base, .. } => may_write(base),
         K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => {
             may_write(lhs) || may_write(rhs)
@@ -35,6 +37,10 @@ impl FnLower<'_, '_> {
         use hir::ExprKind as K;
         if let K::Upcast(inner) = &e.kind {
             return self.consume(inner);
+        }
+        if let K::Downcast(inner) = &e.kind {
+            let v = self.consume(inner);
+            return self.downcast_value(v, inner.ty);
         }
         let v = self.expr(e);
         if self.dead() || !self.needs_drop(e.ty) {
@@ -160,6 +166,10 @@ impl FnLower<'_, '_> {
             } => self.unwrap_variant(expr, *variant, *mode),
             K::New { args, .. } => self.new_object(e.ty, args),
             K::Upcast(inner) => self.expr(inner),
+            K::Downcast(inner) => {
+                let v = self.expr(inner);
+                self.downcast_value(v, inner.ty)
+            }
             K::ToDyn { expr, impl_index } => self.make_dyn(expr, *impl_index, e.ty),
             K::Throw(inner) => self.throw(inner),
             K::Await(inner) => self.await_expr(inner),

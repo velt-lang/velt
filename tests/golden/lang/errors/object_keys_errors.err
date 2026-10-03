@@ -1,5 +1,3 @@
-object_keys_errors.vlt:16:27: error: `Object.keys` cannot list the fields of `Base`: it has subclasses
-a `Base` value may be a `Sub`, whose own fields would be listed too; call it on a value of a class without subclasses
 object_keys_errors.vlt:17:27: error: `Object.keys` lists the keys of an object, a class or struct instance or a `Record`, found `Map<string, i64>`
 list a map's keys with `m.keys()`
 object_keys_errors.vlt:18:27: error: `Object.keys` lists the keys of an object, a class or struct instance or a `Record`, found `string`

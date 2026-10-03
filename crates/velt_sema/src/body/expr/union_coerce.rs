@@ -255,6 +255,7 @@ fn outer_mode(e: &hir::Expr) -> Option<UseMode> {
         | H::Index { mode: m, .. }
         | H::UnwrapSome(_, m)
         | H::UnwrapVariant { mode: m, .. } => Some(m),
+        H::Downcast(ref x) => outer_mode(x),
         _ => None,
     }
 }

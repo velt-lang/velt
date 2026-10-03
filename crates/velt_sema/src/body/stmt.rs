@@ -48,8 +48,18 @@ impl FnCx<'_, '_> {
     }
 
     pub fn stmt(&mut self, s: &ast::Stmt, out: &mut Vec<hir::Stmt>) {
+        // Only the constructor's first statement may call `super(...)`, and only as a statement
+        // of its own: nested in it, the call could run never or more than once.
+        let first = std::mem::take(&mut self.f.super_ok);
+        if first {
+            self.f.super_ok = is_super_call(s);
+            self.f.super_first = true;
+        }
         self.stmt_inner(s, out);
         self.f.super_ok = false;
+        if first {
+            self.f.super_first = false;
+        }
     }
 
     fn stmt_inner(&mut self, s: &ast::Stmt, out: &mut Vec<hir::Stmt>) {
@@ -416,4 +426,12 @@ fn is_place(e: &ast::Expr) -> bool {
         ast::ExprKind::Paren(inner) => is_place(inner),
         _ => false,
     }
+}
+
+/// `super(...);`
+fn is_super_call(s: &ast::Stmt) -> bool {
+    let ast::StmtKind::Expr(e) = &s.kind else {
+        return false;
+    };
+    matches!(&e.kind, ast::ExprKind::Call { callee, .. } if matches!(callee.kind, ast::ExprKind::Super))
 }
