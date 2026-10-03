@@ -114,7 +114,13 @@ impl FnCx<'_, '_> {
         let mut out = vec![];
         let mut cur = Some(ty);
         while let Some((d, args)) = cur.and_then(|t| self.cx.class_of(t)) {
-            if Some(d) == stop || out.len() > 64 {
+            // Inheritance cycles are broken when layouts are computed (`class inheritance
+            // cycle`), so the chain ends; the check on classes already listed only guards that
+            // invariant (unlike a depth limit, it never cuts a deep but finite chain short).
+            let listed = out
+                .iter()
+                .any(|s| matches!(s, ThrowSrc::Defaults(o, ..) if *o == d));
+            if Some(d) == stop || listed {
                 break;
             }
             crate::body::field_defaults(self.cx, d);
