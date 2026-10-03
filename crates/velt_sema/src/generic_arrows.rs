@@ -3,7 +3,8 @@
 //! generic function `function f<T>(x: T): R { return body; }` (same spans, same `export`). The
 //! syntax is rewritten before collection, so every later pass sees an ordinary generic function.
 //! Generic arrows anywhere else are reported by `body::expr::closure` (a closure value has one
-//! type; Velt has no generic function values).
+//! type; Velt has no generic function values). Likewise a module-level `const g = function* (...)
+//! { ... };` is the generator function `function* g(...) { ... }`.
 
 use velt_syntax::ast;
 
@@ -51,6 +52,9 @@ fn as_function(item: &ast::Item) -> Option<ast::Item> {
     };
     if v.kind != ast::VarKind::Const || v.ty.is_some() {
         return None;
+    }
+    if let ast::ExprKind::Function(d) = &v.init.as_ref()?.kind {
+        return generator_function(item, name, d);
     }
     let ast::ExprKind::Arrow {
         type_params,
@@ -102,6 +106,21 @@ fn as_function(item: &ast::Item) -> Option<ast::Item> {
     };
     Some(ast::Item {
         kind: ast::ItemKind::Function(ast::FnDecl { sig, body }),
+        exported: item.exported,
+        span: item.span,
+    })
+}
+
+/// `const g = function* (...): R { ... };` as `function* g(...): R { ... }` (also `async`):
+/// at module level a generator expression is a declaration under the constant's name.
+fn generator_function(item: &ast::Item, name: &ast::Ident, d: &ast::FnDecl) -> Option<ast::Item> {
+    if !d.sig.is_generator {
+        return None;
+    }
+    let mut d = d.clone();
+    d.sig.name = name.clone();
+    Some(ast::Item {
+        kind: ast::ItemKind::Function(d),
         exported: item.exported,
         span: item.span,
     })

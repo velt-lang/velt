@@ -1,0 +1,46 @@
+// check: no leaks
+// Nested array patterns over iterables (#424): an inner `[...]` pattern takes apart a
+// generator, string, `Map` or other iterable it meets, in declarations and `for...of` heads,
+// as JS does.
+import { Set } from "velt:collections/set";
+
+function* gen(start: i64): Generator<i64> {
+  for (let i = start; i < start + 3; i++) {
+    yield i;
+  }
+}
+
+type Holder = { name: string; values: Set<i64> };
+
+function main() {
+  const [[p, q], [r]] = [gen(1), gen(10)];
+  console.log(p, q, r);
+  const pairs = [gen(1), gen(5)];
+  for (const [a, b] of pairs) {
+    console.log(a, b);
+  }
+  const m = new Map<string, string>([["k", "xy"]]);
+  for (const [key, [c0, c1]] of m) {
+    console.log(key, c0, c1);
+  }
+  const [[k, v]] = m;
+  console.log(k, v);
+  const words = ["ab", "cd"];
+  const [[w0, w1], [w2]] = words;
+  console.log(w0, w1, w2);
+  let [[first, ...others]] = [gen(4)];
+  first += 100;
+  console.log(first, others);
+  const h: Holder = { name: "h", values: new Set<i64>([7, 8, 9]) };
+  const { name, values: [s0, s1] } = h;
+  console.log(name, s0, s1);
+  const holders: Holder[] = [h, { name: "g", values: new Set<i64>([1]) }];
+  for (const { name: n, values: [only] } of holders) {
+    console.log(n, only);
+  }
+  const triple: [string, Set<i64>] = ["t", new Set<i64>([3, 4])];
+  const [label, [t0, t1]] = triple;
+  console.log(label, t0, t1);
+  const [[d0, d1 = 50]] = [gen(20)];
+  console.log(d0, d1);
+}

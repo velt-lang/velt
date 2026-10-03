@@ -1,0 +1,36 @@
+// check: no leaks
+// A generator function expression without a result type takes it from the function type it is
+// written for (a return type, an annotation), like an arrow (#424).
+type Gen = () => Generator<string>;
+
+function words(prefix: string): () => Generator<string> {
+  return function* () {
+    yield prefix + "a";
+    yield prefix + "b";
+  };
+}
+
+async function main() {
+  console.log([...words("x")()]);
+  const g: Gen = function* () {
+    yield "q";
+  };
+  const make: (n: i64) => Iterator<i64> = function* (n: i64) {
+    for (let i = 0; i < n; i++) {
+      yield i;
+    }
+  };
+  const ag: () => AsyncGenerator<i64> = async function* () {
+    yield 7;
+  };
+  const it = make(3);
+  let r = it.next();
+  while (!r.done) {
+    console.log(r.value);
+    r = it.next();
+  }
+  for await (const v of ag()) {
+    console.log(v);
+  }
+  console.log([...g()]);
+}

@@ -1,0 +1,27 @@
+// A generator method implementing `Iterable.[Symbol.iterator]` (in a class, or an `extend`
+// block) whose body throws an error its result type does not declare: the interface's iterator
+// type is fixed from the result as written, so the error type must be written there.
+class Bad extends Error {}
+
+class Trio implements Iterable<i64> {
+  *[Symbol.iterator](): Iterator<i64> {
+    yield 1;
+    throw new Bad("x");
+  }
+}
+
+type Pair = { a: i64 };
+
+extend Pair {
+  *[Symbol.iterator](): Generator<i64> {
+    yield this.a;
+    throw new Bad("y");
+  }
+}
+
+function main() {
+  const it: Iterable<i64> = new Trio();
+  const p: Pair = { a: 1 };
+  const q: Iterable<i64> = p;
+  console.log([...it].length, [...q].length);
+}

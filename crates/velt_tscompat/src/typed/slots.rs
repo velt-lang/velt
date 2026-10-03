@@ -35,7 +35,7 @@ pub(super) fn object(props: &[ast::ObjectProp], t: &mut Typed) {
         let (key, value) = match prop {
             ast::ObjectProp::KeyValue(key, value) => (key, Some(value)),
             ast::ObjectProp::Shorthand(key) => (key, None),
-            ast::ObjectProp::Spread(_) => continue,
+            ast::ObjectProp::Spread(_) | ast::ObjectProp::Method(_) => continue,
         };
         let Some(d) = t.def(key.span).filter(|d| d.kind == DefKind::Field) else {
             continue;
@@ -79,6 +79,7 @@ fn prop_span(p: &ast::ObjectProp) -> Span {
         ast::ObjectProp::KeyValue(k, v) => Span::new(k.span.file, k.span.lo, v.span.hi),
         ast::ObjectProp::Shorthand(k) => k.span,
         ast::ObjectProp::Spread(e) => e.span,
+        ast::ObjectProp::Method(f) => Span::new(f.sig.span.file, f.sig.span.lo, f.body.span.hi),
     }
 }
 

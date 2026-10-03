@@ -19,6 +19,9 @@ Maintainer-owned, like hir.rs.
 - Interface values (`Shape[]`) are `TyKind::Dyn`: fat pointer (data, vtable). `ExprKind::ToDyn`
   builds one from a concrete value using `Program::impls[impl_index]`; `Callee::Dyn { slot }`
   calls through it (slot = index into `InterfaceDef::methods`). A Dyn owns a heap box of its value.
+  An impl's `ty` may be any type: builtins (`extend` blocks implementing `Comparable<T>` or
+  `Iterable<T, E>`: `i64`, `T[]`, `string`, `Map<K, V>`) and interface value types
+  (`IterableIterator<T, E>` implements `Iterable<T, E>`; its `ToDyn` boxes the fat pointer).
 - Generic bounds (`T extends Shape`): method calls on a `TyKind::Param` receiver are
   `Callee::ParamMethod`; lowering picks the concrete method via `Program::impls` after
   monomorphization (static dispatch).
@@ -152,6 +155,13 @@ Maintainer-owned, like hir.rs.
   state in that local (the local is only an operand of the generator intrinsics and is
   dropped at the block's end, which closes it). A `GeneratorEmbed` it cannot embed (a
   generator iterating a direct call of itself) is the call's `Generator` object.
+- A generator function expression (`function* (...) { ... }`, also `async function*`) is a
+  closure (`ExprKind::Closure`) whose `FnDef` has `is_generator` (and `is_async`) and
+  `captures`, all by value (`Owned` / `Copy`): calling the closure value creates the generator,
+  whose state holds another reference to each capture (a share, not a copy: generators stay on
+  their thread), and the cell itself for a `LocalDef::boxed` capture (a variable assigned after
+  the capture, by either side). Its function type's result is `ret` with the
+  final `E` and it does not throw.
 
 ## Async generators
 (docs/reference/functions.md "Async generators", docs/internals/design/iteration.md §4)

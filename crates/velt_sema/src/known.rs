@@ -12,6 +12,12 @@ use crate::hir::{self, DefId, IntTy, TyId, TyKind};
 /// The method of the prelude's `Comparable<T>`; `a < b` on a bounded `T` calls it.
 pub(crate) const COMPARE_TO: &str = "compareTo";
 
+/// The interfaces a generator may be declared to return (`Generator<T, E>` implements them).
+const SYNC_RESULTS: [&str; 4] = ["Iterator", "Iterable", "IterableIterator", "IteratorObject"];
+
+/// The interfaces an async generator may be declared to return.
+const ASYNC_RESULTS: [&str; 3] = ["AsyncIterator", "AsyncIterable", "AsyncIterableIterator"];
+
 impl Ctx<'_> {
     /// `interface Comparable<T> { compareTo(other: T): i64 }` from the prelude.
     pub fn comparable_iface(&self) -> Option<DefId> {
@@ -97,8 +103,8 @@ impl Ctx<'_> {
     }
 
     /// `(def, [T, E])` when `t` is a type a generator may be declared to return:
-    /// `Generator<T, E>`, `Iterator<T, E>` or `Iterable<T, E>`, or for an async generator
-    /// `AsyncGenerator<T, E>`, `AsyncIterator<T, E>` or `AsyncIterable<T, E>`.
+    /// `Generator<T, E>` or one of the interfaces it implements ([`SYNC_RESULTS`]), or for an
+    /// async generator `AsyncGenerator<T, E>` or one of [`ASYNC_RESULTS`].
     pub fn generator_result(&self, t: TyId) -> Option<(DefId, Vec<TyId>)> {
         self.generator_result_kind(t).map(|(d, args, _)| (d, args))
     }
@@ -113,11 +119,22 @@ impl Ctx<'_> {
             TyKind::Adt(d, args) if Some(*d) == self.async_generator_class() => {
                 Some((*d, args.clone(), true))
             }
-            TyKind::Dyn(d, args) if iface("Iterator", d) || iface("Iterable", d) => {
+            TyKind::Dyn(d, args) if SYNC_RESULTS.iter().any(|n| iface(n, d)) => {
                 Some((*d, args.clone(), false))
             }
-            TyKind::Dyn(d, args) if iface("AsyncIterator", d) || iface("AsyncIterable", d) => {
+            TyKind::Dyn(d, args) if ASYNC_RESULTS.iter().any(|n| iface(n, d)) => {
                 Some((*d, args.clone(), true))
+            }
+            _ => None,
+        }
+    }
+
+    /// `T` when `t` is an `Iterable<T, E>` value: what an array literal written where one is
+    /// expected holds (`sum([1.5, 2])` with `sum(xs: Iterable<f64>)`).
+    pub fn iterable_elem(&self, t: TyId) -> Option<TyId> {
+        match self.ty.kind(t) {
+            TyKind::Dyn(d, args) if Some(*d) == self.prelude_iface("Iterable") => {
+                args.first().copied()
             }
             _ => None,
         }

@@ -1,0 +1,82 @@
+// check: no leaks
+// `x[Symbol.iterator]()` on arrays, strings, `Map`s and `Set`s returns an `Iterator`. An array's
+// iterator is a live view, as in JS: it reads the length at each step (elements pushed while it
+// runs are visited) and, once it reported `done`, stays done. A string's yields characters (code
+// points). A map's and a set's iterate their entries as of when the iterator was made, like
+// `for...of` over them (JS's are live; this program does not change them meanwhile).
+import { Set } from "velt:collections/set";
+
+function show<T>(r: IteratorResult<T>): string {
+  if (r.done) {
+    return "done";
+  }
+  return `value ${r.value}`;
+}
+
+const xs = [10, 20];
+const it = xs[Symbol.iterator]();
+console.log(show(it.next()));
+xs.push(30);
+console.log(show(it.next()), show(it.next()));
+console.log(show(it.next()));
+xs.push(40);
+console.log(show(it.next()), xs.length);
+
+// Every element, including objects: the iterator shares them with the array.
+class Box {
+  v: string;
+  constructor(v: string) {
+    this.v = v;
+  }
+}
+
+const boxes = [new Box("a"), new Box("b")];
+const bi = boxes[Symbol.iterator]();
+const first = bi.next();
+if (!first.done) {
+  first.value.v = "A";
+}
+console.log(boxes[0].v, bi.next().done, bi.next().done);
+
+const si = "h€😀!"[Symbol.iterator]();
+let r = si.next();
+while (!r.done) {
+  console.log(r.value);
+  r = si.next();
+}
+
+const m = new Map<string, i64>([
+  ["one", 1],
+  ["two", 2],
+]);
+const mi = m[Symbol.iterator]();
+const e = mi.next();
+if (!e.done) {
+  const [k, v] = e.value;
+  console.log(k, v);
+}
+const e2 = mi.next();
+if (!e2.done) {
+  console.log(e2.value[0], e2.value[1]);
+}
+console.log(mi.next().done, mi.next().done);
+
+const s = new Set<i64>([3, 1, 3]);
+const setIt = s[Symbol.iterator]();
+console.log(show(setIt.next()), show(setIt.next()), show(setIt.next()));
+
+// Leaving a loop over an array's iterator early.
+const letters = ["p", "q", "r"];
+const li = letters[Symbol.iterator]();
+let n = 0;
+while (true) {
+  const step = li.next();
+  if (step.done) {
+    break;
+  }
+  n++;
+  if (step.value == "q") {
+    break;
+  }
+}
+console.log(n, show(li.next()));

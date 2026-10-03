@@ -11,7 +11,11 @@
 # generator passed as an `Iterable<i64>`, iterable_class.vlt with an iterator class. The async
 # pair sums 20 × 3M values awaiting an async call per value: async_hand.vlt in a while loop,
 # async_gen.vlt with `for await` over an async generator call; they are compared with
-# async_hand. Node runs once per program (its generators take tens of seconds here).
+# async_hand. The array pair sums a 3M-element array 200 times: array_loop.vlt with `for...of`
+# over the array, array_iterable.vlt through an `Iterable<i64>` parameter; they are compared with
+# array_loop. The spread pair builds 20 arrays of 5M values and sums them: spread_gen.vlt with
+# `[...range(n)]`, spread_hand.vlt pushing in a while loop; they are compared with spread_hand.
+# Node runs once per program (its generators take tens of seconds here).
 # Needs: cargo, node, python3 on PATH; clang for the LLVM backend.
 set -euo pipefail
 RUNS=${1:-5}
@@ -59,7 +63,10 @@ for n in names:
 print("| benchmark | Velt LLVM release (ms) | vs baseline | Node (ms) |")
 print("|---|---|---|---|")
 for n in names:
-    base = best.get("async_hand" if n.startswith("async_") else "hand_loop")
+    group = n.split("_")[0]
+    base = best.get(
+        {"async": "async_hand", "array": "array_loop", "spread": "spread_hand"}.get(group, "hand_loop")
+    )
     rel = f"{best[n] / base:.2f}x" if base else "-"
     print(f"| {n} | {round(best[n] * 1000)} | {rel} | {round(node[n] * 1000)} |")
 EOF

@@ -98,6 +98,10 @@ fn owner_of_extend(target: &ast::TypeExpr) -> &'static str {
             "bool" | "boolean" => "boolean",
             "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
             | "f32" | "f64" | "number" => "number",
+            "Map" => "Map",
+            "IterableIterator" => "IterableIterator",
+            "IteratorObject" => "IteratorObject",
+            "AsyncIterableIterator" => "AsyncIterableIterator",
             other => panic!("an `extend` of `{other}`: name the owner the lint uses for it"),
         },
         T::Union(_) => "nullable",

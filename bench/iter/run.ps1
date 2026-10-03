@@ -1,8 +1,8 @@
 # Iteration benchmark harness (Windows / PowerShell 7): builds every bench/iter/*.vlt (LLVM
 # release), checks that each prints what its Node version (node/<name>.js) prints, and prints a
 # Markdown table of the best wall-clock time over -Runs interleaved rounds, with each program's
-# time relative to hand_loop (the async_* programs: to async_hand). See run.sh for what the
-# programs compare.
+# time relative to hand_loop (the async_* programs: to async_hand; the array_* ones: to
+# array_loop; the spread_* ones: to spread_hand). See run.sh for what the programs compare.
 #
 #   pwsh bench/iter/run.ps1 [-Runs 5]
 param([int]$Runs = 5)
@@ -45,7 +45,7 @@ foreach ($n in $names) {
     $nodeOut = (& node (Join-Path $PSScriptRoot "node/$n.js")) -join "`n"
     $sw.Stop()
     if ($nodeOut -ne $outputs[$n]) { throw "${n}: Velt and Node print different results" }
-    $base = if ($n.StartsWith("async_")) { "async_hand" } else { "hand_loop" }
+    $base = if ($n.StartsWith("async_")) { "async_hand" } elseif ($n.StartsWith("array_")) { "array_loop" } elseif ($n.StartsWith("spread_")) { "spread_hand" } else { "hand_loop" }
     $rel = "{0:N2}x" -f ($best[$n] / $best[$base])
     "| $n | $([Math]::Round($best[$n])) | $rel | $([Math]::Round($sw.Elapsed.TotalMilliseconds)) |"
 }

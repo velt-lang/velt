@@ -370,7 +370,12 @@ builtins included, at zero cost (the calls are direct):
 - `private` is not allowed in `extend`, and an extension cannot add fields (the layout is
   fixed).
 - A type becomes `Comparable` by defining `compareTo` in an `extend` block
-  ([Comparable](#comparable)).
+  ([Comparable](#comparable)), and `Iterable<T, E>` by defining `[Symbol.iterator]()`
+  returning an `Iterator<T, E>`, or as a generator method (`*[Symbol.iterator](): Generator<T,
+  E>`); `[Symbol.asyncIterator]()` makes it an `AsyncIterable<T, E>`
+  ([Iterables](control-flow.md#iterables)). A generator method there that throws must write
+  its error type in its result (`Generator<T, E>`): the interface's type is fixed before
+  bodies are checked.
 - Scope today: an extension applies wherever its module is loaded; `extend` blocks cannot be
   exported.
 - **Planned** ([TypeScript alignment §4](../internals/design/ts-alignment.md#4-extend--full-power-zero-cost-module-scoped)):

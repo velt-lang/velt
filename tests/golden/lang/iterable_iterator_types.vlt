@@ -1,0 +1,94 @@
+// check: no leaks
+// TypeScript's `IterableIterator<T>`, `IteratorObject<T>` and `AsyncIterableIterator<T>`: an
+// iterator whose `[Symbol.iterator]()` returns itself, so loops can consume it. Generators are
+// ones (and may be declared to return them), and their values are iterables where one is
+// expected. `IteratorResult<T, TReturn>` with a `TReturn` meaning "nothing" is
+// `IteratorResult<T>`.
+function* naturals(n: number): IterableIterator<number> {
+  for (let i = 1; i <= n; i++) {
+    yield i;
+  }
+}
+
+function* letters(): IteratorObject<string> {
+  yield "x";
+  yield "y";
+}
+
+async function step() {}
+
+async function* ticks(n: number): AsyncIterableIterator<number> {
+  for (let i = 0; i < n; i++) {
+    await step();
+    yield i * 10;
+  }
+}
+
+function total(xs: Iterable<number>): number {
+  let s = 0.0;
+  for (const x of xs) {
+    s += x;
+  }
+  return s;
+}
+
+// A hand-written iterable iterator, as TypeScript code writes them.
+class Countdown implements IterableIterator<number> {
+  private n: number;
+
+  constructor(n: number) {
+    this.n = n;
+  }
+
+  next(): IteratorResult<number, undefined> {
+    if (this.n <= 0) {
+      return { done: true };
+    }
+    this.n--;
+    return { value: this.n + 1, done: false };
+  }
+
+  [Symbol.iterator](): Iterator<number> {
+    return this;
+  }
+}
+
+function firstTwo(it: IterableIterator<number>): string {
+  const a: IteratorResult<number, void> = it.next();
+  const b: IteratorResult<number, any> = it.next();
+  return `${a.value} ${b.value}`;
+}
+
+async function main() {
+  const g = naturals(4);
+  console.log(g.next().value);
+  for (const x of g) {
+    console.log("rest", x);
+  }
+  console.log(total(naturals(3)));
+
+  const it: IterableIterator<number> = naturals(5);
+  console.log(firstTwo(it), total(it));
+
+  const obj: IteratorObject<string> = letters();
+  for (const l of obj) {
+    console.log(l);
+  }
+
+  console.log(total(new Countdown(3)));
+  const cd = new Countdown(4);
+  console.log(firstTwo(cd));
+  for (const x of cd) {
+    console.log("left", x);
+  }
+
+  for await (const t of ticks(3)) {
+    console.log("tick", t);
+  }
+  const ai: AsyncIterableIterator<number> = ticks(2);
+  const r: IteratorResult<number, unknown> = await ai.next();
+  console.log(r.done, r.value);
+  for await (const t of ai) {
+    console.log("then", t);
+  }
+}

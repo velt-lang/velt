@@ -1,0 +1,24 @@
+// `[...range(n)]`: spreading a direct generator call into an array. The generator's state lives
+// in the loop that fills the array (no generator object, no `IteratorResult`); only the array
+// is allocated. Compare with spread_hand.vlt.
+function* range(n: i64): Generator<i64> {
+  let i = 0;
+  while (i < n) {
+    yield i;
+    i++;
+  }
+}
+
+function main(): void {
+  let sum = 0;
+  for (let round = 0; round < 20; round++) {
+    const xs = [...range(5000000)];
+    for (const x of xs) {
+      sum += x;
+      if (sum >= 1000000007) {
+        sum -= 1000000007;
+      }
+    }
+  }
+  console.log(sum);
+}

@@ -53,6 +53,8 @@ struct Moves<'a> {
     reused: HashSet<(Span, LocalId)>,
     /// Per escaping closure: the enclosing variables it captures by value and assigns.
     writers: &'a HashMap<DefId, HashSet<LocalId>>,
+    /// Generator closures (`function*` expressions).
+    generators: &'a HashSet<DefId>,
     /// Per local: may it live in a shared cell (not a promise, no async closure captures it)?
     boxable: Vec<bool>,
     /// Locals that need a shared cell (`LocalDef::boxed`, see `crate::ownership::cells`).
@@ -103,6 +105,11 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         .collect();
     let writers = writers(cx, &escaping);
     let async_captured = async_captured(cx);
+    let generators: HashSet<DefId> = escaping
+        .iter()
+        .copied()
+        .filter(|&d| matches!(&cx.defs[d.0 as usize], Some(Def::Fn(f)) if f.is_generator))
+        .collect();
     let mut all = vec![];
     let mut out = Outcome::default();
     for (i, d) in cx.defs.iter().enumerate() {
@@ -138,6 +145,7 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
                 .collect(),
             shared: shared[i].clone(),
             writers: &writers,
+            generators: &generators,
             boxed: HashSet::new(),
             tries: vec![],
             report: false,
@@ -201,7 +209,9 @@ fn writers(cx: &mut Ctx, escaping: &HashSet<DefId>) -> HashMap<DefId, HashSet<Lo
 }
 
 /// `(function, local)` pairs captured by an async closure: such a variable keeps its own
-/// value per closure (async closures may run on other threads, and cells are not atomic).
+/// value per closure (async closures may run on other threads, and cells are not atomic). A
+/// generator closure's generators stay on the thread that creates them, so its captures may
+/// live in cells.
 fn async_captured(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
     let mut out = HashSet::new();
     for i in 0..cx.defs.len() {
@@ -217,7 +227,7 @@ fn async_captured(cx: &mut Ctx) -> HashSet<(DefId, LocalId)> {
         cx.defs[i] = Some(Def::Fn(f));
         for c in closures {
             if let Some(Def::Fn(cf)) = &cx.defs[c.0 as usize] {
-                if cf.is_async {
+                if cf.is_async && !cf.is_generator {
                     let d = DefId(i as u32);
                     out.extend(cf.captures.iter().map(|cap| (d, cap.outer)));
                 }
@@ -329,6 +339,29 @@ impl Moves<'_> {
             self.boxed.insert(l);
         }
         self.boxed.contains(&l)
+    }
+
+    /// A generator closure created here assigns enclosing variable `l` (module docs of
+    /// `crate::ownership::cells`): it lives in a cell, or, when it cannot, that is an error.
+    fn generator_writes(&mut self, l: LocalId, span: Span) {
+        let i = l.0 as usize;
+        if self.boxable[i] {
+            self.boxed.insert(l);
+            return;
+        }
+        if !self.report {
+            return;
+        }
+        let name = &self.locals[i].name;
+        self.errors.push(
+            Diagnostic::error(
+                format!("a generator function expression cannot change `{name}` here"),
+                span,
+            )
+            .with_note(format!(
+                "TypeScript allows this; Velt doesn't because `{name}` is also captured by an async closure (or holds a promise), so it cannot be shared with the generators; share the value with `shared`: `const {name} = shared(...)` and `{name}.add(n)` / `{name}.set(v)`, or pass it in as a parameter"
+            )),
+        );
     }
 
     fn moved_error(&self, i: usize, moved_at: Option<(Span, MoveKind)>, span: Span) -> Diagnostic {

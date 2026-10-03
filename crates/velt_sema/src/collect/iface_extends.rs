@@ -201,7 +201,7 @@ fn forwarder(
         args: own_args,
     });
     let host = Host {
-        d,
+        d: Some(d),
         generics,
         span,
         module,

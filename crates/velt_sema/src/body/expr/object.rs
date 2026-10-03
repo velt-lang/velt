@@ -24,7 +24,7 @@ impl FnCx<'_, '_> {
         if let Some(TyKind::Tuple(ts)) = exp.map(|t| self.cx.ty.kind(t).clone()) {
             return self.tuple_lit(elems, &ts, exp.expect("ICE: tuple"), span);
         }
-        let raw_elem = exp.and_then(|t| self.cx.ty.array_elem(t));
+        let raw_elem = exp.and_then(|t| self.cx.ty.array_elem(t).or(self.cx.iterable_elem(t)));
         let exp_elem = raw_elem.filter(|t| !self.cx.ty.has_error(*t));
         // A tuple element type that is only partly known (`[K, V][]` while inferring `K` and
         // `V`) still says the elements are tuples: the first one is checked against it.
@@ -147,6 +147,8 @@ impl FnCx<'_, '_> {
                         .err("object spread (`...x`) is not supported yet", e.span);
                     continue;
                 }
+                // Literals with methods are checked by `object_method.rs`.
+                ast::ObjectProp::Method(_) => continue,
             };
             if out.iter().any(|(n, _)| n.name == name.name) {
                 self.cx.err(
@@ -178,6 +180,12 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if props
+            .iter()
+            .any(|p| matches!(p, ast::ObjectProp::Method(_)))
+        {
+            return self.method_object(props, span);
+        }
         let exp = match self.hint(exp).filter(|t| self.cx.union_def(*t).is_some()) {
             Some(u) => match self.union_member_for(props, u) {
                 Ok(Some(m)) => Some(m),
