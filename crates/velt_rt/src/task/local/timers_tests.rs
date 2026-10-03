@@ -185,3 +185,31 @@ fn sequences_are_per_task() {
     let b = Timers::default();
     assert_eq!((a.next_seq(), a.next_seq(), b.next_seq()), (1, 2, 1));
 }
+
+#[test]
+fn the_queue_merges_appended_and_out_of_order_keys_and_skips_removed_ones() {
+    let base = Instant::now();
+    let flag = AtomicBool::new(false);
+    let reg = || Registered {
+        waker: Waker::noop().clone(),
+        fired: &flag,
+    };
+    let key = |ms: u64, seq: u64| (base + Duration::from_millis(ms), seq, 0);
+    let mut q = Queue::default();
+    for (ms, seq) in [(5, 1), (5, 2), (7, 3), (3, 4), (6, 5), (9, 6)] {
+        q.insert(key(ms, seq), reg());
+    }
+    // In order: appended to the deque; earlier than its last key: into the tree.
+    assert_eq!((q.tail.len(), q.rest.len()), (4, 2));
+    assert!(q.get_mut(&key(5, 2)).is_some() && q.get_mut(&key(3, 4)).is_some());
+    assert!(q.remove(&key(5, 1)).is_some());
+    assert!(q.remove(&key(5, 1)).is_none(), "removed once");
+    assert!(q.remove(&key(6, 5)).is_some());
+    let mut order = Vec::new();
+    while let Some(k) = q.first_key() {
+        q.pop_first(&k);
+        order.push(k);
+    }
+    assert_eq!(order, [key(3, 4), key(5, 2), key(7, 3), key(9, 6)]);
+    assert!(q.is_empty() && q.tail.is_empty() && q.rest.is_empty());
+}

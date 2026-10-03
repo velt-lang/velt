@@ -11,10 +11,10 @@
 //! A leaf registers in the queue of the task polling it (a promise handed to another task moves
 //! its registration along). Outside any task it waits on a plain tokio timer.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
@@ -29,15 +29,84 @@ type Key = (Instant, u64, usize);
 #[derive(Default)]
 pub(crate) struct Timers {
     state: Mutex<State>,
+    /// The last creation sequence number (only the owning task creates timers).
+    seq: AtomicU64,
+}
+
+/// The registered timers in key order. Timers mostly come in key order (equal delays, or a
+/// deadline later than the last one), so those are appended to a deque; the others go to a tree.
+/// A deregistered entry of the deque stays as a tombstone until it reaches the front.
+#[derive(Default)]
+struct Queue {
+    tail: VecDeque<(Key, Option<Registered>)>,
+    rest: BTreeMap<Key, Registered>,
+    live: usize,
+}
+
+impl Queue {
+    fn is_empty(&self) -> bool {
+        self.live == 0
+    }
+
+    fn get_mut(&mut self, key: &Key) -> Option<&mut Registered> {
+        match self.tail.binary_search_by(|(k, _)| k.cmp(key)) {
+            Ok(i) => self.tail[i].1.as_mut(),
+            Err(_) => self.rest.get_mut(key),
+        }
+    }
+
+    fn insert(&mut self, key: Key, r: Registered) {
+        if self.tail.back().is_none_or(|(k, _)| *k < key) {
+            self.tail.push_back((key, Some(r)));
+        } else {
+            self.rest.insert(key, r);
+        }
+        self.live += 1;
+    }
+
+    fn remove(&mut self, key: &Key) -> Option<Registered> {
+        let r = match self.tail.binary_search_by(|(k, _)| k.cmp(key)) {
+            Ok(i) => self.tail[i].1.take(),
+            Err(_) => self.rest.remove(key),
+        };
+        if r.is_some() {
+            self.live -= 1;
+            if self.live == 0 {
+                self.tail.clear();
+            }
+        }
+        r
+    }
+
+    /// The first key (dropping the tombstones in front of the deque).
+    fn first_key(&mut self) -> Option<Key> {
+        while self.tail.front().is_some_and(|(_, r)| r.is_none()) {
+            self.tail.pop_front();
+        }
+        match (self.tail.front(), self.rest.first_key_value()) {
+            (Some((a, _)), Some((b, _))) => Some(*a.min(b)),
+            (Some((a, _)), None) => Some(*a),
+            (None, Some((b, _))) => Some(*b),
+            (None, None) => None,
+        }
+    }
+
+    /// Remove the first entry, at `key` ([`Queue::first_key`]).
+    fn pop_first(&mut self, key: &Key) -> Registered {
+        let r = match self.tail.front() {
+            Some((k, _)) if k == key => self.tail.pop_front().and_then(|(_, r)| r),
+            _ => self.rest.remove(key),
+        };
+        self.live -= 1;
+        r.expect("ICE: the first timer is registered")
+    }
 }
 
 #[derive(Default)]
 struct State {
-    queue: BTreeMap<Key, Registered>,
+    queue: Queue,
     /// The tokio timer armed for the earliest deadline, and that deadline.
     armed: Option<(Pin<Box<Sleep>>, Instant)>,
-    /// The next creation sequence number.
-    next_seq: u64,
     /// Wakers of the timers being fired (kept to reuse its allocation).
     due: Vec<Waker>,
 }
@@ -55,21 +124,23 @@ unsafe impl Send for Registered {}
 impl Timers {
     /// A creation sequence number for a timer of this task.
     pub(crate) fn next_seq(&self) -> u64 {
-        let mut s = self.state.lock();
-        s.next_seq += 1;
-        s.next_seq
+        self.seq.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    /// Register (or update) the leaf at `key`, woken through `waker`. `task` is the waker of the
-    /// task being polled, which the tokio timer wakes when this is the earliest deadline.
-    fn register(&self, key: Key, waker: &Waker, fired: *const AtomicBool, task: &Waker) {
+    /// A registered leaf polled again: wake it through `waker` from now on.
+    fn update(&self, key: &Key, waker: &Waker) {
         let mut s = self.state.lock();
-        if let Some(r) = s.queue.get_mut(&key) {
+        if let Some(r) = s.queue.get_mut(key) {
             if !r.waker.will_wake(waker) {
                 r.waker = waker.clone();
             }
-            return;
         }
+    }
+
+    /// Register the leaf at `key`, woken through `waker`. `task` is the waker of the task being
+    /// polled, which the tokio timer wakes when this is the earliest deadline.
+    fn register(&self, key: Key, waker: &Waker, fired: *const AtomicBool, task: &Waker) {
+        let mut s = self.state.lock();
         s.queue.insert(
             key,
             Registered {
@@ -77,7 +148,7 @@ impl Timers {
                 fired,
             },
         );
-        let earliest = s.queue.first_key_value().is_some_and(|(k, _)| *k == key);
+        let earliest = s.queue.first_key() == Some(key);
         if earliest
             && s.armed.as_ref().is_none_or(|(_, at)| *at != key.0)
             && arm(&mut s.armed, key.0, task)
@@ -103,10 +174,10 @@ impl Timers {
             }
             let mut due = std::mem::take(&mut s.due);
             let now = Instant::now();
-            while let Some(entry) = s.queue.first_entry() {
-                let at = entry.key().0;
+            while let Some(key) = s.queue.first_key() {
+                let at = key.0;
                 if at <= now {
-                    let r = entry.remove();
+                    let r = s.queue.pop_first(&key);
                     // SAFETY: registered leaves are live (they deregister, under this lock,
                     // before being freed).
                     unsafe { (*r.fired).store(true, Ordering::Release) };
@@ -180,39 +251,52 @@ impl Future for TimerLeaf {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         // SAFETY: nothing is moved out; `fired` stays at its address (the leaf is boxed).
         let this = unsafe { self.get_unchecked_mut() };
-        if this.fired.load(Ordering::Acquire) || Instant::now() >= this.deadline {
-            this.deregister();
+        if this.fired.load(Ordering::Acquire) {
+            // Its queue removed it when firing it.
+            this.registered = None;
             return Poll::Ready(());
         }
         let in_task = super::with_timers(|timers, task| {
-            let here = matches!(&this.registered, Some((t, _)) if Arc::ptr_eq(t, timers));
-            if !here {
-                this.deregister();
-                let seq = if this.seq == 0 {
-                    timers.next_seq()
-                } else {
-                    this.seq
-                };
-                let key = (
-                    this.deadline,
-                    seq,
-                    &this.fired as *const AtomicBool as usize,
-                );
-                this.registered = Some((timers.clone(), key));
-            }
             if let Some((t, key)) = &this.registered {
-                t.register(*key, cx.waker(), &this.fired, task);
+                if Arc::ptr_eq(t, timers) {
+                    t.update(key, cx.waker());
+                    return Poll::Pending;
+                }
             }
-        });
-        if in_task.is_none() {
+            // First poll, or polled by another task now: (re-)register here. Once out of the
+            // old queue (under its lock), the leaf can no longer be fired there.
             this.deregister();
-            let deadline = this.deadline;
-            let sleep = this
-                .fallback
-                .get_or_insert_with(|| Box::pin(tokio::time::sleep_until(deadline)));
-            return sleep.as_mut().poll(cx);
+            if this.fired.load(Ordering::Acquire) || Instant::now() >= this.deadline {
+                return Poll::Ready(());
+            }
+            let seq = if this.seq == 0 {
+                timers.next_seq()
+            } else {
+                this.seq
+            };
+            let key = (
+                this.deadline,
+                seq,
+                &this.fired as *const AtomicBool as usize,
+            );
+            timers.register(key, cx.waker(), &this.fired, task);
+            this.registered = Some((timers.clone(), key));
+            Poll::Pending
+        });
+        match in_task {
+            Some(poll) => poll,
+            None => {
+                this.deregister();
+                if this.fired.load(Ordering::Acquire) {
+                    return Poll::Ready(());
+                }
+                let deadline = this.deadline;
+                let sleep = this
+                    .fallback
+                    .get_or_insert_with(|| Box::pin(tokio::time::sleep_until(deadline)));
+                sleep.as_mut().poll(cx)
+            }
         }
-        Poll::Pending
     }
 }
 
