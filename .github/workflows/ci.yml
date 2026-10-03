@@ -79,7 +79,9 @@ jobs:
     needs: queue-plan
     name: ${{ matrix.part }} (${{ matrix.os }})
     strategy:
-      fail-fast: false
+      # One failed job drops the pull request from the queue: cancel the others at once, so
+      # their runners go to the next queue entries instead of finishing a result nobody uses.
+      fail-fast: true
       matrix:
         os: ${{ fromJSON(needs.queue-plan.outputs.os) }}
         part: [check, golden]

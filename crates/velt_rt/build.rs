@@ -47,16 +47,18 @@ fn collect(dir: &Path, names: &mut Vec<String>) {
 }
 
 /// `NAME` of each `#[no_mangle]` followed by `pub [unsafe] extern "C" fn NAME`. `main` is the
-/// process entry, not part of the ABI the generated code calls.
-fn exported_functions(text: &str) -> Vec<String> {
+/// process entry, not part of the ABI the generated code calls. Comments don't count: a
+/// `// SAFETY:` line between the attribute and the function keeps it, and a commented-out
+/// function is not exported (the change planner, crates/xtask, treats comment edits as such).
+pub(crate) fn exported_functions(text: &str) -> Vec<String> {
     let mut out = vec![];
     let mut pending = false;
-    for line in text.lines().map(str::trim) {
+    for line in strip_comments(text).lines().map(str::trim) {
         if line == "#[no_mangle]" {
             pending = true;
             continue;
         }
-        if !pending || line.starts_with("#[") || line.starts_with("///") {
+        if !pending || line.is_empty() || line.starts_with("#[") {
             continue;
         }
         pending = false;
@@ -72,6 +74,95 @@ fn exported_functions(text: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// `text` without its comments (doc comments included), keeping every newline. String and
+/// character literals are copied whole, so `"/*"` in a string opens no comment. (The planner's
+/// crates/xtask/src/comments.rs lexes the same way.)
+fn strip_comments(text: &str) -> String {
+    let c: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < c.len() {
+        if c[i] == '/' && c.get(i + 1) == Some(&'/') {
+            while i < c.len() && c[i] != '\n' {
+                i += 1;
+            }
+        } else if c[i] == '/' && c.get(i + 1) == Some(&'*') {
+            let mut depth = 0;
+            while i < c.len() {
+                if c[i] == '/' && c.get(i + 1) == Some(&'*') {
+                    depth += 1;
+                    i += 2;
+                } else if c[i] == '*' && c.get(i + 1) == Some(&'/') {
+                    depth -= 1;
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    if c[i] == '\n' {
+                        out.push('\n');
+                    }
+                    i += 1;
+                }
+            }
+            out.push(' ');
+        } else {
+            let end = literal_end(&c, i).unwrap_or(i + 1);
+            out.extend(&c[i..end]);
+            i = end;
+        }
+    }
+    out
+}
+
+/// The end of the string, raw string or character literal starting at `i` (with its `b`, `c`
+/// or `r` prefix), or `None` when none starts there (a lifetime's `'` included).
+fn literal_end(c: &[char], i: usize) -> Option<usize> {
+    if i > 0 && (c[i - 1].is_alphanumeric() || c[i - 1] == '_') {
+        return None;
+    }
+    let mut j = i;
+    if matches!(c[j], 'b' | 'c') {
+        j += 1;
+    }
+    if c.get(j) == Some(&'r') {
+        let mut k = j + 1;
+        let mut hashes = 0;
+        while c.get(k) == Some(&'#') {
+            hashes += 1;
+            k += 1;
+        }
+        if c.get(k) != Some(&'"') {
+            return None;
+        }
+        k += 1;
+        while k < c.len() {
+            if c[k] == '"' && (1..=hashes).all(|h| c.get(k + h) == Some(&'#')) {
+                return Some(k + 1 + hashes);
+            }
+            k += 1;
+        }
+        return Some(c.len());
+    }
+    let quoted_end = |quote: char| {
+        let mut k = j + 1;
+        while k < c.len() {
+            match c[k] {
+                '\\' => k += 2,
+                ch if ch == quote => return k + 1,
+                _ => k += 1,
+            }
+        }
+        c.len()
+    };
+    match c.get(j) {
+        Some('"') => Some(quoted_end('"')),
+        Some('\'') if c.get(j + 1) == Some(&'\\') => Some(quoted_end('\'')),
+        Some('\'') if c.get(j + 2) == Some(&'\'') => Some(j + 3),
+        _ => None,
+    }
 }
 
 fn render(names: &[String]) -> String {
