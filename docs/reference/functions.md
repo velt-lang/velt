@@ -148,7 +148,42 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
   allocation, no `IteratorResult` objects, and the body is resumed by a direct call that the
   optimizer can inline; such a loop runs as fast as the equivalent hand-written loop. A
   generator used as a value is one heap object; each `next()` then returns a small
-  `IteratorResult` value.
+  `IteratorResult` value. Spreading a direct call (`[...gen(a)]`) and destructuring one
+  (`const [x, y] = gen(a)`) use the same loop: only the resulting array is allocated.
+
+### Generator function expressions
+
+```ts
+const evens = function* (limit: i64): Generator<i64> {
+  for (let i = 0; i < limit; i += 2) {
+    yield i;
+  }
+};
+
+function main() {
+  const step = 10;
+  const tens = function* (n: i64): Generator<i64> {
+    for (let i = 0; i < n; i++) {
+      yield i * step;
+    }
+  };
+  console.log([...evens(5)], [...tens(3)]);  // [ 0, 2, 4 ] [ 0, 10, 20 ]
+}
+```
+
+- `function* (…): Generator<T> { … }` and `async function* (…): AsyncGenerator<T> { … }` are
+  generator function values, optionally named (`function* walk(…)`); their type is `(…) =>
+  Generator<T, E>` with the body's error type as `E` (a call never throws). Velt has no other
+  `function` expressions: write an [arrow function](#arrow-functions-and-function-types), which
+  TS code can do too.
+- At module level, `const g = function* (…) { … };` is the generator function `g`.
+- Elsewhere it is a closure that may use the variables around it: each generator it creates
+  takes its own copy of them when it is created (like an async closure), so changing one of
+  them in the body is an error (share the value with `shared(…)`, or pass it as a parameter).
+  The name of a named expression is not in scope in its body (TS allows recursion through it):
+  declare a `function*` to recurse. Type parameters and rest parameters are errors there too;
+  declare a `function*`.
+- The return type is required, as for any generator.
 
 ## Async generators
 

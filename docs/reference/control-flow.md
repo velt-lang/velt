@@ -151,6 +151,60 @@ const it = ["a", "b"][Symbol.iterator]();
 console.log(it.next());                   // { value: 'a', done: false }
 ```
 
+### Consuming an iterable
+
+Everything that takes the values of an array takes those of any iterable too, with the same
+loop as `for...of` (so a direct generator call needs no generator object, and stopping early
+closes the iterator):
+
+- **Spread**: `[...gen()]`, `[0, ...it, 9]`, and spread arguments of a rest parameter
+  (`sum(...gen())`, `Math.max(...values())`). The values are taken in order, where the spread
+  stands.
+- **`Array.from(src)`** and **`Array.from(src, (value, i) => ...)`** over anything `for...of`
+  takes; the callback runs as each value arrives.
+- **Array destructuring**: `const [a, b] = gen()` takes only the values the pattern needs, then
+  closes the iterator (`return()`, a generator's `finally`) if it has more, as JS does;
+  `...rest` takes the remaining values, and a default applies when the iterable ended early
+  (`[x = 0]`). Also in `for...of` heads: `for (const [a, b] of rows())` over iterables of
+  iterables.
+- **`new Map(iterable)`** of `[key, value]` pairs and **`new Set(iterable)`**
+  ([velt:collections/set](../std/collections/set.md)).
+- An object literal with a `*[Symbol.iterator]()` method is an iterable
+  ([Iterable object literals](types.md#iterable-object-literals)).
+
+```ts
+function* countTo(n: i64): Generator<i64> {
+  for (let i = 1; i <= n; i++) {
+    yield i;
+  }
+}
+
+function* squares(n: i64): Generator<[i64, i64]> {
+  for (const v of countTo(n)) {
+    yield [v, v * v];
+  }
+}
+
+function sum(...xs: i64[]): i64 {
+  let total = 0;
+  for (const x of xs) {
+    total += x;
+  }
+  return total;
+}
+
+console.log([0, ...countTo(3)]);                        // [ 0, 1, 2, 3 ]
+console.log(sum(...countTo(4)));                         // 10
+console.log(Array.from(countTo(3), (v, i) => v * 10 + i)); // [ 10, 21, 32 ]
+const [first, second] = countTo(100);                    // takes two values, then closes it
+console.log(first, second);                              // 1 2
+const bySide = new Map(squares(3));
+console.log(bySide.get(3));                              // 9
+```
+
+Arrays keep their own (faster) spread and destructuring: a spread array is copied with one
+allocation, and destructuring an array reads its elements by index.
+
 ## `for await`
 
 ```ts

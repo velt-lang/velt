@@ -151,6 +151,11 @@ Maintainer-owned, like hir.rs.
   state in that local (the local is only an operand of the generator intrinsics and is
   dropped at the block's end, which closes it). A `GeneratorEmbed` it cannot embed (a
   generator iterating a direct call of itself) is the call's `Generator` object.
+- A generator function expression (`function* (...) { ... }`, also `async function*`) is a
+  closure (`ExprKind::Closure`) whose `FnDef` has `is_generator` (and `is_async`) and
+  `captures`, all by value (`Owned` / `Copy`): calling the closure value creates the generator,
+  whose state takes its own copy of the captures. Its function type's result is `ret` with the
+  final `E` and it does not throw.
 
 ## Async generators
 (docs/reference/functions.md "Async generators", docs/internals/design/iteration.md §4)

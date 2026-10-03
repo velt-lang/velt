@@ -388,10 +388,15 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
 
 - **Spread**: `{ ...a, b: 1 }` builds a merged object at compile time (later keys win);
   `[x, ...xs]` builds a new array (integer elements spread into a `number[]` convert). Spread
-  arguments, `f(...xs)`, fill a rest parameter ([Functions](functions.md)).
+  arguments, `f(...xs)`, fill a rest parameter ([Functions](functions.md)). Any iterable can be
+  spread into an array or a rest parameter too: `[...gen()]`, `Math.max(...values())`
+  ([Consuming an iterable](control-flow.md#consuming-an-iterable)).
 - **Destructuring**: `const [a, b] = pair;`, `const [head, ...rest] = xs;`,
   `const { a, b } = obj;`, and `for (const [k, v] of map)`. Array destructuring checks the
   length like indexing: a shorter array panics with the same `index out of bounds` message.
+  An iterable is destructured like in JS: `const [a, b] = gen()` takes two values and closes
+  the iterator; one that has fewer values panics like a short array, unless the pattern gives
+  defaults.
 - **Defaults** in `const` and `let` patterns: `const { host = "localhost", port = 80 } = opts;`
   takes the default when the field is `null`, and `const [first = 0] = xs;` when the array is
   too short (where JS reads `undefined`). Defaults in `for...of` patterns and parameter patterns
@@ -408,11 +413,14 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `xs[Symbol.iterator]()` returns an `Iterator<T>`.
 - `new Array<T>(n).fill(v)` and `Array.from({ length: n }, (_, i) => f(i))` build an array of
   `n` elements in one allocation. A bare `new Array<T>(n)` is an error: arrays have no holes.
+  `Array.from(src)` and `Array.from(src, (v, i) => …)` copy (and map) anything `for...of` takes:
+  an array, a string's characters, a map's entries, a generator, any iterable.
 - **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. `Promise.all` over tuples of
   different types is not supported.
 - **`Map<K, V>`**: `new Map<K, V>()`, `new Map(entries)` from an array of `[key, value]` tuples
   (`new Map([["a", 1], ["b", 2]])`: as in JS, the array stays as it is, the map shares its keys
-  and values, and a repeated key keeps its first position and its last value), `set`,
+  and values, and a repeated key keeps its first position and its last value) or from any
+  iterable of them (`new Map(pairs())`), `set`,
   `get(k): V | null` (the stored value itself, as in JS), `has`, `delete`, `size`, `keys()`,
   `values()`, `entries()`, `for (const [k, v] of m)`, plus single-lookup updates: `upsert(k, init, (v) => v + 1)`,
   `update(k, (v) => { v.push(x); }): bool` (the callback gets the stored value itself) and
@@ -474,3 +482,35 @@ console.log(moved, first, rest, [3, 1, 2].map((x) => x * 2).filter((x) => x > 2)
 const ports = new Map([["http", 80], ["https", 443]]); // Map<string, i64>
 console.log(ports.get("https")); // 443
 ```
+
+### Iterable object literals
+
+An object literal whose one member is a `[Symbol.iterator]()` method is an `Iterable<T>`:
+`for...of`, spread, destructuring, `Array.from` and `Iterable<T>` parameters take it, and each
+of them calls the method again.
+
+```ts
+function range(from: i64, to: i64): Iterable<i64> {
+  return {
+    *[Symbol.iterator](): Generator<i64> {
+      for (let v = from; v <= to; v++) {
+        yield v;
+      }
+    },
+  };
+}
+
+console.log([...range(1, 3)]); // [ 1, 2, 3 ]
+```
+
+- The method is a generator (`*[Symbol.iterator](): Generator<T>`), or returns an iterator
+  (`[Symbol.iterator](): Iterator<T> { return new Countdown(3); }`); `async
+  *[Symbol.asyncIterator](): AsyncGenerator<T>` makes an `AsyncIterable<T>` for
+  [`for await`](control-flow.md#for-await). The method uses the variables around it, as a
+  [generator function expression](functions.md#generator-function-expressions) does.
+- Object literals are plain data in Velt, so this is their only method. The literal can have no
+  other members, and `this` in the method is an error (in TS it is the object): use variables,
+  or declare a class that `implements Iterable<T>` and reads its fields. Other methods in object
+  literals are errors too: write a property holding an arrow function.
+- The value is an instance of the prelude class `__IterableObject<T, E>` (async:
+  `__AsyncIterableObject<T, E>`), which holds the method; annotate it as `Iterable<T>`.
