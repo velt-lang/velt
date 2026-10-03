@@ -1,0 +1,20 @@
+// A `shared(...)` value may be used from several threads, and a generator's suspended state
+// (its arguments and locals) must stay on the thread that created it: a value holding a
+// generator cannot be shared, also inside a `Mutex` or an object.
+function* nums(): Generator<i64> {
+  yield 1;
+  yield 2;
+}
+
+async function use(m: shared<Mutex<Generator<i64>>>) {
+  m.with((g) => {
+    console.log(g.next());
+    return 0;
+  });
+}
+
+async function main() {
+  await spawn(use(shared(new Mutex<Generator<i64>>(nums()))));
+  const s = shared(nums());
+  const t = shared({ g: nums() });
+}

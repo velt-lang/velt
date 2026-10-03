@@ -86,6 +86,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// `(obj) -> obj'` of class `ty` (see module docs).
     pub(super) fn obj_transfer_body(&mut self, obj: vir::Local, ty: TyId) {
+        if self.cx.is_generator_obj(ty) {
+            // Its state may share objects with this thread, and cannot be walked or copied.
+            // Sema rejects the visible cases; this is one behind an interface value.
+            self.panic_msg(
+                "a generator cannot go to another thread (`spawn`, a channel, or `shared(...)`)",
+            );
+            return;
+        }
         self.check_if_tagged(obj, |lw, o| {
             let op = lw.operand_place(o, Ty::Ptr);
             for (i, t) in lw.cx.adt_field_tys(ty).into_iter().enumerate() {

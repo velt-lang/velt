@@ -124,9 +124,11 @@ console.log(g.next(), g.next().done, g.next().done);   // { done: false, value: 
   own body panics (`generator is already running`; JS throws a `TypeError`). A call keeps the
   generator alive while it runs: a body that drops the last reference to its own generator
   (`this.gen = other()`) finishes its step, and the generator is closed and freed after it.
-- A generator cannot be copied: `clone()` of one, passing one to a spawned task (or sending it
-  on a channel) and capturing one in an async closure are errors, like for a promise. Pass the
-  arguments instead and create the generator where it is used.
+- A generator cannot be copied or leave its thread: `clone()` of one, passing one to a spawned
+  task (or sending it on a channel), putting one in `shared(...)` (also inside a `Mutex` or an
+  object) and capturing one in an async closure are errors, like for a promise. Behind an
+  interface value (`Iterator<T>`) the compiler cannot see it, and handing it to another thread
+  stops the program instead. Pass the arguments and create the generator where it is used.
 - Not supported: `next(value)` (TS's `TNext`), `throw()`, and `await` in a (sync) generator
   (write an [async generator](#async-generators)). Arrow functions cannot be generators (as in
   TS).

@@ -28,7 +28,16 @@ impl FnCx<'_, '_> {
         }
         match name {
             "panic" => self.simple_intrinsic(Intrinsic::Panic, "`panic`", args, exp, span),
-            "shared" => self.simple_intrinsic(Intrinsic::SharedNew, "`shared`", args, exp, span),
+            "shared" => {
+                let e = self.simple_intrinsic(Intrinsic::SharedNew, "`shared`", args, exp, span);
+                if let H::Call { args: a, .. } = &e.kind {
+                    if let [x] = a.as_slice() {
+                        let (t, at) = (x.ty, x.span);
+                        self.no_generator_copy(t, crate::body::GenCopy::Shared, at);
+                    }
+                }
+                e
+            }
             "spawn" => self.spawn_call(args, exp, span),
             "attempt" => self.attempt_call(args, span),
             "sleep" => self.simple_intrinsic(Intrinsic::Sleep, "`sleep`", args, exp, span),

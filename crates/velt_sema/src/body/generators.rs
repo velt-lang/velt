@@ -207,6 +207,10 @@ impl FnCx<'_, '_> {
                 format!("{it} cannot be passed to another task"),
                 "values passed to a spawned task (or sent on a channel) are copied for the receiving thread, and a generator's suspended state cannot be: create the generator inside the task, or iterate it here and pass its values".to_string(),
             ),
+            GenCopy::Shared => (
+                format!("{it} cannot be shared between threads"),
+                "a `shared(...)` value may be used from several threads, and a generator's suspended state must stay on one: create the generator where it is used, or share the values it produces (collect them into an array first)".to_string(),
+            ),
             GenCopy::Capture(name) => (
                 format!("an async closure cannot capture the generator `{name}`"),
                 "an async closure copies what it captures when it runs (it may run as a task on another thread), and a generator's suspended state cannot be copied: create the generator inside the closure, or pass it to an async function".to_string(),
@@ -224,4 +228,6 @@ pub(crate) enum GenCopy {
     Task,
     /// A capture (named) of an async closure.
     Capture(String),
+    /// The value given to `shared(...)`.
+    Shared,
 }
