@@ -211,7 +211,20 @@ impl FnCx<'_, '_> {
         if let TyKind::Dyn(..) = self.cx.ty.kind(expected) {
             d = d.with_note(format!("`{f}` does not declare `implements {e}`"));
         }
+        if e == f && self.is_anon(expected) && self.is_anon(found.ty) {
+            // An instance of a generic alias (`Box<number>`) and the object type it spells out
+            // (`{ v: number }`) are separate types today.
+            d = d.with_note(
+                "the two object types have the same fields but come from different declarations (a generic type's instance and a written object type don't convert yet); use one of them for both",
+            );
+        }
         self.cx.error(d);
+    }
+
+    /// Is `t` an anonymous object type (`{ v: number }`, a generic alias's instance)?
+    fn is_anon(&self, t: TyId) -> bool {
+        matches!(self.cx.ty.kind(t), TyKind::Adt(d, _)
+            if self.cx.adt(*d).is_some_and(|a| a.kind == crate::hir::AdtKind::Anon))
     }
 
     /// Is `found` acceptable where `expected` is required (without conversion)?
