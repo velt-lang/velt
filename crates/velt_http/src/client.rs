@@ -66,8 +66,7 @@ pub fn fetch_within(
     }
     if let Some((name, _)) = headers.iter().find(|(n, v)| line_break(n) || line_break(v)) {
         return Err(format!(
-            "{method} {url}: the `{}` header contains a line break",
-            name.trim()
+            "{method} {url}: the {name:?} header contains a line break"
         ));
     }
     let deadline = Instant::now() + limits.total;
@@ -329,6 +328,10 @@ mod tests {
         for (name, value) in [("Authorization", injected), ("X\nY", "v")] {
             let err = fetch("GET", &url, &[(name, value)], b"").unwrap_err();
             assert!(err.contains("contains a line break"), "{err}");
+            assert!(
+                !err.contains('\n'),
+                "the message stays on one line: {err:?}"
+            );
         }
         let err = fetch("GET", &format!("{url}x\r\nX: y"), &[], b"").unwrap_err();
         assert!(err.contains("a line break in the request line"), "{err}");
