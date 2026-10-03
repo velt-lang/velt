@@ -153,8 +153,9 @@ contents.
   classes and no `protected` members (`private` is private to the declaring class); a
   constructor can be `private` or `protected`, with TypeScript's rules.
 - `static readonly` constants exist; mutable statics don't.
-- Field initializers and constructors run in JavaScript's order: base initializers, base
-  constructor, derived initializers, derived constructor.
+- Field initializers and constructors run in JavaScript's order (base initializers, base
+  constructor, derived initializers, derived constructor), and parameter properties come first
+  in the field order, as `tsc --target es2022` emits them.
 - A method that is never overridden is called directly; only overridden methods use a vtable.
 - `struct` declares an object type with the same members as a class, built from a literal
   (no constructor). **Planned**

@@ -95,7 +95,10 @@ impl<'a> Parser<'a> {
                 }
                 decl.constructor = Some(c);
                 decl.ctor_visibility = visibility;
-                decl.fields.extend(fields);
+                // Parameter properties come before the declared fields, as TypeScript emits
+                // them as the first class fields (ES2022 / `useDefineForClassFields`): that
+                // order shows in `console.log`, `JSON.stringify` and `Object.keys`.
+                decl.fields.splice(0..0, fields);
             }
         }
     }

@@ -19,7 +19,24 @@ hidden classes and no runtime shape checks.
   `let count = 0` ([Numbers](types.md#numbers)).
 - **Parameter properties**: `constructor(private readonly name: string, public age: i64) {}`
   declares the fields and assigns them, as in TypeScript (`protected` is accepted there and
-  means public: there are no `protected` members).
+  means public: there are no `protected` members). As TypeScript emits them (ES2022 class
+  fields), they are the class's first fields, before the declared ones, which decides the key
+  order of `console.log` and `JSON.stringify`; the constructor assigns them first (after
+  `super(…)`), so they are set after the class's field initializers ran:
+
+  ```ts
+  function log(s: string): i64 {
+    console.log(s);
+    return 1;
+  }
+  class Point {
+    label: i64 = log("label");
+    constructor(public x: f64, public y: f64) {
+      log("constructor");
+    }
+  }
+  console.log(JSON.stringify(new Point(1, 2))); // label, constructor, {"x":1,"y":2,"label":1}
+  ```
 - **Private and protected constructors** (TypeScript's rules): `private constructor(…)` can be
   called (`new C(…)`) only inside the class body: its methods, static methods, field
   initializers and the closures in them. Such a class cannot be extended
