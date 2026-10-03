@@ -38,17 +38,38 @@ impl FnCx<'_, '_> {
         if self.f.finally_depth > 0 {
             self.cx.error(
                 Diagnostic::error("`yield` cannot be used in a `finally` block", span).with_note(
-                    "a `finally` block also runs when the generator is closed early (`return()`, or dropping it), where it cannot pause: move the `yield` out of the `finally`",
+                    "TypeScript allows this; Velt doesn't because a `finally` block also runs when the generator is closed early (`return()`, or dropping it), where it cannot pause; write the `yield` outside the `finally` block (at the end of the `try` block, or after the `try` statement)",
                 ),
             );
         }
-        if delegate {
-            return match arg {
-                Some(a) => self.yield_star(a, span),
-                None => self.error_expr(span),
-            };
+        let used = !self.f.stmt_yields.remove(&(span.lo, span.hi));
+        if used {
+            self.yield_value_used(delegate, span);
         }
+        let h = match (delegate, arg) {
+            (true, Some(a)) => self.yield_star(a, span),
+            (true, None) => self.error_expr(span),
+            (false, arg) => self.yield_one(arg, t, span),
+        };
+        if !used {
+            return h;
+        }
+        // Checked, but its value is an error (reported above).
+        let block = hir::Block {
+            stmts: vec![hir::Stmt {
+                kind: hir::StmtKind::Expr(h),
+                span,
+            }],
+            value: Some(Box::new(self.error_expr(span))),
+            span,
+        };
+        self.mk(H::Block(block), self.cx.ty.error, span)
+    }
+
+    /// `yield arg` (`arg` checked against the yield type `t`).
+    fn yield_one(&mut self, arg: Option<&ast::Expr>, t: TyId, span: Span) -> hir::Expr {
         let v = match arg {
+            Some(a) if self.f.is_async => self.yielded_awaiting(a, t),
             Some(a) => self.expr_coerce(a, t, Want::Move),
             None if t == self.cx.ty.unit || self.cx.ty.is_bottom(t) => self.unit_expr(span),
             None => {
@@ -65,6 +86,40 @@ impl FnCx<'_, '_> {
             args: vec![v],
         };
         self.mk(kind, self.cx.ty.unit, span)
+    }
+
+    /// Marks the `yield`s whose value expression statement `e` drops: `e` itself, or a branch
+    /// of a conditional there (`c ? yield a : yield b`).
+    pub(super) fn stmt_yields(&mut self, e: &ast::Expr) {
+        match &e.kind {
+            ast::ExprKind::Yield { .. } => {
+                self.f.stmt_yields.insert((e.span.lo, e.span.hi));
+            }
+            ast::ExprKind::Paren(x) => self.stmt_yields(x),
+            ast::ExprKind::Cond { then, els, .. } => {
+                self.stmt_yields(then);
+                self.stmt_yields(els);
+            }
+            _ => {}
+        }
+    }
+
+    /// A `yield` whose value is used: TypeScript's `next(value)` / a delegate's return value.
+    fn yield_value_used(&mut self, delegate: bool, span: Span) {
+        let (what, why) = match delegate {
+            false => (
+                "`yield`",
+                "`yield` evaluates to the argument of the next `next(value)` call); Velt doesn't because `next()` takes no argument, so `yield` has no value; write the `yield` as a statement of its own, and pass values into the generator through its parameters or an object both sides share",
+            ),
+            true => (
+                "`yield*`",
+                "`yield*` evaluates to what the inner generator returns); Velt doesn't because generators return no value; write `yield* ...;` as a statement of its own, and yield a last value instead of returning it",
+            ),
+        };
+        self.cx.error(
+            Diagnostic::error(format!("the value of {what} cannot be used"), span)
+                .with_note(format!("TypeScript allows this ({why}")),
+        );
     }
 
     /// `yield` outside a generator body: an error naming the fix.
@@ -154,7 +209,7 @@ impl FnCx<'_, '_> {
                     format!("a `finally` block in a generator cannot throw, but this one may throw `{tn}`"),
                     at,
                 )
-                .with_note("the `finally` block also runs when the generator is closed early (`return()`, or dropping it), where an error has nowhere to go: catch it inside the `finally` block"),
+                .with_note("TypeScript allows this; Velt doesn't because the `finally` block also runs when the generator is closed early (`return()`, or dropping it), where an error has nowhere to go; write a `try`/`catch` inside the `finally` block that handles it"),
             );
         }
         srcs.into_iter().for_each(|s| self.throw_src(s));

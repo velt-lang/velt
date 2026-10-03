@@ -51,7 +51,18 @@ impl FnCx<'_, '_> {
         let Some(r) = self.resolve_method(recv.ty, &prop.name) else {
             return self.no_method(recv, prop, args, span);
         };
-        self.no_generator_send(recv.ty, &prop.name, span);
+        if prop.name == "next" && !args.is_empty() && self.cx.generator_result(recv.ty).is_some() {
+            self.cx.error(
+                Diagnostic::error("`next()` takes no argument", args[0].span).with_note(
+                    "TypeScript allows this (`next(value)` makes the paused `yield` evaluate to `value`); Velt doesn't because a generator's `yield` has no value; write `next()`, and pass values into the generator through its parameters or an object both sides share",
+                ),
+            );
+            self.check_args_loose(args);
+            return self.error_expr(span);
+        }
+        if let Resolved::Def { def, .. } = &r {
+            self.no_generator_send(recv.ty, *def, span);
+        }
         self.check_extension_ambiguity(&r, recv.ty, &prop.name, prop.span);
         self.check_private(self.method_private_to(&r), &prop.name, prop.span);
         self.rec_method(prop.span, &r);
@@ -213,6 +224,10 @@ impl FnCx<'_, '_> {
                 "`length` is a property, not a method; write `s.length`",
                 prop.span,
             );
+        } else if prop.name == "throw" && self.cx.generator_result(recv.ty).is_some() {
+            d = d.with_note(
+                "TypeScript allows this (`throw(e)` throws `e` at the generator's paused `yield`); Velt doesn't because what a generator throws is checked from its body, and an error thrown in from outside could not be; write `return()` to close the generator (its `finally` blocks run), and throw the error where you call it",
+            );
         } else if let Some(note) = self.narrowing_note(recv.ty) {
             d = d.with_note(note);
         } else if matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..))
@@ -265,21 +280,20 @@ impl FnCx<'_, '_> {
 }
 
 impl FnCx<'_, '_> {
-    /// `ch.send(v)` / `ch.trySend(v)` on std's `Channel<T>` copies `v` to the receiving task
-    /// like a `spawn` argument: `T` cannot hold a generator.
-    fn no_generator_send(&mut self, recv: TyId, name: &str, span: Span) {
-        if name != "send" && name != "trySend" {
+    /// A call of `method` (`ch.send(v)` / `ch.trySend(v)` on std's `Channel<T>`) that copies
+    /// `v` to the receiving task like a `spawn` argument: `T` cannot hold a generator.
+    fn no_generator_send(&mut self, recv: TyId, method: DefId, span: Span) {
+        let in_std = self
+            .cx
+            .try_fn(method)
+            .is_some_and(|f| self.cx.scopes[f.module].is_std);
+        if !in_std || !self.cx.channel_sends().contains(&method) {
             return;
         }
-        let TyKind::Adt(d, args) = self.cx.ty.kind(recv).clone() else {
-            return;
-        };
-        let is_channel = self
-            .cx
-            .adt(d)
-            .is_some_and(|a| a.name == "Channel" && self.cx.scopes[a.module].is_std);
-        if let (true, [t]) = (is_channel, args.as_slice()) {
-            self.no_generator_copy(*t, crate::body::GenCopy::Task, span);
+        if let TyKind::Adt(_, args) = self.cx.ty.kind(recv).clone() {
+            if let [t] = args.as_slice() {
+                self.no_generator_copy(*t, crate::body::GenCopy::Task, span);
+            }
         }
     }
 }

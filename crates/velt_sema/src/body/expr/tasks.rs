@@ -54,6 +54,25 @@ impl FnCx<'_, '_> {
         self.mk(H::Await(Box::new(h)), ty, span)
     }
 
+    /// The value of `yield a` in an async generator yielding `t`: a promise is awaited, as in
+    /// JS (its rejection is thrown at the `yield`; docs/reference/functions.md "Async
+    /// generators").
+    pub(crate) fn yielded_awaiting(&mut self, a: &ast::Expr, t: TyId) -> hir::Expr {
+        self.direct_await = super::promise_new::awaited_new_promise(a);
+        let h = self.expr(a, Some(t), Want::Move);
+        self.direct_await = None;
+        let h = match self.cx.ty.kind(h.ty).clone() {
+            TyKind::Promise(v, _) if !matches!(self.cx.ty.kind(t), TyKind::Promise(..)) => {
+                self.awaited_using_shares(&h);
+                self.await_throws(&h);
+                let span = h.span;
+                self.mk(H::Await(Box::new(h)), v, span)
+            }
+            _ => h,
+        };
+        self.coerce(h, t)
+    }
+
     /// Awaiting rethrows the promise's rejection: a directly awaited async call throws what the
     /// function throws (inferred with it); any other promise what its type says.
     fn await_throws(&mut self, h: &hir::Expr) {

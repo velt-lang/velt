@@ -171,6 +171,7 @@ impl FnCx<'_, '_> {
                 self.expr_stmt(inner)
             }
             _ => {
+                self.stmt_yields(e);
                 let h = self.expr(e, None, Want::Borrow);
                 self.check_floating(e, &h);
                 h
@@ -360,7 +361,7 @@ impl FnCx<'_, '_> {
         if let (Some(e), Some(_)) = (e, self.f.yield_ty) {
             self.cx.error(
                 Diagnostic::error("a generator cannot return a value", e.span).with_note(
-                    "`return;` ends the generator; to produce a last value, `yield` it before returning",
+                    "TypeScript allows this (the value becomes the `value` of the result with `done: true`); Velt doesn't because a finished `IteratorResult` carries no value; write `yield value;` before `return;` to produce a last value",
                 ),
             );
             self.expr(e, None, Want::Move);

@@ -304,9 +304,10 @@ fn base_class(cx: &mut Ctx, t: &ast::TypeExpr, kind: AdtKind, env: &TyEnv) -> Op
     // generator's state), which a subclass's constructor would bypass.
     for sealed in ["Record", "Generator", "AsyncGenerator"] {
         if cx.prelude_adt(sealed) == Some(bd) {
+            let a = if sealed.starts_with('A') { "an" } else { "a" };
             cx.error(
                 Diagnostic::error(format!("`{sealed}` cannot be extended"), t.span).with_note(
-                    format!("use composition instead: a class with a `{sealed}` field"),
+                    format!("use composition instead: a class with {a} `{sealed}` field"),
                 ),
             );
             return None;

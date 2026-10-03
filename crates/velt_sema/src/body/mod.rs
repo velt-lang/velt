@@ -161,6 +161,9 @@ pub(crate) struct Frame {
     /// In a generator's `finally` block: the loop stack's length when it was entered (a
     /// `break`/`continue` there cannot target a loop outside it).
     pub finally_loops: Option<usize>,
+    /// Spans (`lo`, `hi`) of the `yield`s about to be checked whose value is unused: those
+    /// that are, or end, an expression statement (`generators.rs`, `stmt_yields`).
+    pub stmt_yields: std::collections::HashSet<(u32, u32)>,
     /// See `FnInfo::soft_moves`.
     pub soft_moves: Vec<Span>,
     /// `using` variables passed to an async call (receiver or argument), not yet soft moves:
@@ -207,6 +210,7 @@ impl Frame {
             yield_ty: None,
             finally_depth: 0,
             finally_loops: None,
+            stmt_yields: Default::default(),
             soft_moves: vec![],
             using_shares: vec![],
             await_using: Default::default(),
@@ -346,7 +350,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
         if self.f.finally_loops.is_some_and(|n| i < n) {
             self.cx.error(
                 Diagnostic::error(format!("`{what}` cannot leave a `finally` block in a generator"), span)
-                    .with_note("the `finally` block also runs when the generator is closed early (`return()`, or dropping it), where the generator must finish: move the loop into the `finally` block, or the `finally` code out of the loop"),
+                    .with_note("TypeScript allows this; Velt doesn't because the `finally` block also runs when the generator is closed early (`return()`, or dropping it), where the generator must finish; write the loop inside the `finally` block, or move the `finally` code out of the loop"),
             );
             return None;
         }

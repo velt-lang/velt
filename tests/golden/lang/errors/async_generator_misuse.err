@@ -1,11 +1,11 @@
 async_generator_misuse.vlt:57:19: error: `AsyncGenerator` cannot be extended
-use composition instead: a class with a `AsyncGenerator` field
+use composition instead: a class with an `AsyncGenerator` field
 async_generator_misuse.vlt:27:30: error: an async generator must return `AsyncGenerator<T>`, `AsyncIterator<T>` or `AsyncIterable<T>`, found the sync `Generator<i64, never>`
 drop `async`, or declare the result as `AsyncGenerator<T>`
 async_generator_misuse.vlt:31:25: error: a generator must return `Generator<T>`, `Iterator<T>` or `Iterable<T>`, found the async `AsyncGenerator<i64, never>`
 make it an async generator: `async function*` (methods: `async *name()`)
 async_generator_misuse.vlt:35:17: error: an async generator must declare its return type
-write `AsyncGenerator<T>`, where `T` is the type of the values it yields
+TypeScript allows this (it infers `AsyncGenerator<T, void, unknown>`); Velt doesn't because the type of the values a generator yields is part of its signature, which is not inferred from its body; write `AsyncGenerator<T>`, where `T` is the type of the values it yields
 async_generator_misuse.vlt:10:3: error: `for await` is only allowed inside async functions
 mark the enclosing function or arrow `async`
 async_generator_misuse.vlt:16:3: error: `for await` is not allowed in a generator
@@ -14,9 +14,9 @@ async_generator_misuse.vlt:22:19: error: cannot iterate over a value of type `As
 `for...of` works on arrays (`T[]`), on `Map`s and classes with an `entries()` method, and on iterables: values with a `[Symbol.iterator]()` method (`implements Iterable<T>`)
 `AsyncGenerator<i64, never>` is an async iterable: iterate it with `for await (const x of ...)` in an async function
 async_generator_misuse.vlt:40:10: error: a generator cannot return a value
-`return;` ends the generator; to produce a last value, `yield` it before returning
+TypeScript allows this (the value becomes the `value` of the result with `done: true`); Velt doesn't because a finished `IteratorResult` carries no value; write `yield value;` before `return;` to produce a last value
 async_generator_misuse.vlt:47:5: error: `yield` cannot be used in a `finally` block
-a `finally` block also runs when the generator is closed early (`return()`, or dropping it), where it cannot pause: move the `yield` out of the `finally`
+TypeScript allows this; Velt doesn't because a `finally` block also runs when the generator is closed early (`return()`, or dropping it), where it cannot pause; write the `yield` outside the `finally` block (at the end of the `try` block, or after the `try` statement)
 async_generator_misuse.vlt:73:25: error: cannot iterate over a value of type `i64`
 `for await` works on async iterables: values with a `[Symbol.asyncIterator]()` method (`implements AsyncIterable<T>`, async generators), and on what `for...of` takes (arrays, iterables), awaiting promise elements
 async_generator_misuse.vlt:76:25: error: `[Symbol.asyncIterator]()` must return an `AsyncIterator<T>`, found `i64[]`
