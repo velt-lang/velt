@@ -24,7 +24,8 @@ pub unsafe extern "C" fn velt_rt_strbuf_new(cap: u64, out: *mut VeltStrBuf) {
     out.write(VeltStr::with_capacity(cap as usize));
 }
 
-/// Append the bytes of `s` (the caller keeps ownership of `s`; `s` may be the builder itself).
+/// Append the bytes of `s` (the caller keeps ownership of `s`; `s` may be the builder itself or
+/// lie in its buffer: `push_bytes` copies such text out before the buffer can move).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_str(buf: *mut VeltStrBuf, s: *const VeltStr) {
     if std::ptr::eq(buf, s) {
@@ -223,6 +224,11 @@ mod tests {
         unsafe { velt_rt_strbuf_push_i64(&mut s, 7) };
         let sp: *mut VeltStr = &mut s;
         unsafe { velt_rt_strbuf_push_str(sp, sp) };
+        // An uncounted view into the builder's own full buffer, which must grow (and may move).
+        let mut h = VeltStr::from_bytes(&[b'h'; 40]);
+        let view = unsafe { VeltStr::borrowed(h.as_bytes().as_ptr().add(30), 10) };
+        unsafe { velt_rt_strbuf_push_str(&mut h, &view) };
+        assert_eq!(finish(h), "h".repeat(50));
         assert_eq!(finish(s), "abc7abc7");
         let mut d = new_buf(64);
         unsafe {

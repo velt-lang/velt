@@ -468,13 +468,29 @@ typedef VeltStr VeltStrBuf;   // same layout; any owned VeltStr is a valid build
 Template literals, `a + b + c` chains and generated `JSON.stringify`/print glue build with one
 builder: O(total length), amortized doubling. A push appends in place to an inline builder with
 room or a heap buffer with count 1; anything else (static text, a full inline string, a shared
-buffer) first moves the text to a fresh buffer, so `s += x` never changes another copy of `s`.
-`finish` moves the text out (a heap result of ≤ 23 bytes becomes inline, freeing the buffer).
+buffer) first moves the text to a fresh buffer, so a push never changes another copy of the
+string. `finish` moves the text out (a heap result of ≤ 23 bytes becomes inline, freeing the
+buffer).
+
+Appending to a variable or field (`s += x`, `s = s + x`, `` s = `${s}${x}` ``, where the old
+value of `s` is dead after the assignment) uses the same in-place path on `s` itself: the text
+after the leading `s` is pushed straight onto `s` when no part of it can throw, else built into
+a builder of its own and appended with `velt_rt_str_append` (rt_abi.md), so a throwing part
+leaves `s` unchanged. When the text may change `s` (it reads `s`, or calls code that could reach
+it), lowering shares the old value before evaluating it and puts it back afterwards, which
+leaves the count at 1 again unless the text kept a copy. Every push ends in the one append
+routine of the runtime (`VeltStr::push_bytes`), so a per-string header can be maintained there.
+
+**Invariant:** a count-1 buffer is appended to (and so possibly reallocated) only while no
+borrowed static-form view into it is live. The only such views today are the JSON reader's
+borrowed keys (§12.3), which point into the source text, and generated decode glue never
+appends to the text it is reading. Appended text may lie in the target's own buffer (a share,
+an uncounted copy or a static-form view of it): it is copied out before the buffer grows.
 
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_strbuf_new` | `(u64 cap, VeltStrBuf* out)` | `cap` = initial capacity hint (≤ 23: starts inline, else allocates up front) |
-| `velt_rt_strbuf_push_str` | `(VeltStrBuf* b, const VeltStr* s)` | `s` may be `b` itself |
+| `velt_rt_strbuf_push_str` | `(VeltStrBuf* b, const VeltStr* s)` | `s` may be `b` itself or lie in its buffer |
 | `velt_rt_strbuf_push_bytes` | `(VeltStrBuf* b, const u8* p, u64 len)` | static text chunks of a template; `len == 0` ⇒ `p` unused |
 | `velt_rt_strbuf_push_i64` / `_u64` | `(VeltStrBuf* b, i64 / u64 v)` | decimal |
 | `velt_rt_strbuf_push_f64` | `(VeltStrBuf* b, f64 v)` | JS `String(v)` (same formatter as `velt_rt_write_f64`) |

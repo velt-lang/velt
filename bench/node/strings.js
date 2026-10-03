@@ -13,3 +13,10 @@ for (let i = 0; i < text.length; i++) {
   }
 }
 console.log(lines.length, text.length, digits, lines[123456]);
+let html = "";
+let tpl = "";
+for (let i = 0; i < 100000; i++) {
+  html += "<div class=\"lvl\">leaf</div>";
+  tpl = `${tpl}<p>${i % 100}</p>`;
+}
+console.log(html.length, tpl.length);

@@ -105,8 +105,10 @@ A `string` is an immutable value, like in JS: assign it, pass it, return it, sto
 it, take it out of a field, an array element, a `for...of` element or `Map.get`. The source stays
 usable and no copy method is needed.
 
-- `+` concatenates two strings; `s += x` appends (in place when `s` holds the only reference to
-  its text; other copies of `s` never change).
+- `+` concatenates two strings; `s += x` appends to a variable or field in place when `s` holds
+  the only reference to its text, growing it geometrically, so building a string in a loop costs
+  time linear in its length. `s = s + x` and `` s = `${s}${x}` `` append the same way. Other
+  copies of `s` never change.
 - **No implicit conversion**: `"Total: " + 5` and `"a" + true` are compile errors. Build text
   with a template literal (`` `Total: ${n}` ``), which formats any value the way `console.log`
   does.
