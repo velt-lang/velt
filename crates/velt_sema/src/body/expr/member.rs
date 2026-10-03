@@ -473,3 +473,8 @@ fn process_note(name: &str) -> String {
             .to_string(),
     }
 }
+
+/// The type of `x as const` (the parser's `const` type name).
+pub(super) fn is_as_const(ty: &ast::TypeExpr) -> bool {
+    matches!(&ty.kind, ast::TypeExprKind::Named { path, args } if args.is_empty() && path.len() == 1 && path[0].name == "const")
+}

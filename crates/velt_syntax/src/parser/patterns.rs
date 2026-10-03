@@ -1,5 +1,5 @@
 //! Binding patterns (`let`/`const`/`for...of`/`catch`): identifiers, `_`, object and array
-//! destructuring.
+//! destructuring, and defaults inside them (`{ a = 1 }`, `[x = 0]`).
 
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
@@ -56,6 +56,7 @@ impl<'a> Parser<'a> {
                 self.error_expected("`:`");
                 return Err(Fail);
             };
+            let pat = self.with_default(pat)?;
             fields.push((key, pat));
             if !self.eat(Tok::Comma) {
                 break;
@@ -64,6 +65,21 @@ impl<'a> Parser<'a> {
         self.expect(Tok::RBrace)?;
         let span = self.span_from(lo);
         Ok(self.mk_pat(PatternKind::Object { fields, rest }, span))
+    }
+
+    /// `pat = value` after a field or element pattern.
+    fn with_default(&mut self, pat: Pattern) -> PResult<Pattern> {
+        if !self.eat(Tok::Eq) {
+            return Ok(pat);
+        }
+        let lo = pat.span.lo;
+        let value = self.parse_assign()?;
+        let span = self.span_from(lo);
+        let kind = PatternKind::Default {
+            pattern: Box::new(pat),
+            value: Box::new(value),
+        };
+        Ok(self.mk_pat(kind, span))
     }
 
     /// `[a, , b, ...rest]` — holes become wildcards.
@@ -84,7 +100,8 @@ impl<'a> Parser<'a> {
                 self.bump();
                 continue;
             }
-            elems.push(self.parse_binding_pattern()?);
+            let pat = self.parse_binding_pattern()?;
+            elems.push(self.with_default(pat)?);
             if !self.eat(Tok::Comma) {
                 break;
             }

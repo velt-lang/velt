@@ -44,37 +44,36 @@ export class Math {
     return x;
   }
 
-  static max(a: f64, b: f64): f64 {
-    if (a > b) {
-      return a;
+  // Any number of values, like JS (`Math.max()` is -Infinity). The two-value call passes an
+  // empty rest array, which costs no allocation.
+  static max(a: f64 = -Infinity, b: f64 = -Infinity, ...rest: f64[]): f64 {
+    let m = max2(a, b);
+    for (const x of rest) {
+      m = max2(m, x);
     }
-    if (b > a) {
-      return b;
-    }
-    // Equal or unordered. For zeros `a + b` is +0 unless both are -0; for NaN it is NaN.
-    return a == b && a != 0.0 ? a : a + b;
+    return m;
   }
 
-  static min(a: f64, b: f64): f64 {
-    if (a < b) {
-      return a;
+  static min(a: f64 = Infinity, b: f64 = Infinity, ...rest: f64[]): f64 {
+    let m = min2(a, b);
+    for (const x of rest) {
+      m = min2(m, x);
     }
-    if (b < a) {
-      return b;
-    }
-    // Mirror of `max`: -(-a + -b) is -0 unless both are +0, and NaN for NaN.
-    return a == b && a != 0.0 ? a : -(-a + -b);
+    return m;
   }
 
   static pow(base: f64, exponent: f64): f64 {
     return base ** exponent;
   }
 
-  // sqrt(a² + b² + c² + d²) without overflow or underflow: operands far from 1 are scaled by an
-  // exact power of two (2^±600) first, so ordinary inputs stay correctly rounded. Takes up to
-  // four values (JS takes any number; there are no rest parameters): `Math.hypot(dx, dy, dz)`.
-  // Infinity wins over NaN, like JS.
-  static hypot(a: f64 = 0.0, b: f64 = 0.0, c: f64 = 0.0, d: f64 = 0.0): f64 {
+  // sqrt(a² + b² + c² + …) without overflow or underflow: operands far from 1 are scaled by an
+  // exact power of two (2^±600) first, so ordinary inputs stay correctly rounded. Any number of
+  // values, like JS; past four they are scaled by the largest one. Infinity wins over NaN, like
+  // JS.
+  static hypot(a: f64 = 0.0, b: f64 = 0.0, c: f64 = 0.0, d: f64 = 0.0, ...rest: f64[]): f64 {
+    if (rest.length > 0) {
+      return hypotMany([a, b, c, d, ...rest]);
+    }
     const x = __intrinsic_f_abs(a);
     const y = __intrinsic_f_abs(b);
     const z = __intrinsic_f_abs(c);
@@ -101,6 +100,58 @@ export class Math {
 }
 
 declare function velt_rt_math_umulh(a: u64, b: u64): u64;
+
+function max2(a: f64, b: f64): f64 {
+  if (a > b) {
+    return a;
+  }
+  if (b > a) {
+    return b;
+  }
+  // Equal or unordered. For zeros `a + b` is +0 unless both are -0; for NaN it is NaN.
+  return a == b && a != 0.0 ? a : a + b;
+}
+
+function min2(a: f64, b: f64): f64 {
+  if (a < b) {
+    return a;
+  }
+  if (b < a) {
+    return b;
+  }
+  // Mirror of `max2`: -(-a + -b) is -0 unless both are +0, and NaN for NaN.
+  return a == b && a != 0.0 ? a : -(-a + -b);
+}
+
+// `Math.hypot` of more than four values: the squares of the values divided by the largest.
+function hypotMany(xs: f64[]): f64 {
+  const inf = 1.0 / 0.0;
+  let big = 0.0;
+  let nan = false;
+  for (const x of xs) {
+    const a = __intrinsic_f_abs(x);
+    if (a == inf) {
+      return inf;
+    }
+    if (a != a) {
+      nan = true;
+    } else if (a > big) {
+      big = a;
+    }
+  }
+  if (nan) {
+    return 0.0 / 0.0;
+  }
+  if (big == 0.0) {
+    return 0.0;
+  }
+  let sum = 0.0;
+  for (const x of xs) {
+    const r = x / big;
+    sum += r * r;
+  }
+  return big * __intrinsic_sqrt(sum);
+}
 
 // sqrt of the sum of the squares of the scaled values; `scale` is a power of two, so the scaling
 // itself is exact (and zero terms add nothing: two values give the two-value result exactly).

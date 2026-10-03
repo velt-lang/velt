@@ -43,6 +43,7 @@ mod locals;
 mod loops;
 pub(crate) mod narrow;
 mod pattern;
+mod pattern_defaults;
 pub(crate) mod places;
 mod stmt;
 pub(crate) mod switch;

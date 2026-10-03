@@ -12,7 +12,7 @@ use crate::ctx::Ctx;
 use crate::defs::{member_key, FnSource};
 use crate::hir::{DefId, TyId};
 
-pub(super) fn fn_sig_ast<'m>(src: FnSource<'m>) -> &'m ast::FnSig {
+pub(crate) fn fn_sig_ast<'m>(src: FnSource<'m>) -> &'m ast::FnSig {
     match src {
         FnSource::Decl(f) => &f.sig,
         FnSource::Default(s, _) => s,

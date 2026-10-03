@@ -64,6 +64,7 @@ impl<'a> Printer<'a> {
                     .get(..(param.name.span.lo - param.span.lo) as usize)
                     .unwrap_or("")
                     .split_whitespace()
+                    .filter(|m| *m != "...")
                     .map(|m| format!("{m} "))
                     .collect::<String>();
                 if param.optional {
@@ -73,6 +74,9 @@ impl<'a> Printer<'a> {
                         "?: ",
                         p.ty_optional(&param.ty)
                     ];
+                }
+                if param.rest {
+                    return cat![mods, "...", param.name.name.clone(), ": ", p.ty(&param.ty)];
                 }
                 let mut doc = cat![mods, param.name.name.clone(), ": ", p.ty(&param.ty)];
                 if let Some(default) = &param.default {

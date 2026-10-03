@@ -107,6 +107,9 @@ pub struct Param {
     pub default: Option<Expr>,
     /// `name?: T` — parsed as `name: T | null = null` (the flag only keeps the spelling).
     pub optional: bool,
+    /// `...name: T[]` (the last parameter): a call's remaining arguments, spreads included,
+    /// as one array. Parsed with the default `[]`.
+    pub rest: bool,
     pub span: Span,
 }
 
@@ -576,6 +579,8 @@ pub enum ExprKind {
     },
     /// `(a, b)` is not a tuple; tuples use `[a, b]` with a tuple type context.
     Paren(Box<Expr>),
+    /// `x!`: the value of `x`, which must not be `null` (checked: a `null` panics).
+    NonNull(Box<Expr>),
     /// A JSX element or fragment: `<div class="a">{x}</div>`, `<></>`. Parentheses around an
     /// element are not kept (`(<a />)` is just the element).
     Jsx(Box<JsxElement>),
@@ -605,6 +610,12 @@ pub enum PatternKind {
     Array {
         elems: Vec<Pattern>,
         rest: Option<Ident>,
+    },
+    /// `p = value` inside an object or array pattern (`{ a = 1 }`, `[x = 0]`): `value` when the
+    /// field is `null` or the element is past the end (where JS reads `undefined`).
+    Default {
+        pattern: Box<Pattern>,
+        value: Box<Expr>,
     },
 }
 

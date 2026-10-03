@@ -1,8 +1,8 @@
 //! Top-level statements (a script, as in a TS or JS file): when the root file has statements
 //! outside declarations, they run, in order, in a generated `main` (`async` when one of them
 //! awaits). A top-level `const`/`let` moves into `main` with them, unless a declaration (a
-//! function, class, … or a module constant that stays) mentions its name: then it stays a module
-//! constant, which those declarations can see.
+//! function, class, struct, `extend` block or a module constant that stays) refers to it
+//! (`script_names`): then it stays a module constant, which those declarations can see.
 //!
 //! The generated function's name has an empty span at the first statement; sema uses that to
 //! reject statements in an imported module (only the root file runs them).
@@ -89,12 +89,13 @@ impl Parser<'_> {
     }
 
     /// Per item: is it a top-level variable that stays at module level? Exported ones do, and
-    /// those whose names a staying declaration mentions (to a fixed point).
+    /// those a staying declaration refers to (to a fixed point).
     fn kept_vars(&self, items: &[Item]) -> Vec<bool> {
         let mut keep: Vec<bool> = items
             .iter()
             .map(|i| !matches!(i.kind, ItemKind::Var(_)) || i.exported)
             .collect();
+        let free: Vec<_> = items.iter().map(super::script_names::free_names).collect();
         loop {
             let mut changed = false;
             for (i, item) in items.iter().enumerate() {
@@ -105,9 +106,8 @@ impl Parser<'_> {
                     continue;
                 }
                 let names = bound_names(&v.pattern);
-                let used = items.iter().enumerate().any(|(j, other)| {
-                    j != i && keep[j] && names.iter().any(|n| self.mentions(other.span, n))
-                });
+                let used = (0..items.len())
+                    .any(|j| j != i && keep[j] && names.iter().any(|n| free[j].contains(n)));
                 if used {
                     keep[i] = true;
                     changed = true;
@@ -119,14 +119,16 @@ impl Parser<'_> {
         }
     }
 
-    /// Does the source text in `span` contain `word` as a whole identifier?
+    /// Does the source text in `span` contain `word` as a whole identifier, not after a `.`
+    /// (`x.word` is a member, not a reference)?
     fn mentions(&self, span: Span, word: &str) -> bool {
         let text = &self.src[span.lo as usize..span.hi as usize];
         let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
         text.match_indices(word).any(|(at, _)| {
-            let before = text[..at].chars().next_back();
+            let before = text[..at].trim_end().chars().next_back();
+            let touching = text[..at].chars().next_back().is_some_and(ident);
             let after = text[at + word.len()..].chars().next();
-            !before.is_some_and(ident) && !after.is_some_and(ident)
+            !touching && before != Some('.') && !after.is_some_and(ident)
         })
     }
 }
@@ -146,5 +148,6 @@ fn bound_names(p: &Pattern) -> Vec<String> {
             .flat_map(bound_names)
             .chain(rest.iter().map(|r| r.name.clone()))
             .collect(),
+        PatternKind::Default { pattern, .. } => bound_names(pattern),
     }
 }

@@ -79,6 +79,33 @@ impl FnCx<'_, '_> {
     }
 
     /// `a ?? b` → `match (a) { Some(v) => v, null => b }`.
+    /// `x!` is `x ?? panic(…)`: TS trusts the assertion, Velt checks it.
+    pub(crate) fn non_null(
+        &mut self,
+        inner: &ast::Expr,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let mk = |kind| ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind,
+            span,
+        };
+        let msg = mk(ast::ExprKind::Lit(ast::Lit::Str(
+            "non-null assertion failed: the value is null".into(),
+        )));
+        let panic = mk(ast::ExprKind::Call {
+            callee: Box::new(mk(ast::ExprKind::Ident(ast::Ident {
+                name: "panic".into(),
+                span,
+            }))),
+            type_args: vec![],
+            args: vec![msg],
+            optional: false,
+        });
+        self.nullish(inner, &panic, exp, span)
+    }
+
     pub(crate) fn nullish(
         &mut self,
         lhs: &ast::Expr,

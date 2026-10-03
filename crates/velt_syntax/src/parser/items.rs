@@ -242,7 +242,11 @@ impl<'a> Parser<'a> {
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
         while !self.at(Tok::RParen) {
-            params.push(self.parse_param()?);
+            let p = self.parse_param()?;
+            if params.last().is_some_and(|q: &Param| q.rest) {
+                self.error("a rest parameter must be the last parameter", p.span);
+            }
+            params.push(p);
             if !self.eat(Tok::Comma) {
                 break;
             }
@@ -254,6 +258,7 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_param(&mut self) -> PResult<Param> {
         let lo = self.cur_lo();
         self.reject_mut_modifier();
+        let rest = self.eat(Tok::DotDotDot);
         let name = self.parse_ident()?;
         let optional = self.eat(Tok::Question);
         if !self.eat(Tok::Colon) {
@@ -284,11 +289,26 @@ impl<'a> Parser<'a> {
             default = Some(self.mk_expr(ExprKind::Lit(Lit::Null), span));
             ty = super::types::or_null(ty);
         }
+        if rest {
+            if !matches!(ty.kind, TypeExprKind::Array(_)) {
+                self.error(
+                    "a rest parameter must have an array type (`...xs: T[]`)",
+                    ty.span,
+                );
+            }
+            if let Some(d) = &default {
+                self.error("a rest parameter cannot have a default value", d.span);
+            }
+            // No arguments left over: an empty array.
+            let span = Span::new(self.file, ty.span.hi, ty.span.hi);
+            default = Some(self.mk_expr(ExprKind::Array(vec![]), span));
+        }
         Ok(Param {
             name,
             ty,
             default,
             optional,
+            rest,
             span: self.span_from(lo),
         })
     }

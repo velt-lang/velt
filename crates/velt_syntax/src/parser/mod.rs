@@ -20,6 +20,7 @@ mod postfix;
 mod primary;
 mod recovery;
 mod script;
+mod script_names;
 mod stmt;
 mod switch;
 mod symbol_keys;

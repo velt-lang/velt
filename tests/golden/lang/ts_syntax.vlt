@@ -1,0 +1,58 @@
+// TypeScript syntax: `??=` / `&&=` / `||=`, non-null `x!`, `as const`, defaults in destructuring,
+// rest parameters and spread arguments.
+class User {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+const m = new Map<string, number>();
+m.set("a", 1);
+console.log(m.get("a")! + 1);
+const users = new Map<string, User>();
+users.set("u", new User("ann"));
+const u = users.get("u")!;
+console.log(u.name, users.get("u")!.name);
+let label: string | null = null;
+label ??= "default";
+console.log(label.length);
+let count: number | null = 3;
+count ??= 10;
+console.log(count);
+let flag = true;
+flag &&= false;
+console.log(flag);
+const ROLES = ["admin", "user"] as const;
+const point = { x: 1, y: 2 } as const;
+console.log(ROLES, ROLES.length, point.x + point.y);
+type Opts = { host?: string; port?: number; debug: boolean };
+const opts: Opts = { debug: true };
+const { host = "localhost", port = 8080, debug } = opts;
+console.log(host, port, debug);
+const { a = 1 } = { a: 2 };
+console.log(a);
+const tens = [10];
+const [first = 0, second = 99, ...rest] = tens;
+console.log(first, second, rest);
+const pair: [string, number] = ["k", 1];
+const [k, v = 5] = pair;
+console.log(k, v);
+const typed: Opts = { port: 1, debug: false };
+const { port: p = 3 }: Opts = typed;
+console.log(p);
+
+function sum(...xs: number[]): number {
+  return xs.reduce((a, b) => a + b, 0);
+}
+
+function tag(name: string, ...parts: string[]): string {
+  return `${name}: ${parts.join(", ")}`;
+}
+
+const nums = [1, 2, 3];
+console.log(sum(), sum(1), sum(1, 2, 3), sum(...nums), sum(0, ...nums, 4));
+console.log(tag("a"), tag("b", "x", "y"));
+const digits = [3, 1, 4, 1, 5, 9, 2, 6];
+console.log(Math.max(...digits), Math.min(...digits), Math.max(), Math.min());
+console.log(Math.max(1, 2), Math.min(1, 2), Math.max(1, 5, 3), Math.hypot(...[3, 4]));

@@ -237,6 +237,20 @@ impl FnCx<'_, '_> {
         value: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
+        if let Some(op @ (ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)) = op {
+            // `a ??= b` is `a = a ?? b` (likewise `&&=`, `||=`): the target is a place, so
+            // reading it again has no effect, and the assignment narrows it as usual.
+            let rhs = ast::Expr {
+                id: ast::NodeId(u32::MAX),
+                kind: ast::ExprKind::Binary {
+                    op,
+                    lhs: Box::new(target.clone()),
+                    rhs: Box::new(value.clone()),
+                },
+                span: value.span,
+            };
+            return self.assign(None, target, &rhs, span);
+        }
         let unit = self.cx.ty.unit;
         let place = match self.assign_target(target, span) {
             Some(AssignTarget::Place(place)) => place,
@@ -276,13 +290,6 @@ impl FnCx<'_, '_> {
             };
             return self.mk(kind, unit, span);
         };
-        if matches!(
-            op,
-            ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish
-        ) {
-            return self
-                .unsupported_expr("logical compound assignments (`&&=`, `||=`, `??=`)", span);
-        }
         if lty == self.cx.ty.str_ && op == ast::BinaryOp::Add {
             let v = self.expr_coerce(value, lty, Want::Borrow);
             let cur = self.place_read(&place, Want::Borrow);
