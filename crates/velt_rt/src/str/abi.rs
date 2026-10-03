@@ -3,6 +3,7 @@
 
 use super::{write_out, VeltStr};
 use crate::fmt;
+use crate::str_array::VeltStrArray;
 use std::cmp::Ordering;
 
 #[no_mangle]
@@ -37,6 +38,22 @@ pub unsafe extern "C" fn velt_rt_str_append(s: *mut VeltStr, t: *const VeltStr) 
     }
     // A share or view of `*s`'s own buffer is copied out by the push where the buffer grows.
     (*s).push_str(&*t);
+}
+
+/// `parts.join(sep)`: one allocation of the right form (`str/join.rs`).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_str_join(
+    parts: *const VeltStrArray,
+    sep: *const VeltStr,
+    out: *mut VeltStr,
+) {
+    let a = &*parts;
+    let parts = if a.len == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(a.ptr, a.len as usize)
+    };
+    write_out(out, VeltStr::join(parts, &*sep));
 }
 
 #[no_mangle]
@@ -78,7 +95,7 @@ pub unsafe extern "C" fn velt_rt_str_clone(s: *const VeltStr, out: *mut VeltStr)
 pub unsafe extern "C" fn velt_rt_str_own(s: *const VeltStr, out: *mut VeltStr) {
     let s = &*s;
     let owned = if s.is_static() {
-        VeltStr::owned(s.as_bytes(), Some(s.summary()))
+        VeltStr::owned_counted(s.as_bytes(), s.summary())
     } else {
         s.share()
     };

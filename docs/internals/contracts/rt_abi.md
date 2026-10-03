@@ -38,7 +38,7 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 |---|---|---|---|
 | static / borrowed | byte 23 < 0x80 and `w2 == 0` | `{ptr, units << 32 \| len, 0}` | bitwise copy / nothing |
 | inline, ASCII (≤ 23 bytes) | byte 23 ≥ 0x80, bit 0x40 clear | bytes 0..len hold the text, byte 23 = `0x80 \| len` (units = len) | bitwise copy / nothing |
-| inline, non-ASCII (≤ 22 bytes) | byte 23 ≥ 0x80, bit 0x40 set | bytes 0..len hold the text, byte 22 = units, byte 23 = `0xC0 \| len` | bitwise copy / nothing |
+| inline, non-ASCII (≤ 22 bytes) | byte 23 ≥ 0x80, bit 0x40 set | bytes 0..len hold the text, byte 22 = units, byte 23 = `0xC0 \| len`, plus `0x20` when it may hold lone surrogates | bitwise copy / nothing |
 | heap | byte 23 < 0x80 and `w2 != 0` | `{ptr, units << 32 \| len, cap}`; `ptr` points into a refcounted buffer | count +1 / count −1, free at 0 |
 
 - `w1` of the static and heap forms packs the unit count in its high 32 bits and the byte length
@@ -56,8 +56,11 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
     table of #377 phase 2 and is null.
 
   Which layout a buffer has follows from the value (units != len), so retaining needs nothing but
-  `ptr`, and release, growth and free derive the header from the value. An ASCII buffer that
-  receives its first non-ASCII byte moves the text to a buffer with a header at that append,
+  `ptr`, and release, growth and free derive the header from the value. An inline string has
+  no room for a lone count; its `0x20` bit is clear when it has none (set conservatively after
+  a join, and for text from a static string, which can't tell without a scan). An ASCII buffer
+  that receives its first non-ASCII byte moves the text behind a header at that append (the
+  allocation is grown in place when the allocator can, and the text shifted),
   even when it is unique and has room. Only runtime functions allocate, share or free buffers.
   Counts are **atomic** (any string may cross threads: `spawn`, HTTP handlers, `shared`). The
   common case pays no atomic read-modify-write: dropping the only reference (count 1) frees
@@ -81,7 +84,8 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   WTF-8 with the unit and lone counts it is given, and the seam is canonical: O(piece), never a
   recount of the whole string) and in full after every operation by the runtime's own tests: the
   bytes are canonical WTF-8; the stored unit count is the text's; a non-ASCII heap buffer's
-  `lone` is its number of lone surrogates; an inline string fits its form.
+  `lone` is its number of lone surrogates; an inline string fits its form, and has no lone
+  surrogates when its `0x20` bit is clear.
 - `VELT_RC_STATS=1` with a **debug** runtime prints `rc stats: retain=… release=… alloc=… free=…`
   to stderr at exit (retain = increments, release = decrements of shared buffers, alloc/free =
   heap buffers). Release runtimes compile the counters out; to count optimized code, link a

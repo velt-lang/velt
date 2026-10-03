@@ -7,8 +7,8 @@
 //!   of them; never freed. The all-zero value is the empty string.
 //! - **inline** (top bit of `w2` set): up to [`INLINE_MAX`] ASCII bytes or
 //!   [`INLINE_MAX_NON_ASCII`] other bytes stored in the value itself; byte 23 is
-//!   `0x80 | len`, plus `0x40` for a non-ASCII string, whose unit count is then byte 22. No heap,
-//!   copying is a 24-byte copy.
+//!   `0x80 | len`, plus `0x40` for a non-ASCII string, whose unit count is then byte 22, plus
+//!   `0x20` when it may hold lone surrogates. No heap, copying is a 24-byte copy.
 //! - **heap** (`w2 > 0` as `i64`): `{ptr, units << 32 | len, cap}` where `ptr` points into a
 //!   reference-counted buffer (`heap`) of `cap` bytes; copying bumps the count, dropping the last
 //!   copy frees it. Non-ASCII buffers carry a header with the lone-surrogate count.
@@ -23,6 +23,7 @@
 mod abi;
 mod heap;
 mod invariants;
+mod join;
 mod push;
 pub mod stats;
 #[cfg(test)]
@@ -49,6 +50,9 @@ pub const MAX_LEN: usize = heap::MAX_CAP;
 const INLINE: u8 = 0x80;
 /// Byte 23 of a non-ASCII inline string has this bit set.
 const NON_ASCII: u8 = 0x40;
+/// Byte 23 of an inline string that may hold lone surrogates has this bit set: clear, the string
+/// has none, so its lone count costs no scan (an inline string has no room for the count).
+const INLINE_LONE: u8 = 0x20;
 /// The byte length in byte 23 of an inline string.
 const INLINE_LEN: u8 = 0x1f;
 /// Where a non-ASCII inline string keeps its unit count.
@@ -144,6 +148,35 @@ impl VeltStr {
         VeltStr::owned(bytes, None)
     }
 
+    /// An owned copy of UTF-8 text, like [`Self::from_bytes`]. UTF-8 holds no lone surrogates,
+    /// so only the units are counted.
+    pub fn from_text(text: &str) -> VeltStr {
+        VeltStr::from_text_counted(text, wtf8::count_units(text.as_bytes()))
+    }
+
+    /// The UTF-16 length of WTF-8 `bytes`.
+    pub fn units_of(bytes: &[u8]) -> usize {
+        wtf8::count_units(bytes)
+    }
+
+    /// [`Self::from_text`] when the caller already counted the text's UTF-16 length (`units`).
+    #[inline]
+    pub fn from_text_counted(text: &str, units: usize) -> VeltStr {
+        VeltStr::owned_counted(text.as_bytes(), Summary { units, lone: 0 })
+    }
+
+    /// [`Self::borrowed`] for UTF-8 text whose UTF-16 length (`units`) the caller counted.
+    ///
+    /// # Safety
+    /// As for [`Self::borrowed`]; the bytes must be UTF-8 and `units` their UTF-16 length.
+    pub unsafe fn borrowed_text(ptr: *const u8, len: usize, units: usize) -> VeltStr {
+        if len > 0 {
+            let bytes = std::slice::from_raw_parts(ptr, len);
+            invariants::check_piece(bytes, Some(Summary { units, lone: 0 }));
+        }
+        VeltStr::borrowed_counted(ptr, len, units)
+    }
+
     /// An owned copy of a Vec's bytes (heap strings carry a count header, so this copies).
     pub fn from_vec(v: Vec<u8>) -> VeltStr {
         VeltStr::from_bytes(&v)
@@ -153,7 +186,7 @@ impl VeltStr {
     /// buffer is an ASCII one: a non-ASCII push moves the text to a buffer with a header.
     pub fn with_capacity(cap: usize) -> VeltStr {
         if cap <= INLINE_MAX {
-            return VeltStr::inline(&[], 0);
+            return VeltStr::inline(&[], 0, false);
         }
         VeltStr {
             w0: heap::alloc(cap, false) as usize as u64,
@@ -235,12 +268,33 @@ impl VeltStr {
     /// `self` must be valid.
     #[inline]
     unsafe fn lone(&self) -> usize {
-        if self.is_ascii() {
+        let tag = self.tag();
+        if (tag & INLINE != 0 && tag & INLINE_LONE == 0) || self.is_ascii() {
             0
         } else if self.is_heap() {
             heap::lone(self.ptr())
         } else {
             wtf8::count_lone(self.as_bytes())
+        }
+    }
+
+    /// Might `self` hold lone surrogates? No for ASCII; for a heap string its header's count; for
+    /// an inline string its flag (conservative after a join); and yes for a non-ASCII static
+    /// string, which has no room to say (finding out would take a scan).
+    ///
+    /// # Safety
+    /// `self` must be valid.
+    #[inline]
+    unsafe fn may_have_lone(&self) -> bool {
+        let tag = self.tag();
+        if tag & INLINE != 0 {
+            tag & INLINE_LONE != 0
+        } else if self.is_ascii() {
+            false
+        } else if self.w2 != 0 {
+            heap::lone(self.ptr()) > 0
+        } else {
+            true
         }
     }
 
@@ -272,12 +326,22 @@ impl VeltStr {
 
     /// # Safety
     /// `self` must be a valid string per the layout contract.
+    #[inline]
     pub unsafe fn as_bytes(&self) -> &[u8] {
-        let n = self.len();
+        // One test of the form gives both the address and the length.
+        let tag = self.tag();
+        let (data, n) = if tag & INLINE != 0 {
+            (
+                self as *const VeltStr as *const u8,
+                (tag & INLINE_LEN) as usize,
+            )
+        } else {
+            (self.ptr() as *const u8, self.w1 as u32 as usize)
+        };
         if n == 0 {
             &[]
         } else {
-            std::slice::from_raw_parts(self.data(), n)
+            std::slice::from_raw_parts(data, n)
         }
     }
 
@@ -292,18 +356,39 @@ impl VeltStr {
             return VeltStr::empty();
         }
         let piece = &self.as_bytes()[start..end];
-        let known = self.is_ascii().then(|| Summary::ascii(piece.len()));
         if self.is_static() {
-            let units = match known {
-                Some(sum) => sum.units,
-                None => wtf8::count_units(piece),
+            let units = if self.is_ascii() {
+                piece.len()
+            } else {
+                wtf8::count_units(piece)
             };
             return VeltStr::borrowed_counted(piece.as_ptr(), piece.len(), units);
         }
         if start == 0 && end == self.len() {
             return self.share();
         }
-        VeltStr::owned(piece, known)
+        VeltStr::owned_counted(piece, self.piece_summary(piece))
+    }
+
+    /// The summary of `piece`, a sub-range of `self`: ASCII if `self` is, and without lone
+    /// surrogates if `self` is known to have none (its heap header or inline flag says so);
+    /// otherwise the piece is counted.
+    ///
+    /// # Safety
+    /// `self` must be valid.
+    unsafe fn piece_summary(&self, piece: &[u8]) -> Summary {
+        if self.is_ascii() {
+            return Summary::ascii(piece.len());
+        }
+        let lone_free = !self.may_have_lone();
+        Summary {
+            units: wtf8::count_units(piece),
+            lone: if lone_free {
+                0
+            } else {
+                wtf8::count_lone(piece)
+            },
+        }
     }
 
     /// Another reference to the same string (count +1 for heap strings).
@@ -346,7 +431,7 @@ impl VeltStr {
         if !self.is_heap() || !fits_inline(self.len(), self.units()) {
             return self;
         }
-        let s = VeltStr::inline(self.as_bytes(), self.units());
+        let s = VeltStr::inline(self.as_bytes(), self.units(), self.lone() > 0);
         self.release();
         invariants::check_whole(&s);
         s
@@ -374,10 +459,23 @@ impl VeltStr {
     /// # Safety
     /// `self` must be valid; what `f` writes must be canonical WTF-8.
     pub unsafe fn push_with(&mut self, f: impl FnOnce(&mut Vec<u8>)) {
+        self.push_with_summary(f, |_| None);
+    }
+
+    /// [`Self::push_with`] for a writer whose output's summary follows from what it wrote (its
+    /// length): `summary` gives it, or `None` to have it counted.
+    ///
+    /// # Safety
+    /// As for [`Self::push_with`]; a summary must be the output's own.
+    pub unsafe fn push_with_summary(
+        &mut self,
+        f: impl FnOnce(&mut Vec<u8>),
+        summary: impl FnOnce(usize) -> Option<Summary>,
+    ) {
         let mut scratch = SCRATCH.with(|s| std::mem::take(&mut *s.borrow_mut()));
         scratch.clear();
         f(&mut scratch);
-        self.push_wtf8(&scratch, None);
+        self.push_wtf8(&scratch, summary(scratch.len()));
         SCRATCH.with(|s| *s.borrow_mut() = scratch);
     }
 }

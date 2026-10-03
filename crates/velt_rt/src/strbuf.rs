@@ -30,7 +30,8 @@ pub unsafe extern "C" fn velt_rt_strbuf_new(cap: u64, out: *mut VeltStrBuf) {
 pub unsafe extern "C" fn velt_rt_strbuf_push_str(buf: *mut VeltStrBuf, s: *const VeltStr) {
     if std::ptr::eq(buf, s) {
         // Copy out first: growing the builder may move the bytes being read.
-        (*buf).push_with(|v| v.extend_from_slice((*s).as_bytes()));
+        let sum = (*s).summary();
+        (*buf).push_with_summary(|v| v.extend_from_slice((*s).as_bytes()), |_| Some(sum));
         return;
     }
     (*buf).push_str(&*s);
@@ -82,7 +83,7 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_u64(buf: *mut VeltStrBuf, v: u64) {
 /// Append an `f64` formatted like JS `String(v)`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_f64(buf: *mut VeltStrBuf, v: f64) {
-    (*buf).push_with(|b| fmt::push_f64(b, v));
+    (*buf).push_with_summary(|b| fmt::push_f64(b, v), |n| Some(Summary::ascii(n)));
 }
 
 /// Append an `f64` the way `JSON.stringify` does: JS formatting, `null` for NaN/±Infinity.
@@ -91,7 +92,7 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_json_f64(buf: *mut VeltStrBuf, v: f
     if !v.is_finite() {
         return push_ascii(buf, b"null");
     }
-    (*buf).push_with(|b| fmt::push_f64(b, v));
+    (*buf).push_with_summary(|b| fmt::push_f64(b, v), |n| Some(Summary::ascii(n)));
 }
 
 /// Append `true` / `false`.
@@ -113,8 +114,19 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_byte(buf: *mut VeltStrBuf, byte: u8
 /// Append `s` as a JSON string literal: quoted and escaped exactly like `JSON.stringify(s)`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_json_str(buf: *mut VeltStrBuf, s: *const VeltStr) {
-    // Escaped into scratch space first, so `s` may be the builder itself.
-    (*buf).push_with(|b| push_json_string(b, (*s).as_bytes()));
+    // Escaped into scratch space first, so `s` may be the builder itself. Only ASCII is escaped
+    // (into ASCII), so the output has the input's units plus one per added byte.
+    let write = |b: &mut Vec<u8>| push_json_string(b, (*s).as_bytes());
+    if (*s).is_ascii() {
+        return (*buf).push_with_summary(write, |out| Some(Summary::ascii(out)));
+    }
+    let (len, sum) = ((*s).len(), (*s).summary());
+    (*buf).push_with_summary(write, |out| {
+        Some(Summary {
+            units: sum.units + (out - len),
+            lone: sum.lone,
+        })
+    });
 }
 
 /// Append `s` as a string inside a container prints in `console.log` (node's `util.inspect`

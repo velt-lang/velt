@@ -28,18 +28,93 @@ impl Summary {
 /// of a code point pushed separately still add up to its length.
 #[inline]
 pub fn count_units(bytes: &[u8]) -> usize {
+    if bytes.len() < SHORT {
+        return count_units_short(bytes);
+    }
     if bytes.is_ascii() {
         return bytes.len();
     }
     count_units_scan(bytes)
 }
 
-/// [`count_units`] without the ASCII shortcut: a plain loop over the bytes, which the compiler
-/// vectorizes.
+/// Below this length [`count_units`] counts a word at a time: the vectorized loops cost more to
+/// set up than a short piece (a split field, a JSON key) takes to count, and an ASCII check first
+/// would cost as much as the count.
+const SHORT: usize = 32;
+
+/// The top bit of every byte of a word.
+const HIGH: u64 = 0x8080_8080_8080_8080;
+
+/// The UTF-16 code units the eight bytes of `w` start (see [`unit_weight`]).
+#[inline]
+fn word_units(w: u64) -> usize {
+    // Bytes whose top bit is set in `marks`: each becomes 0 or 1, and the multiplication sums
+    // them into the top byte.
+    let count = |marks: u64| ((marks >> 7).wrapping_mul(0x0101_0101_0101_0101) >> 56) as usize;
+    let continuation = w & !(w << 1) & HIGH;
+    let four_byte = w & (w << 1) & (w << 2) & (w << 3) & HIGH;
+    8 - count(continuation) + count(four_byte)
+}
+
+/// [`count_units`] of fewer than [`SHORT`] bytes, a word at a time. The last, partial word is
+/// read without a copy (overlapping reads) and padded with zero bytes, which count as ASCII and
+/// are taken off again.
+#[inline]
+fn count_units_short(b: &[u8]) -> usize {
+    let n = b.len();
+    // SAFETY (all reads): every offset read plus its width is at most `n`.
+    let read = |at: usize, width: usize| -> u64 {
+        unsafe {
+            match width {
+                8 => b.as_ptr().add(at).cast::<u64>().read_unaligned(),
+                4 => b.as_ptr().add(at).cast::<u32>().read_unaligned() as u64,
+                2 => b.as_ptr().add(at).cast::<u16>().read_unaligned() as u64,
+                _ => *b.as_ptr().add(at) as u64,
+            }
+        }
+    };
+    let mut units = 0;
+    let mut i = 0;
+    while i + 8 <= n {
+        units += word_units(u64::from_le(read(i, 8)));
+        i += 8;
+    }
+    let rest = n - i;
+    if rest == 0 {
+        return units;
+    }
+    let w = if n >= 8 {
+        u64::from_le(read(n - 8, 8)) >> (8 * (8 - rest))
+    } else {
+        // Two overlapping reads; the shared bytes are equal, so OR-ing them is harmless.
+        let (lo, hi, width) = match rest {
+            4..=7 => (read(0, 4), read(rest - 4, 4), 4),
+            2..=3 => (read(0, 2), read(rest - 2, 2), 2),
+            _ => (read(0, 1), 0, 1),
+        };
+        u64::from_le(lo | (hi << (8 * (rest - width))))
+    };
+    units + word_units(w) - (8 - rest)
+}
+
+/// UTF-16 code units a byte of UTF-8 starts: none for a continuation byte, two for the lead byte
+/// of a 4-byte sequence (a surrogate pair), one otherwise.
+#[inline]
+fn unit_weight(b: u8) -> u8 {
+    (b & 0xC0 != 0x80) as u8 + (b >= 0xF0) as u8
+}
+
+/// [`count_units`] without the ASCII shortcut. Blocks of 127 bytes are summed as bytes (at most 2
+/// units each, so a block's sum fits a `u8`), which the compiler vectorizes 16 bytes at a time; a
+/// sum in `usize` would widen every byte first.
 fn count_units_scan(bytes: &[u8]) -> usize {
     bytes
-        .iter()
-        .map(|&b| (b & 0xC0 != 0x80) as usize + (b >= 0xF0) as usize)
+        .chunks(127)
+        .map(|block| {
+            block
+                .iter()
+                .fold(0u8, |sum, &b| sum.wrapping_add(unit_weight(b))) as usize
+        })
         .sum()
 }
 
@@ -47,7 +122,8 @@ fn count_units_scan(bytes: &[u8]) -> usize {
 /// `ED` followed by `A0..BF`. Text without an `ED` byte (most of it) is ruled out by a fast
 /// search.
 pub fn count_lone(bytes: &[u8]) -> usize {
-    if !bytes.contains(&0xED) {
+    let has_ed = bytes.contains(&0xED);
+    if !has_ed {
         return 0;
     }
     bytes
@@ -69,7 +145,7 @@ pub fn summarize(bytes: &[u8]) -> Summary {
 #[inline(never)]
 fn summarize_non_ascii(bytes: &[u8]) -> Summary {
     Summary {
-        units: count_units_scan(bytes),
+        units: count_units(bytes),
         lone: count_lone(bytes),
     }
 }
@@ -160,6 +236,35 @@ mod tests {
         assert_eq!(count_units("a😀é€".as_bytes()), 5);
         assert_eq!(count_units(&enc(0xD83D)), 1);
         assert_eq!(count_units(&[]), 0);
+    }
+
+    #[test]
+    fn short_counts_match_the_byte_rule() {
+        // Lone surrogates, an `ED` lead byte that is not one, and every other sequence length.
+        let alphabet: [&[u8]; 7] = [
+            b"a",
+            "é".as_bytes(),
+            "日".as_bytes(),
+            "😀".as_bytes(),
+            "\u{D7FF}".as_bytes(),
+            &[0xED, 0xA0, 0xBD],
+            &[0xED, 0xB8, 0x80],
+        ];
+        for len in 0..40 {
+            let text: Vec<u8> = (0..len)
+                .flat_map(|i| alphabet[(i * 7 + len) % alphabet.len()].iter().copied())
+                .collect();
+            for cut in 0..text.len().min(SHORT) {
+                let piece = &text[..cut];
+                let want: usize = piece.iter().map(|&b| unit_weight(b) as usize).sum();
+                assert_eq!(count_units_short(piece), want, "{piece:?}");
+                let lone = piece
+                    .windows(2)
+                    .filter(|w| w[0] == 0xED && w[1] >= 0xA0)
+                    .count();
+                assert_eq!(count_lone(piece), lone, "{piece:?}");
+            }
+        }
     }
 
     #[test]

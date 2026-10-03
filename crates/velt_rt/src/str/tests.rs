@@ -260,3 +260,54 @@ fn strbuf_pushes_carry_units() {
     assert_eq!(bytes(&b.0), text.repeat(2).as_bytes());
     assert_eq!(b.0.units(), 2 * text.encode_utf16().count());
 }
+
+#[test]
+fn inline_strings_flag_lone_surrogates() {
+    let lone_flag = |s: &VeltStr| raw(s)[23] & INLINE_LONE != 0;
+    let plain = Owned(VeltStr::from_bytes("é日".as_bytes()));
+    assert!(plain.0.is_inline() && !lone_flag(&plain.0));
+    let hi = Owned(VeltStr::from_bytes(&enc3(HI)));
+    assert!(lone_flag(&hi.0) && unsafe { hi.0.summary() }.lone == 1);
+    // Appending text with a lone surrogate sets the flag; one without keeps it clear.
+    let mut s = Owned(VeltStr::from_bytes("é".as_bytes()));
+    unsafe { s.0.push_str(&plain.0) };
+    assert!(!lone_flag(&s.0));
+    unsafe { s.0.push_str(&hi.0) };
+    assert!(lone_flag(&s.0) && unsafe { s.0.summary() }.lone == 1);
+    // Concatenation and pieces carry it too.
+    let mut c = Owned(VeltStr::empty());
+    unsafe { velt_rt_str_concat(&plain.0, &hi.0, &mut c.0) };
+    assert!(c.0.is_inline() && lone_flag(&c.0));
+    let piece = Owned(unsafe { c.0.substring(0, 5) });
+    assert!(!lone_flag(&piece.0), "a piece without the surrogate");
+    // Text that arrives as UTF-8 has none.
+    let t = Owned(VeltStr::from_text("ünïcode"));
+    assert!(!lone_flag(&t.0) && t.0.units() == 7);
+}
+
+#[test]
+fn joins_sum_their_pieces() {
+    let parts: Vec<VeltStr> = ["a", "é", "😀", "", "plain ASCII text past the inline limit"]
+        .iter()
+        .map(|t| VeltStr::from_text(t))
+        .collect();
+    let sep = VeltStr::from_static("—".as_bytes());
+    let joined = Owned(unsafe { VeltStr::join(&parts, &sep) });
+    let want = "a—é—😀——plain ASCII text past the inline limit";
+    assert_eq!(bytes(&joined.0), want.as_bytes());
+    assert!(joined.0.is_heap() && joined.0.units() == want.encode_utf16().count());
+    let short = Owned(unsafe { VeltStr::join(&parts[..3], &sep) });
+    assert!(short.0.is_inline() && bytes(&short.0) == "a—é—😀".as_bytes());
+    let one = Owned(unsafe { VeltStr::join(&parts[4..], &sep) });
+    assert_eq!(one.0.ptr(), parts[4].ptr(), "one part is shared");
+    // Halves of a pair at a seam join.
+    let (hi, lo) = (
+        VeltStr::from_bytes(&enc3(HI)),
+        VeltStr::from_bytes(&enc3(LO)),
+    );
+    let pair = Owned(unsafe { VeltStr::join(&[hi, lo], &VeltStr::empty()) });
+    assert_eq!(bytes(&pair.0), "😀".as_bytes());
+    for mut p in parts {
+        unsafe { p.release() };
+    }
+}

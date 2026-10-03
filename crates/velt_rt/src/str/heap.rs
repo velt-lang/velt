@@ -105,6 +105,27 @@ pub(super) unsafe fn grow(data: *mut u8, cap: usize, new_cap: usize, header: boo
     base.add(p)
 }
 
+/// Move the text of the unique ASCII buffer at `data` (capacity `cap`, `len` bytes used) into a
+/// non-ASCII buffer of `new_cap` bytes: the allocation grows by the header (in place when the
+/// allocator can) and the text moves up behind it. Returns the new address of the text.
+///
+/// # Safety
+/// `data` must come from [`alloc`] without a header, with capacity `cap`, and have count 1;
+/// `len <= cap` and `len <= new_cap`.
+pub(super) unsafe fn add_header(data: *mut u8, cap: usize, len: usize, new_cap: usize) -> *mut u8 {
+    let new = layout(new_cap, true);
+    let base = alloc::realloc(data.sub(COUNT), layout(cap, false), new.size());
+    if base.is_null() {
+        alloc::handle_alloc_error(new);
+    }
+    let data = base.add(HEADER);
+    std::ptr::copy(base.add(COUNT), data, len);
+    (base as *mut AtomicPtr<u8>).write(AtomicPtr::new(std::ptr::null_mut()));
+    lone_field(data).write(0);
+    (data.sub(COUNT) as *mut AtomicU64).write(AtomicU64::new(1));
+    data
+}
+
 /// Is `data`'s buffer referenced only by the caller?
 ///
 /// # Safety

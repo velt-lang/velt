@@ -68,6 +68,11 @@ pub(super) fn check_whole(s: &VeltStr) {
     assert_eq!(s.is_ascii(), counted.units == bytes.len(), "{s:?}");
     if s.is_inline() {
         assert!(super::fits_inline(s.len(), s.units()), "ICE: inline {s:?}");
+        let flag = s.tag() & super::INLINE_LONE != 0;
+        assert!(
+            flag || counted.lone == 0,
+            "ICE: {s:?} has lone surrogates but no flag"
+        );
     } else if s.is_heap() {
         assert!(
             s.len() <= s.w2 as usize,

@@ -7,8 +7,8 @@
 use std::mem::MaybeUninit;
 
 use super::{
-    fits_inline, heap, invariants, pack, wtf8, Summary, VeltStr, INLINE, INLINE_LEN, INLINE_MAX,
-    INLINE_MAX_NON_ASCII, INLINE_UNITS, MAX_LEN, NON_ASCII,
+    fits_inline, heap, invariants, pack, wtf8, Summary, VeltStr, INLINE, INLINE_LEN, INLINE_LONE,
+    INLINE_MAX, INLINE_MAX_NON_ASCII, INLINE_UNITS, MAX_LEN, NON_ASCII,
 };
 
 impl VeltStr {
@@ -80,10 +80,28 @@ impl VeltStr {
         self.push_wtf8(bytes, Some(Summary::ascii(len)));
     }
 
-    /// [`Self::push_str`] of a non-ASCII string, whose lone surrogates may need counting.
+    /// [`Self::push_str`] of a non-ASCII string. Into an inline string with room nothing needs
+    /// its lone surrogates (an inline string keeps no count), so they are counted only for a
+    /// heap result.
     #[inline(never)]
     unsafe fn push_non_ascii_str(&mut self, s: &VeltStr) {
-        self.push_wtf8(s.as_bytes(), Some(s.summary()));
+        let bytes = s.as_bytes();
+        let tag = self.tag();
+        let len = (tag & INLINE_LEN) as usize;
+        if tag & INLINE != 0 && len + bytes.len() <= INLINE_MAX_NON_ASCII && !self.joins(bytes) {
+            invariants::check_piece(bytes, None);
+            let units = self.units() + s.units();
+            let p = self as *mut VeltStr as *mut u8;
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), p.add(len), bytes.len());
+            let lone = (tag & INLINE_LONE) | if s.may_have_lone() { INLINE_LONE } else { 0 };
+            *p.add(INLINE_UNITS) = units as u8;
+            *p.add(INLINE_MAX) = INLINE | NON_ASCII | lone | (len + bytes.len()) as u8;
+            #[cfg(debug_assertions)]
+            invariants::check_seam(self, len);
+            invariants::check_whole(self);
+            return;
+        }
+        self.push_wtf8(bytes, Some(s.summary()));
     }
 
     /// `a + b` as a new string (`velt_rt_str_concat`), allocated once at its exact size.
@@ -91,21 +109,26 @@ impl VeltStr {
     /// # Safety
     /// Both strings must be valid.
     pub(super) unsafe fn concat(a: &VeltStr, b: &VeltStr) -> VeltStr {
-        let (sa, sb) = (a.summary(), b.summary());
-        let len = a.len() + b.len();
-        let units = sa.units + sb.units;
-        if fits_inline(len, units) || (sb.lone > 0 && a.joins(b.as_bytes())) {
-            let mut s = VeltStr::owned(a.as_bytes(), Some(sa));
-            s.push_wtf8(b.as_bytes(), Some(sb));
+        let (ta, tb) = (a.as_bytes(), b.as_bytes());
+        if a.joins(tb) {
+            let mut s = VeltStr::owned_counted(ta, a.summary());
+            s.push_wtf8(tb, Some(b.summary()));
             return s;
         }
-        invariants::check_piece(a.as_bytes(), Some(sa));
-        invariants::check_piece(b.as_bytes(), Some(sb));
-        let total = Summary {
-            units,
-            lone: sa.lone + sb.lone,
+        invariants::check_piece(ta, None);
+        invariants::check_piece(tb, None);
+        let len = ta.len() + tb.len();
+        let units = a.units() + b.units();
+        // An inline string keeps no lone count, so only a heap result needs the operands'.
+        let s = if fits_inline(len, units) {
+            VeltStr::inline_of(&[ta, tb], units, a.may_have_lone() || b.may_have_lone())
+        } else {
+            let total = Summary {
+                units,
+                lone: a.lone() + b.lone(),
+            };
+            VeltStr::heap_of(&[ta, tb], total, len)
         };
-        let s = VeltStr::heap_of(&[a.as_bytes(), b.as_bytes()], total, len);
         #[cfg(debug_assertions)]
         invariants::check_seam(&s, a.len());
         invariants::check_whole(&s);
@@ -114,10 +137,19 @@ impl VeltStr {
 
     /// An owned copy of `bytes` (`known`: their summary, if the caller has it).
     pub(super) fn owned(bytes: &[u8], known: Option<Summary>) -> VeltStr {
-        invariants::check_piece(bytes, known);
-        let sum = known.unwrap_or_else(|| wtf8::summarize(bytes));
+        match known {
+            Some(sum) => VeltStr::owned_counted(bytes, sum),
+            None => VeltStr::owned_counted(bytes, wtf8::summarize(bytes)),
+        }
+    }
+
+    /// An owned copy of `bytes`, whose summary is `sum`: inline when short, else a heap buffer
+    /// of exactly its size.
+    #[inline]
+    pub(super) fn owned_counted(bytes: &[u8], sum: Summary) -> VeltStr {
+        invariants::check_piece(bytes, Some(sum));
         let s = if fits_inline(bytes.len(), sum.units) {
-            VeltStr::inline(bytes, sum.units)
+            VeltStr::inline(bytes, sum.units, sum.lone > 0)
         } else {
             // SAFETY: a fresh buffer of exactly the text's size.
             unsafe { VeltStr::heap_of(&[bytes], sum, bytes.len()) }
@@ -126,13 +158,30 @@ impl VeltStr {
         s
     }
 
-    /// The inline string of `bytes`, which has `units` code units and must fit.
-    pub(super) fn inline(bytes: &[u8], units: usize) -> VeltStr {
-        VeltStr::inline_of(&[bytes], units)
+    /// The inline string of `bytes`, which has `units` code units and must fit; `lone`: it may
+    /// hold lone surrogates.
+    #[inline]
+    pub(super) fn inline(bytes: &[u8], units: usize, lone: bool) -> VeltStr {
+        let len = bytes.len();
+        debug_assert!(fits_inline(len, units));
+        let mut s = MaybeUninit::<VeltStr>::zeroed();
+        let p = s.as_mut_ptr() as *mut u8;
+        // SAFETY: 24 writable bytes; the text fits before byte 22 (non-ASCII) or 23 (ASCII).
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, len);
+            *p.add(INLINE_MAX) = if units == len {
+                INLINE | len as u8
+            } else {
+                *p.add(INLINE_UNITS) = units as u8;
+                INLINE | NON_ASCII | if lone { INLINE_LONE } else { 0 } | len as u8
+            };
+            s.assume_init()
+        }
     }
 
-    /// The inline string of `pieces` concatenated (`units` in all; must fit).
-    fn inline_of(pieces: &[&[u8]], units: usize) -> VeltStr {
+    /// The inline string of `pieces` concatenated (`units` in all; must fit; `lone` as in
+    /// [`Self::inline`]).
+    fn inline_of(pieces: &[&[u8]], units: usize, lone: bool) -> VeltStr {
         let len: usize = pieces.iter().map(|p| p.len()).sum();
         debug_assert!(fits_inline(len, units));
         let mut s = MaybeUninit::<VeltStr>::zeroed();
@@ -148,6 +197,9 @@ impl VeltStr {
             if units != len {
                 tag |= NON_ASCII;
                 *p.add(INLINE_UNITS) = units as u8;
+                if lone {
+                    tag |= INLINE_LONE;
+                }
             }
             *p.add(INLINE_MAX) = tag;
             s.assume_init()
@@ -209,9 +261,10 @@ impl VeltStr {
                 }
             } else if need <= INLINE_MAX_NON_ASCII {
                 let units = self.units() + sum.units;
+                let lone = (tag & INLINE_LONE) | if sum.lone > 0 { INLINE_LONE } else { 0 };
                 std::ptr::copy_nonoverlapping(bytes.as_ptr(), p.add(len), n);
                 *p.add(INLINE_UNITS) = units as u8;
-                *p.add(INLINE_MAX) = INLINE | NON_ASCII | need as u8;
+                *p.add(INLINE_MAX) = INLINE | NON_ASCII | lone | need as u8;
                 return;
             }
         }
@@ -243,32 +296,36 @@ impl VeltStr {
         let header = units != need;
         let unique = self.is_heap() && heap::is_unique(self.ptr());
         if unique && self.buffer_holds(bytes) {
-            // The text lies in the buffer that is about to move: copy it out first.
+            // The text lies in the buffer that is about to grow or move: copy it out first.
             let copy = bytes.to_vec();
             return self.append_slow(&copy, sum);
         }
-        if unique && header != self.is_ascii() {
-            let cap = grown(self.w2 as usize, need);
-            self.w0 = heap::grow(self.ptr(), self.w2 as usize, cap, header) as usize as u64;
-            self.w2 = cap as u64;
-            self.append_unique(need - bytes.len(), bytes, sum);
+        let len = need - bytes.len();
+        if unique {
+            let cap = self.w2 as usize;
+            if header != self.is_ascii() {
+                // Full, and of the right kind: grow.
+                let new_cap = grown(cap, need);
+                self.w0 = heap::grow(self.ptr(), cap, new_cap, header) as usize as u64;
+                self.w2 = new_cap as u64;
+            } else {
+                // An ASCII buffer getting its first non-ASCII text keeps its size (a builder's
+                // hint) and moves in place behind a header (its lone count is 0).
+                let new_cap = if need <= cap { cap } else { grown(cap, need) };
+                self.w0 = heap::add_header(self.ptr(), cap, len, new_cap) as usize as u64;
+                self.w2 = new_cap as u64;
+            }
+            self.append_unique(len, bytes, sum);
             return;
         }
         let pieces = [self.as_bytes(), bytes];
-        // A unique buffer moving to a header keeps its size (a builder's hint) and stays a heap
-        // string, as it would have for ASCII text.
-        let s = if !unique && fits_inline(need, units) {
-            VeltStr::inline_of(&pieces, units)
+        let s = if fits_inline(need, units) {
+            VeltStr::inline_of(&pieces, units, sum.lone > 0 || self.may_have_lone())
         } else {
-            let cap = match self.w2 as usize {
-                cap if unique && need <= cap => cap,
-                cap if unique => grown(cap, need),
-                _ => grown(need, need),
-            };
-            let mine = self.summary();
+            let cap = grown(need, need);
             let total = Summary {
                 units,
-                lone: mine.lone + sum.lone,
+                lone: self.lone() + sum.lone,
             };
             VeltStr::heap_of(&pieces, total, cap)
         };

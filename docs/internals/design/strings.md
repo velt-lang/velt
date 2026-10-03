@@ -104,7 +104,7 @@ units, so **a string is ASCII exactly when `units == bytes`**; no flag bit is ne
 |---|---|---|---|
 | static / borrowed, heap | low half of `w1` | high half of `w1` (`w1 >> 32`) | `units == bytes` |
 | inline, ASCII (≤ 23 bytes) | byte 23 = `0x80 \| len` | same as the byte length | bit 0x40 of byte 23 clear |
-| inline, non-ASCII (≤ 22 bytes) | byte 23 = `0xC0 \| len` | byte 22 | bit 0x40 of byte 23 set |
+| inline, non-ASCII (≤ 22 bytes) | byte 23 = `0xC0 \| len` (`0x20`: may hold lone surrogates) | byte 22 | bit 0x40 of byte 23 set |
 
 - The `length` read stays branch-free: two selects over byte 23 and `w1 >> 32`
   (`velt_vir/src/lower/strings.rs`).
