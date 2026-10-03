@@ -23,8 +23,10 @@ pub(super) fn check_group(cx: &mut Ctx, g: &Group) {
             continue;
         }
         let Some(e) = f.throws else { continue };
+        let generic_ret = cx.ty.promise_payload(f.ret).is_none();
         let diag = match g.promise {
             true if f.is_getter => getter_cannot_reject(cx, m, e, owner),
+            true if generic_ret => generic_cannot_reject(cx, m, e, owner),
             true => must_be_async(cx, m, e, owner),
             false => cannot_be_async(cx, m, e, owner),
         };
@@ -88,6 +90,26 @@ fn getter_cannot_reject(
     .with_note(format!(
         "catch the error inside the getter, or declare `{method}` as an `async` method"
     ))
+}
+
+/// A member of a promise group returning a type parameter (a promise for this group): it
+/// cannot be `async`, so it cannot fail.
+fn generic_cannot_reject(
+    cx: &mut Ctx,
+    d: DefId,
+    e: crate::hir::TyId,
+    owner: &GroupOwner,
+) -> Diagnostic {
+    let (name, _, at) = names(cx, d);
+    let en = cx.display(e);
+    Diagnostic::error(
+        format!(
+            "`{name}` cannot fail with `{en}`: `{}` reports errors by rejecting its promise, and `{name}` returns a type parameter, so it cannot be `async`",
+            owner.name
+        ),
+        at,
+    )
+    .with_note("catch the error inside it, or implement the method in a class whose return type is a promise")
 }
 
 /// An `async` member of a group that throws (its interface or base method does not return a
