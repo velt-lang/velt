@@ -1,9 +1,12 @@
 ctor_visibility.vlt:47:19: error: cannot extend `Token`: its constructor is private
 use composition: a class with a `Token` field
 ctor_visibility.vlt:56:17: error: the constructor of `Token` is private: only the body of `Token` can call `new Token(...)`
-add a static factory method to `Token` and call that
+create it with `Token.make(...)`
 ctor_visibility.vlt:57:17: error: the constructor of `Base` is protected: only `Base` and its subclasses can call `new Base(...)`
 add a static factory method to `Base`, or construct a subclass
 ctor_visibility.vlt:58:17: error: the constructor of `Base` is protected: only `Base` and its subclasses can call `new Base(...)`
 ctor_visibility.vlt:43:16: error: the constructor of `Base` is protected: only `Base` and its subclasses can call `new Base(...)`
 ctor_visibility.vlt:51:16: error: the constructor of `Token` is private: only the body of `Token` can call `new Token(...)`
+ctor_visibility.vlt:61:20: error: expected an instance of class `Token`, found an object literal
+ctor_visibility.vlt:62:17: error: the constructor of `JsonValue` is private
+create it with `JsonValue.array(...)`, `JsonValue.from(...)`, `JsonValue.object(...)`, `JsonValue.of(...)` or `JsonValue.parse(...)`

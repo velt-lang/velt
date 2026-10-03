@@ -60,17 +60,12 @@ impl FnCx<'_, '_> {
         if allowed {
             return;
         }
-        let (message, note) = if visibility == ast::CtorVisibility::Private {
-            (
-                format!("the constructor of `{name}` is private: only the body of `{name}` can call `new {name}(...)`"),
-                format!("add a static factory method to `{name}` and call that"),
-            )
+        let message = if visibility == ast::CtorVisibility::Private {
+            format!("the constructor of `{name}` is private: only the body of `{name}` can call `new {name}(...)`")
         } else {
-            (
-                format!("the constructor of `{name}` is protected: only `{name}` and its subclasses can call `new {name}(...)`"),
-                format!("add a static factory method to `{name}`, or construct a subclass"),
-            )
+            format!("the constructor of `{name}` is protected: only `{name}` and its subclasses can call `new {name}(...)`")
         };
+        let note = self.cx.creation_note(class);
         self.cx
             .error(Diagnostic::error(message, span).with_note(note));
     }

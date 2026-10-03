@@ -23,7 +23,10 @@ hidden classes and no runtime shape checks.
   (`super(…)` in their constructors, or `new C(…)`). Elsewhere `new C` is an error:
   ``the constructor of `C` is private: only the body of `C` can call `new C(...)` `` (or
   ``… is protected: only `C` and its subclasses can …``). A subclass without a constructor of
-  its own inherits its base's, with the same rule.
+  its own inherits its base's, with the same rule. `JSON.parse<C>` (and `v.as<C>()`) cannot
+  decode such a class, alone or inside another type, since decoding fills the fields without
+  running a constructor; `JSON.stringify` writes it as usual
+  ([`velt:json`](../std/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
   layout, so upcasts are free. The constructor calls `super(…)` first. Redefining a base method
   requires `override`; `super.m()` calls the base version. There are no abstract classes.

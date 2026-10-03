@@ -33,6 +33,31 @@ class Account {
 const text = JSON.stringify(new Account());
 ```
 
+- **Private and protected constructors:** `JSON.parse<T>` (and `v.as<T>()`) cannot decode a
+  class whose constructor is `private` or `protected`, wherever it appears in `T` (a field, an
+  array element, a union member, a `Map` or `Record` value): decoding fills the fields without
+  running a constructor, so it would bypass the class's factories and their checks. Decode a
+  plain object type and call the factory instead. `JSON.stringify` writes such a class as
+  usual, and `Value` (whose constructor is private too) decodes: the runtime makes it.
+
+```ts
+class Money {
+  private constructor(readonly cents: i64) {}
+
+  static of(cents: i64): Money {
+    if (cents < 0) throw new Error("negative amount");
+    return new Money(cents);
+  }
+}
+
+type MoneyJson = { cents: i64 };
+
+const text = JSON.stringify(Money.of(250)); // {"cents":250}
+// JSON.parse<Money>(text) is an error: `JSON.parse` cannot create a `Money`: its constructor is private
+const m = Money.of(JSON.parse<MoneyJson>(text).cents);
+console.log(text, m.cents); // {"cents":250} 250
+```
+
 - Unions decode when `JSON.parse` can tell the members apart from the JSON value:
   - by its kind: `string | i64 | bool | null`, an array, or an object;
   - literal and enum members by value, before a plain member of the same kind (`"auto" | f64`);

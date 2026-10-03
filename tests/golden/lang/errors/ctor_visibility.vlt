@@ -58,5 +58,7 @@ function main() {
   const c = new Implicit();
   const d = new Child();
   const e = Token.make(2).next();
+  const f: Token = { id: 3 };
+  const g = new JsonValue(0);
   console.log(a.id, d.make(), e.id);
 }
