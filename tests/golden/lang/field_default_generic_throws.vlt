@@ -1,0 +1,61 @@
+// check: no leaks
+// Two instantiations of a generic class throw their own errors from its field initializers:
+// `new One<E1>()` may throw E1 and `new One<E2>()` E2, so the catch sees E1 | E2 (#266).
+
+class E1 extends Error {}
+
+class E2 extends Error {}
+
+function call<E>(f: () => i64 throws E): i64 throws E {
+  return f();
+}
+
+function mkf<E>(): () => i64 throws E {
+  return (): i64 throws E => 1;
+}
+
+class One<E> {
+  n: i64 = call<E>(mkf<E>());
+}
+
+// Through another class's initializers, once per argument.
+class Pair<A, B> {
+  a: One<A> = new One<A>();
+  b: One<B> = new One<B>();
+}
+
+// In a cycle of initializers.
+function never(): bool {
+  return false;
+}
+
+class Node<E> {
+  n: i64 = call<E>(mkf<E>());
+  next: Node<E> | null = never() ? new Node<E>() : null;
+}
+
+function main() {
+  try {
+    const a = new One<E1>();
+    const b = new One<E2>();
+    console.log(a.n + b.n);
+  } catch (e) {
+    const both: E1 | E2 = e;
+    console.log("caught", both.message);
+  }
+  try {
+    const p = new Pair<E1, E2>();
+    console.log(p.a.n + p.b.n);
+  } catch (e) {
+    const both: E1 | E2 = e;
+    console.log("caught", both.message);
+  }
+  try {
+    const x = new Node<E1>();
+    const y = new Node<E2>();
+    console.log(x.n + y.n, x.next === null);
+  } catch (e) {
+    const both: E1 | E2 = e;
+    console.log("caught", both.message);
+  }
+}

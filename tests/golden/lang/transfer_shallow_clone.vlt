@@ -1,0 +1,83 @@
+// check: no leaks
+// A class's own `clone()` may be shallow. A copy for another task never trusts it to return a
+// graph of its own: a class without a resource is copied field by field whatever its `clone()`
+// does, and the copy a resource's `clone()` returns is transferred in turn, so parts it still
+// shares with the original are deep-copied. Each task counts on its own `Inner`.
+class Inner {
+  n: i64 = 0;
+}
+
+class Bag {
+  inner: Inner;
+
+  constructor(inner: Inner) {
+    this.inner = inner;
+  }
+
+  clone(): Bag {
+    return new Bag(this.inner);
+  }
+}
+
+class Conn {
+  id: i64;
+  inner: Inner;
+
+  constructor(id: i64, inner: Inner) {
+    this.id = id;
+    this.inner = inner;
+  }
+
+  clone(): Conn {
+    console.log("clone", this.id);
+    return new Conn(this.id + 10, this.inner);
+  }
+
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+async function countBag(b: Bag): Promise<i64> {
+  for (let k = 0; k < 100000; k++) {
+    b.inner.n += 1;
+    if (k % 1000 == 0) {
+      await yieldNow();
+    }
+  }
+  return b.inner.n;
+}
+
+async function countConn(c: Conn): Promise<i64> {
+  for (let k = 0; k < 100000; k++) {
+    c.inner.n += 1;
+    if (k % 1000 == 0) {
+      await yieldNow();
+    }
+  }
+  return c.inner.n;
+}
+
+async function main() {
+  const b = new Bag(new Inner());
+  const ts: Promise<i64>[] = [];
+  for (let i = 0; i < 4; i++) {
+    ts.push(spawn(countBag(b)));
+  }
+  for (let k = 0; k < 100000; k++) {
+    b.inner.n += 1;
+  }
+  console.log("bag tasks", await Promise.all(ts), "main", b.inner.n);
+
+  const c = new Conn(1, new Inner());
+  const t = spawn(countConn(c));
+  for (let k = 0; k < 100000; k++) {
+    c.inner.n += 1;
+  }
+  console.log("conn task", await t, "main", c.inner.n);
+
+  // On one thread, a deep copy calls a resource's own `clone()`, shallow or not.
+  const copies = [c].clone();
+  copies[0].inner.n += 1;
+  console.log("same thread shares", c.inner.n);
+}

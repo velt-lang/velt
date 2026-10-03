@@ -1,0 +1,38 @@
+// Field defaults that construct each other in a cycle (#266): `new B()` throws what A's
+// defaults throw although A's throwing field comes after the one that closes the cycle.
+import { random } from "velt:random";
+
+class Oops {
+  constructor(public msg: string) {}
+}
+
+function boom(): i64 {
+  if (random() > 2.0) {
+    throw new Oops("boom");
+  }
+  return 1;
+}
+
+class A {
+  b: B | null = random() > 2.0 ? new B() : null;
+  n: i64 = boom();
+}
+
+class B {
+  a: A | null = random() < 2.0 ? new A() : null;
+}
+
+function mk(): B {
+  return new B();
+}
+
+function main() {
+  try {
+    console.log(new B().a == null);
+  } catch (e) {
+    const s: string = e;
+    console.log(s);
+  }
+  const f: () => B = mk;
+  console.log(f().a == null);
+}

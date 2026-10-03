@@ -1,0 +1,26 @@
+// Field initializers run as part of the constructors (JavaScript's order), so a constructor's
+// `throws` clause must allow what the initializers it runs throw: its own class's, and those of
+// the classes up to the next constructor (#273).
+import { Value } from "velt:json";
+
+class Oops extends Error {}
+
+class A {
+  v: Value = JSON.parseValue("1");
+  constructor() throws Oops {}
+}
+
+class Mid extends A {
+  w: Value = JSON.parseValue("2");
+}
+
+class B extends Mid {
+  n: i64 = 1;
+  constructor() throws Oops {
+    super();
+  }
+}
+
+function main() {
+  console.log(new B().w.stringify());
+}

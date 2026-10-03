@@ -1,0 +1,69 @@
+// check: no leaks
+// A spawned task's result reaches the joining task transferred (rt_abi_async.md
+// `velt_rt_spawn_transfer`): moved when nothing on the task references it any more, copied
+// when a promise the task started still uses it. The task's promise keeps counting on its own
+// object, and the joining task's copy stays as delivered.
+class Obj {
+  n: i64 = 0;
+}
+
+class Res {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  clone(): Res {
+    console.log("clone", this.id);
+    return new Res(this.id + 10);
+  }
+
+  [Symbol.dispose]() {}
+}
+
+async function count(o: Obj): Promise<void> {
+  for (let k = 0; k < 2000; k++) {
+    o.n += 1;
+    await yieldNow();
+  }
+}
+
+async function producer(): Promise<Obj> {
+  const o = new Obj();
+  const p = count(o);
+  await yieldNow();
+  return o;
+}
+
+async function hold(r: Res): Promise<void> {
+  await sleep(20);
+  console.log("task still holds", r.id);
+}
+
+async function kept(): Promise<Res> {
+  const r = new Res(1);
+  const p = hold(r);
+  return r;
+}
+
+async function unique(): Promise<Res> {
+  return new Res(2);
+}
+
+async function main() {
+  const o = await spawn(producer());
+  const a = o.n;
+  await sleep(50);
+  console.log("unchanged after delivery", o.n == a);
+  for (let k = 0; k < 1000; k++) {
+    o.n += 1;
+  }
+  console.log("own count", o.n == a + 1000);
+
+  const s = await spawn(kept());
+  console.log("got", s.id);
+  await sleep(50);
+  const u = await spawn(unique());
+  console.log("got", u.id);
+}

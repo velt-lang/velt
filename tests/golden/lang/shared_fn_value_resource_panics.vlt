@@ -1,0 +1,24 @@
+// A function value put in `shared(...)` may be called from several threads at once, and each
+// call shares what it captured. One that captured a resource without `clone()` (not visible
+// where `shared` is: it arrives as a parameter) stops the program when the `shared` is made.
+class Conn {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+function share(f: () => Promise<i64>): shared<Mutex<() => Promise<i64>>> {
+  return shared(new Mutex<() => Promise<i64>>(f));
+}
+
+async function main() {
+  const c = new Conn(1);
+  const m = share(async (): Promise<i64> => c.id);
+  console.log(await m.with((f) => f()));
+}

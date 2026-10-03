@@ -1,0 +1,9 @@
+// A TypeScript interface only declares its methods.
+
+export interface Greeter {
+  name(): string;
+  greet(): string {
+    //~^ interface-body
+    return `hi ${this.name()}`;
+  }
+}

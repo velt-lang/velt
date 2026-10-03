@@ -85,6 +85,27 @@ pub unsafe extern "C" fn velt_rt_spawn(
     velt_rt_spawn_fut(f, result_size, result_drop)
 }
 
+/// `velt_rt_spawn` with the result's transfer glue, run as the task's state finishes (as on
+/// native targets; rt_abi_async.md §1).
+#[no_mangle]
+#[allow(clippy::too_many_arguments)] // the C ABI: velt_rt_spawn plus the transfer glue
+pub unsafe extern "C" fn velt_rt_spawn_transfer(
+    poll: PollFn,
+    drop: DropFn,
+    state: *const u8,
+    state_size: u64,
+    state_align: u64,
+    result_size: u64,
+    result_drop: Option<ResultDropFn>,
+    result_transfer: Option<ResultDropFn>,
+) -> *mut VeltFut {
+    let f = velt_rt_fut_box(poll, drop, state, state_size, state_align);
+    if let Some(t) = result_transfer {
+        super::local::velt_rt_fut_transfer(f, t);
+    }
+    velt_rt_spawn_fut(f, result_size, result_drop)
+}
+
 /// `spawn(f(...))` whose result is unused: no handle.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_spawn_detached(

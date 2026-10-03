@@ -1,0 +1,13 @@
+// Literal suffixes give a literal a Velt number type.
+
+export const small = 5i32; //~ number-suffix
+export const half = 0.5f64; //~ number-suffix
+export const quarter = 0.25f32; //~ number-suffix
+
+export type Small = 1i32 | 2i32; //~ number-suffix number-suffix
+
+export const plain = 5;
+
+// No fix: the value isn't the same as a `number`.
+export const big = 9007199254740993i64; //~ number-suffix
+export const tenth = 0.1f32; //~ number-suffix

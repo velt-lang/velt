@@ -1,0 +1,4 @@
+field_default_cycle_throws.vlt:33:23: error: mismatched types
+  = note: expected string, found Oops
+field_default_cycle_throws.vlt:36:22: error: mismatched types
+  = note: expected () => B, found () => B throws Oops

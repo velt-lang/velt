@@ -41,6 +41,36 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
     let _ = drive(f, &st, &mut Context::from_waker(&w));
 }
 
+/// The owner hands promise `f` to another task: its result is transferred with `transfer` as
+/// its state finishes (at once if it already finished), as velt_rt does, so a program's values
+/// are moved or copied at the same points as on native targets (rt_abi_async.md §1). A race
+/// passes the mark to its children; a second mark, and any other future, is ignored.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: ResultDropFn) {
+    if super::race::pass_transfer(f, transfer) {
+        return;
+    }
+    let started = std::ptr::fn_addr_eq(
+        (*f).poll.0,
+        started_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32,
+    );
+    if !boxed::is_lazy(f) && !started {
+        return;
+    }
+    let t = &mut *trailer(f);
+    if t.transfer.is_some() {
+        return;
+    }
+    t.transfer = Some(transfer);
+    let done = match started {
+        true => shared(f).borrow().done,
+        false => t.live == 0,
+    };
+    if done {
+        transfer(state(f));
+    }
+}
+
 /// The owner gives up promise `f` without cancelling it: a lazy one becomes a started promise
 /// whose task runs at the executor's next turn (not now: the owner's continuation comes first,
 /// like JS's rejection handler), a started one keeps running, and either way its outcome is
@@ -90,6 +120,7 @@ unsafe fn drive(f: *mut VeltFut, st: &RefCell<Started>, cx: &mut Context<'_>) ->
         return Poll::Pending;
     }
     (*t).live = 0;
+    boxed::run_transfer(f);
     executor::count_local(false);
     let (detached, waiter, result_drop) = {
         let mut s = st.borrow_mut();
@@ -260,6 +291,42 @@ mod tests {
         log("owner goes on");
         *(s as *mut i64) = 0;
         READY
+    }
+
+    /// Fake transfer glue: logs and adds 100 to an `i64` result.
+    unsafe extern "C" fn tag(slot: *mut u8) {
+        log("transfer");
+        *(slot as *mut i64) += 100;
+    }
+
+    /// `{ result, tag, p }`: starts a child, marks it twice (it goes to another task), awaits it.
+    unsafe extern "C" fn hand_on_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+        let st = s as *mut i64;
+        if *st.add(1) == 0 {
+            let p = started_child();
+            velt_rt_fut_transfer(p, tag);
+            velt_rt_fut_transfer(p, tag);
+            log("marked");
+            *st.add(2) = p as i64;
+            *st.add(1) = 1;
+        }
+        let p = *st.add(2) as *mut VeltFut;
+        if velt_rt_fut_poll(p, cx) == PENDING {
+            return PENDING;
+        }
+        *st = *((p as *const u8).add(16) as *const i64);
+        velt_rt_fut_drop(p);
+        READY
+    }
+
+    #[test]
+    fn a_marked_promise_transfers_its_result_once_as_it_finishes() {
+        LOG.with(|l| l.borrow_mut().clear());
+        let mut st = [0i64; 3];
+        unsafe { velt_rt_block_on(hand_on_poll, st.as_mut_ptr() as *mut u8) };
+        assert_eq!(st[0], 105);
+        let log = LOG.with(|l| l.borrow().clone());
+        assert_eq!(log, ["child start", "marked", "child end", "transfer"]);
     }
 
     #[test]

@@ -18,9 +18,9 @@ use velt_syntax::ast::{self, ExprKind as E};
 use crate::analysis::Analysis;
 use crate::index::pattern_idents;
 use crate::line_index::LineIndex;
-use crate::syntax_walk::{self, Visit};
 use crate::text_scan::{self, TokenKind};
 use crate::{callable, sema_query};
+use velt_syntax::visit::{self, Visit};
 
 /// Hints for the document's byte range `lo..hi`.
 pub fn inlay_hints(analysis: &Analysis, lo: u32, hi: u32) -> Vec<InlayHint> {
@@ -30,7 +30,7 @@ pub fn inlay_hints(analysis: &Analysis, lo: u32, hi: u32) -> Vec<InlayHint> {
         hi,
         hints: vec![],
     };
-    syntax_walk::walk_module(&analysis.module().ast, &mut c);
+    visit::walk_module(&analysis.module().ast, &mut c);
     let index = LineIndex::new(analysis.text());
     c.hints
         .into_iter()

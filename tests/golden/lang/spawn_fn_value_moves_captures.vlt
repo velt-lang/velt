@@ -1,0 +1,31 @@
+// check: no leaks
+// `spawn(g())` through a function value `g` that is not used again hands `g` itself to the
+// task: what it captured moves with it (a resource without `clone()` too, and back here as the
+// result, released once). A function value still used afterwards is copied for the task.
+class Conn {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+class Obj {
+  n: i64 = 0;
+}
+
+async function main() {
+  const o = new Obj();
+  const f = async (): Promise<i64> => o.n;
+  console.log(await spawn(f()));
+  console.log(await f());
+  const c = new Conn(1);
+  const g = async (): Promise<Conn> => c;
+  const back = await spawn(g());
+  console.log(back.id);
+  console.log("end");
+}

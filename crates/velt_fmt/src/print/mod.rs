@@ -25,6 +25,8 @@ mod patterns;
 mod script;
 mod stmt;
 mod switch;
+#[cfg(test)]
+mod thread_cpu;
 mod types;
 
 use std::collections::HashSet;

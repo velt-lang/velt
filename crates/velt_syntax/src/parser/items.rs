@@ -141,7 +141,7 @@ impl<'a> Parser<'a> {
 
     fn parse_fn_sig(&mut self, lo: u32, is_async: bool) -> PResult<FnSig> {
         self.expect_kw(Kw::Function, "function")?;
-        let name = self.parse_ident()?;
+        let name = self.parse_binding_ident()?;
         self.parse_sig_rest(lo, name, is_async)
     }
 
@@ -259,7 +259,7 @@ impl<'a> Parser<'a> {
         let lo = self.cur_lo();
         self.reject_mut_modifier();
         let rest = self.eat(Tok::DotDotDot);
-        let name = self.parse_ident()?;
+        let name = self.parse_binding_ident()?;
         let optional = self.eat(Tok::Question);
         if !self.eat(Tok::Colon) {
             let msg = format!(
@@ -355,7 +355,7 @@ impl<'a> Parser<'a> {
             VarKind::Using
         };
         self.bump(); // using
-        let name = self.parse_ident()?;
+        let name = self.parse_binding_ident()?;
         let span = name.span;
         let pattern = self.mk_pat(PatternKind::Ident(name), span);
         let decl = self.finish_var_decl(lo, kind, pattern)?;

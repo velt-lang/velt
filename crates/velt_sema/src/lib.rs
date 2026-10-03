@@ -190,6 +190,8 @@ fn analyze(cx: &mut ctx::Ctx) {
     ownership::clone_reused(cx, &moved.reused);
     ownership::box_cells(cx, &moved.boxed);
     ownership::check_exclusive(cx);
+    ownership::check_boundaries(cx);
+    ownership::check_many_threads(cx);
     promise_copies::check(cx);
 }
 

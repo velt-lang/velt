@@ -11,14 +11,14 @@ use velt_syntax::ast::{self, ExprKind as E};
 use crate::analysis::Analysis;
 use crate::line_index::LineIndex;
 use crate::sema_query;
-use crate::syntax_walk::{self, Visit};
+use velt_syntax::visit::{self, Visit};
 
 /// Highlights for the name at byte `offset` of the document.
 pub fn highlights(analysis: &Analysis, offset: u32) -> Option<Vec<DocumentHighlight>> {
     let ide = analysis.ide.as_ref()?;
     let def = sema_query::def_at(analysis, offset)?;
     let mut writes = Writes::default();
-    syntax_walk::walk_module(&analysis.module().ast, &mut writes);
+    visit::walk_module(&analysis.module().ast, &mut writes);
     let index = LineIndex::new(analysis.text());
     let file = analysis.file();
     let highlights = ide

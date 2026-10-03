@@ -66,3 +66,53 @@ fn failed_attempts_and_unclosed_elements() {
         format!("x = {};", "<T>(x: T".repeat(n))
     });
 }
+
+/// Ordinary code: functions with arithmetic, control flow, templates and a generic call.
+#[test]
+fn plain_code() {
+    let unit = "function f(a: i64, b: i64): i64 {\n  let x = a * 2 + b / 3 - (a % 7);\n  \
+                if (x > 10 && b < 3) { return x; } else { x += 1; }\n  \
+                for (let i = 0; i < 10; i++) { console.log(`i=${i} x=${x}`, \"s\\n\"); }\n  \
+                return g<i64>(x, [1, 2, 3], { a: 1, b }) as i64;\n}\n";
+    assert_linear("plain code", 1_000, |n| unit.repeat(n));
+}
+
+/// Conditionals nested in conditionals: each level used to be parsed more than once, which is
+/// exponential in the depth. The cost still grows faster than the depth (about 9 times the work
+/// for 4 times the depth, an open issue), so this only rules out exponential growth: 20 levels
+/// may cost at most 16 times what 5 do, where doubling per level would cost about 30 000 times.
+#[test]
+fn nested_conditionals() {
+    let make = |n: usize| {
+        let mut s = String::from("x");
+        for i in 0..n {
+            s = format!("c{i} ? {s} : y{i}");
+        }
+        format!("function f() {{ x = {s}; }}\n")
+    };
+    let (small, large) = (work(make(5)), work(make(20)));
+    assert!(
+        large <= small * 16,
+        "nested conditionals: 5 levels cost {small} work, 20 levels {large}: exponential?"
+    );
+}
+
+/// Parentheses nested in types, arrows and expressions, closed and unclosed (a failed
+/// function-type attempt used to re-parse the inside, doubling the work per level).
+#[test]
+fn nested_parentheses() {
+    assert_linear("nested parentheses", 5, |n| {
+        let (open, close) = ("(".repeat(n), ")".repeat(n));
+        [
+            format!("declare async function f(path: {open}string): Promise<bool>;"),
+            format!("const x: {open}i64{close} = 1;"),
+            format!("declare function g(p: {open}string{close}): {open}i64{close};"),
+            format!("type F = {open}(a: i64) => i64{close};"),
+            format!("function h() {{ x = {open}a{close}; }}"),
+            format!("function h() {{ x = (a: {open}i64{close}) => a; }}"),
+            format!("function h() {{ x = {}a{close}; }}", "(a) => (".repeat(n)),
+            format!("function h() {{ x = {}a{close}; }}", "(a, ".repeat(n)),
+        ]
+        .join("\n")
+    });
+}

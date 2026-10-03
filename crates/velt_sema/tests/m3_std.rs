@@ -62,11 +62,18 @@ fn std_handles_release_in_drop_hooks() {
 }
 
 #[test]
-fn json_values_clone_by_reference_but_containers_cannot() {
+fn json_values_clone_by_reference_and_containers_through_their_clone() {
     ok_src("function main() { const v = JSON.parseValue(\"1\"); const w = v.clone(); console.log(w.isNumber()); }");
-    let r = err_src(
+    // A deep copy calls a resource's own `clone()` (#122): a container of one can be copied.
+    ok_src(
         "struct Box { v: JsonValue; }
          function main() { const b = Box { v: JSON.parseValue(\"1\") }; const c = b.clone(); }",
+    );
+    // Without a `clone()` of its own, a resource has no copy, nor has what holds it.
+    let r = err_src(
+        "class Res { n: i64 = 0; [Symbol.dispose]() {} }
+         struct Box { r: Res; }
+         function main() { const b = Box { r: new Res() }; const c = b.clone(); }",
     );
     assert!(r.contains("has no automatic `clone()`"), "{r}");
 }

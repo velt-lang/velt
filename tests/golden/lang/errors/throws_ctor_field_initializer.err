@@ -1,0 +1,2 @@
+throws_ctor_field_initializer.vlt:10:3: error: `A.constructor` throws `JsonError`, which its `throws` clause does not allow
+throws_ctor_field_initializer.vlt:20:5: error: `B.constructor` throws `JsonError`, which its `throws` clause does not allow

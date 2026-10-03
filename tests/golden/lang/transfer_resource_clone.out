@@ -1,0 +1,25 @@
+clone 1
+release 101
+task saw 101
+main has 1
+clone 2
+release 102
+task saw holder 102
+main has 2
+clone 3
+release 103
+task saw 103
+main has 3
+clone 4
+release 104
+task saw 104
+main has 4
+clone 5
+copied 105 from 5
+end
+release 105
+release 5
+release 4
+release 3
+release 2
+release 1

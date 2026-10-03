@@ -143,7 +143,8 @@ console.log(label("tea", 3), "a,b".split(","), "  x ".trim().padStart(3, "*"));
 - Numbers, bools and strings compare by value. Objects (class instances, arrays, maps,
   structs, object literals, interface and function values) compare by **identity**, like JS:
   `[1] == [1]` is `false`, and `a == b` is `true` when `b` refers to the same object as `a`.
-  `T | null`, unions and tuples compare their parts that way.
+  `T | null`, unions and tuples compare their parts that way. A `T | null` compares with a
+  `T` (in either order) as if both were `T | null`: `null` equals no value.
 - Content comparison: `deepEqual(a, b)` ([prelude](../std/prelude.md)) compares arrays,
   structs and object literals by their contents, recursively; maps and records by their keys
   and values, in any key order; other class instances by identity. `assertEq` uses it.

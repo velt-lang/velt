@@ -177,6 +177,16 @@ fn check_program(
     opts: &BuildOptions,
     scope: &CheckScope,
 ) -> Result<hir::Program, BuildError> {
+    let loaded = load_stage(sess, opts, scope)?;
+    sema_stage(sess, opts, scope, &loaded)
+}
+
+/// Load and parse the program; stops if that reported errors.
+fn load_stage(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    scope: &CheckScope,
+) -> Result<loader::Loaded, BuildError> {
     let t = Instant::now();
     let load = LoadOptions {
         std_root: loader::std_root(),
@@ -197,7 +207,16 @@ fn check_program(
     .map_err(BuildError::Failed)?;
     sess.record("parse", t);
     sess.stop_if_errors()?;
+    Ok(loaded)
+}
 
+/// Type-check the loaded program (and the native declarations against their libraries).
+fn sema_stage(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    scope: &CheckScope,
+    loaded: &loader::Loaded,
+) -> Result<hir::Program, BuildError> {
     let t = Instant::now();
     let sema_opts = velt_sema::CheckOptions {
         require_main: scope.require_main,
@@ -308,6 +327,21 @@ pub fn check_with(
     scope: &CheckScope,
 ) -> Result<(), BuildError> {
     on_pipeline_thread(|| check_program(sess, opts, scope).map(drop))
+}
+
+/// [`check_with`] for a lint of the checked modules (`velt check --ts-compat`): the loaded
+/// modules once the type checker ran, with its outcome (whose errors are in the session).
+/// `Err` when loading or parsing failed, so nothing was type-checked.
+pub fn check_for_lint(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    scope: &CheckScope,
+) -> Result<(loader::Loaded, Result<(), BuildError>), BuildError> {
+    on_pipeline_thread(|| {
+        let loaded = load_stage(sess, opts, scope)?;
+        let checked = sema_stage(sess, opts, scope, &loaded).map(drop);
+        Ok((loaded, checked))
+    })
 }
 
 /// Run a pipeline stage on the dedicated large-stack thread.

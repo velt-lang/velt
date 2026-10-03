@@ -54,6 +54,7 @@ SQLite, PostgreSQL, Redis). `velt_rt_wasm` is its single-threaded WebAssembly co
 | `velt_fmt` | formatter |
 | `velt_lsp` | language server |
 | `velt_doc` | API docs and the docs website |
+| `velt_tscompat` | `velt check --ts-compat`: the lint for code shared with TypeScript |
 | `vpm`, `velt_registry`, `velt_http` | package manager, registry server, HTTP client for registries |
 | `veltc` | the `velt` CLI: driver, dev supervisor and host, test runner, playground |
 
@@ -84,7 +85,8 @@ Decisions and their rationale, including what is still planned:
   library, scripts, callback indexes, arrow defaults, rest parameters, `x!`, `??=`, destructuring
   defaults, `Date`.
 - [Hot reload](design/hot-reload.md): `velt dev`'s supervisor, JIT host and hot swap.
-- [TSX for server-side rendering](design/tsx.md): the planned JSX support.
+- [TSX for server-side rendering](design/tsx.md): the JSX support, and the common subset of
+  TypeScript and Velt that `velt check --ts-compat` lints.
 - [`Record<K, V>`](design/record.md): TypeScript object syntax over an insertion-ordered
   dictionary (implemented).
 - [`unknown` for dynamic JSON](design/unknown.md): narrowing JSON values the TypeScript way

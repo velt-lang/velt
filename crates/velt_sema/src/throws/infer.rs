@@ -3,6 +3,7 @@
 //! (or context-fixed) `throws` keep it; dispatch groups get their bound or the union of what
 //! their members throw.
 
+use super::InitsSeen;
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, ThrowSrc};
 use crate::hir::{DefId, TyId};
@@ -89,8 +90,24 @@ pub(super) fn srcs_final(cx: &mut Ctx, srcs: &[ThrowSrc]) -> Option<TyId> {
 
 /// What one throw source throws, with the current error types.
 pub(super) fn src_final(cx: &mut Ctx, s: &ThrowSrc) -> Option<TyId> {
+    src_final_in(cx, s, &mut InitsSeen::default())
+}
+
+/// `src_final`, where the field defaults of the classes in `visited` are already counted.
+fn src_final_in(cx: &mut Ctx, s: &ThrowSrc, visited: &mut InitsSeen) -> Option<TyId> {
     let (t, args) = match s {
         ThrowSrc::Direct(t, _) => return cx.canon_error(Some(*t)),
+        ThrowSrc::Defaults(d, args, span) => {
+            if !visited.insert(*d, args) {
+                return None;
+            }
+            let mut acc = None;
+            for s in super::defaults_srcs(cx, *d, args, *span) {
+                let t = src_final_in(cx, &s, visited);
+                acc = cx.join_errors(acc, t);
+            }
+            return acc;
+        }
         ThrowSrc::Call(g, targs, _) => (cx.try_fn(*g).and_then(|f| f.throws), targs.clone()),
         ThrowSrc::Slot {
             iface, slot, args, ..

@@ -20,11 +20,11 @@ impl<'a> Parser<'a> {
         let mut names = vec![];
         let mut namespace = None;
         if self.at(Tok::LBrace) {
-            names = self.parse_import_names(type_only)?;
+            names = self.parse_import_names(type_only, true)?;
             self.expect_kw(Kw::From, "from")?;
         } else if self.eat(Tok::Star) {
             self.expect_kw(Kw::As, "as")?;
-            namespace = Some(self.parse_ident()?);
+            namespace = Some(self.parse_binding_ident()?);
             self.expect_kw(Kw::From, "from")?;
         } else if self.at_ident_like() {
             return Err(self.default_import());
@@ -73,7 +73,7 @@ impl<'a> Parser<'a> {
                 all: true,
             });
         }
-        let names = self.parse_import_names(type_only)?;
+        let names = self.parse_import_names(type_only, false)?;
         let (from, from_span) = if self.eat_kw(Kw::From) {
             self.parse_module_spec()?
         } else {
@@ -92,8 +92,9 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// `{ a, type B, c as d }`; `type_only` marks every name (`import type { … }`).
-    fn parse_import_names(&mut self, type_only: bool) -> PResult<Vec<ImportName>> {
+    /// `{ a, type B, c as d }`; `type_only` marks every name (`import type { … }`). With `binds`
+    /// (an import, not a re-export) the names are declared in this module.
+    fn parse_import_names(&mut self, type_only: bool, binds: bool) -> PResult<Vec<ImportName>> {
         self.expect(Tok::LBrace)?;
         let mut names = Vec::new();
         while !self.at(Tok::RBrace) {
@@ -108,6 +109,9 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
+            if binds {
+                self.check_binding_name(alias.as_ref().unwrap_or(&name));
+            }
             names.push(ImportName {
                 name,
                 alias,

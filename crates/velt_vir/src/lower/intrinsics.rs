@@ -65,6 +65,16 @@ impl FnLower<'_, '_> {
                 let c = self.clone_value(v, t);
                 self.own_value(c, t)
             }
+            (I::Transfer, [a]) => {
+                let v = self.consume(a);
+                let t = self.sub(a.ty);
+                let v = self.transfer_value(v, t);
+                self.own_value(v, t)
+            }
+            (I::NeedsTransfer, [a]) => {
+                let t = self.sub(a.ty);
+                Operand::Const(crate::vir::Const::Bool(self.cx.holds_counted(t)), Ty::Bool)
+            }
             (I::Share, [a]) => {
                 let v = self.expr(a);
                 let t = self.sub(a.ty);

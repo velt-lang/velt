@@ -1,0 +1,21 @@
+open base field
+open base ctor
+base ctor
+open derived field
+init derived n
+close base field
+close base ctor
+close derived field
+caught: derived n failed
+open base field
+open base ctor
+base ctor
+init implicit n
+close base field
+close base ctor
+caught: implicit n failed
+open early field
+init early n
+close early field
+caught: early n failed
+done

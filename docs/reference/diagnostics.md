@@ -19,7 +19,7 @@ The wording below is stable: tests, editors and tools rely on it.
 | unions | ``no field `r` on type `Shape` `` + "narrow it to one member first …" |
 | switch | ``non-exhaustive switch on `s.kind` `` + `missing cases: …`, `duplicate case value` |
 | exclusive access | ``cannot use `xs` here: this call may modify it through another argument`` |
-| threads | "cannot mutate captured variable `n` in a spawned task" (+ `shared` hint) |
+| threads | "cannot mutate captured variable `n` in a spawned task" (+ `shared` hint); "`r` is still used after `spawn`, so the task would get a copy, but `T` owns a resource (`[Symbol.dispose]`) and has no `clone()`" (or "`this.conn` stays where it is held, …", "`Pair` holds a `Conn`, which …"; + the fixes) |
 | modules | ``` `x` is not exported ```, "mutable module-level state is not allowed", ``` `export default` is not supported: Velt has named exports only ```, ``` `T` is imported with `import type` and cannot be used as a value ```, ``` namespace `ns` has no exported member `x` ``` |
 | async | ``` `await` is only allowed inside async functions ```, `floating promise: this promise is neither awaited nor spawned` (+ the `await` / `spawn` fixes) |
 | errors | ``` `f` throws `E`, which its `throws` clause does not allow ```, ``` `C.m` throws `E`, but `I.m` does not allow it ```, "this function throws `E`, but the function type it is used as does not allow throwing", "the error type of this function is not known yet" |

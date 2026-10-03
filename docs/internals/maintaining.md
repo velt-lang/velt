@@ -94,9 +94,13 @@ review.
 
 - **Toolchain**: Rust is pinned in `rust-toolchain.toml`. Upgrade it in its own pull request
   (new versions bring new lints; clippy runs with `-D warnings`).
-- **Flaky tests are bugs**: fix the cause (timing tests compare interleaved measurements; tests
-  that build executables must not reuse a path a crashed process may still lock) instead of
-  re-running.
+- **Flaky tests are bugs**: fix the cause instead of re-running. No wall-clock limits: a cost
+  test counts the work (polls, buffer growths, bytes sent) or measures CPU time (a process's in
+  `tests/common/process_work.rs`, compared between interleaved sizes; a thread's or a child
+  process's against a generous bound), and a speed check belongs in `bench/`. Tests and goldens
+  order events by awaits, channels or observed state, not by sleeps; a wait loop's deadline is a
+  hang guard (a minute), not an assertion. Tests that build executables must not reuse a path a
+  crashed process may still lock.
 - **Platform gaps** found by CI (e.g. a test that is skipped on one OS) get an issue, and any CI
   workaround references it and is removed with the fix.
 - **Disk**: builds are large. On small system disks put `CARGO_TARGET_DIR`, `VELT_GOLDEN_WORK`

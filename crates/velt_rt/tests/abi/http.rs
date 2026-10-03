@@ -86,6 +86,9 @@ unsafe fn respond(req: ReqHandle) -> RespHandle {
     resp
 }
 
+/// Handlers of `/slow` started (`a_handler_finishes_after_its_client_left`).
+static SLOW_STARTED: AtomicU64 = AtomicU64::new(0);
+
 unsafe extern "C" fn handler_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Handler);
     loop {
@@ -93,7 +96,10 @@ unsafe extern "C" fn handler_poll(s: *mut u8, cx: *mut c_void) -> u32 {
             // `/fast` skips the sleep (throughput test); `/slow` gives a client time to leave.
             0 => match text_of(velt_rt_http_req_path, st.req).as_str() {
                 "/fast" => st.tag = 1,
-                "/slow" => (st.fut, st.tag) = (velt_rt_sleep(200), 1),
+                "/slow" => {
+                    SLOW_STARTED.fetch_add(1, Ordering::SeqCst);
+                    (st.fut, st.tag) = (velt_rt_sleep(200), 1);
+                }
                 _ => (st.fut, st.tag) = (velt_rt_sleep(1), 1),
             },
             1 => {
@@ -235,7 +241,9 @@ fn concurrent_clients() {
 }
 
 /// Throughput sanity check: 32 keep-alive clients, 2000 sequential requests each, immediate
-/// handler. Prints requests/s (use `--release --nocapture` for real numbers).
+/// handler, every response checked. Prints requests/s (use `--release --nocapture` for real
+/// numbers) but sets no time limit, which a loaded machine could miss; `http_bench` and
+/// `bench/http/` measure throughput.
 #[test]
 fn keep_alive_throughput() {
     let port = server_port();
@@ -265,7 +273,6 @@ fn keep_alive_throughput() {
         "http keep-alive: {n} requests in {secs:.2}s = {:.0} req/s",
         n as f64 / secs
     );
-    assert!(secs < 60.0);
 }
 
 #[test]
@@ -334,10 +341,11 @@ fn close_stops_the_server() {
     w.write_all(b"GET /x HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
     assert_eq!(read_response(&mut BufReader::new(s)).0, 200);
     unsafe { velt_rt_http_server_close(server) };
+    // A hang guard, not a deadline: on a loaded machine the accept loop may take a while.
     let t = std::time::Instant::now();
     while std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
         assert!(
-            t.elapsed().as_secs() < 5,
+            t.elapsed().as_secs() < 60,
             "server still accepting after close()"
         );
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -376,12 +384,19 @@ fn a_handler_finishes_after_its_client_left() {
     let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
     s.write_all(b"GET /slow HTTP/1.1\r\nHost: x\r\n\r\n")
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(50));
-    // Hang up while the handler sleeps: hyper drops the request, the handler still completes.
+    // Hang up once the handler runs (it then sleeps 200 ms): hyper drops the request, the
+    // handler still completes. Waiting for a fixed time instead could hang up before the
+    // request was read on a loaded machine, and then no handler would ever run.
+    let t = std::time::Instant::now();
+    while SLOW_STARTED.load(Ordering::SeqCst) == 0 {
+        assert!(t.elapsed().as_secs() < 60, "the handler did not start");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
     drop(s);
+    // A hang guard, not a deadline.
     let t = std::time::Instant::now();
     while LEFT_HITS.load(Ordering::SeqCst) == 0 {
-        assert!(t.elapsed().as_secs() < 5, "the handler was cancelled");
+        assert!(t.elapsed().as_secs() < 60, "the handler was cancelled");
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     unsafe { velt_rt_http_server_close(server) };

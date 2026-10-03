@@ -87,6 +87,49 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// Register the class object `new` is constructing at `place` (`DropEntry::HalfBuilt`).
+    pub(super) fn own_half_built(&mut self, place: Place, ty: TyId) {
+        if !self.dead() && self.cx.needs_drop(ty) {
+            self.innermost().drops.push(DropEntry::HalfBuilt(place, ty));
+        }
+    }
+
+    /// The object at `p` is constructed: from here on it drops like any owned temporary.
+    pub(super) fn own_built(&mut self, p: &Place) {
+        for s in self.scopes.iter_mut().rev() {
+            for d in s.drops.iter_mut() {
+                if let DropEntry::HalfBuilt(t, ty) = d {
+                    if t == p {
+                        *d = DropEntry::Temp(t.clone(), *ty);
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Release an object whose construction threw: drop its fields (those not reached are
+    /// still zero, which drops as nothing) and free it, without its `[Symbol.dispose]()`, as
+    /// JavaScript never disposes an object `new` did not return. A counted object the
+    /// constructor shared (`this` stored elsewhere) only loses this reference.
+    fn drop_half_built(&mut self, p: &Place, ty: TyId) {
+        let obj = Operand::Copy(p.clone());
+        let free = |lw: &mut Self| {
+            for (i, t) in lw.cx.adt_field_tys(ty).into_iter().enumerate() {
+                if lw.cx.needs_drop(t) {
+                    let fp = lw.field_place(p, ty, i as u32);
+                    lw.drop_glue(fp, t);
+                }
+            }
+            lw.object_free(Operand::Copy(p.clone()), ty);
+        };
+        if self.cx.counted(ty) {
+            self.release(obj, free);
+        } else {
+            free(self);
+        }
+    }
+
     /// Register "drop what the pattern did not move out of `place`" in the innermost scope.
     pub(super) fn own_rest(&mut self, place: Place, ty: TyId, pat: Rc<velt_sema::hir::Pat>) {
         if !self.dead() && self.cx.needs_drop(ty) {
@@ -115,6 +158,7 @@ impl FnLower<'_, '_> {
         }
         match d {
             DropEntry::Temp(p, ty) => self.drop_glue(p.clone(), *ty),
+            DropEntry::HalfBuilt(p, ty) => self.drop_half_built(p, *ty),
             DropEntry::Local(id) => self.drop_local(*id),
             DropEntry::Rest(p, ty, pat) => self.drop_rest(p.clone(), *ty, pat),
             DropEntry::ConsumedArray { arr, next, elem } => self.drop_consumed(arr, *next, *elem),

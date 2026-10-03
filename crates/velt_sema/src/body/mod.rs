@@ -160,9 +160,15 @@ pub(crate) struct Frame {
     /// Throw sources of the enclosing `try` bodies (innermost last).
     pub tries: Vec<Vec<ThrowSrc>>,
     pub uncaught: Vec<ThrowSrc>,
-    /// `super(...)` is allowed here (first statement of a constructor).
+    /// `super(...)` is allowed here: a root-level statement of a constructor that is the call
+    /// itself, before any other `super(...)` (`stmt` sets it; the call takes it).
     pub super_ok: bool,
     pub super_called: bool,
+    /// A derived class's constructor before its `super(...)` call: `this` and `super.x` are
+    /// errors, as is `return` (`driver` sets it; the call clears it).
+    pub before_super: bool,
+    /// How many statements enclose the one being checked (1 at the body's root).
+    pub stmt_depth: u32,
     /// Field paths that conditions narrow (`field_narrow`).
     pub field_tokens: Vec<field_narrow::FieldToken>,
     /// `const`s bound by reference (`const_borrow`).
@@ -189,6 +195,8 @@ impl Frame {
             uncaught: vec![],
             super_ok: false,
             super_called: false,
+            before_super: false,
+            stmt_depth: 0,
             field_tokens: vec![],
             const_refs: Default::default(),
         }

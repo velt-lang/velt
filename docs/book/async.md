@@ -154,7 +154,9 @@ compile errors. Share state explicitly:
 - `shared(x)` creates an atomically reference-counted value: tasks that capture it refer to the
   same value. On 64-bit integers, `add`, `get` and `set` are atomic.
 - `shared(new Mutex<T>(x))` guards any value; `m.with((v) => …)` locks it for the callback, which
-  gets the value itself and may return a result.
+  gets the value itself and may return a result (a copy of anything that is part of the value).
+  `shared` takes `x` itself: after `shared(new Mutex(o))`, use `o` only through the `shared`
+  value (or pass `o.clone()` to keep your own).
 
 ```ts
 async function main() {

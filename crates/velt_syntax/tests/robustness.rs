@@ -239,16 +239,15 @@ fn deep_nesting_is_an_error_not_a_crash() {
     parse_ok(&src);
 }
 
+/// 60 levels parse (exponential cost would never finish); `src/linear_tests.rs` counts the work.
 #[test]
-fn nested_ternaries_are_not_exponential() {
+fn sixty_nested_ternaries_parse() {
     let mut s = String::from("x");
     for i in 0..60 {
         s = format!("c{} ? {} : y{}", i, s, i);
     }
-    let start = std::time::Instant::now();
     let e = expr(&s);
     assert!(matches!(e.kind, ExprKind::Cond { .. }));
-    assert!(start.elapsed().as_secs() < 5);
 }
 
 /// Linearity itself is checked by counting work, in `src/linear_tests.rs`; this checks the input
@@ -264,33 +263,27 @@ fn jsx_decided_by_the_parser_finishes() {
         format!("x = {};", "{<a>(x".repeat(5_000)),
         format!("x = {};", "<T>(x: T".repeat(5_000)),
     ] {
-        let start = std::time::Instant::now();
         let _ = parse(&src);
-        assert!(start.elapsed().as_secs() < 5, "took {:?}", start.elapsed());
     }
 }
 
+/// A 100k-line file parses. Its cost is counted by `src/linear_tests.rs` (linear growth) and the
+/// `bench.rs` benchmark (speed), not here: a time limit is a guess on a loaded machine.
 #[test]
-fn perf_100k_lines() {
-    let unit = "function f(a: i64, b: i64): i64 {\n  let x = a * 2 + b / 3 - (a % 7);\n  if (x > 10 && b < 3) { return x; } else { x += 1; }\n  for (let i = 0; i < 10; i++) { console.log(`i=${i} x=${x}`, \"s\\n\"); }\n  return g<i64>(x, [1, 2, 3], { a: 1, b }) as i64;\n}\n";
-    let lines = unit.lines().count();
-    let src = unit.repeat(100_000 / lines + 1);
-    let start = std::time::Instant::now();
+fn parses_100k_lines() {
+    let lines = PLAIN_UNIT.lines().count();
+    let src = PLAIN_UNIT.repeat(100_000 / lines + 1);
     let (m, d) = parse(&src);
-    let elapsed = start.elapsed();
     assert!(d.is_empty());
     assert!(m.items.len() > 10_000);
-    eprintln!("parsed {} lines in {:?}", src.lines().count(), elapsed);
-    // Generous bound so debug builds on slow CI machines pass; release is far faster.
-    assert!(elapsed.as_secs_f64() < 5.0, "too slow: {:?}", elapsed);
 }
 
 /// Fuzz regression (difftest parse-exponential-parens): each nested `(` in a type used to double
 /// the parse time (a failed function-type attempt re-parsed the inside), so 26 unclosed levels
-/// took 15 s and an editor would hang while typing them.
+/// took 15 s and an editor would hang while typing them. These parse as they should; the cost is
+/// counted by `src/linear_tests.rs`.
 #[test]
-fn nested_parens_are_linear() {
-    let start = std::time::Instant::now();
+fn nested_parens_parse() {
     let fuzzed = format!(
         "declare async function f(path: {}string): Promise<bool>;",
         "(".repeat(40)
@@ -318,6 +311,4 @@ fn nested_parens_are_linear() {
         ")".repeat(n)
     );
     assert!(!errors(&commas).is_empty());
-    let elapsed = start.elapsed();
-    assert!(elapsed.as_secs_f64() < 2.0, "too slow: {elapsed:?}");
 }

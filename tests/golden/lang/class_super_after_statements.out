@@ -1,0 +1,28 @@
+before super
+open base field
+base ctor ab-cde 5
+open derived field
+derived initializer
+after super ab-cde 19
+ab-cde 19 derived field
+arg VELT
+open base field
+base ctor VELT 8
+open guarded field
+guarded VELT
+VELT
+caught: empty name
+open base field
+base ctor t 6
+props t t
+t
+caught: owner refused
+open base field
+base ctor owner 1
+owner made
+dispose owner owner
+open base field
+base ctor partial 2
+caught: initializer failed
+10
+done
