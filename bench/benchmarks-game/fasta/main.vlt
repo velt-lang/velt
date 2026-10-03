@@ -93,14 +93,14 @@ function main() {
   const argv = args();
   const n = argv.length > 0 ? parseInt(argv[0]) as i64 : 1000;
 
-  stdout.writeString(">ONE Homo sapiens alu\n");
+  process.stdout.write(">ONE Homo sapiens alu\n");
   const alu = new Repeat(ALU);
   for (let left = 2 * n; left > 0; left -= BLOCK_SIZE) {
     stdout.write(alu.next(left < BLOCK_SIZE ? left : BLOCK_SIZE));
   }
 
   const rng = new Random();
-  stdout.writeString(">TWO IUB ambiguity codes\n");
+  process.stdout.write(">TWO IUB ambiguity codes\n");
   const iub = new Alphabet([
     { c: "a", p: 0.27 },
     { c: "c", p: 0.12 },
@@ -122,7 +122,7 @@ function main() {
     stdout.write(iub.next(rng, left < BLOCK_SIZE ? left : BLOCK_SIZE));
   }
 
-  stdout.writeString(">THREE Homo sapiens frequency\n");
+  process.stdout.write(">THREE Homo sapiens frequency\n");
   const homoSapiens = new Alphabet([
     { c: "a", p: 0.302954942668 },
     { c: "c", p: 0.1979883004921 },
