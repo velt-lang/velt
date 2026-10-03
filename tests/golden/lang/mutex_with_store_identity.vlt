@@ -49,16 +49,17 @@ async function main() {
   kept[0].a!.n += 1;
   console.log("out", inside(m));
 
-  // Into the value: the outside object stays outside.
+  // Into the value: the value gets its own copy of an outside object (using `item` afterwards
+  // would be an error, see errors/mutex_with_later_use).
   const item = new Inner();
+  item.n = 7;
   m.with((v) => {
     v.recent.push(item);
     const p = new Pair();
     p.a = item;
     v.pairs.push(p);
   });
-  item.n += 100;
-  console.log("in", inside(m), item.n);
+  console.log("in", inside(m));
 
   // Within the value: one object in two places.
   const n = m.with((v) => {

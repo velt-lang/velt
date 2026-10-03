@@ -24,6 +24,7 @@
 
 mod callbacks;
 mod kept;
+mod later;
 mod opaque;
 mod promises;
 mod regions;
@@ -218,9 +219,12 @@ fn check_callback(
         }
     }
     let mut unfixable = vec![];
+    let mut inward = vec![];
     if !std {
         for (d, f) in bodies.iter_mut() {
-            unfixable.extend(stores::visit(cx, &mut r, s, *d, f, true));
+            let (u, i) = stores::visit(cx, &mut r, s, *d, f, true);
+            unfixable.extend(u);
+            inward.extend(i);
         }
     }
     for (d, f) in bodies {
@@ -243,6 +247,44 @@ fn check_callback(
             continue;
         }
         unfixable_error(cx, u);
+    }
+    later_uses(cx, res, c, inward, reported);
+}
+
+/// Report a variable used after the callback `c` stored it into the value as a copy
+/// (`later`).
+fn later_uses(
+    cx: &mut Ctx,
+    res: &mut values::Resolver,
+    c: DefId,
+    inward: Vec<(crate::hir::LocalId, Span)>,
+    reported: &mut HashSet<Span>,
+) {
+    let Some(f) = res.parent(cx, c) else { return };
+    let at = cx.fn_info(c).span;
+    let mut seen = HashSet::new();
+    for (l, stored) in inward {
+        if !seen.insert(l) {
+            continue;
+        }
+        let Some(use_at) = later::later_use(cx, f, l, at) else {
+            continue;
+        };
+        if !reported.insert(use_at) {
+            continue;
+        }
+        let name = match &cx.defs[f.0 as usize] {
+            Some(Def::Fn(body)) => body.body.locals[l.0 as usize].name.clone(),
+            _ => continue,
+        };
+        cx.error(
+            Diagnostic::error(
+                format!("`{name}` is still used after `with` stored it in the locked value, which got a copy"),
+                use_at,
+            )
+            .with_label(stored, "stored here as a copy: other threads use the value, and the original stays outside")
+            .with_note(format!("changes to `{name}` from here on do not reach the locked value; use it through the lock (`m.with((v) => …)`), or store `{name}.clone()` to make the copy explicit")),
+        );
     }
 }
 

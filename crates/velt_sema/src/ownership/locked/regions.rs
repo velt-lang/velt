@@ -37,6 +37,11 @@ pub(super) struct Regions {
     /// Function values called or passed in the bodies that are resolved to closures among the
     /// bodies (their spans): their bodies are checked, so calls need not copy anything.
     pub(super) resolved: HashSet<Span>,
+    /// The callback's captures: its capture local → the captured variable (in the function
+    /// making the callback).
+    callback_captures: HashMap<LocalId, LocalId>,
+    /// The callback.
+    callback: DefId,
     /// The named functions among what each resolved function value may be.
     pub(super) named: HashMap<Span, Vec<DefId>>,
     /// Set when [`Regions::add`] grew a set (the fixpoint goes on).
@@ -54,6 +59,8 @@ impl Regions {
             params: HashMap::new(),
             resolved: HashSet::new(),
             named: HashMap::new(),
+            callback_captures: HashMap::new(),
+            callback: c,
             changed: false,
         };
         let Sites { parent, passed, .. } = closure_sites(bodies);
@@ -84,6 +91,9 @@ impl Regions {
                     r.bits.insert((*d, p), IN | OUT);
                 }
             }
+            if *d == c {
+                r.callback_captures = f.captures.iter().map(|k| (k.inner, k.outer)).collect();
+            }
             r.captured
                 .insert(*d, f.captures.iter().map(|k| k.outer).collect());
             r.params.insert(*d, params);
@@ -111,6 +121,15 @@ impl Regions {
             *e |= b;
             self.changed = true;
         }
+    }
+
+    /// The variable of the function making the callback that local `l` of body `d` is (a
+    /// capture of the callback, or of a closure made in it), if any.
+    pub(super) fn captured_var(&self, d: DefId, l: LocalId) -> Option<LocalId> {
+        let (b, inner) = self.key((d, l));
+        (b == self.callback)
+            .then(|| self.callback_captures.get(&inner).copied())
+            .flatten()
     }
 
     /// Is local `l` of body `d` the locked value or a captured variable?

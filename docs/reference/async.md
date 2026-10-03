@@ -239,8 +239,10 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
     a snapshot; change the value inside the callback).
   - So does a part of the value the callback stores into something it captured
     (`out.push(v.inner)` pushes a copy, `last = v.inner` assigns one), and an outside object it
-    stores into the value (`v.items.push(item)` stores a copy; `item` stays outside, and a
-    resource without `clone()` is stored itself) — also when a function or method the callback
+    stores into the value (`v.items.push(item)` stores a copy; `item` stays outside, so using
+    it after the `with` is an error, "`item` is still used after `with` stored it in the
+    locked value": store `item.clone()` to keep using `item`; a resource without `clone()` is
+    stored itself) — also when a function or method the callback
     calls does the storing (`v.giveTo(out)` gives the method a copy of the value). An object
     stored from one place in the value to another, or from one outside object to another, stays
     the same object. A call that stores a part of an argument it also changes cannot be given a

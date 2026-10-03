@@ -33,7 +33,7 @@ pub(super) fn visit(
     def: DefId,
     f: &mut FnDef,
     rewrite: bool,
-) -> Vec<Unfixable> {
+) -> (Vec<Unfixable>, Vec<(LocalId, Span)>) {
     let mut w = Stores {
         cx,
         r,
@@ -41,9 +41,10 @@ pub(super) fn visit(
         def,
         rewrite,
         unfixable: vec![],
+        inward: vec![],
     };
     visit::block(&mut f.body.block, &mut w);
-    w.unfixable
+    (w.unfixable, w.inward)
 }
 
 /// A store across the lock that cannot be made a copy.
@@ -70,6 +71,9 @@ struct Stores<'a, 'r, 's, 'm> {
     def: DefId,
     rewrite: bool,
     unfixable: Vec<Unfixable>,
+    /// Captured variables (in the function making the callback) stored into the value as
+    /// copies, with where.
+    inward: Vec<(LocalId, Span)>,
 }
 
 impl Stores<'_, '_, '_, '_> {
@@ -191,9 +195,38 @@ impl Stores<'_, '_, '_, '_> {
     fn transfer_owned(&mut self, e: &mut Expr, dest: u8) -> Result<(), Cross> {
         let borrowed = is_place(e) && outer_mode(e) != Some(UseMode::Move);
         if self.transferable(e, dest)? && !borrowed {
+            self.note_inward(e, dest);
             wrap(e, Intrinsic::Transfer);
         }
         Ok(())
+    }
+
+    /// An outside variable the callback captured, stored into the value as a copy: a later use
+    /// of the variable would not see the value's copy (reported by `super::later`).
+    fn note_inward(&mut self, e: &Expr, dest: u8) {
+        if dest & IN == 0 {
+            return;
+        }
+        let mut x = e;
+        // An explicit `.clone()` is a fresh object: nothing to report.
+        while let E::Call {
+            callee: Callee::Intrinsic(Intrinsic::Share),
+            args,
+        } = &x.kind
+        {
+            match args.as_slice() {
+                [a] => x = a,
+                _ => return,
+            }
+        }
+        // A struct of plain fields (a handle) behaves the same as its copy here.
+        let identity = self.cx.class_of(x.ty).is_some()
+            || matches!(self.cx.ty.kind(x.ty), TyKind::Array(_))
+            || holds_shared(self.cx, x.ty);
+        let outer = place_root(x).and_then(|l| self.r.captured_var(self.def, l));
+        if let (Some(outer), true) = (outer, identity) {
+            self.inward.push((outer, e.span));
+        }
     }
 
     /// A call argument crossing the boundary: an owned one is transferred, a borrowed place
@@ -202,6 +235,9 @@ impl Stores<'_, '_, '_, '_> {
     fn transfer_arg(&mut self, e: &mut Expr, dest: u8) -> Result<(), Cross> {
         if !self.transferable(e, dest)? {
             return Ok(());
+        }
+        if outer_mode(e) != Some(UseMode::BorrowMut) {
+            self.note_inward(e, dest);
         }
         match outer_mode(e) {
             Some(UseMode::Borrow) if is_place(e) => {

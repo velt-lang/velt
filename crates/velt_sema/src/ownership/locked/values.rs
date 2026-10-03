@@ -130,7 +130,7 @@ impl Resolver {
         out
     }
 
-    fn parent(&mut self, cx: &mut Ctx, n: DefId) -> Option<DefId> {
+    pub(super) fn parent(&mut self, cx: &mut Ctx, n: DefId) -> Option<DefId> {
         if self.parents.is_none() {
             self.parents = Some(closure_parents(cx));
         }
