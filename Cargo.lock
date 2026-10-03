@@ -2084,6 +2084,7 @@ dependencies = [
  "velt_registry",
  "velt_sema",
  "velt_syntax",
+ "velt_tscompat",
  "vpm",
 ]
 
@@ -2263,6 +2264,7 @@ name = "velt_tscompat"
 version = "0.1.0"
 dependencies = [
  "velt_common",
+ "velt_sema",
  "velt_syntax",
 ]
 

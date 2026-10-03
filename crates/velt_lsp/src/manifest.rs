@@ -27,8 +27,9 @@ pub fn is_manifest(path: &Path) -> bool {
         .is_some_and(|n| n == vpm::manifest::MANIFEST_FILE)
 }
 
-/// The diagnostics for manifest `text` (in directory `dir`, for its `velt.lock.json`): the
-/// reader's, then the registry's for the dependencies whose data has arrived.
+/// The diagnostics for manifest `text` (in directory `dir`, for its `velt.lock.json` and
+/// `tsCompat` folders): the reader's, warnings for `tsCompat` folders that are not there, then
+/// the registry's for the dependencies whose data has arrived.
 pub fn diagnostics(
     text: &str,
     data: &RegistryData,
@@ -37,6 +38,14 @@ pub fn diagnostics(
     let mut diags = vpm::Manifest::read(FileId(0), text)
         .err()
         .unwrap_or_default();
+    if let Some(dir) = dir {
+        // The folders `velt check --ts-compat` would fail on.
+        diags.extend(vpm::manifest::read::missing_ts_compat_dirs(
+            FileId(0),
+            text,
+            dir,
+        ));
+    }
     if let Some(loc) = locations_for(text) {
         let registry = loc.describe();
         let lock = lockfile(dir);

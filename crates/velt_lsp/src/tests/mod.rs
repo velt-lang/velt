@@ -16,3 +16,4 @@ mod protocol;
 mod quick_fixes;
 mod refactor;
 mod server_features;
+mod ts_compat;

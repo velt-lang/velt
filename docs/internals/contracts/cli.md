@@ -4,7 +4,7 @@
 velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple>] [--emit vir|llvm|obj|exe] [--locked] [-v] [--timings]
 velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm] [--locked] [-- <program args>...]
 velt check [<file.vlt>] [--json] [--locked] [-v]
-velt check --ts-compat <file|dir>... [--json] [--locked] [-v]
+velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]
 velt dev   [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]
 velt test  [<file|dir>] [--release] [--locked] [--watch]
 velt new   <name> [--template app|cli|api|websocket|lib] [--lib]
@@ -138,7 +138,15 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   same diagnostic with `"code": "<code>"` and `"fix": {"location", "replacement", "title"}` or
   `null`. A relative import (`./`, `../`) of a file that is not among the given files is the
   finding `outside-import`. Exit 1 on any error (from the check or an error-severity finding), 0
-  otherwise. Without paths it is a usage error (exit 2).
+  otherwise.
+- `check --ts-compat` without paths (additive; formerly a usage error): the paths are the
+  `tsCompat` folders (`manifest.md`) of the package around the current directory, named relative
+  to it, and their source modules are checked and linted as above (an empty folder adds none).
+  It fails (exit 1, a `location: null` diagnostic with `--json`) outside a package ("… there is
+  no `package.vlt` …"), when the manifest has no `tsCompat` ("package `<name>` has no `tsCompat`
+  folders to lint …"), when a listed folder is not a directory ("package `<name>`: `tsCompat`
+  folder `<dir>` does not exist" / "is not a folder"), or when the folders hold no source
+  module. Plain `velt check` never lints, `tsCompat` or not.
 - Linking (additive): debug builds (no `--release`) link the runtime as a
   shared library (`libvelt_rt_shared.so` / `.dylib`, `velt_rt_shared.dll` + `.dll.lib`) found
   next to `velt`, its parent directory or `<prefix>/lib`, with an rpath to it (Windows: the DLL is

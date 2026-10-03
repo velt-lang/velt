@@ -194,10 +194,20 @@ request gate doesn't need Node; the nightly job sets `VELT_TSC_ORACLE=1`, which 
 Documented but not linted: `i64` past 2^53, integer `/ 0`, out-of-bounds indexing, `-0` printing,
 exit codes.
 
-**Planned:** the typed rules (a type query, `ide::type_of(span)`, on the checked program), the
-oracle's Node runs for behaviour samples, `tsCompat: ["src/models", …]` in
-`package.vlt` for `velt check --ts-compat` without paths, and the findings with quick fixes in
-the language server.
+**Where it runs** (step 4). `tsCompat: ["src/components", "src/models"]` in `package.vlt` lists
+the shared folders ([the manifest](../../tooling/manifest.md#tscompat)): `/`-separated, inside the
+package, each once and none inside another. `velt check --ts-compat` without paths lints their
+files; outside a package or without `tsCompat` it fails with a message pointing at the field. A
+plain `velt check` doesn't lint them: the lint stays opt-in (one flag for CI), so a package's
+check result doesn't change when a folder is shared. The language server lints an open document
+inside the folders on its own analysis (`velt_tscompat::lint_program` takes the loaded modules
+and the checker's diagnostics, so nothing is checked twice), publishes the findings as
+diagnostics (code = rule, source `velt ts-compat`) and offers each fix as a preferred quick fix
+([editors](../../tooling/editors.md#code-shared-with-typescript)). In both, the files in scope
+are those in the folders, so an import leaving them is `outside-import`.
+
+**Planned:** the typed rules (a type query, `ide::type_of(span)`, on the checked program) and
+the oracle's Node runs for behaviour samples.
 
 ## Implementation plan
 

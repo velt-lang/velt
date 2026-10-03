@@ -1,6 +1,7 @@
 //! `velt check --ts-compat` through the `velt` binary: text and JSON output, exit codes, which
 //! files are linted (directories, the closure rule for relative imports, files failing the
-//! check), and that every rule fixture of `velt_tscompat` is valid Velt.
+//! check), and that every rule fixture of `velt_tscompat` is valid Velt. Without paths it lints
+//! the package's `tsCompat` folders.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -247,16 +248,9 @@ fn a_file_failing_the_check_is_not_linted() {
 }
 
 #[test]
-fn paths_are_required_and_must_hold_sources() {
+fn paths_must_hold_sources() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    let o = velt(dir, &["check", "--ts-compat"]);
-    assert_eq!(o.status.code(), Some(2));
-    assert!(
-        stderr(&o).contains("needs the files or directories to lint"),
-        "{}",
-        stderr(&o)
-    );
     std::fs::create_dir(dir.join("empty")).unwrap();
     let o = velt(dir, &["check", "--ts-compat", "empty"]);
     assert_eq!(o.status.code(), Some(1));
@@ -357,4 +351,133 @@ fn findings_follow_the_check_after_a_blank_line() {
         "{err}"
     );
     assert!(lint.contains("`f64` is not a TypeScript type"), "{err}");
+}
+
+/// A manifest named `app` with `tsCompat` set to `dirs` (a Velt array literal).
+fn manifest_with_ts_compat(dirs: &str) -> String {
+    format!(
+        "import type {{ Package }} from \"velt:package\";\n\n\
+         export const pkg: Package = {{ name: \"app\", version: \"0.1.0\", tsCompat: {dirs} }};\n"
+    )
+}
+
+/// The file names (without directories) and codes of a `--json` report's diagnostics.
+fn files_and_codes(report: &Value) -> Vec<(String, String)> {
+    report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| {
+            let file = d["location"]["file"].as_str().unwrap_or("-");
+            let name = Path::new(file).file_name().unwrap().to_string_lossy();
+            (
+                name.into_owned(),
+                d["code"].as_str().unwrap_or("-").to_string(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn without_paths_the_packages_ts_compat_folders_are_linted() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    write(
+        dir,
+        "package.vlt",
+        &manifest_with_ts_compat("[\"src/models\", \"src/ui\"]"),
+    );
+    write(dir, "src/main.vlt", "export function main() {}\n");
+    write(dir, "src/server.vlt", "export const port: number = 8080;\n");
+    // Outside the folders: not linted.
+    write(dir, "src/jobs.vlt", "export const big: i64 = 1;\n");
+    write(dir, "src/models/user.ts", "export const age: i32 = 1;\n");
+    write(
+        dir,
+        "src/models/deep/item.ts",
+        "export const ok: bool = true;\n",
+    );
+    std::fs::create_dir_all(dir.join("src/ui")).unwrap();
+    let o = velt(dir, &["check", "--ts-compat", "--json"]);
+    assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
+    assert_eq!(
+        files_and_codes(&json(&o)),
+        [
+            ("item.ts".to_string(), "bool-type".to_string()),
+            ("user.ts".to_string(), "velt-number-type".to_string()),
+        ]
+    );
+    // From a subdirectory, the files are named from there.
+    let o = velt(&dir.join("src/models"), &["check", "--ts-compat"]);
+    assert!(
+        stderr(&o).contains("\nuser.ts:1:19: error:"),
+        "{}",
+        stderr(&o)
+    );
+    // A plain `velt check` of the package doesn't lint.
+    let o = velt(dir, &["check"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    // An import of a file outside the folders leaves the set.
+    write(
+        dir,
+        "src/models/user.ts",
+        "import { port } from \"../server\";\nexport const p: number = port;\n",
+    );
+    write(
+        dir,
+        "src/models/deep/item.ts",
+        "export const ok: boolean = true;\n",
+    );
+    let report = json(&velt(dir, &["check", "--ts-compat", "--json"]));
+    assert_eq!(
+        files_and_codes(&report),
+        [("user.ts".to_string(), "outside-import".to_string())]
+    );
+}
+
+#[test]
+fn without_paths_a_package_must_list_existing_folders() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    // Outside a package.
+    let o = velt(dir, &["check", "--ts-compat"]);
+    assert_eq!(o.status.code(), Some(1));
+    let err = stderr(&o);
+    assert!(
+        err.contains(
+            "lints the folders a package's `tsCompat` lists, but there is no `package.vlt`"
+        ),
+        "{err}"
+    );
+    assert!(err.contains("`velt check --ts-compat src/models`"), "{err}");
+    // A package without `tsCompat`.
+    write(dir, "package.vlt", &manifest("app"));
+    write(dir, "src/main.vlt", "export function main() {}\n");
+    let err = stderr(&velt(dir, &["check", "--ts-compat"]));
+    assert!(
+        err.contains("package `app` has no `tsCompat` folders to lint: list them in package.vlt"),
+        "{err}"
+    );
+    // A folder that isn't there; then one without sources.
+    write(
+        dir,
+        "package.vlt",
+        &manifest_with_ts_compat("[\"src/models\"]"),
+    );
+    let o = velt(dir, &["check", "--ts-compat", "--json"]);
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(
+        json(&o)["diagnostics"][0]["message"],
+        "package `app`: `tsCompat` folder `src/models` does not exist"
+    );
+    std::fs::create_dir_all(dir.join("src/models")).unwrap();
+    let err = stderr(&velt(dir, &["check", "--ts-compat"]));
+    assert!(
+        err.contains("the `tsCompat` folders have no `.vlt`, `.ts` or `.tsx` files to lint"),
+        "{err}"
+    );
+    // Explicit paths ignore `tsCompat`.
+    write(dir, "src/other.ts", "export const n: number = 1;\n");
+    let o = velt(dir, &["check", "--ts-compat", "src/other.ts"]);
+    assert!(o.status.success(), "{}", stderr(&o));
 }

@@ -42,6 +42,11 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
   "Fix all in file", and **Fix all** (`source.fixAll`, e.g. on save) applies every preferred
   fix of the file.
 
+- **Code shared with TypeScript**: in a file inside one of the package's
+  [`tsCompat`](manifest.md#tscompat) folders, the findings of
+  [`velt check --ts-compat`](cli.md#code-shared-with-typescript---ts-compat) appear as you type,
+  with the rule as the diagnostic's code and `velt ts-compat` as its source (see
+  [below](#code-shared-with-typescript)).
 - **Package manifests**: `package.vlt` is read as data, the way `velt` reads it, not checked as a
   program. Its diagnostics are exactly `velt`'s; completion offers the fields valid at the cursor
   and fixed values (native targets, `true`/`false`); hover explains each field. Saving a changed
@@ -63,6 +68,23 @@ server down.
 are part of the programs the server analyzes and of the workspace symbol index, and it asks the
 editor to report changes to them. Whether the editor sends it `.ts` and `.tsx` documents to
 analyze is up to the client: the VS Code extension leaves them to VS Code's TypeScript support.
+
+## Code shared with TypeScript
+
+A file in a folder that `package.vlt`'s `tsCompat` lists gets the TypeScript-compatibility
+lint's findings next to the compiler's diagnostics: errors where `tsc` would reject the code or
+JavaScript would run it differently, warnings where it may. Each finding's code is its rule
+(`velt-number-type`) and its source is `velt ts-compat`; the message ends with what TypeScript
+does and what to write. A finding with a mechanical replacement (`f64` → `number`, `bool` →
+`boolean`, a dropped suffix) offers it as a preferred quick fix, so **Fix all** applies it too.
+
+- The findings follow your edits, also unsaved edits to `package.vlt`'s `tsCompat`. A folder
+  `tsCompat` lists that doesn't exist is a warning in `package.vlt`.
+- Like the command, the lint skips a file with errors of its own: fix those first.
+- An import of a file outside the folders is the finding `outside-import`.
+- Files outside the folders never get findings, and nothing changes for them.
+- The VS Code extension sends only `.vlt` files to the server; `.ts` and `.tsx` files in the
+  folders get findings in editors that send them, and from `velt check --ts-compat`.
 
 ## Visual Studio Code
 

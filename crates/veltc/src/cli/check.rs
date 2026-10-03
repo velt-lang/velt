@@ -10,8 +10,8 @@ use super::Command;
 pub struct CheckArgs {
     /// Root file; `None` → the package around the current directory.
     pub input: Option<PathBuf>,
-    /// `--ts-compat <file|dir>...`: check these files, then lint them for the TypeScript/Velt
-    /// common subset (never empty when set).
+    /// `--ts-compat [<file|dir>...]`: check these files, then lint them for the TypeScript/Velt
+    /// common subset; empty: the `tsCompat` folders of the package around the current directory.
     pub ts_compat: Option<Vec<PathBuf>>,
     /// `--json`: diagnostics as one JSON document on stdout instead of text on stderr.
     pub json: bool,
@@ -21,12 +21,8 @@ pub struct CheckArgs {
     pub verbose: bool,
 }
 
-/// `--ts-compat` without paths (`tsCompat` folders in package.vlt are planned).
-const NO_TS_COMPAT_PATHS: &str = "`velt check --ts-compat` needs the files or directories to \
-                                  lint, e.g. `velt check --ts-compat src/models`";
-
 /// Parse `velt check [<file.vlt>] [--json] [--locked] [-v]` and
-/// `velt check --ts-compat <file|dir>... [--json] [--locked] [-v]`.
+/// `velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]`.
 pub(super) fn parse_check(args: Vec<OsString>) -> Result<Command, String> {
     let mut c = CheckArgs::default();
     let mut ts_compat = false;
@@ -44,9 +40,6 @@ pub(super) fn parse_check(args: Vec<OsString>) -> Result<Command, String> {
         }
     }
     if ts_compat {
-        if paths.is_empty() {
-            return Err(NO_TS_COMPAT_PATHS.into());
-        }
         c.ts_compat = Some(paths);
     } else if let Some(extra) = paths.get(1) {
         return Err(format!(
@@ -93,8 +86,13 @@ mod tests {
                 ..CheckArgs::default()
             })
         );
-        assert!(p(&["check", "--ts-compat"])
-            .unwrap_err()
-            .contains("needs the files or directories"));
+        // No paths: the package's `tsCompat` folders.
+        assert_eq!(
+            p(&["check", "--ts-compat"]).unwrap(),
+            Command::Check(CheckArgs {
+                ts_compat: Some(vec![]),
+                ..CheckArgs::default()
+            })
+        );
     }
 }
