@@ -4,8 +4,11 @@
 //! Whitespace is only added where it cannot change what the formatter keeps from the layout:
 //! never inside literals, comments, JSX text or JSX attribute strings, never on a line that has a
 //! comment after the insertion point (a comment's line decides whether it trails the code before
-//! it), and no newline into whitespace that already holds one (that would create blank lines,
-//! which are preserved).
+//! it), and at most one newline into a run of whitespace that holds none (two would create a
+//! blank line, which is preserved).
+//!
+//! Each file gets its own random sequence, seeded from its path, so adding a corpus file doesn't
+//! change what the other files are tested with, and a failure reproduces on its own.
 
 mod common;
 
@@ -16,6 +19,15 @@ use velt_fmt::format_source;
 struct Rng(u64);
 
 impl Rng {
+    /// A generator seeded from `path` (FNV-1a; never zero, which xorshift can't leave).
+    fn for_path(path: &std::path::Path) -> Rng {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in path.to_string_lossy().replace('\\', "/").bytes() {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+        Rng(h | 1)
+    }
+
     fn next(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
@@ -28,8 +40,10 @@ impl Rng {
     }
 }
 
-/// Byte offsets where whitespace may be inserted, with whether a newline is allowed there.
-fn insertion_points(src: &str) -> Vec<(usize, bool)> {
+/// Byte offsets where whitespace may be inserted, with whether a newline is allowed there and
+/// where the surrounding whitespace run starts (one run gets at most one inserted newline: two
+/// would make a blank line, which the formatter keeps).
+fn insertion_points(src: &str) -> Vec<(usize, bool, usize)> {
     let bytes = src.as_bytes();
     let mut code = vec![false; bytes.len() + 1];
     let mut comment_start = vec![false; bytes.len() + 1];
@@ -48,7 +62,7 @@ fn insertion_points(src: &str) -> Vec<(usize, bool)> {
         let run_lo = src[..i].trim_end_matches(char::is_whitespace).len();
         let run_hi = i + (src[i..].len() - src[i..].trim_start_matches(char::is_whitespace).len());
         let newline_ok = !src[run_lo..run_hi].contains('\n');
-        out.push((i, newline_ok));
+        out.push((i, newline_ok, run_lo));
     }
     out
 }
@@ -248,19 +262,25 @@ fn perturb(src: &str, rng: &mut Rng) -> String {
     let points = insertion_points(src);
     let mut out = String::with_capacity(src.len() * 2);
     let mut last = 0;
-    for (at, newline_ok) in points {
+    // The run that already got its newline.
+    let mut broken_run = None;
+    for (at, newline_ok, run) in points {
         if rng.below(3) != 0 {
             continue;
         }
         out.push_str(&src[last..at]);
         last = at;
         for _ in 0..=rng.below(3) {
-            let choices: &[char] = if newline_ok {
+            let choices: &[char] = if newline_ok && broken_run != Some(run) {
                 &[' ', '\t', '\n']
             } else {
                 &[' ', '\t']
             };
-            out.push(choices[rng.below(choices.len() as u64) as usize]);
+            let c = choices[rng.below(choices.len() as u64) as usize];
+            if c == '\n' {
+                broken_run = Some(run);
+            }
+            out.push(c);
         }
     }
     out.push_str(&src[last..]);
@@ -269,9 +289,12 @@ fn perturb(src: &str, rng: &mut Rng) -> String {
 
 #[test]
 fn extra_whitespace_does_not_change_the_output() {
-    let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
     let mut failures = vec![];
     for path in corpus() {
+        let mut rng = Rng::for_path(
+            path.strip_prefix(env!("CARGO_MANIFEST_DIR"))
+                .unwrap_or(&path),
+        );
         let src = std::fs::read_to_string(&path).unwrap();
         if !parses(&src) {
             continue;
@@ -301,7 +324,7 @@ fn jsx_text_and_attribute_strings_are_not_perturbed() {
     let src = "const a = <p t='x, y'>Hello, world ( {f(b, c)} </p>;\nconst g = <T,>(x: T) => x;\n";
     let points: Vec<usize> = insertion_points(src)
         .into_iter()
-        .map(|(at, _)| at)
+        .map(|(at, _, _)| at)
         .collect();
     let after = |needle: &str| src.find(needle).unwrap() + needle.len();
     assert!(!points.contains(&after("x,")), "{points:?}");
@@ -310,4 +333,19 @@ fn jsx_text_and_attribute_strings_are_not_perturbed() {
     assert!(points.contains(&after("{f(")), "{points:?}");
     assert!(points.contains(&after("(b,")), "{points:?}");
     assert!(points.contains(&after("<T,")), "{points:?}");
+}
+
+#[test]
+fn perturbing_never_adds_a_blank_line() {
+    // Members on one line: every gap between them may get a newline, but never two.
+    let src = "interface Page<T> { items: T[]; total: number; email?: string }\n";
+    for seed in 1..2000u64 {
+        let noisy = perturb(src, &mut Rng(seed));
+        assert!(!noisy.contains("\n\n"), "seed {seed}:\n{noisy}");
+        assert_eq!(
+            format_source(&noisy).unwrap(),
+            format_source(src).unwrap(),
+            "seed {seed}"
+        );
+    }
 }
