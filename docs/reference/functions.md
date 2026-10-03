@@ -98,8 +98,9 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
   returns `{ done: true }`, and keeps doing so (`next().value` is then `null`). A `Generator<T, E>` is an `Iterator<T, E>` and
   an `Iterable<T, E>` (its `[Symbol.iterator]()` returns itself), so `for...of` takes it
   ([Iterables](control-flow.md#iterables)).
-- The return type is required: `Generator<T>`, `Iterator<T>` or `Iterable<T>`, where `T` is the
-  type of the yielded values; a call has that type, with the generator's error type as `E`.
+- The return type is required: `Generator<T>`, `Iterator<T>`, `Iterable<T>`,
+  `IterableIterator<T>` or `IteratorObject<T>`, where `T` is the type of the yielded values; a
+  call has that type, with the generator's error type as `E`.
   `return;` ends the generator; there is no `TReturn`, so `return value` is an error. A bare
   `yield` is allowed in a `Generator<void>` only, and a `yield` has no value (`const x = yield
   1` is an error: there is no `next(value)`), so it is a statement of its own (also as a
@@ -173,8 +174,8 @@ async function main() {
   `Promise<IteratorResult<T>, E>` that runs the body to its next `yield`, awaiting what it
   awaits on the way. It is an `AsyncIterator<T, E>` and an `AsyncIterable<T, E>`, so
   [`for await`](control-flow.md#for-await) takes it.
-- The return type is required: `AsyncGenerator<T>`, `AsyncIterator<T>` or `AsyncIterable<T>`
-  (a sync result type on an `async function*`, or an async one on a `function*`, is an error
+- The return type is required: `AsyncGenerator<T>`, `AsyncIterator<T>`, `AsyncIterable<T>`
+  or `AsyncIterableIterator<T>` (a sync result type on an `async function*`, or an async one on a `function*`, is an error
   naming the fix).
 - `yield* src` delegates to an async iterable (another async generator) and, as in JS, to a
   sync one (a generator, an array).

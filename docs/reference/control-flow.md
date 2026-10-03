@@ -66,6 +66,32 @@ interface Iterable<T, E = never> {
 - `AsyncIterator<T, E>` (`next(): Promise<IteratorResult<T>, E>`) and `AsyncIterable<T, E>`
   (`[Symbol.asyncIterator]()`) are their async counterparts, iterated with
   [`for await`](#for-await).
+- **Builtin iterables**: arrays, strings, `Map`s and `Set`s (`velt:collections/set`) are
+  `Iterable<T>` (`Iterable<[K, V]>` for a map, `Iterable<string>` for a string), so they convert
+  to an `Iterable<T>` value and satisfy an `Iterable<T>` bound: `sum(xs: Iterable<number>)`
+  takes `[1, 2, 3]`, a set, `m.values()` or (with `Iterable<string>`) a string. An array
+  literal written where an `Iterable<T>` is expected holds `T`s. `for...of` over them directly
+  keeps its own loops; only code written against `Iterable<T>` goes through the protocol.
+  Converting an array to an `Iterable<T>` value copies no elements (the value refers to the
+  array; at most its 24-byte header is boxed), and each loop over it creates one iterator.
+- `x[Symbol.iterator]()` on them returns an `Iterator<T>` (TS: `ArrayIterator<T>` and so on;
+  the prelude classes `ArrayIterator<T>` and `StringIterator` are its implementations). An
+  array's iterator is a live view, as in JS: it reads the length at each step, so it visits
+  elements pushed meanwhile, and once it reported `done` it stays done. A string's yields
+  characters (code points). A map's and a set's iterate the entries as of the call, like
+  `for...of` over a map (JS's map and set iterators are live views).
+- `IterableIterator<T, E>`, `IteratorObject<T, E>` and `AsyncIterableIterator<T, E>` are TS's
+  iterators that are also iterable (`[Symbol.iterator]()` returns the iterator itself, declared
+  as `Iterator<T, E>`, since Velt has no covariant returns). Generators implement them and may
+  be declared to return them (`function* f(): IterableIterator<number>`), and such a value
+  converts to an `Iterable<T, E>` / `AsyncIterable<T, E>`. It does not convert to an
+  `Iterator<T, E>` yet (interface values don't convert to the interfaces they extend); call
+  `it[Symbol.iterator]()` for one.
+- TS's two-argument `IteratorResult<T, TReturn>` is `IteratorResult<T>` when `TReturn` means
+  "nothing" (`void`, `undefined`, `unknown`, `any`); another `TReturn` is an error, since a
+  finished result carries no value. The second argument of `IterableIterator`,
+  `IteratorObject` and `AsyncIterableIterator` follows `Generator`'s rules: it is dropped when
+  it means "nothing", and is the error type `E` otherwise.
 
 ```ts
 class Countdown implements Iterator<i64> {
@@ -109,6 +135,20 @@ for (const n of new From(5)) {
     break;                                // prints "stopped at 3"
   }
 }
+
+function total(xs: Iterable<number>): number {
+  let sum = 0.0;
+  for (const x of xs) {
+    sum += x;
+  }
+  return sum;
+}
+
+const prices = new Map<string, number>([["tea", 2.5], ["cake", 4.0]]);
+console.log(total([1, 2, 3]), total(prices.values()));   // 6 6.5
+
+const it = ["a", "b"][Symbol.iterator]();
+console.log(it.next());                   // { value: 'a', done: false }
 ```
 
 ## `for await`

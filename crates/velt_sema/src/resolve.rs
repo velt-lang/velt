@@ -202,6 +202,12 @@ impl Ctx<'_> {
         t: &ast::TypeExpr,
         env: &TyEnv,
     ) -> TyId {
+        if args.len() == 2 && self.is_iterator_result_alias(item) {
+            return match self.iterator_result_args(args, env) {
+                Some(args) => self.item_type_args(item, name, args, t),
+                None => self.ty.error,
+            };
+        }
         let protocol = match item {
             Item::Def(d) if args.len() >= 2 => self.protocol_type(d),
             _ => None,
@@ -214,6 +220,17 @@ impl Ctx<'_> {
             },
             None => args.iter().map(|a| self.resolve_type(a, env)).collect(),
         };
+        self.item_type_args(item, name, args, t)
+    }
+
+    /// The type an item named `name` denotes with the resolved type arguments `args`.
+    fn item_type_args(
+        &mut self,
+        item: Item,
+        name: &str,
+        args: Vec<TyId>,
+        t: &ast::TypeExpr,
+    ) -> TyId {
         match item {
             Item::Def(d) => self.def_type(d, name, args, t),
             Item::Alias(a) => self.expand_alias(a, args, t),

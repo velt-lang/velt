@@ -9,6 +9,9 @@ object types and tuples (by content).
   `Set.from(xs)` (clones the elements), `size`, `isEmpty()`.
 - `add(v)`: takes ownership. `has(v)`, `delete(v): bool`, `clear()`.
 - `values(): T[]` returns clones in insertion order. `forEach(f)` borrows.
+- A set is an `Iterable<T>`: `for (const x of s)` visits its elements in insertion order, and it
+  converts to an `Iterable<T>` value. `s[Symbol.iterator]()` iterates the elements as of the
+  call (`values()`; JS's set iterator is a live view).
 - Set algebra, each returning a new set: `union`, `intersection`, `difference`,
   `symmetricDifference`.
 - Tests: `isSubsetOf`, `isSupersetOf`, `isDisjointFrom`.

@@ -64,9 +64,18 @@ pub(super) struct ForOfParts<'a> {
 }
 
 impl FnCx<'_, '_> {
-    /// Can `for...of` iterate a value of type `t` through `[Symbol.iterator]()`?
+    /// Can `for...of` iterate a value of type `t` through `[Symbol.iterator]()`? Arrays,
+    /// strings and `Map`s are iterable too (std/prelude/iter.vlt), but keep their own loops.
     pub(super) fn is_iterable(&mut self, t: TyId) -> bool {
-        self.cx.ty.array_elem(t).is_none() && self.method_exists(t, SYMBOL_ITERATOR)
+        self.cx.ty.array_elem(t).is_none()
+            && t != self.cx.ty.str_
+            && !self.is_prelude_map(t)
+            && self.method_exists(t, SYMBOL_ITERATOR)
+    }
+
+    /// Is `t` the prelude's `Map<K, V>` (iterated through `entries()`)?
+    fn is_prelude_map(&self, t: TyId) -> bool {
+        matches!(self.cx.ty.kind(t), TyKind::Adt(d, _) if Some(*d) == self.cx.prelude_adt("Map"))
     }
 
     /// `for (kind pattern of src) body` over the checked iterable `src` (see the module docs).

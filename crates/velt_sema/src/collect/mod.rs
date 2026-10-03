@@ -9,7 +9,8 @@
 //!    [`iface_extends`] flattens interface inheritance.
 //! 4. [`classes`]: `override` rules, vtable slots, inherited constructors, field-init rules.
 //! 5. [`impls`]: `implements` checking and `Program::impls`; [`comparable`]: `extend` blocks
-//!    defining `compareTo` implement the builtin `Comparable<T>`.
+//!    defining `compareTo` implement the builtin `Comparable<T>`; [`iterable`]: those defining
+//!    `[Symbol.iterator](): Iterator<T, E>` implement `Iterable<T, E>`.
 //!
 //! [`field_only`]: field-only interfaces are object types (declared after phase 1, filled after
 //! phase 3). Type-parameter defaults are resolved and checked after phase 1
@@ -29,6 +30,7 @@ pub(crate) mod getters;
 mod iface_extends;
 mod impls;
 mod imports;
+mod iterable;
 mod lookup;
 mod nested;
 pub(crate) mod shapes;
@@ -61,5 +63,6 @@ pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     classes::check_classes(cx);
     impls::build_impls(cx);
     comparable::extension_impls(cx);
+    iterable::extension_impls(cx);
     items
 }

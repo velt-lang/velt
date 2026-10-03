@@ -24,7 +24,7 @@ impl FnCx<'_, '_> {
         if let Some(TyKind::Tuple(ts)) = exp.map(|t| self.cx.ty.kind(t).clone()) {
             return self.tuple_lit(elems, &ts, exp.expect("ICE: tuple"), span);
         }
-        let raw_elem = exp.and_then(|t| self.cx.ty.array_elem(t));
+        let raw_elem = exp.and_then(|t| self.cx.ty.array_elem(t).or(self.cx.iterable_elem(t)));
         let exp_elem = raw_elem.filter(|t| !self.cx.ty.has_error(*t));
         // A tuple element type that is only partly known (`[K, V][]` while inferring `K` and
         // `V`) still says the elements are tuples: the first one is checked against it.

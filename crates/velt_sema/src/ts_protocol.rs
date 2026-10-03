@@ -14,18 +14,21 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use crate::ctx::Ctx;
+use crate::ctx::{Ctx, Item};
 use crate::hir::{DefId, TyId, TyKind};
 use crate::resolve::TyEnv;
 
 /// The prelude's protocol types whose second argument TypeScript reads as `TReturn`.
-const PROTOCOL_TYPES: [&str; 6] = [
+const PROTOCOL_TYPES: [&str; 9] = [
     "Generator",
     "AsyncGenerator",
     "Iterator",
     "AsyncIterator",
     "Iterable",
     "AsyncIterable",
+    "IterableIterator",
+    "AsyncIterableIterator",
+    "IteratorObject",
 ];
 
 /// A second argument checked once base classes are known: (type name, `T`, the argument, its
@@ -91,6 +94,40 @@ impl Ctx<'_> {
             self.deferred_ts_returns.push(check);
         }
         Some(vec![t, second])
+    }
+
+    /// Is `item` the prelude's `IteratorResult<T>` alias?
+    pub(crate) fn is_iterator_result_alias(&self, item: Item) -> bool {
+        matches!((item, self.prelude.get("IteratorResult")), (Item::Alias(a), Some(Item::Alias(b))) if a == *b)
+    }
+
+    /// TypeScript's `IteratorResult<T, TReturn>`: a `TReturn` that says "returns nothing" is
+    /// dropped (`IteratorResult<number, void>` is `IteratorResult<number>`); any other one is
+    /// reported, since a finished result carries no value. `None`: reported.
+    pub(crate) fn iterator_result_args(
+        &mut self,
+        args: &[ast::TypeExpr],
+        env: &TyEnv,
+    ) -> Option<Vec<TyId>> {
+        let t = self.resolve_type(&args[0], env);
+        if no_return_spelling(&args[1]) {
+            return Some(vec![t]);
+        }
+        let second = self.resolve_type(&args[1], env);
+        if second == self.ty.unit || second == self.ty.error {
+            return Some(vec![t]);
+        }
+        let (tn, rn) = (self.display(t), self.display(second));
+        self.error(
+            Diagnostic::error(
+                format!("`IteratorResult` takes no return type: `{rn}` is TypeScript's `TReturn`"),
+                args[1].span,
+            )
+            .with_note(format!(
+                "TypeScript allows this (`IteratorResult<T, TReturn>`, whose finished result carries a `{rn}` value); Velt doesn't because generators and iterators return no value: a finished result is `{{ done: true }}`; write `IteratorResult<{tn}>`, and deliver a final value some other way (yield it, or store it where the caller can read it)"
+            )),
+        );
+        None
     }
 
     /// The second-argument checks made before base classes were known.

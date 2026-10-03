@@ -403,7 +403,9 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   numbers, strings and `Comparable` elements, and `sort(cmp)` (stable, any element type, like
   JS's `Array.prototype.sort(compareFn)`). Callbacks get the element and its index, like JS
   (`xs.map((x, i) => …)`), and may take fewer parameters. The full list is in the
-  [prelude](../std/prelude.md#arrays).
+  [prelude](../std/prelude.md#arrays). Arrays, strings and maps are
+  [`Iterable`](control-flow.md#iterables): they convert to `Iterable<T>` values, and
+  `xs[Symbol.iterator]()` returns an `Iterator<T>`.
 - `new Array<T>(n).fill(v)` and `Array.from({ length: n }, (_, i) => f(i))` build an array of
   `n` elements in one allocation. A bare `new Array<T>(n)` is an error: arrays have no holes.
 - **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. `Promise.all` over tuples of
