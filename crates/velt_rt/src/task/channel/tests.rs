@@ -138,3 +138,40 @@ fn try_send_queues_only_with_room_and_drops_what_it_refuses() {
     unsafe { velt_rt_chan_try_receive(h, slot.as_mut_ptr(), 8, 8) };
     assert_eq!((slot[0], slot[8]), (1, 1));
 }
+
+#[test]
+fn hand_offs_publish_this_threads_output_first() {
+    use crate::io::handoff_probe::{buffer_output, published};
+    let bounded = queue::Chan::new(1);
+    let v = 7u64;
+    let mut out = 0u64;
+    // SAFETY: 8-byte items, read from and written to live locals.
+    unsafe {
+        buffer_output();
+        assert!(matches!(
+            bounded.try_push(&v as *const u64 as *const u8, 8),
+            queue::Push::Sent
+        ));
+        assert!(published(), "send");
+        buffer_output();
+        assert!(matches!(
+            bounded.try_pop(&mut out as *mut u64 as *mut u8, 8),
+            queue::Pop::Item
+        ));
+        assert!(published(), "a receive that frees room");
+    }
+    buffer_output();
+    bounded.close();
+    assert!(published(), "close");
+
+    // A receive from an unbounded channel hands nothing over.
+    let unbounded = queue::Chan::new(0);
+    // SAFETY: as above.
+    unsafe {
+        unbounded.try_push(&v as *const u64 as *const u8, 8);
+        buffer_output();
+        unbounded.try_pop(&mut out as *mut u64 as *mut u8, 8);
+    }
+    assert!(!published());
+    crate::io::publish_before_handoff();
+}
