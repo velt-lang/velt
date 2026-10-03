@@ -185,11 +185,14 @@ impl<'a> Lexer<'a> {
         // diagnostic lies within its token's span or in the trivia before it, so the diagnostics
         // before `t` come first even where one token reports out of order (an unterminated
         // template after an escape inside it).
+        // The work counted is what is dropped: filtering would visit every entry instead.
         let keep = self
             .diags
             .partition_point(|d| d.labels.first().is_some_and(|l| l.span.lo < t.lo));
+        crate::work::add(self.diags.len() - keep);
         self.diags.truncate(keep);
         let keep = self.comments.partition_point(|c| c.start < t.lo);
+        crate::work::add(self.comments.len() - keep);
         self.comments.truncate(keep);
         self.set_ctx(ctx);
         self.done = false;

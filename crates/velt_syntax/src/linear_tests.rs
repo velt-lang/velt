@@ -1,9 +1,9 @@
 //! The parser decides where JSX starts and has the lexer re-lex from there (`lexer::relex_jsx`).
 //! These inputs must stay linear: each element is re-lexed once where the parser finds it,
 //! nested elements must not re-lex the rest of the file, and a re-lex drops only the lookahead
-//! caches and lexer diagnostics past its `<`. Work is counted (`work`), not timed, so a busy
-//! machine cannot fail them: `4 * n` units must cost about 4 times the work of `n`, where a
-//! quadratic regression costs about 16 times.
+//! caches, lexer diagnostics and comments past its `<`. Work is counted (`work`), not timed, so
+//! a busy machine cannot fail them: `4 * n` units must cost about 4 times the work of `n`, where
+//! a quadratic regression costs about 16 times.
 
 use velt_common::FileId;
 
@@ -44,9 +44,12 @@ fn caches_past_a_relex_only() {
         let parens = "function f(a: i64): i64 { return ((a + (1)) * (a - (2))) / (a + (3)); }\n";
         parens.repeat(n) + &"const p = <p>{(1)}</p>;\n".repeat(n)
     });
-    // ... and the lexer's diagnostics past it, not all of them.
+    // ... and the lexer's diagnostics and comments past it, not all of them.
     assert_linear("lexer errors before elements", 2_000, |n| {
         "const x = 1 \u{a7}; const y = <p>a</p>;\n".repeat(n)
+    });
+    assert_linear("comments before elements", 2_000, |n| {
+        "// one\nconst y = /* two */ <p>a</p>;\n".repeat(n)
     });
 }
 

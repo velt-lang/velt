@@ -1,6 +1,6 @@
 //! A work counter for tests: the lexer counts the tokens it lexes, the parser the tokens it
 //! consumes (also while speculating) and the tokens a parenthesis scan passes, and both the
-//! cache entries a JSX re-lex drops. Tests compare the totals for inputs of size n and 4n to
+//! cache entries, lexer diagnostics and comments a JSX re-lex drops. Tests compare the totals for inputs of size n and 4n to
 //! check that parsing stays linear without timing it. Outside tests `add` compiles to nothing.
 
 #[cfg(test)]
