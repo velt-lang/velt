@@ -17,6 +17,7 @@ use parking_lot::Mutex;
 use tokio::task::coop::has_budget_remaining;
 
 use super::node::{self, CANCELLED, DONE, NO_MEMBER, QUEUED};
+use super::timers::Timers;
 use crate::task::{SendPtr, VeltFut};
 
 /// The part of a local set that wakers use (from any thread).
@@ -147,6 +148,8 @@ pub(super) struct Driver<'a> {
     pub set: *mut LocalSet,
     pub task: &'a Waker,
     pub root: &'a mut dyn FnMut(),
+    /// The task's timers, fired at the start of the drain (timers.rs).
+    pub timers: Option<&'a Timers>,
 }
 
 /// Poll the state of started node `f` once. When it finishes, whoever awaits it resumes right
@@ -186,12 +189,25 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
     let set = d.set;
     // The set's own `Arc` keeps `shared` alive for the whole drain.
     let shared: &Shared = &*Arc::as_ptr(&(*set).shared);
+    // Due timers next, in timer order: their promises are queued (without waking this task,
+    // which is running) after the ones woken before, and the root, when it waits for one of the
+    // timers itself, resumes at its place among them.
+    let mut root_at = None;
+    if let Some(t) = d.timers {
+        shared.notified.store(true, SeqCst);
+        shared.take(&mut (*set).pending);
+        let before = (*set).pending.len();
+        root_at = t.fire(d.task).map(|n| before + n);
+    }
     // Registered before `notified` is cleared: a wake after this point reaches the task.
     shared.waker.register(d.task);
     shared.notified.store(false, SeqCst);
     shared.take(&mut (*set).pending);
     // Only nodes woken before this drain: one woken again meanwhile waits for the next poll.
-    for _ in 0..(*set).pending.len() {
+    for ran in 0..(*set).pending.len() {
+        if root_at == Some(ran) {
+            (d.root)();
+        }
         if !has_budget_remaining() {
             d.task.wake_by_ref();
             break;

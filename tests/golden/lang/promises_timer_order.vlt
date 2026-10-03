@@ -1,0 +1,80 @@
+// check: no leaks
+// Promises whose timers are due in the same tick resume in the order their timers were created,
+// like Node: started promises, the losers of a `Promise.race`, and `main` itself (#157).
+async function tick(name: string, ms: i64): Promise<string> {
+  await sleep(ms);
+  console.log(name);
+  return name;
+}
+
+async function ok(name: string, ms: i64): Promise<string> {
+  await sleep(ms);
+  console.log("ok", name);
+  return name;
+}
+
+// Waits for `release` or a long timer, whichever comes first: the timer is abandoned.
+async function opened(gate: Promise<bool>): Promise<void> {
+  await gate;
+}
+
+async function released(name: string, release: Promise<bool>): Promise<void> {
+  await Promise.race([sleep(1000), opened(release)]);
+  console.log(name, "released");
+}
+
+class Order {
+  seen = "";
+}
+
+async function note(order: Order, i: i64, ms: i64): Promise<void> {
+  await sleep(ms);
+  order.seen += order.seen == "" ? `${i}` : ` ${i}`;
+}
+
+async function main() {
+  const a = tick("a", 5);
+  const b = tick("b", 5);
+  const c = tick("c", 5);
+  const d = tick("d", 5);
+  await a;
+  await b;
+  await c;
+  await d;
+
+  const ps = [ok("f0", 5), ok("f1", 5), ok("f2", 5)];
+  console.log("race:", await Promise.race(ps));
+  await sleep(20);
+
+  // `main`'s own timer, created first, comes first; then a promise's, created after it.
+  const mine = sleep(5);
+  const theirs = tick("theirs", 5);
+  await mine;
+  console.log("main");
+  await theirs;
+
+  // And the other way round.
+  const first = tick("first", 5);
+  await sleep(5);
+  console.log("main again");
+  await first;
+
+  // A promise that stopped waiting for its timer (it lost a race) does not disturb the order.
+  const gate = Promise.withResolvers<bool>();
+  const r = released("r", gate.promise);
+  const t1 = tick("t1", 5);
+  const t2 = tick("t2", 5);
+  gate.resolve(true);
+  await r;
+  await t1;
+  await t2;
+
+  // Many timers due together (more than the timer driver wakes in one go).
+  const order = new Order();
+  const notes: Promise<void>[] = [];
+  for (let i = 0; i < 50; i++) {
+    notes.push(note(order, i, 5));
+  }
+  await Promise.all(notes);
+  console.log(order.seen);
+}

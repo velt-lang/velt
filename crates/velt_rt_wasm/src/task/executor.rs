@@ -224,15 +224,22 @@ unsafe fn run_task(id: usize) {
     ((*fut).drop.0)(fut);
 }
 
-/// Poll a timer leaf: ready once `deadline` (monotonic ms) has passed, else registered.
-pub fn poll_timer(deadline: f64, cx: &mut Context<'_>) -> Poll<()> {
+/// A sequence number for a timer created now: timers due at the same time fire in creation order.
+pub fn timer_seq() -> u64 {
+    with_exec(|e| {
+        e.timer_seq += 1;
+        e.timer_seq
+    })
+}
+
+/// Poll a timer leaf created with sequence number `seq` ([`timer_seq`]): ready once `deadline`
+/// (monotonic ms) has passed, else registered.
+pub fn poll_timer(deadline: f64, seq: u64, cx: &mut Context<'_>) -> Poll<()> {
     if platform::monotonic_ms() >= deadline {
         return Poll::Ready(());
     }
     let waker = cx.waker().clone();
     with_exec(|e| {
-        e.timer_seq += 1;
-        let seq = e.timer_seq;
         e.timers.push(Reverse(Timer {
             deadline,
             seq,
