@@ -12,6 +12,7 @@
 mod expr;
 mod loops;
 mod state;
+mod tries;
 
 use std::collections::{HashMap, HashSet};
 
@@ -55,6 +56,8 @@ struct Moves<'a> {
     boxable: Vec<bool>,
     /// Locals that need a shared cell (`LocalDef::boxed`, see `crate::ownership::cells`).
     boxed: HashSet<LocalId>,
+    /// The open `try` bodies and handlers (innermost last), see [`tries`].
+    tries: Vec<tries::TryFrame>,
 }
 
 /// What the move dataflow found besides errors.
@@ -135,6 +138,7 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
             shared: shared[i].clone(),
             writers: &writers,
             boxed: HashSet::new(),
+            tries: vec![],
             report: false,
             errors: vec![],
             loops: vec![],
@@ -417,7 +421,7 @@ impl Moves<'_> {
                 if let Some(e) = e {
                     self.expr(e, st);
                 }
-                *st = None;
+                self.leave_return(st);
             }
             StmtKind::If { cond, then, els } => {
                 self.expr(cond, st);
@@ -455,30 +459,6 @@ impl Moves<'_> {
                     s.uninit[i] = true;
                 }
             }
-        }
-    }
-
-    /// A throw can leave the `try` body anywhere: the handler starts from the join of the
-    /// states at entry and at the end of the body.
-    fn try_stmt(
-        &mut self,
-        body: &Block,
-        catch: Option<&(Option<LocalId>, Block)>,
-        finally: Option<&Block>,
-        st: &mut Flow,
-    ) {
-        let entry = st.clone();
-        self.block(body, st);
-        if let Some((local, handler)) = catch {
-            let mut h = join(entry, st.clone());
-            if let Some(l) = local {
-                Self::init_local(*l, &mut h);
-            }
-            self.block(handler, &mut h);
-            *st = join(st.take(), h);
-        }
-        if let Some(f) = finally {
-            self.block(f, st);
         }
     }
 }
