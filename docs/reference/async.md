@@ -232,11 +232,24 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
   passing or capturing it adds a reference (so does `.clone()`); it is never deep-copied. For
   64-bit integers, `.add(n)`, `.get()` and `.set(v)` are atomic.
 - `shared(new Mutex<T>(x))` with `m.with((v) => …)`: a synchronous lock. The callback gets the
-  value itself (assigning `v` updates it), returns a result, and must not be async. The result
-  leaves the lock like a value going to another task: an object the callback made moves out,
-  a part of the protected value comes out as a copy (`m.with((v) => v.inner)` is a snapshot;
-  change the value inside the callback). A function value stored in the value must not have
-  captured a resource without `clone()` (the program stops when the lock is released).
+  value itself (assigning `v` updates it), returns a result, and must not be async. Nothing
+  crosses the lock by reference, since other threads use the value as soon as it is released:
+  - The result leaves the lock like a value going to another task: an object the callback made
+    moves out, a part of the protected value comes out as a copy (`m.with((v) => v.inner)` is
+    a snapshot; change the value inside the callback).
+  - So does a part of the value the callback stores into something it captured
+    (`out.push(v.inner)` pushes a copy, `last = v.inner` assigns one), and an outside object it
+    stores into the value (`v.items.push(item)` stores a copy; `item` stays outside, and a
+    resource without `clone()` is stored itself). An object stored from one place in the value
+    to another, or from one outside object to another, stays the same object.
+  - A promise made from the value would run after the lock is released, without it, so it is
+    an error, whether the callback returns, stores or drops it (`m.with((v) => load(v))`:
+    "this `Promise<…>` uses the locked value, and would run after `with` releases the lock").
+    Take what the work needs out of the value, await outside `with`, and store the result with
+    another `with`. `spawn(load(v))` is allowed: the task gets a copy. A callback generic in its
+    result that turns out to return a promise stops the program.
+  - A function value stored in the value must not have captured a resource without `clone()`
+    (the program stops when the lock is released).
 
 `shared(x)` is a thread boundary like `spawn`, and it takes `x` itself: a variable used after
 it went into `shared(...)` (also inside `new Mutex(o)`, a literal or a constructor call there)

@@ -1,0 +1,7 @@
+mutex_with_promise.vlt:24:33
+mutex_with_promise.vlt:25:33
+mutex_with_promise.vlt:28:13
+mutex_with_promise.vlt:31:15
+mutex_with_promise.vlt:33:27
+error: this `Promise<i64>` uses the locked value, and would run after `with` releases the lock
+await outside `with`, and store the result with another `with`

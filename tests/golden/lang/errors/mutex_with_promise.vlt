@@ -1,0 +1,36 @@
+// A promise made from the value a `with` callback is given would run after the lock is
+// released, without it (#398): returned, stored or dropped.
+class Outer {
+  n: i64 = 0;
+
+  async bump(): Promise<i64> {
+    await yieldNow();
+    this.n += 1;
+    return this.n;
+  }
+}
+
+async function read(o: Outer): Promise<i64> {
+  await yieldNow();
+  return o.n;
+}
+
+function later(o: Outer): Promise<i64> {
+  return read(o);
+}
+
+async function main() {
+  const m = shared(new Mutex<Outer>(new Outer()));
+  const a = await m.with((v) => read(v));
+  const b = await m.with((v) => v.bump());
+  const ps: Promise<i64>[] = [];
+  m.with((v) => {
+    ps.push(later(v));
+  });
+  m.with((v) => {
+    const p = read(v);
+  });
+  const f = (v: Outer) => read(v);
+  const c = await m.with(f);
+  console.log(a, b, c);
+}

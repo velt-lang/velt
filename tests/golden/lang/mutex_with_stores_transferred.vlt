@@ -1,0 +1,76 @@
+// check: no leaks
+// What a `with` callback stores across the lock leaves it like its result (#398): a part of
+// the protected value stored into captured state (an array, an object's field, a `Map`, a
+// variable, through a helper or a nested closure) comes out as a copy. 8 tasks keep changing
+// the copies they took out while the protected value changes only under the lock, so its
+// count is exact.
+class Inner {
+  n: i64 = 0;
+}
+
+class Holder {
+  items: Inner[] = [];
+}
+
+class Outer {
+  inner: Inner = new Inner();
+  items: Inner[] = [new Inner(), new Inner()];
+}
+
+function stash(xs: Inner[], x: Inner) {
+  xs.push(x);
+}
+
+function stashFrom(xs: Inner[], o: Outer) {
+  xs.push(o.inner);
+}
+
+async function worker(m: shared<Mutex<Outer>>): Promise<i64> {
+  let seen: i64 = 0;
+  for (let k = 0; k < 500; k++) {
+    const out: Inner[] = [];
+    const holder = new Holder();
+    const byName = new Map<string, Inner>();
+    let last: Inner | null = null;
+    m.with((v) => {
+      v.inner.n += 1;
+      out.push(v.inner);
+      holder.items.push(v.items[0]);
+      const list = holder.items;
+      list.push(v.items[1]);
+      byName.set("inner", v.inner);
+      last = v.inner;
+      v.items.forEach((x) => out.push(x));
+      for (const x of v.items) {
+        stash(out, x);
+      }
+      stashFrom(out, v);
+    });
+    // Changing the copies must not touch the protected value.
+    for (const x of out) {
+      x.n += 1000;
+    }
+    for (const x of holder.items) {
+      x.n += 1000;
+    }
+    byName.get("inner")!.n += 1000;
+    if (last != null) {
+      last.n += 1000;
+    }
+    seen += out.length == 6 && holder.items.length == 2 ? 1 : 0;
+    await yieldNow();
+  }
+  return seen;
+}
+
+async function main() {
+  const m = shared(new Mutex<Outer>(new Outer()));
+  const ts: Promise<i64>[] = [];
+  for (let i = 0; i < 8; i++) {
+    ts.push(spawn(worker(m.clone())));
+  }
+  const r = await Promise.all(ts);
+  const n = m.with((v) => v.inner.n);
+  const rest = m.with((v) => v.items[0].n + v.items[1].n);
+  console.log(r.length, r[0], n, rest);
+}

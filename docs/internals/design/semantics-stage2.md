@@ -157,6 +157,15 @@ the settling statement released its own reference (std/prelude/promise.vlt, #263
 whose type cannot reach a counted object (`Intrinsic::NeedsTransfer`, a constant) settles at
 once, so plain replies cost no extra step.
 
+`Mutex.with` is a boundary too (#373, #398): its result is transferred while the lock is still
+held (async_fn/sync.rs `leave_lock`), and sema (ownership/locked) transfers what the callback
+stores from the value into its captured state or from that state into the value, tracking which
+side each local of the callback may reach; a promise made from the value is rejected, since it
+would run after the lock is released. Holding the lock until such a promise settles (an async
+`with`, like `runExclusive`) would need an asynchronous lock that synchronous `with` callers
+cannot starve, and a way to cancel a started promise together with its holder (a dropped one
+keeps running, §1.1 of rt_abi_async.md); until then the error keeps such programs out.
+
 A deep copy of a class with its own `clone()` calls it when a field-by-field copy would
 duplicate a resource (a `[Symbol.dispose]` hook of its own or of a part, or a promise), so a
 resource is duplicated by its type (#122); other classes are copied field by field (a
@@ -233,6 +242,13 @@ value's captures, an interface value's implementor) panics (glue/clone.rs). Stri
   the new task with its arguments as they were passed, not transferred (a gap: the caller must
   not use them afterwards).
 - `Mutex.with` callbacks and `attempt(f)` are not stabilized like ordinary calls.
+- `Mutex.with` (#398): sema sees the stores and promises of the callbacks it can resolve
+  (literals, `const`s, closures passed to a parameter that reaches `with`). A promise started
+  by a function the callback calls (not returned) still runs after the lock is released, and
+  a function value of unknown body that stores a part of the value into state it captured
+  shares it. A resource without `clone()` stored into the value from a captured variable stays
+  shared with the variable (it cannot be copied, and a callback cannot move what it captured
+  even though `with` calls it once).
 - `Map` (and `Set`) keys of struct, object-literal and tuple type compare by content
   (`__intrinsic_eq` with the structural hash), not by identity as in JS; class instances
   compare by identity.

@@ -1,0 +1,5 @@
+out 0
+in 0 100
+within 10 20
+outside 11 11
+spawned 11 20

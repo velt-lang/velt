@@ -9,6 +9,11 @@
 //!   value is checked for function values other threads could not call (`leave_lock`,
 //!   glue/many.rs). The value is passed by pointer — also a scalar one
 //!   when `f` is a closure literal (`Cx::by_ref_params`), so `(v) => { v += 1 }` updates it.
+//!   A promise made under the lock would run after it is released: sema rejects those made
+//!   from the value (velt_sema ownership/locked, which also transfers what the callback
+//!   stores across the lock), and a generic result that turns out to hold one panics.
+
+use std::collections::HashSet;
 
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
@@ -128,13 +133,25 @@ impl FnLower<'_, '_> {
             Ty::Ptr,
             Rvalue::Use(Operand::Copy(proj(&fp, Proj::Field(1)))),
         );
+        let ret = self.sub(ty);
+        // Sema rejects the promises a callback makes from the value; a generic result is only
+        // known here (velt_sema ownership/locked).
+        let generic = ret != ty;
+        if let Some(p) = generic
+            .then(|| self.promise_part(ret, &mut HashSet::new()))
+            .flatten()
+        {
+            let name = self.cx.type_name(p);
+            self.panic_msg(&format!(
+                "the function passed to `Mutex.with` returns a `{name}`, which would run after the lock is released; await outside `with`"
+            ));
+        }
         self.call_rt(Rt::MutexLock, vec![lock.clone()], None);
         let (arg, pt) = match self.cx.ty(vty) {
             Ty::Agg(_) => (self.addr(value.clone()), Ty::Ptr),
             _ if by_ref => (self.addr(value.clone()), Ty::Ptr),
             s => (Operand::Copy(value.clone()), s),
         };
-        let ret = self.sub(ty);
         let abi = self.cx.ret_abi(ret, None);
         let mut params = vec![Ty::Ptr, pt];
         if abi.out.is_some() {
@@ -152,6 +169,23 @@ impl FnLower<'_, '_> {
         self.many_check(value, vty);
         self.call_rt(Rt::MutexUnlock, vec![lock], None);
         r
+    }
+
+    /// The promise type in `t` (itself or a part), if any.
+    fn promise_part(&mut self, t: TyId, seen: &mut HashSet<TyId>) -> Option<TyId> {
+        if !seen.insert(t) {
+            return None;
+        }
+        let parts = match self.cx.kind(t) {
+            TyKind::Promise(..) => return Some(t),
+            TyKind::Shared(_) | TyKind::Dyn(..) | TyKind::Closure(_) | TyKind::FnPtr { .. } => {
+                return None
+            }
+            TyKind::Array(e) => vec![e],
+            TyKind::Adt(..) if self.cx.is_class(t) => self.cx.adt_field_tys(t),
+            _ => self.cx.part_types(t),
+        };
+        parts.into_iter().find_map(|p| self.promise_part(p, seen))
     }
 
     /// The callback's result `r` (of type `ret`), about to leave the lock: transferred like a
