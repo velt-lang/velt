@@ -31,7 +31,12 @@ pub fn count_units(bytes: &[u8]) -> usize {
     if bytes.is_ascii() {
         return bytes.len();
     }
-    // A plain loop over the bytes, which the compiler vectorizes.
+    count_units_scan(bytes)
+}
+
+/// [`count_units`] without the ASCII shortcut: a plain loop over the bytes, which the compiler
+/// vectorizes.
+fn count_units_scan(bytes: &[u8]) -> usize {
     bytes
         .iter()
         .map(|&b| (b & 0xC0 != 0x80) as usize + (b >= 0xF0) as usize)
@@ -39,16 +44,16 @@ pub fn count_units(bytes: &[u8]) -> usize {
 }
 
 /// Lone surrogates in `bytes`: a surrogate code point is the only sequence that starts with
-/// `ED` followed by `A0..BF`.
+/// `ED` followed by `A0..BF`. Text without an `ED` byte (most of it) is ruled out by a fast
+/// search.
 pub fn count_lone(bytes: &[u8]) -> usize {
-    match bytes.len() {
-        0 | 1 => 0,
-        n => bytes[..n - 1]
-            .iter()
-            .zip(&bytes[1..])
-            .filter(|&(&a, &b)| a == 0xED && b >= 0xA0)
-            .count(),
+    if !bytes.contains(&0xED) {
+        return 0;
     }
+    bytes
+        .windows(2)
+        .filter(|w| w[0] == 0xED && w[1] >= 0xA0)
+        .count()
 }
 
 /// The summary of `bytes`, counted: inline for the ASCII check, out of line for the rest.
@@ -64,7 +69,7 @@ pub fn summarize(bytes: &[u8]) -> Summary {
 #[inline(never)]
 fn summarize_non_ascii(bytes: &[u8]) -> Summary {
     Summary {
-        units: count_units(bytes),
+        units: count_units_scan(bytes),
         lone: count_lone(bytes),
     }
 }
