@@ -219,6 +219,9 @@ fn check_callback(
         }
     }
     let mut unfixable = vec![];
+    if let Some((_, f)) = bodies.iter().find(|(d, _)| *d == c) {
+        unfixable.extend(resource_results(cx, &r, c, f));
+    }
     let mut inward = vec![];
     if !std {
         for (d, f) in bodies.iter_mut() {
@@ -249,6 +252,51 @@ fn check_callback(
         unfixable_error(cx, u);
     }
     later_uses(cx, res, c, inward, reported);
+}
+
+/// The callback's results that are a part of the value owning a resource without `clone()`:
+/// `with`'s result leaves the lock as a copy (async_fn/sync.rs `leave_lock`), which cannot be
+/// made (r3; at run time it panicked).
+fn resource_results(
+    cx: &mut Ctx,
+    r: &regions::Regions,
+    c: DefId,
+    f: &FnDef,
+) -> Vec<stores::Unfixable> {
+    struct Results(Vec<Expr>);
+    impl VisitMut for Results {
+        fn stmt(&mut self, s: &mut crate::hir::Stmt) {
+            if let crate::hir::StmtKind::Return(Some(e)) = &s.kind {
+                self.0.push(e.clone());
+            }
+        }
+    }
+    let mut body = f.body.block.clone();
+    let mut found = Results(vec![]);
+    visit::block(&mut body, &mut found);
+    found.0.extend(f.body.block.value.as_deref().cloned());
+    let mut out = vec![];
+    for e in found.0 {
+        let mut x = &e;
+        while let E::Call {
+            callee: Callee::Intrinsic(crate::hir::Intrinsic::Share),
+            args,
+        } = &x.kind
+        {
+            match args.as_slice() {
+                [a] => x = a,
+                _ => break,
+            }
+        }
+        let part = crate::body::places::is_place(x) && r.mentions(cx, c, x) & regions::IN != 0;
+        if part && !cx.holds_promise(e.ty) && cx.owns_uncopyable(e.ty) {
+            out.push(stores::Unfixable {
+                span: e.span,
+                kind: stores::Cross::Resource,
+            });
+        }
+    }
+    out
 }
 
 /// Report a variable used after the callback `c` stored it into the value as a copy
@@ -338,7 +386,7 @@ fn unfixable_error(cx: &mut Ctx, u: stores::Unfixable) {
         ),
         stores::Cross::Resource => (
             "this would copy an object that owns a resource without `clone()` across the `with` lock".to_string(),
-            "a part of the locked value stored outside it must be copied, and so must one a promise made here keeps; give the resource type a `clone()` method, or use it inside the callback",
+            "a part of the locked value stored outside it, returned from `with`, or kept by a promise made here must be copied; give the resource type a `clone()` method, or use it inside the callback",
         ),
     };
     cx.error(Diagnostic::error(msg, u.span).with_note(note));

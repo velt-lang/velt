@@ -1,5 +1,6 @@
 mutex_with_resource.vlt:28:32
 mutex_with_resource.vlt:31:5
+mutex_with_resource.vlt:33:27
 error: the promise made here runs after `with` releases the lock, so it would need its own copy of this `Pool`, but `Pool` holds a `Conn`, which owns a resource (`[Symbol.dispose]`) and has no `clone()`
 give `Conn` a `clone()` method that duplicates the resource
 error: this would copy an object that owns a resource without `clone()` across the `with` lock

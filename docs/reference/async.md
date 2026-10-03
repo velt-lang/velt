@@ -236,7 +236,8 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
   crosses the lock by reference, since other threads use the value as soon as it is released:
   - The result leaves the lock like a value going to another task: an object the callback made
     moves out, a part of the protected value comes out as a copy (`m.with((v) => v.inner)` is
-    a snapshot; change the value inside the callback).
+    a snapshot; change the value inside the callback). A part that owns a resource without
+    `clone()` cannot be copied, so returning one is an error.
   - So does a part of the value the callback stores into something it captured
     (`out.push(v.inner)` pushes a copy, `last = v.inner` assigns one), and an outside object it
     stores into the value (`v.items.push(item)` stores a copy; `item` stays outside, so using

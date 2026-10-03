@@ -1,6 +1,6 @@
 // A part of a Mutex's value that owns a resource without clone() cannot leave the lock as a
-// copy (#398): not given to a promise that runs after the lock is released, and not stored
-// into something the callback captured.
+// copy (#398): not given to a promise that runs after the lock is released, not stored into
+// something the callback captured, and not returned from `with`.
 class Conn {
   id: i64;
 
@@ -30,5 +30,6 @@ async function main() {
   m.with((v) => {
     out.push(v.conn);
   });
-  console.log(await x, out.length);
+  const c = m.with((v) => v.conn);
+  console.log(await x, out.length, c.id);
 }
