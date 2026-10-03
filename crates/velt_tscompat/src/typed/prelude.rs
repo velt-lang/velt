@@ -115,6 +115,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
     ),
     // Builtins.
     (
+        "attempt",
+        "catch the error with `try { … } catch (e) { … }`",
+    ),
+    (
         "spawn",
         "keep tasks and threads out of code shared with TypeScript",
     ),
@@ -369,6 +373,15 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
             ("update", "read with `m.get(k)`, then `m.set(k, f(v))`"),
             ("upsert", "read with `m.get(k)`, then `m.set(k, …)`"),
         ],
+    ),
+    (
+        "Promise",
+        // Builtins.
+        &[(
+            "withResolvers",
+            "use `new Promise(…)` and keep its functions: `Promise.withResolvers` is ES2024, \
+             past the baseline",
+        )],
     ),
     (
         "Math",

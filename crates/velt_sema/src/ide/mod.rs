@@ -14,6 +14,7 @@ mod snapshot;
 mod types;
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use velt_common::{Diagnostic, Diagnostics, FileId, Span};
 
@@ -55,8 +56,10 @@ pub struct Analysis {
     effects: HashMap<Span, effects::Effects>,
     names: display::Names,
     members: members::Members,
-    /// What the type query ([`Analysis::type_of`]) needs of each definition.
-    type_defs: types::TypeDefs,
+    /// Exact span → first index in `types`, built on the first [`Analysis::type_of`].
+    type_index: OnceLock<HashMap<Span, usize>>,
+    /// Exact span → first index in `refs`, built on the first [`Analysis::def_of`].
+    ref_index: OnceLock<HashMap<Span, usize>>,
 }
 
 /// Check `modules` for an editor: like [`crate::check`], but errors never stop other items from
@@ -117,6 +120,20 @@ impl Analysis {
     /// The definition the name at `offset` of `file` denotes (a use or the declaration itself).
     pub fn def_at(&self, file: FileId, offset: u32) -> Option<DefRef> {
         innermost(self.refs.iter(), file, offset).cloned()
+    }
+
+    /// The definition the name whose span is exactly `span` denotes (a use or the declaration
+    /// itself); `None` when no name with that span was recorded. Where several were, the first
+    /// recorded wins, as with [`Analysis::def_at`].
+    pub fn def_of(&self, span: Span) -> Option<DefRef> {
+        let index = self.ref_index.get_or_init(|| {
+            let mut index = HashMap::with_capacity(self.refs.len());
+            for (i, (s, _)) in self.refs.iter().enumerate() {
+                index.entry(*s).or_insert(i);
+            }
+            index
+        });
+        self.refs.get(*index.get(&span)?).map(|(_, d)| d.clone())
     }
 
     /// The type of the innermost expression (or declared local) at `offset`, as source would

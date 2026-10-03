@@ -4,8 +4,9 @@
 //! `--json`) the same under both. Node runs the sample with its types stripped
 //! (`--experimental-transform-types`, Node 22.7 or newer) and a call of `main()` appended.
 //!
-//! Without Node the test is skipped with a message; `VELT_TSC_ORACLE=1` (the nightly oracle
-//! job) makes that a failure.
+//! It runs only with `VELT_TSC_ORACLE` set (the nightly oracle job sets it), where a missing
+//! Node is a failure; otherwise it is skipped with a message, so the pull request gate never
+//! runs Node.
 
 use std::path::Path;
 use std::process::Command;
@@ -96,11 +97,12 @@ fn node_ready() -> Result<(), String> {
 
 #[test]
 fn behaviour_samples_differ_under_node_and_their_fixes_agree() {
-    let required = std::env::var_os("VELT_TSC_ORACLE").is_some_and(|v| v == "1");
-    if let Err(why) = node_ready() {
-        assert!(!required, "VELT_TSC_ORACLE=1 but {why}");
-        eprintln!("skipped: {why}");
+    if std::env::var_os("VELT_TSC_ORACLE").is_none() {
+        eprintln!("skipped: set VELT_TSC_ORACLE=1 to run the behaviour samples under Node");
         return;
+    }
+    if let Err(why) = node_ready() {
+        panic!("VELT_TSC_ORACLE is set but {why}");
     }
     let samples =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/tscompat-oracle/behaviour");

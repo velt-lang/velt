@@ -147,6 +147,7 @@ fn arguments(owner: Span, args: &[ast::Expr], t: &mut Typed) {
     let Some(params) = t.decls.params.get(&owner).cloned() else {
         return;
     };
+    super::numbers::arguments(&params, args, t);
     let null_for_optional =
         |i: usize| params.get(i).is_some_and(|p| t.decls.is_optional(*p)) && is_null(&args[i]);
     // Trailing `null`s for optional parameters can be left out: the first one's fix removes

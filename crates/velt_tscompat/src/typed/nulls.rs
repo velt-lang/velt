@@ -131,10 +131,6 @@ pub(super) fn strict_eq(
         why,
         "Velt has only `null`; in JavaScript `undefined === null` is `false`, while \
          `undefined == null` is `true`",
-    ];
-    let notes = [
-        notes[0],
-        notes[1],
         "write `== null` / `!= null`: the same test in Velt",
     ];
     t.cx.report(

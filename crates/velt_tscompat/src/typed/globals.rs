@@ -88,13 +88,23 @@ fn global(name: &ast::Ident, hint: &str, t: &mut Typed) {
 /// `x` names).
 pub(super) fn member(e: &ast::Expr, object: &ast::Expr, prop: &ast::Ident, t: &mut Typed) {
     let optional = matches!(e.kind, E::Member { optional: true, .. });
-    let Some(owner) = owner(object, optional, t) else {
-        return;
-    };
-    if let Some(hint) = velt_member(&owner, &prop.name) {
+    let owner = owner(object, optional, t);
+    if let Some(hint) = owner.as_deref().and_then(|o| velt_member(o, &prop.name)) {
+        let owner = owner.as_deref().unwrap_or_default();
         report_member(prop.span, &format!("{owner}.{}", prop.name), hint, t);
+    } else if prop.name == "clone" && t.def(prop.span).is_none() {
+        // The compiler's `clone`, which every type has unless it declares its own.
+        let owner = match (owner, t.type_of(object)) {
+            (Some(owner), _) => owner,
+            (None, Some(ty)) => t.program.analysis.show_type(&ty),
+            (None, None) => "value".into(),
+        };
+        report_member(prop.span, &format!("{owner}.clone"), CLONE, t);
     }
 }
+
+const CLONE: &str = "copy what you need yourself (`{ ...o }`, `[...xs]`, `new Map(m)`), or \
+                     declare a `clone()` method on the class";
 
 fn report_member(span: Span, what: &str, hint: &str, t: &mut Typed) {
     t.cx.error(

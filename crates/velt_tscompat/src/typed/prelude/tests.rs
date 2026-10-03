@@ -96,7 +96,9 @@ fn owner_of_extend(target: &ast::TypeExpr) -> &'static str {
             "Array" => "Array",
             "string" => "string",
             "bool" | "boolean" => "boolean",
-            _ => "number",
+            "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
+            | "f32" | "f64" | "number" => "number",
+            other => panic!("an `extend` of `{other}`: name the owner the lint uses for it"),
         },
         T::Union(_) => "nullable",
         other => panic!("an `extend` of {other:?}"),

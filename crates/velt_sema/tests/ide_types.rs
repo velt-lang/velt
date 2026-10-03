@@ -265,3 +265,33 @@ function main() {
     let p = t.type_of("} = p", "p");
     assert!(matches!(t.analysis.view(&p), TypeView::Record));
 }
+
+#[test]
+fn field_only_interfaces_have_their_fields() {
+    let t = Typed::new(
+        "interface User { name: string; nick?: string }\n\
+         function f(u: User): string { return u.name; }\n",
+    );
+    let u = t.type_of(" u.name", "u");
+    let fields: Vec<(String, bool)> = t
+        .analysis
+        .fields(&u)
+        .into_iter()
+        .map(|f| (f.name, f.optional))
+        .collect();
+    assert_eq!(
+        fields,
+        [("name".to_string(), false), ("nick".to_string(), true)]
+    );
+}
+
+#[test]
+fn def_of_takes_an_exact_span() {
+    let t = Typed::new("function f(count: i64): i64 { return count + 1; }\n");
+    let at = t.span("return", "count");
+    let d = t.analysis.def_of(at).expect("a definition");
+    assert_eq!(d.name, "count");
+    assert_eq!(Some(d), t.analysis.def_at(at.file, at.lo));
+    let wider = Span::new(at.file, at.lo, at.hi + 1);
+    assert!(t.analysis.def_of(wider).is_none());
+}

@@ -19,3 +19,13 @@ export function loose(m: Map<string, number>): number {
   const v = m.get("a");
   return v ?? 0;
 }
+
+export function firstLong(xs: string[]): string | null {
+  const v = xs.find((s) => s !== "");
+  return v; //~ undefined-into-null
+}
+
+export function lookup(m: Map<string, number>): number | null {
+  const v = m.get("k");
+  return v; //~ undefined-into-null
+}

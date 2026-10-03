@@ -20,3 +20,15 @@ function isEven(n: number): boolean {
 export function evens(xs: number[]): number[] {
   return xs.filter(isEven);
 }
+
+function mayThrow(s: string): number {
+  if (s === "") {
+    throw new Error("empty");
+  }
+  return 1;
+}
+
+export function attempted(s: string): boolean {
+  const r = attempt(() => mayThrow(s)); //~ velt-global
+  return r instanceof Error;
+}

@@ -25,3 +25,30 @@ export class Box {
 export function standard(xs: number[], b: Box): boolean {
   return xs.includes(1) && b.isEmpty() && Math.max(1, 2) > 0;
 }
+
+export class Point {
+  x: number = 0;
+}
+
+export class Copyable {
+  n: number = 1;
+
+  clone(): Copyable {
+    return new Copyable();
+  }
+}
+
+export function copies(p: Point, c: Copyable, m: Map<string, number>): number {
+  const q = p.clone(); //~ velt-member
+  const n = m.clone(); //~ velt-member
+  const d = c.clone();
+  return q.x + n.size + d.n;
+}
+
+export function generic<T>(x: T): T {
+  return x.clone(); //~ velt-member
+}
+
+export function deferred(): Promise<number> {
+  return Promise.withResolvers<number>().promise; //~ velt-member
+}

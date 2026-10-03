@@ -12,7 +12,7 @@ mod decls;
 mod exprs;
 mod imports;
 mod jsx_pragma;
-mod types;
+pub(crate) mod types;
 
 use std::collections::HashSet;
 use std::path::Path;

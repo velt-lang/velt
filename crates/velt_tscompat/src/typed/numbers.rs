@@ -6,6 +6,7 @@ use velt_sema::ide::{LiteralKind, TypeView};
 use velt_syntax::ast::{self, BinaryOp, ExprKind as E, UpdateOp};
 
 use super::Typed;
+use crate::rules::types::INT_TYPES;
 use crate::{Fix, Severity};
 
 /// `a / b`: Velt divides integers when both operands have integer types; `a - b` on unsigned
@@ -24,10 +25,11 @@ pub(super) fn binary(e: &ast::Expr, op: BinaryOp, lhs: &ast::Expr, rhs: &ast::Ex
 }
 
 /// `Math.trunc(a / b)` where both operands have integer types (Velt's result, in both
-/// languages); `(a as number) / 2` where `a`'s type is made of integer literal types (`1 | 3`)
-/// and `b` is a number literal (JavaScript's result: Velt's `Math.trunc` keeps the literal
-/// types there, and rejects the quotient). Otherwise none: an `as number` on a declared
-/// integer would need the other operand converted too, and the context may need an integer.
+/// languages); `(a as number) / 2` where `a`'s type is made of integer literal types (`1 | 3`),
+/// `b` is a number literal and the quotient goes nowhere that declares an integer
+/// ([`int_position`]; JavaScript's result: Velt's `Math.trunc` keeps the literal types there,
+/// and rejects the quotient). Otherwise none: an `as number` on a declared integer would need
+/// the other operand converted too, and a fraction doesn't fit where an integer is declared.
 fn division_fix(e: &ast::Expr, lhs: &ast::Expr, rhs: &ast::Expr, t: &Typed) -> Option<Fix> {
     let is_int = |x: &ast::Expr| matches!(t.view_of(x), TypeView::Int(_));
     if is_int(lhs) && is_int(rhs) {
@@ -37,7 +39,10 @@ fn division_fix(e: &ast::Expr, lhs: &ast::Expr, rhs: &ast::Expr, t: &Typed) -> O
             title: "truncate with `Math.trunc` in both languages".into(),
         });
     }
-    if !matches!(rhs.kind, E::Lit(ast::Lit::Int { suffix: None, .. })) {
+    if !matches!(rhs.kind, E::Lit(ast::Lit::Int { suffix: None, .. }))
+        || !literal_int(&t.view_of(lhs), t)
+        || t.int_positions.contains(&(e.span.lo, e.span.hi))
+    {
         return None;
     }
     let lhs_text = t.cx.text(lhs.span);
@@ -182,4 +187,133 @@ fn default_sort(call: &ast::Expr, object: &ast::Expr, prop: &ast::Ident, t: &mut
         &notes,
         fix,
     );
+}
+
+/// Whether `view` is an integer literal type (`3`) or a union of them (`1 | 3`).
+fn literal_int(view: &TypeView, t: &Typed) -> bool {
+    match view {
+        TypeView::Literal(LiteralKind::Int) => true,
+        TypeView::Union(members) => members.iter().all(|m| literal_int(&t.view(m), t)),
+        _ => false,
+    }
+}
+
+/// Whether `view` is an integer type: a fixed-width integer or [`literal_int`].
+pub(super) fn int_view(view: &TypeView, t: &Typed) -> bool {
+    matches!(view, TypeView::Int(_)) || literal_int(view, t)
+}
+
+/// Whether the written type `ty` is an integer type (`i64`, `3`, `1 | 3`, `i64 | null`).
+pub(super) fn int_type_expr(ty: &ast::TypeExpr) -> bool {
+    use ast::TypeExprKind as T;
+    match &ty.kind {
+        T::Named { path, args } => match (path.as_slice(), args.is_empty()) {
+            ([name], true) => INT_TYPES.contains(&name.name.as_str()),
+            _ => false,
+        },
+        T::Literal(lit) => matches!(lit.lit, ast::Lit::Int { .. }),
+        T::Union(members) => {
+            members.iter().any(|m| !matches!(m.kind, T::Null))
+                && members
+                    .iter()
+                    .all(|m| matches!(m.kind, T::Null) || int_type_expr(m))
+        }
+        _ => false,
+    }
+}
+
+/// `e` goes where an integer is declared (a return value, a variable, an argument, a field),
+/// or into arithmetic that does: an `as number` fix in it would hand a fraction there.
+pub(super) fn int_position(e: &ast::Expr, t: &mut Typed) {
+    t.int_positions.insert((e.span.lo, e.span.hi));
+    match &e.kind {
+        E::Paren(x) | E::Unary { expr: x, .. } => int_position(x, t),
+        E::Cond { then, els, .. } => {
+            int_position(then, t);
+            int_position(els, t);
+        }
+        E::Binary { op, lhs, rhs } if arithmetic(*op) => {
+            int_position(lhs, t);
+            int_position(rhs, t);
+        }
+        _ => {}
+    }
+}
+
+fn arithmetic(op: BinaryOp) -> bool {
+    use BinaryOp as B;
+    matches!(
+        op,
+        B::Add
+            | B::Sub
+            | B::Mul
+            | B::Div
+            | B::Rem
+            | B::Pow
+            | B::BitAnd
+            | B::BitOr
+            | B::BitXor
+            | B::Shl
+            | B::Shr
+            | B::UShr
+    )
+}
+
+/// An operand of arithmetic or a comparison whose other operand has a declared integer type
+/// (`i64`) must stay an integer.
+pub(super) fn operand_positions(op: BinaryOp, lhs: &ast::Expr, rhs: &ast::Expr, t: &mut Typed) {
+    use BinaryOp as B;
+    let compares = matches!(op, B::Eq | B::NotEq | B::Lt | B::LtEq | B::Gt | B::GtEq);
+    if !arithmetic(op) && !compares {
+        return;
+    }
+    if matches!(t.view_of(rhs), TypeView::Int(_)) {
+        int_position(lhs, t);
+    }
+    if matches!(t.view_of(lhs), TypeView::Int(_)) {
+        int_position(rhs, t);
+    }
+}
+
+/// The variable `pattern` declares has an integer type.
+pub(super) fn int_local(pattern: &ast::Pattern, t: &Typed) -> bool {
+    let ast::PatternKind::Ident(id) = &pattern.kind else {
+        return false;
+    };
+    match t.program.analysis.type_of(id.span) {
+        Some(ty) => int_view(&t.view(&ty), t),
+        None => false,
+    }
+}
+
+/// `{ f: v }` where the field `f` has an integer type.
+pub(super) fn object(e: &ast::Expr, props: &[ast::ObjectProp], t: &mut Typed) {
+    let Some(ty) = t.type_of(e) else { return };
+    let fields = t.program.analysis.fields(&ty);
+    for prop in props {
+        let ast::ObjectProp::KeyValue(key, value) = prop else {
+            continue;
+        };
+        let int = fields
+            .iter()
+            .find(|f| f.name == key.name)
+            .is_some_and(|f| int_view(&t.view(&f.ty), t));
+        if int {
+            int_position(value, t);
+        }
+    }
+}
+
+/// The arguments for parameters (declaring identifiers `params`) with integer types.
+pub(super) fn arguments(params: &[Span], args: &[ast::Expr], t: &mut Typed) {
+    for (arg, param) in args.iter().zip(params) {
+        let int = t
+            .program
+            .analysis
+            .type_of(*param)
+            .is_some_and(|ty| int_view(&t.view(&ty), t));
+        if int {
+            int_position(arg, t);
+        }
+    }
 }

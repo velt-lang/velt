@@ -18,7 +18,8 @@
 //! message (the pull request gate has no Node packages); `VELT_TSC_ORACLE=1` (the nightly run)
 //! makes that a failure. That behaviour samples print differently under Node and `velt run`,
 //! and their fixes print the same, is checked through the `velt` binary
-//! (crates/veltc/tests/ts_compat.rs, `behaviour_samples_differ_under_node_and_their_fixes_agree`).
+//! (crates/veltc/tests/ts_compat.rs, `behaviour_samples_differ_under_node_and_their_fixes_agree`,
+//! which runs only with `VELT_TSC_ORACLE` set).
 
 mod common;
 

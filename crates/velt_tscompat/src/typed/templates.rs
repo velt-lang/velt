@@ -8,7 +8,7 @@ use velt_sema::ide::{NamedKind, TypeRef, TypeView};
 use velt_syntax::ast::{self, ExprKind as E};
 
 use super::numbers::is_global;
-use super::Typed;
+use super::{nulls, Typed};
 use crate::Severity;
 
 /// How a template literal prints a value, compared with JavaScript.
@@ -28,20 +28,26 @@ pub(super) fn template(exprs: &[ast::Expr], t: &mut Typed) {
         let Some(ty) = t.type_of(e) else { continue };
         match printed(&ty, t, 0) {
             Printed::Same => {}
-            Printed::Nullable => t.cx.report(
-                "nullable-in-template",
-                Severity::Warning,
-                e.span,
-                "`${…}` of a value that may be `null`: JavaScript prints `undefined` where it \
-                 is `undefined`"
-                    .into(),
-                &[
-                    "Velt prints `null`; in JavaScript a value that is `undefined` (an optional \
-                     field left out, `Map.get` of a missing key) prints `undefined`",
-                    "say what to print for nothing: `${x ?? \"\"}`, or test the value first",
-                ],
-                None,
-            ),
+            // Only a value that is `undefined` in JavaScript prints differently: a `null`
+            // prints `null` in both.
+            Printed::Nullable => {
+                let Some(why) = nulls::undefined_source(e, t) else {
+                    continue;
+                };
+                t.cx.report(
+                    "nullable-in-template",
+                    Severity::Warning,
+                    e.span,
+                    "`${…}` of a value that may be `undefined` in JavaScript: it prints \
+                     `undefined` there, `null` in Velt"
+                        .into(),
+                    &[
+                        why,
+                        "say what to print for nothing: `${x ?? \"\"}`, or test the value first",
+                    ],
+                    None,
+                )
+            }
             Printed::Contents => {
                 let what = describe(&ty, t);
                 t.cx.report(
@@ -51,7 +57,7 @@ pub(super) fn template(exprs: &[ast::Expr], t: &mut Typed) {
                     format!("`${{…}}` of {what} prints its contents in Velt, not in JavaScript"),
                     &[
                         "Velt formats the value as `console.log` does (`[ 1, 2 ]`, \
-                         `P {{ x: 1 }}`); JavaScript calls `toString()`: an array joins its \
+                         `P { x: 1 }`); JavaScript calls `toString()`: an array joins its \
                          elements with commas (`1,2`), an object gives `[object Object]`",
                         "format it yourself: `xs.join(\", \")`, a field (`${p.name}`), or a \
                          `toString()` method the class declares itself, which both call",
@@ -63,7 +69,7 @@ pub(super) fn template(exprs: &[ast::Expr], t: &mut Typed) {
     }
 }
 
-/// `an array`, `an object`, `` a `User` ``.
+/// `an array`, `an object`, `` a value of type `User` ``.
 fn describe(ty: &TypeRef, t: &Typed) -> String {
     match t.view(ty) {
         TypeView::Nullable(inner) => describe(&inner, t),
@@ -71,7 +77,7 @@ fn describe(ty: &TypeRef, t: &Typed) -> String {
         TypeView::Map(..) => "a `Map`".into(),
         TypeView::Set(_) => "a `Set`".into(),
         TypeView::Record => "an object".into(),
-        TypeView::Named(n) => format!("a `{}`", n.name),
+        TypeView::Named(n) => format!("a value of type `{}`", n.name),
         TypeView::Promise(_) => "a `Promise`".into(),
         TypeView::Fn => "a function".into(),
         _ => "a value that may be an object".into(),

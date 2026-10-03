@@ -38,10 +38,17 @@ spans cover the offset, the shortest wins.
 
 ## Type query
 For tools that reason about types (the `velt check --ts-compat` lint) without parsing display
-strings. Additive: checking records nothing new for it.
+strings. Additive: checking records nothing new for it, and the `Analysis` keeps nothing extra
+for it. It reads the type table and expression types kept for `type_at`, and the member tables
+kept for `members_of`. For each type definition, those hold its kind (class, struct, interface,
+enum, object type, or a union's members), whether the standard library declares it, its fields
+with their `?`, and the type that declares each method. The exact-span indexes behind `type_of`
+and `def_of` are built on the first call of each, so a client that never calls them pays
+nothing; after that each call is a hash lookup, so a tool can ask once per AST node.
 
 | Method | Result |
 |---|---|
+| `def_of(span) -> Option<DefRef>` | The definition named by the name whose span is exactly `span` (a use or a declaration; no covering or nearest match, unlike `def_at`); `None` when no name with that span was recorded. Where several were, the first recorded wins, as with `def_at`. |
 | `type_of(span) -> Option<TypeRef>` | The type of the checked expression (or declared local) whose span is exactly `span` (no covering or nearest match); `None` when nothing with that span was checked. Where a desugaring checks synthetic expressions with the span of the one they stand for (`const { a = 1 } = p` reads `p.a` at `p`'s span), the first record, the original's, wins. The type is the expression's own, before any conversion to the expected type (`m.get(k)` is `V \| null` even where a `V \| null` is wrapped again). |
 | `view(&TypeRef) -> TypeView` | One level of its structure (below). |
 | `fields(&TypeRef) -> Vec<FieldView>` | Fields of a class (inherited ones first), struct, interface or object type, with the type's arguments substituted: `FieldView { name, ty: TypeRef, optional }`. `optional` is `name?: T` in a class, struct or interface; an object type doesn't keep it (`{ a?: T }` is `{ a: T \| null }`). Empty for other types. |
@@ -49,7 +56,8 @@ strings. Additive: checking records nothing new for it.
 | `show_type(&TypeRef) -> String` | As `type_at` spells types, arguments substituted. |
 
 `TypeRef` is an opaque handle (`Clone`); generic arguments travel in it and are substituted when
-viewed, so recursive types are fine. `TypeView`:
+viewed, so recursive types are fine. `TypeView`, `NamedKind` and `LiteralKind` are
+`#[non_exhaustive]`: match them with a `_` arm. `TypeView`:
 
 ```rust
 pub enum TypeView {

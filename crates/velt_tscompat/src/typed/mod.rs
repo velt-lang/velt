@@ -1,5 +1,5 @@
 //! The rules that need types or what a name refers to: they ask the checker's IDE analysis
-//! ([`velt_sema::ide::Analysis`]: `type_of`, `view`, `fields`, `def_at`) about the nodes one
+//! ([`velt_sema::ide::Analysis`]: `type_of`, `view`, `fields`, `def_of`) about the nodes one
 //! walk over each module ([`velt_syntax::visit`]) hands them.
 //!
 //! - [`numbers`] for `int-division`, `unsigned-arith`, `default-sort`;
@@ -131,11 +131,23 @@ pub(crate) fn lint_module(module: &LintModule, program: &Program, decls: &Decls)
             decls,
             undefined_locals: HashSet::new(),
             truncated: HashSet::new(),
+            int_positions: HashSet::new(),
             catch: catch::State::default(),
         },
+        returns: vec![],
     };
     visit::walk_module(module.ast, &mut walk);
-    walk.t.cx.findings
+    // Returned values are checked once every local is known: `return v` comes after the
+    // `const v = m.get(k)` that makes `v` such a value, which the walk sees after the
+    // function itself. A value Velt has narrowed to non-null (`if (v === null) return 0;
+    // return v;`) goes to a declared `T`, not a `T | null`.
+    let Walk { mut t, returns } = walk;
+    for e in returns {
+        if matches!(t.view_of(e), TypeView::Nullable(_)) {
+            nulls::check_into_null(e, &mut t);
+        }
+    }
+    t.cx.findings
 }
 
 /// What the typed rules share while walking one module.
@@ -148,6 +160,8 @@ pub(crate) struct Typed<'a> {
     undefined_locals: HashSet<Span>,
     /// `a / b` directly inside `Math.trunc(…)`, which truncates in both languages.
     truncated: HashSet<(u32, u32)>,
+    /// Expressions that go where an integer is declared ([`numbers::int_position`]).
+    int_positions: HashSet<(u32, u32)>,
     catch: catch::State,
 }
 
@@ -187,10 +201,9 @@ impl Typed<'_> {
         self.program.analysis.view(t)
     }
 
-    /// The definition the name at `span` refers to (no other name ends where it starts, so
-    /// the innermost name at its start is this one).
+    /// The definition the name at `span` refers to.
     fn def(&self, span: Span) -> Option<DefRef> {
-        self.program.analysis.def_at(span.file, span.lo)
+        self.program.analysis.def_of(span)
     }
 
     /// Whether `d` is declared in the standard library.
@@ -199,24 +212,31 @@ impl Typed<'_> {
     }
 }
 
-/// The values a function with a declared return type returns: TypeScript checks them against
-/// it.
-fn declared_returns(values: Vec<&ast::Expr>, t: &mut Typed) {
-    for e in values {
-        nulls::check_into_null(e, t);
-        strings::iter_as_array(e, t);
-    }
-}
-
 /// The visitor: hands nodes to the rules.
 struct Walk<'a> {
     t: Typed<'a>,
+    /// The values functions with a declared return type return, which TypeScript checks
+    /// against it: `undefined-into-null` looks at them after the walk.
+    returns: Vec<&'a ast::Expr>,
+}
+
+impl<'a> Walk<'a> {
+    fn declared_returns(&mut self, ret: &ast::TypeExpr, values: Vec<&'a ast::Expr>) {
+        let int = numbers::int_type_expr(ret);
+        for e in &values {
+            strings::iter_as_array(e, &mut self.t);
+            if int {
+                numbers::int_position(e, &mut self.t);
+            }
+        }
+        self.returns.extend(values);
+    }
 }
 
 impl<'a> Visit<'a> for Walk<'a> {
     fn function(&mut self, sig: &'a ast::FnSig, body: &'a ast::Block) {
-        if sig.ret.is_some() {
-            declared_returns(nulls::returned(body), &mut self.t);
+        if let Some(ret) = &sig.ret {
+            self.declared_returns(ret, nulls::returned(body));
         }
     }
 
@@ -234,8 +254,11 @@ impl<'a> Visit<'a> for Walk<'a> {
     }
 
     fn var_decl(&mut self, v: &'a ast::VarDecl) {
-        if let (Some(_), Some(init)) = (&v.ty, &v.init) {
+        if let (Some(ty), Some(init)) = (&v.ty, &v.init) {
             strings::iter_as_array(init, &mut self.t);
+            if numbers::int_type_expr(ty) || numbers::int_local(&v.pattern, &self.t) {
+                numbers::int_position(init, &mut self.t);
+            }
         }
         nulls::var_decl(v, &mut self.t);
         defaults::var_decl(v, &mut self.t);
@@ -246,11 +269,15 @@ impl<'a> Visit<'a> for Walk<'a> {
         let t = &mut self.t;
         match &e.kind {
             E::Binary { op, lhs, rhs } => {
+                numbers::operand_positions(*op, lhs, rhs, &mut self.t);
                 numbers::binary(e, *op, lhs, rhs, &mut self.t);
                 nulls::strict_eq(e, *op, lhs, rhs, &mut self.t);
                 catch::binary(*op, lhs, rhs, &mut self.t);
             }
             E::Assign { op, target, value } => {
+                if numbers::int_view(&t.place_view(target), t) {
+                    numbers::int_position(value, t);
+                }
                 numbers::assign(e, *op, target, value, t);
                 slots::assign(target, value, t);
             }
@@ -277,12 +304,17 @@ impl<'a> Visit<'a> for Walk<'a> {
                 strings::index(object, t);
                 catch::member(object, t);
             }
-            E::Object(props) => slots::object(props, t),
+            E::Object(props) => {
+                numbers::object(e, props, t);
+                slots::object(props, t);
+            }
             E::Ident(id) => globals::ident(id, t),
             E::Cond { cond, then, .. } => catch::cond(cond, then, t),
             E::Arrow {
-                ret: Some(_), body, ..
-            } => declared_returns(nulls::arrow_returned(body), t),
+                ret: Some(ret),
+                body,
+                ..
+            } => self.declared_returns(ret, nulls::arrow_returned(body)),
             _ => {}
         }
         if let E::Arrow { params, .. } = &e.kind {

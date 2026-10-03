@@ -4,14 +4,15 @@
 //! the handle and substituted lazily, so viewing the fields of `Box<Map<K, V>>` sees the map, and
 //! recursive types are no problem.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use velt_common::{FileId, Span};
+use velt_common::Span;
 
-use super::Analysis;
-use crate::ctx::Ctx;
-use crate::defs::DefInfo;
-use crate::hir::{AdtKind, DefId, FloatTy, IntTy, LitValue, TyId, TyKind};
+use super::display::TypeName;
+use super::members::{Shape, TypeKind};
+use super::{Analysis, DefKind};
+use crate::hir::{DefId, FloatTy, IntTy, LitValue, TyId, TyKind};
 
 /// A type recorded by [`Analysis::type_of`] (or reached from one through [`Analysis::view`] /
 /// [`Analysis::fields`]). Opaque: inspect it with those queries.
@@ -26,6 +27,7 @@ pub struct TypeRef {
 
 /// One level of a type's structure.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum TypeView {
     /// A fixed-width integer (`i64`, `usize`, …; `IntTy::is_signed`, `IntTy::bits`).
     Int(IntTy),
@@ -71,6 +73,7 @@ pub enum TypeView {
 
 /// What a literal type's value is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LiteralKind {
     Str,
     Int,
@@ -91,6 +94,7 @@ pub struct NamedType {
 
 /// The kind of a [`NamedType`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum NamedKind {
     Class,
     Struct,
@@ -108,113 +112,22 @@ pub struct FieldView {
     pub optional: bool,
 }
 
-/// What the queries need of each definition, captured when checking ends.
-#[derive(Default)]
-pub(crate) struct TypeDefs {
-    defs: Vec<DefShape>,
-}
-
-enum DefShape {
-    Adt {
-        name: String,
-        kind: AdtKind,
-        is_std: bool,
-        fields: Vec<(String, TyId, bool)>,
-        /// Names of the methods the type declares itself (not inherited ones).
-        own_methods: Vec<String>,
-    },
-    Iface {
-        name: String,
-        is_std: bool,
-        fields: Vec<(String, TyId, bool)>,
-        methods: Vec<String>,
-    },
-    Enum {
-        name: String,
-        is_std: bool,
-        /// A union type: its members (each variant's payload).
-        union: Option<Vec<TyId>>,
-    },
-    None,
-}
-
-impl TypeDefs {
-    pub(crate) fn capture(cx: &Ctx) -> TypeDefs {
-        let std_files: Vec<FileId> = cx
-            .modules
-            .iter()
-            .filter(|m| m.is_std)
-            .map(|m| m.file)
-            .collect();
-        let is_std = |span: Span| std_files.contains(&span.file);
-        let fields = |fs: &[crate::defs::FieldInfo]| {
-            fs.iter()
-                .map(|f| (f.name.clone(), f.ty, f.optional))
-                .collect()
-        };
-        let defs = cx
-            .info
-            .iter()
-            .enumerate()
-            .map(|(i, info)| match info {
-                DefInfo::Adt(a) => {
-                    let mut own_methods: Vec<String> = a
-                        .methods
-                        .iter()
-                        .filter(|(_, m)| !m.is_static)
-                        .filter(|(_, m)| cx.fn_info(m.def).owner == Some(DefId(i as u32)))
-                        .map(|(n, _)| n.clone())
-                        .collect();
-                    own_methods.sort();
-                    DefShape::Adt {
-                        name: a.name.clone(),
-                        kind: a.kind,
-                        is_std: cx.modules.get(a.module).is_some_and(|m| m.is_std),
-                        fields: fields(&a.fields),
-                        own_methods,
-                    }
-                }
-                DefInfo::Iface(x) => DefShape::Iface {
-                    name: x.name.clone(),
-                    is_std: cx.modules.get(x.module).is_some_and(|m| m.is_std),
-                    fields: fields(&x.fields),
-                    methods: x.methods.iter().map(|m| m.name.clone()).collect(),
-                },
-                DefInfo::Enum(e) => DefShape::Enum {
-                    name: e.name.clone(),
-                    is_std: is_std(e.span),
-                    union: e.is_union.then(|| {
-                        e.variants
-                            .iter()
-                            .filter_map(|v| v.payload.first().copied())
-                            .collect()
-                    }),
-                },
-                DefInfo::Fn(_) | DefInfo::Global(_) => DefShape::None,
-            })
-            .collect();
-        TypeDefs { defs }
-    }
-
-    fn get(&self, d: DefId) -> &DefShape {
-        self.defs.get(d.0 as usize).unwrap_or(&DefShape::None)
-    }
-}
-
 impl Analysis {
     /// The type of the checked expression (or declared local) whose span is exactly `span`;
     /// `None` when nothing with that span was checked.
     pub fn type_of(&self, span: Span) -> Option<TypeRef> {
-        // The first record: desugarings check synthetic expressions with the span of the
-        // expression they stand for after it (`const { a = 1 } = p` reads `p.a` at `p`'s span).
-        self.types
-            .iter()
-            .find(|(s, _, _)| *s == span)
-            .map(|(_, ty, ctx)| TypeRef {
-                ty: *ty,
-                ctx: *ctx,
-                env: None,
-            })
+        let index = self.type_index.get_or_init(|| {
+            // The first record: desugarings check synthetic expressions with the span of the
+            // expression they stand for after it (`const { a = 1 } = p` reads `p.a` at `p`'s
+            // span).
+            let mut index = HashMap::with_capacity(self.types.len());
+            for (i, (s, _, _)) in self.types.iter().enumerate() {
+                index.entry(*s).or_insert(i);
+            }
+            index
+        });
+        let &(_, ty, ctx) = self.types.get(*index.get(&span)?)?;
+        Some(TypeRef { ty, ctx, env: None })
     }
 
     /// `t` as source spells it (`Map<string, i64>`, `{ x: i64 }`).
@@ -273,35 +186,29 @@ impl Analysis {
                 args: args.to_vec(),
             })
         };
-        match self.type_defs.get(d) {
-            DefShape::Adt {
-                kind: AdtKind::Anon,
-                ..
-            } => TypeView::Record,
-            DefShape::Adt {
-                name, is_std: true, ..
-            } if name == "Set" && args.len() == 1 => TypeView::Set(args[0].clone()),
-            DefShape::Adt {
-                name, is_std: true, ..
-            } if name == "Map" && args.len() == 2 => {
+        let Some(tm) = self.members.types.get(&d) else {
+            return TypeView::Other;
+        };
+        let name = match self.names.defs.get(d.0 as usize) {
+            Some(TypeName::Named(name)) => name.as_str(),
+            _ => "",
+        };
+        let is_std = tm.is_std;
+        match &tm.kind {
+            TypeKind::Anon => TypeView::Record,
+            TypeKind::Class | TypeKind::Struct if is_std && name == "Set" && args.len() == 1 => {
+                TypeView::Set(args[0].clone())
+            }
+            TypeKind::Class | TypeKind::Struct if is_std && name == "Map" && args.len() == 2 => {
                 TypeView::Map(args[0].clone(), args[1].clone())
             }
-            DefShape::Adt {
-                name, kind, is_std, ..
-            } => {
-                let kind = match kind {
-                    AdtKind::Struct => NamedKind::Struct,
-                    _ => NamedKind::Class,
-                };
-                named(name, kind, *is_std)
+            TypeKind::Struct => named(name, NamedKind::Struct, is_std),
+            TypeKind::Class => named(name, NamedKind::Class, is_std),
+            TypeKind::Interface => named(name, NamedKind::Interface, is_std),
+            TypeKind::Union(members) => {
+                TypeView::Union(members.iter().map(|m| in_def(*m)).collect())
             }
-            DefShape::Iface { name, is_std, .. } => named(name, NamedKind::Interface, *is_std),
-            DefShape::Enum {
-                union: Some(members),
-                ..
-            } => TypeView::Union(members.iter().map(|m| in_def(*m)).collect()),
-            DefShape::Enum { name, is_std, .. } => named(name, NamedKind::Enum, *is_std),
-            DefShape::None => TypeView::Other,
+            TypeKind::Enum => named(name, NamedKind::Enum, is_std),
         }
     }
 
@@ -320,20 +227,23 @@ impl Analysis {
                 env: t.env.clone(),
             })
             .collect();
-        let fields = match self.type_defs.get(*d) {
-            DefShape::Adt { fields, .. } | DefShape::Iface { fields, .. } => fields,
-            _ => return vec![],
+        let Some(tm) = self.members.types.get(d) else {
+            return vec![];
         };
-        fields
+        tm.instance
             .iter()
-            .map(|(name, ty, optional)| FieldView {
-                name: name.clone(),
-                ty: TypeRef {
-                    ty: *ty,
-                    ctx: 0,
-                    env: Some(env.clone()),
-                },
-                optional: *optional,
+            .filter(|m| m.def.kind == DefKind::Field)
+            .filter_map(|m| match m.shape {
+                Shape::Value(ty) => Some(FieldView {
+                    name: m.name.clone(),
+                    ty: TypeRef {
+                        ty,
+                        ctx: 0,
+                        env: Some(env.clone()),
+                    },
+                    optional: m.optional,
+                }),
+                Shape::Method(..) => None,
             })
             .collect()
     }
@@ -345,11 +255,15 @@ impl Analysis {
         let (TyKind::Adt(d, _) | TyKind::Dyn(d, _)) = self.names.table.kind(t.ty) else {
             return false;
         };
-        match self.type_defs.get(*d) {
-            DefShape::Adt { own_methods, .. } => own_methods.iter().any(|m| m == name),
-            DefShape::Iface { methods, .. } => methods.iter().any(|m| m == name),
-            _ => false,
-        }
+        let Some(tm) = self.members.types.get(d) else {
+            return false;
+        };
+        let interface = matches!(tm.kind, TypeKind::Interface);
+        tm.instance.iter().any(|m| {
+            m.name == name
+                && m.def.kind != DefKind::Field
+                && (interface || m.declared_in == Some(*d))
+        })
     }
 
     /// `t` with a generic parameter replaced by its argument, when it has one.
