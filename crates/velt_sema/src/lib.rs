@@ -84,16 +84,40 @@ pub(crate) const SEMA_STACK_BYTES: usize = 64 << 20;
 /// CONTRACT: check a whole program. `modules[root]` must define `main`.
 /// Returns `Some(program)` iff there are no errors; warnings may accompany either outcome.
 pub fn check(modules: &[SourceModule], root: usize) -> (Option<hir::Program>, Diagnostics) {
+    check_with(modules, root, CheckOptions::default())
+}
+
+/// What [`check_with`] requires of the program beyond being well-typed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CheckOptions {
+    /// The root module must define `main` (a program to build or run). Without it a root with no
+    /// `main` is a library module: every body is still checked and the program's `entry` is
+    /// `None`; a `main` that is there is validated either way.
+    pub require_main: bool,
+}
+
+impl Default for CheckOptions {
+    fn default() -> Self {
+        Self { require_main: true }
+    }
+}
+
+/// [`check`] with options (`velt check` checks library modules, which have no `main`).
+pub fn check_with(
+    modules: &[SourceModule],
+    root: usize,
+    opts: CheckOptions,
+) -> (Option<hir::Program>, Diagnostics) {
     std::thread::scope(|s| {
         let spawned = std::thread::Builder::new()
             .name("velt-sema".into())
             .stack_size(SEMA_STACK_BYTES)
-            .spawn_scoped(s, || check_on_current_thread(modules, root));
+            .spawn_scoped(s, || check_on_current_thread(modules, root, opts));
         match spawned {
             Ok(handle) => handle
                 .join()
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(_) => check_on_current_thread(modules, root),
+            Err(_) => check_on_current_thread(modules, root, opts),
         }
     })
 }
@@ -101,6 +125,7 @@ pub fn check(modules: &[SourceModule], root: usize) -> (Option<hir::Program>, Di
 fn check_on_current_thread(
     modules: &[SourceModule],
     root: usize,
+    opts: CheckOptions,
 ) -> (Option<hir::Program>, Diagnostics) {
     let lifted = generic_arrows::lift(modules);
     let modules = lifted.as_deref().unwrap_or(modules);
@@ -110,7 +135,7 @@ fn check_on_current_thread(
     };
     let mut cx = ctx::Ctx::new(modules, root);
     analyze(&mut cx);
-    let entry = check_main(&mut cx, root, root_mod);
+    let entry = check_main(&mut cx, root, root_mod, opts.require_main);
 
     if cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
@@ -154,9 +179,19 @@ fn analyze(cx: &mut ctx::Ctx) {
     ownership::check_exclusive(cx);
 }
 
-fn check_main(cx: &mut ctx::Ctx, root: usize, root_mod: &SourceModule) -> Option<hir::DefId> {
+/// Validate the root module's `main`; a missing one is an error only when `require_main`.
+fn check_main(
+    cx: &mut ctx::Ctx,
+    root: usize,
+    root_mod: &SourceModule,
+    require_main: bool,
+) -> Option<hir::DefId> {
     let file_start = Span::new(root_mod.file, root_mod.ast.span.lo, root_mod.ast.span.lo);
-    let Some(Item::Def(id)) = cx.scopes[root].items.get("main").copied() else {
+    let main = cx.scopes[root].items.get("main").copied();
+    if main.is_none() && !require_main {
+        return None;
+    }
+    let Some(Item::Def(id)) = main else {
         cx.error(Diagnostic::error(
             "`main` function not found in the root module",
             file_start,

@@ -135,7 +135,8 @@ pub const COMMANDS: &[CommandHelp] = &[
         usage: &["check [<file.vlt>] [--json] [--locked] [-v]"],
         about: "Parses and type-checks like `velt build` (every file the program imports), \
                 prints the diagnostics and exits with 1 if there are errors. Nothing is \
-                lowered, compiled or linked.",
+                lowered, compiled or linked. A library module needs no `main`; in a library \
+                package `src/lib.vlt` is checked.",
         options: &[
             ("--json", "diagnostics as one JSON document on stdout (for editors and tools)"),
             LOCKED,

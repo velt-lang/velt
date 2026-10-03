@@ -87,9 +87,12 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   the newest stable version not yanked (the newest pre-release not yanked if it has no stable
   one).
 - `check` (additive): parse + sema of a file or the current package (same
-  input resolution as `build`, package dependencies installed), every diagnostic the front end
+  input resolution as `build`, except that a package without its entry file checks
+  `src/lib.vlt`; package dependencies installed), every diagnostic the front end
   reports (all files' syntax errors; if there are none, all type errors), no lowering, codegen or
-  link. Exit 0 without errors (warnings allowed), 1 with errors, 101 on an internal error.
+  link. The root module need not define `main` (a library module; every function body is still
+  checked); a `main` that is there is validated as for `build`, which, like `run`, still
+  requires one. Exit 0 without errors (warnings allowed), 1 with errors, 101 on an internal error.
   Diagnostics go to stderr as for `build`; `--json` prints instead one JSON document on stdout:
   `{"diagnostics": [{"severity": "error"|"warning"|"note", "message", "location", "labels":
   [{"location", "message"}], "notes": [string]}], "errors": n, "warnings": n}` where a

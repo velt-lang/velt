@@ -140,6 +140,26 @@ fn package_commands_outside_a_package() {
 }
 
 #[test]
+fn check_in_a_library_package_checks_src_lib() {
+    let s = sandbox();
+    s.ok("", &["new", "util", "--lib"]);
+    let o = s.velt("util", &["check"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    s.write(
+        "util/src/lib.vlt",
+        "export function f(): i64 {\n  return \"x\";\n}\n",
+    );
+    let err = s.fail("util", &["check"]);
+    assert!(err.contains("lib.vlt:2:"), "{err}");
+    std::fs::remove_file(s.dir.join("util/src/lib.vlt")).unwrap();
+    let err = s.fail("util", &["check"]);
+    assert!(
+        err.contains("has neither `src/main.vlt` nor `src/lib.vlt`"),
+        "{err}"
+    );
+}
+
+#[test]
 fn import_of_undeclared_package_is_reported() {
     let s = sandbox();
     s.ok("", &["new", "app"]);

@@ -67,6 +67,61 @@ fn check_reports_diagnostics_without_building() {
     assert!(text(&o.stdout).contains(r#""location":null"#));
 }
 
+#[test]
+fn check_accepts_library_modules_without_main() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    std::fs::write(
+        dir.join("lib.vlt"),
+        "export function double(x: i64): i64 {\n  return x * 2;\n}\n",
+    )
+    .unwrap();
+    // An exported function nothing calls is still type-checked.
+    std::fs::write(
+        dir.join("badlib.vlt"),
+        "export function double(x: i64): i64 {\n  return x * 2;\n}\n\
+         export function name(): string {\n  return 1;\n}\n",
+    )
+    .unwrap();
+
+    let o = velt(dir, &["check", "lib.vlt"], &[]);
+    assert!(o.status.success(), "{}", text(&o.stderr));
+    assert_eq!(
+        (text(&o.stdout), text(&o.stderr)),
+        (String::new(), String::new())
+    );
+
+    let o = velt(dir, &["check", "lib.vlt", "--json"], &[]);
+    assert!(o.status.success(), "{}", text(&o.stderr));
+    let out = text(&o.stdout);
+    assert!(out.contains(r#""errors":0"#), "{out}");
+    assert!(!out.contains("main"), "{out}");
+
+    let o = velt(dir, &["check", "badlib.vlt"], &[]);
+    assert_eq!(o.status.code(), Some(1));
+    let err = text(&o.stderr);
+    assert!(err.contains("badlib.vlt:5:"), "{err}");
+    assert!(!err.contains("`main` function not found"), "{err}");
+
+    let o = velt(dir, &["check", "badlib.vlt", "--json"], &[]);
+    assert_eq!(o.status.code(), Some(1));
+    let out = text(&o.stdout);
+    assert!(out.contains(r#""line":5"#), "{out}");
+    assert!(!out.contains("`main` function not found"), "{out}");
+
+    // Building or running a library is still an error.
+    for cmd in ["build", "run"] {
+        let o = velt(dir, &[cmd, "lib.vlt"], &[]);
+        assert_eq!(o.status.code(), Some(1), "velt {cmd}");
+        let err = text(&o.stderr);
+        assert!(
+            err.contains("`main` function not found in the root module"),
+            "{err}"
+        );
+    }
+    assert!(!dir.join("target/velt/lib").exists());
+}
+
 /// The `link` stage of `velt build -v --timings`, and whether it was skipped.
 fn build(dir: &Path, env: &[(&str, &str)]) -> (bool, String) {
     let o = velt(dir, &["build", "hello.vlt", "--timings"], env);
