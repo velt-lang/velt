@@ -29,7 +29,7 @@ mod impls;
 mod imports;
 mod lookup;
 mod nested;
-mod shapes;
+pub(crate) mod shapes;
 mod sigs;
 
 use crate::ctx::Ctx;

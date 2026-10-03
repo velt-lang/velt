@@ -7,7 +7,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::ctx::Ctx;
-use crate::hir::{AdtKind, DefId, LitValue, TyId, TyKind};
+use crate::hir::{DefId, LitValue, TyId, TyKind};
 use crate::resolve::TyEnv;
 
 /// The operators, by name (a user type of the same name wins, as for every built-in).
@@ -27,7 +27,13 @@ impl Ctx<'_> {
         } else {
             1
         };
-        let tys: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, env)).collect();
+        let tys: Vec<TyId> = args
+            .iter()
+            .map(|a| {
+                let t = self.resolve_type(a, env);
+                self.ty.subst(t, &env.args)
+            })
+            .collect();
         if tys.len() != want {
             self.err(
                 format!(
@@ -86,17 +92,25 @@ impl Ctx<'_> {
         let shown = self.display(t);
         match self.ty.kind(t).clone() {
             TyKind::Adt(d, args) if self.adt(d).is_some() => {
-                let Some(fields) = self.fields_now(d) else {
-                    self.error(
-                        Diagnostic::error(
-                            format!("`{op}<{shown}>` is used before `{shown}`'s fields are known"),
-                            span,
-                        )
-                        .with_note(format!(
-                            "declare `{shown}` (and its base types) before the type that uses `{op}<{shown}>`"
-                        )),
-                    );
-                    return None;
+                let fields = match self.fields_now(d) {
+                    Ok(fields) => fields,
+                    Err(cycle) => {
+                        let name = match (self.adt(cycle), self.iface(cycle)) {
+                            (Some(a), _) => a.name.clone(),
+                            (_, Some(i)) => i.name.clone(),
+                            _ => shown.clone(),
+                        };
+                        self.error(
+                            Diagnostic::error(
+                                format!("`{op}<{shown}>` needs the fields of `{name}` while they are being resolved"),
+                                span,
+                            )
+                            .with_note(format!(
+                                "`{name}` refers to itself through a utility type in a field; TypeScript allows this, but Velt doesn't yet: write the fields out"
+                            )),
+                        );
+                        return None;
+                    }
                 };
                 Some(
                     fields
@@ -129,45 +143,38 @@ impl Ctx<'_> {
         }
     }
 
-    /// Object type `d`'s fields as (name, type, readonly, public), if they are known yet: while
-    /// declarations are shaped, only types shaped earlier have them. A field-only interface's
-    /// object type is filled after interfaces are flattened, so until then its fields come from
-    /// the interface and the ones it extends (inherited first, as `collect::field_only` orders
-    /// them).
-    fn fields_now(&mut self, d: DefId) -> Option<Vec<(String, TyId, bool, bool)>> {
-        let a = self.adt(d)?;
+    /// Object type `d`'s fields as (name, type, readonly, public). While declarations are
+    /// shaped, `d` (and what it inherits from) is shaped first, whatever the declaration order;
+    /// `Err` names a type whose fields are needed while they are being resolved. A field-only
+    /// interface's object type is filled after interfaces are flattened, so until then its
+    /// fields come from the interface and the ones it extends (inherited first, as
+    /// `collect::field_only` orders them).
+    fn fields_now(&mut self, d: DefId) -> Result<Vec<(String, TyId, bool, bool)>, DefId> {
+        crate::collect::shapes::ensure_fields(self, d)?;
+        let a = self.adt(d).expect("ICE: adt");
         if let Some(&iface) = self.field_only_of.get(&d) {
             if a.fields.is_empty() {
-                return self.iface_fields_now(iface, &[], &mut vec![]);
+                return Ok(self.iface_fields_now(iface, &[], &mut vec![]));
             }
         }
-        let ready = self.shapes_done
-            || a.kind == AdtKind::Anon
-            || (!a.fields.is_empty() && a.base.is_none());
-        ready.then(|| {
-            a.fields
-                .iter()
-                .map(|f| (f.name.clone(), f.ty, f.readonly, f.private_to.is_none()))
-                .collect()
-        })
+        Ok(a.fields
+            .iter()
+            .map(|f| (f.name.clone(), f.ty, f.readonly, f.private_to.is_none()))
+            .collect())
     }
 
     /// Interface `iface`'s fields with `args` substituted, inherited ones first, before
-    /// inheritance is flattened.
+    /// inheritance is flattened (the interfaces are shaped: `ensure_fields`).
     fn iface_fields_now(
         &mut self,
         iface: DefId,
         args: &[TyId],
         stack: &mut Vec<DefId>,
-    ) -> Option<Vec<(String, TyId, bool, bool)>> {
-        if stack.contains(&iface) {
-            return Some(vec![]); // a cycle is reported by `collect::iface_extends`
-        }
-        let i = self.iface(iface)?;
+    ) -> Vec<(String, TyId, bool, bool)> {
+        let Some(i) = self.iface(iface).filter(|_| !stack.contains(&iface)) else {
+            return vec![]; // a cycle is reported by `collect::iface_extends`
+        };
         let declared = i.decl.map_or(0, |d| d.fields.len());
-        if i.fields.len() < declared {
-            return None; // not shaped yet
-        }
         let parents = i.parents.clone();
         let own: Vec<(String, TyId, bool)> = i
             .fields
@@ -179,7 +186,7 @@ impl Ctx<'_> {
         let mut out = vec![];
         for p in parents {
             let pargs: Vec<TyId> = p.args.iter().map(|t| self.ty.subst(*t, args)).collect();
-            for f in self.iface_fields_now(p.iface, &pargs, stack)? {
+            for f in self.iface_fields_now(p.iface, &pargs, stack) {
                 if !out.iter().any(|g: &(String, TyId, bool, bool)| g.0 == f.0) {
                     out.push(f);
                 }
@@ -191,11 +198,12 @@ impl Ctx<'_> {
             out.retain(|g| g.0 != n);
             out.push((n, ty, r, true));
         }
-        Some(out)
+        out
     }
 
-    /// The field names `k` lists for `Pick` / `Omit` (a string literal type or a union of them),
-    /// each one a field of `t`.
+    /// The field names `k` lists for `Pick` / `Omit` (a string literal type or a union of them).
+    /// In `Pick` each must be a field of `t`; `Omit` accepts other names, as TypeScript does
+    /// (`Omit<P, "children">` in an alias used on types without `children`), with a warning.
     fn utility_keys(
         &mut self,
         op: &str,
@@ -231,10 +239,15 @@ impl Ctx<'_> {
             if names.contains(key) {
                 continue;
             }
-            ok = false;
             let shown = self.display(t);
             let mut d =
                 Diagnostic::error(format!("`{shown}` has no field `{key}` (in `{op}`)"), span);
+            if op == "Omit" {
+                d.severity = velt_common::Severity::Warning;
+                d = d.with_note("there is nothing to omit; TypeScript accepts this too");
+            } else {
+                ok = false;
+            }
             if let Some(s) = crate::suggest::closest(key, &names) {
                 d = d.with_note(format!("did you mean `{s}`?"));
             }

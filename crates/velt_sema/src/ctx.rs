@@ -64,6 +64,13 @@ pub(crate) struct Ctx<'m> {
     /// Every declared type's fields are resolved (`collect::shapes`); before that, a utility
     /// type (`crate::utility_types`) may only read the fields of types already shaped.
     pub shapes_done: bool,
+    /// Type definitions whose shape (`collect::shapes`) is resolved, and those being resolved
+    /// now: a utility type in a field type shapes the type it reads first, whatever the
+    /// declaration order.
+    pub shaped: HashSet<DefId>,
+    pub shaping: Vec<DefId>,
+    /// Classes whose fields are laid out base-first (`collect::shapes::layout_fields`).
+    pub laid_out: HashSet<DefId>,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: HashMap<Vec<TyId>, DefId>,
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
@@ -132,6 +139,9 @@ impl<'m> Ctx<'m> {
             field_only: HashMap::new(),
             field_only_of: HashMap::new(),
             shapes_done: false,
+            shaped: HashSet::new(),
+            shaping: vec![],
+            laid_out: HashSet::new(),
             unions: HashMap::new(),
             alias_names: HashMap::new(),
             generic_overrides: vec![],

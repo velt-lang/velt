@@ -1,5 +1,6 @@
-// Utility type errors: a key that isn't a field (in Pick and in Omit), keys that aren't string
-// literals, a non-object type, a type parameter (#350), and writing a Readonly field.
+// Utility type errors: a key that isn't a field in Pick (in Omit it is only a warning), keys
+// that aren't string literals, a non-object type, a type parameter (#350), writing a Readonly
+// field, and a type that needs its own fields through an operator.
 interface User {
   id: number;
   name: string;
@@ -21,11 +22,8 @@ function main() {
   r.name = "s";
 }
 
-// A field type can only apply an operator to a type declared before it.
-interface Holder {
-  p: Partial<Later>;
-}
-
-interface Later {
-  a: number;
+// TypeScript allows this; Velt resolves `Partial<Node>` while `Node`'s fields are resolved.
+interface Node {
+  value: number;
+  patches: Partial<Node>[];
 }

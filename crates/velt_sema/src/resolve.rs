@@ -17,6 +17,10 @@ use crate::hir::{TyId, TyKind};
 pub(crate) struct TyEnv {
     pub module: usize,
     pub params: Vec<String>,
+    /// While a generic alias is expanded: its type arguments at this use. Only the utility
+    /// types read them (`Omit<P, "children">` in `type WithoutChildren<P>` needs `P`'s fields);
+    /// everything else resolves `params` to type parameters and is substituted afterwards.
+    pub args: Vec<TyId>,
 }
 
 impl TyEnv {
@@ -24,6 +28,7 @@ impl TyEnv {
         TyEnv {
             module,
             params: params.to_vec(),
+            args: vec![],
         }
     }
 }
@@ -302,7 +307,9 @@ impl Ctx<'_> {
         }
         let names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
         self.aliases[a as usize].expanding = true;
-        let body = self.resolve_type(&decl.ty, &TyEnv::new(module, &names));
+        let mut env = TyEnv::new(module, &names);
+        env.args = args.clone();
+        let body = self.resolve_type(&decl.ty, &env);
         self.aliases[a as usize].expanding = false;
         if names.is_empty() && self.is_structural(body) {
             // `type Shape = { ... } | { ... }`: messages call the union `Shape`.
