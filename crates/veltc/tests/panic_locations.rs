@@ -52,6 +52,11 @@ const CASES: &[(&str, i32, &str)] = &[
         "Uncaught Overheated: over 150 at tests/golden/lang/panic_uncaught_spawned.vlt:8:5",
     ),
     (
+        "panic_uncaught_finally_await",
+        1,
+        "Uncaught A: thrown before the await at tests/golden/lang/panic_uncaught_finally_await.vlt:14:5",
+    ),
+    (
         "panic_uncaught_std",
         1,
         "Uncaught IoError: ENOENT: no such file or directory, lstat 'velt-missing-file-b' at tests/golden/lang/panic_uncaught_std.vlt:7:3",
