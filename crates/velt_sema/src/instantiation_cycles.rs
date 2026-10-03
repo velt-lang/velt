@@ -278,13 +278,18 @@ fn report(cx: &mut Ctx, edges: &[Edge], i: usize, back: &[usize]) {
     let grown = cx.display_in(e.targs[e.to.1 as usize], &names);
     let (f, g) = (fn_name(cx, caller), fn_name(cx, callee));
     let own = format!("{f}<{}>", names.join(", "));
-    let cycle = if callee == caller {
+    // A call from a closure is its enclosing function calling.
+    let (fq, gq) = (enclosing_fn(cx, caller), enclosing_fn(cx, callee));
+    let cycle = if fq == gq {
         format!("`{f}` calls itself with `{grown}`")
     } else {
         let mut through: Vec<String> = vec![];
+        let mut seen = vec![fq, gq];
         for &b in back {
             let d = edges[b].to.0;
-            if d != caller && d != callee && !through.contains(&fn_name(cx, d)) {
+            let dq = enclosing_fn(cx, d);
+            if !seen.contains(&dq) {
+                seen.push(dq);
                 through.push(fn_name(cx, d));
             }
         }
@@ -316,12 +321,17 @@ fn generic_names(cx: &Ctx, d: DefId) -> Vec<String> {
     }
 }
 
-/// A function's name as users wrote it (a closure is named after its enclosing function).
-fn fn_name(cx: &Ctx, d: DefId) -> String {
+/// The qualified name of `d`, or of the function enclosing it if it is a closure.
+fn enclosing_fn<'a>(cx: &'a Ctx, d: DefId) -> &'a str {
     let name = match &cx.defs[d.0 as usize] {
         Some(Def::Fn(f)) => f.name.as_str(),
         _ => "?",
     };
-    let name = name.split("::{closure").next().unwrap_or(name);
+    name.split("::{closure").next().unwrap_or(name)
+}
+
+/// A function's name as users wrote it (a closure is named after its enclosing function).
+fn fn_name(cx: &Ctx, d: DefId) -> String {
+    let name = enclosing_fn(cx, d);
     name.rsplit("::").next().unwrap_or(name).to_string()
 }
