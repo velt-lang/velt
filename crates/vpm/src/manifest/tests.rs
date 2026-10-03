@@ -272,3 +272,28 @@ fn windows_device_names_are_not_package_names() {
         assert!(is_valid_package_name(name), "{name}");
     }
 }
+
+#[test]
+fn names_that_share_a_c_library_prefix_are_reserved() {
+    for name in LIBC_PREFIX_NAMES {
+        let text =
+            format!("export const pkg: Package = {{ name: \"{name}\", version: \"1.0.0\" }};");
+        let err = Manifest::parse(&text).unwrap_err();
+        assert!(
+            err.contains(&format!("the package name `{name}` is reserved")),
+            "{err}"
+        );
+        assert!(!is_valid_package_name(name));
+        let dep = format!(
+            "export const pkg: Package = {{ name: \"a\", version: \"1.0.0\", dependencies: {{ {name}: \"1\" }} }};"
+        );
+        let err = Manifest::parse(&dep).unwrap_err();
+        assert!(
+            err.contains("would share names with the C library's"),
+            "{err}"
+        );
+    }
+    // Longer names have their own prefix (`semver_`, `posix_time_`).
+    assert!(is_valid_package_name("semver"));
+    assert!(is_valid_package_name("posix-time"));
+}

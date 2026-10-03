@@ -1,0 +1,8 @@
+template key1 v1
+stringify a long key that does not fit inline x
+stringify b a long value that does not fit inline either
+concat c 3
+returned returned2 kept2
+[ 'r1', 's1' ] [ 'x', 'y' ]
+Ada1 London
+first Bo Oslo
