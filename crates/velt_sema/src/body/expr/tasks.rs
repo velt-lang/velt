@@ -126,7 +126,20 @@ impl FnCx<'_, '_> {
         )
         .with_note("its result, and any error it throws, would be lost");
         let code = floating_code(e);
+        // `scope.spawn(p)` already started a task: wrapping its handle in `spawn(...)` would not
+        // help, so keep the handle instead.
+        let starts_task = match &h.kind {
+            H::Call {
+                callee: Callee::Def(d, _),
+                ..
+            } => self.is_scope_spawn(*d),
+            _ => false,
+        };
         let (wait, background) = match &code {
+            Some(c) if starts_task => (
+                format!("to wait for it: `await {c}`"),
+                format!("to let it run: keep its handle (`const task = {c};`) and await it later"),
+            ),
             _ if array => (
                 "to wait for them: `await Promise.all(...)`".to_string(),
                 "to run each in the background: `spawn(...)` it".to_string(),
@@ -144,6 +157,13 @@ impl FnCx<'_, '_> {
             d = d.with_note(wait);
         }
         self.cx.error(d.with_note(background));
+    }
+
+    /// Is `d` the standard library's `TaskScope.spawn`?
+    fn is_scope_spawn(&self, d: DefId) -> bool {
+        let f = self.cx.fn_info(d);
+        let name = f.name.rsplit("::").next().unwrap_or(&f.name);
+        name == "TaskScope.spawn" && self.cx.scopes[f.module].is_std
     }
 
     fn is_async_fn(&self, d: DefId) -> bool {

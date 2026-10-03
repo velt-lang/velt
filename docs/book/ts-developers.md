@@ -246,6 +246,7 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | `catch (e: unknown)` | `e` is the exact union of what the `try` can throw | — |
 | `Promise<T>` rejects with anything | `Promise<T, E>` carries its rejection type | — |
 | floating promises lose errors | a floating promise is a compile error | — |
+| an unhandled rejection prints the source line and a stack, and is reported when no handler is attached by the end of the turn | prints `Uncaught <Type>: <message> at file:line:col` and exits with code 1, reported only once nothing can await the promise any more: `const h = spawn(f()); await sleep(100); await h;` handles `h`'s rejection | — |
 | `new Promise(...)` | same, with an arrow-function executor; `await` of one abandoned unsettled is reported | `new Promise(...)` |
 | single-threaded event loop | multi-core runtime; `spawn`, `shared`, `Mutex`; data races are compile errors | — |
 | top-level statements | run in a generated `main` (root file only) | — |

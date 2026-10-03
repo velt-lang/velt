@@ -306,6 +306,7 @@ pub unsafe extern "C" fn velt_rt_fut_detach(f: *mut VeltFut, quiet_drop: Option<
         node::queue(f);
     }
     node::mark_handled(f, quiet_drop);
+    crate::task::spawn::mark_join_handled(f, quiet_drop);
     crate::task::velt_rt_fut_drop(f);
 }
 
@@ -321,6 +322,7 @@ pub unsafe extern "C" fn velt_rt_futs_handled(
 ) {
     for i in 0..n as usize {
         node::mark_handled(*futs.add(i), quiet_drop);
+        crate::task::spawn::mark_join_handled(*futs.add(i), quiet_drop);
     }
 }
 

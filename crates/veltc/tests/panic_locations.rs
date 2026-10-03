@@ -57,6 +57,26 @@ const CASES: &[(&str, i32, &str)] = &[
         "Uncaught A: thrown before the await at tests/golden/lang/panic_uncaught_finally_await.vlt:14:5",
     ),
     (
+        "panic_uncaught_handle_dropped",
+        1,
+        "Uncaught Bad: main failed at tests/golden/lang/panic_uncaught_handle_dropped.vlt:16:3",
+    ),
+    (
+        "panic_uncaught_dropped_catcher",
+        1,
+        "Uncaught Bad: main failed at tests/golden/lang/panic_uncaught_dropped_catcher.vlt:22:3",
+    ),
+    (
+        "spawn_handle_dropped_rejects",
+        1,
+        "Uncaught Failed: lost after 20 ms at tests/golden/lang/spawn_handle_dropped_rejects.vlt:8:3",
+    ),
+    (
+        "spawn_handle_dropped_after_reject",
+        1,
+        "Uncaught Failed: rejected before the handle was dropped at tests/golden/lang/spawn_handle_dropped_after_reject.vlt:7:3",
+    ),
+    (
         "panic_uncaught_std",
         1,
         "Uncaught IoError: ENOENT: no such file or directory, lstat 'velt-missing-file-b' at tests/golden/lang/panic_uncaught_std.vlt:7:3",

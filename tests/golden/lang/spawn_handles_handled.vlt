@@ -1,0 +1,44 @@
+// check: no leaks
+// Spawn handles whose rejections are handled stay quiet when they are dropped (#148): the
+// losers of `Promise.race`, the siblings of an early `Promise.all` rejection, a handle awaited
+// in a `try`, and a `taskScope` child nobody awaited (the scope fails with its error).
+import { TaskScope, taskScope } from "velt:task";
+
+class Failed extends Error {}
+
+async function failing(ms: i64): Promise<i64> {
+  await sleep(ms);
+  throw new Failed(`failed after ${ms} ms`);
+}
+
+async function value(ms: i64): Promise<i64> {
+  await sleep(ms);
+  return ms;
+}
+
+async function main() {
+  const racers: Promise<i64, Failed>[] = [spawn(value(5)), spawn(failing(30))];
+  const winner = await Promise.race(racers);
+  console.log(`race: ${winner}`);
+  try {
+    await Promise.all([spawn(failing(5)), spawn(failing(30))]);
+  } catch (e) {
+    console.log(`all: ${e.message}`);
+  }
+  const task = spawn(failing(5));
+  try {
+    await task;
+  } catch (e) {
+    console.log(`awaited: ${e.message}`);
+  }
+  try {
+    await taskScope<i64, Failed>(async (scope: TaskScope<Failed>): Promise<i64> throws Failed => {
+      const child = scope.spawn(failing(5));
+      return 1;
+    });
+  } catch (e) {
+    console.log(`scope: ${e.message}`);
+  }
+  await sleep(100);
+  console.log("done");
+}

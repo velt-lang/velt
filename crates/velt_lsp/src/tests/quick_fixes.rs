@@ -275,6 +275,36 @@ fn floating_promise_can_be_awaited_or_spawned() {
 }
 
 #[test]
+fn no_spawn_fix_for_a_scope_spawn() {
+    // A stand-in for `velt:task`'s `TaskScope` (the test loader has no standard library).
+    let text = "class TaskScope {
+  spawn(p: Promise<i64>): Promise<i64> {
+    return p;
+  }
+}
+
+async function work(): Promise<i64> {
+  return 1;
+}
+
+async function main() {
+  const scope = new TaskScope();
+  scope.spawn(work());
+}
+";
+    let (mut client, doc, diags) = open("fix_scope_spawn.vlt", text);
+    let offered = actions(&mut client, &doc, text, "scope.spawn(work())", &diags);
+    find(&offered, "Add `await`");
+    assert!(
+        !offered
+            .iter()
+            .any(|a| a["title"] == json!("Run it in the background with `spawn(...)`")),
+        "{offered:#?}"
+    );
+    client.shutdown();
+}
+
+#[test]
 fn export_default_becomes_a_named_export() {
     let text = "export default function main() {}\n";
     let (mut client, doc, diags) = open("fix_default.vlt", text);
