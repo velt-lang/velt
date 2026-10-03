@@ -1,0 +1,35 @@
+// Append loop (same workload as append.js): 20 strings of about 190k characters, each built by
+// 100k `s += piece` appends of non-ASCII pieces, with a strided charCodeAt checksum over each.
+class Rng {
+  seed: i64 = 42;
+
+  next(n: i64): i64 {
+    this.seed = (this.seed * 48271) % 2147483647;
+    return this.seed % n;
+  }
+
+  pick(xs: string[]): string {
+    return xs[this.next(xs.length as i64)];
+  }
+}
+
+const PIECES = "é|ab|日本|😀| |ça|👍🏽|x|€|🚀z";
+
+function main() {
+  const rng = new Rng();
+  const pieces = PIECES.split("|");
+  let total: i64 = 0;
+  let h: i64 = 0;
+  let s = "";
+  for (let round = 0; round < 20; round++) {
+    s = "";
+    for (let i = 0; i < 100000; i++) {
+      s += rng.pick(pieces);
+    }
+    total += s.length as i64;
+    for (let i: i64 = 0; i < (s.length as i64); i += 97) {
+      h = (h * 31 + s.charCodeAt(i)) % 1000000007;
+    }
+  }
+  console.log(`total=${total} length=${s.length} hash=${h} tail=${s.slice((s.length as i64) - 6)}`);
+}
