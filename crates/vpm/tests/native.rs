@@ -31,10 +31,16 @@ fn bundle_dir(dir: &Path, target: &str, content: &str) -> PathBuf {
         import_lib.map(|f| format!("shared/{f}")),
     );
     std::fs::write(b.join(&shared), library_of(content)).unwrap();
+    let exports = BTreeMap::from([("db_open".into(), "(string)->IoResult<u64>".into())]);
     if let Some(import_lib) = &import_lib {
-        std::fs::write(b.join(import_lib), content).unwrap();
+        let dll = shared.trim_start_matches("shared/");
+        let names = vpm::native::exports::exported_names(&library_of(content)).unwrap();
+        let imports: Vec<(String, String)> = names.into_iter().map(|n| (n.clone(), n)).collect();
+        let lib = vpm::native::exports::sample_import_library(dll, &imports);
+        std::fs::write(b.join(import_lib), lib).unwrap();
     }
-    std::fs::write(b.join("static/db.o"), content).unwrap();
+    let object = vpm::native::exports::sample_object("db", &exports, content);
+    std::fs::write(b.join("static/db.o"), object).unwrap();
     let meta = NativeMeta {
         package: "db".into(),
         version: "1.0.0".into(),

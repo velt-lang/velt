@@ -108,11 +108,14 @@ pub fn unpack_verified(
     let meta = NativeMeta::parse(&String::from_utf8_lossy(&meta.bytes), what)?;
     let files: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
     check_meta(&meta, (name, version, target), &files, what)?;
-    let library = entries
-        .iter()
-        .find(|e| e.path == meta.shared)
-        .ok_or_else(|| format!("{what}: the bundle has no `{}`", meta.shared))?;
-    check_exports(&meta, &library.bytes, what)?;
+    let file = |path: &str| {
+        entries
+            .iter()
+            .find(|e| e.path == path)
+            .map(|e| e.bytes.clone())
+            .ok_or_else(|| format!("{what}: the bundle has no `{path}`"))
+    };
+    check_exports(&meta, &file, what)?;
     if dest.exists() {
         std::fs::remove_dir_all(dest)
             .map_err(|e| format!("cannot clean `{}`: {e}", dest.display()))?;
@@ -186,7 +189,31 @@ fn check_export_names(meta: &NativeMeta, what: &str) -> Result<(), String> {
 
 /// The shared library (`library`: its bytes) must export exactly the functions, with the
 /// signatures, that the metadata lists: a prebuilt bundle's list is not trusted as written.
-pub fn check_exports(meta: &NativeMeta, library: &[u8], what: &str) -> Result<(), String> {
+/// The import library and the prelinked object are held to the same list
+/// ([`exports::check_import_library`], [`exports::check_static_object`]). `file` reads one of the
+/// bundle's files by its path in the metadata.
+pub fn check_exports(
+    meta: &NativeMeta,
+    file: &dyn Fn(&str) -> Result<Vec<u8>, String>,
+    what: &str,
+) -> Result<(), String> {
+    let library = file(&meta.shared)?;
+    check_shared_library(meta, &library, what)?;
+    if let Some(import_lib) = &meta.import_lib {
+        let dll = meta.shared.rsplit('/').next().unwrap_or(&meta.shared);
+        let names = exports::exported_names(&library)
+            .map_err(|e| format!("{what}: the shared library `{}`: {e}", meta.shared))?;
+        exports::check_import_library(&file(import_lib)?, dll, &names)
+            .map_err(|e| format!("{what}: `{import_lib}`: {e}"))?;
+    }
+    if let Some(object) = &meta.static_obj {
+        exports::check_static_object(&file(object)?, &meta.package, &meta.exports)
+            .map_err(|e| format!("{what}: `{object}`: {e}"))?;
+    }
+    Ok(())
+}
+
+fn check_shared_library(meta: &NativeMeta, library: &[u8], what: &str) -> Result<(), String> {
     let actual = exports::read(library, &meta.package)
         .map_err(|e| format!("{what}: the shared library `{}`: {e}", meta.shared))?;
     if actual == meta.exports {
@@ -258,7 +285,8 @@ mod tests {
         std::fs::write(dir.join(META_FILE), meta.to_json()).unwrap();
         let library = exports::sample_library("p", &meta.exports, version);
         std::fs::write(dir.join("shared/libvelt_native_p.so"), library).unwrap();
-        std::fs::write(dir.join("static/p.o"), b"obj").unwrap();
+        let object = exports::sample_object("p", &meta.exports, version);
+        std::fs::write(dir.join("static/p.o"), object).unwrap();
     }
 
     /// `sample`'s bundle with its metadata's export list replaced by `exports`.
