@@ -57,7 +57,9 @@ impl FnCx<'_, '_> {
                     .unwrap_or_else(|| self.guard_sel(s, test)),
                 None => self.guard_sel(s, test),
             },
-            (ScrutKind::Discriminant(_) | ScrutKind::TypeOf | ScrutKind::Union, None) => {
+            // A union value compares with any value `===` accepts (`case y:` with `y: "y"`).
+            (ScrutKind::Union, None) => self.guard_sel(s, test),
+            (ScrutKind::Discriminant(_) | ScrutKind::TypeOf, None) => {
                 self.cx.err(
                     format!(
                         "`case` values must be literals when switching on `{}`",

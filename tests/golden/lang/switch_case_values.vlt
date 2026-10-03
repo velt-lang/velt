@@ -1,6 +1,7 @@
 // check: no leaks
 // A `case` value that is not a literal compares with the discriminant like `===` (#337), in both
-// directions: a `T` next to a `T | null`, and a length next to a declared integer.
+// directions: a `T` next to a `T | null`, a length next to a declared integer, and any value on a
+// union discriminant.
 
 class Item {
   name: string;
@@ -48,10 +49,59 @@ function count(xs: string[], three: i64): string {
   }
 }
 
+class Other {}
+
+function pick(): "x" | "y" {
+  return "y";
+}
+
+// On a union value: a constant of a literal type, a string, a member type, a class instance.
+function unions(a: Item) {
+  const p = pick();
+  const y = "y";
+  const yy: string = "y";
+  switch (p) {
+    case y:
+      console.log("const literal");
+      break;
+    default:
+      console.log("no");
+  }
+  switch (p) {
+    case yy:
+      console.log("string");
+      break;
+    default:
+      console.log("no");
+  }
+  const sn: string | number = 2;
+  const two: number = 2;
+  switch (sn) {
+    case two:
+      console.log("member type");
+      break;
+  }
+  const ab: Item | Other = a;
+  switch (ab) {
+    case a:
+      console.log("same instance");
+      break;
+  }
+  const none: Item | Other | null = null;
+  switch (none) {
+    case a:
+      console.log("never");
+      break;
+    default:
+      console.log("null is not the instance");
+  }
+}
+
 function main() {
   console.log(plain("a", "a"), plain("a", "b"), plain("a", null));
   console.log(nullable("a", "a"), nullable(null, "a"), nullable("b", "a"));
   const x = new Item("x");
   console.log(sameItem(x, x), sameItem(x, new Item("x")), sameItem(x, null));
   console.log(count(["a", "b", "c"], 3), count([], 3));
+  unions(x);
 }
