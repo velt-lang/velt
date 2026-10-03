@@ -1,0 +1,53 @@
+// check: no leaks
+// A `with` callback may start work that only reads what it takes from the value: the promise
+// gets a copy, like a spawned call, so it never uses the value after the lock is released
+// (#398). Strings are immutable, so they are passed as they are. A generic helper around
+// `with` may return a promise that does not come from the value, and `Promise.all` waits for
+// promises made like that.
+class State {
+  name: string = "s";
+  n: i64 = 1;
+  tags: string[] = ["a", "b"];
+}
+
+async function save(s: string): Promise<string> {
+  await yieldNow();
+  return `saved ${s}`;
+}
+
+async function count(xs: string[]): Promise<i64> {
+  await yieldNow();
+  return xs.length;
+}
+
+async function read(s: State): Promise<i64> {
+  await yieldNow();
+  return s.n;
+}
+
+async function fetchNum(u: string): Promise<i64> {
+  await yieldNow();
+  return u.length;
+}
+
+function locked<T>(m: shared<Mutex<State>>, f: (s: State) => T): T {
+  return m.with(f);
+}
+
+async function main() {
+  const m = shared(new Mutex<State>(new State()));
+  const a = m.with((v) => save(`${v.name}:${v.n}`));
+  const b = m.with((v) => count(v.tags));
+  const c = m.with((v) => {
+    const p = read(v);
+    v.n += 10;
+    return p;
+  });
+  const d = locked(m, (s) => {
+    s.n += 1;
+    return fetchNum("abc");
+  });
+  // `Promise.all` waits for promises made from copies.
+  const e = m.with((v) => Promise.all(v.tags.map((t) => save(t))));
+  console.log(await a, await b, await c, await d, m.with((v) => v.n), (await e).join(" "));
+}

@@ -1,0 +1,90 @@
+// check: no leaks
+// A closure created in a constructor shares `this` like one in a method: dropping the
+// closure never frees the object `new` returns (#328).
+
+class A {
+  items: string[];
+  constructor() {
+    this.items = ["a"];
+    const f = () => this.items.length;
+    console.log(f());
+  }
+}
+
+class Registry {
+  callbacks: (() => number)[] = [];
+}
+
+// The closure outlives the constructor in another object.
+class Listed {
+  items: string[] = ["l", "m"];
+  constructor(reg: Registry) {
+    reg.callbacks.push((): number => this.items.length);
+  }
+}
+
+// The closure is stored in a field of the object itself.
+class Own {
+  items: string[] = ["o"];
+  count: () => number;
+  constructor() {
+    this.count = (): number => this.items.length;
+  }
+}
+
+class Base {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+class Derived extends Base {
+  items: string[] = ["x", "y"];
+  constructor(reg: Registry) {
+    super("derived");
+    reg.callbacks.push((): number => this.items.length + this.name.length);
+  }
+}
+
+// The constructor throws after sharing `this`: the object stays alive for the callback.
+class Throws {
+  items: string[] = ["t"];
+  constructor(reg: Registry, fail: boolean) {
+    reg.callbacks.push((): number => this.items.length * 10);
+    if (fail) {
+      throw new Error("failed");
+    }
+  }
+}
+
+function make(reg: Registry, fail: boolean): Throws throws Error {
+  return new Throws(reg, fail);
+}
+
+function main() {
+  const a = new A();
+  console.log(a.items);
+
+  const reg = new Registry();
+  const l = new Listed(reg);
+  l.items.push("n");
+  const d = new Derived(reg);
+  try {
+    make(reg, true);
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+  const t = make(reg, false);
+  console.log(l.items, d.items, t.items);
+  for (const cb of reg.callbacks) {
+    console.log(cb());
+  }
+
+  const o = new Own();
+  o.items.push("p");
+  console.log(o.count());
+  // Break the cycle object -> closure -> object, so the leak check sees everything freed.
+  o.count = (): number => 0;
+  console.log(o.count());
+}

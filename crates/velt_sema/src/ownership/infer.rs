@@ -190,10 +190,13 @@ fn infer_body(cx: &mut Ctx, d: DefId, f: &mut FnDef) -> bool {
     let mut changed = false;
     let fixed = cx.fn_info(d).fixed_modes;
     let has_this = cx.fn_info(d).this.is_some();
+    // `new` keeps the object it constructs: a constructor only borrows `this`, and what it
+    // keeps of it (a closure capturing `this`, `list.push(this)`) becomes a share (#328).
+    let ctor = cx.fn_info(d).kind == crate::defs::FnKind::Ctor;
     let first = f.captures.len();
     for (i, p) in f.params.iter().enumerate().skip(first) {
         let borrowed = matches!(p.mode, PassMode::Borrow | PassMode::BorrowMut);
-        if fixed || !borrowed || !moved.contains(&p.local) {
+        if fixed || !borrowed || !moved.contains(&p.local) || (ctor && has_this && i == 0) {
             continue;
         }
         // The HIR params keep their checked modes until `sync_params`: only a change of the

@@ -1,0 +1,33 @@
+// An outside object a `with` callback stores into the locked value is stored as a copy (other
+// threads use the value without this thread's references); using the variable afterwards
+// would change an object the value no longer holds, so it is an error, like a variable used
+// after `shared(x)` took it (#398). An explicit `.clone()` is fine.
+class Item {
+  qty: i64 = 0;
+}
+
+class Inventory {
+  items: Item[] = [];
+}
+
+function main() {
+  const m = shared(new Mutex<Inventory>(new Inventory()));
+  const extra = new Item();
+  m.with((inv) => {
+    inv.items.push(extra);
+  });
+  extra.qty = 20;
+  const kept = new Item();
+  m.with((inv) => {
+    inv.items.push(kept.clone());
+  });
+  kept.qty = 1;
+  const looped = new Item();
+  for (let i = 0; i < 2; i++) {
+    looped.qty += 1;
+    m.with((inv) => {
+      inv.items.push(looped);
+    });
+  }
+  console.log(m.with((inv) => inv.items.length));
+}
