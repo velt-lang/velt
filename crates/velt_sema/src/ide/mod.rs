@@ -2,7 +2,8 @@
 //! [`crate::check`] — every body, even after errors, and without requiring `main` — while
 //! recording side tables ([`record`]) of what each name denotes, the type of each expression and
 //! where each local is visible. The resulting [`Analysis`] owns everything it needs, so the
-//! queries (definition, type, scope, members, references) are plain lookups.
+//! queries (definition, type, scope, members, references) are plain lookups. Tools that reason
+//! about types (lints) use the structured type query of [`types`] ([`Analysis::type_of`]).
 
 mod defref;
 mod display;
@@ -10,6 +11,7 @@ mod effects;
 mod members;
 pub(crate) mod record;
 mod snapshot;
+mod types;
 
 use std::collections::HashMap;
 
@@ -20,6 +22,7 @@ use crate::SourceModule;
 
 pub use defref::{DefKind, DefRef};
 pub use effects::Mutation;
+pub use types::{FieldView, LiteralKind, NamedKind, NamedType, TypeRef, TypeView};
 
 /// The intrinsic tags of a JSX runtime: `(tag, field definition, attribute type)`, shared by the
 /// files using that runtime.
@@ -52,6 +55,8 @@ pub struct Analysis {
     effects: HashMap<Span, effects::Effects>,
     names: display::Names,
     members: members::Members,
+    /// What the type query ([`Analysis::type_of`]) needs of each definition.
+    type_defs: types::TypeDefs,
 }
 
 /// Check `modules` for an editor: like [`crate::check`], but errors never stop other items from

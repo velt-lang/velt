@@ -27,6 +27,7 @@ pub(super) fn build(mut cx: Ctx) -> Analysis {
             rec.params.len() - 1
         }) as u32;
     let names = Names::capture(&cx);
+    let type_defs = super::types::TypeDefs::capture(&cx);
     let b = Builder {
         cx: &cx,
         names: &names,
@@ -79,6 +80,7 @@ pub(super) fn build(mut cx: Ctx) -> Analysis {
         effects,
         names,
         members,
+        type_defs,
     }
 }
 

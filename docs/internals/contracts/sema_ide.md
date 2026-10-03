@@ -36,6 +36,39 @@ spans cover the offset, the shortest wins.
 | `mutation_of(def: &DefRef) -> Option<&Mutation>` | What a function, method or constructor modifies, as ownership inference decided: `Mutation { this: bool, params: Vec<String> }` (`this`: a method that modifies its receiver, never a constructor; `params`: parameters whose contents it modifies, in declaration order; `any()`: either). `None` for anything else, closures included (callbacks take their arguments by a fixed convention). |
 | `references(def: &DefRef) -> Vec<Span>` | Every span naming `def` (its declaration included) in all modules, sorted, deduplicated. Uses through an import alias are included (their text is the alias). |
 
+## Type query
+For tools that reason about types (the `velt check --ts-compat` lint) without parsing display
+strings. Additive: checking records nothing new for it.
+
+| Method | Result |
+|---|---|
+| `type_of(span) -> Option<TypeRef>` | The type of the checked expression (or declared local) whose span is exactly `span` (no covering or nearest match); `None` when nothing with that span was checked. Where a desugaring checks synthetic expressions with the span of the one they stand for (`const { a = 1 } = p` reads `p.a` at `p`'s span), the first record, the original's, wins. The type is the expression's own, before any conversion to the expected type (`m.get(k)` is `V \| null` even where a `V \| null` is wrapped again). |
+| `view(&TypeRef) -> TypeView` | One level of its structure (below). |
+| `fields(&TypeRef) -> Vec<FieldView>` | Fields of a class (inherited ones first), struct, interface or object type, with the type's arguments substituted: `FieldView { name, ty: TypeRef, optional }`. `optional` is `name?: T` in a class, struct or interface; an object type doesn't keep it (`{ a?: T }` is `{ a: T \| null }`). Empty for other types. |
+| `declares_method(&TypeRef, name) -> bool` | The class or struct declares instance method `name` itself (inherited methods don't count), or the interface has it. |
+| `show_type(&TypeRef) -> String` | As `type_at` spells types, arguments substituted. |
+
+`TypeRef` is an opaque handle (`Clone`); generic arguments travel in it and are substituted when
+viewed, so recursive types are fine. `TypeView`:
+
+```rust
+pub enum TypeView {
+    Int(hir::IntTy), Float(hir::FloatTy), Bool, Str, Literal(LiteralKind /* Str|Int|Float|Bool */),
+    Void, Never,
+    Nullable(TypeRef),            // T | null
+    Array(TypeRef), Tuple(Vec<TypeRef>),
+    Map(TypeRef, TypeRef),        // the prelude's Map
+    Set(TypeRef),                 // velt:collections/set
+    Promise(TypeRef),             // what it rejects with is not shown
+    Shared(TypeRef), Fn,          // Fn: closures and named functions as values
+    Union(Vec<TypeRef>),          // A | B (with null: Nullable(Union))
+    Named(NamedType),             // { name, kind: Class|Struct|Interface|Enum, is_std, args }
+    Record,                       // an object type; see fields()
+    Param(String),                // a generic parameter of the enclosing definition
+    Other,                        // after an error
+}
+```
+
 ## `DefRef`
 ```rust
 pub struct DefRef {
