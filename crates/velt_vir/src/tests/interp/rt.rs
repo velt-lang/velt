@@ -112,7 +112,7 @@ impl Interp<'_> {
             "velt_rt_str_from_bool" => {
                 self.new_str(a[1], if a[0] & 1 == 1 { b"true" } else { b"false" })
             }
-            "velt_rt_str_clone" => self.str_clone(a[0], a[1]),
+            "velt_rt_str_clone" | "velt_rt_str_own" => self.str_clone(a[0], a[1]),
             "velt_rt_str_drop" => {
                 let (p, _, cap) = self.str_header(a[0]);
                 if cap > 0 {
