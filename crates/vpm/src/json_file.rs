@@ -25,9 +25,10 @@ pub fn write(path: &Path, value: &impl Serialize) -> Result<(), String> {
     write_atomic(path, &to_text(value))
 }
 
-/// Replace `path` with `text` atomically: a temporary file in the same directory, renamed over
-/// it, so a concurrent reader (a registry server answering while a package is published, a
-/// build reading the lock file) sees the old file or the new one, never a truncated one.
+/// Replace `path` with `text` atomically: a temporary file in the same directory, synced to disk
+/// and renamed over it, so a concurrent reader (a registry server answering while a package is
+/// published, a build reading the lock file) sees the old file or the new one, never a truncated
+/// one, and a crash never leaves an empty one.
 pub fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
@@ -39,11 +40,33 @@ pub fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed)
     ));
-    let written = std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, path));
+    let written = write_synced(&tmp, text.as_bytes()).and_then(|()| std::fs::rename(&tmp, path));
     written.map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         format!("cannot write `{}`: {e}", path.display())
-    })
+    })?;
+    sync_dir(path);
+    Ok(())
+}
+
+/// Write `bytes` to a new file at `path` and wait until they are on disk, so a crash after the
+/// rename never leaves an empty file.
+fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+/// Make a rename in `path`'s directory durable (Unix; Windows has no directory handle to sync).
+/// Best effort: the rename itself has already succeeded.
+fn sync_dir(path: &Path) {
+    #[cfg(unix)]
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::File::open(dir).and_then(|d| d.sync_all());
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 /// The error for a directory that still has the former TOML file `old` where `new` belongs.

@@ -1,5 +1,6 @@
 // `spawn(p);` of a stored promise: nobody can await the task, so its rejection is reported as
-// uncaught (exit 1), like a spawned call.
+// uncaught (exit 1), like a spawned call. `main` waits for a promise nothing ever settles (its
+// resolvers stay alive), so only that report can end the program.
 class Failed extends Error {}
 
 async function bad(name: string): Promise<string> throws Failed {
@@ -10,6 +11,7 @@ async function bad(name: string): Promise<string> throws Failed {
 async function main() {
   const p = bad("stored");
   spawn(p);
-  await sleep(20);
-  console.log("end");
+  const forever = Promise.withResolvers<void>();
+  await forever.promise;
+  console.log("unreachable");
 }

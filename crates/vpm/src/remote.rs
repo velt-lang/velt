@@ -152,6 +152,7 @@ fn write(
     let auth = format!("Bearer {token}");
     let mut headers = headers.to_vec();
     if !token.is_empty() {
+        check_token_transport(url)?;
         headers.push(("Authorization", auth.as_str()));
     }
     let resp = velt_http::fetch(method, target, &headers, body)?;
@@ -163,6 +164,41 @@ fn write(
         )),
         s => Err(format!("registry {url}: {s}: {text}")),
     }
+}
+
+/// The token may travel only over `https://`, or plain `http://` to this machine: anyone on the
+/// network path could read it otherwise.
+fn check_token_transport(url: &str) -> Result<(), String> {
+    let scheme_is = |scheme: &str| {
+        url.get(..scheme.len())
+            .is_some_and(|s| s.eq_ignore_ascii_case(scheme))
+    };
+    if scheme_is("https://") {
+        return Ok(());
+    }
+    let refused = || {
+        format!(
+            "not sending ${TOKEN_VAR} to {url}: only an https:// registry, or http:// on this machine, gets it; use the registry's https:// URL (put `velt registry serve` behind a TLS reverse proxy)"
+        )
+    };
+    if !scheme_is("http://") {
+        return Err(refused());
+    }
+    let rest = &url["http://".len()..];
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = match host_port.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(v6),
+        None => host_port.split(':').next().unwrap_or(host_port),
+    };
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    if loopback {
+        return Ok(());
+    }
+    Err(refused())
 }
 
 /// Yank (`yanked`) or unyank `name` `version`.
@@ -232,4 +268,38 @@ pub fn search(url: &str, query: &str) -> Result<Vec<crate::search::Hit>, String>
         ));
     }
     crate::search::from_json(&resp.body_text()).map_err(|e| format!("registry {url}: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_token_transport;
+
+    #[test]
+    fn tokens_travel_only_over_tls_or_to_this_machine() {
+        for url in [
+            "https://registry.example.com",
+            "HTTPS://registry.example.com",
+            "http://127.0.0.1:8091",
+            "HTTP://localhost",
+            "http://127.1.2.3",
+            "http://localhost:8091/",
+            "http://LOCALHOST",
+            "http://[::1]:8091",
+        ] {
+            assert!(check_token_transport(url).is_ok(), "{url}");
+        }
+        for url in [
+            "http://registry.example.com",
+            "http://192.168.1.10:8091",
+            "http://[2001:db8::1]:8091",
+            "http://localhost.example.com",
+            "http://127.0.0.1@evil.example.com",
+            "HTTP://registry.example.com",
+            "ftp://registry.example.com",
+            "registry.example.com",
+        ] {
+            let err = check_token_transport(url).unwrap_err();
+            assert!(err.contains("https://"), "{url}: {err}");
+        }
+    }
 }

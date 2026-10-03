@@ -81,8 +81,13 @@ fn new_token() -> Result<String, String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// User names follow the package name rules (`[a-z][a-z0-9_-]*`).
+/// User names follow the package name rules (`[a-z][a-z0-9_-]*`, not a Windows device name).
 pub fn check_user_name(name: &str) -> Result<(), String> {
+    if vpm::manifest::is_windows_device_name(name) {
+        return Err(format!(
+            "invalid user name `{name}`: it is a device name on Windows (`con`, `nul`, `com1`, …)"
+        ));
+    }
     if vpm::manifest::is_valid_package_name(name) {
         Ok(())
     } else {
@@ -100,6 +105,7 @@ pub fn is_open(root: &Path) -> Result<bool, String> {
 /// Add user `name`; returns the new token (shown once). The first user closes an open registry.
 pub fn add_user(root: &Path, name: &str) -> Result<String, String> {
     check_user_name(name)?;
+    let _lock = crate::lock(root)?;
     let mut users = load(root)?.unwrap_or_default();
     if users.users.contains_key(name) {
         return Err(format!(
@@ -114,6 +120,7 @@ pub fn add_user(root: &Path, name: &str) -> Result<String, String> {
 
 /// Replace the token of user `name`; returns the new one (the old one stops working).
 pub fn rotate_token(root: &Path, name: &str) -> Result<String, String> {
+    let _lock = crate::lock(root)?;
     let mut users = load(root)?.unwrap_or_default();
     let slot = users
         .users
@@ -125,23 +132,41 @@ pub fn rotate_token(root: &Path, name: &str) -> Result<String, String> {
     Ok(token)
 }
 
-/// Remove user `name` (packages it owns keep their other owners). Removing the last user opens
-/// the registry, so it needs `open`.
-pub fn remove_user(root: &Path, name: &str, open: bool) -> Result<(), String> {
+/// What removing a user changed.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Removed {
+    /// The packages the user owned, now without them.
+    pub owned: Vec<String>,
+    /// Those of them that have no owner left (an administrator assigns one with
+    /// `velt registry owner add`).
+    pub unowned: Vec<String>,
+}
+
+/// Remove user `name` and drop it from the owners of every package (which keep their other
+/// owners), so a new user of the same name owns nothing. Removing the last user opens the
+/// registry, so it needs `open`.
+pub fn remove_user(root: &Path, name: &str, open: bool) -> Result<Removed, String> {
+    let _lock = crate::lock(root)?;
     let mut users = load(root)?.unwrap_or_default();
     if users.users.remove(name).is_none() {
         return Err(format!("no user `{name}`"));
     }
-    if !users.users.is_empty() {
-        return save(root, &users);
-    }
-    if !open {
+    let last = users.users.is_empty();
+    if last && !open {
         return Err(format!(
             "`{name}` is the last user: without users anyone who can reach the registry may publish (pass `--open` to remove it anyway)"
         ));
     }
+    // Owners first: if this stops halfway, the user still exists and owns less, never the
+    // other way round.
+    let removed = crate::owners::drop_user(root, name)?;
+    if !last {
+        save(root, &users)?;
+        return Ok(removed);
+    }
     let path = users_path(root);
-    std::fs::remove_file(&path).map_err(|e| format!("cannot remove `{}`: {e}", path.display()))
+    std::fs::remove_file(&path).map_err(|e| format!("cannot remove `{}`: {e}", path.display()))?;
+    Ok(removed)
 }
 
 /// Every user name, sorted.

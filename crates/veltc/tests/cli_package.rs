@@ -110,6 +110,14 @@ fn add_without_version_uses_latest_and_path_deps_work() {
     s.ok("", &["new", "app"]);
     s.ok("app", &["add", "util"]);
     assert!(s.read("app/package.vlt").contains("util: \"0.1.0\""));
+    // A package with only pre-releases: `add` picks the newest, the version `search` shows.
+    s.ok("", &["new", "beta", "--lib"]);
+    set_version(&s, "beta", "0.2.0-beta.1");
+    s.ok("beta", &["publish"]);
+    let found = s.velt("app", &["search", "beta"]);
+    assert!(String::from_utf8_lossy(&found.stdout).contains("beta  0.2.0-beta.1"));
+    s.ok("app", &["add", "beta"]);
+    assert!(s.read("app/package.vlt").contains("beta: \"0.2.0-beta.1\""));
 
     s.ok("", &["new", "local", "--lib"]);
     s.ok("app", &["add", "local", "--path", "../local"]);

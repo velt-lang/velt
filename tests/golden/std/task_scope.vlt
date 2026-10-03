@@ -1,6 +1,7 @@
 // velt:task taskScope: the scope settles only after its body and every child it spawned (so
 // children never outlive it); a failing child aborts the scope's signal, the siblings stop
 // cooperatively, and the scope fails with the first error in time, even one nobody awaited.
+import { channel, Channel } from "velt:channel";
 import { AbortSignal, AbortError, TaskScope, taskScope } from "velt:task";
 
 class Failed extends Error {}
@@ -17,22 +18,59 @@ async function step(name: string, ms: i64, signal: AbortSignal): Promise<string>
   return name;
 }
 
+// Like `step`, but it starts once `before` receives a value (when given) and reports its line on
+// `lines`, for `main` to print, then on `after` (when given). A line printed by one task can
+// appear after a line another task prints later (#249); this way the children's lines come in a
+// fixed order however their tasks run.
+async function stepInOrder(
+  name: string,
+  ms: i64,
+  signal: AbortSignal,
+  before: Channel<bool> | null,
+  after: Channel<bool> | null,
+  lines: Channel<string>,
+): Promise<string> throws AbortError {
+  if (before != null) {
+    await before.receive();
+  }
+  for (let i = 0; i < ms / 10; i++) {
+    signal.throwIfAborted();
+    await sleep(10);
+  }
+  try {
+    await lines.send(`${name} finished`);
+    if (after != null) {
+      await after.send(true);
+    }
+  } catch (e) {
+    console.log("send failed");
+  }
+  return name;
+}
+
 async function failing(ms: i64): Promise<string> throws Failed {
   await sleep(ms);
   throw new Failed("child failed");
 }
 
 async function main() {
-  const names = await taskScope(
-    async (scope: TaskScope<AbortError>): Promise<string> throws AbortError => {
-      const a = scope.spawn(step("a", 30, scope.signal));
-      const b = scope.spawn(step("b", 150, scope.signal));
-      return "body done";
-    },
-  );
+  const lines = channel<string>();
+  const aDone = channel<bool>();
+  const names = await taskScope(async (
+    scope: TaskScope<AbortError>,
+  ): Promise<string> throws AbortError => {
+    const a = scope.spawn(stepInOrder("a", 30, scope.signal, null, aDone, lines));
+    const b = scope.spawn(stepInOrder("b", 150, scope.signal, aDone, null, lines));
+    return "body done";
+  });
+  // Both children finished before the scope settled.
+  for (let i = 0; i < 2; i++) {
+    console.log(await lines.receive());
+  }
+  lines.close();
+  aDone.close();
   console.log("scope 1:", names);
 
-  const t0 = performance.now();
   try {
     await taskScope(async (scope: TaskScope<ScopeError>): Promise<string> throws ScopeError => {
       const signal = scope.signal;
@@ -41,12 +79,8 @@ async function main() {
       return "unreachable";
     });
   } catch (e) {
-    console.log(
-      "scope 2 failed:",
-      e.message,
-      "siblings stopped early:",
-      performance.now() - t0 < 300.0,
-    );
+    // `slow` stopped early: it would print `slow finished` otherwise.
+    console.log("scope 2 failed:", e.message);
   }
 
   // The first error in time wins over the `AbortError`s it causes in the siblings, whatever

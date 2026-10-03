@@ -55,13 +55,20 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// The HTTP handler (writes are serialized so index and owner updates never interleave).
+    /// The HTTP handler. Writes are serialized, so index and owner updates never interleave:
+    /// one at a time inside the server, and each holds the registry's [`lock`] against
+    /// `velt registry user` and `velt registry owner` running beside it.
     pub fn handler(self) -> Handler {
-        let lock = Arc::new(Mutex::new(()));
+        let one_at_a_time = Arc::new(Mutex::new(()));
         Arc::new(move |req: Request| {
-            let _one_write_at_a_time =
-                (req.method != "GET").then(|| lock.lock().unwrap_or_else(|e| e.into_inner()));
-            self.route(&req)
+            if req.method == "GET" {
+                return self.route(&req);
+            }
+            let _in_process = one_at_a_time.lock().unwrap_or_else(|e| e.into_inner());
+            match lock(&self.root) {
+                Ok(_across_processes) => self.route(&req),
+                Err(e) => Response::text(500, e),
+            }
         })
     }
 
@@ -170,6 +177,27 @@ impl Registry {
         let v = semver::Version::parse(version).ok()?;
         vpm::manifest::is_valid_package_name(name).then(|| self.root.join(name).join(v.to_string()))
     }
+}
+
+/// The lock file that serializes changes to a registry directory across processes.
+pub const LOCK_FILE: &str = ".lock";
+
+/// Hold the registry's lock (an advisory lock on [`LOCK_FILE`]) until the result is dropped:
+/// the server takes it for each write request, and the administrator's commands (users, owners)
+/// for their change, so a change made beside a running server is never lost. Blocks while
+/// another process holds it.
+pub fn lock(root: &Path) -> Result<std::fs::File, String> {
+    let path = root.join(LOCK_FILE);
+    let locked = std::fs::create_dir_all(root).and_then(|()| {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)?;
+        file.lock()?;
+        Ok(file)
+    });
+    locked.map_err(|e| format!("cannot lock `{}`: {e}", path.display()))
 }
 
 /// A fresh directory for an upload being checked (inside the registry, so it is on the same

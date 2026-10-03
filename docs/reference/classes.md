@@ -34,6 +34,9 @@ hidden classes and no runtime shape checks.
   class, struct or union (like `structuredClone`), except values owning a `[Symbol.dispose]`
   resource, which may define `clone()` themselves.
 - Async methods take `this` by value: the promise owns it.
+- An overridden method returning a promise reports its errors through the promise: when the
+  base method or any override can fail, all of them must be `async`
+  ([Async](async.md#errors)).
 
 ```ts
 class Account {

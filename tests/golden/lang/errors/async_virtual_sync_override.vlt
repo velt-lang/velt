@@ -1,0 +1,33 @@
+// A method returning a promise reports the errors of every override through the promise
+// (#259): a synchronous base method or override would throw them at the call instead, so it
+// must be `async` when any of them can fail.
+class Source {
+  read(): Promise<i64> {
+    return new Promise<i64>((resolve, reject) => resolve(1));
+  }
+}
+
+class FailingSource extends Source {
+  override async read(): Promise<i64> {
+    throw new Error("unavailable");
+  }
+}
+
+class Machine {
+  async run(): Promise<i64> {
+    throw new Error("jammed");
+  }
+}
+
+class Idle extends Machine {
+  override run(): Promise<i64> {
+    return new Promise<i64>((resolve, reject) => resolve(0));
+  }
+}
+
+async function main() {
+  const s: Source = new FailingSource();
+  const m: Machine = new Idle();
+  console.log(await s.read());
+  console.log(await m.run());
+}

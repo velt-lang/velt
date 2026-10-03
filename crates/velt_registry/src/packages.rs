@@ -114,13 +114,7 @@ impl Registry {
             Ok(c) => c,
             Err(resp) => return resp,
         };
-        let stored = self.store(req, name, version).and_then(|entry| {
-            match owners::claim(&self.root, name, &caller) {
-                Ok(()) => Ok(entry),
-                Err(e) => Err((500, e)),
-            }
-        });
-        match stored {
+        match self.store(req, name, version, &caller) {
             Ok(entry) => Response::text(201, format!("published `{name}` {}\n", entry.version)),
             Err((status, msg)) => Response::text(status, msg),
         }
@@ -131,6 +125,7 @@ impl Registry {
         req: &Request,
         name: &str,
         version: &str,
+        caller: &Caller,
     ) -> Result<vpm::registry::IndexEntry, (u16, String)> {
         let bad = |m: String| (400, m);
         let sum = archive::checksum(&req.body).map_err(bad)?;
@@ -140,7 +135,7 @@ impl Registry {
             )));
         }
         let staging = staging_dir(&self.root).map_err(|e| (500, e))?;
-        let result = self.publish_staged(&req.body, &staging, name, version);
+        let result = self.publish_staged(&req.body, &staging, name, version, caller);
         let _ = std::fs::remove_dir_all(&staging);
         result
     }
@@ -151,6 +146,7 @@ impl Registry {
         staging: &Path,
         name: &str,
         version: &str,
+        caller: &Caller,
     ) -> Result<vpm::registry::IndexEntry, (u16, String)> {
         archive::unpack(body, staging).map_err(|e| (400, e))?;
         // Read with the limits of every manifest; messages name `package.vlt`, never the
@@ -171,8 +167,14 @@ impl Registry {
                 ),
             ));
         }
+        // The owner is recorded before the version is moved into place, so a package is never
+        // published without its owner; a failed publish takes the claim back.
+        let claimed = owners::claim(&self.root, name, caller).map_err(|e| (500, e))?;
         let loc = self.loc(staging.join(".cache"));
         vpm::registry::publish_local(staging, &loc).map_err(|e| {
+            if claimed {
+                owners::unclaim(&self.root, name);
+            }
             let status = if e.contains("already published") {
                 409
             } else {

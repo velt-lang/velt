@@ -1,0 +1,3 @@
+async_generic_slot.vlt:27:9: error: `G.get` cannot be `async`: calls through `Getter.get`, which returns a type parameter, throw `Error` instead of rejecting a promise
+async_generic_slot.vlt:17:18: error: `Failing.get` cannot be `async`: calls through `Box.get`, which returns a type parameter, throw `Error` instead of rejecting a promise
+  = note: make `get` synchronous (it may still return a promise), or catch the error inside it

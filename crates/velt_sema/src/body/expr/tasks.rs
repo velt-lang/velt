@@ -160,7 +160,7 @@ impl FnCx<'_, '_> {
         if f.kind == FnKind::Extern {
             return;
         }
-        if !f.is_async {
+        if !self.rejects_through_promise(d) {
             self.throw_src(ThrowSrc::Call(d, targs.to_vec(), span));
             return;
         }
@@ -172,6 +172,17 @@ impl FnCx<'_, '_> {
             exact: true,
             span,
         });
+    }
+
+    /// Does calling `d` report its errors through the promise it returns instead of throwing:
+    /// an async function, or a member of a promise dispatch group (a forwarder synthesized for
+    /// an async interface default, throws/groups.rs `Group::promise`)?
+    pub(crate) fn rejects_through_promise(&mut self, d: DefId) -> bool {
+        let f = self.cx.fn_info(d);
+        if f.kind == FnKind::Extern {
+            return false;
+        }
+        f.is_async || self.cx.throw_groups().in_promise_group(d)
     }
 
     /// The result type of calling async function `d` (declared `Promise<T>`): `Promise<T, E>`

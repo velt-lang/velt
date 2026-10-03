@@ -112,7 +112,7 @@ impl FnCx<'_, '_> {
             args: ck.type_args.clone(),
             span,
         };
-        let ret = self.slot_call_throws(src, ck.ret, span);
+        let ret = self.slot_call_throws(&s, src, ck.ret, span);
         let callee = if s.on_param {
             Callee::ParamMethod {
                 iface: s.iface,
@@ -128,11 +128,18 @@ impl FnCx<'_, '_> {
     }
 
     /// A call through interface slot `src` (result type `ret`) may throw here; the result type.
-    /// A method returning a promise reports its errors through the promise (throws/groups.rs
-    /// `Group::promise`): the result is `Promise<T, E>` with what the slot is known to throw
-    /// (checked after inference, like an async call).
-    fn slot_call_throws(&mut self, src: ThrowSrc, ret: TyId, span: Span) -> TyId {
-        let Some(v) = self.cx.ty.promise_payload(ret) else {
+    /// A slot of a promise group (throws/groups.rs `Group::promise`, as lowering reads it)
+    /// reports its errors through the promise: the result is `Promise<T, E>` with what the slot
+    /// is known to throw (checked after inference, like an async call). Other slots throw, even
+    /// when the instantiated result is a promise (`get(): T` with `T = Promise<i64>`).
+    fn slot_call_throws(&mut self, s: &IfaceSlot, src: ThrowSrc, ret: TyId, span: Span) -> TyId {
+        let (iface, slot) = (s.iface, s.slot);
+        let groups = self.cx.throw_groups();
+        let promise = groups
+            .slot_group(iface, slot)
+            .is_some_and(|g| groups.list[g].promise);
+        let payload = self.cx.ty.promise_payload(ret);
+        let Some(v) = payload.filter(|_| promise) else {
             self.throw_src(src);
             return ret;
         };
