@@ -462,10 +462,10 @@ fn description_and_keywords() {
     assert_eq!(json["description"], "Fast JSON for Velt");
     assert_eq!(json["keywords"][1], "parser");
 
-    let long = "x".repeat(201);
+    let long = "x".repeat(301);
     let cases = [
         ("description: \"\"", "`description` is empty; remove the field instead", "\"\""),
-        (&*format!("description: \"{long}\""), "`description` has 201 characters; at most 200 fit on one line", &*format!("\"{long}\"")),
+        (&*format!("description: \"{long}\""), "`description` has 301 characters; at most 300 are allowed (`velt search` shows the start of a long one)", &*format!("\"{long}\"")),
         ("description: \"a\\nb\"", "`description` must be one line (no line breaks, tabs or other control characters)", "\"a\\nb\""),
         ("description: \" a\"", "`description` starts or ends with whitespace", "\" a\""),
         ("keywords: []", "`keywords` is empty; remove the field instead", "[]"),
@@ -493,6 +493,6 @@ fn description_and_keywords() {
         let (got, _) = error(&with(&format!("description: \"a{c}b\"")));
         assert!(got.contains("contains the invisible character U+"), "{got}");
     }
-    // 200 characters that are not ASCII are fine: characters, not bytes, count.
-    read(&with(&format!("description: \"{}\"", "é".repeat(200))));
+    // 300 characters that are not ASCII are fine: characters, not bytes, count.
+    read(&with(&format!("description: \"{}\"", "é".repeat(300))));
 }

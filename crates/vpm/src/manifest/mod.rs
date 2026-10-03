@@ -135,7 +135,7 @@ pub struct Package {
 }
 
 /// Longest `description`, in characters (Unicode scalar values): one line in `velt search`.
-pub const MAX_DESCRIPTION: usize = 200;
+pub const MAX_DESCRIPTION: usize = 300;
 /// Most `keywords`.
 pub const MAX_KEYWORDS: usize = 10;
 /// Longest keyword.
@@ -293,7 +293,7 @@ fn check_description(text: &str) -> Result<(), String> {
         Err("`description` is empty; remove the field instead".into())
     } else if chars > MAX_DESCRIPTION {
         Err(format!(
-            "`description` has {chars} characters; at most {MAX_DESCRIPTION} fit on one line"
+            "`description` has {chars} characters; at most {MAX_DESCRIPTION} are allowed (`velt search` shows the start of a long one)"
         ))
     } else if text.chars().any(char::is_control) {
         Err(
