@@ -118,7 +118,11 @@ impl FnCx<'_, '_> {
                 break;
             }
             crate::body::field_defaults(self.cx, d);
-            cur = self.cx.adt(d).and_then(|a| a.base).map(|b| self.cx.ty.subst(b, &args));
+            cur = self
+                .cx
+                .adt(d)
+                .and_then(|a| a.base)
+                .map(|b| self.cx.ty.subst(b, &args));
             out.push(ThrowSrc::Defaults(d, args, span));
         }
         out

@@ -7,11 +7,16 @@
 //! class declaring the base constructor it calls: right after `super(...)` returns, or on entry
 //! when no ancestor has a constructor. `new C()` calls C's constructor (possibly inherited)
 //! and then runs the initializers of the classes below the one declaring it.
+//!
+//! Those run inline at the `new`, unless the `new` is itself inside the inlined initializers of
+//! the same class (initializers that construct each other in a cycle): that one calls an
+//! out-of-line initializer function (`Work::Init`), so lowering terminates and ordinary
+//! classes compile as before.
 
 use velt_sema::hir::{self, DefId, LocalId, TyId, TyKind};
 
-use super::{ice, FnLower};
-use crate::vir::Place;
+use super::{ice, Cx, FnLower, ScopeKind, Work};
+use crate::vir::{self, Function, Operand, Place, Ty};
 
 impl FnLower<'_, '_> {
     /// The concrete class type when `def` is that class's own constructor.
@@ -86,5 +91,62 @@ impl FnLower<'_, '_> {
             }
         }
         self.targs = saved;
+    }
+
+    /// The initializers `new` runs for class `ty` (concrete) from field `from` on: inline, or
+    /// through the out-of-line initializer when they are already being inlined here.
+    pub(super) fn new_inits(&mut self, obj: &Place, ty: TyId, from: usize) {
+        if !self.init_stack.contains(&ty) {
+            self.init_stack.push(ty);
+            self.init_fields(obj, ty, from);
+            self.init_stack.pop();
+            return;
+        }
+        // The out-of-line initializer throws what may be thrown here: the initializers ran
+        // inline in this same context when sema checked them.
+        let err = self.handler_error_ty();
+        let f = self.cx.func(Work::Init(ty, err));
+        let unit = self.cx.intern(TyKind::Unit);
+        let argv = vec![Operand::Copy(obj.clone())];
+        self.finish_call(vir::Callee::Func(f), argv, unit, err);
+    }
+
+    /// The error type an error thrown here is converted to: the innermost `try`'s, else the
+    /// function's.
+    fn handler_error_ty(&self) -> Option<TyId> {
+        let try_ty = self.scopes.iter().rev().find_map(|s| match s.kind {
+            ScopeKind::Try { ty, .. } => Some(ty),
+            _ => None,
+        });
+        try_ty.or(self.throws)
+    }
+
+    /// `Work::Init(ty, err)`: `(this: ptr [, out: ptr])` running the initializers `new` runs
+    /// for class `ty` after its constructor, throwing `err`.
+    pub(super) fn build_init(cx: &mut Cx<'_>, ty: TyId, err: Option<TyId>) -> Function {
+        let unit = cx.intern(TyKind::Unit);
+        let from = match cx.kind(ty) {
+            TyKind::Adt(d, _) => cx.adt_def(d).ctor,
+            _ => ice("initializer of a non-class type"),
+        };
+        let mut lw = FnLower::bare(cx, vec![]);
+        let from = from.map_or(0, |c| lw.ctor_fields(c));
+        let this = lw.new_local(Ty::Ptr, Some("this".into()));
+        let mut params = vec![Ty::Ptr];
+        lw.ret_ty = Some(unit);
+        lw.throws = err;
+        let abi = lw.cx.ret_abi(unit, err);
+        if abi.out.is_some() {
+            params.push(Ty::Ptr);
+            lw.out_ptr = Some(lw.new_local(Ty::Ptr, Some("ret.out".into())));
+        }
+        lw.init_stack.push(ty);
+        lw.push_scope(ScopeKind::Block);
+        lw.init_fields(&Place::local(this), ty, from);
+        lw.emit_return(None);
+        lw.pop_scope();
+        let tag = err.map_or(String::new(), |e| format!("E{}_", e.0));
+        let sym = format!("_Ginit_{tag}{}", lw.cx.type_symbol(ty));
+        lw.finish(sym, params, abi.ret)
     }
 }

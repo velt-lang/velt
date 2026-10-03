@@ -114,7 +114,7 @@ impl FnLower<'_, '_> {
             None => 0,
         };
         if !self.dead() {
-            self.init_fields(&obj, ty, from);
+            self.new_inits(&obj, ty, from);
         }
         Operand::Copy(obj)
     }

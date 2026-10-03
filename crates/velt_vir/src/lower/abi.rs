@@ -69,6 +69,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             transfer_call: false,
             same_mode: false,
             ctor_self: None,
+            init_stack: vec![],
         };
         let entry = lw.new_block();
         lw.live[entry.0 as usize] = true;
@@ -99,6 +100,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::WidenDrop(from, to) => Self::build_widen_drop(cx, *from, *to),
             Work::HandlerInit(def, targs) => Self::build_handler_init(cx, *def, targs),
             Work::Unclaimed(t) => Self::build_unclaimed(cx, *t),
+            Work::Init(t, e) => Self::build_init(cx, *t, *e),
         }
     }
 

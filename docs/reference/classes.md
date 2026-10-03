@@ -15,6 +15,9 @@ hidden classes and no runtime shape checks.
   D's constructor body. `new` throws whatever the initializers and constructors throw
   ([Errors](errors.md#throwing)); a constructor's `throws` clause covers the initializers it
   runs (those of its class and of the classes between it and the next constructor up).
+  Initializers may construct their own class or classes whose initializers construct it back
+  (`next: Node | null = more() ? new Node() : null`); a `new` in such a cycle throws what every
+  class in the cycle's initializers throws.
   A field declared from an integer literal (`count = 0`) holds a JS number, like
   `let count = 0` ([Numbers](types.md#numbers)).
 - **Parameter properties**: `constructor(private readonly name: string, public age: i64) {}`

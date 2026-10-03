@@ -200,6 +200,10 @@ enum Work {
     Unclaimed(TyId),
     /// `(env, req, state)` initializer of an http handler closure's per-request state.
     HandlerInit(DefId, Vec<TyId>),
+    /// `(this: ptr)`: the field initializers `new` runs for class `T` (after its constructor),
+    /// throwing `E`; built only for classes whose initializers construct each other in a
+    /// cycle (ctor_init.rs).
+    Init(TyId, Option<TyId>),
 }
 
 /// Program-level lowering state.
@@ -368,4 +372,7 @@ struct FnLower<'c, 'h> {
     /// While lowering a class's constructor: the (concrete) class type, whose field
     /// initializers the constructor runs (ctor_init.rs).
     ctor_self: Option<TyId>,
+    /// Classes whose initializers a `new` is inlining here (ctor_init.rs): a `new` of one of
+    /// them inside them calls an out-of-line initializer function instead.
+    init_stack: Vec<TyId>,
 }
