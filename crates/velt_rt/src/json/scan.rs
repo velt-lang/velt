@@ -45,11 +45,17 @@ pub struct NumTok {
     pub integer: bool,
 }
 
-/// Bytes that end a fast string scan: `"`, `\` and control characters.
+/// Bytes that end a fast string scan: `"`, `\`, control characters, and non-ASCII bytes (which
+/// adjust the string's UTF-16 length, see [`UNIT_ADJUST`], and resume the scan).
 static STRING_STOP: [bool; 256] = {
     let mut t = [false; 256];
     let mut i = 0;
     while i < 0x20 {
+        t[i] = true;
+        i += 1;
+    }
+    let mut i = 0x80;
+    while i < 0x100 {
         t[i] = true;
         i += 1;
     }
@@ -58,15 +64,38 @@ static STRING_STOP: [bool; 256] = {
     t
 };
 
+/// For a non-ASCII byte, its UTF-16 code units minus one: a scanned byte counts one unit, a
+/// continuation byte none (−1), the lead byte of a 4-byte sequence two (+1, a surrogate pair).
+static UNIT_ADJUST: [i8; 128] = {
+    let mut t = [0i8; 128];
+    let mut i = 0;
+    while i < 0x40 {
+        t[i] = -1;
+        i += 1;
+    }
+    let mut i = 0x70;
+    while i < 0x80 {
+        t[i] = 1;
+        i += 1;
+    }
+    t
+};
+
 /// Cursor over a JSON document.
 pub struct Scanner<'a> {
     pub src: &'a [u8],
     pub pos: usize,
+    /// The UTF-16 length of the last string token's (decoded) contents.
+    pub units: usize,
 }
 
 impl<'a> Scanner<'a> {
     pub fn new(src: &'a [u8]) -> Scanner<'a> {
-        Scanner { src, pos: 0 }
+        Scanner {
+            src,
+            pos: 0,
+            units: 0,
+        }
     }
 
     /// Skip whitespace and return the next byte without consuming it (`None` at the end).
@@ -156,19 +185,39 @@ impl<'a> Scanner<'a> {
         self.pos += 1;
         let start = self.pos;
         let mut out: Option<Vec<u8>> = None;
+        // The contents' UTF-16 length: one unit per byte scanned, adjusted at non-ASCII bytes.
+        let mut units = 0isize;
         loop {
             let run = self.pos;
-            while self
-                .src
-                .get(self.pos)
-                .is_some_and(|&b| !STRING_STOP[b as usize])
-            {
-                self.pos += 1;
+            loop {
+                while self
+                    .src
+                    .get(self.pos)
+                    .is_some_and(|&b| !STRING_STOP[b as usize])
+                {
+                    self.pos += 1;
+                }
+                // A run of non-ASCII bytes (all of a non-Latin word) adjusts the count in a loop of
+                // its own.
+                let mut any = false;
+                while let Some(&b) = self.src.get(self.pos) {
+                    if b < 0x80 {
+                        break;
+                    }
+                    units += UNIT_ADJUST[(b - 0x80) as usize] as isize;
+                    self.pos += 1;
+                    any = true;
+                }
+                if !any {
+                    break;
+                }
             }
+            units += (self.pos - run) as isize;
             match self.src.get(self.pos) {
                 Some(b'"') => {
                     let end = self.pos;
                     self.pos += 1;
+                    self.units = units as usize;
                     return Ok(match out {
                         None => StrTok::Borrowed(start, end),
                         Some(mut v) => {
@@ -188,7 +237,7 @@ impl<'a> Scanner<'a> {
                         buf.extend_from_slice(&self.src[run..self.pos]);
                     }
                     self.pos += 1;
-                    self.escape(if decode { Some(buf) } else { None })?;
+                    units += self.escape(if decode { Some(buf) } else { None })? as isize;
                 }
                 Some(_) => return Err(self.error("control character in string")),
                 None => return Err(self.error(UNEXPECTED_EOF)),
@@ -196,8 +245,8 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    /// Decode one escape; the backslash is already consumed.
-    fn escape(&mut self, out: Option<&mut Vec<u8>>) -> Result<(), SyntaxError> {
+    /// Decode one escape (the backslash is already consumed); returns its UTF-16 length.
+    fn escape(&mut self, out: Option<&mut Vec<u8>>) -> Result<usize, SyntaxError> {
         let Some(&c) = self.src.get(self.pos) else {
             return Err(self.error(UNEXPECTED_EOF));
         };
@@ -214,7 +263,7 @@ impl<'a> Scanner<'a> {
                 if let Some(out) = out {
                     out.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
                 }
-                return Ok(());
+                return Ok(ch.len_utf16());
             }
             _ => return Err(self.error("invalid escape")),
         };
@@ -222,7 +271,7 @@ impl<'a> Scanner<'a> {
         if let Some(out) = out {
             out.push(decoded as u8);
         }
-        Ok(())
+        Ok(1)
     }
 
     /// `XXXX` after `\u`, combining a following `\uXXXX` low surrogate. Lone surrogates, which
@@ -303,5 +352,31 @@ pub fn number_i64(src: &[u8], tok: NumTok) -> Option<i64> {
         Some(acc)
     } else {
         acc.checked_neg()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strings_carry_their_utf16_length() {
+        let cases = [
+            (r#""plain""#, 5),
+            (r#""""#, 0),
+            ("\"héllo 日本 😀\"", "héllo 日本 😀".encode_utf16().count()),
+            (r#""a\"b\\c\n""#, 6),
+            (r#""é日""#, 2),
+            (r#""😀!""#, 3),
+            (r#""\ud83d x""#, 3),
+            ("\"😀\\n😀\"", 5),
+        ];
+        for (src, want) in cases {
+            for decode in [true, false] {
+                let mut sc = Scanner::new(src.as_bytes());
+                sc.string(decode).unwrap();
+                assert_eq!(sc.units, want, "{src} (decode: {decode})");
+            }
+        }
     }
 }

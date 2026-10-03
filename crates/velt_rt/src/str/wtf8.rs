@@ -37,7 +37,7 @@ pub fn count_units(bytes: &[u8]) -> usize {
     count_units_scan(bytes)
 }
 
-/// Below this length [`count_units`] counts a word at a time: the vectorized loops cost more to
+/// Below this length [`count_units`] and [`count_lone`] work a word at a time: the vectorized loops cost more to
 /// set up than a short piece (a split field, a JSON key) takes to count, and an ASCII check first
 /// would cost as much as the count.
 const SHORT: usize = 32;
@@ -56,11 +56,34 @@ fn word_units(w: u64) -> usize {
     8 - count(continuation) + count(four_byte)
 }
 
-/// [`count_units`] of fewer than [`SHORT`] bytes, a word at a time. The last, partial word is
-/// read without a copy (overlapping reads) and padded with zero bytes, which count as ASCII and
-/// are taken off again.
+/// [`count_units`] of fewer than [`SHORT`] bytes, a word at a time. The partial last word is
+/// padded with zero bytes, which count as ASCII and are taken off again.
 #[inline]
 fn count_units_short(b: &[u8]) -> usize {
+    let mut units = 0;
+    let rest = for_words(b, |w| units += word_units(w));
+    units - (8 - rest) % 8
+}
+
+/// Does a string of fewer than [`SHORT`] bytes contain an `ED` byte (the lead byte of every
+/// surrogate)? A word at a time, without a call.
+#[inline]
+fn has_ed_short(b: &[u8]) -> bool {
+    let mut found = false;
+    for_words(b, |w| {
+        // A zero byte of `w ^ EDED…` is an `ED` byte of `w` (padding bytes are zero, not ED).
+        let x = w ^ 0xEDED_EDED_EDED_EDED;
+        found |= x.wrapping_sub(0x0101_0101_0101_0101) & !x & HIGH != 0;
+    });
+    found
+}
+
+/// Call `f` on the little-endian words of `b` (fewer than [`SHORT`] bytes), the last one padded
+/// with zero bytes; returns how many bytes that last word holds (0: none was partial). The partial
+/// word is read without a copy: one overlapping read of the last 8 bytes, or for fewer than 8
+/// bytes two overlapping reads whose shared bytes are equal (so OR-ing them is harmless).
+#[inline(always)]
+fn for_words(b: &[u8], mut f: impl FnMut(u64)) -> usize {
     let n = b.len();
     // SAFETY (all reads): every offset read plus its width is at most `n`.
     let read = |at: usize, width: usize| -> u64 {
@@ -73,28 +96,26 @@ fn count_units_short(b: &[u8]) -> usize {
             }
         }
     };
-    let mut units = 0;
     let mut i = 0;
     while i + 8 <= n {
-        units += word_units(u64::from_le(read(i, 8)));
+        f(u64::from_le(read(i, 8)));
         i += 8;
     }
     let rest = n - i;
-    if rest == 0 {
-        return units;
-    }
-    let w = if n >= 8 {
-        u64::from_le(read(n - 8, 8)) >> (8 * (8 - rest))
-    } else {
-        // Two overlapping reads; the shared bytes are equal, so OR-ing them is harmless.
-        let (lo, hi, width) = match rest {
-            4..=7 => (read(0, 4), read(rest - 4, 4), 4),
-            2..=3 => (read(0, 2), read(rest - 2, 2), 2),
-            _ => (read(0, 1), 0, 1),
+    if rest > 0 {
+        let w = if n >= 8 {
+            u64::from_le(read(n - 8, 8)) >> (8 * (8 - rest))
+        } else {
+            let (lo, hi, width) = match rest {
+                4..=7 => (read(0, 4), read(rest - 4, 4), 4),
+                2..=3 => (read(0, 2), read(rest - 2, 2), 2),
+                _ => (read(0, 1), 0, 1),
+            };
+            u64::from_le(lo | (hi << (8 * (rest - width))))
         };
-        u64::from_le(lo | (hi << (8 * (rest - width))))
-    };
-    units + word_units(w) - (8 - rest)
+        f(w);
+    }
+    rest
 }
 
 /// UTF-16 code units a byte of UTF-8 starts: none for a continuation byte, two for the lead byte
@@ -122,7 +143,11 @@ fn count_units_scan(bytes: &[u8]) -> usize {
 /// `ED` followed by `A0..BF`. Text without an `ED` byte (most of it) is ruled out by a fast
 /// search.
 pub fn count_lone(bytes: &[u8]) -> usize {
-    let has_ed = bytes.contains(&0xED);
+    let has_ed = if bytes.len() < SHORT {
+        has_ed_short(bytes)
+    } else {
+        bytes.contains(&0xED)
+    };
     if !has_ed {
         return 0;
     }

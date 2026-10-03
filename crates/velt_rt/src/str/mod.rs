@@ -154,11 +154,6 @@ impl VeltStr {
         VeltStr::from_text_counted(text, wtf8::count_units(text.as_bytes()))
     }
 
-    /// The UTF-16 length of WTF-8 `bytes`.
-    pub fn units_of(bytes: &[u8]) -> usize {
-        wtf8::count_units(bytes)
-    }
-
     /// [`Self::from_text`] when the caller already counted the text's UTF-16 length (`units`).
     #[inline]
     pub fn from_text_counted(text: &str, units: usize) -> VeltStr {
