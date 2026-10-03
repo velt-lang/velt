@@ -255,7 +255,11 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
   - A promise made from the value runs after the lock is released. One that only reads what it
     is given gets a copy, like a spawned call (`m.with((v) => save(v.name))`,
     `m.with((v) => read(v))`: `read` sees the value as it was; a copy of a resource without
-    `clone()` cannot be made, which is an error naming it). One that changes it is an
+    `clone()` cannot be made, which is an error naming it). The copy is a deep copy of what
+    the promise is given, made while the lock is held — the whole value for `read(v)` — so
+    pass only the parts the work needs (`read(v.config)`) when the value is large; strings are
+    never copied. Storing a part outside costs a copy of that part the same way. One that
+    changes it is an
     error, whether the callback returns, stores or drops it, or a function it calls starts it
     (`m.with((v) => bump(v))`: "this `Promise<…>` uses the locked value, and would run after
     `with` releases the lock"): take what the work needs out of the value, await outside
