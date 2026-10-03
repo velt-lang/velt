@@ -1,5 +1,5 @@
 iterable_consume_errors.vlt:23:17: error: cannot spread a value of type `i64` into an array
-arrays and iterables (values with a `[Symbol.iterator]()` method, generators) can be spread
+what `for...of` iterates can be spread: arrays, strings, `Map`s, generators and iterables (values with a `[Symbol.iterator]()` method)
 iterable_consume_errors.vlt:24:24: error: cannot spread `i64` elements into an array of `string`
 iterable_consume_errors.vlt:25:24: error: `Array.from` takes an iterable or `{ length: n }`
 pass an array, a string, a `Map`, a generator or a value with a `[Symbol.iterator]()` method, or write `Array.from({ length: n }, (_, i) => ...)`

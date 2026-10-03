@@ -18,6 +18,9 @@
 //! ```
 //!
 //! Arrays keep their own spread and destructuring code (`expr/spread.rs`, `pattern.rs`).
+//! Strings, `Map`s and `entries()` classes, which `for...of` iterates through the array of
+//! their characters or entries (`loops.rs`), are that new array here too: consumers take it
+//! as it is (no loop) or build the array loop over it, never the protocol.
 
 use velt_common::Span;
 use velt_syntax::ast::{self, Expr, ExprKind as E};
@@ -36,11 +39,39 @@ pub(super) struct Consumable {
 enum Source {
     /// An iterable (`[Symbol.iterator]()`, a generator).
     Iter(IterSource),
-    /// An array (a string as its characters, a `Map` or `entries()` class as its entries).
+    /// An array.
     Array(hir::Expr),
+    /// A new array: a string's characters, a `Map`'s or `entries()` class's entries.
+    Fresh(hir::Expr),
+}
+
+impl Consumable {
+    /// Is the source the new array of a string's characters or a `Map`'s entries, which a
+    /// consumer may take as it is (`into_fresh`)?
+    pub(super) fn is_fresh(&self) -> bool {
+        matches!(self.src, Source::Fresh(_))
+    }
+
+    /// The new array of a fresh source (`is_fresh`).
+    pub(super) fn into_fresh(self) -> hir::Expr {
+        match self.src {
+            Source::Fresh(h) => h,
+            _ => panic!("ICE: not a fresh array source"),
+        }
+    }
 }
 
 impl FnCx<'_, '_> {
+    /// Does a consumer take a value of type `t` through `consumable` rather than as an array:
+    /// is it an iterable, a string, a `Map` or a class with `entries()` (what `for...of` takes
+    /// besides arrays)?
+    pub(super) fn is_consumable(&mut self, t: TyId) -> bool {
+        self.cx.ty.array_elem(t).is_none()
+            && (t == self.cx.ty.str_
+                || self.is_iterable(t)
+                || self.cx.class_of(t).is_some() && self.method_exists(t, "entries"))
+    }
+
     /// `src` as a source of values, or `None` when `for...of` cannot iterate it (nothing is
     /// reported then, unless the iterable itself is ill-formed).
     pub(super) fn consumable(&mut self, src: hir::Expr) -> Option<Consumable> {
@@ -54,18 +85,20 @@ impl FnCx<'_, '_> {
                 span,
             });
         }
-        let mut src = src;
-        if self.cx.class_of(src.ty).is_some() && self.method_exists(src.ty, "entries") {
-            src = self.entries_of(src, span);
-        } else if src.ty == self.cx.ty.str_ {
-            src = self.chars_of(src, span);
-        }
+        let (src, fresh) =
+            if self.cx.class_of(src.ty).is_some() && self.method_exists(src.ty, "entries") {
+                (self.entries_of(src, span), true)
+            } else if src.ty == self.cx.ty.str_ {
+                (self.chars_of(src, span), true)
+            } else {
+                (src, false)
+            };
         let elem = self.cx.ty.array_elem(src.ty)?;
-        Some(Consumable {
-            src: Source::Array(src),
-            elem,
-            span,
-        })
+        let src = match fresh {
+            true => Source::Fresh(src),
+            false => Source::Array(src),
+        };
+        Some(Consumable { src, elem, span })
     }
 
     /// `for (const <value> of c) { body }` (`body` names the value `syn.value`).
@@ -89,13 +122,17 @@ impl FnCx<'_, '_> {
         };
         match c.src {
             Source::Iter(s) => self.iter_source_loop(s, parts, out),
-            Source::Array(h) => self.for_of(h, parts, out),
+            Source::Array(h) | Source::Fresh(h) => self.for_of(h, parts, out),
         }
     }
 
     /// The values of `c` as a new array (at most `limit` of them: the loop stops there, which
-    /// closes the iterator), per the module docs.
+    /// closes the iterator), per the module docs. A string's characters or a `Map`'s entries
+    /// are already one (all of them: only an iterator could observe stopping early).
     pub(super) fn collect(&mut self, c: Consumable, limit: Option<usize>) -> hir::Expr {
+        if c.is_fresh() {
+            return c.into_fresh();
+        }
         let span = c.span;
         let arr_ty = self.cx.ty.array(c.elem);
         self.push_scope_until(span.hi);
@@ -157,12 +194,13 @@ impl FnCx<'_, '_> {
 
     /// The value an array pattern `p` takes apart, for the checked `init`: a non-array iterable
     /// becomes the array of the values the pattern needs (all of them with `...rest`), taken
-    /// lazily and closing the iterator after the last, as JS does. Anything else is `init`.
+    /// lazily and closing the iterator after the last, as JS does; a string or a `Map` the
+    /// array of its characters or entries. Anything else is `init`.
     pub(super) fn destructured(&mut self, p: &ast::Pattern, init: hir::Expr) -> hir::Expr {
         let ast::PatternKind::Array { elems, rest } = &p.kind else {
             return init;
         };
-        if !self.is_iterable(init.ty) {
+        if !self.is_consumable(init.ty) {
             return init;
         }
         let span = init.span;
@@ -175,7 +213,7 @@ impl FnCx<'_, '_> {
     /// An argument of `new Map(...)` / `new Set(...)` (`T[]` parameter `param`) that is a
     /// non-array iterable: its values as an array.
     pub(super) fn collected_arg(&mut self, h: hir::Expr, param: TyId) -> hir::Expr {
-        if self.cx.ty.array_elem(param).is_none() || !self.is_iterable(h.ty) {
+        if self.cx.ty.array_elem(param).is_none() || !self.is_consumable(h.ty) {
             return h;
         }
         let span = h.span;

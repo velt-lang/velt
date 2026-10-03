@@ -388,15 +388,16 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
 
 - **Spread**: `{ ...a, b: 1 }` builds a merged object at compile time (later keys win);
   `[x, ...xs]` builds a new array (integer elements spread into a `number[]` convert). Spread
-  arguments, `f(...xs)`, fill a rest parameter ([Functions](functions.md)). Any iterable can be
-  spread into an array or a rest parameter too: `[...gen()]`, `Math.max(...values())`
+  arguments, `f(...xs)`, fill a rest parameter ([Functions](functions.md)). Whatever `for...of`
+  takes can be spread into an array or a rest parameter too: `[..."héllo"]` (characters),
+  `[...map]` (entries), `[...gen()]`, `Math.max(...set)`
   ([Consuming an iterable](control-flow.md#consuming-an-iterable)).
 - **Destructuring**: `const [a, b] = pair;`, `const [head, ...rest] = xs;`,
   `const { a, b } = obj;`, and `for (const [k, v] of map)`. Array destructuring checks the
   length like indexing: a shorter array panics with the same `index out of bounds` message.
-  An iterable is destructured like in JS: `const [a, b] = gen()` takes two values and closes
-  the iterator; one that has fewer values panics like a short array, unless the pattern gives
-  defaults.
+  A string, a map or an iterable is destructured like in JS (`const [first, ...rest] = "abc"`):
+  `const [a, b] = gen()` takes two values and closes the iterator; one that has fewer values
+  panics like a short array, unless the pattern gives defaults.
 - **Defaults** in `const` and `let` patterns: `const { host = "localhost", port = 80 } = opts;`
   takes the default when the field is `null`, and `const [first = 0] = xs;` when the array is
   too short (where JS reads `undefined`). Defaults in `for...of` patterns and parameter patterns

@@ -175,7 +175,7 @@ impl FnCx<'_, '_> {
             return tmp;
         };
         let ty = self.f.locals[local.0 as usize].ty;
-        if !self.is_iterable(ty) {
+        if !self.is_consumable(ty) {
             return tmp;
         }
         let span = tmp.span;

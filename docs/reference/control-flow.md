@@ -153,9 +153,10 @@ console.log(it.next());                   // { value: 'a', done: false }
 
 ### Consuming an iterable
 
-Everything that takes the values of an array takes those of any iterable too, with the same
-loop as `for...of` (so a direct generator call needs no generator object, and stopping early
-closes the iterator):
+Everything that takes the values of an array takes whatever `for...of` takes: a string's
+characters, a `Map`'s entries (and those of a class with `entries()`), a `Set`'s elements, a
+generator, any iterable. It uses the same loop as `for...of` (so a direct generator call needs
+no generator object, and stopping early closes the iterator):
 
 - **Spread**: `[...gen()]`, `[0, ...it, 9]`, and spread arguments of a rest parameter
   (`sum(...gen())`, `Math.max(...values())`). The values are taken in order, where the spread
@@ -200,10 +201,14 @@ const [first, second] = countTo(100);                    // takes two values, th
 console.log(first, second);                              // 1 2
 const bySide = new Map(squares(3));
 console.log(bySide.get(3));                              // 9
+console.log([...bySide.keys()], [..."héllo"]);           // [ 1, 2, 3 ] [ 'h', 'é', 'l', 'l', 'o' ]
+const [head, ...tail] = "abc";
+console.log(head, tail, Math.max(...bySide.values()));  // a [ 'b', 'c' ] 9
 ```
 
 Arrays keep their own (faster) spread and destructuring: a spread array is copied with one
-allocation, and destructuring an array reads its elements by index.
+allocation, and destructuring an array reads its elements by index. A string or a `Map` is
+consumed as the array of its characters or entries, as `for...of` iterates it.
 
 ## `for await`
 

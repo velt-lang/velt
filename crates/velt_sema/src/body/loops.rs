@@ -280,7 +280,7 @@ impl FnCx<'_, '_> {
                 self.cx.ty.error
             }
         };
-        if matches!(p.pattern.kind, ast::PatternKind::Array { .. }) && self.is_iterable(elem) {
+        if matches!(p.pattern.kind, ast::PatternKind::Array { .. }) && self.is_consumable(elem) {
             return self.for_of_destructuring(it, p, out);
         }
         let consume = self.consumes(&it, elem);

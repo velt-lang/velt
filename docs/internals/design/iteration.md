@@ -574,12 +574,18 @@ is an interface call (gen_value in section 3).
 
 ### Consumers
 
-Spread into an array literal or a rest parameter, `Array.from(src[, f])`, array destructuring
-and `new Map(src)` / `new Set(src)` take any iterable. None has HIR of its own: each is a
-`for...of` loop built by the existing statement code (sema `body/consume.rs`): the checked
-source and a synthesized pattern and body go through `for_iter.rs` (`iter_source`, then
-`iter_source_loop`: the embedded loop for a direct generator call, else the protocol loop) or,
-for `Array.from` over an array, string or map, `loops.rs` `for_of`. The body is source text over
+Spread into an array literal or a rest parameter, `Array.from(src[, f])`, array destructuring,
+`new Map(src)` / `new Set(src)` and `yield*` take exactly what `for...of` takes: arrays,
+strings (characters), `Map`s and `entries()` classes (entries), `Set`s, generators, iterables
+and `Iterable<T>` / `IterableIterator<T>` values. None has HIR of its own: each is a `for...of`
+loop built by the existing statement code (sema `body/consume.rs`; `is_consumable` is the
+shared test): the checked source and a synthesized pattern and body go through `for_iter.rs`
+(`iter_source`, then `iter_source_loop`: the embedded loop for a direct generator call, else
+the protocol loop) or, for an array, `loops.rs` `for_of`. A string or a map is never iterated
+through the protocol (section 6: `is_iterable` skips them): like `for...of`, a consumer takes
+the new array of its characters (`split("")`) or entries (`entries()`) and uses it as it is
+(`Consumable::into_fresh`): spread copies it as an array source, `Array.from`, destructuring
+and `new Map` / `new Set` take it without a loop. The body is source text over
 hidden locals (`<array#N>`, `<value#N>`; `#N` numbers them per function), so pushing, mapping
 and narrowing are checked as usual:
 
@@ -673,9 +679,9 @@ closest workable form is a literal whose *one* member is the iterator method: se
   (JS binds `undefined`), unless the pattern gives defaults.
 - `new Set(src)` / `new Map(src)` over an iterable collect the values into an array first (one
   extra allocation) rather than adding them one at a time; the result is the same.
-- Strings, arrays and maps as `Iterable<T>` values, `a[Symbol.iterator]()`, and the
-  `IterableIterator` family are the other half of #424 (built separately). Until then, spread
-  takes a string only through `Array.from`, which reads its characters.
+- Destructuring a string or a map builds the whole array of its characters or entries (JS
+  stops after the values the pattern needs); nothing can observe the difference, since neither
+  runs code per value.
 
 ## Follow-ups
 

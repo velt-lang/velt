@@ -8,8 +8,9 @@
 //!   any other value is bound to a temporary first. Fields private to another type are skipped.
 //! - **Array spread** `[a, ...xs, b]` →
 //!   `{ let out = with_capacity(len); out.push(a); for (e of xs) out.push(e.clone()); ...; out }`
-//!   (Copy elements are copied instead of cloned). A source that is an iterable (`[...gen()]`)
-//!   is a `for...of` pushing its values at its position (`body/consume.rs`).
+//!   (Copy elements are copied instead of cloned). A string or a `Map` is the array of its
+//!   characters or entries (bound to a temporary, as above). A source that is an iterable
+//!   (`[...gen()]`) is a `for...of` pushing its values at its position (`body/consume.rs`).
 //!
 //! Spread sources are evaluated before the other elements of the literal.
 
@@ -271,15 +272,23 @@ impl FnCx<'_, '_> {
                 sources.push(None);
                 continue;
             };
-            let h = self.expr(inner, None, Want::Borrow);
-            let Some(et) = self.cx.ty.array_elem(h.ty) else {
-                let src = self.spread_iterable(h, inner);
-                if let Some(c) = &src {
-                    elem.get_or_insert(c.elem);
+            let mut h = self.expr(inner, None, Want::Borrow);
+            if self.cx.ty.array_elem(h.ty).is_none() {
+                match self.spread_iterable(h, inner) {
+                    // A string's characters, a `Map`'s entries: spread as that array.
+                    Some(c) if c.is_fresh() => h = c.into_fresh(),
+                    Some(c) => {
+                        elem.get_or_insert(c.elem);
+                        sources.push(Some(Src::Iter(c)));
+                        continue;
+                    }
+                    None => {
+                        sources.push(None);
+                        continue;
+                    }
                 }
-                sources.push(src.map(Src::Iter));
-                continue;
-            };
+            }
+            let et = self.cx.ty.array_elem(h.ty).expect("ICE: spread array");
             elem.get_or_insert(et);
             let mut src = if is_place(&h) {
                 h
@@ -373,7 +382,7 @@ impl FnCx<'_, '_> {
     /// A spread source that is not an array: an iterable (`[...gen()]`), else an error.
     fn spread_iterable(&mut self, h: hir::Expr, inner: &ast::Expr) -> Option<Consumable> {
         let ty = h.ty;
-        if self.is_iterable(ty) {
+        if self.is_consumable(ty) {
             return self.consumable(h);
         }
         if !self.cx.ty.is_bottom(ty) {
@@ -383,7 +392,7 @@ impl FnCx<'_, '_> {
                     format!("cannot spread a value of type `{tn}` into an array"),
                     inner.span,
                 )
-                .with_note("arrays and iterables (values with a `[Symbol.iterator]()` method, generators) can be spread"),
+                .with_note("what `for...of` iterates can be spread: arrays, strings, `Map`s, generators and iterables (values with a `[Symbol.iterator]()` method)"),
             );
         }
         None
