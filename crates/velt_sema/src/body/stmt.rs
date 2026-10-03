@@ -7,6 +7,7 @@ use velt_syntax::ast;
 use super::narrow::Fact;
 use super::pattern::BindCtx;
 use super::{FnCx, LocalKind, Want};
+use crate::defs::FnKind;
 use crate::hir::{self, StmtKind as S};
 
 impl FnCx<'_, '_> {
@@ -48,10 +49,13 @@ impl FnCx<'_, '_> {
     }
 
     pub fn stmt(&mut self, s: &ast::Stmt, out: &mut Vec<hir::Stmt>) {
-        // `super(args)` only as the constructor's first statement, on its own: never inside a
-        // block, `if`, `try` or loop, where a path could skip it (and the field initializers
-        // that run right after it) or run it twice.
-        self.f.super_ok = self.f.super_ok && is_super_call(s);
+        // `super(args)` only as a statement of the constructor's body itself, once: never
+        // inside a block, `if`, `try` or loop, where a path could skip it (and the field
+        // initializers that run right after it) or run it twice.
+        self.f.super_ok = self.f.kind == FnKind::Ctor
+            && self.f.stmt_depth == 0
+            && !self.f.super_called
+            && is_super_call(s);
         self.f.stmt_depth += 1;
         self.stmt_inner(s, out);
         self.f.stmt_depth -= 1;
@@ -341,6 +345,15 @@ impl FnCx<'_, '_> {
     }
 
     fn return_stmt(&mut self, e: Option<&ast::Expr>, span: Span, out: &mut Vec<hir::Stmt>) {
+        if self.f.before_super {
+            self.cx.error(
+                Diagnostic::error(
+                    "a constructor cannot `return` before it calls `super(...)`",
+                    span,
+                )
+                .with_note("a derived class's constructor calls `super(...)` on every path"),
+            );
+        }
         match (e, self.f.ret) {
             (None, ret) => {
                 let ret = ret.unwrap_or(self.cx.ty.unit);
@@ -445,7 +458,7 @@ fn is_place(e: &ast::Expr) -> bool {
 }
 
 /// Is `s` the statement `super(args);`?
-fn is_super_call(s: &ast::Stmt) -> bool {
+pub(super) fn is_super_call(s: &ast::Stmt) -> bool {
     let ast::StmtKind::Expr(e) = &s.kind else {
         return false;
     };

@@ -291,6 +291,10 @@ enum DropEntry {
     Local(LocalId),
     /// Owned temporary value at a place, with its concrete type for drop glue.
     Temp(Place, TyId),
+    /// A class object `new` is constructing (adt.rs): on a throw from its constructor or field
+    /// initializers its fields drop and it is freed, but its `[Symbol.dispose]()` does not run.
+    /// Becomes a `Temp` once constructed.
+    HalfBuilt(Place, TyId),
     /// An owned value from which a pattern moved some parts: drop everything else.
     Rest(Place, TyId, Rc<hir::Pat>),
     /// An array consumed by `for…of`: elements `next..len` (of type `elem`) are still owned,

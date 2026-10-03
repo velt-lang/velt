@@ -1,5 +1,6 @@
-// `super(args)` runs the base constructor and this class's field initializers, so it must be the
-// constructor's first statement, on its own: never on a path that could skip it or run it twice (#330).
+// `super(args)` runs the base constructor and this class's field initializers, so it must be a
+// statement of the constructor's body itself, once: never on a path that could skip it or run it
+// twice (#330).
 class Oops extends Error {}
 class Item { v: i64 = 7; }
 class B { constructor(n: i64) throws Oops { if (n < 0) { throw new Oops("b"); } } }
@@ -57,12 +58,6 @@ class InClosure extends B {
     const f = (): void => {
       super(2);
     };
-  }
-}
-class Later extends B {
-  constructor() {
-    console.log("first");
-    super(1);
   }
 }
 class Twice extends B {

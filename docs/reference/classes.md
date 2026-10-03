@@ -56,12 +56,41 @@ hidden classes and no runtime shape checks.
   running a constructor; `JSON.stringify` writes it as usual
   ([`velt:json`](../std/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
-  layout, so upcasts are free. The constructor of a class whose base has a constructor calls
-  `super(…)` as its first statement, on its own: not later, not inside a block, `if`, `try`,
-  `switch`, loop or closure (TypeScript requires this too once a class has initialized fields or
-  parameter properties), so the base constructor and the field initializers run exactly once on
-  every path. Redefining a base method
-  requires `override`; `super.m()` calls the base version. There are no abstract classes.
+  layout, so upcasts are free. Redefining a base method requires `override`; `super.m()` calls
+  the base version. There are no abstract classes.
+- **`super(…)`**: the constructor of a class whose base has a constructor calls `super(…)`, as
+  in TypeScript. Statements may come before it as long as they don't use `this` or `super.x`
+  (``'super' must be called before accessing 'this' in the constructor of a derived class``) or
+  `return`; they run first, then the call's arguments, the base constructor, this class's field
+  initializers and parameter properties, and the rest of the body:
+
+  ```ts
+  class Shape {
+    constructor(public name: string) {}
+  }
+  class Square extends Shape {
+    sides: i64 = 4;
+    constructor(size: f64) {
+      if (size <= 0) {
+        throw new Error("size must be positive");
+      }
+      const name = `square ${size}`;
+      super(name);
+      console.log(this.name, this.sides); // square 2 4
+    }
+  }
+  new Square(2);
+  ```
+
+  The call itself is a statement of the constructor's body, made once: not inside a block, `if`,
+  `try`, `switch`, loop or closure, and not part of an expression. TypeScript requires this too
+  once a class has initialized fields, parameter properties or private fields (TS2401), and
+  otherwise allows a nested call. Velt requires it always: the field initializers run right
+  after the call and every field must be initialized, so the call has to run exactly once on
+  every path. This is the one place Velt is stricter than TypeScript here. When a constructor
+  throws (before `super(…)`, in the base constructor or in a field initializer), `new` frees the
+  object it allocated, dropping the fields that were set, without running the class's
+  `[Symbol.dispose]()`: like JavaScript, nothing disposes an object `new` never returned.
 - **Dispatch**: a method that is never overridden is called directly (and can be inlined). Only
   overridden methods go through a vtable, and only where the static type is a base class.
 - **Members**: `private` (usable only inside the declaring type's body, including closures

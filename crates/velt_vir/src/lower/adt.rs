@@ -95,7 +95,8 @@ impl FnLower<'_, '_> {
         Place::local(obj)
     }
 
-    /// `new C<T>(args)`: allocate, call the constructor (with the type args of the class
+    /// `new C<T>(args)`: allocate (half-built until the end: a throw frees the object without
+    /// disposing it, drops.rs), call the constructor (with the type args of the class
     /// declaring it) with the object as `this`, then run the field initializers that
     /// constructor does not run (ctor_init.rs): those of the classes below the one declaring it,
     /// or every one when no class in the chain has a constructor.
@@ -104,7 +105,8 @@ impl FnLower<'_, '_> {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             ice("new of a non-class type")
         };
-        let obj = self.alloc_object(ty);
+        let obj = self.alloc_object_raw(ty);
+        self.own_half_built(obj.clone(), ty);
         let from = match self.cx.adt_def(d).ctor {
             Some(ctor) => {
                 let cargs = self.cx.ctor_type_args(ctor, ty);
@@ -116,6 +118,7 @@ impl FnLower<'_, '_> {
         if !self.dead() {
             self.new_inits(&obj, ty, from);
         }
+        self.own_built(&obj);
         Operand::Copy(obj)
     }
 

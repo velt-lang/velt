@@ -68,9 +68,15 @@ impl<'a> Parser<'a> {
         m
     }
 
-    /// Prepend `this.<field> = <field>;` for each parameter property to the constructor body.
+    /// Insert `this.<field> = <field>;` for each parameter property into the constructor body:
+    /// right after its root-level `super(...);` (statements before it may not use `this`), else
+    /// at the start.
     pub(super) fn store_param_props(&mut self, body: &mut Block, fields: &[Field]) {
-        let at = usize::from(body.stmts.first().is_some_and(is_super_call));
+        let at = body
+            .stmts
+            .iter()
+            .position(is_super_call)
+            .map_or(0, |i| i + 1);
         let stores: Vec<Stmt> = fields.iter().map(|f| self.store_prop(f)).collect();
         body.stmts.splice(at..at, stores);
     }

@@ -73,6 +73,13 @@ impl FnCx<'_, '_> {
     }
 
     pub(crate) fn this_expr(&mut self, want: Want, span: Span) -> hir::Expr {
+        if self.this_before_super() {
+            self.cx.err(
+                "'super' must be called before accessing 'this' in the constructor of a derived class",
+                span,
+            );
+            return self.error_expr(span);
+        }
         match self.lookup_local("this", span) {
             Some(l) => {
                 self.rec_local(span, l);
