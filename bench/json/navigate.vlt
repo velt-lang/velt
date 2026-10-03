@@ -1,0 +1,29 @@
+// Navigation: `JsonValue.at`/`get` over 100k parsed objects, 20 passes.
+function doc(n: i64): string {
+  const parts: string[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    parts.push(
+      `{"id":${i},"name":"user ${i}","score":${i % 1000}.5,"active":${i % 2 == 0},"tags":["t${i % 7}","x"]}`,
+    );
+  }
+  return `[${parts.join(",")}]`;
+}
+
+function main() {
+  const v = JSON.parseValue(doc(100000));
+  const n = v.len();
+  let sum: i64 = 0;
+  for (let round = 0; round < 20; round++) {
+    for (let i: i64 = 0; i < n; i++) {
+      const item = v.at(i);
+      if (item == null) {
+        continue;
+      }
+      const id = item.get("id")?.asNumber() ?? 0;
+      const score = item.get("score")?.asNumber() ?? 0;
+      const tag = item.get("tags")?.at(0)?.asString() ?? "";
+      sum += (id as i64) + ((score * 2) as i64) + (tag.length as i64);
+    }
+  }
+  console.log(n, sum);
+}

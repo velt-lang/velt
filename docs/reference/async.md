@@ -71,6 +71,19 @@ promise that already started stays on the task that started it.
 Tasks exchange values through channels ([`velt:channel`](../std/channel.md)): typed,
 bounded or unbounded queues where `send` waits while a bounded channel is full.
 
+Output from different tasks interleaves line by line: a `console.log` line is never split by
+another task's output. Lines a task prints before it hands work to another task come before
+anything that task prints in response. Hand-offs are:
+
+- `spawn`;
+- a channel `send`, a `close`, or a `receive` that frees room in a bounded channel;
+- settling a `new Promise` or `Promise.withResolvers` promise;
+- `abort()`;
+- a child leaving a task scope.
+
+Hand-offs through shared state (`shared`, a `Mutex`) and through timers are not covered: to keep
+such lines in order, print them from one task. Writing to stderr flushes stdout first.
+
 Built-ins: `sleep(ms)`, `yieldNow()`, `performance.now(): f64` (monotonic milliseconds) and
 `Date.now(): i64`. Timers and intervals are in [`velt:timers`](../std/timers.md).
 

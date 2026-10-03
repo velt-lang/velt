@@ -53,7 +53,7 @@ type typeof void while
 Contextual keywords: `extend`, `get`, `set`, `override`, `private`, `public`, `throws`, `using`.
 
 Not part of the language: `var`, `undefined`, `any`, `unknown`, `abstract`, `protected` (as a
-member modifier; accepted on constructor parameter properties), `delete` (except
+member modifier; accepted on constructors and constructor parameter properties), `delete` (except
 `delete r[k]` on a [`Record`](types.md#objects-arrays-tuples-and-maps)), `for...in`,
 `export default`, `function` expressions (use arrow functions), `mut`, `match`. Writing most of
 these is an error that names the Velt replacement.
@@ -79,7 +79,9 @@ From highest to lowest precedence, with JavaScript's associativity:
 | `&&` | |
 | `\|\|` `??` | |
 | `?:` | |
-| `=` `+=` `-=` `*=` `/=` `%=` `**=` `<<=` `>>=` `>>>=` `&=` `\|=` `^=` | assignment |
+| `=` `+=` `-=` `*=` `/=` `%=` `**=` `<<=` `>>=` `>>>=` `&=` `\|=` `^=` `&&=` `\|\|=` `??=` | assignment |
 | `=>` | arrow function |
 
-The logical assignments `&&=`, `||=` and `??=` parse but are rejected ("not supported yet").
+The logical assignments `&&=`, `||=` and `??=` assign when `&&`, `||` or `??` would take their
+right side: `x ??= d` is `x = x ?? d` ([Types](types.md#null)). A postfix `!` after an
+expression on the same line is the non-null assertion (`m.get(k)!`).

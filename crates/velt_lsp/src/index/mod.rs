@@ -105,6 +105,7 @@ fn collect_pattern_idents<'p>(p: &'p ast::Pattern, out: &mut Vec<&'p ast::Ident>
                 .for_each(|sub| collect_pattern_idents(sub, out));
             out.extend(rest);
         }
+        ast::PatternKind::Default { pattern, .. } => collect_pattern_idents(pattern, out),
         ast::PatternKind::Wildcard => {}
     }
 }

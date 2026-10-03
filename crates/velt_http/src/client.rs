@@ -56,19 +56,7 @@ pub fn fetch_within(
     body: &[u8],
     limits: Limits,
 ) -> Result<Response, String> {
-    // A line break in the request line or a header would end it early: what follows would be
-    // read as headers of its own (a token from a file or the environment must not inject any).
-    let line_break = |s: &str| s.contains(['\r', '\n']);
-    if line_break(method) || line_break(url) {
-        return Err(format!(
-            "{method:?} {url:?}: a line break in the request line"
-        ));
-    }
-    if let Some((name, _)) = headers.iter().find(|(n, v)| line_break(n) || line_break(v)) {
-        return Err(format!(
-            "{method} {url}: the {name:?} header contains a line break"
-        ));
-    }
+    check_request(method, url, headers)?;
     let deadline = Instant::now() + limits.total;
     if let Some(rest) = url.strip_prefix("http://") {
         return plain(method, rest, headers, body, limits, deadline)
@@ -82,6 +70,53 @@ pub fn fetch_within(
     Err(format!(
         "unsupported URL `{url}` (expected http:// or https://)"
     ))
+}
+
+/// The request line and headers are written as text: a CR or LF in any part (a token read from
+/// a file with a trailing `\r`, a crafted URL) would end a line early and inject headers or a
+/// second request, so control characters are refused before anything is sent. The message names
+/// the header, never its value (which may be a token).
+///
+/// The host is everything between the scheme and the first `/` ([`split`]). An `@`, `?`, `#` or
+/// `\` there would make other URL parsers (the registry token's loopback rule, a browser) see a
+/// different host than the one connected to: `http://localhost?.attacker.example/` is
+/// `localhost` to them and `localhost?.attacker.example` here. Such URLs are refused.
+fn check_request(method: &str, url: &str, headers: &[(&str, &str)]) -> Result<(), String> {
+    let control = |s: &str| s.chars().any(|c| c.is_control());
+    if method.is_empty() || !method.bytes().all(|b| b.is_ascii_uppercase()) {
+        return Err(format!(
+            "invalid HTTP method {method:?}: a line break or another character that is not an uppercase letter in the request line"
+        ));
+    }
+    if control(url) || url.contains(' ') {
+        return Err(format!(
+            "{method} {url:?}: a line break, another control character or a space in the request line"
+        ));
+    }
+    let rest = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+        .unwrap_or(url);
+    let (host, _) = split(rest);
+    if host.is_empty() || host.contains(['@', '?', '#', '\\']) {
+        return Err(format!(
+            "{method} {url}: the host part may not be empty or contain `@`, `?`, `#` or `\\` (write the URL with a `/` after the host)"
+        ));
+    }
+    for (name, value) in headers {
+        let token_char = |b: u8| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b);
+        if name.is_empty() || !name.bytes().all(token_char) {
+            return Err(format!(
+                "{method} {url}: invalid HTTP header name {name:?} (it contains a line break or another character a header name can't have)"
+            ));
+        }
+        if control(value) {
+            return Err(format!(
+                "{method} {url}: the `{name}` header contains a line break or another control character"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// `host[:port]` and `/path?query` of a URL without its scheme.
@@ -271,6 +306,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn control_characters_and_ambiguous_hosts_never_reach_the_request() {
+        // Refused before connecting: port 1 would fail with "cannot connect" otherwise.
+        let url = "http://127.0.0.1:1/x";
+        for token in ["abc\r\nX-Evil: 1", "abc\n", "abc\r", "a\0b", "tab\there"] {
+            let auth = format!("Bearer {token}");
+            let err = fetch("PUT", url, &[("Authorization", &auth)], b"").unwrap_err();
+            assert_eq!(
+                err,
+                "PUT http://127.0.0.1:1/x: the `Authorization` header contains a line break or another control character"
+            );
+        }
+        for bad in [
+            "http://127.0.0.1:1/a\r\nHost: evil",
+            "http://127.0.0.1:1/a b",
+        ] {
+            let err = fetch("GET", bad, &[], b"").unwrap_err();
+            assert!(err.contains("in the request line"), "{err}");
+        }
+        let err = fetch("GET\r\n", url, &[], b"").unwrap_err();
+        assert!(err.starts_with("invalid HTTP method"), "{err}");
+        let err = fetch("GET", url, &[("X-A\r\nB", "v")], b"").unwrap_err();
+        assert!(err.contains("invalid HTTP header name"), "{err}");
+        // The host ends at the first `/`: `?`, `#`, `@` or `\` before it would let another parser
+        // (the token's loopback rule) see `localhost` where this client connects elsewhere.
+        for bad in [
+            "http://localhost?.attacker.example/",
+            "http://localhost#.attacker.example/",
+            "http://localhost@attacker.example/",
+            "http://127.0.0.1:1@attacker.example/",
+            "http://localhost\\.attacker.example/",
+            "https://registry.example.com?x/",
+            "http:///path",
+        ] {
+            let err = fetch("GET", bad, &[], b"").unwrap_err();
+            assert!(err.contains("the host part may not"), "{bad}: {err}");
+        }
+        // Ordinary requests pass the check (and then fail to connect), `?` after the path too.
+        for ok in [url, "http://127.0.0.1:1/search?q=a#b", "http://127.0.0.1:1"] {
+            let err = fetch("GET", ok, &[("Authorization", "Bearer 0123abcd")], b"").unwrap_err();
+            assert!(err.contains("cannot connect"), "{ok}: {err}");
+        }
+    }
+
+    #[test]
     fn unsupported_and_unreachable_urls() {
         assert!(fetch("GET", "ftp://x", &[], b"")
             .unwrap_err()
@@ -334,7 +413,8 @@ mod tests {
             );
         }
         let err = fetch("GET", &format!("{url}x\r\nX: y"), &[], b"").unwrap_err();
-        assert!(err.contains("a line break in the request line"), "{err}");
+        assert!(err.contains("a line break"), "{err}");
+        assert!(err.contains("in the request line"), "{err}");
         assert!(listener.accept().is_err(), "no connection was made");
     }
 }

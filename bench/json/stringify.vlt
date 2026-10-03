@@ -1,0 +1,23 @@
+// Stringify: `JSON.stringify` of 100k objects (about 8 MB), 8 times.
+struct Item {
+  id: i64;
+  name: string;
+  score: f64;
+  active: bool;
+  tags: string[];
+}
+
+function main() {
+  const items: Item[] = [];
+  for (let i: i64 = 0; i < 100000; i++) {
+    const score = ((i % 1000) as f64) + 0.5;
+    const tags = [`t${i % 7}`, "x"];
+    items.push(Item { id: i, name: `user ${i}`, score: score, active: i % 2 == 0, tags: tags });
+  }
+  let total: i64 = 0;
+  for (let round = 0; round < 8; round++) {
+    const text = JSON.stringify(items);
+    total += text.length as i64;
+  }
+  console.log(total);
+}

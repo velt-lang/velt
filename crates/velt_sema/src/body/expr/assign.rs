@@ -237,6 +237,45 @@ impl FnCx<'_, '_> {
         value: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
+        if let Some(op @ (ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)) = op {
+            // `a ??= b` is `a = a ?? b` (likewise `&&=`, `||=`), and the assignment narrows `a`
+            // as usual. That reads the target twice, which is only right when reading it has no
+            // effect (JS evaluates `xs[f()]` once).
+            if !is_pure_place(target) {
+                self.cx.error(
+                    Diagnostic::error(
+                        "`??=`, `||=` and `&&=` are not supported yet on a target that calls a function",
+                        target.span,
+                    )
+                    .with_note("store the index or object in a variable first: `const k = f(); m[k] ??= v;`"),
+                );
+                self.expr(value, None, Want::Borrow);
+                return self.error_expr(span);
+            }
+            // A record key has rules of its own (a key may be missing): the record path handles
+            // every compound form. A target in error is reported once, here.
+            match self.assign_target(target, span) {
+                Some(AssignTarget::Record(obj)) => {
+                    let (object, key) = super::record::record_parts(target);
+                    return self.record_assign(obj, object, key, Some(op), target, value, span);
+                }
+                None => {
+                    self.expr(value, None, Want::Borrow);
+                    return self.error_expr(span);
+                }
+                Some(AssignTarget::Place(_) | AssignTarget::Setter(_)) => {}
+            }
+            let rhs = ast::Expr {
+                id: ast::NodeId(u32::MAX),
+                kind: ast::ExprKind::Binary {
+                    op,
+                    lhs: Box::new(target.clone()),
+                    rhs: Box::new(value.clone()),
+                },
+                span: value.span,
+            };
+            return self.assign(None, target, &rhs, span);
+        }
         let unit = self.cx.ty.unit;
         let place = match self.assign_target(target, span) {
             Some(AssignTarget::Place(place)) => place,
@@ -276,13 +315,6 @@ impl FnCx<'_, '_> {
             };
             return self.mk(kind, unit, span);
         };
-        if matches!(
-            op,
-            ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish
-        ) {
-            return self
-                .unsupported_expr("logical compound assignments (`&&=`, `||=`, `??=`)", span);
-        }
         if lty == self.cx.ty.str_ && op == ast::BinaryOp::Add {
             let v = self.expr_coerce(value, lty, Want::Borrow);
             let cur = self.place_read(&place, Want::Borrow);
@@ -520,6 +552,34 @@ impl FnCx<'_, '_> {
 }
 
 /// `x`, `this.a`, `x.a.b`: re-reading it has no side effects.
+/// A place that reading again has no effect: names, `this`, member paths, and indexes by such
+/// values, literals and arithmetic on them (`xs[i + 1].count`).
+fn is_pure_place(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Index {
+            object,
+            index,
+            optional: false,
+        } => is_pure_place(object) && is_pure_value(index),
+        ast::ExprKind::Member {
+            object,
+            optional: false,
+            ..
+        } => is_pure_place(object),
+        ast::ExprKind::Paren(inner) => is_pure_place(inner),
+        _ => is_plain_path(e),
+    }
+}
+
+fn is_pure_value(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Lit(_) => true,
+        ast::ExprKind::Unary { expr, .. } => is_pure_value(expr),
+        ast::ExprKind::Binary { lhs, rhs, .. } => is_pure_value(lhs) && is_pure_value(rhs),
+        _ => is_pure_place(e),
+    }
+}
+
 fn is_plain_path(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Ident(_) | ast::ExprKind::This => true,

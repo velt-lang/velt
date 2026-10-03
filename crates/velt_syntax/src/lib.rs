@@ -7,7 +7,10 @@
 
 pub mod ast;
 mod lexer;
+#[cfg(test)]
+mod linear_tests;
 mod parser;
+mod work;
 
 use velt_common::{Diagnostics, FileId};
 

@@ -19,6 +19,8 @@ mod patterns;
 mod postfix;
 mod primary;
 mod recovery;
+mod script;
+mod script_names;
 mod stmt;
 mod switch;
 mod symbol_keys;
@@ -172,6 +174,7 @@ impl<'a> Parser<'a> {
 
     #[inline]
     fn bump(&mut self) {
+        crate::work::add(1);
         let t = self.tok(self.pos);
         if t.kind != Tok::Eof {
             self.prev_hi = t.hi;

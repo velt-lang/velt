@@ -6,7 +6,7 @@
 //! `next_key` / `array_next`: the reader only needs to know whether the last consumed token was
 //! an opening bracket.
 
-use super::error::{mismatch_message, syntax_message};
+use super::error::{mismatch_message, syntax_message, unknown_message};
 use super::scan::{number_f64, number_i64, NumTok, Scanner, StrTok, SyntaxError, TOO_DEEP};
 use super::value::{read_limited, Value};
 use super::walk::{walk_limited, MemoSink, SkipSink};
@@ -391,7 +391,7 @@ impl Reader {
     pub fn message(&self, expected: &str, path: &str) -> String {
         match self.error {
             Some(ReadError::Syntax(e)) => syntax_message(self.sc.src, e, path, self.max_depth),
-            Some(ReadError::Unknown) => format!("unknown field at {path}"),
+            Some(ReadError::Unknown) => unknown_message(path),
             _ => mismatch_message(expected, path),
         }
     }

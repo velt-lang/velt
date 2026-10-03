@@ -235,8 +235,14 @@ impl FnCx<'_, '_> {
         out: &mut Vec<hir::Stmt>,
     ) {
         let mut it = self.expr(iter, None, Want::Borrow);
-        if self.cx.class_of(it.ty).is_some() {
+        if self.record_args(it.ty).is_some() {
+            self.record_not_iterable(it.ty, iter);
+            it = self.error_expr(iter.span);
+        } else if self.cx.class_of(it.ty).is_some() {
             it = self.entries_of(it, iter.span);
+        }
+        if it.ty == self.cx.ty.str_ {
+            it = self.chars_of(it, iter.span);
         }
         let elem = match self.cx.ty.array_elem(it.ty) {
             Some(e) => e,
@@ -261,6 +267,7 @@ impl FnCx<'_, '_> {
             false => BindCtx::Elem { mutable },
         };
         let binding = self.pattern(pattern, elem, ctx);
+        self.note_inferred_bindings(&binding, &it);
         self.enter_loop(label, false);
         let b = self.block(body);
         let label = self.exit_loop().hir_label();
@@ -281,6 +288,20 @@ impl FnCx<'_, '_> {
     /// is bound owned, so the body may move it (`out.push(x)`).
     fn consumes(&mut self, iter: &hir::Expr, elem: TyId) -> bool {
         !super::places::is_place(iter) && !self.cx.ty.is_bottom(elem) && !self.cx.is_copy(elem)
+    }
+
+    /// `for (const c of s)` over a string iterates its characters, `s.split("")`, as in JS.
+    fn chars_of(&mut self, s: hir::Expr, span: Span) -> hir::Expr {
+        let prop = ast::Ident {
+            name: "split".into(),
+            span,
+        };
+        let empty = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Lit(ast::Lit::Str(String::new())),
+            span,
+        };
+        self.method_call_on(s, &prop, &[], &[empty], None, span)
     }
 
     /// `for (const [k, v] of m)` over a class value iterates `m.entries()`.

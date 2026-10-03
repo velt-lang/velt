@@ -139,7 +139,29 @@ fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldI
         default: None,
         default_throws: vec![],
         private_to: f.is_private.then_some(owner),
+        inferred_int: untyped_int_field(f),
     }
+}
+
+/// `count = 0;`: the parser took the type `i64` from the literal itself (same span).
+fn untyped_int_field(f: &ast::Field) -> bool {
+    let Some(d) = &f.default else {
+        return false;
+    };
+    let mut e = d;
+    while let ast::ExprKind::Paren(x)
+    | ast::ExprKind::Unary {
+        op: ast::UnaryOp::Neg,
+        expr: x,
+    } = &e.kind
+    {
+        e = x;
+    }
+    d.span == f.ty.span
+        && matches!(
+            e.kind,
+            ast::ExprKind::Lit(ast::Lit::Int { suffix: None, .. })
+        )
 }
 
 fn push_field(cx: &mut Ctx, fields: &mut Vec<FieldInfo>, f: FieldInfo) {
@@ -221,17 +243,29 @@ fn base_class(cx: &mut Ctx, t: &ast::TypeExpr, kind: AdtKind, env: &TyEnv) -> Op
         }
         return None;
     };
-    // Their values only come from the runtime (a JSON handle, a record with every key), which a
+    // A record's values only come from the runtime (a record with every key), which a
     // subclass's constructor would bypass.
-    for sealed in ["Record", "JsonValue"] {
-        if cx.prelude_adt(sealed) == Some(bd) {
-            cx.error(
-                Diagnostic::error(format!("`{sealed}` cannot be extended"), t.span).with_note(
-                    format!("use composition instead: a class with a `{sealed}` field"),
-                ),
-            );
-            return None;
-        }
+    if cx.prelude_adt("Record") == Some(bd) {
+        cx.error(
+            Diagnostic::error("`Record` cannot be extended", t.span)
+                .with_note("use composition instead: a class with a `Record` field"),
+        );
+        return None;
+    }
+    let private_ctor = cx
+        .adt(bd)
+        .and_then(|a| a.decl)
+        .is_some_and(|d| d.ctor_visibility == ast::CtorVisibility::Private);
+    if private_ctor {
+        let name = cx.adt(bd).map(|a| a.name.clone()).unwrap_or_default();
+        cx.error(
+            Diagnostic::error(
+                format!("cannot extend `{name}`: its constructor is private"),
+                t.span,
+            )
+            .with_note(format!("use composition: a class with a `{name}` field")),
+        );
+        return None;
     }
     Some(bt)
 }

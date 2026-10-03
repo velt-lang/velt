@@ -112,6 +112,7 @@ fn expr(e: &ast::Expr) -> Option<Span> {
         | E::Cast { expr: x, .. }
         | E::InstanceOf { expr: x, .. }
         | E::Paren(x)
+        | E::NonNull(x)
         | E::Member { object: x, .. } => expr(x),
         E::Binary { lhs, rhs, .. } => expr(lhs).or_else(|| expr(rhs)),
         E::Assign { target, value, .. } => expr(target).or_else(|| expr(value)),

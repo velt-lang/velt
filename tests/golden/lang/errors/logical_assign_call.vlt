@@ -1,0 +1,6 @@
+// `??=` reads its target twice, so a target that calls a function is rejected (JS evaluates it once).
+function key(): number {
+  return 0;
+}
+const xs: (number | null)[] = [null];
+xs[key()] ??= 5;

@@ -1,0 +1,31 @@
+// Typed parse: `JSON.parse<Item[]>` of 100k objects (about 8 MB), 8 times.
+struct Item {
+  id: i64;
+  name: string;
+  score: f64;
+  active: bool;
+  tags: string[];
+}
+
+function doc(n: i64): string {
+  const parts: string[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    parts.push(
+      `{"id":${i},"name":"user ${i}","score":${i % 1000}.5,"active":${i % 2 == 0},"tags":["t${i % 7}","x"]}`,
+    );
+  }
+  return `[${parts.join(",")}]`;
+}
+
+function main() {
+  const text = doc(100000);
+  let sum: i64 = 0;
+  for (let round = 0; round < 8; round++) {
+    const items = JSON.parse<Item[]>(text);
+    for (const it of items) {
+      sum += it.id + ((it.score * 2) as i64) + (it.active ? 1 : 0);
+      sum += (it.name.length as i64) + (it.tags[0].length as i64);
+    }
+  }
+  console.log(text.length, sum);
+}

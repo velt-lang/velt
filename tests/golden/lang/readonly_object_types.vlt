@@ -1,0 +1,36 @@
+// Object types with readonly fields (docs/internals/design/shared-models.md): literals fill them,
+// shapes that differ only in readonly convert both ways, and a field may be named readonly.
+
+type User = { readonly id: number; name: string; email?: string };
+type Plain = { id: number; name: string; email?: string };
+type Flags = { readonly: bool; readonly ready: bool };
+
+function show(u: User): string {
+  return `${u.id} ${u.name} ${u.email ?? "-"}`;
+}
+
+function first<T>(xs: T[]): T {
+  return xs[0];
+}
+
+function main() {
+  const u: User = { id: 1, name: "ann" };
+  let p: Plain = { id: 2, name: "bo", email: "b@x" };
+  console.log(show(u));
+  console.log(show(p));
+  const q: Plain = u;
+  p.id = 5;
+  console.log(p.id, q.id);
+  let users: User[] = [];
+  users.push(p);
+  console.log(users.length, users[0].name);
+  const f: Flags = { readonly: true, ready: false };
+  console.log(f.readonly, f.ready);
+  // One object seen through both types: writes through one show in the other.
+  let a: Plain = { id: 7, name: "ann" };
+  const v: User = a;
+  a.name = "z";
+  console.log(v.name);
+  const maybe: User | null = a;
+  console.log(maybe?.name ?? "-", first(users).id);
+}

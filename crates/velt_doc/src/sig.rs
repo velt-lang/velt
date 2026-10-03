@@ -164,10 +164,11 @@ impl Printer<'_> {
                 let fields: Vec<String> = fields
                     .iter()
                     .map(|f| {
+                        let readonly = if f.readonly { "readonly " } else { "" };
                         if f.optional {
-                            format!("{}?: {}", f.name.name, self.ty_optional(&f.ty))
+                            format!("{readonly}{}?: {}", f.name.name, self.ty_optional(&f.ty))
                         } else {
-                            format!("{}: {}", f.name.name, self.ty(&f.ty))
+                            format!("{readonly}{}: {}", f.name.name, self.ty(&f.ty))
                         }
                     })
                     .collect();

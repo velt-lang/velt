@@ -1,0 +1,1 @@
+logical_assign_call.vlt:6:1: error: `??=`, `||=` and `&&=` are not supported yet on a target that calls a function

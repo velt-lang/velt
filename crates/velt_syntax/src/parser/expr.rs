@@ -210,12 +210,13 @@ impl<'a> Parser<'a> {
             Tok::Minus => self.finish_prefix(UnaryOp::Neg)?,
             Tok::Plus => self.finish_prefix(UnaryOp::Plus)?,
             Tok::Kw(Kw::Typeof) => self.finish_prefix(UnaryOp::TypeOf)?,
-            // `delete` is a contextual word: `delete r[k]`, `delete this.x`.
+            // `delete` is a contextual word: `delete r[k]`, `delete this.x`, and as in
+            // TypeScript `delete (r[k])` (never a call of something named `delete`).
             Tok::Ident
                 if self.at_word("delete")
-                    && matches!(self.nth(1), Tok::Ident | Tok::Kw(Kw::This)) =>
+                    && matches!(self.nth(1), Tok::Ident | Tok::Kw(Kw::This) | Tok::LParen) =>
             {
-                self.finish_prefix(UnaryOp::Delete)?
+                self.delete_expr()?
             }
             Tok::Kw(Kw::Void) => self.void_expr()?,
             Tok::PlusPlus | Tok::MinusMinus => ExprKind::Update {
@@ -233,6 +234,17 @@ impl<'a> Parser<'a> {
         Ok(self.mk_expr(kind, span))
     }
 
+    /// `delete operand`. Parentheses around a member or index operand (`delete (r[k])`) change
+    /// nothing and are dropped, so `velt fmt` prints `delete r[k]`.
+    fn delete_expr(&mut self) -> PResult<ExprKind> {
+        self.bump();
+        let expr = self.parse_binary(PREC_POW)?;
+        Ok(ExprKind::Unary {
+            op: UnaryOp::Delete,
+            expr: Box::new(unparen_place(expr)),
+        })
+    }
+
     /// Operand of a prefix operator binds up to `**`, so `-x ** 2` is `-(x ** 2)`.
     fn finish_prefix(&mut self, op: UnaryOp) -> PResult<ExprKind> {
         self.bump();
@@ -241,6 +253,21 @@ impl<'a> Parser<'a> {
             op,
             expr: Box::new(expr),
         })
+    }
+}
+
+/// `e` without parentheses if they only enclose a member or index expression.
+fn unparen_place(e: Expr) -> Expr {
+    fn is_place(e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Paren(inner) => is_place(inner),
+            ExprKind::Member { .. } | ExprKind::Index { .. } => true,
+            _ => false,
+        }
+    }
+    match e.kind {
+        ExprKind::Paren(inner) if is_place(&inner) => unparen_place(*inner),
+        kind => Expr { kind, ..e },
     }
 }
 

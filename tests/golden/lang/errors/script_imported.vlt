@@ -1,0 +1,4 @@
+// Top-level statements only run in the root file; an imported module's are an error.
+import { double } from "./_script_lib";
+
+console.log(double(2));

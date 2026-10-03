@@ -29,25 +29,36 @@ keep integer speed. Every integer value is either **declared** or **inferred**:
 
 - **Declared**: its integer type is written or implied by a declaration: an annotated variable
   (`let n: i64 = 7`), a parameter, field or return type, a literal suffix (`7i32`), an `as`
-  cast, an API result (`xs.length`, `s.indexOf(t)`, `Date.now()`), an array element or map
-  value of an integer type, or an integer literal typed by such a context (`x + 2` with `x`
-  declared, `f(2)`, `const n: u8 = 200`).
+  cast, an array element or map value of an integer type, or an integer literal typed by such a
+  context (`x + 2` with `x` declared, `f(2)`, `const n: u8 = 200`).
 - **Inferred**: an integer literal with no context (`7`), a variable declared without a type
-  whose initializer is inferred (`const a = 7`, `let i = 0`, `let n = a * 2`), and arithmetic
-  with at least one inferred operand.
+  whose initializer is inferred (`const a = 7`, `let i = 0`, `let n = a * 2`), a field declared
+  without a type from an integer literal (`count = 0;`), arithmetic with at least one inferred
+  operand, and every integer the standard library hands to your code: `xs.length`,
+  `s.indexOf(t)`, `m.size`, `Date.now()`, the index of `entries()` and of array callbacks. You
+  wrote no integer type for those, so they are JS numbers (inside `std/` they stay declared).
 
 Both are stored as integers (inferred ones as `i64`), so loop counters, indexes and counts run
 at integer speed. The rules:
 
 - **`/` yields `f64` unless both operands are declared integers**: `const a = 7; a / 2` is
-  `3.5`, `7 / 2` is `3.5`, `xs.length / 2` truncates (both declared), and
+  `3.5`, `7 / 2` is `3.5`, `xs.length / 2` is `1.5` for three elements, and
   `const h: i64 = 7 / 2` is `3`.
 - **Integer division is explicit**: `Math.trunc(a / b)` with integer operands is one integer
   division instruction (truncating toward zero, exactly JS's `Math.trunc` of the quotient).
 - Next to a float, or where a float is expected, an inferred integer converts: `a + 0.5`,
-  `Math.sqrt(16)`, `const f: f64 = 1`. A declared integer never converts implicitly: write
-  `x as f64`. Different declared integer types don't mix either: `xs.length` is a `usize`, so
-  compare it with a `usize` (`let i: usize = 0`) or cast (`i as usize`).
+  `Math.sqrt(16)`, `const f: f64 = 1`. Next to an integer of another type, or where one is
+  expected, it adapts: `let i = 0; i < xs.length` and `s.slice(0, s.length - 1)` compile as in
+  JS. A declared type other than `usize` wins; otherwise both sides become `i64`, so
+  `let i = -1; i < xs.length` is `true`. A declared integer never converts implicitly: write
+  `x as f64`, and different declared integer types don't mix (`let n: i32 = 1; let m: u8 = 2;
+  n < m` is an error).
+- **A float index** (`xs[i]` with `i: number`, `xs[Math.floor(n / 2)]`, `xs[parseInt(s)]`) must
+  be a whole number at run time; anything else panics like an index out of bounds (JS reads
+  `undefined`). Indexing with a quotient directly, `xs[n / 2]`, stays an error: write
+  `Math.trunc(n / 2)`.
+- A float passed to an integer parameter of a standard library function converts like JS's
+  `ToIntegerOrInfinity`: `xs.slice(0, xs.length / 2)` takes the first half.
 - `x /= y` on an integer variable is allowed only when it is integer division; otherwise it is
   an error (it would store a float).
 - `%` on integers is the remainder truncated toward zero (sign of the dividend), like JS.
@@ -82,11 +93,13 @@ usable and no copy method is needed.
 - **No implicit conversion**: `"Total: " + 5` and `"a" + true` are compile errors. Build text
   with a template literal (`` `Total: ${n}` ``), which formats any value the way `console.log`
   does.
-- `s.length` is the **byte** length (`usize`); positions (`slice`, `indexOf`, regex offsets) are
-  byte offsets. There is no `s[i]` indexing and no `for...of` over a string; use `slice` or
-  `charCodeAt`.
+- `s.length` is the **byte** length; positions (`slice`, `indexOf`, regex offsets, `s[i]`) are
+  byte offsets. For ASCII text that is JS's answer; for other text it differs
+  (`"Zoë".length` is 4, where JS says 3).
+- `s[i]` is `s.charAt(i)`: the character starting at position `i`, or `""` past the end (JS:
+  `undefined`). `for (const c of s)` iterates the characters (`s.split("")`), emoji included.
 - Methods: `slice substring indexOf lastIndexOf includes startsWith endsWith split trim
-  trimStart trimEnd toUpperCase toLowerCase replace replaceAll repeat padStart padEnd
+  trimStart trimEnd toUpperCase toLowerCase replace replaceAll repeat padStart padEnd charAt at
   charCodeAt`, plus `String.fromCharCode`, `parseInt`, `parseFloat` and `Number(s)`
   ([prelude](../std/prelude.md#strings)).
 - `<` and `>` compare bytewise; `==` compares content.
@@ -115,10 +128,11 @@ console.log(label("tea", 3), "a,b".split(","), "  x ".trim().padStart(3, "*"));
   `[1] == [1]` is `false`, and `a == b` is `true` when `b` refers to the same object as `a`.
   `T | null`, unions and tuples compare their parts that way.
 - Content comparison: `deepEqual(a, b)` ([prelude](../std/prelude.md)) compares arrays,
-  structs and object literals by their contents, recursively, and class instances (`Map`
-  included) by identity; `assertEq` uses it.
-- `<`, `<=`, `>`, `>=` work on numbers and strings, and on a generic `T extends Comparable<T>`
-  ([Comparable](classes.md#comparable)).
+  structs and object literals by their contents, recursively; maps and records by their keys
+  and values, in any key order; other class instances by identity. `assertEq` uses it.
+- `<`, `<=`, `>`, `>=` work on numbers and strings, and on a class or struct implementing
+  `Comparable` (`Date`, `DateTime`) or a generic `T extends Comparable<T>`: `a < b` is
+  `a.compareTo(b) < 0` ([Comparable](classes.md#comparable)).
 
 ## Null
 
@@ -130,6 +144,10 @@ has type `T | null`, stored without an extra allocation where possible.
 - `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result is nullable),
   `if (x != null) { … }` and early exits narrow `x` to `T` (a local or a field path of one,
   see below); `switch` supports `case null`.
+- `x ??= d` assigns `d` when `x` is `null` and narrows `x` (likewise `x ||= d` and `x &&= d`).
+  The target may not call a function yet (`m[key()] ??= v`): store the key in a variable first.
+- `x!` is `x` known not to be `null` (TS's non-null assertion). TypeScript trusts it; Velt
+  checks it: a `null` panics with `non-null assertion failed`.
 - `a?: T` is `T | null` everywhere: an optional parameter `b?: T` is `b: T | null = null`
   (callers may leave it out or pass `null`; it cannot also have a default), an optional class
   or interface field starts as `null` (and is omitted by `JSON.stringify` when null), and an
@@ -186,9 +204,14 @@ A string, number or bool literal is a type with that one value: `"circle"`, `42`
 - A literal takes a literal type only where one is expected (an annotation, a parameter, a
   field, a union with literal members); elsewhere it has its base type (`const s = "up"` is a
   `string`). A literal-typed value converts implicitly to its base type (`const s: string = d;`).
+- Literal types work as type arguments too, negative numbers included: `f<"x" | null>()`,
+  `g<-1>(5)`. As in TypeScript, `a < -1` stays a comparison: a literal after `<` starts type
+  arguments only when `>`, `|` or `,` follows it.
 - A literal type is zero-sized; a union of literals is only its tag. Printing, `${}` and
   `JSON.stringify` show the value; `typeof` gives the base type's tag.
 - `JSON.parse` checks a literal type against its value (`expected "task" at $.kind`).
+- `e as const` is accepted and keeps the value as it is: Velt arrays and literals need no
+  `readonly` or literal-type annotation for it.
 
 ## Union types
 
@@ -302,18 +325,27 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   `{ name: string; n: i64 }` with a fixed layout (a field access is one load). An object type
   accepts exactly its fields: extra fields are a type error, and adding a property later is an
   error (use a `Map` or a `Record`).
+- **`readonly` fields**: in `{ readonly id: i64; name: string }`, assigning `id` is an error
+  (``cannot assign to `id`: it is a readonly field``); like TypeScript's, the check is shallow
+  (`u.tags.push(x)` is fine). A value converts between a type and the same type without
+  `readonly`, in both directions, and stays the same object.
 - **Spread**: `{ ...a, b: 1 }` builds a merged object at compile time (later keys win);
-  `[x, ...xs]` builds a new array. Spread arguments, `f(...xs)`, are not supported.
+  `[x, ...xs]` builds a new array (integer elements spread into a `number[]` convert). Spread
+  arguments, `f(...xs)`, fill a rest parameter ([Functions](functions.md)).
 - **Destructuring**: `const [a, b] = pair;`, `const [head, ...rest] = xs;`,
-  `const { a, b } = obj;`, and `for (const [k, v] of map)`. Defaults inside patterns and
-  parameter patterns are not supported. Array destructuring checks the length like indexing: a
-  shorter array panics with the same `index out of bounds` message.
-- **Arrays** `T[]`: `length` (`usize`), `xs[i]` (bounds-checked: panics
+  `const { a, b } = obj;`, and `for (const [k, v] of map)`. Array destructuring checks the
+  length like indexing: a shorter array panics with the same `index out of bounds` message.
+- **Defaults** in `const` and `let` patterns: `const { host = "localhost", port = 80 } = opts;`
+  takes the default when the field is `null`, and `const [first = 0] = xs;` when the array is
+  too short (where JS reads `undefined`). Defaults in `for...of` patterns and parameter patterns
+  are not supported.
+- **Arrays** `T[]`: `length`, `xs[i]` (bounds-checked: panics
   `index out of bounds: the len is L but the index is I`), `push`, `pop(): T | null`,
   `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat
   reverse isEmpty entries fill`, `join` (any elements, shown as `${x}` shows them), `sort()` on
   numbers, strings and `Comparable` elements, and `sort(cmp)` (stable, any element type, like
-  JS's `Array.prototype.sort(compareFn)`). The full list is in the
+  JS's `Array.prototype.sort(compareFn)`). Callbacks get the element and its index, like JS
+  (`xs.map((x, i) => …)`), and may take fewer parameters. The full list is in the
   [prelude](../std/prelude.md#arrays).
 - `new Array<T>(n).fill(v)` and `Array.from({ length: n }, (_, i) => f(i))` build an array of
   `n` elements in one allocation. A bare `new Array<T>(n)` is an error: arrays have no holes.
@@ -326,22 +358,35 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   `values()`, `entries()`, `for (const [k, v] of m)`, plus single-lookup updates: `upsert(k, init, (v) => v + 1)`,
   `update(k, (v) => { v.push(x); }): bool` (the callback gets the stored value itself) and
   `getOrInsert(k, () => v)`. Keys: numbers, `bool`, `string`, class instances (by identity),
-  and structs, object types and tuples, which compare by content (in JS two equal object
-  literals are two different keys). Iteration follows insertion order, like JS.
+  and structs, object types, tuples, arrays, maps and records, which compare by content (in JS
+  two equal object literals are two different keys). Float keys compare with `==`, so a `NaN`
+  key is never found (JS's SameValueZero finds it), and a content key changed after insertion
+  makes its entry unreachable
+  ([Map](../std/prelude.md#map)). Iteration follows insertion order, like JS.
 - **`Record<K, V>`**: a dictionary written with object syntax, like TypeScript's `Record`.
   `K` is `string`, a union of string literal types, or a string enum; any other key type is
   an error (use a `Map`), also when a generic function or class gets it as a type argument.
   With `string` keys a record is *open*: `r[k]` and `r.name` are `V | null`, `r[k] = v`
-  inserts or replaces, and `delete r[k]` removes. With literal or enum keys it is *closed*: it
-  always holds every key, so `r.cpu` is `V`, a typo is an error, and `delete` is not allowed.
+  inserts or replaces, `r[k] ??= v` sets a missing key, and `delete r[k]` removes. Because a
+  key may be missing, `r[k] += 1`, `r[k]++` and the other compound assignments are errors on an
+  open record: say what a missing key starts from with `r[k] = (r[k] ?? 0) + 1` (JS would give
+  `NaN`). With literal or enum keys it is *closed*: it always holds every key, so `r.cpu` is
+  `V`, `r.cpu += 1` works, a typo is an error, and `delete` is not allowed.
   On an enum-keyed record, `r.mem` names the member whose value is `"mem"`. Build a record
   from an object literal where a record is expected (`const r: Record<string, i64> = {}`; a
   closed record's literal must list every key) or with `new Record<string, V>()`. A literal
   may spread another record (`{ ...r, x: 1 }`). In generic code, where the key type is a type
   parameter `K`, reads are `V | null` and the record may be closed, so it cannot start empty
   (only a literal with a spread builds one) and `delete` is not allowed. A record has no
-  methods of its own: `Object.keys(r)`, `Object.values(r)` and `Object.entries(r)` return
-  arrays in insertion order. `console.log` and `JSON` treat a record as an object. A class
+  methods of its own and is not iterable: `Object.keys(r)` (a `string[]`), `Object.values(r)`
+  and `Object.entries(r)` return arrays in insertion order (`for (const [k, v] of
+  Object.entries(r))`). Given an object literal, `Object.values` and `Object.entries` read it
+  as a `Record<string, V>`, so its values need one type. `Object.keys` accepts any object, as
+  in TypeScript: an object literal or object type (`Object.keys({ a: 1, b: "x" })` is `["a",
+  "b"]`), a struct, or a class instance, whose fields it lists in declaration order (base class
+  fields first, `private` ones too; not static fields or methods). A struct's optional field is
+  listed only when it is not `null`. A class with subclasses is an error, because the value may
+  be a subclass instance with more fields. `console.log` and `JSON` treat a record as an object. A class
   cannot `extends` a `Record` (its constructor would leave a closed record without its keys);
   hold one in a field instead. A literal for an enum-keyed record is not supported yet.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,

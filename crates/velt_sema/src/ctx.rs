@@ -50,7 +50,10 @@ pub(crate) struct Ctx<'m> {
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
     /// Anonymous object types by shape.
-    pub anon: HashMap<Vec<(String, TyId)>, DefId>,
+    /// Anonymous object defs by shape: field names, types and `readonly` flags, in order.
+    pub anon: HashMap<Vec<(String, TyId, bool)>, DefId>,
+    /// Anonymous object defs with `readonly` fields → their twin without (`crate::readonly`).
+    pub readonly_twins: HashMap<DefId, DefId>,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: HashMap<Vec<TyId>, DefId>,
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
@@ -115,6 +118,7 @@ impl<'m> Ctx<'m> {
             impls: vec![],
             impl_index: Default::default(),
             anon: HashMap::new(),
+            readonly_twins: HashMap::new(),
             unions: HashMap::new(),
             alias_names: HashMap::new(),
             generic_overrides: vec![],
@@ -180,6 +184,64 @@ impl<'m> Ctx<'m> {
         match &self.info[d.0 as usize] {
             DefInfo::Adt(a) => Some(a),
             _ => None,
+        }
+    }
+
+    /// The visibility of the constructor `new C(...)` of class `d` runs: its own, or the one it
+    /// inherits from the nearest base class declaring one (public without any).
+    pub fn ctor_visibility(&self, d: DefId) -> velt_syntax::ast::CtorVisibility {
+        self.adt(d)
+            .and_then(|a| a.ctor)
+            .and_then(|c| self.fn_info(c).owner)
+            .and_then(|owner| self.adt(owner)?.decl)
+            .map_or_else(Default::default, |decl| decl.ctor_visibility)
+    }
+
+    /// The public static methods of class `d` that return a `d` (its factories), as
+    /// `` `C.of(...)` or `C.parse(...)` ``; `None` without any.
+    pub fn factories(&self, d: DefId) -> Option<String> {
+        let a = self.adt(d)?;
+        let mut names: Vec<String> = a
+            .methods
+            .iter()
+            .filter(|(_, m)| m.is_static && !self.fn_info(m.def).is_private)
+            .filter(|(_, m)| {
+                matches!(self.ty.kind(self.fn_info(m.def).ret), TyKind::Adt(r, _) if *r == d)
+            })
+            .map(|(name, _)| format!("`{}.{name}(...)`", a.name))
+            .collect();
+        names.sort();
+        let last = names.pop()?;
+        Some(match names.is_empty() {
+            true => last,
+            false => format!("{} or {last}", names.join(", ")),
+        })
+    }
+
+    /// A note saying how code outside class `d` creates one: `new`, its factories, or (for a
+    /// class of the user's own with a private or protected constructor and no factory) adding
+    /// a factory.
+    pub fn creation_note(&self, d: DefId) -> String {
+        use velt_syntax::ast::CtorVisibility;
+        let Some(a) = self.adt(d) else {
+            return String::new();
+        };
+        let name = &a.name;
+        let visibility = self.ctor_visibility(d);
+        if visibility == CtorVisibility::Public {
+            return format!("create it with `new {name}(...)`");
+        }
+        if let Some(factories) = self.factories(d) {
+            return format!("create it with {factories}");
+        }
+        match visibility {
+            _ if self.scopes[a.module].is_std => {
+                format!("`{name}` values come from the functions of the module that declares it")
+            }
+            CtorVisibility::Protected => {
+                format!("add a static factory method to `{name}`, or construct a subclass")
+            }
+            _ => format!("add a static factory method to `{name}` and call that"),
         }
     }
 

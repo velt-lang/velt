@@ -1,0 +1,43 @@
+// Errors deep in a document name a shortened path: the first and last 10 segments with `…`
+// between. Short paths are unchanged.
+class Tree {
+  name: string = "";
+  kids: Tree[] = [];
+}
+
+// `levels` trees nested inside each other around `inner`.
+function nested(levels: i64, inner: string): string {
+  let s = "";
+  for (let i = 0; i < levels; i++) {
+    s += '{"name":"t","kids":[';
+  }
+  s += inner;
+  for (let i = 0; i < levels; i++) {
+    s += "]}";
+  }
+  return s;
+}
+
+function arrays(levels: i64, inner: string): string {
+  return "[".repeat(levels) + inner + "]".repeat(levels);
+}
+
+function show<T>(f: () => T throws JsonError) {
+  try {
+    console.log(f());
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+
+function main() {
+  show(() => JSON.parse<Tree>(nested(2, '{"name":1}')).name);
+  show(() => JSON.parse<Tree>(nested(30, '{"name":1}')).name);
+  show(() => JSON.parse<Tree>(nested(30, '{"x":1}'), { unknownKeys: "reject" }).name);
+  show(() => JSON.parse<Tree>(nested(30, "{}"), { maxDepth: 30 }).name);
+  show(() => JSON.parse<i64[][][]>(arrays(3, "1,}")).length);
+  show(() => JSON.parseValue(arrays(3, "1,}")).len());
+  show(() => JSON.parseValue(arrays(30, "1,}")).len());
+  show(() => JSON.parseValue(arrays(30, "1"), { maxDepth: 25 }).len());
+  show(() => JSON.parse<JsonValue>(arrays(40, "1"), { maxDepth: 30 }).len());
+}

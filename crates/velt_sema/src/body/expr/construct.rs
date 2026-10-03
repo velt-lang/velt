@@ -41,6 +41,7 @@ impl FnCx<'_, '_> {
         let mut ctor_args = vec![];
         let (params, what) = match ctor {
             Some(c) => {
+                self.check_ctor_access(c, class.span);
                 let owner = self.cx.fn_info(c).owner.expect("ICE: ctor owner");
                 let owner_ty = self.ancestor(self_ty, owner);
                 let oargs = match self.cx.ty.kind(owner_ty) {
@@ -68,6 +69,8 @@ impl FnCx<'_, '_> {
             ret: self_ty,
             slot_names: names.names,
             bounds: names.bounds,
+            js_numbers: false,
+            rest: false,
         };
         let ck = self.check_call(&c, slots, args, self.hint(exp), span);
         if Some(d) == self.cx.prelude_adt("Record") && self.owner != Some(d) {

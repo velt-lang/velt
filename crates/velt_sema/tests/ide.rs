@@ -173,7 +173,8 @@ fn members_of_values_and_types() {
     assert!(
         arr_members
             .iter()
-            .any(|(n, _, t)| n == "map" && t.starts_with("(f: (arg0: i64) => U throws E)")),
+            .any(|(n, _, t)| n == "map"
+                && t.starts_with("(f: (arg0: i64, arg1: i64) => U throws E)")),
         "{arr_members:?}"
     );
 }
@@ -266,6 +267,28 @@ function main() { try { load(\"x\"); } catch (e) { console.log(e.message); } con
     );
     let safe = a.def_at(file, at(src, "safe()", 1, 0)).expect("safe");
     assert_eq!(safe.detail, "function safe(): i64");
+}
+
+#[test]
+fn constructor_detail_shows_its_visibility() {
+    let src = "class Token {
+  private constructor(readonly id: i64) {}
+  static make(): Token { return new Token(1); }
+}
+class Base { protected constructor() {} }
+function main() { console.log(Token.make().id); }
+";
+    let (a, file) = analyze(src);
+    let detail = |needle: &str| {
+        let d = a.def_at(file, at(src, needle, 0, 1)).expect("constructor");
+        assert_eq!(d.kind, DefKind::Constructor);
+        d.detail
+    };
+    assert_eq!(
+        detail("constructor(readonly"),
+        "private constructor Token(id: i64)"
+    );
+    assert_eq!(detail("constructor() {}"), "protected constructor Base()");
 }
 
 #[test]

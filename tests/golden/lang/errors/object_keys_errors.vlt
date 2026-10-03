@@ -1,0 +1,23 @@
+// `Object.keys` needs an object; `Object.values` / `Object.entries` need one value type.
+class Base {
+  a = 1;
+}
+
+class Sub extends Base {
+  b = 2;
+}
+
+struct Point {
+  x: f64;
+  y: f64;
+}
+
+function main() {
+  console.log(Object.keys(new Base()));
+  console.log(Object.keys(new Map<string, i64>()));
+  console.log(Object.keys("text"));
+  console.log(Object.values({ a: 1, b: "x" }));
+  console.log(Object.entries({ a: 1, b: 2, c: true }));
+  const p: Point = { x: 1.0, y: 2.0 };
+  console.log(Object.values(p));
+}

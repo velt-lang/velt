@@ -98,10 +98,11 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let args = parse(std::env::args().skip(1).collect())?;
-    let root = repo_root();
+    let root = repo_root()?;
     match args.command.as_str() {
         "check" => {
             let plan = plan(&root, &args)?;
+            println!("root: {}", root.display());
             print!("{}", plan.describe());
             let part = args.part.as_deref().unwrap_or("all");
             let opts = Options {
@@ -119,6 +120,7 @@ fn run() -> Result<(), String> {
         }
         "affected" => {
             let plan = plan(&root, &args)?;
+            println!("root: {}", root.display());
             print!("{}", plan.describe());
             if args.github {
                 github_outputs(&plan)?;
@@ -187,12 +189,78 @@ fn github_outputs(plan: &Plan) -> Result<(), String> {
     )
 }
 
-/// The repository root: two levels above this crate's manifest.
-fn repo_root() -> PathBuf {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest
-        .parent()
-        .and_then(Path::parent)
+/// The repository root, found at run time: the nearest ancestor of the current directory whose
+/// `Cargo.toml` has a `[workspace]` table. Never the root xtask was compiled in: worktrees that
+/// share one target directory share one xtask binary, which would then check another worktree.
+fn repo_root() -> Result<PathBuf, String> {
+    let cwd =
+        std::env::current_dir().map_err(|e| format!("cannot read the current directory: {e}"))?;
+    workspace_root(&cwd)
+}
+
+/// The nearest ancestor of `start` (itself included) whose `Cargo.toml` declares `[workspace]`.
+fn workspace_root(start: &Path) -> Result<PathBuf, String> {
+    start
+        .ancestors()
+        .find(|dir| {
+            std::fs::read_to_string(dir.join("Cargo.toml"))
+                .is_ok_and(|text| text.lines().any(|l| l.trim() == "[workspace]"))
+        })
         .map(Path::to_path_buf)
-        .unwrap_or(manifest)
+        .ok_or_else(|| {
+            format!(
+                "`{}` is not inside a Cargo workspace (run `cargo xtask` from the repository)",
+                start.display()
+            )
+        })
+}
+
+#[cfg(test)]
+mod root_tests {
+    use super::*;
+
+    #[test]
+    fn the_root_is_the_nearest_workspace_above_the_current_directory() {
+        let base = std::env::temp_dir().join(format!("xtask-root-{}", std::process::id()));
+        let member = base.join("ws").join("crates").join("a").join("src");
+        std::fs::create_dir_all(&member).unwrap();
+        std::fs::write(
+            base.join("ws").join("Cargo.toml"),
+            "[workspace]
+members = [\"crates/*\"]
+",
+        )
+        .unwrap();
+        std::fs::write(
+            base.join("ws").join("crates").join("a").join("Cargo.toml"),
+            "[package]
+name = \"a\"
+",
+        )
+        .unwrap();
+        // From a member's directory, the member's own Cargo.toml (no [workspace]) is skipped.
+        assert_eq!(workspace_root(&member).unwrap(), base.join("ws"));
+        assert_eq!(workspace_root(&base.join("ws")).unwrap(), base.join("ws"));
+        let outside = base.join("elsewhere");
+        std::fs::create_dir_all(&outside).unwrap();
+        let err = workspace_root(&outside);
+        // The temp directory itself may sit in a workspace on a developer machine; only check
+        // that an answer is never inside `elsewhere`.
+        assert!(err.map_or(true, |r| !r.starts_with(&outside)));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn this_process_runs_in_this_repository() {
+        // `cargo test` runs xtask's tests from crates/xtask: the root is two levels up.
+        let here = std::env::current_dir().unwrap();
+        let root = repo_root().unwrap();
+        assert!(
+            here.starts_with(&root),
+            "{} vs {}",
+            here.display(),
+            root.display()
+        );
+        assert!(root.join("crates").join("xtask").is_dir());
+    }
 }

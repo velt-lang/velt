@@ -1,0 +1,13 @@
+json_private_constructor.vlt:31:13: error: `JSON.parse` cannot create a `Money`: its constructor is private
+decoding fills the fields without running a constructor; decode into a plain object type and call `Money.of(...)`
+json_private_constructor.vlt:32:13: error: `JSON.parse` cannot create a `Money` (in `Order`): its constructor is private
+json_private_constructor.vlt:33:13: error: `JSON.parse` cannot create a `Money` (in `Money[]`): its constructor is private
+json_private_constructor.vlt:34:13: error: `JSON.parse` cannot create a `Money` (in `string | Money`): its constructor is private
+json_private_constructor.vlt:35:13: error: `JSON.parse` cannot create a `Money` (in `Map<string, Money>`): its constructor is private
+json_private_constructor.vlt:36:13: error: `JSON.parse` cannot create a `Money`: its constructor is private
+json_private_constructor.vlt:37:13: error: `JSON.parse` cannot create a `Money`: its constructor is private
+json_private_constructor.vlt:38:13: error: `JSON.parse` cannot create a `Token`: its constructor is protected
+decoding fills the fields without running a constructor; decode into a plain object type and create the `Token` from it with a static factory method
+json_private_constructor.vlt:39:13: error: `JSON.parse` cannot create an `Admin`: its constructor is protected
+decoding fills the fields without running a constructor; decode into a plain object type and create the `Admin` from it with a static factory method
+json_private_constructor.vlt:40:13: error: `JSON.parse` cannot create a `Money` (in `Record<string, Money>`): its constructor is private

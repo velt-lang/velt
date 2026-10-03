@@ -1,6 +1,9 @@
 //! Structural equality (`Intrinsic::Eq`, `==` on non-scalar types) and hashing
 //! (`Intrinsic::Hash`). Class objects, interface values and function values compare and hash by
-//! identity (JS reference semantics); everything else structurally. Hashes combine parts
+//! identity (JS reference semantics); everything else structurally. The prelude `Map` and
+//! `Record` classes are the exception: they compare by content in any key order (Node's
+//! `isDeepStrictEqual`) through `Map.__deepEquals`, and hash their size and keys through
+//! `Map.__deepHash` (std/prelude/map.vlt); a record compares its map. Hashes combine parts
 //! FxHash-style: `h = (rotl(h, 5) ^ part) * 0x517cc1b727220a95`; strings hash their bytes with
 //! `velt_rt_str_hash`.
 
@@ -25,6 +28,10 @@ impl FnLower<'_, '_> {
             TyKind::Str => {
                 let (pa, pb) = (self.addr(a.clone()), self.addr(b.clone()));
                 self.str_eq(pa, pb)
+            }
+            _ if self.dictionary_content(ty) => {
+                let (pa, pb) = (self.addr(a.clone()), self.addr(b.clone()));
+                self.call_glue(Glue::Eq, ty, vec![pa, pb])
             }
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => {
                 Operand::Const(Const::Bool(true), Ty::Bool)
@@ -56,6 +63,10 @@ impl FnLower<'_, '_> {
                 Operand::Copy(Place::local(r))
             }
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => cint(0, Ty::U64),
+            _ if self.dictionary_content(ty) => {
+                let a = self.addr(place.clone());
+                self.call_glue(Glue::Hash, ty, vec![a])
+            }
             TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Dyn(..) => {
                 let p = Operand::Copy(proj(place, Proj::Field(0)));
                 let x = self.cast_to(p, Ty::Ptr, Ty::U64);
@@ -74,6 +85,40 @@ impl FnLower<'_, '_> {
                 self.call_glue(Glue::Hash, ty, vec![a])
             }
         }
+    }
+
+    /// The prelude `Map` or `Record` class, which compares and hashes by content.
+    fn is_dictionary(&mut self, ty: TyId) -> bool {
+        self.prelude_map(ty).is_some() || self.prelude_record(ty).is_some()
+    }
+
+    /// A `Map` or `Record` (or a nullable one): a pointer that still compares by content.
+    fn dictionary_content(&mut self, ty: TyId) -> bool {
+        match self.cx.kind(ty) {
+            TyKind::Option(e) => self.is_dictionary(e),
+            _ => self.is_dictionary(ty),
+        }
+    }
+
+    /// `Map.<name>(a, …)` for the prelude `Map<K, V>` type `ty` (object pointers in `args`).
+    fn call_map_method(&mut self, ty: TyId, name: &str, args: Vec<Operand>, ret: Ty) -> Operand {
+        let TyKind::Adt(map, targs) = self.cx.kind(ty) else {
+            crate::lower::ice("Map method on a non-ADT type")
+        };
+        let def = self.class_method(map, name);
+        let f = self.cx.func_for(def, targs);
+        let d = self.temp(ret);
+        self.call(vir::Callee::Func(f), args, Some(Place::local(d)), false);
+        Operand::Copy(Place::local(d))
+    }
+
+    /// `ty`'s `Map` (itself, or a record's field 0) at the object `p`: (map type, map place).
+    fn dictionary_map(&mut self, p: &Place, ty: TyId) -> (TyId, Place) {
+        if self.prelude_map(ty).is_some() {
+            return (ty, p.clone());
+        }
+        let map_ty = self.cx.adt_field_tys(ty)[0];
+        (map_ty, self.field_place(p, ty, 0))
     }
 
     /// A pointer-sized value that still compares and hashes by content: a boxed array / object
@@ -145,6 +190,13 @@ impl FnLower<'_, '_> {
         let b = self.deref_param(pb, ty);
         let no = self.new_block();
         match self.cx.kind(ty) {
+            TyKind::Adt(..) if self.is_dictionary(ty) => {
+                let (map_ty, ma) = self.dictionary_map(&a, ty);
+                let (_, mb) = self.dictionary_map(&b, ty);
+                let args = vec![Operand::Copy(ma), Operand::Copy(mb)];
+                let r = self.call_map_method(map_ty, "__deepEquals", args, Ty::Bool);
+                self.when(r, no);
+            }
             TyKind::Adt(..) | TyKind::Tuple(_) if !self.is_enum(ty) => {
                 for (x, y, t) in self.struct_parts(&a, &b, ty) {
                     let e = self.eq_values(&x, &y, t);
@@ -232,6 +284,11 @@ impl FnLower<'_, '_> {
             lw.assign(Place::local(h), Rvalue::Use(n));
         };
         match self.cx.kind(ty) {
+            TyKind::Adt(..) if self.is_dictionary(ty) => {
+                let (map_ty, m) = self.dictionary_map(&place, ty);
+                let v = self.call_map_method(map_ty, "__deepHash", vec![Operand::Copy(m)], Ty::U64);
+                add(self, v);
+            }
             TyKind::Adt(..) | TyKind::Tuple(_) if !self.is_enum(ty) => {
                 for (x, _, t) in self.struct_parts(&place, &place, ty) {
                     let v = self.hash_value(&x, t);
