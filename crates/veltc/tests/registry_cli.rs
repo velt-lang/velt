@@ -41,6 +41,32 @@ fn velt_as(token: &str, dir: &Path, home: &Path, args: &[&str]) -> std::process:
         .expect("run velt")
 }
 
+/// `velt login <url>` (or `logout`) with `token` on stdin.
+fn velt_login(home: &Path, sub: &str, url: &str, token: &str) -> std::process::Output {
+    use std::io::Write;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_velt"))
+        .args([sub, url])
+        .env("VELT_HOME", home)
+        .env_remove("VELT_REGISTRY_TOKEN")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("run velt");
+    let mut stdin = child.stdin.take().expect("stdin");
+    stdin
+        .write_all(
+            format!(
+                "{token}
+"
+            )
+            .as_bytes(),
+        )
+        .expect("token");
+    drop(stdin);
+    child.wait_with_output().expect("run velt")
+}
+
 fn text(out: &std::process::Output) -> String {
     format!(
         "{}{}",
@@ -92,7 +118,25 @@ fn share_a_package_through_the_registry_server() {
     let denied = velt(&lib, &home_a, &["publish"]);
     assert!(!denied.status.success());
     assert!(String::from_utf8_lossy(&denied.stderr).contains("VELT_REGISTRY_TOKEN"));
-    let published = velt_as(&token, &lib, &home_a, &["publish"]);
+    assert!(text(&denied).contains("velt login"), "{}", text(&denied));
+    let login = velt_login(&home_a, "login", &url, &token);
+    assert!(login.status.success(), "{}", text(&login));
+    assert!(home_a.join("credentials.json").is_file());
+    // The stored token goes only to the registry it was stored for: `localhost` is the same
+    // server under another name, so it gets none.
+    let port = url.rsplit(':').next().expect("port");
+    let mut manifest = vpm::Manifest::from_dir(&lib).expect("manifest");
+    manifest.registry = Some(format!("http://localhost:{port}"));
+    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).expect("write");
+    let elsewhere = velt(&lib, &home_a, &["publish"]);
+    assert!(
+        text(&elsewhere).contains("refused the request"),
+        "{}",
+        text(&elsewhere)
+    );
+    manifest.registry = Some(url.clone());
+    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).expect("write");
+    let published = velt(&lib, &home_a, &["publish"]);
     assert!(published.status.success(), "{}", text(&published));
     let owners = velt(&lib, &home_a, &["owner", "list", "greet"]);
     assert_eq!(String::from_utf8_lossy(&owners.stdout), "alice\n");
@@ -121,13 +165,14 @@ fn share_a_package_through_the_registry_server() {
     );
 
     // A yanked version: the locked app keeps installing it, a new requirement can't pick it.
-    let denied = velt(&lib, &home_a, &["yank", "greet@0.1.0"]);
+    // Machine B has no token for the registry.
+    let denied = velt(&lib, &home_b, &["yank", "greet@0.1.0"]);
     assert!(
         text(&denied).contains("VELT_REGISTRY_TOKEN"),
         "{}",
         text(&denied)
     );
-    let yanked = velt_as(&token, &lib, &home_a, &["yank", "greet@0.1.0"]);
+    let yanked = velt(&lib, &home_a, &["yank", "greet@0.1.0"]);
     assert!(yanked.status.success(), "{}", text(&yanked));
     let installed = velt(&app, &home_b, &["install", "--locked"]);
     assert!(installed.status.success(), "{}", text(&installed));
@@ -149,11 +194,50 @@ fn share_a_package_through_the_registry_server() {
         "{}",
         text(&refused)
     );
+    let unyanked = velt(&lib, &home_a, &["yank", "greet@0.1.0", "--undo"]);
+    assert!(unyanked.status.success(), "{}", text(&unyanked));
+    // After `velt logout`, writes are refused again; $VELT_REGISTRY_TOKEN still works (CI).
+    let logout = velt_login(&home_a, "logout", &url, "");
+    assert!(logout.status.success(), "{}", text(&logout));
+    assert!(!velt(&lib, &home_a, &["yank", "greet@0.1.0"])
+        .status
+        .success());
+    let yanked = velt_as(&token, &lib, &home_a, &["yank", "greet@0.1.0"]);
+    assert!(yanked.status.success(), "{}", text(&yanked));
     let unyanked = velt_as(&token, &lib, &home_a, &["yank", "greet@0.1.0", "--undo"]);
     assert!(unyanked.status.success(), "{}", text(&unyanked));
     assert!(velt(&other, &home_b, &["add", "greet@0.1"])
         .status
         .success());
+}
+
+#[test]
+fn tokens_never_travel_over_plain_http_to_another_machine() {
+    let tmp = test_dir::TestDir::new();
+    let home = tmp.path().join("home");
+    let refused = velt_login(&home, "login", "http://registry.example.com", "secret");
+    assert!(!refused.status.success());
+    assert!(
+        text(&refused).contains("refusing to send a registry token"),
+        "{}",
+        text(&refused)
+    );
+    assert!(!home.join("credentials.json").exists());
+    // $VELT_REGISTRY_TOKEN is not sent there either: the write fails before connecting (to an
+    // unroutable documentation address).
+    let lib = tmp.path().join("lib");
+    assert!(velt(tmp.path(), &home, &["new", "lib", "--lib"])
+        .status
+        .success());
+    let mut manifest = vpm::Manifest::from_dir(&lib).expect("manifest");
+    manifest.registry = Some("http://192.0.2.1:9".into());
+    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).expect("write");
+    let out = velt_as("secret", &lib, &home, &["yank", "lib@0.1.0"]);
+    assert!(
+        text(&out).contains("refusing to send $VELT_REGISTRY_TOKEN to http://192.0.2.1:9"),
+        "{}",
+        text(&out)
+    );
 }
 
 #[test]

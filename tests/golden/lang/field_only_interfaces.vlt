@@ -1,0 +1,62 @@
+// An interface with only fields is an object type (docs/internals/design/shared-models.md):
+// literals satisfy it, it has a JSON form, it converts to and from object types of the same
+// layout (and stays the same object), and as a bound it is satisfied by any type with its
+// fields. Interfaces with methods stay nominal.
+
+interface Base { readonly id: number }
+interface User extends Base { name: string; email?: string }
+interface Tree { label: string; children: Tree[] }
+interface Page<T> { items: T[]; total: number }
+interface HasId { id: number }
+interface Named { name(): string }
+interface Tagged extends Named { tag: string }
+type UserRow = { readonly id: number; name: string; email?: string };
+
+class Admin {
+  id: number;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+
+class Thing implements Tagged {
+  tag: string = "t";
+  name(): string {
+    return "thing";
+  }
+}
+
+function idOf<T extends HasId>(x: T): number {
+  return x.id;
+}
+
+function show(t: Tagged): string {
+  return `${t.name()}/${t.tag}`;
+}
+
+function main() {
+  const u: User = { id: 1, name: "ann" };
+  const users: User[] = [u, { id: 2, name: "bo", email: "b@x" }];
+  console.log(users[1].email ?? "-", u.name, JSON.stringify(users[1]));
+  const back = JSON.parse<User>("{\"id\":3,\"name\":\"cy\"}");
+  console.log(back.id, back.name, back.email ?? "-");
+
+  const t: Tree = { label: "root", children: [{ label: "leaf", children: [] }] };
+  console.log(t.children[0].label, JSON.stringify(t));
+
+  const p: Page<string> = { items: ["a", "b"], total: 2 };
+  const q = JSON.parse<Page<number>>("{\"items\":[1,2,3],\"total\":3}");
+  console.log(p.items.length, q.items[2], JSON.stringify(p));
+
+  // One object through both types.
+  let row: UserRow = { id: 4, name: "dee" };
+  const viaUser: User = row;
+  row.name = "z";
+  let v: User = { id: 5, name: "eve" };
+  const viaRow: UserRow = v;
+  v.name = "y";
+  console.log(viaUser.name, viaRow.name);
+
+  // Field-only bounds are structural; interfaces with methods are not.
+  console.log(idOf(row), idOf(u), idOf(new Admin(6)), show(new Thing()));
+}

@@ -18,7 +18,9 @@ compiler knows exactly what each function and each `try` block can throw.
   allowed by its base class) and is the function's error type even when the body throws less.
 - Field initializers may throw: `new C(…)` (and a struct literal that leaves the field out)
   evaluates them, so it throws what they throw, including inherited ones, besides what the
-  constructor throws.
+  constructor throws. They run as part of the constructors
+  ([Classes](classes.md#classes)), so a constructor's `throws` clause must allow what the
+  initializers it runs throw.
 - Methods, constructors (`constructor(x: T) throws E`), arrows (`(x: T): R throws E => …`) and
   async functions (`async function f(): Promise<T> throws E`, see [Async](async.md#errors))
   take a `throws` clause; `declare function` cannot.

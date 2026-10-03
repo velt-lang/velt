@@ -335,7 +335,8 @@ impl FnCx<'_, '_> {
         crate::body::field_defaults(self.cx, d);
         let a = self.cx.adt(d).expect("ICE: struct");
         let (sname, fields) = (a.name.clone(), a.fields.clone());
-        let anon = a.kind == AdtKind::Anon;
+        // Object types (anonymous ones and field-only interfaces) may leave out nullable fields.
+        let anon = a.kind == AdtKind::Anon || self.cx.field_only_of.contains_key(&d);
         if let Some(e) = exp {
             let pat = crate::collect::self_type(self.cx, d, slots.len());
             self.cx.match_ty(pat, e, &mut slots);

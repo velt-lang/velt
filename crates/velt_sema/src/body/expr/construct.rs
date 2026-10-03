@@ -69,6 +69,8 @@ impl FnCx<'_, '_> {
             ret: self_ty,
             slot_names: names.names,
             bounds: names.bounds,
+            js_numbers: false,
+            rest: false,
         };
         let ck = self.check_call(&c, slots, args, self.hint(exp), span);
         if Some(d) == self.cx.prelude_adt("Record") && self.owner != Some(d) {
@@ -77,8 +79,10 @@ impl FnCx<'_, '_> {
                 return self.error_expr(span);
             }
         }
-        // `new` evaluates every field default (own and inherited) before the constructor.
-        for s in self.class_default_throws(ck.ret, span) {
+        // `new` runs the constructor, which runs the field initializers of its class and the
+        // classes above it, then those of the classes below the one declaring it.
+        let owner = ctor.and_then(|c| self.cx.fn_info(c).owner);
+        for s in self.class_default_throws(ck.ret, owner, span) {
             self.throw_src(s);
         }
         if let Some(c) = ctor {
@@ -96,28 +100,36 @@ impl FnCx<'_, '_> {
         self.mk(kind, ck.ret, span)
     }
 
-    /// What the field defaults of class type `ty` (and of its base classes) may throw, as
-    /// thrown by the `new` at `span`.
-    fn class_default_throws(&mut self, ty: TyId, span: Span) -> Vec<ThrowSrc> {
-        let TyKind::Adt(d, args) = self.cx.ty.kind(ty).clone() else {
-            return vec![];
-        };
-        crate::body::field_defaults(self.cx, d);
-        let Some(a) = self.cx.adt(d) else {
-            return vec![];
-        };
-        let own: Vec<ThrowSrc> = a.fields[a.own_fields_start..]
-            .iter()
-            .flat_map(|f| f.default_throws.iter().cloned())
-            .collect();
-        let base = a.base;
-        let mut out: Vec<ThrowSrc> = own
-            .iter()
-            .map(|s| s.used_at(span, |t| self.cx.ty.subst(t, &args)))
-            .collect();
-        if let Some(b) = base {
-            let b = self.cx.ty.subst(b, &args);
-            out.extend(self.class_default_throws(b, span));
+    /// What the field initializers of class type `ty` and of its base classes up to (not
+    /// including) class `stop` may throw, as thrown at `span`: one deferred source per class.
+    /// The initializers are checked first (diagnostics in source order); what they throw is
+    /// resolved later, since initializers that construct each other in a cycle are still
+    /// being checked here (`crate::throws::defaults_srcs`).
+    pub(crate) fn class_default_throws(
+        &mut self,
+        ty: TyId,
+        stop: Option<DefId>,
+        span: Span,
+    ) -> Vec<ThrowSrc> {
+        let mut out = vec![];
+        let mut cur = Some(ty);
+        while let Some((d, args)) = cur.and_then(|t| self.cx.class_of(t)) {
+            // Inheritance cycles are broken when layouts are computed (`class inheritance
+            // cycle`), so the chain ends; the check on classes already listed only guards that
+            // invariant (unlike a depth limit, it never cuts a deep but finite chain short).
+            let listed = out
+                .iter()
+                .any(|s| matches!(s, ThrowSrc::Defaults(o, ..) if *o == d));
+            if Some(d) == stop || listed {
+                break;
+            }
+            crate::body::field_defaults(self.cx, d);
+            cur = self
+                .cx
+                .adt(d)
+                .and_then(|a| a.base)
+                .map(|b| self.cx.ty.subst(b, &args));
+            out.push(ThrowSrc::Defaults(d, args, span));
         }
         out
     }

@@ -68,8 +68,9 @@ impl<'a> Parser<'a> {
         m
     }
 
-    /// Insert `this.<field> = <field>;` for each parameter property at the start of the
-    /// constructor body, or right after its `super(...)` call.
+    /// Insert `this.<field> = <field>;` for each parameter property into the constructor body:
+    /// right after its root-level `super(...);` (statements before it may not use `this`), else
+    /// at the start.
     pub(super) fn store_param_props(&mut self, body: &mut Block, fields: &[Field]) {
         let at = body
             .stmts

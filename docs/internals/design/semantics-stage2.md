@@ -138,19 +138,49 @@ within the copy).
 
 ## 6. Threads (transfer.rs)
 Counts are not atomic, so no counted object may be reachable from two threads. Values cross
-threads at `spawn(f(args))` (owned arguments; for a call through a function value, vtable
-or interface, every argument and the receiver) and the HTTP handler environment: a value whose
-type can reach a counted object is **deep-copied** for the task and the original reference
-released (structured clone at a worker boundary); others move as before. Interface, closure
-and function values count as able to reach one (a closure's heap env is itself counted). An
-owned closure value still moves when, at run time, its env is null or in a frame, or its count
-is 1 and its `reach` header word says no capture can reach a counted object (set where the
-closure is created, closure.rs): then it is the only reference to everything it captures, and
-a captured unique value is not copied (whose `[Symbol.dispose]()` would run twice, #122). A
-borrow-ABI argument of a call through a function value, vtable or interface (the caller keeps
-its reference) is always deep-copied. Async closures copy what they capture per call (deep
-copies of shared captures, `validate`), since an HTTP handler runs them concurrently. Strings
-keep their atomic counts (stage 1); `shared<T>` stays atomic.
+threads at `spawn(f(args))` (owned arguments; for a call through a function value, vtable or
+interface, every argument and the receiver; `spawn(c ? f(x) : g(y))` spawns the chosen call the
+same way), captures of a spawned async closure, the HTTP handler environment, channel sends, a
+value settled on a promise from another task, and the result of a promise that goes to another
+task. Such a value is **transferred** in place by the transfer glue (glue/transfer.rs): a
+counted object whose count is 1 is the sender's alone and stays, with its parts transferred in
+turn; one that is still shared is deep-copied for the task (structured clone at a worker
+boundary) and the sender's reference released; values whose type cannot reach a counted object
+move untouched. Class objects in a hierarchy and interface values transfer through a vtable
+slot, closures through their environment's transfer entry (the env header's third word): a
+shared env is cloned first, and a captured variable's cell that the creator still shares is
+copied, so the task's assignments stay in the task. A promise is marked
+(`velt_rt_fut_transfer`): its result is transferred by the task that produces it as it finishes
+(#160); a lazy one is started first, so its inputs stay on this task. A value settled on a
+promise from another task is transferred by a promise that task drives, at its next step, after
+the settling statement released its own reference (std/prelude/promise.vlt, #263); a value
+whose type cannot reach a counted object (`Intrinsic::NeedsTransfer`, a constant) settles at
+once, so plain replies cost no extra step.
+
+A deep copy of a class with its own `clone()` calls it when a field-by-field copy would
+duplicate a resource (a `[Symbol.dispose]` hook of its own or of a part, or a promise), so a
+resource is duplicated by its type (#122); other classes are copied field by field (a
+shallow `clone()` must not leave a thread copy sharing objects). A copy for another thread
+that called such a `clone()` is transferred in turn (glue/transfer.rs `settle_copy`): parts
+the returned object still shares are deep-copied, and one that is not a new object panics. A resource without one cannot be copied: sema rejects a `spawn` argument or
+spawned capture that is still used afterwards, and one passed through a function value,
+vtable or interface (ownership/boundary.rs); a copy that only turns out to be needed at run
+time panics. A borrow-ABI argument of a call through a function value, vtable or interface
+(the caller keeps its reference) is always copied. Async closures copy what they capture per
+call (deep copies of shared captures, `validate`), since an HTTP handler runs them
+concurrently (#8, #208); a capture owning a resource without `clone()` is shared with the call
+instead (`validate` `share_uncopyable`, async_fn/ctor.rs `take_capture`), and a call spawned
+through a function value first copies the closure for the task (callee.rs `call_indirect`), so
+such a capture still referenced by the caller panics in the transfer (a soft move of the callee,
+sema tasks.rs: when it is the last use, the function value itself moves to the task). Where a
+function value becomes callable from several threads at once (`shared(x)`, which also
+transfers `x`, and an HTTP handler's environment), per-call sharing of such a capture would
+race: sema rejects the closures it sees there (ownership/many.rs), and the many-threads check
+glue (glue/many.rs, entered through tagged env-transfer and `SLOT_TRANSFER` pointers) panics
+on the rest. `spawn` of an async
+closure literal called at once is the literal's task (captures transferred, async_fn/spawn.rs).
+A deep copy that reaches a resource without `clone()` elsewhere (a generic `T`, a function
+value's captures, an interface value's implementor) panics (glue/clone.rs). Strings keep their atomic counts (stage 1); `shared<T>` stays atomic.
 
 ## 7. Identity and the `struct` keyword
 - `==` / `!=` on objects (classes, arrays, structs, object literals, interface and function
@@ -203,7 +233,10 @@ keep their atomic counts (stage 1); `shared<T>` stays atomic.
   block end; an explicit `x[Symbol.dispose]()` of a shared object releases that reference only.
 - Threads: deep copies at `spawn`/handler boundaries do not preserve aliasing inside the copied
   graph. (A stored promise handed to `spawn` already runs on its creator's task and stays there,
-  [Async — tasks](../../reference/async.md#tasks), so it crosses no thread.)
+  [Async — tasks](../../reference/async.md#tasks); only its result crosses, transferred.) A
+  promise created outside any task (synchronous `main`) is lazy, and spawning it runs it on
+  the new task with its arguments as they were passed, not transferred (a gap: the caller must
+  not use them afterwards).
 - `Mutex.with` callbacks and `attempt(f)` are not stabilized like ordinary calls.
 - `Map` (and `Set`) keys of struct, object-literal and tuple type compare by content
   (`__intrinsic_eq` with the structural hash), not by identity as in JS; class instances

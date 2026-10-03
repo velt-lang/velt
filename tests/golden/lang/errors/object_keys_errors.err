@@ -3,7 +3,7 @@ list a map's keys with `m.keys()`
 object_keys_errors.vlt:18:27: error: `Object.keys` lists the keys of an object, a class or struct instance or a `Record`, found `string`
 object_keys_errors.vlt:19:29: error: the values of this object literal have different types (`i64` and `string`), but a `Record` has one value type
 `Object.values` and `Object.entries` return one value type: list the keys with `Object.keys`, or give the values one type (a union, or `Record<string, JsonValue>`)
-object_keys_errors.vlt:20:30: error: the values of this object literal have different types (`i64` and `bool`), but a `Record` has one value type
+object_keys_errors.vlt:20:30: error: the values of this object literal have different types (`i64` and `boolean`), but a `Record` has one value type
 `Object.values` and `Object.entries` return one value type: list the keys with `Object.keys`, or give the values one type (a union, or `Record<string, JsonValue>`)
 object_keys_errors.vlt:22:29: error: `Object.values` needs a `Record`, found `Point`
 they return one value type, so they need a `Record<K, V>`; list an object's keys with `Object.keys`, or keep values of different types in a `Record<string, V>` whose `V` is a union or `JsonValue`

@@ -1,0 +1,25 @@
+// A resource without `clone()` that is still referenced elsewhere when it enters another task
+// would have to be copied, which would release it twice (#122): the transfer stops the program
+// instead. (When the other use is visible where `spawn` is, it is a compile error.)
+class Conn {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+async function serve(c: Conn): Promise<i64> {
+  return c.id;
+}
+
+async function main() {
+  const c = new Conn(1);
+  const pool = [c];
+  console.log("pool", pool.length);
+  console.log(await spawn(serve(c)));
+}

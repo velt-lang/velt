@@ -1,0 +1,56 @@
+class Conn {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+class Pair {
+  a: Conn;
+  b: string;
+
+  constructor(a: Conn, b: string) {
+    this.a = a;
+    this.b = b;
+  }
+}
+
+async function serve(c: Conn): Promise<i64> {
+  return c.id;
+}
+
+async function servePair(p: Pair): Promise<i64> {
+  return p.a.id;
+}
+
+interface Server {
+  serve(c: Conn): Promise<i64>;
+}
+
+class Echo implements Server {
+  async serve(c: Conn): Promise<i64> {
+    return c.id;
+  }
+}
+
+async function main() {
+  const c = new Conn(1);
+  const t = spawn(serve(c));
+  console.log(c.id, await t);
+  const p = new Pair(new Conn(2), "x");
+  const u = spawn(servePair(p));
+  console.log(p.b, await u);
+  const d = new Conn(3);
+  const v = spawn(async (): Promise<i64> => d.id);
+  console.log(d.id, await v);
+  const e = new Conn(5);
+  const w = spawn((async (): Promise<i64> => e.id)());
+  console.log(e.id, await w);
+  const s: Server = new Echo();
+  console.log(await spawn(s.serve(new Conn(4))));
+}

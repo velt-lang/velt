@@ -1,0 +1,6 @@
+  = note: use it through the `shared` value from now on (`m.with((v) => …)`), or give `Conn` a `clone()` and pass `c.clone()`
+  = note: use it through the `shared` value from now on (`m.with((v) => …)`), or pass a copy: `o.clone()`
+  = note: use it through the `shared` value from now on (`m.with((v) => …)`), or pass a copy: `this.o.clone()`
+shared_takes_value.vlt:21:34: error: `this.o` stays where it is held; `shared(...)` takes the value itself (share a clone)
+shared_takes_value.vlt:33:35: error: `o` is still used after `shared(...)`; `shared` takes the value itself (move it in, or share a clone)
+shared_takes_value.vlt:37:37: error: `c` is still used after `shared(...)`; `shared` takes the value itself (move it in, or share a clone)

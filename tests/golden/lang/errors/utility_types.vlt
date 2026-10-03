@@ -1,0 +1,31 @@
+// Utility type errors: a key that isn't a field (in Pick and in Omit), keys that aren't string
+// literals, a non-object type, a type parameter (#350), and writing a Readonly field.
+interface User {
+  id: number;
+  name: string;
+}
+
+type Typo = Pick<User, "nmae">;
+type Extra = Omit<User, "id" | "age">;
+type Wide = Pick<User, string>;
+type Num = Partial<number>;
+
+function patch<T>(x: T, p: Partial<T>) {}
+
+function main() {
+  const a: Typo = { name: "a" };
+  const b: Extra = { name: "b" };
+  const w: Wide = { id: 1, name: "w" };
+  const n: Num = 1;
+  const r: Readonly<User> = { id: 1, name: "r" };
+  r.name = "s";
+}
+
+// A field type can only apply an operator to a type declared before it.
+interface Holder {
+  p: Partial<Later>;
+}
+
+interface Later {
+  a: number;
+}

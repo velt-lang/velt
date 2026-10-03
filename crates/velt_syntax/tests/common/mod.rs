@@ -168,6 +168,7 @@ pub fn pat(p: &Pattern) -> String {
             }
             format!("[{}]", parts.join(", "))
         }
+        PatternKind::Default { pattern, value } => format!("{} = {}", pat(pattern), sx(value)),
     }
 }
 
@@ -311,6 +312,7 @@ pub fn sx(e: &Expr) -> String {
         ExprKind::Cast { expr, ty: t } => format!("(as {} {})", sx(expr), ty(t)),
         ExprKind::InstanceOf { expr, ty: t } => format!("(instanceof {} {})", sx(expr), ty(t)),
         ExprKind::Paren(e) => format!("(paren {})", sx(e)),
+        ExprKind::NonNull(e) => format!("(! {})", sx(e)),
         ExprKind::Jsx(el) => jsx(el),
     }
 }
@@ -379,6 +381,9 @@ pub fn golden_files() -> Vec<PathBuf> {
     collect(&workspace_root().join("tests/golden"), &mut out);
     out
 }
+
+/// One function of ordinary code (six lines): arithmetic, control flow, templates, a generic call.
+pub const PLAIN_UNIT: &str = "function f(a: i64, b: i64): i64 {\n  let x = a * 2 + b / 3 - (a % 7);\n  if (x > 10 && b < 3) { return x; } else { x += 1; }\n  for (let i = 0; i < 10; i++) { console.log(`i=${i} x=${x}`, \"s\\n\"); }\n  return g<i64>(x, [1, 2, 3], { a: 1, b }) as i64;\n}\n";
 
 /// Three items whose JSX elements and generic arrows the parser, not the lexer, decides: every
 /// element is re-lexed once where the parser finds it.

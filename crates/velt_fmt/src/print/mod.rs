@@ -2,8 +2,8 @@
 //! declarations), [`stmt`], [`for_loop`], [`expr`], [`binary`], [`call`] (arguments, last-argument hugging),
 //! [`chain`] (member chains), [`literals`] (objects, arrays, strings), [`func`] (signatures,
 //! parameters, arrows), [`switch`], [`patterns`], [`types`], [`jsx`], [`jsx_children`] and
-//! [`jsx_layout`] (JSX elements and their children); [`lists`] places comments inside
-//! line-per-entry bodies and delimited lists.
+//! [`jsx_layout`] (JSX elements and their children), [`script`] (top-level statements); [`lists`]
+//! places comments inside line-per-entry bodies and delimited lists.
 //!
 //! Comments are interleaved by byte position: every node flushes the not-yet-printed comments
 //! that precede it, and list printers attach the comments that end an entry's line to that entry.
@@ -22,8 +22,11 @@ mod jsx_layout;
 mod lists;
 mod literals;
 mod patterns;
+mod script;
 mod stmt;
 mod switch;
+#[cfg(test)]
+mod thread_cpu;
 mod types;
 
 use std::collections::HashSet;
@@ -54,12 +57,16 @@ impl<'a> Printer<'a> {
     /// The whole file: items separated by blank lines, ending with a newline.
     pub(crate) fn module(&mut self, module: &Module) -> Doc {
         let end = self.src.len() as u32;
+        let entries = script::entries(module);
         let body = self.lines(
-            &module.items,
+            &entries,
             end,
-            |i| (i.span.lo, i.span.hi),
-            items::blank_between,
-            |p, i| p.item(i),
+            script::Top::range,
+            script::blank_before,
+            |p, t| match t {
+                script::Top::Item(i) => p.item(i),
+                script::Top::Stmt(s) => p.stmt(s),
+            },
         );
         if body.is_nil() {
             return nil();

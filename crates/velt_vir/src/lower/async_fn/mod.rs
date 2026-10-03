@@ -28,6 +28,7 @@ mod channel;
 mod ctor;
 mod handler;
 mod kept;
+mod spawn;
 mod spill;
 mod start;
 mod suspend;
@@ -178,7 +179,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.ref_bindings = scan.ref_bindings.iter().copied().collect();
         let inputs = self.declare_async_locals(f, shared);
         self.declare_drop_flags(f, &scan);
-        self.lower_body(f, None);
+        self.lower_body(f);
         self.emit_dispatch();
         inputs
     }

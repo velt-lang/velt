@@ -12,14 +12,14 @@ The wording below is stable: tests, editors and tools rely on it.
 | parse | `expected expression`, ``expected `;` ``, `expected <token>, found <token>` |
 | unknown name or type | ``cannot find `name` in this scope``, ``cannot find type `T` in this scope`` |
 | types | `mismatched types` + note `expected i64, found string` |
-| conditions | `mismatched types` + note `expected bool, found i64` + the comparison to write; ``` `\|\|` needs a `bool` or nullable left side, found `T` ``` (+ "use `??` for a default") |
+| conditions | `mismatched types` + note `expected boolean, found i64` + the comparison to write; ``` `\|\|` needs a `boolean` or nullable left side, found `T` ``` (+ "use `??` for a default") |
 | moves (promises, disposed values) | ``use of moved value `name` `` (+ where it moved) |
 | const | ``cannot assign twice to const `name` `` |
 | members | ``no field `x` on type `T` ``, ``` `x` is private ```, ``cannot assign to `x`: it is a readonly field``, ``cannot assign to `x`: it is a getter`` |
 | unions | ``no field `r` on type `Shape` `` + "narrow it to one member first …" |
 | switch | ``non-exhaustive switch on `s.kind` `` + `missing cases: …`, `duplicate case value` |
 | exclusive access | ``cannot use `xs` here: this call may modify it through another argument`` |
-| threads | "cannot mutate captured variable `n` in a spawned task" (+ `shared` hint) |
+| threads | "cannot mutate captured variable `n` in a spawned task" (+ `shared` hint); "`r` is still used after `spawn`, so the task would get a copy, but `T` owns a resource (`[Symbol.dispose]`) and has no `clone()`" (or "`this.conn` stays where it is held, …", "`Pair` holds a `Conn`, which …"; + the fixes) |
 | modules | ``` `x` is not exported ```, "mutable module-level state is not allowed", ``` `export default` is not supported: Velt has named exports only ```, ``` `T` is imported with `import type` and cannot be used as a value ```, ``` namespace `ns` has no exported member `x` ``` |
 | async | ``` `await` is only allowed inside async functions ```, `floating promise: this promise is neither awaited nor spawned` (+ the `await` / `spawn` fixes) |
 | errors | ``` `f` throws `E`, which its `throws` clause does not allow ```, ``` `C.m` throws `E`, but `I.m` does not allow it ```, "this function throws `E`, but the function type it is used as does not allow throwing", "the error type of this function is not known yet" |

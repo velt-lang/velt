@@ -226,6 +226,7 @@ impl FnCx<'_, '_> {
             }
             if let Some(e) = exprs.get(i) {
                 let h = self.expr(e, None, Want::Borrow);
+                let h = self.own_to_string(h, "toString");
                 let t = h.ty;
                 if t == self.cx.ty.str_ || self.cx.ty.is_bottom(t) {
                     parts.push(h);
@@ -243,6 +244,26 @@ impl FnCx<'_, '_> {
             }
         }
         self.concat_parts(parts, span)
+    }
+
+    /// `h.<method>()` when `h` is a class or struct value with its own `method(): string` (a
+    /// template literal uses `toString()`, as in JS; `console.log` a `__inspect()`), else `h`.
+    pub(crate) fn own_to_string(&mut self, h: hir::Expr, method: &str) -> hir::Expr {
+        let Some((d, _)) = self.adt_of(h.ty) else {
+            return h;
+        };
+        let Some(m) = self.cx.adt(d).and_then(|a| a.methods.get(method)).copied() else {
+            return h;
+        };
+        let f = self.cx.fn_info(m.def);
+        if m.is_static || !f.params.is_empty() || f.ret != self.cx.ty.str_ {
+            return h;
+        }
+        let span = h.span;
+        match self.method_call_hir(h.clone(), method, span) {
+            Some(call) => call,
+            None => h,
+        }
     }
 
     /// The string parts of a template literal joined: a left fold of `StrConcat` (one part that

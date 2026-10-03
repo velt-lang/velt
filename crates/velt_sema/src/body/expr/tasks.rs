@@ -233,7 +233,13 @@ impl FnCx<'_, '_> {
             return self.simple_intrinsic(Intrinsic::Spawn, "`spawn`", args, exp, span);
         };
         if as_arrow(arg).is_none() {
-            return self.simple_intrinsic(Intrinsic::Spawn, "`spawn`", args, exp, span);
+            let mut e = self.simple_intrinsic(Intrinsic::Spawn, "`spawn`", args, exp, span);
+            if let H::Call { args, .. } = &mut e.kind {
+                if let [p] = args.as_mut_slice() {
+                    self.hand_on_spawned_callee(p);
+                }
+            }
+            return e;
         }
         let ret = self
             .hint(exp)
@@ -259,6 +265,34 @@ impl FnCx<'_, '_> {
                 );
                 self.error_expr(span)
             }
+        }
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// `spawn(g())` through a function value `g` (also in either branch of a conditional): the
+    /// task needs `g`'s captures of its own. `g` is taken (a soft move): moved to the task when
+    /// this is its last use, so a capture nothing else uses moves with it, and shared, then
+    /// copied for the task, when `g` is used again (velt_vir callee.rs `call_indirect`).
+    fn hand_on_spawned_callee(&mut self, p: &mut hir::Expr) {
+        match &mut p.kind {
+            H::If { then, els, .. } => {
+                self.hand_on_spawned_callee(then);
+                self.hand_on_spawned_callee(els);
+            }
+            H::Block(b) if b.stmts.is_empty() => {
+                if let Some(v) = b.value.as_deref_mut() {
+                    self.hand_on_spawned_callee(v);
+                }
+            }
+            H::Call {
+                callee: Callee::Indirect(f),
+                ..
+            } if is_place(f) => {
+                crate::body::places::set_place_mode(f, hir::UseMode::Move);
+                self.f.soft_moves.push(f.span);
+            }
+            _ => {}
         }
     }
 }

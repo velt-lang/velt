@@ -256,6 +256,10 @@ fn os_specific_changes_check_windows_and_macos_in_the_queue() {
     for path in [
         "crates/velt_rt/src/http.rs",
         "crates/veltc/src/main.rs",
+        // Terminal echo, signals and file permissions differ by OS (#315).
+        "crates/veltc/src/commands/registry.rs",
+        "crates/vpm/src/credentials.rs",
+        "crates/vpm/src/json_file.rs",
         "std/fs.vlt",
         "tests/golden/lang/foo.out",
         "Cargo.lock",

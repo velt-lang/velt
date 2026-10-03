@@ -35,7 +35,6 @@ mod server;
 mod signature;
 mod signature_help;
 mod symbols;
-mod syntax_walk;
 mod text_scan;
 mod workspace_symbols;
 

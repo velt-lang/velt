@@ -99,6 +99,22 @@ impl Dev {
         unsafe { libc::kill(pid, signal) };
     }
 
+    /// Whether `signal` was sent to the supervisor and not yet delivered (Linux: the pending
+    /// sets in `/proc/<pid>/status`). Two signals sent before the first is delivered count as
+    /// one, so a test that sends a second one waits for the first to be delivered.
+    #[cfg(target_os = "linux")]
+    pub fn signal_pending(&self, signal: i32) -> bool {
+        let pid = self.child.id();
+        let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap_or_default();
+        status.lines().any(|line| {
+            let mask = match line.split_once(':') {
+                Some(("SigPnd" | "ShdPnd", mask)) => mask.trim(),
+                _ => return false,
+            };
+            u64::from_str_radix(mask, 16).is_ok_and(|m| m & (1 << (signal - 1)) != 0)
+        })
+    }
+
     /// The supervisor's child processes (Linux: `/proc/<pid>/task/<pid>/children`).
     #[cfg(target_os = "linux")]
     pub fn children(&self) -> Vec<u32> {

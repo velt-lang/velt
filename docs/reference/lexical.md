@@ -29,6 +29,9 @@ Source files are UTF-8. Each file is a module ([Modules](modules.md)).
 
 `[A-Za-z_$][A-Za-z0-9_$]*`, ASCII only.
 
+Velt code is strict-mode code, as in TypeScript modules: no function, class, enum, variable,
+parameter or import may be named `arguments` or `eval` (properties and methods may).
+
 ## Literals
 
 - **Numbers**: `123`, `1_000_000`, `0xff`, `0b1010`, `0o17`, `1.5`, `1e21`, `2.5e-3`, with an
@@ -79,7 +82,9 @@ From highest to lowest precedence, with JavaScript's associativity:
 | `&&` | |
 | `\|\|` `??` | |
 | `?:` | |
-| `=` `+=` `-=` `*=` `/=` `%=` `**=` `<<=` `>>=` `>>>=` `&=` `\|=` `^=` | assignment |
+| `=` `+=` `-=` `*=` `/=` `%=` `**=` `<<=` `>>=` `>>>=` `&=` `\|=` `^=` `&&=` `\|\|=` `??=` | assignment |
 | `=>` | arrow function |
 
-The logical assignments `&&=`, `||=` and `??=` parse but are rejected ("not supported yet").
+The logical assignments `&&=`, `||=` and `??=` assign when `&&`, `||` or `??` would take their
+right side: `x ??= d` is `x = x ?? d` ([Types](types.md#null)). A postfix `!` after an
+expression on the same line is the non-null assertion (`m.get(k)!`).

@@ -16,6 +16,10 @@ velt_fmt.workspace = true
 velt_http = { path = "../velt_http" }
 velt_syntax.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# Owner-only access for credentials.json (json_file::write_private).
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 # Writes the COFF and Mach-O objects of the bundle-check tests.
 object = { version = "0.39", default-features = false, features = ["read", "std", "write_std", "coff", "elf", "macho"] }

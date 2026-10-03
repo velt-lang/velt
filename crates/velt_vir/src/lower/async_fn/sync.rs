@@ -5,7 +5,9 @@
 //!   prelude declares it). `new Mutex(x)` zero-initializes the lock (`velt_rt_mutex_init`);
 //!   `m.with(f)` on a `Mutex<T>` or `shared<Mutex<T>>` locks, calls `f(value)` through the
 //!   closure borrow ABI, and unlocks. Closures cannot throw or await (POC), so the lock is
-//!   released on every path that returns. The value is passed by pointer — also a scalar one
+//!   released on every path that returns. The result leaves the lock transferred, and the
+//!   value is checked for function values other threads could not call (`leave_lock`,
+//!   glue/many.rs). The value is passed by pointer — also a scalar one
 //!   when `f` is a closure literal (`Cx::by_ref_params`), so `(v) => { v += 1 }` updates it.
 
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
@@ -128,9 +130,9 @@ impl FnLower<'_, '_> {
         );
         self.call_rt(Rt::MutexLock, vec![lock.clone()], None);
         let (arg, pt) = match self.cx.ty(vty) {
-            Ty::Agg(_) => (self.addr(value), Ty::Ptr),
-            _ if by_ref => (self.addr(value), Ty::Ptr),
-            s => (Operand::Copy(value), s),
+            Ty::Agg(_) => (self.addr(value.clone()), Ty::Ptr),
+            _ if by_ref => (self.addr(value.clone()), Ty::Ptr),
+            s => (Operand::Copy(value.clone()), s),
         };
         let ret = self.sub(ty);
         let abi = self.cx.ret_abi(ret, None);
@@ -144,7 +146,31 @@ impl FnLower<'_, '_> {
             ret: abi.ret,
         };
         let r = self.finish_call(callee, vec![env, arg], ret, None);
+        let r = self.leave_lock(r, ret);
+        // A function value stored into the value while the lock was held may be called by
+        // another thread next (glue/many.rs).
+        self.many_check(value, vty);
         self.call_rt(Rt::MutexUnlock, vec![lock], None);
         r
+    }
+
+    /// The callback's result `r` (of type `ret`), about to leave the lock: transferred like a
+    /// `spawn` argument while the lock is still held (#373), so nothing the mutex protects is
+    /// referenced outside it — moved when the callback made it, deep-copied when it is part of
+    /// the value. A promise is left alone: it runs on this task, and transferring it would
+    /// start it under the lock.
+    fn leave_lock(&mut self, r: Operand, ret: TyId) -> Operand {
+        if self.dead()
+            || matches!(self.cx.kind(ret), TyKind::Promise(..))
+            || !self.cx.holds_counted(ret)
+        {
+            return r;
+        }
+        let owned = matches!(&r, Operand::Copy(p) if self.take_temp(&p.clone()));
+        if !owned {
+            return r;
+        }
+        let v = self.transfer_value(r, ret);
+        self.own_value(v, ret)
     }
 }

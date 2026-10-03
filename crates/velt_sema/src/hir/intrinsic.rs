@@ -51,6 +51,14 @@ pub enum Intrinsic {
     /// Copy types and strings, a field-wise share for immutable value types. Emitted by sema
     /// wherever a non-Copy place is used by value but stays in use (or cannot be moved from).
     Share,
+    /// std only (std/prelude/promise.vlt): `__intrinsic_transfer<T>(value: T) -> T`, the value
+    /// made safe for another task (moved where this task held the only reference, deep-copied
+    /// where it is still shared; velt_vir transfer.rs), like a `spawn` argument
+    Transfer,
+    /// std only (std/prelude/promise.vlt): `__intrinsic_needs_transfer<T>(value: borrow T) ->
+    /// bool`, a constant: can a `T` reach a counted object, so that `Transfer` has work to do
+    /// (the value itself is not read)?
+    NeedsTransfer,
     /// f64 math: `Math.sqrt/floor/ceil/round/trunc/abs` (round = JS: half toward +inf)
     Sqrt,
     Floor,

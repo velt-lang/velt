@@ -1,0 +1,68 @@
+// check: no leaks
+// A resource the sender holds the only reference to enters another task as it is, even when
+// its type is counted because the program shares other values of it: no copy (the type has no
+// `clone()`), and it is released once (#122). So for a closure that owns one, an array, a map
+// value and a channel send.
+import { channel, Channel } from "velt:channel";
+
+class Conn {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+async function serve(c: Conn): Promise<i64> {
+  return c.id;
+}
+
+async function callIt(f: () => i64): Promise<i64> {
+  return f();
+}
+
+async function total(cs: Conn[]): Promise<i64> {
+  let n: i64 = 0;
+  for (const c of cs) {
+    n += c.id;
+  }
+  return n;
+}
+
+async function lookup(m: Map<string, Conn>): Promise<i64> {
+  return m.get("k")?.id ?? -1;
+}
+
+async function receiveOne(ch: Channel<Conn>): Promise<i64> {
+  const c = await ch.receive();
+  return c == null ? -1 : c.id;
+}
+
+async function main() {
+  const first = new Conn(1);
+  const alias = first;
+  console.log("shared", alias.id, first == alias);
+
+  const c2 = new Conn(2);
+  console.log("task saw", await spawn(serve(c2)));
+
+  const c3 = new Conn(3);
+  const f = () => c3.id;
+  console.log("task saw", await spawn(callIt(f)));
+
+  console.log("task saw", await spawn(total([new Conn(4), new Conn(5)])));
+
+  const m = new Map<string, Conn>();
+  m.set("k", new Conn(6));
+  console.log("task saw", await spawn(lookup(m)));
+
+  const ch = channel<Conn>();
+  const t = spawn(receiveOne(ch));
+  await ch.send(new Conn(7));
+  console.log("task saw", await t);
+  console.log("end");
+}

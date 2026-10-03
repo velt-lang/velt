@@ -44,7 +44,7 @@ fn enum_key_names_must_be_values() {
 
 #[test]
 fn written_key_types_are_checked_where_resolved() {
-    for t in ["bool", "i64", "f64[]"] {
+    for t in ["boolean", "i64", "f64[]"] {
         let e = err_src(&format!(
             "function f(r: Record<{t}, i64>) {{}} function main() {{}}"
         ));
@@ -53,6 +53,9 @@ fn written_key_types_are_checked_where_resolved() {
             "{e}"
         );
     }
+    // `bool` is the same type, printed with TypeScript's name.
+    let e = err_src("function f(r: Record<bool, i64>) {} function main() {}");
+    assert!(e.contains("`boolean` cannot be a `Record` key"), "{e}");
     let e = err_src("function main() { JSON.parse<Record<i64, string>>(\"{}\"); }");
     assert!(e.contains("`i64` cannot be a `Record` key"), "{e}");
 }
@@ -69,7 +72,7 @@ fn generic_keys_are_checked_per_instantiation() {
     assert!(e.contains("`f64` cannot be a `Record` key"), "{e}");
     assert!(e.contains("required because `dec` uses it"), "{e}");
     let e = err_src(&format!("{src} function main() {{ new Box<bool>(); }}"));
-    assert!(e.contains("`bool` cannot be a `Record` key"), "{e}");
+    assert!(e.contains("`boolean` cannot be a `Record` key"), "{e}");
 }
 
 #[test]

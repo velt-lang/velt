@@ -35,3 +35,39 @@ export function test_leave_and_sockets() {
   assertEq(r.sockets(), [10u64, 30u64]);
   assertEq(r.names(), ["ann", "cy"]);
 }
+
+// `admit` hands back the members who were there before the newcomer, taken with the join itself
+// (#367: taken later, they included clients that joined after the newcomer).
+export function test_admit_peers_are_the_earlier_members() {
+  const r = new Room<u64>();
+  const first = r.admit(1, "ann", socket(10u64));
+  switch (first.type) {
+    case "welcome":
+      assertEq(first.users, ["ann"]);
+      assertEq(first.peers.length, 0);
+      break;
+    case "refused":
+      assert(false, first.reason);
+      break;
+  }
+  const second = r.admit(2, " bo ", socket(20u64));
+  switch (second.type) {
+    case "welcome":
+      assertEq(second.users, ["ann", "bo"]);
+      assertEq(second.peers, [10u64]);
+      break;
+    case "refused":
+      assert(false, second.reason);
+      break;
+  }
+  const taken = r.admit(3, "bo", socket(30u64));
+  switch (taken.type) {
+    case "welcome":
+      assert(false, "bo is taken");
+      break;
+    case "refused":
+      assertEq(taken.reason, "name bo is taken");
+      break;
+  }
+  assertEq(r.sockets(), [10u64, 20u64]);
+}

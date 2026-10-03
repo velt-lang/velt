@@ -321,6 +321,9 @@ pub struct FieldDef {
     pub ty: TyId,
     /// Default initializer (class field `= expr`, or `null` for optional fields).
     pub default: Option<Expr>,
+    /// Declared `private` (in this type or the base class that declares it). Interface fields
+    /// are never private.
+    pub private: bool,
 }
 
 #[derive(Clone, Debug)]

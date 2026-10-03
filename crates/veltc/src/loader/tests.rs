@@ -3,16 +3,16 @@ use std::collections::BTreeMap;
 use super::*;
 
 /// A temp dir with helpers to write `.vlt` files.
-struct Tree(tempfile::TempDir);
+pub(super) struct Tree(tempfile::TempDir);
 
 impl Tree {
-    fn new() -> Tree {
+    pub(super) fn new() -> Tree {
         Tree(tempfile::tempdir().unwrap())
     }
-    fn path(&self, rel: &str) -> PathBuf {
+    pub(super) fn path(&self, rel: &str) -> PathBuf {
         self.0.path().join(rel)
     }
-    fn write(&self, rel: &str, src: &str) -> PathBuf {
+    pub(super) fn write(&self, rel: &str, src: &str) -> PathBuf {
         let p = self.path(rel);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, src).unwrap();
@@ -20,18 +20,18 @@ impl Tree {
     }
 }
 
-fn load(root: &Path, opts: LoadOptions) -> (Loaded, Diagnostics, SourceMap) {
+pub(super) fn load(root: &Path, opts: LoadOptions) -> (Loaded, Diagnostics, SourceMap) {
     let mut sm = SourceMap::new();
     let mut diags = vec![];
     let loaded = load_program(&mut sm, root, opts, &mut diags).unwrap();
     (loaded, diags, sm)
 }
 
-fn paths(l: &Loaded) -> Vec<&str> {
+pub(super) fn paths(l: &Loaded) -> Vec<&str> {
     l.modules.iter().map(|m| m.path.as_str()).collect()
 }
 
-fn imports(l: &Loaded, module: &str) -> Vec<(String, String)> {
+pub(super) fn imports(l: &Loaded, module: &str) -> Vec<(String, String)> {
     l.modules
         .iter()
         .find(|m| m.path == module)
@@ -40,7 +40,7 @@ fn imports(l: &Loaded, module: &str) -> Vec<(String, String)> {
         .clone()
 }
 
-fn messages(diags: &Diagnostics) -> Vec<String> {
+pub(super) fn messages(diags: &Diagnostics) -> Vec<String> {
     diags.iter().map(|d| d.message.clone()).collect()
 }
 
@@ -210,10 +210,7 @@ fn root_source_override_and_bad_specs() {
         },
     );
     assert_eq!(paths(&l), ["main", "math.test"]);
-    assert_eq!(
-        messages(&diags),
-        ["module specifier `./q.vlt` should not include the `.vlt` extension"]
-    );
+    assert_eq!(messages(&diags), ["cannot find module `./q.vlt`"]);
 }
 
 #[test]
@@ -275,11 +272,15 @@ fn folder_modules_load_index_velt() {
 
     let missing = t.write("other/main.vlt", "import { x } from \"./gone\";\n");
     let (_, diags, _) = load(&missing, LoadOptions::default());
-    assert!(diags[0].notes[1].contains("index.vlt"), "{:?}", diags[0]);
+    assert!(
+        diags[0].notes.iter().any(|n| n.contains("index.vlt")),
+        "{:?}",
+        diags[0]
+    );
 }
 
 /// Aliases `@app/*` → `<root>/src/*` for every importer; no dependencies.
-struct AliasResolver(PathBuf);
+pub(super) struct AliasResolver(pub(super) PathBuf);
 
 impl PackageResolver for AliasResolver {
     fn dependency_root(&self, _importer: &Path, name: &str) -> Result<PathBuf, String> {
@@ -316,7 +317,7 @@ fn path_aliases_resolve_like_relative_imports() {
     );
 }
 
-fn jsx_runtime<'l>(l: &'l Loaded, module: &str) -> Option<&'l str> {
+pub(super) fn jsx_runtime<'l>(l: &'l Loaded, module: &str) -> Option<&'l str> {
     l.modules
         .iter()
         .find(|m| m.path == module)
@@ -343,7 +344,7 @@ fn jsx_runtime_from_the_pragma() {
 }
 
 /// Every importer's package has `jsx: { importSource: "<0>" }`.
-struct JsxResolver(String);
+pub(super) struct JsxResolver(pub(super) String);
 
 impl PackageResolver for JsxResolver {
     fn dependency_root(&self, _importer: &Path, name: &str) -> Result<PathBuf, String> {

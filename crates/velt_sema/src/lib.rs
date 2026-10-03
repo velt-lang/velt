@@ -48,9 +48,11 @@ mod ownership;
 mod readonly;
 mod record_keys;
 mod resolve;
+mod suggest;
 mod throws;
 mod types;
 mod unions;
+mod utility_types;
 mod visit;
 mod void_fields;
 
@@ -139,6 +141,7 @@ fn check_on_current_thread(
     let mut cx = ctx::Ctx::new(modules, root);
     analyze(&mut cx);
     let entry = check_main(&mut cx, root, root_mod, opts.require_main);
+    check_imported_scripts(&mut cx, root, modules);
 
     if cx.diags.iter().any(|d| d.is_error()) {
         return (None, cx.diags);
@@ -186,6 +189,32 @@ fn analyze(cx: &mut ctx::Ctx) {
     ownership::clone_reused(cx, &moved.reused);
     ownership::box_cells(cx, &moved.boxed);
     ownership::check_exclusive(cx);
+    ownership::check_boundaries(cx);
+    ownership::check_many_threads(cx);
+}
+
+/// Top-level statements run only in the root file: the parser turned an imported module's into
+/// a `main` whose name has an empty span (`velt_syntax` `parser::script`).
+fn check_imported_scripts(cx: &mut ctx::Ctx, root: usize, modules: &[SourceModule]) {
+    for (i, m) in modules.iter().enumerate() {
+        let script = m.ast.items.iter().find_map(|it| match &it.kind {
+            velt_syntax::ast::ItemKind::Function(f)
+                if f.sig.name.name == "main" && f.sig.name.span.lo == f.sig.name.span.hi =>
+            {
+                Some(f.sig.span)
+            }
+            _ => None,
+        });
+        if let (true, Some(span)) = (i != root, script) {
+            cx.error(
+                Diagnostic::error(
+                    "top-level statements are only allowed in the file the program starts from",
+                    span,
+                )
+                .with_note("an imported module runs nothing when it loads; put this code in a function and call it"),
+            );
+        }
+    }
 }
 
 /// Validate the root module's `main`; a missing one is an error only when `require_main`.

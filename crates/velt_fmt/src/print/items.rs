@@ -20,6 +20,11 @@ fn compact_kind(item: &Item) -> Option<u8> {
     }
 }
 
+/// May `item` sit on the line next to another top-level entry?
+pub(super) fn is_compact(item: &Item) -> bool {
+    compact_kind(item).is_some()
+}
+
 /// Is a blank line required between two consecutive top-level items?
 pub(super) fn blank_between(prev: &Item, cur: &Item) -> bool {
     match (compact_kind(prev), compact_kind(cur)) {

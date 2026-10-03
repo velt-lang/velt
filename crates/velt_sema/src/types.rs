@@ -269,7 +269,8 @@ impl Types {
             "usize" => TyKind::Int(IntTy::USize),
             "f32" => TyKind::Float(FloatTy::F32),
             "f64" | "number" => TyKind::Float(FloatTy::F64),
-            "bool" => TyKind::Bool,
+            // `boolean` is TypeScript's name, so code can be shared with `tsc` (#353).
+            "bool" | "boolean" => TyKind::Bool,
             "string" => TyKind::Str,
             "void" => TyKind::Unit,
             "never" => TyKind::Never,

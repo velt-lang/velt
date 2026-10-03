@@ -68,6 +68,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             transfer_args: false,
             transfer_call: false,
             same_mode: false,
+            ctor_self: None,
+            init_stack: vec![],
         };
         let entry = lw.new_block();
         lw.live[entry.0 as usize] = true;
@@ -82,6 +84,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::Thunk(kind, def, targs) => Self::build_thunk(cx, *kind, *def, targs),
             Work::EnvDrop(def, targs) => Self::build_env_drop(cx, *def, targs),
             Work::EnvClone(def, targs) => Self::build_env_clone(cx, *def, targs),
+            Work::EnvTransfer(def, targs) => Self::build_env_transfer(cx, *def, targs),
             Work::Oob(signed) => Self::build_oob(cx, *signed),
             Work::ArrayGrow => Self::build_array_grow(cx),
             Work::Main => Self::build_main(cx),
@@ -97,6 +100,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::WidenDrop(from, to) => Self::build_widen_drop(cx, *from, *to),
             Work::HandlerInit(def, targs) => Self::build_handler_init(cx, *def, targs),
             Work::Unclaimed(t) => Self::build_unclaimed(cx, *t),
+            Work::Init(t, e) => Self::build_init(cx, *t, *e),
         }
     }
 
@@ -144,6 +148,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let ret = lw.sub(f.ret);
         lw.ret_ty = Some(ret);
         lw.throws = lw.cx.fn_throws(f, targs);
+        lw.ctor_self = lw.ctor_class(def, f);
         let scan = FlagScan::run(hir_prog, &f.body);
         lw.ref_bindings = scan.ref_bindings.iter().copied().collect();
         let (params, attrs) = lw.declare_locals(def, f);
@@ -154,8 +159,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
         }
         let abi = lw.cx.ret_abi(ret, lw.throws);
-        let inits = lw.ctor_inits(def, f);
-        lw.lower_body(f, inits.as_ref());
+        lw.lower_body(f);
         let mut symbol = lw.cx.instance_symbol(&f.name, targs);
         if let Some(at) = caller {
             // `_L` never follows a mangled name or `_T` list, so instances stay distinct.
@@ -274,8 +278,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
-    /// Lowers the body of `f`; a constructor initializes fields as `inits` says.
-    pub(super) fn lower_body(&mut self, f: &FnDef, inits: Option<&super::construct::CtorInits>) {
+    pub(super) fn lower_body(&mut self, f: &FnDef) {
         // Outermost scope: owned params, dropped on every return.
         self.push_scope(ScopeKind::Block);
         for p in &f.params[f.captures.len()..] {
@@ -291,11 +294,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.cancel_before_start(f);
         }
         self.push_scope(ScopeKind::Block);
+        self.ctor_entry_inits();
+        let unit_super = self.unit_super_at(f);
         for (i, s) in f.body.block.stmts.iter().enumerate() {
-            self.run_ctor_inits(inits, i);
             self.stmt(s);
+            if unit_super == Some(i) {
+                self.unit_super_inits();
+            }
         }
-        self.run_ctor_inits(inits, f.body.block.stmts.len());
         let returns_value = !self.returns_unit();
         if let Some(v) = &f.body.block.value {
             // A trailing value expression of a function body is its return value.

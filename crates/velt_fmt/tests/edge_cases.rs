@@ -178,6 +178,19 @@ fn for_comma_lists() {
     assert_eq!(velt_fmt::format_source(src).ok().as_deref(), Some(src));
 }
 
+/// `bool` and `boolean` name the same type; the formatter keeps the spelling written (#353).
+#[test]
+fn bool_and_boolean_keep_their_spelling() {
+    let src = "function f(a: bool, b: boolean): bool | boolean {
+  const xs: Array<boolean> = [a];
+  const g: (x: bool) => boolean = (x) => !x;
+  return g(b) && xs[0];
+}
+";
+    holds(src);
+    assert_eq!(velt_fmt::format_source(src).ok().as_deref(), Some(src));
+}
+
 #[test]
 fn readonly_fields_in_object_types() {
     holds("type User = { readonly id: number; readonly email?: string; readonly: bool };\n");

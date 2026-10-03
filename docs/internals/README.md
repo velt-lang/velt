@@ -54,6 +54,7 @@ SQLite, PostgreSQL, Redis). `velt_rt_wasm` is its single-threaded WebAssembly co
 | `velt_fmt` | formatter |
 | `velt_lsp` | language server |
 | `velt_doc` | API docs and the docs website |
+| `velt_tscompat` | `velt check --ts-compat`: the lint for code shared with TypeScript |
 | `vpm`, `velt_registry`, `velt_http` | package manager, registry server, HTTP client for registries |
 | `veltc` | the `velt` CLI: driver, dev supervisor and host, test runner, playground |
 
@@ -80,17 +81,23 @@ Decisions and their rationale, including what is still planned:
   hybrid promises, the staged move to shared references, cycles, the JS fidelity decisions.
 - [TypeScript alignment](design/ts-alignment.md): inferred mutation, discriminated unions, typed
   errors, `extend`.
+- [TypeScript compatibility, round 1](design/ts-compat.md): JS numbers from the standard
+  library, scripts, callback indexes, arrow defaults, rest parameters, `x!`, `??=`, destructuring
+  defaults, `Date`.
 - [Hot reload](design/hot-reload.md): `velt dev`'s supervisor, JIT host and hot swap.
-- [TSX for server-side rendering](design/tsx.md): the planned JSX support.
+- [TSX for server-side rendering](design/tsx.md): the JSX support, and the common subset of
+  TypeScript and Velt that `velt check --ts-compat` lints.
 - [`Record<K, V>`](design/record.md): TypeScript object syntax over an insertion-ordered
   dictionary (implemented).
 - [`unknown` for dynamic JSON](design/unknown.md): narrowing JSON values the TypeScript way
   (proposed; open questions).
+- [JavaScript string semantics](design/strings.md): UTF-16 code-unit lengths and positions over
+  WTF-8 storage with a cached UTF-16 view (decided, issue #377).
 - [Native code in packages](design/native-packages.md): a `native/` Rust crate in a package, prebuilt
   per-target binaries and the runtime function table.
 - [Data models shared with TypeScript](design/shared-models.md): field-only interfaces as object
   types, `readonly` fields in object types, `Partial`/`Required`/`Readonly`/`Pick`/`Omit`
-  (decided, issue #326).
+  (implemented, issue #326).
 - [A package manifest written in Velt](design/package-manifest.md): `package.vlt`, data-only and
   typed, replacing `velt.toml` (implemented, issue #128).
 

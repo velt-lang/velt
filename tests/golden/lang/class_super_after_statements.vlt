@@ -1,0 +1,148 @@
+// check: no leaks
+// Statements before `super(...)` in a derived class's constructor run first, as in TypeScript:
+// computations, a guard that throws, a local passed to `super`. The base constructor runs at
+// the call (with the base class's field initializers), then the rest of the body (#330). A
+// class with initialized fields or parameter properties calls `super(...)` first, so these
+// assign their fields after it.
+
+class Oops extends Error {}
+
+function log(s: string): number {
+  console.log(s);
+  return s.length;
+}
+
+class Res {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+    console.log(`open ${name}`);
+  }
+}
+
+class Base {
+  label: string;
+  res: Res = new Res("base field");
+  constructor(label: string, n: number) {
+    console.log(`base ctor ${label} ${n}`);
+    this.label = label;
+  }
+}
+
+class Derived extends Base {
+  own: Res;
+  size: number;
+  constructor(parts: string[]) {
+    console.log("before super");
+    const label = parts.join("-");
+    let total: number = 0;
+    for (const p of parts) {
+      total += p.length;
+    }
+    super(label, total);
+    this.own = new Res("derived field");
+    this.size = log("derived initializer");
+    console.log(`after super ${this.label} ${this.size}`);
+  }
+}
+
+class Guarded extends Base {
+  own: Res;
+  constructor(name: string) {
+    if (name.length === 0) {
+      throw new Oops("empty name");
+    }
+    const upper = name.toUpperCase();
+    super(upper, log(`arg ${upper}`));
+    this.own = new Res("guarded field");
+    console.log(`guarded ${this.label}`);
+  }
+}
+
+// A field assigned right after `super(...)`, as a parameter property would be.
+class Props extends Base {
+  readonly tag: string;
+  constructor(tag: string, k: number) {
+    const doubled = k * 2;
+    super(tag, doubled);
+    this.tag = tag;
+    console.log(`props ${this.tag} ${this.label}`);
+  }
+}
+
+// A disposable class: a throw before `super(...)` disposes nothing.
+class Owner extends Base {
+  [Symbol.dispose]() {
+    console.log(`dispose owner ${this.label}`);
+  }
+  constructor(ok: boolean) {
+    if (!ok) {
+      throw new Oops("owner refused");
+    }
+    super("owner", 1);
+  }
+}
+
+// The constructor throws after `super(...)`: the half-built object is freed, not disposed.
+class Partial extends Base {
+  n: number;
+  constructor() {
+    const note = "partial";
+    super(note, 2);
+    this.n = fail();
+  }
+  [Symbol.dispose]() {
+    console.log("dispose partial");
+  }
+}
+
+function fail(): number throws Oops {
+  throw new Oops("initializer failed");
+}
+
+// A base without a constructor: `super()` may still follow other statements.
+class Plain {
+  v: number = 1;
+}
+
+class OnPlain extends Plain {
+  w: number;
+  constructor(k: number) {
+    const f = (x: number): number => x * k;
+    super();
+    this.w = f(this.v + 1);
+  }
+}
+
+function main() {
+  const d = new Derived(["ab", "cde"]);
+  console.log(d.label, d.size, d.own.name);
+  const g = new Guarded("velt");
+  console.log(g.label);
+  try {
+    const bad = new Guarded("");
+    console.log(bad.label);
+  } catch (e) {
+    console.log("caught:", e.message);
+  }
+  const p = new Props("t", 3);
+  console.log(p.tag);
+  try {
+    const o = new Owner(false);
+    console.log(o.label);
+  } catch (e) {
+    console.log("caught:", e.message);
+  }
+  {
+    using o = new Owner(true);
+    console.log("owner made");
+  }
+  try {
+    const q = new Partial();
+    console.log(q.n);
+  } catch (e) {
+    console.log("caught:", e.message);
+  }
+  console.log(new OnPlain(5).w);
+  console.log("done");
+}

@@ -67,7 +67,7 @@ impl FnLower<'_, '_> {
 
     /// Heap-allocate a zeroed object of class `ty` with its vtable pointer set; the object is
     /// registered as an owned temporary (so an error thrown by the constructor frees it).
-    pub(super) fn alloc_object(&mut self, ty: TyId) -> Place {
+    fn alloc_object(&mut self, ty: TyId) -> Place {
         let obj = self.alloc_object_raw(ty);
         self.own_temp(obj.local, ty);
         obj
@@ -93,6 +93,33 @@ impl FnLower<'_, '_> {
             self.assign(hdr, Rvalue::Use(vt));
         }
         Place::local(obj)
+    }
+
+    /// `new C<T>(args)`: allocate (half-built until the end: a throw frees the object without
+    /// disposing it, drops.rs), call the constructor (with the type args of the class
+    /// declaring it) with the object as `this`, then run the field initializers that
+    /// constructor does not run (ctor_init.rs): those of the classes below the one declaring it,
+    /// or every one when no class in the chain has a constructor.
+    pub(super) fn new_object(&mut self, ty: TyId, args: &[hir::Expr]) -> Operand {
+        let ty = self.sub(ty);
+        let TyKind::Adt(d, _) = self.cx.kind(ty) else {
+            ice("new of a non-class type")
+        };
+        let obj = self.alloc_object_raw(ty);
+        self.own_half_built(obj.clone(), ty);
+        let from = match self.cx.adt_def(d).ctor {
+            Some(ctor) => {
+                let cargs = self.cx.ctor_type_args(ctor, ty);
+                self.call_def(ctor, cargs, vec![Operand::Copy(obj.clone())], args);
+                self.ctor_fields(ctor)
+            }
+            None => 0,
+        };
+        if !self.dead() {
+            self.new_inits(&obj, ty, from);
+        }
+        self.own_built(&obj);
+        Operand::Copy(obj)
     }
 
     pub(super) fn variant(&mut self, ty: TyId, variant: u32, args: &[hir::Expr]) -> Operand {
@@ -165,6 +192,19 @@ impl FnLower<'_, '_> {
     pub(super) fn shared_new(&mut self, arg: &hir::Expr, ty: TyId) -> Operand {
         let inner = self.sub(arg.ty);
         let v = self.consume(arg);
+        // The value becomes reachable from every thread holding the `shared` (a thread
+        // boundary): transferred like a `spawn` argument, then checked for function values
+        // that could not be called from several threads at once (glue/many.rs).
+        let v = self.transfer_value(v, inner);
+        let v = match self.cx.reaches_fn(inner) {
+            true => {
+                let vt = self.cx.ty(inner);
+                let t = Place::local(self.copy_to_temp(v, vt));
+                self.many_check(t.clone(), inner);
+                Operand::Copy(t)
+            }
+            false => v,
+        };
         let bx = self.cx.shared_box(inner);
         let p = self.alloc(Ty::Agg(bx));
         let bp = proj(

@@ -218,9 +218,41 @@ pub unsafe extern "C" fn velt_rt_spawn(
     result_size: u64,
     result_drop: Option<ResultDropFn>,
 ) -> *mut VeltFut {
+    velt_rt_spawn_transfer(
+        poll,
+        drop,
+        state,
+        state_size,
+        state_align,
+        result_size,
+        result_drop,
+        None,
+    )
+}
+
+/// `velt_rt_spawn` whose result reaches objects: `result_transfer` (compiled transfer glue)
+/// runs on the result in place as the task's state finishes, on the task (inside its local
+/// set), so the joining task gets a value nothing on this task references any more (moved,
+/// or copied where a promise the task started still uses it).
+///
+/// # Safety
+/// As `velt_rt_spawn`; `result_transfer` must accept the task's result slot.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)] // the C ABI: velt_rt_spawn plus the transfer glue
+pub unsafe extern "C" fn velt_rt_spawn_transfer(
+    poll: PollFn,
+    drop: DropFn,
+    state: *const u8,
+    state_size: u64,
+    state_align: u64,
+    result_size: u64,
+    result_drop: Option<ResultDropFn>,
+    result_transfer: Option<ResultDropFn>,
+) -> *mut VeltFut {
     let (size, align) = (state_size as usize, state_align as usize);
     with_state_store!(size, align, |S| {
-        let body = Compiled::<S>::copy_from(poll, drop, state, size, align);
+        let body =
+            Compiled::<S>::copy_from(poll, drop, state, size, align).with_transfer(result_transfer);
         spawn_sized(body, result_size, result_drop)
     })
 }

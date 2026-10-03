@@ -93,15 +93,11 @@ fn check_request(method: &str, url: &str, headers: &[(&str, &str)]) -> Result<()
             "{method} {url:?}: a line break, another control character or a space in the request line"
         ));
     }
-    let rest = url
-        .strip_prefix("http://")
-        .or_else(|| url.strip_prefix("https://"))
-        .unwrap_or(url);
-    let (host, _) = split(rest);
-    if host.is_empty() || host.contains(['@', '?', '#', '\\']) {
-        return Err(format!(
-            "{method} {url}: the host part may not be empty or contain `@`, `?`, `#` or `\\` (write the URL with a `/` after the host)"
-        ));
+    if let Err(e) = url_host(url) {
+        // An unknown scheme is reported when the request is dispatched.
+        if !e.starts_with("unsupported URL") {
+            return Err(format!("{method} {url}: {e}"));
+        }
     }
     for (name, value) in headers {
         let token_char = |b: u8| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b);
@@ -117,6 +113,63 @@ fn check_request(method: &str, url: &str, headers: &[(&str, &str)]) -> Result<()
         }
     }
     Ok(())
+}
+
+/// The host part of a URL as this client reads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UrlHost<'a> {
+    /// `https://` (TLS) rather than `http://`.
+    pub tls: bool,
+    /// `host`, `host:port`, `[v6]` or `[v6]:port`.
+    pub authority: &'a str,
+}
+
+impl UrlHost<'_> {
+    /// The host name or address without port and brackets.
+    pub fn host(&self) -> &str {
+        match self.authority.strip_prefix('[') {
+            Some(v6) => v6.split(']').next().unwrap_or(v6),
+            None => self.authority.split(':').next().unwrap_or(self.authority),
+        }
+    }
+
+    /// Whether the host is this machine: `localhost` or a loopback address.
+    pub fn is_loopback(&self) -> bool {
+        let host = self.host();
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    }
+}
+
+/// The host part of an `http://` or `https://` URL (scheme in any case): everything between the
+/// scheme and the first `/`, which is what this client connects to. It is refused when empty or
+/// when it contains `@`, `?`, `#` or `\`: other parsers (a token's loopback rule, a browser)
+/// would read another host there (`localhost` in `http://localhost?.attacker.example/`). The one
+/// parser of a registry URL's host, for this client and for vpm's token rules.
+pub fn url_host(url: &str) -> Result<UrlHost<'_>, String> {
+    let scheme_is = |scheme: &str| {
+        url.get(..scheme.len())
+            .is_some_and(|s| s.eq_ignore_ascii_case(scheme))
+    };
+    let (tls, rest) = if scheme_is("https://") {
+        (true, &url["https://".len()..])
+    } else if scheme_is("http://") {
+        (false, &url["http://".len()..])
+    } else {
+        return Err(format!(
+            "unsupported URL `{url}` (expected http:// or https://)"
+        ));
+    };
+    let (authority, _) = split(rest);
+    if authority.is_empty() || authority.contains(['@', '?', '#', '\\']) {
+        return Err(
+            "the host part may not be empty or contain `@`, `?`, `#` or `\\` (write the URL with a `/` after the host)"
+                .into(),
+        );
+    }
+    Ok(UrlHost { tls, authority })
 }
 
 /// `host[:port]` and `/path?query` of a URL without its scheme.
@@ -306,6 +359,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn url_hosts() {
+        let h = url_host("HTTPS://Reg.example.com:8443/api?q=1").unwrap();
+        assert!(h.tls);
+        assert_eq!(
+            (h.authority, h.host()),
+            ("Reg.example.com:8443", "Reg.example.com")
+        );
+        let h = url_host("http://[::1]:8091/").unwrap();
+        assert!(!h.tls && h.is_loopback());
+        assert_eq!(h.host(), "::1");
+        assert!(url_host("http://127.1.2.3").unwrap().is_loopback());
+        assert!(url_host("http://LOCALHOST:1/x").unwrap().is_loopback());
+        assert!(!url_host("http://localhost.example.com")
+            .unwrap()
+            .is_loopback());
+        for bad in [
+            "http://localhost?.a.example/",
+            "http://a@b/",
+            "http:///x",
+            "http://a\\b",
+        ] {
+            assert!(url_host(bad).unwrap_err().contains("host part"), "{bad}");
+        }
+        assert!(url_host("ftp://x").unwrap_err().contains("unsupported"));
+    }
+
+    #[test]
     fn control_characters_and_ambiguous_hosts_never_reach_the_request() {
         // Refused before connecting: port 1 would fail with "cannot connect" otherwise.
         let url = "http://127.0.0.1:1/x";
@@ -361,34 +441,42 @@ mod tests {
     }
 
     /// A server that answers one byte at a time, never pausing long enough for the idle timeout.
+    /// The client gives up after 0.7 s, while the response (about 7 s of bytes) is still coming:
+    /// checked by how much the server got to send, not by the clock, which a loaded machine
+    /// stretches.
     #[test]
     fn a_dripping_server_hits_the_deadline() {
+        const HEAD: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n";
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
             let (mut conn, _) = listener.accept().unwrap();
             let mut request = [0u8; 1024];
             let _ = conn.read(&mut request);
-            for b in b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n"
-                .iter()
-                .cycle()
-            {
+            let mut sent = 0;
+            for b in HEAD.iter().cycle() {
                 if conn.write_all(&[*b]).is_err() {
                     break;
                 }
+                sent += 1;
                 std::thread::sleep(Duration::from_millis(50));
             }
+            sent
         });
         let limits = Limits {
             connect: Duration::from_secs(5),
             idle: Duration::from_secs(5),
             total: Duration::from_millis(700),
         };
-        let started = Instant::now();
         let err = fetch_within("GET", &format!("http://{addr}/"), &[], b"", limits).unwrap_err();
         assert!(err.contains("took too long"), "{err}");
-        assert!(started.elapsed() < Duration::from_secs(5));
-        server.join().unwrap();
+        // At most one byte per 50 ms, so 100 bytes take at least 5 s: far past the deadline,
+        // however slowly a loaded machine runs either side.
+        let sent = server.join().unwrap();
+        assert!(
+            sent < 100,
+            "the server sent {sent} bytes before the client gave up"
+        );
     }
 
     #[test]

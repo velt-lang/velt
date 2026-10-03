@@ -87,8 +87,90 @@ in TSX at least as fast as the hand-written template (`bench/web`).
 Velt is TypeScript-shaped, so a component written in the common subset (typed props, no
 `undefined`, no truthiness on numbers or strings, template literals for text) compiles with both
 `tsc` (for the client) and `velt` (for the server). That makes "write once, render on the server
-in Velt, hydrate in the browser" possible without a second implementation. A
-`velt check --ts-compat` lint can later flag constructs outside the subset.
+in Velt, hydrate in the browser" possible without a second implementation.
+`velt check --ts-compat` ([the CLI](../../tooling/cli.md#code-shared-with-typescript---ts-compat))
+flags constructs outside the subset (#13).
+
+### The common subset
+
+A file in the subset passes `velt check`, passes `tsc --noEmit` (TS ≥ 5.2, `strict`, `target:
+ES2022`, `lib: ["ES2023", "ESNext.Disposable", "DOM"]`, `moduleResolution: "bundler"`, `jsx:
+"react-jsx"` with the provider as `jsxImportSource`), and behaves the same under both, or gets a
+finding saying how it differs. The lint only looks at code Velt accepts: a file is checked first
+and linted only without errors of its own. TypeScript that Velt rejects is a separate list
+(#326).
+
+The lint lives in `crates/velt_tscompat`. Its rules on the syntax tree walk each module with
+`velt_syntax::visit`; the rules on types (marked *Planned* below) need a type query on the
+checked program. Every finding carries a code, a severity, a message (what TypeScript does, why
+Velt differs, what to write) and, when the replacement is mechanical, a fix.
+
+Errors where `tsc` rejects the code:
+
+| Code | Construct | Fix | |
+|---|---|---|---|
+| `velt-number-type` | `i8` … `i64`, `isize`, `u8` … `u64`, `usize`, `f32`, `f64` | `number` (a fix for `f64`, the same type) | |
+| `bool-type` | `bool` | `boolean` (a fix: the same type) | |
+| `number-suffix` | `5i32`, `1.5f32`, also in literal types | a fix drops the suffix where the value stays the same | |
+| `int-cast` | `x as i64` (any integer type) | `Math.trunc(x)`, with a `number` target | |
+| `struct` | `struct P { … }`, named literals `P { … }` | `class`, or a type with object literals | |
+| `extend` | `extend T { … }` | a function | |
+| `throws` | `throws E` on functions, methods, arrows and function types | a fix removes it where Velt infers it (a body) | |
+| `promise-error-type` | `Promise<T, E>` | `Promise<T>` (a fix on the return type of a function with a body) | |
+| `interface-body` | default method bodies in an interface | a base class or a function | |
+| `velt-import` | `velt:*` imports | keep them out of the shared files | |
+| `outside-import` | relative imports of files not being linted | lint them too, or keep the import out | |
+| `jsx-provider` | JSX on the default `velt:jsx` provider | a provider with both runtimes | |
+| `comparable` | `Comparable<T>`, `<` on such a `T` | a comparator parameter | Planned |
+| `velt-global` / `velt-member` | `spawn`, `shared`, `assertEq`, `JSON.parse<T>(…)`, `isEmpty`, `upsert`, `unwrapOr`, … | case by case | Planned |
+| `map-iter-as-array` | `m.keys()` used as an array | `[...m.keys()]` | Planned |
+| `null-into-optional` / `undefined-into-null` | `null` into `x?:`; `Map.get`/`find`/`pop` into `T \| null` | omit it; `?? null` | Planned |
+| `catch-unknown` | `e.x` in `catch (e)` without narrowing | `instanceof` | Planned |
+
+Accepted by `tsc`, but behaves differently:
+
+| Code | Construct | Severity | |
+|---|---|---|---|
+| `declare-fn` | `declare function` (a `ReferenceError` in JS) | error | |
+| `int-division` | `/` on integer types (Velt truncates) | error | Planned |
+| `strict-null-eq` | `=== null` on values that are `undefined` in JS | error | Planned |
+| `object-in-template` | `${obj}` / `${xs}` | error | Planned |
+| `default-sort` | `sort()` without a comparator on numbers | error | Planned |
+| `json-map` | `JSON.stringify` of a `Map` | error | Planned |
+| `nullable-in-template` | `${x}` where `x: T \| null` | warning | Planned |
+| `string-offsets` | UTF-8 vs UTF-16 offsets (silent on ASCII literals) | warning | Planned |
+| `unsigned-arith` | `xs.length - 1` | warning | Planned |
+| `implicit-dispose` | `[Symbol.dispose]` outside `using` | warning | Planned |
+| `init-order` | derived classes with field initializers (#273) | warning | Planned |
+
+Notes on the rules as built, against the issue's first design:
+
+- `boolean` is the same type as `bool` (#353) and `number` the same as `f64`, so their fixes are
+  exact. The other number types have no fix: `number` would change integer arithmetic.
+- `struct` also covers named object literals (`P { … }`), which `tsc` rejects too.
+- `throws` covers arrows and function types as well as declarations; the fix is offered only
+  where Velt infers the thrown types without the clause (a function with a body).
+- `int-cast` reports the cast as a whole, not its type again as `velt-number-type`. It has no
+  fix: `Math.trunc(x)` is a `number`, so code that expects an integer (`const i: i64 = …`)
+  needs its type changed too.
+- `number-suffix` offers its fix only when the literal is the same value as a `number`: not for
+  integers past 2^53, nor for an `f32` literal that rounds (`0.1f32`).
+- `promise-error-type` offers its fix only on the return type of a function, method or arrow
+  with a body, where Velt infers what it rejects with (as `throws` does); elsewhere (function
+  types, declarations without a body) dropping `E` would lose it.
+- Defaults are linted too: of parameters (arrows included) and in destructuring patterns.
+- `outside-import` applies to relative specifiers (`./`, `../`); package names and `paths`
+  aliases aren't checked yet.
+- `jsx-provider` reports one finding per module, at its first element.
+- `declare-fn` is valid Velt only in a package with a native library.
+
+Documented but not linted: `i64` past 2^53, integer `/ 0`, out-of-bounds indexing, `-0` printing,
+exit codes.
+
+**Planned:** the typed rules (a type query, `ide::type_of(span)`, on the checked program), a
+`nightly` oracle running the cases through `tsc` and Node, `tsCompat: ["src/models", …]` in
+`package.vlt` for `velt check --ts-compat` without paths, and the findings with quick fixes in
+the language server.
 
 ## Implementation plan
 

@@ -14,7 +14,12 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
 - Default values work on functions, methods, constructors and interface methods; calls through
   an interface use the interface's defaults.
 - An optional parameter `q?: T` is `q: T | null = null`.
-- There are no rest parameters and no overloads.
+- A **rest parameter** `...xs: T[]` (the last one) collects the remaining arguments into an
+  array, and a call may spread arrays into it: `sum(1, ...more, 4)` passes `[1, ...more, 4]`. A
+  spread argument must land in the rest parameter (in JS `f(...xs)` would bind `xs[0]` to the
+  first parameter); the standard library's variadic functions (`Math.max`, `Math.min`,
+  `Math.hypot`) accept a spread anywhere.
+- There are no overloads.
 - **Nested functions** may be declared inside blocks but cannot capture locals
   (``` `x` cannot be captured by a nested function```); use an arrow function.
 
@@ -160,6 +165,15 @@ shape is only known at run time.
 
 ## Parameters
 
+```ts
+function sum(...xs: number[]): number {
+  return xs.reduce((a, b) => a + b, 0);
+}
+
+const more = [2, 3];
+console.log(sum(), sum(1, ...more, 4), Math.max(...more)); // 0 10 3
+```
+
 Parameters behave like `let` locals: reassigning one never affects the caller. Objects are
 shared with the callee (`xs.push(1)` or `p.x = 2` inside the function is visible to the
 caller); numbers, bools and strings are copies. Which parameters a function
@@ -170,6 +184,13 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
 - **Arrow functions** `(x: T) => expr` and `(x) => { … }` are closures. Parameter types are
   inferred where a function type is expected. There are no `function` expressions and no
   `this` rebinding: `this` inside an arrow is the enclosing method's `this`.
+- Arrow parameters take defaults and may be optional, like a function's: with
+  `const fmt = (n: number, digits = 2) => n.toFixed(digits);`, `fmt(3.14159)` is `"3.14"`. A
+  call through the `const` fills in left-out arguments; an unannotated parameter takes its
+  default's type.
+- As in TS, a function may take **fewer parameters** than the function type it is passed as:
+  `xs.map((x) => x * 2)` where `map` passes `(x, i)`, and `xs.map(double)` with a one-parameter
+  `double`. An arrow may also take more, when the extra ones have defaults.
 - **Generic arrow functions** are written as in `.ts` files, `<T>(x: T): T => x` (the `.tsx`
   spelling `<T,>` works too, and JSX is allowed alongside). One must be a module-level `const`
   with typed parameters and a return type; it is then a generic function:

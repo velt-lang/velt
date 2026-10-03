@@ -1,0 +1,83 @@
+// check: no leaks
+// A field initializer of a derived class runs after the base constructor. When the base
+// constructor already stored the field (through an overridden method), the initializer
+// replaces that value and drops it, like `this.f = v` (#273).
+
+class Item {
+  v: i64;
+  constructor(v: i64) {
+    this.v = v;
+  }
+  [Symbol.dispose]() {
+    console.log("dispose", this.v);
+  }
+}
+
+class Base {
+  constructor() {
+    this.setup();
+  }
+  setup(): void {}
+}
+
+// Its own constructor: the initializers run right after `super()`.
+class Own extends Base {
+  it: Item = new Item(2);
+  s: string = "init";
+  xs: string[] = ["init"];
+  m: Map<string, Item> = new Map<string, Item>();
+  f: () => string = (): string => "init";
+  u: Item | string = "init";
+  o: Item | null = null;
+  constructor() {
+    super();
+    console.log("Own ctor", this.it.v, this.s, this.xs, this.m.size, this.f(), this.o === null);
+  }
+  override setup(): void {
+    this.it = new Item(1);
+    this.s = "from setup " + this.it.v.toString();
+    this.xs = ["a", "b"];
+    const m = new Map<string, Item>();
+    m.set("k", new Item(3));
+    this.m = m;
+    const s = this.s;
+    this.f = (): string => s;
+    this.u = new Item(4);
+    this.o = new Item(5);
+  }
+}
+
+// An inherited constructor: the initializers run after it, at the `new`.
+class Inherits extends Base {
+  it: Item = new Item(20);
+  xs: string[] = ["init"];
+  override setup(): void {
+    this.it = new Item(10);
+    this.xs = ["a", "b"];
+  }
+}
+
+// A generic class in between.
+class Mid<T> extends Base {
+  val: T;
+  constructor(val: T) {
+    super();
+    this.val = val;
+  }
+}
+
+class Leaf extends Mid<string> {
+  it: Item = new Item(200);
+  override setup(): void {
+    this.it = new Item(100);
+  }
+}
+
+function main() {
+  const a = new Own();
+  console.log(a.it.v, a.s, a.xs, a.f());
+  const b = new Inherits();
+  console.log(b.it.v, b.xs);
+  const c = new Leaf("x");
+  console.log(c.it.v, c.val);
+}

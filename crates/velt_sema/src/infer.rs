@@ -201,6 +201,9 @@ impl Ctx<'_> {
             guard += 1;
             cur = if guard > 64 { None } else { self.base_of(t) };
         }
+        if self.field_only.contains_key(&iface) {
+            return self.field_only_impl(ty, iface);
+        }
         None
     }
 

@@ -6,14 +6,16 @@ Maintainer-owned, like hir.rs.
 ## M2 additions
 (see docs/reference/classes.md and docs/reference/memory.md):
 - Class instances are heap-allocated and referenced by a pointer; `Option<Class>` uses null.
-  `new C(args)` is `ExprKind::New`: lowering allocates, then constructs in JavaScript's order
-  (calls the constructor: a `Def::Fn` whose first param is `this` with `PassMode::BorrowMut`).
-  `super(args)` in a constructor is a top-level statement of its body: a `Call` of the base
-  constructor with `Upcast(this)`, or `Lit(Unit)` when no base class has a constructor. Each
-  class's own field defaults (`FieldDef::default`; a base class's fields are the prefix its
-  `AdtDef` has) are evaluated once its base is constructed: at the start of the constructor of
-  a class without a base, right after the `super(...)` statement, or after the inherited
-  constructor for a class without one; the constructor's thrown types include them.
+  `new C(args)` is `ExprKind::New`: lowering allocates and calls the constructor (a `Def::Fn`
+  whose first param is `this` with `PassMode::BorrowMut`). `super(args)` in a constructor is a
+  root-level statement of its body: a `Call` of the base constructor with `Upcast(this)`, or
+  `Lit(Unit)` when no ancestor has a constructor. Field defaults (`FieldDef::default`) run
+  in JavaScript's order: a constructor evaluates those of its class's fields that its base
+  constructor's class does not have, right after the `super(args)` call (when no ancestor has
+  a constructor: after the `Lit(Unit)` statement in a derived class, on entry in a base
+  class); `new` evaluates the rest (those of the classes below the one declaring the
+  constructor, or all of them without one) after the constructor returns. Sema's throw sets
+  follow the same split.
 - Virtual dispatch only for methods overridden somewhere: `Callee::Virtual { slot }` indexes
   `AdtDef::vtable` of the receiver's dynamic class; all other method calls are `Callee::Def`.
 - Interface values (`Shape[]`) are `TyKind::Dyn`: fat pointer (data, vtable). `ExprKind::ToDyn`
@@ -150,7 +152,7 @@ Maintainer-owned, like hir.rs.
   `Variant` patterns as for any member test). It matches when the dynamic class is `C` or a
   subclass of `C` (type arguments are not compared). Lowering numbers all classes in a
   pre-order walk of the hierarchy, so `C` and its subclasses have the ids `lo..=hi`, and every
-  vtable's first word (slot -6) holds the class id of its concrete type: 0 for non-classes;
+  vtable's first word (slot -7) holds the class id of its concrete type: 0 for non-classes;
   in an interface table of a class whose objects carry a vtable pointer, `u64::MAX` (read
   the object's own table, which may be a subclass's).
 - A local (or a path of `readonly` fields) narrowed by such a test reads as
@@ -301,7 +303,13 @@ Maintainer-owned, like hir.rs.
   borrowed param, an array element, a class field, a capture, a by-reference `const` whose place
   the block replaces); implicit copies (spread fields, interface field getters, discriminated
   field reads, async-call arguments used again) are shares too. `Intrinsic::Clone` is a deep copy
-  (`x.clone()`, and in async closures for their captures, which several threads may read).
+  (`x.clone()`, and in async closures for their captures, which several threads may read); a
+  class's own `clone()` (no params, returns the class) is what a deep copy of it calls.
+  `Intrinsic::Transfer(value)` (std only, value owned, result owned, same type): the value made
+  safe for another thread like a `spawn` argument — moved where nothing else references it,
+  deep-copied where it is still shared (std/prelude/promise.vlt settles promises with it).
+  `Intrinsic::NeedsTransfer(value)` (std only, value borrowed and not read): a constant `bool`,
+  whether `Transfer` of a value of that type has anything to do (it can reach a counted object).
 - Lowering's representation (counted objects, boxed arrays/objects, stabilized borrows) is its
   own business (docs/internals/design/semantics-stage2.md §3); it may turn a move out of a part of a
   counted value into a share.
@@ -311,6 +319,9 @@ Maintainer-owned, like hir.rs.
   its captures (any by-value mode) hold the cell; borrowed captures point into it as usual.
 - `AdtDef::assigned`: a field of the object type is assigned somewhere; such a type is shared as
   one counted object, others may be shared by copying their fields.
+- `FieldDef::private` (additive): the field is declared `private` (in the type or the base class
+  that declares it; interface fields never are). `console.log` / `inspect` leave out private
+  fields of zero size (std's `runtime` markers); other private fields show, as in Node.
 - `AdtDef::private_fields` (additive): some field, own or inherited, is `private`. Such a type has
   no JSON form: sema rejects it for `JSON.parse`/`JSON.stringify`, and lowering never writes a
   value of it dynamically (a subclass with private fields is written as its static class).

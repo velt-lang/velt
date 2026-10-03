@@ -325,6 +325,14 @@ impl FnCx<'_, '_> {
                 self.record_read(obj, super::record::RecordKey::Index(index), span)
             }
             TyKind::Array(elem) => self.array_index(obj, elem, index, want, span),
+            // `s[i]` is `s.charAt(i)` (a string, as in JS).
+            TyKind::Str => {
+                let prop = ast::Ident {
+                    name: "charAt".into(),
+                    span,
+                };
+                self.method_call_on(obj, &prop, &[], std::slice::from_ref(index), None, span)
+            }
             TyKind::Tuple(ts) => self.tuple_index(obj, &ts, index, want, span),
             TyKind::Error | TyKind::Never => {
                 self.expr(index, None, Want::Borrow);
@@ -355,6 +363,11 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let usize_ = self.cx.ty.usize;
         let mut i = self.expr(index, Some(usize_), Want::Borrow);
+        // A float index is a JS number (`xs[i]` with `i: number`), except a quotient: `xs[n / 2]`
+        // is almost always a forgotten `Math.trunc`, so it stays an error below.
+        if self.cx.ty.is_float(i.ty) && self.float_division_note(&i).is_none() {
+            i = self.float_index(i);
+        }
         if self.cx.ty.is_int(i.ty) && i.ty != usize_ {
             let is = i.span;
             i = self.mk(H::Cast(Box::new(i)), usize_, is);
@@ -471,4 +484,9 @@ fn process_note(name: &str) -> String {
               `velt:process`"
             .to_string(),
     }
+}
+
+/// The type of `x as const` (the parser's `const` type name).
+pub(super) fn is_as_const(ty: &ast::TypeExpr) -> bool {
+    matches!(&ty.kind, ast::TypeExprKind::Named { path, args } if args.is_empty() && path.len() == 1 && path[0].name == "const")
 }

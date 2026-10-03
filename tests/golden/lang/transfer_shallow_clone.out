@@ -1,0 +1,8 @@
+bag tasks [ 100000, 100000, 100000, 100000 ] main 100000
+clone 1
+close 11
+conn task 100000 main 100000
+clone 1
+same thread shares 100001
+close 11
+close 1

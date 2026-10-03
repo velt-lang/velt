@@ -1,0 +1,20 @@
+// A function value in `shared(...)` may be called from several threads at once, and each call
+// would share what it captured: a resource without `clone()` cannot be captured there.
+class Conn {
+  id: i64;
+  constructor(id: i64) {
+    this.id = id;
+  }
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+async function main() {
+  const c = new Conn(1);
+  const g = async (): Promise<i64> => c.id;
+  const m = shared(new Mutex<() => Promise<i64>>(g));
+  const d = new Conn(2);
+  const n = shared(new Mutex<() => i64>(() => d.id));
+  console.log(await m.with((f) => f()), n.with((f) => f()));
+}

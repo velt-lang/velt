@@ -1,6 +1,6 @@
 //! Workspace symbols: top-level declarations (and the members of types) whose name fuzzy-matches the
 //! query, from every file of the analyzed programs (open documents and what they import, without
-//! the standard library) and from the `.vlt` files under the workspace folders (indexed once and
+//! the standard library) and from the source files under the workspace folders (indexed once and
 //! kept up to date by [`crate::disk_index`]).
 
 use std::collections::HashSet;
@@ -181,7 +181,8 @@ fn fuzzy_match(query: &str, name: &str) -> bool {
     query.chars().all(|q| chars.any(|c| c == q))
 }
 
-/// `.vlt` files under `dir` (skipping hidden, `target` and `node_modules` directories).
+/// Source files (`.vlt`, `.ts`, `.tsx`) under `dir` (skipping hidden, `target` and
+/// `node_modules` directories).
 pub fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -197,7 +198,7 @@ pub fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
             if !name.starts_with('.') && !SKIPPED_DIRS.contains(&name) {
                 collect_files(&path, out);
             }
-        } else if path.extension().is_some_and(|e| e == "vlt") && !is_manifest(&path) {
+        } else if vpm::sources::is_source_file(&path) && !is_manifest(&path) {
             out.push(path);
         }
     }

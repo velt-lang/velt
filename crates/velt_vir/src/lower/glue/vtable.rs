@@ -1,22 +1,23 @@
 //! Vtables as read-only tables of function addresses (static data with relocations). Slot `k`
-//! lives at byte offset `8 * (k + 6)`: the six negative slots are the class id of the concrete
-//! type (a `u64`, not an address: 0 for types that are not classes; class_test.rs), the class
-//! name (a static string, class tables only) and share / format / clone / drop of the concrete
-//! value (glue/mod.rs `SLOT_*`; share only in interface tables), then the class's virtual methods
+//! lives at byte offset `8 * (k + 7)`: the seven negative slots are the class id of the concrete
+//! type (a `u64`, not an address: 0 for types that are not classes; class_test.rs), the transfer
+//! to another thread, the class name (a static string, class tables only) and share / format /
+//! clone / drop of the concrete value (glue/mod.rs `SLOT_*`; share only in interface tables),
+//! then the class's virtual methods
 //! (`AdtDef::vtable`) or the interface's methods. A virtual/interface call loads the entry and calls it: no
 //! dispatcher call in between.
 
 use velt_sema::hir::{DefId, TyId, TyKind};
 
-use super::{Glue, SLOT_CLONE, SLOT_DROP, SLOT_FORMAT, SLOT_NAME, SLOT_SHARE};
+use super::{Glue, SLOT_CLONE, SLOT_DROP, SLOT_FORMAT, SLOT_NAME, SLOT_SHARE, SLOT_TRANSFER};
 use crate::lower::{cint, ice, Cx, FnLower, Work};
 use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, StaticData, StaticId, Ty};
 
 /// Number of negative slots in front of slot 0.
-const HIDDEN: i128 = 6;
+const HIDDEN: i128 = 7;
 
 /// The class id of the concrete type, at byte 0 (an integer, so not a relocation).
-const SLOT_CLASS_ID: i128 = -6;
+const SLOT_CLASS_ID: i128 = -7;
 
 /// Memo key of a vtable: the class itself, or `Program::impls[i]` for a concrete type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -89,6 +90,7 @@ impl Cx<'_> {
         entries.push((SLOT_DROP, self.func(Work::Glue(Glue::ObjDrop, cls))));
         entries.push((SLOT_CLONE, self.func(Work::Glue(Glue::ObjClone, cls))));
         entries.push((SLOT_FORMAT, self.func(Work::Glue(Glue::ObjFormat, cls))));
+        entries.push((SLOT_TRANSFER, self.func(Work::Glue(Glue::ObjTransfer, cls))));
         let name = self.type_name(cls);
         let mut entries: Vec<(i128, Const)> = entries
             .into_iter()
@@ -113,6 +115,7 @@ impl Cx<'_> {
         entries.push((SLOT_CLONE, self.func(Work::Glue(Glue::DynClone, ty))));
         entries.push((SLOT_FORMAT, self.func(Work::Glue(Glue::DynFormat, ty))));
         entries.push((SLOT_SHARE, self.func(Work::Glue(Glue::DynShare, ty))));
+        entries.push((SLOT_TRANSFER, self.func(Work::Glue(Glue::DynTransfer, ty))));
         entries
             .into_iter()
             .map(|(slot, f)| (slot, Const::Func(f)))

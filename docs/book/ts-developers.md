@@ -17,10 +17,12 @@ The differences come from three rules:
 
 ## Programs are compiled
 
-- A program starts at `function main()` or `async function main()` in its root file. `main`
-  may return an `i32` exit code.
-- Module scope holds declarations only: functions, classes, types, imports and constants. Top-
-  level statements go in `main`, and a module-level `let` is an error ("mutable module-level
+- A program starts at its root file's top-level statements, as a TS file does, or at
+  `function main()` / `async function main()` (which may return an `i32` exit code). Top-level
+  statements run in a generated `main`; only the root file may have them
+  ([Scripts](../reference/modules.md#scripts-top-level-statements)).
+- Module scope holds no mutable state: a top-level variable that functions use stays a module
+  constant, and a module-level `let` that a function uses is an error ("mutable module-level
   state is not allowed"). *Why*: no hidden global state means request handlers can't race on
   it, and `velt dev` can hot-swap code without migrating globals.
 - Types are checked once, at compile time, and then gone: there are no runtime type checks,
@@ -36,20 +38,32 @@ const a = 7;
 console.log(a / 2, 0.1 + 0.2);    // 3.5 0.30000000000000004
 ```
 
+Numbers the standard library gives you behave the same: lengths, `indexOf`, `size`, indexes.
+`for (let i = 0; i < xs.length; i++)` works, `xs.length / 2` is `1.5` for three elements, and
+`xs[i]` takes a `number` (a non-whole index panics).
+
 The difference: integer types (`i8` … `i64`, `u8` … `u64`, `isize`, `usize`) exist, and you
 opt into them by writing them. Declared integers do integer arithmetic: `/` truncates when both
 sides are declared integers, values wrap at their width instead of losing precision past 2^53,
-and integer division by zero panics. Lengths and indexes are `usize`. *Why*: integer loops and
-indexes run at integer speed, and you decide where integer semantics apply
-([Numbers](../reference/types.md#numbers)).
+and integer division by zero panics. *Why*: integer loops and indexes run at integer speed
+either way (numbers that hold whole values are stored as integers), and you decide where
+integer semantics apply ([Numbers](../reference/types.md#numbers)).
 
 Declared types don't convert implicitly; `as` converts between number types:
 
 ```ts
-const len = [1, 2, 3].length;     // usize
-const half = len as f64 / 2.0;    // 1.5
-console.log(half, 300 as u8);     // 1.5 44 (integers wrap)
+const xs = [1, 2, 3];
+console.log(xs.length / 2);       // 1.5
+const n: i64 = 7;
+console.log(n / 2, n as f64 / 2, 300 as u8); // 3 3.5 44 (integers wrap)
 ```
+
+## Booleans
+
+`boolean` works as in TypeScript. Velt also accepts the shorter `bool` for the same type, so
+`(x: bool) => boolean` and `boolean[]` mix freely. Write `boolean` in code that `tsc` must also
+accept; compiler messages and editors print `boolean` either way
+([Booleans](../reference/types.md#booleans)).
 
 ## Strings
 
@@ -57,9 +71,9 @@ console.log(half, 300 as u8);     // 1.5 44 (integers wrap)
   template literal, `` `Total: ${n}` ``. *Why*: `"5" + 1 === "51"` and
   `"Total: " + a + b` bugs can't happen.
 - **Lengths and positions are in bytes** of UTF-8, not UTF-16 code units: `"héllo".length` is
-  6. `slice`, `indexOf` and regex offsets are byte offsets. There is no `s[i]` and no
-  `for...of` over a string; use `slice`, `split("")` or `charCodeAt`. *Why*: strings are UTF-8
-  throughout, so no conversion is ever needed.
+  6. `slice`, `indexOf`, `s[i]` and regex offsets are byte offsets; for ASCII text they agree
+  with JS. `s[i]` is `s.charAt(i)` (`""` past the end), and `for (const c of s)` iterates the
+  characters. *Why*: strings are UTF-8 throughout, so no conversion is ever needed.
 - Strings are immutable values, as in JS, and cheap to copy.
 
 ## `null`, not `undefined`
@@ -114,17 +128,24 @@ contents.
 - **Object types are exact**: an object literal can't have extra fields, and you can't add a
   property later. Use a `Map` for dynamic keys. *Why*: every object has a fixed layout, so a
   field access is one load.
-- **Interfaces are nominal**: a class implements an interface by declaring `implements`. An
-  object literal does not satisfy an interface. Object types (`type P = { x: f64 }`) stay
-  structural.
+- **Interfaces with methods are nominal**: a class implements one by declaring `implements`,
+  and an object literal does not satisfy one. An **interface with only fields** is an object
+  type, like `type User = { … }`, so model interfaces work as in TypeScript: literals satisfy
+  them, `JSON.parse<User>` reads them, and as a bound (`<T extends HasId>`) any type with the
+  fields fits. Unlike TypeScript, a class instance is not a `User` value (it is shared by
+  reference; build a `User` from its fields), and an interface that refers to itself through a
+  field (`next?: Node`) needs an array or a class (#376).
 - Interfaces may have **default method bodies**. `extend` adds methods to any type, including
   `string`, arrays and your unions.
 - `as` converts numbers only; there are no type assertions. Narrow with `typeof`, `instanceof`,
   `==` or a discriminant instead.
 - Enums are numeric or string enums; tagged data is a discriminated union (payload enums and
   `match` don't exist).
-- Not available: `keyof`, mapped and conditional types, template literal types, utility types
-  (`Partial`, `Pick`, …), index signatures, declaration merging, `namespace`.
+- `Partial`, `Required`, `Readonly`, `Pick` and `Omit` work on concrete object types (not yet on
+  a type parameter, #350). `Required` also strips `null` from `a: T | null` fields, since
+  `a?: T` *is* `T | null`, and `Pick`/`Omit` reject a key that isn't a field.
+- Not available: `keyof`, mapped and conditional types, template literal types, the other
+  utility types (`Record` aside), index signatures, declaration merging, `namespace`.
 
 ## Classes
 
@@ -134,8 +155,10 @@ contents.
 - `static readonly` constants exist; mutable statics don't.
 - Constructors follow TypeScript's `super(...)` rules: a derived constructor calls it exactly
   once (also when the base has no constructor), statements before it cannot use `this`, and it
-  comes first when the class has initialized fields or parameter properties. Field initializers
-  run in JavaScript's order, right after the base class is constructed.
+  comes first when the class has initialized fields or parameter properties.
+- Field initializers and constructors run in JavaScript's order (base initializers, base
+  constructor, derived initializers, derived constructor), and parameter properties come first
+  in the field order, as `tsc --target es2022` emits them.
 - A method that is never overridden is called directly; only overridden methods use a vtable.
 - `struct` declares an object type with the same members as a class, built from a literal
   (no constructor). **Planned**
@@ -145,8 +168,9 @@ contents.
 ## Functions
 
 - No `function` expressions (use arrows), no `this` rebinding, no `arguments`.
-- No rest parameters, no spread arguments (`f(...xs)`), no overloads. Optional and default
-  parameters work.
+- No overloads. Optional and default parameters work, on arrows too; rest parameters
+  (`...xs: T[]`) take spread arguments (`f(...xs)`) at their position. Callbacks may take fewer
+  parameters than they are passed (`xs.map((x) => …)` gets `(x, i)`).
 - Parameter types are required. As in TypeScript, an omitted return type is inferred from the
   `return` expressions (a union when they differ, `Promise<T>` for `async`, `void` without a
   value). As in TypeScript, a function whose `return` expressions depend on the function
@@ -199,14 +223,19 @@ reference count. Reference cycles are not freed (**planned**: `weak` references)
 - Named exports only: `export default` and default imports are errors with a fix.
 - Standard library modules use the `velt:` prefix: `import { readFile } from "velt:fs"`.
 - Relative imports drop the extension: `import { x } from "./util"`. A folder is a module
-  through its `index.vlt`. `paths` aliases in `package.vlt` work like `compilerOptions.paths`.
+  through its `index.vlt`, `index.ts` or `index.tsx`. `paths` aliases in `package.vlt` work like `compilerOptions.paths`.
+- Modules can be `.ts` and `.tsx` files as well as `.vlt`, so a folder can be shared with a
+  TypeScript project; as in TypeScript, JSX needs `.tsx`, and `"./x.js"` names `x.ts`
+  ([TypeScript files](../reference/modules.md#typescript-files-ts-and-tsx)).
 
 ## Not supported
 
 `var`, `eval`, prototypes, `delete` (other than on a `Record`), `for...in`, `with`, getters on object literals,
 decorators, generators (`function*`, `yield`), `Symbol` (other than `Symbol.dispose` and
 `Symbol.asyncDispose`), `BigInt` literals (use [`velt:bigint`](../std/bigint.md)), Unicode
-identifiers, and the logical assignments `&&=`, `||=`, `??=` (planned). JSX is supported for
+identifiers. `x!` is checked (a `null` panics) where TypeScript trusts it, and `as const` keeps
+the value as it is. `Date` follows JS (months 0-11, local-time getters); its `toString()` has no
+time zone name and its `toLocale…` methods always format as `en-US`. JSX is supported for
 server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `children` yet.
 
 ## Quick reference
@@ -220,13 +249,14 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | `==` coerces | `==` is `===` (objects by identity, `deepEqual` for contents); both sides have the same type | — |
 | objects are shared references | the same: arrays, maps, class instances, object types and closures are references, freed when the last reference goes | — |
 | garbage collector | deterministic freeing, no pauses; `[Symbol.dispose]()`, `using`, `await using` | `weak` references (stage 3) |
-| structural typing everywhere | object types structural but exact; interfaces nominal | — |
+| structural typing everywhere | object types and interfaces with only fields structural but exact; interfaces with methods nominal | — |
 | `any`, `unknown`, type assertions | none; `as` converts numbers; `JsonValue` for dynamic data | — |
 | `catch (e: unknown)` | `e` is the exact union of what the `try` can throw | — |
 | `Promise<T>` rejects with anything | `Promise<T, E>` carries its rejection type | — |
 | floating promises lose errors | a floating promise is a compile error | — |
 | `new Promise(...)` | same, with an arrow-function executor; `await` of one abandoned unsettled is reported | `new Promise(...)` |
 | single-threaded event loop | multi-core runtime; `spawn`, `shared`, `Mutex`; data races are compile errors | — |
+| top-level statements | run in a generated `main` (root file only) | — |
 | mutable module globals | constants only | — |
 | `arr.sort()` sorts as strings | `sort()` and `toSorted()` sort numbers numerically; with a comparator they work like TypeScript | — |
 | `xs.sort()`, `xs.reverse()`, `xs.fill(v)` return the array | they work in place and return nothing (returning the array would make it reference counted); `xs.toSorted()` and `xs.toReversed()` return sorted / reversed copies, as in ES2023 | — |

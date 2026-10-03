@@ -11,7 +11,7 @@ union_errors.vlt:39:18: error: mismatched types
 expected i64, found string | i64
 `string | i64` is a union: narrow it to one member first with `switch`, `typeof`, `instanceof` or `==`
 union_errors.vlt:44:10: error: mismatched types
-this bool literal is not a member of `string | i64`
+this boolean literal is not a member of `string | i64`
 union_errors.vlt:52:15: error: mismatched types
 this integer literal could be several members (add a type suffix like `5i32`) of `string | i32 | i64`
 union_errors.vlt:58:19: error: no field `length` on type `string | i64`

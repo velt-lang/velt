@@ -1,0 +1,54 @@
+// The JS `Date` (prelude): UTC fields, ISO and HTTP strings, parsing, local-time construction and
+// getters (independent of the time zone), setters that roll over, comparison with `<`, and how
+// `console.log` and templates show dates and other values with their own `toString()`.
+class Money {
+  constructor(public cents: number) {}
+
+  toString(): string {
+    return `$${(this.cents / 100).toFixed(2)}`;
+  }
+}
+
+const d = new Date(Date.UTC(2024, 0, 15, 9, 30, 5, 7));
+console.log(
+  d.toISOString(),
+  d.getTime(),
+  d.getUTCFullYear(),
+  d.getUTCMonth(),
+  d.getUTCDate(),
+  d.getUTCDay(),
+);
+console.log(
+  d.getUTCHours(),
+  d.getUTCMinutes(),
+  d.getUTCSeconds(),
+  d.getUTCMilliseconds(),
+  d.toUTCString(),
+);
+const p = new Date("2024-02-29T12:00:00Z");
+console.log(p.toISOString(), Date.parse("2024-03-01"), Date.parse("garbage"));
+const local = new Date(2024, 11, 31, 23, 59);
+console.log(
+  local.getFullYear(),
+  local.getMonth(),
+  local.getDate(),
+  local.getHours(),
+  local.getMinutes(),
+);
+local.setMinutes(local.getMinutes() + 2);
+console.log(
+  local.getFullYear(),
+  local.getMonth(),
+  local.getDate(),
+  local.getHours(),
+  local.getMinutes(),
+);
+const copy = new Date(d);
+copy.setUTCDate(copy.getUTCDate() + 20);
+console.log(copy.toISOString(), d < copy, copy.getTime() - d.getTime());
+console.log(new Date("nope").getTime(), new Date("nope").toString(), new Date(0).toISOString());
+console.log(typeof Date.now(), Date.now() > 1600000000000);
+const morning = new Date("2024-06-01T08:00:00");
+console.log(morning.getHours(), morning.toLocaleDateString(), morning.toLocaleTimeString());
+console.log(JSON.stringify({ when: d.toJSON() }));
+console.log(d, `total: ${new Money(1234)}`);

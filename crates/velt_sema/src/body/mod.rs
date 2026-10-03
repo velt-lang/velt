@@ -44,6 +44,7 @@ mod locals;
 mod loops;
 pub(crate) mod narrow;
 mod pattern;
+mod pattern_defaults;
 pub(crate) mod places;
 pub(crate) mod recursion;
 pub(crate) mod returns;
@@ -160,11 +161,26 @@ pub(crate) struct Frame {
     pub soft_moves: Vec<Span>,
     /// Locals holding inferred integers (`expr::numbers`).
     pub inferred_ints: std::collections::HashSet<LocalId>,
+    /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
+    /// call `f(…)` fills in.
+    pub closure_consts: std::collections::HashMap<LocalId, DefId>,
     /// Throw sources of the enclosing `try` bodies (innermost last).
     pub tries: Vec<Vec<ThrowSrc>>,
     pub uncaught: Vec<ThrowSrc>,
-    /// `super(...)` rules of a constructor (`ctor`).
-    pub sup: ctor::SuperState,
+    /// `super(...)` is allowed here: a root-level statement of a constructor that is the call
+    /// itself, before any other `super(...)` (`stmt` sets it; the call takes it).
+    pub super_ok: bool,
+    pub super_called: bool,
+    /// A derived class's constructor before its `super(...)` call: `this` and `super.x` are
+    /// errors, as is `return` (`driver` sets it; the call clears it).
+    pub before_super: bool,
+    /// How many statements enclose the one being checked (1 at the body's root).
+    pub stmt_depth: u32,
+    /// Why `super(...)` must be the constructor's first statement, when it must: the class's
+    /// first initialized field or parameter property (`ctor`).
+    pub super_first: Option<(String, Span)>,
+    /// Root-level statements of the constructor body checked so far.
+    pub root_stmts: u32,
     /// Field paths that conditions narrow (`field_narrow`).
     pub field_tokens: Vec<field_narrow::FieldToken>,
     /// `const`s bound by reference (`const_borrow`).
@@ -191,9 +207,15 @@ impl Frame {
             is_async: false,
             soft_moves: vec![],
             inferred_ints: Default::default(),
+            closure_consts: Default::default(),
             tries: vec![],
             uncaught: vec![],
-            sup: Default::default(),
+            super_ok: false,
+            super_called: false,
+            before_super: false,
+            stmt_depth: 0,
+            super_first: None,
+            root_stmts: 0,
             field_tokens: vec![],
             const_refs: Default::default(),
             mutable_tests: vec![],
@@ -220,9 +242,9 @@ pub(crate) struct FnCx<'a, 'm> {
     pub outer: Vec<Frame>,
     /// The span of a `new Promise` that is the operand of the `await` being checked.
     pub direct_await: Option<Span>,
-    /// In a derived constructor before `super(...)` has run (its arguments included): `this`
-    /// is not usable yet.
-    pub before_super: bool,
+    /// The arrow being checked is an argument of a `std/` function called from user code: its
+    /// unannotated integer parameters (an index, a `reduce` accumulator) are JS numbers.
+    pub std_callback: bool,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -238,7 +260,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             f: frame,
             outer: vec![],
             direct_await: None,
-            before_super: false,
+            std_callback: false,
         }
     }
 

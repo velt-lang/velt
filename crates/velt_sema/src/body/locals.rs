@@ -178,6 +178,18 @@ impl FnCx<'_, '_> {
     }
 
     /// Lookup without creating captures (for "is this name a local?" questions).
+    /// The type of the visible local `name` (in this frame or an enclosing one), without
+    /// recording a use.
+    pub fn peek_local_ty(&self, name: &str) -> Option<TyId> {
+        if let Some(l) = frame_lookup(&self.f, name) {
+            return Some(self.f.locals[l.0 as usize].ty);
+        }
+        self.outer
+            .iter()
+            .rev()
+            .find_map(|f| frame_lookup(f, name).map(|l| f.locals[l.0 as usize].ty))
+    }
+
     pub fn is_local_name(&self, name: &str) -> bool {
         frame_lookup(&self.f, name).is_some()
             || self.outer.iter().any(|f| frame_lookup(f, name).is_some())

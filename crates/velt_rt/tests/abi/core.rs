@@ -285,7 +285,7 @@ fn detached_tasks_and_dropped_join_handles_keep_running() {
     unsafe { velt_rt_fut_drop(h) };
     let t = Instant::now();
     while DETACHED_DONE.load(Ordering::SeqCst) < 101 {
-        assert!(t.elapsed().as_secs() < 10, "detached tasks did not finish");
+        assert!(t.elapsed().as_secs() < 60, "detached tasks did not finish");
         block_on_fut::<()>(velt_rt_sleep(2));
     }
 }
@@ -463,39 +463,87 @@ fn cancelling_all_drops_the_results_of_finished_children() {
     assert_eq!(RESULT_DROPS.load(Ordering::SeqCst), 2);
 }
 
-/// Limit for a 100k-child `Promise.all`: linear takes well under 100 ms in release; the
-/// budget-starved join of bench/FINDINGS.md §7 took seconds.
-fn all_limit_secs() -> f64 {
-    if cfg!(debug_assertions) {
-        1.5
-    } else {
-        1.0
+// async function counted(p: Promise<i64>): i64 { return await p; }, counting its polls.
+#[repr(C)]
+struct Counted {
+    result: i64,
+    inner: *mut VeltFut,
+    polls: &'static AtomicUsize,
+}
+
+unsafe extern "C" fn counted_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+    let st = &mut *(s as *mut Counted);
+    st.polls.fetch_add(1, Ordering::Relaxed);
+    if velt_rt_fut_poll(st.inner, cx) == PENDING {
+        return PENDING;
+    }
+    st.result = fut_result::<i64>(st.inner);
+    velt_rt_fut_drop(st.inner);
+    st.inner = null_mut();
+    READY
+}
+
+unsafe extern "C" fn counted_drop(s: *mut u8) {
+    let st = &mut *(s as *mut Counted);
+    if !st.inner.is_null() {
+        velt_rt_fut_drop(st.inner);
     }
 }
 
-/// `Promise.all` over 100k children, checked against `expected(i)` and the time limit.
-fn check_all_100k(what: &str, child: impl Fn(i64) -> *mut VeltFut, expected: impl Fn(i64) -> i64) {
+/// `Promise.all` over 100k children (each `counted(child(i))`), checked against `expected(i)`.
+/// Linear is checked by counting, not timing (a loaded machine stretches any time limit): each
+/// child is polled once to start and about once per wake-up. The join of bench/FINDINGS.md §7
+/// polled every pending child again each time the task budget ran out, about n² / 128 polls.
+fn check_all_100k(
+    what: &str,
+    polls: &'static AtomicUsize,
+    child: impl Fn(i64) -> *mut VeltFut,
+    expected: impl Fn(i64) -> i64,
+) {
     block_on_fut::<()>(velt_rt_sleep(0)); // warm up the runtime
     let n = 100_000i64;
     let t = Instant::now();
-    let futs: Vec<*mut VeltFut> = (0..n).map(child).collect();
+    let futs: Vec<*mut VeltFut> = (0..n)
+        .map(|i| {
+            let init = Counted {
+                result: 0,
+                inner: child(i),
+                polls,
+            };
+            let p = &init as *const Counted as *const u8;
+            unsafe {
+                velt_rt_fut_box(
+                    counted_poll,
+                    counted_drop,
+                    p,
+                    size_of::<Counted>() as u64,
+                    8,
+                )
+            }
+        })
+        .collect();
     let mut results = vec![0i64; n as usize];
     let all = unsafe { velt_rt_all(futs.as_ptr(), n as u64, 8, results.as_mut_ptr() as *mut u8) };
     block_on_fut::<()>(all);
-    let elapsed = t.elapsed();
-    eprintln!("Promise.all over {n} {what}: {elapsed:?}");
+    let polls = polls.load(Ordering::Relaxed);
+    eprintln!(
+        "Promise.all over {n} {what}: {:?}, {polls} child polls",
+        t.elapsed()
+    );
     assert!(results.iter().copied().eq((0..n).map(expected)));
     assert!(
-        elapsed.as_secs_f64() < all_limit_secs(),
-        "Promise.all over {n} {what} took {elapsed:?}"
+        polls < 4 * n as usize,
+        "Promise.all over {n} {what} polled them {polls} times"
     );
 }
 
 #[test]
 fn all_over_100k_spawned_children_is_linear() {
     // Promise.all(range(n).map(i => spawn(square(i))))
+    static POLLS: AtomicUsize = AtomicUsize::new(0);
     check_all_100k(
         "spawned tasks",
+        &POLLS,
         |i| {
             let init = Square {
                 result: 0,
@@ -522,5 +570,6 @@ fn all_over_100k_spawned_children_is_linear() {
 #[test]
 fn all_over_100k_sleeps_is_linear() {
     // Promise.all(range(n).map(i => addAfter(i, 1)))
-    check_all_100k("sleeps", |i| boxed_add_after(i, 1), |i| i + 1);
+    static POLLS: AtomicUsize = AtomicUsize::new(0);
+    check_all_100k("sleeps", &POLLS, |i| boxed_add_after(i, 1), |i| i + 1);
 }

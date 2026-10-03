@@ -1,4 +1,5 @@
 //! Arrow functions: `x => e`, `(a, b: T): R => { ... }`, `(a): R throws E => e`, `async (x) => e`,
+//! defaults and optional parameters (`(x: T = 1, y?: U) => …`),
 //! and generic arrows `<T>(x: T) => x` (also `<T,>`, as `.tsx` requires). A `<` where an
 //! expression starts is a generic arrow if `<T,`, `<T extends` or `<T =` follow, or if type
 //! parameters, a parameter list and `=>` parse; otherwise the primary parser makes it JSX.
@@ -9,6 +10,7 @@
 use super::{PResult, Parser};
 use crate::ast::*;
 use crate::lexer::{Kw, Tok};
+use velt_common::Span;
 
 /// Parameters, return type and `throws` clause of an arrow.
 type ArrowHead = (Vec<ArrowParam>, Option<TypeExpr>, Option<TypeExpr>);
@@ -40,8 +42,14 @@ impl<'a> Parser<'a> {
                 self.bump();
             }
             let name = self.take_ident();
+            self.check_binding_name(&name);
             self.bump(); // =>
-            let params = vec![ArrowParam { name, ty: None }];
+            let params = vec![ArrowParam {
+                name,
+                ty: None,
+                default: None,
+                optional: false,
+            }];
             return self
                 .finish_arrow(lo, vec![], (params, None, None), is_async)
                 .map(Some);
@@ -132,13 +140,40 @@ impl<'a> Parser<'a> {
         let mut params = Vec::new();
         while !self.at(Tok::RParen) {
             self.reject_mut_modifier();
-            let name = self.parse_ident()?;
+            let name = self.parse_binding_ident()?;
+            let optional = self.eat(Tok::Question);
             let ty = if self.eat(Tok::Colon) {
                 Some(self.parse_type()?)
             } else {
                 None
             };
-            params.push(ArrowParam { name, ty });
+            let mut default = if self.eat(Tok::Eq) {
+                Some(self.parse_assign()?)
+            } else {
+                None
+            };
+            let ty = match (optional, ty) {
+                (true, ty) => {
+                    if let Some(d) = &default {
+                        let msg = format!(
+                            "parameter `{}` cannot be optional and have a default value",
+                            name.name
+                        );
+                        self.error(msg, d.span);
+                    }
+                    let at = ty.as_ref().map_or(name.span.hi, |t| t.span.hi);
+                    let span = Span::new(self.file, at, at);
+                    default = Some(self.mk_expr(ExprKind::Lit(Lit::Null), span));
+                    ty.map(super::types::or_null)
+                }
+                (false, ty) => ty,
+            };
+            params.push(ArrowParam {
+                name,
+                ty,
+                default,
+                optional,
+            });
             if !self.eat(Tok::Comma) {
                 break;
             }

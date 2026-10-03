@@ -3,6 +3,8 @@
 
 type User = { readonly id: number; name: string; email?: string };
 type Plain = { id: number; name: string; email?: string };
+type Wrapped<T> = { v: T };
+type RoWrapped<T> = { readonly v: T };
 type Flags = { readonly: bool; readonly ready: bool };
 
 function show(u: User): string {
@@ -33,4 +35,9 @@ function main() {
   console.log(v.name);
   const maybe: User | null = a;
   console.log(maybe?.name ?? "-", first(users).id);
+  // A generic readonly alias and the plain one are one type too.
+  let box: Wrapped<number> = { v: 1 };
+  const ro: RoWrapped<number> = box;
+  box.v = 2;
+  console.log(ro.v);
 }

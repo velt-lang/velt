@@ -285,6 +285,22 @@ impl FnCx<'_, '_> {
         let Some(elem) = elem else {
             return self.error_expr(span);
         };
+        for (e, src) in elems.iter().zip(&sources) {
+            let Some((_, et)) = src else { continue };
+            // Integers spread into a float array are numbers too (`[...[1, 2]]` as `number[]`).
+            // Fresh elements convert like any other value of the literal (#268).
+            let fits = *et == elem
+                || (self.cx.ty.is_int(*et) && self.cx.ty.is_float(elem))
+                || self.converts_to(*et, elem)
+                || self.widens(*et, elem);
+            if !fits && !self.cx.ty.has_error(*et) {
+                let (from, to) = (self.cx.display(*et), self.cx.display(elem));
+                self.cx.err(
+                    format!("cannot spread `{from}` elements into an array of `{to}`"),
+                    e.span,
+                );
+            }
+        }
         let arr_ty = self.cx.ty.array(elem);
         let cap = self.spread_capacity(elems, &sources, span);
         let init = self.intrinsic(Intrinsic::ArrayWithCapacity, vec![cap], arr_ty, span);
@@ -348,30 +364,32 @@ impl FnCx<'_, '_> {
     }
 
     /// `for (const e of src) out.push(e / share of e);`, each element converted from the
-    /// source's element type to the literal's (`(from, to)` in `elems`).
+    /// source's element type to the literal's `elem` (integers to a float `elem`, `C`s to
+    /// interface values in `const ns: Named[] = [...cs]`).
     fn push_all(
         &mut self,
         out: hir::LocalId,
         arr_ty: TyId,
         src: hir::Expr,
-        elems: (TyId, TyId),
+        (src_elem, elem): (TyId, TyId),
         span: Span,
     ) -> hir::Stmt {
-        let (elem, to) = elems;
-        let copy = self.cx.is_copy(elem);
+        let copy = self.cx.is_copy(src_elem);
         let mode = if copy { UseMode::Copy } else { UseMode::Borrow };
-        let e = self.new_local("<elem>", elem, false, span, LocalKind::Elem);
-        let read = self.mk(H::Local(e, mode), elem, span);
-        let value = if copy {
+        let e = self.new_local("<elem>", src_elem, false, span, LocalKind::Elem);
+        let read = self.mk(H::Local(e, mode), src_elem, span);
+        let value = if src_elem != elem && self.cx.ty.is_float(elem) {
+            self.mk(H::Cast(Box::new(read)), elem, span)
+        } else if copy {
             read
         } else {
-            self.intrinsic(Intrinsic::Share, vec![read], elem, span)
+            self.intrinsic(Intrinsic::Share, vec![read], src_elem, span)
         };
-        let value = self.coerce(value, to);
+        let value = self.coerce(value, elem);
         let push = self.push_stmt(out, arr_ty, value);
         let binding = Pat {
             kind: PatKind::Binding(e, mode),
-            ty: elem,
+            ty: src_elem,
             span,
         };
         hir::Stmt {

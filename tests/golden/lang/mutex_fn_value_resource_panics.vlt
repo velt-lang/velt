@@ -1,0 +1,28 @@
+// A function value stored into a `Mutex`'s value may be called by several threads, and each
+// call shares what it captured. One that captured a resource without `clone()` stops the
+// program when the lock is released after storing it (here it arrives from a function, so the
+// compiler cannot see it).
+class Conn {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+function mk(id: i64): () => Promise<i64> {
+  const c = new Conn(id);
+  return async (): Promise<i64> => c.id;
+}
+
+async function main() {
+  const m = shared(new Mutex<(() => Promise<i64>)[]>([]));
+  m.with((fs) => {
+    fs.push(mk(1));
+  });
+  console.log(await m.with((fs) => fs[0]()));
+}

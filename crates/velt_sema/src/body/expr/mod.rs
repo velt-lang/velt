@@ -17,6 +17,7 @@ mod discriminated;
 mod dispose_call;
 pub(crate) mod downcast;
 mod errors;
+mod fn_arity;
 mod iface_call;
 mod intrinsics;
 pub(crate) mod jsx;
@@ -133,9 +134,13 @@ impl FnCx<'_, '_> {
             A::StructLit { name, props } => self.struct_lit(name, props, exp, span),
             A::Spread(_) => self.unsupported_expr("spread arguments (`f(...xs)`)", span),
             A::Await(inner) => self.await_expr(inner, exp, span),
+            // `xs as const`: TS narrows the type to literals and `readonly`; the value is the
+            // same, and Velt's arrays and literal types need no annotation for it.
+            A::Cast { expr, ty } if member::is_as_const(ty) => self.expr(expr, exp, want),
             A::Cast { expr, ty } => self.cast(expr, ty, span),
             A::InstanceOf { expr, ty } => self.instanceof(expr, ty, span),
             A::Paren(inner) => self.expr(inner, exp, want),
+            A::NonNull(inner) => self.non_null(inner, exp, span),
             A::Jsx(el) => self.jsx(el),
         }
     }

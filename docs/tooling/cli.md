@@ -10,14 +10,15 @@ prints every command's options and examples.
 | `velt init` | turn the current directory into a package |
 | `velt build` | compile a file or the current package |
 | `velt run` | build and run a file or the current package |
-| `velt check [--json]` | type-check a file or the current package without building it ([`velt check`](#velt-check)) |
+| `velt check [--json]` | type-check a file or the current package without building it ([`velt check`](#velt-check)); `--ts-compat` lints code shared with TypeScript ([below](#code-shared-with-typescript---ts-compat)) |
 | `velt dev` | run, then hot-swap or restart on every change ([`velt dev`](dev.md)) |
 | `velt test` | run the tests ([Testing](../book/testing.md)) |
-| `velt fmt` | format `.vlt` files ([Formatter](fmt.md)) |
+| `velt fmt` | format `.vlt` (and `.ts`, `.tsx`) files ([Formatter](fmt.md)) |
 | `velt clean` | remove the package's `target/` directory |
 | `velt add`, `install`, `update`, `publish` | packages ([Packages](packages.md)) |
 | `velt manifest [--json]` | check the package's manifest, or print it as JSON for other tools ([`package.vlt`](manifest.md#other-tools)) |
 | `velt search`, `yank`, `owner` | find and manage published packages ([Registries](packages.md#registries)) |
+| `velt login`, `logout` | store or forget your token for a registry server ([Users, owners and yanking](packages.md#users-owners-and-yanking)) |
 | `velt doc` | generate HTML API documentation |
 | `velt lsp` | the language server ([Editors](editors.md)) |
 | `velt playground` | write and run programs in the browser ([WebAssembly](webassembly.md#the-playground)) |
@@ -30,7 +31,8 @@ prints every command's options and examples.
 Every build command works on a single file or on a package:
 
 - **A file**: `velt run hello.vlt` builds `./target/velt/hello` (`hello.exe` on Windows),
-  relative to the current directory, and runs it. If the file is inside a package, the package's
+  relative to the current directory, and runs it. The file, and the modules it imports, may also
+  be `.ts` or `.tsx` files ([TypeScript files](../reference/modules.md#typescript-files-ts-and-tsx)). If the file is inside a package, the package's
   dependencies are installed first.
 - **A package**: without a file argument, `velt` searches upward from the current directory for
   `package.vlt` and builds the package's entry (default `src/main.vlt`) to
@@ -71,6 +73,7 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelif
 
 ```
 velt check [<file.vlt>] [--json] [--locked] [-v]
+velt check --ts-compat <file|dir>... [--json] [--locked] [-v]
 ```
 
 Parses and type-checks a file with every file it imports, or the whole current package, and prints
@@ -80,20 +83,53 @@ It exits with 0 when there are no errors (warnings are allowed) and with 1 when 
 - A **library module** needs no `main`: `velt check lib.vlt` checks every function in it,
   including exported functions nothing calls. `velt build` and `velt run` still require `main`.
 - In a package, `velt check` without a file checks the whole package, like `tsc` checks a
-  project: every `.vlt` module under `src/` and `tests/` (recursively, skipping `target/`, hidden
-  and symlinked directories), including `src/lib.vlt` next to `src/main.vlt`, modules nothing
-  imports, and test files. The entry (`package.entry`, default `src/main.vlt`) must define a
-  valid `main`; every other module is checked as a library module. A library package (no
-  configured entry and no `src/main.vlt`) checks `src/lib.vlt` and the rest the same way. All
-  modules are checked together, so a module several of them import is checked, and its errors
-  reported, once. Other directories (`examples/`, `bench/`, scripts next to `package.vlt`)
-  usually hold programs of their own: check them with `velt check <file>`.
+  project: every `.vlt`, `.ts` and `.tsx` module under `src/` and `tests/` (recursively,
+  skipping `target/`, `node_modules/`, hidden and symlinked directories; `.d.ts` files are not
+  modules), including `src/lib.vlt` next to `src/main.vlt`, modules nothing imports, and test
+  files. The entry (`package.entry`, default `src/main.vlt`) must define a valid `main`; every
+  other module is checked as a library module. A library package (no configured entry and no
+  `src/main.vlt`) checks `src/lib.vlt` and the rest the same way. All modules are checked
+  together, so a module several of them import is checked, and its errors reported, once. Two
+  files in one directory whose names differ only in the extension (`src/dup.vlt` and
+  `src/dup.ts`) are an error: an import can't tell them apart. Other
+  directories (`examples/`, `bench/`, scripts next to `package.vlt`) usually hold programs of
+  their own: check them with `velt check <file>`.
 - `velt check <file>` checks that file and the files it imports, and nothing else.
 - `--json` prints one JSON document on stdout instead, for editors and other tools:
   `{"diagnostics": [...], "errors": n, "warnings": n}`, each diagnostic with its `severity`,
   `message`, `location` (`file`, 1-based `line`/`column`, `endLine`/`endColumn`), further
-  `labels` and `notes`.
+  `labels` and `notes`, plus `code` and `fix` (`null` except for `--ts-compat` findings).
 - `-v` prints per-stage timings.
+
+### Code shared with TypeScript: `--ts-compat`
+
+A file in the common subset of TypeScript and Velt compiles with both `tsc` and `velt` and
+behaves the same under both, so a client and a Velt server can share models, validation and
+components. `velt check --ts-compat` checks exactly the files you pass (for a directory, its
+`.vlt`, `.ts` and `.tsx` files, found as for a package), then reports what in them `tsc` would
+reject or run differently:
+
+```text
+$ velt check --ts-compat src/models
+src/models/user.ts:3:14: error: `f64` is not a TypeScript type
+  = note: `f64` is Velt's other name for `number`, the only name TypeScript knows
+  = note: write `number`
+  = note: ts-compat(velt-number-type)
+```
+
+- The files are checked first, together, as library modules; a file with errors of its own
+  reports them and isn't linted. They must all be in one package (or none in a package): lint
+  one package per run. Two files with the same module path (`dup.vlt` and `dup.ts`) are an
+  error, as in a package check; a declaration file (`.d.ts`) can't be passed.
+- Every finding says what TypeScript does, why Velt differs and what to write, and ends with a
+  note naming its rule, `ts-compat(<code>)`. With `--json`, each finding also carries its `code`
+  and, when the replacement is mechanical, a `fix`: `{"location", "replacement", "title"}`.
+- A relative import must stay among the files passed: `tsc` compiles every file a shared file
+  imports.
+- It exits with 1 when there is an error, from the check or from the lint.
+- The rules and the subset are listed in
+  [the TSX design](../internals/design/tsx.md#the-common-subset). `velt build` never runs the
+  lint.
 
 ## `velt new` and `velt init`
 
@@ -122,7 +158,8 @@ velt doc [<file|dir>...] [--std] [-o <dir>]
 
 Generates HTML documentation for exported items: their signatures and the `///` comment block
 right above each declaration (a comment block at the top of a file documents the module).
-Without paths, it documents the package's `src/` into `<package>/target/doc`; `--std` documents
+Without paths, it documents the package's `src/` (`.vlt`, `.ts` and `.tsx` files) into
+`<package>/target/doc`; `--std` documents
 the standard library. The output has one page per module and a client-side search.
 
 - **Signatures** are shown in one canonical form whatever the source's layout:
@@ -186,7 +223,7 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_STD` | standard library directory |
 | `VELT_HOME` | package manager home (default `~/.velt`: `cache/`, `registry/`) |
 | `VELT_REGISTRY` | package registry: a directory (default `$VELT_HOME/registry`) or an `http(s)://` URL |
-| `VELT_REGISTRY_TOKEN` | your registry user's token, for `velt publish`, `velt yank` and `velt owner` against a registry server |
+| `VELT_REGISTRY_TOKEN` | a registry token sent to every registry server, overriding the tokens `velt login` stored (for CI) |
 | `VELT_CA_FILE` | PEM file of extra CA certificates to trust for `https://` registries |
 | `VELT_CLANG` | clang for the LLVM backend |
 | `VELT_LLVM_OPT` | clang optimization level for release builds: `3` (default), `2`, `1`, `s` or `z` |

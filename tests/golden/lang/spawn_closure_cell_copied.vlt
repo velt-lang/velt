@@ -1,0 +1,26 @@
+// check: no leaks
+// A closure that the program still uses goes to a spawned task as a copy, and so does every
+// variable it captured, including one the closure assigns (kept in a cell it shares with its
+// creator): the task counts on its own copy while this task keeps counting on the original.
+async function callMany(f: () => i64, times: i64): Promise<i64> {
+  let last: i64 = 0;
+  for (let i = 0; i < times; i++) {
+    last = f();
+  }
+  return last;
+}
+
+async function main() {
+  let n: i64 = 0;
+  const label = ["count"];
+  const f = (): i64 => {
+    n += 1;
+    return n + (label[0] == "count" ? 0 : 1);
+  };
+  const t = spawn(callMany(f, 100000));
+  for (let i = 0; i < 100000; i++) {
+    f();
+  }
+  console.log("main", n, "task", await t);
+  console.log(f());
+}

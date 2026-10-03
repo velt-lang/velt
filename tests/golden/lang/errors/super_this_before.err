@@ -1,0 +1,8 @@
+super_this_before.vlt:15:5: error: 'super' must be called before accessing 'this' in the constructor of a derived class
+super_this_before.vlt:21:15: error: 'super' must be called before accessing 'this' in the constructor of a derived class
+super_this_before.vlt:27:15: error: 'super' must be called before accessing a property of 'super' in the constructor of a derived class
+super_this_before.vlt:33:11: error: 'super' must be called before accessing 'this' in the constructor of a derived class
+super_this_before.vlt:38:26: error: 'super' must be called before accessing 'this' in the constructor of a derived class
+super_this_before.vlt:46:19: error: 'super' must be called before accessing 'this' in the constructor of a derived class
+super_this_before.vlt:54:7: error: a constructor cannot `return` before it calls `super(...)`
+  = note: a derived class's constructor calls `super(...)` on every path

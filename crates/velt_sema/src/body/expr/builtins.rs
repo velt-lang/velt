@@ -169,6 +169,8 @@ impl FnCx<'_, '_> {
         let mut out = vec![];
         for a in args {
             let h = self.expr(a, None, Want::Borrow);
+            // A `Date` prints as its ISO string, like Node.
+            let h = self.own_to_string(h, "__inspect");
             if !self.printable(h.ty) {
                 let tn = self.cx.display(h.ty);
                 self.cx
@@ -217,6 +219,8 @@ impl FnCx<'_, '_> {
             ret,
             slot_names: names,
             bounds: vec![vec![]; n],
+            js_numbers: false,
+            rest: false,
         };
         let ck = self.check_call(&c, vec![None; n], args, self.hint(exp), span);
         let kind = H::Variant {
@@ -266,14 +270,22 @@ impl FnCx<'_, '_> {
                     "it runs once and has one owner; pass the promise itself on, or await it and copy the result",
                 ),
             );
-        } else if i == Intrinsic::Clone && self.cx.owns_resource(recv.ty) {
-            let tn = self.cx.display(recv.ty);
+        } else if i == Intrinsic::Clone && self.cx.owns_uncopyable(recv.ty) {
+            let why = self.cx.uncopyable_why(recv.ty);
+            let part = self.cx.uncopyable_part(recv.ty).unwrap_or(recv.ty);
+            let note = match self.cx.ty.kind(part) {
+                TyKind::Promise(..) => "a promise runs once and has one owner; await it and copy the result".to_string(),
+                _ => format!(
+                    "a copy would share the resource and release it twice; give `{}` a `clone()` method that duplicates the resource (a deep copy then calls it)",
+                    self.cx.display(part)
+                ),
+            };
             self.cx.error(
                 Diagnostic::error(
-                    format!("`{tn}` owns a resource (a `[Symbol.dispose]` drop hook or a promise), so it has no automatic `clone()`"),
+                    format!("{why}, so it has no automatic `clone()`"),
                     prop.span,
                 )
-                .with_note("a copy would share the resource and release it twice; define a `clone()` method that duplicates the resource"),
+                .with_note(note),
             );
         }
         let mut all = vec![recv];

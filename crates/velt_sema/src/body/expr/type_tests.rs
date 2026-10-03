@@ -331,7 +331,7 @@ impl FnCx<'_, '_> {
         };
         let (found, what) = match &lit.lit {
             ast::Lit::Str(_) => (find(&|t| t == ty.str_), "string"),
-            ast::Lit::Bool(_) => (find(&|t| t == ty.bool_), "bool"),
+            ast::Lit::Bool(_) => (find(&|t| t == ty.bool_), "boolean"),
             ast::Lit::Int {
                 suffix: Some(s), ..
             }

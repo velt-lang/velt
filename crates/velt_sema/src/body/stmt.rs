@@ -7,6 +7,7 @@ use velt_syntax::ast;
 use super::narrow::Fact;
 use super::pattern::BindCtx;
 use super::{FnCx, LocalKind, Want};
+use crate::defs::FnKind;
 use crate::hir::{self, StmtKind as S};
 
 impl FnCx<'_, '_> {
@@ -48,11 +49,16 @@ impl FnCx<'_, '_> {
     }
 
     pub fn stmt(&mut self, s: &ast::Stmt, out: &mut Vec<hir::Stmt>) {
-        // Only a top-level `super(...);` statement of a constructor may call the base
-        // constructor: nested, the call could run never or more than once.
-        let top = self.ctor_stmt_enter(s);
+        // `super(args)` only as a statement of the constructor's body itself, once: never
+        // inside a block, `if`, `try` or loop, where a path could skip it (and the field
+        // initializers that run right after it) or run it twice.
+        let root = self.f.kind == FnKind::Ctor && self.f.stmt_depth == 0;
+        self.f.super_ok = root && !self.f.super_called && is_super_call(s);
+        self.f.stmt_depth += 1;
         self.stmt_inner(s, out);
-        self.ctor_stmt_leave(top);
+        self.f.stmt_depth -= 1;
+        self.f.super_ok = false;
+        self.f.root_stmts += u32::from(root);
     }
 
     fn stmt_inner(&mut self, s: &ast::Stmt, out: &mut Vec<hir::Stmt>) {
@@ -239,6 +245,14 @@ impl FnCx<'_, '_> {
             );
             return;
         };
+        if super::pattern_defaults::has_default(&v.pattern) {
+            let e = match &v.ty {
+                // `const { a = 1 }: Opts = x`: the annotation types the value taken apart.
+                Some(t) => self.typed_temp(e, t, out),
+                None => e.clone(),
+            };
+            return self.decl_with_defaults(v.kind, &v.pattern, e, out);
+        }
         let init = match ann {
             Some(t) => self.expr_coerce(e, t, Want::Borrow),
             None => self.expr(e, None, Want::Borrow),
@@ -249,6 +263,7 @@ impl FnCx<'_, '_> {
             place,
         };
         let pat = self.pattern(&v.pattern, init.ty, ctx);
+        self.note_inferred_bindings(&pat, &init);
         Self::push(out, S::LetPat { pat, init }, span);
     }
 
@@ -317,6 +332,11 @@ impl FnCx<'_, '_> {
         if let (None, Some(h)) = (ann, &init) {
             self.note_inferred_local(local, h);
         }
+        if let (LocalKind::Const, Some(hir::ExprKind::Closure(d))) =
+            (kind, init.as_ref().map(|h| &h.kind))
+        {
+            self.f.closure_consts.insert(local, *d);
+        }
         if v.kind == ast::VarKind::Using {
             self.check_disposable(ty, false, v.span);
         }
@@ -324,7 +344,15 @@ impl FnCx<'_, '_> {
     }
 
     fn return_stmt(&mut self, e: Option<&ast::Expr>, span: Span, out: &mut Vec<hir::Stmt>) {
-        self.check_return_in_ctor(span);
+        if self.f.before_super {
+            self.cx.error(
+                Diagnostic::error(
+                    "a constructor cannot `return` before it calls `super(...)`",
+                    span,
+                )
+                .with_note("a derived class's constructor calls `super(...)` on every path"),
+            );
+        }
         let Some(ret) = self.f.ret else {
             let h = self.infer_return(e, span);
             Self::push(out, S::Return(h), span);
@@ -420,4 +448,12 @@ fn is_place(e: &ast::Expr) -> bool {
         ast::ExprKind::Paren(inner) => is_place(inner),
         _ => false,
     }
+}
+
+/// Is `s` the statement `super(args);`?
+pub(super) fn is_super_call(s: &ast::Stmt) -> bool {
+    let ast::StmtKind::Expr(e) = &s.kind else {
+        return false;
+    };
+    matches!(&e.kind, ast::ExprKind::Call { callee, .. } if matches!(callee.kind, ast::ExprKind::Super))
 }

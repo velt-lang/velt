@@ -7,14 +7,42 @@ hidden classes and no runtime shape checks.
 
 - Fields need a type (`count: i64 = 0`), or an initializer that states one (`count = 0`,
   `done = false`, `items = new Map<string, i64>()`). A field without a default must be assigned
-  in the `constructor`. `new C(…)` evaluates its arguments, allocates the object on the heap and
-  constructs it in JavaScript's order: base class first, each class's field initializers right
-  after its base class is constructed (at the start of the constructor of a class without a
-  base, right after `super(…)` returns in a derived one), then the rest of its constructor. It
-  throws whatever they throw ([Errors](errors.md#throwing)).
+  in the `constructor`. `new C(…)` allocates the object on the heap and constructs it in
+  JavaScript's order: a class's field initializers run once its base class is constructed
+  (right after `super(…)` returns, or after the inherited constructor when the class has no
+  constructor of its own), in declaration order, before the rest of its constructor body. So for
+  `class D extends B`: the arguments, B's initializers, B's constructor body, D's initializers,
+  D's constructor body. `new` throws whatever the initializers and constructors throw
+  ([Errors](errors.md#throwing)); a constructor's `throws` clause covers the initializers it
+  runs (those of its class and of the classes between it and the next constructor up).
+  Initializers may construct their own class or classes whose initializers construct it back
+  (`next: Node | null = more() ? new Node() : null`); a `new` in such a cycle throws what every
+  class in the cycle's initializers throws. Before its initializer runs (for example in an
+  overridden method that a base constructor calls) a field reads as zero or empty (`0`, `false`,
+  `""`, an empty array); reading a field that holds an object there (a class instance, a `Map`) is
+  unsound today ([#349](https://github.com/velt-lang/velt/issues/349)).
+  A field declared from an integer literal (`count = 0`) holds a JS number, like
+  `let count = 0` ([Numbers](types.md#numbers)).
 - **Parameter properties**: `constructor(private readonly name: string, public age: i64) {}`
   declares the fields and assigns them, as in TypeScript (`protected` is accepted there and
-  means public: there are no `protected` members).
+  means public: there are no `protected` members). As TypeScript emits them (ES2022 class
+  fields), they are the class's first fields, before the declared ones, which decides the key
+  order of `console.log` and `JSON.stringify`; the constructor assigns them first (after
+  `super(…)`), so they are set after the class's field initializers ran:
+
+  ```ts
+  function log(s: string): i64 {
+    console.log(s);
+    return 1;
+  }
+  class Point {
+    label: i64 = log("label");
+    constructor(public x: f64, public y: f64) {
+      log("constructor");
+    }
+  }
+  console.log(JSON.stringify(new Point(1, 2))); // label, constructor, {"x":1,"y":2,"label":1}
+  ```
 - **Private and protected constructors** (TypeScript's rules): `private constructor(…)` can be
   called (`new C(…)`) only inside the class body: its methods, static methods, field
   initializers and the closures in them. Such a class cannot be extended
@@ -28,37 +56,53 @@ hidden classes and no runtime shape checks.
   running a constructor; `JSON.stringify` writes it as usual
   ([`velt:json`](../std/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
-  layout, so upcasts are free. A subclass constructor calls `super(…)` exactly once on every
-  path, also when the base class has no constructor (`super();`): as a statement of its own in
-  the constructor body (not inside an `if`, a loop, a ternary or a closure, where it could run
-  never or twice). Statements before it may validate arguments or compute locals, but cannot
-  use `this` or `super.m()` (nor can the arguments), or `return`. When the class has initialized
-  fields or parameter properties, which are set right after `super(…)` returns, `super(…)` must
-  be the first statement (TypeScript's rules). A subclass without a constructor of its own
-  inherits its base's. Redefining a base method requires `override`; `super.m()` calls the base
-  version. There are no abstract classes.
+  layout, so upcasts are free. A subclass without a constructor of its own inherits its
+  base's. Redefining a base method requires `override`; `super.m()` calls the base version.
+  There are no abstract classes.
+- **`super(…)`**: the constructor of a subclass calls `super(…)`, as in TypeScript, also when
+  the base class has no constructor (`super();`). Statements may come before it as long as they
+  don't use `this` or `super.x`
+  (``'super' must be called before accessing 'this' in the constructor of a derived class``) or
+  `return`; they run first, then the call's arguments, the base constructor, this class's field
+  initializers and parameter properties, and the rest of the body. When the class has
+  initialized fields or parameter properties (which are set right after `super(…)` returns),
+  `super(…)` must be the first statement (TypeScript's TS2376):
 
-```ts
-class Figure {
-  constructor(readonly name: string) {}
-}
-
-class Ring extends Figure {
-  radius: f64;
-  constructor(radius: f64) {
-    if (radius < 0) {
-      throw new Error(`negative radius ${radius}`);
-    }
-    super("ring");
-    this.radius = radius;
+  ```ts
+  class Shape {
+    constructor(public name: string) {}
   }
-}
-```
+  class Square extends Shape {
+    sides: i64;
+    constructor(size: f64) {
+      if (size <= 0) {
+        throw new Error("size must be positive");
+      }
+      const name = `square ${size}`;
+      super(name);
+      this.sides = 4;
+      console.log(this.name, this.sides); // square 2 4
+    }
+  }
+  new Square(2);
+  ```
+
+  The call itself is a statement of the constructor's body, made once: not inside a block, `if`,
+  `try`, `switch`, loop or closure, and not part of an expression. TypeScript requires this too
+  once a class has initialized fields, parameter properties or private fields (TS2401), and
+  otherwise allows a nested call. Velt requires it always: the field initializers run right
+  after the call and every field must be initialized, so the call has to run exactly once on
+  every path. This is the one place Velt is stricter than TypeScript here. When a constructor
+  throws (before `super(…)`, in the base constructor or in a field initializer), `new` frees the
+  object it allocated, dropping the fields that were set, without running the class's
+  `[Symbol.dispose]()`: like JavaScript, nothing disposes an object `new` never returned.
 - **Dispatch**: a method that is never overridden is called directly (and can be inlined). Only
   overridden methods go through a vtable, and only where the static type is a base class.
 - **Members**: `private` (usable only inside the declaring type's body, including closures
   there, but not in subclasses: ``` `x` is private ```; the standard library's own modules may
-  use the private members of its types, which is how std types build each other's handles),
+  use the private members of its types, which is how std types build each other's handles;
+  `console.log` shows private fields, as Node shows a TypeScript `private` field, except
+  zero-sized ones such as std's `runtime` markers),
   `public` (the default), `readonly`
   fields (assignable only in the constructor), `static` methods, and
   `static readonly NAME: T = const;` constants (`Account.LIMIT`, `Math.PI`). Mutable statics
@@ -71,11 +115,18 @@ class Ring extends Figure {
 - Instances are references, as in JS ([Memory model](memory.md#values-and-references)):
   `const b = a` refers to the same object. `x.clone()` makes an independent deep copy of any
   class, struct or union (like `structuredClone`), except values owning a `[Symbol.dispose]`
-  resource, which may define `clone()` themselves.
+  resource, which may define `clone()` themselves. Such a class's own `clone()` (no
+  parameters, returning the class) is what every deep copy of it calls: `x.clone()` of an
+  array or object holding it, and the copy a value gets when it goes to another task
+  ([Async](async.md#promises)), which then deep-copies whatever the returned object still
+  shares with the original. A class that owns no resource is deep-copied field by field
+  wherever it is nested; its `clone()` runs only when called (`x.clone()` on it).
 - Async methods take `this` by value: the promise owns it.
 - An overridden method returning a promise reports its errors through the promise: when the
   base method or any override can fail, all of them must be `async`
   ([Async](async.md#errors)).
+- A template literal calls a class's (or struct's) own `toString(): string`, as in JS
+  (`` `total: ${price}` ``); without one it shows the value the way `console.log` does.
 
 ```ts
 class Account {
@@ -239,8 +290,18 @@ console.log(p.len(), q.len());  // 4 4
 - An interface lists the methods, getters, setters and fields an implementing type must have,
   and may give methods **default bodies** (mixins). `class C implements I, J` takes any number;
   `interface B extends A, C` inherits everything.
-- Interfaces are nominal: a type implements an interface only by declaring `implements` (or
-  through an [`extend`](#extend) block); an object literal does not satisfy one.
+- An interface with **methods** (or getters or setters, own or inherited) is nominal: a type
+  implements it only by declaring `implements` (or through an [`extend`](#extend) block); an
+  object literal does not satisfy one.
+- An interface with **only fields** (at least one, no methods, extending only such interfaces)
+  describes data: it is an object type, like `type User = { … }`, so object literals satisfy
+  it, field reads are loads and it has a JSON form. It converts to and from object types with
+  the same fields and stays the same object. `class C implements User` checks that the class
+  has the fields, but a class instance is not a `User` (it is shared by reference; build one
+  from its fields). As a bound, `<T extends HasId>` is satisfied by any type with the fields
+  (a struct, class or object type, not generic). An interface that refers to itself through a
+  field (`next?: Node`) has infinite size, as a struct does; through an array
+  (`children: Node[]`) it is fine.
 - Used as a **generic bound** (`<T extends Named>`), an interface is resolved at compile time
   (direct calls). Used as a **value type** (`Named[]` holding different classes), it is a fat
   pointer (data plus vtable), like Rust's `dyn`.
@@ -288,12 +349,32 @@ for (const p of pets) {
 console.log(loudest(new Dog()));
 ```
 
+```ts
+interface User {                          // only fields: an object type
+  readonly id: i64;
+  name: string;
+  email?: string;
+}
+
+interface HasId {
+  id: i64;
+}
+
+function idOf<T extends HasId>(x: T): i64 { // any type with an `id: i64` field
+  return x.id;
+}
+
+const u: User = { id: 1, name: "ann" };   // an object literal satisfies it
+console.log(JSON.stringify(u), idOf(u));
+```
+
 ## Generics
 
 Classes, structs, interfaces and functions take type parameters (`class Stack<T>`,
 `interface Box<T>`, `function f<T extends Comparable<T>>`). Every instantiation is compiled
 separately (monomorphization): no boxing, and bounds resolve to direct calls. Bounds are
-interfaces, not object types. There are no default type arguments.
+interfaces (an interface with only fields is satisfied by any type with its fields), not object
+types. There are no default type arguments.
 
 ```ts
 class Stack<T> {
@@ -396,8 +477,8 @@ The prelude declares `interface Comparable<T> { compareTo(other: T): i64; }` and
 for every number type, `string` (bytewise) and `bool`. With `T extends Comparable<T>`, the
 operators `<`, `<=`, `>` and `>=` work on `T` (static dispatch after monomorphization), and
 `sort()` orders Comparable elements (floats put `NaN` last). User types implement it with
-`implements Comparable<X>` or an `extend` block. On a concrete class the operators are not
-available yet: call `a.compareTo(b)` or go through a generic.
+`implements Comparable<X>` or an `extend` block, and then `<`, `<=`, `>` and `>=` work on their
+values too (`v1 < v2` is `v1.compareTo(v2) < 0`).
 
 ```ts
 class Version implements Comparable<Version> {

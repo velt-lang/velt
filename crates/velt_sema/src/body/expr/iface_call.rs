@@ -103,6 +103,8 @@ impl FnCx<'_, '_> {
             ret: s.method.ret,
             slot_names,
             bounds,
+            js_numbers: false,
+            rest: false,
         };
         let ck = self.check_call(&c, slots, args, exp.filter(|_| own > 0), span);
         let mode = if s.method.mut_this {

@@ -1,0 +1,29 @@
+// `throws` clauses are Velt-only.
+
+export class Invalid extends Error {}
+
+export function parse(s: string): number throws Invalid {
+  //~^ throws
+  if (s === "") {
+    throw new Invalid("empty");
+  }
+  return 1;
+}
+
+export interface Parser {
+  parse(s: string): number throws Invalid; //~ throws
+}
+
+export function apply(f: (s: string) => number throws Invalid, s: string): number {
+  //~^ throws
+  return f(s);
+}
+
+export function check(s: string): number {
+  const f = (t: string): number throws Invalid => parse(t); //~ throws
+  return f(s);
+}
+
+export function inferred(s: string): number {
+  return parse(s);
+}

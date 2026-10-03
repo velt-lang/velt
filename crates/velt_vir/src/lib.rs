@@ -60,18 +60,19 @@
 //!   space and have no VIR field (later fields shift down);
 //! * class → `Ptr` to a heap object `[vtable: ptr]? + fields` (base-class fields first; the vtable
 //!   pointer exists when the class hierarchy has a subclass or a virtual method). Objects are
-//!   allocated with `velt_rt_alloc`, zero-filled, then field defaults and the constructor run;
+//!   allocated with `velt_rt_alloc`, zero-filled, then the constructors and field initializers
+//!   run in JavaScript's order (`lower/ctor_init.rs`);
 //! * C-like enum → `I64` discriminant; other enums → `{ tag: u32 }` base sized for the largest
 //!   `{ tag, payload… }` variant view (tag = variant index);
 //! * `T | null` → `Ptr` (null = none) for classes and `shared<T>`; otherwise `{ bool, T }`;
 //! * `T[]` → `{ data: ptr, len: u64, cap: u64 }`; `shared<T>` → `Ptr` to `{ count: u64, value }`;
 //! * function values → `{ code: ptr, env: ptr }`; the env is
-//!   `{ drop: ptr, clone: ptr, reach: u64, captures… }` (null for named functions / capture-less
+//!   `{ drop: ptr, clone: ptr, transfer: ptr, captures… }` (null for named functions / capture-less
 //!   closures; stack-allocated with null drop/clone when the closure only borrows);
 //! * interface values → `{ data: ptr, vtable: ptr }` (data = the object for classes, else a heap box).
 //! * Vtables are read-only tables of function addresses (static data with relocations): slot `k`
-//!   at byte `8 * (k + 6)`; slots -1 to -5 are drop/clone/format/share/class name of the
-//!   concrete value, and the first word (-6) is its class id for `instanceof`
+//!   at byte `8 * (k + 7)`; slots -1 to -6 are drop/clone/format/share/class name/transfer of
+//!   the concrete value, and the first word (-7) is its class id for `instanceof`
 //!   (`lower/glue/vtable.rs`, `lower/class_test.rs`).
 //! * Every type's all-zero bit pattern is a valid "owns nothing" value for its drop glue. A
 //!   struct/class with a `dispose()` hook runs it before its fields are dropped.

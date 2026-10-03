@@ -16,7 +16,11 @@ impl FnLower<'_, '_> {
     /// `a === b` for the values of concrete type `ty` at two places (Bool operand).
     pub(super) fn same_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         if self.cx.is_object(ty) {
-            self.cx.note_identity(ty);
+            // Function and interface values keep their identity (a code / data pointer) when
+            // copied: no fact (one would box them).
+            if !self.cx.is_fn_or_dyn(ty) {
+                self.cx.note_identity(ty);
+            }
             return self.identity(a, b, ty);
         }
         match self.cx.kind(ty) {
@@ -36,6 +40,8 @@ impl FnLower<'_, '_> {
         let (x, y) = match self.cx.ty(ty) {
             // Class objects and counted boxes: the pointer is the object.
             Ty::Ptr => (Operand::Copy(a.clone()), Operand::Copy(b.clone())),
+            // Interface and function values: compared here, not through `eq_values`: inside
+            // `same` glue (`same_mode`) that comes back to `same_values` for objects, without end.
             _ if self.cx.is_fn_or_dyn(ty) => return self.ref_identity(a, b, ty),
             // A uniquely owned inline object: the address of its one home.
             _ => (self.addr(a.clone()), self.addr(b.clone())),
