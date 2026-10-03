@@ -12,7 +12,6 @@
 
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind};
 
-use super::generator::GEN_STATE_OFF;
 use super::AsyncInfo;
 use crate::lower::glue::VtableKey;
 use crate::lower::operand::proj;
@@ -60,19 +59,33 @@ impl Cx<'_> {
         self.intern(TyKind::Adt(d, vec![t, e]))
     }
 
-    /// The object layout of instance `def<targs>`: `{ table: ptr, state }`.
-    fn gen_box(&mut self, info: &AsyncInfo, name: &str) -> AggId {
+    /// The object layout of instance `def<targs>`: the class's fields (the table pointer first),
+    /// then the state at [`gen_state_off`](Self::gen_state_off).
+    fn gen_box(&mut self, def: DefId, targs: &[TyId], info: &AsyncInfo) -> AggId {
+        let gty = self.gen_class_ty(def, targs);
+        let oa = self.obj_agg(gty);
+        let mut fields = self.aggs[oa.0 as usize].fields.clone();
+        fields[0].0 = Ty::Ptr; // the class's `state: u64` word holds the table pointer
+        let off = self.gen_state_off(gty);
         let (size, align) = self.size_align(Ty::Agg(info.state));
-        if i128::from(align) > GEN_STATE_OFF {
-            ice("generator state aligned beyond its table pointer");
+        if align > 8 {
+            ice("generator state aligned beyond its object's 8-byte alignment");
         }
-        let off = GEN_STATE_OFF as u32;
+        fields.push((Ty::Agg(info.state), off as u32));
+        let name = &self.fn_def(def).name;
         self.push_agg(AggLayout {
             name: format!("{name} generator"),
-            size: (off + size).next_multiple_of(8),
+            size: (off as u32 + size).next_multiple_of(8),
             align: 8,
-            fields: vec![(Ty::Ptr, 0), (Ty::Agg(info.state), off)],
+            fields,
         })
+    }
+
+    /// Byte offset of the state in an object of generator class `gty`: after the class's
+    /// fields (the table pointer; an async generator's call queue, std/prelude/iter.vlt).
+    pub(in crate::lower) fn gen_state_off(&mut self, gty: TyId) -> i128 {
+        let oa = self.obj_agg(gty);
+        i128::from(self.aggs[oa.0 as usize].size.next_multiple_of(8))
     }
 
     /// The table of instance `def<targs>` (built once per lowering pass).
@@ -154,8 +167,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// A new generator object holding the initial state in local `s`.
     fn gen_object(&mut self, def: DefId, targs: &[TyId], info: &AsyncInfo, s: Local) -> Operand {
-        let name = self.cx.fn_def(def).name.clone();
-        let bx = self.cx.gen_box(info, &name);
+        let bx = self.cx.gen_box(def, targs, info);
         let gty = self.cx.gen_class_ty(def, targs);
         let obj = if self.cx.counted(gty) {
             self.counted_alloc(Ty::Agg(bx))
@@ -169,8 +181,20 @@ impl<'c, 'h> FnLower<'c, 'h> {
             proj(&base, Proj::Field(0)),
             Rvalue::Use(Operand::Const(Const::Static(table), Ty::Ptr)),
         );
+        // The class's other fields (an async generator's call queue) start at zero.
+        let fields = self.cx.aggs[bx.0 as usize].fields.clone();
+        let last = fields.len() - 1;
+        for (i, &(t, _)) in fields.iter().enumerate().take(last).skip(1) {
+            if t.scalar_size().is_none() {
+                ice("a generator class field is not a scalar");
+            }
+            self.assign(
+                proj(&base, Proj::Field(i as u32)),
+                Rvalue::Use(crate::lower::cint(0, t)),
+            );
+        }
         self.assign(
-            proj(&base, Proj::Field(1)),
+            proj(&base, Proj::Field(last as u32)),
             Rvalue::Use(Operand::Copy(Place::local(s))),
         );
         Operand::Copy(Place::local(obj))
@@ -186,7 +210,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             .async_info(def, targs)
             .unwrap_or_else(|| ice("generator state layout unavailable"));
         let name = cx.fn_def(def).name.clone();
-        let bx = cx.gen_box(&info, &name);
+        let bx = cx.gen_box(def, targs, &info);
         let gty = cx.gen_class_ty(def, targs);
         let mut lw = FnLower::bare(cx, targs.to_vec());
         let obj = lw.new_local(Ty::Ptr, Some("obj".into()));

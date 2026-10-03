@@ -1,6 +1,7 @@
 // A generator's suspended state cannot be copied: `clone()`, an argument of a spawned call, a
 // capture of an async closure (which copies what it captures when it runs) and a value sent on
-// a channel are compile-time errors, like copying a promise.
+// a channel are compile-time errors, like copying a promise. That includes a generator passed as
+// an interface value made at the call (`Iterable<T>`, `AsyncIterable<T>`).
 import { channel } from "velt:channel";
 
 function* nums(): Generator<i64> {
@@ -35,6 +36,22 @@ async function consumeAsync(g: AsyncGenerator<i64>): Promise<i64> {
   return s;
 }
 
+async function sum(it: Iterable<i64>): Promise<i64> {
+  let s = 0;
+  for (const x of it) {
+    s += x;
+  }
+  return s;
+}
+
+async function sumAsync(it: AsyncIterable<i64>): Promise<i64> {
+  let s = 0;
+  for await (const x of it) {
+    s += x;
+  }
+  return s;
+}
+
 async function hold(h: Holder): Promise<void> {
   console.log(h.g);
 }
@@ -54,6 +71,9 @@ async function main() {
   await f();
   const ch = channel<Generator<i64>>();
   await ch.send(nums());
+  console.log(await spawn(sum(nums())));
+  console.log(await spawn(sumAsync(anums())));
   // Passing one to an async function on the same task shares it: fine.
   console.log(await consume(g));
+  console.log(await sum(nums()));
 }

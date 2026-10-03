@@ -30,6 +30,11 @@ Promises behave like JavaScript's, at Rust's cost:
   the promise (objects) or copied (numbers, strings), otherwise moved, because the promise may
   outlive the caller's frame. A promise has one owner: using a promise variable after handing
   it on is ``use of moved value``, and an explicit `p.clone()` is ``a promise cannot be copied``.
+- A `using` variable may be the receiver or an argument of an async call only when the call is
+  awaited where it is made (`await r.read()`): it is disposed at the end of its block, which a
+  stored or returned promise could outlive (``an async call that keeps it must be awaited
+  here``), and it cannot go to `spawn` at all. An `await using` variable may be shared with a
+  stored promise: the block awaits its `[Symbol.asyncDispose]()` when it ends.
 - Values handed to `spawn` (and captured by an HTTP handler) go to another thread: an object
   the program still shares is deep-copied for the task (like a structured clone), so threads
   never share reference counts. That includes the receiver of `spawn(obj.method())` (also
@@ -95,6 +100,12 @@ async function count(): Promise<i64> {
 
 - Leaving a `for await` early awaits the iterator's `return()`, which runs the generator's
   `finally` blocks (they may `await`).
+- Calls of `next()` and `return()` on a stored generator are queued like JS's: one started
+  while another is running waits for its turn, and each promise gets its own step, in call
+  order (`const p1 = g.next(); const p2 = g.next();` gives `p1` the first value whichever is
+  awaited first). A call whose promise is dropped or loses a race still takes its turn. The
+  standard library's async iterators (a channel's, a socket's) are async generators and
+  behave the same. Waiting for a turn costs nothing unless calls overlap.
 - An async generator, like a started promise, belongs to the task that created it: passing one
   to `spawn` (or a channel) or capturing one in an async closure is a compile-time error. A task
   dropped while it is suspended inside a `for await` drops the generator with it (cancellation:

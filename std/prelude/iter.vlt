@@ -68,19 +68,44 @@ export class Generator<T, E = never> implements Iterator<T, E>, Iterable<T, E> {
 // too, without awaiting: cleanup that would `await` is then cancelled (drops only), like a
 // cancelled async function. After it finished, threw, or was closed, `next()` reports `done`.
 //
-// The compiler creates these objects: the generator's state follows the `state` word.
+// Like JS, `next()` and `return()` calls are queued: a call made while another one is still
+// running waits for its turn, so each promise settles with its own step, in call order. A call
+// whose promise nobody awaits still takes its turn (its value is dropped).
+//
+// The compiler creates these objects: the generator's state follows the class's fields, and the
+// queue fields start at zero.
 export class AsyncGenerator<T, E = never> implements AsyncIterator<T, E>, AsyncIterable<T, E> {
   private state: u64 = 0;
+  // The call queue: tickets handed out, the ticket being served, and the runtime latch the
+  // waiting calls wait on (0: nobody waits).
+  private ticket: u64 = 0;
+  private serving: u64 = 0;
+  private latch: u64 = 0;
 
   async next(): Promise<IteratorResult<T>, E> {
-    if (await __intrinsic_async_generator_resume(this)) {
-      return { done: false, value: __intrinsic_async_generator_value(this) };
+    const turn = this.ticket;
+    this.ticket = turn + 1;
+    if (this.serving != turn) {
+      await this.waitTurn(turn);
     }
-    return { done: true };
+    try {
+      if (await __intrinsic_async_generator_resume(this)) {
+        return { done: false, value: __intrinsic_async_generator_value(this) };
+      }
+      return { done: true };
+    } finally {
+      this.passTurn();
+    }
   }
 
   async return(): Promise<void> {
+    const turn = this.ticket;
+    this.ticket = turn + 1;
+    if (this.serving != turn) {
+      await this.waitTurn(turn);
+    }
     await __intrinsic_async_generator_return(this);
+    this.passTurn();
   }
 
   // An async generator is its own iterator.
@@ -89,10 +114,39 @@ export class AsyncGenerator<T, E = never> implements AsyncIterator<T, E>, AsyncI
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    await __intrinsic_async_generator_return(this);
+    await this.return();
   }
 
   [Symbol.dispose](): void {
     __intrinsic_async_generator_dispose(this);
+    if (this.latch != 0) {
+      velt_rt_latch_free(this.latch);
+      this.latch = 0;
+    }
+  }
+
+  // Waits until the call holding ticket `turn` is served.
+  private async waitTurn(turn: u64): Promise<void> {
+    while (this.serving != turn) {
+      if (this.latch == 0) {
+        this.latch = velt_rt_latch_new();
+      }
+      await velt_rt_latch_wait(this.latch);
+    }
+  }
+
+  // The current call finished: serve the next one.
+  private passTurn() {
+    this.serving = this.serving + 1;
+    if (this.latch != 0) {
+      velt_rt_latch_open(this.latch);
+      velt_rt_latch_free(this.latch);
+      this.latch = 0;
+    }
   }
 }
+
+declare function velt_rt_latch_new(): u64;
+declare function velt_rt_latch_free(latch: u64);
+declare function velt_rt_latch_open(latch: u64);
+declare async function velt_rt_latch_wait(latch: u64): Promise<void>;

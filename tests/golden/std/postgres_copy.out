@@ -1,5 +1,6 @@
 copied: 1000
 lines: 1000 | 1,alpha,1.5 | 2,"beta, with comma",2.25 | 1000,row 1000,1000.5
+for await: true
 after abort: 1000
 bad row: 22P02
 closed writer: ECLOSED

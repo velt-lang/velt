@@ -189,8 +189,9 @@ function* range(n: i64): Generator<i64> {
 - While the body runs the tag is RUNNING; resuming then (the body reaching its own generator)
   panics with `generator is already running` (JS throws a `TypeError`). The store is dead in
   an inlined loop and disappears.
-- A **generator object** is one heap block `[table: ptr][state]` (the class's one field is the
-  table pointer; states are at most 8-aligned): the static per-instance table holds resume,
+- A **generator object** is one heap block `[table: ptr][state]` (the class's first field is the
+  table pointer; states are at most 8-aligned; an async generator has its call queue between
+  them, section 4): the static per-instance table holds resume,
   close and free functions. `Work::GenNew` builds it (counted like any object of the class when
   `Generator<T, E>` is shared), `Work::Fn` returns it or, for a declared `Iterator` / `Iterable`
   result, its interface value; the class's drop runs `[Symbol.dispose]` (close), then frees the
@@ -200,9 +201,12 @@ function* range(n: i64): Generator<i64> {
   `clone()`, an argument (or receiver) of a spawned call, a value sent on a std `Channel`, and
   a capture of an async closure (whose state copies its captures when it runs), each with
   "a generator cannot be copied" / "... cannot be passed to another task" / "an async closure
-  cannot capture the generator `g`". Interface values are not looked into: an
-  `Iterable<T>` value backed by a generator that reaches a spawned task still panics at run
-  time (`a generator cannot be copied`, the clone glue).
+  cannot capture the generator `g`". A generator coerced to an interface value at the spawned
+  call itself (`spawn(sum(gen()))` with `sum(it: Iterable<T>)`) is caught too (the argument's
+  `ToDyn` operand). An interface value made earlier is not looked into: one backed by a
+  generator that reaches a spawned task still panics at run time (`a generator cannot be
+  copied`, the clone glue). Moving a fresh generator into the task instead was not done: the
+  task transfer deep-copies interface values without knowing whether they are shared.
 - **Embedded loops**: `for (const x of gen(a))` with a direct call (sema emits `GeneratorEmbed`,
   hir_encodings.md "Generators") builds the state in a frame local (spilled into the enclosing
   state when the loop is in an async function or a generator, like an embedded awaited child),
@@ -307,7 +311,8 @@ async function main() {
   `try { … } finally { await AsyncGeneratorReturn(<generator>) }`, so leaving the loop early
   awaits the close (a no-op once the generator is done: one tag test on the normal path).
   Cancelling the enclosing task drops the local, which runs the dropping close.
-- **Heap objects** are the sync layout `[table][state]`; the table has a fourth entry
+- **Heap objects** are the sync layout with the call queue's three words before the state
+  (`[table][queue][state]`, "Overlapping calls" below); the table has a fourth entry
   (close-start). `await g.next()` on an `AsyncGenerator<T>` variable is a direct call of the
   class's async method, whose state the caller embeds (no allocation per item); through an
   `AsyncIterator<T>` interface value each `next()` is a boxed promise (one allocation per item).
@@ -321,6 +326,38 @@ declaration", and a last use disposed the object when the call finished. Now an 
 receiver or argument of an async call is a soft move like any other object (`tasks.rs`
 `note_async_args`, `method_call.rs` `receiver`), shared when the place is used again or is a
 `using` variable (`ownership/validate.rs`); values holding a promise still move.
+
+A `using` variable is disposed at the end of its block whoever else holds it (its drop), so
+sharing one with a promise that outlives the block would run the call on a disposed object, or
+(as the drop of the last reference) delay the disposal past the block. Sema therefore shares a
+`using` variable only with a call awaited where it is made (`FnCx::soft_move` defers it,
+`awaited_using_shares` accepts it when the enclosing `await`'s operand is that call); a stored or
+returned call is "`r` is declared with `using`: an async call that keeps it must be awaited
+here" (`finish_using_shares`), and `spawn(r.read())` / `spawn(use(r))` stay "cannot move `r`
+out of its `using` declaration" (the task's deep copy would be disposed a second time). An
+`await using` variable may be shared with a stored promise: its block awaits
+`[Symbol.asyncDispose]()` explicitly at the end, as JS does.
+
+### Overlapping calls on a generator object
+
+`AsyncGenerator.next()` and `return()` follow JS's queue: a call made while another is running
+waits for its turn, so each promise settles with its own step in call order, and a call whose
+promise is dropped or abandoned (a started promise runs to completion) still takes its turn.
+Without it, two `next()` promises polled the same suspended `await` with different wakers: the
+values went to the wrong caller, a lost wakeup could hang the program, and `return()` during a
+pending `next()` skipped `finally` blocks.
+
+The queue is a ticket lock in the prelude class (std/prelude/iter.vlt): three `u64` fields
+after the table pointer — tickets handed out, the ticket being served, and a runtime latch
+(`velt_rt_latch_*`, the one `new Promise` uses) that waiting calls wait on, created by the
+first waiter and opened and released by the call that finishes. All callers of one generator
+run on its task (a generator cannot cross tasks), so the fields need no atomics. An
+uncontended call costs two field updates and a compare; nothing is allocated unless calls
+overlap. The generator object's state now follows the class's fields (`Cx::gen_state_off`:
+the class object's size; 8 for `Generator`, 32 for `AsyncGenerator`), and `Work::GenNew`
+zeroes the fields after the table pointer. The embedded `for await` loop over a direct call has
+no object and no queue. A call cancelled while it waits for its turn (only when its whole task
+is dropped) leaves its ticket unserved; everything else on that task is dropped with it.
 
 ### Cost
 
@@ -414,4 +451,5 @@ program compiles to a byte-identical object file before and after this phase.
   APIs only; a `lines()` method there would follow the same pattern.
 - A generator method implementing an interface with an inferred (unwritten) `E` must write it.
 - Keeping an embedded async generator's state in registers across steps (section 4, Cost).
-- Generators cannot cross tasks; `Iterable<T>` values backed by one are checked at run time.
+- Generators cannot cross tasks; stored `Iterable<T>` values backed by one are checked at run
+  time.
