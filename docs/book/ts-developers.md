@@ -141,8 +141,11 @@ contents.
   `==` or a discriminant instead.
 - Enums are numeric or string enums; tagged data is a discriminated union (payload enums and
   `match` don't exist).
-- Not available: `keyof`, mapped and conditional types, template literal types, utility types
-  (`Partial`, `Pick`, …), index signatures, declaration merging, `namespace`.
+- `Partial`, `Required`, `Readonly`, `Pick` and `Omit` work on concrete object types (not yet on
+  a type parameter, #350). `Required` also strips `null` from `a: T | null` fields, since
+  `a?: T` *is* `T | null`, and `Pick`/`Omit` reject a key that isn't a field.
+- Not available: `keyof`, mapped and conditional types, template literal types, the other
+  utility types (`Record` aside), index signatures, declaration merging, `namespace`.
 
 ## Classes
 
