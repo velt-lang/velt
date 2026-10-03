@@ -7,7 +7,9 @@ type Member = { name: string; n: i64 };
 
 function nameOf(): string | null {
   const m: Member | null = { name: "alice".repeat(3), n: 1 };
-  if (m == null) return null;
+  if (m == null) {
+    return null;
+  }
   return m.name;
 }
 

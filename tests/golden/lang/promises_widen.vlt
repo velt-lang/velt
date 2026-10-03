@@ -1,0 +1,75 @@
+// check: no leaks
+// A promise converts to a promise type whose error type allows every error it can reject with:
+// `Promise<T>` (never rejects) to `Promise<T, E>`, and `Promise<T, E1>` to `Promise<T, E1 | E2>`.
+// The converted promise starts when it is created and settles like the original.
+class Oops extends Error {}
+
+class Other extends Error {}
+
+async function work(name: string, ms: i64): Promise<string> {
+  console.log("start", name);
+  await sleep(ms);
+  console.log("done", name);
+  return name;
+}
+
+async function failing(ms: i64): Promise<i64> throws Oops {
+  await sleep(ms);
+  throw new Oops("bad");
+}
+
+async function double(n: i64): Promise<i64> {
+  await sleep(1);
+  return n * 2;
+}
+
+// A return value converts like an assignment.
+function pick(ok: bool): Promise<i64, Oops> {
+  if (ok) {
+    return double(1);
+  }
+  return failing(1);
+}
+
+async function either(p: Promise<i64, Oops | Other>): Promise<i64> throws Oops | Other {
+  return await p;
+}
+
+async function main() {
+  // Started at once, in creation order, like JS. `b` is created later and sleeps longer, so it
+  // finishes later however long `main` takes between the two.
+  const a: Promise<string, Oops> = work("a", 10);
+  const b: Promise<string, Oops> = work("b", 80);
+  console.log("created");
+  console.log(await a, await b);
+
+  console.log(await pick(true));
+  try {
+    await pick(false);
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+
+  console.log(await either(double(5)));
+  try {
+    await either(failing(1));
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+
+  const ps: Promise<i64, Oops>[] = [failing(50), double(3)];
+  console.log(await Promise.race(ps));
+  const mixed: Promise<i64, Oops>[] = [double(4), failing(1)];
+  const settled = await Promise.allSettled(mixed);
+  console.log(settled.length);
+
+  // A converted runtime timer that loses a race is dropped, like any race loser: the program
+  // doesn't wait for it.
+  const timers: Promise<void, Oops>[] = [sleep(60000), quiet()];
+  await Promise.race(timers);
+  console.log("race done");
+}
+
+async function quiet(): Promise<void> throws Oops {
+  await sleep(1);
+}

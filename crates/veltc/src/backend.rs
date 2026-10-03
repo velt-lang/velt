@@ -45,17 +45,19 @@ impl Backend {
         }
     }
 
-    /// Generate an object file for `program`, appending the time of the backend's steps to
-    /// `timings` where it reports them (LLVM: printing the IR, then clang).
-    pub fn emit_object(
+    /// Generate the object files for `program`, appending the time of the backend's steps to
+    /// `timings` where it reports them (LLVM: printing the IR, then clang). Cranelift makes one
+    /// object; LLVM one per codegen unit (`units`, see `velt_codegen_llvm::emit_objects_timed`).
+    pub fn emit_objects(
         self,
         program: &vir::Program,
         opts: &velt_codegen_cl::CodegenOptions,
+        units: Option<usize>,
         timings: &mut Vec<(&'static str, Duration)>,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<Vec<Vec<u8>>, String> {
         match self {
-            Backend::Cranelift => velt_codegen_cl::emit_object(program, opts),
-            Backend::Llvm => velt_codegen_llvm::emit_object_timed(program, opts, timings),
+            Backend::Cranelift => velt_codegen_cl::emit_object(program, opts).map(|o| vec![o]),
+            Backend::Llvm => velt_codegen_llvm::emit_objects_timed(program, opts, units, timings),
         }
     }
 }

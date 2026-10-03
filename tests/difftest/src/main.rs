@@ -117,7 +117,7 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
                 .ok_or_else(|| format!("`{a}` needs a value\n{USAGE}"))
         };
         match a.as_str() {
-            "--velt" => args.cfg.vlt = PathBuf::from(value()?),
+            "--velt" => args.cfg.velt = PathBuf::from(value()?),
             "--node" => args.cfg.node = PathBuf::from(value()?),
             "--modes" => args.cfg.modes = parse_modes(&value()?)?,
             "-j" | "--jobs" => args.jobs = parse_num(&value()?)?,

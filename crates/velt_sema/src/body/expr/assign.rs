@@ -23,6 +23,9 @@ enum AssignTarget {
 impl FnCx<'_, '_> {
     /// Resolve an assignment target to a writable place or a setter. Reports errors.
     fn assign_target(&mut self, target: &ast::Expr, span: Span) -> Option<AssignTarget> {
+        if self.reject_env_assign(target) {
+            return None;
+        }
         let place = match &target.kind {
             ast::ExprKind::Paren(inner) => return self.assign_target(inner, span),
             ast::ExprKind::Ident(id) => self.assign_local(id, span),
@@ -42,6 +45,10 @@ impl FnCx<'_, '_> {
                     return Some(AssignTarget::Setter(obj));
                 }
                 if self.reject_getter_assign(obj.ty, prop) {
+                    return None;
+                }
+                if prop.name == "length" && self.cx.ty.array_elem(obj.ty).is_some() {
+                    self.reject_length_assign(object, target.span);
                     return None;
                 }
                 let place = self.field_access(obj, prop, Want::BorrowMut, target.span)?;
@@ -76,6 +83,15 @@ impl FnCx<'_, '_> {
             }
         };
         place.map(AssignTarget::Place)
+    }
+
+    /// `xs.length = n`: arrays have no empty slots to grow into, so shortening is a method.
+    fn reject_length_assign(&mut self, object: &ast::Expr, span: Span) {
+        let xs = crate::body::switch::cases::source_text(object);
+        self.cx.error(
+            Diagnostic::error("the length of an array cannot be assigned", span)
+                .with_note(format!("to shorten it, write `{xs}.truncate(n)`")),
+        );
     }
 
     fn assign_local(&mut self, id: &ast::Ident, span: Span) -> Option<hir::Expr> {

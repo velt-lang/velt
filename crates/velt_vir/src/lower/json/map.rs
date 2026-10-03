@@ -28,8 +28,11 @@ impl FnLower<'_, '_> {
         (kt, vt): (TyId, TyId),
     ) {
         let tys = self.cx.adt_field_tys(ty);
+        // Either array may be boxed (shared elsewhere in the program as the same type).
         let keys = self.field_place(place, ty, KEYS);
+        let keys = self.content(&keys, tys[KEYS as usize]);
         let values = self.field_place(place, ty, VALUES);
+        let values = self.content(&values, tys[VALUES as usize]);
         let TyKind::Array(slot_t) = self.cx.kind(tys[VALUES as usize]) else {
             ice("Map.entryValues is not an array")
         };
@@ -130,12 +133,46 @@ impl FnLower<'_, '_> {
     fn json_new_map(&mut self, place: &Place, ty: TyId) {
         // `new Map()` runs the field initializers, which may create statement temporaries.
         self.push_scope(ScopeKind::Temps);
-        let obj = self.new_object(ty, &[]);
+        let args = self.empty_ctor_args(ty);
+        let obj = self.new_object(ty, &args);
         if let Operand::Copy(p) = &obj {
             self.take_temp(p);
         }
         self.assign(place.clone(), Rvalue::Use(obj));
         self.pop_scope();
+    }
+
+    /// Arguments for `new C()` of a class whose constructor parameters all default to an
+    /// empty array: sema fills defaults in at call sites, so a constructor call made by
+    /// lowering passes them itself. The contract is the prelude `Map`'s constructor,
+    /// `constructor(entries: [K, V][] = [])` in std/prelude/map.vlt: changing its parameters
+    /// means changing this (pinned by tests/golden/lang/json_map_constructor.vlt).
+    fn empty_ctor_args(&mut self, ty: TyId) -> Vec<hir::Expr> {
+        let TyKind::Adt(d, _) = self.cx.kind(ty) else {
+            ice("constructor arguments of a non-ADT type")
+        };
+        let Some(ctor) = self.cx.adt_def(d).ctor else {
+            return vec![];
+        };
+        let cargs = self.cx.ctor_type_args(ctor, ty);
+        // `params[0]` is `this`.
+        let params: Vec<TyId> = (self.cx.fn_def(ctor).params.iter().skip(1))
+            .map(|p| p.ty)
+            .collect();
+        params
+            .into_iter()
+            .map(|p| {
+                let pt = self.cx.subst(p, &cargs);
+                if !matches!(self.cx.kind(pt), TyKind::Array(_)) {
+                    ice("JSON-decoded class whose constructor needs a non-array argument");
+                }
+                hir::Expr {
+                    kind: hir::ExprKind::ArrayLit(vec![]),
+                    ty: pt,
+                    span: velt_common::Span::DUMMY,
+                }
+            })
+            .collect()
     }
 
     /// The allowed key strings of a record with literal keys `kt` (`None`: `string` keys).

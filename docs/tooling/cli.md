@@ -16,10 +16,11 @@ prints every command's options and examples.
 | `velt clean` | remove the package's `target/` directory |
 | `velt add`, `install`, `update`, `publish` | packages ([Packages](packages.md)) |
 | `velt manifest [--json]` | check the package's manifest, or print it as JSON for other tools ([`package.vlt`](manifest.md#other-tools)) |
+| `velt search`, `yank`, `owner` | find and manage published packages ([Registries](packages.md#registries)) |
 | `velt doc` | generate HTML API documentation |
 | `velt lsp` | the language server ([Editors](editors.md)) |
 | `velt playground` | write and run programs in the browser ([WebAssembly](webassembly.md#the-playground)) |
-| `velt registry serve` | serve a package registry over HTTP ([Packages](packages.md#registries)) |
+| `velt registry serve`, `registry user`, `registry owner` | serve a package registry over HTTP, and manage its users and owners ([Packages](packages.md#registries)) |
 | `velt doctor` | check the installation and run a hello world |
 | `velt completions <shell>` | print a completion script for bash, zsh, fish or PowerShell |
 
@@ -43,11 +44,18 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelif
            [--locked] [-v] [-- <program args>...]
 ```
 
-- **Debug builds** (the default) use Cranelift: fast to compile, with function symbols for
-  backtraces.
+- **Debug builds** (the default) use Cranelift: fast to compile, with line tables for debuggers
+  on Linux (macOS untested; function symbols on Windows).
 - **`--release`** runs Velt's optimizer, then LLVM `-O3` when clang 16 or newer is found
   (`VELT_CLANG`, `PATH`, the standard install directories); otherwise Cranelift, with a
   one-line note. `-g` keeps debug info in a release build ([Debugging](debugging.md)).
+  An LLVM build (`--release`, or `--backend llvm`) of a large program (above about 32 000 VIR
+  statements) is split into codegen units that clang compiles in parallel, one object file
+  each, which builds it several times faster on a multi-core machine. Functions that call each
+  other, and small helpers, stay in their caller's unit, so in the
+  [measurements](../../bench/RESULTS.md) split programs run as fast as unsplit ones (within
+  ±3 %, one faster). Smaller programs are one unit. `VELT_CODEGEN_UNITS=N`
+  asks for N units (at most the core count); `VELT_CODEGEN_UNITS=1` turns splitting off.
 - `--backend llvm` without `--release` gives an unoptimized build with full line information.
 - `--target wasm32-wasip1` and `--target wasm32-unknown-unknown` build WebAssembly
   ([WebAssembly](webassembly.md)); `--target x86_64-apple-darwin` cross-builds on Apple
@@ -149,8 +157,11 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_STD` | standard library directory |
 | `VELT_HOME` | package manager home (default `~/.velt`: `cache/`, `registry/`) |
 | `VELT_REGISTRY` | package registry: a directory (default `$VELT_HOME/registry`) or an `http(s)://` URL |
-| `VELT_REGISTRY_TOKEN` | token for `velt publish` to a registry server, and the token a server accepts |
+| `VELT_REGISTRY_TOKEN` | your registry user's token, for `velt publish`, `velt yank` and `velt owner` against a registry server |
+| `VELT_CA_FILE` | PEM file of extra CA certificates to trust for `https://` registries |
 | `VELT_CLANG` | clang for the LLVM backend |
+| `VELT_LLVM_OPT` | clang optimization level for release builds: `3` (default), `2`, `1`, `s` or `z` |
+| `VELT_CODEGEN_UNITS` | how many codegen units (parallel clang processes) an LLVM build uses, at most the core count; `1` turns splitting off; default: from the program's size (one unit below about 32 000 VIR statements) |
 | `VELT_RT_LIB` | runtime library (default: next to `velt`, or `<prefix>/lib` when installed) |
 | `VELT_LINKER` | linker override |
 | `VELT_LLVM_BIN` | directory with LLVM's `opt` and `llc`, for WebAssembly |

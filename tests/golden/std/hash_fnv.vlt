@@ -1,0 +1,14 @@
+// velt:hash: 64-bit FNV-1a gives the reference values, the same for a string and its UTF-8
+// bytes, on every platform and run; a stable shard index follows from it.
+import { fnv1a64, fnv1a64Bytes } from "velt:hash";
+import { utf8Encode } from "velt:encoding";
+
+async function main() {
+  console.log(fnv1a64(""), fnv1a64("a"), fnv1a64("foobar"));
+  console.log(fnv1a64("héllo") == fnv1a64Bytes(utf8Encode("héllo")));
+  console.log(fnv1a64Bytes([0xff, 0x00]));
+  const shards: u64 = 16;
+  for (const key of ["user:1", "user:2", "order:42"]) {
+    console.log(key, fnv1a64(key) % shards);
+  }
+}

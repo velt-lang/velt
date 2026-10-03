@@ -11,7 +11,8 @@ use crate::body::LocalKind;
 use crate::ctx::Ctx;
 use crate::defs::BodyState;
 use crate::hir::{
-    Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalDef, LocalId, PassMode, UseMode,
+    Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalDef, LocalId, PassMode, TyId,
+    UseMode,
 };
 use crate::visit;
 
@@ -66,8 +67,9 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
                 }
             }
             if let (E::Closure(c), true) = (&e.kind, soft.contains(&e.span)) {
-                if v.shared_captures_pinned(*c) {
-                    copied_captures.push(*c);
+                let pinned = v.shared_captures_pinned(*c);
+                if !pinned.is_empty() {
+                    copied_captures.push((*c, pinned));
                 }
             }
             v.check(e, &mut errors)
@@ -75,8 +77,8 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         cx.diags.extend(errors);
         f.body.block = block;
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
-        for c in copied_captures {
-            super::shares::share_captures(cx, c);
+        for (c, pinned) in copied_captures {
+            super::shares::share_captures(cx, c, &pinned);
         }
     }
     fn_values(cx);
@@ -207,15 +209,18 @@ impl Validator<'_, '_, '_> {
         }
     }
 
-    /// Does closure `c` capture by value a shared variable it may not move (then its shared
-    /// captures become shares)?
-    fn shared_captures_pinned(&self, c: DefId) -> bool {
+    /// The shared variables closure `c` captures by value but may not move (those captures
+    /// become shares).
+    fn shared_captures_pinned(&self, c: DefId) -> Vec<LocalId> {
         let shared = self.shared.get(&c).cloned().unwrap_or_default();
-        shared.into_iter().any(|outer| {
-            let mut invalid = vec![];
-            self.root(outer, None, Span::default(), &mut invalid);
-            !invalid.is_empty()
-        })
+        shared
+            .into_iter()
+            .filter(|&outer| {
+                let mut invalid = vec![];
+                self.root(outer, None, Span::default(), &mut invalid);
+                !invalid.is_empty()
+            })
+            .collect()
     }
 
     /// Is the place `e` rooted at a captured variable?
@@ -302,20 +307,46 @@ fn array_move(span: Span) -> Diagnostic {
     .with_note("elements stay owned by the array; `xs[i].clone()` makes an owned copy")
 }
 
-/// Function values borrow their arguments: a function with owned params can't be one.
+/// Function values borrow their arguments; the value's thunk takes another reference to the
+/// ones a function owns (#224), which a value holding a promise (one owner) cannot give. A
+/// generic function is checked at its type arguments; a parameter type that still mentions a
+/// type parameter (a value taken inside a generic function) may hold a promise, so it is
+/// rejected.
 fn fn_values(cx: &mut Ctx) {
     let values = cx.fn_values.clone();
-    for (d, span) in values {
-        let f = cx.fn_info(d);
-        if let Some(p) = f.params.iter().find(|p| p.mode == PassMode::Owned) {
-            let (fname, pname) = (f.name.clone(), p.name.clone());
-            cx.error(
-                Diagnostic::error(
-                    format!("function `{fname}` takes ownership of `{pname}`, so it cannot be used as a function value"),
-                    span,
-                )
-                .with_note("function values borrow their arguments; wrap it in a closure that clones"),
-            );
+    for (d, args, span) in values {
+        let params: Vec<(String, TyId)> = cx
+            .fn_info(d)
+            .params
+            .iter()
+            .filter(|p| p.mode == PassMode::Owned)
+            .map(|p| (p.name.clone(), p.ty))
+            .collect();
+        let mut found = None;
+        for (pname, t) in params {
+            let t = cx.ty.subst(t, &args);
+            if cx.mentions_params(t) {
+                found = Some((
+                    pname,
+                    "its type depends on a type parameter, which may be a promise",
+                ));
+                break;
+            }
+            if !cx.is_copy(t) && !cx.is_shared_value(t) {
+                found = Some((pname, "a promise has one owner"));
+                break;
+            }
         }
+        let Some((pname, why)) = found else {
+            continue;
+        };
+        let fname = cx.fn_info(d).name.clone();
+        cx.error(
+            Diagnostic::error(
+                format!("function `{fname}` takes ownership of `{pname}`, so it cannot be used as a function value"),
+                span,
+            )
+            .with_note(format!("function values borrow their arguments, and {why}; call the function directly")),
+        );
     }
 }

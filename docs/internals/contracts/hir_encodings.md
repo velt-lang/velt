@@ -78,6 +78,11 @@ Maintainer-owned, like hir.rs.
   `promiseNew` (or `promiseNewResolveOnly`) with two more arguments: the compiler-internal
   `Intrinsic::SourceLocation` (no arguments; lowered to the `"path:line:col"` string of its
   span) and a `bool` literal, true when the `new Promise` is the direct operand of `Await`.
+  `Promise.withResolvers<T, E>()` is `Call { Def(promiseWithResolvers, [T, E]) }`.
+- A promise used where a promise type with a wider error type is expected (`Promise<T>` or
+  `Promise<T, E1>` where `Promise<T, E2>` is expected, every error of `E1` allowed by `E2`) is
+  `Call { Intrinsic(PromiseWiden), [p] }`, `p` owned, typed as the expected promise type. The
+  wrapper is lazy; used as a value (not awaited or spawned right away), it starts `p`.
 - `async main` → `velt_main` calls `velt_rt_block_on`.
 - std wraps rt I/O with `declare async function` externs (`ExternFnDef::is_async`); rt results
   use `IoResult` layout = Velt `struct { code: i32; message: string; value: T }`.
@@ -255,14 +260,17 @@ Maintainer-owned, like hir.rs.
 - Dispatch groups share one error type: every method in an interface slot (its default and all
   implementations) and in a vtable slot (the base method and all overrides) has the same
   `FnDef::throws`, with no type params (interface methods whose error type would depend on them
-  are rejected), so `Callee::Dyn` / `Virtual` / `ParamMethod` calls use any member's.
+  are rejected), so `Callee::Dyn` / `Virtual` / `ParamMethod` calls use any member's — except
+  in a promise slot (`InterfaceMethodDef::promise`: the interface method returns a promise that
+  carries the group's errors): its members are async, or synchronous with no `throws`, and a
+  call through the slot never throws.
 - Promises: `TyKind::Promise(T, E)` resolves to `T` or rejects with `E` (`Never`: cannot reject).
   An async fn's call has type `Promise<ret, throws>`; `await` of a direct call checks the child
   state's `Result<T, E>` (result region at offset 0), and a promise *value* (heap future) holds
   its result at `+16` as `Result<T, E>` when it can reject, else `T` — also for spawned tasks'
   join handles and the value form of `Promise.all` (which settles to `Result<T[], E>`: the first
-  rejection in array order once every child has finished). A `spawn(...)` in statement position
-  (its handle is dropped at once) reports a rejection as uncaught.
+  rejection, as soon as it happens). A `spawn(...)` in statement position (its handle is dropped
+  at once) reports a rejection as uncaught.
 - `Intrinsic::Attempt` (`attempt(f)`): see hir.rs; lowering calls `f` with the Result ABI and
   converts `Ok(v)` / `Err(e)` into the call's type by widening (`T | E`), or `null` / the error
   for `E | null`.
@@ -287,6 +295,9 @@ Maintainer-owned, like hir.rs.
   its captures (any by-value mode) hold the cell; borrowed captures point into it as usual.
 - `AdtDef::assigned`: a field of the object type is assigned somewhere; such a type is shared as
   one counted object, others may be shared by copying their fields.
+- `AdtDef::private_fields` (additive): some field, own or inherited, is `private`. Such a type has
+  no JSON form: sema rejects it for `JSON.parse`/`JSON.stringify`, and lowering never writes a
+  value of it dynamically (a subclass with private fields is written as its static class).
 - Modifying through a pattern / `for...of` / by-reference `const` binding is allowed (JS):
   mutation inference counts it against the place the binding points into.
 - `==` / `!=` on non-primitive types are `Intrinsic::Same` (JS `===`: objects — class instances,

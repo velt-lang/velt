@@ -1,3 +1,4 @@
+// check: no leaks
 // std/encoding: Base64 (standard + URL-safe), hex and UTF-8 round trips, edge cases and errors.
 
 import {

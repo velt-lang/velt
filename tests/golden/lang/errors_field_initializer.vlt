@@ -1,0 +1,102 @@
+// Field initializers run when an object or struct literal is created, so what they throw is
+// thrown by `new` (own and inherited fields, generic classes) and by struct literals that use the
+// default (#200). Defaults are checked on first use, so they may refer to later types.
+import { Value } from "velt:json";
+
+class Oops extends Error {}
+
+function risky(ok: bool): i64 throws Oops {
+  if (!ok) {
+    throw new Oops("risky failed");
+  }
+  return 5;
+}
+
+class Slot {
+  v: Value = JSON.parseValue("1");
+}
+
+class Box<T> {
+  items: T[] = [];
+  n: i64 = risky(true);
+}
+
+class Base {
+  name: string;
+  b: i64 = risky(true);
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+class Derived extends Base {
+  d: Value = JSON.parseValue("[1");
+  constructor() {
+    super("derived");
+  }
+}
+
+class Inherits extends Base {}
+
+struct Cfg {
+  port: i64 = risky(true);
+  host: string = "localhost";
+}
+
+struct Bad {
+  x: i64 = risky(false);
+}
+
+function make(): Slot {
+  return new Slot();
+}
+
+async function later(): Promise<i64> {
+  await sleep(1);
+  const s = new Slot();
+  return s.v.stringify().length as i64;
+}
+
+class Outer {
+  inner: Later = new Later();
+  p: P = {};
+}
+
+class Later {
+  v: Value = JSON.parseValue("x");
+}
+
+struct P {
+  v: i64 = JSON.parse<i64>("2");
+}
+
+async function main() {
+  console.log(new Slot().v.stringify());
+  console.log(make().v.stringify());
+  console.log(new Box<string>().n);
+  console.log(await later());
+  try {
+    const d = new Derived();
+    console.log(d.name);
+  } catch (e) {
+    console.log("derived:", e.message);
+  }
+  const i = new Inherits("i");
+  console.log(i.name, i.b);
+  const c: Cfg = { host: "h" };
+  console.log(c.port, c.host);
+  const c2: Cfg = { port: 1 };
+  console.log(c2.port);
+  try {
+    const b: Bad = {};
+    console.log(b.x);
+  } catch (e) {
+    console.log("struct:", e.message);
+  }
+  try {
+    console.log(new Outer().p.v);
+  } catch (e) {
+    console.log("nested:", e.message);
+  }
+  console.log(new Slot().v.stringify());
+}

@@ -10,6 +10,9 @@
 //!   borrowed); they cannot be called with `()`, nor assigned unless a setter of the same
 //!   name exists (`setters`).
 //! - `static readonly NAME` fields are module constants read as `Type.NAME`.
+//! - A prelude function `F` whose prelude also exports a class `FConstructor` has that class's
+//!   static members as its own (`Number(s)` and `Number.isInteger(x)`, like TypeScript's
+//!   `NumberConstructor`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -154,6 +157,15 @@ impl FnCx<'_, '_> {
             )),
         );
         true
+    }
+
+    /// The class holding the static members of prelude function `name` (`NumberConstructor`
+    /// for `Number`), if `item` is that prelude function and not a user item shadowing it.
+    pub(crate) fn companion_class(&self, name: &str, item: crate::ctx::Item) -> Option<DefId> {
+        if self.cx.prelude.get(name) != Some(&item) {
+            return None;
+        }
+        self.cx.prelude_adt(&format!("{name}Constructor"))
     }
 
     /// `Type.NAME` for a `static readonly` field of struct/class `d`.

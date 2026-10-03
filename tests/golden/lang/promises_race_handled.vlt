@@ -1,6 +1,9 @@
 // A promise passed to `Promise.race` or `Promise.any` is handled, like in JS: once it lost, its
 // later rejection is dropped instead of being reported as uncaught. Losers keep running to
-// completion. Timers are >= 40 ms apart.
+// completion. Each race's loser settles only when `main` releases it after the race, and `main`
+// waits until it did, so which input wins doesn't depend on timing.
+import { channel, Channel } from "velt:channel";
+
 class Timeout extends Error {
   ms: i64;
 
@@ -24,22 +27,63 @@ async function rejectAfter(ms: i64): Promise<string> throws Timeout {
   throw new Timeout(ms);
 }
 
-async function withTimeout(
+async function send(ch: Channel<bool>): Promise<void> {
+  try {
+    await ch.send(true);
+  } catch (e) {
+    console.log("send failed");
+  }
+}
+
+// Work that finishes once `release` receives a value, then reports on `done`.
+async function workWhenReleased(
   name: string,
-  workMs: i64,
-  limitMs: i64,
+  release: Channel<bool>,
+  done: Channel<bool>,
 ): Promise<string> throws Timeout {
-  return await Promise.race([work(name, workMs), rejectAfter(limitMs)]);
+  await release.receive();
+  console.log("released:", name);
+  await send(done);
+  return name;
+}
+
+// A timeout that rejects once `release` receives a value, then reports on `done`.
+async function timeoutWhenReleased(
+  ms: i64,
+  release: Channel<bool>,
+  done: Channel<bool>,
+): Promise<string> throws Timeout {
+  await release.receive();
+  console.log("released: timeout of", ms, "ms");
+  await send(done);
+  throw new Timeout(ms);
+}
+
+// Release a race's loser and wait until it settled.
+async function finish(release: Channel<bool>, done: Channel<bool>): Promise<void> {
+  await send(release);
+  await done.receive();
 }
 
 async function main() {
-  console.log("race:", await withTimeout("fast work", 10, 50));
+  const r1 = channel<bool>();
+  const d1 = channel<bool>();
+  const fast = await Promise.race([work("fast work", 10), timeoutWhenReleased(50, r1, d1)]);
+  console.log("race:", fast);
+  await finish(r1, d1);
+
+  const r2 = channel<bool>();
+  const d2 = channel<bool>();
   try {
-    console.log(await withTimeout("slow work", 150, 100));
+    console.log(await Promise.race([workWhenReleased("slow work", r2, d2), rejectAfter(100)]));
   } catch (e) {
     console.log("race rejected:", e.message);
   }
-  console.log("any:", await Promise.any([work("any work", 200), rejectAfter(250)]));
-  await sleep(400);
+  await finish(r2, d2);
+
+  const r3 = channel<bool>();
+  const d3 = channel<bool>();
+  console.log("any:", await Promise.any([work("any work", 200), timeoutWhenReleased(250, r3, d3)]));
+  await finish(r3, d3);
   console.log("exits normally");
 }

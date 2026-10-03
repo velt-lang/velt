@@ -17,9 +17,14 @@ sources.
 - **Errors** are thrown classes extending the prelude `Error { message }`. Catch them with
   `try { … } catch (e) { e.message }`; `e` is the union of the error classes the calls can
   throw, narrowed with `instanceof`. Each module has its own error class (`UrlError`,
-  `CsvError`, …).
+  `CsvError`, …). Messages start with a capital letter (`Invalid URL: …`); `IoError` messages
+  are lowercase, as in Node (`ENOENT: no such file or directory, open 'x'`, `handle is
+  closed`). An error that escapes `main` prints `Uncaught <Class>: <message> at
+  <file>:<line>:<col>`, naming the error's actual class and, for an error thrown inside the
+  standard library, the line of your code that called it.
 - **I/O errors** are `IoError { code, message }` from [`velt:io`](io.md). `code` is a
-  Node-style name: `"ENOENT"`, `"EACCES"`, `"ECONNREFUSED"`, `"EOF"`, …
+  Node-style name: `"ENOENT"`, `"EACCES"`, `"ECONNREFUSED"`, `"EOF"`, … A failed file-system
+  call has Node's message: `ENOENT: no such file or directory, open 'data.txt'`.
 - **Strings** are UTF-8, and string positions (`slice`, `indexOf`, regex match offsets) are
   **byte offsets**.
 - **Async functions return promises that start at once**, like JS (a direct `await` costs
@@ -40,10 +45,11 @@ sources.
 | Data formats | [json](json.md) · [csv](csv.md) · [encoding](encoding.md) · [url](url.md) · [html](html.md) · [jsx](jsx.md) (TSX rendering) |
 | Collections | [collections/set](collections/set.md) · [collections/deque](collections/deque.md) · [collections/priority_queue](collections/priority_queue.md) · [collections/sorted_map](collections/sorted_map.md) · [arena](arena.md) |
 | Numbers and time | [math](math.md) · [bigint](bigint.md) · [random](random.md) · [datetime](datetime.md) · [timers](timers.md) |
-| Concurrency | [channel](channel.md) |
-| Security | [crypto](crypto.md) · [uuid](uuid.md) |
+| Concurrency | [channel](channel.md) · [task](task.md) (cancellation, timeouts, task scopes) |
+| Security and hashing | [crypto](crypto.md) · [uuid](uuid.md) · [hash](hash.md) (stable, non-cryptographic) |
 | Text | [regex](regex.md) |
 | Programs and the system | [process](process.md) · [cli](cli.md) · [child_process](child_process.md) · [os](os.md) |
+| Packages | [package](package.md) (the type of `package.vlt`) |
 | Databases (moving to packages) | [sqlite](sqlite.md) · [postgres](postgres.md) · [redis](redis.md) |
 
 The database drivers are part of the standard library today. They are moving to separately
@@ -67,12 +73,13 @@ what Velt can't do on its own:
 | `velt:random` | a per-thread wyrand generator |
 | `velt:datetime` | only the local UTC offset; calendar math, parsing and formatting are pure Velt |
 | `velt:html` | `escapeHtml` is one runtime pass |
+| `velt:hash` | FNV-1a over a string's or array's bytes, without a copy |
 | `velt:sqlite` | embedded SQLite (rusqlite); transactions and row decoding are Velt |
 | `velt:postgres` | tokio-postgres connections, pool, statement cache, TLS and `COPY`; transactions and row decoding are Velt |
 | `velt:redis` | a RESP2 client over tokio and rustls: multiplexed connections, pipelines, pub/sub |
 
 Pure Velt: `velt:path`, `velt:math`, `velt:collections/*`, `velt:arena`, `velt:encoding`,
-`velt:url`, `velt:csv`, `velt:cli`, `velt:timers` (built on `sleep` and `spawn`), `velt:json`
+`velt:url`, `velt:csv`, `velt:cli`, `velt:timers` (built on `sleep`, `spawn` and `velt:task` signals), `velt:json`
 and `velt:io`; `velt:jsx` too (escaping through `velt:html`). The runtime ABI is documented in
 [the internals](../internals/contracts/rt_abi_async.md).
 

@@ -1,0 +1,154 @@
+// check: no leaks
+// Async function values (closures) as the dynamic receiver (#182, #196). The closures capture
+// heap state: a read-only label object and a `shared` log (async closures may not mutate
+// plain captures, so their changes go through `shared(new Mutex(...))`). The function value is
+// held in a local, a class field, a Map value and an array element, alone and shared with an
+// alias. Object arguments passed through a function value must arrive by reference, so the
+// callee's changes are visible to the caller.
+class TooBig extends Error {}
+
+class Tag {
+  name: string = "a tag name long enough to live on the heap";
+}
+
+class Store {
+  items: string[] = [];
+}
+
+type Log = shared<Mutex<string[]>>;
+type Add = (item: string) => Promise<i64>;
+type Check = (n: i64) => Promise<i64> throws TooBig;
+type Touch = (s: Store) => Promise<i64>;
+
+function adder(tag: Tag, log: Log): Add {
+  return async (item: string): Promise<i64> => {
+    return log.with((v) => {
+      v.push(`${tag.name.length} ${item}`);
+      return v.length as i64;
+    });
+  };
+}
+
+function checker(tag: Tag, log: Log): Check {
+  return async (n: i64): Promise<i64> throws TooBig => {
+    if (n > 2) {
+      throw new TooBig(`${tag.name}: ${n}`);
+    }
+    log.with((v) => {
+      v.push(`n${n}`);
+    });
+    return n * 10;
+  };
+}
+
+function size(log: Log): usize {
+  return log.with((v) => v.length);
+}
+
+class Handlers {
+  add: Add;
+  check: Check;
+
+  constructor(add: Add, check: Check) {
+    this.add = add;
+    this.check = check;
+  }
+}
+
+// A local: the closure is the only reference (and the call is the last use in the loop body),
+// then the same closure aliased by a second local.
+async function local(): Promise<void> {
+  const log: Log = shared(new Mutex<string[]>([]));
+  const add = adder(new Tag(), log);
+  for (let i = 0; i < 3; i++) {
+    await add(`item ${i}`);
+  }
+  const again = add;
+  console.log("local", await again("x"), await add("y"), size(log));
+  const check = checker(new Tag(), log);
+  for (let n = 1; n < 5; n++) {
+    try {
+      console.log("local check", await check(n));
+    } catch (e) {
+      console.log("local caught", e.message);
+    }
+  }
+  console.log("local log", log.with((v) => v.join(",")));
+}
+
+// A field, a Map value and an array element holding closures over one tag and one log; `h.add`
+// is held by the field, the Map and the array at once (refcount > 1).
+async function holders(): Promise<void> {
+  const tag = new Tag();
+  const log: Log = shared(new Mutex<string[]>([]));
+  const h = new Handlers(adder(tag, log), checker(tag, log));
+  for (let i = 0; i < 2; i++) {
+    console.log("field", await h.add("f"));
+  }
+  try {
+    console.log("field check", await h.check(1));
+    console.log("field check", await h.check(3));
+  } catch (e) {
+    console.log("field caught", e.message);
+  }
+
+  const byName = new Map<string, Add>();
+  byName.set("a", h.add); // shared with the field
+  byName.set("b", adder(tag, log));
+  for (const key of ["a", "b", "a"]) {
+    const f = byName.get(key);
+    if (f != null) {
+      console.log("map", key, await f(key));
+    }
+  }
+
+  const fs: Add[] = [h.add, adder(tag, log)];
+  for (let i = 0; i < 4; i++) {
+    await fs[i % 2]("arr");
+  }
+  for (const f of fs) {
+    console.log("array for-of", await f("last"));
+  }
+  console.log("log", size(log), await h.add("end"), size(log));
+}
+
+// The object travels as an argument through a function value and through a wrapping async
+// closure (#196): every bump must land on the caller's object.
+async function named(s: Store): Promise<i64> {
+  s.items.push("named");
+  return s.items.length as i64;
+}
+
+function wrap(f: Touch): Touch {
+  return async (s: Store): Promise<i64> => await f(s);
+}
+
+async function objectArguments(): Promise<void> {
+  const bump: Touch = async (s: Store): Promise<i64> => {
+    s.items.push("bump");
+    return s.items.length as i64;
+  };
+  const wrapped = wrap(bump);
+  const s = new Store();
+  const alias = s;
+  for (let i = 0; i < 3; i++) {
+    await wrapped(s); // the last use of `s` in the loop body; `s` has an alias
+  }
+  console.log("args", await bump(s), await wrapped(alias), alias.items.length);
+  // A named async function is a `Touch` value itself (#224), and so is an async closure
+  // forwarding to it.
+  const direct: Touch = named;
+  console.log("args named", await direct(s), await wrap(named)(alias));
+  const viaNamed: Touch = async (s: Store): Promise<i64> => await named(s);
+  const ts: Touch[] = [bump, wrapped, named, viaNamed, wrap(viaNamed)];
+  for (const t of ts) {
+    console.log("args array", await t(s));
+  }
+  console.log("args items", s.items.join(","));
+}
+
+async function main() {
+  await local();
+  await holders();
+  await objectArguments();
+}

@@ -1,22 +1,78 @@
+// check: no leaks
 // `renderToStream` into a std/http `Response.stream` body: the markup before a pending async
 // component is flushed before the component finishes loading (a raw TCP client sees the page
 // head first), and the streamed body is byte-identical to `renderToString` of the same tree.
+// In the logged run the components load only when told to: `second` once the client has seen
+// the head, `first` once `second` has loaded, and the server reports its lines over a channel
+// that `main` prints from, so the order of the lines doesn't depend on timing.
 import { jsx, Fragment, jsxAsyncComponent } from "velt:jsx/jsx-runtime";
 import { Element, renderToString, renderToStream } from "velt:jsx";
 import { serve, fetch, Request, Response, ResponseWriter } from "velt:http";
 import { connect } from "velt:net";
+import { channel, Channel } from "velt:channel";
 
-type SlowProps = { label: string; delay: i64; log: bool };
+// `wait`: load once it receives a value (else after `delay` ms); `then`: report there after;
+// `lines`: where to report that it loaded.
+type SlowProps = {
+  label: string;
+  delay: i64;
+  lines: Channel<string> | null;
+  wait: Channel<bool> | null;
+  then: Channel<bool> | null;
+};
+
+// The channels that order the logged run.
+type Cues = { headSeen: Channel<bool>; secondLoaded: Channel<bool>; lines: Channel<string> };
+
+async function send(ch: Channel<bool>): Promise<void> {
+  try {
+    await ch.send(true);
+  } catch (e) {
+    console.log("send failed");
+  }
+}
+
+// A server line, printed by `main` (a line printed by one task can appear after a line another
+// task prints later, #249).
+async function report(lines: Channel<string>, line: string): Promise<void> {
+  try {
+    await lines.send(line);
+  } catch (e) {
+    console.log("report failed");
+  }
+}
 
 async function Slow(props: SlowProps): Promise<Element> {
-  await sleep(props.delay);
-  if (props.log) {
-    console.log(`server: ${props.label} loaded`);
+  if (props.wait != null) {
+    await props.wait.receive();
+  } else {
+    await sleep(props.delay);
+  }
+  if (props.lines != null) {
+    await report(props.lines, `server: ${props.label} loaded`);
+  }
+  if (props.then != null) {
+    await send(props.then);
   }
   return jsx("li", [], [], [props.label], null);
 }
 
-function page(delay: i64, log: bool): Element {
+function page(delay: i64, cues: Cues | null): Element {
+  let first: SlowProps = { label: "first", delay: delay, lines: null, wait: null, then: null };
+  let second: SlowProps = {
+    label: "second",
+    delay: delay / 2,
+    lines: null,
+    wait: null,
+    then: null,
+  };
+  if (cues != null) {
+    first.lines = cues.lines;
+    second.lines = cues.lines;
+    first.wait = cues.secondLoaded;
+    second.wait = cues.headSeen;
+    second.then = cues.secondLoaded;
+  }
   return Fragment(
     [
       jsx("h1", [], [], ["Posts & news"], null),
@@ -25,18 +81,8 @@ function page(delay: i64, log: bool): Element {
         [],
         [],
         [
-          jsxAsyncComponent(
-            (p: SlowProps) => Slow(p),
-            { label: "first", delay: delay, log: log },
-            null,
-            "jsx_stream#Slow",
-          ),
-          jsxAsyncComponent(
-            (p: SlowProps) => Slow(p),
-            { label: "second", delay: delay / 2, log: log },
-            null,
-            "jsx_stream#Slow",
-          ),
+          jsxAsyncComponent((p: SlowProps) => Slow(p), first, null, "jsx_stream#Slow"),
+          jsxAsyncComponent((p: SlowProps) => Slow(p), second, null, "jsx_stream#Slow"),
         ],
         null,
       ),
@@ -46,8 +92,13 @@ function page(delay: i64, log: bool): Element {
   );
 }
 
-// Reads a raw HTTP/1.1 response and reports whether the page head arrived before the posts.
-async function rawClient(port: i64): Promise<void> {
+// Reads a raw HTTP/1.1 response and reports whether the page head arrived before the posts;
+// then lets the posts load.
+async function rawClient(
+  port: i64,
+  headSeen: Channel<bool>,
+  lines: Channel<string>,
+): Promise<void> {
   const c = await connect(`127.0.0.1:${port}`);
   await c.write("GET /log?150 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
   let received = "";
@@ -61,31 +112,43 @@ async function rawClient(port: i64): Promise<void> {
     if (!reported && received.includes("<h1>")) {
       reported = true;
       console.log(`client: head received, posts included: ${received.includes("first")}`);
+      await send(headSeen);
     }
   }
   c.close();
+  // The server's three lines, reported before the response ended.
+  for (let i = 0; i < 3; i++) {
+    console.log(await lines.receive());
+  }
   console.log(`client: complete: ${received.includes("<footer>end</footer>")}`);
 }
 
 async function main() {
+  const headSeen = channel<bool>();
+  const secondLoaded = channel<bool>();
+  const lines = channel<string>();
+  const cues: Cues = { headSeen: headSeen, secondLoaded: secondLoaded, lines: lines };
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
     const delay = parseInt(req.query) as i64;
+    const logged: Cues | null = req.path == "/log" ? cues : null;
     const res = Response.stream(async (w: ResponseWriter) => {
-      const log = req.path == "/log";
-      const ok = await renderToStream(page(delay, log), w);
-      if (log) {
-        console.log(`server: stream done ${ok}`);
+      const ok = await renderToStream(page(delay, logged), w);
+      if (logged != null) {
+        await report(logged.lines, `server: stream done ${ok}`);
       }
     });
     res.setHeader("content-type", "text/html; charset=utf-8");
     return res;
   });
-  await rawClient(server.port);
+  await rawClient(server.port, headSeen, lines);
   const res = await fetch(`http://127.0.0.1:${server.port}/?10`);
   console.log(res.status, res.headers.get("content-type"), res.headers.get("transfer-encoding"));
   const body = await res.text();
-  const expected = await renderToString(page(1, false));
+  const expected = await renderToString(page(1, null));
   console.log(body);
   console.log(`same as renderToString: ${body == expected}`);
-  server.close();
+  await server.shutdown();
+  headSeen.close();
+  secondLoaded.close();
+  lines.close();
 }

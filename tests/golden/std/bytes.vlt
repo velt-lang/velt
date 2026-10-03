@@ -1,3 +1,4 @@
+// check: no leaks
 // Byte arrays (std/prelude/bytes.vlt): `Buffer.alloc`, and `indexOf` (memchr), `lastIndexOf`,
 // `set`, `copyWithin`, `fill` on `u8[]` with JS positions. Expected output is Node's (Uint8Array).
 function main() {

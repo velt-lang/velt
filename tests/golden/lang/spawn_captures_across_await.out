@@ -1,0 +1,7 @@
+Map(2) { 'a' => 1, 'a key long enough to live on the heap' => 2 }
+hello, a record value on the heap
+a point label long enough to live on the heap 3,4
+one | two | a third element long enough to live on the heap
+AFTER AWAIT!
+1 3 7 AGAIN!
+2 33 4 47 MAIN!

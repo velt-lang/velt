@@ -138,11 +138,19 @@ within the copy).
 
 ## 6. Threads (transfer.rs)
 Counts are not atomic, so no counted object may be reachable from two threads. Values cross
-threads at `spawn(f(args))` (owned arguments) and the HTTP handler environment: a value whose
+threads at `spawn(f(args))` (owned arguments; for a call through a function value, vtable
+or interface, every argument and the receiver) and the HTTP handler environment: a value whose
 type can reach a counted object is **deep-copied** for the task and the original reference
-released (structured clone at a worker boundary); others move as before. Async closures copy
-what they capture per call (deep copies of shared captures, `validate`), since an HTTP handler
-runs them concurrently. Strings keep their atomic counts (stage 1); `shared<T>` stays atomic.
+released (structured clone at a worker boundary); others move as before. Interface, closure
+and function values count as able to reach one (a closure's heap env is itself counted). An
+owned closure value still moves when, at run time, its env is null or in a frame, or its count
+is 1 and its `reach` header word says no capture can reach a counted object (set where the
+closure is created, closure.rs): then it is the only reference to everything it captures, and
+a captured unique value is not copied (whose `[Symbol.dispose]()` would run twice, #122). A
+borrow-ABI argument of a call through a function value, vtable or interface (the caller keeps
+its reference) is always deep-copied. Async closures copy what they capture per call (deep
+copies of shared captures, `validate`), since an HTTP handler runs them concurrently. Strings
+keep their atomic counts (stage 1); `shared<T>` stays atomic.
 
 ## 7. Identity and the `struct` keyword
 - `==` / `!=` on objects (classes, arrays, structs, object literals, interface and function

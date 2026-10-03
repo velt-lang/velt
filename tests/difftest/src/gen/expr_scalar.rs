@@ -1,12 +1,13 @@
 //! Integer, float and bool expressions.
 //!
 //! Integer expressions keep every value within ±16384 (wide literals up to 2^52 appear only as
-//! operands of a reduced `+`/`-` or exact division) (bitwise ops on values reduced `% 10007`)
+//! operands of a reduced `+`/`-` or a division) (bitwise ops on values reduced `% 10007`)
 //! and every intermediate below 2³¹: binary results are reduced `% 10007`, shifts only see operands
 //! reduced `% 1000`. That keeps i64 wrapping and JS's 32-bit bitwise operators out of the picture.
-//! Division is written as exact division (`(a - a % k) / k`), which truncates identically in both
-//! languages. JS integers are doubles, so `*`, `%`, `/` and negation can produce `-0`, which
-//! `console.log` prints as `-0`; those results are normalized with `| 0` (identity on i64).
+//! Integer division is written `Math.trunc(a / k)`, Velt's integer division, which truncates
+//! identically in both languages (exact in JS doubles: every operand is below 2^53). JS integers
+//! are doubles, so `*`, `%`, `/` and negation can produce `-0`, which `console.log` prints as
+//! `-0`; those results are normalized with `| 0` (identity on i64).
 
 use super::scope::Ty;
 use super::Gen;
@@ -46,11 +47,11 @@ impl Gen {
             3 => format!("(({} % {}) | 0)", self.int(d), self.nonzero_lit()),
             4 if self.rng.chance(25) => {
                 let (w, k) = (self.wide_lit(), self.nonzero_lit());
-                self.reduce(&format!("({w} - {w} % {k}) / {k}"))
+                self.reduce(&format!("Math.trunc({w} / {k})"))
             }
             4 => {
                 let (a, k) = (self.int(d), self.nonzero_lit());
-                format!("((({a} - {a} % {k}) / {k}) | 0)")
+                format!("(Math.trunc({a} / {k}) | 0)")
             }
             5 => {
                 let op = *self.rng.pick(&["&", "|", "^"]);

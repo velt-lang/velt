@@ -5,8 +5,9 @@
 //!   state from its arguments and boxes it (`velt_rt_fut_box`) — a promise *value*. For async
 //!   closures it is the closure's `code`, called with the borrow ABI: every call's state gets
 //!   its own clone of the owned captures (an async closure may be called many times — e.g. a
-//!   request handler — and its promises may outlive the closure), owned aggregate arguments
-//!   are cloned;
+//!   request handler — and its promises may outlive the closure); an owned argument is another
+//!   reference to the caller's value (a share, as for a direct async call: the callee sees the
+//!   caller's object, #196);
 //! - `f$drop` ([`Work::AsyncDrop`]): set `DROP_BIT` in the tag and run the poll function.
 
 use std::collections::HashMap;
@@ -14,6 +15,7 @@ use std::collections::HashMap;
 use velt_sema::hir::{self, DefId, LocalId, PassMode, TyId};
 
 use super::{AsyncInfo, DROP_BIT};
+use crate::lower::closure::ENV_HEADER;
 use crate::lower::operand::proj;
 use crate::lower::{cint, ice, unit, Cx, FnLower};
 use crate::vir::{self, BinOp, Function, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
@@ -103,7 +105,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let targs = self.targs.clone();
         let ea = self.cx.env_agg(def, &targs);
         let base = proj(&Place::local(env), Proj::Deref(Ty::Agg(ea)));
-        let slot = proj(&base, Proj::Field(2 + k as u32));
+        let slot = proj(&base, Proj::Field(ENV_HEADER + k as u32));
         Some(match c.mode {
             PassMode::Borrow | PassMode::BorrowMut => match vt {
                 Ty::Agg(_) => Operand::Copy(slot),
@@ -119,7 +121,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// An incoming argument (param local `l`) as the value the state stores. Under the borrow
-    /// ABI (async closures) the caller keeps its arguments, so owned ones are cloned.
+    /// ABI (async closures) the caller keeps its arguments, so owned ones are shared (a spawned
+    /// call passes copies, transfer.rs).
     fn incoming_input(
         &mut self,
         l: Local,
@@ -139,7 +142,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             PassMode::Borrow | PassMode::BorrowMut if matches!(vt, Ty::Agg(_)) => {
                 Operand::Copy(Place::local(l))
             }
-            PassMode::Owned if borrowed && self.cx.needs_drop(ty) => self.clone_value(value, ty),
+            PassMode::Owned if borrowed && self.cx.needs_drop(ty) => self.share_value(value, ty),
             _ => value,
         }
     }

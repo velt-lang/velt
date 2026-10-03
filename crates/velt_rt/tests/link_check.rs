@@ -39,7 +39,7 @@ typedef void (*DropFn)(void*);
 VeltFut* velt_rt_sleep(int64_t);
 uint32_t velt_rt_fut_poll(VeltFut*, void*);
 void velt_rt_fut_drop(VeltFut*);
-VeltFut* velt_rt_spawn(PollFn, DropFn, const void*, uint64_t, uint64_t, uint64_t);
+VeltFut* velt_rt_spawn(PollFn, DropFn, const void*, uint64_t, uint64_t, uint64_t, void (*)(void*));
 void velt_rt_block_on(PollFn, void*);
 "#;
 
@@ -100,7 +100,7 @@ static uint32_t main_poll(void* s, void* cx) {
         Square q = { 0, 7 };
         if (!velt_rt_fut_poll(m->f, cx)) return 0;
         velt_rt_fut_drop(m->f);
-        m->f = velt_rt_spawn(square_poll, square_drop, &q, sizeof q, 8, 8);
+        m->f = velt_rt_spawn(square_poll, square_drop, &q, sizeof q, 8, 8, 0);
         m->tag = 2;
         break;
     }
@@ -365,8 +365,8 @@ int32_t velt_main(void) {
 }
 "#;
 
-/// `async function main() { console.log("ready"); await sleep(6000); }` — like a server that logs
-/// and then waits for connections.
+/// `async function main() { console.log("ready"); await sleep(86_400_000); }` — like a server
+/// that logs and then waits for connections, for a day.
 const IDLE: &str = r#"
 typedef struct { int32_t result; uint32_t tag; VeltFut* f; } Idle;
 static uint32_t idle_poll(void* s, void* cx) {
@@ -374,7 +374,7 @@ static uint32_t idle_poll(void* s, void* cx) {
     if (m->tag == 0) {
         VeltStr r = LIT("ready");
         velt_rt_write_str(1, &r); velt_rt_write_byte(1, 10);
-        m->f = velt_rt_sleep(6000);
+        m->f = velt_rt_sleep(86400000);
         m->tag = 1;
     }
     if (!velt_rt_fut_poll(m->f, cx)) return 0;
@@ -384,6 +384,20 @@ static uint32_t idle_poll(void* s, void* cx) {
 int32_t velt_main(void) { Idle m = { 0, 0, 0 }; velt_rt_block_on(idle_poll, &m); return 0; }
 "#;
 
+/// Kills the child when dropped, so a failing assertion does not leave it sleeping.
+struct KillOnDrop(std::process::Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Output written before the workers go idle reaches a pipe while the program is still running,
+/// not when it exits. The program sleeps for a day after printing, so the line can only arrive
+/// through the idle flush: no deadline on how soon (a loaded machine may take seconds just to
+/// start the process), only a hang guard in case it never does.
 #[test]
 fn piped_output_is_flushed_when_workers_idle() {
     use std::io::BufRead;
@@ -391,24 +405,29 @@ fn piped_output_is_flushed_when_workers_idle() {
         eprintln!("NOTE: no C toolchain found; idle flush check skipped");
         return;
     };
-    let start = std::time::Instant::now();
-    let mut child = Command::new(&exe)
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut line = String::new();
-    std::io::BufReader::new(child.stdout.take().unwrap())
-        .read_line(&mut line)
-        .unwrap();
-    let waited = start.elapsed();
-    assert_eq!(line.trim_end(), "ready");
-    // Flushed at exit would mean ≥ 6 s. The budget leaves room for a slow first launch (macOS
-    // scans every new executable, which takes seconds on a loaded machine).
-    assert!(
-        waited.as_millis() < 4000,
-        "output reached the pipe only after {waited:?}"
+    let mut child = KillOnDrop(
+        Command::new(&exe)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap(),
     );
-    assert!(child.wait().unwrap().success());
+    let stdout = child.0.stdout.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        let read = std::io::BufReader::new(stdout).read_line(&mut line);
+        let _ = tx.send(read.map(|_| line));
+    });
+    let line = rx
+        .recv_timeout(std::time::Duration::from_secs(120))
+        .expect("no output after 120 s: buffered output is not flushed when the workers idle")
+        .unwrap();
+    assert_eq!(line.trim_end(), "ready");
+    // The line arrived while the program sleeps: it was flushed at idle, not at exit.
+    assert!(
+        child.0.try_wait().unwrap().is_none(),
+        "the program exited before its output arrived"
+    );
 }
 
 /// 64 tasks each print 1000 lines built from several `write_*` calls (like one `console.log` with
@@ -442,7 +461,7 @@ static uint32_t main_poll(void* s, void* cx) {
         for (i = 0; i < 128; i++) PAD[i] = 'x';
         for (i = 0; i < 64; i++) {
             Printer p = { 0, 0, i, 0 };
-            m->h[i] = velt_rt_spawn(printer_poll, printer_drop, &p, sizeof p, 8, 0);
+            m->h[i] = velt_rt_spawn(printer_poll, printer_drop, &p, sizeof p, 8, 0, 0);
         }
         m->tag = 1;
     }

@@ -21,12 +21,14 @@
 //! response.
 
 mod reload_support;
+mod test_dir;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use reload_support::{get, Background, Dev, Mark, Probe};
+use test_dir::TestDir;
 
 /// One `expect` line.
 #[derive(Debug)]
@@ -114,19 +116,36 @@ fn steps(case: &Path) -> Vec<PathBuf> {
     steps
 }
 
-/// Copy a step's files (all but `expect`) into the program directory, stamped with the current
-/// time: a copy keeps the source's mtime, and two versions of a file with the same length and
-/// checkout time would look unchanged to `velt dev`.
+/// Put a step's files (all but `expect`) into the program directory the way an editor saves:
+/// each file is written to a temporary name and renamed into place, so `velt dev` never sees
+/// it half-written, and files new to the directory come first, so a module exists before the
+/// files that import it change. Written now, they get the current time as their mtime (a copy
+/// would keep the source's, and two versions with the same length and checkout time would look
+/// unchanged).
 fn apply(step: &Path, dir: &Path) {
-    for entry in std::fs::read_dir(step).unwrap() {
-        let path = entry.unwrap().path();
-        if path.file_name().is_some_and(|n| n != "expect") {
-            let dst = dir.join(path.file_name().unwrap());
-            std::fs::copy(&path, &dst).unwrap();
-            let file = std::fs::File::options().write(true).open(&dst).unwrap();
-            file.set_modified(std::time::SystemTime::now()).unwrap();
-        }
+    let mut files: Vec<PathBuf> = std::fs::read_dir(step)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.file_name().is_some_and(|n| n != "expect"))
+        .collect();
+    files.sort_by_key(|path| (dir.join(path.file_name().unwrap()).exists(), path.clone()));
+    for path in files {
+        save(
+            &dir.join(path.file_name().unwrap()),
+            std::fs::read(&path).unwrap(),
+        );
     }
+}
+
+/// Write `path` like an editor: to a temporary name next to it (not a `.vlt` file), then renamed
+/// into place, so a watcher never sees it half-written.
+fn save(path: &Path, contents: impl AsRef<[u8]>) {
+    let mut tmp_name = std::ffi::OsString::from(".");
+    tmp_name.push(path.file_name().unwrap());
+    tmp_name.push(".tmp");
+    let tmp = path.with_file_name(tmp_name);
+    std::fs::write(&tmp, contents).unwrap();
+    std::fs::rename(&tmp, path).unwrap();
 }
 
 /// What a case keeps between expectations.
@@ -140,7 +159,7 @@ struct Run<'d> {
 }
 
 fn run_case(case: &Path, mode: Mode) -> Result<(), String> {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = TestDir::new();
     let mut dev: Option<Dev> = None;
     let mut probe = None;
     let mut background = HashMap::new();
@@ -279,7 +298,7 @@ fn reload_goldens() {
 #[cfg(unix)]
 #[test]
 fn sigterm_stops_the_program() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = TestDir::new();
     apply(&root().join("tests/reload/hello_server/1"), dir.path());
     let mut dev = Dev::start(dir.path(), &[]);
     let started = dev.wait_stderr(Mark::default(), "velt dev: started");
@@ -300,11 +319,11 @@ fn sigterm_stops_the_program() {
 #[cfg(target_os = "linux")]
 #[test]
 fn spare_host_is_discarded() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = TestDir::new();
     let case = root().join("tests/reload/hello_server/1");
     apply(&case, dir.path());
     let main = std::fs::read_to_string(case.join("main.vlt")).unwrap();
-    let write = |text: String| std::fs::write(dir.path().join("main.vlt"), text).unwrap();
+    let write = |text: String| save(&dir.path().join("main.vlt"), text);
     let dev = Dev::start(dir.path(), &[]);
     let ok = |r: Result<Instant, String>| r.unwrap_or_else(|e| panic!("{e}"));
     ok(dev.wait_stderr(Mark::default(), "velt dev: started"));
@@ -353,10 +372,10 @@ fn spare_host_is_discarded() {
 /// the same failed build prints its diagnostics.
 #[test]
 fn quiet_host_prints_no_diagnostics() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = TestDir::new();
     let main = std::fs::read_to_string(root().join("tests/reload/hello_server/1/main.vlt"));
     let bad = main.unwrap().replace("Response.text", "Response.txt");
-    std::fs::write(dir.path().join("main.vlt"), bad).unwrap();
+    save(&dir.path().join("main.vlt"), bad);
     let host = |quiet: bool| {
         let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_velt"));
         cmd.args(["dev", "--host", "main.vlt"])
@@ -382,7 +401,7 @@ fn quiet_host_prints_no_diagnostics() {
 #[cfg(target_os = "linux")]
 #[test]
 fn second_interrupt_kills_the_program() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = TestDir::new();
     apply(&root().join("tests/reload/in_flight/1"), dir.path());
     let mut dev = Dev::start(dir.path(), &[]);
     let started = dev.wait_stderr(Mark::default(), "velt dev: started");
@@ -452,7 +471,7 @@ fn bench_save_to_first_response() {
 /// Sorted save → first response times of 10 edits.
 fn bench(mode: Mode, edit: BenchEdit) -> Vec<Duration> {
     let case = root().join("tests/reload/hello_server/1");
-    let dir = tempfile::tempdir().unwrap();
+    let dir = TestDir::new();
     apply(&case, dir.path());
     let source = std::fs::read_to_string(dir.path().join("main.vlt")).unwrap();
     let dev = Dev::start(dir.path(), mode.flags());
@@ -468,7 +487,7 @@ fn bench(mode: Mode, edit: BenchEdit) -> Vec<Duration> {
             text = text.replace("sleep(1000000000)", &format!("sleep(100000000{n})"));
         }
         let saved = Instant::now();
-        std::fs::write(dir.path().join("main.vlt"), text).unwrap();
+        save(&dir.path().join("main.vlt"), text);
         while get(port, "/").ok().as_deref() != Some(body.as_str()) {
             std::thread::sleep(Duration::from_millis(1));
         }

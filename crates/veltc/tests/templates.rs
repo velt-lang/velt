@@ -5,13 +5,15 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+mod test_dir;
+
 struct Sandbox {
-    _tmp: tempfile::TempDir,
+    _tmp: test_dir::TestDir,
     dir: PathBuf,
 }
 
 fn sandbox() -> Sandbox {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = test_dir::TestDir::new();
     let dir = tmp.path().to_path_buf();
     Sandbox { _tmp: tmp, dir }
 }

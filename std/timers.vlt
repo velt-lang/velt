@@ -12,6 +12,8 @@
 // An interval can't re-create its promise every tick without a stored closure, so it is pulled:
 // `const t = new Ticker(100); while (await t.tick()) { ... }`.
 
+import { AbortController, AbortSignal } from "velt:task";
+
 // Timer state in the shared flag.
 const PENDING: i64 = 0;
 const CLEARED: i64 = 1;
@@ -82,28 +84,28 @@ async function fire(ms: i64, task: () => Promise<void>, state: shared<i64>): Pro
 
 // Stops a `Ticker` from any task: `const stop = t.stopper(); spawn(later(stop));`.
 export class TickerStop {
-  private stopped: shared<i64>;
+  private control: AbortController;
 
-  // Wraps a ticker's stop flag (use `Ticker.stopper()`).
-  constructor(stopped: shared<i64>) {
-    this.stopped = stopped;
+  // Wraps a ticker's stop controller (use `Ticker.stopper()`).
+  constructor(control: AbortController) {
+    this.control = control;
   }
 
-  // Makes the ticker's pending and future `tick()`s resolve to false.
+  // Makes the ticker's pending and future `tick()`s resolve to false, the pending one at once.
   stop() {
-    this.stopped.set(1);
+    this.control.abort("ticker stopped");
   }
 }
 
 // A drift-free periodic schedule: tick `k` is due `k * periodMs` after construction (measured
 // with `performance.now()`), independent of how long the loop body takes. Missed ticks are
 // skipped, not burst: a `tick()` that is already late resolves at once, and the next one is
-// the first schedule point after that. A stop takes effect when the pending tick is due (at
-// most one period later; there is no way to interrupt a sleep).
+// the first schedule point after that. A stop wakes a pending tick at once: its sleep races the
+// stop signal (velt:task), and the losing sleep is cancelled.
 export class Ticker {
   private periodMs: f64;
   private nextDue: f64;
-  private stopped: shared<i64> = shared(0);
+  private control: AbortController = new AbortController();
 
   // A ticker whose first tick is due `periodMs` (>= 1) from now.
   constructor(periodMs: i64) {
@@ -124,26 +126,29 @@ export class Ticker {
     }
     this.nextDue = next;
     const waitMs = due > now ? Math.ceil(due - now) as i64 : 0;
-    return waitTick(waitMs, this.stopped.clone());
+    return waitTick(waitMs, this.control.signal);
   }
 
   // Stops the ticker (see `TickerStop.stop`).
   stop() {
-    this.stopped.set(1);
+    this.control.abort("ticker stopped");
   }
 
   // A handle that stops this ticker from another task.
   stopper(): TickerStop {
-    return new TickerStop(this.stopped.clone());
+    return new TickerStop(this.control);
   }
 }
 
-async function waitTick(ms: i64, stopped: shared<i64>): Promise<bool> {
-  if (stopped.get() != 0) {
+// Sleeps until the tick is due unless `stopped` is aborted first: the race drops the losing
+// runtime wait (the timer or the signal wait), so nothing is left behind to keep the program
+// alive.
+async function waitTick(ms: i64, stopped: AbortSignal): Promise<bool> {
+  if (stopped.aborted) {
     return false;
   }
   if (ms > 0) {
-    await sleep(ms);
+    await Promise.race([sleep(ms), stopped.whenAborted()]);
   }
-  return stopped.get() == 0;
+  return !stopped.aborted;
 }

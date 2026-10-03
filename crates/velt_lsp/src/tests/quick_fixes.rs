@@ -135,6 +135,82 @@ fn replaces_void_zero_and_an_undefined_type_with_null() {
 }
 
 #[test]
+fn makes_a_promise_returning_override_async() {
+    let text = "class Jammed {}
+
+class Machine {
+  async run(): Promise<i64> {
+    throw new Jammed();
+  }
+}
+
+class Idle extends Machine {
+  override run(): Promise<i64> {
+    throw new Jammed();
+  }
+}
+
+async function main() {
+  const m: Machine = new Idle();
+  try {
+    console.log(await m.run());
+  } catch (e) {
+    console.log(\"jammed\");
+  }
+}
+";
+    let (mut client, doc, diags) = open("fix_async.vlt", text);
+    let offered = actions(
+        &mut client,
+        &doc,
+        text,
+        "run(): Promise<i64> {
+    throw new Jammed();
+  }
+}
+
+async",
+        &diags,
+    );
+    let fixed = apply(text, find(&offered, "Add `async`"), &doc);
+    assert!(
+        fixed.contains("override async run(): Promise<i64>"),
+        "{fixed}"
+    );
+    assert_eq!(errors_after(&mut client, &doc, &fixed), [] as [Value; 0]);
+    client.shutdown();
+}
+
+#[test]
+fn no_async_fix_for_a_getter() {
+    let text = "class Jammed {}
+
+interface Reader {
+  get ready(): Promise<bool>;
+}
+
+class R implements Reader {
+  get ready(): Promise<bool> {
+    throw new Jammed();
+  }
+}
+
+async function main() {
+  const r: Reader = new R();
+  console.log(await r.ready);
+}
+";
+    let (mut client, doc, diags) = open("fix_async_getter.vlt", text);
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    let offered = actions(&mut client, &doc, text, "ready(): Promise<bool> {", &diags);
+    assert!(
+        !offered.iter().any(|a| a["title"] == json!("Add `async`")),
+        "{offered:#?}"
+    );
+    client.shutdown();
+}
+
+#[test]
 fn converts_string_concatenation_to_a_template_literal() {
     let text = "function main() {\n  const n = 3;\n  const s = 1 + n + \"a`\" + n + \"!\";\n  console.log(s);\n}\n";
     let (mut client, doc, diags) = open("fix_concat.vlt", text);

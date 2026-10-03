@@ -9,6 +9,7 @@
 use crate::str::VeltStr;
 use std::io;
 use std::mem::MaybeUninit;
+use std::path::Path;
 
 /// Stable error codes (`VeltErr::code`). `std/fs` and `std/net` map them to error classes.
 pub mod code {
@@ -179,6 +180,58 @@ pub fn code_name(c: i32) -> &'static str {
     }
 }
 
+/// Node's description of an error code (libuv's `uv_strerror`), or the operating system's
+/// message without Rust's ` (os error N)` suffix for codes Node has no fixed text for.
+fn describe(e: &io::Error) -> String {
+    let fixed = match code_of(e) {
+        code::NOT_FOUND => "no such file or directory",
+        code::PERMISSION_DENIED => "permission denied",
+        code::ALREADY_EXISTS => "file already exists",
+        code::INVALID_INPUT => "invalid argument",
+        code::NOT_A_DIRECTORY => "not a directory",
+        code::DIRECTORY_NOT_EMPTY => "directory not empty",
+        code::IS_A_DIRECTORY => "illegal operation on a directory",
+        _ => "",
+    };
+    if !fixed.is_empty() {
+        return fixed.to_string();
+    }
+    let text = e.to_string();
+    let text = match text.rfind(" (os error ") {
+        Some(i) if text.ends_with(')') => &text[..i],
+        _ => &text,
+    };
+    // Windows' texts are sentences ("… by another process."); Node's descriptions aren't.
+    let text = text.strip_suffix('.').unwrap_or(text);
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(c) => c.to_lowercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// `e` with Node's message for a failed file-system call: `ENOENT: no such file or directory,
+/// open 'x'` (`rename 'a' -> 'b'` with a destination). The error kind (and so the code) is kept.
+pub fn fs_error(e: io::Error, syscall: &str, path: &Path, dest: Option<&Path>) -> io::Error {
+    let mut msg = format!(
+        "{}: {}, {syscall} '{}'",
+        code_name(code_of(&e)),
+        describe(&e),
+        path.display()
+    );
+    if let Some(d) = dest {
+        msg.push_str(&format!(" -> '{}'", d.display()));
+    }
+    io::Error::new(e.kind(), msg)
+}
+
+/// `e` with Node's message for a failed read or write of an open file, which names no path:
+/// `EISDIR: illegal operation on a directory, read`.
+pub fn op_error(e: io::Error, syscall: &str) -> io::Error {
+    let msg = format!("{}: {}, {syscall}", code_name(code_of(&e)), describe(&e));
+    io::Error::new(e.kind(), msg)
+}
+
 /// Write the Node-style name of `code` (a static string: `cap == 0`, nothing to free) to `out`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_err_code_name(code: i32, out: *mut VeltStr) {
@@ -210,5 +263,43 @@ mod tests {
         unsafe { crate::str::velt_rt_str_drop(&mut m) };
         let ok: IoResult<u8> = IoResult::from_io(Ok(7u8), |v| v + 1);
         assert_eq!((ok.err.code, unsafe { ok.value.assume_init() }), (0, 8));
+    }
+
+    #[test]
+    fn node_style_fs_messages() {
+        let e = io::Error::from(io::ErrorKind::NotFound);
+        let e = fs_error(e, "unlink", Path::new("x"), None);
+        assert_eq!(e.kind(), io::ErrorKind::NotFound);
+        assert_eq!(
+            e.to_string(),
+            "ENOENT: no such file or directory, unlink 'x'"
+        );
+        let e = io::Error::from(io::ErrorKind::AlreadyExists);
+        let e = fs_error(e, "rename", Path::new("a"), Some(Path::new("b")));
+        assert_eq!(
+            e.to_string(),
+            "EEXIST: file already exists, rename 'a' -> 'b'"
+        );
+        let e = io::Error::other("Something odd (os error 5)");
+        let e = fs_error(e, "open", Path::new("f"), None);
+        assert_eq!(e.to_string(), "UNKNOWN: something odd, open 'f'");
+        // Windows error 32 (ERROR_SHARING_VIOLATION) as Rust displays it.
+        let text = concat!(
+            "The process cannot access the file because it is being used by another process.",
+            " (os error 32)"
+        );
+        let e = fs_error(io::Error::other(text), "open", Path::new("x"), None);
+        assert_eq!(
+            e.to_string(),
+            concat!(
+                "UNKNOWN: the process cannot access the file because it is being used by another",
+                " process, open 'x'"
+            )
+        );
+        let e = op_error(io::Error::from(io::ErrorKind::IsADirectory), "read");
+        assert_eq!(
+            e.to_string(),
+            "EISDIR: illegal operation on a directory, read"
+        );
     }
 }

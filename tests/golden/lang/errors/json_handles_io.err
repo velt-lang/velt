@@ -1,0 +1,8 @@
+json_handles_io.vlt:9:10: error: cannot convert to or from JSON: `TcpStream` has a private field `runtime`, so it has no JSON form
+json_handles_io.vlt:9:30: error: cannot convert to or from JSON: `FileWriter` has a private field `runtime`, so it has no JSON form
+json_handles_io.vlt:13:13: error: cannot convert to or from JSON: `TcpListener` has a private field `runtime`, so it has no JSON form
+json_handles_io.vlt:14:13: error: cannot convert to or from JSON: `TcpStream` has a private field `runtime`, so it has no JSON form
+json_handles_io.vlt:15:13: error: cannot convert to or from JSON: `FileReader` has a private field `runtime`, so it has no JSON form
+json_handles_io.vlt:16:13: error: cannot convert to or from JSON: `UdpSocket` has a private field `runtime`, so it has no JSON form
+json_handles_io.vlt:17:13: error: cannot convert to or from JSON: `ChildProcess` has a private field `runtime`, so it has no JSON form
+json_handles_io.vlt:18:13: error: cannot convert to or from JSON: `Channel<i64>` has a private field `runtime`, so it has no JSON form

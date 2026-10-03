@@ -1,13 +1,13 @@
 //! `velt_rt_latch_*` on the current-thread executor: the one-shot latch behind
 //! `new Promise((resolve, reject) => …)` (see velt_rt's task/latch.rs). One thread, so a flag
-//! and one waker slot per pending wait (replaced only when it would wake another task, freed
-//! when the wait is dropped, reused by the next wait).
+//! and one waker slot per pending wait (waiters.rs).
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::sync::Arc;
-use std::task::{Context, Poll, Waker};
+use std::task::{Context, Poll};
 
 use super::leaf::new_leaf;
+use super::waiters::{Slot, Waiters};
 use super::VeltFut;
 use crate::handle::Handle;
 
@@ -15,49 +15,18 @@ use crate::handle::Handle;
 #[derive(Default)]
 pub struct Latch {
     open: Cell<bool>,
-    /// One slot per pending wait (`None`: free).
-    waiters: RefCell<Vec<Option<Waker>>>,
-    free: RefCell<Vec<usize>>,
+    waiters: Waiters,
 }
 
 /// A pending wait's slot in its latch; freed when the wait is dropped.
 struct Waiter {
     latch: Arc<Latch>,
-    slot: Option<usize>,
-}
-
-impl Waiter {
-    fn register(&mut self, w: &Waker) {
-        let mut ws = self.latch.waiters.borrow_mut();
-        match self.slot {
-            Some(i) => {
-                if !ws[i].as_ref().is_some_and(|old| old.will_wake(w)) {
-                    ws[i] = Some(w.clone());
-                }
-            }
-            None => {
-                let i = match self.latch.free.borrow_mut().pop() {
-                    Some(i) => i,
-                    None => {
-                        ws.push(None);
-                        ws.len() - 1
-                    }
-                };
-                ws[i] = Some(w.clone());
-                self.slot = Some(i);
-            }
-        }
-    }
+    slot: Slot,
 }
 
 impl Drop for Waiter {
     fn drop(&mut self) {
-        if let Some(i) = self.slot {
-            if let Some(w) = self.latch.waiters.borrow_mut().get_mut(i) {
-                *w = None;
-            }
-            self.latch.free.borrow_mut().push(i);
-        }
+        self.slot.release(&self.latch.waiters);
     }
 }
 
@@ -86,15 +55,7 @@ pub unsafe extern "C" fn velt_rt_latch_free(h: Handle<Latch>) {
 pub unsafe extern "C" fn velt_rt_latch_open(h: Handle<Latch>) {
     let l = h.obj();
     if !l.open.replace(true) {
-        let ws: Vec<Waker> = l
-            .waiters
-            .borrow_mut()
-            .iter_mut()
-            .filter_map(Option::take)
-            .collect();
-        for w in ws {
-            w.wake();
-        }
+        l.waiters.wake_all();
     }
 }
 
@@ -106,13 +67,13 @@ pub unsafe extern "C" fn velt_rt_latch_open(h: Handle<Latch>) {
 pub unsafe extern "C" fn velt_rt_latch_wait(h: Handle<Latch>) -> *mut VeltFut {
     let mut waiter = Waiter {
         latch: h.clone_arc(),
-        slot: None,
+        slot: Slot::default(),
     };
     new_leaf(move |cx: &mut Context<'_>| {
         if waiter.latch.open.get() {
             return Poll::Ready(());
         }
-        waiter.register(cx.waker());
+        waiter.slot.register(&waiter.latch.waiters, cx.waker());
         Poll::Pending
     })
 }
@@ -121,6 +82,7 @@ pub unsafe extern "C" fn velt_rt_latch_wait(h: Handle<Latch>) -> *mut VeltFut {
 mod tests {
     use super::*;
     use crate::task::{raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, PENDING, READY};
+    use std::task::Waker;
 
     fn poll(f: *mut VeltFut) -> u32 {
         let mut cx = Context::from_waker(Waker::noop());
@@ -138,7 +100,7 @@ mod tests {
                 assert_eq!(poll(a), PENDING);
             }
             assert_eq!(
-                h.obj().waiters.borrow().len(),
+                h.obj().waiters.slots(),
                 1,
                 "one slot however often it is polled"
             );
@@ -146,7 +108,7 @@ mod tests {
             let b = velt_rt_latch_wait(h);
             assert_eq!(poll(b), PENDING);
             assert_eq!(
-                h.obj().waiters.borrow().len(),
+                h.obj().waiters.slots(),
                 1,
                 "the dropped wait's slot is reused"
             );

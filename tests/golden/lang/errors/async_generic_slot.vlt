@@ -1,0 +1,37 @@
+// An interface or base method returning a type parameter is called through one entry for every
+// type argument, and that entry throws (#309): an `async` implementation for a promise type
+// argument would reject instead, so it is an error when it can fail.
+class Box<T> {
+  value: T;
+
+  constructor(value: T) {
+    this.value = value;
+  }
+
+  get(): T {
+    return this.value;
+  }
+}
+
+class Failing extends Box<Promise<i64>> {
+  override async get(): Promise<i64> {
+    throw new Error("empty");
+  }
+}
+
+interface Getter<T> {
+  get(): T;
+}
+
+class G implements Getter<Promise<i64>> {
+  async get(): Promise<i64> {
+    throw new Error("empty");
+  }
+}
+
+async function main() {
+  const b: Box<Promise<i64>> = new Failing(new Promise<i64>((resolve, reject) => resolve(1)));
+  console.log(await b.get());
+  const g: Getter<Promise<i64>> = new G();
+  console.log(await g.get());
+}

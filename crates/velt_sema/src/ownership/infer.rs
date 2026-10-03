@@ -46,7 +46,18 @@ pub(crate) fn infer_modes(cx: &mut Ctx) {
     while let Some(d) = work.next_body() {
         visits += 1;
         if visits > cap {
-            debug_assert!(false, "ICE: ownership inference does not settle");
+            // Reported in every build: bodies not visited again keep modes that are too weak,
+            // which would surface as confusing errors in unrelated code.
+            let info = cx.fn_info(d);
+            let e = Diagnostic::error(
+                format!(
+                    "ICE: ownership inference does not settle (still changing `{}`)",
+                    info.name
+                ),
+                info.name_span,
+            )
+            .with_note("this is a compiler bug; please report it with this program");
+            errors.push((position[&d], e));
             break;
         }
         let before = cx.diags.len();
@@ -95,7 +106,8 @@ pub(super) fn with_body(
 /// Locals moved from (wholly or partially), incl. by escaping-closure captures. Soft moves
 /// (async-call arguments, `soft`) do not count: they become clones rather than take ownership.
 /// Neither do strings taken out of a larger value or captured by a closure: they become copies
-/// when the root stays alive (`super::strings`), so `return this.name` borrows `this`.
+/// when the root stays alive (`super::strings`), so `return this.name` borrows `this`; nor do
+/// fields taken out of a class instance, which become shares.
 fn moved_roots(cx: &Ctx, b: &mut Block, soft: &HashSet<Span>) -> HashSet<LocalId> {
     let mut out = HashSet::new();
     visit::exprs_mut(b, &mut |e: &mut Expr| match &e.kind {
@@ -121,6 +133,10 @@ fn moved_roots(cx: &Ctx, b: &mut Block, soft: &HashSet<Span>) -> HashSet<LocalId
         _ if soft.contains(&e.span) && super::soft::is_moved_place(e) => {}
         E::Field { .. } | E::UnwrapSome(..) | E::UnwrapVariant { .. }
             if cx.is_string_value(e.ty) => {}
+        // A field can't leave a class instance: the move becomes a share (`super::validate`),
+        // so it takes nothing from the root (`get signal() { return this.ctl.sig; }` borrows
+        // `this`).
+        E::Field { .. } | E::UnwrapSome(..) | E::UnwrapVariant { .. } if through_class(cx, e) => {}
         E::Local(l, UseMode::Move) => {
             out.insert(*l);
         }
@@ -150,6 +166,22 @@ fn moved_roots(cx: &Ctx, b: &mut Block, soft: &HashSet<Span>) -> HashSet<LocalId
         _ => {}
     });
     out
+}
+
+/// Does place `e` lie inside a class instance (a field reached through one)?
+fn through_class(cx: &Ctx, e: &Expr) -> bool {
+    let mut cur = e;
+    loop {
+        cur = match &cur.kind {
+            E::Field { base, .. }
+            | E::UnwrapSome(base, _)
+            | E::UnwrapVariant { expr: base, .. } => base,
+            _ => return false,
+        };
+        if cx.class_of(cur.ty).is_some() {
+            return true;
+        }
+    }
 }
 
 fn infer_body(cx: &mut Ctx, d: DefId, f: &mut FnDef) -> bool {
@@ -221,28 +253,15 @@ impl Flip<'_> {
         any
     }
 
+    /// Move the matched place. Reports a change only when its mode really changes (an array
+    /// element `xs[i]` included), or the fixpoint never settles; a module constant (no mode)
+    /// is left alone.
     fn consume(&mut self, scrutinee: &mut Expr) {
-        if is_place(scrutinee) && !place_moved(scrutinee) {
+        if current_mode(scrutinee).is_some_and(|m| m != UseMode::Move) {
             set_place_mode(scrutinee, UseMode::Move);
             self.changed = true;
         }
     }
-}
-
-fn place_moved(e: &Expr) -> bool {
-    matches!(
-        e.kind,
-        E::Local(_, UseMode::Move)
-            | E::Field {
-                mode: UseMode::Move,
-                ..
-            }
-            | E::UnwrapSome(_, UseMode::Move)
-            | E::UnwrapVariant {
-                mode: UseMode::Move,
-                ..
-            }
-    )
 }
 
 struct PatFn<'a>(&'a mut dyn FnMut(&mut Pat));

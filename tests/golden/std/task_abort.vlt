@@ -1,0 +1,101 @@
+// velt:task: an AbortController stops cooperative work (checked with `throwIfAborted()`, or
+// raced with `whenAborted()`), also in a spawned task sharing the signal; `AbortSignal.timeout`
+// and `AbortSignal.any` (which keeps its sources alive); `throwIfAborted()` throws
+// `TimeoutError` for a timeout; `timeout(p, ms)` rejects with `TimeoutError` while `p` keeps
+// running.
+import { channel, Channel } from "velt:channel";
+import { AbortController, AbortSignal, AbortError, TimeoutError, timeout } from "velt:task";
+
+async function work(
+  name: string,
+  steps: i64,
+  signal: AbortSignal,
+): Promise<string> throws AbortError {
+  for (let i = 0; i < steps; i++) {
+    signal.throwIfAborted();
+    await sleep(10);
+  }
+  return `${name} done`;
+}
+
+async function stopped(signal: AbortSignal): Promise<string> {
+  await signal.whenAborted();
+  return `stopped: ${signal.reason}`;
+}
+
+async function slow(ms: i64): Promise<string> {
+  await sleep(ms);
+  console.log("slow", ms, "finished");
+  return `slow ${ms}`;
+}
+
+// Finishes once `release` receives a value, then reports on `done`: it outlasts any timeout.
+async function held(release: Channel<bool>, done: Channel<bool>): Promise<string> {
+  await release.receive();
+  console.log("held finished");
+  await send(done);
+  return "held";
+}
+
+async function send(ch: Channel<bool>): Promise<void> {
+  try {
+    await ch.send(true);
+  } catch (e) {
+    console.log("send failed");
+  }
+}
+
+async function main() {
+  const ac = new AbortController();
+  const job = work("job", 100, ac.signal);
+  await sleep(35);
+  ac.abort("user cancelled");
+  try {
+    console.log(await job);
+  } catch (e) {
+    console.log("aborted:", e.message);
+  }
+
+  const shutdown = new AbortController();
+  const worker = spawn(stopped(shutdown.signal));
+  await sleep(10);
+  shutdown.abort();
+  console.log(await worker);
+
+  // Long enough that `before:` is always read first.
+  const t = AbortSignal.timeout(1000);
+  console.log("before:", t.aborted, t.reason == "");
+  await t.whenAborted();
+  console.log("after:", t.aborted, t.reason);
+
+  const a = new AbortController();
+  const both = AbortSignal.any([a.signal, AbortSignal.timeout(1000)]);
+  a.abort("first");
+  a.abort("ignored");
+  console.log("any:", both.aborted, both.reason);
+
+  // Only the derived signal holds this timeout signal, and it still fires through it.
+  const later = AbortSignal.any([new AbortController().signal, AbortSignal.timeout(20)]);
+  await later.whenAborted();
+  console.log("any of a timeout:", later.aborted, later.reason);
+  try {
+    later.throwIfAborted();
+  } catch (e) {
+    console.log("throwIfAborted:", e.message);
+  }
+
+  console.log(await timeout(slow(10), 100));
+  // `p` finishes only after the timeout rejected, and is waited for.
+  const release = channel<bool>();
+  const done = channel<bool>();
+  try {
+    console.log(await timeout(held(release, done), 30));
+  } catch (e) {
+    console.log("timeout:", e.message, e.ms);
+  }
+  await send(release);
+  await done.receive();
+  release.close();
+  done.close();
+  console.log("done");
+}

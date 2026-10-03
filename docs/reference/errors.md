@@ -16,6 +16,9 @@ compiler knows exactly what each function and each `try` block can throw.
 - A written clause bounds the body
   (``` `load` throws `Timeout`, which its `throws` clause does not allow ```; a subclass is
   allowed by its base class) and is the function's error type even when the body throws less.
+- Field initializers may throw: `new C(…)` (and a struct literal that leaves the field out)
+  evaluates them, so it throws what they throw, including inherited ones, besides what the
+  constructor throws.
 - Methods, constructors (`constructor(x: T) throws E`), arrows (`(x: T): R throws E => …`) and
   async functions (`async function f(): Promise<T> throws E`, see [Async](async.md#errors))
   take a `throws` clause; `declare function` cannot.
@@ -29,6 +32,10 @@ compiler knows exactly what each function and each `try` block can throw.
   it.
 - `throw e;` rethrows; a narrowed `e` rethrows just that member.
 - `catch { … }` without a binding and `finally` (which runs on every path) work as in JS.
+- A `finally` runs after the `return`, `break`, `continue` or throw that leaves its `try`, so it
+  sees what they took: an object, array or string passed on before is shared and still usable
+  there. A value that can't be shared, such as a promise, is gone once a `return` hands it on,
+  and using it in the `finally` is ``use of moved value``.
 - `instanceof` cannot tell apart subclasses of a member (a downcast); make the subclasses
   members of the union instead.
 
@@ -43,7 +50,8 @@ cannot throw.
 - Interface methods and overridden methods share one error type per method: the interface's (or
   base method's) `throws` clause bounds every implementation
   (``` `Db.get` throws `Forbidden`, but `Store.get` does not allow it ```); without one it is the
-  union of what the implementations throw.
+  union of what the implementations throw. For an interface method returning a promise it is
+  what the promise rejects with ([Async](async.md#errors)).
 - **Higher-order functions** propagate their callback's errors by being generic over them:
   `function run<E>(f: () => i64 throws E): i64 throws E`. The prelude's array methods
   (`forEach`, `map`, `filter`, `reduce`, `find`, `findIndex`, `some`, `every`), `Map` methods
@@ -59,8 +67,11 @@ nothing; `null` means success).
 
 ## Uncaught errors and panics
 
-- An error escaping `main` prints `Uncaught <Type>: <message> at file:line:col` to stderr and
-  exits with code 1.
+- An error escaping `main` prints `Uncaught <Class>: <message> at file:line:col` to stderr and
+  exits with code 1. `<Class>` is the error's actual class (an `IoError` thrown through a
+  function declared `throws Error` prints `IoError`), and the location is where it was thrown;
+  for an error thrown inside the standard library, it is the line of your code that called
+  into it.
 - **Panics** are bugs, not errors: an index out of bounds, integer division by zero,
   `panic(msg)`, a failed `assert`. They print `panic: … at file:line:col` and exit with code
   101. They cannot be caught.
@@ -71,7 +82,8 @@ nothing; `null` means success).
 
 A closure created inside a recursive function that it calls, and a `catch` or promise whose
 error type depends on a function still being checked through recursion, may need a `throws`
-clause (``` the error type of this function is not known yet ```). Error types of interface and
+clause (``` the error type of this function is not known yet ```); when the recursion goes
+through an interface value, the `throws` clause goes on the interface method. Error types of interface and
 overridden methods cannot depend on type parameters.
 
 ## Example

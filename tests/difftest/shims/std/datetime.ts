@@ -1,6 +1,6 @@
 // Node twin of std/datetime for the differential harness, on JS `Date` (UTC getters,
-// `Date.UTC`, `Date.parse`, `toISOString`, `toUTCString`). The harness runs every program with
-// `TZ=UTC`, so the local-time API is UTC on both sides. Pattern formatting, month arithmetic and
+// `Date.UTC`, `Date.parse`, `toISOString`, `toUTCString`). The local-time API uses Node's local
+// zone; the harness runs both sides with `TZ=UTC`. Pattern formatting, month arithmetic and
 // `Duration.toString` have no JS equivalent: they are written from the std/datetime docs.
 
 export class DateTimeError extends Error {}
@@ -9,6 +9,9 @@ const DAY = 86400000;
 const MONTHS = "January February March April May June July August September October November December".split(" ");
 const DAYS = "Sunday Monday Tuesday Wednesday Thursday Friday Saturday".split(" ");
 const pad = (n: number, w: number): string => (n < 0 ? "-" : "") + `${Math.abs(n)}`.padStart(w, "0");
+// `+HH:MM` (or `+HHMM` with an empty `sep`) for an offset in minutes east of UTC.
+const offsetText = (min: number, sep: string): string =>
+  (min < 0 ? "-" : "+") + pad(Math.floor(Math.abs(min) / 60), 2) + sep + pad(Math.abs(min) % 60, 2);
 
 export class DateTime {
   private ms: number;
@@ -27,8 +30,10 @@ export class DateTime {
     t.setUTCHours(h, mi, s, ms);
     return new DateTime(t.getTime());
   }
+  // A date-time without a zone is UTC in std/datetime (JS reads it as local time).
   static parse(s: string): DateTime {
-    const t = Date.parse(s);
+    const zoneless = /[Tt ]\d{2}:\d{2}/.test(s) && !/([Zz]|[+-]\d{2}(:?\d{2})?)$/.test(s);
+    const t = Date.parse(zoneless ? `${s}Z` : s);
     if (Number.isNaN(t)) throw new DateTimeError(`Invalid date: ${s}`);
     return new DateTime(t);
   }
@@ -64,11 +69,16 @@ export class DateTime {
       offsetMinutes: 0,
     };
   }
+  // Node's local zone (the system's, or `TZ`), DST included, like std/datetime's.
   localParts() {
-    return this.parts();
+    return { ...this.shifted().parts(), offsetMinutes: this.localOffsetMinutes };
   }
   get localOffsetMinutes(): number {
-    return 0;
+    return -this.date.getTimezoneOffset() || 0;
+  }
+  // This instant's local wall-clock time, as a UTC `DateTime`.
+  private shifted(): DateTime {
+    return new DateTime(this.ms + this.localOffsetMinutes * 60000);
   }
   get year(): number {
     return this.date.getUTCFullYear();
@@ -101,7 +111,7 @@ export class DateTime {
     return this.date.toISOString();
   }
   toLocalISOString(): string {
-    return this.date.toISOString().replace("Z", "+00:00");
+    return this.shifted().toISOString().replace("Z", offsetText(this.localOffsetMinutes, ":"));
   }
   toUTCString(): string {
     return this.date.toUTCString();
@@ -113,6 +123,10 @@ export class DateTime {
     return this.toISOString();
   }
   format(pattern: string): string {
+    return this.formatAt(pattern, 0);
+  }
+  // `pattern` with this instant's fields, written as being `offset` minutes east of UTC.
+  private formatAt(pattern: string, offset: number): string {
     const p = this.parts();
     const h12 = p.hour % 12 === 0 ? 12 : p.hour % 12;
     const tokens: Record<string, string> = {
@@ -123,12 +137,12 @@ export class DateTime {
       H: `${p.hour}`, HH: pad(p.hour, 2), h: `${h12}`, hh: pad(h12, 2),
       A: p.hour < 12 ? "AM" : "PM", a: p.hour < 12 ? "am" : "pm",
       m: `${p.minute}`, mm: pad(p.minute, 2), s: `${p.second}`, ss: pad(p.second, 2),
-      SSS: pad(p.millisecond, 3), Z: "+00:00", ZZ: "+0000",
+      SSS: pad(p.millisecond, 3), Z: offsetText(offset, ":"), ZZ: offsetText(offset, ""),
     };
     return pattern.replace(/\[([^\]]*)\]?|(.)\2*/g, (run, lit) => lit ?? (Object.hasOwn(tokens, run) ? tokens[run] : run));
   }
   formatLocal(pattern: string): string {
-    return this.format(pattern);
+    return this.shifted().formatAt(pattern, this.localOffsetMinutes);
   }
   addMs(n: number): DateTime {
     return new DateTime(this.ms + n);

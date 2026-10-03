@@ -10,12 +10,12 @@
 //! tables (`crate::registry`); in-flight operations hold their own `Arc`, and a released handle
 //! (through any copy of the Velt struct) fails with `EBADF`.
 
-use super::ops::{data_arg, path_arg};
+use super::ops::{data_arg, open, path_arg};
 use crate::bytes::VeltBytes;
 use crate::net::tcp::DEFAULT_READ;
 use crate::net::utf8::Utf8Decoder;
 use crate::registry::{Key, Registry};
-use crate::result::IoResult;
+use crate::result::{fs_error, IoResult};
 use crate::stdin::LineRead;
 use crate::str::VeltStr;
 use crate::task::leaf::{blocking_leaf, new_leaf, run_blocking};
@@ -55,7 +55,9 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 pub unsafe extern "C" fn velt_rt_fs_open_read(path: *const VeltStr) -> *mut VeltFut {
     let p = path_arg(path);
     blocking_leaf(move || {
-        IoResult::from_io(File::open(p), |f| {
+        let opened =
+            open(&p, OpenOptions::new().read(true)).map_err(|e| fs_error(e, "open", &p, None));
+        IoResult::from_io(opened, |f| {
             READERS.insert(ReaderObj {
                 inner: Mutex::new((BufReader::with_capacity(BUFFER, f), Utf8Decoder::default())),
             })
@@ -182,7 +184,8 @@ pub unsafe extern "C" fn velt_rt_fs_open_write(path: *const VeltStr, append: u8)
         } else {
             o.write(true).truncate(true);
         }
-        IoResult::from_io(o.open(p), |f| {
+        let opened = open(&p, &o).map_err(|e| fs_error(e, "open", &p, None));
+        IoResult::from_io(opened, |f| {
             WRITERS.insert(WriterObj {
                 inner: Mutex::new(Some(BufWriter::with_capacity(BUFFER, f))),
             })

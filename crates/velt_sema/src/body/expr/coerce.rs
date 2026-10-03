@@ -2,7 +2,9 @@
 //! `T` → `T | null` (`WrapSome`), member → union, union → wider union and union → a type every
 //! member converts to (`union_coerce`), literal type → its base (`literal_types`), string enum
 //! → `string`, subclass → base class (`Upcast`), concrete type → interface value (`ToDyn`,
-//! moves the value), inferred integer → float (`expr::numbers`), and `never` → anything.
+//! moves the value), inferred integer → float (`expr::numbers`), `never` → anything, and
+//! `Promise<T, E1>` → `Promise<T, E2>` when `E2` allows every error of `E1` (`never` included:
+//! `Promise<T>` → `Promise<T, E>`; `Intrinsic::PromiseWiden`).
 
 use velt_common::Diagnostic;
 
@@ -30,6 +32,14 @@ impl FnCx<'_, '_> {
             || (t.has_error(exp) && self.loosely_equal(exp, h.ty))
         {
             return Ok(h);
+        }
+        if self.widens_promise(h.ty, exp) {
+            let span = h.span;
+            let call = H::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::PromiseWiden),
+                args: vec![h],
+            };
+            return Ok(self.mk(call, exp, span));
         }
         if let Some(inner) = self.cx.ty.opt_payload(exp) {
             if self.cx.ty.opt_payload(h.ty).is_some() && self.cx.union_def(inner).is_some() {
@@ -109,6 +119,18 @@ impl FnCx<'_, '_> {
             }
             (x, y) => x == y,
         }
+    }
+
+    /// `Promise<T, E1>` → `Promise<T, E2>`: the same `T` (the wrapper copies the value as it is),
+    /// and `E2` allows every error `E1` can reject with (an unrelated error type is still a
+    /// mismatch).
+    fn widens_promise(&mut self, from: TyId, to: TyId) -> bool {
+        let (&TyKind::Promise(x, e), &TyKind::Promise(y, f)) =
+            (self.cx.ty.kind(from), self.cx.ty.kind(to))
+        else {
+            return false;
+        };
+        x == y && e != f && self.cx.error_outside(Some(f), Some(e)).is_none()
     }
 
     fn upcast(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {

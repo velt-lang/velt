@@ -9,15 +9,18 @@
 //! is 4 bytes, so each header entry is a [`Wide`] slot (pointer + padding): generated code loads
 //! the slot as 64 bits and truncates, which ignores the padding.
 
+pub mod abort;
 pub mod all;
 pub mod boxed;
 pub mod channel;
 pub mod executor;
+pub mod group;
 pub mod latch;
 pub mod leaf;
 pub mod local;
 pub mod race;
 pub mod spawn;
+pub mod waiters;
 
 use std::ffi::c_void;
 use std::task::Context;

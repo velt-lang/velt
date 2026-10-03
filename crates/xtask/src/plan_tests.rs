@@ -285,3 +285,30 @@ fn the_portable_crates_exist() {
         );
     }
 }
+
+#[test]
+fn the_differential_tester_checks_only_itself() {
+    let p = plan(&[
+        "tests/difftest/src/gen/expr_scalar.rs",
+        "tests/difftest/corpus/knapsack.vlt",
+    ]);
+    assert!(!p.full);
+    assert!(p.difftest);
+    assert!(!p.rust, "no workspace clippy");
+    assert!(!p.needs_build(), "no workspace build");
+    assert_eq!(p.filterset(), None);
+    assert_eq!(p.goldens, Goldens::None);
+    assert_eq!(p.other_os, None);
+    // Its manifest too: the crate is outside the workspace, so it can't change other crates.
+    assert!(plan(&["tests/difftest/Cargo.toml"]).difftest);
+    // Workspace changes leave it alone; everything includes it.
+    assert!(!plan(&["crates/velt_syntax/src/lexer.rs"]).difftest);
+    assert!(plan(&["Cargo.lock"]).difftest);
+}
+
+/// The differential tester's manifest exists where the rule says.
+#[test]
+fn the_differential_tester_exists() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    assert!(root.join(DIFFTEST).join("Cargo.toml").is_file());
+}

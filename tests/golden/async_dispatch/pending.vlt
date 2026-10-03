@@ -1,0 +1,77 @@
+// check: no leaks
+// Several calls through dynamic dispatch in flight at once on the same receiver: the promises
+// are stored (in locals and an array) and awaited later, after the receiver's own variable is
+// gone or reassigned. Each pending call must keep the receiver alive, and every mutation must
+// land on the one shared object. Includes a rejection surfacing from `Promise.all`.
+class Closed extends Error {}
+
+interface Door {
+  knock(n: i64): Promise<i64> throws Closed;
+}
+
+class House implements Door {
+  name: string = "a house name long enough to live on the heap";
+  knocks: i64 = 0;
+
+  async knock(n: i64): Promise<i64> throws Closed {
+    await sleep(1);
+    if (n < 0) {
+      throw new Closed(`${this.name} ignores ${n}`);
+    }
+    this.knocks += n;
+    return n; // not `this.knocks`: the calls may finish in any order
+  }
+}
+
+class Bell {
+  rings: i64 = 0;
+
+  async ring(): Promise<i64> {
+    await sleep(1);
+    this.rings += 1;
+    return this.rings;
+  }
+}
+
+class LoudBell extends Bell {
+  override async ring(): Promise<i64> {
+    return (await super.ring()) * 100;
+  }
+}
+
+function start(d: Door, ns: i64[]): Promise<i64, Closed>[] {
+  const ps: Promise<i64, Closed>[] = [];
+  for (const n of ns) {
+    ps.push(d.knock(n)); // the receiver is a borrowed parameter; each promise keeps its own
+  }
+  return ps;
+}
+
+async function main() {
+  const h = new House();
+  let d: Door = h;
+  const first = d.knock(1);
+  const second = d.knock(2);
+  d = new House(); // the interface variable no longer refers to `h`
+  console.log("stored", (await first) + (await second), h.knocks);
+
+  const ok = await Promise.all(start(h, [1, 2, 3]));
+  console.log("all", ok.join(","), h.knocks);
+  try {
+    await Promise.all(start(h, [10, -1, 20]));
+    console.log("not reached");
+  } catch (e) {
+    console.log("all caught", e.message);
+  }
+  // `Promise.all` rejects as soon as one call does; the others may still be in flight: wait
+  // until they have landed on `h` (the loop ends only if they do).
+  while (h.knocks < 39) {
+    await sleep(1);
+  }
+  console.log("after", h.knocks, await d.knock(0));
+
+  const b: Bell = new LoudBell();
+  const rings = [b.ring(), b.ring()];
+  const results = await Promise.all(rings);
+  console.log("virtual", results[0] + results[1], await b.ring()); // 100 + 200 in any order
+}

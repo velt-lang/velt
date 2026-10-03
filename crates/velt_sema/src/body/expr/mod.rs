@@ -32,6 +32,7 @@ mod object;
 mod object_keys;
 mod ops;
 mod ordering;
+mod process;
 mod promise_new;
 mod record;
 mod record_call;

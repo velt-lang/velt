@@ -83,12 +83,19 @@ pub enum Intrinsic {
     /// std only: `__intrinsic_chan_receive<T>(ch: u64): Promise<T | null>` — the oldest value,
     /// or null once the channel is closed and drained.
     ChanReceive,
+    /// std only: `__intrinsic_chan_try_send<T>(ch: u64, value: T): bool` — moves `value` into
+    /// the channel if it has room; false (and `value` dropped) if it is full or closed.
+    ChanTrySend,
     /// std only: `__intrinsic_chan_try_receive<T>(ch: u64): T | null` — the oldest value if one
     /// is queued.
     ChanTryReceive,
     /// Compiler-internal (no source syntax): the location of the call's span as a string,
     /// `"path:line:col"` (the site of a `new Promise`, std/prelude/promise.vlt).
     SourceLocation,
+    /// Compiler-internal (no source syntax): `p: Promise<T, E1>` as a `Promise<T, E2>` whose error
+    /// set contains `E1`'s (an implicit conversion, `coerce.rs`): a lazy wrapper that widens
+    /// the rejection.
+    PromiseWiden,
     /// `performance.now(): f64`
     PerfNow,
     /// `Date.now(): i64`

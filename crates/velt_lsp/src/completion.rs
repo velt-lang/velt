@@ -1,5 +1,5 @@
-//! Completion. After `receiver.`: the members of the receiver's type (`this` → the enclosing
-//! class). Elsewhere: locals in scope, the module's items, imported names, prelude items, built-in
+//! Completion. In JSX: tags and attributes ([`jsx_completion`]). After `receiver.`: the members
+//! of the receiver's type (`this` → the enclosing class). Elsewhere: locals in scope, the module's items, imported names, prelude items, built-in
 //! globals and keywords. The receiver is read from the text (while typing `x.` the statement usually
 //! does not parse) and looked up among the names sema sees at the cursor; the AST index answers
 //! when sema has no analysis or does not know the name.
@@ -13,7 +13,7 @@ use crate::analysis::Analysis;
 use crate::index::scope;
 use crate::index::{self, Decl, DeclKind};
 use crate::signature;
-use crate::{definition, sema_query};
+use crate::{definition, jsx_completion, sema_query};
 
 /// Keywords and built-in type names (whitespace separated).
 const KEYWORDS: &str = "async await break case catch class const constructor continue declare \
@@ -39,8 +39,9 @@ const BUILTINS: &[&str] = &[
     "Map",
 ];
 
-/// Completion items at byte `offset` of the document.
-pub fn complete(analysis: &Analysis, offset: u32) -> Vec<CompletionItem> {
+/// Completion items at byte `offset` of the document; with `jsx_only` (completion triggered by
+/// `<`), nothing outside JSX.
+pub fn complete(analysis: &Analysis, offset: u32, jsx_only: bool) -> Vec<CompletionItem> {
     let text = analysis.text();
     let offset = (offset as usize).min(text.len());
     let word_start = text[..offset]
@@ -50,6 +51,14 @@ pub fn complete(analysis: &Analysis, offset: u32) -> Vec<CompletionItem> {
         .last()
         .map_or(offset, |(i, _)| i);
     let at = word_start as u32;
+    let jsx_start = jsx_completion::word_start(text, offset, word_start);
+    if let Some(ctx) = jsx_completion::context(text, jsx_start) {
+        let replace = (jsx_start < word_start).then_some((jsx_start as u32, offset as u32));
+        return jsx_completion::items(analysis, &ctx, jsx_start as u32, replace);
+    }
+    if jsx_only {
+        return vec![];
+    }
     if let Some(receiver) = receiver_before(&text[..word_start]) {
         if let Some(items) = sema_query::member_items(analysis, receiver, at) {
             return items;

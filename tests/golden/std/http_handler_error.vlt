@@ -1,3 +1,4 @@
+// check: no leaks
 // A request handler that throws (its promise rejects) gets a 500 response; the error is printed
 // to stderr and the server keeps serving.
 import { serve, fetch, Request, Response } from "velt:http";
@@ -16,5 +17,5 @@ async function main() {
   console.log(bad.status, await bad.text());
   const ok = await fetch(`${base}/home`);
   console.log(ok.status, await ok.text());
-  server.close();
+  await server.shutdown();
 }

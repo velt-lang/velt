@@ -101,10 +101,18 @@ impl Moves<'_> {
             ExprKind::Unary { expr, .. }
             | ExprKind::Cast(expr)
             | ExprKind::WrapSome(expr)
-            | ExprKind::Await(expr)
             | ExprKind::Upcast(expr)
-            | ExprKind::ToDyn { expr, .. }
-            | ExprKind::Throw(expr) => self.expr(expr, st),
+            | ExprKind::ToDyn { expr, .. } => self.expr(expr, st),
+            ExprKind::Await(expr) => {
+                self.expr(expr, st);
+                // An awaited promise may reject.
+                self.record_throw(st);
+            }
+            ExprKind::Throw(expr) => {
+                self.expr(expr, st);
+                // The handler (and `finally`) of the enclosing `try` start from here too.
+                self.record_throw(st);
+            }
             ExprKind::Binary { lhs, rhs, .. } => {
                 self.expr(lhs, st);
                 self.expr(rhs, st);
@@ -133,6 +141,8 @@ impl Moves<'_> {
                     self.expr(c, st);
                 }
                 self.operands(args, st);
+                // The call may throw: a handler (and `finally`) can start from here.
+                self.record_throw(st);
             }
             ExprKind::If { cond, then, els } => {
                 self.expr(cond, st);
@@ -145,11 +155,16 @@ impl Moves<'_> {
             ExprKind::AdtLit { fields: xs, .. }
             | ExprKind::Variant { args: xs, .. }
             | ExprKind::ArrayLit(xs)
-            | ExprKind::Tuple(xs)
-            | ExprKind::New { args: xs, .. } => self.operands(xs, st),
+            | ExprKind::Tuple(xs) => self.operands(xs, st),
+            ExprKind::New { args, .. } => {
+                self.operands(args, st);
+                self.record_throw(st);
+            }
             ExprKind::Match { scrutinee, arms } => self.match_arms(scrutinee, arms, st),
         }
         if e.ty == self.never {
+            // Diverging (`panic`, a function that always throws): a throw point.
+            self.record_throw(st);
             *st = None;
         }
     }

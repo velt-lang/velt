@@ -34,6 +34,7 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
             }
             None => generic_group(cx, &g.members),
         }
+        super::conventions::check_group(cx, g);
     }
     let checks = std::mem::take(&mut cx.throw_checks);
     for c in checks {
@@ -42,7 +43,7 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
 }
 
 /// Where in `d`'s body the error `m` comes from.
-fn site_of(cx: &mut Ctx, d: DefId, m: TyId) -> Span {
+pub(super) fn site_of(cx: &mut Ctx, d: DefId, m: TyId) -> Span {
     let srcs = cx.fn_info(d).throw_srcs.clone();
     first_site(cx, &srcs, m).unwrap_or(cx.fn_info(d).name_span)
 }
@@ -178,6 +179,25 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
         return;
     }
     let fs = fin.map_or("nothing".to_string(), |t| format!("`{}`", cx.display(t)));
+    // A call through an interface value: its error type is the interface method's.
+    let slot = c.srcs.iter().find_map(|s| match s {
+        ThrowSrc::Slot { iface, slot, .. } => {
+            let i = cx.iface(*iface)?;
+            let m = i.methods.get(*slot as usize)?;
+            Some((i.name.clone(), m.name.clone()))
+        }
+        _ => None,
+    });
+    let note = match slot {
+        Some((i, m)) => {
+            let e = fin.map_or("E".to_string(), |t| cx.display(t));
+            format!("add a `throws` clause to interface method `{i}.{m}` (`{m}(): T throws {e};`)")
+        }
+        None => {
+            "add a `throws` clause to the functions in the recursion (`function f(): T throws E`)"
+                .into()
+        }
+    };
     cx.error(
         Diagnostic::error(
             format!(
@@ -185,13 +205,11 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
             ),
             c.span,
         )
-        .with_note(
-            "add a `throws` clause to the functions in the recursion (`function f(): T throws E`)",
-        ),
+        .with_note(note),
     );
 }
 
 /// `a.b::C.m` → `C.m`.
-fn short_name(n: &str) -> String {
+pub(super) fn short_name(n: &str) -> String {
     n.rsplit("::").next().unwrap_or(n).to_string()
 }

@@ -93,6 +93,22 @@ pub fn execute(cmd: Command) -> ExitCode {
         } => package::publish(native_artifacts.as_deref(), native_only),
         Command::NativeBuild { target } => package::native_build(target),
         Command::Manifest { json } => package::manifest(json),
+        Command::Yank {
+            name,
+            version,
+            undo,
+        } => registry::yank_command(&name, &version, undo),
+        Command::Owner { action, package } => registry::owner_command(&action, &package),
+        Command::Search { query } => registry::search_command(&query),
+        Command::RegistryOwner {
+            add,
+            package,
+            user,
+            dir,
+        } => registry::admin_owner_command(add, &package, &user, dir.as_ref()),
+        Command::RegistryUser { action, name, dir } => {
+            registry::user_command(action, &name, dir.as_ref())
+        }
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

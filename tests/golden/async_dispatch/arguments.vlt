@@ -1,0 +1,108 @@
+// check: no leaks
+// Objects passed as arguments to async calls made through dynamic dispatch (#182, #195,
+// #196): the callee mutates its object argument and the caller must see the change, also when
+// the argument is shared (refcount > 1) and when the call is the argument's last use in a loop
+// body. The dynamic receivers themselves are passed on to async functions the same way.
+class Full extends Error {}
+
+class Bag {
+  label: string = "a bag label long enough to live on the heap";
+  items: string[] = [];
+}
+
+interface Filler {
+  fill(bag: Bag): Promise<usize>;
+  fillAll(bags: Bag[]): Promise<usize> throws Full;
+}
+
+class Apples implements Filler {
+  async fill(bag: Bag): Promise<usize> {
+    bag.items.push("apple");
+    return bag.items.length;
+  }
+
+  async fillAll(bags: Bag[]): Promise<usize> throws Full {
+    for (const b of bags) {
+      if (b.items.length >= 5) {
+        throw new Full(`${b.label} has ${b.items.length}`);
+      }
+      b.items.push("apple");
+    }
+    return bags.length;
+  }
+}
+
+class Packer {
+  async pack(bag: Bag): Promise<usize> {
+    bag.items.push("box");
+    return bag.items.length;
+  }
+}
+
+class GiftPacker extends Packer {
+  override async pack(bag: Bag): Promise<usize> {
+    bag.items.push("ribbon");
+    return await super.pack(bag);
+  }
+}
+
+// The interface value is passed on to an async function; inside the loop that call is the
+// last use of `f` in the body, and `f` has a concrete alias.
+async function useFiller(f: Filler, bag: Bag): Promise<usize> {
+  return await f.fill(bag);
+}
+
+async function interfaceArgs(): Promise<void> {
+  const apples = new Apples();
+  const f: Filler = apples;
+  const bag = new Bag();
+  const alias = bag;
+  for (let i = 0; i < 2; i++) {
+    await f.fill(bag); // the last use of `bag` in the loop body
+  }
+  for (let i = 0; i < 2; i++) {
+    await useFiller(f, alias);
+  }
+  console.log("interface", bag.items.length, alias.items.length);
+
+  const bags = [new Bag(), bag];
+  try {
+    console.log("fillAll", await f.fillAll(bags));
+    console.log("fillAll", await f.fillAll(bags));
+  } catch (e) {
+    console.log("fillAll caught", e.message);
+  }
+  console.log("after fillAll", bags[0].items.length, bag.items.length);
+
+  const byKind = new Map<string, Filler>();
+  byKind.set("apples", f);
+  const fillers: Filler[] = [f, new Apples()];
+  for (let i = 0; i < 2; i++) {
+    const g = byKind.get("apples");
+    if (g != null) {
+      await useFiller(g, bags[0]);
+    }
+    await useFiller(fillers[i], bags[0]);
+  }
+  console.log("holders", bags[0].items.join(","));
+}
+
+async function virtualArgs(): Promise<void> {
+  const packers: Packer[] = [new Packer(), new GiftPacker()];
+  const bag = new Bag();
+  for (let round = 0; round < 2; round++) {
+    for (const p of packers) {
+      await p.pack(bag);
+    }
+  }
+  console.log("virtual", bag.items.join(","));
+  const p: Packer = new GiftPacker();
+  const shared = new Bag();
+  const again = shared;
+  console.log("virtual alias", await p.pack(shared), await p.pack(again), shared.items.length);
+}
+
+async function main() {
+  await interfaceArgs();
+  await virtualArgs();
+}

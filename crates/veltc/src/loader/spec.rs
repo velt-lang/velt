@@ -39,8 +39,11 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
             "standard library modules are imported as `velt:{rel}` (not `{spec}`)"
         ));
     }
+    if spec == "std" {
+        return Err("standard library modules are imported as `velt:x` (`velt:fs`)".into());
+    }
     if let Some(rel) = spec.strip_prefix("velt:") {
-        if !is_clean_subpath(rel) {
+        if !is_std_subpath(rel) {
             return Err(format!("invalid standard library module `{spec}`"));
         }
         return Ok(ModuleRef::Std {
@@ -80,6 +83,17 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
     })
 }
 
+/// A standard library module path: `/`-separated segments of `[a-z0-9_-]`. Nothing else may
+/// reach `std_root.join(rel)`: on Windows `C:/x` or `..\x` would leave the std root.
+fn is_std_subpath(rel: &str) -> bool {
+    !rel.is_empty()
+        && rel.split('/').all(|s| {
+            !s.is_empty()
+                && s.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+        })
+}
+
 /// Non-empty `/`-separated segments without `.`/`..`.
 fn is_clean_subpath(rel: &str) -> bool {
     !rel.is_empty()
@@ -91,6 +105,39 @@ fn is_clean_subpath(rel: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn std_specs_stay_inside_the_std_root() {
+        let dir = Path::new("proj");
+        for spec in [
+            "velt:C:/Users/me/evil",
+            "velt:..\\..\\proj\\evil",
+            "velt:..\\prelude\\evil",
+            "velt:a\\b",
+            "velt:/etc/x",
+            "velt:../x",
+            "velt:a/./b",
+            "velt:Fs",
+            "velt:a.b",
+            "velt:a b",
+            "velt:",
+        ] {
+            let err = resolve_spec(spec, dir).unwrap_err();
+            assert!(
+                err.contains("invalid standard library module"),
+                "{spec}: {err}"
+            );
+        }
+        for spec in [
+            "velt:jsx/jsx-runtime",
+            "velt:collections/priority_queue",
+            "velt:fs2",
+        ] {
+            assert!(resolve_spec(spec, dir).is_ok(), "{spec}");
+        }
+        let err = resolve_spec("std", dir).unwrap_err();
+        assert!(err.contains("`velt:x`"), "{err}");
+    }
 
     #[test]
     fn classify_specs() {

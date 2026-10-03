@@ -68,7 +68,7 @@ Using it from another package:
 
 ```sh
 cd ../app
-velt add textkit                    # the latest version, into package.vlt and velt.lock
+velt add textkit                    # the latest version, into package.vlt and velt.lock.json
 velt add util --path ../util        # or a package from a local directory
 ```
 
@@ -77,9 +77,9 @@ import { slugify } from "textkit";             // the package's src/lib.vlt
 import { wrap } from "textkit/format";         // its src/format.vlt
 ```
 
-`velt install` resolves dependencies and writes `velt.lock` with exact versions and content
+`velt install` resolves dependencies and writes `velt.lock.json` with exact versions and content
 hashes; `velt install --locked` (also on `build`, `run` and `test`) fails instead of changing
-the lockfile, for reproducible builds. Commit `velt.lock` for applications.
+the lockfile, for reproducible builds. Commit `velt.lock.json` for applications.
 
 ## Documenting a library
 

@@ -52,9 +52,7 @@ impl Analysis {
 
     /// Whether module `module` belongs to the standard library (prelude included).
     pub fn is_std(&self, module: usize) -> bool {
-        self.modules
-            .get(module)
-            .is_some_and(|m| m.path.starts_with("std/"))
+        self.modules.get(module).is_some_and(|m| m.is_std)
     }
 
     /// Index of the module with canonical path `path`.
@@ -124,6 +122,7 @@ fn standalone(path: &Path, overlay: &HashMap<PathBuf, String>, msg: String) -> A
     diagnostics.push(Diagnostic::error(msg, Span::new(file, 0, 0)));
     let module = SourceModule {
         path: "main".into(),
+        is_std: false,
         file,
         ast,
         imports: vec![],

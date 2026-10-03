@@ -91,13 +91,16 @@ pub(crate) fn shared_captures(cx: &mut Ctx, c: DefId) -> Vec<LocalId> {
         .collect()
 }
 
-/// Make the by-value captures of shared values of closure `c` shares (the enclosing variables
-/// stay usable).
-pub(crate) fn share_captures(cx: &mut Ctx, c: DefId) {
+/// Make closure `c`'s by-value captures of the shared values of `outer` (enclosing variables)
+/// shares: those variables stay usable, and the closure's other captures stay moves.
+pub(crate) fn share_captures(cx: &mut Ctx, c: DefId, outer: &[LocalId]) {
     let shared = shared_captures(cx, c);
     if let Some(Def::Fn(f)) = &mut cx.defs[c.0 as usize] {
         for cap in f.captures.iter_mut() {
-            if cap.mode == PassMode::Owned && shared.contains(&cap.outer) {
+            if cap.mode == PassMode::Owned
+                && shared.contains(&cap.outer)
+                && outer.contains(&cap.outer)
+            {
                 cap.share = true;
             }
         }

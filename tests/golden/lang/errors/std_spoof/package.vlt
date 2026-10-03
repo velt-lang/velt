@@ -1,0 +1,7 @@
+import type { Package } from "velt:package";
+
+export const pkg: Package = {
+  name: "std-spoof",
+  version: "0.1.0",
+  paths: { "@evil": "std/evil" },
+};

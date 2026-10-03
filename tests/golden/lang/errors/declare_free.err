@@ -1,0 +1,3 @@
+declare_free.vlt:4:1: error: `declare function free` is not allowed: this program is not in a package with a native library
+  = note: outside the standard library, `declare function` may only name an export of the package's own native library
+  = note: to call C code, give the package a native library (`native` in package.vlt; see Packages with native code), or use the standard library's API

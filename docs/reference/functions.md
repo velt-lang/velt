@@ -25,6 +25,27 @@ separately, so there is no boxing and bounds resolve to direct calls. Type argum
 inferred or given explicitly (`f<f64>(2)`). Bounds are interfaces
 ([Generics](classes.md#generics)).
 
+Type arguments are inferred from the arguments first and, as in TypeScript, from the expected
+type of the call (an annotated variable, a return statement, a typed parameter) second. The
+expected type types the arguments of type parameters it fixes, before an untyped number
+literal falls back to `i64`; where an argument's own type disagrees, the argument decides:
+
+```ts
+import { Set } from "velt:collections/set";
+
+function id<T>(x: T): T {
+  return x;
+}
+
+function main() {
+  const y: i32 = id(1); // T = i32
+  const z: f64 = id(2); // T = f64
+  const s: Set<u8> = new Set([1, 2]); // T = u8
+  const c: Map<string, u16> = new Map([["a", 1]]);
+  console.log(y, z, s.size, c.get("a"));
+}
+```
+
 Because each instantiation is compiled, a generic function may call itself (directly or
 through other generic functions) with the same type arguments, but not with growing ones:
 `f<T>` calling `f<T[]>` would need `f<T[][]>`, `f<T[][][]>` and so on without end. The
@@ -66,7 +87,11 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   ```
 
 - **Function types** `(x: T) => U` accept closures and named functions alike. One that may
-  throw says so: `(x: T) => U throws E` ([Errors](errors.md#dynamic-calls)).
+  throw says so: `(x: T) => U throws E` ([Errors](errors.md#dynamic-calls)). Calling a named
+  function through a value behaves like calling it directly: an object it keeps or modifies is
+  the caller's object. A function whose parameter takes ownership of a promise (one owner)
+  cannot be a value, and neither can a generic function that keeps a parameter whose type is a
+  promise at the value's type arguments or still depends on a type parameter.
 
 ## Captures
 
@@ -91,7 +116,9 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   only calls it.
 - A closure stored in a variable, field or array, or returned, is **escaping** and captures by
   value: objects are shared with it (the closure and the enclosing code see the same object),
-  numbers and strings are copied. A variable that the closure or the enclosing code assigns
+  numbers and strings are copied. A captured object the enclosing code does not use again moves
+  into the closure, so it is released (and disposed) when the closure is, even if other captures
+  are still used afterwards. A variable that the closure or the enclosing code assigns
   while the other still uses it (`let count = 0; const inc = () => { count++; }; inc();
   console.log(count)`) lives in a shared, reference-counted cell, so both see every change, as
   in JS; a closure that is the only remaining user (a `makeCounter` returning `() => ++n`) keeps

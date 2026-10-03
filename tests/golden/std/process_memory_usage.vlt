@@ -1,0 +1,7 @@
+// `process.memoryUsage()`: the resident set size and the heap's committed memory, in bytes. Both
+// are positive. That touching memory shows up in `rss` is checked by the runtime's unit tests;
+// a 64 MiB variant of this program hangs on Windows debug builds (#297).
+async function main() {
+  const m = process.memoryUsage();
+  console.log(m.rss > 0, m.heapUsed > 0);
+}

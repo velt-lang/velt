@@ -224,6 +224,9 @@ impl FnCx<'_, '_> {
 
     /// `delete operand`: only `delete r[k]` / `delete r.name` on an open record.
     pub(super) fn delete_expr(&mut self, operand: &ast::Expr, span: Span) -> hir::Expr {
+        if self.reject_env_delete(operand) {
+            return self.error_expr(span);
+        }
         let (object, key) = match &operand.kind {
             ast::ExprKind::Index {
                 object,

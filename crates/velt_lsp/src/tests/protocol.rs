@@ -25,16 +25,20 @@ fn initialize_advertises_capabilities() {
     }
     assert_eq!(
         caps["codeActionProvider"]["codeActionKinds"],
-        json!(["quickfix"])
+        json!(["quickfix", "source.fixAll"])
     );
     assert_eq!(
         caps["signatureHelpProvider"]["triggerCharacters"],
         json!(["(", ","])
     );
-    assert_eq!(caps["semanticTokensProvider"]["full"], json!(true));
+    assert_eq!(
+        caps["semanticTokensProvider"]["full"],
+        json!({ "delta": true })
+    );
+    assert_eq!(caps["semanticTokensProvider"]["range"], json!(true));
     assert_eq!(
         caps["completionProvider"]["triggerCharacters"],
-        json!(["."])
+        json!([".", "<", "\""])
     );
     assert_eq!(client.init["serverInfo"]["name"], json!("velt-lsp"));
     client.shutdown();

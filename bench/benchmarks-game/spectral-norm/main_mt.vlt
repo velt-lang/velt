@@ -7,18 +7,6 @@
 import { argv } from "velt:process";
 import { availableParallelism } from "velt:os";
 
-// JS `Number.prototype.toFixed` for the magnitudes printed here (|x| * 10^digits < 2^53).
-extend f64 {
-  toFixed(digits: i64): string {
-    const scale = 10.0 ** (digits as f64);
-    const scaled = Math.round(Math.abs(this) * scale) as i64;
-    const unit = scale as i64;
-    const frac = `${scaled % unit}`.padStart(digits, "0");
-    const sign = this < 0.0 && scaled != 0 ? "-" : "";
-    return `${sign}${scaled / unit}.${frac}`;
-  }
-}
-
 // Entry (i, j) of the infinite matrix A.
 function a(i: i64, j: i64): f64 {
   return (((i + j) * (i + j + 1)) / 2 + i + 1) as f64;

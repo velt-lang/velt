@@ -5,6 +5,7 @@
 #![allow(dead_code, unused_imports)]
 
 pub mod hir_walk;
+pub mod process_work;
 pub mod programs;
 
 use std::cell::Cell;
@@ -418,6 +419,7 @@ pub fn func(name: &str, params: &[(&str, &str)], ret: Option<&str>, body: Vec<St
 pub fn run(items: Vec<Item>) -> (Option<hir::Program>, Diagnostics) {
     let m = SourceModule {
         path: "main".into(),
+        is_std: false,
         file: FileId(0),
         ast: Module {
             items,

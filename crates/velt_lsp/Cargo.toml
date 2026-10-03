@@ -8,7 +8,13 @@ velt_common.workspace = true
 velt_syntax.workspace = true
 velt_sema.workspace = true
 velt_fmt.workspace = true
+vpm.workspace = true
 lsp-server = "0.10.0"
 lsp-types = "0.95"
 serde_json = "1.0.151"
 serde = "1.0.229"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+velt_http = { path = "../velt_http" }
+velt_registry = { path = "../velt_registry" }

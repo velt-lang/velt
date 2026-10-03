@@ -62,12 +62,16 @@ pub(crate) struct Ctx<'m> {
     /// Functions whose parameter defaults are checked (or being checked): they are checked on
     /// first use, since a field default or constant may call with fewer arguments.
     pub defaults_checked: HashSet<DefId>,
+    /// Types whose field defaults are checked (or being checked): checked up front, or on first
+    /// use by a `new` or struct literal in a default checked before them.
+    pub field_defaults_checked: HashSet<DefId>,
     /// Closure counters per top-level function name.
     pub closure_counts: HashMap<String, u32>,
     /// Every function-like def, in creation order.
     pub fn_defs: Vec<DefId>,
-    /// Named functions used as values (`FnRef`), checked after ownership inference.
-    pub fn_values: Vec<(DefId, Span)>,
+    /// Named functions used as values (`FnRef`) with their type arguments, checked after
+    /// ownership inference.
+    pub fn_values: Vec<(DefId, Vec<TyId>, Span)>,
     /// Dispatch groups for error types (`crate::throws`), built on first use.
     pub groups: Option<crate::throws::Groups>,
     /// Error types committed to while checking bodies, re-checked after inference.
@@ -101,7 +105,7 @@ impl<'m> Ctx<'m> {
             scopes: modules
                 .iter()
                 .map(|m| ModuleScope {
-                    is_std: m.path.starts_with("std/"),
+                    is_std: m.is_std,
                     ..Default::default()
                 })
                 .collect(),
@@ -116,6 +120,7 @@ impl<'m> Ctx<'m> {
             generic_overrides: vec![],
             display_params: vec![],
             defaults_checked: HashSet::new(),
+            field_defaults_checked: HashSet::new(),
             closure_counts: HashMap::new(),
             fn_defs: vec![],
             fn_values: vec![],

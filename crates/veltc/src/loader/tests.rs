@@ -394,3 +394,90 @@ fn missing_jsx_runtime_says_where_it_came_from() {
     assert!(note.contains("from the default"), "{note}");
     assert_eq!(jsx_runtime(&l, "main"), None);
 }
+
+/// Loads `p/main.vlt` (with `main`) against the std root `std/` of `t`.
+fn load_with_std(t: &Tree, main: &str) -> (Loaded, Diagnostics) {
+    let root = t.write("p/main.vlt", main);
+    let (l, d, _) = load(
+        &root,
+        LoadOptions {
+            std_root: Some(t.path("std")),
+            ..Default::default()
+        },
+    );
+    (l, d)
+}
+
+#[test]
+fn only_files_below_the_std_root_are_std() {
+    let t = Tree::new();
+    t.write("std/math.vlt", "export function one(): i64 { return 1; }\n");
+    t.write(
+        "std/escape.vlt",
+        "import { x } from \"../outside\";\nexport function y() {}\n",
+    );
+    t.write("outside.vlt", "export function x() {}\n");
+    // std modules are std; the root and its own modules are not.
+    let (l, d) = load_with_std(
+        &t,
+        "import { one } from \"velt:math\";\nfunction main() {}\n",
+    );
+    assert!(d.is_empty(), "{:?}", messages(&d));
+    let std_flags: Vec<(&str, bool)> = l
+        .modules
+        .iter()
+        .map(|m| (m.path.as_str(), m.is_std))
+        .collect();
+    assert_eq!(std_flags, [("main", false), ("std/math", true)]);
+    // A std module whose relative import leaves the std root.
+    let (_, d) = load_with_std(
+        &t,
+        "import { y } from \"velt:escape\";\nfunction main() {}\n",
+    );
+    assert_eq!(
+        messages(&d),
+        ["module `../outside` resolves to a file outside the standard library"]
+    );
+    // A user's relative import of a std file.
+    let (_, d) = load_with_std(
+        &t,
+        "import { one } from \"../std/math\";\nfunction main() {}\n",
+    );
+    assert_eq!(
+        messages(&d),
+        ["module `../std/math` is a file of the standard library: import it as `velt:math`"]
+    );
+}
+
+/// On Windows, `\` and drive letters would let a `velt:` path leave the std root; the specifier is
+/// rejected before any file is looked up.
+#[cfg(windows)]
+#[test]
+fn windows_std_specifiers_cannot_leave_the_std_root() {
+    let t = Tree::new();
+    t.write("std/math.vlt", "export function one(): i64 { return 1; }\n");
+    let evil = t.write("evil.vlt", "export function x() {}\n");
+    let absolute = evil
+        .with_extension("")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    for spec in [
+        r"velt:..\evil".to_string(),
+        r"velt:..\std\..\evil".to_string(),
+        format!("velt:{absolute}"),
+    ] {
+        // In the source text a `\` is written `\\`.
+        let quoted = spec.replace('\\', r"\\");
+        let main = format!("import {{ x }} from \"{quoted}\";\nfunction main() {{}}\n");
+        let (l, d) = load_with_std(&t, &main);
+        assert!(
+            messages(&d)
+                .iter()
+                .any(|m| m.contains("invalid standard library module")),
+            "{spec}: {:?}",
+            messages(&d)
+        );
+        assert!(l.modules.iter().all(|m| m.path == "main"), "{spec}");
+    }
+}

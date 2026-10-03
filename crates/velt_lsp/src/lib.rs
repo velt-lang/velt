@@ -2,9 +2,9 @@
 
 //!
 //! Features: diagnostics (parse + imports + sema, debounced, per open document), formatting
-//! (`velt_fmt`), document symbols, go to definition, hover, completion, find references, rename,
-//! quick fixes (code actions), inlay hints, signature help, semantic tokens, document highlight and
-//! workspace symbols.
+//! (`velt_fmt`), document symbols, go to definition, hover, completion (JSX tags and attributes
+//! included), find references, rename, quick fixes (code actions), inlay hints, signature help,
+//! semantic tokens, document highlight and workspace symbols.
 //! Program loading is injected through [`ProgramLoader`] (the CLI's loader lives in `veltc`, which
 //! depends on this crate). Editor queries come from sema's IDE API ([`sema_query`] over
 //! `velt_sema::ide`, which answers even when the program has errors); the AST-based [`index`]
@@ -18,13 +18,17 @@ mod code_actions;
 mod completion;
 mod definition;
 mod diagnostics;
+mod disk_index;
 mod documents;
 mod highlight;
 mod hover;
 mod index;
 mod inlay_hints;
+mod jsx_completion;
 mod line_index;
+mod manifest;
 mod references;
+mod registry;
 mod sema_query;
 mod semantic_tokens;
 mod server;

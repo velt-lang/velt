@@ -1,3 +1,4 @@
+// check: no leaks
 // `Request` reads its properties from the runtime request on access: getters, `header(name)`,
 // `headers`, an empty and a non-empty body. A constant response header (interned by the
 // runtime) and a varying one come back right on every response.
@@ -26,5 +27,5 @@ async function main() {
   console.log(await post.text());
   const empty = await fetch(`${base}/empty`, { method: "POST", body: "" });
   console.log(await empty.text());
-  server.close();
+  await server.shutdown();
 }

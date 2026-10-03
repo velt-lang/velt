@@ -1,0 +1,105 @@
+// check: no leaks
+// Async methods called through a base-class reference whose class overrides them (a vtable
+// call, #194): the receiver held in a local, a field, a Map value and an array element, alone
+// and aliased by a reference of the derived type that is read after the calls. The overrides
+// call `super`, mutate the receiver and, in the `throws` variant, reject.
+class Jammed extends Error {}
+
+class Machine {
+  name: string = "a machine name long enough to live on the heap";
+  runs: i64 = 0;
+
+  async run(n: i64): Promise<string> {
+    this.runs += n;
+    return `machine ${this.runs}`;
+  }
+
+  async press(n: i64): Promise<i64> throws Jammed {
+    this.runs += 1;
+    return n;
+  }
+}
+
+class Press extends Machine {
+  jams: i64 = 0;
+
+  override async run(n: i64): Promise<string> {
+    const base = await super.run(n * 2);
+    return `press ${base}`;
+  }
+
+  override async press(n: i64): Promise<i64> throws Jammed {
+    if (n % 2 == 1) {
+      this.jams += 1;
+      throw new Jammed(`${this.name} jammed on ${n}`);
+    }
+    return (await super.press(n)) * 100;
+  }
+}
+
+class Line {
+  head: Machine;
+
+  constructor(head: Machine) {
+    this.head = head;
+  }
+}
+
+// A local: the base reference alone (call as the last use in the loop body), then aliased by
+// a `Press` that reads the mutations back.
+async function local(): Promise<void> {
+  const m: Machine = new Press();
+  for (let i = 1; i < 4; i++) {
+    console.log("local", await m.run(i));
+  }
+  const p = new Press();
+  const base: Machine = p;
+  for (let i = 0; i < 4; i++) {
+    try {
+      console.log("local press", await base.press(i));
+    } catch (e) {
+      console.log("local caught", e.message);
+    }
+  }
+  console.log("local alias", p.runs, p.jams, await base.run(0));
+}
+
+// A field, a Map value and array elements; the same `Press` sits in all of them.
+async function holders(): Promise<void> {
+  const p = new Press();
+  const line = new Line(p);
+  for (let i = 0; i < 2; i++) {
+    console.log("field", await line.head.run(1));
+  }
+
+  const byName = new Map<string, Machine>();
+  byName.set("press", p);
+  byName.set("plain", new Machine());
+  for (const key of ["press", "plain", "press"]) {
+    const m = byName.get(key);
+    if (m != null) {
+      try {
+        console.log("map", key, await m.run(1), await m.press(3));
+      } catch (e) {
+        console.log("map", key, "caught", e.message);
+      }
+    }
+  }
+
+  const ms: Machine[] = [new Machine(), p, new Press()];
+  for (let round = 0; round < 2; round++) {
+    for (const m of ms) {
+      console.log("array", await m.run(1));
+    }
+  }
+  for (let i = 0; i < 3; i++) {
+    const m = ms[i];
+    console.log("array element", await m.press(2));
+  }
+  console.log("shared press", p.runs, p.jams, await line.head.run(0));
+}
+
+async function main() {
+  await local();
+  await holders();
+}

@@ -1,0 +1,15 @@
+// A stored `Promise.race` that is never awaited reports its rejection as uncaught (exit 1), like an
+// unhandled rejection in Node (which exits at the rejection; Velt reports it when the promise
+// is dropped, here at the end of `main`).
+class Failed extends Error {}
+
+async function late(name: string, ms: i64): Promise<string> throws Failed {
+  await sleep(ms);
+  throw new Failed(`${name} failed`);
+}
+
+async function main() {
+  const race = Promise.race([late("x", 10), late("y", 30)]);
+  console.log("race stored");
+  await sleep(50);
+}

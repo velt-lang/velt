@@ -59,9 +59,11 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_sleep` | `(i64 ms) -> VeltFut*` | `sleep(ms)`; negative = 0; result: none |
 | `velt_rt_all` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results) -> VeltFut*` | `Promise.all(array)`: takes ownership of the `n` futures (not of the pointer array); child `i`'s result is moved to `results + i*result_size` (must stay valid until completion/drop); concurrent, only woken children are re-polled. Result: none. |
 | `velt_rt_all_with_drop` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results, void (*result_drop)(void* slot)) -> VeltFut*` | same as `velt_rt_all` (which = this with `result_drop == NULL`), for results that own resources: if the returned future is dropped **before completing**, `result_drop(results + i*result_size)` runs for every child `i` that had already finished (pending children are cancelled via their own drop). After completion it never runs � all results belong to the awaiter. Use it whenever `T` needs dropping. |
+| `velt_rt_all_or_reject` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results, void (*result_drop)(void* slot)) -> VeltFut*` | `Promise.all` over promises that can reject: like `velt_rt_all_with_drop` over `Result<T, E>` slots (tag byte at offset 0, 0 = fulfilled), but completes as soon as a child rejects. Its result is empty. On a rejection the rejected child's result is moved to slot 0 and is the only initialized slot (so a rejection is an `Err` tag in slot 0, `n > 0`): the runtime drops the other finished results with `result_drop` (null: nothing to drop) and drops the pending children (started promises keep running; mark them with `velt_rt_futs_handled` first). |
 
 | `velt_rt_race` | `(VeltFut* const* futs, u64 n, u64 result_size) -> VeltFut*` | `Promise.race(array)`: takes ownership of the `n` futures (not of the pointer array); the first child to finish moves its `result_size`-byte result to the returned future's slot (+16) and the others are dropped (started promises keep running, §1.1). `n == 0` never completes. |
 | `velt_rt_race_ok` | `(VeltFut* const* futs, u64 n, u64 result_size, void (*reject_drop)(void* slot)) -> VeltFut*` | `Promise.any`: like `velt_rt_race` over `Result<T, E>` slots (tag byte at offset 0, 0 = fulfilled): the first fulfilled child wins; a rejected one is dropped with `reject_drop` (null: nothing to drop) while others are still running, and the last rejection is the result when all reject. |
+| `velt_rt_fut_detach` | `(VeltFut* f, void (*quiet_drop)(void* slot))` | the owner gives up `f` without cancelling it (pending siblings of an early `Promise.all` rejection). A boxed promise that is still lazy, even one its owner has polled, becomes a started promise of the current task without being polled now: it runs at the task's next poll, after the owner's continuation, as in JS, where the rejection handler runs before other woken promises. A started promise keeps running. Either way its result is disposed of with `quiet_drop` (handled, null: nothing to drop). Any other future is dropped as by `velt_rt_fut_drop`. Takes ownership of `f`. |
 | `velt_rt_futs_handled` | `(VeltFut* const* futs, u64 n, void (*quiet_drop)(void* slot))` | the `n` futures are handed to a combinator (`race`, `any`, `all`), which handles their rejections like JS: a started promise among them that is dropped unfinished later disposes of its result with `quiet_drop` (null: nothing to drop) instead of its `result_drop`, so a rejection is not reported (§1.1). No-op for other futures. Called before the combinator takes the futures. |
 
 `Promise.all([a(), b()])` with a static list should be compiled inline instead (children embedded,
@@ -105,9 +107,9 @@ each polled until done, done-flags in the state): no allocation.
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_block_on` | `(PollFn poll, void* state)` | `async main`: `velt_main` builds the state on its stack, calls this, then reads the result at `state+0`. Runs the root as a task on the runtime's workers; returns when READY. Tasks still running afterwards are abandoned when the process exits. Must not be called from inside a task. |
-| `velt_rt_spawn` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size) -> VeltFut*` | `spawn(f(...))`: copies the initial state into the task (caller gives up ownership of its contents), starts it now. Returns the join handle; its result slot (+16) receives `result_size` bytes (≤ 256; box larger results). Dropping the handle **detaches** (task keeps running). |
+| `velt_rt_spawn` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(f(...))`: copies the initial state into the task (caller gives up ownership of its contents), starts it now. Returns the join handle; its result slot (+16) receives `result_size` bytes (≤ 256; box larger results). Dropping the handle **detaches** (task keeps running); a result the handle never claims (dropped before or after the task finished) is dropped with `result_drop` (null: nothing to drop). |
 | `velt_rt_spawn_detached` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align)` | spawn whose result is unused: no handle, one allocation |
-| `velt_rt_spawn_fut` | `(VeltFut* f, u64 result_size) -> VeltFut*` | `spawn(p)` where `p` is already a heap future (boxed promise, leaf); takes ownership of `f` |
+| `velt_rt_spawn_fut` | `(VeltFut* f, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(p)` where `p` is already a heap future (boxed promise, leaf); takes ownership of `f`; `result_drop` as for `velt_rt_spawn` |
 
 Runtime: created lazily, workers = `VELT_THREADS` (positive integer) or the number of cores.
 Allocation per task: states ≤ 1 KiB (align ≤ 16) live inline in tokio's task cell (size classes
@@ -134,8 +136,8 @@ like the socket handles (§3.2): a channel leaves the table once it is closed an
 later use of a copy sees a closed, empty channel. The runtime never sees a `T`, only its bytes:
 every call passes the item size (align <= 16). `receive` results are a `T | null` in the
 compiler's layout: `payload` is the offset of the value after the `bool` present flag, or 0 when
-`T` is pointer-like and null is the zero pointer. `send`, `receive` and `tryReceive` are reached
-through the std-only intrinsics `__intrinsic_chan_{send,receive,try_receive}<T>` (lowering knows
+`T` is pointer-like and null is the zero pointer. `send`, `trySend`, `receive` and `tryReceive` are reached
+through the std-only intrinsics `__intrinsic_chan_{send,try_send,receive,try_receive}<T>` (lowering knows
 `T`'s size, layout and drop glue; it transfers the value first, like a `spawn` argument: a value the
 sender still shares is deep-copied). No code pointers are stored, except the `item_drop` a pending
 `send` future owns (§13.5).
@@ -147,8 +149,43 @@ sender still shares is deep-copied). No code pointers are stored, except the `it
 | `velt_rt_chan_closed` | `(u64 ch) -> bool` | |
 | `velt_rt_chan_len` | `(u64 ch) -> u64` | queued items |
 | `velt_rt_chan_send` | `(u64 ch, const void* src, u64 size, void (*item_drop)(void*)) -> VeltFut*` | moves the item's bytes (and ownership) into the future at the call; `bool` result: queued (after waiting for space), or false when closed. An item not queued is dropped with `item_drop` (null: nothing to drop) |
+| `velt_rt_chan_try_send` | `(u64 ch, const void* src, u64 size, void (*item_drop)(void*)) -> bool` | moves the item's bytes into the channel if it has room now; false when full or closed, and the item is dropped with `item_drop` |
 | `velt_rt_chan_receive` | `(u64 ch, u64 size, u64 payload, u64 slot_size) -> VeltFut*` | result: a `slot_size`-byte `T \| null` (see above), null once closed and drained |
 | `velt_rt_chan_try_receive` | `(u64 ch, void* dst, u64 size, u64 payload)` | writes the oldest item, or null, as a `T \| null` at `dst` |
+
+### 2.3 Abort signals (`velt:task`)
+
+Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task.vlt and
+released once, at the cell's last reference; no handle is public. Aborting sets a flag, stores
+the reason and wakes the waiters; it never cancels anything itself. No code pointers are
+stored: `AbortSignal.timeout` is a runtime timer task holding a weak reference. A signal made
+by `any` holds strong references to its sources until it is aborted (they hold weak ones back).
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_signal_new` | `() -> u64` | a signal that is not aborted |
+| `velt_rt_signal_retain` | `(u64 s) -> u64` | another reference to it (a scope's child task holds one) |
+| `velt_rt_signal_free` | `(u64 s)` | releases a handle |
+| `velt_rt_signal_abort` | `(u64 s, const VeltStr* reason)` | aborts it and the signals derived from it (`any`); a no-op if aborted |
+| `velt_rt_signal_aborted` | `(u64 s) -> bool` | |
+| `velt_rt_signal_reason` | `(u64 s, VeltStr* out)` | the reason (`""` while not aborted) |
+| `velt_rt_signal_timeout_ms` | `(u64 s) -> i64` | the `ms` of the `velt_rt_signal_timeout` signal that aborted it (directly or through `any`), else -1 |
+| `velt_rt_signal_wait` | `(u64 s) -> VeltFut*` | completes (unit) once aborted |
+| `velt_rt_signal_timeout` | `(i64 ms, const VeltStr* reason) -> u64` | a signal a timer aborts after `ms` |
+| `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | aborted with the first of `signals` that is (its reason and timeout); keeps them alive until then |
+
+### 2.4 Task groups (`taskScope`)
+
+The live-children count of a `taskScope` (std/task.vlt), behind a registry key (a `TaskScope`
+copy used after its scope ended finds no group). No code pointers are stored.
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_group_new` | `() -> u64` | a group with no children |
+| `velt_rt_group_enter` | `(u64 g) -> bool` | a child is about to start; false (nothing counted) once the group is closed or freed |
+| `velt_rt_group_leave` | `(u64 g)` | a child finished |
+| `velt_rt_group_wait` | `(u64 g) -> VeltFut*` | completes (unit) once no child is live, and closes the group then |
+| `velt_rt_group_free` | `(u64 g)` | the scope ended |
 
 ## 3. Results and errors
 
@@ -247,7 +284,12 @@ typedef struct { uint64_t size; double mtime_ms; uint8_t is_file; uint8_t is_dir
 | `velt_rt_fs_exists(path)` | `velt_rt_fs_exists_sync(path) -> u8` | `u8` (never fails) |
 
 All `path`/`from`/`to`/`data` parameters are `const VeltStr*`. Async variants run on tokio's
-blocking pool.
+blocking pool. Error messages are Node's: `<CODE>: <description>, <syscall> '<path>'` (plus
+` -> '<to>'` for `rename`/`copyfile`), e.g. `ENOENT: no such file or directory, lstat 'x'` from
+`fs_remove`; the file streams' `open_read`/`open_write` (§14.7) use the same form. A failed
+read or write of an opened file names no path (`EISDIR: illegal operation on a directory,
+read`), and a directory opened as a file is `EISDIR` on every system (Windows reports access
+denied).
 
 ## 6. std/net (TCP)
 
@@ -301,6 +343,8 @@ reading freed memory.
 | `velt_rt_http_req_header` | `(VeltReq r, const VeltStr* name, VeltStr* out) -> u8` | case-insensitive; 0 = absent (`out` untouched) |
 | `velt_rt_http_req_header_count` | `(VeltReq r) -> u64` | |
 | `velt_rt_http_req_header_at` | `(VeltReq r, u64 i, VeltStr* name, VeltStr* value)` | lowercase name |
+| `velt_rt_http_req_header_names` | `(VeltReq r, VeltStrArray* out)` | every header name (lowercase), in received order: `req.headers` in one call (`header_at` per index is O(n) each) |
+| `velt_rt_http_req_header_values` | `(VeltReq r, VeltStrArray* out)` | every value, in the order of `header_names` (non-UTF-8 bytes decoded lossily) |
 | `velt_rt_http_req_drop` | `(VeltReq r)` | |
 | `velt_rt_http_resp_new` | `(u32 status) -> VeltResp` | invalid status ⇒ 500 |
 | `velt_rt_http_resp_header` | `(VeltResp r, const VeltStr* name, const VeltStr* value) -> u8` | append; 0 if invalid |
@@ -314,7 +358,8 @@ the program entry waits until no keep-alive references remain — like Node, a l
 keeps the process running. (`velt_rt_block_on` itself does not wait.)
 
 `Response.text(b, s)` = `resp_new(s)` + `resp_body_text(r, &b)`; `Response.json(v, s)` = serialize
-`v` (compiler-generated) + `resp_new(s)` + `resp_json`.
+`v` (compiler-generated) + `resp_new(s)` + `resp_json`. For a bodiless status (1xx, 204, 304) the
+body setters and `resp_json` drop the body and add no `content-type`.
 
 **Client** (`http://` only; `https://` fails with `ENOTSUP`):
 
@@ -340,6 +385,8 @@ keeps the process running. (`velt_rt_block_on` itself does not wait.)
 | `velt_rt_perf_now` | `() -> f64` | `performance.now()`: ms since process start, monotonic |
 | `velt_rt_date_now` | `() -> i64` | `Date.now()`: ms since the Unix epoch |
 | `velt_rt_exit` | see rt_abi.md | |
+| `velt_rt_memory_rss` | `() -> i64` | `process.memoryUsage().rss`: resident set size in bytes from the OS (`/proc/self/statm`, `task_info`, `GetProcessMemoryInfo`); 0 if unknown. wasm: the linear memory size |
+| `velt_rt_memory_heap` | `() -> i64` | `heapUsed`: mimalloc's committed heap bytes (Windows: the process's private committed bytes); without mimalloc, the RSS. wasm: the linear memory size |
 
 ## 9. Shared state and helpers (sync)
 
@@ -383,7 +430,7 @@ void add1After$drop(void* s) { Add1After* st = s; if (st->tag == 1) velt_rt_fut_
 
 // const h = spawn(add1After(41, 5)); ... await h
 Add1After init = { 0, 0, 41, 5, 0 };
-st->h = velt_rt_spawn(add1After$poll, add1After$drop, &init, sizeof init, 8, sizeof(int64_t));
+st->h = velt_rt_spawn(add1After$poll, add1After$drop, &init, sizeof init, 8, sizeof(int64_t), NULL);
 ... if (!velt_rt_fut_poll(st->h, cx)) return 0;
     int64_t v = *(int64_t*)((char*)st->h + 16); velt_rt_fut_drop(st->h);
 
@@ -461,6 +508,7 @@ exactly. "Omitted" JS arguments are passed as the value given in Notes.
 | `velt_rt_parse_int` | `(const VeltStr* s, i64 radix) -> f64` | exact JS `parseInt`: leading JS whitespace, sign, `0x` prefix (radix 0/16), radix `ToInt32`, 0 = omitted, outside 2..36 ⇒ NaN, longest digit prefix, none ⇒ NaN, `-0` kept. Correctly rounded for radix 10 and powers of two; other radixes exact below 2^128 (V8 is not correctly rounded there either). |
 | `velt_rt_parse_float` | `(const VeltStr* s) -> f64` | exact JS `parseFloat`: leading whitespace, longest `StrDecimalLiteral` prefix (incl. `Infinity`), else NaN |
 | `velt_rt_str_to_number` | `(const VeltStr* s) -> f64` | exact JS `Number(s)`: trimmed; `""` ⇒ 0; `0x`/`0o`/`0b` (unsigned); `±Infinity`; whole string must be a decimal literal, else NaN |
+| `velt_rt_str_locale_compare` | `(const VeltStr* s, const VeltStr* t) -> i64` | `s.localeCompare(t)`: -1/0/1 in the CLDR root collation (`Intl.Collator("und")`); exact for the blocks in the table generated by `scripts/gen-collation-table.js` (U+0020..U+024F, U+0370..U+04FF, U+1E00..U+1EFF, U+2000..U+206F and U+20A0..U+20CF) except characters that expand to three or more elements (`¼`, `ϗ`), approximate elsewhere (additive) |
 | `velt_rt_str_array_drop` | `(VeltStrArray* a)` | already in §4 |
 
 ### 12.3 JSON pull reader (`JSON.parse<T>`)
@@ -665,7 +713,9 @@ one state layout, so all of them change together; `env` stays). In dev builds th
 `init` is that version's code itself, not a trampoline.
 Rule: only vtables (via relocations), `VeltFut` headers and these per-server handler slots may
 store code addresses. New runtime APIs that take callbacks (timers, WebSockets, child processes,
-...) must keep them replaceable the same way.
+...) must keep them replaceable the same way. The one exception is drop glue kept with a value in
+flight (a join's or a spawned task's result, a channel item being sent): it matches that value's
+layout, which a swap doesn't change, and it goes away with the value.
 
 
 ## 14. Standard library breadth (stream std-net; additive)
@@ -684,7 +734,7 @@ of a Copy element type, built from a Rust `Vec<T>` (same allocator), like `VeltS
 |---|---|---|
 | `velt_rt_random_bytes` | `(u64 n, VeltBytes* out)` | `n` bytes from the OS CSPRNG (`getrandom`); failure of the OS generator is fatal |
 | `velt_rt_random_u64` | `() -> u64` | uniform, OS CSPRNG |
-| `velt_rt_local_offset_minutes` | `(i64 epoch_ms) -> i32` | minutes to add to UTC for local time at that instant (DST-aware: the C library tz database on Unix; on Windows the system time zone with its dynamic per-year DST rules, `SystemTimeToTzSpecificLocalTimeEx`) |
+| `velt_rt_local_offset_minutes` | `(i64 epoch_ms) -> i32` | minutes to add to UTC for local time at that instant (DST-aware: the C library tz database on Unix; on Windows `TZ` when it names UTC or a fixed offset (`Etc/GMT±N`), else the system time zone with its dynamic per-year DST rules, `SystemTimeToTzSpecificLocalTimeEx`) |
 
 ### 14.2 Regular expressions (`velt:regex`)
 
@@ -836,6 +886,13 @@ typedef struct { uint32_t kind; uint32_t pad; VeltStr text; VeltBytes data; } Ve
 |---|---|---|
 | `velt_rt_html_escape` | `(const VeltStr* s, VeltStr* out)` | owned copy of `s` with `& < > " '` → `&amp; &lt; &gt; &quot; &#39;`, in one pass (output sized once); other bytes unchanged |
 
+Stable hash (`velt:hash`, additive):
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_fnv1a64_str` | `(const VeltStr* s) -> u64` | `velt:hash`: 64-bit FNV-1a of the bytes; stable forever (std contract) |
+| `velt_rt_fnv1a64_bytes` | `(const VeltBytes* data) -> u64` | the same over a `u8[]` |
+
 ### 14.11 SQLite (`velt:sqlite`; stream db, additive)
 
 `crates/velt_rt/src/sqlite/` over `rusqlite` (SQLite compiled in: `bundled`; also
@@ -929,7 +986,7 @@ Not available on wasm (no sockets): the symbols are not defined by `velt_rt_wasm
 
 ### 14.13 PostgreSQL (`velt:postgres`; stream db, additive)
 
-`crates/velt_rt/src/postgres/` over `tokio-postgres` (`default-features = false`, `runtime`), connected over the runtime's own socket and wire stream (§14.17).
+`crates/velt_rt/src/postgres/` over `tokio-postgres` (`default-features = false`, `runtime`), connected over the runtime's own socket and wire stream (§14.18).
 TLS is a hand-written `TlsConnect` over tokio-rustls with the runtime's `ring` provider and
 roots (§14.8); `sslmode` = `disable`, `prefer` (default), `require` (no certificate check),
 `verify-ca`, `verify-full`, plus `sslrootcert=<PEM file>` (extra roots; turns `require` into
@@ -991,8 +1048,9 @@ lists). Not available on WebAssembly (no `velt_rt_pg_*` symbols in `libvelt_rt_w
 `VeltHandler.env` is null or a closure environment box whose first word is its drop function
 (`void drop(void* env)`, may be null), as closure lowering lays it out. Once a server is closed
 and its last connection and request have finished, the runtime calls that function once, so
-the handler's captures are dropped (their `dispose()` hooks run). Before this, `env` was never
-freed. Every in-flight request keeps the server's handler state alive, so no request can see a
+the handler's captures are dropped (their `dispose()` hooks run). A `serve` that fails (the
+address does not bind, the TLS certificate or key does not parse) calls it too, since no server
+will. Before this, `env` was never freed. Every in-flight request keeps the server's handler state alive, so no request can see a
 released environment; under `velt dev`, environments of replaced handlers (§13.5) are still
 never freed.
 
@@ -1043,14 +1101,14 @@ its response open.
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_http_resp_stream_open` | `(VeltResp r) -> VeltRespWriter` | body becomes a stream; default `content-type: text/plain; charset=utf-8` unless one is set; opening again detaches the earlier writer (its writes return 0) |
+| `velt_rt_http_resp_stream_open` | `(VeltResp r) -> VeltRespWriter` | body becomes a stream; default `content-type: text/plain; charset=utf-8` unless one is set; opening again detaches the earlier writer (its writes return 0). A bodiless status (1xx, 204, 304) keeps the empty body and gets no `content-type`; the writer's writes return 0 |
 | `velt_rt_http_resp_stream_write` | `(VeltRespWriter w, const VeltStr* text) -> u8` | buffers a copy; 0 once ended, client gone, or `w` released |
 | `velt_rt_http_resp_stream_write_bytes` | `(VeltRespWriter w, const VeltBytes* data) -> u8` | the same for `u8[]` |
 | `velt_rt_http_resp_stream_flush` | `(VeltRespWriter w) -> VeltFut*` | result `u8`: 1 = the buffer was handed to the body (nothing buffered: 1 while the client is there); 0 = client gone / ended. Cancel-safe: the buffer is taken only once there is room |
 | `velt_rt_http_resp_stream_close` | `(VeltRespWriter w) -> VeltFut*` | result `u8` as `flush`; sends the rest, ends the body normally (final chunk) and releases `w`; 0 on a released handle |
 | `velt_rt_http_resp_stream_abort` | `(VeltRespWriter w)` | ends the body with an error (HTTP/1.1: the connection is closed without the final chunk; HTTP/2: `RST_STREAM`), discarding the buffer, and releases `w`; no-op on a released handle |
 
-### 14.17 PostgreSQL batches (`std/postgres`; stream platform-perf, additive)
+### 14.18 PostgreSQL batches (`std/postgres`; stream platform-perf, additive)
 One prepared statement run with N parameter sets in one message group — `Bind` + `Execute` per
 set and **one** `Sync` (pgx's `Batch`): one round trip and one implicit transaction on the server
 instead of N. tokio-postgres has no API for it, so every connection now runs over a wire stream

@@ -1,0 +1,18 @@
+// Two applicable `extend` blocks where neither target is an instance of the other: a call is
+// ambiguous (it would be decided by declaration order otherwise).
+extend<T> Map<string, T> {
+  describe(): string {
+    return "string keys";
+  }
+}
+
+extend<K> Map<K, i64> {
+  describe(): string {
+    return "i64 values";
+  }
+}
+
+function main() {
+  const counts = new Map<string, i64>();
+  console.log(counts.describe());
+}

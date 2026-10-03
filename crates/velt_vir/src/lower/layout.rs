@@ -13,7 +13,7 @@
 //!   class hierarchy has more than one class or any virtual slot; it points to a dispatcher
 //!   function (see glue/vtable.rs).
 //! - Shared boxes: `{ count: u64, value: T }`; closure environments: `{ drop: ptr, clone: ptr,
-//!   captures... }` (borrowed captures are pointers).
+//!   reach: u64, captures... }` (borrowed captures are pointers; closure.rs).
 
 use std::collections::{HashMap, HashSet};
 
@@ -41,6 +41,8 @@ pub(super) struct Layouts {
     pub(super) settle_wraps: HashMap<TyId, AggId>,
     /// State of the wrapper boxing a kept `Promise.race` per result slot type (kept.rs).
     pub(super) race_boxes: HashMap<TyId, AggId>,
+    /// State of the wrapper widening a promise, per target promise type (async_fn/widen.rs).
+    pub(super) widen_boxes: HashMap<TyId, AggId>,
     /// Failure context of JSON decoders (json/).
     pub(super) json_ctx: Option<AggId>,
     /// Promise-value wrappers of throwing async functions: layout and inner-state field.
@@ -328,7 +330,8 @@ impl Cx<'_> {
             })
             .collect();
         let name = format!("{} env", f.name);
-        let mut tys = vec![Ty::Ptr, Ty::Ptr];
+        // closure.rs `ENV_HEADER`: drop entry, clone entry, `reach`.
+        let mut tys = vec![Ty::Ptr, Ty::Ptr, Ty::U64];
         for (mode, t) in caps {
             let t = self.subst(t, targs);
             tys.push(match mode {

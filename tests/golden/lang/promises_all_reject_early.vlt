@@ -1,0 +1,70 @@
+// `Promise.all` rejects as soon as one promise rejects, like JS: it does not wait for the
+// slower promises, which keep running to completion (their results and later rejections are
+// dropped). Within a case, timers start together and are far apart (except for the tie), and
+// each case waits for its losers before the next one starts, so a slow machine keeps the order.
+class Failed extends Error {
+  ms: i64;
+
+  constructor(ms: i64) {
+    super(`failed after ${ms} ms`);
+    this.ms = ms;
+  }
+}
+
+async function step(name: string, ms: i64, fail: bool): Promise<string> throws Failed {
+  await sleep(ms);
+  console.log("settled", name);
+  if (fail) {
+    throw new Failed(ms);
+  }
+  return name;
+}
+
+async function failNow(): Promise<string> throws Failed {
+  console.log("started failNow");
+  throw new Failed(0);
+}
+
+async function startNow(name: string): Promise<string> throws Failed {
+  console.log("started", name);
+  await sleep(10);
+  return name;
+}
+
+async function main() {
+  try {
+    await Promise.all([step("slow", 600, false), step("fails", 40, true), step("mid", 300, false)]);
+  } catch (e) {
+    console.log("all rejected:", e.message);
+  }
+  await sleep(1000);
+
+  // The first rejection in time wins, not the first in array order.
+  try {
+    const ps = [step("late failure", 900, true), step("early failure", 300, true)];
+    await Promise.all(ps);
+  } catch (e) {
+    console.log("all rejected:", e.message);
+  }
+  await sleep(1000);
+
+  console.log("fulfilled:", await Promise.all([step("a", 300, false), step("b", 10, false)]));
+
+  // A tie goes to the first in array order, and its handler runs before the siblings woken in
+  // the same tick.
+  try {
+    await Promise.all([step("tie 1", 20, true), step("tie 2", 20, true), step("tie 3", 20, false)]);
+  } catch (e) {
+    console.log("all rejected:", e.message);
+  }
+
+  // Every call of the literal runs up to its first `await` before a rejection is taken, even
+  // one that throws at once.
+  try {
+    await Promise.all([failNow(), startNow("second")]);
+  } catch (e) {
+    console.log("all rejected:", e.message);
+  }
+  await sleep(200);
+  console.log("done");
+}

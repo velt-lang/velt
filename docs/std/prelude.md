@@ -21,6 +21,7 @@ byte offsets; a negative position counts from the end, as in JS.
 | `replace(from, to)`, `replaceAll(from, to)` | plain text; for patterns use [`velt:regex`](regex.md) |
 | `repeat(n)`, `padStart(n, fill = " ")`, `padEnd(n, fill = " ")` | |
 | `charCodeAt(i = 0)` | the byte at `i` |
+| `localeCompare(t): i64` | -1, 0 or 1 in the CLDR root collation, like `new Intl.Collator("und").compare(s, t)` (`"a" < "A" < "b"`, `"e" < "é" < "f"`; Node's own `localeCompare` uses the host's locale). Exact for strings made of U+0020..U+024F, U+0370..U+04FF, U+1E00..U+1EFF, U+2000..U+206F and U+20A0..U+20CF (Latin with Vietnamese, Greek, Cyrillic, general punctuation, currency signs), except a few characters that stand for three or more (`¼`, `½`, `¾`, `ϗ`); approximate for everything else. No locale or options arguments |
 
 Conversions: `String.fromCharCode(code)`, `parseInt(s, radix = 0)` and `parseFloat(s)` (both
 return `f64`, `NaN` on failure), `Number(s)`.
@@ -28,6 +29,11 @@ return `f64`, `NaN` on failure), `Number(s)`.
 ## Numbers
 
 - `NaN`, `Infinity`, `isNaN(x)`, `isFinite(x)`.
+- `Number(s)` converts a string; `Number.isInteger(x)`, `Number.isNaN(x)`, `Number.isFinite(x)`,
+  `Number.isSafeInteger(x)`, `Number.parseInt(s, radix = 0)`, `Number.parseFloat(s)` and the
+  constants `Number.MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, `EPSILON`, `MAX_VALUE`, `MIN_VALUE`,
+  `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY` are JS's, on `f64` (they live in the prelude
+  class `NumberConstructor`, TypeScript's name for the type of `Number`).
 - `x.toFixed(digits = 0)` on `f64`, rounded like JS.
 - `Math`: `PI`, `E`, `sqrt floor ceil round trunc abs sign pow hypot`, `max(a, b)` and
   `min(a, b)` (two arguments). On integer operands, `Math.trunc(a / b)` is integer division.
@@ -45,9 +51,14 @@ Callback methods rethrow what their callback throws.
 | `forEach`, `map`, `filter`, `reduce(f, init)` | |
 | `find`, `findIndex`, `findLast`, `findLastIndex`, `some`, `every` | |
 | `indexOf`, `lastIndexOf`, `includes` | structural equality, so `NaN` is never found |
-| `slice(start = 0, end?)`, `concat(other)`, `reverse()`, `fill(v, start?, end?)` | |
+| `slice(start = 0, end?)`, `concat(other)` | |
+| `reverse()`, `fill(v, start?, end?)`, `sort()` | in place, returning nothing (JS returns the array: returning it would share it, which makes every array of its type reference counted) |
+| `toSorted(cmp?)`, `toReversed()`, `toSpliced(start, deleteCount?)`, `with(i, v)` | ES2023's copying forms: a new array, the receiver unchanged (the elements themselves are shared, as in JS); `toSorted()` without a comparator orders like `sort()`; `with` panics on an index out of range (JS's RangeError); `toSpliced` only removes until rest parameters land (**Planned**) |
+| `splice(start, deleteCount?): T[]` | removes and returns `deleteCount` elements (the rest when omitted); inserting items needs rest parameters (**Planned**) |
+| `truncate(n)` | JS `xs.length = n`: drops the elements from `n` on (`length` is read-only) |
+| `flat()` | on `T[][]`: the inner elements, one level deep |
 | `isEmpty()`, `entries(): [usize, T][]` | |
-| `join(sep = ",")` | any element type, formatted like `${x}` |
+| `join(sep = ",")` | any element type: strings, numbers and booleans like JS; one level of inner arrays joined with `","` and `null` elements as empty text, like JS; other values formatted like `${x}` (JS writes `[object Object]`), and so are deeper levels, `null` inside inner arrays and arrays inside nullable elements, which JS joins recursively |
 | `sort()`, `sort(cmp)` | `sort()` on numbers, strings and `Comparable` elements (unstable, pdqsort); `sort(cmp)` is stable on any element type |
 | `new Array<T>(n).fill(v)`, `Array.from({ length: n }, (_, i) => f(i))` | `n` elements in one allocation |
 
@@ -63,7 +74,7 @@ by content, as `deepEqual` compares them).
 
 | Member | Notes |
 |---|---|
-| `new Map<K, V>()`, `size`, `clear()` | |
+| `new Map<K, V>()`, `new Map(entries: [K, V][])`, `size`, `clear()` | `new Map(entries)` leaves `entries` as it is and shares their keys and values, like JS |
 | `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself, as in JS |
 | `upsert(k, init, (v) => v + 1)` | insert `init` or replace the value with the callback's result, in one lookup |
 | `update(k, (v) => { … }): bool` | modify the stored value in place; `false` when `k` is absent |
@@ -128,7 +139,8 @@ nest 128 levels deep unless `options.maxDepth` says otherwise.
 - `attempt(() => f())`: a throwing call as a value, `T | E`.
 - `AggregateError`, thrown by `Promise.any` when every promise rejects.
 - `assert(cond, msg?)`, `assertEq(a, b, msg?)` (compares with `deepEqual`), `panic(msg)`:
-  panics, for bugs.
+  panics, for bugs. `assertThrows(() => f(), msg?)` returns the error `f` throws and panics if
+  it returns normally.
 - `deepEqual(a, b): bool`: content comparison, like Node's `util.isDeepStrictEqual`. Arrays,
   structs and object literals compare their contents recursively. A `Map` or `Record` equals
   another with the same keys, each with a deeply equal value, in any order (a key is matched
@@ -144,7 +156,8 @@ console.log(deepEqual(a, b), a == b); // true false
 ## Async and concurrency
 
 `sleep(ms)`, `yieldNow()`, `spawn(p)`, `Promise.all`, `Promise.race`, `Promise.allSettled`
-(with `PromiseSettledResult<T, E>`), `Promise.any`, `shared(x)`, `Mutex<T>`,
+(with `PromiseSettledResult<T, E>`), `Promise.any`, `Promise.withResolvers` (with
+`PromiseWithResolvers<T, E>`), `shared(x)`, `Mutex<T>`,
 `performance.now()` and `Date.now()` ([Async](../reference/async.md)).
 
 ```ts

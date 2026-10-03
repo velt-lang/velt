@@ -1,11 +1,14 @@
 //! Eager promises (`velt_rt_fut_start`): a started promise runs until its first suspension at
 //! once and then progresses while its creator does other things; dropped unawaited, it still
 //! runs to completion (handed to a combinator, with its quiet drop); a cancelled task cancels its
-//! unfinished promises; `velt_rt_race`.
+//! unfinished promises; a lazy promise its owner polled and then detached keeps running after
+//! the owner's continuation (`velt_rt_fut_detach`); `velt_rt_race`.
 
 use super::fake::block_on_fut;
 use crate::task::compiled::{Compiled, Inline};
-use crate::task::local::{velt_rt_fut_box, velt_rt_fut_start, velt_rt_futs_handled};
+use crate::task::local::{
+    velt_rt_fut_box, velt_rt_fut_detach, velt_rt_fut_start, velt_rt_futs_handled,
+};
 use crate::task::race::velt_rt_race;
 use crate::task::runtime::{runtime, velt_rt_block_on};
 use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, VeltFut, PENDING, READY};
@@ -225,6 +228,45 @@ fn a_handled_promise_disposes_of_its_result_quietly() {
     assert_eq!(events(11..12), [(11, "start"), (11, "end")]);
 }
 
+/// Results of `job(40, ..)` disposed of by the quiet drop given to `velt_rt_fut_detach`.
+static DETACHED_RESULT_DROPS: AtomicUsize = AtomicUsize::new(0);
+
+unsafe extern "C" fn count_detached_drop(slot: *mut u8) {
+    if *(slot as *const i64) == 40 {
+        DETACHED_RESULT_DROPS.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+// The owner of lazy `job(40, 5)` (an inline `Promise.all` child) polls it once, then gives it
+// up without cancelling it (a sibling rejected) and goes on.
+unsafe extern "C" fn detach_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+    let f = job(40, 5);
+    assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
+    velt_rt_fut_detach(f, Some(count_detached_drop));
+    log(41, "owner goes on");
+    *(s as *mut i64) = 0;
+    READY
+}
+
+#[test]
+fn a_detached_promise_keeps_running_after_its_owner() {
+    let mut st = [0i64; 2];
+    unsafe { velt_rt_block_on(detach_poll, st.as_mut_ptr() as *mut u8) };
+    let t = Instant::now();
+    while DETACHED_RESULT_DROPS.load(Ordering::SeqCst) == 0 {
+        assert!(
+            t.elapsed() < Duration::from_secs(10),
+            "detached promise did not finish"
+        );
+        block_on_fut::<()>(velt_rt_sleep(2));
+    }
+    // Its timer held the owner's waker: the set re-polled it, and it finished quietly.
+    assert_eq!(
+        events(40..42),
+        [(40, "start"), (41, "owner goes on"), (40, "end")]
+    );
+}
+
 #[test]
 fn outside_a_task_a_promise_stays_lazy() {
     let f = started_job(20, 1);
@@ -270,11 +312,15 @@ fn cancelling_a_task_cancels_its_unfinished_promises() {
     assert_eq!(JOB_DROPS.load(Ordering::SeqCst), drops + 1);
 }
 
-// async function first() { return await Promise.race([job(41, 60), job(42, 5), job(43, 30)]); }
+// async function first() { return await Promise.race([job(41, 500), job(42, 5), job(43, 30)]); }
 unsafe extern "C" fn race_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut [i64; 2]);
     if st[1] == 0 {
-        let futs = [started_job(41, 60), started_job(42, 5), started_job(43, 30)];
+        let futs = [
+            started_job(41, 500),
+            started_job(42, 5),
+            started_job(43, 30),
+        ];
         st[1] = velt_rt_race(futs.as_ptr(), 3, 8) as i64;
     }
     match take(st[1] as *mut VeltFut, cx) {
@@ -292,7 +338,12 @@ fn race_takes_the_first_result_and_the_losers_keep_running() {
     let t = Instant::now();
     unsafe { velt_rt_block_on(race_poll, st.as_mut_ptr() as *mut u8) };
     assert_eq!(st[0], 42);
-    assert!(t.elapsed() < Duration::from_millis(55));
+    // The race settled with the first result, before the slowest loser ended (no wall-clock
+    // bound: timers are coarse on Windows and tests run in parallel).
+    assert!(
+        !events(41..44).contains(&(41, "end")),
+        "the race waited for a loser"
+    );
     while events(41..44).len() < 6 {
         assert!(
             t.elapsed() < Duration::from_secs(10),

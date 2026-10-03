@@ -1,0 +1,16 @@
+// A named function can be a function value even when it keeps its object arguments (#224), but
+// not when a parameter takes ownership of a promise: function values borrow their arguments,
+// and a promise has one owner.
+
+async function wait(p: Promise<i64>): Promise<i64> {
+  return await p;
+}
+
+async function one(): Promise<i64> {
+  return 1;
+}
+
+async function main() {
+  const w: (p: Promise<i64>) => Promise<i64> = wait;
+  console.log(await w(one()));
+}

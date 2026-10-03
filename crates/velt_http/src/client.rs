@@ -1,34 +1,180 @@
-//! The client: one request per call. `http://` goes over `std::net`; `https://` runs the system
-//! `curl` (present on macOS, Windows 10+ and practically every Linux), which brings TLS and the
-//! platform's certificate store without a TLS dependency here.
+//! The client: one request per call, over `std::net`. `https://` goes through rustls with
+//! Mozilla's root certificates ([`crate::tls`]), the TLS stack the Velt runtime uses too, so
+//! nothing depends on a system `curl` or the machine's trust store.
 
-use std::io::{BufReader, Write};
-use std::net::TcpStream;
-use std::process::Command;
-use std::time::Duration;
+use std::io::{BufReader, Read, Write};
+use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use rustls::pki_types::ServerName;
+use rustls::{ClientConfig, ClientConnection, StreamOwned};
 
 use crate::message::{read_response, Response};
 
 /// Largest response body accepted (packages and API answers are far smaller).
 const MAX_RESPONSE: usize = 256 << 20;
-const TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How long a request may take.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Limits {
+    /// Connecting to one address of the host.
+    pub connect: Duration,
+    /// Waiting for the server in one read or write.
+    pub idle: Duration,
+    /// The whole exchange, from connecting to the last byte of the answer: a server that sends
+    /// a byte now and then can't hold a fetch forever.
+    pub total: Duration,
+}
+
+impl Limits {
+    pub(crate) const DEFAULT: Limits = Limits {
+        connect: Duration::from_secs(10),
+        idle: Duration::from_secs(60),
+        total: Duration::from_secs(600),
+    };
+}
 
 /// Send `method url` with extra `headers` and `body`; any status is returned as a response.
+/// Connecting may take 10 s per address, the server may be silent for 60 s at a time, and the
+/// whole exchange may take 10 minutes.
 pub fn fetch(
     method: &str,
     url: &str,
     headers: &[(&str, &str)],
     body: &[u8],
 ) -> Result<Response, String> {
+    fetch_within(method, url, headers, body, Limits::DEFAULT)
+}
+
+pub(crate) fn fetch_within(
+    method: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+    limits: Limits,
+) -> Result<Response, String> {
+    let deadline = Instant::now() + limits.total;
     if let Some(rest) = url.strip_prefix("http://") {
-        return plain(method, rest, headers, body).map_err(|e| format!("{method} {url}: {e}"));
+        return plain(method, rest, headers, body, limits, deadline)
+            .map_err(|e| format!("{method} {url}: {e}"));
     }
-    if url.starts_with("https://") {
-        return curl(method, url, headers, body).map_err(|e| format!("{method} {url}: {e}"));
+    if let Some(rest) = url.strip_prefix("https://") {
+        return crate::tls::client_config()
+            .and_then(|config| https_within(method, rest, headers, body, config, limits, deadline))
+            .map_err(|e| format!("{method} {url}: {e}"));
     }
     Err(format!(
         "unsupported URL `{url}` (expected http:// or https://)"
     ))
+}
+
+/// `host[:port]` and `/path?query` of a URL without its scheme.
+fn split(rest: &str) -> (&str, &str) {
+    match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, "/"),
+    }
+}
+
+/// A connection to `host` (each of its addresses in turn, `limits.connect` each but never past
+/// `deadline`), whose reads
+/// and writes fail once `deadline` has passed.
+fn connect(
+    host: &str,
+    default_port: u16,
+    limits: Limits,
+    deadline: Instant,
+) -> Result<Deadlined, String> {
+    let authority = if host.rsplit_once(':').is_some_and(|(_, p)| !p.contains(']')) {
+        host.to_string()
+    } else {
+        format!("{host}:{default_port}")
+    };
+    let addrs = authority
+        .to_socket_addrs()
+        .map_err(|e| format!("cannot connect: {e}"))?;
+    let mut last = None;
+    for addr in addrs {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(format!("cannot connect: {}", too_long()));
+        }
+        match TcpStream::connect_timeout(&addr, limits.connect.min(left)) {
+            Ok(stream) => {
+                return Ok(Deadlined {
+                    stream,
+                    idle: limits.idle,
+                    deadline,
+                })
+            }
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(match last {
+        Some(e) => format!("cannot connect: {e}"),
+        None => format!("cannot connect: `{host}` has no address"),
+    })
+}
+
+/// A TCP stream whose every read and write waits at most `idle`, and fails once `deadline`
+/// has passed.
+struct Deadlined {
+    stream: TcpStream,
+    idle: Duration,
+    deadline: Instant,
+}
+
+impl Deadlined {
+    /// The time the next read or write may wait, or the error once the deadline has passed.
+    fn wait(&self) -> std::io::Result<Duration> {
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(too_long());
+        }
+        Ok(left.min(self.idle))
+    }
+
+    /// A read or write that timed out because the deadline passed says so.
+    fn explain<T>(&self, result: std::io::Result<T>) -> std::io::Result<T> {
+        match result {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) && Instant::now() >= self.deadline =>
+            {
+                Err(too_long())
+            }
+            other => other,
+        }
+    }
+}
+
+fn too_long() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::TimedOut, "the request took too long")
+}
+
+impl Read for Deadlined {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let wait = self.wait()?;
+        self.stream.set_read_timeout(Some(wait))?;
+        let read = self.stream.read(buf);
+        self.explain(read)
+    }
+}
+
+impl Write for Deadlined {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let wait = self.wait()?;
+        self.stream.set_write_timeout(Some(wait))?;
+        let written = self.stream.write(buf);
+        self.explain(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.stream.flush()
+    }
 }
 
 fn plain(
@@ -36,18 +182,59 @@ fn plain(
     rest: &str,
     headers: &[(&str, &str)],
     body: &[u8],
+    limits: Limits,
+    deadline: Instant,
 ) -> Result<Response, String> {
-    let (host, path) = match rest.find('/') {
-        Some(i) => (&rest[..i], &rest[i..]),
-        None => (rest, "/"),
+    let (host, path) = split(rest);
+    let stream = connect(host, 80, limits, deadline)?;
+    exchange(stream, method, host, path, headers, body)
+}
+
+/// One request over TLS, verified with `config`, within the default limits.
+#[cfg(test)]
+pub(crate) fn https(
+    method: &str,
+    rest: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+    config: Arc<ClientConfig>,
+) -> Result<Response, String> {
+    let limits = Limits::DEFAULT;
+    let deadline = Instant::now() + limits.total;
+    https_within(method, rest, headers, body, config, limits, deadline)
+}
+
+/// One request over TLS, verified with `config`.
+fn https_within(
+    method: &str,
+    rest: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+    config: Arc<ClientConfig>,
+    limits: Limits,
+    deadline: Instant,
+) -> Result<Response, String> {
+    let (host, path) = split(rest);
+    // `[::1]:8443` → `::1`, `example.com:8443` → `example.com`.
+    let name = match host.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(v6),
+        None => host.split(':').next().unwrap_or(host),
     };
-    let authority = if host.contains(':') {
-        host.to_string()
-    } else {
-        format!("{host}:80")
-    };
-    let mut stream = TcpStream::connect(&authority).map_err(|e| format!("cannot connect: {e}"))?;
-    let _ = stream.set_read_timeout(Some(TIMEOUT));
+    let server_name =
+        ServerName::try_from(name.to_string()).map_err(|_| format!("invalid host `{name}`"))?;
+    let conn = ClientConnection::new(config, server_name).map_err(|e| format!("TLS: {e}"))?;
+    let stream = StreamOwned::new(conn, connect(host, 443, limits, deadline)?);
+    exchange(stream, method, host, path, headers, body)
+}
+
+fn exchange(
+    mut stream: impl Read + Write,
+    method: &str,
+    host: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+) -> Result<Response, String> {
     let mut head = format!(
         "{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Length: {}\r\nConnection: close\r\n",
         body.len()
@@ -59,74 +246,9 @@ fn plain(
     stream
         .write_all(head.as_bytes())
         .and_then(|()| stream.write_all(body))
+        .and_then(|()| stream.flush())
         .map_err(|e| format!("cannot send: {e}"))?;
     read_response(&mut BufReader::new(stream), MAX_RESPONSE)
-}
-
-fn curl(
-    method: &str,
-    url: &str,
-    headers: &[(&str, &str)],
-    body: &[u8],
-) -> Result<Response, String> {
-    let dir = tempfile_dir()?;
-    let (body_in, head_out, body_out) =
-        (dir.join("request"), dir.join("head"), dir.join("response"));
-    std::fs::write(&body_in, body).map_err(|e| format!("cannot write a temp file: {e}"))?;
-    let mut cmd = Command::new("curl");
-    cmd.args(["-sS", "-X", method, "--max-time", "120"])
-        .arg("--data-binary")
-        .arg(format!("@{}", body_in.display()))
-        .arg("-D")
-        .arg(&head_out)
-        .arg("-o")
-        .arg(&body_out);
-    for (n, v) in headers {
-        cmd.arg("-H").arg(format!("{n}: {v}"));
-    }
-    let out = cmd
-        .arg(url)
-        .output()
-        .map_err(|e| format!("cannot run curl (needed for https:// URLs): {e}"))?;
-    let result = if out.status.success() {
-        let mut wire = std::fs::read(&head_out).map_err(|e| e.to_string())?;
-        let body = std::fs::read(&body_out).unwrap_or_default();
-        wire.extend_from_slice(b"\r\n");
-        last_response_head(&wire, body)
-    } else {
-        Err(format!(
-            "curl failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ))
-    };
-    let _ = std::fs::remove_dir_all(&dir);
-    result
-}
-
-/// curl's `-D` file holds every response head (redirects, `100 Continue`); use the last one.
-fn last_response_head(wire: &[u8], body: Vec<u8>) -> Result<Response, String> {
-    let text = String::from_utf8_lossy(wire).replace("\r\n", "\n");
-    let last = text
-        .split("\n\n")
-        .filter(|h| h.starts_with("HTTP/"))
-        .last()
-        .ok_or("curl returned no HTTP response head")?;
-    let head = format!("{}\r\n\r\n", last.replace('\n', "\r\n"));
-    let mut resp = read_response(&mut head.as_bytes(), 0)?;
-    resp.body = body;
-    Ok(resp)
-}
-
-fn tempfile_dir() -> Result<std::path::PathBuf, String> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "velt-http-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create a temp dir: {e}"))?;
-    Ok(dir)
 }
 
 #[cfg(test)]
@@ -140,13 +262,44 @@ mod tests {
             .contains("unsupported"));
         let err = fetch("GET", "http://127.0.0.1:1/", &[], b"").unwrap_err();
         assert!(err.contains("cannot connect"), "{err}");
+        let err = fetch("GET", "https://127.0.0.1:1/", &[], b"").unwrap_err();
+        assert!(err.contains("cannot connect"), "{err}");
+    }
+
+    /// A server that answers one byte at a time, never pausing long enough for the idle timeout.
+    #[test]
+    fn a_dripping_server_hits_the_deadline() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut request = [0u8; 1024];
+            let _ = conn.read(&mut request);
+            for b in b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n"
+                .iter()
+                .cycle()
+            {
+                if conn.write_all(&[*b]).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        let limits = Limits {
+            connect: Duration::from_secs(5),
+            idle: Duration::from_secs(5),
+            total: Duration::from_millis(700),
+        };
+        let started = Instant::now();
+        let err = fetch_within("GET", &format!("http://{addr}/"), &[], b"", limits).unwrap_err();
+        assert!(err.contains("took too long"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        server.join().unwrap();
     }
 
     #[test]
-    fn curl_heads_use_the_last_response() {
-        let wire = b"HTTP/1.1 100 Continue\r\n\r\nHTTP/2 201\r\ncontent-type: x\r\n\r\n";
-        let resp = last_response_head(wire, b"ok".to_vec()).unwrap();
-        assert_eq!((resp.status, resp.header("Content-Type")), (201, Some("x")));
-        assert_eq!(resp.body, b"ok");
+    fn urls_split_into_host_and_path() {
+        assert_eq!(split("h:8080/a?b"), ("h:8080", "/a?b"));
+        assert_eq!(split("h"), ("h", "/"));
     }
 }

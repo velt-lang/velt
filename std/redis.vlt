@@ -97,6 +97,7 @@ async function run(handle: u64, args: string[]): Promise<RawReply> {
 // A connection (a Copy handle; see the module header).
 export struct RedisClient {
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   // Runs any command (`args[0]` is its name) and returns the decoded reply.
   async call(args: string[]): Promise<RedisReply> {
@@ -384,3 +385,8 @@ export async function psubscribe(
   }
   return await openSubscriber(target.handle, "", "", patterns, true);
 }
+
+// A field of this type makes a type opaque: a type with a private field has no JSON form,
+// so untrusted JSON can't produce the runtime handle it holds, and `JSON.stringify` doesn't
+// write it. It takes no space.
+struct RuntimeHandle {}

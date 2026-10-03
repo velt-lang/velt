@@ -1,0 +1,69 @@
+// check: no leaks
+// `Promise.withResolvers<T, E>()`: a pending promise and the functions that settle it. The first
+// settlement wins; `resolve` may be called on the promise's own task (the same object), moved
+// into a spawned task, or sent over a channel and called there (a copy). `T` and `E` also come
+// from the expected type.
+import { channel, Channel } from "velt:channel";
+
+class Failed extends Error {}
+
+class Box {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+type Call = { n: i64; reply: (value: i64) => void };
+
+async function doubler(calls: Channel<Call>) {
+  while (true) {
+    const c = await calls.receive();
+    if (c == null) {
+      return;
+    }
+    c.reply(c.n * 2);
+  }
+}
+
+async function main() {
+  const twice = Promise.withResolvers<i64, Failed>();
+  twice.resolve(1);
+  twice.resolve(2);
+  twice.reject(new Failed("ignored"));
+  console.log("twice:", await twice.promise);
+
+  const box = new Box(5);
+  const own = Promise.withResolvers<Box>();
+  own.resolve(box);
+  console.log("same object:", (await own.promise) === box);
+
+  const { promise, resolve } = Promise.withResolvers<Box>();
+  spawn(async () => {
+    await sleep(5);
+    resolve(new Box(7));
+  });
+  console.log("from a task:", (await promise).n);
+
+  const calls = channel<Call>();
+  const server = spawn(doubler(calls));
+  for (let i = 1; i <= 3; i++) {
+    const r = Promise.withResolvers<i64>();
+    await calls.send({ n: i, reply: r.resolve });
+    console.log("reply:", await r.promise);
+  }
+  calls.close();
+  await server;
+
+  const failing: PromiseWithResolvers<string, Failed> = Promise.withResolvers();
+  const reject = failing.reject;
+  spawn(async () => {
+    reject(new Failed("no luck"));
+  });
+  try {
+    console.log(await failing.promise);
+  } catch (e) {
+    console.log("rejected:", e.message);
+  }
+}

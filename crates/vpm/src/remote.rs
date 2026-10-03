@@ -2,13 +2,19 @@
 //!
 //! | Request | Answer |
 //! |---|---|
-//! | `GET  <url>/api/v1/<name>/index` | the package's `index.toml` (see [`crate::registry`]), 404 if unknown |
+//! | `GET  <url>/api/v1/<name>/index` | the package's `index.json` (see [`crate::registry`]), 404 if unknown |
 //! | `GET  <url>/api/v1/<name>/<version>` | the version's [`crate::archive`] |
 //! | `PUT  <url>/api/v1/<name>/<version>` | publish: body = archive, `X-Velt-Checksum: sha256:…`; `Authorization: Bearer <token>` when the server requires one |
 //! | `GET  <url>/api/v1/<name>/<version>/native/<triple>` | a native bundle ([`crate::native::bundle`]) |
 //! | `PUT  <url>/api/v1/<name>/<version>/native/<triple>` | add a native bundle to a published version (same headers; never replaces one) |
+//! | `PUT` / `DELETE <url>/api/v1/<name>/<version>/yank` | yank / unyank a version ([`crate::yank`]) |
+//! | `GET  <url>/api/v1/<name>/owners` | the package's owners, one per line |
+//! | `PUT` / `DELETE <url>/api/v1/<name>/owners/<user>` | add / remove an owner |
+//! | `GET  <url>/api/v1/search?q=<text>` | packages whose name contains the text ([`crate::search`]), as JSON |
 //!
-//! Downloads are verified against the checksum the index (and `velt.lock`) records before they
+//! Every write sends `Authorization: Bearer $VELT_REGISTRY_TOKEN`, the user's own token; a server
+//! with users answers 401 without a valid one and 403 when the user does not own the package.
+//! Downloads are verified against the checksum the index (and `velt.lock.json`) records before they
 //! are unpacked into the cache.
 
 use std::path::{Path, PathBuf};
@@ -28,6 +34,10 @@ fn api(url: &str, name: &str, rest: &str) -> String {
 pub fn read_index(url: &str, name: &str) -> Result<Option<Index>, String> {
     let resp = velt_http::fetch("GET", &api(url, name, "index"), &[], b"")?;
     match resp.status {
+        // A server from before the index was JSON answers with `index.toml`, typed as TOML.
+        200 if is_toml(resp.header("content-type")) => Err(format!(
+            "registry {url} answered with an `index.toml` for `{name}` (an older `velt registry serve`): upgrade the server, which now serves `index.json`"
+        )),
         200 => parse_index(&resp.body_text(), &format!("{url} ({name})")).map(Some),
         404 => Ok(None),
         s => Err(format!(
@@ -35,6 +45,15 @@ pub fn read_index(url: &str, name: &str) -> Result<Option<Index>, String> {
             resp.body_text().trim()
         )),
     }
+}
+
+/// Whether a `Content-Type` is TOML's (`application/toml`, parameters ignored).
+fn is_toml(content_type: Option<&str>) -> bool {
+    content_type.is_some_and(|t| {
+        t.split(';')
+            .next()
+            .is_some_and(|m| m.trim().eq_ignore_ascii_case("application/toml"))
+    })
 }
 
 /// Download `name` `version`, verify it against `checksum`, and unpack it into `dest`
@@ -118,19 +137,169 @@ pub fn publish(url: &str, root: &Path, name: &str, entry: &IndexEntry) -> Result
 }
 
 fn put(url: &str, target: &str, checksum: &str, body: &[u8]) -> Result<(), String> {
+    write(url, "PUT", target, &[("X-Velt-Checksum", checksum)], body).map(drop)
+}
+
+/// Send a write request with the user's token; `Ok` with the answer's text on 2xx.
+fn write(
+    url: &str,
+    method: &str,
+    target: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+) -> Result<String, String> {
     let token = std::env::var(TOKEN_VAR).unwrap_or_default();
     let auth = format!("Bearer {token}");
-    let mut headers = vec![("X-Velt-Checksum", checksum)];
+    let mut headers = headers.to_vec();
     if !token.is_empty() {
+        check_token_transport(url)?;
         headers.push(("Authorization", auth.as_str()));
     }
-    let resp = velt_http::fetch("PUT", target, &headers, body)?;
+    let resp = velt_http::fetch(method, target, &headers, body)?;
+    let text = resp.body_text().trim().to_string();
     match resp.status {
-        200 | 201 => Ok(()),
-        401 | 403 => Err(format!(
-            "registry {url} refused the upload ({}): set ${TOKEN_VAR}",
-            resp.status
+        200..=299 => Ok(text),
+        401 => Err(format!(
+            "registry {url} refused the request ({text}): set ${TOKEN_VAR} to your token"
         )),
+        s => Err(format!("registry {url}: {s}: {text}")),
+    }
+}
+
+/// The token may travel only over `https://`, or plain `http://` to this machine: anyone on the
+/// network path could read it otherwise.
+fn check_token_transport(url: &str) -> Result<(), String> {
+    let scheme_is = |scheme: &str| {
+        url.get(..scheme.len())
+            .is_some_and(|s| s.eq_ignore_ascii_case(scheme))
+    };
+    if scheme_is("https://") {
+        return Ok(());
+    }
+    let refused = || {
+        format!(
+            "not sending ${TOKEN_VAR} to {url}: only an https:// registry, or http:// on this machine, gets it; use the registry's https:// URL (put `velt registry serve` behind a TLS reverse proxy)"
+        )
+    };
+    if !scheme_is("http://") {
+        return Err(refused());
+    }
+    let rest = &url["http://".len()..];
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = match host_port.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(v6),
+        None => host_port.split(':').next().unwrap_or(host_port),
+    };
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    if loopback {
+        return Ok(());
+    }
+    Err(refused())
+}
+
+/// Yank (`yanked`) or unyank `name` `version`.
+pub fn yank(url: &str, name: &str, version: &str, yanked: bool) -> Result<(), String> {
+    let method = if yanked { "PUT" } else { "DELETE" };
+    write(
+        url,
+        method,
+        &api(url, name, &format!("{version}/yank")),
+        &[],
+        b"",
+    )
+    .map(drop)
+}
+
+/// The owners of `name`.
+pub fn owners(url: &str, name: &str) -> Result<Vec<String>, String> {
+    check_names(&[name])?;
+    let resp = velt_http::fetch("GET", &api(url, name, "owners"), &[], b"")?;
+    match resp.status {
+        200 => Ok(resp.body_text().lines().map(str::to_string).collect()),
+        404 => Err(format!("`{name}` is not in the registry {url}")),
         s => Err(format!("registry {url}: {s}: {}", resp.body_text().trim())),
+    }
+}
+
+/// Add (`add`) or remove `user` as an owner of `name`.
+pub fn set_owner(url: &str, name: &str, user: &str, add: bool) -> Result<(), String> {
+    check_names(&[name, user])?;
+    let method = if add { "PUT" } else { "DELETE" };
+    write(
+        url,
+        method,
+        &api(url, name, &format!("owners/{user}")),
+        &[],
+        b"",
+    )
+    .map(drop)
+}
+
+/// Package and user names go into URL paths: only `[a-z][a-z0-9_-]*` ones are sent.
+fn check_names(names: &[&str]) -> Result<(), String> {
+    match names
+        .iter()
+        .find(|n| !crate::manifest::is_valid_package_name(n))
+    {
+        Some(bad) => Err(format!(
+            "invalid name `{bad}` (use lowercase letters, digits, `-` and `_`, starting with a letter)"
+        )),
+        None => Ok(()),
+    }
+}
+
+/// The registry's answer to a search for `query`.
+pub fn search(url: &str, query: &str) -> Result<Vec<crate::search::Hit>, String> {
+    let target = format!(
+        "{}/api/v1/search?q={}",
+        url.trim_end_matches('/'),
+        crate::search::encode_query(query)
+    );
+    let resp = velt_http::fetch("GET", &target, &[], b"")?;
+    if resp.status != 200 {
+        return Err(format!(
+            "registry {url}: {} searching: {}",
+            resp.status,
+            resp.body_text().trim()
+        ));
+    }
+    crate::search::from_json(&resp.body_text()).map_err(|e| format!("registry {url}: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_token_transport;
+
+    #[test]
+    fn tokens_travel_only_over_tls_or_to_this_machine() {
+        for url in [
+            "https://registry.example.com",
+            "HTTPS://registry.example.com",
+            "http://127.0.0.1:8091",
+            "HTTP://localhost",
+            "http://127.1.2.3",
+            "http://localhost:8091/",
+            "http://LOCALHOST",
+            "http://[::1]:8091",
+        ] {
+            assert!(check_token_transport(url).is_ok(), "{url}");
+        }
+        for url in [
+            "http://registry.example.com",
+            "http://192.168.1.10:8091",
+            "http://[2001:db8::1]:8091",
+            "http://localhost.example.com",
+            "http://127.0.0.1@evil.example.com",
+            "HTTP://registry.example.com",
+            "ftp://registry.example.com",
+            "registry.example.com",
+        ] {
+            let err = check_token_transport(url).unwrap_err();
+            assert!(err.contains("https://"), "{url}: {err}");
+        }
     }
 }

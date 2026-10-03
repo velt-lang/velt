@@ -1,17 +1,17 @@
 //! `Promise.all(ps)` as a value when the promises can reject (`Promise<T, E>[]`): each child
 //! leaves a `Result<T, E>` in the results buffer, and the joined promise's slot is a
 //! `Result<T[], E>`. The wrapper state is `{ result: Result<T[], E> @0, inner: VeltFut*,
-//! buf: Result<T, E>[] }`; once `velt_rt_all` is done its poll *settles* the buffer: the first
-//! rejected child in array order becomes `Err` (every other result is dropped), else the `Ok`
-//! payloads move into a fresh `T[]`. Like JS, the join waits for its children; unlike JS, it
-//! reports a rejection only after every child has settled.
+//! buf: Result<T, E>[] }`. `velt_rt_all_or_reject` completes as soon as a child rejects, like
+//! JS, and moves that child's result to slot 0; the wrapper's poll then *settles* the buffer: an
+//! `Err` in slot 0 becomes the joined `Err` (the runtime already dropped every other result, and
+//! the other promises keep running), else the `Ok` payloads move into a fresh `T[]`.
 
 use velt_sema::hir::{TyId, TyKind};
 
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cfunc, cint, ice, unit, Cx, FnLower, ScopeKind, Work};
-use crate::vir::{AggId, BinOp, Function, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
+use crate::vir::{AggId, BinOp, Function, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl Cx<'_> {
     /// Wrapper state for children results of type `slot` (`Result<T, E>`).
@@ -114,19 +114,29 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.finish(sym, vec![Ty::Ptr], Ty::Unit)
     }
 
-    /// Turn the results buffer (state field 2) into the joined result (state field 0).
+    /// Turn the results buffer (state field 2) into the joined result (state field 0). A
+    /// rejection is an `Err` in slot 0, where `velt_rt_all_or_reject` moves it (`n > 0`).
     fn settle(&mut self, base: &Place, slot: TyId) {
         let buf = proj(base, Proj::Field(2));
         let n = Operand::Copy(proj(&buf, Proj::Field(1)));
-        let first = self.first_rejection(&buf, n.clone(), slot);
-        let failed = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Ne, Operand::Copy(Place::local(first)), n.clone()),
+        let (check, err_bb, ok_bb, done) = (
+            self.new_block(),
+            self.new_block(),
+            self.new_block(),
+            self.new_block(),
         );
-        let (err_bb, ok_bb, done) = (self.new_block(), self.new_block(), self.new_block());
+        let any = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Ne, n.clone(), cint(0, Ty::U64)),
+        );
+        self.branch(any, check, ok_bb);
+        self.switch_to(check);
+        let first = self.elem_place(&buf, cint(0, Ty::U64), slot);
+        let tag = Operand::Copy(proj(&first, Proj::Field(0)));
+        let failed = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, tag, cint(0, Ty::U8)));
         self.branch(failed, err_bb, ok_bb);
         self.switch_to(err_bb);
-        self.settle_rejected(base, &buf, (first, n.clone()), slot);
+        self.settle_rejected(base, &buf, slot);
         self.goto(done);
         self.switch_to(ok_bb);
         self.settle_fulfilled(base, &buf, n, slot);
@@ -134,42 +144,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.switch_to(done);
     }
 
-    /// Index of the first `Err` in the buffer, or `n`.
-    fn first_rejection(&mut self, buf: &Place, n: Operand, slot: TyId) -> Local {
-        let first = self.temp(Ty::U64);
-        self.assign(Place::local(first), Rvalue::Use(n.clone()));
-        let k = self.temp(Ty::U64);
-        self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
-        self.count_loop(k, n.clone(), |lw, k| {
-            let r = lw.elem_place(buf, k.clone(), slot);
-            let tag = Operand::Copy(proj(&r, Proj::Field(0)));
-            let is_err = lw.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, tag, cint(0, Ty::U8)));
-            let unset = lw.rvalue_temp(
-                Ty::Bool,
-                Rvalue::Binary(BinOp::Eq, Operand::Copy(Place::local(first)), n),
-            );
-            let both = lw.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, is_err, unset));
-            let (set_bb, next) = (lw.new_block(), lw.new_block());
-            lw.branch(both, set_bb, next);
-            lw.switch_to(set_bb);
-            lw.assign(Place::local(first), Rvalue::Use(k));
-            lw.goto(next);
-            lw.switch_to(next);
-        });
-        first
-    }
-
-    /// `result = Err(buf[first].error)`; every other result is dropped; the buffer is freed.
-    fn settle_rejected(
-        &mut self,
-        base: &Place,
-        buf: &Place,
-        (first, n): (Local, Operand),
-        slot: TyId,
-    ) {
+    /// `result = Err(buf[0].error)` (the only initialized result); the buffer is freed.
+    fn settle_rejected(&mut self, base: &Place, buf: &Place, slot: TyId) {
         let joined = self.cx.joined_result(slot);
-        let fp = Operand::Copy(Place::local(first));
-        let failed = self.elem_place(buf, fp.clone(), slot);
+        let failed = self.elem_place(buf, cint(0, Ty::U64), slot);
         let ev = self.cx.view(slot, 1);
         let err = Operand::Copy(proj(&proj(&failed, Proj::Cast(ev)), Proj::Field(1)));
         let out = proj(base, Proj::Field(0));
@@ -184,18 +162,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
             );
         }
         self.assign(proj(&out, Proj::Field(0)), Rvalue::Use(cint(1, Ty::U8)));
-        let k = self.temp(Ty::U64);
-        self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
-        self.count_loop(k, n, |lw, k| {
-            let other = lw.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, k.clone(), fp));
-            let (drop_bb, next) = (lw.new_block(), lw.new_block());
-            lw.branch(other, drop_bb, next);
-            lw.switch_to(drop_bb);
-            let p = lw.elem_place(buf, k, slot);
-            lw.drop_glue(p, slot);
-            lw.goto(next);
-            lw.switch_to(next);
-        });
         self.free_buffer(buf, slot);
     }
 

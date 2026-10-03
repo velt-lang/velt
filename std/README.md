@@ -6,14 +6,16 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | Path | Role |
 |---|---|
 | `prelude/*.vlt` | Implicitly imported into every module. |
-| `prelude/array.vlt` | `T[]` methods: `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat reverse isEmpty`, `join` on `string[]`. Callback methods rethrow their callback's errors (generic `E`). |
-| `prelude/sort.vlt` | `sort()` on `i64 i32 u64 usize f64 string` arrays (pdqsort), stable `sort(cmp)` on any array. |
+| `prelude/array.vlt` | `T[]` methods: `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat reverse fill splice truncate toReversed toSpliced with isEmpty entries join`. Callback methods rethrow their callback's errors (generic `E`). |
+| `prelude/array_nested.vlt` | `flat` and `join` on `T[][]`, `join` on `(T \| null)[]`. |
+| `prelude/sort.vlt` | `sort()` on `i64 i32 u64 usize f64 string` arrays (pdqsort), stable `sort(cmp)` on any array, and the copying `toSorted`. |
 | `prelude/map.vlt` | `Map<K, V>`: insertion-ordered hash map (dense entries + linear-probing index). |
 | `prelude/math.vlt` | `Math` static methods (f64). |
 | `prelude/nullable.vlt` | `isNull unwrap unwrapOr map` on `T \| null`. |
-| `prelude/assert.vlt` | `assert`, `assertEq`. |
+| `prelude/assert.vlt` | `assert`, `assertEq`, `assertThrows`, `deepEqual`. |
+| `prelude/number.vlt` | `NaN`, `Infinity`, `isNaN`, `isFinite`, `toFixed`, and `Number.*` (`NumberConstructor`). |
 | `prelude/error.vlt` | `Error { message }`, base class of std errors. |
-| `prelude/string.vlt` | `string` methods (`slice indexOf split trim replace padStart …`), `String.fromCharCode`, `parseInt`, `parseFloat`, `Number`. |
+| `prelude/string.vlt` | `string` methods (`slice indexOf split trim replace padStart localeCompare …`), `String.fromCharCode`, `parseInt`, `parseFloat`, `Number`. |
 | `prelude/json.vlt` | `JSON.stringify/parse/parseValue`, `JsonError`, `JsonValue`. |
 | `prelude/sync.vlt` | `Mutex<T>` layout for `new Mutex(x)` / `.with(f)` (compiler-implemented). |
 | `math.vlt` | `std/math`: integer helpers `clamp gcd lcm isPrime fib`. |
@@ -38,6 +40,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `url.vlt` | `std/url`: WHATWG `URL`, `URLSearchParams`, `encodeURIComponent` family (`url/*.vlt`: internal). |
 | `datetime.vlt` | `std/datetime`: UTC-first `DateTime` (ISO/HTTP dates, formatting, calendar math), `Duration` (`datetime/*.vlt`: internal). |
 | `html.vlt` | `std/html`: `escapeHtml` (one runtime pass). |
+| `package.vlt` | `velt:package`: types only, `Package` and its parts: the type of a package's `package.vlt` manifest (docs/tooling/manifest.md). |
 | `jsx.vlt` | `velt:jsx`: server-side TSX rendering, `renderToString renderToStringSync renderToStream raw Fragment`, `Element`, `RenderError`, the `JSX` types. |
 | `jsx/jsx-runtime.vlt` | `velt:jsx/jsx-runtime`: the JSX provider module compiled JSX calls (docs/internals/contracts/jsx.md), with the SSR precompile exports; `jsx/generic/jsx-runtime.vlt` without them. Internal: `jsx/node.vlt` (`Element`), `factory.vlt`, `escape.vlt`, `void_elements.vlt`, `render.vlt`, `intrinsic.vlt` + `attrs/*.vlt` (HTML tags and attributes). |
 | `csv.vlt` | `std/csv`: RFC 4180 `parseCsv parseCsvRecords stringifyCsv`, `CsvError`. |

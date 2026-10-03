@@ -1,0 +1,18 @@
+// check: no leaks
+// The JSON decoder creates a Map (or Record) itself and passes an empty array for each
+// constructor parameter (json/map.rs `empty_ctor_args`): this pins its contract with the
+// prelude's `constructor(entries: [K, V][] = [])` (std/prelude/map.vlt, #205): a decoded map
+// holds exactly the JSON's entries and behaves like one built with `new Map()`.
+type Scores = Map<string, i64>;
+type Pick = Record<"a" | "b", i64>;
+
+function main() {
+  const m = JSON.parse<Scores>('{"x":1,"y":2}');
+  console.log(m.size, m.get("y"));
+  m.set("z", 3);
+  console.log(m, JSON.stringify(m));
+  const e = JSON.parse<Scores>("{}");
+  console.log(e.size, e.get("x"));
+  const r = JSON.parse<Pick>('{"b":2,"a":1}');
+  console.log(r);
+}

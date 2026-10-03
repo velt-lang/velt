@@ -1,5 +1,5 @@
 //! Packages with native code against an isolated local registry (hand-made bundles, no cargo):
-//! publish → install for a target → `velt.lock` pins every target → tampering is caught → a
+//! publish → install for a target → `velt.lock.json` pins every target → tampering is caught → a
 //! missing target without cargo gets the documented message → targets can be added, never
 //! replaced. One test: it sets `$VELT_CARGO` for the whole process.
 
@@ -38,7 +38,7 @@ fn bundle_dir(dir: &Path, target: &str, content: &str) -> PathBuf {
         static_obj: Some("static/db.o".into()),
         exports: BTreeMap::from([("db_open".into(), "(string)->IoResult<u64>".into())]),
     };
-    std::fs::write(b.join("native.toml"), meta.to_toml()).unwrap();
+    std::fs::write(b.join("native.json"), meta.to_json()).unwrap();
     b
 }
 
@@ -201,11 +201,11 @@ fn native_packages_end_to_end() {
     );
 
     // A library needing a newer runtime table is refused before download.
-    let index_path = loc.registry.join("db/index.toml");
+    let index_path = loc.registry.join("db/index.json");
     let text = std::fs::read_to_string(&index_path).unwrap();
     std::fs::write(
         &index_path,
-        text.replace("native_abi = 1", "native_abi = 99"),
+        text.replace("\"native_abi\": 1", "\"native_abi\": 99"),
     )
     .unwrap();
     let e = install(&dir.join("app"), &loc, for_linux).unwrap_err();

@@ -1,0 +1,35 @@
+// check: no leaks
+// `Promise.all` over spawned tasks that rejects early drops the join handles of the tasks still
+// running; their results (objects that own memory) are freed when they finish, and no task
+// result leaks.
+class Failed extends Error {}
+
+class Report {
+  text: string;
+
+  constructor(text: string) {
+    this.text = text;
+  }
+}
+
+async function ok(i: i64): Promise<Report> throws Failed {
+  await sleep(2);
+  return new Report(`task ${i} produced a string long enough to live on the heap`);
+}
+
+async function fail(i: i64): Promise<Report> throws Failed {
+  throw new Failed(`task ${i} failed`);
+}
+
+async function main() {
+  let rejected = 0;
+  for (let i = 0; i < 200; i++) {
+    try {
+      await Promise.all([spawn(ok(i)), spawn(fail(i)), spawn(ok(i))]);
+    } catch (e) {
+      rejected++;
+    }
+  }
+  await sleep(50);
+  console.log("rejected", rejected);
+}

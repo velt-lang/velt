@@ -142,11 +142,17 @@ impl WriterObj {
 }
 
 /// `Response.stream(...)`: makes `r`'s body a stream (default `content-type: text/plain;
-/// charset=utf-8` unless one is set) and returns its writer.
+/// charset=utf-8` unless one is set) and returns its writer. A bodiless status (1xx, 204, 304)
+/// keeps its empty body and gets no `content-type`: the writer's body end is dropped at once,
+/// so its writes return 0 as if the client had gone away.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_resp_stream_open(r: Handle<RespObj>) -> WriterHandle {
     let (writer, body) = WriterObj::new();
     let r = r.obj_mut();
+    if super::response::bodiless(r.status()) {
+        drop(body);
+        return WRITERS.insert(writer);
+    }
     *r.body_mut() = RespBody::Stream(body);
     r.headers_mut()
         .entry(CONTENT_TYPE)

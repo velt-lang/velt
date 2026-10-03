@@ -92,8 +92,8 @@ impl FnCx<'_, '_> {
 
     pub(crate) fn fn_callable(&mut self, d: DefId, what: String) -> Callable {
         crate::body::defaults::param_defaults(self.cx, d);
+        let async_call = self.rejects_through_promise(d);
         let f = self.cx.fn_info(d);
-        let async_call = f.is_async && f.kind != crate::defs::FnKind::Extern;
         let mut c = Callable {
             what,
             params: f.params.clone(),
@@ -227,6 +227,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.namespace_call(object, prop, type_args, args, exp, span) {
             return h;
         }
+        if let Some(h) = self.process_write_call(object, prop, args, exp, span) {
+            return h;
+        }
         if let Some(h) = self.array_fill_new(object, prop, args, exp, span) {
             return h;
         }
@@ -283,7 +286,13 @@ impl FnCx<'_, '_> {
             Some(Item::Def(d)) if self.cx.adt(d).is_some() => {
                 Some(self.static_call(d, prop, type_args, args, exp, span))
             }
-            Some(_) => None,
+            Some(item) => {
+                let d = self.companion_class(&id.name, item)?;
+                Some(self.static_call(d, prop, type_args, args, exp, span))
+            }
+            None if (id.name.as_str(), prop.name.as_str()) == ("Promise", "withResolvers") => {
+                Some(self.promise_with_resolvers(type_args, args, exp, span))
+            }
             None => self.namespace_builtin(id, prop, args, exp, span),
         }
     }

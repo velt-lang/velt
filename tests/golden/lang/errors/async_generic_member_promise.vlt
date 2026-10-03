@@ -1,0 +1,24 @@
+// A method returning a type parameter that implements an interface method returning a promise
+// cannot be `async`, so it cannot fail (its errors would have to reject the promise).
+interface Loader {
+  load(): Promise<i64>;
+}
+
+class Holder<T> {
+  value: T;
+
+  constructor(value: T) {
+    this.value = value;
+  }
+
+  load(): T {
+    throw new Error("empty");
+  }
+}
+
+class PromiseHolder extends Holder<Promise<i64>> implements Loader {}
+
+async function main() {
+  const l: Loader = new PromiseHolder(new Promise<i64>((resolve, reject) => resolve(1)));
+  console.log(await l.load());
+}

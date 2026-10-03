@@ -1,11 +1,20 @@
 # Nightly: the full gate on Linux with real PostgreSQL and Redis, so the database goldens run
-# (they are skipped without their URLs).
+# (they are skipped without their URLs) and then the differential tests against Node
+# (tests/difftest), and the Cranelift compile-memory stress run (bench/compile/stress.sh,
+# stress.ps1) on Linux and Windows. A manual run can pick one of them:
+# `gh workflow run nightly -f only=stress`.
 name: nightly
 
 on:
   schedule:
     - cron: "17 2 * * *"
   workflow_dispatch:
+    inputs:
+      only:
+        description: Run only one job (scheduled runs run both).
+        type: choice
+        options: [all, gate, stress]
+        default: all
 
 env:
   CARGO_INCREMENTAL: "0"
@@ -13,6 +22,7 @@ env:
 
 jobs:
   gate-with-services:
+    if: inputs.only != 'stress'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     services:
@@ -38,3 +48,63 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
       - run: scripts/check-all.sh
+      # Node is the oracle: the hand-written corpus and short generated runs must agree with it.
+      # All three run even when one finds a mismatch (each finds different bugs); the step fails
+      # at the end if any did.
+      - name: difftest (corpus, short fuzz)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 45
+        run: |
+          status=0
+          tests/difftest/run.sh run tests/difftest/corpus -j 4 || status=1
+          tests/difftest/run.sh fuzz --seeds 0..200 -j 4 || status=1
+          tests/difftest/run.sh fuzz --std --seeds 0..100 -j 4 || status=1
+          exit "$status"
+      # The failing programs, shrunk, with what differed (tests/difftest/README.md).
+      - name: difftest reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: difftest-out
+          path: tests/difftest/out
+          if-no-files-found: ignore
+
+  # A debug build (Cranelift) of long_main_16000 must stay under 2 GB of peak memory and print the
+  # right result (#42, #189). The script prints the stage times and the peak; the summary shows them.
+  compile-stress:
+    if: inputs.only != 'gate'
+    name: compile-stress (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: "false"
+      - name: bench/compile/stress.sh
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -o pipefail
+          bench/compile/stress.sh 2>&1 | tee "$RUNNER_TEMP/stress.log"
+      - name: bench/compile/stress.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: |
+          pwsh -NoProfile -File bench/compile/stress.ps1 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/stress.log"
+          exit $LASTEXITCODE
+      - name: summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### compile stress (${{ runner.os }})"
+            echo '```'
+            tail -n 40 "$RUNNER_TEMP/stress.log" 2>/dev/null || echo "no log (the run stopped before the stress script)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

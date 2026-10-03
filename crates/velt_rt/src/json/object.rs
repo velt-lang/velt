@@ -46,14 +46,15 @@ struct Index {
 
 #[cfg(test)]
 thread_local! {
-    /// Slots moved or visited by deletes on this thread (compaction, order tables, moves in
-    /// small objects): lets tests check that deleting stays linear without timing it.
+    /// Work done editing objects on this thread: slots moved or visited by deletes (compaction,
+    /// order tables, moves in small objects) and children copied when an edit copies a shared
+    /// node on write. Lets tests check that editing stays linear by counting instead of timing.
     pub(crate) static WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// Count `n` slots of delete work (tests only).
+/// Count `n` steps of edit work (tests only).
 #[inline(always)]
-fn count_work(n: usize) {
+pub(super) fn count_work(n: usize) {
     #[cfg(test)]
     WORK.with(|w| w.set(w.get() + n));
     #[cfg(not(test))]

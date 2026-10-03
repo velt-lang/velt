@@ -1,0 +1,6 @@
+// Nor through a `paths` alias that points into a `std/` directory.
+import { grow } from "@evil";
+
+function main() {
+  console.log(grow(1).length);
+}

@@ -1,0 +1,16 @@
+// A getter returning a promise from an interface would report its errors through the promise,
+// and a getter cannot be `async`: a failing getter is an error (no `async` fix for it).
+interface Reader {
+  get ready(): Promise<bool>;
+}
+
+class R implements Reader {
+  get ready(): Promise<bool> {
+    throw new Error("not ready");
+  }
+}
+
+async function main() {
+  const r: Reader = new R();
+  console.log(await r.ready);
+}

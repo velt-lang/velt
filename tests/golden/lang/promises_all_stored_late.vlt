@@ -1,0 +1,53 @@
+// check: no leaks
+// A stored `Promise.all` settles in time order even when it is awaited later: it rejects with
+// the first rejection to happen (`y`), not the first in array order. (Node reports `y` too, but
+// as an unhandled rejection, since no handler was attached when it happened; in Velt a promise
+// that is still held is not unhandled.) Finished results that own memory (strings) are dropped
+// when an inline `Promise.all` rejects early. `x` rejects only once `main` releases it, after
+// the stored `Promise.all` settled, so `y` is first in time however the timers run.
+import { channel, Channel } from "velt:channel";
+
+class Failed extends Error {}
+
+// Rejects once `release` receives a value.
+async function lateWhenReleased(
+  name: string,
+  release: Channel<bool>,
+): Promise<string> throws Failed {
+  await release.receive();
+  throw new Failed(`${name} failed`);
+}
+
+async function late(name: string, ms: i64): Promise<string> throws Failed {
+  await sleep(ms);
+  throw new Failed(`${name} failed`);
+}
+
+async function ok(name: string, ms: i64): Promise<string> throws Failed {
+  await sleep(ms);
+  return `${name} is a long enough string to live on the heap`;
+}
+
+async function main() {
+  const release = channel<bool>();
+  const all = Promise.all([lateWhenReleased("x", release), late("y", 10)]);
+  await sleep(50);
+  try {
+    console.log(await all);
+  } catch (e) {
+    console.log("stored all rejected:", e.message);
+  }
+  try {
+    await release.send(true);
+  } catch (e) {
+    console.log("release failed");
+  }
+  release.close();
+  try {
+    console.log(await Promise.all([ok("a", 5), ok("b", 10), late("c", 20), ok("d", 40)]));
+  } catch (e) {
+    console.log("inline all rejected:", e.message);
+  }
+  await sleep(50);
+  console.log("done");
+}

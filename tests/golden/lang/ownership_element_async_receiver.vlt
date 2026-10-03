@@ -1,0 +1,66 @@
+// Regression (#197): an async method called on a local copied out of an array element made
+// ownership inference report a change on every visit of `main` (the element's move was not
+// recognized as done), so it never settled; release builds stopped at the visit cap and left
+// other bodies with borrowed modes (`this.f = f` in `M` failed: "cannot keep a copy of `f`").
+// Variants: nested arrays, a field, a Map value, an array parameter, a sync function.
+class Box {
+  n: i64;
+  constructor(n: i64) {
+    this.n = n;
+  }
+  async get(): Promise<i64> {
+    return this.n;
+  }
+}
+
+class Holder {
+  box: Box = new Box(3);
+  inner: Holder | null = null;
+}
+
+class M {
+  f: () => void;
+  constructor(f: () => void) {
+    this.f = f;
+  }
+}
+
+async function fromParam(boxes: Box[]): Promise<i64> {
+  const b = boxes[0];
+  return await b.get();
+}
+
+function sync(boxes: Box[]): Box {
+  const b = boxes[0];
+  return b;
+}
+
+async function main() {
+  const boxes = [new Box(1)];
+  const b = boxes[0];
+  console.log(await b.get());
+
+  const grid = [[new Box(1), new Box(2)]];
+  const g = grid[0][1];
+  console.log(await g.get());
+
+  const h = new Holder();
+  const hb = h.box;
+  console.log(await hb.get());
+
+  const m = new Map<string, Box>();
+  m.set("k", new Box(4));
+  const mb = m.get("k");
+  if (mb !== null) {
+    console.log(await mb.get());
+  }
+
+  console.log(await fromParam(boxes));
+  console.log(await sync(grid[0]).get());
+
+  const saved = new M(() => {
+    console.log("kept");
+  });
+  saved.f();
+  console.log(boxes.length, grid[0].length, b.n);
+}

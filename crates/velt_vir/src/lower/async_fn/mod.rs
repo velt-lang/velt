@@ -34,6 +34,7 @@ mod suspend;
 mod sync;
 mod tasks;
 mod value;
+mod widen;
 
 use std::collections::HashMap;
 

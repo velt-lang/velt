@@ -1,0 +1,18 @@
+settled fails
+all rejected: failed after 40 ms
+settled mid
+settled slow
+settled early failure
+all rejected: failed after 300 ms
+settled late failure
+settled b
+settled a
+fulfilled: [ 'a', 'b' ]
+settled tie 1
+all rejected: failed after 20 ms
+started failNow
+started second
+all rejected: failed after 0 ms
+settled tie 2
+settled tie 3
+done

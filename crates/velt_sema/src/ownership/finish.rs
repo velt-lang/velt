@@ -20,7 +20,7 @@ use super::evidence;
 
 /// Demote the modified params of named functions used as values (module docs).
 pub(super) fn demote_fn_values(cx: &mut Ctx) {
-    let values: Vec<DefId> = cx.fn_values.iter().map(|(d, _)| *d).collect();
+    let values: Vec<DefId> = cx.fn_values.iter().map(|(d, ..)| *d).collect();
     for d in values {
         let info = cx.fn_info_mut(d);
         let mut demoted = vec![];

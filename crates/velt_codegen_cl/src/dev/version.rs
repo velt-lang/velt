@@ -1,7 +1,10 @@
 //! One program version in its own `JITModule`: compiles the functions the version defines,
 //! resolves everything else to code that is already loaded (trampolines, pinned code of earlier
 //! versions, runtime symbols, C library functions), and registers the new code's unwind info
-//! with the system (Windows x64, macOS, Linux).
+//! with the system (Windows x64, macOS, Linux) and its line tables with debuggers (macOS, Linux:
+//! `debug_info::jit`).
+
+use std::time::{Duration, Instant};
 
 use cranelift_jit::{JITBuilder, JITModule};
 use velt_vir::vir;
@@ -24,15 +27,34 @@ pub(crate) struct Version {
     pub trampolines: Vec<Option<usize>>,
 }
 
-/// Compile `program` with `names` (see [`DevFunction`]). `imports` resolves every reference
-/// this version does not define; `runtime` is the host's symbol table.
+/// What a version is compiled from, besides the program.
+pub(crate) struct Inputs<'a> {
+    /// How the version declares each function (see [`DevFunction`]).
+    pub names: &'a [DevFunction],
+    /// Addresses of every reference this version does not define.
+    pub imports: &'a [(String, usize)],
+    /// The host's symbol table.
+    pub runtime: &'a [(String, usize)],
+    /// The session's first version (sizes its arena).
+    pub first: bool,
+    /// Describe the code to debuggers (`debug_info::jit`).
+    pub debug_info: bool,
+}
+
+/// Compile `program` as described by `inputs`, appending the time of each step to `timings`.
 pub(crate) fn compile(
     program: &vir::Program,
-    names: &[DevFunction],
-    imports: &[(String, usize)],
-    runtime: &[(String, usize)],
-    first: bool,
+    inputs: &Inputs,
+    timings: &mut Vec<(&'static str, Duration)>,
 ) -> Result<Version, String> {
+    let Inputs {
+        names,
+        imports,
+        runtime,
+        first,
+        debug_info,
+    } = *inputs;
+    let start = Instant::now();
     let isa = crate::isa::make_isa(&crate::host_triple(), false, true)?;
     let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
     for (name, address) in runtime.iter().chain(imports) {
@@ -45,13 +67,30 @@ pub(crate) fn compile(
     let built = build_module(&mut module, program, &Naming::Dev(names))?;
     #[cfg(all(windows, target_arch = "x86_64"))]
     let unwind = crate::unwind::jit_windows::JitUnwind::stage(&mut module, &built.unwind)?;
+    timings.push(("compile", start.elapsed()));
+    let start = Instant::now();
     module
         .finalize_definitions()
         .map_err(|e| format!("codegen: finalizing JIT code: {e}"))?;
+    timings.push(("finalize", start.elapsed()));
+    let start = Instant::now();
     #[cfg(all(windows, target_arch = "x86_64"))]
     unwind.register(&module)?;
     #[cfg(unix)]
     crate::unwind::jit_systemv::register(&module, &built.unwind)?;
+    timings.push(("unwind", start.elapsed()));
+    #[cfg(unix)]
+    if debug_info {
+        let start = Instant::now();
+        let addresses: Vec<u64> = (built.lines.iter())
+            .map(|f| module.get_finalized_function(f.id) as u64)
+            .collect();
+        crate::debug_info::jit::register(&program.files, &built.lines, &addresses)?;
+        timings.push(("debug info", start.elapsed()));
+    }
+    // Debuggers read JIT line tables on Unix only.
+    #[cfg(not(unix))]
+    let _ = debug_info;
     let address = |id| module.get_finalized_function(id) as usize;
     let code = built.funcs.iter().map(|id| id.map(address)).collect();
     let trampolines = names

@@ -11,5 +11,5 @@ sent 4 queued 1
 received 4
 handled 20 results 20 total length 1050
 ticket 1 dropped
-caught: send on a closed channel
+caught: Send on a closed channel
 closed: true receive: null

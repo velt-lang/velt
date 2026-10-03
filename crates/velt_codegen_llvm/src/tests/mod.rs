@@ -315,4 +315,6 @@ fn param_attributes_become_llvm_attributes() {
     assert!(ir.contains(needle), "missing `{needle}` in\n{ir}");
 }
 
+mod placement;
+mod units;
 mod wasm;

@@ -54,6 +54,7 @@ impl Loader {
         );
         self.modules.push(SourceModule {
             path: canonical.to_string(),
+            is_std: canonical.starts_with("std/"),
             file: FileId(id.0),
             ast,
             imports: vec![],
@@ -156,6 +157,11 @@ pub fn load_src_at(file: &Path, src: &str) -> Loaded {
 /// Like [`load_src`] but the root may have syntax errors.
 pub fn load_src_lenient(src: &str) -> Loaded {
     load_with(&repo_root().join("tests/inline/main.vlt"), src, true)
+}
+
+/// [`load_src_lenient`] for a source placed at `file` (so relative imports resolve from there).
+pub fn load_src_lenient_at(file: &Path, src: &str) -> Loaded {
+    load_with(file, src, true)
 }
 
 fn load_with(file: &Path, src: &str, lenient: bool) -> Loaded {

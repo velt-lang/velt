@@ -3,9 +3,16 @@
 
 mod assists;
 mod client;
+mod effects;
+mod jsx;
+mod jsx_more;
+mod jsx_tags;
 mod loader;
+mod manifest;
+mod manifest_registry;
 mod modules;
 mod navigation;
 mod protocol;
 mod quick_fixes;
 mod refactor;
+mod server_features;

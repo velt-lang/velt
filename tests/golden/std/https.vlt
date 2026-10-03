@@ -1,3 +1,4 @@
+// check: no leaks
 import { serve, fetch, Request, Response } from "velt:http";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
 
@@ -45,5 +46,5 @@ async function main() {
   } catch (e) {
     console.log(e.code, e.message.startsWith("invalid key PEM"));
   }
-  server.close();
+  await server.shutdown();
 }

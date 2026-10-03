@@ -5,8 +5,10 @@
 //! - `SelfData`: `first` is the receiver's data pointer; the target's `this` is that pointer
 //!   (aggregates, class objects) or the value loaded from it (scalars).
 //!
-//! In both, a target param that takes ownership (`PassMode::Owned` of a droppable type) gets a
-//! deep copy, since the caller keeps its argument. Methods need no thunk when neither applies.
+//! In both, a target param that takes ownership (`PassMode::Owned` of a droppable type) gets
+//! another reference (a share), since the caller keeps its argument; so does an owned receiver
+//! (an async method's `this`, which moves into its future). Methods need no thunk when none of
+//! this applies.
 
 use velt_sema::hir::{DefId, PassMode, TyId};
 
@@ -16,7 +18,7 @@ use crate::vir::{self, FuncId, Function, Operand, Place, Proj, Terminator, Ty};
 /// How a thunk forwards one incoming argument to its target.
 enum Incoming {
     Pass,
-    /// The target takes ownership: pass a deep copy.
+    /// The target takes ownership: pass a share.
     Owned,
 }
 
@@ -25,8 +27,7 @@ impl Cx<'_> {
     pub(in crate::lower) fn self_entry(&mut self, def: DefId, targs: Vec<TyId>) -> FuncId {
         let f = self.fn_def(def);
         let this = f.params.first().map(|p| p.ty);
-        let owned: Vec<(PassMode, TyId)> =
-            f.params.iter().skip(1).map(|p| (p.mode, p.ty)).collect();
+        let modes: Vec<(PassMode, TyId)> = f.params.iter().map(|p| (p.mode, p.ty)).collect();
         let this_scalar = match this {
             Some(t) => {
                 let t = self.subst(t, &targs);
@@ -34,7 +35,8 @@ impl Cx<'_> {
             }
             None => true,
         };
-        let needs_copy = owned.into_iter().any(|(m, t)| {
+        // `this` included: an async method owns its receiver (it moves into the future).
+        let needs_copy = modes.into_iter().any(|(m, t)| {
             let t = self.subst(t, &targs);
             m == PassMode::Owned && self.needs_drop(t)
         });
@@ -63,6 +65,21 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
+    /// Another reference to the receiver at data pointer `first`, for a target that owns its
+    /// `this` (async methods): the interface value or object keeps its own reference.
+    fn owned_this(&mut self, first: vir::Local, vt: Ty, this: TyId) -> Operand {
+        match vt {
+            Ty::Agg(_) | Ty::Ptr => self.owned_copy(first, vt, this),
+            s => {
+                let v = Operand::Copy(Place {
+                    local: first,
+                    proj: vec![Proj::Deref(s)],
+                });
+                self.share_value(v, this)
+            }
+        }
+    }
+
     pub(in crate::lower) fn build_thunk(
         cx: &'c mut Cx<'h>,
         kind: ThunkKind,
@@ -78,6 +95,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             ThunkKind::Env(_) => 0,
             ThunkKind::SelfData => 1,
         };
+        // An owned receiver is copied once the params are declared (they come first).
+        let mut owned_this = None;
         if kind == ThunkKind::SelfData {
             let this = f
                 .params
@@ -85,9 +104,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 .map(|p| p.ty)
                 .unwrap_or_else(|| crate::lower::ice("method without this"));
             let tt = lw.sub(this);
+            let owned = f.params[0].mode == PassMode::Owned && lw.cx.needs_drop(tt);
             match lw.cx.ty(tt) {
-                Ty::Agg(_) | Ty::Ptr => args.push(Operand::Copy(Place::local(first))),
                 Ty::Unit => {}
+                vt if owned => owned_this = Some((vt, tt)),
+                Ty::Agg(_) | Ty::Ptr => args.push(Operand::Copy(Place::local(first))),
                 s => args.push(Operand::Copy(Place {
                     local: first,
                     proj: vec![Proj::Deref(s)],
@@ -127,6 +148,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
             params.push(Ty::Ptr);
             lw.new_local(Ty::Ptr, Some("ret.out".into()))
         });
+        if let Some((vt, tt)) = owned_this {
+            let this = lw.owned_this(first, vt, tt);
+            args.push(this);
+        }
         for (l, vt, pty, adapt) in incoming {
             args.push(match adapt {
                 Incoming::Owned => lw.owned_copy(l, vt, pty),

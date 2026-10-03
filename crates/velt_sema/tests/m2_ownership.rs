@@ -214,12 +214,24 @@ fn escaping_closures_move_or_share_captures() {
 }
 
 #[test]
-fn owned_params_cannot_be_function_values() {
-    let r = err_src(
+fn owned_params_can_be_function_values() {
+    // The value's thunk takes another reference to the arguments the function keeps (#224).
+    ok_src(
         "function keep(s: string): string { return s; }
          function main() { const f: (s: string) => string = keep; console.log(f(\"x\")); }",
     );
-    assert!(r.contains("takes ownership of `s`"), "{r}");
+    ok_src(
+        "class S { n: i64 = 0; }
+         async function f(s: S): Promise<void> { s.n += 1; }
+         async function main() { const g: (s: S) => Promise<void> = f; const s = new S(); await g(s); console.log(s.n); }",
+    );
+    // A promise has one owner: a borrowed one cannot be handed on.
+    let r = err_src(
+        "async function wait(p: Promise<i64>): Promise<i64> { return await p; }
+         async function main() { const w: (p: Promise<i64>) => Promise<i64> = wait; }",
+    );
+    assert!(r.contains("takes ownership of `p`"), "{r}");
+    assert!(!r.contains("clone"), "{r}");
 }
 
 #[test]

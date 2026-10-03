@@ -1,0 +1,42 @@
+local store seen
+local store seen
+dropping the closure
+local store disposed
+closure gone, counter 2
+param store seen
+dropping the closure
+param store disposed
+closure gone, counter 10
+store b seen
+dropping g
+store b disposed
+store a seen
+dropping f
+store a disposed
+both gone, counter 3
+outer's store seen
+dropping inner
+outer's store disposed
+inner gone, counter 1
+outer's store seen
+dropping inner
+outer's store disposed
+inner gone, counter 2
+dropping outer
+loop store 0 seen
+end of iteration 0, counter 1
+loop store 0 disposed
+loop store 1 seen
+end of iteration 1, counter 2
+loop store 1 disposed
+returned store seen
+dropping the returned closure
+returned store disposed
+returned closure gone, counter 1
+field store a seen
+field store b seen
+dropping the handlers
+field store a disposed
+field store b disposed
+handlers gone, counter 3
+done

@@ -28,13 +28,20 @@ variables, calls, spreads) is an error that points at it:
 package.vlt:5:13: error: `null` is not allowed; leave the key out
 ```
 
-Leave out the fields you don't need. A key the manifest doesn't know is an error, with a
+In an editor, the language server ([`velt lsp`](editors.md)) completes the fields valid where
+you type, explains each on hover, and reports exactly the errors `velt` would, as you type. It
+also asks the package's registry: it completes package names and versions in `dependencies`,
+shows a dependency's newest and locked versions on hover, and flags requirements that no
+published version matches or that leave out a newer one (with a fix). The
+[`Package`](../std/package.md) type documents the same fields. Leave out the fields you don't
+need. A key the manifest doesn't know is an error, with a
 suggestion when it is close to one (`dependecies` → `dependencies`). `velt manifest` checks the
 file and reports these errors without building anything.
 
 ## `name`, `version`, `entry`
 
-- `name`: lowercase letters, digits, `_` and `-`, starting with a letter.
+- `name`: lowercase letters, digits, `_` and `-`, starting with a letter. `std` is reserved for
+  the standard library.
 - `version`: a semantic version.
 - `entry`: the program's root file, a path inside the package (default `"src/main.vlt"`). A
   package with `src/main.vlt` is runnable; a package with `src/lib.vlt` is a library that other
@@ -121,11 +128,13 @@ still has one stops with an error that prints the equivalent `package.vlt`. Save
 Package versions published with a `velt.toml` can't be installed any more; installing one says
 so. Their authors publish a new version with a `package.vlt`.
 
-## `velt.lock`
+## `velt.lock.json`
 
-`velt install` writes `velt.lock`, which pins the exact version and content hash of every
-dependency: `version = 1` and one `[[package]]` entry per package with `name`, `version`,
-`source` (`"registry"` or `"path+<relative path>"`), `checksum` and `dependencies`, and for a
-package with native code a `[package.native]` table with the checksum of its prebuilt library
-for every published target. Commit it for applications. `--locked` on `build`, `run`, `test` and
-`install` fails instead of changing it. It is generated, so it stays TOML.
+`velt install` writes `velt.lock.json`, which pins the exact version and content hash of every
+dependency. It is generated JSON, pretty-printed with a stable key order so diffs stay readable:
+`"version": 1` and a `"packages"` array with one entry per package (`name`, `version`, `source`:
+`"registry"` or `"path+<relative path>"`, `checksum`, `dependencies`, and for a package with
+native code a `"native"` object with the checksum of its prebuilt library for every published
+target). Commit it for applications. `--locked` on `build`, `run`, `test` and `install` fails
+instead of changing it. A package that still has the former `velt.lock` (TOML) gets an error:
+delete it and run `velt install`.

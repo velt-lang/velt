@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::programs::{load_src, load_src_lenient};
+use common::programs::{load_src, load_src_at, load_src_lenient, load_src_lenient_at, repo_root};
 use velt_common::FileId;
 use velt_sema::ide::{check_for_ide, Analysis, DefKind};
 
@@ -288,4 +288,134 @@ function main() { console.log(Token.make().id); }
         "private constructor Token(id: i64)"
     );
     assert_eq!(detail("constructor() {}"), "protected constructor Base()");
+}
+
+#[test]
+fn jsx_tags_and_attributes() {
+    let src = "// @jsxImportSource ./_jsx_test_provider
+function main() { const e = <a href=\"/x\">x</a>; }";
+    let l = load_src_at(&repo_root().join("tests/golden/lang/main.vlt"), src);
+    let file = l.modules[l.root].file;
+    let a = check_for_ide(&l.modules, l.root);
+    let tags = a.jsx_intrinsics(file);
+    let names: Vec<&str> = tags.iter().map(|(n, _, _)| n.as_str()).collect();
+    assert!(
+        names.starts_with(&["a", "br", "button", "div"]),
+        "{names:?}"
+    );
+    let (_, anchor, ty) = &tags[0];
+    assert_eq!(anchor.kind, DefKind::Field);
+    assert_eq!(
+        ty,
+        "{ href: string | null; class: string | null; title: string | null }"
+    );
+    // The tag in the source names the same field, and its attributes are the members.
+    let used = a.def_at(file, at(src, "<a", 0, 1)).expect("tag");
+    assert!(used.same_def(anchor));
+    let attrs: Vec<(String, String)> = a
+        .members_of(anchor)
+        .into_iter()
+        .map(|(n, _, t)| (n, t))
+        .collect();
+    assert_eq!(attrs[0], ("href".to_string(), "string | null".to_string()));
+    assert_eq!(attrs.len(), 3);
+    // A file without JSX has no tags.
+    let (plain, plain_file) = analyze("function main() {}");
+    assert!(plain.jsx_intrinsics(plain_file).is_empty());
+}
+
+#[test]
+fn members_of_a_field_are_the_members_of_its_type() {
+    let src = "struct Inner { a: i64; b: string; }
+struct Outer { inner: Inner; }
+function main() { const o = Outer { inner: Inner { a: 1, b: \"x\" } }; console.log(o.inner.a); }";
+    let (a, file) = analyze(src);
+    let inner = a.def_at(file, at(src, "inner.a", 0, 0)).expect("field");
+    let names: Vec<String> = a
+        .members_of(&inner)
+        .into_iter()
+        .map(|(n, _, _)| n)
+        .collect();
+    assert_eq!(names, ["a", "b"]);
+}
+
+#[test]
+fn inferred_throws_and_mutation() {
+    let src = "class NotFound extends Error {}
+class Cart {
+  items: string[];
+  constructor() { this.items = []; }
+  add(item: string) { this.items.push(item); }
+  count(): usize { return this.items.length; }
+}
+function fill(cart: Cart, xs: string[], n: i64) { cart.add(\"a\"); console.log(xs.length, n); }
+function find(id: string): string { if (id == \"\") throw new NotFound(id); return id; }
+function main() {
+  const c = new Cart();
+  const tag = (xs: string[]) => { xs.push(\"t\"); };
+  const ys: string[] = [];
+  fill(c, ys, 1);
+  tag(ys);
+  try { find(\"x\"); } catch (e) {}
+  console.log(c.count());
+}";
+    let (a, file) = analyze(src);
+    let def = |needle: &str, n: usize| a.def_at(file, at(src, needle, n, 0)).expect(needle);
+    let add = def("add(item", 0);
+    assert_eq!(a.mutation_of(&add).map(|m| m.this), Some(true));
+    let count = def("count()", 0);
+    assert_eq!(a.mutation_of(&count).map(|m| m.any()), Some(false));
+    let fill = def("fill(cart", 0);
+    let m = a.mutation_of(&fill).expect("fill");
+    assert_eq!(
+        (m.this, m.params.clone()),
+        (false, vec!["cart".to_string()])
+    );
+    // Closures take their parameters by the callback convention: nothing is inferred.
+    let tag = def("tag =", 0);
+    assert!(a.mutation_of(&tag).is_none());
+    let find = def("find(id", 0);
+    assert_eq!(a.throws_of(&find), Some("NotFound"));
+    assert_eq!(a.throws_of(&fill), None);
+    let local = def("ys:", 0);
+    assert!(a.mutation_of(&local).is_none());
+}
+
+#[test]
+fn closing_tags_name_what_their_opening_tags_do() {
+    let src = "// @jsxImportSource ./_jsx_test_provider
+function Card(props: { title: string; children: JSX.Element }): JSX.Element { return <div>{props.title}</div>; }
+function main() { const e = <Card title=\"t\"><p>x</p></Card>; }";
+    let l = load_src_at(&repo_root().join("tests/golden/lang/main.vlt"), src);
+    let file = l.modules[l.root].file;
+    let a = check_for_ide(&l.modules, l.root);
+    let card = a
+        .def_at(file, at(src, "</Card>", 0, 3))
+        .expect("closing component");
+    assert_eq!(card.span.lo, at(src, "Card(props", 0, 0));
+    let p_open = a.def_at(file, at(src, "<p>", 0, 1)).expect("opening tag");
+    let p_close = a.def_at(file, at(src, "</p>", 0, 2)).expect("closing tag");
+    assert!(p_open.same_def(&p_close));
+    // References (and so rename) include the closing tag.
+    let refs: Vec<u32> = a.references(&card).iter().map(|s| s.lo).collect();
+    assert!(refs.contains(&at(src, "</Card>", 0, 2)), "{refs:?}");
+    assert!(refs.contains(&at(src, "<Card title", 0, 1)), "{refs:?}");
+}
+
+#[test]
+fn a_mismatched_closing_tag_names_nothing() {
+    let src = "// @jsxImportSource ./_jsx_test_provider
+function Card(props: { title: string }): JSX.Element { return <div>{props.title}</div>; }
+function main() { const e = <Card title=\"t\"></Other>; }";
+    let l = load_src_lenient_at(&repo_root().join("tests/golden/lang/main.vlt"), src);
+    let file = l.modules[l.root].file;
+    let a = check_for_ide(&l.modules, l.root);
+    let card = a.def_at(file, at(src, "<Card", 0, 1)).expect("opening tag");
+    let other = at(src, "</Other>", 0, 2);
+    let found = a.def_at(file, other);
+    assert!(
+        !found.as_ref().is_some_and(|d| d.same_def(&card)),
+        "{found:?}"
+    );
+    assert!(!a.references(&card).iter().any(|s| s.lo == other));
 }

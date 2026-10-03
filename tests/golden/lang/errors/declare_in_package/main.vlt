@@ -1,0 +1,7 @@
+// Only a package's own native library may be declared: a plain dependency's `declare function`
+// is an error, even though this program never declares anything itself.
+import { copy } from "plain";
+
+function main() {
+  console.log(copy(0, 0, 0));
+}

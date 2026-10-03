@@ -1,0 +1,160 @@
+// check: no leaks
+// #193: an interface method returning a promise reports its errors through the promise, like an
+// async function: `Promise<T> throws E` (or `Promise<T, E>`, or an inferred error) is what the
+// promise rejects with. A call through an interface value used to be typed as throwing at the
+// call and returning a promise that cannot reject, while the async implementation's promise
+// carried the error: the awaiting code misread the result (a crash).
+class E extends Error {}
+
+class F extends Error {}
+
+interface Method {
+  invoke(x: i64): Promise<string> throws E;
+}
+
+// The same, spelled with the error in the promise type.
+interface Spelled {
+  invoke(x: i64): Promise<string, E>;
+}
+
+interface Loose {
+  run(x: i64): Promise<i64>;
+}
+
+class Impl implements Method, Spelled {
+  tag: string = "a tag long enough to live on the heap";
+  async invoke(x: i64): Promise<string> throws E {
+    if (x < 0) {
+      throw new E(`negative ${this.tag}`);
+    }
+    return `ok ${x} ${this.tag}`;
+  }
+}
+
+// An override: the interface entry forwards to the vtable slot.
+class Sub extends Impl {
+  override async invoke(x: i64): Promise<string> throws E {
+    if (x < 0) {
+      throw new E("sub negative");
+    }
+    return `sub ${x}`;
+  }
+}
+
+// Inferred: the slot's promise rejects with `E | F`.
+class A implements Loose {
+  async run(x: i64): Promise<i64> {
+    if (x == 0) {
+      throw new E("zero");
+    }
+    return x;
+  }
+}
+
+class B implements Loose {
+  async run(x: i64): Promise<i64> {
+    if (x == 1) {
+      throw new F("one");
+    }
+    return x * 10;
+  }
+}
+
+// A synchronous implementation is fine where the promise cannot reject.
+interface Plain {
+  run(x: i64): Promise<i64>;
+}
+
+class Sync implements Plain {
+  run(x: i64): Promise<i64> {
+    return new Promise<i64>((resolve, reject) => resolve(x + 1));
+  }
+}
+
+class Async implements Plain {
+  async run(x: i64): Promise<i64> {
+    return x + 2;
+  }
+}
+
+class Holder {
+  m: Method;
+  constructor(m: Method) {
+    this.m = m;
+  }
+}
+
+async function generic<T extends Method>(t: T, x: i64): Promise<string> throws E {
+  return await t.invoke(x);
+}
+
+async function main() {
+  const h = new Holder(new Impl());
+  const map = new Map<string, Method>();
+  map.set("k", new Impl());
+  const arr: Method[] = [new Impl()];
+  for (let i = -1; i < 2; i++) {
+    try {
+      console.log(await h.m.invoke(i));
+      const v = map.get("k");
+      if (v != null) {
+        console.log(await v.invoke(i + 1));
+      }
+      console.log(await arr[0].invoke(i));
+    } catch (e) {
+      console.log("caught", e.message);
+    }
+  }
+  const p = h.m.invoke(-5);
+  try {
+    console.log(await p);
+  } catch (e) {
+    console.log("stored", e.message);
+  }
+  const sp: Spelled = new Impl();
+  try {
+    console.log(await sp.invoke(3));
+    console.log(await sp.invoke(-3));
+  } catch (e) {
+    console.log("spelled", e.message);
+  }
+  try {
+    console.log(await generic(new Impl(), -2));
+  } catch (e) {
+    console.log("generic", e.message);
+  }
+  try {
+    const all = await Promise.all([h.m.invoke(1), arr[0].invoke(2)]);
+    console.log(all.length);
+    await Promise.all([h.m.invoke(1), arr[0].invoke(-2)]);
+  } catch (e) {
+    console.log("all", e.message);
+  }
+  const ls: Loose[] = [new A(), new B()];
+  for (let i = 0; i < 3; i++) {
+    for (const l of ls) {
+      try {
+        console.log(await l.run(i));
+      } catch (e) {
+        if (e instanceof E) {
+          console.log("E", e.message);
+        } else {
+          console.log("F", e.message);
+        }
+      }
+    }
+  }
+  const subs: Method[] = [new Sub(), new Impl()];
+  for (const m of subs) {
+    try {
+      console.log(await m.invoke(1));
+      console.log(await m.invoke(-1));
+    } catch (e) {
+      console.log("caught", e.message);
+    }
+  }
+  const ps: Plain[] = [new Sync(), new Async()];
+  for (const x of ps) {
+    console.log(await x.run(1));
+  }
+}

@@ -14,9 +14,9 @@ end post 6
 <ol><li>a</li><article id="post-6">Post #6</article><li>b</li></ol>
 start post -1
 end post -1
-RenderError: jsx_async#Post | component jsx_async#Post failed: NotFound { message: 'no post -1' }
-RenderError: jsx_async#Broken | component jsx_async#Broken failed: NotFound { message: 'sync failure' }
+RenderError: jsx_async#Post | Component jsx_async#Post failed: NotFound { message: 'no post -1' }
+RenderError: jsx_async#Broken | Component jsx_async#Broken failed: NotFound { message: 'sync failure' }
 start post 5
-sync: the element has an async component: use `await renderToString`
+sync: The element has an async component: use `await renderToString`
 <p>sync</p> <p>sync</p>
 end post 5

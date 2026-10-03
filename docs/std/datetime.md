@@ -2,7 +2,10 @@
 
 `import { DateTime, Duration } from "velt:datetime"`. `DateTime` is a UTC-first instant: epoch
 milliseconds in a small struct. **Months are 1-12.** Local time is opt-in and DST-aware, using
-the OS time zone.
+the OS time zone. `TZ` overrides it: on macOS and Linux any value the C library understands; on
+Windows only UTC (`UTC`, `Etc/UTC`, `GMT`, ...) and fixed offsets (`Etc/GMT-2` is UTC+2), other
+names keep the system zone. Node differs there: it understands region names like
+`Europe/Berlin`, and uses UTC for a name it doesn't recognise (a typo, the wrong case).
 
 - Constructors:
   - `DateTime.now()`, `fromEpochMs(ms)`

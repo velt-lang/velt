@@ -12,6 +12,7 @@
 mod expr;
 mod loops;
 mod state;
+mod tries;
 
 use std::collections::{HashMap, HashSet};
 
@@ -46,23 +47,26 @@ struct Moves<'a> {
     report: bool,
     errors: Vec<Diagnostic>,
     loops: Vec<LoopFlow>,
-    /// Soft moves of this function (`FnInfo::soft_moves`) and those whose place is used again.
+    /// Soft moves of this function (`FnInfo::soft_moves`) and those whose place is used again
+    /// (with the local used again: a closure's soft move is one per captured variable).
     soft: HashSet<Span>,
-    reused: HashSet<Span>,
+    reused: HashSet<(Span, LocalId)>,
     /// Per escaping closure: the enclosing variables it captures by value and assigns.
     writers: &'a HashMap<DefId, HashSet<LocalId>>,
     /// Per local: may it live in a shared cell (not a promise, no async closure captures it)?
     boxable: Vec<bool>,
     /// Locals that need a shared cell (`LocalDef::boxed`, see `crate::ownership::cells`).
     boxed: HashSet<LocalId>,
+    /// The open `try` bodies and handlers (innermost last), see [`tries`].
+    tries: Vec<tries::TryFrame>,
 }
 
 /// What the move dataflow found besides errors.
 #[derive(Default)]
 pub(crate) struct Outcome {
-    /// Per function: the soft moves whose place is used again (they become shares,
-    /// `crate::ownership::soft`).
-    pub reused: HashMap<DefId, HashSet<Span>>,
+    /// Per function: the soft moves whose place is used again, with the local used again (they
+    /// become shares, `crate::ownership::soft`; for a closure, only the captures of that local).
+    pub reused: HashMap<DefId, HashSet<(Span, LocalId)>>,
     /// Per function: the variables that need a shared cell (`crate::ownership::cells`).
     pub boxed: HashMap<DefId, HashSet<LocalId>>,
 }
@@ -135,6 +139,7 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
             shared: shared[i].clone(),
             writers: &writers,
             boxed: HashSet::new(),
+            tries: vec![],
             report: false,
             errors: vec![],
             loops: vec![],
@@ -246,7 +251,7 @@ impl Moves<'_> {
             if self.report {
                 match hard {
                     None if !sites.is_empty() => {
-                        self.reused.extend(sites.iter().map(|(at, _)| *at));
+                        self.reused.extend(sites.iter().map(|(at, _)| (*at, l)));
                     }
                     _ => {
                         let d = self.moved_error(i, hard.copied(), span);
@@ -417,7 +422,7 @@ impl Moves<'_> {
                 if let Some(e) = e {
                     self.expr(e, st);
                 }
-                *st = None;
+                self.leave_return(st);
             }
             StmtKind::If { cond, then, els } => {
                 self.expr(cond, st);
@@ -455,30 +460,6 @@ impl Moves<'_> {
                     s.uninit[i] = true;
                 }
             }
-        }
-    }
-
-    /// A throw can leave the `try` body anywhere: the handler starts from the join of the
-    /// states at entry and at the end of the body.
-    fn try_stmt(
-        &mut self,
-        body: &Block,
-        catch: Option<&(Option<LocalId>, Block)>,
-        finally: Option<&Block>,
-        st: &mut Flow,
-    ) {
-        let entry = st.clone();
-        self.block(body, st);
-        if let Some((local, handler)) = catch {
-            let mut h = join(entry, st.clone());
-            if let Some(l) = local {
-                Self::init_local(*l, &mut h);
-            }
-            self.block(handler, &mut h);
-            *st = join(st.take(), h);
-        }
-        if let Some(f) = finally {
-            self.block(f, st);
         }
     }
 }

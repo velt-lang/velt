@@ -6,6 +6,7 @@
 
 mod defref;
 mod display;
+mod effects;
 mod members;
 pub(crate) mod record;
 mod snapshot;
@@ -18,6 +19,11 @@ use crate::hir::TyId;
 use crate::SourceModule;
 
 pub use defref::{DefKind, DefRef};
+pub use effects::Mutation;
+
+/// The intrinsic tags of a JSX runtime: `(tag, field definition, attribute type)`, shared by the
+/// files using that runtime.
+type JsxTags = std::sync::Arc<[(String, DefRef, String)]>;
 
 /// What a name denotes, the type of each expression, and the visible names — for one program.
 pub struct Analysis {
@@ -40,6 +46,10 @@ pub struct Analysis {
     files: HashMap<FileId, usize>,
     /// Type of each local / constant / field definition (by declaration span).
     def_types: HashMap<Span, (TyId, u32)>,
+    /// Per file with a JSX runtime: its intrinsic tags.
+    jsx_tags: HashMap<FileId, JsxTags>,
+    /// Inferred throws and mutation of each named function (by declaring identifier).
+    effects: HashMap<Span, effects::Effects>,
     names: display::Names,
     members: members::Members,
 }
@@ -199,6 +209,27 @@ impl Analysis {
             Some(&(ty, ctx)) => self.members.instance(self, ty, ctx),
             None => vec![],
         }
+    }
+
+    /// The intrinsic tags of the JSX runtime of `file` (the fields of `JSX.IntrinsicElements`):
+    /// `(tag, definition, attribute type)`, sorted by tag; empty when the file has no JSX
+    /// runtime. `members_of` on a tag's definition lists its attributes.
+    pub fn jsx_intrinsics(&self, file: FileId) -> &[(String, DefRef, String)] {
+        self.jsx_tags.get(&file).map_or(&[], |tags| tags)
+    }
+
+    /// What the function, method, constructor or closure-valued variable `def` throws
+    /// (written or inferred), spelled as source; `None` when it throws nothing or `def` is not
+    /// one.
+    pub fn throws_of(&self, def: &DefRef) -> Option<&str> {
+        self.effects.get(&def.span)?.throws.as_deref()
+    }
+
+    /// What the function, method or constructor `def` modifies (as inferred: `this`,
+    /// parameters); `None` when `def` is not one (closures included: their parameters follow
+    /// the callback convention, not inference).
+    pub fn mutation_of(&self, def: &DefRef) -> Option<&Mutation> {
+        self.effects.get(&def.span)?.mutation.as_ref()
     }
 
     /// Every span naming `def` (its declaration included), in source order.

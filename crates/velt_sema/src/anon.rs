@@ -105,6 +105,7 @@ impl Ctx<'_> {
                 optional: false,
                 has_default: false,
                 default: None,
+                default_throws: vec![],
                 private_to: None,
             })
             .collect();

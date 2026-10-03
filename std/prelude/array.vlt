@@ -92,8 +92,10 @@ extend<T> Array<T> {
     return __intrinsic_share(this[i as usize]);
   }
 
-  // Sets the elements in [start, end) to `value` (positions as in `slice`). JS also
-  // returns the array; here the result is `void`, like `reverse`.
+  // Sets the elements in [start, end) to `value` (positions as in `slice`). JS also returns
+  // the array; here the result is `void`, like `reverse` and `sort`: returning the array would
+  // share it, which makes every array of its type reference counted in the whole program.
+  // `new Array<T>(n).fill(v)` still works (the compiler builds the array in one step).
   fill(value: T, start: i64 = 0, end: i64 = 9223372036854775807) {
     const hi = clampPosition(end, this.length);
     for (let i = clampPosition(start, this.length); i < hi; i++) {
@@ -171,18 +173,85 @@ extend<T> Array<T> {
     return out;
   }
 
-  // Reverses in place (JS also returns the array; here the result is `void`).
+  // Reverses in place (JS also returns the array; here the result is `void`, see `fill`).
   reverse() {
-    if (this.length < 2) {
-      return;
+    reverseRange(this, 0, this.length);
+  }
+
+  // Removes `deleteCount` elements starting at `start` (a negative `start` counts from the end;
+  // both are clamped, like JS) and returns them in order; omitting `deleteCount` removes the
+  // rest. O(length). Inserting (`splice(i, 0, x)`) needs rest parameters (planned).
+  splice(start: i64, deleteCount: i64 = 9223372036854775807): T[] {
+    const len = this.length;
+    const lo = clampPosition(start, len);
+    const room = (len - lo) as i64;
+    const k: usize = deleteCount <= 0 ? 0 : (deleteCount < room ? deleteCount : room) as usize;
+    const out: T[] = __intrinsic_array_with_capacity(k);
+    if (k == 0) {
+      return out;
     }
-    let i: usize = 0;
-    let j = this.length - 1;
-    while (i < j) {
-      __intrinsic_array_swap(this, i, j);
-      i++;
-      j--;
+    // [lo, len) holds the removed block X then the rest Y: reversing it gives rev(Y) rev(X),
+    // reversing rev(Y) back gives Y rev(X), so the removed elements come off the end in order.
+    reverseRange(this, lo, len);
+    reverseRange(this, lo, len - k);
+    for (let i: usize = 0; i < k; i++) {
+      out.push(__intrinsic_array_remove(this, this.length - 1));
     }
+    return out;
+  }
+
+  // Shortens the array to `length` elements, dropping the rest (JS `xs.length = n`); a longer
+  // `length` leaves it unchanged. Panics on a negative `length`, like JS's RangeError.
+  truncate(length: i64) {
+    if (length < 0) {
+      panic(`RangeError: Invalid array length: ${length}`);
+    }
+    if ((length as u64) < (this.length as u64)) {
+      __intrinsic_array_truncate(this, length as usize);
+    }
+  }
+
+  // ES2023 copying forms (`toReversed`, `toSpliced`, `with`; `toSorted` is in sort.vlt): a new
+  // array, the receiver unchanged. Like `slice`, the new array holds the same elements (objects
+  // are shared, as in JS); the arrays themselves are independent.
+
+  // The elements in reverse order.
+  toReversed(): T[] {
+    const out: T[] = __intrinsic_array_with_capacity(this.length);
+    let i = this.length;
+    while (i > 0) {
+      i--;
+      out.push(__intrinsic_share(this[i]));
+    }
+    return out;
+  }
+
+  // `splice(start, deleteCount)` on a copy: the array without the removed elements. Inserting
+  // items needs rest parameters (planned).
+  toSpliced(start: i64, deleteCount: i64 = 9223372036854775807): T[] {
+    const len = this.length;
+    const lo = clampPosition(start, len);
+    const room = (len - lo) as i64;
+    const k: usize = deleteCount <= 0 ? 0 : (deleteCount < room ? deleteCount : room) as usize;
+    const out: T[] = __intrinsic_array_with_capacity(len - k);
+    for (let i: usize = 0; i < len; i++) {
+      if (i < lo || i >= lo + k) {
+        out.push(__intrinsic_share(this[i]));
+      }
+    }
+    return out;
+  }
+
+  // A copy with `value` at `index` (negative counts from the end). Panics like JS's RangeError
+  // when `index` is out of range.
+  with(index: i64, value: T): T[] {
+    const i = index < 0 ? index + (this.length as i64) : index;
+    if (i < 0 || i >= (this.length as i64)) {
+      panic(`RangeError: Invalid index : ${index}`);
+    }
+    const out = this.slice();
+    out[i as usize] = value;
+    return out;
   }
 
   isEmpty(): bool {
@@ -201,7 +270,8 @@ extend<T> Array<T> {
 
   // `join` for element types without their own (string enums, literal unions, objects): each
   // element as a template literal shows it (`${x}`; for objects that is the `console.log`
-  // form, where JS writes `[object Object]`). Strings, numbers and bools have exact ones below.
+  // form, where JS writes `[object Object]`). Strings, numbers and bools have exact ones below;
+  // arrays of arrays and of nullable elements have JS's (one level deep) in array_nested.vlt.
   join(sep: string = ","): string {
     let s = "";
     for (let i: usize = 0; i < this.length; i++) {
@@ -351,4 +421,18 @@ export function __arrayFromLength<U>(n: i64, f: (i: i64) => U): U[] {
     out.push(f(i));
   }
   return out;
+}
+
+// Reverses `xs[lo..hi)` in place.
+function reverseRange<T>(xs: T[], lo: usize, hi: usize) {
+  if (hi - lo < 2) {
+    return;
+  }
+  let i = lo;
+  let j = hi - 1;
+  while (i < j) {
+    __intrinsic_array_swap(xs, i, j);
+    i++;
+    j--;
+  }
 }

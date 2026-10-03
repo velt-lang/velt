@@ -7,7 +7,11 @@ hidden classes and no runtime shape checks.
 
 - Fields need a type (`count: i64 = 0`), or an initializer that states one (`count = 0`,
   `done = false`, `items = new Map<string, i64>()`). A field without a default must be assigned
-  in the `constructor`. `new C(…)` allocates the object on the heap.
+  in the `constructor`. `new C(…)` allocates the object on the heap, evaluates the field
+  initializers (base class ones first) and then runs the constructor; it throws whatever they
+  throw ([Errors](errors.md#throwing)). This order is a known difference from TypeScript, which
+  runs the base class's initializers and constructor before the derived class's initializers
+  (tracked in [#273](https://github.com/velt-lang/velt/issues/273)).
 - **Parameter properties**: `constructor(private readonly name: string, public age: i64) {}`
   declares the fields and assigns them, as in TypeScript (`protected` is accepted there and
   means public: there are no `protected` members).
@@ -39,6 +43,9 @@ hidden classes and no runtime shape checks.
   class, struct or union (like `structuredClone`), except values owning a `[Symbol.dispose]`
   resource, which may define `clone()` themselves.
 - Async methods take `this` by value: the promise owns it.
+- An overridden method returning a promise reports its errors through the promise: when the
+  base method or any override can fail, all of them must be `async`
+  ([Async](async.md#errors)).
 
 ```ts
 class Account {
@@ -152,6 +159,9 @@ console.log(p.len(), q.len());  // 4 4
 - **Generic methods** (`apply<U>(f: (x: i64) => U): U[]`) are dispatched statically only: call
   them on a concrete class or on a `T extends I` generic, not on an interface value. Generic
   interface methods cannot have default bodies yet.
+- A default body can be `async` (`async load(): Promise<T> { … }`), with the rules of an async
+  class method ([Async](async.md#errors)). A method without a body cannot be: like in TypeScript,
+  it declares a `Promise` result, and implementations may be `async`.
 
 ```ts
 interface Named {
@@ -226,8 +236,17 @@ builtins included, at zero cost (the calls are direct):
   `extend<T extends Named> T { … }` (every implementor gets the method).
 - **Static methods**: `extend Point { static origin(): Point { … } }` is called as
   `Point.origin()`.
-- A type's own member wins over an extension. `private` is not allowed in `extend`, and an
-  extension cannot add fields (the layout is fixed).
+- A type's own member wins over an extension. Among the extensions that apply (target matches,
+  bounds hold), the most specific wins: block A is more specific than block B when A's target
+  is an instance of B's and not the other way round, so `extend Array<string>` wins over
+  `extend<T> Array<T[]>`, which wins over `extend<T> Array<T>` (the prelude's `join` on
+  `string[][]` is its own). With the same target, a block with bounds
+  (`extend<T extends Comparable<T>> Array<T>`) wins over one without. When no single block is
+  more specific than every other one (`extend<T> Map<string, T>` and `extend<K> Map<K, i64>`
+  on a `Map<string, i64>`, or two blocks with the same target that both have bounds or both
+  have none), a call is an error: ``ambiguous extension method `m` ``, naming both blocks.
+- `private` is not allowed in `extend`, and an extension cannot add fields (the layout is
+  fixed).
 - A type becomes `Comparable` by defining `compareTo` in an `extend` block
   ([Comparable](#comparable)).
 - Scope today: an extension applies wherever its module is loaded; `extend` blocks cannot be

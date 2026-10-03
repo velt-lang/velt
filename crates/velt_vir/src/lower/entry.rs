@@ -10,6 +10,7 @@
 
 use velt_sema::hir::{self, TyId, TyKind};
 
+use super::glue::SLOT_NAME;
 use super::operand::proj;
 use super::rt::Rt;
 use super::{cint, FnLower, ScopeKind};
@@ -167,8 +168,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             return;
         }
         let stream = cint(2, Ty::U32);
-        let name = self.cx.type_name(err);
-        self.write_text(&stream, &format!("Uncaught {name}"));
+        self.write_text(&stream, "Uncaught ");
+        self.write_error_name(&stream, ep, err);
         if let Some(i) = self.message_field(err) {
             self.write_text(&stream, ": ");
             let mp = self.field_place(ep, err, i);
@@ -181,6 +182,23 @@ impl<'c, 'h> FnLower<'c, 'h> {
             vec![stream, cint(b'\n' as i128, Ty::U8)],
             None,
         );
+    }
+
+    /// The name of the error's type; for a class with subclasses, of its dynamic class (read from
+    /// its vtable), so an `IoError` thrown as an `Error` reports `IoError`.
+    fn write_error_name(&mut self, stream: &Operand, ep: &Place, err: TyId) {
+        let dynamic = match self.cx.kind(err) {
+            TyKind::Adt(d, _) => self.cx.is_class(err) && self.cx.has_header(d),
+            _ => false,
+        };
+        if !dynamic {
+            let name = self.cx.type_name(err);
+            self.write_text(stream, &name);
+            return;
+        }
+        let vt = self.obj_vtable(Operand::Copy(ep.clone()), err);
+        let name = self.dispatch(vt, SLOT_NAME);
+        self.call_rt(Rt::WriteStr, vec![stream.clone(), name], None);
     }
 
     /// ` at <path>:<line>:<col>` of the last `throw` on this thread, if recorded.

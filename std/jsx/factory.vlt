@@ -62,7 +62,7 @@ export function jsxComponent<P, E>(
     return component(props);
   } catch (e) {
     const rest = new Deferred();
-    rest.failure = new RenderError(name, `component ${name} failed: ${e}`);
+    rest.failure = new RenderError(name, `Component ${name} failed: ${e}`);
     const node = new Element("");
     node.rest = rest;
     return node;
@@ -91,7 +91,7 @@ async function settle<E>(p: Promise<Element, E>, name: string): Promise<Element,
   try {
     return await p;
   } catch (e) {
-    throw new RenderError(name, `component ${name} failed: ${e}`);
+    throw new RenderError(name, `Component ${name} failed: ${e}`);
   }
 }
 

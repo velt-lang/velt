@@ -9,7 +9,7 @@ helper), and explain it in your final report.
 |---|---|---|
 | Spans & diagnostics | `crates/velt_common/src/lib.rs` | everyone |
 | AST | `crates/velt_syntax/src/ast.rs` + `parse_file` | frontend → sema |
-| HIR | `crates/velt_sema/src/hir.rs` + `hir_encodings.md` + `check`, `SourceModule` | sema → IR |
+| HIR | `crates/velt_sema/src/hir.rs` + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; drivers set it, sema never derives it from the path) | sema → IR |
 | VIR | `crates/velt_vir/src/vir.rs` + `lower`, `verify` | IR → codegen |
 | Codegen API | `crates/velt_codegen_cl/src/lib.rs` (`emit_object`, `host_triple`) | codegen → driver |
 | Link API | `crates/velt_link/src/lib.rs` (`link`, `find_runtime_lib`) | tooling → driver |
@@ -48,8 +48,11 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 - Backends emit debug info exactly when the VIR has locations: the driver keeps them for debug
   builds and `-g`, and strips them for plain `--release`. LLVM: `DICompileUnit`/`DIFile`/
   `DISubprogram`/`DILocation` per statement (CodeView on Windows → PDB via `link /DEBUG`; DWARF 4
-  elsewhere). Cranelift: no line tables; on COFF, internal functions become external symbols so the
-  PDB names them.
+  elsewhere). Cranelift: DWARF 4 line tables (`DW_TAG_subprogram` per function and a line
+  program; no types or variables) in ELF and Mach-O objects (debuggers checked on Linux; macOS
+  untested), and for JIT code an in-memory ELF image per version registered through the GDB JIT
+  interface (Linux; macOS untested, LLDB needs `plugin.jit-loader.gdb.enable on`); on COFF no line
+  tables, and internal functions become external symbols so the PDB names them.
 
 ## Who owns what
 | Area | Crates / files |

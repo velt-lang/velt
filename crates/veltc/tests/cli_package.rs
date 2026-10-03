@@ -4,13 +4,15 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+mod test_dir;
+
 struct Sandbox {
-    _tmp: tempfile::TempDir,
+    _tmp: test_dir::TestDir,
     dir: PathBuf,
 }
 
 fn sandbox() -> Sandbox {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = test_dir::TestDir::new();
     let dir = tmp.path().to_path_buf();
     Sandbox { _tmp: tmp, dir }
 }
@@ -74,15 +76,15 @@ fn new_publish_add_install() {
     set_version(&s, "mylib", "1.2.0");
     s.ok("mylib/src", &["publish"]); // found by searching upward
     assert!(s.fail("mylib", &["publish"]).contains("already published"));
-    assert!(s.dir.join("home/registry/mylib/index.toml").is_file());
+    assert!(s.dir.join("home/registry/mylib/index.json").is_file());
 
     s.ok("", &["new", "app"]);
     s.ok("app", &["add", "mylib@^1.0"]);
     let manifest = s.read("app/package.vlt");
     assert!(manifest.contains("mylib: \"^1.0\""), "{manifest}");
-    let lock = s.read("app/velt.lock");
+    let lock = s.read("app/velt.lock.json");
     assert!(
-        lock.contains("name = \"mylib\"") && lock.contains("version = \"1.2.0\""),
+        lock.contains("\"name\": \"mylib\"") && lock.contains("\"version\": \"1.2.0\""),
         "{lock}"
     );
     assert!(s.dir.join("home/cache/mylib-1.2.0/src/lib.vlt").is_file());
@@ -108,6 +110,14 @@ fn add_without_version_uses_latest_and_path_deps_work() {
     s.ok("", &["new", "app"]);
     s.ok("app", &["add", "util"]);
     assert!(s.read("app/package.vlt").contains("util: \"0.1.0\""));
+    // A package with only pre-releases: `add` picks the newest, the version `search` shows.
+    s.ok("", &["new", "beta", "--lib"]);
+    set_version(&s, "beta", "0.2.0-beta.1");
+    s.ok("beta", &["publish"]);
+    let found = s.velt("app", &["search", "beta"]);
+    assert!(String::from_utf8_lossy(&found.stdout).contains("beta  0.2.0-beta.1"));
+    s.ok("app", &["add", "beta"]);
+    assert!(s.read("app/package.vlt").contains("beta: \"0.2.0-beta.1\""));
 
     s.ok("", &["new", "local", "--lib"]);
     s.ok("app", &["add", "local", "--path", "../local"]);
@@ -115,8 +125,8 @@ fn add_without_version_uses_latest_and_path_deps_work() {
         .read("app/package.vlt")
         .contains("local: { path: \"../local\" }"));
     assert!(s
-        .read("app/velt.lock")
-        .contains("source = \"path+../local\""));
+        .read("app/velt.lock.json")
+        .contains("\"source\": \"path+../local\""));
 }
 
 #[test]

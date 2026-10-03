@@ -26,6 +26,18 @@ export const pkg: Package = {
 };
 ```
 
+`velt:package` (`std/package.vlt`) declares the `Package` type (documentation, and the import
+resolves). The reader below is the definition of a valid manifest; its fields are one table,
+`vpm::manifest::schema`, which a test checks against `std/package.vlt`. The language server
+does not analyze a file named `package.vlt` as a program: its diagnostics are the reader's, and
+completion and hover come from the schema (`vpm::manifest::ide`). With the package's registry
+(`$VELT_REGISTRY` when it is a URL, else `registry`, else the local one, as `velt install` picks
+it) it also completes versions and package names, explains dependencies and checks requirements
+against the versions that are not yanked plus the one `velt.lock.json` pins
+(`vpm::manifest::ide::registry`). The data is fetched in the background (at most four fetches at
+once, kept five minutes); completion waits up to 400 ms for data on its way, and an unreachable
+registry adds nothing.
+
 ## The data-only subset (`vpm::manifest::read`)
 - At most one import, `import type { … } from "velt:package"` naming at least one type; then
   exactly one `export const pkg: Package = <value>;`, and nothing else.
@@ -59,7 +71,9 @@ export const pkg: Package = {
   its own modules only (`vpm::PackageGraph::path_alias`).
 - `entry` is a `/`-separated path inside the package (not empty, not absolute, no `..`).
 - A library package exposes `src/lib.vlt` (entry for importers); `src/main.vlt` makes it runnable.
-- `velt.lock` (TOML, generated) pins exact versions + content hashes; registry for the POC is a
+- `velt.lock.json` (generated JSON: `{ "version": 1, "packages": [...] }`, pretty-printed, stable
+  key order, trailing newline) pins exact versions + content hashes; a package with only the
+  former `velt.lock` (TOML) gets an error saying to run `velt install`. The registry for the POC is a
   local directory (`$VELT_REGISTRY`, default `~/.velt/registry/<name>/<version>/`), cache in
   `~/.velt/cache`.
 
@@ -70,14 +84,45 @@ registry: "https://registry.example.com",
 - A root package's `registry` URL (or `$VELT_REGISTRY` set to an `http(s)://` URL, which takes
   precedence) replaces the local registry directory for resolution, `velt add`, `velt install`
   and `velt publish`. Protocol (`velt registry serve`, crates/vpm/src/remote.rs):
-  `GET <url>/api/v1/<name>/index` → `index.toml`; `GET <url>/api/v1/<name>/<version>` → package
-  archive; `PUT` the same path with the archive, `X-Velt-Checksum: sha256:…` and, when the server
-  has a token, `Authorization: Bearer $VELT_REGISTRY_TOKEN`.
+  `GET <url>/api/v1/<name>/index` → `index.json` (`{ "versions": [...] }`, `application/json`; a
+  registry directory with an `index.toml` from an older velt is an error); `GET <url>/api/v1/<name>/<version>` → package
+  archive; `PUT` the same path with the archive and `X-Velt-Checksum: sha256:…`.
+- Users (additive): `<dir>/.auth/users.json` maps user names to the `sha256:` of their tokens.
+  While the file exists (even listing no users), every write without `Authorization: Bearer <a
+  user's token>` (scheme case-insensitive) is 401; clients send `$VELT_REGISTRY_TOKEN`, only to
+  an `https://` registry or an `http://` one on a loopback host (`localhost`, `127.0.0.0/8`,
+  `[::1]`), and fail otherwise. Only a registry without the file is open: every write is allowed.
+  The registry's files are replaced atomically (temporary file, synced, then renamed); on Unix
+  `.auth/` is mode 0700. Server writes and the administrator's `velt registry user|owner` commands
+  hold an advisory lock on `<dir>/.lock`. Removing a user removes it from every `owners.json`.
+  Package and user names are never Windows device names (`con`, `prn`, `aux`, `nul`, `com0`–`com9`,
+  `lpt0`–`lpt9`).
+- Owners (additive): `<dir>/<name>/owners.json` (`{ "owners": ["alice"] }`). The first user to publish
+  a new package owns it (recorded before the version is stored, and taken back if storing fails).
+  Writes to a package by a user who doesn't own it are 403, also when an existing package has no
+  owners (on a server with users): an administrator assigns them with
+  `velt registry owner add`. `GET <url>/api/v1/<name>/owners` → one owner per line; `PUT`/`DELETE
+  <url>/api/v1/<name>/owners/<user>` add/remove one (400 for a name or user that isn't
+  `[a-z][a-z0-9_-]*`, 404 for an unknown user or a user who isn't an owner, 409 for the last
+  owner, 400 on a server without users).
+- Yank (additive): index entries gain `yanked = true` (absent when false). `PUT`/`DELETE
+  <url>/api/v1/<name>/<version>/yank` set/clear it (owners). Resolution never selects a yanked
+  version unless the lockfile pins it; yanked versions stay downloadable.
+- Search (additive): `GET <url>/api/v1/search?q=<text>` →
+  `{"packages":[{"name":"…","version":"…"}]}`: names containing the text (case-insensitive),
+  exact match first, then prefix matches, then by name; at most 50; the version is the newest
+  not yanked, and packages with only yanked versions are left out.
 - Archives (`vpm::archive`) carry `package.vlt` + `src/**` (+ the `native` crate directory,
   without `target/` and `.git/`); an archive with any other path, such as a `velt.toml`, is
-  rejected. Their checksum is the same content hash `velt.lock` records, and every download is
+  rejected. Their checksum is the same content hash `velt.lock.json` records, and every download is
   verified against it before it enters the cache.
-- `https://` goes through the system `curl`; `http://` is built in.
+- `https://` uses rustls (`velt_http::tls`) with Mozilla's roots (`webpki-roots`) plus the PEM
+  certificates in `$VELT_CA_FILE`; `http://` is plain TCP. No redirects, proxies (`HTTPS_PROXY`
+  is not honored) or HTTP/2. `velt registry serve` is plain HTTP; deployments beyond localhost
+  put a TLS-terminating reverse proxy in front of it.
+- Yanked but locked (additive): `vpm::Resolution::yanked` / `vpm::Installed::yanked` list the
+  selected registry versions that are yanked; the CLI prints `warning: `<name>` <version> is
+  yanked (pinned by velt.lock.json)` for each.
 
 ## JSX import source (additive)
 ```ts ignore
@@ -96,14 +141,15 @@ Contract: [native_abi.md](native_abi.md).
 - `native`: `path` (default `"native"`, a directory name in the package root, not `src` or
   `target`), `targets` (triples from `vpm::manifest::NATIVE_TARGETS`: x86_64/aarch64 Linux GNU,
   macOS and Windows MSVC), `wasm` (must be `false`: not supported yet).
-- Index entries gain `native_abi = <n>` and `native = { "<triple>" = "sha256:…" }`. A published
+- Index entries gain `"native_abi": <n>` and `"native": { "<triple>": "sha256:…" }`. A published
   target is never replaced; a target may be **added** to a published version
   (`velt publish --native-only`). `velt publish` requires a bundle for every listed target.
 - Local registry: `<registry>/<name>/<version>.native/<triple>/`. Remote:
   `GET`/`PUT <url>/api/v1/<name>/<version>/native/<triple>` (bundle archive, same checksum header
   and token); `PUT` answers 409 for a target already published, 404 for an unpublished version.
-  The bundle's `native.toml` stays TOML (generated).
-- `velt.lock` entries of registry packages gain a `[package.native]` table: target triple →
+  The bundle's metadata is `native.json` (generated JSON); a bundle with the former `native.toml`
+  is refused with an error saying to rebuild it.
+- `velt.lock.json` entries of registry packages gain a `"native"` object: target triple →
   bundle checksum, for **every** published target (the lock is the same on every OS). Under
   `--locked`, a locked version keeps exactly its locked targets; a changed checksum of a locked
   target is an error.

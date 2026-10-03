@@ -50,6 +50,7 @@ impl Project {
         let root = vpm::relpath::absolute(root);
         let manifest = Manifest::from_dir(&root)?;
         let installed = vpm::install(&root, &Locations::from_env()?, opts)?;
+        super::package::warn_yanked(&installed);
         Ok(Project {
             root,
             manifest,

@@ -1,0 +1,32 @@
+// JS idioms that Velt spells differently get an error with the fix: assigning an array's
+// `length`, using the result of an in-place array method (`toSorted`/`toReversed` for `sort` and
+// `reverse`; for `fill`, the variable or a variable to store a temporary in; other types' `sort`
+// get no array hint), `then`/`catch` on a promise, and Node's `process.argv` (and the
+// `process` members that are not values, can only be called, or can't be assigned or deleted).
+class Deck {
+  sort() {}
+}
+
+async function fetchCount(): Promise<i64> {
+  return 1;
+}
+
+async function main() {
+  const xs = [3, 1, 2];
+  xs.length = 0;
+  const sorted = xs.sort();
+  const copy = xs.slice().reverse();
+  const filled = xs.fill(0);
+  const zeros = xs.slice().fill(0);
+  const deck = new Deck();
+  const shuffled = deck.sort();
+  const count = await fetchCount().then((n: i64) => n + 1);
+  const args = process.argv;
+  const out = process.stdout;
+  process.env.HOME = "/tmp";
+  delete process.env.HOME;
+  const quit = process.exit;
+  const usage = process.memoryUsage;
+  const pid = process.pid;
+  process.stdout.end();
+}

@@ -223,14 +223,24 @@ impl FnLower<'_, '_> {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             crate::lower::ice("field format of a non-struct type")
         };
-        let names: Vec<String> = self
+        let private_fields = self.cx.adt_def(d).private_fields;
+        let all: Vec<(u32, String, TyId)> = self
             .cx
             .adt_def(d)
             .fields
             .iter()
             .map(|f| f.name.clone())
+            .zip(self.cx.adt_field_tys(ty))
+            .enumerate()
+            .map(|(i, (n, t))| (i as u32, n, t))
             .collect();
-        let tys = self.cx.adt_field_tys(ty);
+        // A type with private fields hides its zero-sized markers (std's `runtime:
+        // RuntimeHandle`, which only makes a handle type opaque to JSON).
+        let shown: Vec<(u32, String, TyId)> = all
+            .into_iter()
+            .filter(|(_, _, t)| !(private_fields && self.is_empty_struct(*t)))
+            .collect();
+        let names: Vec<&String> = shown.iter().map(|(_, n, _)| n).collect();
         let open = match &name {
             Some(n) if names.is_empty() => format!("{n} {{}}"),
             None if names.is_empty() => "{}".into(),
@@ -242,15 +252,22 @@ impl FnLower<'_, '_> {
         if names.is_empty() {
             return self.push_text(buf, &pending);
         }
-        for (i, (n, t)) in names.into_iter().zip(tys).enumerate() {
+        for (i, (index, n, t)) in shown.iter().enumerate() {
             let sep = if i > 0 { ", " } else { "" };
             pending.push_str(&format!("{sep}{n}: "));
             self.push_text(buf, &pending);
             pending.clear();
-            let fp = self.field_place(place, ty, i as u32);
-            self.format_nested(buf, &fp, t);
+            let fp = self.field_place(place, ty, *index);
+            self.format_nested(buf, &fp, *t);
         }
         self.push_text(buf, " }");
+    }
+
+    /// A struct without fields (zero-sized).
+    fn is_empty_struct(&self, t: TyId) -> bool {
+        matches!(self.cx.kind(t), TyKind::Adt(d, _)
+            if matches!(self.cx.hir.def(d), velt_sema::hir::Def::Adt(a)
+                if a.kind == AdtKind::Struct && a.fields.is_empty()))
     }
 
     fn format_array(&mut self, buf: &Operand, arr: &Place, e: TyId) {

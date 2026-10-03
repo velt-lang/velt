@@ -1,0 +1,4 @@
+fn_value_generic_promise.vlt:19:38: error: function `boxIt` takes ownership of `b`, so it cannot be used as a function value
+  = note: function values borrow their arguments, and its type depends on a type parameter, which may be a promise; call the function directly
+fn_value_generic_promise.vlt:28:50: error: function `keep` takes ownership of `x`, so it cannot be used as a function value
+  = note: function values borrow their arguments, and a promise has one owner; call the function directly

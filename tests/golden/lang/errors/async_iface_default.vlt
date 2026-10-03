@@ -1,0 +1,28 @@
+// #220: only an interface method with a body (a default) can be `async`; a method without one
+// declares that it returns a promise. An async default returns a `Promise`, and an
+// implementation overriding a default whose promise can reject must itself be `async`.
+class E extends Error {}
+
+interface A {
+  async f(): Promise<i64>;
+
+  async g(): i64 {
+    return 1;
+  }
+
+  async h(): Promise<i64> throws E {
+    return 1;
+  }
+}
+
+class C implements A {
+  f(): Promise<i64> {
+    return new Promise<i64>((res, rej) => res(1));
+  }
+
+  h(): Promise<i64> {
+    return new Promise<i64>((res, rej) => res(1));
+  }
+}
+
+function main() {}

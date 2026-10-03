@@ -46,9 +46,9 @@ pub fn dev_command(args: DevArgs) -> ExitCode {
 pub fn test_watch(mut run: impl FnMut() -> Result<Outcome, String>) -> ! {
     let mut watcher = watch::Watcher::default();
     loop {
-        let started = std::time::SystemTime::now();
+        let snapshot = watcher.snapshot();
         match run() {
-            Ok(outcome) => watcher.set(outcome.watched, started),
+            Ok(outcome) => watcher.set(outcome.watched, &snapshot),
             // Nothing was read (e.g. a bad path); keep watching what worked before.
             Err(msg) => crate::style::error(&msg),
         }

@@ -11,8 +11,9 @@ use velt_syntax::ast;
 
 use super::args::Callable;
 use crate::body::FnCx;
-use crate::defs::IfaceMethod;
+use crate::defs::{IfaceMethod, ThrowSrc};
 use crate::hir::{self, Callee, DefId, ExprKind as H, PassMode, TyId};
+use crate::throws::ThrowCheck;
 
 /// A resolved interface method slot.
 pub(crate) struct IfaceSlot {
@@ -105,12 +106,13 @@ impl FnCx<'_, '_> {
         let recv = self.receiver(recv, None, mode);
         let mut all = vec![recv];
         all.extend(ck.args);
-        self.throw_src(crate::defs::ThrowSrc::Slot {
+        let src = ThrowSrc::Slot {
             iface: s.iface,
             slot: s.slot,
             args: ck.type_args.clone(),
             span,
-        });
+        };
+        let ret = self.slot_call_throws(&s, src, ck.ret, span);
         let callee = if s.on_param {
             Callee::ParamMethod {
                 iface: s.iface,
@@ -122,6 +124,35 @@ impl FnCx<'_, '_> {
             Callee::Dyn { slot: s.slot }
         };
         let kind = H::Call { callee, args: all };
-        self.mk(kind, ck.ret, span)
+        self.mk(kind, ret, span)
+    }
+
+    /// A call through interface slot `src` (result type `ret`) may throw here; the result type.
+    /// A slot of a promise group (throws/groups.rs `Group::promise`, as lowering reads it)
+    /// reports its errors through the promise: the result is `Promise<T, E>` with what the slot
+    /// is known to throw (checked after inference, like an async call). Other slots throw, even
+    /// when the instantiated result is a promise (`get(): T` with `T = Promise<i64>`).
+    fn slot_call_throws(&mut self, s: &IfaceSlot, src: ThrowSrc, ret: TyId, span: Span) -> TyId {
+        let (iface, slot) = (s.iface, s.slot);
+        let groups = self.cx.throw_groups();
+        let promise = groups
+            .slot_group(iface, slot)
+            .is_some_and(|g| groups.list[g].promise);
+        let payload = self.cx.ty.promise_payload(ret);
+        let Some(v) = payload.filter(|_| promise) else {
+            self.throw_src(src);
+            return ret;
+        };
+        let e = crate::throws::srcs_now(self.cx, std::slice::from_ref(&src));
+        self.cx.throw_checks.push(ThrowCheck {
+            srcs: vec![src],
+            observed: e,
+            exact: true,
+            span,
+        });
+        match e {
+            Some(e) => self.cx.ty.promise_rejecting(v, e),
+            None => ret,
+        }
     }
 }

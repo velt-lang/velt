@@ -58,8 +58,8 @@ switch (s.kind) { case "circle": return s.r; case "rect": return s.w * s.h; }
   being generic over them (`map<U, E>(f: (x: T) => U throws E): U[] throws E`), as the prelude's
   array, `Map` and nullable callbacks and the std collections do. Interface and overridden
   methods share one error type (the declaring method's clause, else the union of the
-  implementations'). `Promise.all` rethrows the first rejection in array order once all promises
-  settled; a `spawn(...)` statement reports its error as uncaught; `serve` answers 500 for a
+  implementations'). `Promise.all` rejects with the first rejection as soon as it happens, like
+  JS; a `spawn(...)` statement reports its error as uncaught; `serve` answers 500 for a
   throwing handler.
 
 ## 4. `extend` — full power, zero cost, module-scoped
@@ -72,9 +72,15 @@ switch (s.kind) { case "circle": return s.r; case "rect": return s.w * s.h; }
 - **Blanket extensions** (implemented): `extend<T extends Comparable<T>> T { clamp(lo: T, hi: T):
   T { … } }`; extending through a bound adds the method to every implementor.
 - **Retroactive implements** (planned): `extend Point implements Comparable<Point> { … }`.
+- **Overlapping extensions** (implemented): among the applicable blocks (target matches,
+  bounds hold) the most specific wins, A over B when A's target is an instance of B's and not
+  the reverse (`extend Array<i64>` over `extend<T> Array<T[]>` over `extend<T> Array<T>`), or
+  when both have the same target and only A has bounds.
+  Otherwise the conflicting applicable extensions are an ambiguity error at the call
+  (``ambiguous extension method `m` ``, naming both blocks).
 - **Scoping** (planned): an extension is visible in its module and where it is imported
-  (`import { Stats } from …`); prelude extensions are global. Conflicting applicable extensions
-  are an ambiguity error. Today an extension applies wherever its module is loaded.
+  (`import { Stats } from …`); prelude extensions are global. Today an extension applies
+  wherever its module is loaded.
 - A type's own member always wins over an extension. No new fields (the layout is fixed). No
   operator overloading.
 

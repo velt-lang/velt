@@ -137,6 +137,7 @@ fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldI
         optional: f.optional,
         has_default: f.default.is_some() || f.optional,
         default: None,
+        default_throws: vec![],
         private_to: f.is_private.then_some(owner),
     }
 }

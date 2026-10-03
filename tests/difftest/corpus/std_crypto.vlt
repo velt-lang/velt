@@ -57,10 +57,20 @@ function main() {
     inRange = inRange && v >= -3 && v < 4;
   }
   console.log("randomInt in range:", inRange, randomInt(5, 6));
-  try {
-    randomInt(3, 3);
-  } catch (e) {
-    console.log(e instanceof CryptoError, e.message);
+  const bounds: i64[][] = [
+    [3, 3],
+    [1000000000000, 1000000000000],
+    [0, 281474976710656],
+    [-9007199254740992, 0],
+    [0, 9007199254740992],
+    [0, -4294967297],
+  ];
+  for (const [min, max] of bounds) {
+    try {
+      randomInt(min, max);
+    } catch (e) {
+      console.log(e instanceof CryptoError, e.message);
+    }
   }
   console.log(
     timingSafeEqual(filled(5, 1), filled(5, 1)),

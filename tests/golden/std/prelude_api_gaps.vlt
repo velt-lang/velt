@@ -1,0 +1,58 @@
+// Prelude APIs TypeScript code reaches for (expected output checked against Node): `splice`,
+// `truncate` (JS `length = n`), `flat`, `join` on nested arrays and nullable elements,
+// `localeCompare`, the static members of `Number`, and `assertThrows`. The line after the
+// nullable `join`s shows where Velt differs: an array nested two levels deep, `null` inside an
+// inner array and an array inside a nullable element print like `${x}` (JS: `1,2,3 1, 1,2,`).
+class ParseError extends Error {}
+
+function parse(s: string): i64 {
+  if (s == "x") {
+    throw new ParseError(`bad input: ${s}`);
+  }
+  return 1;
+}
+
+function main() {
+  const xs = [0, 1, 2, 3, 4, 5, 6];
+  const removed = xs.splice(2, 3);
+  console.log(removed, xs);
+  const last = xs.splice(-1);
+  const none = xs.splice(1, 0);
+  const past = xs.splice(10);
+  console.log(last, none, past, xs);
+  const words = ["a", "b", "c", "d"];
+  const tail = words.splice(1);
+  console.log(tail, words);
+  const ys = [1, 2, 3, 4];
+  ys.truncate(2);
+  console.log(ys, ys.length);
+  ys.truncate(10);
+  console.log(ys);
+
+  const grid = [[1, 2], [3], []];
+  console.log(grid.flat(), grid.join(";"));
+  const maybe: (i64 | null)[] = [1, null, 3];
+  const names: (string | null)[] = ["a", null, "c"];
+  console.log(maybe.join(), names.join("-"));
+  const deep = [[[1, 2], [3]]];
+  const innerNull: (i64 | null)[][] = [[1, null]];
+  const outerNull: (i64[] | null)[] = [[1, 2], null];
+  console.log(deep.join(), innerNull.join(), outerNull.join());
+
+  const people = ["émile", "Zoë", "adam", "Ådne", "zack", "Eve", "eve", "_x", "10", "9"];
+  people.sort((a, b) => a.localeCompare(b));
+  console.log(people.join(" "));
+  console.log("a".localeCompare("B"), "b".localeCompare("a"), "résumé".localeCompare("resume"));
+
+  console.log(Number("42"), Number.isInteger(5), Number.isInteger(5.5), Number.isNaN(Number.NaN));
+  console.log(Number.MAX_SAFE_INTEGER, Number.MIN_SAFE_INTEGER, Number.EPSILON);
+  console.log(Number.MAX_VALUE, Number.MIN_VALUE, Number.POSITIVE_INFINITY);
+  console.log(Number.parseInt("ff", 16), Number.parseFloat("3.5x"), Number.isSafeInteger(2 ** 53));
+  console.log(Number.isFinite(1 / 0), Number.isInteger(1 / 0), Number.NEGATIVE_INFINITY);
+
+  const e = assertThrows(() => {
+    parse("x");
+  });
+  console.log(e.message, e instanceof ParseError);
+  console.log(assertThrows(() => parse("x")).message);
+}

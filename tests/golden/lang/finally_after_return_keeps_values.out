@@ -1,0 +1,30 @@
+finally token
+token
+direct finally token
+token
+loop finally 0 token
+loop finally 1 token
+token
+inner finally token
+outer finally token
+token
+continue finally 0 token
+continue finally 1 token
+continue finally 2 token
+token
+token
+catch finally token
+token
+token
+labelled inner token
+labelled outer token
+token token
+async finally 0 token
+async finally 1 token
+token token
+rethrown token
+diverging token
+throwing token
+exits finally true
+exits finally false
+one one

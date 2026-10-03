@@ -182,7 +182,7 @@ pub(crate) fn compile(ir: &str, target: &Target, optimize: bool) -> CodegenResul
     std::fs::write(&ll, ir)
         .map_err(|e| format!("codegen: cannot write `{}`: {e}", ll.display()))?;
     let mut cmd = Command::new(&clang);
-    cmd.arg(if optimize { "-O3" } else { "-O0" })
+    cmd.arg(if optimize { opt_flag() } else { "-O0" })
         .args(["-c", "-x", "ir", "-Wno-override-module"])
         .arg(format!("--target={}", target.triple))
         .args(target.deployment_target_arg());
@@ -200,6 +200,27 @@ pub(crate) fn compile(ir: &str, target: &Target, optimize: bool) -> CodegenResul
         );
     }
     std::fs::read(&obj).map_err(|e| format!("codegen: cannot read `{}`: {e}", obj.display()))
+}
+
+/// clang's optimization flag for release builds: `-O3`, or `$VELT_LLVM_OPT` (`1`, `2`, `3`, `s`
+/// or `z`, with or without the `-O`) to trade code speed for compile time.
+pub(crate) fn opt_flag() -> &'static str {
+    static FLAG: OnceLock<&'static str> = OnceLock::new();
+    FLAG.get_or_init(|| {
+        let level = std::env::var("VELT_LLVM_OPT").unwrap_or_default();
+        parse_opt_level(&level).unwrap_or("-O3")
+    })
+}
+
+fn parse_opt_level(level: &str) -> Option<&'static str> {
+    Some(match level.trim().trim_start_matches("-O") {
+        "1" => "-O1",
+        "2" => "-O2",
+        "3" => "-O3",
+        "s" => "-Os",
+        "z" => "-Oz",
+        _ => return None,
+    })
 }
 
 /// A private scratch directory, removed on drop.
@@ -237,6 +258,15 @@ mod tests {
 
     fn usable(banner: &str) -> Option<bool> {
         parse_version(banner).map(|v| v.major >= v.min_major())
+    }
+
+    #[test]
+    fn optimization_levels() {
+        assert_eq!(parse_opt_level("2"), Some("-O2"));
+        assert_eq!(parse_opt_level("-O2"), Some("-O2"));
+        assert_eq!(parse_opt_level(" s "), Some("-Os"));
+        assert_eq!(parse_opt_level(""), None);
+        assert_eq!(parse_opt_level("fast"), None);
     }
 
     #[test]

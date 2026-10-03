@@ -1,0 +1,27 @@
+// Calling an async closure value passes a class argument by reference, as a direct call of an
+// async function does: the callee gets the caller's instance, and `[Symbol.dispose]()` runs once
+// for one object (#196; it used to be copied into the call's state and disposed twice).
+class Res {
+  raw: i64;
+
+  constructor(raw: i64) {
+    this.raw = raw;
+  }
+
+  [Symbol.dispose]() {
+    console.log(`dispose ${this.raw}`);
+  }
+}
+
+async function direct(r: Res): Promise<i64> {
+  return r.raw;
+}
+
+async function viaClosure(handler: (r: Res) => Promise<i64>): Promise<i64> {
+  return await handler(new Res(2));
+}
+
+async function main() {
+  console.log(await direct(new Res(1)));
+  console.log(await viaClosure(async (r: Res): Promise<i64> => r.raw));
+}

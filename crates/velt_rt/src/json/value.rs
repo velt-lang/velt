@@ -5,6 +5,7 @@
 //! valid after the root handle is freed. Parsing, stringifying and dropping are iterative, so
 //! arbitrarily deep documents cannot overflow the stack.
 
+use super::object::count_work;
 pub use super::object::Object;
 use super::scan::{number_f64, Scanner, StrTok, SyntaxError};
 use super::walk::{walk_limited, Scalar, Sink};
@@ -22,8 +23,13 @@ pub enum Value {
 }
 
 impl Value {
-    /// A copy of this node sharing its children (O(number of children)).
+    /// A copy of this node sharing its children (O(number of children), counted as work).
     pub fn shallow_clone(&self) -> Value {
+        match self {
+            Value::Array(items) => count_work(items.len()),
+            Value::Object(obj) => count_work(obj.len()),
+            _ => {}
+        }
         match self {
             Value::Null => Value::Null,
             Value::Bool(b) => Value::Bool(*b),

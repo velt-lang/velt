@@ -32,17 +32,26 @@ Promises behave like JavaScript's, at Rust's cost:
   it on is ``use of moved value``, and an explicit `p.clone()` is ``a promise cannot be copied``.
 - Values handed to `spawn` (and captured by an HTTP handler) go to another thread: an object
   the program still shares is deep-copied for the task (like a structured clone), so threads
-  never share reference counts.
+  never share reference counts. That includes the receiver of `spawn(obj.method())` (also
+  through a base-class reference or an interface value) and what a closure or interface value
+  passed to the task reaches. A closure the caller still uses afterwards is copied too, with
+  what it captures, so the task and the caller each run their own copy. Objects the program
+  never shares move instead: a closure handed on for the last time that captures only those
+  (an HTTP handler capturing a disposable resource, say) goes to the task as it is, and a
+  captured value's `[Symbol.dispose]()` runs once.
 
 ## Combinators
 
-- `Promise.all(ps: Promise<T, E>[]): Promise<T[], E>`: the results, in order.
+- `Promise.all(ps: Promise<T, E>[]): Promise<T[], E>`: the results, in order; rejects as soon
+  as one promise rejects.
 - `Promise.race(ps): Promise<T, E>`: the first to settle; the others keep running to
   completion.
 - `Promise.allSettled(ps)`: a `PromiseSettledResult<T, E>[]`, where each element is
   `{ status: "fulfilled"; value: T } | { status: "rejected"; reason: E }`.
 - `Promise.any(ps): Promise<T>`: the first to fulfill; `AggregateError` when all of them reject
   (or the array is empty).
+- `Promise.withResolvers<T, E>()`: a pending promise with its `resolve` and `reject`
+  ([below](#promisewithresolvers)).
 
 All promises in one call must have the same type. Like in JS, every promise passed to a
 combinator is *handled*: one that loses (or is left behind) and rejects later has its error
@@ -65,6 +74,22 @@ bounded or unbounded queues where `send` waits while a bounded channel is full.
 Built-ins: `sleep(ms)`, `yieldNow()`, `performance.now(): f64` (monotonic milliseconds) and
 `Date.now(): i64`. Timers and intervals are in [`velt:timers`](../std/timers.md).
 
+## Cancellation
+
+Cancellation is cooperative, with TypeScript's `AbortController` / `AbortSignal`
+([`velt:task`](../std/task.md)): `abort()` marks the signal, and code that takes one checks it
+(`throwIfAborted()`) or races its work against `signal.whenAborted()` (put the wait itself in
+the `Promise.race`, so it is dropped when the work wins). A started promise is never cancelled
+behind the program's back, so `finally` blocks and `using` disposal run as usual.
+`timeout(p, ms)` rejects with `TimeoutError` when `p` is too slow (`p` is then abandoned like a
+`Promise.race` loser: a running call keeps running, like JS).
+`taskScope(async (scope) => …)` is structured concurrency: it settles only after every task
+started with `scope.spawn`, fails with the first error of the body or a child, and that error
+aborts `scope.signal` so the siblings stop.
+
+A task the runtime drops is cancelled at its current suspension point: the values it owns are dropped (`using` resources are disposed),
+`finally` blocks don't run, and its unfinished local promises are cancelled with it.
+
 ## Thread safety
 
 Thread safety is checked at compile time: async closures, and HTTP handlers, must not modify
@@ -83,16 +108,62 @@ can reject with: `Promise<T, E>` (a `Promise<T>` never rejects).
 
 - An async function's `throws` clause (`async function f(): Promise<T> throws E`, or the
   inferred one) is its promise's `E`. In a function type, `throws` after a `Promise` result is
-  the promise's `E`: `() => Promise<T> throws E`.
+  the promise's `E`: `() => Promise<T> throws E`. So it is for an interface method returning a
+  promise (`load(id: string): Promise<User> throws NotFound`, or `Promise<User, NotFound>`):
+  calling it through the interface returns a `Promise<User, NotFound>`, and its
+  implementations are `async` methods (a synchronous one may return a promise only when the
+  method's promise cannot reject). The same holds for a class method returning a promise that
+  a subclass overrides: the base method and every override are `async` when any of them can
+  fail. A getter cannot be `async`, so a getter returning a promise from an interface cannot
+  fail, and overridden getters throw at the read. A method declared as returning a type
+  parameter (`get(): T`) throws its errors for every type argument: an `async` implementation
+  for `T = Promise<…>` must not fail. A default body of such an interface method can be `async` too:
+
+```ts
+class NotFound extends Error {}
+
+interface Store {
+  get(id: string): string | null;
+  async load(id: string): Promise<string> throws NotFound {
+    const v = this.get(id);
+    if (v == null) {
+      throw new NotFound(id);
+    }
+    return v;
+  }
+}
+
+class Memory implements Store {
+  get(id: string): string | null {
+    return id == "a" ? "apple" : null;
+  }
+}
+
+async function main() {
+  const s: Store = new Memory();
+  console.log(await s.load("a"));
+  try {
+    await s.load("b");
+  } catch (e) {
+    console.log("not found:", e.message);
+  }
+}
+```
 - Awaiting rethrows the typed error: a direct `await f()`, a stored promise
   (`const p = f(); … await p`), a spawned task's handle, `await Promise.race(ps)` (the first
-  promise to settle), and `await Promise.all(ps)`, which waits for every promise and then
-  rethrows the first rejection in array order (unlike JS, which rejects as soon as one promise
-  rejects). `Promise.allSettled` reports each rejection as
+  promise to settle), and `await Promise.all(ps)`, which rejects as soon as one promise rejects,
+  like JS (the others keep running to completion). `Promise.allSettled` reports each rejection as
   `{ status: "rejected"; reason: E }`.
+- A promise converts to a promise type whose error type allows all of its errors: a
+  `Promise<T>` can be used as a `Promise<T, E>`, and a `Promise<T, E1>` as a
+  `Promise<T, E1 | E2>`, wherever that type is expected (a typed variable or array, an
+  argument, a return value). An array literal without an expected type still takes its element
+  type from its first element, so mixed arrays need a type:
+  `const ps: Promise<string, Timeout>[] = [work(), rejectAfter(50)]`.
 - A promise nobody can await reports its error as uncaught (`Uncaught <Type>: <message>`, exit
-  code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`), and a
-  stored promise that rejects after it was dropped unawaited (unless a combinator handled it).
+  code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`, or
+  `spawn(p);` of a stored promise), and a stored promise that rejects after it was dropped
+  unawaited (unless a combinator handled it).
 
 ## `new Promise`
 
@@ -136,6 +207,51 @@ function after(ms: i64, ok: bool): Promise<string, Failed> {
 
 async function main() {
   console.log(await after(10, true)); // fine after 10 ms
+}
+```
+
+## `Promise.withResolvers`
+
+`Promise.withResolvers<T, E>()` (ES2024) returns a `PromiseWithResolvers<T, E>`:
+`{ promise: Promise<T, E>; resolve: (value: T) => void; reject: (reason: E) => void }`, a
+pending promise and the functions that settle it, without an executor. `T` and `E` come from
+the type arguments (`E` defaults to `never`: the promise cannot reject) or from the expected
+type.
+
+- `resolve` and `reject` work like a `new Promise` executor's: store them, move them into a
+  spawned task, or send them over a [channel](../std/channel.md) and call them there; the
+  awaiting task wakes. The first settlement wins and later calls do nothing.
+- A value settled from another task is copied, one settled on the promise's own task is the same
+  object, as for `new Promise`.
+- A promise whose `resolve` and `reject` are all dropped without settling never settles, like in
+  JS: it can lose a `Promise.race`, and awaiting it otherwise waits forever. A pending promise
+  keeps the process alive (#147).
+
+A one-shot reply to a request handled on another task, without a channel per request:
+
+```ts
+import { channel, Channel } from "velt:channel";
+
+type Request = { n: i64; reply: (value: i64) => void };
+
+async function doubler(requests: Channel<Request>) {
+  while (true) {
+    const r = await requests.receive();
+    if (r == null) {
+      return;
+    }
+    r.reply(r.n * 2);
+  }
+}
+
+async function main() {
+  const requests = channel<Request>();
+  const server = spawn(doubler(requests));
+  const { promise, resolve } = Promise.withResolvers<i64>();
+  await requests.send({ n: 21, reply: resolve });
+  console.log(await promise); // 42
+  requests.close();
+  await server;
 }
 ```
 

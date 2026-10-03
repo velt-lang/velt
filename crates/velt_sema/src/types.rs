@@ -182,6 +182,32 @@ impl Types {
         })
     }
 
+    /// `t` with every error type (of a promise, thrown by a function type) made `Error`, i.e.
+    /// unconstrained: `Promise<T>` as a contextual type says nothing about what it rejects with.
+    pub fn without_error_types(&mut self, t: TyId) -> TyId {
+        let error = self.error;
+        let k = self.kind(t).clone();
+        let m = |s: &mut Self, x: TyId| s.without_error_types(x);
+        let nk = match k {
+            TyKind::Promise(v, _) => TyKind::Promise(m(self, v), error),
+            TyKind::FnPtr { params, ret, .. } => TyKind::FnPtr {
+                params: params.iter().map(|a| m(self, *a)).collect(),
+                ret: m(self, ret),
+                throws: error,
+            },
+            TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|a| m(self, *a)).collect()),
+            TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| m(self, *a)).collect()),
+            TyKind::Array(e) => TyKind::Array(m(self, e)),
+            TyKind::Map(a, b) => TyKind::Map(m(self, a), m(self, b)),
+            TyKind::Tuple(ts) => TyKind::Tuple(ts.iter().map(|a| m(self, *a)).collect()),
+            TyKind::Option(e) => TyKind::Option(m(self, e)),
+            TyKind::Result(a, b) => TyKind::Result(m(self, a), m(self, b)),
+            TyKind::Shared(e) => TyKind::Shared(m(self, e)),
+            _ => return t,
+        };
+        self.intern(nk)
+    }
+
     /// Rebuild `t` bottom-up; `f` may replace a node (returning `Some`).
     pub fn map(&mut self, t: TyId, f: &mut dyn FnMut(&TyKind) -> Option<TyId>) -> TyId {
         let k = self.kind(t).clone();

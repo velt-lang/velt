@@ -136,7 +136,7 @@ impl<'a> Printer<'a> {
     }
 
     fn conditional(&mut self, cond: &Expr, then: &Expr, els: &Expr) -> Doc {
-        if super::jsx::is_jsx_conditional(then, els) {
+        if super::jsx::is_jsx_conditional(cond, then, els) {
             return self.jsx_conditional(cond, then, els);
         }
         let cond = self.expr(cond);

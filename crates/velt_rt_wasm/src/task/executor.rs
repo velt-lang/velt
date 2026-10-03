@@ -22,10 +22,25 @@ const ROOT: usize = 0;
 pub struct JoinState {
     /// The task finished and `result` holds its result bytes.
     pub done: bool,
-    /// The result, moved out of the task's result slot.
-    pub result: Vec<u8>,
+    /// The result, moved out of the task's result slot (8-aligned words, so drop glue may run
+    /// on it).
+    pub result: Vec<u64>,
     /// The join handle's waker while it waits.
     pub waiter: Option<Waker>,
+    /// Drops a result the handle never claims (`claimed` stays false); `None`: nothing to drop.
+    /// Drop glue kept with a value in flight (rt_abi_async.md §13.5).
+    pub result_drop: Option<super::all::ResultDropFn>,
+    /// The join handle moved the result out.
+    pub claimed: bool,
+}
+
+impl Drop for JoinState {
+    fn drop(&mut self) {
+        if let (true, false, Some(d)) = (self.done, self.claimed, self.result_drop) {
+            // SAFETY: an unclaimed result written by the finished task.
+            unsafe { d(self.result.as_mut_ptr() as *mut u8) }
+        }
+    }
 }
 
 struct Task {
@@ -196,7 +211,9 @@ unsafe fn run_task(id: usize) {
         let result = (fut as *const u8).add(FUT_RESULT_OFFSET);
         let waiter = {
             let mut j = join.borrow_mut();
-            j.result = std::slice::from_raw_parts(result, task.result_size).to_vec();
+            let mut words = vec![0u64; task.result_size.div_ceil(8)];
+            std::ptr::copy_nonoverlapping(result, words.as_mut_ptr() as *mut u8, task.result_size);
+            j.result = words;
             j.done = true;
             j.waiter.take()
         };

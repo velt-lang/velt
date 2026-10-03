@@ -9,6 +9,7 @@ semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+# Only the `velt.toml` migration converter (manifest/legacy.rs) still reads TOML.
 toml = "1.1.6"
 velt_common.workspace = true
 velt_fmt.workspace = true

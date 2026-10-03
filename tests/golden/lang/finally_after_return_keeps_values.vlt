@@ -1,0 +1,256 @@
+// check: no leaks
+// A `finally` runs on every way out of its `try`: after a `return`, `break` or `continue`, and
+// after a throw. A value the `finally` uses is shared with what took it before, not moved; and
+// what the `finally` itself takes is gone for the code its exit goes to (the loop after a
+// `break`, an outer `catch` after a throw). Covers a getter's object handed to a stored promise
+// (the `Promise.race([work(), expire(ms, signal)])` shape), labelled jumps through nested
+// `finally`s, a `return` in a `catch`, and an async `break` across an `await`.
+
+class Inner {
+  name: string = "token";
+}
+
+class Token {
+  inner: Inner = new Inner();
+}
+
+class Ctl {
+  private tok: Token = new Token();
+
+  get token(): Token {
+    return this.tok;
+  }
+}
+
+async function use(t: Token): Promise<string> {
+  await sleep(1);
+  return t.inner.name;
+}
+
+async function guarded(): Promise<string> {
+  const c = new Ctl();
+  try {
+    const p = use(c.token);
+    return await p;
+  } finally {
+    console.log("finally", c.token.inner.name);
+  }
+}
+
+function keep(t: Token): string {
+  const kept = [t];
+  return kept[0].inner.name;
+}
+
+function direct(): string {
+  const t = new Token();
+  try {
+    return keep(t);
+  } finally {
+    console.log("direct finally", t.inner.name);
+  }
+}
+
+function inLoop(): string {
+  const t = new Token();
+  let out = "";
+  for (let i = 0; i < 3; i++) {
+    try {
+      if (i == 1) {
+        out = keep(t);
+        break;
+      }
+    } finally {
+      console.log("loop finally", i, t.inner.name);
+    }
+  }
+  return out;
+}
+
+function nested(): string {
+  const t = new Token();
+  try {
+    try {
+      return keep(t);
+    } finally {
+      console.log("inner finally", t.inner.name);
+    }
+  } finally {
+    console.log("outer finally", t.inner.name);
+  }
+}
+
+function continued(): string {
+  const t = new Token();
+  let out = "";
+  for (let i = 0; i < 3; i++) {
+    try {
+      if (i < 2) {
+        out = keep(t);
+        continue;
+      }
+    } finally {
+      console.log("continue finally", i, t.inner.name);
+    }
+  }
+  return out;
+}
+
+// What the `finally` takes on a `break` is gone after the loop: the loop exit sees it.
+function finallyTakes(): string {
+  const t = new Token();
+  while (true) {
+    try {
+      break;
+    } finally {
+      keep(t);
+    }
+  }
+  return t.inner.name;
+}
+
+function returnInCatch(): string {
+  const t = new Token();
+  try {
+    throw new Error("boom");
+  } catch (e) {
+    return keep(t);
+  } finally {
+    console.log("catch finally", t.inner.name);
+  }
+}
+
+// A throw through an inner `finally` reaches the outer handler after that `finally` ran.
+function throwThroughFinally(): string {
+  const t = new Token();
+  try {
+    try {
+      throw new Error("inner");
+    } finally {
+      keep(t);
+    }
+  } catch (e) {
+    return t.inner.name;
+  }
+}
+
+function labelled(): string {
+  const t = new Token();
+  let out = "";
+  outer: for (let i = 0; i < 2; i++) {
+    for (let j = 0; j < 2; j++) {
+      try {
+        try {
+          out = keep(t);
+          break outer;
+        } finally {
+          console.log("labelled inner", t.inner.name);
+        }
+      } finally {
+        console.log("labelled outer", t.inner.name);
+      }
+    }
+  }
+  return out + " " + t.inner.name;
+}
+
+async function asyncBreak(): Promise<string> {
+  const t = new Token();
+  let out = "";
+  for (let i = 0; i < 3; i++) {
+    try {
+      out = await use(t);
+      if (i == 1) {
+        break;
+      }
+    } finally {
+      console.log("async finally", i, t.inner.name);
+    }
+  }
+  return out + " " + t.inner.name;
+}
+
+// A rethrow from a `catch`, a call that throws and a diverging call are throw points too: the
+// outer handler sees what was taken before them.
+function rethrown(): string {
+  const t = new Token();
+  try {
+    try {
+      throw new Error("a");
+    } catch (e) {
+      keep(t);
+      throw e;
+    }
+  } catch (e) {
+    return "rethrown " + t.inner.name;
+  }
+}
+
+function fail(): never {
+  throw new Error("fail");
+}
+
+function mayThrow(n: i64) {
+  if (n > 0) {
+    throw new Error("may");
+  }
+}
+
+function diverging(): string {
+  const t = new Token();
+  try {
+    keep(t);
+    fail();
+  } catch (e) {
+    return "diverging " + t.inner.name;
+  }
+}
+
+function throwing(): string {
+  const t = new Token();
+  try {
+    keep(t);
+    mayThrow(1);
+    return "no";
+  } catch (e) {
+    return "throwing " + t.inner.name;
+  }
+}
+
+// Each exit gets the `finally` on its own path: the promise returned on one path is still
+// there after the `break` on the other.
+async function oneAsync(): Promise<string> {
+  return "one";
+}
+
+function exits(c: bool): Promise<string> {
+  const p = oneAsync();
+  while (true) {
+    try {
+      if (c) {
+        return p;
+      }
+      break;
+    } finally {
+      console.log("exits finally", c);
+    }
+  }
+  return p;
+}
+
+async function main() {
+  console.log(await guarded());
+  console.log(direct());
+  console.log(inLoop());
+  console.log(nested());
+  console.log(continued());
+  console.log(finallyTakes());
+  console.log(returnInCatch());
+  console.log(throwThroughFinally());
+  console.log(labelled());
+  console.log(await asyncBreak());
+  console.log(rethrown());
+  console.log(diverging());
+  console.log(throwing());
+  console.log(await exits(true), await exits(false));
+}

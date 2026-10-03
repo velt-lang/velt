@@ -1,9 +1,11 @@
 //! `velt registry serve` + `velt publish` / `velt add` against it: two "machines" (separate
-//! `VELT_HOME`s) share a package over HTTP.
+//! `VELT_HOME`s) share a package over HTTP; a registry user publishes, owns, yanks and searches.
 
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+
+mod test_dir;
 
 fn velt(dir: &Path, home: &Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_velt"))
@@ -27,13 +29,44 @@ impl Drop for Kill {
     }
 }
 
+/// `velt` with the registry token `token`.
+fn velt_as(token: &str, dir: &Path, home: &Path, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_velt"))
+        .args(args)
+        .current_dir(dir)
+        .env("VELT_HOME", home)
+        .env_remove("VELT_REGISTRY")
+        .env("VELT_REGISTRY_TOKEN", token)
+        .output()
+        .expect("run velt")
+}
+
+fn text(out: &std::process::Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
 #[test]
 fn share_a_package_through_the_registry_server() {
-    let tmp = tempfile::tempdir().expect("temp dir");
+    let tmp = test_dir::TestDir::new();
+    let served = tmp.path().join("served");
+    let dir_arg = served.to_string_lossy().into_owned();
+    let added_user = velt(
+        tmp.path(),
+        &tmp.path().join("admin"),
+        &["registry", "user", "add", "alice", "--dir", &dir_arg],
+    );
+    assert!(added_user.status.success(), "{}", text(&added_user));
+    let token = String::from_utf8_lossy(&added_user.stdout)
+        .trim()
+        .to_string();
+    assert_eq!(token.len(), 64, "{token}");
     let server = Command::new(env!("CARGO_BIN_EXE_velt"))
         .args(["registry", "serve", "--port", "0", "--dir"])
-        .arg(tmp.path().join("served"))
-        .env("VELT_REGISTRY_TOKEN", "t0ken")
+        .arg(&served)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -59,17 +92,15 @@ fn share_a_package_through_the_registry_server() {
     let denied = velt(&lib, &home_a, &["publish"]);
     assert!(!denied.status.success());
     assert!(String::from_utf8_lossy(&denied.stderr).contains("VELT_REGISTRY_TOKEN"));
-    let published = Command::new(env!("CARGO_BIN_EXE_velt"))
-        .arg("publish")
-        .current_dir(&lib)
-        .env("VELT_HOME", &home_a)
-        .env("VELT_REGISTRY_TOKEN", "t0ken")
-        .output()
-        .expect("publish");
+    let published = velt_as(&token, &lib, &home_a, &["publish"]);
+    assert!(published.status.success(), "{}", text(&published));
+    let owners = velt(&lib, &home_a, &["owner", "list", "greet"]);
+    assert_eq!(String::from_utf8_lossy(&owners.stdout), "alice\n");
+    let found = velt(&lib, &home_a, &["search", "gre"]);
     assert!(
-        published.status.success(),
+        String::from_utf8_lossy(&found.stdout).contains("greet  0.1.0"),
         "{}",
-        String::from_utf8_lossy(&published.stderr)
+        text(&found)
     );
 
     let app = tmp.path().join("app");
@@ -83,9 +114,69 @@ fn share_a_package_through_the_registry_server() {
         "{}",
         String::from_utf8_lossy(&added.stderr)
     );
-    let lock = std::fs::read_to_string(app.join("velt.lock")).expect("lock");
+    let lock = std::fs::read_to_string(app.join("velt.lock.json")).expect("lock");
     assert!(
-        lock.contains("name = \"greet\"") && lock.contains("sha256:"),
+        lock.contains("\"name\": \"greet\"") && lock.contains("sha256:"),
         "{lock}"
+    );
+
+    // A yanked version: the locked app keeps installing it, a new requirement can't pick it.
+    let denied = velt(&lib, &home_a, &["yank", "greet@0.1.0"]);
+    assert!(
+        text(&denied).contains("VELT_REGISTRY_TOKEN"),
+        "{}",
+        text(&denied)
+    );
+    let yanked = velt_as(&token, &lib, &home_a, &["yank", "greet@0.1.0"]);
+    assert!(yanked.status.success(), "{}", text(&yanked));
+    let installed = velt(&app, &home_b, &["install", "--locked"]);
+    assert!(installed.status.success(), "{}", text(&installed));
+    assert!(
+        text(&installed).contains("warning: `greet` 0.1.0 is yanked (pinned by velt.lock.json)"),
+        "{}",
+        text(&installed)
+    );
+    let other = tmp.path().join("other");
+    assert!(velt(tmp.path(), &home_b, &["new", "other"])
+        .status
+        .success());
+    let mut manifest = vpm::Manifest::from_dir(&other).expect("manifest");
+    manifest.registry = Some(url.clone());
+    std::fs::write(other.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).expect("write");
+    let refused = velt(&other, &home_b, &["add", "greet@0.1"]);
+    assert!(
+        text(&refused).contains("0.1.0 (yanked)"),
+        "{}",
+        text(&refused)
+    );
+    let unyanked = velt_as(&token, &lib, &home_a, &["yank", "greet@0.1.0", "--undo"]);
+    assert!(unyanked.status.success(), "{}", text(&unyanked));
+    assert!(velt(&other, &home_b, &["add", "greet@0.1"])
+        .status
+        .success());
+}
+
+#[test]
+fn a_token_without_users_does_not_start_an_open_server() {
+    let tmp = test_dir::TestDir::new();
+    let served = tmp.path().join("served");
+    let refused = velt_as(
+        "old-shared-token",
+        tmp.path(),
+        &tmp.path().join("home"),
+        &[
+            "registry",
+            "serve",
+            "--port",
+            "0",
+            "--dir",
+            &served.to_string_lossy(),
+        ],
+    );
+    assert!(!refused.status.success());
+    assert!(
+        text(&refused).contains("velt registry user add"),
+        "{}",
+        text(&refused)
     );
 }

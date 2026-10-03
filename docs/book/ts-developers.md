@@ -132,6 +132,9 @@ contents.
   classes and no `protected` members (`private` is private to the declaring class); a
   constructor can be `private` or `protected`, with TypeScript's rules.
 - `static readonly` constants exist; mutable statics don't.
+- `new` evaluates all field initializers (base class first) before running the constructors;
+  TypeScript runs the base initializers and constructor before the derived initializers. A known
+  difference, tracked in [#273](https://github.com/velt-lang/velt/issues/273).
 - A method that is never overridden is called directly; only overridden methods use a vtable.
 - `struct` declares an object type with the same members as a class, built from a literal
   (no constructor). **Planned**
@@ -168,11 +171,11 @@ surprise ([Error handling](errors.md)).
   *Why*: a forgotten `await` silently loses errors in JS.
 - `spawn(f())` runs a task on another core; the runtime is multi-threaded. Data shared between
   tasks must be `shared(...)` or a `Mutex`, and data races are compile errors.
-- `Promise.all` waits for every promise, then rethrows the first rejection in array order. JS
-  rejects as soon as one promise rejects.
 - A promise's type carries its error type: `Promise<T, E>`.
-- `new Promise((resolve, reject) => …)` works as in JS; `resolve` and `reject` may be kept and
-  called later from any task. No global `setTimeout` (use
+- Promises have no `then`, `catch` or `finally`: `await` them, inside `try`/`catch`/`finally`
+  to handle their errors. *Why*: one way to sequence async code, and errors stay typed.
+- `new Promise((resolve, reject) => …)` and `Promise.withResolvers()` work as in JS; `resolve`
+  and `reject` may be kept and called later from any task. No global `setTimeout` (use
   `sleep(ms)` or [`velt:timers`](../std/timers.md)), no `for await`, no async generators.
 
 ## Memory
@@ -219,7 +222,14 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | `new Promise(...)` | same, with an arrow-function executor; `await` of one abandoned unsettled is reported | `new Promise(...)` |
 | single-threaded event loop | multi-core runtime; `spawn`, `shared`, `Mutex`; data races are compile errors | — |
 | mutable module globals | constants only | — |
-| `arr.sort()` sorts as strings | `sort()` sorts numbers numerically; `sort(cmp)` like TypeScript | — |
+| `arr.sort()` sorts as strings | `sort()` and `toSorted()` sort numbers numerically; with a comparator they work like TypeScript | — |
+| `xs.sort()`, `xs.reverse()`, `xs.fill(v)` return the array | they work in place and return nothing (returning the array would make it reference counted); `xs.toSorted()` and `xs.toReversed()` return sorted / reversed copies, as in ES2023 | — |
+| `xs.length = 0` | `xs.truncate(0)`; `length` is read-only (arrays have no holes) | — |
+| `xs.splice(i, n, a, b)`, `xs.push(a, b)` | `splice(i, n)` removes; one `push(x)` per element | inserting `splice` and `push` with rest parameters |
+| `p.then(f).catch(g)` | `await p` inside `try`/`catch` | — |
+| `process.stdout.write(s)`, `process.stderr.write(s)`, `process.env.X` | the same on the builtin `process` (`process.env.X` is `string \| null`, with no `undefined`, so `process.env.NOPE !== null` is `false`; assigning to it is `setEnv` and `delete` is `removeEnv`, from `velt:process`) | — |
+| `process.argv` | `args()` from `velt:process`: the arguments after the program, like `process.argv.slice(2)` | — |
+| `a.localeCompare(b, locale, options)` (the host's locale by default) | `a.localeCompare(b)`: the CLDR root collation, like `new Intl.Collator("und").compare(a, b)`; no locales | — |
 | `export default` | named exports only | — |
 | string length in UTF-16 units | length and offsets in UTF-8 bytes | — |
 | (no equivalent) | `extend` adds members to any type | module-scoped extensions, retroactive `implements` |

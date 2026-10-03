@@ -44,3 +44,101 @@ fn soft_moves_in_both_branches_are_shared_when_used_again() {
            console.log(a); }";
     assert_eq!(shares(src, "main"), 3);
 }
+
+#[test]
+fn a_finally_after_a_return_keeps_what_it_uses() {
+    // The `finally` runs after `return keep(t)`: `t` is shared with `keep`, not moved (#144).
+    let src = "class T { n: i64 = 1; }
+         function keep(t: T): i64 { const kept = [t]; return kept[0].n; }
+         function f(): i64 { const t = new T(); try { return keep(t); } finally { console.log(t.n); } }
+         function g(): i64 { const t = new T(); try { return keep(t); } finally { console.log(1); } }
+         function main() { console.log(f(), g()); }";
+    assert_eq!(shares(src, "f"), 1);
+    assert_eq!(shares(src, "g"), 0);
+}
+
+#[test]
+fn a_finally_after_a_break_keeps_what_it_uses() {
+    let src = "class T { n: i64 = 1; }
+         function keep(t: T): i64 { const kept = [t]; return kept[0].n; }
+         function f(): i64 {
+           const t = new T(); let out = 0;
+           for (let i = 0; i < 3; i++) { try { out = keep(t); break; } finally { console.log(t.n); } }
+           return out; }
+         function main() { console.log(f()); }";
+    assert_eq!(shares(src, "f"), 1);
+}
+
+#[test]
+fn a_finally_after_continue_or_a_throw_keeps_what_it_uses() {
+    let src = "class T { n: i64 = 1; }
+         function keep(t: T): i64 { const kept = [t]; return kept[0].n; }
+         function cont(): i64 {
+           const t = new T(); let out = 0;
+           for (let i = 0; i < 3; i++) { try { out = keep(t); continue; } finally { console.log(t.n); } }
+           return out; }
+         function thrown(): i64 {
+           const t = new T();
+           try { try { keep(t); throw new Error(\"x\"); } finally { console.log(t.n); } }
+           catch (e) { return 0; } }
+         function main() { console.log(cont(), thrown()); }";
+    assert_eq!(shares(src, "cont"), 1);
+    assert_eq!(shares(src, "thrown"), 1);
+}
+
+#[test]
+fn what_a_finally_takes_is_gone_where_its_exit_goes() {
+    // After the `finally` of a `break` (or of a throw into an outer `catch`), `t` has been
+    // passed on: its use after the loop (in the handler) shares it instead.
+    let src = "class T { n: i64 = 1; }
+         function keep(t: T): i64 { const kept = [t]; return kept[0].n; }
+         function brk(): i64 { const t = new T(); while (true) { try { break; } finally { keep(t); } } return t.n; }
+         function thr(): i64 {
+           const t = new T();
+           try { try { throw new Error(\"x\"); } finally { keep(t); } } catch (e) { return t.n; } }
+         function main() { console.log(brk(), thr()); }";
+    assert_eq!(shares(src, "brk"), 1);
+    assert_eq!(shares(src, "thr"), 1);
+}
+
+#[test]
+fn a_promise_returned_in_a_try_is_gone_in_its_finally() {
+    let err = common::programs::err_src(
+        "async function one(): Promise<i64> { return 1; }
+         function f(): Promise<i64> { const p = one(); try { return p; } finally { const q = p; } }
+         async function main() { console.log(await f()); }",
+    );
+    assert!(err.contains("use of moved value `p`"), "{err}");
+}
+
+#[test]
+fn a_rethrow_and_calls_that_throw_reach_the_handler() {
+    let src = "class T { n: i64 = 1; }
+         function keep(t: T): i64 { const kept = [t]; return kept[0].n; }
+         function fail(): never { throw new Error(\"x\"); }
+         function mayThrow(n: i64) { if (n > 0) { throw new Error(\"y\"); } }
+         function rethrown(): i64 {
+           const t = new T();
+           try { try { throw new Error(\"a\"); } catch (e) { keep(t); throw e; } }
+           catch (e) { return t.n; } }
+         function diverging(): i64 { const t = new T(); try { keep(t); fail(); } catch (e) { return t.n; } }
+         function throwing(): i64 { const t = new T(); try { keep(t); mayThrow(1); return 0; } catch (e) { return t.n; } }
+         function main() { console.log(rethrown(), diverging(), throwing()); }";
+    assert_eq!(shares(src, "rethrown"), 1);
+    assert_eq!(shares(src, "diverging"), 1);
+    assert_eq!(shares(src, "throwing"), 1);
+}
+
+#[test]
+fn each_exit_of_a_finally_keeps_its_own_state() {
+    // `return p` moves the promise only on the way to the function's exit; the `break` to the
+    // loop's end still has it, so the `await` after the loop is fine.
+    common::programs::ok_src(
+        "async function one(): Promise<i64> { return 1; }
+         function f(c: bool): Promise<i64> {
+           const p = one();
+           while (true) { try { if (c) { return p; } break; } finally { console.log(\"f\"); } }
+           return p; }
+         async function main() { console.log(await f(true), await f(false)); }",
+    );
+}

@@ -1,0 +1,113 @@
+// check: no leaks
+// #220: a default interface method can be `async`, with the rules of an async class method: the
+// promise carries its errors (`throws E`, or inferred) and it keeps the receiver alive while it
+// runs. Called through an interface value (a local, a field, a Map value, an array element), on a
+// class that does not override it, through a generic bound, and overridden.
+class E extends Error {}
+
+interface Named {
+  name(): string;
+
+  async greet(n: string): Promise<string> throws E {
+    if (n == "") {
+      throw new E(`no name for ${this.name()}`);
+    }
+    const base = await this.plain(n);
+    return `${base} from ${this.name()}`;
+  }
+
+  // No `throws`: the promise cannot reject.
+  async plain(n: string): Promise<string> {
+    return `hi ${n}`;
+  }
+
+  // Inferred: rejects with `E`.
+  async check(x: i64): Promise<i64> {
+    if (x < 0) {
+      throw new E(`negative ${x}`);
+    }
+    return x * 2;
+  }
+}
+
+class Dog implements Named {
+  n: string = "a dog name long enough to live on the heap";
+  name(): string {
+    return this.n;
+  }
+}
+
+class Cat implements Named {
+  name(): string {
+    return "cat";
+  }
+
+  async greet(n: string): Promise<string> throws E {
+    if (n == "") {
+      throw new E("the cat ignores you");
+    }
+    return `meow ${n}`;
+  }
+}
+
+class Holder {
+  pet: Named;
+  constructor(pet: Named) {
+    this.pet = pet;
+  }
+}
+
+async function viaBound<T extends Named>(t: T, n: string): Promise<string> throws E {
+  return await t.greet(n);
+}
+
+async function main() {
+  const pets: Named[] = [new Dog(), new Cat()];
+  for (const p of pets) {
+    for (const n of ["bob", ""]) {
+      try {
+        console.log(await p.greet(n));
+      } catch (e) {
+        console.log("caught", e.message);
+      }
+    }
+    console.log(await p.plain("x"));
+  }
+  // A concrete class that does not override: the receiver is used again afterwards.
+  const d = new Dog();
+  console.log(await d.greet("ann"));
+  console.log(await d.plain("ann"), d.name());
+  try {
+    console.log(await d.check(4));
+    console.log(await d.check(-4));
+  } catch (e) {
+    console.log("check", e.message);
+  }
+  // Stored promises, then awaited.
+  const p1 = d.greet("late");
+  const p2 = pets[0].greet("");
+  console.log(await p1);
+  try {
+    console.log(await p2);
+  } catch (e) {
+    console.log("stored", e.message);
+  }
+  const h = new Holder(new Dog());
+  console.log(await h.pet.greet("field"));
+  const m = new Map<string, Named>();
+  m.set("k", new Cat());
+  const v = m.get("k");
+  if (v != null) {
+    console.log(await v.greet("map"));
+  }
+  try {
+    console.log(await viaBound(new Dog(), "bound"));
+    console.log(await viaBound(new Cat(), ""));
+  } catch (e) {
+    console.log("bound", e.message);
+  }
+  const all = await Promise.all([d.check(1), pets[1].check(2)]);
+  console.log(all.length, all[0], all[1]);
+  const task = spawn(d.greet("spawned"));
+  console.log(await task);
+}

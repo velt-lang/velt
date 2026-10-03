@@ -13,9 +13,7 @@ use crate::resolve::TyEnv;
 pub(crate) fn check_bodies(cx: &mut Ctx) {
     let all: Vec<DefId> = (0..cx.info.len() as u32).map(DefId).collect();
     for &d in &all {
-        if cx.adt(d).is_some_and(|a| a.decl.is_some()) {
-            field_defaults(cx, d);
-        }
+        field_defaults(cx, d);
     }
     for &d in &all {
         if cx.global(d).is_some() {
@@ -42,7 +40,11 @@ pub(super) fn detached<'a, 'm>(
     FnCx::new(cx, module, env, Frame::new(FnKind::Free, None))
 }
 
-fn field_defaults(cx: &mut Ctx, d: DefId) {
+/// Check the own field defaults of type `d` (once), recording what each may throw.
+pub(crate) fn field_defaults(cx: &mut Ctx, d: DefId) {
+    if cx.adt(d).is_none_or(|a| a.decl.is_none()) || !cx.field_defaults_checked.insert(d) {
+        return;
+    }
     let a = cx.adt(d).expect("ICE: adt");
     let (decl, module, names, start, qual) = (
         a.decl.expect("ICE: decl"),
@@ -57,12 +59,15 @@ fn field_defaults(cx: &mut Ctx, d: DefId) {
         let Some(ast_field) = decl.fields.iter().find(|af| af.name.name == f.name) else {
             continue;
         };
+        let mut throws = vec![];
         let default = match &ast_field.default {
             Some(e) => {
                 let mut fcx = detached(cx, module, &names);
                 fcx.owner = Some(d);
                 fcx.fn_name = format!("{qual}.{}", f.name);
-                Some(fcx.expr_coerce(e, f.ty, Want::Move))
+                let h = fcx.expr_coerce(e, f.ty, Want::Move);
+                throws = std::mem::take(&mut fcx.f.uncaught);
+                Some(h)
             }
             None if f.optional => Some(hir::Expr {
                 kind: H::Lit(hir::Lit::Null),
@@ -71,7 +76,9 @@ fn field_defaults(cx: &mut Ctx, d: DefId) {
             }),
             None => None,
         };
-        cx.adt_mut(d).fields[start + i].default = default;
+        let field = &mut cx.adt_mut(d).fields[start + i];
+        field.default = default;
+        field.default_throws = throws;
     }
     cx.display_params = saved;
 }

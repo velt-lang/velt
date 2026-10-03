@@ -180,7 +180,7 @@ impl<'d> Renderer<'d> {
                     fill_at: at + 2,
                     ..cmd
                 });
-                fits_flat(&glued_run(parts, at), rem)
+                fits_flat(&[content, separator, &parts[at + 2]], rem)
             }
             None => content_fits,
         };
@@ -216,17 +216,6 @@ impl<'d> Renderer<'d> {
         self.out.extend(std::iter::repeat_n(' ', cmd.indent));
         self.pos = cmd.indent as isize;
     }
-}
-
-/// `parts[at]`, the separator after it and the next content, extended over the contents that
-/// follow behind text separators: text never breaks, so such a run must fit on the line as a
-/// whole (a space that has to stay next to a JSX tag, say).
-fn glued_run(parts: &[Doc], at: usize) -> Vec<&Doc> {
-    let mut end = (at + 3).min(parts.len());
-    while end + 1 < parts.len() && matches!(parts[end].node(), Node::Text(_)) {
-        end += 2;
-    }
-    parts[at..end].iter().collect()
 }
 
 /// Does `next` fit in `width` columns, up to the first line break (continuing into the `rest` of

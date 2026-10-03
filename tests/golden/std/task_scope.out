@@ -1,0 +1,7 @@
+a finished
+b finished
+scope 1: body done
+scope 2 failed: child failed
+scope 3 failed: child failed
+scope 4 failed: child failed
+scope 5: d

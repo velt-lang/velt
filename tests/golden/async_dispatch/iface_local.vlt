@@ -1,0 +1,102 @@
+// check: no leaks
+// Async methods called through an interface value held in a local (#182, #193, #194, #195).
+// The receiver is a class instance with a heap string, so a reference dropped too early shows
+// up as a use after free (the checking allocator aborts) and one taken too often as a leak.
+// Every call mutates the receiver; the caller reads the count back through the concrete alias
+// or through the interface, so a call on a copy would print stale numbers.
+class Negative extends Error {}
+
+interface Counter {
+  bump(by: i64): Promise<string>;
+  check(by: i64): Promise<string> throws Negative;
+  total(): i64;
+}
+
+class Tally implements Counter {
+  label: string = "a tally label long enough to live on the heap";
+  n: i64 = 0;
+
+  async bump(by: i64): Promise<string> {
+    this.n += by;
+    return `${this.label} ${this.n}`;
+  }
+
+  async check(by: i64): Promise<string> throws Negative {
+    if (by < 0) {
+      throw new Negative(`${this.label}: ${by}`);
+    }
+    this.n += by;
+    return `checked ${this.n}`;
+  }
+
+  total(): i64 {
+    return this.n;
+  }
+}
+
+// Refcount 1: the interface value is the only reference. Two calls in a row, then a call as
+// the last use of the value inside a loop body, then a call that is not the last use.
+async function soleOwner(): Promise<void> {
+  const c: Counter = new Tally();
+  console.log(await c.bump(1));
+  console.log(await c.bump(2));
+  for (let i = 0; i < 3; i++) {
+    console.log(await c.bump(10));
+  }
+  for (let i = 0; i < 2; i++) {
+    console.log(await c.bump(100), c.total());
+  }
+}
+
+// Refcount 2: a concrete alias stays alive past the calls and sees every mutation.
+async function aliased(): Promise<void> {
+  const t = new Tally();
+  const c: Counter = t;
+  for (let i = 0; i < 3; i++) {
+    await c.bump(1);
+  }
+  console.log("alias sees", t.n);
+  const p = c.bump(5); // the promise is awaited later; the receiver must stay alive meanwhile
+  console.log("before await", t.n);
+  console.log(await p, "alias sees", t.n);
+}
+
+// `throws`: a successful call, then a rejection thrown by the callee and caught by the caller,
+// in a loop where the call is the last use of the receiver. The receiver survives the
+// rejection and keeps the mutations made before it.
+async function throwing(): Promise<void> {
+  const t = new Tally();
+  const c: Counter = t;
+  for (const by of [1, -2, 3, -4]) {
+    try {
+      console.log(await c.check(by));
+    } catch (e) {
+      console.log("caught", e.message);
+    }
+  }
+  console.log("after the loop", c.total(), t.n);
+}
+
+// The rejection propagates out of a helper that does not catch it; the caller catches it.
+async function forward(c: Counter, by: i64): Promise<string> throws Negative {
+  return await c.check(by);
+}
+
+async function propagated(): Promise<void> {
+  const c: Counter = new Tally();
+  try {
+    console.log(await forward(c, 7));
+    console.log(await forward(c, -7));
+    console.log("not reached");
+  } catch (e) {
+    console.log("caught from helper", e.message);
+  }
+  console.log("receiver after", c.total(), await c.bump(1));
+}
+
+async function main() {
+  await soleOwner();
+  await aliased();
+  await throwing();
+  await propagated();
+}

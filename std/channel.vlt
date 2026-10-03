@@ -19,7 +19,7 @@ declare function velt_rt_chan_len(ch: u64): u64;
 // Thrown by `send` on a closed channel.
 export class ChannelClosed extends Error {
   constructor() {
-    super("send on a closed channel");
+    super("Send on a closed channel");
   }
 }
 
@@ -27,6 +27,7 @@ export class ChannelClosed extends Error {
 // `capacity` values (at least 1).
 export struct Channel<T> {
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   // Queues `value`, waiting while a bounded channel is full. Throws `ChannelClosed` (and drops
   // `value`) if the channel is closed, also while waiting.
@@ -34,6 +35,13 @@ export struct Channel<T> {
     if (!(await __intrinsic_chan_send<T>(this.handle, value))) {
       throw new ChannelClosed();
     }
+  }
+
+  // Queues `value` if the channel has room now, without waiting: true if it was queued, false
+  // (and `value` dropped) if a bounded channel is full or the channel is closed. Synchronous, so
+  // it may be called inside `Mutex.with`.
+  trySend(value: T): bool {
+    return __intrinsic_chan_try_send<T>(this.handle, value);
   }
 
   // The oldest value, waiting for one; `null` once the channel is closed and empty.
@@ -70,3 +78,8 @@ export function channel<T>(capacity: i64 = 0): Channel<T> {
   }
   return { handle: velt_rt_chan_new(capacity as u64) };
 }
+
+// A field of this type makes a type opaque: a type with a private field has no JSON form,
+// so untrusted JSON can't produce the runtime handle it holds, and `JSON.stringify` doesn't
+// write it. It takes no space.
+struct RuntimeHandle {}

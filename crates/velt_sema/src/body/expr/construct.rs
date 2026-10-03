@@ -36,6 +36,9 @@ impl FnCx<'_, '_> {
         let self_ty = crate::collect::self_type(self.cx, d, n);
         let ctor = self.cx.adt(d).and_then(|a| a.ctor);
         let cname = self.cx.adt(d).map(|a| a.name.clone()).unwrap_or_default();
+        // The constructor's type args in terms of the class's params: an inherited constructor
+        // takes those its declaring base class gets (`class D<U> extends B<U[]>`: `[U[]]`).
+        let mut ctor_args = vec![];
         let (params, what) = match ctor {
             Some(c) => {
                 self.check_ctor_access(c, class.span);
@@ -50,6 +53,7 @@ impl FnCx<'_, '_> {
                 for p in &mut ps {
                     p.ty = self.cx.ty.subst(p.ty, &oargs);
                 }
+                ctor_args = oargs;
                 (ps, format!("the constructor of `{cname}`"))
             }
             None => (vec![], format!("class `{cname}` (it has no constructor)")),
@@ -73,8 +77,16 @@ impl FnCx<'_, '_> {
                 return self.error_expr(span);
             }
         }
+        // `new` evaluates every field default (own and inherited) before the constructor.
+        for s in self.class_default_throws(ck.ret, span) {
+            self.throw_src(s);
+        }
         if let Some(c) = ctor {
-            self.throw_src(ThrowSrc::Call(c, ck.type_args.clone(), span));
+            let targs = ctor_args
+                .iter()
+                .map(|&t| self.cx.ty.subst(t, &ck.type_args))
+                .collect();
+            self.throw_src(ThrowSrc::Call(c, targs, span));
         }
         let kind = H::New {
             def: d,
@@ -82,6 +94,32 @@ impl FnCx<'_, '_> {
             args: ck.args,
         };
         self.mk(kind, ck.ret, span)
+    }
+
+    /// What the field defaults of class type `ty` (and of its base classes) may throw, as
+    /// thrown by the `new` at `span`.
+    fn class_default_throws(&mut self, ty: TyId, span: Span) -> Vec<ThrowSrc> {
+        let TyKind::Adt(d, args) = self.cx.ty.kind(ty).clone() else {
+            return vec![];
+        };
+        crate::body::field_defaults(self.cx, d);
+        let Some(a) = self.cx.adt(d) else {
+            return vec![];
+        };
+        let own: Vec<ThrowSrc> = a.fields[a.own_fields_start..]
+            .iter()
+            .flat_map(|f| f.default_throws.iter().cloned())
+            .collect();
+        let base = a.base;
+        let mut out: Vec<ThrowSrc> = own
+            .iter()
+            .map(|s| s.used_at(span, |t| self.cx.ty.subst(t, &args)))
+            .collect();
+        if let Some(b) = base {
+            let b = self.cx.ty.subst(b, &args);
+            out.extend(self.class_default_throws(b, span));
+        }
+        out
     }
 
     fn class_name(&mut self, t: &ast::TypeExpr) -> Option<(DefId, Vec<Option<TyId>>)> {

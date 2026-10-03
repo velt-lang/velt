@@ -123,9 +123,9 @@ export class Headers {
 // the `Request`, in anything that outlives the handler. Reading it afterwards is a runtime error
 // (the runtime checks every request handle), never a read of freed memory.
 //
-// Not a `[Symbol.dispose]()` owner: calling the handler (an async closure value) copies its class
-// arguments, so each copy would release the request (tests/golden/bugs/
-// lower_async_closure_call_clones_class_arg.vlt).
+// Not a `[Symbol.dispose]()` owner: `serve` releases the runtime request itself. (Calling the
+// handler, an async closure value, used to copy its class arguments, which ruled that out; it
+// passes the same object since #196.)
 export class Request {
   private raw: u64;
 
@@ -175,8 +175,10 @@ export class Request {
 }
 
 // An outgoing response (a runtime `VeltResp` handle), built by the static constructors.
+// A 1xx, 204 or 304 status has no body: the body argument is dropped and no `content-type` added.
 export class Response {
   raw: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   constructor(raw: u64) {
     this.raw = raw;
@@ -201,7 +203,9 @@ export class Response {
   // `text/html; charset=utf-8`.
   static html(body: string, status: i64 = 200): Response {
     const r = velt_rt_http_resp_new(status as u32);
-    velt_rt_http_resp_header(r, "content-type", "text/html; charset=utf-8");
+    if (status != 204 && status != 304 && (status < 100 || status >= 200)) {
+      velt_rt_http_resp_header(r, "content-type", "text/html; charset=utf-8");
+    }
     let owned = body;
     velt_rt_http_resp_body_text(r, owned);
     return new Response(r);
@@ -258,6 +262,7 @@ export class Server {
   // The real port (useful after `port: 0`).
   port: i64;
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   constructor(port: i64, handle: u64) {
     this.port = port;
@@ -336,6 +341,7 @@ export struct FetchOptions {
 // response is alive (i.e. before `text()`/`json()`/`bytes()` consume it or it is dropped).
 export struct FetchHeaders {
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   // The value of header `name` (case-insensitive), or null.
   get(name: string): string | null {
@@ -354,6 +360,7 @@ export class FetchResponse {
   status: i64;
   headers: FetchHeaders;
   handle: u64;
+  private runtime: RuntimeHandle = RuntimeHandle {};
 
   constructor(handle: u64) {
     this.status = velt_rt_http_fetch_resp_status(handle) as i64;
@@ -407,3 +414,8 @@ export async function fetch(url: string, opts: FetchOptions = {}): Promise<Fetch
       : await velt_rt_http_fetch_ca(method, url, method, 0, body, ca);
   return new FetchResponse(unwrapIo(r));
 }
+
+// A field of this type makes a type opaque: a type with a private field has no JSON form,
+// so untrusted JSON can't produce the runtime handle it holds, and `JSON.stringify` doesn't
+// write it. It takes no space.
+struct RuntimeHandle {}

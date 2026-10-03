@@ -192,6 +192,11 @@ impl FnCx<'_, '_> {
             Some(id) if !optional => return self.ident_expr(&id, exp, want),
             _ => {}
         }
+        if !optional {
+            if let Some(h) = self.process_env_member(object, prop, exp, span) {
+                return h;
+            }
+        }
         if let Some(object) = self.without_namespace(object) {
             return self.member(&object, prop, optional, exp, want, span);
         }
@@ -202,13 +207,31 @@ impl FnCx<'_, '_> {
                     "console" | "process" | "Promise" | "performance" | "Date"
                 ) && self.lookup_item(&id.name, id.span).is_none()
                 {
-                    self.cx.err(
-                        format!("`{}.{}` can only be called", id.name, prop.name),
-                        span,
-                    );
+                    let what = format!("`{}.{}`", id.name, prop.name);
+                    let msg = match (id.name.as_str(), prop.name.as_str()) {
+                        ("process", "stdout" | "stderr" | "env") => {
+                            format!("{what} is not a value: use its members")
+                        }
+                        ("process", p) if !matches!(p, "exit" | "memoryUsage") => {
+                            format!("{what} is not supported")
+                        }
+                        _ => format!("{what} can only be called"),
+                    };
+                    let mut d = Diagnostic::error(msg, span);
+                    if id.name == "process" && !matches!(prop.name.as_str(), "exit" | "memoryUsage")
+                    {
+                        d = d.with_note(process_note(&prop.name));
+                    }
+                    self.cx.error(d);
                     return self.error_expr(span);
                 }
-                if let Some(Item::Def(d)) = self.lookup_item(&id.name, id.span) {
+                let item = self.lookup_item(&id.name, id.span);
+                if let Some(c) = item.and_then(|it| self.companion_class(&id.name, it)) {
+                    if let Some(h) = self.static_field(c, prop, want, span) {
+                        return h;
+                    }
+                }
+                if let Some(Item::Def(d)) = item {
                     if self.cx.enum_info(d).is_some() {
                         return self.variant_value(d, prop, &[], exp, span);
                     }
@@ -277,6 +300,9 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         if optional {
             return self.optional_chain(object, span, |s, v| s.index_of(v, index, want, span));
+        }
+        if let Some(h) = self.process_env_index(object, index, span) {
+            return h;
         }
         let obj = self.expr(object, None, Want::Borrow);
         self.index_of(obj, index, want, span)
@@ -415,5 +441,29 @@ impl FnCx<'_, '_> {
     /// Is `t` a class type (for "use `new`" hints)?
     pub(crate) fn is_class_def(&self, d: DefId) -> bool {
         self.cx.adt(d).is_some_and(|a| a.kind == AdtKind::Class)
+    }
+}
+
+/// Where Node's `process.<name>` lives in Velt, for a `name` that is not a value of the builtin
+/// `process`. That namespace has `exit`, `memoryUsage()`, `stdout.write`, `stderr.write` and
+/// `env` (`super::process`); the rest is in `velt:process`.
+fn process_note(name: &str) -> String {
+    match name {
+        "stdout" | "stderr" => format!(
+            "call `process.{name}.write(s)`; for bytes, `import {{ stdout }} from \"velt:process\"`"
+        ),
+        "env" => "read a variable with `process.env.NAME` or `process.env[name]` \
+                  (`string | null`); set one with `setEnv(name, value)` of `velt:process`"
+            .to_string(),
+        "argv" => "use `args()` from `velt:process`: the arguments after the program, like \
+                   Node's `process.argv.slice(2)`"
+            .to_string(),
+        "cwd" | "chdir" => {
+            format!("use `import {{ {name} }} from \"velt:process\"`: `{name}` is a function there")
+        }
+        _ => "the builtin `process` has `process.env.NAME`, `process.stdout.write(s)`, \
+              `process.exit(code)` and `process.memoryUsage()`; `args()` and `cwd()` are in \
+              `velt:process`"
+            .to_string(),
     }
 }

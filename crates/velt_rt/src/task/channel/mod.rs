@@ -104,6 +104,31 @@ pub unsafe extern "C" fn velt_rt_chan_send(
     })
 }
 
+/// `ch.trySend(value)`: moves the `size`-byte item at `src` (and its ownership) into the
+/// channel if it has room now; true if queued. An item that was not queued (the channel is full
+/// or closed) is dropped with `item_drop` (null: nothing to drop).
+///
+/// # Safety
+/// `src` must hold a `size`-byte item.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_chan_try_send(
+    h: Key<Chan>,
+    src: *const u8,
+    size: u64,
+    item_drop: Option<ResultDropFn>,
+) -> bool {
+    let now = CHANNELS
+        .get(h)
+        .map_or(Push::Closed, |c| c.try_push(src, size as usize));
+    let sent = matches!(now, Push::Sent);
+    if !sent {
+        if let Some(d) = item_drop {
+            d(src as *mut u8);
+        }
+    }
+    sent
+}
+
 /// `await ch.receive()`: a future whose result slot gets a `T | null` (see [`write_option`];
 /// `T` is `size` bytes): the oldest item, or null once the channel is closed and drained.
 ///

@@ -1,3 +1,4 @@
+// check: no leaks
 import { serve, fetch, Request, Response } from "velt:http";
 
 async function main() {
@@ -22,5 +23,5 @@ async function main() {
   const r3 = await fetch(`${base}/nope`);
   console.log(r3.status);
   console.log(hits.get());
-  server.close();
+  await server.shutdown();
 }

@@ -32,6 +32,7 @@ mod cells;
 mod cfg;
 mod closure;
 mod console;
+mod dispatch;
 mod drops;
 mod entry;
 mod errors;
@@ -186,6 +187,10 @@ enum Work {
     /// so it can be started (async_fn/kept.rs).
     RaceBoxPoll(TyId),
     RaceBoxDrop(TyId),
+    /// Poll / drop of the wrapper widening a `Promise<T, E1>` into a `Promise<T, E2>`
+    /// (async_fn/widen.rs).
+    WidenPoll(TyId, TyId),
+    WidenDrop(TyId, TyId),
     /// `(slot: ptr)`: disposes of the unclaimed result of a started promise of a rejecting
     /// promise type (async_fn/start.rs).
     Unclaimed(TyId),
@@ -348,6 +353,9 @@ struct FnLower<'c, 'h> {
     share_binds: bool,
     /// While lowering the arguments of a spawned call: owned ones are transferred (transfer.rs).
     transfer_args: bool,
+    /// The next call lowered is spawned through a function value, vtable or interface: its
+    /// arguments are transferred (transfer.rs). Taken by that call before anything else.
+    transfer_call: bool,
     /// Building `Glue::Same`: objects inside the compared values compare by identity (same.rs).
     same_mode: bool,
 }

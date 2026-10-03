@@ -1,0 +1,36 @@
+// A recursive async method called through an interface value with an inferred error type (#193):
+// the error type at the inner calls is not known yet, and the `throws` clause it needs goes on
+// the interface method.
+class DivZero extends Error {}
+
+interface Expr {
+  eval(): Promise<i64>;
+}
+
+class Num implements Expr {
+  constructor(public n: i64) {}
+  async eval(): Promise<i64> {
+    return this.n;
+  }
+}
+
+class Div implements Expr {
+  constructor(public a: Expr, public b: Expr) {}
+  async eval(): Promise<i64> {
+    const x = await this.a.eval();
+    const y = await this.b.eval();
+    if (y == 0) {
+      throw new DivZero("div by zero");
+    }
+    return x / y;
+  }
+}
+
+async function main() {
+  const e: Expr = new Div(new Num(1), new Num(0));
+  try {
+    console.log(await e.eval());
+  } catch (err) {
+    console.log("caught", err.message);
+  }
+}

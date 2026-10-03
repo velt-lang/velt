@@ -1,0 +1,26 @@
+field deposit 10
+field deposit 20
+field deposit 30
+field via method 32
+field withdraw 2
+field refused 2 < 30
+field alias sees 15 16 16
+map solo 1
+map solo 3
+map solo 6
+map shared refused 0 < 2
+map shared after 1
+map shared refused 1 < 2
+map shared after 2
+map solo 4
+map solo after 5
+map alias sees 2
+map solo kept 5
+array alias sees 4
+array for-of 12
+array for-of 14
+array for-of 24
+array local refused 12 < 15
+array local 9
+array local refused 9 < 15
+array alias end 9 12

@@ -1,8 +1,8 @@
 //! The package cache: registry packages extracted to `<cache>/<name>-<version>/`, the directory the
-//! compiler reads them from. For the local registry "extracting" is a copy; every fetch verifies the
-//! content checksum so a tampered cache or registry entry is caught. Native bundles are cached
-//! per target under `<cache>/native/<name>-<version>/<triple>/` ([`fetch_native`]) and verified
-//! the same way **before** they are placed where the compiler loads or links them.
+//! compiler reads them from. For the local registry "extracting" is a copy; every fetch verifies
+//! the content checksum so a tampered cache or registry entry is caught. Native bundles are cached
+//! per target under `<cache>/native/<name>-<version>/<triple>/` ([`fetch_native`]) and verified the
+//! same way **before** they are placed where the compiler loads or links them.
 
 use std::path::PathBuf;
 
@@ -52,8 +52,8 @@ pub fn fetch(
 }
 
 /// Ensure the `target` native bundle of `name` `version` is in the cache with contents hashing to
-/// `checksum` (from `velt.lock` / the index); returns its directory. A download or registry copy
-/// is verified in a staging directory and only then moved into place.
+/// `checksum` (from `velt.lock.json` / the index); returns its directory. A download or registry
+/// copy is verified in a staging directory and only then moved into place.
 pub fn fetch_native(
     loc: &Locations,
     name: &str,

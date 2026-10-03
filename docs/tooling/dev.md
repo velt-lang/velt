@@ -1,7 +1,7 @@
 # `velt dev`: hot reload
 
 ```
-velt dev [<file.vlt>] [--exe] [--locked] [-v] [-- <program args>...]
+velt dev [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]
 ```
 
 `velt dev` runs your program like `velt run`, then keeps it up to date while you edit. Save a
@@ -19,11 +19,14 @@ velt dev: restarted (Point gained a field) in 380 ms
 ## What happens on save
 
 `velt dev` watches every file the build read (your modules, the standard library, path
-dependencies) plus `package.vlt` and `velt.lock`, and new `.vlt` files next to them (so a module
+dependencies) plus `package.vlt` and `velt.lock.json`, and new `.vlt` files next to them (so a module
 that an import was missing is picked up as soon as you create it). Changes come from the
 operating system's file notifications; where those don't work (some network or container file
-systems), set `VELT_DEV_POLL=1` to check the files every 10 ms instead. On a change it builds
-the new version while the old one keeps running:
+systems), set `VELT_DEV_POLL=1` to check the files every 10 ms instead. A file saved while a
+build is running leads to another build once it finishes. Files are compared by modification
+time and length, so on file systems with coarse timestamps (FAT, some network mounts) two saves
+of the same length within one timestamp tick can look like one. On a change it builds the new
+version while the old one keeps running:
 
 - **Hot swap** (the common case): the changed functions are compiled and swapped into the
   running program. In-memory data, open connections, caches and running tasks survive. New
@@ -72,6 +75,9 @@ release `velt`, other builds running on the machine):
 
 The time includes a 30 ms settle delay after the last write.
 
+`-v` prints how long each build stage took; `--timings` also splits the JIT stage into compiling,
+finalizing, registering unwind information and building the debug-info image.
+
 ## Limits
 
 - Code that is already running keeps running the old version: a future in flight (by design),
@@ -84,7 +90,9 @@ The time includes a 30 ms settle delay after the last write.
   swap.
 - Edits to functions that only ran during startup are swapped, but they don't run again.
 - After 200 hot swaps the host restarts to reclaim the memory of old code.
-- JIT code has no line-level debug information; use `--exe` or a normal build to debug.
+- JIT code has line-level debug information for GDB and LLDB on Linux; macOS is untested (LLDB
+  needs `plugin.jit-loader.gdb.enable on`) ([Debugging](debugging.md#velt-dev-and-the-debugger)).
+  `VELT_DEV_DEBUG_INFO=0` turns it off. On Windows, use `--exe` or a normal build to debug.
 - JIT code registers its unwind information on Windows x64, macOS and Linux, so debuggers and
   backtraces walk through it; on Windows arm64 it does not yet. On musl (Alpine) the JIT host
   is unavailable, so use `--exe`. Hot swap is tested end to end on Windows x64 and

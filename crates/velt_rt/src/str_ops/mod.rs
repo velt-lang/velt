@@ -1,5 +1,5 @@
-//! JS string methods over `VeltStr` (rt_abi_async.md §12.2): searching, slicing, splitting,
-//! trimming, case mapping, replacing, padding and number parsing.
+//! JS string methods over `VeltStr` (rt_abi_async.md §12.2): searching, comparing, slicing,
+//! splitting, trimming, case mapping, replacing, padding and number parsing.
 //!
 //! POC indexing model: indexes and lengths are **byte offsets** (so they agree with `s.length`).
 //! An offset that falls inside a multi-byte character is moved to a character boundary, so every
@@ -11,6 +11,7 @@
 //! other sub-strings are owned copies (inline when short).
 
 pub mod case;
+pub mod collate;
 pub mod fixed;
 pub mod number;
 pub mod replace;

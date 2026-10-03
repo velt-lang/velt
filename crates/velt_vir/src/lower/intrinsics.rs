@@ -103,8 +103,10 @@ impl FnLower<'_, '_> {
                 | I::SharedSet
                 | I::MutexNew
                 | I::MutexWith
+                | I::PromiseWiden
                 | I::ChanSend
                 | I::ChanReceive
+                | I::ChanTrySend
                 | I::ChanTryReceive,
                 _,
             ) => self.async_intrinsic(i, args, ty),

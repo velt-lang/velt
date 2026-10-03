@@ -1,4 +1,5 @@
-//! `velt_rt_all`: `Promise.all` over a runtime-sized array of heap futures.
+//! `velt_rt_all` / `velt_rt_all_or_reject`: `Promise.all` over a runtime-sized array of heap
+//! futures.
 //!
 //! Fixed-arity `Promise.all([a(), b()])` is compiled inline (children embedded in the parent state,
 //! each polled until done: no allocation). For arrays, polling every child on every wake-up would be
@@ -17,6 +18,9 @@
 //! When that payment spends the budget the join yields at once through `yield_now`, a deferred
 //! wake like any budget-exhausted leaf: a `FuturesUnordered` self-wake would requeue the join
 //! ahead of tasks that yielded themselves (those only run when the scheduler checks for events).
+//!
+//! Early rejection: `velt_rt_all_or_reject` (promises that can reject) completes at the first
+//! `Err` result, like JS, and reports which child it was.
 //!
 //! Cancellation: the results of children that already finished live in the caller's results
 //! buffer, which nobody else knows is (partly) initialized. `velt_rt_all_with_drop` takes a drop
@@ -46,6 +50,8 @@ impl Future for Child {
     type Output = usize;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<usize> {
+        #[cfg(test)]
+        tests::CHILD_POLLS.with(|n| n.set(n.get() + 1));
         if !has_budget_remaining() {
             // Polling now could only return a spurious Pending (see the module doc).
             cx.waker().wake_by_ref();
@@ -90,6 +96,25 @@ impl FinishedResults {
     fn disarm(&mut self) {
         self.complete = true;
     }
+
+    /// Child `i` rejected (its slot is set, `done[i]` still clear): move its result to slot 0,
+    /// dropping slot 0's own finished result first. Slot 0 then belongs to the awaiter, and the
+    /// other finished results are dropped with `self`.
+    ///
+    /// # Safety
+    /// Slot `i` must hold child `i`'s result; `done` must describe the other slots.
+    unsafe fn reject_into_first(&mut self, i: usize) {
+        if i == 0 {
+            return;
+        }
+        if let (Some(d), Some(drop_fn)) = (self.done.get_mut(0), self.drop_fn) {
+            if *d {
+                drop_fn(self.results.0);
+                *d = false;
+            }
+        }
+        std::ptr::copy_nonoverlapping(self.results.0.add(i * self.size), self.results.0, self.size);
+    }
 }
 
 impl Drop for FinishedResults {
@@ -130,8 +155,37 @@ pub unsafe extern "C" fn velt_rt_all_with_drop(
     results: *mut u8,
     result_drop: Option<ResultDropFn>,
 ) -> *mut VeltFut {
-    let (n, size) = (n as usize, result_size as usize);
-    let set: FuturesUnordered<Child> = (0..n)
+    new_join::<false>(futs, n, result_size, results, result_drop)
+}
+
+/// `Promise.all` over promises that can reject: like [`velt_rt_all_with_drop`] over
+/// `Result<T, E>` slots (tag byte at offset 0, 0 = fulfilled), but it completes as soon as a
+/// child rejects, like JS. Then the rejected child's result is moved to slot 0 and is the only
+/// initialized slot: the other finished results are dropped with `result_drop` and the pending
+/// children are dropped (started promises keep running; the caller marked them handled with
+/// `velt_rt_futs_handled`). So the caller sees a rejection as an `Err` tag in slot 0 (`n > 0`).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_all_or_reject(
+    futs: *const *mut VeltFut,
+    n: u64,
+    result_size: u64,
+    results: *mut u8,
+    result_drop: Option<ResultDropFn>,
+) -> *mut VeltFut {
+    new_join::<true>(futs, n, result_size, results, result_drop)
+}
+
+/// The join of both entry points (one loop, monomorphized per `REJECT`): with `REJECT`, it stops
+/// at the first child whose `Result` slot is an `Err` (see [`velt_rt_all_or_reject`]).
+unsafe fn new_join<const REJECT: bool>(
+    futs: *const *mut VeltFut,
+    n: u64,
+    result_size: u64,
+    results: *mut u8,
+    result_drop: Option<ResultDropFn>,
+) -> *mut VeltFut {
+    let (count, size) = (n as usize, result_size as usize);
+    let set: FuturesUnordered<Child> = (0..count)
         .map(|i| Child {
             fut: SendPtr(*futs.add(i)),
             dst: SendPtr(results.add(i * size)),
@@ -144,7 +198,7 @@ pub unsafe extern "C" fn velt_rt_all_with_drop(
         size,
         drop_fn: result_drop,
         done: if result_drop.is_some() {
-            vec![false; n]
+            vec![false; count]
         } else {
             Vec::new()
         },
@@ -153,6 +207,14 @@ pub unsafe extern "C" fn velt_rt_all_with_drop(
     new_leaf(async move {
         let mut set = set;
         while let Some(i) = set.next().await {
+            // SAFETY: child `i` just wrote its result slot; byte 0 is the `Result` tag. (Only
+            // `finished` is read here: capturing more would grow every join's state, which shows
+            // up as ~10% on many small joins.)
+            if REJECT && unsafe { *finished.results.0.add(i * finished.size) } != 0 {
+                // SAFETY: slots 0 and `i` belong to this join; `done` tracks which are set.
+                unsafe { finished.reject_into_first(i) };
+                return;
+            }
             if let Some(d) = finished.done.get_mut(i) {
                 *d = true;
             }
@@ -222,18 +284,24 @@ mod tests {
         rt.block_on(async { tokio::spawn(fut).await.expect("root task") });
     }
 
-    /// Limit for a 100k-child join: linear takes well under 100 ms in release, quadratic seconds.
-    fn limit() -> Duration {
-        Duration::from_millis(if cfg!(debug_assertions) { 1500 } else { 1000 })
+    thread_local! {
+        /// Polls of join children on this thread: a join that re-polled every pending child
+        /// on each wake-up would poll about n² / 128 times instead of about n.
+        pub(super) static CHILD_POLLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     }
 
     fn check_join(n: i64, child: fn(i64) -> *mut VeltFut) {
         run_in_task(async move {
-            let t = Instant::now();
+            let before = CHILD_POLLS.with(std::cell::Cell::get);
             let results = join((0..n).map(child).collect()).await;
-            let elapsed = t.elapsed();
+            let polls = CHILD_POLLS.with(std::cell::Cell::get) - before;
             assert!(results.iter().copied().eq((0..n).map(|i| i * 3)));
-            assert!(elapsed < limit(), "join of {n} children took {elapsed:?}");
+            // Each child is polled once to start and once per wake-up, plus the polls skipped
+            // for want of budget: a small multiple of n. Counted, not timed.
+            assert!(
+                polls < 4 * n as usize,
+                "join of {n} children polled them {polls} times"
+            );
         });
     }
 
@@ -257,6 +325,50 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(1)).await;
                 i * 3
             })
+        });
+    }
+
+    #[test]
+    fn all_or_reject_completes_at_the_first_rejection_in_time() {
+        run_in_task(async {
+            // 8-byte slots: byte 0 is the `Result` tag, the value tells the children apart.
+            let child = |ms: u64, tag: u64, id: u64| {
+                new_leaf(async move {
+                    tokio::time::sleep(Duration::from_millis(ms)).await;
+                    tag | (id << 8)
+                })
+            };
+            let mut results = [0u64; 4];
+            let t = Instant::now();
+            let all = {
+                let children = [
+                    child(30_000, 0, 0),
+                    child(20_000, 1, 1),
+                    child(20, 1, 2),
+                    child(10, 0, 3),
+                ];
+                // SAFETY: `results` outlives the join, which is awaited to completion.
+                SendPtr(unsafe {
+                    velt_rt_all_or_reject(
+                        children.as_ptr(),
+                        4,
+                        8,
+                        results.as_mut_ptr() as *mut u8,
+                        None,
+                    )
+                })
+            };
+            Await(all).await;
+            // The pending children are dropped (their timers cancelled), so this ends at once.
+            assert!(
+                t.elapsed() < Duration::from_secs(10),
+                "long before the 20 s and 30 s children"
+            );
+            assert_eq!(
+                results[0],
+                1 | (2 << 8),
+                "child 2 rejected first; its result is in slot 0"
+            );
         });
     }
 

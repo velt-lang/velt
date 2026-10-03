@@ -5,10 +5,13 @@
 //! being entered, statements after it are skipped. Bindings follow the language's scoping: `let`/
 //! `const` are visible after their statement, parameters in the whole body, `for` bindings in the
 //! loop, pattern bindings in their match arm or catch block. Items and types are walked here,
-//! statements and patterns in [`stmt`], expressions in [`expr`].
+//! statements and patterns in [`stmt`], expressions in [`expr`], JSX elements in [`jsx`].
 
 mod expr;
+mod jsx;
 mod stmt;
+
+pub(crate) use jsx::is_component;
 
 use velt_common::Span;
 use velt_syntax::ast;

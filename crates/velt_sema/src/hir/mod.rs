@@ -329,6 +329,9 @@ pub struct AdtDef {
     pub fields: Vec<FieldDef>,
     /// Sema's verdict: bitwise-copyable (all fields Copy, kind Struct/Anon).
     pub is_copy: bool,
+    /// Some field (own or inherited) is `private`. Such a type has no JSON form: decoding could
+    /// forge the runtime handles std types keep in private fields, and writing would leak them.
+    pub private_fields: bool,
     /// Some field is assigned somewhere in the program (`x.f = …`, `x.f += …`): two references
     /// to one value must see the same fields, so sharing it needs one counted object
     /// (hir_encodings.md "Sharing"); otherwise a share may copy it field by field.
@@ -362,6 +365,10 @@ pub struct InterfaceMethodDef {
     /// `Def::Fn` of the default body; its `self_ty` is `TyKind::Param(generics)` (an implicit
     /// extra type param standing for the implementor).
     pub default: Option<DefId>,
+    /// The method returns a promise that carries its errors (sema's dispatch group of the slot
+    /// holds such a method): its implementations reject the promise, so a call through the slot
+    /// never throws (hir_encodings.md "Errors").
+    pub promise: bool,
 }
 
 #[derive(Clone, Debug)]

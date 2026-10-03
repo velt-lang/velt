@@ -10,10 +10,11 @@ use crate::lower::{cint, ice, unit, FnLower};
 use crate::vir::{Operand, Place, Ty};
 
 impl FnLower<'_, '_> {
-    /// `ChanSend`, `ChanReceive`, `ChanTryReceive`; `ty` is the call's type.
+    /// `ChanSend`, `ChanTrySend`, `ChanReceive`, `ChanTryReceive`; `ty` is the call's type.
     pub(super) fn chan_intrinsic(&mut self, i: Intrinsic, args: &[hir::Expr], ty: TyId) -> Operand {
         match (i, args) {
-            (Intrinsic::ChanSend, [ch, v]) => self.chan_send(ch, v, ty),
+            (Intrinsic::ChanSend, [ch, v]) => self.chan_send(Rt::ChanSend, ch, v, ty),
+            (Intrinsic::ChanTrySend, [ch, v]) => self.chan_send(Rt::ChanTrySend, ch, v, ty),
             (Intrinsic::ChanReceive, [ch]) => {
                 let h = self.expr(ch);
                 let opt = self.sub(ty);
@@ -41,10 +42,12 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `__intrinsic_chan_send(ch, value)`: the value's bytes (and its ownership) go to the
-    /// runtime, with the drop glue it uses if the channel is closed. A channel is a thread
-    /// boundary like `spawn`: a value the sender still shares is deep-copied (transfer.rs).
-    fn chan_send(&mut self, ch: &hir::Expr, v: &hir::Expr, ty: TyId) -> Operand {
+    /// `__intrinsic_chan_send(ch, value)` (`r`: `Rt::ChanSend`, a future) and
+    /// `__intrinsic_chan_try_send(ch, value)` (`Rt::ChanTrySend`, a `bool` now): the value's bytes
+    /// (and its ownership) go to the runtime, with the drop glue it uses if the value is not
+    /// queued. A channel is a thread boundary like `spawn`: a value the sender still shares is
+    /// deep-copied (transfer.rs).
+    fn chan_send(&mut self, r: Rt, ch: &hir::Expr, v: &hir::Expr, ty: TyId) -> Operand {
         let h = self.expr(ch);
         let t = self.sub(v.ty);
         let val = self.consume(v);
@@ -61,7 +64,7 @@ impl FnLower<'_, '_> {
         };
         let drop = self.result_drop_fn(t).unwrap_or_else(|| cint(0, Ty::Ptr));
         let args = vec![h, src, cint(size as i128, Ty::U64), drop];
-        self.rt_value(Rt::ChanSend, args, ty)
+        self.rt_value(r, args, ty)
     }
 
     /// The item size of `T | null` (`opt`) and the offset of its payload: 0 when `T` is

@@ -1,5 +1,5 @@
 //! Robustness: no panics on truncated/garbage input, bounded nesting depth, linear-time
-//! ternary disambiguation, and parse speed.
+//! ternary disambiguation, and parse speed. Parse cost growth is counted in `src/linear_tests.rs`.
 
 mod common;
 
@@ -251,16 +251,23 @@ fn nested_ternaries_are_not_exponential() {
     assert!(start.elapsed().as_secs() < 5);
 }
 
+/// Linearity itself is checked by counting work, in `src/linear_tests.rs`; this checks the input
+/// it uses parses and that pathological JSX and generic arrow attempts still finish.
 #[test]
-fn jsx_decided_by_the_parser_stays_linear() {
-    // Every element is re-lexed once where the parser finds it; nested elements in containers
-    // must not re-lex the rest of the file each time.
-    let unit = "const a = <ul class=\"x\">{xs.map((i) => <li key={i}>it's {i}</li>)}</ul>;\n\
-                const id = <T>(x: T): T => x;\nconst u = v.as<User>();\n";
-    let (m, d) = parse(&unit.repeat(100));
+fn jsx_decided_by_the_parser_finishes() {
+    let (m, d) = parse(&common::JSX_UNIT.repeat(100));
     assert!(d.is_empty(), "{:?}", &d[..d.len().min(3)]);
     assert_eq!(m.items.len(), 300);
-    // Linearity of these inputs is checked by counting work, in `src/linear_tests.rs`.
+    // Generic arrow attempts that fail late, and unclosed elements, still finish.
+    for src in [
+        format!("x = {};", "<a>(".repeat(20_000)),
+        format!("x = {};", "{<a>(x".repeat(5_000)),
+        format!("x = {};", "<T>(x: T".repeat(5_000)),
+    ] {
+        let start = std::time::Instant::now();
+        let _ = parse(&src);
+        assert!(start.elapsed().as_secs() < 5, "took {:?}", start.elapsed());
+    }
 }
 
 #[test]

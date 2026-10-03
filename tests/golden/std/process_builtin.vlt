@@ -1,0 +1,19 @@
+// check: no leaks
+// Node's `process.stdout.write`, `process.stderr.write` and `process.env` on the builtin
+// `process`: writes without a newline, ordered with `console.log`, and environment variables as
+// `string | null` (`?? fallback` reads like Node's `undefined`). Output identical to Node.
+
+function main() {
+  process.stdout.write("one ");
+  console.log("two");
+  const ok = process.stdout.write("three\n");
+  console.log("write returned", ok);
+  process.stderr.write("to stderr\n");
+  const path = process.env.PATH;
+  console.log("PATH set:", path !== null);
+  console.log("missing:", process.env.VELT_SURELY_UNSET_VARIABLE ?? "unset");
+  const name = "VELT_SURELY_UNSET_VARIABLE";
+  console.log("by name:", process.env[name] ?? "unset");
+  const v = process.env.PATH ?? "";
+  console.log("PATH has text:", v.length > 0);
+}
