@@ -58,6 +58,11 @@ fn all_args() -> Vec<String> {
 /// (the program, or `velt` under `velt dev`); the script is the source file under `velt run` /
 /// `velt dev`, else the executable again (as for a Node single-executable application).
 pub fn node_argv() -> Vec<String> {
+    static NODE_ARGV: OnceLock<Vec<String>> = OnceLock::new();
+    NODE_ARGV.get_or_init(build_node_argv).clone()
+}
+
+fn build_node_argv() -> Vec<String> {
     let args = all_args();
     let exe = std::env::current_exe()
         .ok()

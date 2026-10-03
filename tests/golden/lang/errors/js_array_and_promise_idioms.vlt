@@ -2,7 +2,8 @@
 // `length`, using the result of an in-place array method (`toSorted`/`toReversed` for `sort` and
 // `reverse`; for `fill`, the variable or a variable to store a temporary in; other types' `sort`
 // get no array hint), `then`/`catch` on a promise, and the `process` members that are not
-// values, can only be called, or can't be assigned or deleted.
+// values, can only be called, or can't be assigned or deleted, and changing `process.argv` in
+// place (each read is a new array).
 class Deck {
   sort() {}
 }
@@ -29,4 +30,6 @@ async function main() {
   const usage = process.memoryUsage;
   const pid = process.pid;
   process.stdout.end();
+  process.argv.push("x");
+  process.argv[2] = "y";
 }

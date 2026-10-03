@@ -703,8 +703,10 @@ workspace build and would strip `main` from the staticlib every program links). 
   with `JITBuilder::symbol`. A test checks it contains every `velt_rt_*` name in rt_abi.md and
   this file. Other symbols (`memcpy`, `fmod`, ...) resolve from the process.
 - `entry::run_main(velt_main)`: what `main` does (runtime init, call, flush stdout) → exit code.
-- `process::set_args(argv)`: `process.argv` for the hosted program (`velt`'s own arguments are not
-  the program's).
+- `process::set_args(argv)`: `argv()` / `args()` for the hosted program (`velt`'s own arguments
+  are not the program's).
+- `process::set_script(path)`: the script of Node's `process.argv[1]` for the hosted program
+  (`velt dev`); otherwise the runtime reads `$VELT_SCRIPT` once at start-up and removes it.
 
 On Windows x64 the JIT (`velt_codegen_cl::DevSession`) registers each loaded program's unwind
 info with `RtlAddFunctionTable` (code and records in one arena), so stack walks get through JIT

@@ -120,6 +120,59 @@ impl FnCx<'_, '_> {
         Some(self.prelude_call("__processArgv", "process.argv", &[], &[], exp, span))
     }
 
+    /// Is `e` the builtin `process.argv`?
+    fn is_process_argv(&mut self, e: &ast::Expr) -> bool {
+        self.process_member(e).is_some_and(|m| m.name == "argv")
+    }
+
+    fn argv_mutation(&mut self, span: Span) {
+        self.cx.error(
+            velt_common::Diagnostic::error(
+                "`process.argv` can't be changed in place: each read is a new array",
+                span,
+            )
+            .with_note(
+                "TypeScript allows this (Node keeps one array, so changes persist), but in Velt \
+                 the change would be lost; copy it first: `const argv = process.argv`, then \
+                 change `argv`",
+            ),
+        );
+    }
+
+    /// `process.argv.push(x)` and other in-place array methods (reported; returns whether).
+    pub(super) fn reject_argv_mutation_call(&mut self, object: &ast::Expr, prop: &ast::Ident) -> bool {
+        const MUTATING: &[&str] = &[
+            "push",
+            "pop",
+            "shift",
+            "unshift",
+            "splice",
+            "sort",
+            "reverse",
+            "fill",
+            "copyWithin",
+            "truncate",
+        ];
+        if !MUTATING.contains(&prop.name.as_str()) || !self.is_process_argv(object) {
+            return false;
+        }
+        self.argv_mutation(prop.span);
+        true
+    }
+
+    /// `process.argv = …` / `process.argv[i] = …` (reported; returns whether).
+    pub(super) fn reject_argv_assign(&mut self, target: &ast::Expr) -> bool {
+        let base = match &target.kind {
+            ast::ExprKind::Index { object, .. } => object.as_ref(),
+            _ => target,
+        };
+        if !self.is_process_argv(base) {
+            return false;
+        }
+        self.argv_mutation(target.span);
+        true
+    }
+
     /// Is `target` `process.env.NAME` or `process.env[name]`?
     fn is_env_entry(&mut self, target: &ast::Expr) -> bool {
         let (ast::ExprKind::Member { object, .. } | ast::ExprKind::Index { object, .. }) =

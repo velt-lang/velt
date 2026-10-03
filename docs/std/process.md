@@ -13,8 +13,10 @@ import, as in Node:
 - `process.argv`: Node's layout, `[runtime, script, ...args]`, so `process.argv.slice(2)` is the
   arguments. The runtime is the running executable (`velt` under `velt dev`). The script is the
   source file under `velt run` / `velt dev`, and the executable again for a built program (as
-  for a Node single-executable application). Each read returns a new array: changing it doesn't
-  change the next read.
+  for a Node single-executable application). Under WASI the runtime and the script are the
+  module's path; in the browser `process.argv` is `["", ""]`. Each read returns a new array, so
+  changing it in place (`process.argv.push(x)`, `process.argv[2] = s`) is an error: copy it
+  first (`const argv = process.argv`).
 - `process.exit(code: i32)`, `process.memoryUsage()` (below).
 
 `import { args, cwd } from "velt:process"` for the rest: command-line arguments, listing and

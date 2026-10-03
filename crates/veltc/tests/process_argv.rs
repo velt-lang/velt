@@ -13,6 +13,7 @@ const PROGRAM: &str = r#"function main() {
   console.log(argv.length, argv.slice(2));
   console.log(argv[1].endsWith("argv_prog.vlt") || argv[1].endsWith("argv_prog.ts"));
   console.log(argv[1] == argv[0]);
+  console.log(process.env.VELT_SCRIPT == null);
 }
 "#;
 
@@ -43,7 +44,9 @@ fn run_and_built_program_follow_node() {
         .output()
         .unwrap();
     let ran = stdout(&run);
-    assert_eq!(ran, "4 [ 'one', 'two words' ]\ntrue\nfalse\n");
+    // `VELT_SCRIPT` reached the program's start-up and was removed: neither the program nor
+    // its child processes see it.
+    assert_eq!(ran, "4 [ 'one', 'two words' ]\ntrue\nfalse\ntrue\n");
 
     // A built program: the script is the executable itself.
     let exe = dir.path().join(if cfg!(windows) {
@@ -61,9 +64,7 @@ fn run_and_built_program_follow_node() {
         .unwrap();
     stdout(&build);
     let built = stdout(&Command::new(&exe).args(args).output().unwrap());
-    assert_eq!(built, "4 [ 'one', 'two words' ]\nfalse\ntrue\n");
-    // The variable `velt run` passes the script in doesn't leak to child processes.
-    assert!(std::env::var_os("VELT_SCRIPT").is_none());
+    assert_eq!(built, "4 [ 'one', 'two words' ]\nfalse\ntrue\ntrue\n");
 
     // Node, when installed, prints what `velt run` prints.
     let ts = dir.path().join("argv_prog.ts");
