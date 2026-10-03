@@ -8,6 +8,7 @@ use crate::vir::Ty;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Rt {
     StrConcat,
+    StrAppend,
     StrFromI64,
     StrFromU64,
     StrFromF64,
@@ -118,6 +119,7 @@ impl Rt {
         let math = |s| (s, vec![F64], F64, false);
         match self {
             Rt::StrConcat => ("velt_rt_str_concat", vec![Ptr, Ptr, Ptr], Unit, false),
+            Rt::StrAppend => ("velt_rt_str_append", vec![Ptr, Ptr], Unit, false),
             Rt::StrFromI64 => ("velt_rt_str_from_i64", vec![I64, Ptr], Unit, false),
             Rt::StrFromU64 => ("velt_rt_str_from_u64", vec![U64, Ptr], Unit, false),
             Rt::StrFromF64 => ("velt_rt_str_from_f64", vec![F64, Ptr], Unit, false),
