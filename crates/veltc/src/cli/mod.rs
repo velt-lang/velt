@@ -190,6 +190,10 @@ pub enum Command {
     },
     /// `velt search <text>`.
     Search { query: String, json: bool },
+    /// `velt login <registry-url>`: store a token (read from stdin) for that registry.
+    Login { url: String },
+    /// `velt logout <registry-url>`: forget the stored token of that registry.
+    Logout { url: String },
     /// `velt registry owner add|remove <pkg> <user> [--dir <d>]`: an administrator's change.
     RegistryOwner {
         add: bool,
@@ -259,6 +263,7 @@ fn parse_command(sub: &str, rest: Vec<OsString>) -> Result<Command, String> {
         "yank" => registry::parse_yank(rest),
         "owner" => registry::parse_owner(rest),
         "search" => registry::parse_search(rest),
+        "login" | "logout" => registry::parse_login(sub, rest),
         _ => Err(unknown_command(sub)),
     }
 }

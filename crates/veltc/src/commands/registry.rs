@@ -82,7 +82,7 @@ pub fn user_command(action: UserAction, name: &str, dir: Option<&PathBuf>) -> Re
     style::status(
         verb,
         &format!(
-            "the token of `{name}` (shown once; the user sets it as ${})",
+            "the token of `{name}` (shown once; the user stores it with `velt login <registry-url>`, or sets ${} in CI)",
             vpm::remote::TOKEN_VAR
         ),
     );
@@ -150,6 +150,216 @@ pub fn owner_command(action: &OwnerAction, package: &str) -> Result<(), String> 
             let verb = if add { "Added" } else { "Removed" };
             style::status(verb, &format!("`{user}` as an owner of `{package}`"));
         }
+    }
+    Ok(())
+}
+
+/// `velt login <url>`: read the token from stdin (one line; a prompt when it is a terminal) and
+/// store it for that registry.
+pub fn login_command(url: &str) -> Result<(), String> {
+    use std::io::{BufRead, IsTerminal};
+    let key = vpm::credentials::registry_key(url)?;
+    vpm::credentials::check_transport(&key, "a registry token")?;
+    let stdin = std::io::stdin();
+    let mut token = String::new();
+    let read = if stdin.is_terminal() {
+        eprint!("Token for {key}: ");
+        // The token is not shown while it is typed (or pasted); the guard restores the
+        // terminal on every path.
+        let _quiet = NoEcho::start();
+        let read = stdin.lock().read_line(&mut token);
+        eprintln!();
+        read
+    } else {
+        stdin.lock().read_line(&mut token)
+    };
+    read.map_err(|e| format!("cannot read the token from stdin: {e}"))?;
+    let path = vpm::credentials::default_path()?;
+    vpm::credentials::login(&path, &key, &token)?;
+    style::status(
+        "Saved",
+        &format!("the token for {key} in {}", path.display()),
+    );
+    Ok(())
+}
+
+/// Turns off the terminal's echo of stdin until dropped (nothing when that fails). An interrupt
+/// while the token is typed (Ctrl+C, a closed terminal) restores the echo before the process
+/// ends, so the shell isn't left without it.
+struct NoEcho {
+    on: bool,
+}
+
+impl NoEcho {
+    fn start() -> NoEcho {
+        NoEcho {
+            on: no_echo::start(),
+        }
+    }
+}
+
+impl Drop for NoEcho {
+    fn drop(&mut self) {
+        if self.on {
+            no_echo::stop();
+        }
+    }
+}
+
+#[cfg(unix)]
+mod no_echo {
+    use std::cell::UnsafeCell;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// The terminal attributes before echo was turned off, and the signal actions replaced.
+    struct Saved {
+        termios: UnsafeCell<std::mem::MaybeUninit<libc::termios>>,
+        actions: UnsafeCell<[std::mem::MaybeUninit<libc::sigaction>; 3]>,
+    }
+    // SAFETY: written once in `start` before SAVED is set, read only while it is set.
+    unsafe impl Sync for Saved {}
+    static STATE: Saved = Saved {
+        termios: UnsafeCell::new(std::mem::MaybeUninit::uninit()),
+        actions: UnsafeCell::new([std::mem::MaybeUninit::uninit(); 3]),
+    };
+    static SAVED: AtomicBool = AtomicBool::new(false);
+    const SIGNALS: [libc::c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
+
+    /// Restores the terminal, then lets the signal end the process as it would have.
+    extern "C" fn on_signal(signal: libc::c_int) {
+        // SAFETY: tcsetattr, signal and raise are async-signal-safe; the attributes were saved
+        // before the handler was installed.
+        unsafe {
+            if SAVED.load(Ordering::SeqCst) {
+                libc::tcsetattr(
+                    libc::STDIN_FILENO,
+                    libc::TCSANOW,
+                    (*STATE.termios.get()).as_ptr(),
+                );
+            }
+            libc::signal(signal, libc::SIG_DFL);
+            libc::raise(signal);
+        }
+    }
+
+    pub fn start() -> bool {
+        // SAFETY: tcgetattr/tcsetattr on stdin and sigaction with structures this module owns;
+        // STATE is written before SAVED publishes it.
+        unsafe {
+            let mut t: libc::termios = std::mem::zeroed();
+            if libc::tcgetattr(libc::STDIN_FILENO, &mut t) != 0 {
+                return false;
+            }
+            (*STATE.termios.get()).write(t);
+            SAVED.store(true, Ordering::SeqCst);
+            let actions = &mut *STATE.actions.get();
+            for (i, signal) in SIGNALS.into_iter().enumerate() {
+                let mut action: libc::sigaction = std::mem::zeroed();
+                action.sa_sigaction = on_signal as *const () as libc::sighandler_t;
+                libc::sigemptyset(&mut action.sa_mask);
+                libc::sigaction(signal, &action, actions[i].as_mut_ptr());
+            }
+            t.c_lflag &= !libc::ECHO;
+            if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &t) != 0 {
+                stop();
+                return false;
+            }
+            true
+        }
+    }
+
+    pub fn stop() {
+        // SAFETY: restores what `start` saved, then the previous signal actions.
+        unsafe {
+            if !SAVED.swap(false, Ordering::SeqCst) {
+                return;
+            }
+            libc::tcsetattr(
+                libc::STDIN_FILENO,
+                libc::TCSANOW,
+                (*STATE.termios.get()).as_ptr(),
+            );
+            let actions = &*STATE.actions.get();
+            for (i, signal) in SIGNALS.into_iter().enumerate() {
+                libc::sigaction(signal, actions[i].as_ptr(), std::ptr::null_mut());
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+mod no_echo {
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+    use windows_sys::core::BOOL;
+    use windows_sys::Win32::System::Console::{
+        GetConsoleMode, GetStdHandle, SetConsoleCtrlHandler, SetConsoleMode, ENABLE_ECHO_INPUT,
+        STD_INPUT_HANDLE,
+    };
+
+    /// The console mode before echo was turned off.
+    static MODE: AtomicU32 = AtomicU32::new(0);
+    static SAVED: AtomicBool = AtomicBool::new(false);
+
+    /// Ctrl+C, Ctrl+Break or a closed console: restore the mode, then let the default handler
+    /// end the process.
+    unsafe extern "system" fn on_event(_event: u32) -> BOOL {
+        if SAVED.load(Ordering::SeqCst) {
+            // SAFETY: restores the mode `start` read from this process's stdin.
+            unsafe {
+                SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), MODE.load(Ordering::SeqCst));
+            }
+        }
+        0
+    }
+
+    pub fn start() -> bool {
+        // SAFETY: console calls on the process's own stdin handle.
+        unsafe {
+            let handle = GetStdHandle(STD_INPUT_HANDLE);
+            let mut mode = 0u32;
+            if GetConsoleMode(handle, &mut mode) == 0 {
+                return false;
+            }
+            MODE.store(mode, Ordering::SeqCst);
+            SAVED.store(true, Ordering::SeqCst);
+            SetConsoleCtrlHandler(Some(on_event), 1);
+            if SetConsoleMode(handle, mode & !ENABLE_ECHO_INPUT) == 0 {
+                stop();
+                return false;
+            }
+            true
+        }
+    }
+
+    pub fn stop() {
+        if !SAVED.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        // SAFETY: restores the mode `start` read, then removes the handler it added.
+        unsafe {
+            SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), MODE.load(Ordering::SeqCst));
+            SetConsoleCtrlHandler(Some(on_event), 0);
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+mod no_echo {
+    pub fn start() -> bool {
+        false
+    }
+    pub fn stop() {}
+}
+
+/// `velt logout <url>`: forget the stored token of that registry.
+pub fn logout_command(url: &str) -> Result<(), String> {
+    let key = vpm::credentials::registry_key(url)?;
+    let path = vpm::credentials::default_path()?;
+    if vpm::credentials::logout(&path, &key)? {
+        style::status("Removed", &format!("the token for {key}"));
+    } else {
+        style::status("Unchanged", &format!("no token stored for {key}"));
     }
     Ok(())
 }

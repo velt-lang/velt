@@ -18,6 +18,7 @@ prints every command's options and examples.
 | `velt add`, `install`, `update`, `publish` | packages ([Packages](packages.md)) |
 | `velt manifest [--json]` | check the package's manifest, or print it as JSON for other tools ([`package.vlt`](manifest.md#other-tools)) |
 | `velt search`, `yank`, `owner` | find and manage published packages ([Registries](packages.md#registries)) |
+| `velt login`, `logout` | store or forget your token for a registry server ([Users, owners and yanking](packages.md#users-owners-and-yanking)) |
 | `velt doc` | generate HTML API documentation |
 | `velt lsp` | the language server ([Editors](editors.md)) |
 | `velt playground` | write and run programs in the browser ([WebAssembly](webassembly.md#the-playground)) |
@@ -186,7 +187,7 @@ velt completions powershell >> $PROFILE                # PowerShell
 | `VELT_STD` | standard library directory |
 | `VELT_HOME` | package manager home (default `~/.velt`: `cache/`, `registry/`) |
 | `VELT_REGISTRY` | package registry: a directory (default `$VELT_HOME/registry`) or an `http(s)://` URL |
-| `VELT_REGISTRY_TOKEN` | your registry user's token, for `velt publish`, `velt yank` and `velt owner` against a registry server |
+| `VELT_REGISTRY_TOKEN` | a registry token sent to every registry server, overriding the tokens `velt login` stored (for CI) |
 | `VELT_CA_FILE` | PEM file of extra CA certificates to trust for `https://` registries |
 | `VELT_CLANG` | clang for the LLVM backend |
 | `VELT_LLVM_OPT` | clang optimization level for release builds: `3` (default), `2`, `1`, `s` or `z` |
