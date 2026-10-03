@@ -73,12 +73,14 @@ as uncaught.
 ## Tasks
 
 `spawn(p)` returns a `Promise<T>` join handle. `spawn(f())`, or `spawn(async () => { … })`, runs
-`f` as a task of its own on any core, and a spawned task runs even if nobody awaits it. A
-promise that already started (`const p = f(); spawn(p)`) stays on the task that started it. A
-promise that goes to another task (`spawn(p)`, `spawn(g(p))`, a channel) delivers its value
-there as a transferred one: moved if the task that produced it no longer references it, else a
-copy made where it was produced, so two tasks never use one object (on single-threaded
-WebAssembly, where tasks share the one thread, it is the same object).
+`f` as a task of its own on any core, and a spawned task runs even if nobody awaits it.
+`spawn(c ? f(x) : g(y))` spawns the call the condition picks, like
+`c ? spawn(f(x)) : spawn(g(y))`. A promise that already started (`const p = f(); spawn(p)`)
+stays on the task that started it. A promise that goes to another task (`spawn(p)`,
+`spawn(g(p))`, a channel) delivers its value there as a transferred one: moved if the task that
+produced it no longer references it, else a copy made where it was produced, so two tasks never
+use one object (on single-threaded WebAssembly, where tasks share the one thread, it is the same
+object).
 
 Tasks exchange values through channels ([`velt:channel`](../std/channel.md)): typed,
 bounded or unbounded queues where `send` waits while a bounded channel is full.

@@ -1,0 +1,65 @@
+// check: no leaks
+// `spawn` of a conditional runs the chosen call as a task of its own, with its arguments and
+// receiver copied for it like `spawn(f(x))` (#270); a stored promise already started on this
+// task and stays here (docs/reference/async.md "Tasks"), so the caller's objects are never
+// used from two threads. Each form counts on an object while this task counts on its own.
+class Box {
+  n: i64 = 0;
+}
+
+class Reader implements Source {
+  b: Box = new Box();
+
+  async read(k: i64): Promise<i64> {
+    for (let i = 0; i < 100000; i++) {
+      this.b.n += k;
+      if (i % 1000 == 0) {
+        await yieldNow();
+      }
+    }
+    return this.b.n;
+  }
+}
+
+interface Source {
+  read(k: i64): Promise<i64>;
+}
+
+async function bump(b: Box): Promise<i64> {
+  for (let i = 0; i < 100000; i++) {
+    b.n += 1;
+    if (i % 1000 == 0) {
+      await yieldNow();
+    }
+  }
+  return b.n;
+}
+
+function pick(i: i64): bool {
+  return i % 2 == 0;
+}
+
+async function main() {
+  const b = new Box();
+  const ts: Promise<i64>[] = [];
+  for (let i = 0; i < 8; i++) {
+    ts.push(spawn(pick(i) ? bump(b) : bump(b)));
+  }
+  console.log("conditional", await Promise.all(ts), b.n);
+
+  const r = new Reader();
+  const o = new Reader();
+  const s: Source = new Reader();
+  const us: Promise<i64>[] = [];
+  for (let i = 0; i < 4; i++) {
+    us.push(spawn(pick(i) ? r.read(1) : o.read(2)));
+    us.push(spawn(pick(i) ? s.read(3) : r.read(4)));
+  }
+  console.log("methods", await Promise.all(us), r.b.n, o.b.n);
+
+  const kept = new Box();
+  const p = bump(kept);
+  const q = r.read(1);
+  const vs = [spawn(p), spawn(q)];
+  console.log("stored", await Promise.all(vs), kept.n, r.b.n);
+}

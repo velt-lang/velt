@@ -1,16 +1,17 @@
 //! `spawn(p)` (docs/reference/async.md "Tasks"). A direct call of a compiled async function
 //! or an async closure literal becomes a task from its initial state, with its arguments or
 //! captures transferred (transfer.rs); a call through a function value, vtable or interface
-//! passes the task copies. Any other promise — a stored one, already started by this task —
-//! keeps running where it started, and its result is transferred where it is produced
-//! (`velt_rt_fut_transfer`, #160), so the task's join handle delivers nothing this task still
-//! references.
+//! passes the task copies. `spawn(c ? f(x) : g(y))` spawns the chosen call the same way, as
+//! `c ? spawn(f(x)) : spawn(g(y))` would (#270). Any other promise — a stored one, already
+//! started by this task — keeps running where it started, and its result is transferred where
+//! it is produced (`velt_rt_fut_transfer`, #160), so the task's join handle delivers nothing
+//! this task still references.
 
 use velt_sema::hir::{self, TyId, TyKind};
 
 use crate::lower::rt::Rt;
 use crate::lower::{cfunc, cint, FnLower, Glue, ScopeKind, Work};
-use crate::vir::{Operand, Place, Ty};
+use crate::vir::{Operand, Place, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
     /// `spawn(p)`: a direct compiled call or async closure literal starts from an inline initial
@@ -18,6 +19,9 @@ impl FnLower<'_, '_> {
     /// `detached`: the join handle is dropped at once (a `spawn(...)` statement), so the task's
     /// error is reported as uncaught.
     pub(in crate::lower) fn spawn(&mut self, p: &hir::Expr, ty: TyId, detached: bool) -> Operand {
+        if let hir::ExprKind::If { cond, then, els } = &p.kind {
+            return self.spawn_if(cond, [then, els], ty, detached);
+        }
         let pty = self.sub(ty);
         let slot = self.cx.promise_slot(pty);
         let st = self.cx.ty(slot);
@@ -106,6 +110,35 @@ impl FnLower<'_, '_> {
         self.rt_value(Rt::SpawnFut, vec![fut, rsize, result_drop], ty)
     }
 
+    /// `spawn(c ? a : b)`: spawn the branch `c` picks (see module docs).
+    fn spawn_if(
+        &mut self,
+        cond: &hir::Expr,
+        branches: [&hir::Expr; 2],
+        ty: TyId,
+        detached: bool,
+    ) -> Operand {
+        let c = self.expr(cond);
+        let t = self.vty(ty);
+        let res = self.temp(t);
+        let (then_bb, else_bb, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(c, then_bb, else_bb);
+        for (bb, branch) in [then_bb, else_bb].into_iter().zip(branches) {
+            self.switch_to(bb);
+            self.push_scope(ScopeKind::Temps);
+            let handle = self.spawn(spawned(branch), ty, detached);
+            if let Operand::Copy(p) = &handle {
+                self.take_temp(p);
+            }
+            self.assign(Place::local(res), Rvalue::Use(handle));
+            self.pop_scope();
+            self.goto(join);
+        }
+        self.switch_to(join);
+        let ty = self.sub(ty);
+        self.owned_result(Some(res), ty)
+    }
+
     /// The promise value `fut` (of type `pty`) leaves this task: its result is transferred
     /// where it is produced (glue/transfer.rs).
     fn transfer_result(&mut self, fut: Operand, pty: TyId) {
@@ -114,6 +147,15 @@ impl FnLower<'_, '_> {
             let g = cfunc(self.cx.func(Work::Glue(Glue::Transfer, slot)));
             self.call_rt(Rt::FutTransfer, vec![fut, g], None);
         }
+    }
+}
+
+/// The promise expression a conditional branch spawns (a block holding only a value is that
+/// value).
+fn spawned(e: &hir::Expr) -> &hir::Expr {
+    match &e.kind {
+        hir::ExprKind::Block(b) if b.stmts.is_empty() => b.value.as_deref().map_or(e, spawned),
+        _ => e,
     }
 }
 
