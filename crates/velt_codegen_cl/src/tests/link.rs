@@ -14,7 +14,8 @@ use std::io::Write;
 extern "C" { fn velt_main() -> i32; }
 unsafe fn bytes<'a>(s: *const VeltStr) -> &'a [u8] {
     let s = &*s;
-    if s.len == 0 { &[] } else { std::slice::from_raw_parts(s.ptr, s.len as usize) }
+    let len = s.len as u32 as usize; // the low half; the high half is the UTF-16 length
+    if len == 0 { &[] } else { std::slice::from_raw_parts(s.ptr, len) }
 }
 fn out(b: &[u8]) { std::io::stdout().write_all(b).unwrap(); }
 #[no_mangle] pub extern "C" fn velt_rt_write_str(_s: u32, v: *const VeltStr) { out(unsafe { bytes(v) }) }

@@ -17,10 +17,7 @@ pub unsafe extern "C" fn velt_rt_str_concat(
     } else if a.is_empty() {
         b.share()
     } else {
-        let mut s = VeltStr::with_capacity(a.len() + b.len());
-        s.push_bytes(a.as_bytes());
-        s.push_bytes(b.as_bytes());
-        s
+        VeltStr::concat(a, b)
     };
     write_out(out, s);
 }
@@ -32,12 +29,14 @@ pub unsafe extern "C" fn velt_rt_str_concat(
 /// place, so a per-string header has a single place to be kept up to date.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_str_append(s: *mut VeltStr, t: *const VeltStr) {
-    if std::ptr::eq(s, t) || (*s).holds_bytes_of(&*t) {
-        // `t` reads the bytes `*s` is about to grow (and maybe move): copy them out first.
-        (*s).push_with(|v| v.extend_from_slice((*t).as_bytes()));
+    if std::ptr::eq(s, t) {
+        // `s += s`: copy the text out first (the append may grow and move it).
+        let (copy, sum) = ((*t).as_bytes().to_vec(), (*t).summary());
+        (*s).push_wtf8(&copy, Some(sum));
         return;
     }
-    (*s).push_bytes((*t).as_bytes());
+    // A share or view of `*s`'s own buffer is copied out by the push where the buffer grows.
+    (*s).push_str(&*t);
 }
 
 #[no_mangle]
@@ -79,7 +78,7 @@ pub unsafe extern "C" fn velt_rt_str_clone(s: *const VeltStr, out: *mut VeltStr)
 pub unsafe extern "C" fn velt_rt_str_own(s: *const VeltStr, out: *mut VeltStr) {
     let s = &*s;
     let owned = if s.is_static() {
-        VeltStr::from_bytes(s.as_bytes())
+        VeltStr::owned(s.as_bytes(), Some(s.summary()))
     } else {
         s.share()
     };
@@ -258,16 +257,16 @@ mod tests {
     #[test]
     fn append_in_place_only_when_unique() {
         let mut s = VeltStr::from_static(b"ab");
-        unsafe { s.push_bytes(b"c") };
+        unsafe { s.push_wtf8(b"c", None) };
         assert!(s.is_inline() && text(&s) == "abc");
-        unsafe { s.push_bytes(LONG.as_bytes()) };
+        unsafe { s.push_wtf8(LONG.as_bytes(), None) };
         assert!(s.is_heap());
-        unsafe { s.push_bytes(b"!") };
+        unsafe { s.push_wtf8(b"!", None) };
         let before = data(&s);
-        unsafe { s.push_bytes(b"#") };
+        unsafe { s.push_wtf8(b"#", None) };
         assert_eq!(data(&s), before, "unique with room: in place");
         let mut shared = unsafe { s.share() };
-        unsafe { s.push_bytes(b"?") };
+        unsafe { s.push_wtf8(b"?", None) };
         assert_ne!(data(&s), before, "shared: copied");
         assert!(text(&shared).ends_with("!#") && text(&s).ends_with("!#?"));
         unsafe {

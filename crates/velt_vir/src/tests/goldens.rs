@@ -436,7 +436,7 @@ fn#0 internal _V4main() -> unit {
   let _2: ptr
   bb0:
     _0 = cast static#0 as u64
-    _1 = agg#0 { _0, 12_u64, 0_u64 }
+    _1 = agg#0 { _0, 51539607564_u64, 0_u64 }
     _2 = &_1
     call extern#0 velt_rt_write_str(1_u32, _2) -> bb1
   bb1:

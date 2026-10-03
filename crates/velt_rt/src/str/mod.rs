@@ -1,12 +1,20 @@
 //! Strings: the `VeltStr` value (rt_abi.md "Strings") and the `velt_rt_str_*` core functions.
 //!
-//! A string is an immutable value in 24 bytes with three forms, told apart by the last word:
-//! - **static / borrowed** (`w2 == 0`): `{ptr, len, 0}` — literals, and sub-ranges of them; never
-//!   freed. The all-zero value is the empty string.
-//! - **inline** (top bit of `w2` set): up to [`INLINE_MAX`] bytes stored in the value itself;
-//!   byte 23 is `0x80 | len`. No heap, copying is a 24-byte copy.
-//! - **heap** (`w2 > 0` as `i64`): `{ptr, len, cap}` where `ptr` points into a reference-counted
-//!   buffer (`heap`) of `cap` bytes; copying bumps the count, dropping the last copy frees it.
+//! A string is an immutable value in 24 bytes with three forms, told apart by the last word. The
+//! bytes are canonical WTF-8 (`wtf8`), and every form also knows the string's UTF-16 length
+//! (#377): a string is ASCII exactly when its unit count equals its byte count.
+//! - **static / borrowed** (`w2 == 0`): `{ptr, units << 32 | len, 0}` — literals, and sub-ranges
+//!   of them; never freed. The all-zero value is the empty string.
+//! - **inline** (top bit of `w2` set): up to [`INLINE_MAX`] ASCII bytes or
+//!   [`INLINE_MAX_NON_ASCII`] other bytes stored in the value itself; byte 23 is
+//!   `0x80 | len`, plus `0x40` for a non-ASCII string, whose unit count is then byte 22. No heap,
+//!   copying is a 24-byte copy.
+//! - **heap** (`w2 > 0` as `i64`): `{ptr, units << 32 | len, cap}` where `ptr` points into a
+//!   reference-counted buffer (`heap`) of `cap` bytes; copying bumps the count, dropping the last
+//!   copy frees it. Non-ASCII buffers carry a header with the lone-surrogate count.
+//!
+//! Bytes enter a string through one function, [`VeltStr::push_wtf8`] (`push`), or through the
+//! constructors here, which use the same counting and layout helpers.
 //!
 //! Strings are immutable, so a shared heap buffer is never written; only a builder that holds the
 //! single reference (count 1) appends in place (`strbuf.rs`). Counts are atomic: any string may
@@ -14,17 +22,42 @@
 
 mod abi;
 mod heap;
+mod invariants;
+mod push;
 pub mod stats;
+#[cfg(test)]
+mod tests;
+mod wtf8;
 
 pub use abi::*;
-
-use std::mem::MaybeUninit;
+pub use wtf8::Summary;
 
 #[cfg(not(target_endian = "little"))]
 compile_error!("the VeltStr inline form assumes a little-endian target");
 
-/// Longest string stored inline.
+/// Longest ASCII string stored inline.
 pub const INLINE_MAX: usize = 23;
+
+/// Longest non-ASCII string stored inline (byte 22 holds its unit count).
+pub const INLINE_MAX_NON_ASCII: usize = 22;
+
+/// Longest string, in bytes: `w1` packs the unit and byte counts in 32 bits each.
+pub const MAX_LEN: usize = heap::MAX_CAP;
+
+/// Byte 23 of an inline string: this bit, plus [`NON_ASCII`] and the byte length.
+const INLINE: u8 = 0x80;
+/// Byte 23 of a non-ASCII inline string has this bit set.
+const NON_ASCII: u8 = 0x40;
+/// The byte length in byte 23 of an inline string.
+const INLINE_LEN: u8 = 0x1f;
+/// Where a non-ASCII inline string keeps its unit count.
+const INLINE_UNITS: usize = 22;
+
+/// `w1` of the static and heap forms.
+#[inline]
+const fn pack(units: usize, len: usize) -> u64 {
+    ((units as u64) << 32) | len as u64
+}
 
 /// A Velt string: 24 bytes, align 8 (vir::STR_AGG). See the module docs for the three forms.
 #[repr(C)]
@@ -74,27 +107,40 @@ impl VeltStr {
         unsafe { VeltStr::borrowed(bytes.as_ptr(), bytes.len()) }
     }
 
-    /// A string that borrows `len` bytes at `ptr` (static form: dropping it frees nothing).
+    /// A string that borrows `len` bytes at `ptr` (static form: dropping it frees nothing). The
+    /// bytes are scanned for their unit count.
     ///
     /// # Safety
-    /// The bytes must stay valid and unchanged for as long as the string (and its copies) live.
+    /// The bytes must be canonical WTF-8 and stay valid and unchanged for as long as the string
+    /// (and its copies) live.
     pub unsafe fn borrowed(ptr: *const u8, len: usize) -> VeltStr {
-        VeltStr {
-            w0: ptr as usize as u64,
-            w1: len as u64,
-            w2: 0,
-        }
+        let bytes = if len == 0 {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(ptr, len)
+        };
+        invariants::check_piece(bytes, None);
+        VeltStr::borrowed_counted(ptr, len, wtf8::count_units(bytes))
     }
 
-    /// An owned copy of `bytes`: inline when short, else a fresh heap buffer.
-    pub fn from_bytes(bytes: &[u8]) -> VeltStr {
-        if bytes.len() <= INLINE_MAX {
-            return VeltStr::inline(bytes);
+    /// [`Self::borrowed`] with a known unit count.
+    unsafe fn borrowed_counted(ptr: *const u8, len: usize, units: usize) -> VeltStr {
+        if len > MAX_LEN {
+            crate::panic::fatal("string too long");
         }
-        let mut s = VeltStr::with_capacity(bytes.len());
-        // SAFETY: a fresh unique heap buffer with room for `bytes`.
-        unsafe { s.append_unique(bytes) };
+        let s = VeltStr {
+            w0: ptr as usize as u64,
+            w1: pack(units, len),
+            w2: 0,
+        };
+        invariants::check_whole(&s);
         s
+    }
+
+    /// An owned copy of `bytes` (canonical WTF-8): inline when short, else a fresh heap buffer
+    /// of exactly its size.
+    pub fn from_bytes(bytes: &[u8]) -> VeltStr {
+        VeltStr::owned(bytes, None)
     }
 
     /// An owned copy of a Vec's bytes (heap strings carry a count header, so this copies).
@@ -102,32 +148,21 @@ impl VeltStr {
         VeltStr::from_bytes(&v)
     }
 
-    /// Inline string of `bytes` (at most [`INLINE_MAX`]).
-    fn inline(bytes: &[u8]) -> VeltStr {
-        debug_assert!(bytes.len() <= INLINE_MAX);
-        let mut s = MaybeUninit::<VeltStr>::zeroed();
-        let p = s.as_mut_ptr() as *mut u8;
-        // SAFETY: 24 writable bytes; the data fits before byte 23.
-        unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
-            *p.add(INLINE_MAX) = 0x80 | bytes.len() as u8;
-            s.assume_init()
-        }
-    }
-
-    /// An empty string with room for `cap` bytes before it must allocate (inline up to 23).
+    /// An empty string with room for `cap` bytes before it must allocate (inline up to 23). The
+    /// buffer is an ASCII one: a non-ASCII push moves the text to a buffer with a header.
     pub fn with_capacity(cap: usize) -> VeltStr {
         if cap <= INLINE_MAX {
-            return VeltStr::inline(&[]);
+            return VeltStr::inline(&[], 0);
         }
         VeltStr {
-            w0: heap::alloc(cap) as usize as u64,
+            w0: heap::alloc(cap, false) as usize as u64,
             w1: 0,
             w2: cap as u64,
         }
     }
 
-    /// Byte 23: `0x80 | len` in the inline form, 0 otherwise (the top byte of `cap` / 0).
+    /// Byte 23: `0x80 | len` (and `0x40` when non-ASCII) in the inline form, 0 otherwise (the
+    /// top byte of `cap` / 0).
     ///
     /// The form is tested through this byte, not the whole of `w2`: a builder appending inline
     /// writes single bytes into `w2`, and reading them back as one 8-byte word right after would
@@ -145,7 +180,7 @@ impl VeltStr {
 
     #[inline]
     pub fn is_inline(&self) -> bool {
-        self.tag() & 0x80 != 0
+        self.tag() & INLINE != 0
     }
 
     #[inline]
@@ -157,15 +192,65 @@ impl VeltStr {
     #[inline]
     pub fn len(&self) -> usize {
         let tag = self.tag();
-        if tag & 0x80 != 0 {
-            (tag & 0x7f) as usize
+        if tag & INLINE != 0 {
+            (tag & INLINE_LEN) as usize
         } else {
-            self.w1 as usize
+            self.w1 as u32 as usize
+        }
+    }
+
+    /// UTF-16 length (code units).
+    #[inline]
+    pub fn units(&self) -> usize {
+        let tag = self.tag();
+        if tag & INLINE == 0 {
+            (self.w1 >> 32) as usize
+        } else if tag & NON_ASCII != 0 {
+            // SAFETY: byte 22 of a 24-byte value.
+            unsafe { *(self as *const VeltStr as *const u8).add(INLINE_UNITS) as usize }
+        } else {
+            (tag & INLINE_LEN) as usize
+        }
+    }
+
+    /// Is every byte ASCII (units == bytes)? Decides whether a heap buffer has a header.
+    #[inline]
+    pub fn is_ascii(&self) -> bool {
+        let tag = self.tag();
+        if tag & INLINE != 0 {
+            tag & NON_ASCII == 0
+        } else {
+            (self.w1 >> 32) as u32 == self.w1 as u32
         }
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Lone surrogates: stored in a heap buffer's header, counted for the other forms.
+    ///
+    /// # Safety
+    /// `self` must be valid.
+    unsafe fn lone(&self) -> usize {
+        if self.is_ascii() {
+            0
+        } else if self.is_heap() {
+            heap::lone(self.ptr())
+        } else {
+            wtf8::count_lone(self.as_bytes())
+        }
+    }
+
+    /// The unit and lone-surrogate counts, to append `self` to another string without a scan.
+    ///
+    /// # Safety
+    /// `self` must be valid.
+    pub unsafe fn summary(&self) -> Summary {
+        Summary {
+            units: self.units(),
+            lone: self.lone(),
+        }
     }
 
     /// Address of the first byte (inside `self` for the inline form).
@@ -194,21 +279,28 @@ impl VeltStr {
     }
 
     /// Bytes `start..end` as a string: a borrowed sub-range of a static string, the whole string
-    /// shared (count +1), else a fresh copy.
+    /// shared (count +1), else a fresh copy. A piece of an ASCII string is ASCII, so only a piece
+    /// of a non-ASCII one is counted.
     ///
     /// # Safety
-    /// `self` must be valid and `start <= end <= len`.
+    /// `self` must be valid and `start <= end <= len`, both at code point boundaries.
     pub unsafe fn substring(&self, start: usize, end: usize) -> VeltStr {
         if start >= end {
             return VeltStr::empty();
         }
+        let piece = &self.as_bytes()[start..end];
+        let known = self.is_ascii().then(|| Summary::ascii(piece.len()));
         if self.is_static() {
-            return VeltStr::borrowed(self.ptr().add(start), end - start);
+            let units = match known {
+                Some(sum) => sum.units,
+                None => wtf8::count_units(piece),
+            };
+            return VeltStr::borrowed_counted(piece.as_ptr(), piece.len(), units);
         }
         if start == 0 && end == self.len() {
             return self.share();
         }
-        VeltStr::from_bytes(&self.as_bytes()[start..end])
+        VeltStr::owned(piece, known)
     }
 
     /// Another reference to the same string (count +1 for heap strings).
@@ -226,14 +318,10 @@ impl VeltStr {
         }
     }
 
-    /// Do the bytes of `other` lie in `self`'s heap buffer (a share of it, or an uncounted view:
-    /// a static-form sub-range or a bitwise copy)?
-    pub(crate) fn holds_bytes_of(&self, other: &VeltStr) -> bool {
-        if !self.is_heap() || other.is_inline() {
-            return false;
-        }
-        let (start, p) = (self.w0 as usize, other.w0 as usize);
-        p >= start && p < start + self.w2 as usize
+    /// Do `bytes` start in `self`'s heap buffer (text `self` is about to grow, move or rewrite)?
+    fn buffer_holds(&self, bytes: &[u8]) -> bool {
+        let start = self.w0 as usize;
+        self.is_heap() && (start..start + self.w2 as usize).contains(&(bytes.as_ptr() as usize))
     }
 
     /// Give up this reference (frees the buffer with the last one) and leave `self` empty.
@@ -242,7 +330,7 @@ impl VeltStr {
     /// `self` must be valid and not used afterwards except as the empty string.
     pub unsafe fn release(&mut self) {
         if self.is_heap() {
-            heap::release(self.ptr(), self.w2 as usize);
+            heap::release(self.ptr(), self.w2 as usize, !self.is_ascii());
         }
         *self = VeltStr::empty();
     }
@@ -252,85 +340,17 @@ impl VeltStr {
     /// # Safety
     /// `self` must be valid.
     pub unsafe fn compact(mut self) -> VeltStr {
-        if !self.is_heap() || self.len() > INLINE_MAX {
+        if !self.is_heap() || !fits_inline(self.len(), self.units()) {
             return self;
         }
-        let s = VeltStr::inline(self.as_bytes());
+        let s = VeltStr::inline(self.as_bytes(), self.units());
         self.release();
+        invariants::check_whole(&s);
         s
     }
 
-    /// Append `bytes`, keeping the string owned by `self`: in place when `self` is inline with
-    /// room or the only reference to a heap buffer, else by moving to a new buffer.
-    ///
-    /// # Safety
-    /// `self` must be valid; `bytes` must not point into `self`'s own buffer.
-    #[inline]
-    pub unsafe fn push_bytes(&mut self, bytes: &[u8]) {
-        if self.is_heap() {
-            let len = self.w1 as usize;
-            let need = len + bytes.len();
-            if need <= self.w2 as usize && heap::is_unique(self.ptr()) {
-                std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr().add(len), bytes.len());
-                self.w1 = need as u64;
-                return;
-            }
-        } else if self.is_inline() {
-            let len = self.len();
-            let need = len + bytes.len();
-            if need <= INLINE_MAX {
-                let p = self as *mut VeltStr as *mut u8;
-                std::ptr::copy_nonoverlapping(bytes.as_ptr(), p.add(len), bytes.len());
-                *p.add(INLINE_MAX) = 0x80 | need as u8;
-                return;
-            }
-        }
-        self.push_slow(bytes);
-    }
-
-    /// [`Self::push_bytes`] when the text must move: a unique heap buffer that is full grows,
-    /// anything else (static, full inline, shared heap) moves to a new buffer.
-    #[cold]
-    unsafe fn push_slow(&mut self, bytes: &[u8]) {
-        if bytes.is_empty() {
-            return;
-        }
-        let need = self.len() + bytes.len();
-        if self.is_heap() && heap::is_unique(self.ptr()) {
-            let start = self.ptr() as usize;
-            if (start..start + self.w2 as usize).contains(&(bytes.as_ptr() as usize)) {
-                // The text lies in the buffer that is about to move: copy it out first.
-                let copy = bytes.to_vec();
-                return self.push_slow(&copy);
-            }
-            let cap = grown(self.w2 as usize, need);
-            self.w0 = heap::grow(self.ptr(), self.w2 as usize, cap) as usize as u64;
-            self.w2 = cap as u64;
-            self.append_unique(bytes);
-            return;
-        }
-        let mut s = if need <= INLINE_MAX {
-            VeltStr::inline(self.as_bytes())
-        } else {
-            let mut h = VeltStr::with_capacity(grown(need, need));
-            h.append_unique(self.as_bytes());
-            h
-        };
-        self.release();
-        s.push_bytes(bytes);
-        *self = s;
-    }
-
-    /// Append to a unique heap buffer that has room.
-    unsafe fn append_unique(&mut self, bytes: &[u8]) {
-        let len = self.w1 as usize;
-        debug_assert!(self.is_heap() && len + bytes.len() <= self.w2 as usize);
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr().add(len), bytes.len());
-        self.w1 = (len + bytes.len()) as u64;
-    }
-
     /// Insert `bytes` at byte offset `at` (rare: `console.log`'s `<ref *N>` prefix), moving
-    /// the text to a new buffer.
+    /// the text to a new string.
     ///
     /// # Safety
     /// `self` must be valid, `at` at most its length and on a character boundary; `bytes` must
@@ -341,8 +361,7 @@ impl VeltStr {
         text.extend_from_slice(&old[..at]);
         text.extend_from_slice(bytes);
         text.extend_from_slice(&old[at..]);
-        let mut s = VeltStr::with_capacity(text.len());
-        s.push_bytes(&text);
+        let s = VeltStr::from_bytes(&text);
         self.release();
         *self = s;
     }
@@ -350,24 +369,29 @@ impl VeltStr {
     /// Run `f` on a byte vector that is appended to `self` (formatting helpers write into a Vec).
     ///
     /// # Safety
-    /// `self` must be valid.
+    /// `self` must be valid; what `f` writes must be canonical WTF-8.
     pub unsafe fn push_with(&mut self, f: impl FnOnce(&mut Vec<u8>)) {
         let mut scratch = SCRATCH.with(|s| std::mem::take(&mut *s.borrow_mut()));
         scratch.clear();
         f(&mut scratch);
-        self.push_bytes(&scratch);
+        self.push_wtf8(&scratch, None);
         SCRATCH.with(|s| *s.borrow_mut() = scratch);
+    }
+}
+
+/// Does a string of `len` bytes and `units` code units fit in the inline form?
+#[inline]
+fn fits_inline(len: usize, units: usize) -> bool {
+    if units == len {
+        len <= INLINE_MAX
+    } else {
+        len <= INLINE_MAX_NON_ASCII
     }
 }
 
 thread_local! {
     /// Reused formatting buffer for [`VeltStr::push_with`] (numbers, JSON pieces).
     static SCRATCH: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Capacity for a buffer that must hold `need` bytes: amortized doubling from `cap`, at least 32.
-fn grown(cap: usize, need: usize) -> usize {
-    need.max(cap.saturating_mul(2)).max(32)
 }
 
 /// Write a string result to an out-parameter.
