@@ -74,7 +74,7 @@ impl Ctx<'_> {
             return Some(vec![t]);
         }
         let second = self.resolve_type(&args[1], env);
-        if self.ty.is_bottom(t) || second == self.ty.error {
+        if t == self.ty.error || second == self.ty.error {
             return None;
         }
         if second == self.ty.unit {
