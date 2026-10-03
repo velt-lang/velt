@@ -210,7 +210,7 @@ const NATIVE_LIBS: &[&str] = &[
 #[cfg(not(target_env = "msvc"))]
 fn build(name: &str, body: &str) -> Option<PathBuf> {
     let cc = std::env::var("CC").unwrap_or_else(|_| "cc".into());
-    if Command::new(&cc).arg("--version").output().is_err() {
+    if command(&cc).arg("--version").output().is_err() {
         return None;
     }
     let dir = work_dir(name);
@@ -225,10 +225,10 @@ fn build(name: &str, body: &str) -> Option<PathBuf> {
         "aarch64" if cfg!(target_os = "macos") => &["-arch", "arm64"],
         _ => &[],
     };
-    let mut c = Command::new(&cc);
+    let mut c = command(&cc);
     c.args(arch).args(["-c", "-O1", "-o"]).arg(&obj).arg(&src);
     run_ok(c, "cc -c");
-    let mut l = Command::new(&cc);
+    let mut l = command(&cc);
     l.args(arch)
         .arg("-o")
         .arg(&exe)
@@ -261,7 +261,7 @@ fn build(name: &str, body: &str) -> Option<PathBuf> {
 }
 
 fn run(exe: &Path) -> Output {
-    Command::new(exe).output().unwrap()
+    command(exe).output().unwrap()
 }
 
 fn text(b: &[u8]) -> String {
@@ -407,7 +407,7 @@ fn piped_output_is_flushed_when_workers_idle() {
         return;
     };
     let mut child = KillOnDrop(
-        Command::new(&exe)
+        command(&exe)
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap(),
@@ -512,7 +512,7 @@ fn concurrent_tasks_never_interleave_within_a_line() {
     };
     for _ in 0..3 {
         let start = std::time::Instant::now();
-        let mut child = Command::new(&exe)
+        let mut child = command(&exe)
             .env("VELT_THREADS", "8")
             .stdout(std::process::Stdio::piped())
             .spawn()
@@ -604,4 +604,27 @@ fn wait_with_cpu_time(mut child: std::process::Child) -> (std::process::ExitStat
         status,
         Duration::from_nanos((ticks(t[2]) + ticks(t[3])) * 100),
     )
+}
+
+/// `Command::new(program)` for a test's child process. On Windows, when this test process has no
+/// console (a CI agent, a background shell), the child gets a hidden console instead of opening a
+/// window of its own. In a terminal it shares the terminal's console as before, so Ctrl+C still
+/// reaches it.
+fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetConsoleWindow() -> *mut std::ffi::c_void;
+        }
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // SAFETY: takes no arguments; returns this process's console window or null.
+        if unsafe { GetConsoleWindow() }.is_null() {
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+    }
+    cmd
 }

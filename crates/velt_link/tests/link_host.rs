@@ -2,7 +2,6 @@
 //! staticlib (compiled here with `rustc`, implementing the few rt_abi.md symbols we call) → exe → run.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use cranelift_codegen::ir::{types, AbiParam, InstBuilder};
 use cranelift_codegen::settings::{self, Configurable};
@@ -133,7 +132,7 @@ fn build_standin_rt(dir: &Path, triple: &str) -> PathBuf {
     let src = dir.join("standin_rt.rs");
     std::fs::write(&src, STANDIN_RT).unwrap();
     let out = dir.join(velt_link::runtime_lib_name(triple));
-    let st = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+    let st = command(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
         .args([
             "--edition",
             "2021",
@@ -181,7 +180,7 @@ fn link_and_run_on_host() {
         })
         .unwrap_or_else(|e| panic!("link failed (release={release}):\n{e}"));
 
-        let o = Command::new(&exe).output().unwrap();
+        let o = command(&exe).output().unwrap();
         assert_eq!(String::from_utf8_lossy(&o.stdout), "42\n");
         assert_eq!(o.status.code(), Some(7));
     }
@@ -190,7 +189,7 @@ fn link_and_run_on_host() {
     let bad_rt_src = dir.join("empty_rt.rs");
     std::fs::write(&bad_rt_src, "#[no_mangle] pub extern \"C\" fn unused() {}").unwrap();
     let bad_rt = dir.join(format!("bad_{}", velt_link::runtime_lib_name(&triple)));
-    let st = Command::new("rustc")
+    let st = command("rustc")
         .args(["--crate-type", "staticlib", "--crate-name", "bad", "-o"])
         .arg(&bad_rt)
         .arg(&bad_rt_src)
@@ -213,4 +212,27 @@ fn link_and_run_on_host() {
     );
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `Command::new(program)` for a test's child process. On Windows, when this test process has no
+/// console (a CI agent, a background shell), the child gets a hidden console instead of opening a
+/// window of its own. In a terminal it shares the terminal's console as before, so Ctrl+C still
+/// reaches it.
+fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetConsoleWindow() -> *mut std::ffi::c_void;
+        }
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // SAFETY: takes no arguments; returns this process's console window or null.
+        if unsafe { GetConsoleWindow() }.is_null() {
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+    }
+    cmd
 }
