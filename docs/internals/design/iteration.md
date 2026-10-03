@@ -186,9 +186,12 @@ function* range(n: i64): Generator<i64> {
   throw, and a `break` / `continue` in a `finally` block that targets a loop outside it
   (`FnCx::loop_target`, `Frame::finally_loops`): lowered in the close path, such a jump would
   resume the body instead of finishing.
-- While the body runs the tag is RUNNING; resuming then (the body reaching its own generator)
-  panics with `generator is already running` (JS throws a `TypeError`). The store is dead in
-  an inlined loop and disappears.
+- While the body runs the tag is RUNNING; resuming or closing it then (the body reaching its
+  own generator: `GEN_RUNNING`, `DROP_BIT | GEN_RUNNING`) panics with `generator is already
+  running` (JS throws a `TypeError`). The store is dead in an inlined loop and disappears. The
+  body cannot free its own state by dropping the last reference to its generator: a call's
+  receiver reached through a counted object or a shared cell (a variable a closure assigns)
+  is shared for the statement (velt_vir stabilize.rs), so the drop happens after the step.
 - A **generator object** is one heap block `[table: ptr][state]` (the class's first field is the
   table pointer; states are at most 8-aligned; an async generator has its call queue between
   them, section 4): the static per-instance table holds resume,

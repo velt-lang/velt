@@ -33,8 +33,11 @@ use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 pub(super) const GEN_DONE: i128 = 0;
 pub(super) const GEN_YIELDED: i128 = 1;
 pub(super) const GEN_THREW: i128 = 2;
-/// Tag of a generator whose body is running: resuming it again from inside (through a
-/// reference it holds to itself) panics, as JS throws "Generator is already running".
+/// Tag of a generator whose body is running: resuming or closing it from inside (`next()` or
+/// `return()` through a reference it holds to itself) panics, as JS throws "Generator is already
+/// running". A call keeps its receiver alive (stabilize.rs), so the body cannot drop the last
+/// reference to its own generator; were it dropped anyway (`DROP_BIT | GEN_RUNNING`), freeing
+/// the state under the running body would be unsound, so that panics too.
 pub(super) const GEN_RUNNING: i128 = 0x7FFF_FFFE;
 /// Byte offsets of the table entries: resume `(state, cx) -> u32`, close `(state)`, free `(obj)`,
 /// and for an async generator close-start `(state)` ([`Work::AsyncCloseStart`]).
@@ -122,17 +125,18 @@ impl FnLower<'_, '_> {
         unit()
     }
 
-    /// The dispatch case of a running generator (module docs of [`GEN_RUNNING`]).
+    /// The dispatch cases of a running generator, resumed (`GEN_RUNNING`, also `CLOSE_BIT |
+    /// GEN_RUNNING`) or closed (`DROP_BIT | GEN_RUNNING`): see [`GEN_RUNNING`].
     pub(super) fn running_case(&mut self) {
         let saved = self.cur;
         let b = self.new_block();
         self.live[b.0 as usize] = true;
         self.switch_to(b);
-        let msg = self.str_lit("generator is already running");
-        let p = self.operand_addr(msg, Ty::Agg(vir::STR_AGG));
-        self.call_rt(crate::lower::rt::Rt::Panic, vec![p], None);
+        self.panic_msg("generator is already running");
         self.switch_to(saved);
-        self.actx().cases.push((GEN_RUNNING, b));
+        let cases = &mut self.actx().cases;
+        cases.push((GEN_RUNNING, b));
+        cases.push((DROP_BIT | GEN_RUNNING, b));
     }
 
     /// The close path of `yield` `k`: what `return;` at the `yield` runs (module docs). In an

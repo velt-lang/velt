@@ -181,7 +181,9 @@ contents.
 - Async generators (`async function*`, `async *name()`) and `for await` work as in JS too
   (`AsyncGenerator<T>`); a `for await` over an async generator call allocates nothing
   ([Async generators](../reference/functions.md#async-generators)). Unlike JS, dropping a
-  generator closes it, and a generator cannot be passed to another task.
+  generator closes it (its `finally` blocks run), calling `next()` or `return()` on a generator
+  from inside its own body stops the program (`generator is already running`; JS throws a
+  catchable `TypeError`), and a generator cannot be passed to another task.
 
 ## Errors
 

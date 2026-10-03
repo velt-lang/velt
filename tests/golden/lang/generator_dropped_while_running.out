@@ -1,0 +1,16 @@
+{ done: false, value: 1 }
+field replaced while running 41
+viaField: finally
+{ done: false, value: 41 }
+{ done: false, value: 100 }
+{ done: true }
+{ done: false, value: 1 }
+interface value replaced while running
+viaIface: finally
+{ done: false, value: 2 }
+{ done: false, value: 100 }
+{ done: false, value: 1 }
+variable cleared while running 21
+viaClosure: finally
+{ done: false, value: 21 }
+null

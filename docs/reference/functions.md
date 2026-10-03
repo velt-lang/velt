@@ -120,8 +120,10 @@ console.log(g.next(), g.next().done, g.next().done);   // { done: false, value: 
   `break` / `continue` to a loop outside it (TS allows all three).
 - A generator keeps its arguments (they are owned, as for an async function) and its locals
   between `yield`s. A generator method sees `this` as it is when the body runs, not when the
-  method was called, as in JS. Resuming a generator from inside its own body panics
-  (`generator is already running`; JS throws a `TypeError`).
+  method was called, as in JS. Calling `next()` or `return()` on a generator from inside its
+  own body panics (`generator is already running`; JS throws a `TypeError`). A call keeps the
+  generator alive while it runs: a body that drops the last reference to its own generator
+  (`this.gen = other()`) finishes its step, and the generator is closed and freed after it.
 - A generator cannot be copied: `clone()` of one, passing one to a spawned task (or sending it
   on a channel) and capturing one in an async closure are errors, like for a promise. Pass the
   arguments instead and create the generator where it is used.

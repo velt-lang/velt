@@ -290,6 +290,9 @@ struct LInfo {
     /// The local is a shared cell owned by this function (cells.rs): `vir` holds the cell
     /// pointer; dropping the local releases the cell.
     cell: bool,
+    /// The value lives in a shared cell (this function's or a captured one): a closure may
+    /// replace it while a call borrows it (stabilize.rs).
+    in_cell: bool,
     /// The local holds a generator's state inline (async_fn/generator.rs): `vir` is the state;
     /// dropping the local closes the generator.
     gen: Option<async_fn::GenLocal>,

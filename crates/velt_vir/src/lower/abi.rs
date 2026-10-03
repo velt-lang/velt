@@ -256,6 +256,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 let droppable = cell || vir.is_some() && !by_ref && self.cx.needs_drop(ty);
                 let mut li = LInfo::new(vir, ty, indirect, droppable, LState::Uninit);
                 li.cell = cell;
+                li.in_cell = cell;
                 info[i] = Some(li);
             }
         }
@@ -399,6 +400,7 @@ impl LInfo {
             moved_fields: vec![],
             zero_parts: false,
             cell: false,
+            in_cell: false,
             gen: None,
         }
     }
