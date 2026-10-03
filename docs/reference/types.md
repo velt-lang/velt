@@ -361,8 +361,8 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   in TypeScript: an object literal or object type (`Object.keys({ a: 1, b: "x" })` is `["a",
   "b"]`), a struct, or a class instance, whose fields it lists in declaration order (base class
   fields first, `private` ones too; not static fields or methods). A struct's optional field is
-  listed only when it is not `null`. A class with subclasses is an error, because the value may
-  be a subclass instance with more fields. `console.log` and `JSON` treat a record as an object. A class
+  listed only when it is not `null`. On a class with subclasses it lists the fields of the
+  object's actual class (a `Shape` holding a `Rect` lists the `Rect` fields too). `console.log` and `JSON` treat a record as an object. A class
   cannot `extends` a `Record` (its constructor would leave a closed record without its keys);
   hold one in a field instead. A literal for an enum-keyed record is not supported yet.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,
