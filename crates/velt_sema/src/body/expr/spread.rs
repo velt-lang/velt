@@ -292,7 +292,7 @@ impl FnCx<'_, '_> {
         let Some(elem) = elem else {
             return self.error_expr(span);
         };
-        for (e, src) in elems.iter().zip(&sources) {
+        for (e, src) in elems.iter().zip(&mut sources) {
             let (et, is_array) = match src {
                 Some(Src::Array(_, et)) => (*et, true),
                 Some(Src::Iter(c)) => (c.elem, false),
@@ -307,6 +307,10 @@ impl FnCx<'_, '_> {
                     format!("cannot spread `{from}` elements into an array of `{to}`"),
                     e.span,
                 );
+                if !is_array {
+                    // Reported: its loop is not built.
+                    *src = None;
+                }
             }
         }
         let arr_ty = self.cx.ty.array(elem);

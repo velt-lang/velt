@@ -1,0 +1,80 @@
+// check: no leaks
+// Array destructuring of an iterable (#424): the pattern takes only the values it needs, one
+// `next()` at a time, then closes the iterator (`return()`, or a generator's `finally`) when
+// it is not done yet, as in JS. `...rest` takes the remaining values; a default applies when
+// the iterable ended early. Works in `for...of` heads too. Arrays keep their own path.
+function* count(n: i64): Generator<i64> {
+  try {
+    for (let i = 0; i < n; i++) {
+      console.log(`  yield ${i}`);
+      yield i;
+    }
+  } finally {
+    console.log(`  finally after ${n}`);
+  }
+}
+
+class Countdown implements Iterator<string> {
+  constructor(private n: i64) {}
+
+  next(): IteratorResult<string> {
+    if (this.n == 0) {
+      return { done: true };
+    }
+    this.n--;
+    return { value: `c${this.n}`, done: false };
+  }
+
+  return(): IteratorResult<string> {
+    console.log(`  return() with ${this.n} left`);
+    return { done: true };
+  }
+}
+
+class Countdowns implements Iterable<string> {
+  constructor(private n: i64) {}
+
+  [Symbol.iterator](): Iterator<string> {
+    return new Countdown(this.n);
+  }
+}
+
+function* pairs(): Generator<[string, i64]> {
+  yield ["one", 1];
+  yield ["two", 2];
+}
+
+function* rows(): Generator<Countdowns> {
+  yield new Countdowns(3);
+  yield new Countdowns(2);
+}
+
+function main() {
+  console.log("two of five:");
+  const [a, b] = count(5);
+  console.log("after:", a, b);
+  console.log("all of two:");
+  const [c, d] = count(2);
+  console.log("after:", c, d);
+  console.log("rest:");
+  const [first, ...rest] = count(4);
+  console.log("after:", first, rest);
+  console.log("hole:");
+  const [, second] = new Countdowns(4);
+  console.log("after:", second);
+  console.log("defaults:");
+  let [p, q = "none", r = "none"] = new Countdowns(2);
+  q = q.toUpperCase();
+  console.log("after:", p, q, r);
+  console.log("nested:");
+  const [[k, v], [k2, v2]] = pairs();
+  console.log("after:", k, v, k2, v2);
+  console.log("for...of heads:");
+  for (const [x, y] of rows()) {
+    console.log("row:", x, y);
+  }
+  for (let [x, ...more] of [new Countdowns(2), new Countdowns(3)]) {
+    x = x + "!";
+    console.log("array row:", x, more);
+  }
+}

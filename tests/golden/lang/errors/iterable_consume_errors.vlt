@@ -1,0 +1,70 @@
+// What #424's iterable consumers and syntax still reject, each with the fix: spreading or
+// collecting something that is not iterable, values of the wrong type, function expressions
+// that are not generators, generator expressions that change a captured variable or name
+// themselves, and object literals whose methods are not one iterator method.
+function* numbers(): Generator<i64> {
+  yield 1;
+}
+
+class Box {
+  items: i64[] = [1, 2];
+
+  view() {
+    const withThis = {
+      *[Symbol.iterator](): Generator<i64> {
+        yield* this.items;
+      },
+    };
+  }
+}
+
+function main() {
+  const n = 5;
+  const a = [...n];
+  const b: string[] = [...numbers()];
+  const c = Array.from(n);
+  const plain = function (x: i64): i64 {
+    return x;
+  };
+  const generic = function* <T>(x: T): Generator<T> {
+    yield x;
+  };
+  const rest = function* (...xs: i64[]): Generator<i64> {
+    yield* xs;
+  };
+  let total = 0;
+  const counting = function* (): Generator<i64> {
+    total += 1;
+    yield total;
+  };
+  const walk = function* walk(k: i64): Generator<i64> {
+    if (k > 0) {
+      yield* walk(k - 1);
+    }
+    yield k;
+  };
+  const untyped = function* () {
+    yield 1;
+  };
+  const extra = {
+    size: 2,
+    *[Symbol.iterator](): Generator<i64> {
+      yield 1;
+    },
+  };
+  const method = {
+    describe(): string {
+      return "x";
+    },
+  };
+  const wrongResult = {
+    [Symbol.iterator](): i64[] {
+      return [1];
+    },
+  };
+  const wrongKey = {
+    async *[Symbol.iterator](): AsyncGenerator<i64> {
+      yield 1;
+    },
+  };
+}

@@ -1,0 +1,9 @@
+[ 1, 2, 3, 4 ] 10
+loop: 1
+loop: 2
+loop: 3
+loop: 4
+destructured: 1 2
+[ 2, 1, 0 ] [ 2, 1, 0 ] 3
+async: x
+async: y
