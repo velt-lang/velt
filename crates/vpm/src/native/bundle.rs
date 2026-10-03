@@ -5,7 +5,9 @@
 use std::path::Path;
 
 use crate::archive;
-use crate::native::{library_files, NativeMeta, LEGACY_META_FILE, META_FILE};
+use crate::native::{
+    export_prefix, exports, init_symbol, library_files, NativeMeta, LEGACY_META_FILE, META_FILE,
+};
 
 /// Whether `path` (relative, `/`-separated) may be part of a bundle.
 fn allowed(path: &str) -> bool {
@@ -106,6 +108,14 @@ pub fn unpack_verified(
     let meta = NativeMeta::parse(&String::from_utf8_lossy(&meta.bytes), what)?;
     let files: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
     check_meta(&meta, (name, version, target), &files, what)?;
+    let file = |path: &str| {
+        entries
+            .iter()
+            .find(|e| e.path == path)
+            .map(|e| e.bytes.clone())
+            .ok_or_else(|| format!("{what}: the bundle has no `{path}`"))
+    };
+    check_exports(&meta, &file, what)?;
     if dest.exists() {
         std::fs::remove_dir_all(dest)
             .map_err(|e| format!("cannot clean `{}`: {e}", dest.display()))?;
@@ -151,7 +161,84 @@ pub fn check_meta(
             ));
         }
     }
-    check_library_files(meta, what)
+    check_library_files(meta, what)?;
+    check_export_names(meta, what)
+}
+
+/// Every export listed in the metadata carries the package's prefix (`<pkg>_`): a `declare` of a
+/// listed name must resolve to the package's own library, never to a C library function such as
+/// `free` that an unprefixed name would bind to.
+fn check_export_names(meta: &NativeMeta, what: &str) -> Result<(), String> {
+    let prefix = export_prefix(&meta.package);
+    let init = init_symbol(&meta.package);
+    let bad: Vec<&str> = meta
+        .exports
+        .keys()
+        .filter(|n| !n.starts_with(&prefix) || **n == init)
+        .map(String::as_str)
+        .collect();
+    if bad.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "{what}: {META_FILE} lists exports that are not package `{}`'s functions (each must start with `{prefix}`): `{}`",
+        meta.package,
+        bad.join("`, `")
+    ))
+}
+
+/// The shared library (`library`: its bytes) must export exactly the functions, with the
+/// signatures, that the metadata lists: a prebuilt bundle's list is not trusted as written.
+/// The import library and the prelinked object are held to the same list
+/// ([`exports::check_import_library`], [`exports::check_static_object`]). `file` reads one of the
+/// bundle's files by its path in the metadata.
+pub fn check_exports(
+    meta: &NativeMeta,
+    file: &dyn Fn(&str) -> Result<Vec<u8>, String>,
+    what: &str,
+) -> Result<(), String> {
+    let library = file(&meta.shared)?;
+    check_shared_library(meta, &library, what)?;
+    if let Some(import_lib) = &meta.import_lib {
+        let dll = meta.shared.rsplit('/').next().unwrap_or(&meta.shared);
+        let names = exports::exported_names(&library)
+            .map_err(|e| format!("{what}: the shared library `{}`: {e}", meta.shared))?;
+        exports::check_import_library(&file(import_lib)?, dll, &names)
+            .map_err(|e| format!("{what}: `{import_lib}`: {e}"))?;
+    }
+    if let Some(object) = &meta.static_obj {
+        exports::check_static_object(&file(object)?, &meta.package, &meta.exports)
+            .map_err(|e| format!("{what}: `{object}`: {e}"))?;
+    }
+    Ok(())
+}
+
+fn check_shared_library(meta: &NativeMeta, library: &[u8], what: &str) -> Result<(), String> {
+    let actual = exports::read(library, &meta.package)
+        .map_err(|e| format!("{what}: the shared library `{}`: {e}", meta.shared))?;
+    if actual == meta.exports {
+        return Ok(());
+    }
+    let mut problems = vec![];
+    for (name, sig) in &meta.exports {
+        match actual.get(name) {
+            None => problems.push(format!(
+                "`{name}` is listed but the library does not export it"
+            )),
+            Some(real) if real != sig => problems.push(format!(
+                "`{name}` is listed as `{sig}`, but the library records `{real}`"
+            )),
+            Some(_) => {}
+        }
+    }
+    for name in actual.keys().filter(|n| !meta.exports.contains_key(*n)) {
+        problems.push(format!("the library exports `{name}`, which is not listed"));
+    }
+    Err(format!(
+        "{what}: {META_FILE} does not match the shared library `{}`:\n  {}",
+        meta.shared,
+        problems.join("\n  ")
+    ))
 }
 
 fn check_library_files(meta: &NativeMeta, what: &str) -> Result<(), String> {
@@ -191,13 +278,70 @@ mod tests {
             shared: "shared/libvelt_native_p.so".into(),
             import_lib: None,
             static_obj: Some("static/p.o".into()),
-            exports: BTreeMap::new(),
+            exports: BTreeMap::from([("p_open".into(), "()->u64".into())]),
         };
         std::fs::create_dir_all(dir.join("shared")).unwrap();
         std::fs::create_dir_all(dir.join("static")).unwrap();
         std::fs::write(dir.join(META_FILE), meta.to_json()).unwrap();
-        std::fs::write(dir.join("shared/libvelt_native_p.so"), b"ELF").unwrap();
-        std::fs::write(dir.join("static/p.o"), b"obj").unwrap();
+        let library = exports::sample_library("p", &meta.exports, version);
+        std::fs::write(dir.join("shared/libvelt_native_p.so"), library).unwrap();
+        let object = exports::sample_object("p", &meta.exports, version);
+        std::fs::write(dir.join("static/p.o"), object).unwrap();
+    }
+
+    /// `sample`'s bundle with its metadata's export list replaced by `exports`.
+    fn with_listed_exports(dir: &Path, exports: &[(&str, &str)]) {
+        let mut meta = NativeMeta::read(dir).unwrap();
+        meta.exports = exports
+            .iter()
+            .map(|(n, s)| (n.to_string(), s.to_string()))
+            .collect();
+        std::fs::write(dir.join(META_FILE), meta.to_json()).unwrap();
+    }
+
+    #[test]
+    fn listed_exports_must_be_the_librarys_own() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = ("p", "1.0.0", "x86_64-unknown-linux-gnu");
+        let b = tmp.path().join("b");
+        sample(&b, "1.0.0");
+        crate::native::NativeLib::open(&b, crate::native::NativeOrigin::Prebuilt).unwrap();
+        let cases: [(&[(&str, &str)], &str); 4] = [
+            // A C library function: a `declare` of it would bind to libc.
+            (
+                &[("p_open", "()->u64"), ("free", "(u64)->void")],
+                "(each must start with `p_`): `free`",
+            ),
+            (
+                &[("p_open", "()->u64"), ("p_close", "(u64)->void")],
+                "`p_close` is listed but the library does not export it",
+            ),
+            (
+                &[("p_open", "(u64)->u64")],
+                "`p_open` is listed as `(u64)->u64`, but the library records `()->u64`",
+            ),
+            (&[], "the library exports `p_open`, which is not listed"),
+        ];
+        for (listed, expected) in cases {
+            with_listed_exports(&b, listed);
+            let open = crate::native::NativeLib::open(&b, crate::native::NativeOrigin::Prebuilt);
+            let e = open.map(drop).unwrap_err();
+            assert!(e.contains(expected), "{e}");
+            let (bytes, sum) = (pack(&b).unwrap(), checksum(&b).unwrap());
+            let out = tmp.path().join("out");
+            let e = unpack_verified(&bytes, &sum, id, &out, "t").unwrap_err();
+            assert!(e.contains(expected), "{e}");
+            assert!(!out.exists());
+        }
+        // A library that is not one.
+        sample(&b, "1.0.0");
+        std::fs::write(b.join("shared/libvelt_native_p.so"), b"ELF").unwrap();
+        let open = crate::native::NativeLib::open(&b, crate::native::NativeOrigin::Prebuilt);
+        let e = open.map(drop).unwrap_err();
+        assert!(
+            e.contains("the shared library `shared/libvelt_native_p.so`: cannot read"),
+            "{e}"
+        );
     }
 
     #[test]

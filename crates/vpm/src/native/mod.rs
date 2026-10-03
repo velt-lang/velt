@@ -18,6 +18,8 @@
 pub mod build;
 pub mod bundle;
 pub mod exports;
+#[doc(hidden)]
+pub mod samples;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -150,6 +152,11 @@ impl NativeLib {
         );
         let what = format!("`{}`", dir.display());
         bundle::check_meta(&meta, id, &bundle::list_files(dir)?, &what)?;
+        let file = |path: &str| {
+            let path = dir.join(path);
+            std::fs::read(&path).map_err(|e| format!("cannot read `{}`: {e}", path.display()))
+        };
+        bundle::check_exports(&meta, &file, &what)?;
         Ok(NativeLib {
             dir: dir.to_path_buf(),
             meta,

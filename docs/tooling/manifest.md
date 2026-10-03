@@ -41,7 +41,8 @@ file and reports these errors without building anything.
 ## `name`, `version`, `description`, `keywords`, `entry`
 
 - `name`: lowercase letters, digits, `_` and `-`, starting with a letter. `std` is reserved for
-  the standard library.
+  the standard library, and `pthread`, `sem`, `shm` and `posix` because a package's native
+  functions start with its name and `_` (`sem_open` is the C library's).
 - `version`: a semantic version.
 - `description`: one line about the package, shown by `velt search` and registry listings: at most
   200 characters, no line breaks, no surrounding whitespace.
