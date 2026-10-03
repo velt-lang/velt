@@ -131,7 +131,14 @@ impl FnLower<'_, '_> {
             TyKind::Adt(d, _) => {
                 let anon = self.cx.adt_def(d).kind == AdtKind::Anon;
                 let name = (!anon).then(|| self.cx.type_name(ty));
-                self.format_fields(buf, name, place, ty);
+                if self.cx.recursive_object(d) {
+                    // A recursive object is a box (its pointer is the value) and may be part
+                    // of a cycle.
+                    let p = Operand::Copy(place.clone());
+                    self.format_once(buf, p, |lw| lw.format_fields(buf, name, place, ty));
+                } else {
+                    self.format_fields(buf, name, place, ty);
+                }
             }
             TyKind::Tuple(tys) => {
                 self.push_text(buf, "[ ");
@@ -319,13 +326,30 @@ impl FnLower<'_, '_> {
             self.terminate(Terminator::Return(unit()));
             return;
         }
-        if !self.format_map(&buf, &Place::local(obj), ty)
-            && !self.format_record(&buf, &Place::local(obj), ty)
-        {
-            let name = Some(self.cx.type_name(ty));
-            self.format_fields(&buf, name, &Place::local(obj), ty);
-        }
+        let p = Operand::Copy(Place::local(obj));
+        self.format_once(&buf, p, |lw| {
+            if !lw.format_map(&buf, &Place::local(obj), ty)
+                && !lw.format_record(&buf, &Place::local(obj), ty)
+            {
+                let name = Some(lw.cx.type_name(ty));
+                lw.format_fields(&buf, name, &Place::local(obj), ty);
+            }
+        });
         self.terminate(Terminator::Return(unit()));
+    }
+
+    /// Print the object at address `p` with `body`, unless it is already being printed: an
+    /// object graph with a cycle prints `[Circular *1]` there, and the object it refers back to
+    /// gets a `<ref *1>` prefix, as node prints it.
+    fn format_once(&mut self, buf: &Operand, p: Operand, body: impl FnOnce(&mut Self)) {
+        let fresh = self.rt_u8(Rt::StrbufInspectEnter, vec![buf.clone(), p]);
+        let (print, done) = (self.new_block(), self.new_block());
+        self.branch(fresh, print, done);
+        self.switch_to(print);
+        body(self);
+        self.call_rt(Rt::StrbufInspectLeave, vec![buf.clone()], None);
+        self.goto(done);
+        self.switch_to(done);
     }
 
     pub(super) fn dyn_format_body(&mut self, buf: Operand, data: vir::Local, ty: TyId) {
