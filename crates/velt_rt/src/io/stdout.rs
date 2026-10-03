@@ -5,8 +5,11 @@
 //! into one shared buffer (one mutex acquisition) when it fills, when stdout is flushed, at the end
 //! of every task poll (`publish_thread_output`) — before the task can resume on another worker, so
 //! `log a; await; log b` always prints `a` before `b` — and before the task hands work to another
-//! (`publish_before_handoff`: spawn, channel send, settling a promise, aborting a signal), so a line
-//! logged before `spawn(f())` prints before anything `f` prints. The shared buffer reaches the OS
+//! (`publish_before_handoff`, called before the hand-off becomes visible: spawning a task, a channel
+//! send or close, a receive that frees room in a bounded channel, settling a `new Promise`, aborting
+//! a signal, a child leaving a task group), so a line logged before `spawn(f())` prints before
+//! anything `f` prints. Hand-offs through shared state (`shared`, a `Mutex`) and timers are not
+//! covered: such lines may still appear out of order. The shared buffer reaches the OS
 //! when it fills, on explicit flushes, and when a worker goes idle. On an interactive terminal every
 //! completed line is written through immediately (line buffering, like C stdio).
 
@@ -160,6 +163,12 @@ pub fn publish_local() {
             }
         }
     });
+}
+
+/// Bytes in this thread's buffer (for tests).
+#[cfg(test)]
+pub(crate) fn local_len() -> usize {
+    LOCAL.with(|l| l.0.borrow().len())
 }
 
 /// Write everything buffered by this thread and the shared buffer to the OS.

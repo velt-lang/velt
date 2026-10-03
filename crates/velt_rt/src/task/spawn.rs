@@ -261,3 +261,26 @@ pub unsafe extern "C" fn velt_rt_spawn_detached(
         );
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::task::READY;
+    use std::ffi::c_void;
+
+    unsafe extern "C" fn done(_: *mut u8, _: *mut c_void) -> u32 {
+        READY
+    }
+
+    unsafe extern "C" fn nothing(_: *mut u8) {}
+
+    #[test]
+    fn spawning_publishes_this_threads_output_first() {
+        use crate::io::handoff_probe::{buffer_output, published};
+        let state = [0u64; 2];
+        buffer_output();
+        // SAFETY: a 16-byte state whose poll finishes at once and owns nothing.
+        unsafe { velt_rt_spawn_detached(done, nothing, state.as_ptr() as *const u8, 16, 8) };
+        assert!(published());
+    }
+}

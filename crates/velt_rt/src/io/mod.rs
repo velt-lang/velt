@@ -36,11 +36,30 @@ pub fn publish_thread_output() {
     stdout::publish_local();
 }
 
-/// Called before this task hands work to another one (spawns a task, sends on a channel, settles
-/// a promise, aborts a signal): what it printed so far becomes visible before anything the other
-/// task prints, which may run on another worker at once.
+/// Called before this task hands work to another one, ahead of the change the other task sees:
+/// spawning a task, a channel send or close, a receive that frees room in a bounded channel,
+/// settling a `new Promise`, aborting a signal, a child leaving a task group. What this thread
+/// printed so far becomes visible before anything the other task prints, which may run on another
+/// worker at once.
 pub fn publish_before_handoff() {
     stdout::publish_local();
+}
+
+/// Test probe for the hand-off points: buffer a line on this thread, and check later whether it
+/// was published.
+#[cfg(test)]
+pub(crate) mod handoff_probe {
+    /// Buffer a space in this thread's buffer (no newline: a terminal would publish a line at
+    /// once).
+    pub(crate) fn buffer_output() {
+        super::stdout::append(|b| b.push(b' '));
+        assert!(!published(), "the line stays buffered");
+    }
+
+    /// Whether this thread's buffer was published (it is empty).
+    pub(crate) fn published() -> bool {
+        super::stdout::local_len() == 0
+    }
 }
 
 /// Runtime idle hook (a worker is about to park): write pending output to the OS.

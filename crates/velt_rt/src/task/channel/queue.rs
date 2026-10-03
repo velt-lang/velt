@@ -71,6 +71,8 @@ impl Chan {
     /// # Safety
     /// `src` must point to `size` readable bytes.
     pub(super) unsafe fn try_push(&self, src: *const u8, size: usize) -> Push {
+        // Before the item is visible: a receiver on another worker may take it at once.
+        crate::io::publish_before_handoff();
         let mut s = self.lock();
         if s.closed {
             return Push::Closed;
@@ -82,7 +84,6 @@ impl Chan {
             .extend(std::slice::from_raw_parts(src, size).iter().copied());
         s.len += 1;
         drop(s);
-        crate::io::publish_before_handoff();
         self.items.notify_one();
         Push::Sent
     }
@@ -92,6 +93,10 @@ impl Chan {
     /// # Safety
     /// `dst` must point to `size` writable bytes.
     pub(super) unsafe fn try_pop(&self, dst: *mut u8, size: usize) -> Pop {
+        if self.capacity != 0 {
+            // Before the room is visible: a waiting sender may use it at once.
+            crate::io::publish_before_handoff();
+        }
         let mut s = self.lock();
         if s.len == 0 {
             return if s.closed { Pop::Closed } else { Pop::Empty };
@@ -102,7 +107,6 @@ impl Chan {
         s.len -= 1;
         drop(s);
         if self.capacity != 0 {
-            crate::io::publish_before_handoff();
             self.space.notify_one();
         }
         Pop::Item
@@ -110,13 +114,13 @@ impl Chan {
 
     /// Close: senders fail from now on, receivers drain what is left. Wakes every waiter.
     pub(super) fn close(&self) {
+        crate::io::publish_before_handoff();
         let mut s = self.lock();
         if s.closed {
             return;
         }
         s.closed = true;
         drop(s);
-        crate::io::publish_before_handoff();
         self.items.notify_waiters();
         self.space.notify_waiters();
     }
