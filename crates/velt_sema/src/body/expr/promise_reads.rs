@@ -47,6 +47,19 @@ impl FnCx<'_, '_> {
         );
     }
 
+    /// `const p = obj.run` / `const { run } = obj` on a class instance: binding the promise field
+    /// would share it with the object.
+    pub(in crate::body) fn promise_out_of_object(&mut self, t: TyId, span: Span) {
+        let tn = self.cx.display(t);
+        self.cx.error(
+            Diagnostic::error(format!("cannot read a `{tn}` field out of an object"), span)
+                .with_note(format!(
+                    "{WHY}: await the promise before storing it in the object, or keep it \
+                     outside the object (in an array, taken out with `pop()`)"
+                )),
+        );
+    }
+
     /// `[...arr]` / `f(...arr)` copying elements that hold a promise: reported (returns whether
     /// it was).
     pub(in crate::body) fn reject_promise_spread(&mut self, elem: TyId, span: Span) -> bool {

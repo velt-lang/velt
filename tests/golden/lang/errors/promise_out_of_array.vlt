@@ -1,7 +1,7 @@
 // A promise has one owner and can't be copied (TypeScript allows these; shared promises are
 // #212), so reading one out of an array is an error on every path that would copy it: moving or
 // binding an element, methods and generic functions that copy elements (found per
-// instantiation), spreading and destructuring. `pop()`, `shift()`, `splice` and `Promise.all`
+// instantiation), spreading and destructuring. `pop()`, `splice` and `Promise.all`
 // take them out (lang/promises_in_collections).
 async function work(n: i64): Promise<string> {
   return `done ${n}`;

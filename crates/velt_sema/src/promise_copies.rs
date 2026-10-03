@@ -17,6 +17,7 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
+use crate::dispatch::{instantiate, Dispatch};
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, StmtKind, TyId, TyKind};
 use crate::types::collect_params;
 use crate::visit::{self, VisitMut};
@@ -37,6 +38,10 @@ struct Facts {
     /// Generic calls: callee, type arguments, span of the call.
     calls: Vec<(DefId, Vec<TyId>, Span)>,
     closures: Vec<DefId>,
+    /// Class values whose methods are called dynamically (virtual calls, interface values).
+    dispatch: Vec<(TyId, Span)>,
+    /// The methods those reach, with the class's type arguments.
+    dyn_calls: Vec<(DefId, Vec<TyId>, Span)>,
     /// Spans of `for...of` iterables (a call there is "iterating").
     loops: HashSet<Span>,
 }
@@ -79,13 +84,36 @@ impl VisitMut for Collect<'_> {
                 }
             }
             E::Closure(c) => self.facts.closures.push(*c),
+            // A generic function used as a value: its copies happen wherever it is called.
+            E::FnRef(d, targs) if !targs.is_empty() => {
+                self.facts.calls.push((*d, targs.clone(), e.span));
+            }
+            // Dynamic dispatch: the methods a class value's vtable can reach.
+            E::ToDyn { expr, .. } => self.facts.dispatch.push((expr.ty, e.span)),
+            E::Call {
+                callee: Callee::Virtual { .. },
+                args,
+            } => {
+                if let Some(recv) = args.first() {
+                    self.facts.dispatch.push((recv.ty, e.span));
+                }
+            }
             _ => {}
         }
     }
 }
 
 pub(crate) fn check(cx: &mut Ctx) {
-    let facts = collect(cx);
+    let mut facts = collect(cx);
+    // Dynamic dispatch becomes calls of every method the value's class can reach.
+    let mut dispatch = Dispatch::default();
+    for (_, fx) in &mut facts {
+        for (t, span) in std::mem::take(&mut fx.dispatch) {
+            for (m, args) in dispatch.targets(cx, t) {
+                fx.dyn_calls.push((m, args, span));
+            }
+        }
+    }
     // The generic types each function copies (types that mention its type parameters).
     let mut needs: HashMap<DefId, Vec<Copy>> = HashMap::new();
     // Concrete promise-holding copies found at calls: (caller, call span) -> (copied type, callee).
@@ -99,6 +127,13 @@ pub(crate) fn check(cx: &mut Ctx) {
             for (d, targs, span) in &fx.calls {
                 for (t, deep) in needs.get(d).cloned().unwrap_or_default() {
                     reqs.push(((cx.ty.subst(t, targs), deep), Some((*span, *d))));
+                }
+            }
+            for (m, args, span) in &fx.dyn_calls {
+                for (t, deep) in needs.get(m).cloned().unwrap_or_default() {
+                    if let Some(t) = instantiate(cx, t, args) {
+                        reqs.push(((t, deep), Some((*span, *m))));
+                    }
                 }
             }
             for c in &fx.closures {
@@ -149,6 +184,14 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let mut facts = Facts::default();
+        // A capture that shares the enclosing variable copies it, without an intrinsic.
+        for c in &f.captures {
+            if c.share {
+                facts
+                    .copies
+                    .push((f.body.locals[c.inner.0 as usize].ty, false));
+            }
+        }
         visit::block(
             &mut f.body.block,
             &mut Collect {
@@ -213,7 +256,7 @@ fn container(name: &str) -> (&'static str, bool) {
     let owner = short.rsplit_once('.').map_or("", |(o, _)| o);
     match owner {
         "Map" => (" out of the `Map`", true),
-        "Record" => (" out of the `Record`", false),
+        "Record" => (" out of the `Record`", true),
         "Set" => (" out of the `Set`", false),
         o if o.ends_with("[]") => (" out of the array", false),
         _ => ("", false),
@@ -254,21 +297,24 @@ fn report(cx: &mut Ctx, span: Span, t: TyId, callee: DefId, iterating: bool) {
         format!("{} would copy a `{tn}`{from}", written(&name))
     };
     let direct = matches!(cx.ty.kind(t), TyKind::Promise(..));
-    let note = if !direct {
-        format!(
-            "{WHY}, nor can a value that holds one: read its fields in place (`xs[i].field`), \
-             or take it out with `pop()` or `splice(i, 1)`"
-        )
-    } else if map {
-        format!(
+    let note = match (direct, map) {
+        (false, true) => format!(
+            "{WHY}, nor can a value type that holds one: store the awaited result instead of the \
+             promise, or make `{tn}` a class (a class instance is shared, not copied)"
+        ),
+        (false, false) => format!(
+            "{WHY}, nor can a value type that holds one: read its fields in place \
+             (`xs[i].field`), take it out with `pop()` or `splice(i, 1)`, or make `{tn}` a class \
+             (a class instance is shared, not copied)"
+        ),
+        (true, true) => format!(
             "{WHY}: store the awaited result (`m.set(k, await p)`), or keep the promises in an \
              array and take them out with `pop()` or `splice(i, 1)`"
-        )
-    } else {
-        format!(
+        ),
+        (true, false) => format!(
             "{WHY}: take promises out with `pop()` or `splice(i, 1)`, or await them together \
              with `Promise.all(arr)`"
-        )
+        ),
     };
     cx.error(Diagnostic::error(msg, span).with_note(note));
 }

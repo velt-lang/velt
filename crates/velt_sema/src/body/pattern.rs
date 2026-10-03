@@ -113,6 +113,9 @@ impl FnCx<'_, '_> {
                     (0, err)
                 }
             };
+            if self.binds_promise(fty) && self.cx.class_of(ty).is_some() {
+                self.promise_out_of_object(fty, sub.span);
+            }
             let sp = self.pattern(sub, fty, ctx);
             out.push((idx, sp));
         }
