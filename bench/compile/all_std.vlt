@@ -15,5 +15,5 @@ function main() {
   console.log(`${p} ${existsSync(p)} ${clamp(gcd(12, 18), 0, 5)} ${argv().length}`);
   console.log(env("HOME") ?? "");
   const r = Response.text("ok");
-  console.log(`${r.raw != 0}`);
+  console.log(`${r.setHeader("x-a", "1")}`);
 }

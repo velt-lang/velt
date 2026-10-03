@@ -1,0 +1,2 @@
+Ticket { id: 1, secret: 7 }
+[ Ticket { id: 2, secret: 7 } ]

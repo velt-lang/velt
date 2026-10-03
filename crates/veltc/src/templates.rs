@@ -112,7 +112,13 @@ impl Template {
         let mut files = vec![
             ScaffoldFile::new(
                 vpm::manifest::MANIFEST_FILE,
-                vpm::scaffold::manifest_text(name),
+                // A library is published and searched for: it starts with a description to edit.
+                vpm::scaffold::manifest_text_with(
+                    name,
+                    self.is_lib()
+                        .then(|| format!("What {name} does, in one sentence."))
+                        .as_deref(),
+                ),
             ),
             ScaffoldFile {
                 if_exists: IfExists::AppendLines,

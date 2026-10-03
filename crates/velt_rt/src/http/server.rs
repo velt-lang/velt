@@ -8,7 +8,11 @@
 //! future (size classes, like `spawn`), so a request costs no allocation beyond hyper's own and the
 //! request/response objects. The request body is read completely before the handler starts, so
 //! `req.body` is a plain synchronous accessor. The handler's result (state offset 0) is a
-//! `VeltResp*`.
+//! response key (`response.rs`).
+//!
+//! A server handle is a registry key too (`crate::registry`): after `close()`, `shutdown()` or
+//! dropping the `Server`, any copy of the handle (or a forged one) is inert: `port` is 0 and the
+//! other operations do nothing.
 //!
 //! `serve_tls` terminates TLS first (rustls, ALPN h2/http1.1). HTTP/1.1 connections support
 //! upgrades: a request asking for one parks its `OnUpgrade` (`upgrade.rs`) for std/websocket.
@@ -17,10 +21,10 @@ use super::body::RespBody;
 use super::handler::Shared;
 pub use super::handler::{InitFn, VeltHandler};
 use super::request::ReqObj;
-use super::response::RespObj;
+use super::response::RespHandle;
 use super::upgrade;
-use crate::handle::Handle;
 use crate::net::tcp::text_arg;
+use crate::registry::{Key, Registry};
 use crate::result::{code, IoResult, VeltErr};
 use crate::str::VeltStr;
 use crate::task::compiled::{with_state_store, Compiled, OwnedStore};
@@ -46,6 +50,11 @@ use tokio_rustls::TlsAcceptor;
 
 /// How long a client may take to complete its TLS handshake.
 const TLS_HANDSHAKE: Duration = Duration::from_secs(10);
+
+/// A server handle (a registry key).
+pub type ServerHandle = Key<ServerObj>;
+
+static SERVERS: Registry<ServerObj> = Registry::new();
 
 /// A running server (`VeltServer` in the ABI docs).
 pub struct ServerObj {
@@ -91,8 +100,8 @@ impl<S: OwnedStore> HandlerFut<S> {
 ///
 /// # Safety
 /// The handler must have completed and its result must not have been taken yet.
-unsafe fn take_response<S: OwnedStore>(inner: Pin<&mut Compiled<S>>) -> Handle<RespObj> {
-    *(inner.state_ptr() as *const Handle<RespObj>)
+unsafe fn take_response<S: OwnedStore>(inner: Pin<&mut Compiled<S>>) -> RespHandle {
+    *(inner.state_ptr() as *const RespHandle)
 }
 
 impl<S: OwnedStore> Future for HandlerFut<S> {
@@ -105,15 +114,14 @@ impl<S: OwnedStore> Future for HandlerFut<S> {
         if inner.as_mut().poll(cx).is_pending() {
             return Poll::Pending;
         }
-        // SAFETY: the handler completed just now; its result is an owned `VeltResp*` or null.
+        // SAFETY: the handler completed just now; its result is a response key (0 = none).
         let resp = unsafe { take_response(inner.as_mut()) };
         self.inner = None;
-        Poll::Ready(if resp.is_null() {
-            status_only(StatusCode::INTERNAL_SERVER_ERROR)
-        } else {
-            // SAFETY: ownership of the response moves back to the runtime.
-            unsafe { *resp.into_box() }
-        })
+        // Ownership of the response moves back to the runtime; a dead key is a 500.
+        Poll::Ready(
+            super::response::take(resp)
+                .unwrap_or_else(|| status_only(StatusCode::INTERNAL_SERVER_ERROR)),
+        )
     }
 }
 
@@ -131,10 +139,8 @@ async fn finish_detached<S: OwnedStore>(mut inner: Pin<Box<Compiled<S>>>, _share
     inner.as_mut().await;
     // SAFETY: the handler completed; nobody else takes its result.
     let resp = unsafe { take_response(inner.as_mut()) };
-    if !resp.is_null() {
-        // SAFETY: an owned response nobody will send.
-        drop(unsafe { resp.into_box() });
-    }
+    // A response nobody will send.
+    drop(super::response::take(resp));
 }
 
 fn status_only(status: StatusCode) -> Response<RespBody> {
@@ -270,7 +276,7 @@ unsafe fn start(addr: String, handler: VeltHandler, tls: Option<TlsAcceptor>) ->
                 released,
             })
         });
-        IoResult::from_io(r, |s| Handle::from_box(Box::new(s)))
+        IoResult::from_io(r, |s| SERVERS.insert(s))
     })
 }
 
@@ -302,42 +308,49 @@ pub unsafe extern "C" fn velt_rt_http_serve_tls(
             // run) as a failed bind does when its `Shared` is dropped.
             super::handler::release_env((*handler).env);
             new_leaf(async move {
-                IoResult::<Handle<ServerObj>>::err(VeltErr::new(code::INVALID_INPUT, &msg))
+                IoResult::<ServerHandle>::err(VeltErr::new(code::INVALID_INPUT, &msg))
             })
         }
     }
 }
 
-/// `server.port`: the bound port.
+/// `server.port`: the bound port (0 once the handle is closed).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_server_port(s: Handle<ServerObj>) -> u32 {
-    s.obj().port as u32
+pub unsafe extern "C" fn velt_rt_http_server_port(s: ServerHandle) -> u32 {
+    SERVERS.get(s).map_or(0, |s| s.port as u32)
 }
 
 /// `server.close()`: stop accepting, let open connections finish their in-flight requests, and
-/// free the handle. The handler's environment is released once the last request finished.
+/// free the handle. The handler's environment is released once the last request finished. A
+/// closed (or forged) handle is ignored.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_server_close(s: Handle<ServerObj>) {
-    stop(*s.into_box());
+pub unsafe extern "C" fn velt_rt_http_server_close(s: ServerHandle) {
+    stop(s);
 }
 
 /// `await server.shutdown()`: `velt_rt_http_server_close`, then resolves (result `()`) once every
-/// in-flight request has finished and the handler's environment was released.
+/// in-flight request has finished and the handler's environment was released (at once for a
+/// closed handle).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_server_shutdown(s: Handle<ServerObj>) -> *mut VeltFut {
-    let mut released = stop(*s.into_box());
-    new_leaf(async move { while released.changed().await.is_ok() {} })
+pub unsafe extern "C" fn velt_rt_http_server_shutdown(s: ServerHandle) -> *mut VeltFut {
+    let released = stop(s);
+    new_leaf(async move {
+        if let Some(mut released) = released {
+            while released.changed().await.is_ok() {}
+        }
+    })
 }
 
-fn stop(s: ServerObj) -> watch::Receiver<()> {
+fn stop(s: ServerHandle) -> Option<watch::Receiver<()>> {
+    let s = SERVERS.remove(s)?;
     s.accept_loop.abort();
     crate::task::runtime::keep_alive_release();
-    s.released
+    Some(s.released.clone())
 }
 
 /// Dropping a `Server` value: free the handle but keep serving (like Node, a listening server runs
 /// until `close()` or process exit, whether or not the program still holds it).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_http_server_detach(s: Handle<ServerObj>) {
-    drop(s.into_box());
+pub unsafe extern "C" fn velt_rt_http_server_detach(s: ServerHandle) {
+    drop(SERVERS.remove(s));
 }

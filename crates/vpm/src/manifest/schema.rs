@@ -57,6 +57,22 @@ pub const PACKAGE: &[Field] = &[
         doc: "A semantic version, such as `\"0.1.0\"`.",
     },
     Field {
+        key: "description",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "One line about the package, shown by `velt search` and registry listings: at most \
+              200 characters, no line breaks, no surrounding whitespace.",
+    },
+    Field {
+        key: "keywords",
+        kind: Kind::StrArray { values: &[] },
+        ty: "string[]",
+        required: false,
+        doc: "Search words, such as `[\"json\", \"parser\"]`: at most 10, each lowercase \
+              letters, digits and `-` (at most 32 characters).",
+    },
+    Field {
         key: "entry",
         kind: Kind::Str,
         ty: "string",

@@ -1,16 +1,22 @@
-//! Handle tables for the runtime objects `std` exposes through Copy handle structs: TCP
-//! listeners and streams, UDP sockets, child processes, file readers and writers, WebSockets
+//! Handle tables for the runtime objects `std` exposes: TCP listeners and streams, UDP sockets,
+//! child processes, file readers and writers, WebSockets, HTTP servers, requests and responses
 //! (rt_abi_async.md §3.2).
 //!
 //! Velt code copies those structs freely, so after `close()` through one copy another copy (in
 //! another task, say) may still hold the handle. Such a handle is therefore not the object's
-//! address but a key into a table, `(generation << 32) | (slot + 1)`: `close()` removes the
-//! entry (operations in flight keep their own `Arc`, so the object lives until they finish),
-//! and every later use of any copy finds no entry and fails with `EBADF` ("handle is closed")
-//! instead of touching freed memory. A slot is reused with the next generation, so a stale
+//! address but a key into a table, `(generation << 32) | (shard << 24) | (slot + 1)`: `close()`
+//! removes the entry (operations in flight keep their own `Arc`, so the object lives until they
+//! finish), and every later use of any copy finds no entry and fails with `EBADF` ("handle is
+//! closed") instead of touching freed memory. A slot is reused with the next generation, so a stale
 //! handle never reaches a newer object.
+//!
+//! The table is split into [`SHARDS`] shards, each behind its own lock. A thread inserts into
+//! "its" shard (assigned round-robin on first use), and the shard is part of the key, so the
+//! objects one worker creates and uses (an HTTP request and its response, on the worker that runs
+//! the handler) never wait for another worker's lock.
 
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::result::{code, IoResult, VeltErr};
@@ -49,10 +55,26 @@ impl<T> Key<T> {
         Key(bits, PhantomData)
     }
 
-    fn slot(self) -> Option<(usize, u32)> {
-        let index = (self.0 & 0xffff_ffff) as usize;
-        (index != 0).then(|| (index - 1, (self.0 >> 32) as u32))
+    /// `(shard, slot, generation)`, or `None` for the null key.
+    fn slot(self) -> Option<(usize, usize, u32)> {
+        let low = (self.0 & 0xffff_ffff) as usize;
+        let index = low & SLOT_MASK;
+        (index != 0).then(|| (low >> SHARD_SHIFT, index - 1, (self.0 >> 32) as u32))
     }
+}
+
+/// Number of shards (a power of two; the shard index takes the key's bits 24..32).
+pub const SHARDS: usize = 16;
+const SHARD_SHIFT: usize = 24;
+const SLOT_MASK: usize = (1 << SHARD_SHIFT) - 1;
+
+/// The shard this thread inserts into.
+fn home_shard() -> usize {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    thread_local! {
+        static HOME: usize = NEXT.fetch_add(1, Ordering::Relaxed) % SHARDS;
+    }
+    HOME.with(|h| *h)
 }
 
 struct Slot<T> {
@@ -67,8 +89,12 @@ struct Table<T> {
 
 /// The open objects of one kind, keyed by handle.
 pub struct Registry<T> {
-    table: Mutex<Table<T>>,
+    shards: [Shard<T>; SHARDS],
 }
+
+/// One shard's lock and table, on cache lines of its own (no false sharing between workers).
+#[repr(align(128))]
+struct Shard<T>(Mutex<Table<T>>);
 
 impl<T> Default for Registry<T> {
     fn default() -> Self {
@@ -80,22 +106,26 @@ impl<T> Registry<T> {
     /// An empty table (usable in a `static`).
     pub const fn new() -> Self {
         Registry {
-            table: Mutex::new(Table {
-                slots: Vec::new(),
-                free: Vec::new(),
-            }),
+            shards: [const {
+                Shard(Mutex::new(Table {
+                    slots: Vec::new(),
+                    free: Vec::new(),
+                }))
+            }; SHARDS],
         }
     }
 
-    fn lock(&self) -> MutexGuard<'_, Table<T>> {
+    fn lock(&self, shard: usize) -> Option<MutexGuard<'_, Table<T>>> {
         // A poisoned lock only means a panic elsewhere (which ends the process anyway).
-        self.table.lock().unwrap_or_else(|e| e.into_inner())
+        let table = self.shards.get(shard)?;
+        Some(table.0.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     /// Register a new object; the table holds one reference until [`remove`](Self::remove).
     pub fn insert(&self, obj: T) -> Key<T> {
         let obj = Arc::new(obj);
-        let mut t = self.lock();
+        let shard = home_shard();
+        let mut t = self.lock(shard).expect("ICE: home shard exists");
         let index = match t.free.pop() {
             Some(i) => {
                 t.slots[i].obj = Some(obj);
@@ -109,17 +139,19 @@ impl<T> Registry<T> {
                 t.slots.len() - 1
             }
         };
+        assert!(
+            index < SLOT_MASK,
+            "ICE: more than 16M open handles of one kind in one shard"
+        );
         let generation = t.slots[index].generation;
-        Key(
-            ((generation as u64) << 32) | (index as u64 + 1),
-            PhantomData,
-        )
+        let low = (shard << SHARD_SHIFT) | (index + 1);
+        Key(((generation as u64) << 32) | low as u64, PhantomData)
     }
 
     /// The object, if the handle is still open.
     pub fn get(&self, key: Key<T>) -> Option<Arc<T>> {
-        let (index, generation) = key.slot()?;
-        let t = self.lock();
+        let (shard, index, generation) = key.slot()?;
+        let t = self.lock(shard)?;
         let slot = t.slots.get(index)?;
         (slot.generation == generation)
             .then(|| slot.obj.clone())
@@ -142,8 +174,8 @@ impl<T> Registry<T> {
     /// Close the handle: every copy of it is dead afterwards. Returns the table's reference
     /// (`None` if the handle was already closed or never valid).
     pub fn remove(&self, key: Key<T>) -> Option<Arc<T>> {
-        let (index, generation) = key.slot()?;
-        let mut t = self.lock();
+        let (shard, index, generation) = key.slot()?;
+        let mut t = self.lock(shard)?;
         let slot = t.slots.get_mut(index)?;
         if slot.generation != generation {
             return None;
@@ -193,5 +225,36 @@ mod tests {
         assert_eq!(r.get(b).as_deref().map(String::as_str), Some("b"));
         assert!(r.get(Key(0, PhantomData)).is_none());
         assert!(r.get(Key(12345, PhantomData)).is_none());
+        // A key naming a shard that does not exist.
+        assert!(r
+            .get(Key((1 << 32) | (0xff << 24) | 1, PhantomData))
+            .is_none());
+    }
+
+    #[test]
+    fn threads_insert_into_their_own_shards() {
+        let r: Registry<usize> = Registry::new();
+        let keys: Vec<Key<usize>> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..SHARDS)
+                .map(|i| {
+                    let r = &r;
+                    s.spawn(move || r.insert(i))
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        for (i, k) in keys.iter().enumerate() {
+            assert_eq!(r.get(*k).as_deref(), Some(&i));
+        }
+        let shards: std::collections::HashSet<usize> =
+            keys.iter().map(|k| k.slot().unwrap().0).collect();
+        assert!(
+            shards.len() > 1,
+            "inserts from different threads use different shards"
+        );
+        for k in keys {
+            assert!(r.remove(k).is_some());
+            assert!(r.get(k).is_none());
+        }
     }
 }

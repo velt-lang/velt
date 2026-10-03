@@ -1,0 +1,20 @@
+// `FetchHeaders` refers to its `FetchResponse`'s runtime handle. Used after the response was
+// released, it is a clear runtime error (exit 101), never a read of freed memory.
+import { serve, fetch, Request, Response, FetchHeaders } from "velt:http";
+
+async function headersOf(url: string): Promise<FetchHeaders> {
+  const res = await fetch(url);
+  console.log("status", res.status, res.headers.get("x-kind"));
+  return res.headers;
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const r = Response.text("ok");
+    r.setHeader("x-kind", "test");
+    return r;
+  });
+  const headers = await headersOf(`http://127.0.0.1:${server.port}/`);
+  console.log("response released");
+  console.log(headers.get("x-kind"));
+}

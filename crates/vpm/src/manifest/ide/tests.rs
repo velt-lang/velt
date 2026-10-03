@@ -23,6 +23,8 @@ fn top_level_keys_not_yet_written() {
         labels("{ name: \"a\", | }"),
         [
             "version",
+            "description",
+            "keywords",
             "entry",
             "registry",
             "dependencies",

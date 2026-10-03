@@ -99,7 +99,7 @@ pub fn execute(cmd: Command) -> ExitCode {
             undo,
         } => registry::yank_command(&name, &version, undo),
         Command::Owner { action, package } => registry::owner_command(&action, &package),
-        Command::Search { query } => registry::search_command(&query),
+        Command::Search { query, json } => registry::search_command(&query, json),
         Command::RegistryOwner {
             add,
             package,

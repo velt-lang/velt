@@ -203,10 +203,11 @@ impl FnLower<'_, '_> {
         let kty = self.cx.ty(kt);
         let kv = self.temp(kty);
         match m.keys {
-            // The key borrows the source: keep an owned copy for the map.
+            // The key borrows the source, which may be a temporary freed right after the
+            // parse: the map keeps a copy that owns its bytes (`StrClone` would keep the view).
             None => {
                 let oa = self.addr(Place::local(kv));
-                self.call_rt(Rt::StrClone, vec![ka.clone(), oa], None);
+                self.call_rt(Rt::StrOwn, vec![ka.clone(), oa], None);
             }
             Some(keys) => self.json_record_key(m, ka.clone(), keys, kv),
         }

@@ -7,7 +7,7 @@ compiling or running anything (design: [package-manifest.md](../design/package-m
 import type { Package } from "velt:package";
 
 export const pkg: Package = {
-  name: "hello",                // [a-z][a-z0-9_-]*
+  name: "hello",                // [a-z][a-z0-9_-]*, not std, pthread, sem, shm or posix
   version: "0.1.0",             // semver, required
   entry: "src/main.vlt",        // optional, the default (relative to package.vlt, inside the package)
   dependencies: {
@@ -72,6 +72,11 @@ talk to hosts the checkout names); `$VELT_REGISTRY` is always asked.
   Targets must stay inside the package (no `..`, not absolute). Each package's aliases apply to
   its own modules only (`vpm::PackageGraph::path_alias`).
 - `entry` is a `/`-separated path inside the package (not empty, not absolute, no `..`).
+- `description` (additive, #184): one line of at most 200 characters (Unicode scalar values), no
+  control characters, no leading or trailing whitespace, not empty. `keywords`: at most 10
+  distinct entries, each `[a-z0-9][a-z0-9-]{0,31}`, order kept, not empty. Both optional; an empty
+  string or array is an error saying to remove the field. `to_vlt` writes them after `version`,
+  and `velt manifest --json` prints them when present.
 - A library package exposes `src/lib.vlt` (entry for importers); `src/main.vlt` makes it runnable.
 - `velt.lock.json` (generated JSON: `{ "version": 1, "packages": [...] }`, pretty-printed, stable
   key order, trailing newline) pins exact versions + content hashes; a package with only the
@@ -111,9 +116,17 @@ registry: "https://registry.example.com",
   <url>/api/v1/<name>/<version>/yank` set/clear it (owners). Resolution never selects a yanked
   version unless the lockfile pins it; yanked versions stay downloadable.
 - Search (additive): `GET <url>/api/v1/search?q=<text>` →
-  `{"packages":[{"name":"…","version":"…"}]}`: names containing the text (case-insensitive),
-  exact match first, then prefix matches, then by name; at most 50; the version is the newest
-  not yanked, and packages with only yanked versions are left out.
+  `{"packages":[{"name":"…","version":"…","description"?:"…","keywords"?:["…"]}]}`. The text is
+  lowercased and split on whitespace into terms; a package matches when every term is a
+  substring of its name, one of its keywords or its description. Ranked by the best tier any
+  term reaches (0 the name equals the whole text, 1 the name starts with it, 2 a keyword equals a
+  term, 3 the name contains a term, 4 a keyword starts with a term, 5 the description contains a
+  term), then by how many terms reach that tier, then by name; at most 50. The version is the one
+  `velt add` picks (newest stable not yanked, else newest pre-release not yanked), with that
+  version's `description` and `keywords`; packages with only yanked versions are left out.
+- Index entries (additive, #184) carry the version's `"description"` and `"keywords"` after
+  `"checksum"` (omitted when absent), taken from the published `package.vlt`, also by the server
+  from the uploaded archive (never from request headers).
 - Archives (`vpm::archive`) carry `package.vlt` + `src/**` (+ the `native` crate directory,
   without `target/` and `.git/`); an archive with any other path, such as a `velt.toml`, is
   rejected. Their checksum is the same content hash `velt.lock.json` records, and every download is

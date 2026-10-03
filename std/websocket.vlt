@@ -57,8 +57,7 @@ export class WsMessage {
 
 // An open WebSocket connection (a Copy handle; see the module header).
 export struct WebSocket {
-  handle: u64;
-  private runtime: RuntimeHandle = RuntimeHandle {};
+  private handle: u64;
 
   // Sends a text message.
   async send(text: string): Promise<void> {
@@ -107,7 +106,7 @@ export function upgradeWebSocket(req: Request): WebSocketUpgrade {
   const r = unwrapIo(velt_rt_ws_accept(req.upgrade, req.header("sec-websocket-key") ?? ""));
   return WebSocketUpgrade {
     socket: WebSocket { handle: r.ws },
-    response: new Response(r.response),
+    response: Response.adopt(r.response),
   };
 }
 
@@ -123,8 +122,3 @@ export async function connectWebSocket(
 ): Promise<WebSocket> {
   return WebSocket { handle: unwrapIo(await velt_rt_ws_connect(url, opts.ca ?? "")) };
 }
-
-// A field of this type makes a type opaque: a type with a private field has no JSON form,
-// so untrusted JSON can't produce the runtime handle it holds, and `JSON.stringify` doesn't
-// write it. It takes no space.
-struct RuntimeHandle {}

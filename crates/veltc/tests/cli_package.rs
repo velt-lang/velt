@@ -322,3 +322,29 @@ fn fmt_reports_a_velt_toml_like_every_command() {
         "{err}"
     );
 }
+
+#[test]
+fn search_matches_descriptions_and_prints_json() {
+    let s = sandbox();
+    s.ok("", &["new", "textkit", "--template", "lib"]);
+    let manifest = s
+        .read("textkit/package.vlt")
+        .replace("What textkit does, in one sentence.", "Wrap and pad text")
+        .replace(
+            "version: \"0.1.0\",",
+            "version: \"0.1.0\",\n  keywords: [\"strings\"],",
+        );
+    s.write("textkit/package.vlt", &manifest);
+    s.ok("textkit", &["publish"]);
+
+    let out = s.velt("", &["search", "pad"]);
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(text.trim_end(), "textkit  0.1.0  Wrap and pad text");
+
+    let out = s.velt("", &["search", "strings", "--json"]);
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json["packages"][0]["name"], "textkit");
+    assert_eq!(json["packages"][0]["description"], "Wrap and pad text");
+    assert_eq!(json["packages"][0]["keywords"][0], "strings");
+}

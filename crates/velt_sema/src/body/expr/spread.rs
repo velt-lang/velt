@@ -144,7 +144,7 @@ impl FnCx<'_, '_> {
         let fields = self.cx.adt(d).map(|a| a.fields.clone()).unwrap_or_default();
         let mut out = vec![];
         for (i, f) in fields.iter().enumerate() {
-            if f.private_to.is_some_and(|o| self.owner != Some(o)) {
+            if f.private_to.is_some_and(|o| !self.private_allowed(o)) {
                 continue;
             }
             let fty = self.cx.ty.subst(f.ty, &args);

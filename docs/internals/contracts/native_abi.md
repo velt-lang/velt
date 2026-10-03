@@ -138,6 +138,20 @@ static/<p>.o                  # Linux and macOS only
   (e.g. `DW.ref.rust_eh_personality`) would replace the library's and leave references dangling.
 - `native.json` may only name the bundle's own files: `shared` and `import_lib` under `shared/`,
   `static` under `static/`, no absolute paths or `..` (checked on unpack, publish and load).
+- A prebuilt bundle's `exports` list is not trusted as written. On unpack, publish and load:
+  - every listed name must start with `<pkg>_`;
+  - the shared library's exports, read back with `vpm::native::exports::read`, must equal the
+    list, signatures included. They are read from the ELF `.dynsym` section (every defined
+    symbol with global, weak or unique binding and default or protected visibility, whatever its
+    type), the Mach-O symbol table and the PE export directory;
+  - the Windows import library must import exactly the DLL's exports, each by its own name from
+    the bundle's DLL; other members may define only the import descriptor names, and the
+    archive's symbol map must point each name at a member that defines it;
+  - the prelinked object may define no non-local symbol besides the exports, the init function
+    and the toolchain's names (common symbols, Mach-O tentative definitions included).
+
+  These checks cover the tables listed; a file whose loader-visible data disagrees with them
+  (an ELF `PT_DYNAMIC` that is not `.dynsym`, a Mach-O export trie) is #314.
 - The checksum of a bundle is the content hash of its files (`vpm::native::bundle::checksum`,
   the hash `velt.lock.json` records for packages).
 

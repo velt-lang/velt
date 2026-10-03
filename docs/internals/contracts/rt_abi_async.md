@@ -233,15 +233,21 @@ pointer type, so `std` stores them in `u64` fields and passes `u64` arguments; t
 and returns the same `u64`, in argument lists, results and result slots alike.
 - Handles that `std` wraps in **Copy structs** (`VeltListener`, `VeltStream`, `VeltUdp`,
   `VeltChild`, `VeltFileReader`, `VeltFileWriter`, `VeltWs`) are keys into runtime handle tables
-  (`velt_rt::registry::Key<T>`: slot + generation), because Velt code may hold several copies:
+  (`velt_rt::registry::Key<T>`: generation, shard and slot), because Velt code may hold several copies:
   releasing one (`close`/`free`) makes every copy dead. Later operations fail with `EBADF`
   (code 16, "handle is closed"), sync accessors return their documented empty value (port 0,
   pid 0, exit code -1, empty address), and releasing again is a no-op; a stale handle never
   reaches a newer object. In-flight operations hold their own `Arc`, so the object lives until
   they finish.
+- The HTTP handles (`VeltServer`, `VeltReq`, `VeltResp`, `VeltFetchResp`) are registry keys as
+  well, so a stale or forged one never reaches memory (additive): server operations on a closed
+  handle are no-ops (port 0, `shutdown` resolves at once), response builders ignore a dead
+  response (`velt_rt_http_resp_header` returns 0) and the server answers 500 for one, and using a
+  released request or fetch response is a fatal error that says so.
 - The others are the object's address (`velt_rt::handle::Handle<T>`, `repr(transparent)`): an
-  `Arc` (regexes, JSON nodes) or a `Box` (single owner: requests, responses, fetch responses,
-  servers), owned by a class whose `dispose()` releases it exactly once.
+  `Arc` (regexes, JSON nodes) owned by a class whose `dispose()` releases it exactly once. std
+  keeps every handle in a `private` field (the standard library may use the private members of
+  its own types), so user code can neither build nor read one.
 
 ## 4. Byte buffers and string arrays
 
@@ -529,7 +535,7 @@ typedef struct VeltJsonReader VeltJsonReader;   // opaque
 | `velt_rt_json_reader_free` | `(VeltJsonReader* r)` | null ok |
 | `velt_rt_json_reader_peek` | `(VeltJsonReader* r) -> u32` | next token kind, skipping whitespace: 0 EOF, 1 `null`, 2 `true`, 3 `false`, 4 number, 5 string, 6 `[`, 7 `]`, 8 `{`, 9 `}`, 10 error (bad byte, or the reader already failed). Classifies by first byte only; the `read_*` call validates. |
 | `velt_rt_json_reader_expect_object_start` | `(r) -> u8` | consume `{` |
-| `velt_rt_json_reader_next_key` | `(r, VeltStr* out) -> u8` | **1** = `*out` is the next key and its `:` is consumed (read the value next); **0** = `}` consumed (end of object); **2** = error. Handles the commas. The key **borrows** the source (static form) unless it had escapes — compare it, don't keep it (clone if needed); dropping it is always allowed. |
+| `velt_rt_json_reader_next_key` | `(r, VeltStr* out) -> u8` | **1** = `*out` is the next key and its `:` is consumed (read the value next); **0** = `}` consumed (end of object); **2** = error. Handles the commas. The key **borrows** the source (static form) unless it had escapes — compare it, don't keep it (`velt_rt_str_own` makes a copy to keep: `velt_rt_str_clone` keeps the borrow); dropping it is always allowed. |
 | `velt_rt_json_reader_expect_array_start` | `(r) -> u8` | consume `[` |
 | `velt_rt_json_reader_array_next` | `(r) -> u8` | **1** = another element follows (read it next), **0** = `]` consumed, **2** = error |
 | `velt_rt_json_reader_read_string` | `(r, VeltStr* out) -> u8` | owned, decoded (`\u` escapes incl. surrogate pairs; a lone surrogate → U+FFFD since UTF-8 cannot hold it) |
