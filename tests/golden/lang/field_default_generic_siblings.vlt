@@ -1,7 +1,7 @@
 // check: no leaks
-// Seventeen sibling instantiations of a generic class whose field initializer throws its type
-// argument: the catch sees all seventeen errors. The cap on counted instantiations applies only
-// along a chain of initializers constructing their own class (#372).
+// Seventy sibling instantiations of a generic class whose field initializer throws its type
+// argument: the catch sees all seventy errors. Only instantiations that grow (whose type
+// arguments contain an enclosing instantiation's) are limited, so siblings all count (#372).
 
 class E1 extends Error {}
 
@@ -37,6 +37,112 @@ class E16 extends Error {}
 
 class E17 extends Error {}
 
+class E18 extends Error {}
+
+class E19 extends Error {}
+
+class E20 extends Error {}
+
+class E21 extends Error {}
+
+class E22 extends Error {}
+
+class E23 extends Error {}
+
+class E24 extends Error {}
+
+class E25 extends Error {}
+
+class E26 extends Error {}
+
+class E27 extends Error {}
+
+class E28 extends Error {}
+
+class E29 extends Error {}
+
+class E30 extends Error {}
+
+class E31 extends Error {}
+
+class E32 extends Error {}
+
+class E33 extends Error {}
+
+class E34 extends Error {}
+
+class E35 extends Error {}
+
+class E36 extends Error {}
+
+class E37 extends Error {}
+
+class E38 extends Error {}
+
+class E39 extends Error {}
+
+class E40 extends Error {}
+
+class E41 extends Error {}
+
+class E42 extends Error {}
+
+class E43 extends Error {}
+
+class E44 extends Error {}
+
+class E45 extends Error {}
+
+class E46 extends Error {}
+
+class E47 extends Error {}
+
+class E48 extends Error {}
+
+class E49 extends Error {}
+
+class E50 extends Error {}
+
+class E51 extends Error {}
+
+class E52 extends Error {}
+
+class E53 extends Error {}
+
+class E54 extends Error {}
+
+class E55 extends Error {}
+
+class E56 extends Error {}
+
+class E57 extends Error {}
+
+class E58 extends Error {}
+
+class E59 extends Error {}
+
+class E60 extends Error {}
+
+class E61 extends Error {}
+
+class E62 extends Error {}
+
+class E63 extends Error {}
+
+class E64 extends Error {}
+
+class E65 extends Error {}
+
+class E66 extends Error {}
+
+class E67 extends Error {}
+
+class E68 extends Error {}
+
+class E69 extends Error {}
+
+class E70 extends Error {}
+
 function call<E>(f: () => i64 throws E): i64 throws E {
   return f();
 }
@@ -69,9 +175,62 @@ function main() {
     total += new Box<E15>().n;
     total += new Box<E16>().n;
     total += new Box<E17>().n;
+    total += new Box<E18>().n;
+    total += new Box<E19>().n;
+    total += new Box<E20>().n;
+    total += new Box<E21>().n;
+    total += new Box<E22>().n;
+    total += new Box<E23>().n;
+    total += new Box<E24>().n;
+    total += new Box<E25>().n;
+    total += new Box<E26>().n;
+    total += new Box<E27>().n;
+    total += new Box<E28>().n;
+    total += new Box<E29>().n;
+    total += new Box<E30>().n;
+    total += new Box<E31>().n;
+    total += new Box<E32>().n;
+    total += new Box<E33>().n;
+    total += new Box<E34>().n;
+    total += new Box<E35>().n;
+    total += new Box<E36>().n;
+    total += new Box<E37>().n;
+    total += new Box<E38>().n;
+    total += new Box<E39>().n;
+    total += new Box<E40>().n;
+    total += new Box<E41>().n;
+    total += new Box<E42>().n;
+    total += new Box<E43>().n;
+    total += new Box<E44>().n;
+    total += new Box<E45>().n;
+    total += new Box<E46>().n;
+    total += new Box<E47>().n;
+    total += new Box<E48>().n;
+    total += new Box<E49>().n;
+    total += new Box<E50>().n;
+    total += new Box<E51>().n;
+    total += new Box<E52>().n;
+    total += new Box<E53>().n;
+    total += new Box<E54>().n;
+    total += new Box<E55>().n;
+    total += new Box<E56>().n;
+    total += new Box<E57>().n;
+    total += new Box<E58>().n;
+    total += new Box<E59>().n;
+    total += new Box<E60>().n;
+    total += new Box<E61>().n;
+    total += new Box<E62>().n;
+    total += new Box<E63>().n;
+    total += new Box<E64>().n;
+    total += new Box<E65>().n;
+    total += new Box<E66>().n;
+    total += new Box<E67>().n;
+    total += new Box<E68>().n;
+    total += new Box<E69>().n;
+    total += new Box<E70>().n;
     console.log(total);
   } catch (e) {
-    const all: E1 | E2 | E3 | E4 | E5 | E6 | E7 | E8 | E9 | E10 | E11 | E12 | E13 | E14 | E15 | E16 | E17 =
+    const all: E1 | E2 | E3 | E4 | E5 | E6 | E7 | E8 | E9 | E10 | E11 | E12 | E13 | E14 | E15 | E16 | E17 | E18 | E19 | E20 | E21 | E22 | E23 | E24 | E25 | E26 | E27 | E28 | E29 | E30 | E31 | E32 | E33 | E34 | E35 | E36 | E37 | E38 | E39 | E40 | E41 | E42 | E43 | E44 | E45 | E46 | E47 | E48 | E49 | E50 | E51 | E52 | E53 | E54 | E55 | E56 | E57 | E58 | E59 | E60 | E61 | E62 | E63 | E64 | E65 | E66 | E67 | E68 | E69 | E70 =
       e;
     console.log("caught", all.message);
   }

@@ -18,14 +18,16 @@ mod checks;
 mod conventions;
 mod groups;
 mod infer;
+mod inits;
 mod sets;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use velt_common::Span;
 
 pub(crate) use groups::Groups;
 pub(crate) use infer::infer_all;
+pub(crate) use inits::InitsSeen;
 
 use crate::ctx::Ctx;
 use crate::defs::ThrowSrc;
@@ -37,52 +39,6 @@ struct Visited {
     /// Functions whose bodies' sources are counted (in their own generic context).
     fns: HashSet<DefId>,
     inits: InitsSeen,
-}
-
-/// How many instantiations of one class's field initializers one chain of initializers counts.
-/// Initializers can construct their class with ever larger type arguments (`Box<T>` running
-/// `new Box<Box<T>>()`), which would never end; past this many instantiations of the class on
-/// the current chain, deeper ones count as already seen. Sibling instantiations (`new Box<E1>()`
-/// … `new Box<E17>()` in one body) are not on one chain and all count (#372).
-const MAX_INIT_DEPTH: usize = 16;
-
-/// How many instantiations of one class a resolution counts in all: a bound on initializers that
-/// construct their class in several growing ways (`Box<Pair<T>>` and `Box<Box<T>>`), whose
-/// instantiations within [`MAX_INIT_DEPTH`] grow exponentially.
-const MAX_INIT_INSTANCES: usize = 64;
-
-/// The classes whose field initializers ([`ThrowSrc::Defaults`]) are already counted, keyed on
-/// the class and its type arguments (`Box<E1>` and `Box<E2>` throw different errors), and how
-/// many instantiations of each class the current chain of initializers is inside.
-#[derive(Default)]
-pub(crate) struct InitsSeen {
-    seen: HashMap<DefId, HashSet<Vec<TyId>>>,
-    depth: HashMap<DefId, usize>,
-}
-
-impl InitsSeen {
-    /// Enter class `d`'s initializers with type arguments `args`: false when they are counted
-    /// already (or the chain or the resolution has its limit of the class). After true, the
-    /// caller counts the initializers' sources and then calls [`leave`](Self::leave).
-    pub(crate) fn enter(&mut self, d: DefId, args: &[TyId]) -> bool {
-        let depth = self.depth.entry(d).or_default();
-        let seen = self.seen.entry(d).or_default();
-        if *depth >= MAX_INIT_DEPTH || seen.len() >= MAX_INIT_INSTANCES {
-            return false;
-        }
-        if !seen.insert(args.to_vec()) {
-            return false;
-        }
-        *depth += 1;
-        true
-    }
-
-    /// Leave the initializers of class `d` entered last.
-    pub(crate) fn leave(&mut self, d: DefId) {
-        if let Some(n) = self.depth.get_mut(&d) {
-            *n = n.saturating_sub(1);
-        }
-    }
 }
 
 /// A type sema built from what `srcs` throw at checking time; the final inference must agree
@@ -124,12 +80,12 @@ fn srcs_now_in(cx: &mut Ctx, srcs: &[ThrowSrc], visited: &mut Visited) -> Option
                 subst_error(cx, t, args)
             }
             ThrowSrc::Defaults(d, args, span) => {
-                if !visited.inits.enter(*d, args) {
+                if !visited.inits.enter(&cx.ty, *d, args) {
                     continue;
                 }
                 let srcs = defaults_srcs(cx, *d, args, *span);
                 let t = srcs_now_in(cx, &srcs, visited);
-                visited.inits.leave(*d);
+                visited.inits.leave();
                 t
             }
         };
