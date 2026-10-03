@@ -45,7 +45,7 @@ fn velt_as(token: &str, dir: &Path, home: &Path, args: &[&str]) -> std::process:
 /// `velt login <url>` (or `logout`) with `token` on stdin.
 fn velt_login(home: &Path, sub: &str, url: &str, token: &str) -> std::process::Output {
     use std::io::Write;
-    let mut child = Command::new(env!("CARGO_BIN_EXE_velt"))
+    let mut child = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args([sub, url])
         .env("VELT_HOME", home)
         .env_remove("VELT_REGISTRY_TOKEN")
