@@ -67,7 +67,7 @@ impl FnLower<'_, '_> {
 
     /// Heap-allocate a zeroed object of class `ty` with its vtable pointer set; the object is
     /// registered as an owned temporary (so an error thrown by the constructor frees it).
-    fn alloc_object(&mut self, ty: TyId) -> Place {
+    pub(super) fn alloc_object(&mut self, ty: TyId) -> Place {
         let obj = self.alloc_object_raw(ty);
         self.own_temp(obj.local, ty);
         obj
@@ -93,31 +93,6 @@ impl FnLower<'_, '_> {
             self.assign(hdr, Rvalue::Use(vt));
         }
         Place::local(obj)
-    }
-
-    /// `new C<T>(args)`: allocate, evaluate field defaults (in the class's type context), call
-    /// the constructor (with the type args of the class declaring it) with the object as `this`.
-    pub(super) fn new_object(&mut self, ty: TyId, args: &[hir::Expr]) -> Operand {
-        let ty = self.sub(ty);
-        let TyKind::Adt(d, cargs) = self.cx.kind(ty) else {
-            ice("new of a non-class type")
-        };
-        let obj = self.alloc_object(ty);
-        let adt = self.cx.adt_def(d);
-        let saved = std::mem::replace(&mut self.targs, cargs.clone());
-        for (i, f) in adt.fields.iter().enumerate() {
-            if let Some(def) = &f.default {
-                let v = self.consume(def);
-                let p = self.field_place(&obj, ty, i as u32);
-                self.store(p, v);
-            }
-        }
-        self.targs = saved;
-        if let Some(ctor) = adt.ctor {
-            let cargs = self.cx.ctor_type_args(ctor, ty);
-            self.call_def(ctor, cargs, vec![Operand::Copy(obj.clone())], args);
-        }
-        Operand::Copy(obj)
     }
 
     pub(super) fn variant(&mut self, ty: TyId, variant: u32, args: &[hir::Expr]) -> Operand {

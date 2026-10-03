@@ -33,6 +33,7 @@ mod cfg;
 mod class_test;
 mod closure;
 mod console;
+mod construct;
 mod dispatch;
 mod drops;
 mod entry;

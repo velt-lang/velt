@@ -7,11 +7,11 @@ hidden classes and no runtime shape checks.
 
 - Fields need a type (`count: i64 = 0`), or an initializer that states one (`count = 0`,
   `done = false`, `items = new Map<string, i64>()`). A field without a default must be assigned
-  in the `constructor`. `new C(…)` allocates the object on the heap, evaluates the field
-  initializers (base class ones first) and then runs the constructor; it throws whatever they
-  throw ([Errors](errors.md#throwing)). This order is a known difference from TypeScript, which
-  runs the base class's initializers and constructor before the derived class's initializers
-  (tracked in [#273](https://github.com/velt-lang/velt/issues/273)).
+  in the `constructor`. `new C(…)` evaluates its arguments, allocates the object on the heap and
+  constructs it in JavaScript's order: base class first, each class's field initializers right
+  after its base class is constructed (at the start of the constructor of a class without a
+  base, right after `super(…)` returns in a derived one), then the rest of its constructor. It
+  throws whatever they throw ([Errors](errors.md#throwing)).
 - **Parameter properties**: `constructor(private readonly name: string, public age: i64) {}`
   declares the fields and assigns them, as in TypeScript (`protected` is accepted there and
   means public: there are no `protected` members).
@@ -28,12 +28,32 @@ hidden classes and no runtime shape checks.
   running a constructor; `JSON.stringify` writes it as usual
   ([`velt:json`](../std/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
-  layout, so upcasts are free. A subclass constructor calls `super(…)` exactly once, as its
-  first statement and on its own (not inside an `if`, a loop, a ternary or a closure, where it
-  could run never or twice), and the arguments cannot use `this` or `super.m()`. TypeScript
-  also accepts statements before `super(…)` in a class without initialized fields or parameter
-  properties; Velt always wants it first. Redefining a base method
-  requires `override`; `super.m()` calls the base version. There are no abstract classes.
+  layout, so upcasts are free. A subclass constructor calls `super(…)` exactly once on every
+  path, also when the base class has no constructor (`super();`): as a statement of its own in
+  the constructor body (not inside an `if`, a loop, a ternary or a closure, where it could run
+  never or twice). Statements before it may validate arguments or compute locals, but cannot
+  use `this` or `super.m()` (nor can the arguments), or `return`. When the class has initialized
+  fields or parameter properties, which are set right after `super(…)` returns, `super(…)` must
+  be the first statement (TypeScript's rules). A subclass without a constructor of its own
+  inherits its base's. Redefining a base method requires `override`; `super.m()` calls the base
+  version. There are no abstract classes.
+
+```ts
+class Figure {
+  constructor(readonly name: string) {}
+}
+
+class Ring extends Figure {
+  radius: f64;
+  constructor(radius: f64) {
+    if (radius < 0) {
+      throw new Error(`negative radius ${radius}`);
+    }
+    super("ring");
+    this.radius = radius;
+  }
+}
+```
 - **Dispatch**: a method that is never overridden is called directly (and can be inlined). Only
   overridden methods go through a vtable, and only where the static type is a base class.
 - **Members**: `private` (usable only inside the declaring type's body, including closures

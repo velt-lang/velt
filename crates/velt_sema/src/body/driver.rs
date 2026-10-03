@@ -4,10 +4,10 @@
 
 use velt_common::{Diagnostic, Span};
 
-use super::{FnCx, Frame, LocalKind, Want};
+use super::{recursion, FnCx, Frame, LocalKind, Want};
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo, FnKind, FnSource, RetSource};
-use crate::hir::{self, Def, DefId, ExprKind as H, LocalId, StmtKind as S};
+use crate::hir::{self, Def, DefId, ExprKind as H};
 use crate::resolve::TyEnv;
 
 pub(crate) fn check_bodies(cx: &mut Ctx) {
@@ -157,7 +157,8 @@ fn is_const_expr(e: &hir::Expr) -> bool {
     }
 }
 
-/// Check `def`'s body now unless it is already checked or being checked.
+/// Check `def`'s body now unless it is already checked or being checked. A body whose
+/// inferred return type was needed before it was known is checked again (`body::recursion`).
 pub(crate) fn ensure_body(cx: &mut Ctx, def: DefId) {
     let f = cx.fn_info(def);
     if f.state != BodyState::Unchecked {
@@ -167,15 +168,28 @@ pub(crate) fn ensure_body(cx: &mut Ctx, def: DefId) {
         cx.fn_info_mut(def).state = BodyState::Done;
         return;
     };
+    let inferred = f.ret_source == RetSource::Body;
     cx.fn_info_mut(def).state = BodyState::InProgress;
+    let mark = recursion::Mark::new(cx);
+    let mut fndef = check_body(cx, def, src);
+    if recursion::needs_second_pass(cx, def, &mark) {
+        fndef = check_body(cx, def, src);
+    }
+    cx.defs[def.0 as usize] = Some(Def::Fn(fndef));
+    cx.fn_info_mut(def).state = BodyState::Done;
+    recursion::completed(cx, def, inferred);
+}
+
+fn check_body(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     cx.checking.push(def);
+    let in_return = std::mem::take(&mut cx.rec.in_return);
     let names = cx.fn_info(def).generics.names.clone();
     let saved = std::mem::replace(&mut cx.display_params, names);
     let fndef = check_fn(cx, def, src);
     cx.display_params = saved;
+    cx.rec.in_return = in_return;
     cx.checking.pop();
-    cx.defs[def.0 as usize] = Some(Def::Fn(fndef));
-    cx.fn_info_mut(def).state = BodyState::Done;
+    fndef
 }
 
 fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
@@ -209,7 +223,9 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     fcx.enclosing_locals = enclosing_locals;
     let params = fcx.declare_params(&f);
     let mut stmts = vec![];
-    fcx.f.super_ok = f.kind == FnKind::Ctor;
+    if let (FnKind::Ctor, FnSource::Decl(d)) = (f.kind, src) {
+        fcx.ctor_begin(&f, d);
+    }
     fcx.stmts_into(&body.stmts, &mut stmts);
     let mut block = hir::Block {
         stmts,
@@ -307,79 +323,6 @@ impl FnCx<'_, '_> {
                 )
                 .with_note(format!("expected {rty}, found void")),
             );
-        }
-    }
-
-    /// Constructor rules: `super(...)` first when the base class has a constructor, and every
-    /// own field without a default assigned on every path.
-    fn check_ctor(&mut self, f: &crate::defs::FnInfo, block: &hir::Block) {
-        let Some(owner) = f.owner else { return };
-        let a = self.cx.adt(owner).expect("ICE: ctor owner");
-        let base_ctor = a
-            .base
-            .and_then(|b| self.cx.class_of(b))
-            .and_then(|(b, _)| self.cx.adt(b).and_then(|x| x.ctor));
-        let needed: Vec<(u32, String)> = a.fields[a.own_fields_start..]
-            .iter()
-            .enumerate()
-            .filter(|(_, fl)| !fl.has_default)
-            .map(|(i, fl)| ((a.own_fields_start + i) as u32, fl.name.clone()))
-            .collect();
-        let class = a.name.clone();
-        if base_ctor.is_some() && !self.f.super_called {
-            self.cx.error(
-                Diagnostic::error(
-                    format!("the constructor of `{class}` must call `super(...)` first"),
-                    f.name_span,
-                )
-                .with_note("the base class has a constructor that must run"),
-            );
-        }
-        let this = LocalId(0);
-        let assigned = assigned_fields(block, this);
-        for (idx, name) in needed {
-            if !assigned.contains(&idx) {
-                self.cx.error(
-                    Diagnostic::error(
-                        format!(
-                            "field `{name}` is not initialized by the constructor of `{class}`"
-                        ),
-                        f.name_span,
-                    )
-                    .with_note(format!("assign `this.{name} = ...` on every path")),
-                );
-            }
-        }
-    }
-}
-
-/// Fields of `this` assigned on every path through `b` (conservative).
-fn assigned_fields(b: &hir::Block, this: LocalId) -> Vec<u32> {
-    let mut out = vec![];
-    for s in &b.stmts {
-        match &s.kind {
-            S::Expr(e) => field_assign(e, this, &mut out),
-            S::Block(inner) => out.extend(assigned_fields(inner, this)),
-            S::If {
-                then,
-                els: Some(els),
-                ..
-            } => {
-                let (t, e) = (assigned_fields(then, this), assigned_fields(els, this));
-                out.extend(t.into_iter().filter(|x| e.contains(x)));
-            }
-            _ => {}
-        }
-    }
-    out
-}
-
-fn field_assign(e: &hir::Expr, this: LocalId, out: &mut Vec<u32>) {
-    if let H::Assign { place, .. } = &e.kind {
-        if let H::Field { base, index, .. } = &place.kind {
-            if matches!(base.kind, H::Local(l, _) if l == this) {
-                out.push(*index);
-            }
         }
     }
 }

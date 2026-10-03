@@ -132,9 +132,10 @@ contents.
   classes and no `protected` members (`private` is private to the declaring class); a
   constructor can be `private` or `protected`, with TypeScript's rules.
 - `static readonly` constants exist; mutable statics don't.
-- `new` evaluates all field initializers (base class first) before running the constructors;
-  TypeScript runs the base initializers and constructor before the derived initializers. A known
-  difference, tracked in [#273](https://github.com/velt-lang/velt/issues/273).
+- Constructors follow TypeScript's `super(...)` rules: a derived constructor calls it exactly
+  once (also when the base has no constructor), statements before it cannot use `this`, and it
+  comes first when the class has initialized fields or parameter properties. Field initializers
+  run in JavaScript's order, right after the base class is constructed.
 - A method that is never overridden is called directly; only overridden methods use a vtable.
 - `struct` declares an object type with the same members as a class, built from a literal
   (no constructor). **Planned**
@@ -148,8 +149,8 @@ contents.
   parameters work.
 - Parameter types are required. As in TypeScript, an omitted return type is inferred from the
   `return` expressions (a union when they differ, `Promise<T>` for `async`, `void` without a
-  value). A function with a `return` value whose body uses the function itself needs an
-  annotation (TypeScript asks only when the use is in a `return` expression). A `return;` next
+  value). As in TypeScript, a function whose `return` expressions depend on the function
+  itself needs an annotation; uses elsewhere in the body don't. A `return;` next
   to `return value;` is an error rather than `T | undefined`: return `null` with a `T | null`
   type.
 - Generics are compiled per instantiation (monomorphized), so generic code is as fast as
