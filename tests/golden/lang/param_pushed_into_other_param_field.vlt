@@ -1,23 +1,45 @@
 // check: no leaks
 // Storing one parameter in a field of another is ordinary code (registries, event emitters):
-// `s` and `k.kept` cannot alias, so the call is accepted (#242).
+// `s` and `k.kept` cannot alias, so the call is accepted (#242). Also through a Map, in an
+// async function and in a closure, and the stored value is the same object.
 class S {
   n: i64 = 0;
 }
 
 class Keeper {
   kept: S[] = [];
+  byName: Map<string, S> = new Map();
 }
 
 function keep(k: Keeper, s: S) {
   k.kept.push(s);
 }
 
-function main() {
+function name(k: Keeper, key: string, s: S) {
+  k.byName.set(key, s);
+}
+
+async function keepLater(k: Keeper, s: S) {
+  await sleep(1);
+  k.kept.push(s);
+}
+
+async function main() {
   const k = new Keeper();
   const s = new S();
   s.n = 7;
   keep(k, s);
   keep(k, new S());
   console.log(k.kept[0].n, k.kept[1].n, k.kept.length);
+  s.n = 8;
+  console.log(k.kept[0].n, k.kept[0] === s);
+  name(k, "a", s);
+  console.log(k.byName.get("a")?.n);
+  const t = new S();
+  t.n = 9;
+  await keepLater(k, t);
+  console.log(k.kept.length, k.kept[2].n);
+  const store = (k2: Keeper, s2: S) => k2.kept.push(s2);
+  store(k, new S());
+  console.log(k.kept.length, k.kept[3].n);
 }
