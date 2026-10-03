@@ -105,6 +105,10 @@ src/lib.vlt:5:1: error: `declare` of `greet_parse` does not match the native lib
   = note: this declares     `(string)->IoResult<i32>`
 ```
 
+Only a package's own library can be declared this way. A `declare function` anywhere else (in
+a program or a package without native code, or naming another package's export) is a compile
+error, so ordinary Velt code can't call arbitrary C functions such as `free`.
+
 Wrap handles in a class that releases them in `[Symbol.dispose]()`, so `using` and the end of
 the object's life close them (see `packages/sqlite/src/lib.vlt`).
 

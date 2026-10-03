@@ -30,9 +30,10 @@ native objects are `u64` handles (§3.2) that the package wraps in a class with
 `declare async function`: `(string,u32)->IoResult<u64>`, `async (u64,string)->IoResult<string>`.
 
 **Names**: every export of package `p` starts with `p_` (`-` in the package name becomes `_`),
-plus `velt_native_init_p`. The compiler requires every `declare` in a package with a library
-to name one of **its own** exports with **exactly** the recorded signature, and no package may
-declare another package's export. `IoResult`/`IoStatus` are std's `velt:io` types, identified
+plus `velt_native_init_p`. Outside std, the compiler requires every `declare` to name one of
+the exports of **its own** package's library with **exactly** the recorded signature: a root
+program, a package without a library (`free`, `memcpy`) and another package's export are
+errors. `IoResult`/`IoStatus` are std's `velt:io` types, identified
 by definition (a look-alike struct is rejected). Violations are compile errors at the `declare`
 (`veltc/src/native/`). Separately, sema rejects a `velt_rt_*` runtime function declared outside
 std, in any package or the root program (`velt_sema` `collect/declare.rs`).

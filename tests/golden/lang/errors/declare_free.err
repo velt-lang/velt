@@ -1,0 +1,2 @@
+declare_free.vlt:4:1: error: `declare function free` is not allowed: this program is not in a package with a native library
+  = note: outside the standard library, `declare function` may only name an export of the package's own native library

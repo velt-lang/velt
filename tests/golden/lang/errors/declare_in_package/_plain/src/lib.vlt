@@ -1,0 +1,6 @@
+// A package without native code can't declare C functions such as libc's `memcpy`.
+declare function memcpy(dest: u64, src: u64, n: u64): u64;
+
+export function copy(dest: u64, src: u64, n: u64): u64 {
+  return memcpy(dest, src, n);
+}
