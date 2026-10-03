@@ -29,7 +29,9 @@ impl VeltStr {
         };
         #[cfg(debug_assertions)]
         let seam = self.len();
-        if sum.lone == 0 {
+        // A join needs a low surrogate at the start of the piece (and lone surrogates on both
+        // sides, which `push_lone` checks).
+        if sum.lone == 0 || !wtf8::starts_with_low(bytes) {
             self.append(bytes, sum);
         } else {
             self.push_lone(bytes, sum);
@@ -70,7 +72,17 @@ impl VeltStr {
             )
         };
         if !ascii {
-            return self.push_non_ascii_str(s);
+            if self.is_inline() {
+                return self.push_non_ascii_str(s);
+            }
+            // Onto a heap or static string: the append itself is inlined (the hot path of
+            // `s += piece`).
+            let bytes = if len == 0 {
+                &[][..]
+            } else {
+                std::slice::from_raw_parts(data, len)
+            };
+            return self.push_wtf8(bytes, Some(s.summary()));
         }
         let bytes = if len == 0 {
             &[][..]
@@ -125,7 +137,7 @@ impl VeltStr {
         } else {
             let total = Summary {
                 units,
-                lone: a.lone() + b.lone(),
+                lone: a.lone().saturating_add(b.lone()),
             };
             VeltStr::heap_of(&[ta, tb], total, len)
         };
@@ -278,7 +290,7 @@ impl VeltStr {
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr().add(len), bytes.len());
         self.w1 += pack(sum.units, bytes.len());
         if sum.lone != 0 {
-            heap::set_lone(self.ptr(), heap::lone(self.ptr()) + sum.lone);
+            heap::set_lone(self.ptr(), heap::lone(self.ptr()).saturating_add(sum.lone));
         }
     }
 
@@ -325,7 +337,7 @@ impl VeltStr {
             let cap = grown(need, need);
             let total = Summary {
                 units,
-                lone: self.lone() + sum.lone,
+                lone: self.lone().saturating_add(sum.lone),
             };
             VeltStr::heap_of(&pieces, total, cap)
         };
@@ -359,11 +371,11 @@ impl VeltStr {
         // start of the pair in place.
         std::ptr::copy_nonoverlapping(pair.as_ptr(), (self.data() as *mut u8).add(len - 3), 3);
         if self.is_heap() {
-            heap::set_lone(self.ptr(), heap::lone(self.ptr()) - 1);
+            heap::set_lone(self.ptr(), wtf8::lone_less(heap::lone(self.ptr()), 1));
         }
         let rest = Summary {
             units: sum.units - 1,
-            lone: sum.lone - 1,
+            lone: wtf8::lone_less(sum.lone, 1),
         };
         self.append(&bytes[3..], rest);
     }

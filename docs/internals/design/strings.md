@@ -126,7 +126,9 @@ from the value (`units != bytes`).
 
 - `lone` counts the lone surrogates. It is what decides whether a seam can join and whether
   output needs conversion; an exact boolean can't survive a join, a count can:
-  `lone(a + b) = lone(a) + lone(b) − 2 · joined`.
+  `lone(a + b) = lone(a) + lone(b) − 2 · joined`. A static string has no room for the count, so
+  a buffer that absorbs text from one marks its count unknown (counted when somebody needs it);
+  the join itself tests the seam's bytes.
 - An ASCII buffer moves to a buffer with a header **at the push that writes its first byte
   ≥ 0x80**, not when a builder finishes: template lowering and `s += x` use the live builder
   value.

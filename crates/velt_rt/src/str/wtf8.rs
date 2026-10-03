@@ -11,8 +11,24 @@
 pub struct Summary {
     /// UTF-16 code units.
     pub units: usize,
-    /// Lone surrogates (3-byte sequences `ED A0..BF xx`).
+    /// Lone surrogates (3-byte sequences `ED A0..BF xx`), or [`LONE_UNKNOWN`].
     pub lone: usize,
+}
+
+/// A lone-surrogate count nobody took: text from a static string, which has no room to record
+/// it. Counts add with saturation, so a string that absorbs such text keeps it unknown until
+/// somebody needs the number and counts. Only the unit count must be exact; a seam join tests
+/// the bytes, so it does not depend on this count.
+pub const LONE_UNKNOWN: usize = usize::MAX;
+
+/// `lone` less `n` lone surrogates (joined into a pair), unless it is unknown.
+#[inline]
+pub fn lone_less(lone: usize, n: usize) -> usize {
+    if lone == LONE_UNKNOWN {
+        lone
+    } else {
+        lone - n
+    }
 }
 
 impl Summary {
@@ -141,16 +157,24 @@ fn count_units_scan(bytes: &[u8]) -> usize {
 
 /// Lone surrogates in `bytes`: a surrogate code point is the only sequence that starts with
 /// `ED` followed by `A0..BF`. Text without an `ED` byte (most of it) is ruled out by a fast
-/// search.
+/// search, inline for a short piece (an append of one).
+#[inline]
 pub fn count_lone(bytes: &[u8]) -> usize {
     let has_ed = if bytes.len() < SHORT {
         has_ed_short(bytes)
     } else {
         bytes.contains(&0xED)
     };
-    if !has_ed {
-        return 0;
+    if has_ed {
+        count_lone_scan(bytes)
+    } else {
+        0
     }
+}
+
+/// [`count_lone`] of text that has an `ED` byte.
+#[inline(never)]
+fn count_lone_scan(bytes: &[u8]) -> usize {
     bytes
         .windows(2)
         .filter(|w| w[0] == 0xED && w[1] >= 0xA0)

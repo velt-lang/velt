@@ -64,13 +64,13 @@ fn units_in_every_form() {
             assert_eq!((s.0.units(), s.0.len()), (want, text.len()), "{:?}", s.0);
             assert_eq!(s.0.is_ascii(), text.is_ascii(), "{:?}", s.0);
             let sum = unsafe { s.0.summary() };
-            assert_eq!(
-                sum,
-                Summary {
-                    units: want,
-                    lone: 0
-                }
-            );
+            // Known for ASCII and owned strings; a non-ASCII static string can't tell.
+            let lone = if s.0.is_static() && !s.0.is_ascii() {
+                wtf8::LONE_UNKNOWN
+            } else {
+                0
+            };
+            assert_eq!(sum, Summary { units: want, lone });
         }
     }
 }
@@ -184,7 +184,13 @@ fn halves_join_at_a_seam() {
     ];
     for mut s in starts {
         let before = s.0.len();
-        assert_eq!(unsafe { s.0.summary() }.lone, 1);
+        // A static string's lone count is unknown (it has no room for one).
+        let lone = if s.0.is_static() {
+            wtf8::LONE_UNKNOWN
+        } else {
+            1
+        };
+        assert_eq!(unsafe { s.0.summary() }.lone, lone);
         unsafe { s.0.push_wtf8(&[&lo[..], b"z"].concat(), None) };
         assert_eq!(&bytes(&s.0)[before - 3..], &[pair, b"z"].concat()[..]);
         assert_eq!(s.0.len(), before + 2, "bytes shrink by 2 at the join");

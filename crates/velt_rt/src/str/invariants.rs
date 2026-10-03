@@ -20,7 +20,16 @@ pub(super) fn check_piece(piece: &[u8], summary: Option<Summary>) {
     }
     if let Some(sum) = summary {
         let counted = wtf8::summarize(piece);
-        assert_eq!(sum, counted, "ICE: wrong summary of a string piece");
+        assert_eq!(
+            sum.units, counted.units,
+            "ICE: wrong unit count of a string piece"
+        );
+        if sum.lone != wtf8::LONE_UNKNOWN {
+            assert_eq!(
+                sum.lone, counted.lone,
+                "ICE: wrong lone count of a string piece"
+            );
+        }
     }
 }
 
@@ -81,7 +90,9 @@ pub(super) fn check_whole(s: &VeltStr) {
         if !s.is_ascii() {
             // SAFETY: a heap string with a header.
             let lone = unsafe { super::heap::lone(s.ptr()) };
-            assert_eq!(lone, counted.lone, "ICE: lone surrogates of {s:?}");
+            if lone != wtf8::LONE_UNKNOWN {
+                assert_eq!(lone, counted.lone, "ICE: lone surrogates of {s:?}");
+            }
         }
     }
 }

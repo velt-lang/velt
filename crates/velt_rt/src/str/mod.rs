@@ -257,7 +257,8 @@ impl VeltStr {
         self.len() == 0
     }
 
-    /// Lone surrogates: stored in a heap buffer's header, counted for the other forms.
+    /// Lone surrogates: stored in a heap buffer's header (possibly [`wtf8::LONE_UNKNOWN`]),
+    /// counted for an inline string, unknown for a static one.
     ///
     /// # Safety
     /// `self` must be valid.
@@ -268,8 +269,12 @@ impl VeltStr {
             0
         } else if self.is_heap() {
             heap::lone(self.ptr())
-        } else {
+        } else if self.is_inline() {
             wtf8::count_lone(self.as_bytes())
+        } else {
+            // A static string has no room for the count, and a scan per append would cost more
+            // than the count is worth.
+            wtf8::LONE_UNKNOWN
         }
     }
 

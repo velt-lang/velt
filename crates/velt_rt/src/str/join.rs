@@ -4,7 +4,7 @@
 //! exactly when the result is not ASCII). A builder fed piece by piece would start an ASCII
 //! buffer and move it at the first non-ASCII piece.
 
-use super::{fits_inline, heap, invariants, pack, Summary, VeltStr, INLINE_MAX};
+use super::{fits_inline, heap, invariants, pack, wtf8, Summary, VeltStr, INLINE_MAX};
 
 impl VeltStr {
     /// `parts.join(sep)`: a new string (one part: that string, shared).
@@ -23,16 +23,19 @@ impl VeltStr {
         let mut len = sep.len() * gaps;
         let mut total = Summary {
             units: sep_sum.units * gaps,
-            lone: sep_sum.lone * gaps,
+            lone: sep_sum.lone.saturating_mul(gaps),
         };
+        // A seam can join two halves of a pair only where a low surrogate starts a piece.
+        let mut low_start = wtf8::starts_with_low(sep.as_bytes());
         for p in parts {
             let sum = p.summary();
             invariants::check_piece(p.as_bytes(), Some(sum));
             len += p.len();
             total.units += sum.units;
-            total.lone += sum.lone;
+            total.lone = total.lone.saturating_add(sum.lone);
+            low_start |= wtf8::starts_with_low(p.as_bytes());
         }
-        if total.lone > 0 {
+        if low_start {
             // A seam may join two halves of a pair: append piece by piece.
             return VeltStr::join_pushing(first, rest, sep);
         }
@@ -54,9 +57,12 @@ impl VeltStr {
             write(text.as_mut_ptr());
             VeltStr::inline(&text[..len], total.units, false)
         } else {
-            // No lone surrogates, so a header buffer's lone count stays 0.
-            let data = heap::alloc(len, total.units != len);
+            let header = total.units != len;
+            let data = heap::alloc(len, header);
             write(data);
+            if header {
+                heap::set_lone(data, total.lone);
+            }
             VeltStr {
                 w0: data as usize as u64,
                 w1: pack(total.units, len),

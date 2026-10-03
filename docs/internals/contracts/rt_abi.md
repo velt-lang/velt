@@ -52,7 +52,9 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   byte, and the count is always the 8 bytes before it:
   - ASCII strings (units == len): `[count: u64 (atomic)][cap bytes]`;
   - non-ASCII strings: `[crumbs: pointer (atomic)][lone: u64][count: u64 (atomic)][cap bytes]`.
-    `lone` is the number of lone surrogates in the text; `crumbs` is reserved for the breadcrumb
+    `lone` is the number of lone surrogates in the text, or all ones when unknown (the buffer
+    absorbed text from a static string, which has no room to record its count; whoever needs the
+    number counts then); `crumbs` is reserved for the breadcrumb
     table of #377 phase 2 and is null.
 
   Which layout a buffer has follows from the value (units != len), so retaining needs nothing but
@@ -85,7 +87,7 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   WTF-8 with the unit and lone counts it is given, and the seam is canonical: O(piece), never a
   recount of the whole string) and in full after every operation by the runtime's own tests: the
   bytes are canonical WTF-8; the stored unit count is the text's; a non-ASCII heap buffer's
-  `lone` is its number of lone surrogates; an inline string fits its form, and has no lone
+  `lone`, unless unknown, is its number of lone surrogates; an inline string fits its form, and has no lone
   surrogates when its `0x20` bit is clear.
 - `VELT_RC_STATS=1` with a **debug** runtime prints `rc stats: retain=… release=… alloc=… free=…`
   to stderr at exit (retain = increments, release = decrements of shared buffers, alloc/free =
