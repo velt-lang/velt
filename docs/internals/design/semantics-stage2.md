@@ -140,14 +140,17 @@ within the copy).
 Counts are not atomic, so no counted object may be reachable from two threads. Values cross
 threads at `spawn(f(args))` (owned arguments; for a call through a function value, vtable
 or interface, every argument and the receiver), captures of a spawned async closure, the HTTP
-handler environment and channel sends. Such a value is **transferred** in place by the transfer
+handler environment, channel sends and a value settled on a promise from another task. Such a
+value is **transferred** in place by the transfer
 glue (glue/transfer.rs): a counted object whose count is 1 is the sender's alone and stays, with
 its parts transferred in turn; one that is still shared is deep-copied for the task (structured
 clone at a worker boundary) and the sender's reference released; values whose type cannot
 reach a counted object move untouched. Class objects in a hierarchy and interface values
 transfer through a vtable slot, closures through their environment's transfer entry (the env
 header's third word): a shared env is cloned first, and a captured variable's cell that the
-creator still shares is copied, so the task's assignments stay in the task.
+creator still shares is copied, so the task's assignments stay in the task. A value settled on
+a promise from another task is transferred by a promise that task drives, at its next step,
+after the settling statement released its own reference (std/prelude/promise.vlt, #263).
 
 A deep copy of a class with its own `clone()` calls it, so a resource is duplicated by its
 type (#122). A resource without one cannot be copied: sema rejects a `spawn` argument or

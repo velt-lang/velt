@@ -30,16 +30,16 @@ Promises behave like JavaScript's, at Rust's cost:
   the promise (objects) or copied (numbers, strings), otherwise moved, because the promise may
   outlive the caller's frame. A promise has one owner: using a promise variable after handing
   it on is ``use of moved value``, and an explicit `p.clone()` is ``a promise cannot be copied``.
-- Values handed to `spawn` (and captured by an HTTP handler, or sent over a channel) go to
-  another thread. What the program no longer references anywhere else moves as it is; an object
-  it still shares is deep-copied for the task (like a structured clone), so threads never share
-  reference counts. That includes the receiver of `spawn(obj.method())` (also through a
-  base-class reference or an interface value) and what a closure or interface value passed to
-  the task reaches. A closure the caller still uses afterwards is copied too, with what it
-  captures (also a variable it assigns), so the task and the caller each run their own copy. A
-  closure handed on for the last time that captures only values nothing else references (an
-  HTTP handler capturing a disposable resource, say) goes to the task as it is, and a captured
-  value's `[Symbol.dispose]()` runs once.
+- Values handed to `spawn` (and captured by an HTTP handler, sent over a channel, or settled on
+  a promise from another task) go to another thread. What the program no longer references
+  anywhere else moves as it is; an object it still shares is deep-copied for the task (like a
+  structured clone), so threads never share reference counts. That includes the receiver of
+  `spawn(obj.method())` (also through a base-class reference or an interface value) and what a
+  closure or interface value passed to the task reaches. A closure the caller still uses
+  afterwards is copied too, with what it captures (also a variable it assigns), so the task and
+  the caller each run their own copy. A closure handed on for the last time that captures only
+  values nothing else references (an HTTP handler capturing a disposable resource, say) goes to
+  the task as it is, and a captured value's `[Symbol.dispose]()` runs once.
 - A value owning a `[Symbol.dispose]` resource is copied by its class's own `clone()` method
   ([Classes](classes.md)), so each copy releases its own resource. One without `clone()` cannot
   be copied: passing it to `spawn` and using it afterwards is an error ("`r` is still used
@@ -198,7 +198,9 @@ async function main() {
 - The first `resolve(value)` or `reject(reason)` settles the promise; later calls do nothing.
   An error the executor throws rejects it.
 - A value settled on the promise's own task is the same object the awaiter gets (like JS); one
-  settled from another task is copied, like a `spawn` argument. (On single-threaded WebAssembly
+  settled from another task is transferred like a `spawn` argument, once the settling task has
+  finished its current step: moved when that task no longer references it (a value made for the
+  call, `resolve(new Result(…))`), copied when it still does. (On single-threaded WebAssembly
   there is only one thread, so it is shared there too.) A promise passed on to a spawned task
   and awaited there is not copied yet, as for any promise (#160): don't keep using the value
   on the settling task then.
@@ -242,8 +244,8 @@ type.
 - `resolve` and `reject` work like a `new Promise` executor's: store them, move them into a
   spawned task, or send them over a [channel](../std/channel.md) and call them there; the
   awaiting task wakes. The first settlement wins and later calls do nothing.
-- A value settled from another task is copied, one settled on the promise's own task is the same
-  object, as for `new Promise`.
+- A value settled from another task is transferred (moved, or copied while that task still uses
+  it), one settled on the promise's own task is the same object, as for `new Promise`.
 - A promise whose `resolve` and `reject` are all dropped without settling never settles, like in
   JS: it can lose a `Promise.race`, and awaiting it otherwise waits forever. A pending promise
   keeps the process alive (#147).

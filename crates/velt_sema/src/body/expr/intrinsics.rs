@@ -32,6 +32,7 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "same" => I::Same,
         "clone" => I::Clone,
         "share" => I::Share,
+        "transfer" => I::Transfer,
         "sqrt" => I::Sqrt,
         "floor" => I::Floor,
         "ceil" => I::Ceil,
@@ -115,6 +116,7 @@ impl FnCx<'_, '_> {
             I::Hash => (vec![(t, B)], ty.u64, true),
             I::Eq | I::Same => (vec![(t, B), (t, B)], bool_, true),
             I::Clone | I::Share => (vec![(t, B)], t, true),
+            I::Transfer => (vec![(t, O)], t, true),
             I::ToString => (vec![(t, B)], str_, true),
             I::SharedNew => {
                 let s = ty.intern(TyKind::Shared(t));

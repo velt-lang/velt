@@ -291,6 +291,9 @@ Maintainer-owned, like hir.rs.
   field reads, async-call arguments used again) are shares too. `Intrinsic::Clone` is a deep copy
   (`x.clone()`, and in async closures for their captures, which several threads may read); a
   class's own `clone()` (no params, returns the class) is what a deep copy of it calls.
+  `Intrinsic::Transfer(value)` (std only, value owned, result owned, same type): the value made
+  safe for another thread like a `spawn` argument — moved where nothing else references it,
+  deep-copied where it is still shared (std/prelude/promise.vlt settles promises with it).
 - Lowering's representation (counted objects, boxed arrays/objects, stabilized borrows) is its
   own business (docs/internals/design/semantics-stage2.md §3); it may turn a move out of a part of a
   counted value into a share.
