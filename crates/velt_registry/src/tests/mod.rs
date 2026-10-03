@@ -131,7 +131,7 @@ fn native_bundle(dir: &Path, content: &str) -> std::path::PathBuf {
     let target = "x86_64-unknown-linux-gnu";
     let b = dir.join(target);
     std::fs::create_dir_all(b.join("shared")).unwrap();
-    let exports = std::collections::BTreeMap::from([("n_get".into(), "()->u64".into())]);
+    let exports = std::collections::BTreeMap::from([("velt_n__get".into(), "()->u64".into())]);
     let library = vpm::native::exports::sample_library("n", &exports, content);
     std::fs::write(b.join("shared/libvelt_native_n.so"), library).unwrap();
     let meta = vpm::native::NativeMeta {
@@ -238,6 +238,49 @@ fn a_registry_written_by_an_older_velt() {
     server.stop();
     std::fs::write(root.join("old/index.json"), "{\"versions\": []}\n").unwrap();
     check_dir(&root).unwrap();
+}
+
+#[test]
+fn names_the_current_rules_refuse_keep_the_server_from_starting() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("server");
+    let index = |name: &str| {
+        std::fs::create_dir_all(root.join(name)).unwrap();
+        std::fs::write(root.join(name).join("index.json"), "{\"versions\": []}\n").unwrap();
+    };
+    index("fine");
+    check_dir(&root).unwrap();
+    // Published before the rules changed: an invalid name and a `-`/`_` pair.
+    index("rt-utils");
+    index("my-pkg");
+    index("my_pkg");
+    let e = check_dir(&root).unwrap_err();
+    assert!(
+        e.contains("`rt-utils` is no longer a valid package name"),
+        "{e}"
+    );
+    assert!(
+        e.contains("`my-pkg` and `my_pkg` differ only in `-` and `_`"),
+        "{e}"
+    );
+    assert!(
+        e.contains("rename or remove those package directories"),
+        "{e}"
+    );
+    // A directory without an index is not a package.
+    std::fs::remove_dir_all(root.join("rt-utils")).unwrap();
+    std::fs::remove_file(root.join("my_pkg").join("index.json")).unwrap();
+    check_dir(&root).unwrap();
+}
+
+#[test]
+fn user_names_have_their_own_rules() {
+    for ok in ["rt", "native", "john_", "a--b", "sig-x"] {
+        auth::check_user_name(ok).unwrap_or_else(|e| panic!("{ok}: {e}"));
+    }
+    for bad in ["Rt", "1a", "con", "a b"] {
+        assert!(auth::check_user_name(bad).is_err(), "{bad}");
+    }
 }
 
 /// A stub server answering every request with `content_type` and `body`.

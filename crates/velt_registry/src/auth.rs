@@ -81,14 +81,16 @@ fn new_token() -> Result<String, String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// User names follow the package name rules (`[a-z][a-z0-9_-]*`, not a Windows device name).
+/// User names are `[a-z][a-z0-9_-]*` and not a Windows device name
+/// ([`vpm::manifest::is_valid_user_name`]); the package rules for native export prefixes don't
+/// apply to them.
 pub fn check_user_name(name: &str) -> Result<(), String> {
     if vpm::manifest::is_windows_device_name(name) {
         return Err(format!(
             "invalid user name `{name}`: it is a device name on Windows (`con`, `nul`, `com1`, …)"
         ));
     }
-    if vpm::manifest::is_valid_package_name(name) {
+    if vpm::manifest::is_valid_user_name(name) {
         Ok(())
     } else {
         Err(format!(
