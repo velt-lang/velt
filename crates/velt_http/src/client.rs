@@ -441,34 +441,42 @@ mod tests {
     }
 
     /// A server that answers one byte at a time, never pausing long enough for the idle timeout.
+    /// The client gives up after 0.7 s, while the response (about 7 s of bytes) is still coming:
+    /// checked by how much the server got to send, not by the clock, which a loaded machine
+    /// stretches.
     #[test]
     fn a_dripping_server_hits_the_deadline() {
+        const HEAD: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n";
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
             let (mut conn, _) = listener.accept().unwrap();
             let mut request = [0u8; 1024];
             let _ = conn.read(&mut request);
-            for b in b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n"
-                .iter()
-                .cycle()
-            {
+            let mut sent = 0;
+            for b in HEAD.iter().cycle() {
                 if conn.write_all(&[*b]).is_err() {
                     break;
                 }
+                sent += 1;
                 std::thread::sleep(Duration::from_millis(50));
             }
+            sent
         });
         let limits = Limits {
             connect: Duration::from_secs(5),
             idle: Duration::from_secs(5),
             total: Duration::from_millis(700),
         };
-        let started = Instant::now();
         let err = fetch_within("GET", &format!("http://{addr}/"), &[], b"", limits).unwrap_err();
         assert!(err.contains("took too long"), "{err}");
-        assert!(started.elapsed() < Duration::from_secs(5));
-        server.join().unwrap();
+        // At most one byte per 50 ms, so 100 bytes take at least 5 s: far past the deadline,
+        // however slowly a loaded machine runs either side.
+        let sent = server.join().unwrap();
+        assert!(
+            sent < 100,
+            "the server sent {sent} bytes before the client gave up"
+        );
     }
 
     #[test]

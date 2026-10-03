@@ -332,7 +332,8 @@ fn spare_host_is_discarded() {
     write(main.replace("1000000000", "1000000001"));
     ok(dev.wait_stderr(mark, "velt dev: restarted"));
     let one_program = |what: &str| {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // A hang guard: the spare is gone at once, but a loaded machine may take its time.
+        let deadline = Instant::now() + Duration::from_secs(60);
         while dev.children().len() != 1 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -396,11 +397,18 @@ fn quiet_host_prints_no_diagnostics() {
 }
 
 /// A second SIGTERM exits at once, and takes the program along: the program (busy with a
-/// request it would otherwise drain for a second) is gone right after `velt dev` exits,
-/// instead of running on, orphaned.
+/// request it would otherwise drain) is killed when `velt dev` exits, instead of draining or
+/// running on, orphaned. Checked by how the program ended, not by how soon: the test process
+/// becomes the subreaper of its descendants, so the orphaned program becomes its child and its
+/// exit status can be read. Only the second interrupt kills it (SIGKILL); a drained program
+/// exits by itself.
 #[cfg(target_os = "linux")]
 #[test]
 fn second_interrupt_kills_the_program() {
+    // SAFETY: plain syscall; it only changes who reaps this process's orphaned descendants.
+    // Other tests' orphans then end as zombies of the test process, which they count as gone.
+    let rc = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) };
+    assert_eq!(rc, 0, "prctl: {}", std::io::Error::last_os_error());
     let dir = TestDir::new();
     apply(&root().join("tests/reload/in_flight/1"), dir.path());
     let mut dev = Dev::start(dir.path(), &[]);
@@ -409,31 +417,50 @@ fn second_interrupt_kills_the_program() {
     let port = dev.port().unwrap_or_else(|e| panic!("{e}"));
     let programs = dev.children();
     assert_eq!(programs.len(), 1, "{programs:?}");
+    let program = programs[0] as libc::pid_t;
     let slow = Background::start(port, "/slow");
+    // Time for the request to reach the program (it sleeps 8 s); the checks hold either way.
     std::thread::sleep(Duration::from_millis(200));
     dev.signal(libc::SIGTERM);
-    std::thread::sleep(Duration::from_millis(50));
-    dev.signal(libc::SIGTERM);
-    assert_eq!(
-        dev.wait_exit(Duration::from_secs(5)),
-        Some(128 + libc::SIGTERM)
-    );
-    let alive = |pid: u32| {
-        std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
-            !stat
-                .rsplit(')')
-                .next()
-                .unwrap_or("")
-                .trim_start()
-                .starts_with('Z')
-        })
-    };
-    // Killed: gone within moments (a drained program would live on for up to a second).
-    let deadline = Instant::now() + Duration::from_millis(300);
-    while alive(programs[0]) && Instant::now() < deadline {
+    // A second signal sent before the first is delivered would merge with it.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while dev.signal_pending(libc::SIGTERM) {
+        assert!(
+            Instant::now() < deadline,
+            "the first SIGTERM was not delivered"
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert!(!alive(programs[0]), "the program outlived velt dev");
+    dev.signal(libc::SIGTERM);
+    assert_eq!(
+        dev.wait_exit(Duration::from_secs(60)),
+        Some(128 + libc::SIGTERM)
+    );
+    // The program is our child now (or was killed before `velt dev` exited, a zombie handed on
+    // to us). A hang guard only: a program left running would sleep for days.
+    let mut status = 0;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let reaped = loop {
+        // SAFETY: plain syscall; `status` is writable.
+        match unsafe { libc::waitpid(program, &mut status, libc::WNOHANG) } {
+            0 => {}
+            pid => break pid,
+        }
+        assert!(Instant::now() < deadline, "the program outlived velt dev");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(
+        reaped,
+        program,
+        "waitpid: {}",
+        std::io::Error::last_os_error()
+    );
+    // SAFETY: plain syscall.
+    unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 0, 0, 0, 0) };
+    assert!(
+        libc::WIFSIGNALED(status) && libc::WTERMSIG(status) == libc::SIGKILL,
+        "the program was not killed: wait status {status:#x}"
+    );
     assert!(slow.finish().1.is_err(), "the slow request was not cut off");
 }
 
