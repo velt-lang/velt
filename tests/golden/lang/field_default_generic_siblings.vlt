@@ -1,0 +1,78 @@
+// check: no leaks
+// Seventeen sibling instantiations of a generic class whose field initializer throws its type
+// argument: the catch sees all seventeen errors. The cap on counted instantiations applies only
+// along a chain of initializers constructing their own class (#372).
+
+class E1 extends Error {}
+
+class E2 extends Error {}
+
+class E3 extends Error {}
+
+class E4 extends Error {}
+
+class E5 extends Error {}
+
+class E6 extends Error {}
+
+class E7 extends Error {}
+
+class E8 extends Error {}
+
+class E9 extends Error {}
+
+class E10 extends Error {}
+
+class E11 extends Error {}
+
+class E12 extends Error {}
+
+class E13 extends Error {}
+
+class E14 extends Error {}
+
+class E15 extends Error {}
+
+class E16 extends Error {}
+
+class E17 extends Error {}
+
+function call<E>(f: () => i64 throws E): i64 throws E {
+  return f();
+}
+
+function mkf<E>(): () => i64 throws E {
+  return (): i64 throws E => 1;
+}
+
+class Box<E> {
+  n: i64 = call<E>(mkf<E>());
+}
+
+function main() {
+  let total = 0;
+  try {
+    total += new Box<E1>().n;
+    total += new Box<E2>().n;
+    total += new Box<E3>().n;
+    total += new Box<E4>().n;
+    total += new Box<E5>().n;
+    total += new Box<E6>().n;
+    total += new Box<E7>().n;
+    total += new Box<E8>().n;
+    total += new Box<E9>().n;
+    total += new Box<E10>().n;
+    total += new Box<E11>().n;
+    total += new Box<E12>().n;
+    total += new Box<E13>().n;
+    total += new Box<E14>().n;
+    total += new Box<E15>().n;
+    total += new Box<E16>().n;
+    total += new Box<E17>().n;
+    console.log(total);
+  } catch (e) {
+    const all: E1 | E2 | E3 | E4 | E5 | E6 | E7 | E8 | E9 | E10 | E11 | E12 | E13 | E14 | E15 | E16 | E17 =
+      e;
+    console.log("caught", all.message);
+  }
+}

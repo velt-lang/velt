@@ -39,24 +39,49 @@ struct Visited {
     inits: InitsSeen,
 }
 
-/// How many instantiations of one class's field initializers a resolution counts separately.
+/// How many instantiations of one class's field initializers one chain of initializers counts.
 /// Initializers can construct their class with ever larger type arguments (`Box<T>` running
-/// `new Box<Box<T>>()`), which would never end; past this many, further instantiations of the
-/// class count as already seen (its first ones count). Ordinary programs construct a class with
-/// a few distinct type arguments in one chain of initializers.
-const MAX_INIT_INSTANCES: usize = 16;
+/// `new Box<Box<T>>()`), which would never end; past this many instantiations of the class on
+/// the current chain, deeper ones count as already seen. Sibling instantiations (`new Box<E1>()`
+/// … `new Box<E17>()` in one body) are not on one chain and all count (#372).
+const MAX_INIT_DEPTH: usize = 16;
+
+/// How many instantiations of one class a resolution counts in all: a bound on initializers that
+/// construct their class in several growing ways (`Box<Pair<T>>` and `Box<Box<T>>`), whose
+/// instantiations within [`MAX_INIT_DEPTH`] grow exponentially.
+const MAX_INIT_INSTANCES: usize = 1024;
 
 /// The classes whose field initializers ([`ThrowSrc::Defaults`]) are already counted, keyed on
-/// the class and its type arguments: `Box<E1>` and `Box<E2>` throw different errors.
+/// the class and its type arguments (`Box<E1>` and `Box<E2>` throw different errors), and how
+/// many instantiations of each class the current chain of initializers is inside.
 #[derive(Default)]
-pub(crate) struct InitsSeen(HashMap<DefId, HashSet<Vec<TyId>>>);
+pub(crate) struct InitsSeen {
+    seen: HashMap<DefId, HashSet<Vec<TyId>>>,
+    depth: HashMap<DefId, usize>,
+}
 
 impl InitsSeen {
-    /// Record class `d` with type arguments `args`: false when they are counted already (or
-    /// the class has [`MAX_INIT_INSTANCES`] counted).
-    pub(crate) fn insert(&mut self, d: DefId, args: &[TyId]) -> bool {
-        let seen = self.0.entry(d).or_default();
-        seen.len() < MAX_INIT_INSTANCES && seen.insert(args.to_vec())
+    /// Enter class `d`'s initializers with type arguments `args`: false when they are counted
+    /// already (or the chain or the resolution has its limit of the class). After true, the
+    /// caller counts the initializers' sources and then calls [`leave`](Self::leave).
+    pub(crate) fn enter(&mut self, d: DefId, args: &[TyId]) -> bool {
+        let depth = self.depth.entry(d).or_default();
+        let seen = self.seen.entry(d).or_default();
+        if *depth >= MAX_INIT_DEPTH || seen.len() >= MAX_INIT_INSTANCES {
+            return false;
+        }
+        if !seen.insert(args.to_vec()) {
+            return false;
+        }
+        *depth += 1;
+        true
+    }
+
+    /// Leave the initializers of class `d` entered last.
+    pub(crate) fn leave(&mut self, d: DefId) {
+        if let Some(n) = self.depth.get_mut(&d) {
+            *n = n.saturating_sub(1);
+        }
     }
 }
 
@@ -99,11 +124,13 @@ fn srcs_now_in(cx: &mut Ctx, srcs: &[ThrowSrc], visited: &mut Visited) -> Option
                 subst_error(cx, t, args)
             }
             ThrowSrc::Defaults(d, args, span) => {
-                if !visited.inits.insert(*d, args) {
+                if !visited.inits.enter(*d, args) {
                     continue;
                 }
                 let srcs = defaults_srcs(cx, *d, args, *span);
-                srcs_now_in(cx, &srcs, visited)
+                let t = srcs_now_in(cx, &srcs, visited);
+                visited.inits.leave(*d);
+                t
             }
         };
         acc = cx.join_errors(acc, t);

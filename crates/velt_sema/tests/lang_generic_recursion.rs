@@ -108,3 +108,26 @@ fn a_growing_call_outside_a_cycle_compiles() {
          function main() { console.log(f<i64>(1)); }",
     );
 }
+
+/// Field initializers constructing their own class with growing type arguments, in two ways at
+/// each step: counting their errors stops along each chain and in all (#372), so checking ends.
+#[test]
+fn growing_field_initializers_in_two_ways_finish() {
+    let src = "class E1 extends Error {}
+         function call<E>(f: () => i64 throws E): i64 throws E { return f(); }
+         function mkf<E>(): () => i64 throws E { return (): i64 throws E => 1; }
+         function never(): bool { return false; }
+         class Pair<T> { a: i64 = 0; }
+         class Grow<E> {
+           n: i64 = never() ? new Grow<Grow<E>>().n + new Grow<Pair<E>>().n : call<E>(mkf<E>());
+         }
+         function main() {
+           try { console.log(new Grow<E1>().n); } catch (e) { console.log(\"caught\"); }
+         }";
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(common::programs::load_src(src).check().1.len());
+    });
+    rx.recv_timeout(Duration::from_secs(30))
+        .expect("checking growing field initializers did not finish");
+}
