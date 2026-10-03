@@ -50,8 +50,8 @@ async function main() {
 
   console.log("fulfilled:", await Promise.all([step("a", 300, false), step("b", 10, false)]));
 
-  // A tie goes to the first in array order, and its handler runs before the siblings woken in
-  // the same tick.
+  // A tie goes to the first in array order: timers due in the same tick resume in creation order
+  // (#157), so its handler runs before the siblings'.
   try {
     await Promise.all([step("tie 1", 20, true), step("tie 2", 20, true), step("tie 3", 20, false)]);
   } catch (e) {
