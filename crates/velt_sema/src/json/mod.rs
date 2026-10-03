@@ -57,7 +57,7 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
             let mut reqs: Vec<(TyId, Span, bool)> = u.direct.clone();
             for (d, targs, span) in &u.calls {
                 for (t, parse) in needs.get(d).cloned().unwrap_or_default() {
-                    reqs.push((cx.ty.subst(t, targs), *span, parse));
+                    reqs.push((cx.subst(t, targs), *span, parse));
                 }
             }
             for c in &u.closures {
@@ -353,7 +353,7 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
                 _ => return Some(t),
             };
             stack.push(t);
-            let tys: Vec<TyId> = tys.into_iter().map(|f| cx.ty.subst(f, &args)).collect();
+            let tys: Vec<TyId> = tys.into_iter().map(|f| cx.subst(f, &args)).collect();
             let bad = tys
                 .into_iter()
                 .find_map(|f| unserializable(cx, f, stack, parse));

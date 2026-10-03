@@ -124,7 +124,7 @@ fn contains_by_value(
                 DefInfo::Enum(e) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
                 _ => vec![],
             };
-            tys.into_iter().map(|f| cx.ty.subst(f, &args)).collect()
+            tys.into_iter().map(|f| cx.subst(f, &args)).collect()
         }
         TyKind::Tuple(ts) => ts,
         TyKind::Option(x) => vec![x],
@@ -441,7 +441,7 @@ fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
     let inherited: Vec<FieldInfo> = cx.adt(bd).map(|b| b.fields.clone()).unwrap_or_default();
     let mut all = vec![];
     for mut f in inherited {
-        f.ty = cx.ty.subst(f.ty, &bargs);
+        f.ty = cx.subst(f.ty, &bargs);
         all.push(f);
     }
     let start = all.len();

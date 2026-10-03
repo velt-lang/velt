@@ -317,7 +317,7 @@ impl Ctx<'_> {
                 .entry(body)
                 .or_insert_with(|| decl.name.name.clone());
         }
-        self.ty.subst(body, &args)
+        self.subst(body, &args)
     }
 
     /// A type without a name of its own (a union or an anonymous object type).

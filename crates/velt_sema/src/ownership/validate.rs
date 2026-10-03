@@ -355,7 +355,7 @@ fn fn_values(cx: &mut Ctx) {
             .collect();
         let mut found = None;
         for (pname, t) in params {
-            let t = cx.ty.subst(t, &args);
+            let t = cx.subst(t, &args);
             if cx.mentions_params(t) {
                 found = Some((
                     pname,

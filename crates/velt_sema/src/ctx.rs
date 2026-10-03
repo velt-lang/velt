@@ -71,6 +71,8 @@ pub(crate) struct Ctx<'m> {
     pub shaping: Vec<DefId>,
     /// Classes whose fields are laid out base-first (`collect::shapes::layout_fields`).
     pub laid_out: HashSet<DefId>,
+    /// Canonical form of each type canonicalized so far (`crate::anon`, `Ctx::canon`).
+    pub canon_memo: HashMap<TyId, TyId>,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: HashMap<Vec<TyId>, DefId>,
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
@@ -142,6 +144,7 @@ impl<'m> Ctx<'m> {
             shaped: HashSet::new(),
             shaping: vec![],
             laid_out: HashSet::new(),
+            canon_memo: HashMap::new(),
             unions: HashMap::new(),
             alias_names: HashMap::new(),
             generic_overrides: vec![],
@@ -310,7 +313,7 @@ impl<'m> Ctx<'m> {
     pub fn base_of(&mut self, t: TyId) -> Option<TyId> {
         let (d, args) = self.class_of(t)?;
         let base = self.adt(d)?.base?;
-        Some(self.ty.subst(base, &args))
+        Some(self.subst(base, &args))
     }
 
     /// Is class `sub` class `sup` or one of its (transitive) subclasses?
@@ -407,7 +410,7 @@ impl<'m> Ctx<'m> {
                     DefInfo::Enum(e) => e.variants.iter().flat_map(|v| v.payload.clone()).collect(),
                     _ => vec![],
                 };
-                tys.into_iter().map(|f| self.ty.subst(f, &args)).collect()
+                tys.into_iter().map(|f| self.subst(f, &args)).collect()
             }
             _ => vec![],
         };
@@ -449,7 +452,7 @@ impl<'m> Ctx<'m> {
                     _ => return false,
                 };
                 tys.into_iter().all(|f| {
-                    let f = self.ty.subst(f, &args);
+                    let f = self.subst(f, &args);
                     self.is_copy_depth(f, depth + 1)
                 })
             }

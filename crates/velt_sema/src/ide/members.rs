@@ -114,7 +114,7 @@ fn method_raw(cx: &mut Ctx, name: String, def: DefId, owner_args: &[TyId]) -> Ra
         if owner_args.is_empty() {
             t
         } else {
-            cx.ty.subst(t, owner_args)
+            cx.subst(t, owner_args)
         }
     };
     let ps = f

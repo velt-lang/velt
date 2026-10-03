@@ -82,7 +82,7 @@ fn field_getters(cx: &mut Ctx, p: &Pair, cache: &mut Getters) -> Vec<DefId> {
         .unwrap_or_default();
     let mut getters = vec![];
     for f in ifields {
-        let want = cx.ty.subst(f.ty, &p.bound.args);
+        let want = cx.subst(f.ty, &p.bound.args);
         let have = cx
             .adt(p.d)
             .and_then(|a| a.fields.iter().position(|g| g.name == f.name))
@@ -170,12 +170,12 @@ fn trampoline(cx: &mut Ctx, d: DefId, self_ty: TyId, f: &Found, slot: u32) -> De
     let params = params
         .into_iter()
         .map(|mut p| {
-            p.ty = cx.ty.subst(p.ty, &owner_args);
+            p.ty = cx.subst(p.ty, &owner_args);
             p.default = None;
             p
         })
         .collect();
-    let ret = cx.ty.subst(ret, &owner_args);
+    let ret = cx.subst(ret, &owner_args);
     let qual = cx.adt(d).map(|a| a.qual_name.clone()).unwrap_or_default();
     let host = Host::adt(cx, d);
     synth_method(
@@ -212,14 +212,14 @@ fn check_method_sig(
         return;
     };
     let iface_args = &iface_args[..];
-    let ps: Vec<TyId> = ps.into_iter().map(|t| cx.ty.subst(t, owner_args)).collect();
-    let ret = cx.ty.subst(ret, owner_args);
+    let ps: Vec<TyId> = ps.into_iter().map(|t| cx.subst(t, owner_args)).collect();
+    let ret = cx.subst(ret, owner_args);
     let want_ps: Vec<TyId> = m
         .params
         .iter()
-        .map(|p| cx.ty.subst(p.ty, iface_args))
+        .map(|p| cx.subst(p.ty, iface_args))
         .collect();
-    let want_ret = cx.ty.subst(m.ret, iface_args);
+    let want_ret = cx.subst(m.ret, iface_args);
     let name = &m.name;
     if ps != want_ps || ret != want_ret {
         cx.err(
@@ -275,7 +275,7 @@ fn own_generics_match(
             bs.iter()
                 .map(|b| Bound {
                     iface: b.iface,
-                    args: b.args.iter().map(|t| cx.ty.subst(*t, &args)).collect(),
+                    args: b.args.iter().map(|t| cx.subst(*t, &args)).collect(),
                 })
                 .collect()
         })

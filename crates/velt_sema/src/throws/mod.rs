@@ -130,7 +130,7 @@ pub(crate) fn defaults_srcs(cx: &mut Ctx, d: DefId, args: &[TyId], span: Span) -
 }
 
 fn subst_error(cx: &mut Ctx, t: Option<TyId>, targs: &[TyId]) -> Option<TyId> {
-    let t = t.map(|t| cx.ty.subst(t, targs));
+    let t = t.map(|t| cx.subst(t, targs));
     cx.canon_error(t)
 }
 

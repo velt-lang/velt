@@ -353,14 +353,14 @@ impl FnCx<'_, '_> {
             .collect();
         let mut hs = vec![];
         for (i, f) in fields.iter().enumerate() {
-            let fty = self.cx.ty.subst(f.ty, &type_args);
+            let fty = self.cx.subst(f.ty, &type_args);
             let h = match (values[i].take(), &f.default) {
                 (Some(h), _) => self.coerce(h, fty),
                 (None, Some(dflt)) => {
                     let mut h = dflt.clone();
-                    crate::visit::map_expr_types(&mut h, &mut |t| self.cx.ty.subst(t, &type_args));
+                    crate::visit::map_expr_types(&mut h, &mut |t| self.cx.subst(t, &type_args));
                     for s in &f.default_throws {
-                        let s = s.used_at(span, |t| self.cx.ty.subst(t, &type_args));
+                        let s = s.used_at(span, |t| self.cx.subst(t, &type_args));
                         self.throw_src(s);
                     }
                     h
@@ -416,7 +416,7 @@ impl FnCx<'_, '_> {
             self.check_private(fields[i].private_to, &pname.name, pname.span);
             self.cx
                 .rec_ref(pname.span, crate::ide::record::Target::Field(d, i as u32));
-            let expected = self.cx.ty.subst_known(fields[i].ty, slots);
+            let expected = self.cx.subst_known(fields[i].ty, slots);
             let h = self.prop_value(pname, *value, Some(expected));
             self.cx.match_ty(fields[i].ty, h.ty, slots);
             values[i] = Some(h);

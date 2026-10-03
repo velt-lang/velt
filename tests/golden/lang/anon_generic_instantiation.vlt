@@ -1,0 +1,54 @@
+// An anonymous object type instantiated from a generic one is the type written directly:
+// `{ a: U }` at `U = string` is `{ a: string }`, at every level of nesting and in arrays, and
+// values flow between the two forms unconverted (issue #350, prerequisite P1).
+
+function wrap<U>(x: U): { a: U } {
+  return { a: x };
+}
+
+function box<U>(v: U): { v: U; n: i64 } {
+  return { v: v, n: 1 };
+}
+
+function pair<A, B>(a: A, b: B): { a: A; b: B } {
+  return { a: a, b: b };
+}
+
+// A generic calling a generic with one parameter twice: `{ a: A; b: B }` at `A = B = W`.
+function twice<W>(w: W): { a: W; b: W } {
+  return pair(w, w);
+}
+
+function nested<U>(x: U): { outer: { inner: U }[] } {
+  return { outer: [{ inner: x }] };
+}
+
+// Writes through the generic form are seen through the concrete one: the object is shared.
+function bump<U>(o: { v: U; n: i64 }): void {
+  o.n += 1;
+}
+
+function main(): void {
+  const o: { a: string } = wrap<string>("hi");
+  const o2: { a: string } = wrap("inferred");
+  console.log(o.a, o2.a);
+
+  const xs: { v: string; n: i64 }[] = [box("x"), box("y")];
+  console.log(xs.length, xs[1].v);
+
+  const t: { a: f64; b: f64 } = twice(1.5);
+  console.log(t.a + t.b);
+
+  const n: { outer: { inner: bool }[] } = nested(true);
+  console.log(n.outer[0].inner);
+
+  const b: { v: string; n: i64 } = box("z");
+  bump(b);
+  bump(b);
+  console.log(b.n);
+  console.log(b);
+
+  const p = pair("k", 2);
+  const q: { a: string; b: i64 } = p;
+  console.log(q.b);
+}

@@ -116,7 +116,7 @@ impl Ctx<'_> {
                     fields
                         .into_iter()
                         .filter(|f| f.3)
-                        .map(|(n, ty, r, _)| (n, self.ty.subst(ty, &args), r))
+                        .map(|(n, ty, r, _)| (n, self.subst(ty, &args), r))
                         .collect(),
                 )
             }
@@ -185,7 +185,7 @@ impl Ctx<'_> {
         stack.push(iface);
         let mut out = vec![];
         for p in parents {
-            let pargs: Vec<TyId> = p.args.iter().map(|t| self.ty.subst(*t, args)).collect();
+            let pargs: Vec<TyId> = p.args.iter().map(|t| self.subst(*t, args)).collect();
             for f in self.iface_fields_now(p.iface, &pargs, stack) {
                 if !out.iter().any(|g: &(String, TyId, bool, bool)| g.0 == f.0) {
                     out.push(f);
@@ -194,7 +194,7 @@ impl Ctx<'_> {
         }
         stack.pop();
         for (n, ty, r) in own {
-            let ty = self.ty.subst(ty, args);
+            let ty = self.subst(ty, args);
             out.retain(|g| g.0 != n);
             out.push((n, ty, r, true));
         }

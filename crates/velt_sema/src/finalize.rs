@@ -119,7 +119,7 @@ fn field_defaults(
     if let Some((bd, bargs)) = base.and_then(|b| cx.class_of(b)) {
         for mut e in field_defaults(cx, bd, memo).into_iter().take(start) {
             if let Some(e) = &mut e {
-                crate::visit::map_expr_types(e, &mut |t| cx.ty.subst(t, &bargs));
+                crate::visit::map_expr_types(e, &mut |t| cx.subst(t, &bargs));
             }
             out.push(e);
         }
