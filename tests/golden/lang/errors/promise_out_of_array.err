@@ -19,4 +19,4 @@ promise_out_of_array.vlt:36:16: error: `flat` would copy a `Promise<string>` out
 promise_out_of_array.vlt:37:18: error: `new Array(n).fill(v)` would copy a `Promise<string>`
   = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212): take promises out with `pop()` or `splice(i, 1)`, or await them together with `Promise.all(arr)`
 promise_out_of_array.vlt:39:13: error: `at` would copy a `Task` out of the array
-  = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212), nor can a value that holds one: read its fields in place (`xs[i].field`), or take it out with `pop()` or `splice(i, 1)`
+  = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212), nor can a value type that holds one: read its fields in place (`xs[i].field`), take it out with `pop()` or `splice(i, 1)`, or make `Task` a class (a class instance is shared, not copied)
