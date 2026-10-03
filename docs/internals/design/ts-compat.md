@@ -100,5 +100,6 @@ errors.
 ## Not in this round
 
 Structural interfaces, utility types, `readonly` object-type fields, JSON output of absent
-optional fields, `velt check --ts-compat` and the `.d.ts` package (shared models and tooling, in
-separate work); UTF-16 string positions; overloads.
+optional fields, `velt check --ts-compat` (the lint for code shared with `tsc`: see
+[TSX, "The common subset"](tsx.md#the-common-subset)) and the `.d.ts` package (shared models and
+tooling, in separate work); UTF-16 string positions; overloads.

@@ -2259,6 +2259,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "velt_tscompat"
+version = "0.1.0"
+dependencies = [
+ "velt_common",
+ "velt_syntax",
+]
+
+[[package]]
 name = "velt_vir"
 version = "0.1.0"
 dependencies = [
@@ -2291,6 +2299,7 @@ dependencies = [
  "velt_rt_host",
  "velt_sema",
  "velt_syntax",
+ "velt_tscompat",
  "velt_vir",
  "vpm",
  "windows-sys 0.61.2",

@@ -63,7 +63,7 @@ Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exi
 | ir | `crates/velt_vir` (except `vir.rs` data types — `Display` impl may be improved) |
 | codegen | `crates/velt_codegen_cl` |
 | runtime | `crates/velt_rt`, `std/**` |
-| tooling | `crates/veltc`, `crates/velt_link`, `crates/vpm` (except `tests/golden.rs`), `crates/velt_doc`, `crates/velt_registry`, `crates/velt_http` |
+| tooling | `crates/veltc`, `crates/velt_link`, `crates/vpm` (except `tests/golden.rs`), `crates/velt_doc`, `crates/velt_tscompat`, `crates/velt_registry`, `crates/velt_http` |
 | native SDK | `crates/velt_native`, `crates/velt_native_macros` (versioned with the native ABI), `packages/**` |
 | runtime (wasm) | `crates/velt_rt_wasm`, `crates/velt_rt_host` (mirror of velt_rt deps) |
 | runtime packaging | `crates/velt_rt_shared` (the runtime as a shared library for debug builds; mirror of velt_rt deps) |

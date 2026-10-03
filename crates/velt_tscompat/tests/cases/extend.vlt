@@ -1,0 +1,14 @@
+// `extend` adds methods to a type declared elsewhere.
+
+export type Money = { cents: number };
+
+extend Money {
+  //~^ extend
+  dollars(): number {
+    return this.cents / 100;
+  }
+}
+
+export function dollars(m: Money): number {
+  return m.cents / 100;
+}

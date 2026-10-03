@@ -4,6 +4,7 @@
 velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple>] [--emit vir|llvm|obj|exe] [--locked] [-v] [--timings]
 velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm] [--locked] [-- <program args>...]
 velt check [<file.vlt>] [--json] [--locked] [-v]
+velt check --ts-compat <file|dir>... [--json] [--locked] [-v]
 velt dev   [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]
 velt test  [<file|dir>] [--release] [--locked] [--watch]
 velt new   <name> [--template app|cli|api|websocket|lib] [--lib]
@@ -121,6 +122,23 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `location` is `{"file", "line", "column", "endLine", "endColumn"}` (1-based; columns count
   bytes, as in the text output) or `null`. A non-source failure (unreadable input, broken
   package) is an error diagnostic with `location: null`. `-v` prints stage timings to stderr.
+  Additive: every JSON diagnostic also has `"code"` and `"fix"`, both `null` except for
+  `--ts-compat` findings.
+- `check --ts-compat <file|dir>...` (additive): checks exactly the given files (a directory: its
+  source modules, found as for a package, recursively; a directory without any is an error; an
+  explicit `.d.ts` path is an error) in one front-end run, the first as the root and the rest as
+  extra roots, all library modules, inside their package (if any). All files must share one
+  package root (the nearest directory above each with a manifest), or all have none; otherwise
+  it fails (exit 1) with an error naming two of the files and their packages ("lint one package
+  per run: …"). Each group of them with the same module path is an error, as in a whole-package
+  check. Then it lints, with `velt_tscompat`, those of them that have no error diagnostic
+  located in them (none when loading or parsing failed). Findings follow the check's
+  diagnostics (in text, after a blank line), ordered by file and position. Text: each is a
+  diagnostic (its severity, message and notes) whose last note is `ts-compat(<code>)`. JSON: the
+  same diagnostic with `"code": "<code>"` and `"fix": {"location", "replacement", "title"}` or
+  `null`. A relative import (`./`, `../`) of a file that is not among the given files is the
+  finding `outside-import`. Exit 1 on any error (from the check or an error-severity finding), 0
+  otherwise. Without paths it is a usage error (exit 2).
 - Linking (additive): debug builds (no `--release`) link the runtime as a
   shared library (`libvelt_rt_shared.so` / `.dylib`, `velt_rt_shared.dll` + `.dll.lib`) found
   next to `velt`, its parent directory or `<prefix>/lib`, with an rpath to it (Windows: the DLL is

@@ -9,12 +9,12 @@ use velt_syntax::ast::{self, ExprKind as E};
 use super::Fix;
 use crate::analysis::Analysis;
 use crate::sema_query;
-use crate::syntax_walk::{self, Visit};
+use velt_syntax::visit::{self, Visit};
 
 /// Fixes for floating promises among the statements overlapping `lo..hi`.
 pub fn fixes(analysis: &Analysis, lo: u32, hi: u32) -> Vec<Fix> {
     let mut scan = Scan::default();
-    syntax_walk::walk_module(&analysis.module().ast, &mut scan);
+    visit::walk_module(&analysis.module().ast, &mut scan);
     let mut out = vec![];
     for &e in &scan.statements {
         if e.span.hi < lo || e.span.lo > hi || !is_promise(analysis, e) {

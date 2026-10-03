@@ -10,6 +10,7 @@ mod lexer;
 #[cfg(test)]
 mod linear_tests;
 mod parser;
+pub mod visit;
 mod work;
 
 use velt_common::{Diagnostics, FileId};
