@@ -21,6 +21,7 @@
 
 mod abi;
 mod adt;
+mod append;
 mod array;
 mod async_fn;
 mod attempt;

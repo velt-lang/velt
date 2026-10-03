@@ -226,6 +226,16 @@ impl VeltStr {
         }
     }
 
+    /// Do the bytes of `other` lie in `self`'s heap buffer (a share of it, or an uncounted view:
+    /// a static-form sub-range or a bitwise copy)?
+    pub(crate) fn holds_bytes_of(&self, other: &VeltStr) -> bool {
+        if !self.is_heap() || other.is_inline() {
+            return false;
+        }
+        let (start, p) = (self.w0 as usize, other.w0 as usize);
+        p >= start && p < start + self.w2 as usize
+    }
+
     /// Give up this reference (frees the buffer with the last one) and leave `self` empty.
     ///
     /// # Safety
