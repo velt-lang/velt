@@ -32,8 +32,8 @@ pub unsafe extern "C" fn velt_rt_str_concat(
 pub unsafe extern "C" fn velt_rt_str_append(s: *mut VeltStr, t: *const VeltStr) {
     if std::ptr::eq(s, t) {
         // `s += s`: copy the text out first (the append may grow and move it).
-        let (copy, sum) = ((*t).as_bytes().to_vec(), (*t).summary());
-        (*s).push_wtf8(&copy, Some(sum));
+        let sum = (*t).summary();
+        (*s).push_with_summary(|v| v.extend_from_slice((*t).as_bytes()), |_| Some(sum));
         return;
     }
     // A share or view of `*s`'s own buffer is copied out by the push where the buffer grows.

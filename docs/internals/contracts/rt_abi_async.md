@@ -488,7 +488,12 @@ a builder of its own and appended with `velt_rt_str_append` (rt_abi.md), so a th
 leaves `s` unchanged. When the text may change `s` (it reads `s`, or calls code that could reach
 it), lowering shares the old value before evaluating it and puts it back afterwards, which
 leaves the count at 1 again unless the text kept a copy. Every push ends in the one append
-routine of the runtime (`VeltStr::push_bytes`), so a per-string header can be maintained there.
+routine of the runtime (`VeltStr::push_wtf8`, rt_abi.md "Strings"), which keeps the string's
+UTF-16 unit count, lone-surrogate count and form up to date per append in O(1) (the appended
+text's counts come from its value when it is a string, as in `velt_rt_str_append`).
+Appended text lying in the target's own buffer (the target itself, a share, an uncounted copy or
+a static-form view of it) is copied out before the buffer grows, moves behind a header or has a
+surrogate pair joined at its end.
 
 **Invariant:** a count-1 buffer is appended to (and so possibly reallocated) only while no
 borrowed static-form view into it is live. The only such views today are the JSON reader's

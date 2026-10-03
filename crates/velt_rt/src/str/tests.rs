@@ -311,3 +311,30 @@ fn joins_sum_their_pieces() {
         unsafe { p.release() };
     }
 }
+
+#[test]
+fn appending_a_view_of_itself_joins_and_grows_safely() {
+    // A heap string starting with a low half and ending with a high one: appending an uncounted
+    // copy of itself joins the halves at the seam, which rewrites (and may move) the buffer the
+    // appended text lies in.
+    let (hi, lo) = (enc3(HI), enc3(LO));
+    let body = [&lo[..], &[b'x'; 30], &hi].concat();
+    let mut s = VeltStr::from_bytes(&body);
+    let view = VeltStr {
+        w0: s.w0,
+        w1: s.w1,
+        w2: s.w2,
+    };
+    unsafe { velt_rt_str_append(&mut s, &view) };
+    let want = [&lo[..], &[b'x'; 30], "😀".as_bytes(), &[b'x'; 30], &hi].concat();
+    assert_eq!(bytes(&s), want);
+    assert_eq!(unsafe { s.summary() }.lone, 2);
+    // A full header buffer growing while the appended text is a static-form view into it.
+    let tail = unsafe { VeltStr::borrowed(s.ptr().add(3), 30) };
+    unsafe { velt_rt_str_append(&mut s, &tail) };
+    assert_eq!(&bytes(&s)[want.len()..], &[b'x'; 30]);
+    let sp: *mut VeltStr = &mut s;
+    unsafe { velt_rt_str_append(sp, sp) };
+    assert_eq!(s.len(), 2 * (want.len() + 30));
+    unsafe { s.release() };
+}

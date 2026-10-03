@@ -25,7 +25,7 @@ pub unsafe extern "C" fn velt_rt_strbuf_new(cap: u64, out: *mut VeltStrBuf) {
 }
 
 /// Append the bytes of `s` (the caller keeps ownership of `s`; `s` may be the builder itself or
-/// lie in its buffer: `push_bytes` copies such text out before the buffer can move).
+/// lie in its buffer: `push_wtf8` copies such text out before the buffer can move).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_str(buf: *mut VeltStrBuf, s: *const VeltStr) {
     if std::ptr::eq(buf, s) {

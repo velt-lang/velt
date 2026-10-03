@@ -68,8 +68,9 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   alive (the compiler moves instead when the source is dead).
 - A buffer with count > 1 is never written. The builder (§12.1 of rt_abi_async.md) appends in
   place only to an inline string with room or a heap buffer with count 1 (of the right layout).
-- Bytes enter a string through one runtime function (`VeltStr::push_wtf8`), which keeps the unit
-  count, the lone count and the form in step, and joins a high surrogate ending the string with a
+- Bytes enter a string through one runtime function (`VeltStr::push_wtf8`; every append, including
+  `velt_rt_str_append` and the builder's pushes, ends there), which keeps the unit count, the lone
+  count and the form in step in O(1) per append (geometric growth), and joins a high surrogate ending the string with a
   low one starting the appended text into the pair's 4-byte code point (only when both sides have
   lone surrogates: units are unchanged, bytes and lone count shrink by 2). Code outside the
   runtime's string module never writes `w1`/`w2`.

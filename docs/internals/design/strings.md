@@ -144,7 +144,7 @@ surrogates. `push_bytes`, `from_bytes`, `from_vec` and `append_unique` become pr
 Joining a high and a low half keeps the **unit count unchanged** and shortens the bytes by 2.
 The producers that can glue halves together, and so must go through `push_wtf8`:
 
-- `str_concat` and the builder (`push_str`/`push_bytes`, which also carries templates,
+- `str_concat`, `velt_rt_str_append` and the builder (`push_str`/`push_bytes`, which also carries templates,
   `Array.join` and `s += x`);
 - `repeat`, `padStart`/`padEnd` (fill against fill, and fill against the string);
 - `replace`/`replaceAll` (two seams per match) and regex `replace`;
