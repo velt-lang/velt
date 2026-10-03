@@ -1,0 +1,65 @@
+// check: no leaks
+// An interface method returning a type parameter throws its errors for every type argument
+// (#306 review): a synchronous implementation for `T = Promise<i64>` that throws is caught at the
+// call, through an interface value, a generic parameter and a synchronous function returning the
+// promise, and a promise it returns still resolves.
+class Empty extends Error {}
+
+interface Getter<T> {
+  get(): T;
+}
+
+class Stock implements Getter<Promise<i64>> {
+  name: string = "a stock with a name long enough to live on the heap";
+  count: i64;
+
+  constructor(count: i64) {
+    this.count = count;
+  }
+
+  get(): Promise<i64> {
+    if (this.count == 0) {
+      throw new Empty(`${this.name} is empty`);
+    }
+    return new Promise<i64>((resolve, reject) => resolve(this.count));
+  }
+}
+
+class Count implements Getter<i64> {
+  get(): i64 {
+    return 7;
+  }
+}
+
+function fetchIt(g: Getter<Promise<i64>>): Promise<i64> {
+  return g.get();
+}
+
+async function viaParam<G extends Getter<Promise<i64>>>(g: G): Promise<string> {
+  try {
+    return `param ${await g.get()}`;
+  } catch (e) {
+    return `param caught: ${e.message}`;
+  }
+}
+
+async function main() {
+  const stocks: Getter<Promise<i64>>[] = [new Stock(3), new Stock(0)];
+  for (const s of stocks) {
+    try {
+      console.log(await s.get());
+    } catch (e) {
+      console.log(`caught: ${e.message}`);
+    }
+    try {
+      const p = fetchIt(s);
+      console.log(`fetched ${await p}`);
+    } catch (e) {
+      console.log(`fetch caught: ${e.message}`);
+    }
+  }
+  console.log(await viaParam(new Stock(5)));
+  console.log(await viaParam(new Stock(0)));
+  const c: Getter<i64> = new Count();
+  console.log(c.get());
+}

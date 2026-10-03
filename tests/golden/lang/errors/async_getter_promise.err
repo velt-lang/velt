@@ -1,0 +1,2 @@
+async_getter_promise.vlt:8:7: error: getter `R.ready` cannot fail with `Error`: `Reader.ready` returns a promise, which reports errors by rejecting, and a getter cannot be `async`
+  = note: catch the error inside the getter, or declare `ready` as an `async` method

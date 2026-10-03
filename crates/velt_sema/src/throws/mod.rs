@@ -15,6 +15,7 @@
 //!   the final inference ([`checks`]): recursion may need a `throws` clause.
 
 mod checks;
+mod conventions;
 mod groups;
 mod infer;
 mod sets;

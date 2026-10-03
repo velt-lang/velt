@@ -1,0 +1,1 @@
+async_generic_member_promise.vlt:14:3: error: `Holder.load` cannot fail with `Error`: `Loader.load` reports errors by rejecting its promise, and `Holder.load` returns a type parameter, so it cannot be `async`

@@ -4,7 +4,8 @@
 //! Compiler diagnostics carry no machine-readable fix-its yet (`velt_common::Diagnostic` has only
 //! a message, labels and notes), so each fix recognizes its diagnostic by message/notes and builds
 //! the replacement from the AST and sema's types:
-//! - [`fixits`]: `mut` removal, `undefined` → `null`, a non-`bool` condition → an explicit comparison;
+//! - [`fixits`]: `mut` removal, `undefined` → `null`, a non-`bool` condition → an explicit comparison,
+//!   `async` for a method whose promise must carry its errors;
 //! - [`concat`]: `"a" + n` → a template literal;
 //! - [`exports`]: `export default` → a named export;
 //! - [`promise`]: a floating promise (a promise-typed expression statement, a compiler error) →
