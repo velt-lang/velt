@@ -64,23 +64,22 @@ hidden classes and no runtime shape checks.
   don't use `this` or `super.x`
   (``'super' must be called before accessing 'this' in the constructor of a derived class``) or
   `return`; they run first, then the call's arguments, the base constructor, this class's field
-  initializers and parameter properties, and the rest of the body. When the class has
-  initialized fields or parameter properties (which are set right after `super(…)` returns),
-  `super(…)` must be the first statement (TypeScript's TS2376):
+  initializers and parameter properties, and the rest of the body. This holds also when the
+  class has initialized fields or parameter properties, which are set right after `super(…)`
+  returns, as in JavaScript (TypeScript 4.6+):
 
   ```ts
   class Shape {
     constructor(public name: string) {}
   }
   class Square extends Shape {
-    sides: i64;
+    sides: i64 = 4;
     constructor(size: f64) {
       if (size <= 0) {
         throw new Error("size must be positive");
       }
       const name = `square ${size}`;
       super(name);
-      this.sides = 4;
       console.log(this.name, this.sides); // square 2 4
     }
   }

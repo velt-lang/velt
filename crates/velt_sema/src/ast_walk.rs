@@ -95,6 +95,7 @@ pub(crate) fn children_mut(e: &mut ast::Expr, f: &mut dyn FnMut(&mut ast::Expr))
         | E::Await(expr)
         | E::Cast { expr, .. }
         | E::InstanceOf { expr, .. }
+        | E::NonNull(expr)
         | E::Paren(expr)
         | E::Member { object: expr, .. } => f(expr),
         E::Binary { lhs: a, rhs: b, .. }

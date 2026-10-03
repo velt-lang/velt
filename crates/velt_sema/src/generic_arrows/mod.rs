@@ -1,7 +1,8 @@
 //! Generic arrow functions (`<T>(x: T): T => x`, or `<T,>` as `.tsx` spells it): a
-//! `const f = <T>(x: T): R => body;` with typed parameters and a return type is checked as the
-//! generic function `function f<T>(x: T): R { return body; }` (same spans; at module level with
-//! the same `export`, in a body as a nested function, see [`local`]). The syntax is rewritten
+//! `const f = <T>(x: T): R => body;` with typed parameters is checked as the generic function
+//! `function f<T>(x: T): R { return body; }` (same spans; at module level with the same
+//! `export`, in a body as a nested function, see [`local`]). Without a return type, the
+//! function infers it from its body like any other (`collect::ret_infer`). The syntax is rewritten
 //! before collection, so every later pass sees an ordinary generic function. Generic arrows
 //! anywhere else are reported by `body::expr::closure` (a closure value has one type; Velt has
 //! no generic function values).
@@ -61,7 +62,8 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
     })
 }
 
-/// A module-level `const f = <T>(x: T): R => body;` as `function f<T>(x: T): R { return body; }`.
+/// A module-level `const f = <T>(x: T): R => body;` as `function f<T>(x: T): R { return body; }`
+/// (`: R` only when the arrow has it).
 fn as_function(item: &ast::Item) -> Option<ast::Item> {
     let ast::ItemKind::Var(v) = &item.kind else {
         return None;
@@ -73,8 +75,7 @@ fn as_function(item: &ast::Item) -> Option<ast::Item> {
     })
 }
 
-/// The function a generic arrow constant `v` declares, if it is one with typed parameters and
-/// a return type.
+/// The function a generic arrow constant `v` declares, if it is one with typed parameters.
 fn arrow_function(v: &ast::VarDecl) -> Option<ast::FnDecl> {
     let ast::PatternKind::Ident(name) = &v.pattern.kind else {
         return None;
@@ -85,7 +86,7 @@ fn arrow_function(v: &ast::VarDecl) -> Option<ast::FnDecl> {
     let ast::ExprKind::Arrow {
         type_params,
         params,
-        ret: Some(ret),
+        ret,
         throws,
         body,
         is_async,
@@ -124,7 +125,7 @@ fn arrow_function(v: &ast::VarDecl) -> Option<ast::FnDecl> {
         name: name.clone(),
         generics: type_params.clone(),
         params,
-        ret: Some(ret.clone()),
+        ret: ret.clone(),
         throws: throws.clone(),
         is_async: *is_async,
         span: v.span,
@@ -167,8 +168,15 @@ mod tests {
     }
 
     #[test]
+    fn lifts_generic_arrows_without_a_return_type() {
+        let Some(ast::ItemKind::Function(f)) = lifted("const id = <T,>(x: T) => x;") else {
+            panic!("not lifted");
+        };
+        assert!(f.sig.ret.is_none());
+    }
+
+    #[test]
     fn leaves_other_constants_alone() {
-        assert!(lifted("const id = <T,>(x: T) => x;").is_none());
         assert!(lifted("const id = <T,>(x): T => x;").is_none());
         assert!(lifted("const f = (x: i64): i64 => x;").is_none());
         assert!(lifted("const n = 1;").is_none());
@@ -202,7 +210,7 @@ mod tests {
     #[test]
     fn leaves_bodies_without_generic_arrows_alone() {
         assert!(lifted("function f() { let id = <T,>(x: T): T => x; }").is_none());
-        assert!(lifted("function f() { const id = <T,>(x: T) => x; }").is_none());
+        assert!(lifted("function f() { const id = <T,>(x) => x; }").is_none());
         assert!(lifted("function f() { const g = (x: i64): i64 => x; }").is_none());
     }
 }

@@ -72,7 +72,9 @@ Types:
   children first, then arrow functions, which get their parameter types from the result).
 - Generic arrow functions (`const id = <T>(x: T): T => x;`) are generic functions, at module
   level and as a `const` in a function body (a nested generic function, instantiated per
-  call). A Velt function value has exactly one type, so there are no generic function values:
+  call). Their parameters need types; without a return type one is inferred from the body by
+  the rules for functions (`const id = <T>(x: T) => x;` returns `T`; `async` gives
+  `Promise<T>`). A Velt function value has exactly one type, so there are no generic function values:
   using one as a value needs a function type (`const f: (x: i64) => i64 = id;`), and a
   generic arrow in any other position is a compile error with a fix-it.
 - Components are functions `(props: P) => JSX.Element`. **Async components**

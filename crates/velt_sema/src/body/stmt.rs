@@ -58,7 +58,6 @@ impl FnCx<'_, '_> {
         self.stmt_inner(s, out);
         self.f.stmt_depth -= 1;
         self.f.super_ok = false;
-        self.f.root_stmts += u32::from(root);
     }
 
     fn stmt_inner(&mut self, s: &ast::Stmt, out: &mut Vec<hir::Stmt>) {

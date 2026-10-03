@@ -176,11 +176,6 @@ pub(crate) struct Frame {
     pub before_super: bool,
     /// How many statements enclose the one being checked (1 at the body's root).
     pub stmt_depth: u32,
-    /// Why `super(...)` must be the constructor's first statement, when it must: the class's
-    /// first initialized field or parameter property (`ctor`).
-    pub super_first: Option<(String, Span)>,
-    /// Root-level statements of the constructor body checked so far.
-    pub root_stmts: u32,
     /// Field paths that conditions narrow (`field_narrow`).
     pub field_tokens: Vec<field_narrow::FieldToken>,
     /// `const`s bound by reference (`const_borrow`).
@@ -214,8 +209,6 @@ impl Frame {
             super_called: false,
             before_super: false,
             stmt_depth: 0,
-            super_first: None,
-            root_stmts: 0,
             field_tokens: vec![],
             const_refs: Default::default(),
             mutable_tests: vec![],

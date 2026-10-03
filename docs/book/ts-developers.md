@@ -154,8 +154,9 @@ contents.
   constructor can be `private` or `protected`, with TypeScript's rules.
 - `static readonly` constants exist; mutable statics don't.
 - Constructors follow TypeScript's `super(...)` rules: a derived constructor calls it exactly
-  once (also when the base has no constructor), statements before it cannot use `this`, and it
-  comes first when the class has initialized fields or parameter properties.
+  once (also when the base has no constructor), and statements before it cannot use `this`.
+  As in TypeScript 4.6+, such statements are allowed also when the class has initialized fields
+  or parameter properties; those are set right after `super(...)` returns.
 - Field initializers and constructors run in JavaScript's order (base initializers, base
   constructor, derived initializers, derived constructor), and parameter properties come first
   in the field order, as `tsc --target es2022` emits them.

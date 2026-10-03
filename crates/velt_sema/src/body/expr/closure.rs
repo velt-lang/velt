@@ -75,10 +75,10 @@ impl FnCx<'_, '_> {
         if !type_params.is_empty() {
             self.cx.error(
                 velt_common::Diagnostic::error(
-                    "a generic arrow function must be the value of a `const` with typed parameters and a return type",
+                    "a generic arrow function must be the value of a `const` with typed parameters",
                     e.span,
                 )
-                .with_note("a function value has one type; declare it as `const id = <T>(x: T): T => x;` and call it, or write a generic `function`"),
+                .with_note("a function value has one type; declare it as `const id = <T>(x: T) => x;` and call it, or write a generic `function`"),
             );
             return self.error_expr(e.span);
         }

@@ -1,7 +1,8 @@
 // `super(...)` must run exactly once on every path, before `this` is used: as a statement of its
 // own in a derived constructor (not inside `if`, a loop, a ternary or a closure), with arguments
-// that do not use `this` or `super.m()`. Statements before it may not use `this` or return, and
-// a class with initialized fields or parameter properties needs it first (TypeScript's rules).
+// that do not use `this` or `super.m()`. Statements before it may not use `this` or return
+// (TypeScript's rules); they may come first also in a class with initialized fields or parameter
+// properties (`super_statements.vlt`).
 class A {
   x: i64;
   constructor(x: i64) {
@@ -39,21 +40,6 @@ class Twice extends A {
   constructor() {
     super(1);
     super(2);
-  }
-}
-
-class LateWithField extends A {
-  y: i64 = 1;
-  constructor() {
-    console.log("before");
-    super(1);
-  }
-}
-
-class LateWithParamProperty extends A {
-  constructor(readonly z: i64) {
-    const w = z * 2;
-    super(w);
   }
 }
 

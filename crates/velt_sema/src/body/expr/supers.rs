@@ -13,7 +13,7 @@ impl FnCx<'_, '_> {
     /// constructor (`body::ctor`). A base class without a constructor makes it `Lit(Unit)`.
     pub(super) fn super_ctor_call(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
         let base = self.this_base();
-        // Taken: a `super(...)` among the arguments is not the first statement.
+        // Taken: a `super(...)` among the arguments is not a statement of its own.
         let ok = std::mem::take(&mut self.f.super_ok);
         let Some(base) = base.filter(|_| ok) else {
             self.misplaced_super(base.is_some(), span);
@@ -21,7 +21,6 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         };
         self.f.super_called = true;
-        self.check_super_first(span);
         let (bd, bargs) = self.cx.class_of(base).expect("ICE: base class");
         let Some(ctor) = self.cx.adt(bd).and_then(|a| a.ctor) else {
             self.f.before_super = false;

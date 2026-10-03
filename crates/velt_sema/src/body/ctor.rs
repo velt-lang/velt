@@ -1,11 +1,11 @@
 //! Constructor rules (TypeScript's): a derived constructor calls `super(...)` (TS2377), also
 //! when no base class has a constructor. Statements that use neither `this` nor `super` may come
-//! before it (`stmt` and `expr/supers` check its placement), unless the class has initialized
-//! fields or parameter properties, which are set right after `super(...)` returns: then
-//! `super(...)` comes first (TS2376). Every own field without a default is assigned on every
+//! before it (`stmt` and `expr/supers` check its placement), also when the class has
+//! initialized fields or parameter properties: those are set right after `super(...)` returns,
+//! as in JavaScript (TypeScript 4.6+). Every own field without a default is assigned on every
 //! path.
 
-use velt_common::{Diagnostic, Span};
+use velt_common::Diagnostic;
 use velt_syntax::ast;
 
 use super::stmt::is_super_call;
@@ -16,47 +16,12 @@ use crate::hir::{self, DefId, ExprKind as H, LocalId, StmtKind as S, TyId};
 impl FnCx<'_, '_> {
     /// Sets up the `super(...)` rules before a constructor body is checked.
     pub(super) fn ctor_begin(&mut self, f: &FnInfo, decl: &ast::FnDecl) {
-        let Some(owner) = f.owner else { return };
-        if self.this_base().is_none() {
+        if f.owner.is_none() || self.this_base().is_none() {
             return;
         }
-        self.f.super_first = self
-            .cx
-            .adt(owner)
-            .and_then(|a| a.decl)
-            .and_then(|t| first_reason(t, decl));
         // Until `super(...)`. Without a root-level call, the missing call is reported (not every
         // use of `this`).
         self.f.before_super = decl.body.stmts.iter().any(is_super_call);
-    }
-
-    /// A `super(...)` call after other statements in a class that needs it first (TS2376).
-    pub(crate) fn check_super_first(&mut self, span: Span) {
-        let Some((why, at)) = self.f.super_first.clone() else {
-            return;
-        };
-        if self.f.root_stmts == 0 {
-            return;
-        }
-        let class = self.owner_class_name();
-        self.cx.error(
-            Diagnostic::error(
-                format!("`super(...)` must be the first statement of the constructor of `{class}`"),
-                span,
-            )
-            .with_label(at, format!("{why} is set right after `super(...)` returns"))
-            .with_note(format!(
-                "`{class}` has {why}, so no statement may run before `super(...)`"
-            ))
-            .with_note("move the statements before `super(...)` after it"),
-        );
-    }
-
-    fn owner_class_name(&self) -> String {
-        self.owner
-            .and_then(|o| self.cx.adt(o))
-            .map(|a| a.name.clone())
-            .unwrap_or_default()
     }
 
     /// The constructor of the base class of constructor `f`'s class, if any.
@@ -143,20 +108,6 @@ impl FnCx<'_, '_> {
             .with_note(fix),
         );
     }
-}
-
-/// Why `super(...)` must come first in class `t` with constructor `ctor`: its first
-/// initialized field or parameter property.
-fn first_reason(t: &ast::TypeDecl, ctor: &ast::FnDecl) -> Option<(String, Span)> {
-    t.fields.iter().filter(|f| !f.is_static).find_map(|f| {
-        if ctor.sig.params.iter().any(|p| p.span == f.span) {
-            Some((format!("the parameter property `{}`", f.name.name), f.span))
-        } else {
-            f.default
-                .as_ref()
-                .map(|_| (format!("the initialized field `{}`", f.name.name), f.span))
-        }
-    })
 }
 
 /// Fields of `this` assigned on every path through `b` (conservative).

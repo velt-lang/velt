@@ -1,8 +1,10 @@
-// A generic arrow function is the value of a `const` with typed parameters and a return type.
-// A local one is a generic function nested in its function: it captures nothing, and a use as
-// a value needs a function type to instantiate it at.
+// A generic arrow function is the value of a `const` with typed parameters; without a return
+// type it infers one, which a self-use in its return expressions prevents. A local one is a
+// generic function nested in its function: it captures nothing, and a use as a value needs a
+// function type to instantiate it at.
 
-const noReturnType = <T,>(x: T) => x;
+const untypedParam = <T,>(x) => x;
+const selfReturning = <T,>(x: T) => selfReturning(x);
 
 function apply(f: (x: i64) => i64): i64 {
   return f(1);

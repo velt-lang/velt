@@ -1,9 +1,7 @@
 // check: no leaks
 // Statements before `super(...)` in a derived class's constructor run first, as in TypeScript:
 // computations, a guard that throws, a local passed to `super`. The base constructor runs at
-// the call (with the base class's field initializers), then the rest of the body (#330). A
-// class with initialized fields or parameter properties calls `super(...)` first, so these
-// assign their fields after it.
+// the call, then this class's field initializers, then the rest of the body (#330).
 
 class Oops extends Error {}
 
@@ -30,8 +28,8 @@ class Base {
 }
 
 class Derived extends Base {
-  own: Res;
-  size: number;
+  own: Res = new Res("derived field");
+  size: number = log("derived initializer");
   constructor(parts: string[]) {
     console.log("before super");
     const label = parts.join("-");
@@ -40,32 +38,27 @@ class Derived extends Base {
       total += p.length;
     }
     super(label, total);
-    this.own = new Res("derived field");
-    this.size = log("derived initializer");
     console.log(`after super ${this.label} ${this.size}`);
   }
 }
 
 class Guarded extends Base {
-  own: Res;
+  own: Res = new Res("guarded field");
   constructor(name: string) {
     if (name.length === 0) {
       throw new Oops("empty name");
     }
     const upper = name.toUpperCase();
     super(upper, log(`arg ${upper}`));
-    this.own = new Res("guarded field");
     console.log(`guarded ${this.label}`);
   }
 }
 
-// A field assigned right after `super(...)`, as a parameter property would be.
+// Parameter properties are assigned right after `super(...)`.
 class Props extends Base {
-  readonly tag: string;
-  constructor(tag: string, k: number) {
+  constructor(public readonly tag: string, k: number) {
     const doubled = k * 2;
     super(tag, doubled);
-    this.tag = tag;
     console.log(`props ${this.tag} ${this.label}`);
   }
 }
@@ -83,13 +76,12 @@ class Owner extends Base {
   }
 }
 
-// The constructor throws after `super(...)`: the half-built object is freed, not disposed.
+// The initializer throws after `super(...)`: the half-built object is freed, not disposed.
 class Partial extends Base {
-  n: number;
+  n: number = fail();
   constructor() {
     const note = "partial";
     super(note, 2);
-    this.n = fail();
   }
   [Symbol.dispose]() {
     console.log("dispose partial");

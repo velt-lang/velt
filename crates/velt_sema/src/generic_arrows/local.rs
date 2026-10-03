@@ -1,6 +1,6 @@
-//! Local generic arrows: `const id = <T>(x: T): T => x;` in a function body (in any block,
+//! Local generic arrows: `const id = <T>(x: T) => x;` in a function body (in any block,
 //! also inside an arrow function's body) becomes the nested generic function
-//! `function id<T>(x: T): T { return x; }`, which `collect::nested` hoists like any nested
+//! `function id<T>(x: T) { return x; }`, which `collect::nested` hoists like any nested
 //! declaration. Each call instantiates it, as for a local generic function; like one it
 //! captures no locals, and a use as a value needs a function type to instantiate it at.
 

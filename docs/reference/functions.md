@@ -56,6 +56,7 @@ function main() {
 An unannotated method that overrides a base class method or implements an interface method
 returns that method's type, and its `return`s are checked against it. Arrow functions follow
 the same rules when no function type is expected; where one is, its result type applies.
+Generic arrow functions (`const id = <T>(x: T) => x`) follow them too.
 
 A `return;` next to `return value;` is an error: TypeScript would return `undefined`, which
 Velt doesn't have. Return `null` and give the function a `T | null` type instead.
@@ -193,10 +194,12 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   `double`. An arrow may also take more, when the extra ones have defaults.
 - **Generic arrow functions** are written as in `.ts` files, `<T>(x: T): T => x` (the `.tsx`
   spelling `<T,>` works too, and JSX is allowed alongside). One must be the value of a `const`
-  with typed parameters and a return type; it is then a generic function. At module level it
-  is an ordinary generic function; in a function body it is a generic function nested there,
-  so each call instantiates it, and like any [nested function](#declarations) it cannot use
-  the local variables around it. A function value has one type, so using one as a value needs
+  with typed parameters; it is then a generic function. Without a return type it returns the
+  type of its body or its `return`s, by the rules of [Return types](#return-types)
+  (`const id = <T>(x: T) => x` returns `T`; an `async` one returns `Promise<T>`). At module
+  level it is an ordinary generic function; in a function body it is a generic function nested
+  there, so each call instantiates it, and like any [nested function](#declarations) it cannot
+  use the local variables around it. A function value has one type, so using one as a value needs
   a function type to instantiate it at (`const f: (x: i64) => i64 = id;`), and a generic arrow
   anywhere else (an argument, a `let`) is an error:
 
@@ -205,8 +208,11 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
 
   function main() {
     console.log(firstOr([3, 4], 0), firstOr([], "none"));
-    const pair = <A, B>(a: A, b: B): string => `${a}:${b}`;
+    const pair = <A, B>(a: A, b: B) => `${a}:${b}`; // returns string
     console.log(pair(1, true), pair("x", 2.5)); // 1:true x:2.5
+    const id = <T>(x: T) => x;
+    const n: i64 = id(41) + 1;
+    console.log(n); // 42
   }
   ```
 

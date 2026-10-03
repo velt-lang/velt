@@ -1,31 +1,23 @@
-super_placement.vlt:18:7: error: `super(...)` must be a statement of the constructor's body itself, not inside a block, `if`, `try`, `switch` or loop
+super_placement.vlt:19:7: error: `super(...)` must be a statement of the constructor's body itself, not inside a block, `if`, `try`, `switch` or loop
   = note: the base constructor and this class's field initializers run there, exactly once on every path
-super_placement.vlt:26:7: error: `super(...)` must be a statement of the constructor's body itself, not inside a block, `if`, `try`, `switch` or loop
+super_placement.vlt:27:7: error: `super(...)` must be a statement of the constructor's body itself, not inside a block, `if`, `try`, `switch` or loop
   = note: the base constructor and this class's field initializers run there, exactly once on every path
-super_placement.vlt:33:21: error: `super(...)` cannot be called inside a closure; call it as a statement of the constructor's body
-super_placement.vlt:41:5: error: `super(...)` is called once, as a statement of the constructor's body
+super_placement.vlt:34:21: error: `super(...)` cannot be called inside a closure; call it as a statement of the constructor's body
+super_placement.vlt:42:5: error: `super(...)` is called once, as a statement of the constructor's body
   = note: the base constructor and this class's field initializers run there, exactly once on every path
-super_placement.vlt:49:5: error: `super(...)` must be the first statement of the constructor of `LateWithField`
-  super_placement.vlt:46:3: the initialized field `y` is set right after `super(...)` returns
-  = note: `LateWithField` has the initialized field `y`, so no statement may run before `super(...)`
-  = note: move the statements before `super(...)` after it
-super_placement.vlt:56:5: error: `super(...)` must be the first statement of the constructor of `LateWithParamProperty`
-  super_placement.vlt:54:15: the parameter property `z` is set right after `super(...)` returns
-  = note: `LateWithParamProperty` has the parameter property `z`, so no statement may run before `super(...)`
-  = note: move the statements before `super(...)` after it
-super_placement.vlt:62:17: error: 'super' must be called before accessing 'this' in the constructor of a derived class
-super_placement.vlt:70:7: error: a constructor cannot `return` before it calls `super(...)`
+super_placement.vlt:48:17: error: 'super' must be called before accessing 'this' in the constructor of a derived class
+super_placement.vlt:56:7: error: a constructor cannot `return` before it calls `super(...)`
   = note: a derived class's constructor calls `super(...)` on every path
-super_placement.vlt:79:11: error: 'super' must be called before accessing 'this' in the constructor of a derived class
-super_placement.vlt:85:11: error: 'super' must be called before accessing a property of 'super' in the constructor of a derived class
-super_placement.vlt:91:9: error: `super(...)` must be a statement of its own in the constructor's body, not part of an expression
+super_placement.vlt:65:11: error: 'super' must be called before accessing 'this' in the constructor of a derived class
+super_placement.vlt:71:11: error: 'super' must be called before accessing a property of 'super' in the constructor of a derived class
+super_placement.vlt:77:9: error: `super(...)` must be a statement of its own in the constructor's body, not part of an expression
   = note: the base constructor and this class's field initializers run there, exactly once on every path
-super_placement.vlt:91:20: error: `super(...)` is called once, as a statement of the constructor's body
+super_placement.vlt:77:20: error: `super(...)` is called once, as a statement of the constructor's body
   = note: the base constructor and this class's field initializers run there, exactly once on every path
-super_placement.vlt:97:5: error: `super(...)` is only available in a constructor of a class that `extends` another
-super_placement.vlt:102:3: error: the constructor of `Missing` must call `super(...)`
+super_placement.vlt:83:5: error: `super(...)` is only available in a constructor of a class that `extends` another
+super_placement.vlt:88:3: error: the constructor of `Missing` must call `super(...)`
   = note: `Missing` extends `A`, which must be initialized before `this` is used
   = note: add `super(x);` as the first statement of the constructor, with the arguments of `A`'s constructor
-super_placement.vlt:110:3: error: the constructor of `MissingNoBaseCtor` must call `super(...)`
+super_placement.vlt:96:3: error: the constructor of `MissingNoBaseCtor` must call `super(...)`
   = note: `MissingNoBaseCtor` extends `NoCtor`, which must be initialized before `this` is used
   = note: add `super();` as the first statement of the constructor

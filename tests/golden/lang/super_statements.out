@@ -24,3 +24,11 @@ ADA!
 Named bob
 tag x
 bob x
+--
+Mixed before super
+Mixed super argument 8
+A field
+A constructor 1
+Mixed field
+Mixed constructor 7 1
+7 1

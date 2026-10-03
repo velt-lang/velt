@@ -126,14 +126,12 @@ fn constructor_rules() {
         r.contains("'super' must be called before accessing 'this'"),
         "{r}"
     );
-    let r = err_src(
+    // TypeScript 4.6+: statements may precede `super(...)` also with initialized fields and
+    // parameter properties.
+    ok_src(
         "class A { n: i64; constructor(n: i64) { this.n = n; } }
-         class B extends A { m: i64 = 0; constructor() { console.log(1); super(2); } }
+         class B extends A { m: i64 = 0; constructor(readonly k: i64) { console.log(1); super(2); } }
          function main() {}",
-    );
-    assert!(
-        r.contains("`super(...)` must be the first statement of the constructor of `B`"),
-        "{r}"
     );
     ok_src(
         "class A { n: i64; constructor(n: i64) { this.n = n; } }
@@ -733,10 +731,6 @@ fn super_runs_exactly_once_before_this() {
             "constructor(c: bool) { if (c) { return; } super(1); }",
             "cannot `return` before it calls `super(...)`",
         ),
-        (
-            "constructor(readonly k: i64) { const j = k; super(j); }",
-            "has the parameter property `k`",
-        ),
         ("constructor() {}", "add `super(n);` as the first statement"),
     ] {
         let r = err_src(&format!(
@@ -750,5 +744,8 @@ fn super_runs_exactly_once_before_this() {
     assert!(r.contains("add `super();` as the first statement"), "{r}");
     ok_src(&format!(
         "{base} class B extends A {{ constructor(n: i64) {{ if (n < 0) {{ throw new Error(\"n\"); }} const m = n * 2; super(m); }} }} function main() {{}}"
+    ));
+    ok_src(&format!(
+        "{base} class B extends A {{ constructor(readonly k: i64) {{ const j = k; super(j); }} }} function main() {{}}"
     ));
 }

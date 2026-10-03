@@ -1,6 +1,6 @@
 // Statements before `super(...)` (TypeScript's rules) and JavaScript's construction order: the
 // arguments first, then the base class; a class's field defaults right after its base class is
-// constructed. Matches Node.
+// constructed, also after statements before `super(...)`. Matches Node.
 function log(s: string): number {
   console.log(s);
   return 1;
@@ -76,6 +76,19 @@ class Tagged extends Named {
   }
 }
 
+// Initialized fields, a parameter property and statements before `super(...)` (TypeScript 4.6+):
+// the statements and the arguments run first, then the base class, then this class's fields and
+// parameter properties, then the rest of the body.
+class Mixed extends A {
+  m: number = log("Mixed field");
+  constructor(readonly k: number, n: number) {
+    console.log("Mixed before super");
+    const twice = n * 2;
+    super(log(`Mixed super argument ${twice}`));
+    console.log(`Mixed constructor ${this.k} ${this.m}`);
+  }
+}
+
 function main() {
   new B();
   console.log("--");
@@ -93,4 +106,7 @@ function main() {
   console.log(new Shouting("ada").name);
   const t = new Tagged("bob", "x");
   console.log(`${t.name} ${t.tag}`);
+  console.log("--");
+  const m = new Mixed(7, 4);
+  console.log(`${m.k} ${m.m}`);
 }
