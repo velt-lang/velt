@@ -1,8 +1,8 @@
 # Design: iteration, generators and `for await`
 
-Status: accepted (issue #62), implemented in four phases. **Phases 1 (the protocol and
-`for...of` over user iterables), 2 (sync generators) and 3 (async generators and `for await`)
-are built**; phase 4 below is the plan and is updated as it lands.
+Status: accepted (issue #62), implemented in four phases, **all built**: 1 (the protocol and
+`for...of` over user iterables), 2 (sync generators), 3 (async generators and `for await`) and
+4 (std sources are async iterables).
 
 ## Problem
 
@@ -354,8 +354,64 @@ register-resident across steps is a possible follow-up.
 - `for await` over a sync source awaits only promise elements; it adds no extra suspension per
   element, so a loop over plain values does not yield to other work as JS's would.
 
-## 5. Std sources (phase 4, planned)
+## 5. Std sources (built, phase 4)
 
-`Channel<T>` (#65) becomes `AsyncIterable<T>`: `for await (const job of jobs)` ends once the
-channel is closed and drained. Then `FileReader` lines, WebSocket messages, Redis subscriptions and
-`Ticker`.
+Each std pull source is also an async iterable; the pull methods stay. The iterator is an async
+generator method, so a direct `for await` over the source embeds the generator's state in the
+caller (section 4): no allocation per item, the same runtime calls as the pull loop.
+
+| Source | How | Yields | `E` |
+|---|---|---|---|
+| `Channel<T>` (std/channel.vlt) | `implements AsyncIterable<T>`, `async *[Symbol.asyncIterator]()` | values until closed and drained | `never` |
+| `FileReader` (std/fs_stream.vlt) | `async *lines(): AsyncGenerator<string, IoError>` | remaining lines | `IoError` |
+| velt:stdin | `export async function* lines()` | remaining lines | `IoError` |
+| `WebSocket` (std/websocket.vlt) | `implements AsyncIterable<WsMessage, IoError>` | messages until the peer closed | `IoError` |
+| `RedisSubscriber` (std/redis/pubsub.vlt) | `implements AsyncIterable<RedisMessage, RedisError>` | messages until `close()` | `RedisError` |
+| `Ticker` (std/timers.vlt) | `implements AsyncIterable<i64>` | tick numbers 1, 2, … per loop, until stopped | `never` |
+| postgres `CopyReader` | `implements AsyncIterable<string, PgError>` | `read()` chunks to the end | `PgError` |
+
+`FileReader` and stdin get a `lines()` method rather than being iterable themselves: a reader
+also reads bytes and chunks, so the line view is named, like Node's `filehandle.readLines()`.
+
+**Early exit does not close the source.** JS stream iterators destroy the stream in `return()`;
+here leaving the loop only closes the generator, which holds nothing: the channel, socket,
+subscription or reader stays open where it was (the next value is still receivable). A channel
+has other receivers and these handles are shared copies, so ending one consumer's loop must not
+end everyone's stream; closing stays an explicit `close()` / `stop()`. The generators are
+suspended at a `yield` whenever the loop body runs, so no received value is lost by a `break`.
+
+**Generator methods in dispatch groups** (sema `throws/groups.rs`, `collect/impls.rs`). A
+generator method implementing `[Symbol.asyncIterator](): AsyncIterator<T, E>` with `E` other
+than `never` did not work before this phase: its signature keeps the result with `E = never`
+and a written `E` as `throws` (section 3), so it did not match the interface method, and its
+`E` joined the slot's dispatch group, merging every implementation's error type (`IoError |
+PgError | RedisError`). Now the interface check compares the generator's result with its written
+`E` restored (a missing one is reported with "declare the generator's result as
+`AsyncIterator<T, E>`"), and generator methods are not members of dispatch groups: calling one
+never throws, its `E` lives in the result type, so it neither adds to nor takes the group's
+error type. This is sema-internal; HIR is unchanged.
+
+### Deviations from the accepted text
+
+- Leaving a loop early does not close the source (JS stream iterators destroy the stream).
+- Beyond the four planned sources, stdin `lines()` and postgres `CopyReader` are iterable too.
+- Generator methods leave dispatch groups (above), a sema change the plan did not foresee.
+
+### Cost
+
+`for await (const v of ch)` compiles to the generator's poll embedded in the loop, calling the
+same `velt_rt_chan_receive` as `await ch.receive()`, with no allocation per value (checked in
+VIR). Same build, LLVM release, `VELT_THREADS=1`, best of 21 interleaved (bench/RESULTS.md):
+bench/async `channel_pipeline` (1M values from 4 producers) 44.6 ms with the `receive()` loop,
+46.8 ms with `for await` (about 2 ns per value: the embedded generator step of section 4);
+draining 10 × 1M queued values in one task 432.6 vs 428.6 ms. Every bench/async and bench/iter
+program compiles to a byte-identical object file before and after this phase.
+
+## Follow-ups
+
+- `next(value)` / `throw()` and `return value` (TS's `TNext` / `TReturn`).
+- Child process stdout/stderr lines and HTTP streaming request/response bodies have chunk pull
+  APIs only; a `lines()` method there would follow the same pattern.
+- A generator method implementing an interface with an inferred (unwritten) `E` must write it.
+- Keeping an embedded async generator's state in registers across steps (section 4, Cost).
+- Generators cannot cross tasks; `Iterable<T>` values backed by one are checked at run time.

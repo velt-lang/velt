@@ -198,15 +198,22 @@ fn check_method_sig(
     iface_args: &[TyId],
     iname: &str,
 ) {
-    let (ps, ret, span, is_getter) = {
+    let (ps, mut ret, span, is_getter, is_generator) = {
         let f = cx.fn_info(def);
         (
             f.params.iter().map(|p| p.ty).collect::<Vec<_>>(),
             f.ret,
             f.name_span,
             f.is_getter,
+            f.is_generator,
         )
     };
+    // A generator's signature keeps its result with `E = never` and a written `E` as its
+    // `throws` (collect/generator_sig.rs): compare the result as written.
+    if is_generator {
+        let e = cx.fn_info(def).declared_throws.and_then(|t| t.ty);
+        ret = cx.with_generator_error(ret, e.unwrap_or(cx.ty.never));
+    }
     let Some(iface_args) = own_generics_match(cx, def, owner_args.len(), m, iface_args, iname)
     else {
         return;
@@ -222,10 +229,15 @@ fn check_method_sig(
     let want_ret = cx.ty.subst(m.ret, iface_args);
     let name = &m.name;
     if ps != want_ps || ret != want_ret {
-        cx.err(
+        let mut d = Diagnostic::error(
             format!("method `{name}` has a different signature than required by `{iname}`"),
             span,
         );
+        if is_generator && ps == want_ps {
+            let want = cx.display(want_ret);
+            d = d.with_note(format!("declare the generator's result as `{want}`: its error type is part of the result type"));
+        }
+        cx.error(d);
     } else if is_getter != m.is_getter {
         let what = if m.is_getter { "a getter" } else { "a method" };
         cx.err(

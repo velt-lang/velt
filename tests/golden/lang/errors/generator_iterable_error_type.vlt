@@ -1,0 +1,28 @@
+// A generator method implementing `AsyncIterable<T, E>` / `Iterable<T, E>` declares `E` in its
+// result type: the error type is part of the interface method's result.
+class Oops extends Error {
+  constructor(m: string) {
+    super(m);
+  }
+}
+
+class Ticks implements AsyncIterable<i64, Oops> {
+  async *[Symbol.asyncIterator](): AsyncIterator<i64> {
+    throw new Oops("x");
+  }
+}
+
+class Steps implements Iterable<i64, Oops> {
+  *[Symbol.iterator](): Iterator<i64> {
+    yield 1;
+  }
+}
+
+async function main() {
+  for await (const v of new Ticks()) {
+    console.log(v);
+  }
+  for (const v of new Steps()) {
+    console.log(v);
+  }
+}

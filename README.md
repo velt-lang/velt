@@ -32,8 +32,8 @@ garbage collector and no runtime to install.
 ## Why Velt
 
 - **It's TypeScript.** Classes, interfaces, generics, unions and narrowing, discriminated unions,
-  closures, `async`/`await`, ES modules, template literals, destructuring, `using`. If you write
-  TypeScript, you can read Velt today.
+  closures, `async`/`await`, generators and `for await`, ES modules, template literals,
+  destructuring, `using`. If you write TypeScript, you can read Velt today.
 - **It's as fast as Rust.** Native code through LLVM, monomorphized generics, no boxing, no GC.
   On an Intel i9 laptop (best of 10, [bench/RESULTS.md](bench/RESULTS.md)): recursive `fib(35)`
   takes 32 ms in Velt and in Rust `-O`, 147 ms in Node; n-body 162 ms (Rust 179, Node 1826);

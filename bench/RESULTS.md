@@ -1018,3 +1018,19 @@ iterable_class 455, gen_value 1125 — the machine was quieter than in the phase
 - The difference (about 1.2 ns per value) is the generator's state living in the caller's
   state memory rather than registers: each step stores and reloads its tag and counter and
   tests the poll result. Real work per value (an actual suspension or I/O) dwarfs it.
+
+## Channels as async iterables (#62 phase 4, 2026-10-03)
+
+`for await (const v of ch)` against the `await ch.receive()` loop it replaces, same build (LLVM
+release, interleaved, best of 21, Apple M4 shared with other builds, `VELT_THREADS=1`):
+
+| program | `receive()` loop (ms) | `for await` (ms) |
+|---|---|---|
+| bench/async channel_pipeline (4 producers, 1M values, capacity 1024) | 44.6 | 46.8 |
+| drain: 10 × 1M values queued, then received in one task | 432.6 | 428.6 |
+
+- Nothing is allocated per value: the channel's `[Symbol.asyncIterator]` is an async generator
+  method, so the loop embeds its state and calls the same runtime receive. The pipeline's
+  ~2 ns per value is the generator step (section "Async generators" above).
+- Every bench/async and bench/iter program compiles to a byte-identical object file before and
+  after this phase (it changes std sources and sema only), so their timings are unchanged.

@@ -28,10 +28,8 @@ async function main() {
 
   const r = await db.copyTo(`COPY (SELECT * FROM ${t} ORDER BY id) TO STDOUT (FORMAT csv)`);
   let text = "";
-  let chunk = await r.read();
-  while (chunk != null) {
+  for await (const chunk of r) {
     text += chunk;
-    chunk = await r.read();
   }
   const lines = text.split("\n");
   console.log("lines:", lines.length - 1, "|", lines[0], "|", lines[1], "|", lines[999]);

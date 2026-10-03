@@ -107,7 +107,10 @@ console.log(g.next(), g.next().done, g.next().done);   // { done: false, value: 
 - **Errors**: `E` is what the body throws, inferred like a function's `throws` (or written:
   `Generator<T, E>`, or `throws E` after the return type). `next()` throws it, and so does
   `for...of` over the generator; creating the generator never throws. A generator that threw is
-  done.
+  done. A generator method implementing an interface whose result names an error type writes
+  it: `class Lines implements Iterable<string, IoError>` declares `*[Symbol.iterator]():
+  Iterator<string, IoError>`. Each class keeps its own `E`: calling a generator method never
+  throws, so implementations of one interface method don't share an error type.
 - **Closing**: `return()` (which `for...of` calls when it is left early), the end of a `using`
   block (`using g = gen();`), and dropping the generator all close a generator suspended at a
   `yield`: its `finally` blocks run and its `using` values are disposed, as if the `yield` were

@@ -8,11 +8,14 @@
 //! members throw (inferred). For an interface method or a base class method returning a promise
 //! it is what the promises reject with (implemented by async methods), as for async functions.
 //! An inferred group error type cannot mention type parameters (every member would see them
-//! differently). A written bound on a generic interface's method may mention the interface's
-//! own parameters (`next(): IteratorResult<T> throws E` in `Iterator<T, E>`): each member then
-//! sees it with the interface arguments of its implementation ([`member_bound`]), and a call
-//! through an interface value with that value's arguments; vtable entries of different
-//! instantiations never mix, because each `Iterator<T, E>` instantiation has its own vtable.
+//! differently). A generator method is no member: calling it only creates the generator and
+//! never throws (its error type is the `E` of its result, `Iterator<T, E>`), so it neither adds
+//! to nor takes the group's error type. A written bound on a generic interface's method may
+//! mention the interface's own parameters (`next(): IteratorResult<T> throws E` in
+//! `Iterator<T, E>`): each member then sees it with the interface arguments of its
+//! implementation ([`member_bound`]), and a call through an interface value with that value's
+//! arguments; vtable entries of different instantiations never mix, because each
+//! `Iterator<T, E>` instantiation has its own vtable.
 
 use std::collections::HashMap;
 
@@ -141,6 +144,7 @@ pub(crate) fn build(cx: &mut Ctx) -> Groups {
             groups.list.len() - 1
         });
         match uf.nodes[i] {
+            Node::Def(d) if cx.try_fn(d).is_some_and(|f| f.is_generator) => {}
             Node::Def(d) => {
                 groups.of.insert(d, g);
                 groups.list[g].members.push(d);
@@ -164,7 +168,10 @@ pub(crate) fn build(cx: &mut Ctx) -> Groups {
         }
     }
     for root in roots {
-        let g = &mut groups.list[groups.of[&root]];
+        let Some(&g) = groups.of.get(&root) else {
+            continue;
+        };
+        let g = &mut groups.list[g];
         if g.owner.as_ref().is_some_and(|o| o.interface) {
             continue;
         }

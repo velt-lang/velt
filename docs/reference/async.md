@@ -99,6 +99,48 @@ async function count(): Promise<i64> {
   to `spawn` (or a channel) or capturing one in an async closure is a compile-time error. A task
   dropped while it is suspended inside a `for await` drops the generator with it (cancellation:
   its values are dropped; `finally` blocks that would `await` do not run).
+- A class whose `[Symbol.asyncIterator]` is an async generator method (`async
+  *[Symbol.asyncIterator]()`) is iterated like a direct call: its state is part of the caller's.
+
+### Std sources
+
+The standard library's streams are async iterables, so a consumer is a `for await` loop. Each
+one also keeps its pull method (`receive()`, `readLine()`, `next()`, `tick()`), and leaving a
+loop early leaves the source open where it was: a channel or a socket may have other users, so
+ending the stream is always an explicit `close()` (or `stop()`).
+
+| Source | Loop | Ends when |
+|---|---|---|
+| [`Channel<T>`](../std/channel.md) | `for await (const job of jobs)` | the channel is closed and drained |
+| [`FileReader`](../std/fs_stream.md) | `for await (const line of reader.lines())` | end of file |
+| [standard input](../std/stdin.md) | `for await (const line of lines())` | end of input |
+| [`WebSocket`](../std/websocket.md) | `for await (const msg of ws)` | the peer closed the connection |
+| [`RedisSubscriber`](../std/redis.md) | `for await (const m of sub)` | `sub.close()` |
+| [`Ticker`](../std/timers.md) | `for await (const n of ticker)` | the ticker is stopped |
+| [postgres `CopyReader`](../std/postgres.md) | `for await (const chunk of reader)` | the end of the `COPY` |
+
+```ts
+import { channel, Channel, ChannelClosed } from "velt:channel";
+
+async function produce(out: Channel<i64>): Promise<void> throws ChannelClosed {
+  for (let i = 1; i <= 3; i++) {
+    await out.send(i * i);
+  }
+  out.close();
+}
+
+async function main() {
+  const squares = channel<i64>(1);
+  const producer = spawn(produce(squares));
+  for await (const n of squares) {
+    console.log(n); // 1, 4, 9
+  }
+  await producer;
+}
+```
+
+Iterating these costs what the pull loop costs: their `[Symbol.asyncIterator]` methods are
+async generators, which a direct `for await` runs inside the caller (no allocation per value).
 
 ## Tasks
 

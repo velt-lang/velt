@@ -99,8 +99,8 @@ Decisions and their rationale, including what is still planned:
 - [A package manifest written in Velt](design/package-manifest.md): `package.vlt`, data-only and
   typed, replacing `velt.toml` (implemented, issue #128).
 - [Iteration, generators and `for await`](design/iteration.md): the iterator protocol with typed
-  errors, `for...of` over iterables (implemented), generators and async iteration (planned,
-  issue #62).
+  errors, `for...of` over iterables, generators, async generators and `for await`
+  (implemented, issue #62).
 
 ## Testing
 

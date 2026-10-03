@@ -205,6 +205,11 @@ surprise ([Error handling](errors.md)).
 - `new Promise((resolve, reject) => …)` and `Promise.withResolvers()` work as in JS; `resolve`
   and `reject` may be kept and called later from any task. No global `setTimeout` (use
   `sleep(ms)` or [`velt:timers`](../std/timers.md)).
+- Std streams are async iterables: `for await` over a [channel](../std/channel.md), a file's
+  `lines()`, standard input's `lines()`, a WebSocket, a Redis subscriber or a `Ticker`. Unlike
+  a Node stream, whose iterator destroys the stream when the loop is left early, leaving the
+  loop keeps the source open (a channel may have other receivers): close it yourself
+  ([Std sources](../reference/async.md#std-sources)).
 
 ## Memory
 
