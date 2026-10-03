@@ -169,6 +169,8 @@ impl FnCx<'_, '_> {
         let mut out = vec![];
         for a in args {
             let h = self.expr(a, None, Want::Borrow);
+            // A `Date` prints as its ISO string, like Node.
+            let h = self.own_to_string(h, "__inspect");
             if !self.printable(h.ty) {
                 let tn = self.cx.display(h.ty);
                 self.cx
