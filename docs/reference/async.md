@@ -114,7 +114,10 @@ can reject with: `Promise<T, E>` (a `Promise<T>` never rejects).
   implementations are `async` methods (a synchronous one may return a promise only when the
   method's promise cannot reject). The same holds for a class method returning a promise that
   a subclass overrides: the base method and every override are `async` when any of them can
-  fail. A default body of such an interface method can be `async` too:
+  fail. A getter cannot be `async`, so a getter returning a promise from an interface cannot
+  fail, and overridden getters throw at the read. A method declared as returning a type
+  parameter (`get(): T`) throws its errors for every type argument: an `async` implementation
+  for `T = Promise<…>` must not fail. A default body of such an interface method can be `async` too:
 
 ```ts
 class NotFound extends Error {}

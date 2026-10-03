@@ -1,0 +1,25 @@
+// check: no leaks
+// Getters cannot be `async`, so an overridden getter returning a promise throws its errors at the
+// read, in every class, like any other overridden method that does not return a promise (#259).
+class Source {
+  get value(): Promise<i64> {
+    return new Promise<i64>((resolve, reject) => resolve(1));
+  }
+}
+
+class Failing extends Source {
+  override get value(): Promise<i64> {
+    throw new Error("unavailable");
+  }
+}
+
+async function main() {
+  const sources: Source[] = [new Source(), new Failing()];
+  for (const s of sources) {
+    try {
+      console.log(await s.value);
+    } catch (e) {
+      console.log(`caught ${e.message}`);
+    }
+  }
+}

@@ -89,8 +89,8 @@ impl FnCx<'_, '_> {
 
     pub(crate) fn fn_callable(&mut self, d: DefId, what: String) -> Callable {
         crate::body::defaults::param_defaults(self.cx, d);
+        let async_call = self.rejects_through_promise(d);
         let f = self.cx.fn_info(d);
-        let async_call = f.is_async && f.kind != crate::defs::FnKind::Extern;
         let mut c = Callable {
             what,
             params: f.params.clone(),

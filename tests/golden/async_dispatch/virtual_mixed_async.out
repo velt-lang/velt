@@ -6,3 +6,11 @@ cached 3
 4
 rejected: jammed
 30
+a lamp with a name long enough to live on the heap started 1
+dim 50 1
+rejected: broken 1
+rejected: a lamp with a name long enough to live on the heap is unplugged
+dim 50 -1
+rejected: broken -1
+a lamp with a name long enough to live on the heap started 2
+rejected: broken 2

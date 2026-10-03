@@ -1,7 +1,8 @@
 // check: no leaks
 // A method returning a promise that is synchronous in one class and `async` in another, called
 // through the base class (#259): the promise carries the errors of every override, so the
-// synchronous ones are those that cannot fail. Both directions, and a three-level hierarchy.
+// synchronous ones are those that cannot fail. Both directions, a three-level hierarchy, and a
+// failing group mixing an interface default with class overrides.
 class Jammed extends Error {}
 
 class Source {
@@ -55,6 +56,52 @@ class GentlePress extends Press {
   }
 }
 
+class Unplugged extends Error {}
+
+interface Device {
+  label(): string;
+
+  async start(n: i64): Promise<string> {
+    if (n < 0) {
+      throw new Unplugged(`${this.label()} is unplugged`);
+    }
+    return `${this.label()} started ${n}`;
+  }
+}
+
+// Gets `start` from the interface default.
+class Lamp implements Device {
+  name: string = "a lamp with a name long enough to live on the heap";
+
+  label(): string {
+    return this.name;
+  }
+}
+
+class DimLamp extends Lamp {
+  override async start(n: i64): Promise<string> {
+    await sleep(1);
+    return `dim ${this.name.length} ${n}`;
+  }
+}
+
+class BrokenLamp extends Lamp {
+  override async start(n: i64): Promise<string> {
+    await sleep(1);
+    throw new Unplugged(`broken ${n}`);
+  }
+}
+
+async function startAll(lamps: Lamp[], n: i64) {
+  for (const l of lamps) {
+    try {
+      console.log(await l.start(n));
+    } catch (e) {
+      console.log(`rejected: ${e.message}`);
+    }
+  }
+}
+
 async function main() {
   const sources: Source[] = [new Source(), new SlowSource(), new CachedSource()];
   for (const s of sources) {
@@ -68,6 +115,17 @@ async function main() {
   for (const p of presses) {
     try {
       console.log(await p.press(3));
+    } catch (e) {
+      console.log(`rejected: ${e.message}`);
+    }
+  }
+  const lamps: Lamp[] = [new Lamp(), new DimLamp(), new BrokenLamp()];
+  await startAll(lamps, 1);
+  await startAll(lamps, -1);
+  const devices: Device[] = [new Lamp(), new BrokenLamp()];
+  for (const d of devices) {
+    try {
+      console.log(await d.start(2));
     } catch (e) {
       console.log(`rejected: ${e.message}`);
     }

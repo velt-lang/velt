@@ -136,15 +136,17 @@ fn replaces_void_zero_and_an_undefined_type_with_null() {
 
 #[test]
 fn makes_a_promise_returning_override_async() {
-    let text = "class Machine {
+    let text = "class Jammed {}
+
+class Machine {
   async run(): Promise<i64> {
-    throw new Error(\"jammed\");
+    throw new Jammed();
   }
 }
 
 class Idle extends Machine {
   override run(): Promise<i64> {
-    return new Promise<i64>((resolve, reject) => resolve(0));
+    throw new Jammed();
   }
 }
 
@@ -153,7 +155,7 @@ async function main() {
   try {
     console.log(await m.run());
   } catch (e) {
-    console.log(e.message);
+    console.log(\"jammed\");
   }
 }
 ";
@@ -163,7 +165,11 @@ async function main() {
         &doc,
         text,
         "run(): Promise<i64> {
-    return",
+    throw new Jammed();
+  }
+}
+
+async",
         &diags,
     );
     let fixed = apply(text, find(&offered, "Add `async`"), &doc);
@@ -171,13 +177,35 @@ async function main() {
         fixed.contains("override async run(): Promise<i64>"),
         "{fixed}"
     );
-    // The body may need adapting to `async`; the rule itself is satisfied.
-    let errors = errors_after(&mut client, &doc, &fixed);
+    assert_eq!(errors_after(&mut client, &doc, &fixed), [] as [Value; 0]);
+    client.shutdown();
+}
+
+#[test]
+fn no_async_fix_for_a_getter() {
+    let text = "class Jammed {}
+
+interface Reader {
+  get ready(): Promise<bool>;
+}
+
+class R implements Reader {
+  get ready(): Promise<bool> {
+    throw new Jammed();
+  }
+}
+
+async function main() {
+  const r: Reader = new R();
+  console.log(await r.ready);
+}
+";
+    let (mut client, doc, diags) = open("fix_async_getter.vlt", text);
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    let offered = actions(&mut client, &doc, text, "ready(): Promise<bool> {", &diags);
     assert!(
-        !errors
-            .iter()
-            .any(|e| e["message"].as_str().unwrap().contains("must be `async`")),
-        "{errors:?}"
+        !offered.iter().any(|a| a["title"] == json!("Add `async`")),
+        "{offered:#?}"
     );
     client.shutdown();
 }

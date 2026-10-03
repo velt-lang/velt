@@ -15,7 +15,7 @@ use velt_common::Diagnostic;
 
 use crate::ctx::Ctx;
 use crate::defs::{DeclaredThrows, DefInfo};
-use crate::hir::DefId;
+use crate::hir::{DefId, TyId};
 
 /// A node of the union-find: a function, or an interface method slot.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -40,9 +40,18 @@ pub(crate) struct Group {
     /// what the promises reject with, and calling an entry never throws (async members; a
     /// synchronous member may only forward to an async one).
     pub promise: bool,
-    /// The base class method whose vtable slot made this a promise group, when no interface
-    /// method did (for messages).
-    pub promise_base: Option<DefId>,
+    /// The method every member implements or overrides (for messages).
+    pub owner: Option<GroupOwner>,
+}
+
+/// The interface method or base class method of a group.
+#[derive(Clone, Debug)]
+pub(crate) struct GroupOwner {
+    /// `I.m` / `Base.m`.
+    pub name: String,
+    pub interface: bool,
+    /// Its return type as declared (a type parameter for `get(): T`).
+    pub ret: TyId,
 }
 
 /// Every dispatch group of the program.
@@ -114,7 +123,7 @@ pub(crate) fn build(cx: &mut Ctx) -> Groups {
     };
     let mut bounds: Vec<(Node, GroupBound)> = vec![];
     link_interfaces(cx, &mut uf, &mut bounds);
-    let promise_roots = link_vtables(cx, &mut uf, &mut bounds);
+    let roots = link_vtables(cx, &mut uf, &mut bounds);
     let mut groups = Groups::default();
     let mut by_root: HashMap<usize, usize> = HashMap::new();
     for i in 0..uf.nodes.len() {
@@ -130,22 +139,38 @@ pub(crate) fn build(cx: &mut Ctx) -> Groups {
             }
             Node::Slot(iface, s) => {
                 groups.slots.insert((iface, s), g);
-                let ret = cx
-                    .iface(iface)
-                    .and_then(|i| i.methods.get(s as usize))
-                    .map(|m| m.ret);
-                if ret.is_some_and(|t| cx.ty.promise_payload(t).is_some()) {
+                let Some(i) = cx.iface(iface) else { continue };
+                let Some(m) = i.methods.get(s as usize) else {
+                    continue;
+                };
+                let owner = GroupOwner {
+                    name: format!("{}.{}", i.name, m.name),
+                    interface: true,
+                    ret: m.ret,
+                };
+                if cx.ty.promise_payload(owner.ret).is_some() {
                     groups.list[g].promise = true;
                 }
+                groups.list[g].owner = Some(owner);
             }
         }
     }
-    for root in promise_roots {
+    for root in roots {
         let g = &mut groups.list[groups.of[&root]];
-        if !g.promise {
-            g.promise = true;
-            g.promise_base = Some(root);
+        if g.owner.as_ref().is_some_and(|o| o.interface) {
+            continue;
         }
+        let f = cx.fn_info(root);
+        let owner = GroupOwner {
+            name: f.name.rsplit("::").next().unwrap_or(&f.name).to_string(),
+            interface: false,
+            ret: f.ret,
+        };
+        // Getters cannot be `async`: a getter's errors are thrown, whatever it returns.
+        if !f.is_getter && cx.ty.promise_payload(owner.ret).is_some() {
+            g.promise = true;
+        }
+        g.owner = Some(owner);
     }
     for (n, b) in bounds {
         let i = uf.id(n);
@@ -218,14 +243,14 @@ fn link_interfaces(cx: &mut Ctx, uf: &mut UnionFind, bounds: &mut Vec<(Node, Gro
     }
 }
 
-/// Link every vtable slot's base method with its overrides; returns the base methods (slots a
-/// class introduces) that return a promise.
+/// Link every vtable slot's base method with its overrides; returns the base methods (the
+/// slots each class introduces).
 fn link_vtables(
     cx: &mut Ctx,
     uf: &mut UnionFind,
     bounds: &mut Vec<(Node, GroupBound)>,
 ) -> Vec<DefId> {
-    let mut promise_roots = vec![];
+    let mut roots = vec![];
     for i in 0..cx.info.len() {
         let DefInfo::Adt(a) = &cx.info[i] else {
             continue;
@@ -245,13 +270,12 @@ fn link_vtables(
                         let owner = cx.fn_info(m).name.clone();
                         bounds.push((Node::Def(m), GroupBound { decl, owner }));
                     }
-                    let ret = cx.try_fn(m).map(|f| f.ret);
-                    if ret.is_some_and(|t| cx.ty.promise_payload(t).is_some()) {
-                        promise_roots.push(m);
+                    if cx.try_fn(m).is_some() {
+                        roots.push(m);
                     }
                 }
             }
         }
     }
-    promise_roots
+    roots
 }
