@@ -333,41 +333,40 @@ mod tests {
         for &(s, a, b, want) in js::SLICE {
             assert_eq!(slice(t(s), a, b), want, "{}.slice({a}, {b})", show(t(s)));
         }
-        for &(s, i, want) in js::CHAR_CODE_AT {
-            assert_eq!(
-                char_code_at(t(s), i),
-                want,
-                "{}.charCodeAt({i})",
-                show(t(s))
-            );
+        for &(s, want) in js::CHAR_CODE_AT {
+            for (&i, &want) in js::CHAR_CODE_AT_INDEXES.iter().zip(&want) {
+                assert_eq!(
+                    char_code_at(t(s), i),
+                    want,
+                    "{}.charCodeAt({i})",
+                    show(t(s))
+                );
+            }
         }
         for &(code, want) in js::FROM_CHAR_CODE {
             assert_eq!(from_char_code(code), [want], "String.fromCharCode({code})");
         }
-        for &(s, n, from, want) in js::INDEX_OF {
-            let (s, n) = (t(s), t(n));
-            assert_eq!(
-                index_of(s, n, from),
-                want,
-                "{}.indexOf({}, {from})",
-                show(s),
-                show(n)
-            );
-        }
-        for &(s, n, from, want) in js::LAST_INDEX_OF {
-            let (s, n) = (t(s), t(n));
-            let got = last_index_of(s, n, from);
-            assert_eq!(got, want, "{}.lastIndexOf({}, {from})", show(s), show(n));
-        }
-        for &(s, n, inc, starts, ends) in js::SEARCH {
+        for &(s, n, idx, last, inc, starts, ends) in js::SEARCH {
             let (s, n) = (t(s), t(n));
             let m = format!("{} {}", show(s), show(n));
+            for (&from, &want) in js::INDEX_OF_FROMS.iter().zip(&idx) {
+                assert_eq!(index_of(s, n, from), want, "indexOf from {from}: {m}");
+            }
+            for (&from, &want) in js::LAST_INDEX_OF_FROMS.iter().zip(&last) {
+                assert_eq!(
+                    last_index_of(s, n, from),
+                    want,
+                    "lastIndexOf from {from}: {m}"
+                );
+            }
             assert_eq!(includes(s, n), inc, "includes {m}");
             assert_eq!(starts_with(s, n), starts, "startsWith {m}");
             assert_eq!(ends_with(s, n), ends, "endsWith {m}");
         }
-        for &(a, b, want) in js::CMP {
-            assert_eq!(cmp(t(a), t(b)), want, "{} vs {}", show(t(a)), show(t(b)));
+        for &(a, want) in js::CMP {
+            for (b, &want) in want.iter().enumerate() {
+                assert_eq!(cmp(t(a), t(b)), want, "{} vs {}", show(t(a)), show(t(b)));
+            }
         }
         for &(s, sep, want) in js::SPLIT {
             let got = split(t(s), t(sep));
