@@ -1,0 +1,49 @@
+// @jsxImportSource ./_jsx_test_provider
+
+// Generic components: explicit type arguments on the tag (`<List<number> …>`, also with a
+// member name; the closing tag has none), and type arguments inferred from the children.
+
+import { render } from "./_jsx_test_provider/render";
+import * as ui from "./_jsx_generic_ui";
+
+type ListProps<T> = { items: T[]; render: (item: T) => JSX.Child };
+
+function List<T>(props: ListProps<T>): JSX.Element {
+  const rows: JSX.Element[] = [];
+  for (const item of props.items) {
+    rows.push(<li>{props.render(item)}</li>);
+  }
+  return <ul>{rows}</ul>;
+}
+
+// `T` appears only in the children and in an arrow function prop.
+function Labelled<T>(props: { children: T; label: (v: T) => string }): JSX.Element {
+  return <p>{props.label(props.children)}</p>;
+}
+
+// Several children: `T` is the type of each.
+function Count<T>(props: { children: T[]; first: (v: T) => string }): JSX.Element {
+  return <p>{`${props.children.length} from ${props.first(props.children[0])}`}</p>;
+}
+
+async function main() {
+  console.log(await render(<List<number> items={[1, 2]} render={(n) => n * 10} />));
+  console.log(await render(<List<string> items={[]} render={(s) => s}></List>));
+  console.log(
+    await render(<List<number[]> items={[[1, 2], [3]]} render={(xs) => `${xs.length}`} />),
+  );
+  console.log(
+    await render(<ui.Pick<string> options={["a", "b"]} chosen="b" show={(s) => s.toUpperCase()} />),
+  );
+  console.log(await render(<Labelled label={(v) => `${v + 1}`}>{41}</Labelled>));
+  console.log(await render(<Labelled label={(s) => s.toUpperCase()}>hello</Labelled>));
+  console.log(
+    await render(
+      <Count first={(v) => `${v}`}>
+        {7}
+        {8}
+        {9}
+      </Count>,
+    ),
+  );
+}

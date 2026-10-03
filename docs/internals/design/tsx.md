@@ -18,6 +18,10 @@ already solved it; add nothing JavaScript-specific that causes bugs; keep Rust-l
   `<Card title={t}>…</Card>` (a capitalized or dotted name is a component), spread props
   `{...p}`, `key`, string and expression attributes, children text with JSX whitespace rules,
   `{/* comments */}`.
+- Type arguments on an opening tag, as in TSX: `<List<number> items={xs} />`, also after a
+  member name (`<ui.List<number> …>`); the closing tag takes none (`</List>`). Inside a tag a
+  `<` that does not follow `=` opens the type arguments, which are lexed as code up to the
+  matching `>` (an element as an attribute value, `icon=<Star />`, still follows `=`).
 - Allowed in every `.vlt` file: Velt has no `<T>expr` casts (only `as`), so TypeScript's `.ts`
   / `.tsx` split isn't needed. `velt fmt` formats JSX like Prettier.
 - **The parser decides where an element starts**, not the lexer: in code the lexer always
@@ -63,6 +67,14 @@ Types:
 
 - `JSX.Element` (the provider's node or fragment type), `JSX.IntrinsicElements` (the allowed
   attributes per tag, so typos in attributes are compile errors), `JSX.ElementChildrenAttribute`.
+- Generic components `function List<T>(props: ListProps<T>)` work as in TypeScript: explicit
+  type arguments on the tag, or inference from the props and the children (typed values and
+  children first, then arrow functions, which get their parameter types from the result).
+- Generic arrow functions (`const id = <T>(x: T): T => x;`) are generic functions, at module
+  level and as a `const` in a function body (a nested generic function, instantiated per
+  call). A Velt function value has exactly one type, so there are no generic function values:
+  using one as a value needs a function type (`const f: (x: i64) => i64 = id;`), and a
+  generic arrow in any other position is a compile error with a fix-it.
 - Components are functions `(props: P) => JSX.Element`. **Async components**
   `(props: P) => Promise<JSX.Element>` are allowed on the server (data loading) and awaited by
   the renderer; streaming providers flush finished parts while later ones load (hybrid promises

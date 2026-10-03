@@ -571,3 +571,22 @@ fn layout_is_stable_under_reformatting() {
     let narrow = once.replace("  ", "\t");
     common::check(&narrow).unwrap_or_else(|m| panic!("{m}"));
 }
+
+#[test]
+fn type_arguments_on_tags_are_kept() {
+    assert_fmt(
+        "const a = <List<number>   items={xs} />;\nconst b = <ui.List< Array<number> , {a: number}>>{x}</ui.List>;\nconst c = <Box<(x: number) => string>/>;\n",
+        "const a = <List<number> items={xs} />;\nconst b = <ui.List<Array<number>, { a: number }>>{x}</ui.List>;\nconst c = <Box<(x: number) => string> />;\n",
+    );
+    assert_fmt(
+        "const d = <List<string> first_long_attribute_name={xs} second_long_attribute_name={ys} third_attribute={zs} />;\n",
+        "const d = (
+  <List<string>
+    first_long_attribute_name={xs}
+    second_long_attribute_name={ys}
+    third_attribute={zs}
+  />
+);
+",
+    );
+}
