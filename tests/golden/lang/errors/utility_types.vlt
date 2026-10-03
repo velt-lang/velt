@@ -1,6 +1,9 @@
 // Utility type errors: a key that isn't a field (in Pick and in Omit), keys that aren't string
 // literals, a non-object type, a type parameter (#350), and writing a Readonly field.
-interface User { id: number; name: string }
+interface User {
+  id: number;
+  name: string;
+}
 
 type Typo = Pick<User, "nmae">;
 type Extra = Omit<User, "id" | "age">;
@@ -19,5 +22,10 @@ function main() {
 }
 
 // A field type can only apply an operator to a type declared before it.
-interface Holder { p: Partial<Later> }
-interface Later { a: number }
+interface Holder {
+  p: Partial<Later>;
+}
+
+interface Later {
+  a: number;
+}

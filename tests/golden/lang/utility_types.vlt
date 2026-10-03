@@ -1,8 +1,15 @@
 // Partial, Required, Readonly, Pick and Omit build object types from a concrete object type
 // (docs/internals/design/shared-models.md, step 3). The results are ordinary object types.
 
-interface Base { readonly id: number }
-interface User extends Base { name: string; email?: string }
+interface Base {
+  readonly id: number;
+}
+
+interface User extends Base {
+  name: string;
+  email?: string;
+}
+
 class Account {
   owner: string = "ann";
   private secret: string = "s";
