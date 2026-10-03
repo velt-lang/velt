@@ -131,7 +131,7 @@ fn native_bundle(dir: &Path, content: &str) -> std::path::PathBuf {
     let target = "x86_64-unknown-linux-gnu";
     let b = dir.join(target);
     std::fs::create_dir_all(b.join("shared")).unwrap();
-    let exports = std::collections::BTreeMap::from([("n_get".into(), "()->u64".into())]);
+    let exports = std::collections::BTreeMap::from([("velt_n_get".into(), "()->u64".into())]);
     let library = vpm::native::exports::sample_library("n", &exports, content);
     std::fs::write(b.join("shared/libvelt_native_n.so"), library).unwrap();
     let meta = vpm::native::NativeMeta {

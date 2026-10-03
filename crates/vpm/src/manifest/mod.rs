@@ -345,8 +345,8 @@ fn check_name(name: &str) -> Result<(), String> {
     if is_windows_device_name(name) {
         return Err(device_name(name));
     }
-    if LIBC_PREFIX_NAMES.contains(&name) {
-        return Err(libc_prefix(name));
+    if NATIVE_PREFIX_NAMES.contains(&name) {
+        return Err(native_prefix(name));
     }
     if is_valid_package_name(name) {
         Ok(())
@@ -380,8 +380,8 @@ fn check_dependency_name(name: &str) -> Result<(), String> {
     if is_windows_device_name(name) {
         return Err(device_name(name));
     }
-    if LIBC_PREFIX_NAMES.contains(&name) {
-        return Err(libc_prefix(name));
+    if NATIVE_PREFIX_NAMES.contains(&name) {
+        return Err(native_prefix(name));
     }
     if is_valid_package_name(name) {
         Ok(())
@@ -447,7 +447,7 @@ pub fn is_valid_package_name(name: &str) -> bool {
     let mut chars = name.chars();
     !RESERVED_NAMES.contains(&name)
         && !is_windows_device_name(name)
-        && !LIBC_PREFIX_NAMES.contains(&name)
+        && !NATIVE_PREFIX_NAMES.contains(&name)
         && matches!(chars.next(), Some('a'..='z'))
         && chars.all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-' | '_'))
 }
@@ -472,14 +472,14 @@ fn device_name(name: &str) -> String {
     format!("the package name `{name}` is a device name on Windows (`con`, `nul`, `com1`, …)")
 }
 
-/// Names whose export prefix (`<name>_`, see `native::export_prefix`) is a C library namespace
-/// (`pthread_create`, `sem_open`, `shm_open`, `posix_spawn`): such a package's native exports
-/// would share names with the C library's functions.
-pub const LIBC_PREFIX_NAMES: &[&str] = &["pthread", "sem", "shm", "posix"];
+/// Names whose native export prefix (`velt_<name>_`, see `native::export_prefix`) is Velt's
+/// own: `velt_rt_` (runtime functions), `velt_sig_` (signature records) and `velt_native_` (init
+/// functions).
+pub const NATIVE_PREFIX_NAMES: &[&str] = &["rt", "sig", "native"];
 
-fn libc_prefix(name: &str) -> String {
+fn native_prefix(name: &str) -> String {
     format!(
-        "the package name `{name}` is reserved: its native functions (`{name}_*`) would share names with the C library's"
+        "the package name `{name}` is reserved: a package's native functions are named `velt_<package>_…`, and `velt_{name}_…` is Velt's own"
     )
 }
 

@@ -39,7 +39,7 @@ How a program uses the binary depends on the mode:
 ```text
 sqlite/
   velt.toml
-  src/lib.vlt          # the Velt API; `declare function sqlite_open(...)` etc.
+  src/lib.vlt          # the Velt API; `declare function velt_sqlite_open(...)` etc.
   native/Cargo.toml    # crate-type = ["cdylib", "staticlib"]; depends on `velt_native`
   native/src/lib.rs
 ```
@@ -84,20 +84,21 @@ Nothing changes in the parser, HIR or VIR.
 
 ```ts planned
 // sqlite/src/lib.vlt
-declare function sqlite_open(path: string, flags: u32): IoResult<u64>;
-declare async function sqlite_query(db: u64, sql: string): Promise<IoResult<Rows>>;
+declare function velt_sqlite_open(path: string, flags: u32): IoResult<u64>;
+declare async function velt_sqlite_query(db: u64, sql: string): Promise<IoResult<Rows>>;
 ```
 
 ### Exported symbol names
 
 Every symbol the crate exports starts with `<pkg>_`, where `<pkg>` is the package name with `-`
-turned into `_`. The one exception is `velt_native_init`. The rule is checked in two places:
+turned into `_`. (Revised by #314: the prefix is now `velt_<pkg>_`, so no export can share a
+name with a C library function; the examples below use it.) The one exception is `velt_native_init`. The rule is checked in two places:
 
 - **At publish:** `velt publish` reads the export list of the built library and refuses
   unprefixed exports. The list is stored in the bundle's `native.json`.
 - **In sema:** a `declare` in a package module must name either an export of that package's own
   native library or a `velt_rt_*` symbol from std's set. Anything else is a diagnostic at the
-  `declare` ("`sqlite_opne` is not exported by the native library of `sqlite 1.2.0`"), not a
+  `declare` ("`velt_sqlite_opne` is not exported by the native library of `sqlite 1.2.0`"), not a
   link error later.
 
 A package may only declare its own exports. Two packages therefore can't bind each other's native
@@ -321,7 +322,7 @@ and the link stamp (`veltc/src/link.rs::link_key`) hashes the bundles.
 The prototype driver is **sqlite**:
 - It is synchronous, bundles its C library through rusqlite, needs no server, and exercises
   handles and `fut_new_blocking`.
-- `packages/sqlite` mirrors `std/sqlite.vlt` with `sqlite_*` exports.
+- `packages/sqlite` mirrors `std/sqlite.vlt` with `velt_sqlite_*` exports.
 - `std/sqlite` stays until the drivers are migrated as a follow-up.
 
 Each step below lands with its own tests:

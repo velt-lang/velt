@@ -41,8 +41,8 @@ file and reports these errors without building anything.
 ## `name`, `version`, `description`, `keywords`, `entry`
 
 - `name`: lowercase letters, digits, `_` and `-`, starting with a letter. `std` is reserved for
-  the standard library, and `pthread`, `sem`, `shm` and `posix` because a package's native
-  functions start with its name and `_` (`sem_open` is the C library's).
+  the standard library, and `rt`, `sig` and `native` because a package's native functions are
+  named `velt_<name>_…` and those prefixes are Velt's own (`velt_rt_…` is the runtime).
 - `version`: a semantic version.
 - `description`: one line about the package, shown by `velt search` and registry listings: at most
   300 characters, no line breaks, no surrounding whitespace.

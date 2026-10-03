@@ -38,9 +38,10 @@ pub const LEGACY_META_FILE: &str = "native.toml";
 /// Prefix of the signature records the SDK's `#[export]` emits (`velt_sig_<export>`).
 pub const SIG_PREFIX: &str = "velt_sig_";
 
-/// `<pkg>_`: what every export of package `pkg`'s library starts with (`-` becomes `_`).
+/// `velt_<pkg>_`: what every export of package `pkg`'s library starts with (`-` becomes `_`).
+/// No C library or system function starts with `velt_`, so an export can't take one's name.
 pub fn export_prefix(package: &str) -> String {
-    format!("{}_", package.replace('-', "_"))
+    format!("velt_{}_", package.replace('-', "_"))
 }
 
 /// `velt_native_<pkg>`: the name the package's native crate gives its library (`[lib] name`), so
@@ -225,7 +226,7 @@ mod tests {
 
     #[test]
     fn names() {
-        assert_eq!(export_prefix("pg-lite"), "pg_lite_");
+        assert_eq!(export_prefix("pg-lite"), "velt_pg_lite_");
         assert_eq!(init_symbol("pg-lite"), "velt_native_init_pg_lite");
     }
 
@@ -239,7 +240,10 @@ mod tests {
             shared: "shared/libvelt_native_sqlite.so".into(),
             import_lib: None,
             static_obj: Some("static/sqlite.o".into()),
-            exports: BTreeMap::from([("sqlite_open".into(), "(string)->IoResult<u64>".into())]),
+            exports: BTreeMap::from([(
+                "velt_sqlite_open".into(),
+                "(string)->IoResult<u64>".into(),
+            )]),
         };
         let text = meta.to_json();
         assert!(text.contains("\"static\": \"static/sqlite.o\""), "{text}");

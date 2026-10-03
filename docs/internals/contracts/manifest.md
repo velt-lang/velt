@@ -7,7 +7,7 @@ compiling or running anything (design: [package-manifest.md](../design/package-m
 import type { Package } from "velt:package";
 
 export const pkg: Package = {
-  name: "hello",                // [a-z][a-z0-9_-]*, not std, pthread, sem, shm or posix
+  name: "hello",                // [a-z][a-z0-9_-]*, not std, rt, sig or native
   version: "0.1.0",             // semver, required
   entry: "src/main.vlt",        // optional, the default (relative to package.vlt, inside the package)
   dependencies: {

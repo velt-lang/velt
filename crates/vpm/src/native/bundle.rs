@@ -278,7 +278,7 @@ mod tests {
             shared: "shared/libvelt_native_p.so".into(),
             import_lib: None,
             static_obj: Some("static/p.o".into()),
-            exports: BTreeMap::from([("p_open".into(), "()->u64".into())]),
+            exports: BTreeMap::from([("velt_p_open".into(), "()->u64".into())]),
         };
         std::fs::create_dir_all(dir.join("shared")).unwrap();
         std::fs::create_dir_all(dir.join("static")).unwrap();
@@ -309,18 +309,21 @@ mod tests {
         let cases: [(&[(&str, &str)], &str); 4] = [
             // A C library function: a `declare` of it would bind to libc.
             (
-                &[("p_open", "()->u64"), ("free", "(u64)->void")],
-                "(each must start with `p_`): `free`",
+                &[("velt_p_open", "()->u64"), ("free", "(u64)->void")],
+                "(each must start with `velt_p_`): `free`",
             ),
             (
-                &[("p_open", "()->u64"), ("p_close", "(u64)->void")],
-                "`p_close` is listed but the library does not export it",
+                &[("velt_p_open", "()->u64"), ("velt_p_close", "(u64)->void")],
+                "`velt_p_close` is listed but the library does not export it",
             ),
             (
-                &[("p_open", "(u64)->u64")],
-                "`p_open` is listed as `(u64)->u64`, but the library records `()->u64`",
+                &[("velt_p_open", "(u64)->u64")],
+                "`velt_p_open` is listed as `(u64)->u64`, but the library records `()->u64`",
             ),
-            (&[], "the library exports `p_open`, which is not listed"),
+            (
+                &[],
+                "the library exports `velt_p_open`, which is not listed",
+            ),
         ];
         for (listed, expected) in cases {
             with_listed_exports(&b, listed);

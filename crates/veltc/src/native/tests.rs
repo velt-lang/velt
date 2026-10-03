@@ -16,36 +16,36 @@ fn write(path: &Path, text: &str) {
 
 const LIB: &str = r#"import { real } from "./real";
 
-declare function demo_ok(): u64;
-declare function demo_add(a: u64, b: i64): u64;
-declare function demo_ad(a: u64): u64;
-declare function demo_size(n: isize): u64;
-declare function demo_cb(f: (x: i64) => i64): u64;
+declare function velt_demo_ok(): u64;
+declare function velt_demo_add(a: u64, b: i64): u64;
+declare function velt_demo_ad(a: u64): u64;
+declare function velt_demo_size(n: isize): u64;
+declare function velt_demo_cb(f: (x: i64) => i64): u64;
 
 struct IoResult<T> {
   code: i32;
   message: string;
   value: T;
 }
-declare function demo_fake(): IoResult<u64>;
+declare function velt_demo_fake(): IoResult<u64>;
 
 export function run(): u64 {
-  return demo_ok() + real();
+  return velt_demo_ok() + real();
 }
 "#;
 
 const REAL: &str = r#"import { IoResult } from "velt:io";
 
-declare function demo_real(): IoResult<u64>;
+declare function velt_demo_real(): IoResult<u64>;
 
 export function real(): u64 {
-  return demo_real().value;
+  return velt_demo_real().value;
 }
 "#;
 
 const MAIN: &str = r#"import { run } from "demo";
 
-declare function demo_ok(): u64;
+declare function velt_demo_ok(): u64;
 
 function main() {
   console.log(run());
@@ -69,12 +69,12 @@ fn diagnostics() -> String {
     write(&demo.join("src/real.vlt"), REAL);
 
     let exports = [
-        ("demo_ok", "()->u64"),
-        ("demo_add", "(u64,i32)->u64"),
-        ("demo_size", "(i64)->u64"),
-        ("demo_cb", "(i64)->u64"),
-        ("demo_fake", "()->IoResult<u64>"),
-        ("demo_real", "()->IoResult<u64>"),
+        ("velt_demo_ok", "()->u64"),
+        ("velt_demo_add", "(u64,i32)->u64"),
+        ("velt_demo_size", "(i64)->u64"),
+        ("velt_demo_cb", "(i64)->u64"),
+        ("velt_demo_fake", "()->IoResult<u64>"),
+        ("velt_demo_real", "()->IoResult<u64>"),
     ];
     let meta = NativeMeta {
         package: "demo".into(),
@@ -112,24 +112,24 @@ fn declares_must_match_their_library_exactly() {
     let d = diagnostics();
     let has = |s: &str| assert!(d.contains(s), "missing `{s}` in:\n{d}");
     // A type that differs.
-    has("`declare` of `demo_add` does not match the native library of `demo 0.1.0`");
+    has("`declare` of `velt_demo_add` does not match the native library of `demo 0.1.0`");
     has("the library exports `(u64,i32)->u64`");
     has("this declares     `(u64,i64)->u64`");
     // A name the library does not export, with a hint.
-    has("`demo_ad` is not exported by the native library of `demo 0.1.0`");
-    has("did you mean `demo_add`?");
+    has("`velt_demo_ad` is not exported by the native library of `demo 0.1.0`");
+    has("did you mean `velt_demo_add`?");
     // Types that cannot cross the boundary.
     has("not `isize`");
     has("not `function`");
-    // A look-alike of std's IoResult is not IoResult (the only result error is `demo_fake`'s).
+    // A look-alike of std's IoResult is not IoResult (the only result error is `velt_demo_fake`'s).
     assert_eq!(d.matches("a native function returns").count(), 1, "{d}");
     assert!(d.contains("IoResult<T>` of one of those, not `"), "{d}");
     // Another package's export, from a package without a library.
-    has("`declare function demo_ok` is not allowed: package `app` has no native library");
-    has("`demo_ok` is exported by the native library of package `demo`: import that package's API instead");
+    has("`declare function velt_demo_ok` is not allowed: package `app` has no native library");
+    has("`velt_demo_ok` is exported by the native library of package `demo`: import that package's API instead");
     // The correct declarations (including std's IoResult) report nothing.
-    assert!(!d.contains("demo_real"), "{d}");
-    assert_eq!(d.matches("demo_ok").count(), 2, "{d}");
+    assert!(!d.contains("velt_demo_real"), "{d}");
+    assert_eq!(d.matches("velt_demo_ok").count(), 2, "{d}");
 }
 
 /// Diagnostics of checking `src` as a program without packages.

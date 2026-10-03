@@ -274,8 +274,8 @@ fn windows_device_names_are_not_package_names() {
 }
 
 #[test]
-fn names_that_share_a_c_library_prefix_are_reserved() {
-    for name in LIBC_PREFIX_NAMES {
+fn names_whose_native_prefix_is_velts_own_are_reserved() {
+    for name in NATIVE_PREFIX_NAMES {
         let text =
             format!("export const pkg: Package = {{ name: \"{name}\", version: \"1.0.0\" }};");
         let err = Manifest::parse(&text).unwrap_err();
@@ -289,11 +289,14 @@ fn names_that_share_a_c_library_prefix_are_reserved() {
         );
         let err = Manifest::parse(&dep).unwrap_err();
         assert!(
-            err.contains("would share names with the C library's"),
+            err.contains(&format!("`velt_{name}_…` is Velt's own")),
             "{err}"
         );
     }
-    // Longer names have their own prefix (`semver_`, `posix_time_`).
-    assert!(is_valid_package_name("semver"));
-    assert!(is_valid_package_name("posix-time"));
+    // The C library's prefixes are ordinary names now: exports start with `velt_`.
+    for name in [
+        "pthread", "sem", "shm", "posix", "runtime", "signal", "natives",
+    ] {
+        assert!(is_valid_package_name(name), "{name}");
+    }
 }
