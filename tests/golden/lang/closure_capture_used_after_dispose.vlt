@@ -51,7 +51,7 @@ function borrowedParam(counter: Counter) {
   console.log(`closure gone, counter ${counter.n}`);
 }
 
-// Two closures share `counter`; each owns its own store.
+// Two closures, one nested in the other's block, share `counter`; each owns its own store.
 function twoClosures() {
   const counter = new Counter();
   const a = new Store("store a");
@@ -75,10 +75,96 @@ function twoClosures() {
   console.log(`both gone, counter ${counter.n}`);
 }
 
+// An escaping closure creating an inner escaping closure: the inner one captures one of the
+// outer closure's own captures (which cannot move out of the outer closure: shared) and a store
+// local to the outer closure (moved: disposed when the inner closure is).
+function nestedClosures() {
+  const counter = new Counter();
+  const outer = keep(() => {
+    const store = new Store("outer's store");
+    {
+      const inner = keep(() => {
+        counter.n += 1;
+        console.log(`${store.name} seen`);
+      });
+      inner();
+      console.log("dropping inner");
+    }
+    console.log(`inner gone, counter ${counter.n}`);
+  });
+  outer();
+  outer();
+  console.log("dropping outer");
+}
+
+// One closure per iteration: each iteration's store goes with its closure.
+function inLoop() {
+  const counter = new Counter();
+  for (let i = 0; i < 2; i++) {
+    const store = new Store(`loop store ${i}`);
+    const f = keep(() => {
+      counter.n += 1;
+      console.log(`${store.name} seen`);
+    });
+    f();
+    console.log(`end of iteration ${i}, counter ${counter.n}`);
+  }
+}
+
+function makeReporter(counter: Counter): () => void {
+  const store = new Store("returned store");
+  return () => {
+    counter.n += 1;
+    console.log(`${store.name} seen`);
+  };
+}
+
+// A returned closure owns its store; the caller's counter is shared with it.
+function returned() {
+  const counter = new Counter();
+  {
+    const f = makeReporter(counter);
+    f();
+    console.log("dropping the returned closure");
+  }
+  console.log(`returned closure gone, counter ${counter.n}`);
+}
+
+class Handlers {
+  list: (() => void)[] = [];
+}
+
+// Closures stored in an array field are released with the object holding them.
+function inField() {
+  const counter = new Counter();
+  {
+    const h = new Handlers();
+    const a = new Store("field store a");
+    const b = new Store("field store b");
+    h.list.push(() => {
+      counter.n += 1;
+      console.log(`${a.name} seen`);
+    });
+    h.list.push(() => {
+      counter.n += 2;
+      console.log(`${b.name} seen`);
+    });
+    for (const f of h.list) {
+      f();
+    }
+    console.log("dropping the handlers");
+  }
+  console.log(`handlers gone, counter ${counter.n}`);
+}
+
 function main() {
   usedAfterwards();
   const counter = new Counter();
   borrowedParam(counter);
   twoClosures();
+  nestedClosures();
+  inLoop();
+  returned();
+  inField();
   console.log("done");
 }
