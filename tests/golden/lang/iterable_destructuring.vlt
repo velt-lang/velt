@@ -60,7 +60,7 @@ function main() {
   const [first, ...rest] = count(4);
   console.log("after:", first, rest);
   console.log("hole:");
-  const [, second] = new Countdowns(4);
+  const [_, second] = new Countdowns(4);
   console.log("after:", second);
   console.log("defaults:");
   let [p, q = "none", r = "none"] = new Countdowns(2);

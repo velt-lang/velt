@@ -57,11 +57,14 @@ async function main() {
   console.log("first:", first);
   console.log(
     "argument:",
-    take(function* (n: i64): Generator<string> {
-      for (let i = 0; i < n; i++) {
-        yield "#".repeat(i + 1);
-      }
-    }, 3),
+    take(
+      function* (n: i64): Generator<string> {
+        for (let i = 0; i < n; i++) {
+          yield "#".repeat(i + 1);
+        }
+      },
+      3,
+    ),
   );
   const nonEmpty = function* (xs: string[]): Generator<string, Empty> {
     for (const x of xs) {
