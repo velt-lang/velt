@@ -189,7 +189,7 @@
       "patterns": [
         {
           "name": "support.type.primitive.velt",
-          "match": "(?<![\\w$.])(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|number|bool|string|void|never)(?![\\w$])"
+          "match": "(?<![\\w$.])(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|number|boolean|bool|string|void|never)(?![\\w$])"
         },
         {
           "name": "support.type.builtin.velt",

@@ -14,7 +14,7 @@ record_open_errors.vlt:14:3: error: cannot use `**=` on a key of a `Record<strin
 say what a missing key starts from: `counts[k] = (counts[k] ?? 0) ** 2`
 record_open_errors.vlt:16:3: error: cannot use `+=` on a key of a `Record<string, string>`: the key may be missing, so `names["x"]` is `string | null`
 say what a missing key starts from: `names["x"] = (names["x"] ?? "") + "!"`
-record_open_errors.vlt:18:3: error: cannot use `&&=` on a key of a `Record<string, bool>`: the key may be missing, so `flags["on"]` is `bool | null`
+record_open_errors.vlt:18:3: error: cannot use `&&=` on a key of a `Record<string, boolean>`: the key may be missing, so `flags["on"]` is `boolean | null`
 say what a missing key counts as: `flags["on"] = (flags["on"] ?? false) && true`
 record_open_errors.vlt:19:21: error: cannot iterate over a `Record<string, i64>` with `for...of`
 iterate its keys with `for (const k of Object.keys(counts))` or its entries with `for (const [k, v] of Object.entries(counts))`
