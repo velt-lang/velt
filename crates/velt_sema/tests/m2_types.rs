@@ -322,6 +322,22 @@ fn generic_equality_uses_the_same_intrinsic() {
 }
 
 #[test]
+fn interface_and_function_values_compare_by_identity() {
+    // #365: `===` on interface and function values is `Intrinsic::Same` (identity, as in JS).
+    let p = ok_src(
+        "interface N { n(): i64; } class C implements N { n(): i64 { return 1; } }
+         function eqN(a: N, b: N): bool { return a === b; }
+         function eqF(f: () => i64, g: () => i64): bool { return f !== g; }
+         function main() { const c: N = new C(); const f = () => 1; console.log(eqN(c, c), eqF(f, f)); }",
+    );
+    for f in ["eqN", "eqF"] {
+        assert!(calls(func(&p, f))
+            .iter()
+            .any(|(c, _)| matches!(c, Callee::Intrinsic(Intrinsic::Same))));
+    }
+}
+
+#[test]
 fn generic_classes_and_methods() {
     let p = ok_src(
         "class Box<T> { v: T; constructor(v: T) { this.v = v; } map<U>(f: (x: T) => U): Box<U> { return new Box(f(this.v)); } }

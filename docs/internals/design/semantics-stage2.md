@@ -158,6 +158,11 @@ keep their atomic counts (stage 1); `shared<T>` stays atomic.
   uncounted one by the address of its single home (a unique value lives in exactly one place).
   `T | null`, unions and tuples compare part by part (`Glue::Same`). An object type copied when
   shared would lose its identity, so comparing one makes it counted once it is shared.
+- Interface values compare their data pointer; comparing an interface type makes the object
+  types converted to it counted (`Boxing::identity_dyns`), so the data pointer is the object,
+  not a copy. Function values compare code and env; once a program compares function values
+  (`Boxing::fn_identity`), a closure without captures gets an empty env per evaluation (a frame
+  env when only borrowed by a call), so each evaluation is a new function as in JS (#365).
 - `deepEqual(a, b)` (prelude) is the structural comparison; `assertEq` uses it.
 - **Not done:** removing the `struct` keyword and migrating its ~95 declarations (std handles to
   classes with `[Symbol.dispose]`, data structs to `type X = { … }` + `extend X`). Structs

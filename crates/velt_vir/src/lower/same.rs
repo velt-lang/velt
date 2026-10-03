@@ -4,11 +4,13 @@
 //! one home (it has a single owner), so its identity is the address of the place holding it.
 //! An object type that is copied when shared (never changed in place) would lose its identity
 //! that way, so comparing one records a fact that makes it counted once it is shared (boxing/).
+//! Interface and function values: see `ref_identity`.
 
 use velt_sema::hir::{self, TyId, TyKind};
 
+use super::operand::proj;
 use super::{FnLower, Glue};
-use crate::vir::{BinOp, Operand, Place, Rvalue, Ty};
+use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
     /// `a === b` for the values of concrete type `ty` at two places (Bool operand).
@@ -34,11 +36,32 @@ impl FnLower<'_, '_> {
         let (x, y) = match self.cx.ty(ty) {
             // Class objects and counted boxes: the pointer is the object.
             Ty::Ptr => (Operand::Copy(a.clone()), Operand::Copy(b.clone())),
-            // Function and interface values: their first word (code / data pointer).
-            _ if self.cx.is_fn_or_dyn(ty) => return self.eq_values(a, b, ty),
+            _ if self.cx.is_fn_or_dyn(ty) => return self.ref_identity(a, b, ty),
             // A uniquely owned inline object: the address of its one home.
             _ => (self.addr(a.clone()), self.addr(b.clone())),
         };
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
+    }
+
+    /// Identity of two function or interface values: an interface value is its data pointer
+    /// (a class object, or a counted box once interface values are compared: `make_dyn`); a
+    /// function value is its code and its environment (each evaluation of a closure has its
+    /// own once function values are compared: closure.rs).
+    pub(super) fn ref_identity(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        if matches!(self.cx.kind(ty), TyKind::Dyn(..)) {
+            self.cx.note_identity(ty);
+            return self.word_eq(a, b, 0);
+        }
+        self.cx.note_fn_identity();
+        let code = self.word_eq(a, b, 0);
+        let env = self.word_eq(a, b, 1);
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, code, env))
+    }
+
+    /// Do the words `field` of the values at `a` and `b` agree (Bool operand)?
+    fn word_eq(&mut self, a: &Place, b: &Place, field: u32) -> Operand {
+        let f = Proj::Field(field);
+        let (x, y) = (Operand::Copy(proj(a, f.clone())), Operand::Copy(proj(b, f)));
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
     }
 
@@ -58,6 +81,12 @@ impl super::Cx<'_> {
             TyKind::Adt(d, _) => matches!(self.hir.def(*d), hir::Def::Adt(_)),
             _ => false,
         }
+    }
+
+    /// Is `t` an object type whose values a share copies unless it is counted (an array or an
+    /// object type, not a class, interface or function value)?
+    pub(super) fn copied_object(&self, t: TyId) -> bool {
+        self.is_object(t) && !self.is_class(t) && !self.is_fn_or_dyn(t)
     }
 
     fn is_fn_or_dyn(&self, t: TyId) -> bool {

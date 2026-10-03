@@ -1,6 +1,6 @@
 //! Unary and binary operators (`!`, `&&` and `||` are in `truthiness`). `==`/`!=` on non-primitive types (objects, enums,
-//! options, generic `T`, ...) is `Intrinsic::Same` (JS `===`: objects by identity; `!=` wraps it
-//! in `Not`).
+//! options, interface and function values, generic `T`, ...) is `Intrinsic::Same` (JS `===`:
+//! objects by identity; `!=` wraps it in `Not`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -311,11 +311,11 @@ impl FnCx<'_, '_> {
         )
     }
 
+    /// Can `==` compare values of `t`? Interface and function values compare by identity
+    /// (#365): the object behind an interface value, and the function value itself (each
+    /// evaluation of an arrow is a new one, as in JS).
     fn equatable(&self, t: TyId) -> bool {
-        !matches!(
-            self.cx.ty.kind(t),
-            TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Dyn(..) | TyKind::Unit
-        )
+        !matches!(self.cx.ty.kind(t), TyKind::Unit)
     }
 
     /// Validate `lhs op rhs`; returns the (common) operand type, or None after reporting an error.

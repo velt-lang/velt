@@ -114,6 +114,26 @@ console.log(label("tea", 3), "a,b".split(","), "  x ".trim().padStart(3, "*"));
   structs, object literals, interface and function values) compare by **identity**, like JS:
   `[1] == [1]` is `false`, and `a == b` is `true` when `b` refers to the same object as `a`.
   `T | null`, unions and tuples compare their parts that way.
+- An interface value compares the object behind it: two `Shape` values of one class instance
+  are equal. A function value is equal to its copies, and a named function to itself; each
+  evaluation of an arrow or function expression is a new function, as in JS, also when it
+  captures nothing (so `emitter.off(h)` finds the `h` given to `emitter.on(h)`, and two arrows
+  made by one loop differ). `indexOf`, `includes` and `Map` keys agree with `==`. Comparing
+  costs only the programs that do it: there, an arrow without captures gets an empty
+  environment of its own when it is created, and a struct converted to an interface value
+  that is compared is counted, so the interface value refers to it rather than to a copy.
+
+  ```ts
+  function main() {
+    const h = () => console.log("h");
+    const handlers = [h];
+    const fresh: (() => void)[] = [];
+    for (let i = 0; i < 2; i++) {
+      fresh.push(() => console.log("h"));
+    }
+    console.log(handlers.indexOf(h), h === h, fresh[0] === fresh[1]); // 0 true false
+  }
+  ```
 - Content comparison: `deepEqual(a, b)` ([prelude](../std/prelude.md)) compares arrays,
   structs and object literals by their contents, recursively; maps and records by their keys
   and values, in any key order; other class instances by identity. `assertEq` uses it.
@@ -366,7 +386,8 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   `get(k): V | null` (the stored value itself, as in JS), `has`, `delete`, `size`, `keys()`,
   `values()`, `entries()`, `for (const [k, v] of m)`, plus single-lookup updates: `upsert(k, init, (v) => v + 1)`,
   `update(k, (v) => { v.push(x); }): bool` (the callback gets the stored value itself) and
-  `getOrInsert(k, () => v)`. Keys: numbers, `bool`, `string`, class instances (by identity),
+  `getOrInsert(k, () => v)`. Keys: numbers, `bool`, `string`, class instances, interface and
+  function values (by identity, as `==` compares them),
   and structs, object types, tuples, arrays, maps and records, which compare by content (in JS
   two equal object literals are two different keys). Float keys compare with `==`, so a `NaN`
   key is never found (JS's SameValueZero finds it), and a content key changed after insertion

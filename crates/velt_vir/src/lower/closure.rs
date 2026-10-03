@@ -8,7 +8,9 @@
 //! all others are counted heap boxes owning their captures (semantics stage 2: copies of a
 //! function value share its env), released through the drop function in the header and deep
 //! copied by the clone function. Closures without captures and named
-//! functions have a null env and an env-ignoring thunk as `code` (glue/thunk.rs).
+//! functions have a null env and an env-ignoring thunk as `code` (glue/thunk.rs); in a program
+//! that compares function values, a closure without captures gets an empty env all the same,
+//! as the identity of that evaluation (`identity_closure`).
 
 use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId};
 
@@ -55,6 +57,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let ca = self.cx.closure_agg();
         if f.captures.is_empty() {
             let code = self.cx.func(Work::Thunk(ThunkKind::Env(None), def, targs));
+            if self.cx.fn_identity() {
+                return self.identity_closure(def, ty, cfunc(code), borrowed);
+            }
             return self.rvalue_temp(
                 Ty::Agg(ca),
                 Rvalue::Aggregate(ca, vec![cfunc(code), cint(0, Ty::Ptr)]),
@@ -87,6 +92,33 @@ impl<'c, 'h> FnLower<'c, 'h> {
         );
         let ty = self.sub(ty);
         self.own_temp(t, ty);
+        Operand::Copy(Place::local(t))
+    }
+
+    /// `{ code, env }` of a closure without captures in a program that compares function
+    /// values: the env holds nothing but is this evaluation's identity, as in JS, where each
+    /// evaluation of an arrow is a new function. A closure only borrowed by a call gets a frame
+    /// env (no allocation; a kept copy is cloned to the heap and so is another function, as a
+    /// borrowed closure with captures is); any other one a counted heap env.
+    fn identity_closure(&mut self, def: DefId, ty: TyId, code: Operand, borrowed: bool) -> Operand {
+        let targs = self.targs.clone();
+        let ea = self.cx.env_agg(def, &targs);
+        let clone_fn = cfunc(self.cx.func(Work::EnvClone(def, targs.clone())));
+        let (env, drop_fn) = if borrowed {
+            let s = self.temp(Ty::Agg(ea));
+            (self.addr(Place::local(s)), cint(0, Ty::Ptr))
+        } else {
+            let p = self.counted_alloc(Ty::Agg(ea));
+            (p, cfunc(self.cx.func(Work::EnvDrop(def, targs))))
+        };
+        self.fill_env(def, env.clone(), drop_fn, clone_fn);
+        let ca = self.cx.closure_agg();
+        let t = self.temp(Ty::Agg(ca));
+        self.assign(Place::local(t), Rvalue::Aggregate(ca, vec![code, env]));
+        if !borrowed {
+            let ty = self.sub(ty);
+            self.own_temp(t, ty);
+        }
         Operand::Copy(Place::local(t))
     }
 
