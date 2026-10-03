@@ -1,0 +1,21 @@
+// The baseline of the async iteration benchmarks: a hand-written loop in an async function
+// that awaits an async call per value (it completes at once: no suspension), with the same
+// running sum modulo a prime as hand_loop.vlt, over 20 × 3M values.
+async function step(i: i64): Promise<i64> {
+  return i;
+}
+
+async function main() {
+  let sum = 0;
+  for (let round = 0; round < 20; round++) {
+    let i = 0;
+    while (i < 3000000) {
+      sum += await step(i);
+      if (sum >= 1000000007) {
+        sum -= 1000000007;
+      }
+      i++;
+    }
+  }
+  console.log(sum);
+}

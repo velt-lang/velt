@@ -1,5 +1,6 @@
 // Misused generators: the result type, `return` with a value, `yield` outside a generator or in
-// a `finally` block, a throwing `finally`, `await`, async generators, and `new Generator`.
+// a `finally` block, a throwing `finally`, `break`/`continue` out of a `finally`, `await`, and
+// `new Generator`.
 function* noRet() {
   yield 1;
 }
@@ -59,13 +60,30 @@ function* arrowYield(): Generator<i64> {
   f();
 }
 
-async function* later(): Generator<i64> {
-  yield 1;
+// Closing the generator runs its `finally` blocks, which must then finish: no `break` or
+// `continue` out of them (a loop inside the `finally` block is fine).
+function* breakInFinally(): Generator<i64> {
+  while (true) {
+    try {
+      yield 1;
+    } finally {
+      break;
+    }
+  }
 }
 
-class Svc {
-  async *items(): Generator<i64> {
-    yield 1;
+function* continueInFinally(): Generator<i64> {
+  outer: for (let i = 0; i < 3; i++) {
+    try {
+      yield i;
+    } finally {
+      for (let j = 0; j < 2; j++) {
+        if (j == 1) {
+          break;
+        }
+        continue outer;
+      }
+    }
   }
 }
 

@@ -1,6 +1,8 @@
 //! Signatures of generators (`function*`, `*name()`; docs/reference/functions.md
 //! "Generators"): the declared result must be one of the iteration protocol types the prelude's
-//! `Generator<T, E>` class provides — `Generator<T, E>`, `Iterator<T, E>` or `Iterable<T, E>`.
+//! `Generator<T, E>` class provides — `Generator<T, E>`, `Iterator<T, E>` or `Iterable<T, E>` —
+//! or for an async generator (`async function*`, `async *name()`) those of `AsyncGenerator<T,
+//! E>`: `AsyncGenerator<T, E>`, `AsyncIterator<T, E>` or `AsyncIterable<T, E>`.
 //! Like an async function's `Promise<T, E>`, a written `E` is the same as `throws E`: it moves
 //! into the declared `throws`, and the signature keeps the result with `E = never`; a call's
 //! result carries the generator's final error type (`body/generators.rs`). Parameters are owned
@@ -29,13 +31,7 @@ pub(super) fn generator_sig(
         FnKind::Extern => {}
         _ => owned_async_params(cx, ps),
     }
-    if sig.is_async {
-        cx.error(
-            Diagnostic::error("async generators (`async function*`) are not supported yet", sig.name.span)
-                .with_note("write a generator (`function*`) that yields promises, or an async function that returns an array"),
-        );
-    }
-    let Some(args) = generator_args(cx, ret) else {
+    let Some(args) = generator_args(cx, ret, sig.is_async) else {
         report_bad_result(cx, ret, sig);
         return (cx.ty.error, throws);
     };
@@ -57,10 +53,11 @@ pub(super) fn generator_sig(
     (cx.with_generator_error(ret, never), throws)
 }
 
-/// `[T, E]` of a generator result type (`Generator`, `Iterator` or `Iterable`).
-fn generator_args(cx: &Ctx, ret: TyId) -> Option<Vec<TyId>> {
-    let (_, args) = cx.generator_result(ret)?;
-    (args.len() == 2).then_some(args)
+/// `[T, E]` of a generator result type (`Generator`, `Iterator` or `Iterable`; for an async
+/// generator `AsyncGenerator`, `AsyncIterator` or `AsyncIterable`).
+fn generator_args(cx: &Ctx, ret: TyId, is_async: bool) -> Option<Vec<TyId>> {
+    let (_, args, async_) = cx.generator_result_kind(ret)?;
+    (args.len() == 2 && async_ == is_async).then_some(args)
 }
 
 /// Is the error type argument written (`Generator<T, E>`), rather than the default?
@@ -75,21 +72,56 @@ fn report_bad_result(cx: &mut Ctx, ret: TyId, sig: &ast::FnSig) {
     if cx.ty.is_bottom(ret) {
         return;
     }
+    let (what, g, it, able) = match sig.is_async {
+        true => (
+            "an async generator",
+            "AsyncGenerator",
+            "AsyncIterator",
+            "AsyncIterable",
+        ),
+        false => ("a generator", "Generator", "Iterator", "Iterable"),
+    };
     let Some(t) = &sig.ret else {
         cx.error(
-            Diagnostic::error("a generator must declare its return type", sig.name.span)
-                .with_note("write `Generator<T>`, where `T` is the type of the values it yields"),
+            Diagnostic::error(
+                format!("{what} must declare its return type"),
+                sig.name.span,
+            )
+            .with_note(format!(
+                "write `{g}<T>`, where `T` is the type of the values it yields"
+            )),
         );
         return;
     };
+    if let Some((_, _, other)) = cx.generator_result_kind(ret) {
+        let (fix, tn) = match other {
+            true => (
+                "make it an async generator: `async function*` (methods: `async *name()`)",
+                "async",
+            ),
+            false => (
+                "drop `async`, or declare the result as `AsyncGenerator<T>`",
+                "sync",
+            ),
+        };
+        let found = cx.display(ret);
+        cx.error(
+            Diagnostic::error(
+                format!("{what} must return `{g}<T>`, `{it}<T>` or `{able}<T>`, found the {tn} `{found}`"),
+                t.span,
+            )
+            .with_note(fix),
+        );
+        return;
+    }
     let found = cx.display(ret);
     cx.error(
         Diagnostic::error(
-            format!("the return type of a generator must be `Generator<T>`, `Iterator<T>` or `Iterable<T>`, found `{found}`"),
+            format!("the return type of {what} must be `{g}<T>`, `{it}<T>` or `{able}<T>`, found `{found}`"),
             t.span,
         )
         .with_note(format!(
-            "write `Generator<T>`, where `T` is the type of the values it yields (`Generator<{found}>` if it yields `{found}` values)"
+            "write `{g}<T>`, where `T` is the type of the values it yields (`{g}<{found}>` if it yields `{found}` values)"
         )),
     );
 }

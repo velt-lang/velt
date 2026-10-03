@@ -39,7 +39,12 @@ typedef struct VeltFut {                             // every runtime-owned futu
 - Generators (`function*`) reuse this state-machine shape without the runtime: their poll
   function is called with a null `cx` and returns 0 (done), 1 (a value is in the result slot)
   or 2 (the slot holds the `Err`), and `$drop` closes a suspended generator (it runs `finally`
-  blocks). Nothing of this crosses the runtime ABI (velt_vir `async_fn/generator.rs`).
+  blocks). Async generators (`async function*`) are polled with the awaiting function's `cx`
+  and return 0 (pending: the waker is registered, as for any poll), 1 (done), 2 (a value) or 3
+  (an `Err`); setting tag bit `0x4000_0000` (`$close`) and polling to completion closes one,
+  awaiting its `finally` blocks. Nothing of this crosses the runtime ABI either (velt_vir
+  `async_fn/generator.rs`): the runtime never sees an async generator, only the futures of
+  the functions that drive it.
 
 **Awaiting** (inside a poll function):
 - *Compiled child, fast path (no allocation):* the child state is a field of the parent state.

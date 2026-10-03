@@ -112,20 +112,74 @@ console.log(g.next(), g.next().done, g.next().done);   // { done: false, value: 
   block (`using g = gen();`), and dropping the generator all close a generator suspended at a
   `yield`: its `finally` blocks run and its `using` values are disposed, as if the `yield` were
   a `return`. A generator that never started or already finished has nothing to clean up.
-  Because closing runs `finally` blocks where the generator can neither pause nor report an
-  error, a `finally` block in a generator cannot `yield` or throw (TS allows both).
+  Because closing runs `finally` blocks where the generator can neither pause, report an
+  error, nor go on with its body, a `finally` block in a generator cannot `yield`, throw, or
+  `break` / `continue` to a loop outside it (TS allows all three).
 - A generator keeps its arguments (they are owned, as for an async function) and its locals
   between `yield`s. A generator method sees `this` as it is when the body runs, not when the
   method was called, as in JS. Resuming a generator from inside its own body panics
   (`generator is already running`; JS throws a `TypeError`).
-- Not supported: `next(value)` (TS's `TNext`), `throw()`, `await` in a generator, and async
-  generators (`async function*`, **Planned**). Arrow functions cannot be generators (as in TS).
+- A generator cannot be copied: `clone()` of one, passing one to a spawned task (or sending it
+  on a channel) and capturing one in an async closure are errors, like for a promise. Pass the
+  arguments instead and create the generator where it is used.
+- Not supported: `next(value)` (TS's `TNext`), `throw()`, and `await` in a (sync) generator
+  (write an [async generator](#async-generators)). Arrow functions cannot be generators (as in
+  TS).
 - **Cost**: `for (const x of gen(a))` with a direct call (or over a class whose
   `[Symbol.iterator]` is a generator method) keeps the generator's state in the loop: no
   allocation, no `IteratorResult` objects, and the body is resumed by a direct call that the
   optimizer can inline; such a loop runs as fast as the equivalent hand-written loop. A
   generator used as a value is one heap object; each `next()` then returns a small
   `IteratorResult` value.
+
+## Async generators
+
+```ts
+async function* pages(n: i64): AsyncGenerator<string> {
+  for (let i = 1; i <= n; i++) {
+    await sleep(1);                        // e.g. fetch the page
+    yield `page ${i}`;
+  }
+}
+
+async function main() {
+  for await (const p of pages(3)) {
+    console.log(p);                        // page 1, page 2, page 3
+  }
+}
+```
+
+- `async function* name(…): AsyncGenerator<T>` is an **async generator**, and so is a method
+  written `async *name()`, `static async *name()` or `async *[Symbol.asyncIterator]()`. Its
+  body may both `await` and `yield`. Calling one creates an `AsyncGenerator<T, E>`
+  ([prelude](../std/prelude.md#iteration)) without running the body; each `next()` returns a
+  `Promise<IteratorResult<T>, E>` that runs the body to its next `yield`, awaiting what it
+  awaits on the way. It is an `AsyncIterator<T, E>` and an `AsyncIterable<T, E>`, so
+  [`for await`](control-flow.md#for-await) takes it.
+- The return type is required: `AsyncGenerator<T>`, `AsyncIterator<T>` or `AsyncIterable<T>`
+  (a sync result type on an `async function*`, or an async one on a `function*`, is an error
+  naming the fix).
+- `yield* src` delegates to an async iterable (another async generator) and, as in JS, to a
+  sync one (a generator, an array).
+- **Errors**: `E` is what the body throws, awaited calls included, inferred or written
+  (`AsyncGenerator<T, E>`). `next()` rejects with it, and `for await` rethrows it, whether it
+  is thrown before or after the body's first `await`. A generator that threw is done.
+- **Closing**: `return()` (which `for await` awaits when it is left early) and `await using g =
+  agen()` close a generator suspended at a `yield` like a sync one, and here its `finally`
+  blocks may `await` (so may `await using` disposals in the body); `return()` resolves once
+  they are done. A `using` block's end and dropping the generator close it without awaiting:
+  if that cleanup would `await`, it is cancelled instead (its values are dropped, its `finally`
+  blocks do not run), like a [cancelled async function](async.md#cancellation). A `finally`
+  block cannot `yield`, throw or `break` out, as in a sync generator.
+- An async generator belongs to the task that created it, like a started promise: it cannot be
+  copied or passed to another task (see above).
+- **Cost**: `for await (const x of agen(a))` with a direct call (or over a class whose
+  `[Symbol.asyncIterator]` is an async generator method) keeps the generator's state inside the
+  enclosing async function's state, like `await f()` does: no allocation for the generator or
+  per item, and each step is a direct call of the generator's poll function. A stored
+  generator is one heap object; `await g.next()` on an `AsyncGenerator<T>` variable is a direct
+  call too, with the result as a small `IteratorResult` value. Through an `AsyncIterator<T>` or
+  `AsyncIterable<T>` interface value, each `next()` allocates its promise.
 
 ## Parameters
 

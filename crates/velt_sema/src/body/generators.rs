@@ -4,12 +4,14 @@
 //! - `yield v` checks `v` against the generator's yield type `T` and is
 //!   `Call { Intrinsic(Yield), [v] }` (`v` owned, type `void`); a bare `yield` only in a
 //!   `Generator<void>`.
-//! - `yield* src` is desugared to `for (const <yield@N> of src) { yield <yield@N>; }`, so it
-//!   takes any iterable `for...of` takes, and closing the outer generator while it is
-//!   suspended inside closes the inner iterator (the loop's early-exit path).
-//! - `yield` is not allowed in a `finally` block, and a `finally` block cannot throw: closing a
-//!   generator early (`return()`, dropping it) runs its `finally` blocks, where the generator
-//!   can neither pause nor report an error.
+//! - `yield* src` is desugared to `for (const <yield@N> of src) { yield <yield@N>; }` (`for
+//!   await` in an async generator), so it takes any iterable `for...of` (`for await`) takes, and
+//!   closing the outer generator while it is suspended inside closes the inner iterator (the
+//!   loop's early-exit path).
+//! - `yield` is not allowed in a `finally` block, a `finally` block cannot throw, and a
+//!   `break`/`continue` in it cannot target a loop outside it: closing a generator early
+//!   (`return()`, dropping it) runs its `finally` blocks, where the generator can neither pause,
+//!   report an error, nor go on with its body.
 //! - A call creates the generator (the body has not run yet) and does not throw: its result is
 //!   the declared `Generator<T>` (or `Iterator<T>` / `Iterable<T>`) with the generator's error
 //!   type as `E`, re-checked after inference like an async call's promise type.
@@ -19,7 +21,7 @@ use velt_syntax::ast;
 
 use super::{FnCx, Want};
 use crate::defs::ThrowSrc;
-use crate::hir::{self, Callee, DefId, ExprKind as H, Intrinsic, TyId};
+use crate::hir::{self, Callee, DefId, ExprKind as H, Intrinsic, TyId, TyKind};
 use crate::throws::ThrowCheck;
 
 impl FnCx<'_, '_> {
@@ -80,7 +82,8 @@ impl FnCx<'_, '_> {
         self.error_expr(span)
     }
 
-    /// `yield* src`: `for (const <yield@N> of src) { yield <yield@N>; }` (module docs).
+    /// `yield* src`: `for (const <yield@N> of src) { yield <yield@N>; }`, or `for await` in an
+    /// async generator (module docs).
     fn yield_star(&mut self, src: &ast::Expr, span: Span) -> hir::Expr {
         let name = ast::Ident {
             name: format!("<yield@{}>", span.lo),
@@ -114,6 +117,8 @@ impl FnCx<'_, '_> {
                 pattern,
                 iter: src.clone(),
                 body,
+                // An async generator delegates to async iterables (and, like JS, sync ones).
+                is_await: self.f.is_async,
             },
             span,
         };
@@ -127,15 +132,18 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block), self.cx.ty.unit, span)
     }
 
-    /// Check a `finally` block; in a generator it must not throw or `yield` (module docs).
+    /// Check a `finally` block; in a generator it must not throw, `yield`, or `break`/`continue`
+    /// out of it (module docs).
     pub(super) fn finally_block(&mut self, b: &ast::Block) -> hir::Block {
         if self.f.yield_ty.is_none() {
             return self.block(b);
         }
         self.f.finally_depth += 1;
+        let loops = self.f.finally_loops.replace(self.f.loops.len());
         self.f.tries.push(vec![]);
         let hb = self.block(b);
         let srcs = self.f.tries.pop().expect("ICE: try stack");
+        self.f.finally_loops = loops;
         self.f.finally_depth -= 1;
         let thrown = crate::throws::srcs_now(self.cx, &srcs);
         if let Some(t) = thrown.filter(|t| *t != self.cx.ty.never) {
@@ -167,8 +175,53 @@ impl FnCx<'_, '_> {
         self.cx.with_generator_error(ret, e.unwrap_or(never))
     }
 
-    /// Is `d` a generator function or method?
+    /// Is `d` a generator function or method (async ones included)?
     pub(crate) fn is_generator_fn(&self, d: DefId) -> bool {
         self.cx.try_fn(d).is_some_and(|f| f.is_generator)
     }
+
+    /// Is `d` an async generator function or method?
+    pub(crate) fn is_async_generator_fn(&self, d: DefId) -> bool {
+        self.cx.try_fn(d).is_some_and(|f| f.is_async_gen)
+    }
+
+    /// A value holding a generator cannot be copied (module docs of `known.rs`
+    /// `holds_generator`): report `what` copying it at `span`.
+    pub(crate) fn no_generator_copy(&mut self, t: TyId, what: GenCopy, span: Span) {
+        if !self.cx.holds_generator(t) {
+            return;
+        }
+        let tn = self.cx.display(t);
+        let direct =
+            matches!(self.cx.ty.kind(t), TyKind::Adt(d, _) if self.cx.is_generator_class(*d));
+        let it = match direct {
+            true => format!("a generator (`{tn}`)"),
+            false => format!("`{tn}`, which holds a generator,"),
+        };
+        let (msg, note) = match what {
+            GenCopy::Clone => (
+                "a generator cannot be copied".to_string(),
+                "its suspended state (locals, `finally` blocks still to run) has one owner: pass the generator itself on, or collect its values into an array and copy that".to_string(),
+            ),
+            GenCopy::Task => (
+                format!("{it} cannot be passed to another task"),
+                "values passed to a spawned task (or sent on a channel) are copied for the receiving thread, and a generator's suspended state cannot be: create the generator inside the task, or iterate it here and pass its values".to_string(),
+            ),
+            GenCopy::Capture(name) => (
+                format!("an async closure cannot capture the generator `{name}`"),
+                "an async closure copies what it captures when it runs (it may run as a task on another thread), and a generator's suspended state cannot be copied: create the generator inside the closure, or pass it to an async function".to_string(),
+            ),
+        };
+        self.cx.error(Diagnostic::error(msg, span).with_note(note));
+    }
+}
+
+/// How a value would be copied, for [`FnCx::no_generator_copy`].
+pub(crate) enum GenCopy {
+    /// `x.clone()`.
+    Clone,
+    /// An argument of a spawned call, or a value sent on a channel.
+    Task,
+    /// A capture (named) of an async closure.
+    Capture(String),
 }

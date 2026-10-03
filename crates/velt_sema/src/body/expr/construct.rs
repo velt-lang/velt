@@ -32,10 +32,13 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         };
-        if Some(d) == self.cx.generator_class() && !self.cx.scopes[self.module].is_std {
+        if self.cx.is_generator_class(d) && !self.cx.scopes[self.module].is_std {
+            let fix = match Some(d) == self.cx.generator_class() {
+                true => "write a generator function (`function* f(): Generator<T> { ... }`) and call it",
+                false => "write an async generator function (`async function* f(): AsyncGenerator<T> { ... }`) and call it",
+            };
             self.cx.error(
-                Diagnostic::error("generators cannot be created with `new`", span)
-                    .with_note("write a generator function (`function* f(): Generator<T> { ... }`) and call it"),
+                Diagnostic::error("generators cannot be created with `new`", span).with_note(fix),
             );
             self.check_args_loose(args);
             return self.error_expr(span);
@@ -171,17 +174,17 @@ impl FnCx<'_, '_> {
             return None;
         }
         let n = a.generics.len();
-        if !args.is_empty() && args.len() != n {
+        if args.is_empty() {
+            return Some((d, vec![None; n]));
+        }
+        let written: Vec<TyId> = args.iter().map(|a| self.resolve(a)).collect();
+        let full = self.cx.adt_with_defaults(d, written);
+        if full.len() != n {
             self.cx
                 .err(format!("class `{name}` takes {n} type argument(s)"), t.span);
             return None;
         }
-        let slots = if args.is_empty() {
-            vec![None; n]
-        } else {
-            args.iter().map(|a| Some(self.resolve(a))).collect()
-        };
-        Some((d, slots))
+        Some((d, full.into_iter().map(Some).collect()))
     }
 
     /// The ancestor type of class type `t` whose def is `owner` (`t` itself if none).

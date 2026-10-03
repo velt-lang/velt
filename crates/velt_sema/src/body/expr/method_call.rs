@@ -51,6 +51,7 @@ impl FnCx<'_, '_> {
         let Some(r) = self.resolve_method(recv.ty, &prop.name) else {
             return self.no_method(recv, prop, args, span);
         };
+        self.no_generator_send(recv.ty, &prop.name, span);
         self.check_extension_ambiguity(&r, recv.ty, &prop.name, prop.span);
         self.check_private(self.method_private_to(&r), &prop.name, prop.span);
         self.rec_method(prop.span, &r);
@@ -166,7 +167,15 @@ impl FnCx<'_, '_> {
         };
         match mode {
             PassMode::BorrowMut => self.use_mutably(target, "call a mutating method on"),
-            PassMode::Owned => self.force_move(target),
+            PassMode::Owned => {
+                self.force_move(target);
+                // An async method's receiver (an object) is shared with the call when the place
+                // is used again or cannot be moved from (a `using` variable), like an argument.
+                let ty = target.ty;
+                if crate::body::places::is_place(target) && self.cx.is_shared_value(ty) {
+                    self.f.soft_moves.push(target.span);
+                }
+            }
             PassMode::Copy | PassMode::Borrow => set_place_mode(target, UseMode::Borrow),
         }
         recv
@@ -245,5 +254,25 @@ impl FnCx<'_, '_> {
         };
         let h = self.method_call_on(recv, &prop, &[], &[], None, span);
         (!self.cx.ty.is_bottom(h.ty)).then_some(h)
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// `ch.send(v)` / `ch.trySend(v)` on std's `Channel<T>` copies `v` to the receiving task
+    /// like a `spawn` argument: `T` cannot hold a generator.
+    fn no_generator_send(&mut self, recv: TyId, name: &str, span: Span) {
+        if name != "send" && name != "trySend" {
+            return;
+        }
+        let TyKind::Adt(d, args) = self.cx.ty.kind(recv).clone() else {
+            return;
+        };
+        let is_channel = self
+            .cx
+            .adt(d)
+            .is_some_and(|a| a.name == "Channel" && self.cx.scopes[a.module].is_std);
+        if let (true, [t]) = (is_channel, args.as_slice()) {
+            self.no_generator_copy(*t, crate::body::GenCopy::Task, span);
+        }
     }
 }

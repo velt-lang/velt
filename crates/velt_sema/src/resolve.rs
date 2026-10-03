@@ -333,6 +333,19 @@ impl Ctx<'_> {
         self.ty.subst(body, &args)
     }
 
+    /// `args` of class or struct `d` completed with its parameters' defaults (`new Box<i64>(...)`
+    /// for `class Box<T, E = never>`).
+    pub(crate) fn adt_with_defaults(&mut self, d: crate::hir::DefId, args: Vec<TyId>) -> Vec<TyId> {
+        let decl = match &self.info[d.0 as usize] {
+            DefInfo::Adt(a) => a.decl.map(|x| (a.module, x)),
+            _ => None,
+        };
+        match decl {
+            Some((module, x)) => self.with_defaults(module, &x.generics, args),
+            None => args,
+        }
+    }
+
     /// `args` completed with the defaults of the parameters `gs` they leave out (`E = never`;
     /// a default may mention the parameters before it). Unchanged when a missing parameter has
     /// no default (the caller reports the arity).

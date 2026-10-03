@@ -101,6 +101,7 @@ impl<'a> Walker<'a> {
                 pattern,
                 iter,
                 body,
+                ..
             } => {
                 self.expr(iter);
                 let keyword = kind.keyword();

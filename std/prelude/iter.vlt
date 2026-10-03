@@ -59,3 +59,40 @@ export class Generator<T, E = never> implements Iterator<T, E>, Iterable<T, E> {
     __intrinsic_generator_return(this);
   }
 }
+
+// An async generator (`async function*`, docs/reference/functions.md "Async generators"): what
+// calling one creates. Each `next()` runs the body up to its next `yield`, awaiting what the body
+// awaits on the way; its promise rejects with what the body throws (`E`). `return()` closes a
+// generator suspended at a `yield`: its `finally` blocks run (and may `await`) and its `using`
+// / `await using` values are disposed, as if the `yield` were a `return`. Dropping it closes it
+// too, without awaiting: cleanup that would `await` is then cancelled (drops only), like a
+// cancelled async function. After it finished, threw, or was closed, `next()` reports `done`.
+//
+// The compiler creates these objects: the generator's state follows the `state` word.
+export class AsyncGenerator<T, E = never> implements AsyncIterator<T, E>, AsyncIterable<T, E> {
+  private state: u64 = 0;
+
+  async next(): Promise<IteratorResult<T>, E> {
+    if (await __intrinsic_async_generator_resume(this)) {
+      return { done: false, value: __intrinsic_async_generator_value(this) };
+    }
+    return { done: true };
+  }
+
+  async return(): Promise<void> {
+    await __intrinsic_async_generator_return(this);
+  }
+
+  // An async generator is its own iterator.
+  [Symbol.asyncIterator](): AsyncIterator<T, E> {
+    return this;
+  }
+
+  async [Symbol.asyncDispose](): Promise<void> {
+    await __intrinsic_async_generator_return(this);
+  }
+
+  [Symbol.dispose](): void {
+    __intrinsic_async_generator_dispose(this);
+  }
+}

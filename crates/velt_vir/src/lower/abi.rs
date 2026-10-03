@@ -90,6 +90,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::Main => Self::build_main(cx),
             Work::Poll(def, targs) => Self::build_poll(cx, *def, targs),
             Work::AsyncDrop(def, targs) => Self::build_async_drop(cx, *def, targs),
+            Work::AsyncCloseStart(def, targs) => Self::build_close_start(cx, *def, targs),
             Work::ValuePoll(def, targs) => Self::build_value_poll(cx, *def, targs),
             Work::ValueDrop(def, targs) => Self::build_value_drop(cx, *def, targs),
             Work::AllPoll(t) => Self::build_all_poll(cx, *t),
@@ -141,11 +142,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let hir::Def::Fn(f) = hir_prog.def(def) else {
             ice("function instance is not a Def::Fn")
         };
-        if f.is_async {
-            return Self::build_async_new(cx, def, targs);
-        }
         if f.is_generator {
             return Self::build_gen_fn(cx, def, targs);
+        }
+        if f.is_async {
+            return Self::build_async_new(cx, def, targs);
         }
         let mut lw = FnLower::bare(cx, targs.to_vec());
         lw.enter_span(f.span);

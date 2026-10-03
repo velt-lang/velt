@@ -309,9 +309,13 @@ impl FnLower<'_, '_> {
     }
 
     pub(super) fn obj_format_body(&mut self, buf: Operand, obj: vir::Local, ty: TyId) {
-        if self.cx.is_generator_obj(ty) {
+        if let Some(is_async) = self.cx.generator_obj_kind(ty) {
             // As Node prints a generator object.
-            self.push_text(&buf, "Object [Generator] {}");
+            let text = match is_async {
+                true => "Object [AsyncGenerator] {}",
+                false => "Object [Generator] {}",
+            };
+            self.push_text(&buf, text);
             self.terminate(Terminator::Return(unit()));
             return;
         }

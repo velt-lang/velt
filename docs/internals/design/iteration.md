@@ -1,8 +1,8 @@
 # Design: iteration, generators and `for await`
 
 Status: accepted (issue #62), implemented in four phases. **Phases 1 (the protocol and
-`for...of` over user iterables) and 2 (sync generators) are built**; phases 3–4 below are the
-plan and are updated as they land.
+`for...of` over user iterables), 2 (sync generators) and 3 (async generators and `for await`)
+are built**; phase 4 below is the plan and is updated as it lands.
 
 ## Problem
 
@@ -181,8 +181,11 @@ function* range(n: i64): Generator<i64> {
   `return;` at that `yield` runs — every scope's drops *and `finally` blocks* — where async
   cancellation runs drops only. Before the first resume it drops the arguments; after the end
   it does nothing. Both leave the tag DONE, so `next()` after `return()` is done.
-- Because closing runs `finally` blocks where the generator cannot pause or report an error,
-  sema rejects `yield` in a `finally` block and a `finally` block that may throw.
+- Because closing runs `finally` blocks where the generator cannot pause, report an error or
+  go on with its body, sema rejects `yield` in a `finally` block, a `finally` block that may
+  throw, and a `break` / `continue` in a `finally` block that targets a loop outside it
+  (`FnCx::loop_target`, `Frame::finally_loops`): lowered in the close path, such a jump would
+  resume the body instead of finishing.
 - While the body runs the tag is RUNNING; resuming then (the body reaching its own generator)
   panics with `generator is already running` (JS throws a `TypeError`). The store is dead in
   an inlined loop and disappears.
@@ -192,8 +195,14 @@ function* range(n: i64): Generator<i64> {
   `Generator<T, E>` is shared), `Work::Fn` returns it or, for a declared `Iterator` / `Iterable`
   result, its interface value; the class's drop runs `[Symbol.dispose]` (close), then frees the
   block through the table (`object_free`). `console.log(g)` prints `Object [Generator] {}`
-  like Node; a deep copy of one (`clone()`, a spawned task's copy) panics (sema already rejects
-  `clone()` on types with `[Symbol.dispose]`).
+  like Node. A generator's state cannot be copied, so sema rejects every deep copy of a value
+  holding one (`known.rs` `holds_generator`, `body/generators.rs` `no_generator_copy`):
+  `clone()`, an argument (or receiver) of a spawned call, a value sent on a std `Channel`, and
+  a capture of an async closure (whose state copies its captures when it runs), each with
+  "a generator cannot be copied" / "... cannot be passed to another task" / "an async closure
+  cannot capture the generator `g`". Interface values are not looked into: an
+  `Iterable<T>` value backed by a generator that reaches a spawned task still panics at run
+  time (`a generator cannot be copied`, the clone glue).
 - **Embedded loops**: `for (const x of gen(a))` with a direct call (sema emits `GeneratorEmbed`,
   hir_encodings.md "Generators") builds the state in a frame local (spilled into the enclosing
   state when the loop is in an async function or a generator, like an embedded awaited child),
@@ -227,29 +236,123 @@ per step.
   `Iterator<T, E>` (Velt has no covariant returns), and a generator value is the class's object.
 - `resume` is the async poll function with a null `cx` (not a separate signature), and THREW is a
   third result.
-- A `finally` block in a generator cannot `yield` or throw (TS allows both; see above).
+- A `finally` block in a generator cannot `yield`, throw, or `break` / `continue` out of
+  itself (TS allows all three; see above).
 - `for...of` over a generator *value* goes through the protocol (`[Symbol.iterator]()`, then
   `next()` through the interface); only direct calls are embedded.
 
-## 4. Async generators and `for await` (phase 3, planned)
+## 4. Async generators and `for await` (built, phase 3)
 
-```ts planned
-async function* lines(r: FileReader): AsyncGenerator<string, IoError> {
-  while (true) {
-    const line = await r.readLine();
-    if (line == null) {
-      return;
-    }
-    yield line;
+```ts
+async function* lines(texts: string[]): AsyncGenerator<string> {
+  for (const t of texts) {
+    await sleep(1);
+    yield t;
+  }
+}
+
+async function main() {
+  for await (const line of lines(["a", "b"])) {
+    console.log(line);
   }
 }
 ```
 
-- `for await (const x of src)` works on `AsyncIterable<T, E>` in async code only (the diagnostic
-  names the fix), and calls `await it.return()` on early exit, like section 2.
-- An async generator's state machine has `poll(state, cx) -> { PENDING, YIELDED, DONE }`: `await`
-  suspends with `PENDING` as today, and `yield` returns `YIELDED` with the value in the slot.
-  A `for await` over a direct async generator call polls an embedded child state.
+### Language
+
+- `async function*`, `async *name()`, `static async *name()` and `async *[Symbol.asyncIterator]()`
+  are async generators. The declared result is `AsyncGenerator<T, E>`, `AsyncIterator<T, E>` or
+  `AsyncIterable<T, E>` (a sync result on an `async function*`, or an async one on a
+  `function*`, is an error naming the fix); `E` is inferred from the body (awaited calls
+  included) or written, like a generator's (`collect/generator_sig.rs`). The body may `await`
+  and `yield`; `FnInfo::is_async_gen` is set and `FnInfo::is_async` is not (a call creates the
+  generator, not a promise), and HIR `FnDef` has both `is_generator` and `is_async`.
+- `AsyncGenerator<T, E>` is a prelude class like `Generator`: `async next()`, `async return()`,
+  `[Symbol.asyncIterator]()` (itself), `async [Symbol.asyncDispose]()` (the awaited close) and
+  `[Symbol.dispose]()` (the close without awaiting, also its drop), over the std-only
+  intrinsics `AsyncGeneratorResume` / `Value` / `Return` / `Dispose` (hir_encodings.md "Async
+  generators"). `new AsyncGenerator` and `extends AsyncGenerator` are errors.
+- `for await (const x of src)` (`ast::StmtKind::ForOf::is_await`, sema `body/for_await.rs`) is
+  only allowed in async functions and async generators ("`for await` is only allowed inside
+  async functions" / "... is not allowed in a generator", naming the fix). Over a type with
+  `[Symbol.asyncIterator]()` it is section 2's protocol loop with `await <it>.next()` and, on
+  early exit, `await <it>.return()` (once, as JS). Over a direct async generator call it is the
+  embedded loop below. Over a sync source (an array, an iterable, a generator) it is
+  `for...of` with each value awaited when the element type is a promise, as JS does; an array
+  of promises is consumed (its promises move out, so a variable holding it is moved). A sync
+  `for...of` over an async iterable says to use `for await`.
+- `yield* src` in an async generator is `for await (const v of src) yield v;`: async
+  iterables, and sync ones as in JS (async-from-sync).
+
+### Lowering (velt_vir `async_fn/generator.rs`)
+
+- An async generator instance is an async state machine with both suspension kinds: its poll
+  function `f$poll(state, cx)` returns `0` PENDING (an `await` suspended; the waker is
+  registered as for any poll), `1` DONE, `2` YIELDED (value in the result region) or `3` THREW
+  — the sync generator codes plus one (`FnLower::gen_code`). A finished state polled again
+  returns DONE (an explicit dispatch case for `DONE`).
+- `await AsyncGeneratorResume(g)` in the consumer is a suspension of the consumer: its resume
+  block polls `g` with the consumer's own `cx` (through the object's table, or directly for an
+  embedded state); PENDING suspends the consumer, THREW routes the error like a throwing call.
+- **Closing.** Tag bit `CLOSE_BIT` (`0x4000_0000`; `DONE | CLOSE_BIT == DONE`) asks for the
+  *awaited* close: `Work::AsyncCloseStart` (`f$close`, in the object's table) sets it, and the
+  closer polls until not PENDING. The case `CLOSE_BIT | k` of a `yield` runs what `return;` at
+  the `yield` runs, including `finally` blocks that `await` (their awaits are ordinary
+  suspensions of the close path). The *dropping* close (`DROP_BIT`, `f$drop`, which runs with no
+  `cx`) is the same block when that cleanup has no `await`; otherwise it is a cancel block (drops
+  only, like a cancelled async function). At an `await` (a `next()` whose promise was dropped)
+  both bits cancel the pending child. Cancel blocks of an async generator leave the tag DONE.
+- **Embedded loops.** `for await (const x of agen(a))` keeps the state in a hidden local of
+  the enclosing state machine (spilled into its state, like an awaited child) and is wrapped in
+  `try { … } finally { await AsyncGeneratorReturn(<generator>) }`, so leaving the loop early
+  awaits the close (a no-op once the generator is done: one tag test on the normal path).
+  Cancelling the enclosing task drops the local, which runs the dropping close.
+- **Heap objects** are the sync layout `[table][state]`; the table has a fourth entry
+  (close-start). `await g.next()` on an `AsyncGenerator<T>` variable is a direct call of the
+  class's async method, whose state the caller embeds (no allocation per item); through an
+  `AsyncIterator<T>` interface value each `next()` is a boxed promise (one allocation per item).
+
+### Async methods on resources
+
+`await g.next()` passes `g` as the async method's (owned) receiver. Before this phase a
+receiver or argument that owns a resource (`[Symbol.dispose]`) was always *moved* into the
+call, so `using r = res(); await r.next()` was "cannot move `r` out of its `using`
+declaration", and a last use disposed the object when the call finished. Now an object
+receiver or argument of an async call is a soft move like any other object (`tasks.rs`
+`note_async_args`, `method_call.rs` `receiver`), shared when the place is used again or is a
+`using` variable (`ownership/validate.rs`); values holding a promise still move.
+
+### Cost
+
+`bench/iter` (`bench/iter/run.sh 7`): 20 × 3M values, each from an async call that completes at
+once (`await step(i)`), summed modulo a prime; LLVM release, best of 7 interleaved runs (Apple
+M4, shared with other builds):
+
+| program | ms | vs async_hand | Node (ms) |
+|---|---|---|---|
+| async_hand (while loop, `await step(i)`) | 49 | 1.00 | 1876 |
+| async_gen (`for await` over `values(n)`) | 118 | 2.41 | 7043 |
+
+Both are far below Node, and neither allocates per value. The hand loop inlines `step` and
+keeps everything in registers (about 0.8 ns per value); the generator loop costs about 1.2 ns
+more per value: the generator's state lives in the caller's state *memory* (an async
+function's state is not promoted to registers across its suspension points), so each step
+loads and stores the generator's tag and counter, polls it and tests the result codes. A body
+doing real work (an actual suspension, I/O) hides this; making the embedded state
+register-resident across steps is a possible follow-up.
+
+### Deviations from the accepted text
+
+- The poll function has a fourth result (THREW) and the codes are shifted by one so that 0
+  stays PENDING.
+- `finally` blocks of an async generator may `await` (they run when it is closed with an
+  awaited `return()`); a generator dropped without `return()` cancels such cleanup instead of
+  running it (JS never runs it at all).
+- An async generator cannot be passed to another task (sema rejects it, as for sync
+  generators), rather than following the promise transfer rules: its state may hold objects the
+  creating task shares.
+- `for await` over a sync source awaits only promise elements; it adds no extra suspension per
+  element, so a loop over plain values does not yield to other work as JS's would.
 
 ## 5. Std sources (phase 4, planned)
 

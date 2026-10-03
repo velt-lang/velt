@@ -3,7 +3,8 @@
 ## Statements
 
 - `if` / `else if` / `else`, `while`, `do … while`, C-style `for` (comma lists allowed:
-  `for (let i = 0, j = n; i < j; i++, j--)`), `for (const x of xs)`, `break` and `continue`
+  `for (let i = 0, j = n; i < j; i++, j--)`), `for (const x of xs)`,
+  [`for await (const x of xs)`](#for-await) in async code, `break` and `continue`
   (optionally labeled: `outer: for (…)` … `continue outer;`), `return`, blocks, and the
   ternary `?:`. A body without braces (`if (c) return x;`) is a one-statement block.
 - Conditions take `bool` or nullable values ([safe truthiness](variables.md#conditions-safe-truthiness)).
@@ -56,8 +57,8 @@ interface Iterable<T, E = never> {
   whose `[Symbol.iterator]` is a generator method (`*[Symbol.iterator]()`) is iterable without
   an iterator class. Leaving the loop early closes the generator (its `finally` blocks run).
 - `AsyncIterator<T, E>` (`next(): Promise<IteratorResult<T>, E>`) and `AsyncIterable<T, E>`
-  (`[Symbol.asyncIterator]()`) are declared too; `for await` over them is **Planned**, as are
-  async generators (`async function*`).
+  (`[Symbol.asyncIterator]()`) are their async counterparts, iterated with
+  [`for await`](#for-await).
 
 ```ts
 class Countdown implements Iterator<i64> {
@@ -98,6 +99,73 @@ for (const n of new From(3)) {
 for (const n of new From(5)) {
   if (n == 4) {
     break;                                // prints "stopped at 3"
+  }
+}
+```
+
+## `for await`
+
+```ts
+interface AsyncIterator<T, E = never> {
+  next(): Promise<IteratorResult<T>, E>;
+  async return(): Promise<void> {}       // early exit; the default does nothing
+}
+
+interface AsyncIterable<T, E = never> {
+  [Symbol.asyncIterator](): AsyncIterator<T, E>;
+}
+```
+
+- `for await (const x of src)` is allowed in async functions and
+  [async generators](functions.md#async-generators); elsewhere it is an error that names the
+  fix. It calls `src[Symbol.asyncIterator]()` once, then awaits `next()` until a result is
+  `done`. `src` may be any type with that method (a class, an `AsyncIterable<T>` value, an
+  [async generator](functions.md#async-generators)).
+- **Typed errors**: the loop rethrows what `next()` rejects with (`E`), like `for...of`.
+- **Early exit**: leaving the loop before `done` (`break`, `return`, a thrown error, a labeled
+  `break` / `continue` of an outer loop) awaits the iterator's `return()` exactly once, as in
+  JS; for an async generator that runs its `finally` blocks, which may `await` themselves.
+- Over a **sync** source (an array, an iterable, a generator) `for await` works like JS too:
+  each value that is a promise is awaited (`for await (const v of [load(a), load(b)])`), other
+  values are used as they are. An array of promises is consumed: its promises move into the
+  loop, so a variable holding the array cannot be used after it.
+- `for await (const x of agen(a))` over a direct async generator call keeps the generator's
+  state inside the enclosing async function's: no allocation (see
+  [Cost](functions.md#async-generators)).
+
+```ts
+class Ticks implements AsyncIterable<i64> {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<i64> {
+    return new TickIter(this.n);
+  }
+}
+
+class TickIter implements AsyncIterator<i64> {
+  left: i64;
+
+  constructor(left: i64) {
+    this.left = left;
+  }
+
+  async next(): Promise<IteratorResult<i64>> {
+    await sleep(1);
+    if (this.left == 0) {
+      return { done: true };
+    }
+    this.left -= 1;
+    return { done: false, value: this.left };
+  }
+}
+
+async function main() {
+  for await (const t of new Ticks(3)) {
+    console.log(t);                       // 2 1 0
   }
 }
 ```

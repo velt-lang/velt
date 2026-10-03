@@ -1,6 +1,7 @@
 //! Generator syntax: `function*`, generator methods (`*name()`, `static *name()`,
 //! `*[Symbol.iterator]()`), `yield`, bare `yield` and `yield*`, and the errors for `yield`
-//! used as a name or as an operand.
+//! used as a name or as an operand; async generators (`async function*`, `async *name()`) and
+//! `for await`.
 
 mod common;
 
@@ -94,6 +95,54 @@ fn yield_errors() {
     assert!(
         e.iter()
             .any(|m| m.contains("interface methods cannot be generators")),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn async_generators() {
+    let m = parse_ok(
+        "async function* a(): AsyncGenerator<i64> { yield await f(); }
+         class C {
+           async *items(): AsyncGenerator<i64> { yield 1; }
+           static async *make(): AsyncGenerator<i64> {}
+           async *[Symbol.asyncIterator](): AsyncIterator<i64> {}
+         }",
+    );
+    let f = function(&m, 0);
+    assert!(f.sig.is_generator && f.sig.is_async);
+    let ItemKind::Class(c) = &m.items[1].kind else {
+        panic!("class")
+    };
+    for meth in &c.methods {
+        assert!(
+            meth.decl.sig.is_generator && meth.decl.sig.is_async,
+            "{meth:?}"
+        );
+    }
+    assert_eq!(c.methods[2].decl.sig.name.name, SYMBOL_ASYNC_ITERATOR);
+}
+
+#[test]
+fn for_await() {
+    let m = parse_ok(
+        "async function f() {
+           for await (const x of xs) {}
+           for (const y of ys) {}
+           for await (let [a, b] of pairs()) {}
+         }",
+    );
+    let flags: Vec<bool> = body(&m)
+        .iter()
+        .map(|s| match &s.kind {
+            StmtKind::ForOf { is_await, .. } => *is_await,
+            k => panic!("expected for...of, got {k:?}"),
+        })
+        .collect();
+    assert_eq!(flags, [true, false, true]);
+    let e = errors("async function f() { for await (let i = 0; i < 3; i++) {} }");
+    assert!(
+        e.iter().any(|m| m.contains("`for await` needs `of`")),
         "{e:?}"
     );
 }

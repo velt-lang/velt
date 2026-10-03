@@ -154,7 +154,7 @@ copied).
 
 ## Iteration
 
-The iteration protocol behind `for...of` ([Control flow](../reference/control-flow.md#iterables)):
+The iteration protocol behind `for...of` and `for await` ([Control flow](../reference/control-flow.md#iterables)):
 
 | Declaration | Notes |
 |---|---|
@@ -163,7 +163,8 @@ The iteration protocol behind `for...of` ([Control flow](../reference/control-fl
 | `interface Iterable<T, E = never>` | `[Symbol.iterator](): Iterator<T, E>`; what `for...of` iterates |
 | `class Generator<T, E = never>` | what calling a [generator](../reference/functions.md#generators) (`function*`) creates: `implements Iterator<T, E>, Iterable<T, E>` (`[Symbol.iterator]()` returns itself); `return()` and `[Symbol.dispose]()` close it. Only generator calls create one (`new Generator` is an error) |
 | `interface AsyncIterator<T, E = never>` | `next(): Promise<IteratorResult<T>, E>`; `async return(): Promise<void>` (default: nothing) |
-| `interface AsyncIterable<T, E = never>` | `[Symbol.asyncIterator](): AsyncIterator<T, E>`; for `for await` (**Planned**) |
+| `interface AsyncIterable<T, E = never>` | `[Symbol.asyncIterator](): AsyncIterator<T, E>`; what [`for await`](../reference/control-flow.md#for-await) iterates |
+| `class AsyncGenerator<T, E = never>` | what calling an [async generator](../reference/functions.md#async-generators) (`async function*`) creates: `implements AsyncIterator<T, E>, AsyncIterable<T, E>`; `return()` and `[Symbol.asyncDispose]()` close it (awaiting its cleanup), `[Symbol.dispose]()` closes it without awaiting. Only async generator calls create one |
 
 ## JSON
 

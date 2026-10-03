@@ -270,7 +270,10 @@ impl FnCx<'_, '_> {
                 crate::body::places::set_place_mode(&mut recv, m);
             }
         }
-        if i == Intrinsic::Clone && matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..)) {
+        if i == Intrinsic::Clone && self.cx.holds_generator(recv.ty) {
+            let t = recv.ty;
+            self.no_generator_copy(t, crate::body::GenCopy::Clone, prop.span);
+        } else if i == Intrinsic::Clone && matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..)) {
             self.cx.error(
                 Diagnostic::error("a promise cannot be copied", prop.span).with_note(
                     "it runs once and has one owner; pass the promise itself on, or await it and copy the result",

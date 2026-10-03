@@ -58,6 +58,15 @@ class C { *items(): Generator<i64> { yield this.x; } static  *make(): Generator<
 }
 
 #[test]
+fn async_generators() {
+    holds(
+        "async   function*   gen(): AsyncGenerator<i64> { yield await f(); yield*  other(); }
+class C { async  *items(): AsyncGenerator<i64> { yield 1; } static async *make(): AsyncGenerator<i64> {} async *[Symbol.asyncIterator](): AsyncIterator<i64> {} }
+async function g() { for  await  (const x of xs) { use(x); } for await (let [a, b] of pairs()) {} for (const y of ys) {} }",
+    );
+}
+
+#[test]
 fn iteration_protocol() {
     holds(
         "interface It<T, E   = never> { next(): IteratorResult<T> throws E; }

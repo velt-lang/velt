@@ -221,7 +221,10 @@ impl FnCx<'_, '_> {
                     _ => break,
                 };
             }
-            if m == PassMode::Owned && is_place(place) && !self.cx.owns_resource(place.ty) {
+            // A resource that is a shared value (an object with `[Symbol.dispose]`, a generator)
+            // is shared like any object; one holding a promise cannot be.
+            let soft = !self.cx.owns_resource(place.ty) || self.cx.is_shared_value(place.ty);
+            if m == PassMode::Owned && is_place(place) && soft {
                 self.f.soft_moves.push(place.span);
             }
         }
@@ -240,6 +243,7 @@ impl FnCx<'_, '_> {
         };
         if as_arrow(arg).is_none() {
             let mut e = self.simple_intrinsic(Intrinsic::Spawn, "`spawn`", args, exp, span);
+            self.no_spawned_generators(&e);
             if let H::Call { args, .. } = &mut e.kind {
                 if let [p] = args.as_mut_slice() {
                     self.hand_on_spawned_callee(p);
@@ -299,6 +303,24 @@ impl FnCx<'_, '_> {
                 self.f.soft_moves.push(f.span);
             }
             _ => {}
+        }
+    }
+
+    /// `spawn(f(args))` transfers the call's arguments (the receiver included) to the task's
+    /// thread, copying what the caller still shares: none may hold a generator.
+    fn no_spawned_generators(&mut self, h: &hir::Expr) {
+        let H::Call { args, .. } = &h.kind else {
+            return;
+        };
+        let Some(H::Call {
+            args: call_args, ..
+        }) = args.first().map(|a| &a.kind)
+        else {
+            return;
+        };
+        let tys: Vec<(TyId, Span)> = call_args.iter().map(|a| (a.ty, a.span)).collect();
+        for (t, at) in tys {
+            self.no_generator_copy(t, crate::body::GenCopy::Task, at);
         }
     }
 }

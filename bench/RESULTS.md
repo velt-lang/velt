@@ -1000,3 +1000,21 @@ with other builds (identical programs vary by up to ±10% between rounds). Node 
 - Array `for...of` is untouched: bench/classes, shapes and nbody lower to identical VIR before
   and after this change, hashmap differs only in the source paths of panic messages; their
   times are unchanged within noise.
+
+## Async generators (`bench/iter`, #62 phase 3, 2026-10-03)
+
+`bench/iter/run.sh 7` adds an async pair: 20 × 3M values, each from an async call that
+completes at once (`await step(i)`), summed like the rest; compared with the async hand loop.
+Same machine and caveats as above (this run's sync rows: hand_loop 456 ms, gen_loop 454,
+iterable_class 455, gen_value 1125 — the machine was quieter than in the phase-2 run).
+
+| program | Velt (ms) | vs async_hand | Node (ms) |
+|---|---|---|---|
+| async_hand: `while` loop in an async function | 49 | 1.00 | 1876 |
+| async_gen: `for await` over `values(n)`, an `async function*` | 118 | 2.41 | 7043 |
+
+- Nothing is allocated in either: the async generator's state is part of `main`'s state and is
+  polled by a direct call per value.
+- The difference (about 1.2 ns per value) is the generator's state living in the caller's
+  state memory rather than registers: each step stores and reloads its tag and counter and
+  tests the poll result. Real work per value (an actual suspension or I/O) dwarfs it.

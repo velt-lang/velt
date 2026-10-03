@@ -166,6 +166,7 @@ impl FnCx<'_, '_> {
         let frame = std::mem::replace(&mut self.f, parent);
         if is_async {
             self.no_mutated_captures(&frame);
+            self.no_captured_generators(&frame);
         }
         let captures = self.capture_modes(&frame, span);
         let clause = throws.as_ref().map_or(span, |t| t.span);
@@ -225,6 +226,15 @@ impl FnCx<'_, '_> {
                     "tasks may run concurrently on other threads; share it with `shared` instead: `const {name} = shared(...)` and `{name}.add(n)` / `{name}.set(v)`, or `shared(new Mutex(...))` with `.with(...)`"
                 )),
             );
+        }
+    }
+
+    /// An async closure copies its captures when it runs: none may hold a generator.
+    fn no_captured_generators(&mut self, frame: &Frame) {
+        for c in &frame.captures {
+            let l = &frame.locals[c.inner.0 as usize];
+            let (ty, name, at) = (l.ty, l.name.clone(), l.span);
+            self.no_generator_copy(ty, crate::body::GenCopy::Capture(name), at);
         }
     }
 

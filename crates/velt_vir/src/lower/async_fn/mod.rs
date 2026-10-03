@@ -54,6 +54,10 @@ use crate::vir::{
 const PLACEHOLDER: AggId = AggId(u32::MAX);
 /// Tag bit that turns a resume into a cancellation (set by the drop function).
 const DROP_BIT: i128 = 0x8000_0000;
+/// Tag bit that turns a resume of an async generator into its *awaited* close (generator.rs:
+/// `return()`): at a `yield` it runs the `finally` blocks and disposals, which may `await`.
+/// `DONE | CLOSE_BIT` is `DONE`.
+const CLOSE_BIT: i128 = 0x4000_0000;
 /// Tag of a finished state machine (never resumed; dropping it is a no-op).
 const DONE: i128 = 0x7FFF_FFFF;
 
@@ -78,6 +82,9 @@ pub(super) struct AsyncCx {
     /// The resume function of a generator (generator.rs): `yield`s suspend, results are
     /// `GEN_DONE` / `GEN_YIELDED` / `GEN_THREW`.
     generator: bool,
+    /// The poll function of an async generator: also `await`s suspend (PENDING, 0), and the
+    /// results are the `GEN_*` codes plus one (generator.rs `gen_code`).
+    async_gen: bool,
 }
 
 impl Cx<'_> {
@@ -121,9 +128,9 @@ impl Cx<'_> {
         }
     }
 
-    /// Is `def` a compiled async function?
+    /// Is `def` a compiled async function (not an async generator)?
     pub(super) fn is_async_fn(&self, def: DefId) -> bool {
-        matches!(self.hir.def(def), hir::Def::Fn(f) if f.is_async)
+        matches!(self.hir.def(def), hir::Def::Fn(f) if f.is_async && !f.is_generator)
     }
 
     /// Build `f$poll` and record the state layout in `asyncs`.
@@ -187,6 +194,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             cases: vec![(0, start)],
             next_tag: 1,
             generator: f.is_generator,
+            async_gen: f.is_generator && f.is_async,
         });
         self.switch_to(start);
         if f.is_generator {
@@ -273,7 +281,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     pub(super) fn finish_poll(&mut self) {
         self.set_tag(DONE);
         let ready = if self.in_generator() {
-            generator::GEN_DONE
+            self.gen_code(generator::GEN_DONE)
         } else {
             1
         };
@@ -286,7 +294,29 @@ impl<'c, 'h> FnLower<'c, 'h> {
             return self.finish_poll();
         }
         self.set_tag(DONE);
-        self.terminate(Terminator::Return(cint(generator::GEN_THREW, Ty::U32)));
+        let threw = self.gen_code(generator::GEN_THREW);
+        self.terminate(Terminator::Return(cint(threw, Ty::U32)));
+    }
+
+    /// Dispatch cases of a cancel block `d` of suspension `k`: `DROP_BIT | k`, and for an async
+    /// generator also `CLOSE_BIT | k` (closing it while it awaits cancels the await).
+    fn cancel_cases(&mut self, k: i128, d: BlockId) {
+        let a = self.actx();
+        a.cases.push((DROP_BIT | k, d));
+        if a.async_gen {
+            a.cases.push((CLOSE_BIT | k, d));
+        }
+    }
+
+    /// End of a cancel block: in an async generator, which may be polled again (`next()` after
+    /// a closing `return()`), it is DONE.
+    fn finish_cancel(&mut self) {
+        if !self.actx().async_gen {
+            return self.terminate(Terminator::Return(cint(0, Ty::U32)));
+        }
+        self.set_tag(DONE);
+        let done = self.gen_code(generator::GEN_DONE);
+        self.terminate(Terminator::Return(cint(done, Ty::U32)));
     }
 
     /// Cancellation before the first poll: drop the owned inputs (their drop flags, if any,
@@ -306,9 +336,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         // Finished: a generator closed before it started is done (`next()` after `return()`).
         self.set_tag(DONE);
-        self.terminate(Terminator::Return(cint(0, Ty::U32)));
+        let done = match self.in_generator() {
+            true => self.gen_code(generator::GEN_DONE),
+            false => 0,
+        };
+        self.terminate(Terminator::Return(cint(done, Ty::U32)));
         self.switch_to(saved);
-        self.actx().cases.push((DROP_BIT, d));
+        self.cancel_cases(0, d);
     }
 
     /// Fill the entry block: `switch state.tag`.
@@ -318,6 +352,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let tag = self.rvalue_temp(Ty::U32, Rvalue::Use(Operand::Copy(tp)));
         if self.in_generator() {
             self.running_case();
+            self.switch_to(BlockId(0));
+        }
+        if self.actx().async_gen {
+            self.done_case();
             self.switch_to(BlockId(0));
         }
         let other = self.new_block();
