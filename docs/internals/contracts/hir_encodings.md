@@ -71,6 +71,10 @@ Maintainer-owned, like hir.rs.
   `Intrinsic::Spawn`; any other call of an async function (or of a function value returning a
   `TyKind::Promise(T)`) yields a started promise: boxed via `velt_rt_fut_box`, then
   `velt_rt_fut_start` (hybrid promises, docs/reference/async.md).
+- `Intrinsic::SpawnHandled` (`__intrinsic_spawn_handled(p)`, standard library only) is
+  `Intrinsic::Spawn` whose rejection the caller handles itself (`TaskScope.spawn`: the scope
+  fails with it). A dropped `Spawn` handle reports its task's rejection as uncaught; a dropped
+  `SpawnHandled` handle drops it quietly.
 - Hybrid promises: sema rejects an expression statement of type `Promise<T>` or `Promise<T>[]`
   other than a `spawn(...)` call ("floating promise"). `Intrinsic::PromiseRace`
   (`Promise.race(ps: Promise<T, E>[]): Promise<T, E>`, `ps` owned) and the std-only
