@@ -55,6 +55,14 @@ class Box {
   }
 }
 
+class Holder {
+  private s: Signal = new Signal();
+  get inner(): Signal {
+    console.log("get inner");
+    return this.s;
+  }
+}
+
 function pick(s: Signal, tag: string): Signal {
   console.log("pick", tag);
   return s;
@@ -86,6 +94,10 @@ function main() {
   let i = 0;
   all[i++].value += 10;
   console.log("i", i);
+  // A getter on the way to the accessor runs once too.
+  const h = new Holder();
+  h.inner.value++;
+  h.inner.value += rhs(2);
 
   // As values: postfix gives the old value, prefix and compound the new one.
   const a = s.value++;

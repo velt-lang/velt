@@ -117,6 +117,11 @@ impl FnCx<'_, '_> {
                 };
                 (binary(op, old_ref(), one, span), None)
             }
+            Rmw::Logical(op @ (ast::BinaryOp::Or | ast::BinaryOp::And), _)
+                if self.reject_logical_assign(op, old_ty, span) =>
+            {
+                return self.error_expr(span);
+            }
             Rmw::Logical(op, v) => (v.clone(), Some(self.decides(op, old_ref(), span))),
         };
         let mut set = vec![];
@@ -151,14 +156,15 @@ impl FnCx<'_, '_> {
     }
 
     /// The receiver to read and write through: `obj` itself when evaluating it again has no
-    /// effect (a variable, `this`, a field path), else a temporary holding it.
+    /// effect (a variable, `this`, a path of fields), else a temporary holding it. A path through
+    /// a getter (`h.inner.value++`) runs that getter once, as in JS.
     fn receiver_once(
         &mut self,
         mut obj: hir::Expr,
         object: &ast::Expr,
         stmts: &mut Vec<hir::Stmt>,
     ) -> hir::Expr {
-        if side_effect_free(object) {
+        if side_effect_free(object) && is_field_path(&obj) {
             return obj;
         }
         set_place_mode(&mut obj, UseMode::Move);
@@ -206,6 +212,15 @@ impl FnCx<'_, '_> {
             UseMode::Move
         };
         self.mk(H::Local(l, mode), ty, span)
+    }
+}
+
+/// Is `e` a variable or a path of fields of one (no getter or other call on the way)?
+fn is_field_path(e: &hir::Expr) -> bool {
+    match &e.kind {
+        H::Local(..) | H::Global(_) => true,
+        H::Field { base, .. } => is_field_path(base),
+        _ => false,
     }
 }
 

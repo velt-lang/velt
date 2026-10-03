@@ -25,6 +25,13 @@ set 21
 get 21
 set 31
 i 1
+get inner
+get 0
+set 1
+get inner
+get 1
+rhs 2
+set 3
 get 31
 set 32
 get 32
