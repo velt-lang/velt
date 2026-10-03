@@ -124,9 +124,53 @@ fn declares_must_match_their_library_exactly() {
     // A look-alike of std's IoResult is not IoResult (the only result error is `demo_fake`'s).
     assert_eq!(d.matches("a native function returns").count(), 1, "{d}");
     assert!(d.contains("IoResult<T>` of one of those, not `"), "{d}");
-    // Another package's export.
-    has("`demo_ok` is exported by the native library of package `demo`; only that package may declare it");
+    // Another package's export, from a package without a library.
+    has("`declare function demo_ok` is not allowed: package `app` has no native library");
+    has("`demo_ok` is exported by the native library of package `demo`: import that package's API instead");
     // The correct declarations (including std's IoResult) report nothing.
     assert!(!d.contains("demo_real"), "{d}");
-    assert_eq!(d.matches("demo_ok").count(), 1, "{d}");
+    assert_eq!(d.matches("demo_ok").count(), 2, "{d}");
+}
+
+/// Diagnostics of checking `src` as a program without packages.
+fn check_alone(src: &str) -> String {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = tmp.path().join("main.vlt");
+    write(&main, src);
+    let opts = BuildOptions {
+        input: main,
+        ..Default::default()
+    };
+    let mut sess = Session::new();
+    let r = driver::check(&mut sess, &opts);
+    if r.is_ok() {
+        return String::new();
+    }
+    sess.render_diagnostics()
+}
+
+#[test]
+fn a_program_without_packages_declares_nothing() {
+    let d =
+        check_alone("declare function free(p: u64): void;\nfunction main() {\n  free(4096);\n}\n");
+    assert!(
+        d.contains("`declare function free` is not allowed: this program is not in a package with a native library"),
+        "{d}"
+    );
+    assert!(
+        d.contains("to call C code, give the package a native library"),
+        "{d}"
+    );
+    let d = check_alone(
+        "declare async function sleep_ms(n: u64): Promise<u64>;\nasync function main() {\n  await sleep_ms(1);\n}\n",
+    );
+    assert!(
+        d.contains("`declare async function sleep_ms` is not allowed"),
+        "{d}"
+    );
+    // std's own declarations (behind `velt:fs` and the prelude) are not affected.
+    let d = check_alone(
+        "import { readFile } from \"velt:fs\";\nfunction main() {\n  console.log(\"ok\");\n}\n",
+    );
+    assert_eq!(d, "");
 }

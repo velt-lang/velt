@@ -1,17 +1,18 @@
 //! The compiler's side of native packages (docs/internals/contracts/native_abi.md):
 //!
-//! - [`check_declares`]: every `declare function` of a package with native code must name one of
-//!   **its own** library's exports, and its lowered signature must equal the signature the SDK
-//!   recorded for that export exactly. A mismatch would be memory corruption at run time, so it
-//!   is a compile error. No package may declare another package's export (sema already keeps
-//!   `velt_rt_*` runtime functions to std). `IoResult` and
-//!   `IoStatus` are std's (`velt:io`) types, identified by definition, not by name.
+//! - [`check_declares`]: outside the standard library, a `declare function` must name one of the
+//!   exports of **its own** package's native library, and its lowered signature must equal the
+//!   signature the SDK recorded for that export exactly. Anything else (a root program or a
+//!   package without native code declaring `free`, another package's export, a mismatch) would
+//!   let ordinary code call arbitrary C symbols or corrupt memory, so it is a compile error.
+//!   `IoResult` and `IoStatus` are std's (`velt:io`) types, identified by definition, not by name.
 //! - [`inits`]: the libraries `velt_main` initializes before `main`.
 //! - [`links`]: what the linker adds per library.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use velt_common::{Diagnostic, Diagnostics, SourceMap};
+use velt_common::{Diagnostic, Diagnostics, FileId, SourceMap};
 use velt_sema::hir::{self, Def, DefId, FloatTy, IntTy, TyId, TyKind};
 use vpm::PackageGraph;
 
@@ -147,38 +148,27 @@ fn ty_name(p: &hir::Program, t: TyId) -> String {
     }
 }
 
-/// Check every `declare function` of the program's packages against their native libraries
-/// (see the module docs); reports errors into `diags`.
+/// Check every `declare function` outside the standard library (`std_files`: the files of std
+/// modules) against the native library of its own package (`graph`, `None` for a program without
+/// packages); see the module docs. Reports errors into `diags`.
 pub fn check_declares(
     p: &hir::Program,
     sm: &SourceMap,
     std_root: Option<&Path>,
-    graph: &PackageGraph,
+    graph: Option<&PackageGraph>,
+    std_files: &HashSet<FileId>,
     diags: &mut Diagnostics,
 ) {
-    if graph.natives().next().is_none() {
-        return;
-    }
     let io = IoTypes::find(p, sm, std_root);
     for def in &p.defs {
         let Def::ExternFn(f) = def else { continue };
-        let file = &sm.get(f.span.file).path;
-        let Some(pkg) = graph.package_of(file) else {
+        if std_files.contains(&f.span.file) {
             continue;
-        };
-        let owner = graph
-            .natives()
-            .find(|(_, lib)| lib.meta.exports.contains_key(&f.symbol));
-        let Some(lib) = &pkg.native else {
-            if let Some((other, _)) = owner {
-                diags.push(Diagnostic::error(
-                    format!(
-                        "`{}` is exported by the native library of package `{}`; only that package may declare it",
-                        f.symbol, other.name
-                    ),
-                    f.span,
-                ));
-            }
+        }
+        let file = &sm.get(f.span.file).path;
+        let pkg = graph.and_then(|g| g.package_of(file));
+        let Some(lib) = pkg.and_then(|p| p.native.as_ref()) else {
+            diags.push(not_native(f, pkg.map(|p| p.name.as_str()), graph));
             continue;
         };
         let what = format!("`{} {}`", lib.meta.package, lib.meta.version);
@@ -211,6 +201,42 @@ pub fn check_declares(
             ),
             Err(why) => diags.push(Diagnostic::error(why, f.span)),
         }
+    }
+}
+
+/// The error for a `declare function` in a module whose package (`pkg`; `None`: a program
+/// without a package) has no native library.
+fn not_native(f: &hir::ExternFnDef, pkg: Option<&str>, graph: Option<&PackageGraph>) -> Diagnostic {
+    let whose = match pkg {
+        Some(name) => format!("package `{name}` has no native library"),
+        None => "this program is not in a package with a native library".into(),
+    };
+    let kind = if f.is_async {
+        "declare async function"
+    } else {
+        "declare function"
+    };
+    let d = Diagnostic::error(
+        format!("`{kind} {}` is not allowed: {whose}", f.symbol),
+        f.span,
+    )
+    .with_note(
+        "outside the standard library, `declare function` may only name an export of the \
+         package's own native library",
+    );
+    let owner = graph
+        .into_iter()
+        .flat_map(|g| g.natives())
+        .find(|(_, lib)| lib.meta.exports.contains_key(&f.symbol));
+    match owner {
+        Some((other, _)) => d.with_note(format!(
+            "`{}` is exported by the native library of package `{}`: import that package's API instead",
+            f.symbol, other.name
+        )),
+        None => d.with_note(
+            "to call C code, give the package a native library (`native` in package.vlt; see \
+             Packages with native code), or use the standard library's API",
+        ),
     }
 }
 

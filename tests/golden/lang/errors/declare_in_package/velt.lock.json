@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "packages": [
+    {
+      "name": "plain",
+      "version": "0.1.0",
+      "source": "path+_plain"
+    }
+  ]
+}

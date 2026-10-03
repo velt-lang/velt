@@ -1,0 +1,1 @@
+lib.vlt:2:1: error: `declare function memcpy` is not allowed: package `plain` has no native library

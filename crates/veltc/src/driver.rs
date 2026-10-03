@@ -180,13 +180,20 @@ fn check_program(sess: &mut Session, opts: &BuildOptions) -> Result<hir::Program
     let t = Instant::now();
     let (hir, diags) = velt_sema::check(&loaded.modules, loaded.root);
     sess.diagnostics.extend(diags);
-    if let (Some(hir), Some(graph)) = (&hir, &opts.packages) {
+    if let Some(hir) = &hir {
         let std_root = loader::std_root();
+        let std_files = loaded
+            .modules
+            .iter()
+            .filter(|m| m.is_std)
+            .map(|m| m.file)
+            .collect();
         crate::native::check_declares(
             hir,
             &sess.sm,
             std_root.as_deref(),
-            graph,
+            opts.packages.as_ref(),
+            &std_files,
             &mut sess.diagnostics,
         );
     }

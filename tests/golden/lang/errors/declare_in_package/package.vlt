@@ -1,0 +1,7 @@
+import type { Package } from "velt:package";
+
+export const pkg: Package = {
+  name: "declare-in-package",
+  version: "0.1.0",
+  dependencies: { plain: { path: "_plain" } },
+};
