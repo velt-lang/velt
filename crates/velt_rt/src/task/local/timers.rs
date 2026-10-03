@@ -13,6 +13,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
+use std::marker::PhantomPinned;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -35,12 +36,15 @@ pub(crate) struct Timers {
 
 /// The registered timers in key order. Timers mostly come in key order (equal delays, or a
 /// deadline later than the last one), so those are appended to a deque; the others go to a tree.
-/// A deregistered entry of the deque stays as a tombstone until it reaches the front.
+/// A deregistered entry of the deque stays as a tombstone until it reaches the front, or until
+/// tombstones outnumber the live entries. A key is in at most one of the two.
 #[derive(Default)]
 struct Queue {
     tail: VecDeque<(Key, Option<Registered>)>,
     rest: BTreeMap<Key, Registered>,
     live: usize,
+    /// Tombstones in `tail`.
+    dead: usize,
 }
 
 impl Queue {
@@ -56,23 +60,39 @@ impl Queue {
     }
 
     fn insert(&mut self, key: Key, r: Registered) {
-        if self.tail.back().is_none_or(|(k, _)| *k < key) {
-            self.tail.push_back((key, Some(r)));
-        } else {
-            self.rest.insert(key, r);
+        match self.tail.binary_search_by(|(k, _)| k.cmp(&key)) {
+            // Its own tombstone (the leaf left and came back): revive it.
+            Ok(i) => {
+                let slot = &mut self.tail[i].1;
+                assert!(slot.is_none(), "ICE: timer registered twice");
+                *slot = Some(r);
+                self.dead -= 1;
+            }
+            Err(i) if i == self.tail.len() => self.tail.push_back((key, Some(r))),
+            Err(_) => {
+                self.rest.insert(key, r);
+            }
         }
         self.live += 1;
     }
 
     fn remove(&mut self, key: &Key) -> Option<Registered> {
         let r = match self.tail.binary_search_by(|(k, _)| k.cmp(key)) {
-            Ok(i) => self.tail[i].1.take(),
+            Ok(i) => {
+                let r = self.tail[i].1.take();
+                self.dead += usize::from(r.is_some());
+                r
+            }
             Err(_) => self.rest.remove(key),
         };
         if r.is_some() {
             self.live -= 1;
             if self.live == 0 {
                 self.tail.clear();
+                self.dead = 0;
+            } else if self.dead > 32 && self.dead > self.live {
+                self.tail.retain(|(_, r)| r.is_some());
+                self.dead = 0;
             }
         }
         r
@@ -82,6 +102,7 @@ impl Queue {
     fn first_key(&mut self) -> Option<Key> {
         while self.tail.front().is_some_and(|(_, r)| r.is_none()) {
             self.tail.pop_front();
+            self.dead -= 1;
         }
         match (self.tail.front(), self.rest.first_key_value()) {
             (Some((a, _)), Some((b, _))) => Some(*a.min(b)),
@@ -173,7 +194,7 @@ impl Timers {
                 return None;
             }
             let mut due = std::mem::take(&mut s.due);
-            let now = Instant::now();
+            let mut now = Instant::now();
             while let Some(key) = s.queue.first_key() {
                 let at = key.0;
                 if at <= now {
@@ -182,7 +203,10 @@ impl Timers {
                     // before being freed).
                     unsafe { (*r.fired).store(true, Ordering::Release) };
                     due.push(r.waker);
-                } else if !arm(&mut s.armed, at, task) {
+                } else if arm(&mut s.armed, at, task) {
+                    // The tokio timer says it is due (its clock may be ahead of `now`).
+                    now = Instant::now().max(at);
+                } else {
                     break;
                 }
             }
@@ -229,6 +253,8 @@ pub(crate) struct TimerLeaf {
     registered: Option<(Arc<Timers>, Key)>,
     /// Outside any task: a plain tokio timer.
     fallback: Option<Pin<Box<Sleep>>>,
+    /// A queue holds a pointer to `fired`: the leaf must not move once polled.
+    _pinned: PhantomPinned,
 }
 
 impl TimerLeaf {
@@ -241,6 +267,7 @@ impl TimerLeaf {
             fired: AtomicBool::new(false),
             registered: None,
             fallback: None,
+            _pinned: PhantomPinned,
         }
     }
 }

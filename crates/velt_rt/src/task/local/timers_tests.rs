@@ -27,6 +27,7 @@ fn leaf(timers: &Arc<Timers>, deadline: Instant, waker: &Waker, task: &Waker) ->
         fired: AtomicBool::new(false),
         registered: None,
         fallback: None,
+        _pinned: PhantomPinned,
     });
     let key = (deadline, l.seq, &l.fired as *const AtomicBool as usize);
     timers.register(key, waker, &l.fired, task);
@@ -212,4 +213,54 @@ fn the_queue_merges_appended_and_out_of_order_keys_and_skips_removed_ones() {
     }
     assert_eq!(order, [key(3, 4), key(5, 2), key(7, 3), key(9, 6)]);
     assert!(q.is_empty() && q.tail.is_empty() && q.rest.is_empty());
+}
+
+#[test]
+fn a_key_registered_again_behind_its_tombstone_is_found_and_removed() {
+    let base = Instant::now();
+    let flag = AtomicBool::new(false);
+    let reg = || Registered {
+        waker: Waker::noop().clone(),
+        fired: &flag,
+    };
+    let key = |ms: u64, seq: u64| (base + Duration::from_millis(ms), seq, 0);
+    let mut q = Queue::default();
+    q.insert(key(1, 1), reg());
+    q.insert(key(2, 2), reg());
+    // The first leaf leaves (a tombstone) and comes back with the same key.
+    assert!(q.remove(&key(1, 1)).is_some());
+    q.insert(key(1, 1), reg());
+    assert!(q.rest.is_empty(), "revived in place");
+    assert!(q.get_mut(&key(1, 1)).is_some());
+    assert!(q.remove(&key(1, 1)).is_some());
+    assert!(q.get_mut(&key(1, 1)).is_none());
+    assert_eq!(q.first_key(), Some(key(2, 2)));
+    assert_eq!(q.dead, 0);
+}
+
+#[test]
+fn tombstones_are_compacted_once_they_outnumber_live_timers() {
+    let base = Instant::now();
+    let flag = AtomicBool::new(false);
+    let reg = || Registered {
+        waker: Waker::noop().clone(),
+        fired: &flag,
+    };
+    let key = |seq: u64| (base, seq, 0);
+    let mut q = Queue::default();
+    for seq in 0..100 {
+        q.insert(key(seq), reg());
+    }
+    // Remove all but the first and the last 20: the middle ones become tombstones.
+    for seq in 1..80 {
+        assert!(q.remove(&key(seq)).is_some());
+    }
+    assert!(q.tail.len() < 100, "compacted");
+    assert_eq!(q.tail.iter().filter(|(_, r)| r.is_none()).count(), q.dead);
+    let mut order = Vec::new();
+    while let Some(k) = q.first_key() {
+        q.pop_first(&k);
+        order.push(k.1);
+    }
+    assert_eq!(order, [0].into_iter().chain(80..100).collect::<Vec<_>>());
 }
