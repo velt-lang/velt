@@ -71,9 +71,12 @@ async function main() {
   } catch (e) {
     console.log("all failed:", e.message);
   }
+  // The first rejection in time wins. The two failing tasks are far apart: a spawned task
+  // starts (and starts its timer) when a worker first runs it, which can be late on a busy
+  // machine.
   const tasks: Promise<i64, Timeout | Refused>[] = [];
-  for (let i = 1; i <= 3; i++) {
-    tasks.push(spawn(fetchValue(i * 20)));
+  for (const ms of [20, 40, 500]) {
+    tasks.push(spawn(fetchValue(ms)));
   }
   try {
     console.log(await Promise.all(tasks));
