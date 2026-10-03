@@ -28,8 +28,9 @@ impl Job {
     /// A job holding `child` and every process it starts from now on; they are killed when the
     /// job is dropped (also if the test process dies).
     ///
-    /// `child` joins right after it started, before it can have started anything of its own
-    /// (`velt dev` starts a program only after its first build).
+    /// `child` joins right after it started; whatever it starts later joins the job with it (job
+    /// membership is inherited). `velt dev` starts its first host or program only after it has
+    /// set up its session, well after that.
     pub fn holding(child: &Child) -> Job {
         // SAFETY: an anonymous job with default security; the handle is owned below.
         let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
@@ -66,12 +67,16 @@ impl Job {
         unsafe { TerminateJobObject(self.handle(), 1) };
         let deadline = Instant::now() + EXIT_LIMIT;
         loop {
+            if Instant::now() > deadline {
+                return false;
+            }
             let Some(pids) = self.process_ids() else {
                 return false;
             };
             if pids.is_empty() {
                 return true;
             }
+            let mut opened = false;
             for pid in pids {
                 // A process that is already gone can't be opened: nothing to wait for.
                 // SAFETY: plain call; the handle (if any) is owned below.
@@ -82,12 +87,17 @@ impl Job {
                 // SAFETY: a valid handle that nothing else owns; closing it drops the last
                 // reference this test holds to the process.
                 let process = unsafe { OwnedHandle::from_raw_handle(raw) };
+                opened = true;
                 let left = deadline.saturating_duration_since(Instant::now());
                 let ms = u32::try_from(left.as_millis()).unwrap_or(u32::MAX);
                 // SAFETY: a valid handle.
                 if unsafe { WaitForSingleObject(process.as_raw_handle(), ms) } != WAIT_OBJECT_0 {
                     return false;
                 }
+            }
+            // Listed but gone before they could be opened: the list catches up in a moment.
+            if !opened {
+                std::thread::sleep(Duration::from_millis(1));
             }
         }
     }

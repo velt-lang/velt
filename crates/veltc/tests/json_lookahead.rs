@@ -6,9 +6,11 @@
 
 use std::process::Command;
 
+mod test_dir;
+
 #[test]
 fn union_lookahead_uses_the_remembering_skip() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_dir::TestDir::new();
     let src = dir.path().join("main.vlt");
     std::fs::write(
         &src,

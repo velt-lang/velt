@@ -5,6 +5,8 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
+mod test_dir;
+
 fn velt(dir: &Path, home: &Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_velt"))
         .args(args)
@@ -49,7 +51,7 @@ fn text(out: &std::process::Output) -> String {
 
 #[test]
 fn share_a_package_through_the_registry_server() {
-    let tmp = tempfile::tempdir().expect("temp dir");
+    let tmp = test_dir::TestDir::new();
     let served = tmp.path().join("served");
     let dir_arg = served.to_string_lossy().into_owned();
     let added_user = velt(
@@ -156,7 +158,7 @@ fn share_a_package_through_the_registry_server() {
 
 #[test]
 fn a_token_without_users_does_not_start_an_open_server() {
-    let tmp = tempfile::tempdir().expect("temp dir");
+    let tmp = test_dir::TestDir::new();
     let served = tmp.path().join("served");
     let refused = velt_as(
         "old-shared-token",

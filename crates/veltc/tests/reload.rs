@@ -21,12 +21,14 @@
 //! response.
 
 mod reload_support;
+mod test_dir;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use reload_support::{get, Background, Dev, Mark, Probe, TestDir};
+use reload_support::{get, Background, Dev, Mark, Probe};
+use test_dir::TestDir;
 
 /// One `expect` line.
 #[derive(Debug)]
