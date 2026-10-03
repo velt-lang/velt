@@ -62,7 +62,7 @@ pub const PACKAGE: &[Field] = &[
         ty: "string",
         required: false,
         doc: "One line about the package, shown by `velt search` and registry listings: at most \
-              200 characters, no line breaks, no surrounding whitespace.",
+              300 characters, no line breaks, no surrounding whitespace.",
     },
     Field {
         key: "keywords",

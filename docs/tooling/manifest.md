@@ -45,7 +45,7 @@ file and reports these errors without building anything.
   functions start with its name and `_` (`sem_open` is the C library's).
 - `version`: a semantic version.
 - `description`: one line about the package, shown by `velt search` and registry listings: at most
-  200 characters, no line breaks, no surrounding whitespace.
+  300 characters, no line breaks, no surrounding whitespace.
 - `keywords`: search words, such as `["json", "parser"]`: at most 10, each lowercase letters,
   digits and `-` (at most 32 characters, starting with a letter or digit). `velt search` matches
   every word of its text against names, keywords and descriptions, names first.

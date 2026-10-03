@@ -72,7 +72,7 @@ talk to hosts the checkout names); `$VELT_REGISTRY` is always asked.
   Targets must stay inside the package (no `..`, not absolute). Each package's aliases apply to
   its own modules only (`vpm::PackageGraph::path_alias`).
 - `entry` is a `/`-separated path inside the package (not empty, not absolute, no `..`).
-- `description` (additive, #184): one line of at most 200 characters (Unicode scalar values), no
+- `description` (additive, #184): one line of at most 300 characters (Unicode scalar values), no
   control characters, no leading or trailing whitespace, not empty. `keywords`: at most 10
   distinct entries, each `[a-z0-9][a-z0-9-]{0,31}`, order kept, not empty. Both optional; an empty
   string or array is an error saying to remove the field. `to_vlt` writes them after `version`,
