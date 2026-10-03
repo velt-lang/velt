@@ -1,0 +1,7 @@
+// `env(name)` and `stdout.writeString(s)` of velt:process were removed: the builtin
+// `process.env.NAME` and `process.stdout.write(s)` replace them, and the errors say so.
+import { env, stdout } from "velt:process";
+
+function main() {
+  stdout.writeString("hi");
+}

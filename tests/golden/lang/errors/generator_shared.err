@@ -1,0 +1,6 @@
+generator_shared.vlt:17:26: error: `Mutex<Generator<i64, never>>`, which holds a generator, cannot be shared between threads
+  = note: a `shared(...)` value may be used from several threads, and a generator's suspended state must stay on one: create the generator where it is used, or share the values it produces (collect them into an array first)
+generator_shared.vlt:18:20: error: a generator (`Generator<i64, never>`) cannot be shared between threads
+  = note: a `shared(...)` value may be used from several threads, and a generator's suspended state must stay on one: create the generator where it is used, or share the values it produces (collect them into an array first)
+generator_shared.vlt:19:20: error: `{ g: Generator<i64, never> }`, which holds a generator, cannot be shared between threads
+  = note: a `shared(...)` value may be used from several threads, and a generator's suspended state must stay on one: create the generator where it is used, or share the values it produces (collect them into an array first)

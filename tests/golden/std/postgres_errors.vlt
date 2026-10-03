@@ -2,7 +2,6 @@
 // Node-style codes for failures outside the server (connection, parameters, decoding, closed
 // handles). The connection stays usable after each of them.
 // requires-env: VELT_TEST_PG_URL
-import { env } from "velt:process";
 import { connect, createPool, Client } from "velt:postgres";
 
 class Item {
@@ -43,7 +42,7 @@ async function connectTo(url: string) {
 }
 
 async function main() {
-  const url = env("VELT_TEST_PG_URL") ?? "";
+  const url = process.env.VELT_TEST_PG_URL ?? "";
   const db = await connect(url);
   await db.batch("CREATE TEMP TABLE items (id int PRIMARY KEY, name text NOT NULL)");
   await db.run("INSERT INTO items VALUES (1, 'a')");

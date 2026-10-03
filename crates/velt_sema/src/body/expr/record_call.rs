@@ -145,7 +145,7 @@ impl FnCx<'_, '_> {
         let ck = self.check_call(&c, slots, rest, None, span);
         let kty = self.cx.ty.subst(kp.ty, &ck.type_args);
         let key = self.coerce(key, kty);
-        let recv = self.receiver(obj, recv_ty, self.this_mode(def));
+        let recv = self.receiver(obj, recv_ty, self.this_mode(def), false);
         let mut args = vec![recv, key];
         if let (Some(v), Some(vp)) = (checked, vp) {
             let vty = self.cx.ty.subst(vp.ty, &ck.type_args);

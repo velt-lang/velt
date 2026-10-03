@@ -6,7 +6,7 @@ import { escapeHtml } from "velt:html";
 import { serve, Request, Response } from "velt:http";
 import { availableParallelism } from "velt:os";
 import { createPool, Client, Pool } from "velt:postgres";
-import { args, env } from "velt:process";
+import { args } from "velt:process";
 import { randomInt } from "velt:random";
 
 const DEFAULT_URL = "postgres://benchmarkdbuser:benchmarkdbpass@127.0.0.1:5432/hello_world";
@@ -250,18 +250,18 @@ function named(res: Response): Response {
 
 function portArg(): i64 {
   const argv = args();
-  const raw = argv.length > 0 ? argv[0] : env("PORT") ?? "8080";
+  const raw = argv.length > 0 ? argv[0] : process.env.PORT ?? "8080";
   return parseInt(raw, 10) as i64;
 }
 
 function poolSize(): i64 {
-  const raw = env("DB_POOL") ?? "";
+  const raw = process.env.DB_POOL ?? "";
   return raw == "" ? availableParallelism() * 2 : parseInt(raw, 10) as i64;
 }
 
 async function main() {
-  const pool = createPool({ url: env("DATABASE_URL") ?? DEFAULT_URL, max: poolSize() });
-  const server = await serve({ port: portArg(), host: env("HOST") ?? "127.0.0.1" }, async (
+  const pool = createPool({ url: process.env.DATABASE_URL ?? DEFAULT_URL, max: poolSize() });
+  const server = await serve({ port: portArg(), host: process.env.HOST ?? "127.0.0.1" }, async (
     req: Request,
   ): Promise<Response> => {
     if (req.path == "/plaintext") {

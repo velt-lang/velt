@@ -1,0 +1,68 @@
+// check: no leaks
+// A closure forwarding a borrowed callback, passed to an interface method that keeps (or
+// returns) its argument as a generic `T`, outlives the call (#167): it owns a copy of what it
+// forwards, so calling it later works. Forwarding to a parameter of function type still
+// borrows (the callee cannot keep it).
+interface Keeper<T> {
+  keep(x: T): void;
+}
+
+class K<T> implements Keeper<T> {
+  items: T[] = [];
+
+  keep(x: T) {
+    this.items.push(x);
+  }
+}
+
+interface Id<T> {
+  id(x: T): T;
+}
+
+class Same<T> implements Id<T> {
+  id(x: T): T {
+    return x;
+  }
+}
+
+interface Handler {
+  handle(n: i64, next: (n: i64) => i64): i64;
+}
+
+class Twice implements Handler {
+  handle(n: i64, next: (n: i64) => i64): i64 {
+    return next(next(n));
+  }
+}
+
+class Box {
+  n: i64 = 40;
+  label: string = "a label long enough to live on the heap";
+}
+
+function reg(k: Keeper<(n: i64) => void>, cb: (n: i64) => void) {
+  k.keep((n) => cb(n + 1));
+}
+
+function wrap(i: Id<(n: i64) => i64>, cb: (n: i64) => i64): (n: i64) => i64 {
+  return i.id((n) => cb(n * 2));
+}
+
+function through(h: Handler, cb: (n: i64) => i64): i64 {
+  return h.handle(1, (n) => cb(n));
+}
+
+function main() {
+  const kk = new K<(n: i64) => void>();
+  const k: Keeper<(n: i64) => void> = kk;
+  const b = new Box();
+  reg(k, (n) => console.log("kept", n + b.n, b.label.length));
+  reg(k, (n) => console.log("kept again", n));
+  for (const f of kk.items) {
+    f(1);
+  }
+  const s: Id<(n: i64) => i64> = new Same<(n: i64) => i64>();
+  const doubled = wrap(s, (n) => n + b.n);
+  console.log("returned", doubled(5));
+  console.log("forwarded", through(new Twice(), (n) => n + 10));
+}

@@ -1,0 +1,92 @@
+// check: no leaks
+// velt:channel as an async iterable: `for await (const v of ch)` receives until the channel is
+// closed and drained. Leaving the loop early does not close the channel (other receivers may
+// still use it): the remaining values stay receivable.
+import { Channel, ChannelClosed, channel } from "velt:channel";
+
+class Job {
+  id: i64;
+  name: string;
+
+  constructor(id: i64, name: string) {
+    this.id = id;
+    this.name = name;
+  }
+}
+
+async function produce(ch: Channel<i64>, from: i64, n: i64): Promise<void> throws ChannelClosed {
+  for (let i = from; i < from + n; i++) {
+    await ch.send(i);
+  }
+}
+
+async function produceAndClose(ch: Channel<Job>, n: i64): Promise<void> throws ChannelClosed {
+  for (let i = 0; i < n; i++) {
+    await ch.send(new Job(i, `job number ${i}, long enough to live on the heap`));
+  }
+  ch.close();
+}
+
+// A consumer in its own task: sums what it receives until the channel is closed.
+async function consume(ch: Channel<i64>): Promise<i64> {
+  let total = 0;
+  for await (const v of ch) {
+    total += v;
+  }
+  return total;
+}
+
+// Any `AsyncIterable<T>` takes a channel.
+async function collect(src: AsyncIterable<string>): Promise<string[]> {
+  const out: string[] = [];
+  for await (const s of src) {
+    out.push(s);
+  }
+  return out;
+}
+
+async function main() {
+  // A producer task and a consumer loop; capacity 2 makes the producer wait (backpressure).
+  const jobs = channel<Job>(2);
+  const producer = spawn(produceAndClose(jobs, 5));
+  for await (const job of jobs) {
+    console.log("job", job.id, job.name.length);
+  }
+  await producer;
+  console.log("drained, closed:", jobs.closed);
+
+  // Several producers, then close: the consumer task ends once everything is received.
+  const nums = channel<i64>(4);
+  const sum = spawn(consume(nums));
+  const producers: Promise<void, ChannelClosed>[] = [];
+  for (let p = 0; p < 3; p++) {
+    producers.push(spawn(produce(nums, p * 100, 50)));
+  }
+  await Promise.all(producers);
+  nums.close();
+  console.log("sum", await sum);
+
+  // Breaking out early leaves the channel open with the rest queued.
+  const words = channel<string>();
+  for (const w of ["alpha", "beta", "gamma", "delta"]) {
+    await words.send(w);
+  }
+  for await (const w of words) {
+    console.log("first", w);
+    if (w == "beta") {
+      break;
+    }
+  }
+  console.log("closed:", words.closed, "left:", words.length);
+  console.log("next:", await words.receive());
+  words.close();
+  console.log("rest:", await collect(words));
+
+  // A closed, empty channel: the loop body never runs.
+  const empty = channel<Job>();
+  empty.close();
+  for await (const job of empty) {
+    console.log("never", job.id);
+  }
+  console.log("done");
+}

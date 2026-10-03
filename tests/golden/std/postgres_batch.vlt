@@ -3,7 +3,6 @@
 // surfaces, nothing of the batch stays), empty and single-set batches, batches mixed with
 // ordinary queries on one connection, inside a transaction, after a COPY, and on a pool.
 // requires-env: VELT_TEST_PG_URL
-import { env } from "velt:process";
 import { connect, createPool, Client } from "velt:postgres";
 
 class Item {
@@ -180,7 +179,7 @@ async function afterCopy(db: Client) {
 }
 
 async function main() {
-  const url = env("VELT_TEST_PG_URL") ?? "";
+  const url = process.env.VELT_TEST_PG_URL ?? "";
   const db = await connect(url);
   await db.batch(
     "CREATE TEMP TABLE items (id int PRIMARY KEY, name text NOT NULL); INSERT INTO items VALUES (1, 'a'), (2, 'b'), (3, 'c')",

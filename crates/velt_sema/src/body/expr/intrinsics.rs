@@ -50,6 +50,13 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "chan_receive" => I::ChanReceive,
         "chan_try_send" => I::ChanTrySend,
         "chan_try_receive" => I::ChanTryReceive,
+        "generator_resume" => I::GeneratorResume,
+        "generator_value" => I::GeneratorValue,
+        "generator_return" => I::GeneratorReturn,
+        "async_generator_resume" => I::AsyncGeneratorResume,
+        "async_generator_value" => I::AsyncGeneratorValue,
+        "async_generator_return" => I::AsyncGeneratorReturn,
+        "async_generator_dispose" => I::AsyncGeneratorDispose,
         _ => return None,
     })
 }
@@ -82,7 +89,14 @@ impl FnCx<'_, '_> {
                 Intrinsic::Spawn
                 | Intrinsic::PromiseAll
                 | Intrinsic::PromiseRace
-                | Intrinsic::PromiseAny,
+                | Intrinsic::PromiseAny
+                | Intrinsic::GeneratorResume
+                | Intrinsic::GeneratorValue
+                | Intrinsic::GeneratorReturn
+                | Intrinsic::AsyncGeneratorResume
+                | Intrinsic::AsyncGeneratorValue
+                | Intrinsic::AsyncGeneratorReturn
+                | Intrinsic::AsyncGeneratorDispose,
             ) => {
                 vec!["T".into(), "E".into()]
             }
@@ -96,6 +110,7 @@ impl FnCx<'_, '_> {
             slot_names,
             js_numbers: false,
             rest: false,
+            defaults: vec![],
         }
     }
 
@@ -144,6 +159,9 @@ impl FnCx<'_, '_> {
         use Intrinsic as I;
         use PassMode::{Borrow as B, Copy as C, Owned as O};
         let mutex = self.cx.mutex_ty();
+        let (t0, e0) = (self.cx.ty.param(0), self.cx.ty.param(1));
+        let gen = self.cx.generator_ty(t0, e0);
+        let agen = self.cx.async_generator_ty(t0, e0);
         let ty = &mut self.cx.ty;
         let (t, e) = (ty.param(0), ty.param(1));
         let (unit, str_, i64_, u64_) = (ty.unit, ty.str_, ty.i64, ty.u64);
@@ -183,6 +201,16 @@ impl FnCx<'_, '_> {
                 let f = http_handler_fn(ty);
                 (vec![(f, O)], ty.intern(TyKind::Tuple(vec![u64_; 6])), false)
             }
+            I::GeneratorResume => (vec![(gen, PassMode::BorrowMut)], ty.bool_, true),
+            I::GeneratorValue => (vec![(gen, PassMode::BorrowMut)], t, true),
+            I::GeneratorReturn => (vec![(gen, PassMode::BorrowMut)], unit, true),
+            I::AsyncGeneratorResume => {
+                let r = ty.promise_rejecting(ty.bool_, e);
+                (vec![(agen, PassMode::BorrowMut)], r, true)
+            }
+            I::AsyncGeneratorValue => (vec![(agen, PassMode::BorrowMut)], t, true),
+            I::AsyncGeneratorReturn => (vec![(agen, PassMode::BorrowMut)], ty.promise(unit), true),
+            I::AsyncGeneratorDispose => (vec![(agen, PassMode::BorrowMut)], unit, true),
             _ => unreachable!("ICE: intrinsic {i:?} has an M2 signature"),
         }
     }

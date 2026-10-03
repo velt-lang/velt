@@ -1,0 +1,18 @@
+// An error thrown in a `try` whose `finally` awaits a task that already finished successfully
+// keeps its own location (#162): the finished task threw nothing, so it hands over none.
+class A extends Error {}
+
+async function ok(): Promise<i64> {
+  return 1;
+}
+
+async function main() {
+  const h = spawn(ok());
+  await sleep(20);
+  console.log("throwing");
+  try {
+    throw new A("thrown before the await");
+  } finally {
+    console.log(await h);
+  }
+}

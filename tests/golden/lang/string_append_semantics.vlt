@@ -1,0 +1,163 @@
+// check: no leaks
+// Appending to a string in place (`s += x`, `s = s + x`, `` s = `${s}${x}` ``) keeps JS
+// semantics: other copies never change, the old value is read before the right-hand side runs,
+// and a right-hand side that throws leaves the target unchanged.
+
+class Page {
+  out: string = "";
+  parts: string[] = [];
+
+  add(x: string) {
+    this.out += x;
+  }
+
+  render() {
+    this.out += label(this.parts.length);
+    this.out = this.out + "[" + this.parts[0] + "]";
+    this.out = `${this.out}<p>${this.out.length}</p>`;
+  }
+}
+
+class Doc {
+  page: Page = new Page();
+}
+
+function apply(f: () => string): string {
+  return f();
+}
+
+function label(n: number): string {
+  return `<h${n}>`;
+}
+
+function fails(): string {
+  throw new Error("no text");
+}
+
+async function later(x: string): Promise<string> {
+  return x + x;
+}
+
+async function main() {
+  // A copy keeps its value while the original grows; and appending a string to itself.
+  let s = "start-of-a-string-longer-than-inline";
+  const copy = s;
+  s += "+1";
+  s = s + "+2";
+  s = `${s}+3`;
+  console.log(copy);
+  console.log(s);
+  let d = "ab";
+  d += d;
+  d = d + d;
+  d = `${d}${d}-${d.length}`;
+  console.log(d);
+
+  // The right-hand side changes the target through a closure: JS reads it first.
+  let t = "t";
+  const bump = (): string => {
+    t += "?";
+    return "x";
+  };
+  t += bump();
+  t = t + bump() + t;
+  console.log(t);
+
+  // Mixed parts: numbers and booleans.
+  let m = "";
+  for (let i = 0; i < 3; i++) {
+    m = `${m}${i}:${i % 2 == 0}${i / 4};`;
+  }
+  console.log(m);
+
+  // A throwing part leaves the target as it was.
+  let e = "kept";
+  try {
+    e = `${e}${fails()}`;
+  } catch (err) {
+    console.log("caught", err.message, e);
+  }
+  try {
+    e += fails();
+  } catch (err) {
+    console.log("caught", err.message, e);
+  }
+
+  // Fields, through a method, a nested path and the RHS reaching the field.
+  const p = new Page();
+  for (let i = 0; i < 3; i++) {
+    p.add(`<li>${i}</li>`);
+  }
+  p.parts.push("a");
+  p.render();
+  // The right-hand side changes the field: the assignment overwrites that change.
+  const touch = (): string => {
+    p.out += "!lost!";
+    return "<t>";
+  };
+  p.out += touch();
+  p.out = `${p.out}${touch()}`;
+  console.log(p.out);
+  const doc = new Doc();
+  const alias = doc.page;
+  doc.page.out += "x";
+  doc.page.out = doc.page.out + alias.out;
+  doc.page.out += alias.out;
+  console.log(doc.page.out, alias.out);
+
+  // Await in the right-hand side.
+  let a = "a";
+  a += await later("b");
+  const b = a;
+  a = `${a}${await later(b)}`;
+  console.log(a);
+
+  // Elements and captured variables.
+  const xs = ["p", "q"];
+  xs[0] += "1";
+  xs[1] = xs[1] + xs[0];
+  let captured = "";
+  const add = (x: string) => {
+    captured += x;
+  };
+  add("c1");
+  add("c2");
+  console.log(xs.join(","), captured);
+  // A closure passed to a call changes the target: JS reads the target first.
+  let v = "v";
+  const bumpV = (): string => {
+    v += "?";
+    return "x";
+  };
+  v += apply(bumpV);
+  v = v + apply(bumpV);
+  console.log(v);
+
+  // `s += s` on a string that owns its buffer, which must grow.
+  let h = "";
+  for (let i = 0; i < 4; i++) {
+    h += "0123456789";
+  }
+  h += h;
+  h = h + h;
+  console.log(h.length, h.slice(35, 45));
+
+  // A copy of the target on the right-hand side keeps the old value.
+  let r = "ab";
+  const copyR = r;
+  r = r + "-" + copyR;
+  r = `${r}|${copyR}`;
+  console.log(r, copyR);
+
+  // A throwing part leaves a field unchanged.
+  try {
+    p.out += fails();
+  } catch (err) {
+    console.log("caught", err.message, p.out.length);
+  }
+  try {
+    p.out = `${p.out}<b>${fails()}`;
+  } catch (err) {
+    console.log("caught", err.message, p.out.length);
+  }
+}

@@ -1,0 +1,120 @@
+// check: no leaks
+// Closing a generator suspended at a `yield` runs it as if the `yield` were a `return`: its
+// `finally` blocks run and its `using` values are disposed. That happens when a `for...of`
+// over it is left early (`break`, `return`, a thrown error), on `return()`, at the end of a
+// `using` block, and when the generator is dropped. A generator that never started, or that
+// finished, has nothing to clean up.
+class Res {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+    console.log(`open ${name}`);
+  }
+
+  [Symbol.dispose](): void {
+    console.log(`dispose ${this.name}`);
+  }
+}
+
+class Stop extends Error {}
+
+function* guarded(name: string): Generator<i64> {
+  using r = new Res(name);
+  try {
+    for (let i = 0; i < 3; i++) {
+      yield i;
+    }
+  } finally {
+    console.log(`finally ${name}`);
+  }
+  console.log(`done ${name}`);
+}
+
+function* nested(): Generator<string> {
+  try {
+    try {
+      yield "inner";
+    } finally {
+      console.log("inner finally");
+    }
+    yield "between";
+  } finally {
+    console.log("outer finally");
+  }
+}
+
+function firstOf(name: string): i64 {
+  for (const v of guarded(name)) {
+    return v;
+  }
+  return -1;
+}
+
+function failAt(name: string, at: i64): void throws Stop {
+  for (const v of guarded(name)) {
+    if (v == at) {
+      throw new Stop(`stop at ${v}`);
+    }
+  }
+}
+
+function main(): void {
+  for (const v of guarded("break")) {
+    console.log(`got ${v}`);
+    if (v == 1) {
+      break;
+    }
+  }
+  console.log(`first ${firstOf("return")}`);
+  try {
+    failAt("throw", 0);
+  } catch (e) {
+    console.log(e.message);
+  }
+  for (const v of guarded("complete")) {
+    console.log(`all ${v}`);
+  }
+
+  // `return()` by hand; afterwards the generator is done.
+  const g = guarded("manual");
+  console.log(g.next().done);
+  g.return();
+  console.log(g.next().done);
+  g.return();
+
+  // `using` closes it at the end of the block.
+  {
+    using u = guarded("using");
+    const r = u.next();
+    if (!r.done) {
+      console.log(`using got ${r.value}`);
+    }
+  }
+  console.log("after using");
+
+  // Dropping a suspended generator closes it too.
+  {
+    const d = guarded("dropped");
+    d.next();
+    d.next();
+    console.log("dropping");
+  }
+  console.log("after drop");
+
+  // Never started: nothing runs.
+  {
+    const n = guarded("never");
+  }
+
+  for (const s of nested()) {
+    console.log(s);
+    if (s == "between") {
+      break;
+    }
+  }
+  const h = nested();
+  h.next();
+  h.return();
+  console.log("end");
+}

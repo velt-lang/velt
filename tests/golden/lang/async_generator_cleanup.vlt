@@ -1,0 +1,163 @@
+// check: no leaks
+// Closing an async generator suspended at a `yield` runs it as if the `yield` were a
+// `return`: its `finally` blocks run (and may `await`) and its `using` / `await using` values
+// are disposed. A `for await` left early (`break`, `return`, a thrown error, a labelled
+// `continue`) awaits the close, like JS's `await it.return()`; so do `return()` and
+// `await using`. Dropping a stored generator closes it without awaiting (the last part, which
+// Node never does): cleanup that would `await` is then cancelled, only drops run.
+class Stop extends Error {}
+
+class Conn {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  async [Symbol.asyncDispose](): Promise<void> {
+    await sleep(1);
+    console.log(`${this.name}: closed`);
+  }
+}
+
+class Res {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  [Symbol.dispose](): void {
+    console.log(`dispose ${this.name}`);
+  }
+}
+
+async function* rows(): AsyncGenerator<i64> {
+  await using c = new Conn("db");
+  try {
+    for (let i = 1; i <= 5; i++) {
+      await sleep(1);
+      yield i;
+    }
+  } finally {
+    await sleep(1);
+    console.log("rows: finally");
+  }
+}
+
+async function* inner(tag: string): AsyncGenerator<string> {
+  try {
+    yield `${tag}.1`;
+    yield `${tag}.2`;
+  } finally {
+    await sleep(1);
+    console.log(`${tag}: inner finally`);
+  }
+}
+
+async function* outer(): AsyncGenerator<string> {
+  try {
+    for await (const s of inner("in")) {
+      yield s;
+    }
+  } finally {
+    console.log("outer finally");
+  }
+}
+
+async function find(target: string): Promise<string> {
+  for await (const s of outer()) {
+    if (s == target) {
+      return `found ${s}`;
+    }
+  }
+  return "none";
+}
+
+async function* plain(tag: string): AsyncGenerator<i64> {
+  using r = new Res(tag);
+  try {
+    yield 1;
+    yield 2;
+  } finally {
+    console.log(`${tag}: finally`);
+  }
+}
+
+async function* awaiting(tag: string): AsyncGenerator<i64> {
+  using r = new Res(tag);
+  try {
+    yield 1;
+  } finally {
+    await sleep(1);
+    console.log(`${tag}: finally`);
+  }
+}
+
+async function main() {
+  for await (const r of rows()) {
+    console.log("row", r);
+    if (r == 2) {
+      break;
+    }
+  }
+  console.log("after break");
+  const g = rows();
+  const first = await g.next();
+  if (!first.done) {
+    console.log("first", first.value);
+  }
+  await g.return();
+  const again = await g.next();
+  console.log("after return, done:", again.done);
+  for await (const s of outer()) {
+    console.log("outer", s);
+    break;
+  }
+  console.log(await find("in.1"));
+  try {
+    for await (const s of outer()) {
+      console.log("throwing at", s);
+      throw new Stop("stop");
+    }
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+  rows: for (let i = 0; i < 3; i++) {
+    for await (const s of inner(`r${i}`)) {
+      if (i == 1) {
+        continue rows;
+      }
+      if (i == 2) {
+        break rows;
+      }
+      console.log("row", s);
+    }
+  }
+  {
+    await using p = plain("await using");
+    const v = await p.next();
+    if (!v.done) {
+      console.log("await using got", v.value);
+    }
+  }
+  {
+    using p = plain("using");
+    const v = await p.next();
+    if (!v.done) {
+      console.log("using got", v.value);
+    }
+  }
+  // Velt only from here: Node never closes a dropped generator.
+  {
+    const d = plain("dropped");
+    const v = await d.next();
+    console.log("dropping", v.done, d);
+  }
+  {
+    const d = awaiting("dropped while awaiting cleanup");
+    const v = await d.next();
+    console.log("dropping", v.done, d);
+  }
+  console.log("end");
+}

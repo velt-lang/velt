@@ -165,10 +165,16 @@ fn inherit_method(cx: &mut Ctx, d: DefId, m: IfaceMethod, args: &[TyId], pname: 
     let default = m
         .default
         .map(|def| forwarder(cx, d, &m, def, args, &params, ret));
+    // A `throws` clause mentioning the parent's parameters, in `d`'s terms.
+    let throws = m.throws.map(|t| crate::defs::DeclaredThrows {
+        ty: t.ty.map(|e| cx.ty.subst(e, args)),
+        ..t
+    });
     iface_mut(cx, d).methods.push(IfaceMethod {
         params,
         ret,
         default,
+        throws,
         ..m
     });
 }

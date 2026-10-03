@@ -2,13 +2,13 @@
 // std/redis over TLS: `rediss://` against a real TLS Redis whose certificate is signed by the CA
 // in the file $VELT_TEST_REDISS_CA (scripts/linux-check.sh --services starts one).
 import { connect } from "velt:redis";
-import { env } from "velt:process";
+
 import { readFile } from "velt:fs";
 import { freshPrefix, cleanup } from "./_redis";
 
 async function main() {
-  const url = env("VELT_TEST_REDISS_URL") ?? "";
-  const ca = await readFile(env("VELT_TEST_REDISS_CA") ?? "");
+  const url = process.env.VELT_TEST_REDISS_URL ?? "";
+  const ca = await readFile(process.env.VELT_TEST_REDISS_CA ?? "");
   const p = freshPrefix();
   const c = await connect(url, { ca: ca });
   console.log("ping:", await c.ping());

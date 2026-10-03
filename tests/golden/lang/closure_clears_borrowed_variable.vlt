@@ -1,0 +1,37 @@
+// check: no leaks
+// A method call borrows its receiver from a variable that a closure assigns; the method runs
+// that closure, which replaces the variable's object. The call keeps the object it started
+// with alive until it returns (as JS's garbage collector would), so `this` stays valid.
+class Counter {
+  n: i64 = 5;
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  bump(cb: () => void): i64 {
+    cb();
+    this.n += 1;
+    return this.n;
+  }
+}
+
+function orNull<T>(x: T): T | null {
+  return x;
+}
+
+function main() {
+  let c: Counter | null = null;
+  const replace = () => {
+    c = new Counter("second");
+  };
+  c = orNull(new Counter("first"));
+  console.log(c?.bump(replace));
+  console.log(c?.name, c?.n);
+  const clear = () => {
+    c = null;
+  };
+  console.log(c?.bump(clear));
+  console.log(c?.name);
+}

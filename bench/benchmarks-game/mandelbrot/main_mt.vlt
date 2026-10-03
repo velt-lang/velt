@@ -60,7 +60,7 @@ async function main() {
     tasks.push(spawn(renderRows(y, last, size)));
   }
   const blocks = await Promise.all(tasks);
-  stdout.writeString(`P4\n${size} ${size}\n`);
+  process.stdout.write(`P4\n${size} ${size}\n`);
   for (const block of blocks) {
     stdout.write(block);
   }

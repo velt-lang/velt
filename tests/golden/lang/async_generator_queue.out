@@ -1,0 +1,23 @@
+b E:1
+a E:0
+race E:2
+fin E
+returned
+p3 done
+done
+timed out
+x T:1
+fin T
+timed out
+x 2
+dispose slow-RET
+fin RET
+dispose RET
+returned
+RET-held:RET-slow
+leaving await using block
+dispose slow-AU
+fin AU
+dispose AU
+AU-held:AU-slow
+end

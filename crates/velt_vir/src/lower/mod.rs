@@ -21,6 +21,7 @@
 
 mod abi;
 mod adt;
+mod append;
 mod array;
 mod async_fn;
 mod attempt;
@@ -98,7 +99,7 @@ const MAX_BOXING_PASSES: usize = 8;
 /// ids in the counted set stay valid.
 pub(crate) fn lower_program(hir: &hir::Program, opts: &LowerOptions) -> vir::Program {
     let mut types = hir.types.clone();
-    let mut counted = boxing::Boxing::default();
+    let mut counted = boxing::Boxing::initial(hir);
     for _ in 0..MAX_BOXING_PASSES {
         let mut cx = Cx::new(hir, types, counted.clone());
         cx.native_inits = opts.native_inits.to_vec();
@@ -181,6 +182,9 @@ enum Work {
     Poll(DefId, Vec<TyId>),
     /// `(state: ptr)` drop function of an async function instance.
     AsyncDrop(DefId, Vec<TyId>),
+    /// `(state: ptr)`: request the awaited close of an async generator instance (sets
+    /// `CLOSE_BIT`; async_fn/generator.rs).
+    AsyncCloseStart(DefId, Vec<TyId>),
     /// Poll / drop of the promise-value wrapper of a throwing async function (async_fn/value.rs).
     ValuePoll(DefId, Vec<TyId>),
     ValueDrop(DefId, Vec<TyId>),
@@ -204,6 +208,10 @@ enum Work {
     /// throwing `E`; built only for classes whose initializers construct each other in a
     /// cycle (ctor_init.rs).
     Init(TyId, Option<TyId>),
+    /// Constructor of a generator instance returning its `Generator<T, E>` object, and the
+    /// function freeing such an object (async_fn/gen_object.rs).
+    GenNew(DefId, Vec<TyId>),
+    GenFree(DefId, Vec<TyId>),
 }
 
 /// Program-level lowering state.
@@ -283,6 +291,12 @@ struct LInfo {
     /// The local is a shared cell owned by this function (cells.rs): `vir` holds the cell
     /// pointer; dropping the local releases the cell.
     cell: bool,
+    /// The value lives in a shared cell (this function's or a captured one): a closure may
+    /// replace it while a call borrows it (stabilize.rs).
+    in_cell: bool,
+    /// The local holds a generator's state inline (async_fn/generator.rs): `vir` is the state;
+    /// dropping the local closes the generator.
+    gen: Option<async_fn::GenLocal>,
 }
 
 /// A pending drop obligation.

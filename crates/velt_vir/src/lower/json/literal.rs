@@ -27,9 +27,19 @@ pub(super) fn literal_text(l: &LitValue) -> String {
     }
 }
 
-/// `"low"` for one choice, `one of "low", "high"` for several.
+/// `"low"` for one choice, `one of "low", "high"` for several. The choices are listed by JSON
+/// kind (strings, then numbers, then booleans), each kind in the type's member order: a union's
+/// member order follows type interning, which a literal type the prelude happens to create
+/// earlier would otherwise change (`"auto" | 0 | 1.5 | false`, not `false, "auto", 0, 1.5`).
 fn choice_text(alts: &[LitValue]) -> String {
-    let texts: Vec<String> = alts.iter().map(literal_text).collect();
+    let rank = |l: &LitValue| match l {
+        LitValue::Str(_) => 0,
+        LitValue::Int(..) | LitValue::Float(..) => 1,
+        LitValue::Bool(_) => 2,
+    };
+    let mut sorted: Vec<&LitValue> = alts.iter().collect();
+    sorted.sort_by_key(|l| rank(l));
+    let texts: Vec<String> = sorted.into_iter().map(literal_text).collect();
     match texts.as_slice() {
         [one] => one.clone(),
         _ => format!("one of {}", texts.join(", ")),
@@ -312,4 +322,24 @@ fn by_kind(alts: &[LitValue], want: fn(&LitValue) -> bool) -> Vec<(u32, LitValue
         .filter(|(_, l)| want(l))
         .map(|(i, l)| (i as u32, l.clone()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use velt_sema::hir::IntTy;
+
+    #[test]
+    fn choices_are_listed_by_kind_whatever_the_member_order() {
+        let alts = [
+            LitValue::Bool(false),
+            LitValue::Str("auto".into()),
+            LitValue::Int(IntTy::I64, 0),
+            LitValue::Float(hir::FloatTy::F64, 1.5f64.to_bits()),
+        ];
+        assert_eq!(choice_text(&alts), r#"one of "auto", 0, 1.5, false"#);
+        let enum_like = [LitValue::Int(IntTy::I64, 20), LitValue::Int(IntTy::I64, 10)];
+        assert_eq!(choice_text(&enum_like), "one of 20, 10");
+        assert_eq!(choice_text(&[LitValue::Str("x".into())]), r#""x""#);
+    }
 }

@@ -96,14 +96,14 @@ fn jsx_provider(module: &ast::Module, cx: &mut Cx) {
         &[
             "`tsc` compiles JSX into calls of its `jsxImportSource`'s runtime; `velt:jsx` \
              exists only in Velt",
-            "use a provider with both a Velt and a TypeScript runtime: `// @jsxImportSource \
-             <package>` at the top of the file, or `jsx.importSource` in package.vlt",
+            "use a provider with both a Velt and a TypeScript runtime: `/** @jsxImportSource \
+             <package> */` at the top of the file, or `jsx.importSource` in package.vlt",
         ],
     );
 }
 
 /// Finds the first JSX element or fragment.
-struct FirstJsx(Option<Span>);
+pub(super) struct FirstJsx(pub(super) Option<Span>);
 
 impl<'a> Visit<'a> for FirstJsx {
     fn expr(&mut self, e: &'a ast::Expr) {

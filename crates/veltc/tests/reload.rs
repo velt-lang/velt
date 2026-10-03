@@ -20,6 +20,7 @@
 //! `VELT_RELOAD=<case>`. `bench_save_to_first_response` (ignored) times save → first new
 //! response.
 
+mod no_window;
 mod reload_support;
 mod test_dir;
 
@@ -378,7 +379,7 @@ fn quiet_host_prints_no_diagnostics() {
     let bad = main.unwrap().replace("Response.text", "Response.txt");
     save(&dir.path().join("main.vlt"), bad);
     let host = |quiet: bool| {
-        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_velt"));
+        let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
         cmd.args(["dev", "--host", "main.vlt"])
             .current_dir(dir.path());
         if quiet {

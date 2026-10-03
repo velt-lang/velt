@@ -185,8 +185,21 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     } else {
         f.ret
     };
-    let mut frame = Frame::new(f.kind, Some(body_ret));
-    frame.is_async = f.is_async;
+    // A generator's body yields `T` of its declared `Generator<T>` and returns nothing; the HIR
+    // `ret` stays the declared result (hir_encodings.md "Generators").
+    let yield_ty = f.is_generator.then(|| {
+        cx.generator_result(f.ret)
+            .and_then(|(_, a)| a.first().copied())
+            .unwrap_or(cx.ty.error)
+    });
+    let frame_ret = if yield_ty.is_some() {
+        cx.ty.unit
+    } else {
+        body_ret
+    };
+    let mut frame = Frame::new(f.kind, Some(frame_ret));
+    frame.is_async = f.is_async || f.is_async_gen;
+    frame.yield_ty = yield_ty;
     let enclosing_locals = cx
         .nested_locals
         .get(&def)
@@ -219,8 +232,9 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     if f.kind == FnKind::Ctor {
         fcx.check_ctor(&f, &block);
     }
-    fcx.check_returns(&f.name, body_ret, f.name_span, &block);
+    fcx.check_returns(&f.name, frame_ret, f.name_span, &block);
     fcx.rec_frame_scopes();
+    fcx.finish_using_shares();
     let frame = std::mem::replace(&mut fcx.f, Frame::new(f.kind, None));
     let info = cx.fn_info_mut(def);
     info.local_kinds = frame.kinds;
@@ -231,7 +245,8 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         generics: f.generics.len() as u32,
         params,
         ret: body_ret,
-        is_async: f.is_async,
+        is_async: f.is_async || f.is_async_gen,
+        is_generator: f.is_generator,
         self_ty: f.this.as_ref().map(|t| t.ty),
         captures: vec![],
         body: hir::Body {

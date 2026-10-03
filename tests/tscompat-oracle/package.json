@@ -1,0 +1,9 @@
+{
+  "name": "velt-tscompat-oracle",
+  "private": true,
+  "description": "The pinned TypeScript that checks the claims of `velt check --ts-compat` (crates/velt_tscompat/tests/oracle.rs).",
+  "license": "MIT OR Apache-2.0",
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

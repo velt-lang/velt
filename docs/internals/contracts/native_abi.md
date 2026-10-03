@@ -29,8 +29,16 @@ native objects are `u64` handles (§3.2) that the package wraps in a class with
 **Signatures** are written `(<param>,<param>)-><result>`, with `async ` in front for
 `declare async function`: `(string,u32)->IoResult<u64>`, `async (u64,string)->IoResult<string>`.
 
-**Names**: every export of package `p` starts with `p_` (`-` in the package name becomes `_`),
-plus `velt_native_init_p`. Outside std, the compiler requires every `declare` to name one of
+**Names**: every export of package `p` starts with `velt_p__` (`-` in the package name becomes
+`_`, then a double underscore), plus `velt_native_init_p`. The prefix is structural: no C
+library or system function starts with `velt_`, so a package's exports can't take the name of
+one. It is one-to-one: package names separate words with single `-` or `_` (never doubled,
+mixed or at the end), so `velt_a__` is never the start of `velt_a_b__`; and names that differ
+only in `-` versus `_` count as the same, so the registry refuses `my_pkg` when `my-pkg` exists
+and installing refuses two packages with native code whose names normalise the same. Names whose
+first component is `rt`, `sig` or `native` (`rt`, `rt-str`, `native_init`) are reserved, since
+`velt_rt_`, `velt_sig_` and `velt_native_` are Velt's own runtime functions, signature records
+and init functions. Outside std, the compiler requires every `declare` to name one of
 the exports of **its own** package's library with **exactly** the recorded signature: a root
 program, a package without a library (`free`, `memcpy`) and another package's export are
 errors. `IoResult`/`IoStatus` are std's `velt:io` types, identified
@@ -51,7 +59,8 @@ The SDK's `#[velt_native::export]` emits, for each exported function `f`, a data
 `velt_sig_f` holding the NUL-terminated signature of `f`. `velt native build` reads the shared
 library's exports with the `object` crate (any target's ELF, Mach-O or PE) and writes the
 `exports` table of `native.json`. Building fails when the init function is missing, an export
-lacks the `p_` prefix, an export has no record, or a record names nothing exported.
+lacks the `velt_p__` prefix (an export with an older prefix gets its new name as a fix-it), an
+export has no record, or a record names nothing exported.
 
 ## The function table
 
@@ -139,7 +148,7 @@ static/<p>.o                  # Linux and macOS only
 - `native.json` may only name the bundle's own files: `shared` and `import_lib` under `shared/`,
   `static` under `static/`, no absolute paths or `..` (checked on unpack, publish and load).
 - A prebuilt bundle's `exports` list is not trusted as written. On unpack, publish and load:
-  - every listed name must start with `<pkg>_`;
+  - every listed name must start with `velt_<pkg>__`;
   - the shared library's exports, read back with `vpm::native::exports::read`, must equal the
     list, signatures included. They are read from the ELF `.dynsym` section (every defined
     symbol with global, weak or unique binding and default or protected visibility, whatever its

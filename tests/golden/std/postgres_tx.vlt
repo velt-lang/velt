@@ -2,7 +2,6 @@
 // failure, not the "transaction is aborted" ones after it), nests with savepoints, and
 // begin()/commit()/rollback() give explicit control.
 // requires-env: VELT_TEST_PG_URL
-import { env } from "velt:process";
 import { connect, Client } from "velt:postgres";
 
 class Count {
@@ -28,7 +27,7 @@ async function add(db: Client, n: i64) {
 }
 
 async function main() {
-  const db = await connect(env("VELT_TEST_PG_URL") ?? "");
+  const db = await connect(process.env.VELT_TEST_PG_URL ?? "");
   await db.batch("CREATE TEMP TABLE t (n int PRIMARY KEY)");
 
   // Commit: the callback's result is returned.

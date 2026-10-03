@@ -11,12 +11,17 @@ use velt_syntax::ast;
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
 use crate::hir::{TyId, TyKind};
+use crate::type_defaults::DefaultsOf;
 
 /// Generic parameter names in scope (`Param(i)` is `params[i]`) and the module for lookups.
 #[derive(Clone, Default)]
 pub(crate) struct TyEnv {
     pub module: usize,
     pub params: Vec<String>,
+    /// While a generic alias is expanded: its type arguments at this use. Only the utility
+    /// types read them (`Omit<P, "children">` in `type WithoutChildren<P>` needs `P`'s fields);
+    /// everything else resolves `params` to type parameters and is substituted afterwards.
+    pub args: Vec<TyId>,
 }
 
 impl TyEnv {
@@ -24,6 +29,7 @@ impl TyEnv {
         TyEnv {
             module,
             params: params.to_vec(),
+            args: vec![],
         }
     }
 }
@@ -72,7 +78,11 @@ impl Ctx<'_> {
         let params = params.iter().map(|t| self.resolve_type(t, env)).collect();
         let mut ret = self.resolve_type(ret, env);
         let never = self.ty.never;
-        let err = throws.map(|t| self.resolve_type(t, env));
+        let err = throws.map(|t| {
+            let e = self.resolve_type(t, env);
+            self.no_void_error(e, t.span);
+            e
+        });
         let err = self.canon_error(err).unwrap_or(never);
         let throws = match self.ty.kind(ret).clone() {
             TyKind::Promise(v, e) if err != never => {
@@ -192,7 +202,18 @@ impl Ctx<'_> {
         t: &ast::TypeExpr,
         env: &TyEnv,
     ) -> TyId {
-        let args: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, env)).collect();
+        let protocol = match item {
+            Item::Def(d) if args.len() >= 2 => self.protocol_type(d),
+            _ => None,
+        };
+        let args: Vec<TyId> = match protocol {
+            // TypeScript's `Generator<T, TReturn, TNext>` spellings (`crate::ts_protocol`).
+            Some(p) => match self.protocol_args(p, args, env) {
+                Some(args) => args,
+                None => return self.ty.error,
+            },
+            None => args.iter().map(|a| self.resolve_type(a, env)).collect(),
+        };
         match item {
             Item::Def(d) => self.def_type(d, name, args, t),
             Item::Alias(a) => self.expand_alias(a, args, t),
@@ -217,6 +238,7 @@ impl Ctx<'_> {
             }
             _ => return None,
         };
+        let written = args;
         let args: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, env)).collect();
         if args.len() != arity {
             self.arity_error(name, arity, args.len(), t);
@@ -226,12 +248,26 @@ impl Ctx<'_> {
             "Array" => TyKind::Array(args[0]),
             "Promise" => {
                 let e = args.get(1).copied().unwrap_or(self.ty.never);
+                if let Some(w) = written.get(1) {
+                    self.no_void_error(e, w.span);
+                }
                 let e = self.canon_error(Some(e)).unwrap_or(self.ty.never);
                 TyKind::Promise(args[0], e)
             }
             _ => TyKind::Shared(args[0]),
         };
         Some(self.ty.intern(k))
+    }
+
+    /// `void` written as an error type (`throws void`, `Promise<T, void>`): it throws nothing.
+    pub(crate) fn no_void_error(&mut self, e: TyId, span: velt_common::Span) {
+        if e == self.ty.unit {
+            self.error(
+                velt_common::Diagnostic::error("`void` is not an error type", span).with_note(
+                    "leave the error type out: `throws` and `Promise<T>` without one mean nothing is thrown",
+                ),
+            );
+        }
     }
 
     fn removed_result(&mut self, t: &ast::TypeExpr) -> TyId {
@@ -258,14 +294,26 @@ impl Ctx<'_> {
         args: Vec<TyId>,
         t: &ast::TypeExpr,
     ) -> TyId {
-        let (arity, is_iface) = match &self.info[d.0 as usize] {
-            DefInfo::Adt(a) => (a.generics.len(), false),
-            DefInfo::Enum(e) => (e.generics.len(), false),
-            DefInfo::Iface(i) => (i.generics.len(), true),
+        let (arity, is_iface, decl) = match &self.info[d.0 as usize] {
+            DefInfo::Adt(a) => (
+                a.generics.len(),
+                false,
+                a.decl.map(|x| (a.module, &x.generics[..])),
+            ),
+            DefInfo::Enum(e) => (e.generics.len(), false, None),
+            DefInfo::Iface(i) => (
+                i.generics.len(),
+                true,
+                i.decl.map(|x| (i.module, &x.generics[..])),
+            ),
             _ => {
                 self.err(format!("`{name}` is not a type"), t.span);
                 return self.ty.error;
             }
+        };
+        let args = match decl {
+            Some((module, gs)) => self.with_defaults(DefaultsOf::Def(d), module, gs, args),
+            None => args,
         };
         if args.len() != arity {
             self.arity_error(name, arity, args.len(), t);
@@ -296,13 +344,17 @@ impl Ctx<'_> {
             );
             return self.ty.error;
         }
+        let args = self.with_defaults(DefaultsOf::Alias(a), module, &decl.generics, args);
         if args.len() != decl.generics.len() {
             self.arity_error(&decl.name.name, decl.generics.len(), args.len(), t);
             return self.ty.error;
         }
         let names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
+        self.aliases[a as usize].used = true;
         self.aliases[a as usize].expanding = true;
-        let body = self.resolve_type(&decl.ty, &TyEnv::new(module, &names));
+        let mut env = TyEnv::new(module, &names);
+        env.args = args.clone();
+        let body = self.resolve_type(&decl.ty, &env);
         self.aliases[a as usize].expanding = false;
         if names.is_empty() && self.is_structural(body) {
             // `type Shape = { ... } | { ... }`: messages call the union `Shape`.
@@ -313,10 +365,42 @@ impl Ctx<'_> {
         self.ty.subst(body, &args)
     }
 
+    /// `args` of class or struct `d` completed with its parameters' defaults (`new Box<i64>(...)`
+    /// for `class Box<T, E = never>`).
+    pub(crate) fn adt_with_defaults(&mut self, d: crate::hir::DefId, args: Vec<TyId>) -> Vec<TyId> {
+        let decl = match &self.info[d.0 as usize] {
+            DefInfo::Adt(a) => a.decl.map(|x| (a.module, x)),
+            _ => None,
+        };
+        match decl {
+            Some((module, x)) => self.with_defaults(DefaultsOf::Def(d), module, &x.generics, args),
+            None => args,
+        }
+    }
+
     /// A type without a name of its own (a union or an anonymous object type).
     fn is_structural(&self, t: TyId) -> bool {
         self.union_def(t).is_some()
             || matches!(self.ty.kind(t), TyKind::Adt(d, _)
                 if self.adt(*d).is_some_and(|a| a.kind == crate::hir::AdtKind::Anon))
     }
+}
+
+/// Resolve every type alias that nothing expanded, so its errors are reported too
+/// (`type X = Nope;` used nowhere is still an error, as in TypeScript). Aliases that are used
+/// were checked at their uses.
+pub(crate) fn check_unused_aliases(cx: &mut Ctx) {
+    cx.checking_unused_aliases = true;
+    for a in 0..cx.aliases.len() {
+        if cx.aliases[a].used {
+            continue;
+        }
+        let (module, decl) = (cx.aliases[a].module, cx.aliases[a].decl);
+        let names: Vec<String> = decl.generics.iter().map(|g| g.name.name.clone()).collect();
+        cx.aliases[a].used = true;
+        cx.aliases[a].expanding = true;
+        cx.resolve_type(&decl.ty, &TyEnv::new(module, &names));
+        cx.aliases[a].expanding = false;
+    }
+    cx.checking_unused_aliases = false;
 }

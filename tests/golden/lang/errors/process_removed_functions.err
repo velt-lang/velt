@@ -1,0 +1,4 @@
+process_removed_functions.vlt:3:10: error: module `velt:process` has no member `env`
+  = note: `env` was removed: read a variable with `process.env.NAME` or `process.env[name]` (`string | null`, no import)
+process_removed_functions.vlt:6:10: error: no method named `writeString` found for type `Stdout`
+  = note: `writeString` was removed: write a string with `process.stdout.write(s)` (no import); `stdout.write` of `velt:process` takes bytes

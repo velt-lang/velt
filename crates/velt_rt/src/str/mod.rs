@@ -226,6 +226,16 @@ impl VeltStr {
         }
     }
 
+    /// Do the bytes of `other` lie in `self`'s heap buffer (a share of it, or an uncounted view:
+    /// a static-form sub-range or a bitwise copy)?
+    pub(crate) fn holds_bytes_of(&self, other: &VeltStr) -> bool {
+        if !self.is_heap() || other.is_inline() {
+            return false;
+        }
+        let (start, p) = (self.w0 as usize, other.w0 as usize);
+        p >= start && p < start + self.w2 as usize
+    }
+
     /// Give up this reference (frees the buffer with the last one) and leave `self` empty.
     ///
     /// # Safety
@@ -287,6 +297,12 @@ impl VeltStr {
         }
         let need = self.len() + bytes.len();
         if self.is_heap() && heap::is_unique(self.ptr()) {
+            let start = self.ptr() as usize;
+            if (start..start + self.w2 as usize).contains(&(bytes.as_ptr() as usize)) {
+                // The text lies in the buffer that is about to move: copy it out first.
+                let copy = bytes.to_vec();
+                return self.push_slow(&copy);
+            }
             let cap = grown(self.w2 as usize, need);
             self.w0 = heap::grow(self.ptr(), self.w2 as usize, cap) as usize as u64;
             self.w2 = cap as u64;

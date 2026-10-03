@@ -1,7 +1,8 @@
 # Nightly: the full gate on Linux with real PostgreSQL and Redis, so the database goldens run
 # (they are skipped without their URLs) and then the differential tests against Node
-# (tests/difftest), and the Cranelift compile-memory stress run (bench/compile/stress.sh,
-# stress.ps1) on Linux and Windows. A manual run can pick one of them:
+# (tests/difftest), the Cranelift compile-memory stress run (bench/compile/stress.sh,
+# stress.ps1) on Linux and Windows, and the `tsc` oracle for `velt check --ts-compat`
+# (tests/tscompat-oracle). A manual run can pick one of them:
 # `gh workflow run nightly -f only=stress`.
 name: nightly
 
@@ -11,9 +12,9 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: Run only one job (scheduled runs run both).
+        description: Run only one job (scheduled runs run all of them).
         type: choice
-        options: [all, gate, stress]
+        options: [all, gate, stress, oracle]
         default: all
 
 env:
@@ -22,7 +23,7 @@ env:
 
 jobs:
   gate-with-services:
-    if: inputs.only != 'stress'
+    if: inputs.only != 'stress' && inputs.only != 'oracle'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     services:
@@ -72,7 +73,7 @@ jobs:
   # A debug build (Cranelift) of long_main_16000 must stay under 2 GB of peak memory and print the
   # right result (#42, #189). The script prints the stage times and the peak; the summary shows them.
   compile-stress:
-    if: inputs.only != 'gate'
+    if: inputs.only != 'gate' && inputs.only != 'oracle'
     name: compile-stress (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -108,3 +109,22 @@ jobs:
             tail -n 40 "$RUNNER_TEMP/stress.log" 2>/dev/null || echo "no log (the run stopped before the stress script)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # The lint's claims against a pinned TypeScript (crates/velt_tscompat/tests/oracle.rs): the
+  # rule fixtures compile with `tsc` where the lint passes them, and each rule's sample is
+  # rejected (or, for a behaviour rule, accepted). The pull request gate skips the `tsc` part,
+  # which needs the Node packages; VELT_TSC_ORACLE=1 makes a missing `tsc` fail here.
+  tsc-oracle:
+    if: inputs.only != 'gate' && inputs.only != 'stress'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VELT_TSC_ORACLE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: npm ci (the pinned typescript)
+        working-directory: tests/tscompat-oracle
+        run: npm ci --no-audit --no-fund
+      - name: oracle
+        run: cargo test -p velt_tscompat --test oracle -- --nocapture

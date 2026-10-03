@@ -1,0 +1,35 @@
+// check: no leaks
+// Two `for await` loops over async generators running concurrently (`Promise.all`): each
+// generator suspends its consumer while it awaits, and the other one goes on. The steps are
+// ordered by promises the consumers resolve for each other, so the output matches Node.
+async function* producer(tag: string, gate: Promise<bool>): AsyncGenerator<string> {
+  try {
+    yield `${tag}1`;
+    await gate;
+    yield `${tag}2`;
+  } finally {
+    console.log(`${tag}: producer done`);
+  }
+}
+
+async function consume(tag: string, gate: Promise<bool>, release: (v: bool) => void): Promise<i64> {
+  let n = 0;
+  for await (const v of producer(tag, gate)) {
+    console.log(`${tag} got ${v}`);
+    n++;
+    if ((n == 1 && tag == "B") || (n == 2 && tag == "A")) {
+      release(true);
+    }
+  }
+  return n;
+}
+
+async function main() {
+  const a = Promise.withResolvers<bool>();
+  const b = Promise.withResolvers<bool>();
+  const counts = await Promise.all([
+    consume("A", a.promise, b.resolve),
+    consume("B", b.promise, a.resolve),
+  ]);
+  console.log(counts);
+}

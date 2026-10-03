@@ -1,0 +1,81 @@
+// check: no leaks
+// Errors thrown by a generator's body come out of `next()` (and out of `for...of` over it),
+// typed: `Generator<T, E>` throws `E`, inferred from the body or written. The call that
+// creates the generator never throws. After an error the generator is done.
+class ParseError extends Error {
+  line: i64;
+
+  constructor(line: i64) {
+    super(`bad line ${line}`);
+    this.line = line;
+  }
+}
+
+class Limit extends Error {}
+
+// `E` inferred from the body: `ParseError`.
+function* parse(lines: string[]): Generator<i64> {
+  let n = 0;
+  for (const l of lines) {
+    n++;
+    if (l == "x") {
+      throw new ParseError(n);
+    }
+    yield n * 10;
+  }
+}
+
+// `E` written as the second type argument.
+function* bounded(max: i64): Generator<i64, Limit> {
+  let i = 0;
+  while (true) {
+    if (i > max) {
+      throw new Limit(`over ${max}`);
+    }
+    yield i;
+    i++;
+  }
+}
+
+function sumAll(lines: string[]): i64 throws ParseError {
+  let s = 0;
+  for (const v of parse(lines)) {
+    s += v;
+  }
+  return s;
+}
+
+function main(): void {
+  try {
+    console.log(sumAll(["a", "b"]));
+    console.log(sumAll(["a", "x", "c"]));
+  } catch (e) {
+    console.log(`parse failed at line ${e.line}`);
+  }
+
+  const g = parse(["a", "x"]);
+  try {
+    const first = g.next();
+    if (!first.done) {
+      console.log(`first ${first.value}`);
+    }
+    g.next();
+    console.log("not reached");
+  } catch (e) {
+    console.log(`next threw: ${e.message}`);
+  }
+  console.log(`done after error: ${g.next().done}`);
+
+  try {
+    for (const v of bounded(2)) {
+      console.log(`bounded ${v}`);
+    }
+  } catch (e) {
+    console.log(`limit: ${e.message}`);
+  }
+
+  // The same generator, with input it accepts.
+  for (const v of parse(["a"])) {
+    console.log(`ok ${v}`);
+  }
+}

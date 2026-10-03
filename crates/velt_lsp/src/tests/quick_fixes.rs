@@ -20,7 +20,7 @@ fn open(name: &str, text: &str) -> (Client, Url, Vec<Value>) {
 }
 
 /// Code actions for the empty range at the first `needle` of `text`.
-fn actions(
+pub(super) fn actions(
     client: &mut Client,
     doc: &Url,
     text: &str,
@@ -39,7 +39,7 @@ fn actions(
 }
 
 /// The action titled `title` (panics listing the offered ones otherwise).
-fn find<'a>(actions: &'a [Value], title: &str) -> &'a Value {
+pub(super) fn find<'a>(actions: &'a [Value], title: &str) -> &'a Value {
     actions
         .iter()
         .find(|a| a["title"] == json!(title))
@@ -47,7 +47,7 @@ fn find<'a>(actions: &'a [Value], title: &str) -> &'a Value {
 }
 
 /// `text` with the action's edits for `doc` applied.
-fn apply(text: &str, action: &Value, doc: &Url) -> String {
+pub(super) fn apply(text: &str, action: &Value, doc: &Url) -> String {
     let edits = action["edit"]["changes"][doc.as_str()].as_array().unwrap();
     let index = LineIndex::new(text);
     let offset = |p: &Value| {

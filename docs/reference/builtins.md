@@ -28,6 +28,7 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `performance.now(): f64`, `Date.now(): i64` | monotonic and wall-clock milliseconds |
 | `Date` | JavaScript's dates ([prelude](../std/prelude.md#date)) |
 | `Symbol.dispose`, `Symbol.asyncDispose` | cleanup method names ([Memory model](memory.md#resource-cleanup-using-and-symboldispose)) |
+| `Symbol.iterator`, `Symbol.asyncIterator` | iteration method names ([Control flow](control-flow.md#iterables)) |
 
 Integer helpers (`gcd`, `clamp`, …) are in [`velt:math`](../std/math.md). Everything else is
 imported from the [standard library](../std/README.md).

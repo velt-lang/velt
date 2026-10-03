@@ -155,14 +155,48 @@ impl<'a> Parser<'a> {
     fn parse_object_props(&mut self) -> PResult<Vec<ObjectProp>> {
         self.expect(Tok::LBrace)?;
         let mut props = Vec::new();
+        // `value: undefined` (its position, and its diagnostic's).
+        let mut undefined_value = None;
         while !self.at(Tok::RBrace) {
-            props.push(self.parse_object_prop()?);
+            let ndiags = self.diags.len();
+            let prop = self.parse_object_prop()?;
+            if let ObjectProp::KeyValue(k, v) = &prop {
+                if k.name == "value"
+                    && self.text(v.span.lo, v.span.hi) == "undefined"
+                    && self.diags.len() > ndiags
+                {
+                    undefined_value = Some((props.len(), ndiags));
+                }
+            }
+            props.push(prop);
             if !self.eat(Tok::Comma) {
                 break;
             }
         }
         self.expect(Tok::RBrace)?;
+        if let Some((i, d)) = undefined_value {
+            self.finished_result_value(&mut props, i, d);
+        }
         Ok(props)
+    }
+
+    /// `{ done: true, value: undefined }`, TypeScript's finished `IteratorResult`: Velt's has no
+    /// `value`. Says so instead of "use `null`" (which a `{ done: true }` result can't hold),
+    /// and drops the property.
+    fn finished_result_value(&mut self, props: &mut Vec<ObjectProp>, i: usize, d: usize) {
+        let done = props.iter().any(|p| {
+            matches!(p, ObjectProp::KeyValue(k, Expr { kind: ExprKind::Lit(Lit::Bool(true)), .. })
+                if k.name == "done")
+        });
+        if !done {
+            return;
+        }
+        let span = self.diags[d].labels[0].span;
+        self.diags[d] = velt_common::Diagnostic::error("`undefined` is not part of Velt", span)
+            .with_note(
+                "TypeScript allows this; Velt doesn't because it has no `undefined`, and a finished `IteratorResult` has no `value`; write `{ done: true }`",
+            );
+        props.remove(i);
     }
 
     fn parse_object_prop(&mut self) -> PResult<ObjectProp> {

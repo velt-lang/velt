@@ -40,12 +40,15 @@ file and reports these errors without building anything.
 
 ## `name`, `version`, `description`, `keywords`, `entry`
 
-- `name`: lowercase letters, digits, `_` and `-`, starting with a letter. `std` is reserved for
-  the standard library, and `pthread`, `sem`, `shm` and `posix` because a package's native
-  functions start with its name and `_` (`sem_open` is the C library's).
+- `name`: lowercase letters and digits, starting with a letter, with single `-` or `_` between
+  words (`text-kit`, `text_kit`; not `text--kit`, `text_-kit` or `textkit-`). Names that differ
+  only in `-` versus `_` count as the same in a registry. `std` is reserved for the standard
+  library, and names whose first word is `rt`, `sig` or `native` (`rt`, `rt-str`) because a
+  package's native functions are named `velt_<name>__…` and those prefixes are Velt's own
+  (`velt_rt_…` is the runtime).
 - `version`: a semantic version.
 - `description`: one line about the package, shown by `velt search` and registry listings: at most
-  200 characters, no line breaks, no surrounding whitespace.
+  300 characters, no line breaks, no surrounding whitespace.
 - `keywords`: search words, such as `["json", "parser"]`: at most 10, each lowercase letters,
   digits and `-` (at most 32 characters, starting with a letter or digit). `velt search` matches
   every word of its text against names, keywords and descriptions, names first.
@@ -83,7 +86,8 @@ jsx: { importSource: "sigx" },
 
 The module whose `jsx-runtime` compiles the package's JSX: a dependency, `"velt:jsx"` (the
 default), a `paths` alias, or `./dir` relative to the package root. A
-`// @jsxImportSource x` comment at the top of a file wins ([JSX](../std/jsx.md)).
+`/** @jsxImportSource x */` comment at the top of a file wins ([JSX](../std/jsx.md)); Velt also
+reads it from a `//` comment, `tsc` only from a block comment.
 
 ## `native`
 
@@ -99,6 +103,32 @@ whose functions its Velt code declares ([Packages with native code](packages.md#
   missing): `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`,
   `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`.
 - `wasm`: must be `false` (the default); WebAssembly libraries are not supported yet.
+
+## `tsCompat`
+
+```ts ignore
+tsCompat: ["src/components", "src/models"],
+```
+
+Folders whose modules a TypeScript client shares, so they must stay in the
+[common subset](../internals/design/tsx.md#the-common-subset) of TypeScript and Velt (like the
+client's `tsconfig.json` `include`). `velt check --ts-compat` without paths lints every `.vlt`,
+`.ts` and `.tsx` file in them ([`velt check`](cli.md#code-shared-with-typescript---ts-compat)),
+and the editor shows the findings, with their fixes, as you type
+([editors](editors.md#code-shared-with-typescript)). Nothing else changes: `velt build` and a
+plain `velt check` never lint.
+
+- Each entry is a `/`-separated path relative to the package root (`src/models`; not
+  `./src/models`, `../shared` or `/abs`, no trailing `/`).
+- Each folder once: a folder listed twice, or inside another listed one, is an error. Case
+  doesn't matter here (`src/models` and `src/Models/sub` overlap): on macOS and Windows they
+  are the same folder, so such a list would mean something else on Linux.
+- The files in a folder are found as `velt check` finds a package's: `node_modules/`,
+  `target/`, hidden and symlinked directories are skipped, and so is a package nested in the
+  folder (a directory with its own `package.vlt`), which lints its own `tsCompat`.
+- Not empty: leave the field out instead of writing `[]`.
+- A folder that doesn't exist is a warning in the editor and an error for
+  `velt check --ts-compat`.
 
 ## `registry`
 

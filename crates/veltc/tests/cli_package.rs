@@ -2,8 +2,9 @@
 //! `new` → `publish` → `add` → `install` → lockfile, plus `build`/`run`/`test` in package mode.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
+mod no_window;
 mod test_dir;
 
 struct Sandbox {
@@ -20,7 +21,7 @@ fn sandbox() -> Sandbox {
 impl Sandbox {
     fn velt(&self, cwd: &str, args: &[&str]) -> Output {
         let cwd = self.dir.join(cwd);
-        Command::new(env!("CARGO_BIN_EXE_velt"))
+        crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
             .args(args)
             .current_dir(&cwd)
             .env("VELT_HOME", self.dir.join("home"))
@@ -284,6 +285,24 @@ fn check_checks_modules_under_a_std_directory() {
     let err = s.fail("app", &["check"]);
     let at = format!("{}:2:", Path::new("std").join("x.vlt").display());
     assert!(err.contains(&at), "missing `{at}` in:\n{err}");
+}
+
+#[test]
+fn check_and_test_leave_nested_packages_alone() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    // A package inside `src/`: its manifest is not a module, and its files are its own.
+    s.ok("app/src", &["new", "vendored", "--lib"]);
+    s.write("app/src/vendored/src/lib.vlt", BAD);
+    s.write(
+        "app/src/vendored/src/lib.test.vlt",
+        "export function test_fails() {\n  assertEq(1, 2);\n}\n",
+    );
+    s.ok("app", &["check"]);
+    let out = s.ok("app", &["test"]);
+    assert!(!out.contains("test_fails"), "{out}");
+    // In the nested package, its files are checked.
+    s.fail("app/src/vendored", &["check"]);
 }
 
 #[cfg(unix)]

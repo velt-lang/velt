@@ -33,7 +33,7 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_type_decl(&mut self, is_class: bool) -> PResult<TypeDecl> {
         self.bump(); // struct / class
         let name = self.parse_binding_ident()?;
-        let generics = self.parse_generic_params()?;
+        let generics = self.parse_type_generic_params()?;
         let extends = self.parse_class_extends(is_class)?;
         let mut implements = Vec::new();
         if self.eat_kw(Kw::Implements) {
@@ -116,7 +116,7 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_interface(&mut self) -> PResult<InterfaceDecl> {
         self.bump(); // interface
         let name = self.parse_ident()?;
-        let generics = self.parse_generic_params()?;
+        let generics = self.parse_type_generic_params()?;
         let mut extends = Vec::new();
         if self.eat_kw(Kw::Extends) {
             extends = self.parse_type_list()?;

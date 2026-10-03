@@ -70,6 +70,7 @@ impl FnLower<'_, '_> {
         info.indirect = true;
         info.droppable = true;
         info.cell = true;
+        info.in_cell = true;
         let p = self.local_place(p.local);
         self.store(p, v);
     }
