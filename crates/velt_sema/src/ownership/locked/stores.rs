@@ -1,13 +1,19 @@
 //! Stores across the lock boundary in a `with` callback (super module docs). A store into a
 //! place rooted at a local that reaches one region (`super::regions`), of a value that may
-//! reach the other, is wrapped in `Intrinsic::Transfer`: an assignment, or an argument of a
-//! call that may modify another argument (`out.push(v.inner)`; a borrowed argument is passed
-//! as a transferred copy there, since the callee may keep a share of it). A store into a fresh
-//! local only grows what the local reaches.
+//! reach the other, is wrapped in `Intrinsic::Transfer`: an assignment, or an argument a call
+//! may store into another argument or into the function value it calls (`super::summary`:
+//! `out.push(v.inner)`, `stash(out, v.inner)`). A borrowed argument is passed as a
+//! transferred copy there; one the callee also modifies cannot be, and that call is an error
+//! (`v.addTo(out)` where `addTo` changes `this` and pushes a part of it into `out`). A store
+//! into a fresh local only grows what the local reaches, and one into a place whose type
+//! cannot hold a shared value (`out: i64[]`) crosses nothing.
 
 use std::collections::HashSet;
 
-use super::regions::{crosses, pat_locals, Regions, IN};
+use velt_common::Span;
+
+use super::regions::{crosses, holds_shared, pat_locals, Regions, IN};
+use super::summary::{call_flows, outer_mode, Summaries};
 use crate::body::places::{is_place, place_root};
 use crate::ctx::Ctx;
 use crate::hir::{
@@ -18,24 +24,45 @@ use crate::visit::{self, VisitMut};
 
 /// One pass over body `f` (of `def`): grow the regions (`rewrite: false`, repeated to a
 /// fixpoint), or insert the transfers (`rewrite: true`, once, with the final regions).
-pub(super) fn visit(cx: &mut Ctx, r: &mut Regions, def: DefId, f: &mut FnDef, rewrite: bool) {
+/// Returns the calls that would share a part of one side with the other and cannot be fixed
+/// (`rewrite` only).
+pub(super) fn visit(
+    cx: &mut Ctx,
+    r: &mut Regions,
+    s: &Summaries,
+    def: DefId,
+    f: &mut FnDef,
+    rewrite: bool,
+) -> Vec<Unfixable> {
     let mut w = Stores {
         cx,
         r,
+        s,
         def,
         rewrite,
+        unfixable: vec![],
     };
     visit::block(&mut f.body.block, &mut w);
+    w.unfixable
 }
 
-struct Stores<'a, 'r, 'm> {
+/// A call storing a part of an argument it also modifies across the lock.
+pub(super) struct Unfixable {
+    pub(super) span: Span,
+    /// An outside object stored into the value (else a part of the value stored outside).
+    pub(super) inward: bool,
+}
+
+struct Stores<'a, 'r, 's, 'm> {
     cx: &'a mut Ctx<'m>,
     r: &'r mut Regions,
+    s: &'s Summaries,
     def: DefId,
     rewrite: bool,
+    unfixable: Vec<Unfixable>,
 }
 
-impl Stores<'_, '_, '_> {
+impl Stores<'_, '_, '_, '_> {
     fn mentions(&mut self, e: &Expr) -> u8 {
         self.r.mentions(self.cx, self.def, e)
     }
@@ -73,45 +100,49 @@ impl Stores<'_, '_, '_> {
         }
     }
 
-    /// A call: each argument it may modify, and a function value it calls (which may store
-    /// what it is given into what it captured), may receive the other arguments.
-    fn call(&mut self, callee: Option<&Expr>, args: &mut [Expr]) {
+    /// A call: the arguments it may store into other arguments, or into the function value
+    /// it calls (`super::summary::call_flows`).
+    fn call(&mut self, span: Span, callee: &Callee, args: &mut [Expr]) {
         let bits: Vec<u8> = args.iter().map(|a| self.mentions(a)).collect();
-        let others = |i: Option<usize>| {
-            let rest = bits.iter().enumerate().filter(|(j, _)| Some(*j) != i);
-            rest.fold(0, |b, (_, x)| b | x)
+        let fn_bits = match callee {
+            Callee::Indirect(c) => self.mentions(c),
+            _ => 0,
         };
         if !self.rewrite {
+            // A closure passed to a call is given what the other arguments reach.
             for (i, a) in args.iter().enumerate() {
                 if let E::Closure(n) = a.kind {
+                    let others = bits.iter().enumerate().filter(|(j, _)| *j != i);
+                    let b = others.fold(0, |b, (_, x)| b | x);
                     for p in self.r.params.get(&n).cloned().unwrap_or_default() {
-                        self.r.add(n, p, others(Some(i)));
+                        self.r.add(n, p, b);
                     }
                 }
             }
         }
-        let mut dests: Vec<(Option<usize>, Option<LocalId>, u8)> = vec![];
-        if let Some(c) = callee {
-            dests.push((None, None, self.mentions(c)));
-        }
-        for (i, a) in args.iter().enumerate() {
-            if is_place(a) && outer_mode(a) == Some(UseMode::BorrowMut) {
-                let (root, dest) = self.dest(a);
-                dests.push((Some(i), root, dest));
-            }
-        }
         let mut done = HashSet::new();
-        for (i, root, dest) in dests {
+        for (a, b) in call_flows(self.s, callee, args) {
+            let (root, dest) = match b {
+                // Its body is checked where it is (`super::regions`).
+                Some(b) if matches!(args[b].kind, E::Closure(_)) => continue,
+                Some(b) if !holds_shared(self.cx, args[b].ty) => continue,
+                Some(b) => self.dest(&args[b]),
+                None => (None, fn_bits),
+            };
             if dest == 0 {
                 if let (false, Some(root)) = (self.rewrite, root) {
-                    self.r.add(self.def, root, others(i));
+                    self.r.add(self.def, root, bits[a]);
                 }
                 continue;
             }
-            for j in 0..args.len() {
-                if Some(j) != i && crosses(dest, bits[j]) && self.rewrite && done.insert(j) {
-                    self.transfer_arg(&mut args[j], dest);
-                }
+            if !crosses(dest, bits[a]) || !self.rewrite || !done.insert(a) {
+                continue;
+            }
+            if !self.transfer_arg(&mut args[a], dest) {
+                self.unfixable.push(Unfixable {
+                    span,
+                    inward: dest & IN != 0,
+                });
             }
         }
     }
@@ -125,19 +156,22 @@ impl Stores<'_, '_, '_> {
     }
 
     /// A call argument crossing the boundary: an owned one is transferred, a borrowed place
-    /// is passed as a transferred copy; a mutably borrowed one stays (the callee changes it).
-    fn transfer_arg(&mut self, e: &mut Expr, dest: u8) {
+    /// is passed as a transferred copy. A mutably borrowed one cannot be (the callee changes
+    /// it): false.
+    fn transfer_arg(&mut self, e: &mut Expr, dest: u8) -> bool {
         if !self.transferable(e, dest) {
-            return;
+            return true;
         }
         match outer_mode(e) {
             Some(UseMode::Borrow) if is_place(e) => {
                 wrap(e, Intrinsic::Share);
                 wrap(e, Intrinsic::Transfer);
             }
-            Some(UseMode::Borrow | UseMode::BorrowMut | UseMode::Copy) if is_place(e) => {}
+            Some(UseMode::BorrowMut) if is_place(e) => return false,
+            Some(UseMode::Copy) if is_place(e) => {}
             _ => wrap(e, Intrinsic::Transfer),
         }
+        true
     }
 
     /// Values that may reach a counted object (strings keep atomic counts; a promise is never
@@ -152,7 +186,7 @@ impl Stores<'_, '_, '_> {
     }
 }
 
-impl VisitMut for Stores<'_, '_, '_> {
+impl VisitMut for Stores<'_, '_, '_, '_> {
     fn stmt(&mut self, s: &mut Stmt) {
         if self.rewrite {
             return;
@@ -189,11 +223,8 @@ impl VisitMut for Stores<'_, '_, '_> {
                 ..
             } => {}
             E::Call { callee, args } => {
-                let c = match callee {
-                    Callee::Indirect(c) => Some((**c).clone()),
-                    _ => None,
-                };
-                self.call(c.as_ref(), args);
+                let callee = callee.clone();
+                self.call(e.span, &callee, args);
             }
             E::Match { scrutinee, arms } if !self.rewrite => {
                 let b = self.mentions(scrutinee);
@@ -207,20 +238,8 @@ impl VisitMut for Stores<'_, '_, '_> {
     }
 }
 
-/// The use mode of a place's outermost node.
-fn outer_mode(e: &Expr) -> Option<UseMode> {
-    match &e.kind {
-        E::Local(_, m)
-        | E::Field { mode: m, .. }
-        | E::Index { mode: m, .. }
-        | E::UnwrapSome(_, m)
-        | E::UnwrapVariant { mode: m, .. } => Some(*m),
-        _ => None,
-    }
-}
-
 /// `e` becomes `op(e)`.
-fn wrap(e: &mut Expr, op: Intrinsic) {
+pub(super) fn wrap(e: &mut Expr, op: Intrinsic) {
     let (ty, span) = (e.ty, e.span);
     let unit = Expr {
         kind: E::Lit(crate::hir::Lit::Unit),

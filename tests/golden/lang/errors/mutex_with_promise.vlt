@@ -1,36 +1,56 @@
-// A promise made from the value a `with` callback is given would run after the lock is
-// released, without it (#398): returned, stored or dropped.
+// A promise that changes the value a `with` callback is given would run after the lock is
+// released, without it (#398): returned, stored or dropped, made here or by a function the
+// callback calls. So would one returned by a function value whose body is not visible. A call
+// that stores a part of the value outside and also changes the value cannot pass a copy.
+class Inner {
+  n: i64 = 0;
+}
+
 class Outer {
   n: i64 = 0;
+  inner: Inner = new Inner();
 
-  async bump(): Promise<i64> {
+  async bumpSelf(): Promise<i64> {
     await yieldNow();
     this.n += 1;
     return this.n;
   }
+
+  addTo(xs: Inner[]) {
+    this.n += 1;
+    xs.push(this.inner);
+  }
 }
 
-async function read(o: Outer): Promise<i64> {
+async function bump(o: Outer): Promise<i64> {
   await yieldNow();
+  o.n += 1;
   return o.n;
 }
 
-function later(o: Outer): Promise<i64> {
-  return read(o);
+function fire(o: Outer) {
+  const p = bump(o);
 }
 
 async function main() {
   const m = shared(new Mutex<Outer>(new Outer()));
-  const a = await m.with((v) => read(v));
-  const b = await m.with((v) => v.bump());
+  const a = await m.with((v) => bump(v));
+  const b = await m.with((v) => v.bumpSelf());
   const ps: Promise<i64>[] = [];
   m.with((v) => {
-    ps.push(later(v));
+    ps.push(bump(v));
   });
   m.with((v) => {
-    const p = read(v);
+    const p = bump(v);
   });
-  const f = (v: Outer) => read(v);
-  const c = await m.with(f);
+  m.with((v) => {
+    const g = () => bump(v);
+    const p = g();
+  });
+  m.with((v) => fire(v));
+  const fs: ((o: Outer) => Promise<i64>)[] = [bump];
+  const c = await m.with(fs[0]);
+  const out: Inner[] = [];
+  m.with((v) => v.addTo(out));
   console.log(a, b, c);
 }

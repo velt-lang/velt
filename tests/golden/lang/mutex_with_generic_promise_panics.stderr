@@ -1,1 +1,0 @@
-panic: the function passed to `Mutex.with` returns a `Promise<i64, never>`, which would run after the lock is released; await outside `with`

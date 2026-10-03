@@ -1,7 +1,13 @@
-mutex_with_promise.vlt:24:33
-mutex_with_promise.vlt:25:33
-mutex_with_promise.vlt:28:13
-mutex_with_promise.vlt:31:15
-mutex_with_promise.vlt:33:27
+mutex_with_promise.vlt:37:33
+mutex_with_promise.vlt:38:33
+mutex_with_promise.vlt:41:13
+mutex_with_promise.vlt:44:15
+mutex_with_promise.vlt:47:21
+mutex_with_promise.vlt:50:17
+mutex_with_promise.vlt:52:26
+mutex_with_promise.vlt:54:17
 error: this `Promise<i64>` uses the locked value, and would run after `with` releases the lock
+error: `fire` starts a promise with the locked value, which would run after `with` releases the lock
+error: the function passed to `with` returns `Promise<i64>`, which would run after the lock is released
+error: this call may store a part of the locked value outside it, and also changes that argument
 await outside `with`, and store the result with another `with`

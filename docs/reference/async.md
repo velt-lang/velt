@@ -240,14 +240,20 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
   - So does a part of the value the callback stores into something it captured
     (`out.push(v.inner)` pushes a copy, `last = v.inner` assigns one), and an outside object it
     stores into the value (`v.items.push(item)` stores a copy; `item` stays outside, and a
-    resource without `clone()` is stored itself). An object stored from one place in the value
-    to another, or from one outside object to another, stays the same object.
-  - A promise made from the value would run after the lock is released, without it, so it is
-    an error, whether the callback returns, stores or drops it (`m.with((v) => load(v))`:
-    "this `Promise<…>` uses the locked value, and would run after `with` releases the lock").
-    Take what the work needs out of the value, await outside `with`, and store the result with
-    another `with`. `spawn(load(v))` is allowed: the task gets a copy. A callback generic in its
-    result that turns out to return a promise stops the program.
+    resource without `clone()` is stored itself) — also when a function or method the callback
+    calls does the storing (`v.giveTo(out)` gives the method a copy of the value). An object
+    stored from one place in the value to another, or from one outside object to another, stays
+    the same object. A call that stores a part of an argument it also changes cannot be given a
+    copy, and is an error ("this call may store a part of the locked value outside it, and also
+    changes that argument"): return the part from `with` instead.
+  - A promise made from the value runs after the lock is released. One that only reads what it
+    is given gets a copy, like a spawned call (`m.with((v) => save(v.name))`,
+    `m.with((v) => read(v))`: `read` sees the value as it was). One that changes it is an
+    error, whether the callback returns, stores or drops it, or a function it calls starts it
+    (`m.with((v) => bump(v))`: "this `Promise<…>` uses the locked value, and would run after
+    `with` releases the lock"): take what the work needs out of the value, await outside
+    `with`, and store the result with another `with`. A function value whose body is not
+    visible (not a closure written where it is passed) may not return a promise.
   - A function value stored in the value must not have captured a resource without `clone()`
     (the program stops when the lock is released).
 

@@ -1,7 +1,7 @@
 // check: no leaks
 // What a `with` callback stores across the lock leaves it like its result (#398): a part of
 // the protected value stored into captured state (an array, an object's field, a `Map`, a
-// variable, through a helper or a nested closure) comes out as a copy. 8 tasks keep changing
+// variable, through a helper, a method of the value or a nested closure) comes out as a copy. 8 tasks keep changing
 // the copies they took out while the protected value changes only under the lock, so its
 // count is exact.
 class Inner {
@@ -15,6 +15,16 @@ class Holder {
 class Outer {
   inner: Inner = new Inner();
   items: Inner[] = [new Inner(), new Inner()];
+
+  // Reads `this` and stores a part of it outside: the call gets a copy of the value.
+  giveTo(xs: Inner[]) {
+    xs.push(this.inner);
+  }
+
+  // Stores only a number: nothing to copy.
+  countInto(ns: i64[]) {
+    ns.push(this.items.length);
+  }
 }
 
 function stash(xs: Inner[], x: Inner) {
@@ -31,6 +41,7 @@ async function worker(m: shared<Mutex<Outer>>): Promise<i64> {
     const out: Inner[] = [];
     const holder = new Holder();
     const byName = new Map<string, Inner>();
+    const counts: i64[] = [];
     let last: Inner | null = null;
     m.with((v) => {
       v.inner.n += 1;
@@ -45,6 +56,8 @@ async function worker(m: shared<Mutex<Outer>>): Promise<i64> {
         stash(out, x);
       }
       stashFrom(out, v);
+      v.giveTo(out);
+      v.countInto(counts);
     });
     // Changing the copies must not touch the protected value.
     for (const x of out) {
@@ -57,7 +70,7 @@ async function worker(m: shared<Mutex<Outer>>): Promise<i64> {
     if (last != null) {
       last.n += 1000;
     }
-    seen += out.length == 6 && holder.items.length == 2 ? 1 : 0;
+    seen += out.length == 7 && counts[0] == 2 && holder.items.length == 2 ? 1 : 0;
     await yieldNow();
   }
   return seen;
