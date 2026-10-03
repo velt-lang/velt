@@ -1,0 +1,18 @@
+// check: no leaks
+// A spawned task whose handle was dropped and that then rejects is an unhandled rejection
+// (#148): reported like an uncaught error, with exit code 1, as in Node.
+class Failed extends Error {}
+
+async function failing(ms: i64): Promise<i64> {
+  await sleep(ms);
+  throw new Failed(`lost after ${ms} ms`);
+}
+
+async function main() {
+  {
+    const task = spawn(failing(20));
+    console.log("dropping the handle");
+  }
+  await sleep(500);
+  console.log("unreachable");
+}

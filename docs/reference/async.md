@@ -221,8 +221,11 @@ async function main() {
   `const ps: Promise<string, Timeout>[] = [work(), rejectAfter(50)]`.
 - A promise nobody can await reports its error as uncaught (`Uncaught <Type>: <message>`, exit
   code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`, or
-  `spawn(p);` of a stored promise), and a stored promise that rejects after it was dropped
-  unawaited (unless a combinator handled it).
+  `spawn(p);` of a stored promise), a spawned task whose handle was dropped without being
+  awaited (when the task rejects, or when the handle is dropped after it did), and a stored
+  promise that rejects after it was dropped unawaited. A promise or handle handed to a
+  combinator (`Promise.race`, `all`, `any`) is handled, and so is a `scope.spawn` child, whose
+  error fails its `taskScope`.
 
 ## `new Promise`
 
