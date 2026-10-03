@@ -971,3 +971,9 @@ parse_union 458 → 430, parse_value 654 → 609, navigate 299 → 293, stringif
 537 → 23. Deleting from the front was O(n) per delete and is now O(1) amortized; `json.Value`
 nodes shrank from 80 to 40 bytes (an object's key index moved behind a box), which makes
 `parseValue` a little faster.
+
+Positions after deletes in the middle (Fenwick tree of the live slots, 2026-10-03; interleaved
+runs, best of 21, CPU ms): parse_value 313 → 315, navigate 170 → 174, edit 10 → 10, the rest
+unchanged (within ±2%). Deleting 80k keys from the middle of a 160k-key object, each followed
+by two `at` calls: 9.9 s → 0.04 s (each `at` rebuilt a table of the live positions in O(n);
+it now costs O(log n)).
