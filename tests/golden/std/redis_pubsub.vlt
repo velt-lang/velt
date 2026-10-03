@@ -1,5 +1,6 @@
 // requires-env: VELT_TEST_REDIS_URL
-// std/redis: pub/sub with pulled messages, pattern subscriptions and close() from another task.
+// std/redis: pub/sub with pulled messages (`next()` and `for await`), pattern subscriptions and
+// close() from another task.
 import { connect, subscribe, psubscribe, RedisSubscriber, RedisMessage } from "velt:redis";
 import { redisUrl, freshPrefix } from "./_redis";
 
@@ -49,18 +50,16 @@ async function main() {
   console.log(show(await psub.next(), p));
   psub.close();
 
-  // A pull loop, ended by close() from another task while `next()` waits (the closer starts
-  // after the first message, so the output does not depend on timing).
+  // A `for await` loop, ended by close() from another task while it waits for the next message
+  // (the closer starts after the first message, so the output does not depend on timing).
   await c.publish(`${p}alerts`, "last");
   let count = 0;
-  let m = await sub.next();
-  while (m != null) {
+  for await (const m of sub) {
     console.log("loop:", show(m, p));
     count++;
     if (count == 1) {
       spawn(closeLater(sub));
     }
-    m = await sub.next();
   }
   console.log("loop ended after", count, "message(s)");
   console.log("next after close:", show(await sub.next(), p));

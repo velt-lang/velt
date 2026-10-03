@@ -16,6 +16,11 @@ through one channel.
   - `receive(): Promise<T | null>` returns the oldest value, waiting for one. It returns `null`
     once the channel is closed and empty.
   - `tryReceive(): T | null` returns the oldest value if one is queued, without waiting.
+  - A channel is an `AsyncIterable<T>`: `for await (const v of ch)` receives values until the
+    channel is closed and drained, then ends. Leaving the loop early (`break`, `return`, an
+    error) does **not** close the channel: other tasks may still be receiving from it, and the
+    values still queued stay receivable. Call `close()` when the stream is over. The loop
+    costs what a `receive()` loop costs (no allocation per value).
   - `close()` ends the stream. Closing twice does nothing.
   - `closed` and `length` (the number of queued values).
 - A sent value crosses to the receiver like a `spawn` argument: it moves when the sender no
@@ -32,11 +37,7 @@ through one channel.
 import { channel, Channel, ChannelClosed } from "velt:channel";
 
 async function worker(jobs: Channel<string>, results: Channel<i64>): Promise<void> throws ChannelClosed {
-  while (true) {
-    const job = await jobs.receive();
-    if (job == null) {
-      return;
-    }
+  for await (const job of jobs) {     // ends once `jobs` is closed and drained
     await results.send(job.length as i64);
   }
 }
@@ -55,11 +56,7 @@ async function main() {
   await Promise.all(workers);
   results.close();
   let total = 0;
-  while (true) {
-    const n = results.tryReceive();
-    if (n == null) {
-      break;
-    }
+  for await (const n of results) {
     total += n;
   }
   console.log(total); // 23

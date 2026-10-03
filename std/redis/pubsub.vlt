@@ -8,6 +8,7 @@
 // `close()` (from any task) makes pending and later `next()` calls return null.
 
 import { IoResult, IoStatus } from "velt:io";
+import { RedisError } from "velt:redis";
 import { redisError } from "velt:redis/reply";
 
 // The runtime's `VeltRedisMessage`: kind 0 = closed, 1 = message, 2 = pattern message.
@@ -57,7 +58,7 @@ function check(s: IoStatus) {
 }
 
 // A subscribed connection (a Copy handle like `RedisClient`; release it with `close()`).
-export struct RedisSubscriber {
+export struct RedisSubscriber implements AsyncIterable<RedisMessage, RedisError> {
   private handle: u64;
 
   // The next message; null once `close()` was called. Throws `RedisError` ("ECONNRESET") if
@@ -72,6 +73,18 @@ export struct RedisSubscriber {
       return null;
     }
     return new RedisMessage(m.channel, m.message, m.kind == 2 ? m.pattern : null);
+  }
+
+  // `for await (const m of sub)`: the messages until `close()` is called. Leaving the loop
+  // early keeps the subscription (call `close()` to end it).
+  async *[Symbol.asyncIterator](): AsyncIterator<RedisMessage, RedisError> {
+    while (true) {
+      const m = await this.next();
+      if (m == null) {
+        return;
+      }
+      yield m;
+    }
   }
 
   // Also listens to `channels`; resolves once the server confirmed them.

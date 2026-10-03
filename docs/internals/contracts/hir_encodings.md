@@ -327,7 +327,10 @@ Maintainer-owned, like hir.rs.
   clause does (`next(): IteratorResult<T> throws E` in `Iterator<T, E>`); each member's
   `FnDef::throws` is then that clause with the interface args of its implementation
   (`implements Iterator<string, IoError>`: `IoError`), so the members of one slot agree per
-  interface instantiation, which is all one vtable holds.
+  interface instantiation, which is all one vtable holds. A generator method (`is_generator`)
+  is no member: its call never throws, and its `FnDef::throws` is its own `E` (the `E` of
+  `ret`), so a slot's members may be generators with different `E`s (`[Symbol.asyncIterator]()`
+  of `AsyncIterable<T, E>`, whose result type carries `E`).
 - Promises: `TyKind::Promise(T, E)` resolves to `T` or rejects with `E` (`Never`: cannot reject).
   An async fn's call has type `Promise<ret, throws>`; `await` of a direct call checks the child
   state's `Result<T, E>` (result region at offset 0), and a promise *value* (heap future) holds
