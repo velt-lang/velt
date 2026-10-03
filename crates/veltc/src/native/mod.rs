@@ -211,8 +211,13 @@ fn not_native(f: &hir::ExternFnDef, pkg: Option<&str>, graph: Option<&PackageGra
         Some(name) => format!("package `{name}` has no native library"),
         None => "this program is not in a package with a native library".into(),
     };
-    let mut d = Diagnostic::error(
-        format!("`declare function {}` is not allowed: {whose}", f.symbol),
+    let kind = if f.is_async {
+        "declare async function"
+    } else {
+        "declare function"
+    };
+    let d = Diagnostic::error(
+        format!("`{kind} {}` is not allowed: {whose}", f.symbol),
         f.span,
     )
     .with_note(
@@ -223,13 +228,16 @@ fn not_native(f: &hir::ExternFnDef, pkg: Option<&str>, graph: Option<&PackageGra
         .into_iter()
         .flat_map(|g| g.natives())
         .find(|(_, lib)| lib.meta.exports.contains_key(&f.symbol));
-    if let Some((other, _)) = owner {
-        d = d.with_note(format!(
+    match owner {
+        Some((other, _)) => d.with_note(format!(
             "`{}` is exported by the native library of package `{}`: import that package's API instead",
             f.symbol, other.name
-        ));
+        )),
+        None => d.with_note(
+            "to call C code, give the package a native library (`native` in package.vlt; see \
+             Packages with native code), or use the standard library's API",
+        ),
     }
-    d
 }
 
 fn closest<'a>(name: &str, candidates: impl Iterator<Item = &'a String>) -> Option<&'a String> {

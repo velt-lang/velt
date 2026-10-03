@@ -157,6 +157,17 @@ fn a_program_without_packages_declares_nothing() {
         d.contains("`declare function free` is not allowed: this program is not in a package with a native library"),
         "{d}"
     );
+    assert!(
+        d.contains("to call C code, give the package a native library"),
+        "{d}"
+    );
+    let d = check_alone(
+        "declare async function sleep_ms(n: u64): Promise<u64>;\nasync function main() {\n  await sleep_ms(1);\n}\n",
+    );
+    assert!(
+        d.contains("`declare async function sleep_ms` is not allowed"),
+        "{d}"
+    );
     // std's own declarations (behind `velt:fs` and the prelude) are not affected.
     let d = check_alone(
         "import { readFile } from \"velt:fs\";\nfunction main() {\n  console.log(\"ok\");\n}\n",
