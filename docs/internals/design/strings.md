@@ -249,8 +249,8 @@ surrogates exist (phase 2): before that, a lone surrogate reaching a Rust `&str`
 sequences leave out D800–DFFF). This design does the minimum: `.` and negated classes (`[^…]`,
 `\S`, `\W`, `\D`) accept lone surrogates through hand-built byte classes, and offsets are code
 units. JavaScript's regex syntax and semantics (`u` and non-`u` modes, Annex B escapes,
-JavaScript's `\s`, case folding per mode, empty-match stepping, `d`-flag indices) are a separate
-issue: today's translator is neither JavaScript's `u` mode nor its default mode.
+JavaScript's `\s`, case folding per mode, empty-match stepping, `d`-flag indices) are #401:
+today's translator is neither JavaScript's `u` mode nor its default mode.
 
 ### Allocations
 
@@ -262,8 +262,8 @@ issue: today's translator is neither JavaScript's `u` mode nor its default mode.
   doesn't change them), the layout moves once to a buffer with a header, the lone count follows
   the formula above, crumbs are extended lazily, and a cursor is reset on a join.
 - Not changed by this design: a heap `slice` copies (`str/mod.rs` `substring`), so
-  `rest = rest.slice(n)` parsers are O(n²), where V8 uses sliced strings. That is a follow-up
-  issue; the header layout must not prevent a later shared-slice form.
+  `rest = rest.slice(n)` parsers are O(n²), where V8 uses sliced strings. That is #402; the
+  header layout must not prevent a later shared-slice form.
 
 ## Cost
 
@@ -379,7 +379,7 @@ One PR each:
    `includes`/`startsWith`/`endsWith`, Node-exact `TextEncoder`/`TextDecoder` with `encodeInto`
    and a zero-copy `encode`, and literal escapes for lone surrogates and joined pairs.
 5. The regex minimum: lone surrogates in `.` and negated classes, and code-unit offsets. The rest
-   goes to the separate regex issue.
+   goes to #401.
 
 ## Decisions
 
@@ -394,7 +394,7 @@ One PR each:
 4. `charCodeAt` out of range keeps returning -1 for now; `NaN` belongs to the number-semantics
    decision in #214, not to this design.
 5. Regex: this design does the minimum (lone surrogates in `.` and negated classes, code-unit
-   offsets); JavaScript regex syntax and semantics are a separate issue.
+   offsets); JavaScript regex syntax and semantics are #401.
 6. The cursor lands with the semantics (phase 2) and strength reduction right after (phase 3),
    not "later".
 7. The type of `length` and of positions follows #214's decision for `Array.length`.
