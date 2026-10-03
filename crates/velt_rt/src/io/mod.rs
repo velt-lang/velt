@@ -42,7 +42,7 @@ pub fn publish_thread_output() {
 /// printed so far becomes visible before anything the other task prints, which may run on another
 /// worker at once.
 pub fn publish_before_handoff() {
-    stdout::publish_local();
+    stdout::publish_if_buffered();
 }
 
 /// Test probe for the hand-off points: buffer a line on this thread, and check later whether it

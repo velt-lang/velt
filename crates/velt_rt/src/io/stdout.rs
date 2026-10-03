@@ -13,7 +13,7 @@
 //! when it fills, on explicit flushes, and when a worker goes idle. On an interactive terminal every
 //! completed line is written through immediately (line buffering, like C stdio).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Mutex, MutexGuard, TryLockError};
@@ -44,6 +44,9 @@ impl Drop for Local {
 
 thread_local! {
     static LOCAL: Local = const { Local(RefCell::new(Vec::new())) };
+    /// Whether this thread's buffer may hold bytes: a cheap check (no destructor) for the
+    /// hand-off points, which mostly find the buffer empty.
+    static BUFFERED: Cell<bool> = const { Cell::new(false) };
 }
 
 fn line_buffered() -> bool {
@@ -145,6 +148,7 @@ pub fn append(f: impl FnOnce(&mut Vec<u8>)) {
             publish_all(&mut buf);
             write_shared(&mut lock_shared());
         }
+        BUFFERED.set(!buf.is_empty());
     });
     if let Some(f) = f {
         // Thread buffer unavailable (thread shutting down): go through the shared buffer.
@@ -161,6 +165,7 @@ pub fn publish_local() {
             if !buf.is_empty() {
                 publish_all(&mut buf);
             }
+            BUFFERED.set(false);
         }
     });
 }
@@ -169,6 +174,13 @@ pub fn publish_local() {
 #[cfg(test)]
 pub(crate) fn local_len() -> usize {
     LOCAL.with(|l| l.0.borrow().len())
+}
+
+/// [`publish_local`], with a cheap check first for the common case of an empty buffer.
+pub fn publish_if_buffered() {
+    if BUFFERED.get() {
+        publish_local();
+    }
 }
 
 /// Write everything buffered by this thread and the shared buffer to the OS.
