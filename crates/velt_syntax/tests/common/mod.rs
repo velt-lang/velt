@@ -168,6 +168,7 @@ pub fn pat(p: &Pattern) -> String {
             }
             format!("[{}]", parts.join(", "))
         }
+        PatternKind::Default { pattern, value } => format!("{} = {}", pat(pattern), sx(value)),
     }
 }
 
@@ -311,6 +312,7 @@ pub fn sx(e: &Expr) -> String {
         ExprKind::Cast { expr, ty: t } => format!("(as {} {})", sx(expr), ty(t)),
         ExprKind::InstanceOf { expr, ty: t } => format!("(instanceof {} {})", sx(expr), ty(t)),
         ExprKind::Paren(e) => format!("(paren {})", sx(e)),
+        ExprKind::NonNull(e) => format!("(! {})", sx(e)),
         ExprKind::Jsx(el) => jsx(el),
     }
 }
