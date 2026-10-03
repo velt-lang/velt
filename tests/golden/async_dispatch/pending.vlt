@@ -63,8 +63,11 @@ async function main() {
   } catch (e) {
     console.log("all caught", e.message);
   }
-  // `Promise.all` rejects as soon as one call does; the others may still be in flight.
-  await sleep(5);
+  // `Promise.all` rejects as soon as one call does; the others may still be in flight: wait
+  // until they have landed on `h` (the loop ends only if they do).
+  while (h.knocks < 39) {
+    await sleep(1);
+  }
   console.log("after", h.knocks, await d.knock(0));
 
   const b: Bell = new LoudBell();
