@@ -2,12 +2,14 @@
 //! (daylight saving time included). Everything else about dates is computed in Velt from
 //! `Date.now()` and this offset.
 
+#[cfg(any(windows, test))]
+mod tz_env;
 #[cfg(windows)]
 mod windows;
 
 /// Minutes to add to UTC to get local time at `epoch_ms` (e.g. 120 for CEST). Uses the C
-/// library's time zone database on Unix and the system time zone (with its dynamic, per-year
-/// daylight saving rules) on Windows.
+/// library's time zone database on Unix and, on Windows, `TZ` when it names UTC or a fixed offset,
+/// else the system time zone (with its dynamic, per-year daylight saving rules).
 #[no_mangle]
 pub extern "C" fn velt_rt_local_offset_minutes(epoch_ms: i64) -> i32 {
     offset_seconds(epoch_ms.div_euclid(1000)) / 60

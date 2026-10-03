@@ -728,7 +728,7 @@ of a Copy element type, built from a Rust `Vec<T>` (same allocator), like `VeltS
 |---|---|---|
 | `velt_rt_random_bytes` | `(u64 n, VeltBytes* out)` | `n` bytes from the OS CSPRNG (`getrandom`); failure of the OS generator is fatal |
 | `velt_rt_random_u64` | `() -> u64` | uniform, OS CSPRNG |
-| `velt_rt_local_offset_minutes` | `(i64 epoch_ms) -> i32` | minutes to add to UTC for local time at that instant (DST-aware: the C library tz database on Unix; on Windows the system time zone with its dynamic per-year DST rules, `SystemTimeToTzSpecificLocalTimeEx`) |
+| `velt_rt_local_offset_minutes` | `(i64 epoch_ms) -> i32` | minutes to add to UTC for local time at that instant (DST-aware: the C library tz database on Unix; on Windows `TZ` when it names UTC or a fixed offset (`Etc/GMT±N`), else the system time zone with its dynamic per-year DST rules, `SystemTimeToTzSpecificLocalTimeEx`) |
 
 ### 14.2 Regular expressions (`velt:regex`)
 

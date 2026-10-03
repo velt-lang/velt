@@ -72,9 +72,8 @@ The TypeScript twin is the `.vlt` source plus:
    `Duration.toString`). A std module without a shim makes the program `node-rejected`.
 
 Types are transformed, not only stripped, because TS `enum`s need code. Both sides see the same
-local time zone: every run gets `TZ=UTC`, except on Windows, where Velt reads the system zone and
-ignores `TZ` (the Node shim then uses the system zone too). `DateTime.parse` reads a date-time
-without a zone as UTC on both sides.
+local time zone: every run gets `TZ=UTC` (Velt honours `TZ` on Windows too for UTC and fixed
+offsets). `DateTime.parse` reads a date-time without a zone as UTC on both sides.
 
 Output is captured through files, not pipes (Node writes pipes asynchronously on macOS).
 

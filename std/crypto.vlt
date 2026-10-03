@@ -324,12 +324,25 @@ export function randomBytes(n: usize): u8[] {
   return velt_rt_random_bytes(n as u64);
 }
 
+// The largest integer a JS number holds exactly (`Number.MAX_SAFE_INTEGER`).
+const MAX_SAFE_INTEGER: i64 = 9007199254740991;
+// The largest `max - min` Node's `randomInt` accepts (2^48 - 1).
+const RANDOM_INT_RANGE: i64 = 281474976710655;
+
 // A uniformly distributed secure random integer in [min, max) (Node's `crypto.randomInt`);
-// rejection sampling avoids modulo bias. Throws `CryptoError` if `max <= min`.
+// rejection sampling avoids modulo bias. Throws `CryptoError`, with Node's messages, when `min`
+// or `max` is not a safe integer, `max <= min`, or `max - min` is 2^48 or more.
 export function randomInt(min: i64, max: i64): i64 {
+  checkSafeInteger("min", min);
+  checkSafeInteger("max", max);
   if (max <= min) {
     throw new CryptoError(
-      `The value of "max" is out of range. It must be greater than the value of "min" (${min}). Received ${max}`,
+      `The value of "max" is out of range. It must be greater than the value of "min" (${min}). Received ${received(max)}`,
+    );
+  }
+  if (max - min > RANDOM_INT_RANGE) {
+    throw new CryptoError(
+      `The value of "max - min" is out of range. It must be <= ${RANDOM_INT_RANGE}. Received ${received(max - min)}`,
     );
   }
   const range = (max - min) as u64;
@@ -341,6 +354,32 @@ export function randomInt(min: i64, max: i64): i64 {
       return min + ((r % range) as i64);
     }
   }
+}
+
+// Node's check of a `randomInt` bound.
+function checkSafeInteger(name: string, n: i64) {
+  if (n < -MAX_SAFE_INTEGER || n > MAX_SAFE_INTEGER) {
+    throw new CryptoError(
+      `The "${name}" argument must be a safe integer. Received type number (${n})`,
+    );
+  }
+}
+
+// A number as Node's range errors write what they received: beyond 2^32, in groups of three
+// digits separated by `_` (`1_000_000_000_000`).
+function received(n: i64): string {
+  const s = `${n}`;
+  if (n >= -4294967296 && n <= 4294967296) {
+    return s;
+  }
+  const start: i64 = n < 0 ? 1 : 0;
+  let out = "";
+  let i = s.length as i64;
+  while (i >= start + 4) {
+    out = `_${s.slice(i - 3, i)}${out}`;
+    i -= 3;
+  }
+  return `${s.slice(0, i)}${out}`;
 }
 
 // Whether `a` and `b` are equal, in time that depends only on their lengths (not on where they
