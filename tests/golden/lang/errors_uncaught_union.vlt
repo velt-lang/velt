@@ -28,6 +28,9 @@ async function main() {
     console.log("caught", e.message);
   }
   spawn(background());
-  await sleep(200);
+  // A promise nothing ever settles (its resolvers stay alive): only the task's report can end
+  // the program.
+  const forever = Promise.withResolvers<void>();
+  await forever.promise;
   console.log("unreachable");
 }
