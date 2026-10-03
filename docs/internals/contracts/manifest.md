@@ -98,8 +98,9 @@ registry: "https://registry.example.com",
   Package and user names are never Windows device names (`con`, `prn`, `aux`, `nul`, `com0`–`com9`,
   `lpt0`–`lpt9`).
 - Owners (additive): `<dir>/<name>/owners.json` (`{ "owners": ["alice"] }`). The first user to publish
-  a new package owns it (recorded before the version is stored, and taken back if storing fails). Writes to a package by a user who doesn't own it are 403, also when an
-  existing package has no owners (on a server with users): an administrator assigns them with
+  a new package owns it (recorded before the version is stored, and taken back if storing fails).
+  Writes to a package by a user who doesn't own it are 403, also when an existing package has no
+  owners (on a server with users): an administrator assigns them with
   `velt registry owner add`. `GET <url>/api/v1/<name>/owners` → one owner per line; `PUT`/`DELETE
   <url>/api/v1/<name>/owners/<user>` add/remove one (400 for a name or user that isn't
   `[a-z][a-z0-9_-]*`, 404 for an unknown user or a user who isn't an owner, 409 for the last

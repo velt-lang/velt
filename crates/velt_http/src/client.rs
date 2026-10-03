@@ -77,7 +77,8 @@ fn split(rest: &str) -> (&str, &str) {
     }
 }
 
-/// A connection to `host` (each of its addresses in turn, `limits.connect` each), whose reads
+/// A connection to `host` (each of its addresses in turn, `limits.connect` each but never past
+/// `deadline`), whose reads
 /// and writes fail once `deadline` has passed.
 fn connect(
     host: &str,
@@ -95,7 +96,11 @@ fn connect(
         .map_err(|e| format!("cannot connect: {e}"))?;
     let mut last = None;
     for addr in addrs {
-        match TcpStream::connect_timeout(&addr, limits.connect) {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(format!("cannot connect: {}", too_long()));
+        }
+        match TcpStream::connect_timeout(&addr, limits.connect.min(left)) {
             Ok(stream) => {
                 return Ok(Deadlined {
                     stream,

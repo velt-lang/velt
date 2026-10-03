@@ -169,9 +169,22 @@ fn write(
 /// The token may travel only over `https://`, or plain `http://` to this machine: anyone on the
 /// network path could read it otherwise.
 fn check_token_transport(url: &str) -> Result<(), String> {
-    let Some(rest) = url.strip_prefix("http://") else {
-        return Ok(());
+    let scheme_is = |scheme: &str| {
+        url.get(..scheme.len())
+            .is_some_and(|s| s.eq_ignore_ascii_case(scheme))
     };
+    if scheme_is("https://") {
+        return Ok(());
+    }
+    let refused = || {
+        format!(
+            "not sending ${TOKEN_VAR} to {url}: only an https:// registry, or http:// on this machine, gets it; use the registry's https:// URL (put `velt registry serve` behind a TLS reverse proxy)"
+        )
+    };
+    if !scheme_is("http://") {
+        return Err(refused());
+    }
+    let rest = &url["http://".len()..];
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
     let host = match host_port.strip_prefix('[') {
@@ -185,9 +198,7 @@ fn check_token_transport(url: &str) -> Result<(), String> {
     if loopback {
         return Ok(());
     }
-    Err(format!(
-        "not sending ${TOKEN_VAR} to {url}: plain http:// would show it to the network; use the registry's https:// URL (put `velt registry serve` behind a TLS reverse proxy)"
-    ))
+    Err(refused())
 }
 
 /// Yank (`yanked`) or unyank `name` `version`.
@@ -267,7 +278,9 @@ mod tests {
     fn tokens_travel_only_over_tls_or_to_this_machine() {
         for url in [
             "https://registry.example.com",
+            "HTTPS://registry.example.com",
             "http://127.0.0.1:8091",
+            "HTTP://localhost",
             "http://127.1.2.3",
             "http://localhost:8091/",
             "http://LOCALHOST",
@@ -281,6 +294,9 @@ mod tests {
             "http://[2001:db8::1]:8091",
             "http://localhost.example.com",
             "http://127.0.0.1@evil.example.com",
+            "HTTP://registry.example.com",
+            "ftp://registry.example.com",
+            "registry.example.com",
         ] {
             let err = check_token_transport(url).unwrap_err();
             assert!(err.contains("https://"), "{url}: {err}");

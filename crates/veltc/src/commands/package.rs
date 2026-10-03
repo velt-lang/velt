@@ -96,7 +96,8 @@ fn report_native(graph: &vpm::PackageGraph) {
     }
 }
 
-/// The newest published version of `name` that is not yanked, as a requirement string.
+/// The version `velt add` picks for `name`, as a requirement string: the newest stable version
+/// that is not yanked, else the newest pre-release that is not (the version `velt search` shows).
 fn latest_version(loc: &Locations, name: &str) -> Result<String, String> {
     let index = vpm::registry::read_index(loc, name)?.ok_or_else(|| {
         format!(
@@ -104,16 +105,9 @@ fn latest_version(loc: &Locations, name: &str) -> Result<String, String> {
             loc.describe()
         )
     })?;
-    let latest = index
-        .versions
-        .iter()
-        .filter(|e| !e.yanked)
-        .map(|e| e.semver())
-        .filter(|v| v.pre.is_empty())
-        .max();
-    latest
+    vpm::manifest::ide::registry::newest(&index)
         .map(|v| v.to_string())
-        .ok_or_else(|| format!("package `{name}` has no stable version that is not yanked"))
+        .ok_or_else(|| format!("every version of package `{name}` is yanked"))
 }
 
 /// `velt install [--locked]` and `velt update`.

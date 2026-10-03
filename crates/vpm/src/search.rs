@@ -57,13 +57,7 @@ pub fn search_local(root: &Path, query: &str) -> Result<Vec<Hit>, String> {
         let Ok(index) = parse_index(&text, &path.display().to_string()) else {
             continue;
         };
-        let available = index
-            .versions
-            .iter()
-            .filter(|v| !v.yanked)
-            .map(|v| v.semver());
-        let (stable, pre): (Vec<_>, Vec<_>) = available.partition(|v| v.pre.is_empty());
-        let newest = stable.into_iter().max().or_else(|| pre.into_iter().max());
+        let newest = crate::manifest::ide::registry::newest(&index);
         if let Some(version) = newest {
             hits.push(Hit {
                 name,

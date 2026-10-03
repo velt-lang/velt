@@ -42,8 +42,8 @@ import { slugify } from "textkit";
 - `velt registry serve` speaks plain HTTP, so tokens and packages cross the network unencrypted.
   Beyond localhost, put it behind a reverse proxy that terminates TLS (Caddy, nginx) and give
   clients the `https://` URL. `velt` sends `VELT_REGISTRY_TOKEN` only to an `https://` registry
-  or to `http://localhost` (`127.0.0.1`, `[::1]`), and refuses a write to any other `http://`
-  registry while the variable is set.
+  or to `http://` on this machine (`localhost`, `127.0.0.0/8`, `[::1]`), and refuses a write to
+  any other registry while the variable is set.
 - A request may take 10 minutes in all. `velt` gives up on a server that stays silent for 60
   seconds, or that it can't connect to within 10 seconds.
 - Package archives contain `package.vlt`, `src/**` and the sources of a `native` crate. Their checksum is the content hash that
@@ -85,6 +85,10 @@ as the OS user the server runs as. The users file, `.auth/users.json`, is create
 default permissions (0644 under a usual umask) inside `.auth/`, which is 0700 on Unix so other
 users can't read the token hashes. A users file written by another OS user may be unreadable to
 the server, which then answers every write with 500 until the file's owner is fixed.
+
+A crash while a new package is being published can leave its owner recorded without a version
+(a `<dir>/<name>/owners.json` and no `index.json`); the name then stays reserved for that user.
+To free it, delete the `<dir>/<name>` directory.
 
 Package and user names can't be Windows device names (`con`, `nul`, `aux`, `com1`, …), since a
 package is stored in a directory named after it.

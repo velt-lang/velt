@@ -78,7 +78,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `warning: `<name>` <version> is yanked (pinned by velt.lock.json)` for each yanked locked version.
 - `yank <pkg>@<version> [--undo]` (additive): sets or clears the version's `yanked` flag in the
   package's registry (local, or remote: owners only). Resolution skips yanked versions unless
-  `velt.lock.json` pins them; `add` without a version picks the newest stable version not yanked.
+  `velt.lock.json` pins them; `add` without a version picks the newest stable version not yanked
+  (the newest pre-release not yanked if there is no stable one).
 - `owner list|add|remove <pkg> [<user>]` (additive): a package's owners on a registry server
   (`list` prints one per line on stdout); an error for a local registry.
 - `search <text>` (additive): `name version` lines on stdout for the packages of the package's
