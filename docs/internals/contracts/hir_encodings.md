@@ -354,9 +354,11 @@ Maintainer-owned, like hir.rs.
   field reads, async-call arguments used again) are shares too. `Intrinsic::Clone` is a deep copy
   (`x.clone()`, and in async closures for their captures, which several threads may read); a
   class's own `clone()` (no params, returns the class) is what a deep copy of it calls.
-  `Intrinsic::Transfer(value)` (std only, value owned, result owned, same type): the value made
-  safe for another thread like a `spawn` argument — moved where nothing else references it,
-  deep-copied where it is still shared (std/prelude/promise.vlt settles promises with it).
+  `Intrinsic::Transfer(value)` (written in std only, value owned, result owned, same type): the
+  value made safe for another thread like a `spawn` argument — moved where nothing else
+  references it, deep-copied where it is still shared (std/prelude/promise.vlt settles promises
+  with it; sema wraps the values a `Mutex.with` callback stores across the lock in it,
+  velt_sema ownership/locked).
   `Intrinsic::NeedsTransfer(value)` (std only, value borrowed and not read): a constant `bool`,
   whether `Transfer` of a value of that type has anything to do (it can reach a counted object).
 - Lowering's representation (counted objects, boxed arrays/objects, stabilized borrows) is its

@@ -18,14 +18,16 @@ mod checks;
 mod conventions;
 mod groups;
 mod infer;
+mod inits;
 mod sets;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use velt_common::Span;
 
 pub(crate) use groups::Groups;
 pub(crate) use infer::infer_all;
+pub(crate) use inits::InitsSeen;
 
 use crate::ctx::Ctx;
 use crate::defs::ThrowSrc;
@@ -37,27 +39,6 @@ struct Visited {
     /// Functions whose bodies' sources are counted (in their own generic context).
     fns: HashSet<DefId>,
     inits: InitsSeen,
-}
-
-/// How many instantiations of one class's field initializers a resolution counts separately.
-/// Initializers can construct their class with ever larger type arguments (`Box<T>` running
-/// `new Box<Box<T>>()`), which would never end; past this many, further instantiations of the
-/// class count as already seen (its first ones count). Ordinary programs construct a class with
-/// a few distinct type arguments in one chain of initializers.
-const MAX_INIT_INSTANCES: usize = 16;
-
-/// The classes whose field initializers ([`ThrowSrc::Defaults`]) are already counted, keyed on
-/// the class and its type arguments: `Box<E1>` and `Box<E2>` throw different errors.
-#[derive(Default)]
-pub(crate) struct InitsSeen(HashMap<DefId, HashSet<Vec<TyId>>>);
-
-impl InitsSeen {
-    /// Record class `d` with type arguments `args`: false when they are counted already (or
-    /// the class has [`MAX_INIT_INSTANCES`] counted).
-    pub(crate) fn insert(&mut self, d: DefId, args: &[TyId]) -> bool {
-        let seen = self.0.entry(d).or_default();
-        seen.len() < MAX_INIT_INSTANCES && seen.insert(args.to_vec())
-    }
 }
 
 /// A type sema built from what `srcs` throw at checking time; the final inference must agree
@@ -99,11 +80,13 @@ fn srcs_now_in(cx: &mut Ctx, srcs: &[ThrowSrc], visited: &mut Visited) -> Option
                 subst_error(cx, t, args)
             }
             ThrowSrc::Defaults(d, args, span) => {
-                if !visited.inits.insert(*d, args) {
+                if !visited.inits.enter(&cx.ty, *d, args) {
                     continue;
                 }
                 let srcs = defaults_srcs(cx, *d, args, *span);
-                srcs_now_in(cx, &srcs, visited)
+                let t = srcs_now_in(cx, &srcs, visited);
+                visited.inits.leave();
+                t
             }
         };
         acc = cx.join_errors(acc, t);

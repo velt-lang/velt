@@ -239,11 +239,50 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
   passing or capturing it adds a reference (so does `.clone()`); it is never deep-copied. For
   64-bit integers, `.add(n)`, `.get()` and `.set(v)` are atomic.
 - `shared(new Mutex<T>(x))` with `m.with((v) => …)`: a synchronous lock. The callback gets the
-  value itself (assigning `v` updates it), returns a result, and must not be async. The result
-  leaves the lock like a value going to another task: an object the callback made moves out,
-  a part of the protected value comes out as a copy (`m.with((v) => v.inner)` is a snapshot;
-  change the value inside the callback). A function value stored in the value must not have
-  captured a resource without `clone()` (the program stops when the lock is released).
+  value itself (assigning `v` updates it), returns a result, and must not be async. Nothing
+  crosses the lock by reference, since other threads use the value as soon as it is released:
+  - The result leaves the lock like a value going to another task: an object the callback made
+    moves out, a part of the protected value comes out as a copy (`m.with((v) => v.inner)` is
+    a snapshot; change the value inside the callback). A part that owns a resource without
+    `clone()` cannot be copied, so returning one is an error.
+  - So does a part of the value the callback stores into something it captured
+    (`out.push(v.inner)` pushes a copy, `last = v.inner` assigns one), and an outside object it
+    stores into the value (`v.items.push(item)` stores a copy; `item` stays outside, so using
+    it after the `with` is an error, "`item` is still used after `with` stored it in the
+    locked value": store `item.clone()` to keep using `item`; a resource without `clone()` is
+    stored itself) — also when a function or method the callback
+    calls does the storing (`v.giveTo(out)` gives the method a copy of the value). An object
+    stored from one place in the value to another, or from one outside object to another, stays
+    the same object. A call that stores a part of an argument it also changes cannot be given a
+    copy, and is an error ("this call may store a part of the locked value outside it, and also
+    changes that argument"): return the part from `with` instead. A function value the
+    callback calls with the value (`step(v)`, a helper's parameter) gets the value itself, so
+    its changes land in it: the closures it may be are checked like the callback. One whose
+    body cannot be found (a field, an array element) may not be given both the value and
+    something outside the lock. The callback itself is a closure written where it is passed, a
+    named function (`m.with(update)`), or a variable or helper parameter bound to those; one
+    found only through a field, an array element or a `Map` value (`m.with(hooks.cb)`) cannot
+    be checked, and is an error when the value can hold objects ("the function passed to
+    `with` comes from an object's field …").
+  - A promise made from the value runs after the lock is released. One that only reads what it
+    is given gets a copy, like a spawned call (`m.with((v) => save(v.name))`,
+    `m.with((v) => read(v))`: `read` sees the value as it was; a copy of a resource without
+    `clone()` cannot be made, which is an error naming it). The copy is a deep copy of what
+    the promise is given, made while the lock is held — the whole value for `read(v)` — so
+    pass only the parts the work needs (`read(v.config)`) when the value is large; strings are
+    never copied. Storing a part outside costs a copy of that part the same way. A promise
+    that changes what it is given is an error, whether the callback returns, stores or drops
+    it, or a function it calls starts it (`m.with((v) => bump(v))`: "this `Promise<…>` uses
+    the locked value, and would run after
+    `with` releases the lock"): take what the work needs out of the value, await outside
+    `with`, and store the result with another `with`. A function value whose body is not
+    visible may not return a promise either; through a generic helper
+    (`function run<T>(m, fs: ((s: S) => T)[]): T`) that is reported where `T` is a promise.
+  - A function value stored in the value must not have captured a resource without `clone()`
+    (the program stops when the lock is released). Calling one that returns or starts a
+    promise (`m.with((f) => f())`) is an error when a synchronous closure of its type captured
+    objects: the promise would use them after the lock is released. An async closure there is
+    fine, since each call gets its own copy of what it captured.
 
 `shared(x)` is a thread boundary like `spawn`, and it takes `x` itself: a variable used after
 it went into `shared(...)` (also inside `new Mutex(o)`, a literal or a constructor call there)

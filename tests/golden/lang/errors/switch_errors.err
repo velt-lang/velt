@@ -15,3 +15,5 @@ possible values: "circle", "rect", "tri"
 switch_errors.vlt:60:5: error: duplicate `case` value
 switch_errors.vlt:68:10: error: mismatched types: this literal can never equal a value of type `i64`
 switch_errors.vlt:78:9: error: `continue` cannot target a `switch`
+switch_errors.vlt:86:10: error: mismatched types
+expected string, found i64

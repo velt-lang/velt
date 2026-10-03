@@ -1,0 +1,36 @@
+// A constructor that throws after sharing `this` (#328) leaves a half-built object reachable
+// from where it was stored; its fields not assigned yet are null pointers, and reading one
+// crashes (#349: reading a field before it is initialized). Node prints `undefined` for it;
+// the expected output follows Node until #349 decides what Velt does instead.
+class Keep {
+  items: H[] = [];
+}
+
+class H {
+  a: string;
+  b: string[];
+
+  constructor(keep: Keep, fail: boolean) {
+    this.a = "x";
+    keep.items.push(this);
+    if (fail) {
+      throw new Error("boom");
+    }
+    this.b = ["q"];
+  }
+}
+
+function mk(keep: Keep, fail: boolean): H throws Error {
+  return new H(keep, fail);
+}
+
+function main() {
+  const keep = new Keep();
+  try {
+    mk(keep, true);
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+  console.log(keep.items.length, keep.items[0].a);
+  console.log(keep.items[0].b);
+}
