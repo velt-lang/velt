@@ -2,7 +2,7 @@
 // the iterator's `next()` throws (`E` of `Iterable<T, E>`): a `throws` clause must allow it.
 class BadIter implements Iterator<string> {
   next(): IteratorResult<string> {
-    return { done: false, value: 1 };
+    return { value: 1, done: false };
   }
 }
 

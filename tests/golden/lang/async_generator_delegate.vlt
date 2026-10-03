@@ -54,7 +54,7 @@ class PairIter implements AsyncIterator<string> {
     if (this.n > 2) {
       return { done: true };
     }
-    return { done: false, value: `p${this.n}` };
+    return { value: `p${this.n}`, done: false };
   }
 }
 

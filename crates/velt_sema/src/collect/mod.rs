@@ -54,6 +54,7 @@ pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     crate::type_defaults::check_all(cx);
     shapes::resolve_shapes(cx, &items);
     cx.shapes_done = true;
+    cx.check_deferred_ts_returns();
     sigs::resolve_sigs(cx, &items);
     iface_extends::flatten_all(cx);
     field_only::fill(cx);

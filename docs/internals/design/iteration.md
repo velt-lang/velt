@@ -14,11 +14,13 @@ messages (`for await (const line of lines)`), and writes lazy sequences with gen
 ## 1. The protocol (built, phase 1)
 
 ```ts ignore
-type IteratorResult<T> = { done: false; value: T } | { done: true };
+type IteratorResult<T> = { value: T; done: false } | { done: true };
 
 interface Iterator<T, E = never> {
   next(): IteratorResult<T> throws E;
-  return(): void {}                       // early exit: release what the iterator holds
+  return(): IteratorResult<T> {           // early exit: release what the iterator holds
+    return { done: true };
+  }
 }
 interface Iterable<T, E = never> {
   [Symbol.iterator](): Iterator<T, E>;
@@ -26,7 +28,9 @@ interface Iterable<T, E = never> {
 
 interface AsyncIterator<T, E = never> {
   next(): Promise<IteratorResult<T>, E>;
-  async return(): Promise<void> {}
+  async return(): Promise<IteratorResult<T>> {
+    return { done: true };
+  }
 }
 interface AsyncIterable<T, E = never> {
   [Symbol.asyncIterator](): AsyncIterator<T, E>;
@@ -40,7 +44,18 @@ They live in `std/prelude/iter.vlt`.
   and `if (!r.done)` narrow it (sema `body/narrow.rs`: a member access tested for truthiness on
   a union local whose discriminant values are all `bool` literals), and a union of `bool`
   literals is a condition (`body/expr/truthiness.rs`).
+- `value` comes first, so a result prints and serializes as in Node (`{ value: 1, done: false
+  }`). Reading `r.value` without narrowing is allowed on an `IteratorResult<T>` (recognized by
+  its shape, `known.rs` `is_iterator_result`) and gives `T | null`, `null` when done: a match
+  on the member (`body/expr/discriminated.rs` `union_field`). TS gives `undefined` there.
 - Errors are typed: `E` is what `next()` throws. `for...of` rethrows it.
+- **TypeScript's spellings** (sema `ts_protocol.rs`): TS's `Generator<T, TReturn, TNext>` (and
+  `Iterator`, `Iterable`, the async twins) read the second argument as the return type. A second
+  argument of `void`, `undefined`, `unknown` or `any`, and any third argument, are dropped
+  (`Generator<number, void, unknown>` is `Generator<number>`; the parser accepts `undefined`
+  there). Any other second argument is `E` and must be an error type (a class extending `Error`,
+  a union of them, an interface, a type parameter); otherwise it can only be TS's `TReturn`, and
+  is an error at the annotation. Checked once base classes are known.
 - Not in the first version: `next(value)` (TS's `TNext`) and `throw()`. A later addition does
   not break code.
 
@@ -70,8 +85,10 @@ They live in `std/prelude/iter.vlt`.
 
 ### Deviations from the accepted text
 
-- `Iterator.return()` has an empty default body (`AsyncIterator.return()` an empty `async` one),
-  so iterators that hold nothing need not write it; TS declares it optional (`return?()`).
+- `Iterator.return()` has a default body returning `{ done: true }` (`AsyncIterator.return()` an
+  `async` one), so iterators that hold nothing need not write it; TS declares it optional
+  (`return?()`). It returns `IteratorResult<T>` as in TS (first built returning `void`, which
+  made the documented pattern throw a `TypeError` in Node); loops ignore the result.
 - `[Symbol.iterator]()` of a class implementing `Iterable<T>` must be declared to return
   `Iterator<T, E>` (implementations match the interface signature exactly; Velt has no
   covariant returns). A class that does not declare `implements Iterable` may return its
@@ -134,7 +151,7 @@ heap box). Array and map loops are untouched.
 | `for (const x of 5)` | `` cannot iterate over a value of type `i64` ``, noting what `for...of` accepts (arrays, `Map`s / `entries()` classes, `[Symbol.iterator]()`) |
 | iterating an iterator | the same, plus "`Counter` looks like an iterator: iterate the iterable that creates it, or give it a `[Symbol.iterator]()` method" |
 | `[Symbol.iterator](): Counter[]` | `` `[Symbol.iterator]()` must return an `Iterator<T>`, found `Counter[]` `` |
-| `next()` returning `{ done: false, value: 1 }` for `Iterator<string>` | the usual type mismatch at the literal |
+| `next()` returning `{ value: 1, done: false }` for `Iterator<string>` | the usual type mismatch at the literal |
 | a loop over `Iterable<T, Read>` in a function `throws Other` | `` `f` throws `Read`, which its `throws` clause does not allow `` at the loop |
 | `next()` throwing in `implements Iterator<i64>` | `` `C.next` throws `Read`, but `Iterator.next` does not allow it ``, noting "`E` is a type argument of `Iterator`: implement `Iterator` with `Read` as `E`" |
 
@@ -290,6 +307,9 @@ async function main() {
   `for...of` over an async iterable says to use `for await`.
 - `yield* src` in an async generator is `for await (const v of src) yield v;`: async
   iterables, and sync ones as in JS (async-from-sync).
+- `yield p` in an async generator, `p: Promise<T, E2>`, is `yield (await p)`, as JS does (sema
+  `expr/tasks.rs` `yielded_awaiting`): the rejection is thrown at the `yield` and `E2` joins
+  the generator's error type. No new HIR: an `Await` inside the `Yield` intrinsic's argument.
 
 ### Lowering (velt_vir `async_fn/generator.rs`)
 
@@ -455,7 +475,9 @@ program compiles to a byte-identical object file before and after this phase.
 
 ## Follow-ups
 
-- `next(value)` / `throw()` and `return value` (TS's `TNext` / `TReturn`).
+- `next(value)` / `throw()` and `return value` (TS's `TNext` / `TReturn`). Today each is an
+  error saying that TS allows it, why Velt doesn't, and what to write, as are using the value
+  of `yield` / `yield*` and `{ done: true, value: undefined }`.
 - Child process stdout/stderr lines and HTTP streaming request/response bodies have chunk pull
   APIs only; a `lines()` method there would follow the same pattern.
 - A generator method implementing an interface with an inferred (unwritten) `E` must write it.

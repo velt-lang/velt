@@ -29,12 +29,13 @@ class CountdownIter implements AsyncIterator<i64> {
       return { done: true };
     }
     this.n -= 1;
-    return { done: false, value: this.n + 1 };
+    return { value: this.n + 1, done: false };
   }
 
-  async return(): Promise<void> {
+  async return(): Promise<IteratorResult<i64>> {
     await sleep(1);
     console.log("countdown closed");
+    return { done: true };
   }
 }
 

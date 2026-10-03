@@ -62,11 +62,13 @@ fn generator_args(cx: &Ctx, ret: TyId, is_async: bool) -> Option<Vec<TyId>> {
 
 /// Is the error type argument written (`Generator<T, E>`), rather than the default? Also when
 /// it is not `never` (`type Gen = Generator<i64, A>`: written in the alias); `never` through an
-/// alias counts as the default.
+/// alias counts as the default, and so does TypeScript's `Generator<T, void>` /
+/// `Generator<T, TReturn, TNext>` (`crate::ts_protocol`).
 fn written_error(sig: &ast::FnSig) -> bool {
     matches!(
         sig.ret.as_ref().map(|t| &t.kind),
-        Some(ast::TypeExprKind::Named { args, .. }) if args.len() == 2
+        Some(ast::TypeExprKind::Named { args, .. })
+            if args.len() == 2 && !crate::ts_protocol::ts_spelling(args)
     )
 }
 
@@ -90,7 +92,7 @@ fn report_bad_result(cx: &mut Ctx, ret: TyId, sig: &ast::FnSig) {
                 sig.name.span,
             )
             .with_note(format!(
-                "write `{g}<T>`, where `T` is the type of the values it yields"
+                "TypeScript allows this (it infers `{g}<T, void, unknown>`); Velt doesn't because the type of the values a generator yields is part of its signature, which is not inferred from its body; write `{g}<T>`, where `T` is the type of the values it yields"
             )),
         );
         return;

@@ -38,11 +38,12 @@ class LineIter implements Iterator<string, ReadError> {
     }
     const line = this.lines[this.i];
     this.i += 1;
-    return { done: false, value: line };
+    return { value: line, done: false };
   }
 
-  return(): void {
+  return(): IteratorResult<string> {
     console.log(`close ${this.name} after ${this.i}`);
+    return { done: true };
   }
 }
 

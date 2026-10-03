@@ -25,7 +25,7 @@ class Lines implements Swapped<Read, string>, Pull<string> {
     if (this.n > 2) {
       throw new Read(`disk gone after ${this.n - 1} lines`);
     }
-    return { done: false, value: `line ${this.n}` };
+    return { value: `line ${this.n}`, done: false };
   }
 }
 

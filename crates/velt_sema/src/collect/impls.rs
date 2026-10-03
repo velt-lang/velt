@@ -236,6 +236,17 @@ fn check_method_sig(
         if is_generator && ps == want_ps {
             let want = cx.display(want_ret);
             d = d.with_note(format!("declare the generator's result as `{want}`: its error type is part of the result type"));
+        } else if name == "return" && ps == want_ps && matches!(iname, "Iterator" | "AsyncIterator")
+        {
+            // `return(): void`: an iterator's early exit returns a finished result, as in TS.
+            let t = iface_args.first().map_or("T".into(), |t| cx.display(*t));
+            let want = match iname {
+                "Iterator" => format!("return(): IteratorResult<{t}>"),
+                _ => format!("async return(): Promise<IteratorResult<{t}>>"),
+            };
+            d = d.with_note(format!(
+                "`return()` returns a finished result, as in TypeScript: declare it `{want}` and end it with `return {{ done: true }};`"
+            ));
         }
         cx.error(d);
     } else if is_getter != m.is_getter {

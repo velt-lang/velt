@@ -37,6 +37,50 @@ impl Ctx<'_> {
         }
     }
 
+    /// Is `t` the prelude's `IteratorResult<T>`, `{ value: T; done: false } | { done: true }`
+    /// (or an object union of that shape)? Its `value` can be read without narrowing
+    /// (`body/expr/discriminated.rs`).
+    pub fn is_iterator_result(&mut self, t: TyId) -> bool {
+        let Some(ms) = self.union_members(t) else {
+            return false;
+        };
+        let mut shapes: Vec<(usize, bool)> = vec![];
+        for m in ms {
+            let n = match self.ty.kind(m) {
+                TyKind::Adt(d, _) => self.adt(*d).map(|a| a.fields.len()),
+                _ => None,
+            };
+            let done = self.field_of(m, "done").map(|(_, f)| self.lit_value(f));
+            match (n, done) {
+                (Some(n), Some(Some(hir::LitValue::Bool(b)))) => shapes.push((n, b)),
+                _ => return false,
+            }
+        }
+        shapes.sort();
+        shapes == [(1, true), (2, false)]
+    }
+
+    /// The methods of std/channel's `Channel<T>` that hand their value to another task (`send`,
+    /// `trySend`), by def: a user type of the same name, or another std type's `send`, is no
+    /// channel.
+    pub fn channel_sends(&self) -> Vec<DefId> {
+        let module = self
+            .modules
+            .iter()
+            .position(|m| m.is_std && m.path == "std/channel");
+        let channel = match module.and_then(|m| self.scopes[m].items.get("Channel")) {
+            Some(Item::Def(d)) => *d,
+            _ => return vec![],
+        };
+        let Some(a) = self.adt(channel) else {
+            return vec![];
+        };
+        ["send", "trySend"]
+            .iter()
+            .filter_map(|n| a.methods.get(*n).map(|m| m.def))
+            .collect()
+    }
+
     /// The prelude's `Generator<T, E>` class: what calling a generator creates.
     pub fn generator_class(&self) -> Option<DefId> {
         self.prelude_adt("Generator")

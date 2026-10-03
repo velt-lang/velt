@@ -9,7 +9,7 @@ class Counter implements Iterator<i64> {
 
   next(): IteratorResult<i64> {
     this.n += 1;
-    return this.n > 3 ? { done: true } : { done: false, value: this.n };
+    return this.n > 3 ? { done: true } : { value: this.n, done: false };
   }
 }
 

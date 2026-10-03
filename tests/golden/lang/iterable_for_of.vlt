@@ -18,7 +18,7 @@ class RangeIter implements Iterator<i64> {
     }
     const v = this.i;
     this.i += 1;
-    return { done: false, value: v };
+    return { value: v, done: false };
   }
 }
 
@@ -60,7 +60,7 @@ class PairIter implements Iterator<[string, Pair]> {
     }
     const p = this.items[this.i];
     this.i += 1;
-    return { done: false, value: [p.key.toUpperCase(), p] };
+    return { value: [p.key.toUpperCase(), p], done: false };
   }
 }
 

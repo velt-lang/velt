@@ -26,11 +26,13 @@
 The prelude declares TypeScript's iteration protocol, without `undefined`:
 
 ```ts
-type IteratorResult<T> = { done: false; value: T } | { done: true };
+type IteratorResult<T> = { value: T; done: false } | { done: true };
 
 interface Iterator<T, E = never> {
   next(): IteratorResult<T> throws E;
-  return(): void {}                       // early exit; the default does nothing
+  return(): IteratorResult<T> {           // early exit; the default does nothing else
+    return { done: true };
+  }
 }
 
 interface Iterable<T, E = never> {
@@ -42,7 +44,12 @@ interface Iterable<T, E = never> {
   `done`, binding each `value` (owned by the loop variable). `src` may be any type with that
   method, a class declaring `implements Iterable<T>` or not, or an `Iterable<T>` value.
 - A finished result has no `value` (Velt has no `undefined`); `if (r.done)` narrows `r` like
-  any [discriminated union](types.md#discriminated-unions).
+  any [discriminated union](types.md#discriminated-unions). Reading `r.value` without narrowing
+  gives `T | null`: `null` when `r` is done (TS: `undefined`), so `g().next().value` works.
+- `return()` returns an `IteratorResult<T>`, as in TS (`{ done: true }`; the loop ignores it).
+  An iterator class that releases something there writes `return(): IteratorResult<T>` and
+  returns `{ done: true }`, which also works in Node (where a `return()` returning nothing
+  makes `break` throw a `TypeError`).
 - **Typed errors**: `E` is what `next()` throws (`never`, the default, means nothing). The loop
   throws it, so a function iterating an `Iterable<T, IoError>` throws `IoError`; a generic
   `function sum<E>(xs: Iterable<i64, E>): i64 throws E` throws what its argument does.
@@ -73,11 +80,12 @@ class Countdown implements Iterator<i64> {
       return { done: true };
     }
     this.n -= 1;
-    return { done: false, value: this.n + 1 };
+    return { value: this.n + 1, done: false };
   }
 
-  return(): void {
+  return(): IteratorResult<i64> {
     console.log(`stopped at ${this.n}`);
+    return { done: true };
   }
 }
 
@@ -108,7 +116,9 @@ for (const n of new From(5)) {
 ```ts
 interface AsyncIterator<T, E = never> {
   next(): Promise<IteratorResult<T>, E>;
-  async return(): Promise<void> {}       // early exit; the default does nothing
+  async return(): Promise<IteratorResult<T>> {   // early exit; the default does nothing else
+    return { done: true };
+  }
 }
 
 interface AsyncIterable<T, E = never> {
@@ -116,9 +126,10 @@ interface AsyncIterable<T, E = never> {
 }
 ```
 
-- `for await (const x of src)` is allowed in async functions and
-  [async generators](functions.md#async-generators); elsewhere it is an error that names the
-  fix. It calls `src[Symbol.asyncIterator]()` once, then awaits `next()` until a result is
+- `for await (const x of src)` is allowed in async functions,
+  [async generators](functions.md#async-generators) and a script's top-level statements (whose
+  generated `main` is then `async`, [Scripts](modules.md#scripts-top-level-statements));
+  elsewhere it is an error that names the fix. It calls `src[Symbol.asyncIterator]()` once, then awaits `next()` until a result is
   `done`. `src` may be any type with that method (a class, an `AsyncIterable<T>` value, an
   [async generator](functions.md#async-generators)).
 - **Typed errors**: the loop rethrows what `next()` rejects with (`E`), like `for...of`.
@@ -159,7 +170,7 @@ class TickIter implements AsyncIterator<i64> {
       return { done: true };
     }
     this.left -= 1;
-    return { done: false, value: this.left };
+    return { value: this.left, done: false };
   }
 }
 

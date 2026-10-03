@@ -179,6 +179,7 @@ fn promise_throws(
 pub(super) fn throws_clause(cx: &mut Ctx, sig: &ast::FnSig, env: &TyEnv) -> Option<DeclaredThrows> {
     let t = sig.throws.as_ref()?;
     let ty = cx.resolve_type(t, env);
+    cx.no_void_error(ty, t.span);
     Some(DeclaredThrows {
         ty: cx.canon_error(Some(ty)),
         span: t.span,

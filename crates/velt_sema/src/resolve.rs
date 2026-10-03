@@ -78,7 +78,11 @@ impl Ctx<'_> {
         let params = params.iter().map(|t| self.resolve_type(t, env)).collect();
         let mut ret = self.resolve_type(ret, env);
         let never = self.ty.never;
-        let err = throws.map(|t| self.resolve_type(t, env));
+        let err = throws.map(|t| {
+            let e = self.resolve_type(t, env);
+            self.no_void_error(e, t.span);
+            e
+        });
         let err = self.canon_error(err).unwrap_or(never);
         let throws = match self.ty.kind(ret).clone() {
             TyKind::Promise(v, e) if err != never => {
@@ -198,7 +202,18 @@ impl Ctx<'_> {
         t: &ast::TypeExpr,
         env: &TyEnv,
     ) -> TyId {
-        let args: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, env)).collect();
+        let protocol = match item {
+            Item::Def(d) if args.len() >= 2 => self.protocol_type(d),
+            _ => None,
+        };
+        let args: Vec<TyId> = match protocol {
+            // TypeScript's `Generator<T, TReturn, TNext>` spellings (`crate::ts_protocol`).
+            Some(p) => match self.protocol_args(p, args, env) {
+                Some(args) => args,
+                None => return self.ty.error,
+            },
+            None => args.iter().map(|a| self.resolve_type(a, env)).collect(),
+        };
         match item {
             Item::Def(d) => self.def_type(d, name, args, t),
             Item::Alias(a) => self.expand_alias(a, args, t),
@@ -223,6 +238,7 @@ impl Ctx<'_> {
             }
             _ => return None,
         };
+        let written = args;
         let args: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, env)).collect();
         if args.len() != arity {
             self.arity_error(name, arity, args.len(), t);
@@ -232,12 +248,26 @@ impl Ctx<'_> {
             "Array" => TyKind::Array(args[0]),
             "Promise" => {
                 let e = args.get(1).copied().unwrap_or(self.ty.never);
+                if let Some(w) = written.get(1) {
+                    self.no_void_error(e, w.span);
+                }
                 let e = self.canon_error(Some(e)).unwrap_or(self.ty.never);
                 TyKind::Promise(args[0], e)
             }
             _ => TyKind::Shared(args[0]),
         };
         Some(self.ty.intern(k))
+    }
+
+    /// `void` written as an error type (`throws void`, `Promise<T, void>`): it throws nothing.
+    pub(crate) fn no_void_error(&mut self, e: TyId, span: velt_common::Span) {
+        if e == self.ty.unit {
+            self.error(
+                velt_common::Diagnostic::error("`void` is not an error type", span).with_note(
+                    "leave the error type out: `throws` and `Promise<T>` without one mean nothing is thrown",
+                ),
+            );
+        }
     }
 
     fn removed_result(&mut self, t: &ast::TypeExpr) -> TyId {

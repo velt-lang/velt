@@ -1,6 +1,7 @@
-iterator_errors.vlt:5:34: error: mismatched types
+iterator_errors.vlt:5:21: error: mismatched types
 expected string, found i64
 iterator_errors.vlt:27:3: error: `total` throws `Read`, which its `throws` clause does not allow
 add `Read` to the `throws` clause, or catch it
 iterator_errors.vlt:35:5: error: `Quiet.next` throws `Read`, but `Iterator.next` does not allow it
+implementations and overrides may throw only what the method they implement declares
 `E` is a type argument of `Iterator`: implement `Iterator` with `Read` as `E`

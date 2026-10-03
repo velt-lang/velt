@@ -4,15 +4,19 @@
 // any `Iterable<T, E>`: it calls `src[Symbol.iterator]()` once, then `next()` until a result
 // is `done`, and calls the iterator's `return()` when the loop is left early (`break`,
 // `return`, a thrown error). `E` is what `next()` throws (`never`: nothing); the loop throws
-// it too. Velt has no `undefined`, so a finished result has no `value`.
+// it too. Velt has no `undefined`, so a finished result has no `value` (reading `r.value`
+// without narrowing gives `T | null`).
 
-export type IteratorResult<T> = { done: false; value: T } | { done: true };
+export type IteratorResult<T> = { value: T; done: false } | { done: true };
 
 export interface Iterator<T, E = never> {
   next(): IteratorResult<T> throws E;
 
   // Early exit: release what the iterator holds. Not called after `next()` reported `done`.
-  return(): void {}
+  // Returns a finished result, as in TS (`for...of` ignores it).
+  return(): IteratorResult<T> {
+    return { done: true };
+  }
 }
 
 export interface Iterable<T, E = never> {
@@ -22,7 +26,9 @@ export interface Iterable<T, E = never> {
 export interface AsyncIterator<T, E = never> {
   next(): Promise<IteratorResult<T>, E>;
 
-  async return(): Promise<void> {}
+  async return(): Promise<IteratorResult<T>> {
+    return { done: true };
+  }
 }
 
 export interface AsyncIterable<T, E = never> {
@@ -41,13 +47,14 @@ export class Generator<T, E = never> implements Iterator<T, E>, Iterable<T, E> {
 
   next(): IteratorResult<T> throws E {
     if (__intrinsic_generator_resume(this)) {
-      return { done: false, value: __intrinsic_generator_value(this) };
+      return { value: __intrinsic_generator_value(this), done: false };
     }
     return { done: true };
   }
 
-  return(): void {
+  return(): IteratorResult<T> {
     __intrinsic_generator_return(this);
+    return { done: true };
   }
 
   // A generator is its own iterator.
@@ -87,7 +94,7 @@ export class AsyncGenerator<T, E = never> implements AsyncIterator<T, E>, AsyncI
     const mine = await this.takeTurn();
     try {
       if (await __intrinsic_async_generator_resume(this)) {
-        return { done: false, value: __intrinsic_async_generator_value(this) };
+        return { value: __intrinsic_async_generator_value(this), done: false };
       }
       return { done: true };
     } finally {
@@ -95,10 +102,11 @@ export class AsyncGenerator<T, E = never> implements AsyncIterator<T, E>, AsyncI
     }
   }
 
-  async return(): Promise<void> {
+  async return(): Promise<IteratorResult<T>> {
     const mine = await this.takeTurn();
     try {
       await __intrinsic_async_generator_return(this);
+      return { done: true };
     } finally {
       this.passTurn(mine);
     }

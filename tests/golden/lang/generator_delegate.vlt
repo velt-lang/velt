@@ -32,11 +32,12 @@ class Steps implements Iterator<string> {
     if (this.n > 3) {
       return { done: true };
     }
-    return { done: false, value: `step${this.n}` };
+    return { value: `step${this.n}`, done: false };
   }
 
-  return(): void {
+  return(): IteratorResult<string> {
     console.log("steps closed");
+    return { done: true };
   }
 }
 

@@ -319,9 +319,11 @@ for (const s of shapes) {
   (``"square"` is not a valid `kind` for `Shape` ``).
 - `x.kind === "circle"` / `!==` and `switch (x.kind)` narrow a local `x`; comparing with an
   impossible literal is an error. A `bool` discriminant is also a condition:
-  `if (r.done)` / `if (!r.done)` narrow `r` of `{ done: false; value: T } | { done: true }`.
+  `if (r.done)` / `if (!r.done)` narrow `r` of `{ value: T; done: false } | { done: true }`.
 - A field every member has (like `kind`) can be read without narrowing; other fields need
-  narrowing (``no field `r` on type `Shape` ``). Fields cannot be assigned through the union.
+  narrowing (``no field `r` on type `Shape` ``), except `value` on an `IteratorResult<T>`, which
+  reads as `T | null` ([Iterables](control-flow.md#iterables)). Fields cannot be assigned through
+  the union.
 - Recursive discriminated unions need a nominal member (a class or struct:
   `class Node { kind: "node"; kids: Tree[] }`), because an alias cannot refer to itself.
 - Payload enums and `match` do not exist; both are errors with a hint to use a discriminated

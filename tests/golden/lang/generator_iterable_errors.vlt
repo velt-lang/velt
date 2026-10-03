@@ -65,7 +65,7 @@ class Twice implements Iterator<i64, Oops> {
     if (this.n > 2) {
       throw new Oops("twice ran out");
     }
-    return { done: false, value: this.n * 10 };
+    return { value: this.n * 10, done: false };
   }
 }
 
