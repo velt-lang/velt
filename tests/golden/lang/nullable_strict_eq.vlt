@@ -1,11 +1,21 @@
 // `===` / `!==` between `T | null` and `T`, both operand orders (#264): identity for classes,
-// by value for primitives, false for null against a value.
+// by value for primitives, false for null against a value; interface and function values too.
 // check: no leaks
 class Job {
   id: i64 = 0;
 }
 
 class Big extends Job {}
+
+interface Shape {
+  area(): i64;
+}
+
+class Sq implements Shape {
+  area(): i64 {
+    return 1;
+  }
+}
 
 function maybe(j: Job, keep: bool): Job | null {
   return keep ? j : null;
@@ -33,6 +43,8 @@ function main() {
   m.set("j", j);
   console.log(m.get("j") === j, k === m.get("j"), m.get("x") === k);
   console.log(j.id);
+  shapes();
+  functions();
   generic();
 }
 
@@ -42,4 +54,29 @@ function same<T>(a: T | null, b: T): bool {
 
 function generic() {
   console.log(same<i64>(1, 1), same<string>(null, "x"), same<i64>(2, 3));
+}
+
+// Interface values compare by the object they refer to.
+function shapes() {
+  const sh: Shape = new Sq();
+  const other: Shape = new Sq();
+  const shn: Shape | null = sh;
+  const none: Shape | null = null;
+  console.log(shn === sh, sh === shn, shn === other, none === sh, sh !== none);
+  const sh2: Shape | null = sh;
+  const oth: Shape | null = other;
+  console.log(shn === sh2, shn === oth, none === none, shn !== oth);
+}
+
+function adder(n: i64): (x: i64) => i64 {
+  return (x: i64): i64 => x + n;
+}
+
+// Function values compare by identity: two closures of one arrow are different functions.
+function functions() {
+  const f = adder(1);
+  const g = adder(2);
+  const fn: ((x: i64) => i64) | null = f;
+  const none: ((x: i64) => i64) | null = null;
+  console.log(fn === f, f === fn, fn === g, none === f, fn !== g);
 }
