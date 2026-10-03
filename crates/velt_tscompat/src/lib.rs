@@ -17,6 +17,24 @@ use std::path::{Path, PathBuf};
 use velt_common::Span;
 use velt_syntax::ast;
 
+/// The code of every rule. The `tsc` oracle (tests/oracle.rs) holds each one to its claim, so a
+/// new rule is listed here and given a sample there.
+pub const RULES: &[&str] = &[
+    "velt-number-type",
+    "bool-type",
+    "number-suffix",
+    "int-cast",
+    "struct",
+    "extend",
+    "throws",
+    "promise-error-type",
+    "interface-body",
+    "velt-import",
+    "outside-import",
+    "jsx-provider",
+    "declare-fn",
+];
+
 /// How serious a [`Finding`] is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Severity {

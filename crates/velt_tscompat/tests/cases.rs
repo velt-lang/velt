@@ -4,17 +4,15 @@
 //! the case with every fix applied (`VELT_BLESS=1` rewrites them). Every case also passes
 //! `velt check` (crates/veltc/tests/ts_compat.rs), so the rules only ever see valid Velt.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 
+use common::{cases_dir, imports, lint_source, parse};
 use velt_common::{FileId, Span};
-use velt_syntax::ast;
 use velt_tscompat::{lint, Finding, LintModule};
 
 const ANNOTATION: &str = "//~";
-
-fn cases_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cases")
-}
 
 /// The cases, sorted.
 fn cases() -> Vec<PathBuf> {
@@ -31,55 +29,11 @@ fn cases() -> Vec<PathBuf> {
     files
 }
 
-fn parse(path: &Path, src: &str) -> ast::Module {
-    let (module, diags) = if path.extension().is_some_and(|e| e == "ts") {
-        velt_syntax::parse_ts_file(FileId(0), src)
-    } else {
-        velt_syntax::parse_file(FileId(0), src)
-    };
-    assert!(diags.is_empty(), "{}: {diags:?}", path.display());
-    module
-}
-
-/// The relative imports of `module`, resolved next to `path` like the loader does.
-fn imports(path: &Path, module: &ast::Module) -> Vec<(String, PathBuf)> {
-    let dir = path.parent().expect("a case has a directory");
-    let mut out = vec![];
-    for item in &module.items {
-        let ast::ItemKind::Import(import) = &item.kind else {
-            continue;
-        };
-        let found = ["vlt", "ts", "tsx"]
-            .iter()
-            .map(|ext| dir.join(format!("{}.{ext}", import.from)))
-            .find(|f| f.is_file());
-        if let Some(file) = found {
-            let file = file.canonicalize().expect("canonical import");
-            out.push((import.from.clone(), file));
-        }
-    }
-    out
-}
-
-/// Lint `src` as the only file in scope, with the default JSX provider unless it names one.
-fn lint_source(path: &Path, src: &str) -> Vec<Finding> {
-    let module = parse(path, src);
-    let canonical = path.canonicalize().unwrap_or(path.to_path_buf());
-    let lint_module = LintModule {
-        path: &canonical,
-        src,
-        imports: imports(path, &module),
-        default_jsx_provider: module.jsx_import_source.is_none(),
-        ast: &module,
-    };
-    lint(&[lint_module], &[canonical.as_path()])
-}
-
 /// `(line, codes)` for every line with findings (1-based lines).
 fn by_line(src: &str, findings: &[Finding]) -> Vec<(usize, Vec<String>)> {
     let mut lines: Vec<(usize, Vec<String>)> = vec![];
     for f in findings {
-        let line = src[..f.span.lo as usize].matches('\n').count() + 1;
+        let line = common::line_of(src, f.span.lo);
         match lines.last_mut() {
             Some((l, codes)) if *l == line => codes.push(f.code.to_string()),
             _ => lines.push((line, vec![f.code.to_string()])),

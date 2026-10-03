@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+mod no_window;
 mod runtime_support;
 
 fn root() -> PathBuf {
@@ -95,7 +96,7 @@ fn lldb_resolves_breakpoints_on_velt_lines() {
         eprintln!("note: needs clang and LLDB on macOS/Linux; skipping");
         return;
     }
-    let lldb_runs = Command::new("lldb")
+    let lldb_runs = crate::no_window::command("lldb")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success());
@@ -110,14 +111,14 @@ fn lldb_resolves_breakpoints_on_velt_lines() {
     let src = work.join("app.vlt");
     let program = "function add(a: i64, b: i64): i64 {\n  const sum = a + b;\n  return sum;\n}\n\nfunction main() {\n  console.log(add(2, 3));\n}\n";
     std::fs::write(&src, program).expect("write source");
-    let o = Command::new(env!("CARGO_BIN_EXE_velt"))
+    let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["build", "app.vlt", "--backend", "llvm"])
         .current_dir(&work)
         .output()
         .expect("velt build");
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let out = output_within(
-        Command::new("lldb")
+        crate::no_window::command("lldb")
             .args([
                 "-b",
                 "-o",

@@ -194,6 +194,14 @@ fn docs_run_the_documentation_tests() {
 }
 
 #[test]
+fn the_tsc_oracle_runs_the_lint_tests() {
+    let p = plan(&["tests/tscompat-oracle/rejected/struct.ts"]);
+    assert_eq!(p.packages, set(&["velt_tscompat"]));
+    assert_eq!(p.veltc, Veltc::Some(set(&["ts_compat"])));
+    assert_eq!(p.goldens, Goldens::None);
+}
+
+#[test]
 fn rules_combine() {
     let p = plan(&[
         "docs/std/fs.md",

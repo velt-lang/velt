@@ -3,14 +3,15 @@
 //! check), and that every rule fixture of `velt_tscompat` is valid Velt.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 use serde_json::Value;
 
+mod no_window;
 mod test_dir;
 
 fn velt(cwd: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_velt"))
+    crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(args)
         .current_dir(cwd)
         .output()
@@ -93,6 +94,24 @@ fn every_fixed_case_passes_velt_check() {
         let target = dir.join(name.file_name().unwrap());
         std::fs::copy(file, &target).unwrap();
         let o = velt(dir, &["check", target.to_str().unwrap()]);
+        assert!(o.status.success(), "{}:\n{}", file.display(), stderr(&o));
+    }
+}
+
+/// The `tsc` oracle's samples of what `tsc` rejects (tests/tscompat-oracle/rejected) are valid
+/// Velt too, so they show what the lint sees. (Its behaviour sample, `declare function`, is
+/// valid only in a package with a native library.)
+#[test]
+fn every_rejected_sample_passes_velt_check() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/tscompat-oracle/rejected");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    files.sort();
+    assert!(files.len() > 5, "{files:?}");
+    for file in files {
+        let o = velt(&dir, &["check", file.to_str().unwrap()]);
         assert!(o.status.success(), "{}:\n{}", file.display(), stderr(&o));
     }
 }
