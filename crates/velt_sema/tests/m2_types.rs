@@ -112,13 +112,18 @@ fn constructor_rules() {
         r.contains("field `a` of class `C` has no default value"),
         "{r}"
     );
-    let r = err_src(
+    ok_src(
         "class A { n: i64; constructor(n: i64) { this.n = n; } }
          class B extends A { constructor() { console.log(1); super(2); } }
          function main() {}",
     );
+    let r = err_src(
+        "class A { n: i64; constructor(n: i64) { this.n = n; } }
+         class B extends A { m: i64 = 0; constructor() { console.log(1); super(2); } }
+         function main() {}",
+    );
     assert!(
-        r.contains("`super(...)` must be the first statement"),
+        r.contains("`super(...)` must be the first statement of the constructor of `B`"),
         "{r}"
     );
     let r = err_src("class C { constructor(a: i64) {} } function main() { new C(); }");
@@ -655,10 +660,30 @@ fn super_runs_exactly_once_before_this() {
             "constructor() { super(this.n); }",
             "`this` cannot be used before `super(...)` has run",
         ),
+        (
+            "constructor() { const k = this.n; super(k); }",
+            "`this` cannot be used before `super(...)` has run",
+        ),
+        (
+            "constructor(c: bool) { if (c) { return; } super(1); }",
+            "returns before calling `super(...)`",
+        ),
+        (
+            "constructor(readonly k: i64) { const j = k; super(j); }",
+            "has the parameter property `k`",
+        ),
+        ("constructor() {}", "add `super(n);` as the first statement"),
     ] {
         let r = err_src(&format!(
             "{base} class B extends A {{ {ctor} }} function main() {{}}"
         ));
         assert!(r.contains(want), "{ctor}: {r}");
     }
+    let r = err_src(
+        "class A { n: i64 = 0; } class B extends A { constructor() {} } function main() {}",
+    );
+    assert!(r.contains("add `super();` as the first statement"), "{r}");
+    ok_src(&format!(
+        "{base} class B extends A {{ constructor(n: i64) {{ if (n < 0) {{ throw new Error(\"n\"); }} const m = n * 2; super(m); }} }} function main() {{}}"
+    ));
 }

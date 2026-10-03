@@ -35,6 +35,7 @@
 
 mod assigned;
 mod const_borrow;
+mod ctor;
 mod defaults;
 mod driver;
 pub(crate) mod expr;
@@ -161,11 +162,8 @@ pub(crate) struct Frame {
     /// Throw sources of the enclosing `try` bodies (innermost last).
     pub tries: Vec<Vec<ThrowSrc>>,
     pub uncaught: Vec<ThrowSrc>,
-    /// `super(...)` is allowed here (the constructor's first statement is `super(...);`).
-    pub super_ok: bool,
-    /// Checking the constructor's first statement (`super(...)` nested in it is an error).
-    pub super_first: bool,
-    pub super_called: bool,
+    /// `super(...)` rules of a constructor (`ctor`).
+    pub sup: ctor::SuperState,
     /// Field paths that conditions narrow (`field_narrow`).
     pub field_tokens: Vec<field_narrow::FieldToken>,
     /// `const`s bound by reference (`const_borrow`).
@@ -194,9 +192,7 @@ impl Frame {
             inferred_ints: Default::default(),
             tries: vec![],
             uncaught: vec![],
-            super_ok: false,
-            super_first: false,
-            super_called: false,
+            sup: Default::default(),
             field_tokens: vec![],
             const_refs: Default::default(),
             mutable_tests: vec![],
@@ -223,8 +219,9 @@ pub(crate) struct FnCx<'a, 'm> {
     pub outer: Vec<Frame>,
     /// The span of a `new Promise` that is the operand of the `await` being checked.
     pub direct_await: Option<Span>,
-    /// Checking the arguments of `super(...)`: `this` is not usable yet.
-    pub super_args: bool,
+    /// In a derived constructor before `super(...)` has run (its arguments included): `this`
+    /// is not usable yet.
+    pub before_super: bool,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -240,7 +237,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             f: frame,
             outer: vec![],
             direct_await: None,
-            super_args: false,
+            before_super: false,
         }
     }
 

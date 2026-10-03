@@ -1,6 +1,7 @@
-// `super(...)` must run exactly once, before `this` is used: as the first statement of a derived
-// constructor, on its own (not inside `if`, a loop, a ternary or a closure), with arguments that
-// do not use `this` or `super.m()`.
+// `super(...)` must run exactly once on every path, before `this` is used: as a statement of its
+// own in a derived constructor (not inside `if`, a loop, a ternary or a closure), with arguments
+// that do not use `this` or `super.m()`. Statements before it may not use `this` or return, and
+// a class with initialized fields or parameter properties needs it first (TypeScript's rules).
 class A {
   x: i64;
   constructor(x: i64) {
@@ -41,9 +42,33 @@ class Twice extends A {
   }
 }
 
-class Late extends A {
+class LateWithField extends A {
+  y: i64 = 1;
   constructor() {
     console.log("before");
+    super(1);
+  }
+}
+
+class LateWithParamProperty extends A {
+  constructor(readonly z: i64) {
+    const w = z * 2;
+    super(w);
+  }
+}
+
+class ThisBeforeSuper extends A {
+  constructor() {
+    console.log(this.x);
+    super(1);
+  }
+}
+
+class ReturnBeforeSuper extends A {
+  constructor(c: bool) {
+    if (c) {
+      return;
+    }
     super(1);
   }
 }
@@ -75,6 +100,25 @@ class NotDerived {
 
 class Missing extends A {
   constructor() {}
+}
+
+class NoCtor {
+  n: i64 = 0;
+}
+
+class MissingNoBaseCtor extends NoCtor {
+  constructor() {
+    console.log("no super");
+  }
+}
+
+class Late extends A {
+  constructor(n: i64) {
+    if (n < 0) {
+      throw new Error("negative");
+    }
+    super(n);
+  }
 }
 
 class Fine extends A {

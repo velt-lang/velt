@@ -76,7 +76,7 @@ impl super::Cx<'_> {
     }
 
     /// `ty` followed by its base classes (an impl for a base class also serves subclasses).
-    fn self_and_bases(&mut self, ty: TyId) -> Vec<TyId> {
+    pub(super) fn self_and_bases(&mut self, ty: TyId) -> Vec<TyId> {
         let mut out = vec![ty];
         let mut cur = ty;
         while let TyKind::Adt(d, args) = self.kind(cur) {

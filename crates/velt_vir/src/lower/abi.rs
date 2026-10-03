@@ -154,7 +154,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
         }
         let abi = lw.cx.ret_abi(ret, lw.throws);
-        lw.lower_body(f);
+        let inits = lw.ctor_inits(def, f);
+        lw.lower_body(f, inits.as_ref());
         let mut symbol = lw.cx.instance_symbol(&f.name, targs);
         if let Some(at) = caller {
             // `_L` never follows a mangled name or `_T` list, so instances stay distinct.
@@ -273,7 +274,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
-    pub(super) fn lower_body(&mut self, f: &FnDef) {
+    /// Lowers the body of `f`; a constructor initializes fields as `inits` says.
+    pub(super) fn lower_body(&mut self, f: &FnDef, inits: Option<&super::construct::CtorInits>) {
         // Outermost scope: owned params, dropped on every return.
         self.push_scope(ScopeKind::Block);
         for p in &f.params[f.captures.len()..] {
@@ -289,9 +291,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.cancel_before_start(f);
         }
         self.push_scope(ScopeKind::Block);
-        for s in &f.body.block.stmts {
+        for (i, s) in f.body.block.stmts.iter().enumerate() {
+            self.run_ctor_inits(inits, i);
             self.stmt(s);
         }
+        self.run_ctor_inits(inits, f.body.block.stmts.len());
         let returns_value = !self.returns_unit();
         if let Some(v) = &f.body.block.value {
             // A trailing value expression of a function body is its return value.

@@ -1,0 +1,26 @@
+B super argument
+A field
+A constructor 1
+B field
+B constructor
+--
+B super argument
+A field
+A constructor 1
+B field
+B constructor
+C field
+--
+Plain argument
+Plain field
+Plain constructor 1
+--
+before super
+Counted field
+42
+caught
+Named ADA!
+ADA!
+Named bob
+tag x
+bob x
