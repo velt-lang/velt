@@ -137,7 +137,11 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
   passing or capturing it adds a reference (so does `.clone()`); it is never deep-copied. For
   64-bit integers, `.add(n)`, `.get()` and `.set(v)` are atomic.
 - `shared(new Mutex<T>(x))` with `m.with((v) => …)`: a synchronous lock. The callback gets the
-  value itself (assigning `v` updates it), returns a result, and must not be async.
+  value itself (assigning `v` updates it), returns a result, and must not be async. The result
+  leaves the lock like a value going to another task: an object the callback made moves out,
+  a part of the protected value comes out as a copy (`m.with((v) => v.inner)` is a snapshot;
+  change the value inside the callback). A function value stored in the value must not have
+  captured a resource without `clone()` (the program stops when the lock is released).
 
 `shared(x)` is a thread boundary like `spawn`: `x` is transferred (moved, or copied when the
 program still references it elsewhere). A function value in it, and an HTTP handler, may be

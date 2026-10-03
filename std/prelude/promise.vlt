@@ -201,6 +201,23 @@ export function promiseNew<T, E>(
   return settlement<T, E>(slot, site, direct);
 }
 
+// The slot's settlement, moved out. A plain value comes out as `with`'s result. One that
+// reaches an object is taken out through `taken` instead: `with`'s result is transferred as it
+// leaves the lock (a copy where it is still shared), but a value settled on this promise's own
+// task is the awaiter's same object (JS identity), and one settled from another task was
+// transferred when it was settled.
+function takeSettlement<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlement<T, E> {
+  const probe: Settlement<T, E> = { status: "pending" };
+  if (!__intrinsic_needs_transfer(probe)) {
+    return slot.with((s) => s.takeOutcome());
+  }
+  const taken: Settlement<T, E>[] = [];
+  slot.with((s) => {
+    taken.push(s.takeOutcome());
+  });
+  return taken.pop() ?? probe;
+}
+
 // Waits for the slot to be settled (holding only the slot, not the executor).
 async function settlement<T, E>(
   slot: shared<Mutex<PromiseSlot<T, E>>>,
@@ -208,7 +225,7 @@ async function settlement<T, E>(
   direct: bool,
 ): Promise<T> throws E {
   await velt_rt_latch_wait(slot.with((s) => s.latch));
-  const outcome = slot.with((s) => s.takeOutcome());
+  const outcome = takeSettlement<T, E>(slot);
   switch (outcome.status) {
     case "fulfilled":
       return outcome.value;

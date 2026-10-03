@@ -252,7 +252,7 @@ impl FnLower<'_, '_> {
         let why = self.uncopyable_why(ty);
         let name = self.cx.type_name(ty);
         self.panic_msg(&format!(
-            "a function value that captured a `{name}` is shared between threads (`shared(...)` or an HTTP handler): each call would share the `{name}` from several threads at once, and {why}"
+            "a function value that captured a `{name}` is shared between threads (`shared(...)`, a `Mutex`'s value, or an HTTP handler): each call would share the `{name}` from several threads at once, and {why}"
         ));
     }
 
