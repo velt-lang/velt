@@ -25,8 +25,14 @@ use crate::defs::FnKind;
 use crate::hir::{self, ExprKind as H, TyId, TyKind};
 
 impl FnCx<'_, '_> {
-    /// `function* (...) { ... }` / `async function* (...) { ... }` as a value.
-    pub(super) fn function_expr(&mut self, d: &ast::FnDecl, span: Span) -> hir::Expr {
+    /// `function* (...) { ... }` / `async function* (...) { ... }` as a value; without a written
+    /// result type it takes the one of the expected function type `exp`, like an arrow.
+    pub(super) fn function_expr(
+        &mut self,
+        d: &ast::FnDecl,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
         let sig = &d.sig;
         if !sig.is_generator {
             self.cx.error(
@@ -41,7 +47,7 @@ impl FnCx<'_, '_> {
         }
         let ret = match &sig.ret {
             Some(t) => self.resolve(t),
-            None => self.cx.ty.unit,
+            None => self.expected_gen_result(exp, sig.is_async),
         };
         let Some((t, e, written)) = crate::collect::expr_result_args(self.cx, ret, sig) else {
             return self.error_expr(span);
@@ -51,6 +57,19 @@ impl FnCx<'_, '_> {
             declared = self.cx.join_errors(declared, Some(e));
         }
         self.gen_closure(d, (ret, t), declared, span)
+    }
+
+    /// The result type of the expected function type `exp` when it is a generator's (`() =>
+    /// Generator<T>`), else unit (reported as a missing result type).
+    fn expected_gen_result(&self, exp: Option<TyId>, is_async: bool) -> TyId {
+        let ret = match exp.map(|t| self.cx.ty.kind(t)) {
+            Some(TyKind::FnPtr { ret, .. }) => *ret,
+            _ => return self.cx.ty.unit,
+        };
+        match self.cx.generator_result_kind(ret) {
+            Some((_, _, a)) if a == is_async => ret,
+            _ => self.cx.ty.unit,
+        }
     }
 
     /// Type parameters and rest parameters are errors (module docs).

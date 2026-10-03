@@ -129,7 +129,7 @@ impl FnCx<'_, '_> {
                 optional,
             } => self.index_expr(object, index, *optional, want, span),
             A::Arrow { .. } => self.closure(e, exp, true),
-            A::Function(d) => self.function_expr(d, span),
+            A::Function(d) => self.function_expr(d, exp, span),
             A::Array(elems) => self.array_lit(elems, exp, span),
             A::Object(props) => self.object_lit(props, exp, span),
             A::StructLit { name, props } => self.struct_lit(name, props, exp, span),

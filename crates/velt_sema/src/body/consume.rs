@@ -346,6 +346,17 @@ impl Synth {
         self.expr(E::Ident(self.ident(name)))
     }
 
+    /// The type named `name` (a builtin like `f64`).
+    pub(super) fn named_type(&self, name: &str) -> ast::TypeExpr {
+        ast::TypeExpr {
+            kind: ast::TypeExprKind::Named {
+                path: vec![self.ident(name)],
+                args: vec![],
+            },
+            span: self.at,
+        }
+    }
+
     pub(super) fn ident_pat(&self, name: &str) -> ast::Pattern {
         ast::Pattern {
             id: ast::NodeId(u32::MAX),

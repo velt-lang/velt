@@ -183,7 +183,10 @@ function main() {
   of them see, and the body may assign it (`count++`). The name of a named expression is not in scope in its body (TS allows recursion through it):
   declare a `function*` to recurse. Type parameters and rest parameters are errors there too;
   declare a `function*`.
-- The return type is required, as for any generator.
+- The return type is required, as for any generator, unless the expression is written where
+  a function type is expected (`return function* () { … }` in a function returning `() =>
+  Generator<string>`, or `const g: Gen = function* () { … }`): then it is that type's result,
+  as for an arrow.
 
 ## Async generators
 

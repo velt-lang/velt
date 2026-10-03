@@ -666,6 +666,9 @@ object from the env's captures (`ctor_state`, shared with async closures).
   reachable from several threads (an HTTP handler's environment); only resources without
   `clone()` are checked there. The expression's own name is not in scope in its body (a function value cannot
   refer to itself); a use says so. Type parameters and rest parameters are errors.
+- Without a written result type, a generator expression takes the result of the function type
+  expected where it stands (`function_expr`'s `exp`), like an arrow; elsewhere the result type
+  stays required.
 - At module level, `const g = function* (...) { ... };` is lifted to the generator function `g`
   (`generic_arrows.rs`, next to generic arrow constants), since module constants must be
   constant expressions.

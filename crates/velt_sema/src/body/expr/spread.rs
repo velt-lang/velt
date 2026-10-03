@@ -307,9 +307,9 @@ impl FnCx<'_, '_> {
                 Some(Src::Iter(c)) => (c.elem, false),
                 None => continue,
             };
-            // Integers spread into a float array are numbers too (`[...[1, 2]]` as `number[]`).
-            let fits =
-                et == elem || (is_array && self.cx.ty.is_int(et) && self.cx.ty.is_float(elem));
+            // Integers spread into a float array are numbers too (`[...[1, 2]]` as `number[]`,
+            // `Math.max(...ints())`).
+            let fits = et == elem || (self.cx.ty.is_int(et) && self.cx.ty.is_float(elem));
             if !fits && !self.cx.ty.has_error(et) {
                 let (from, to) = (self.cx.display(et), self.cx.display(elem));
                 self.cx.err(
@@ -359,7 +359,15 @@ impl FnCx<'_, '_> {
                 }
                 (Some(Src::Iter(c)), _) => {
                     let syn = syn.as_ref().expect("ICE: spread names");
-                    let v = syn.name(&syn.value);
+                    let mut v = syn.name(&syn.value);
+                    if c.elem != elem && self.cx.ty.is_float(elem) {
+                        // An integer into a float array: `<value#N> as f64`.
+                        let ty = self.cx.display(elem);
+                        v = syn.expr(ast::ExprKind::Cast {
+                            expr: Box::new(v),
+                            ty: syn.named_type(&ty),
+                        });
+                    }
                     let push = syn.method(syn.name(&syn.array), "push", vec![v]);
                     self.consume(c, syn, vec![syn.expr_stmt(push)], &mut lets);
                     continue;
