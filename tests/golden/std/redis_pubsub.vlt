@@ -50,18 +50,33 @@ async function main() {
   console.log(show(await psub.next(), p));
   psub.close();
 
-  // A `for await` loop, ended by close() from another task while it waits for the next message
-  // (the closer starts after the first message, so the output does not depend on timing).
+  // A pull loop, ended by close() from another task while `next()` waits (the closer starts
+  // after the first message, so the output does not depend on timing).
   await c.publish(`${p}alerts`, "last");
   let count = 0;
-  for await (const m of sub) {
+  let m = await sub.next();
+  while (m != null) {
     console.log("loop:", show(m, p));
     count++;
     if (count == 1) {
       spawn(closeLater(sub));
     }
+    m = await sub.next();
   }
   console.log("loop ended after", count, "message(s)");
   console.log("next after close:", show(await sub.next(), p));
+
+  // The same with `for await` over a subscriber, ended by close() from another task.
+  const sub2 = await subscribe(url, [`${p}alerts`]);
+  await c.publish(`${p}alerts`, "again");
+  let count2 = 0;
+  for await (const m2 of sub2) {
+    console.log("for await:", show(m2, p));
+    count2++;
+    if (count2 == 1) {
+      spawn(closeLater(sub2));
+    }
+  }
+  console.log("for await ended after", count2, "message(s)");
   c.close();
 }

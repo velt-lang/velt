@@ -234,6 +234,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     }
     fcx.check_returns(&f.name, frame_ret, f.name_span, &block);
     fcx.rec_frame_scopes();
+    fcx.finish_using_shares();
     let frame = std::mem::replace(&mut fcx.f, Frame::new(f.kind, None));
     let info = cx.fn_info_mut(def);
     info.local_kinds = frame.kinds;

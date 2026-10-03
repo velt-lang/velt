@@ -163,6 +163,11 @@ pub(crate) struct Frame {
     pub finally_loops: Option<usize>,
     /// See `FnInfo::soft_moves`.
     pub soft_moves: Vec<Span>,
+    /// `using` variables passed to an async call (receiver or argument), not yet soft moves:
+    /// only a directly awaited call may share one (`expr::tasks`, `using_share`).
+    pub using_shares: Vec<(Span, LocalId)>,
+    /// The `using` locals declared `await using`.
+    pub await_using: std::collections::HashSet<LocalId>,
     /// Locals holding inferred integers (`expr::numbers`).
     pub inferred_ints: std::collections::HashSet<LocalId>,
     /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
@@ -203,6 +208,8 @@ impl Frame {
             finally_depth: 0,
             finally_loops: None,
             soft_moves: vec![],
+            using_shares: vec![],
+            await_using: Default::default(),
             inferred_ints: Default::default(),
             closure_consts: Default::default(),
             tries: vec![],

@@ -174,8 +174,45 @@ async function main() {
   if that cleanup would `await`, it is cancelled instead (its values are dropped, its `finally`
   blocks do not run), like a [cancelled async function](async.md#cancellation). A `finally`
   block cannot `yield`, throw or `break` out, as in a sync generator.
+- **Overlapping calls** are queued, as in JS: a `next()` or `return()` made while an earlier
+  call is still running waits for its turn, and each promise settles with its own step, in
+  call order. A call nobody awaits (a `Promise.race` loser, a call abandoned by `timeout`) still
+  takes its turn; its value is dropped and the next call gets the next one.
+- A stored generator is closed when its last reference goes, like any object
+  ([Memory](memory.md)): when the variable's last use is a `next()` call, that is when the
+  call's promise settles, since the call holds the generator until then. JS never closes an
+  abandoned generator (its `finally` blocks never run); Velt has no garbage collector to wait
+  for, so it closes it as soon as nothing can resume it:
+
+  ```ts
+  async function* ticks(): AsyncGenerator<i64> {
+    try {
+      yield 1;
+      yield 2;
+    } finally {
+      console.log("ticks closed");
+    }
+  }
+
+  async function main() {
+    const g = ticks();
+    const p = g.next();                    // the last use of `g`: `p` holds it now
+    // `p` settled at once (the body reached `yield 1` without awaiting), which released the
+    // last reference: "ticks closed" has been printed.
+    console.log("waiting");
+    const r = await p;
+    if (!r.done) {
+      console.log(r.value);                // 1
+    }
+  }
+  ```
+
+  To keep it open, use it again later (`await g.return()` closes it explicitly).
 - An async generator belongs to the task that created it, like a started promise: it cannot be
-  copied or passed to another task (see above).
+  copied or passed to another task (see above), also not as an `AsyncIterable<T>` or
+  `Iterable<T>` value made at the call (`spawn(sum(gen()))`). An interface value made earlier
+  and stored is not looked into: passing one backed by a generator to `spawn` panics
+  (`a generator cannot be copied`).
 - **Cost**: `for await (const x of agen(a))` with a direct call (or over a class whose
   `[Symbol.asyncIterator]` is an async generator method) keeps the generator's state inside the
   enclosing async function's state, like `await f()` does: no allocation for the generator or

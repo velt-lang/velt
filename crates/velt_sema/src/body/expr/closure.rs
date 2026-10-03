@@ -163,6 +163,7 @@ impl FnCx<'_, '_> {
         self.rec_frame_scopes();
         let body_ret = self.f.ret.unwrap_or(self.cx.ty.unit);
         let parent = self.outer.pop().expect("ICE: closure frame");
+        self.finish_using_shares();
         let frame = std::mem::replace(&mut self.f, parent);
         if is_async {
             self.no_mutated_captures(&frame);

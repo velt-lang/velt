@@ -11,7 +11,7 @@
 //!   blocks and drops (`using` disposals) of the scopes the `yield` is in — then finishes. A
 //!   generator that never started drops its arguments; a finished one does nothing.
 //! - A generator *value* (`Generator<T, E>`, a prelude class) is one heap object
-//!   `[table: ptr][state…]` ([`GEN_STATE_OFF`]); the table holds the instance's resume, close
+//!   `[table: ptr][class fields…][state…]` ([`Cx::gen_state_off`]); the table holds the instance's resume, close
 //!   and free functions (`gen_object.rs`). A `for...of` over a direct call keeps the state in a
 //!   frame local instead (`GeneratorEmbed`): resumed directly, closed by its drop.
 //! - An *async* generator (`async function*`, hir_encodings.md "Async generators") is polled
@@ -36,9 +36,6 @@ pub(super) const GEN_THREW: i128 = 2;
 /// Tag of a generator whose body is running: resuming it again from inside (through a
 /// reference it holds to itself) panics, as JS throws "Generator is already running".
 pub(super) const GEN_RUNNING: i128 = 0x7FFF_FFFE;
-/// Byte offset of the state in a generator object, after the table pointer (states are at most
-/// 8-aligned: no VIR scalar is wider).
-pub(in crate::lower) const GEN_STATE_OFF: i128 = 8;
 /// Byte offsets of the table entries: resume `(state, cx) -> u32`, close `(state)`, free `(obj)`,
 /// and for an async generator close-start `(state)` ([`Work::AsyncCloseStart`]).
 pub(super) const TABLE_RESUME: i128 = 0;
@@ -58,8 +55,8 @@ pub(in crate::lower) struct GenLocal {
 enum GenRef {
     /// Inline state at `state` (a pointer): direct calls of the instance's functions.
     Inline { state: Operand, gen: GenLocal },
-    /// A generator object: through its table.
-    Boxed { obj: Operand },
+    /// A generator object (its state at byte `off`): through its table.
+    Boxed { obj: Operand, off: i128 },
 }
 
 impl Cx<'_> {
@@ -179,10 +176,13 @@ impl FnLower<'_, '_> {
                 return GenRef::Inline { state, gen };
             }
         }
+        let gty = self.sub(g.ty);
+        let off = self.cx.gen_state_off(gty);
         let v = self.expr(g);
         let obj = self.copy_to_temp(v, Ty::Ptr);
         GenRef::Boxed {
             obj: Operand::Copy(Place::local(obj)),
+            off,
         }
     }
 
@@ -190,9 +190,9 @@ impl FnLower<'_, '_> {
     fn gen_state(&mut self, g: &GenRef) -> Operand {
         match g {
             GenRef::Inline { state, .. } => state.clone(),
-            GenRef::Boxed { obj } => self.rvalue_temp(
+            GenRef::Boxed { obj, off } => self.rvalue_temp(
                 Ty::Ptr,
-                Rvalue::Binary(BinOp::PtrAdd, obj.clone(), cint(GEN_STATE_OFF, Ty::U64)),
+                Rvalue::Binary(BinOp::PtrAdd, obj.clone(), cint(*off, Ty::U64)),
             ),
         }
     }
@@ -226,7 +226,7 @@ impl FnLower<'_, '_> {
                 self.call(callee, vec![state, cx], Some(Place::local(r)), false);
                 Operand::Copy(Place::local(r))
             }
-            GenRef::Boxed { obj } => {
+            GenRef::Boxed { obj, .. } => {
                 let f = self.gen_table_entry(obj.clone(), TABLE_RESUME);
                 self.call_entry(f, vec![state, cx], vec![Ty::Ptr, Ty::Ptr], Ty::U32)
             }
@@ -273,7 +273,7 @@ impl FnLower<'_, '_> {
                     .func(Work::AsyncCloseStart(gen.def, gen.targs.clone()));
                 self.call(vir::Callee::Func(f), vec![state], None, false);
             }
-            GenRef::Boxed { obj } => {
+            GenRef::Boxed { obj, .. } => {
                 let f = self.gen_table_entry(obj.clone(), TABLE_CLOSE_START);
                 self.call_entry(f, vec![state], vec![Ty::Ptr], Ty::Unit);
             }
@@ -357,7 +357,7 @@ impl FnLower<'_, '_> {
                 let f = self.cx.func(Work::AsyncDrop(gen.def, gen.targs.clone()));
                 self.call(vir::Callee::Func(f), vec![state], None, false);
             }
-            GenRef::Boxed { obj } => {
+            GenRef::Boxed { obj, .. } => {
                 let f = self.gen_table_entry(obj.clone(), TABLE_CLOSE);
                 self.call_entry(f, vec![state], vec![Ty::Ptr], Ty::Unit);
             }

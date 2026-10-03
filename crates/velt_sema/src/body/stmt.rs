@@ -330,6 +330,9 @@ impl FnCx<'_, '_> {
             }
         }
         let local = self.declare_local(name, ty, kind);
+        if v.kind == ast::VarKind::AwaitUsing {
+            self.f.await_using.insert(local);
+        }
         if let (None, Some(h)) = (ann, &init) {
             self.note_inferred_local(local, h);
         }

@@ -83,7 +83,7 @@ impl FnCx<'_, '_> {
             Resolved::Virtual { def, slot, slots } => {
                 let c = self.fn_callable(def, format!("method `{}`", prop.name));
                 let ck = self.check_call(&c, slots, args, exp, span);
-                let recv = self.receiver(recv, None, self.this_mode(def));
+                let recv = self.receiver(recv, None, self.this_mode(def), self.is_async_fn(def));
                 let mut all = vec![recv];
                 all.extend(ck.args);
                 self.call_throws(def, &ck.type_args, ck.ret, span);
@@ -139,7 +139,12 @@ impl FnCx<'_, '_> {
         self.explicit_type_args(&mut slots, own, type_args, span);
         let ck = self.check_call(&c, slots, args, exp, span);
         self.note_async_args(def, &ck.args);
-        let recv = self.receiver(recv, Some(recv_ty), self.this_mode(def));
+        let recv = self.receiver(
+            recv,
+            Some(recv_ty),
+            self.this_mode(def),
+            self.is_async_fn(def),
+        );
         let mut all = vec![recv];
         all.extend(ck.args);
         self.call_throws(def, &ck.type_args, ck.ret, span);
@@ -150,12 +155,14 @@ impl FnCx<'_, '_> {
         self.mk(kind, ck.ret, span)
     }
 
-    /// The receiver argument: upcast to the declaring type, then used per the `this` mode.
+    /// The receiver argument: upcast to the declaring type, then used per the `this` mode
+    /// (`is_async`: of an async method).
     pub(super) fn receiver(
         &mut self,
         recv: hir::Expr,
         to: Option<TyId>,
         mode: PassMode,
+        is_async: bool,
     ) -> hir::Expr {
         let mut recv = match to {
             Some(t) if t != recv.ty => self.coerce(recv, t),
@@ -173,7 +180,7 @@ impl FnCx<'_, '_> {
                 // is used again or cannot be moved from (a `using` variable), like an argument.
                 let ty = target.ty;
                 if crate::body::places::is_place(target) && self.cx.is_shared_value(ty) {
-                    self.f.soft_moves.push(target.span);
+                    self.soft_move(target, is_async);
                 }
             }
             PassMode::Copy | PassMode::Borrow => set_place_mode(target, UseMode::Borrow),
