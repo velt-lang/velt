@@ -219,11 +219,11 @@ fn link_and_run_on_host() {
 /// window of its own. In a terminal it shares the terminal's console as before, so Ctrl+C still
 /// reaches it.
 fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
-    #[allow(unused_mut)]
-    let mut cmd = std::process::Command::new(program);
+    let cmd = std::process::Command::new(program);
     #[cfg(windows)]
-    {
+    let cmd = {
         use std::os::windows::process::CommandExt;
+        let mut cmd = cmd;
         #[link(name = "kernel32")]
         extern "system" {
             fn GetConsoleWindow() -> *mut std::ffi::c_void;
@@ -233,6 +233,7 @@ fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
         if unsafe { GetConsoleWindow() }.is_null() {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
-    }
+        cmd
+    };
     cmd
 }
