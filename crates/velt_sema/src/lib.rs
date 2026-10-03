@@ -45,6 +45,7 @@ mod known;
 mod literals;
 mod moves;
 mod ownership;
+mod promise_copies;
 mod record_keys;
 mod resolve;
 mod throws;
@@ -184,6 +185,7 @@ fn analyze(cx: &mut ctx::Ctx) {
     ownership::clone_reused(cx, &moved.reused);
     ownership::box_cells(cx, &moved.boxed);
     ownership::check_exclusive(cx);
+    promise_copies::check(cx);
 }
 
 /// Validate the root module's `main`; a missing one is an error only when `require_main`.

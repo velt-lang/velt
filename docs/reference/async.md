@@ -34,7 +34,9 @@ Promises behave like JavaScript's, at Rust's cost:
   `splice(i, 1)`, or awaited with the others by `Promise.all(arr)`. TypeScript lets several
   places hold the same promise; Velt doesn't, so reading a promise element (`arr[i]`) and the
   methods that copy values out (`m.get(k)`, `m.values()`, `arr.at(i)`, `arr.slice()`, …) are
-  compile-time errors for promises (and for moving out values that hold one).
+  compile-time errors for promises and for values that copy one (a struct with a promise
+  field); a class instance holding a promise is shared, so reading it out works. Shared
+  promises, which would make these reads work as in TypeScript, are planned (#212).
 - Values handed to `spawn` (and captured by an HTTP handler) go to another thread: an object
   the program still shares is deep-copied for the task (like a structured clone), so threads
   never share reference counts. That includes the receiver of `spawn(obj.method())` (also

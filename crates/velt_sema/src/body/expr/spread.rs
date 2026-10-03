@@ -356,6 +356,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Stmt {
         let copy = self.cx.is_copy(elem);
+        self.reject_promise_spread(elem, span);
         let mode = if copy { UseMode::Copy } else { UseMode::Borrow };
         let e = self.new_local("<elem>", elem, false, span, LocalKind::Elem);
         let read = self.mk(H::Local(e, mode), elem, span);

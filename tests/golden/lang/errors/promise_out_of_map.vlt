@@ -1,14 +1,13 @@
-// A promise has one owner and can't be copied, so `Map` methods that return copies of the
-// stored values are errors when the values hold promises (they used to panic at run time).
+// `Map` and `Record` reads copy the stored value, so they are errors when the value is a
+// promise or a value type holding one (TypeScript allows them; shared promises are #212). A class
+// instance holding a promise is shared, not copied, so reading it works
+// (lang/promises_in_collections).
 async function work(n: i64): Promise<string> {
   return `done ${n}`;
 }
 
-class Job {
+struct Task {
   run: Promise<string>;
-  constructor(run: Promise<string>) {
-    this.run = run;
-  }
 }
 
 async function main() {
@@ -17,10 +16,17 @@ async function main() {
   const p = m.get("a");
   const all = m.values();
   const pairs = m.entries();
-  const jobs = new Map<string, Job>();
-  jobs.set("j", new Job(work(2)));
-  const j = jobs.get("j");
+  for (const [k, v] of m) {
+    console.log(k);
+  }
+  const tasks = new Map<string, Task>();
+  tasks.set("t", Task { run: work(2) });
+  const t = tasks.get("t");
+  const r: Record<string, Promise<string>> = {};
+  r["x"] = work(3);
+  const x = r["x"];
+  const vals = Object.values(r);
   const results = new Map<string, string>();
-  results.set("ok", await work(3));
+  results.set("ok", await work(4));
   console.log(results.get("ok"), m.has("a"), m.size);
 }

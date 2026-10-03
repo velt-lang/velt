@@ -137,6 +137,9 @@ impl FnCx<'_, '_> {
                 P::Tuple(pats)
             }
             TyKind::Array(e) => {
+                if !elems.is_empty() {
+                    self.reject_promise_destructuring(e, span);
+                }
                 let pats = elems.iter().map(|p| self.pattern(p, e, ctx)).collect();
                 let rest = rest.map(|r| {
                     if !self.cx.is_copy(e) && !self.cx.is_shared_value(e) {

@@ -34,6 +34,12 @@ impl FnCx<'_, '_> {
             None => self.expr(e, None, Want::Borrow),
         };
         let ty = ann.unwrap_or(h.ty);
+        // A promise element bound by reference would be awaited (moved out of the array) later.
+        if matches!(h.kind, H::Index { .. }) && self.cx.holds_promise(ty) && self.binds_promise(ty)
+        {
+            self.promise_out_of_array(ty, e.span);
+            h = self.error_expr(e.span);
+        }
         let pinned = is_place(&h)
             && !self.cx.is_copy(ty)
             && !self.cx.is_string_value(ty)
