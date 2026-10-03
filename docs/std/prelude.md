@@ -111,7 +111,8 @@ console.log(env.HOME ?? "/", Object.keys(env), limits);
 ```
 
 A key of a `Record<string, V>` may be missing, so counting needs a starting value:
-`r[k] += 1` is an error there, and `??` supplies it.
+`r[k] += 1` is an error there, and `??` supplies it. `r[k] ||= v` and `r[k] &&= v` are errors
+too; `r[k] ??= v` sets the key only when it is missing.
 
 ```ts
 const seen: Record<string, i64> = {};

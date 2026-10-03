@@ -20,4 +20,6 @@ function main() {
     console.log(key);
   }
   console.log(Object.values({}));
+  counts["a"] ||= 1;
+  names["x"] &&= "y";
 }

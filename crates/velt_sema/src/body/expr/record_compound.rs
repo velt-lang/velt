@@ -1,8 +1,9 @@
 //! Compound assignment (`r[k] += v`, `r[k]++`) on an *open* record (`Record<string, V>`, or a
 //! type-parameter key): reading a key that may be missing gives `V | null`, and JavaScript's
 //! `undefined + 1` (`NaN`) has no counterpart, so these are errors with a fix-it that says what
-//! a missing key starts from: `r[k] = (r[k] ?? 0) + 1`. `r[k] ??= v` stays allowed (it is
-//! defined for a missing key). Closed records always have every key and keep the compound forms.
+//! a missing key starts from: `r[k] = (r[k] ?? 0) + 1` (for `&&=` and `||=` on values other than
+//! `bool`, which have no `&&` and `||`, the `??=` or `if` form that says what it meant). `r[k] ??= v`
+//! stays allowed (it is defined for a missing key). Closed records always have every key and keep the compound forms.
 //!
 //! Also the other record misuse whose fix-it names the record as written: `for...of` over a
 //! record, which TypeScript code writes over `Object.keys(r)` or `Object.entries(r)`.
@@ -37,7 +38,9 @@ impl FnCx<'_, '_> {
         } else {
             None
         };
+        let logical = matches!(bop, ast::BinaryOp::And | ast::BinaryOp::Or);
         let fix = match start {
+            _ if logical => self.logical_record_fix(v, &place, &rhs, bop),
             Some(s) => format!(
                 "say what a missing key starts from: `{place} = ({place} ?? {s}) {} {rhs}`",
                 op_str(bop)
@@ -59,6 +62,25 @@ impl FnCx<'_, '_> {
 }
 
 impl FnCx<'_, '_> {
+    /// The fix-it for `place &&= rhs` / `place ||= rhs` on an open record with values `v`. Only
+    /// `bool` has `&&` and `||` (numbers and strings are never truthy or falsy), so for other
+    /// values it names what the JavaScript form is used for: setting a missing or a present key.
+    fn logical_record_fix(&self, v: TyId, place: &str, rhs: &str, bop: ast::BinaryOp) -> String {
+        if v == self.cx.ty.bool_ {
+            return format!(
+                "say what a missing key counts as: `{place} = ({place} ?? false) {} {rhs}`",
+                op_str(bop)
+            );
+        }
+        if bop == ast::BinaryOp::Or {
+            format!("to set `{place}` only when the key is missing, use `{place} ??= {rhs}`")
+        } else {
+            format!(
+                "to set `{place}` only when the key is present, write `if ({place} != null) {place} = {rhs}`"
+            )
+        }
+    }
+
     /// `for (... of r)` where `r` (`iter`) is the record type `rec`: records are not iterable.
     pub(crate) fn record_not_iterable(&mut self, rec: TyId, iter: &ast::Expr) {
         let rn = self.cx.display(rec);
