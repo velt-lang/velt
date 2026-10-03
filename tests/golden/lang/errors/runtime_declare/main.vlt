@@ -1,0 +1,10 @@
+// Only the standard library may declare `velt_rt_*` runtime functions: they take raw handles,
+// and user code could call them with forged ones.
+import { free } from "plain";
+
+declare function velt_rt_regex_free(r: u64): void;
+
+function main() {
+  velt_rt_regex_free(4096);
+  free(4096);
+}

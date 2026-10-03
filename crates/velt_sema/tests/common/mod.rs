@@ -418,6 +418,7 @@ pub fn func(name: &str, params: &[(&str, &str)], ret: Option<&str>, body: Vec<St
 pub fn run(items: Vec<Item>) -> (Option<hir::Program>, Diagnostics) {
     let m = SourceModule {
         path: "main".into(),
+        is_std: false,
         file: FileId(0),
         ast: Module {
             items,

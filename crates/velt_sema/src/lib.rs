@@ -62,6 +62,10 @@ pub struct SourceModule {
     /// Canonical module path: `"main"` for the root file, `"std/fs"`, `"./util"` resolved to a
     /// root-relative path like `"util"`, package modules as `"pkgname"` / `"pkgname/sub"`.
     pub path: String,
+    /// Loaded from the standard library root (the loader's `Origin::Std`). Only std modules may
+    /// use compiler intrinsics and the private members of std types; never derived from `path`,
+    /// which user files must not be able to imitate.
+    pub is_std: bool,
     pub file: FileId,
     pub ast: ast::Module,
     /// For each `import ... from "<spec>"` in this module: spec string → canonical path of the

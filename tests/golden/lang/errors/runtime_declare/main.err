@@ -1,0 +1,2 @@
+main.vlt:5:18: error: `velt_rt_regex_free` is a runtime function: only the standard library may declare it
+lib.vlt:2:18: error: `velt_rt_regex_free` is a runtime function: only the standard library may declare it

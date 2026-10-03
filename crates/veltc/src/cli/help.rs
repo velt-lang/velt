@@ -149,7 +149,7 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "dev",
         summary: "Run, then rebuild and restart on every change",
-        usage: &["dev [<file.vlt>] [--exe] [--locked] [-v] [-- <program args>...]"],
+        usage: &["dev [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]"],
         about: "Runs the program like `velt run`, then rebuilds and restarts it whenever a file \
                 it imports (or package.vlt/velt.lock) changes; a failed build leaves the old \
                 version running. The program runs JIT-compiled inside `velt`, and listening \
@@ -161,6 +161,7 @@ pub const COMMANDS: &[CommandHelp] = &[
             BACKEND,
             LOCKED,
             VERBOSE,
+            TIMINGS,
         ],
         examples: &[
             ("velt dev", "develop the current package"),

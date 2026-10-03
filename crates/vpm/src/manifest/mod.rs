@@ -273,6 +273,9 @@ fn check_registry(url: &str) -> Result<(), String> {
 }
 
 fn check_name(name: &str) -> Result<(), String> {
+    if RESERVED_NAMES.contains(&name) {
+        return Err(reserved(name));
+    }
     if is_valid_package_name(name) {
         Ok(())
     } else {
@@ -299,6 +302,9 @@ fn check_import_source(source: &str) -> Result<(), String> {
 }
 
 fn check_dependency_name(name: &str) -> Result<(), String> {
+    if RESERVED_NAMES.contains(&name) {
+        return Err(reserved(name));
+    }
     if is_valid_package_name(name) {
         Ok(())
     } else {
@@ -360,8 +366,17 @@ fn check_native_wasm(wasm: bool) -> Result<(), String> {
 /// Whether `name` is a valid package name: `[a-z][a-z0-9_-]*`.
 pub fn is_valid_package_name(name: &str) -> bool {
     let mut chars = name.chars();
-    matches!(chars.next(), Some('a'..='z'))
+    !RESERVED_NAMES.contains(&name)
+        && matches!(chars.next(), Some('a'..='z'))
         && chars.all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-' | '_'))
+}
+
+/// Names no package may have: a package's modules are named after it (`std/x`), and `std` is the
+/// standard library's namespace.
+pub const RESERVED_NAMES: &[&str] = &["std"];
+
+fn reserved(name: &str) -> String {
+    format!("the package name `{name}` is reserved for the standard library")
 }
 
 /// The root directory of the nearest package enclosing `start` (a file or directory): the first

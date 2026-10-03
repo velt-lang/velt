@@ -1,0 +1,7 @@
+import type { Package } from "velt:package";
+
+export const pkg: Package = {
+  name: "uses-std",
+  version: "0.1.0",
+  dependencies: { std: { path: "_lib" } },
+};

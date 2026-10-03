@@ -22,6 +22,7 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Vec<SourceModule>> {
         .iter()
         .map(|m| SourceModule {
             path: m.path.clone(),
+            is_std: m.is_std,
             file: m.file,
             ast: ast::Module {
                 items: m
@@ -115,6 +116,7 @@ mod tests {
         assert!(d.is_empty(), "{d:?}");
         let m = SourceModule {
             path: "main".into(),
+            is_std: false,
             file: FileId(0),
             ast,
             imports: vec![],

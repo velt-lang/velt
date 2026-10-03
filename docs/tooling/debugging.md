@@ -61,6 +61,10 @@ by the `velt dev` you typed). On Linux each version announces its line tables to
 files and steps by line. macOS is untested; LLDB on Apple platforms reads JIT line tables only
 after `settings set plugin.jit-loader.gdb.enable on`.
 
+Building that debug information costs little: about 1 ms for a 300-function program and 20 ms for
+a 22,000-function one, under 2% of the time to the first run
+([measurements](../../bench/RESULTS.md)). To turn it off, set `VELT_DEV_DEBUG_INFO=0`.
+
 ```sh
 gdb -p "$(pgrep -f 'velt dev --host')"      # then: break app.vlt:12, continue
 lldb -p "$(pgrep -f 'velt dev --host')"     # then: breakpoint set -f app.vlt -l 12, continue
