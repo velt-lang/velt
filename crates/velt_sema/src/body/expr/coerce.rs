@@ -222,7 +222,11 @@ impl FnCx<'_, '_> {
             d = d.with_note(format!("`{e}` has only fields, so it is a data type, like `type {e} = {{ … }}`: a class instance is shared by reference and is not one"))
                 .with_note(note);
         }
-        if e == f && self.is_anon(expected) && self.is_anon(found.ty) {
+        if self.only_optional_differs(expected, found.ty) {
+            d = d.with_note(
+                "an optional field (`a?: T`) may be absent, so it is not a `T | null` field: the two object types differ in which fields may be left out; copy the value to convert it: `{ ...x }`",
+            );
+        } else if e == f && self.is_anon(expected) && self.is_anon(found.ty) {
             // Instances are canonical (crate::anon), except a generic union whose members are
             // themselves unions or nullable: `U | string` at `U = i64 | bool` keeps its own
             // variants (#350).
@@ -269,5 +273,29 @@ impl FnCx<'_, '_> {
     /// Is `found` acceptable where `expected` is required (without conversion)?
     pub fn compatible(&self, expected: TyId, found: TyId) -> bool {
         expected == found || self.cx.ty.is_bottom(found) || expected == self.cx.ty.error
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// `a` and `b` are anonymous object types with the same field names and read types that
+    /// differ only in which fields are optional (`{ a?: T }` and `{ a: T | null }`).
+    fn only_optional_differs(&mut self, a: TyId, b: TyId) -> bool {
+        let (TyKind::Adt(da, aa), TyKind::Adt(db, ab)) =
+            (self.cx.ty.kind(a).clone(), self.cx.ty.kind(b).clone())
+        else {
+            return false;
+        };
+        if !self.cx.same_anon_shape(da, db) {
+            return false;
+        }
+        let fa: Vec<TyId> = self.cx.anon_field_tys(da);
+        let fb: Vec<TyId> = self.cx.anon_field_tys(db);
+        let fa: Vec<TyId> = fa.iter().map(|t| self.cx.subst(*t, &aa)).collect();
+        let fb: Vec<TyId> = fb.iter().map(|t| self.cx.subst(*t, &ab)).collect();
+        let opt = |cx: &crate::ctx::Ctx, d| {
+            cx.adt(d)
+                .map(|x| x.fields.iter().map(|f| f.optional).collect::<Vec<_>>())
+        };
+        fa == fb && opt(self.cx, da) != opt(self.cx, db)
     }
 }

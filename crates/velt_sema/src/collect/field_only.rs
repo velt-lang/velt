@@ -139,11 +139,8 @@ pub(super) fn fill(cx: &mut Ctx) {
     for (_, adt) in pairs {
         let a = cx.adt(adt).expect("ICE: adt");
         let module = a.module;
-        let fields: Vec<(String, crate::hir::TyId, bool)> = a
-            .fields
-            .iter()
-            .map(|f| (f.name.clone(), f.ty, f.readonly))
-            .collect();
+        let fields: Vec<crate::defs::AnonField> =
+            a.fields.iter().map(crate::anon::anon_field).collect();
         let (anon, template) = cx.anon_def_with(&fields, module);
         let (twin, template) = match cx.readonly_twins.get(&anon) {
             Some((plain, None)) => (*plain, template),

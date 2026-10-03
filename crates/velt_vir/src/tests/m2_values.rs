@@ -93,7 +93,8 @@ fn nullable_class_uses_null_niche() {
         Def::Adt(adt(
             "Node",
             AdtKind::Class,
-            vec![("v", t.str, None), ("next", on, Some(null(on)))],
+            // `next: Node | null` (not optional: it prints as `null`).
+            vec![("v", t.str, None), ("next", on, None)],
         )),
     );
     let mut f = FB::new("main", t.unit);

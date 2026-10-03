@@ -96,10 +96,17 @@ impl Ctx<'_> {
 
     /// `{ a: A; b: B }`: the anonymous object type of that shape.
     fn resolve_object(&mut self, fields: &[ast::ObjectTypeField], env: &TyEnv) -> TyId {
-        let mut out: Vec<(String, TyId, bool)> = vec![];
+        let mut out: Vec<crate::defs::AnonField> = vec![];
         let mut spans = vec![];
         for f in fields {
-            let t = self.resolve_type(&f.ty, env);
+            // The declared type: without the `| null` the parser adds for `name?: T`
+            // (`velt_syntax` `or_null`), which the flag stands for (P2, deferred-types.md).
+            let written = if f.optional {
+                written_type(&f.ty)
+            } else {
+                f.ty.clone()
+            };
+            let t = self.resolve_type(&written, env);
             if out.iter().any(|(n, ..)| *n == f.name.name) {
                 self.err(
                     format!("duplicate field `{}` in object type", f.name.name),
@@ -107,7 +114,11 @@ impl Ctx<'_> {
                 );
                 continue;
             }
-            out.push((f.name.name.clone(), t, f.readonly));
+            let flags = crate::defs::FieldFlags {
+                readonly: f.readonly,
+                optional: f.optional,
+            };
+            out.push((f.name.name.clone(), t, flags));
             spans.push(f.name.span);
         }
         if out.iter().any(|(_, t, _)| *t == self.ty.error) {
@@ -325,5 +336,29 @@ impl Ctx<'_> {
         self.union_def(t).is_some()
             || matches!(self.ty.kind(t), TyKind::Adt(d, _)
                 if self.adt(*d).is_some_and(|a| a.kind == crate::hir::AdtKind::Anon))
+    }
+}
+
+/// The type written for an optional field `name?: T`: `T`, without the `| null` the parser adds
+/// (`velt_syntax` `or_null`; the added `null` is the zero-width one at the end). A written type
+/// that already admits `null` (`name?: T | null`) is kept as written.
+fn written_type(ty: &ast::TypeExpr) -> ast::TypeExpr {
+    let ast::TypeExprKind::Union(ms) = &ty.kind else {
+        return ty.clone();
+    };
+    let added =
+        |m: &ast::TypeExpr| matches!(m.kind, ast::TypeExprKind::Null) && m.span.lo == m.span.hi;
+    match ms.last() {
+        Some(last) if added(last) => {
+            let rest = &ms[..ms.len() - 1];
+            match rest {
+                [one] => one.clone(),
+                _ => ast::TypeExpr {
+                    kind: ast::TypeExprKind::Union(rest.to_vec()),
+                    span: ty.span,
+                },
+            }
+        }
+        _ => ty.clone(),
     }
 }

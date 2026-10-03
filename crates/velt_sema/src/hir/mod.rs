@@ -206,11 +206,12 @@ pub struct Program {
     /// Interface implementations (M2): which concrete type implements which interface, with
     /// the method defs in `InterfaceDef::methods` order (defaults already substituted).
     pub impls: Vec<ImplDef>,
-    /// The anonymous object def of each concrete shape (field names and types, in order) that
+    /// The anonymous object def of each concrete shape (field names, types and whether each is
+    /// optional, i.e. has the default `null`, in order) that
     /// lowering sees: no type parameters, and none replaced by a twin before lowering
     /// (readonly erasure). Lowering maps every instance of a generic anonymous def onto these,
     /// so one shape is one type (velt_vir `Cx::canon`).
-    pub anon_shapes: HashMap<Vec<(String, TyId)>, DefId>,
+    pub anon_shapes: HashMap<Vec<(String, TyId, bool)>, DefId>,
     /// The concrete union def of each member list (sorted by type id). Lowering maps an instance
     /// of a generic union whose members are plain types onto it (velt_vir `Cx::canon`).
     pub union_shapes: HashMap<Vec<TyId>, DefId>,
@@ -343,6 +344,10 @@ pub struct FieldDef {
     /// Declared `private` (in this type or the base class that declares it). Interface fields
     /// are never private.
     pub private: bool,
+    /// `name?: T`: may be absent. JSON and printing leave an absent (`null`) one out, as
+    /// JavaScript leaves out a missing key; a `T | null` field with a `null` default is not
+    /// optional.
+    pub optional: bool,
 }
 
 #[derive(Clone, Debug)]

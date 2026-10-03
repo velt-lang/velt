@@ -80,13 +80,18 @@ impl<'h> Cx<'h> {
                 _ => None,
             };
             if let Some(a) = anon {
-                let fields: Vec<(String, TyId)> =
-                    a.fields.iter().map(|f| (f.name.clone(), f.ty)).collect();
-                let key: Vec<(String, TyId)> = fields
+                // An optional field (`a?: T`, default `null`) is part of the shape: `{ a?: T }`
+                // and `{ a: T | null }` print and serialize differently.
+                let fields: Vec<(String, TyId, bool)> = a
+                    .fields
+                    .iter()
+                    .map(|f| (f.name.clone(), f.ty, f.optional))
+                    .collect();
+                let key: Vec<(String, TyId, bool)> = fields
                     .into_iter()
-                    .map(|(n, ft)| {
+                    .map(|(n, ft, opt)| {
                         let ft = self.subst_raw(ft, &args);
-                        (n, self.canon(ft))
+                        (n, self.canon(ft), opt)
                     })
                     .collect();
                 out = match self.concrete_anon(&key) {
@@ -183,7 +188,7 @@ impl<'h> Cx<'h> {
     }
 
     /// Sema's anonymous def with exactly these (concrete) fields, if lowering sees one.
-    fn concrete_anon(&self, key: &[(String, TyId)]) -> Option<DefId> {
+    fn concrete_anon(&self, key: &[(String, TyId, bool)]) -> Option<DefId> {
         self.hir.anon_shapes.get(key).copied()
     }
 
@@ -461,7 +466,7 @@ pub(super) fn int_ty(i: IntTy) -> Ty {
 pub(super) struct AnonShapes {
     memo: HashMap<TyId, TyId>,
     /// The type of each shape that sema has no concrete def for.
-    reps: HashMap<Vec<(String, TyId)>, TyId>,
+    reps: HashMap<Vec<(String, TyId, bool)>, TyId>,
     /// The same for unions, by sorted member list.
     union_reps: HashMap<Vec<TyId>, TyId>,
 }

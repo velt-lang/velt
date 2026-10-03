@@ -177,6 +177,7 @@ pub(crate) fn iface_bound(cx: &mut Ctx, t: &ast::TypeExpr, env: &TyEnv) -> Optio
 
 fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldInfo {
     let mut ty = cx.resolve_type(&f.ty, env);
+    let declared = ty;
     if f.optional && cx.ty.opt_payload(ty).is_none() && ty != cx.ty.error {
         ty = cx.ty.option(ty);
     }
@@ -189,6 +190,7 @@ fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldI
     FieldInfo {
         name: f.name.name.clone(),
         ty,
+        declared,
         span: f.name.span,
         readonly: f.readonly,
         optional: f.optional,

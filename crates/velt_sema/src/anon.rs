@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use velt_common::Span;
 
 use crate::ctx::Ctx;
-use crate::defs::{AdtInfo, DefInfo, FieldInfo, Generics};
+use crate::defs::{AdtInfo, AnonField, DefInfo, FieldFlags, FieldInfo, Generics};
 use crate::hir::{AdtKind, DefId, TyId, TyKind};
 
 impl Ctx<'_> {
@@ -124,18 +124,14 @@ impl Ctx<'_> {
         }
         let a = self.adt(d).filter(|a| a.kind == AdtKind::Anon)?;
         let module = a.module;
-        let templ: Vec<(String, TyId, bool)> = a
-            .fields
-            .iter()
-            .map(|f| (f.name.clone(), f.ty, f.readonly))
-            .collect();
-        // `readonly` flags are part of the shape: `{ readonly v: T0 }` at `string` is
+        let templ: Vec<AnonField> = a.fields.iter().map(anon_field).collect();
+        // The flags are part of the shape: `{ readonly v: T0 }` at `string` is
         // `{ readonly v: string }`, not the writable `{ v: string }`.
-        let fields: Vec<(String, TyId, bool)> = templ
+        let fields: Vec<AnonField> = templ
             .into_iter()
-            .map(|(n, ft, ro)| {
+            .map(|(n, ft, flags)| {
                 let ft = self.ty.subst(ft, args);
-                (n, self.canon_depth(ft, depth + 1), ro)
+                (n, self.canon_depth(ft, depth + 1), flags)
             })
             .collect();
         let (d2, args2) = self.anon_def_with(&fields, module);
@@ -151,8 +147,8 @@ impl Ctx<'_> {
         self.ty.intern(TyKind::Adt(d, args))
     }
 
-    /// The anonymous object type with these fields and `readonly` flags.
-    pub fn anon_type_with(&mut self, fields: &[(String, TyId, bool)], module: usize) -> TyId {
+    /// The anonymous object type with these fields (declared types and flags).
+    pub fn anon_type_with(&mut self, fields: &[AnonField], module: usize) -> TyId {
         let (d, args) = self.anon_def_with(fields, module);
         self.ty.intern(TyKind::Adt(d, args))
     }
@@ -215,19 +211,19 @@ impl Ctx<'_> {
         }
     }
 
-    /// The anonymous object def of this shape (no field readonly) and its type arguments.
+    /// The anonymous object def of this shape (no field readonly or optional) and its type
+    /// arguments.
     pub fn anon_def(&mut self, fields: &[(String, TyId)], module: usize) -> (DefId, Vec<TyId>) {
-        let fields: Vec<(String, TyId, bool)> =
-            fields.iter().map(|(n, t)| (n.clone(), *t, false)).collect();
+        let fields: Vec<AnonField> = fields
+            .iter()
+            .map(|(n, t)| (n.clone(), *t, FieldFlags::default()))
+            .collect();
         self.anon_def_with(&fields, module)
     }
 
-    /// The anonymous object def of this shape (with `readonly` flags) and its type arguments.
-    pub fn anon_def_with(
-        &mut self,
-        fields: &[(String, TyId, bool)],
-        module: usize,
-    ) -> (DefId, Vec<TyId>) {
+    /// The anonymous object def of this shape (declared types and flags) and its type
+    /// arguments.
+    pub fn anon_def_with(&mut self, fields: &[AnonField], module: usize) -> (DefId, Vec<TyId>) {
         let mut params: Vec<u32> = vec![];
         for (_, t, _) in fields {
             crate::types::collect_params(&self.ty, *t, &mut params);
@@ -237,14 +233,14 @@ impl Ctx<'_> {
             .enumerate()
             .map(|(i, p)| (*p, self.ty.param(i as u32)))
             .collect();
-        let norm: Vec<(String, TyId, bool)> = fields
+        let norm: Vec<AnonField> = fields
             .iter()
-            .map(|(n, t, readonly)| {
+            .map(|(n, t, flags)| {
                 let t = self.ty.map(*t, &mut |k| match k {
                     TyKind::Param(i) => new_tys.get(i).copied(),
                     _ => None,
                 });
-                (n.clone(), t, *readonly)
+                (n.clone(), t, *flags)
             })
             .collect();
         let params: Vec<TyId> = params.iter().map(|p| self.ty.param(*p)).collect();
@@ -253,10 +249,16 @@ impl Ctx<'_> {
         }
         let d = self.new_anon_def(&norm, params.len(), module);
         self.anon.insert(norm.clone(), d);
-        if norm.iter().any(|(_, _, readonly)| *readonly) {
-            let plain: Vec<(String, TyId, bool)> = norm
+        if norm.iter().any(|(_, _, flags)| flags.readonly) {
+            let plain: Vec<AnonField> = norm
                 .iter()
-                .map(|(n, t, _)| (n.clone(), *t, false))
+                .map(|(n, t, flags)| {
+                    let flags = FieldFlags {
+                        readonly: false,
+                        ..*flags
+                    };
+                    (n.clone(), *t, flags)
+                })
                 .collect();
             let (twin, _) = self.anon_def_with(&plain, module);
             self.readonly_twins.insert(d, (twin, None));
@@ -265,13 +267,14 @@ impl Ctx<'_> {
     }
 
     /// A fresh anonymous object def with fields `norm` (over `n` type params).
-    fn new_anon_def(&mut self, norm: &[(String, TyId, bool)], n: usize, module: usize) -> DefId {
+    fn new_anon_def(&mut self, norm: &[AnonField], n: usize, module: usize) -> DefId {
         let name = {
             let parts: Vec<String> = norm
                 .iter()
-                .map(|(n, t, readonly)| {
-                    let readonly = if *readonly { "readonly " } else { "" };
-                    format!("{readonly}{n}: {}", self.display(*t))
+                .map(|(n, t, flags)| {
+                    let readonly = if flags.readonly { "readonly " } else { "" };
+                    let q = if flags.optional { "?" } else { "" };
+                    format!("{readonly}{n}{q}: {}", self.display(*t))
                 })
                 .collect();
             format!("{{ {} }}", parts.join(", "))
@@ -303,17 +306,33 @@ impl Ctx<'_> {
         let d = self.alloc_def(Span::DUMMY, DefInfo::Adt(Box::new(info)));
         let fields = norm
             .iter()
-            .map(|(n, t, readonly)| FieldInfo {
-                name: n.clone(),
-                ty: *t,
-                span: Span::DUMMY,
-                readonly: *readonly,
-                optional: false,
-                has_default: false,
-                default: None,
-                default_throws: vec![],
-                private_to: None,
-                inferred_int: false,
+            .map(|(n, t, flags)| {
+                // An optional field reads as `T | null` and may be left out, like a class's
+                // (`body::driver`): its default is `null`, which lowering's JSON and printing
+                // glue reads as "absent".
+                let ty = if flags.optional {
+                    self.ty.option(*t)
+                } else {
+                    *t
+                };
+                let default = flags.optional.then_some(crate::hir::Expr {
+                    kind: crate::hir::ExprKind::Lit(crate::hir::Lit::Null),
+                    ty,
+                    span: Span::DUMMY,
+                });
+                FieldInfo {
+                    name: n.clone(),
+                    ty,
+                    declared: *t,
+                    span: Span::DUMMY,
+                    readonly: flags.readonly,
+                    optional: flags.optional,
+                    has_default: flags.optional,
+                    default,
+                    default_throws: vec![],
+                    private_to: None,
+                    inferred_int: false,
+                }
             })
             .collect();
         self.adt_mut(d).fields = fields;
@@ -324,13 +343,17 @@ impl Ctx<'_> {
 /// `hir::Program::anon_shapes`: every concrete anonymous def lowering sees, by its (erased)
 /// fields. Defs replaced by a twin before lowering (`crate::readonly`) are left out: lowering
 /// never sees them, and a shape must not resolve to one of them.
-pub(crate) fn concrete_shapes(cx: &Ctx) -> HashMap<Vec<(String, TyId)>, DefId> {
+pub(crate) fn concrete_shapes(cx: &Ctx) -> HashMap<Vec<(String, TyId, bool)>, DefId> {
     let mut out = HashMap::new();
     for (i, d) in cx.defs.iter().enumerate() {
         let id = DefId(i as u32);
         if let Some(crate::hir::Def::Adt(a)) = d {
             if a.kind == AdtKind::Anon && a.generics == 0 && !cx.readonly_twins.contains_key(&id) {
-                let key = a.fields.iter().map(|f| (f.name.clone(), f.ty)).collect();
+                let key = a
+                    .fields
+                    .iter()
+                    .map(|f| (f.name.clone(), f.ty, f.optional))
+                    .collect();
                 out.entry(key).or_insert(id);
             }
         }
@@ -350,4 +373,13 @@ pub(crate) fn concrete_unions(cx: &Ctx) -> HashMap<Vec<TyId>, DefId> {
         }
     }
     out
+}
+
+/// Field `f` of an anonymous def as it is interned.
+pub(crate) fn anon_field(f: &FieldInfo) -> AnonField {
+    let flags = FieldFlags {
+        readonly: f.readonly,
+        optional: f.optional,
+    };
+    (f.name.clone(), f.declared, flags)
 }

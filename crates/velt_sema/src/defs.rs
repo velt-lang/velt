@@ -200,10 +200,25 @@ pub(crate) struct MethodRef {
     pub is_static: bool,
 }
 
+/// Flags of a field that are part of an anonymous object type's identity.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) struct FieldFlags {
+    pub readonly: bool,
+    /// `name?: T`: may be absent (read as `T | null`).
+    pub optional: bool,
+}
+
+/// A field of an anonymous object type as it is interned (`crate::anon`): name, declared type
+/// (without the `null` a `?` adds) and flags.
+pub(crate) type AnonField = (String, TyId, FieldFlags);
+
 #[derive(Clone)]
 pub(crate) struct FieldInfo {
     pub name: String,
+    /// The type a read gives: `declared`, or `declared | null` for an optional field.
     pub ty: TyId,
+    /// The written type, without the `null` a `?` adds (`Required` gives it back).
+    pub declared: TyId,
     pub span: Span,
     pub readonly: bool,
     pub optional: bool,

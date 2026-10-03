@@ -128,7 +128,7 @@ impl Ctx<'_> {
                         .collect(),
                     _ => vec![],
                 };
-                tys.into_iter().map(|f| self.ty.subst(f, &args)).collect()
+                tys.into_iter().map(|f| self.subst(f, &args)).collect()
             }
             k => crate::types::children(&k),
         };

@@ -143,8 +143,7 @@ contents.
   `match` don't exist).
 - `Partial`, `Required`, `Readonly`, `Pick` and `Omit` work on concrete object types, also through
   generic aliases like `type WithoutChildren<P> = Omit<P, "children">` (not yet on a type
-  parameter inside a generic function, #350). `Required` also strips `null` from `a: T | null`
-  fields, since `a?: T` *is* `T | null`, and `Pick` rejects a key that isn't a field (`Omit`
+  parameter inside a generic function, #350). `Pick` rejects a key that isn't a field (`Omit`
   warns).
 - Not available: `keyof`, mapped and conditional types, template literal types, the other
   utility types (`Record` aside), index signatures, declaration merging, `namespace`.

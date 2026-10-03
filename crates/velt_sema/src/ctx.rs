@@ -50,8 +50,8 @@ pub(crate) struct Ctx<'m> {
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
     /// Anonymous object types by shape.
-    /// Anonymous object defs by shape: field names, types and `readonly` flags, in order.
-    pub anon: HashMap<Vec<(String, TyId, bool)>, DefId>,
+    /// Anonymous object defs by shape: field names, declared types and flags, in order.
+    pub anon: HashMap<Vec<crate::defs::AnonField>, DefId>,
     /// Object type defs replaced before lowering (`crate::readonly`): anonymous ones with
     /// `readonly` fields → their twin without, and field-only interfaces' object types → the
     /// anonymous object type of their fields. With a template, the twin's type arguments are
@@ -537,7 +537,13 @@ impl<'m> Ctx<'m> {
                     let fs: Vec<String> = a
                         .fields
                         .iter()
-                        .map(|f| format!("{}: {}", f.name, self.display_in(f.ty, &bound)))
+                        .map(|f| {
+                            if f.optional {
+                                format!("{}?: {}", f.name, self.display_in(f.declared, &bound))
+                            } else {
+                                format!("{}: {}", f.name, self.display_in(f.ty, &bound))
+                            }
+                        })
                         .collect();
                     format!("{{ {} }}", fs.join("; "))
                 }

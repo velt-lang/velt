@@ -30,8 +30,12 @@ pub(super) fn has_spread(props: &[ast::ObjectProp]) -> bool {
 
 /// A field value of a spread object literal.
 enum Value<'e> {
-    /// Read out of a spread source.
-    Read(hir::Expr),
+    /// Read out of a spread source; `true` for a source field that is optional (`a?: T`), which
+    /// may be absent (`null`).
+    Read(hir::Expr, bool),
+    /// An optional source field over an earlier value: the earlier value stays when the field
+    /// is absent, as a JavaScript spread copies only the keys an object has (`read ?? earlier`).
+    Over(hir::Expr, Box<Value<'e>>),
     /// An explicit property (`key: value` or shorthand `key`).
     Prop(ast::Ident, Option<&'e ast::Expr>),
 }
@@ -51,9 +55,9 @@ impl FnCx<'_, '_> {
         for p in props {
             let new: Vec<(String, Value)> = match p {
                 ast::ObjectProp::Spread(e) => self
-                    .spread_source(e, &mut lets)
+                    .spread_fields(e, &mut lets)
                     .into_iter()
-                    .map(|(n, h)| (n, Value::Read(h)))
+                    .map(|(n, h, opt)| (n, Value::Read(h, opt)))
                     .collect(),
                 ast::ObjectProp::KeyValue(k, v) => {
                     vec![(k.name.clone(), Value::Prop(k.clone(), Some(v)))]
@@ -74,14 +78,23 @@ impl FnCx<'_, '_> {
                     explicit.push(name.clone());
                 }
                 match entries.iter_mut().find(|(n, _)| *n == name) {
-                    Some(slot) => slot.1 = v,
+                    Some(slot) => {
+                        let prev = std::mem::replace(
+                            &mut slot.1,
+                            Value::Read(self.error_expr(span), false),
+                        );
+                        slot.1 = match v {
+                            Value::Read(h, true) => Value::Over(h, Box::new(prev)),
+                            v => v,
+                        };
+                    }
                     None => entries.push((name, v)),
                 }
             }
         }
         let lit = match target {
-            Some((d, slots)) => self.spread_struct(d, slots, entries, exp, span),
-            None => self.spread_anon(entries, span),
+            Some((d, slots)) => self.spread_struct(d, slots, entries, exp, span, &mut lets),
+            None => self.spread_anon(entries, span, &mut lets),
         };
         self.with_lets(lets, lit)
     }
@@ -120,6 +133,18 @@ impl FnCx<'_, '_> {
         e: &ast::Expr,
         lets: &mut Vec<hir::Stmt>,
     ) -> Vec<(String, hir::Expr)> {
+        self.spread_fields(e, lets)
+            .into_iter()
+            .map(|(n, h, _)| (n, h))
+            .collect()
+    }
+
+    /// [`spread_source`](Self::spread_source), with whether each field is optional.
+    fn spread_fields(
+        &mut self,
+        e: &ast::Expr,
+        lets: &mut Vec<hir::Stmt>,
+    ) -> Vec<(String, hir::Expr, bool)> {
         let h = self.expr(e, None, Want::Borrow);
         let Some((d, args)) = self.adt_of(h.ty) else {
             if !self.cx.ty.is_bottom(h.ty) {
@@ -151,6 +176,7 @@ impl FnCx<'_, '_> {
             out.push((
                 f.name.clone(),
                 self.field_read(&base, i as u32, fty, moves, e.span),
+                f.optional,
             ));
         }
         out
@@ -186,18 +212,30 @@ impl FnCx<'_, '_> {
         self.intrinsic(Intrinsic::Share, vec![field], ty, span)
     }
 
-    fn spread_anon(&mut self, entries: Vec<(String, Value)>, span: Span) -> hir::Expr {
-        let mut fields = vec![];
+    fn spread_anon(
+        &mut self,
+        entries: Vec<(String, Value)>,
+        span: Span,
+        lets: &mut Vec<hir::Stmt>,
+    ) -> hir::Expr {
+        let mut fields: Vec<crate::defs::AnonField> = vec![];
         let mut hs = vec![];
         for (name, v) in entries {
-            let h = match v {
-                Value::Read(h) => h,
-                Value::Prop(k, value) => self.prop_value(&k, value, None),
+            // A field that may still be absent stays optional (`{ ...p }` with `p: Partial<T>`).
+            let absent = matches!(v, Value::Read(_, true));
+            let h = self.spread_value(v, None, span, lets);
+            let (declared, optional) = match self.cx.ty.opt_payload(h.ty) {
+                Some(p) if absent => (p, true),
+                _ => (h.ty, false),
             };
-            fields.push((name, h.ty));
+            let flags = crate::defs::FieldFlags {
+                readonly: false,
+                optional,
+            };
+            fields.push((name, declared, flags));
             hs.push(h);
         }
-        let (def, type_args) = self.anon_def(&fields);
+        let (def, type_args) = self.cx.anon_def_with(&fields, self.module);
         let ty = self.cx.ty.intern(TyKind::Adt(def, type_args.clone()));
         let kind = H::AdtLit {
             def,
@@ -214,6 +252,7 @@ impl FnCx<'_, '_> {
         entries: Vec<(String, Value)>,
         exp: Option<TyId>,
         span: Span,
+        lets: &mut Vec<hir::Stmt>,
     ) -> hir::Expr {
         let a = self.cx.adt(d).expect("ICE: struct");
         let (sname, fields) = (a.name.clone(), a.fields.clone());
@@ -221,9 +260,12 @@ impl FnCx<'_, '_> {
         for (name, v) in entries {
             let i = fields.iter().position(|f| f.name == name);
             let h = match (v, i) {
-                (Value::Read(h), Some(_)) => h,
                 // Extra fields of a spread source are not part of the target type.
-                (Value::Read(_), None) => continue,
+                (Value::Read(..) | Value::Over(..), None) => continue,
+                (v @ (Value::Read(..) | Value::Over(..)), Some(i)) => {
+                    let expected = self.cx.subst_known(fields[i].ty, &slots);
+                    self.spread_value(v, Some(expected), span, lets)
+                }
                 (Value::Prop(k, value), Some(i)) => {
                     self.check_private(fields[i].private_to, &k.name, k.span);
                     self.cx
@@ -243,6 +285,42 @@ impl FnCx<'_, '_> {
             values[i] = Some(h);
         }
         self.finish_struct(d, slots, values, exp, span)
+    }
+
+    /// The HIR value of a spread field (`expected`: the target field's type, if known).
+    fn spread_value(
+        &mut self,
+        v: Value,
+        expected: Option<TyId>,
+        span: Span,
+        lets: &mut Vec<hir::Stmt>,
+    ) -> hir::Expr {
+        match v {
+            Value::Read(h, _) => h,
+            Value::Prop(k, value) => self.prop_value(&k, value, expected),
+            Value::Over(h, prev) => {
+                let prev = match *prev {
+                    // A property under an optional field is evaluated whether or not the field
+                    // is present, as in JavaScript: into a temporary, after the spread sources.
+                    Value::Prop(k, value) => {
+                        let p = self.prop_value(&k, value, expected);
+                        let mode = if self.cx.is_copy(p.ty) {
+                            UseMode::Copy
+                        } else {
+                            UseMode::Move
+                        };
+                        let mut t = self.temp("<spread>", p, lets);
+                        set_place_mode(&mut t, mode);
+                        t
+                    }
+                    prev => self.spread_value(prev, expected, span, lets),
+                };
+                if self.cx.ty.opt_payload(h.ty).is_none() {
+                    return h;
+                }
+                self.nullish_exprs(h, prev, span)
+            }
+        }
     }
 
     /// Array literal with `...xs` elements (see the module docs).

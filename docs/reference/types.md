@@ -166,11 +166,16 @@ has type `T | null`, stored without an extra allocation where possible.
   The target may not call a function yet (`m[key()] ??= v`): store the key in a variable first.
 - `x!` is `x` known not to be `null` (TS's non-null assertion). TypeScript trusts it; Velt
   checks it: a `null` panics with `non-null assertion failed`.
-- `a?: T` is `T | null` everywhere: an optional parameter `b?: T` is `b: T | null = null`
-  (callers may leave it out or pass `null`; it cannot also have a default), an optional class
-  or interface field starts as `null` (and is omitted by `JSON.stringify` when null), and an
-  object literal may leave out any `T | null` field of an object type
+- `a?: T` reads as `T | null`: an optional parameter `b?: T` is `b: T | null = null` (callers
+  may leave it out or pass `null`; it cannot also have a default), and an optional field starts
+  as `null`, meaning absent: `JSON.stringify` and `console.log` leave it out, and a spread
+  (`{ ...a, ...b }`) doesn't copy it over an earlier value, as JavaScript skips a missing key.
+  A field declared `a?: T | null` can't yet tell an absent key from a present `null` (#350).
+  An object literal may leave out any `T | null` field of an object type
   (`{ port: i64; host?: string }` accepts `{ port: 80 }`).
+- In an object type, `?` is part of the type: `{ a?: string }` and `{ a: string | null }` read
+  alike but are different types (the first may be absent), with no implicit conversion between
+  them; copy with `{ ...x }`.
 - `JSON.parse<T>` treats an absent key like an explicit `null` (a `T | null` field may be
   missing); only a `JsonValue` tells them apart: `v.has("a")` vs `v.get("a")?.isNull()`.
 - `x?.a.b` short-circuits the rest of the chain like TypeScript (null when `x` is null; `.b` is
@@ -349,16 +354,16 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   `readonly`, in both directions, and stays the same object.
 - **Utility types** build an object type from a concrete one (an object type, an interface
   with only fields, or a class or struct, whose public fields are used):
-  `Partial<T>` (every field optional), `Required<T>` (every nullable field non-null),
+  `Partial<T>` (every field optional), `Required<T>` (no field optional),
   `Readonly<T>` (every field `readonly`), `Pick<T, K>` (only the fields named in `K`) and
   `Omit<T, K>` (every other field). `K` is a string literal type or a union of them
   (`"id" | "email"`). In `Pick` a name that is not a field is an error; in `Omit` it is a
   warning, as TypeScript accepts it (so `type WithoutChildren<P> = Omit<P, "children">` works
   on types without `children`). The results are ordinary object types: `Pick<User, "name">`
-  *is* `{ name: string }`, and declaration order doesn't matter. Differences from TypeScript:
-  `Required` also removes `null` from fields written `a: T | null` (in Velt `a?: T` is
-  `T | null`, #418); an operator on a type parameter (`Partial<T>` in a generic function) is
-  not supported yet (#350); and a type can't apply one to itself in its own fields
+  *is* `{ name: string }`, and declaration order doesn't matter. As in TypeScript, `Required`
+  removes only the `?`: a field written `a: T | null`, or `a?: T | null`, stays nullable.
+  Differences from TypeScript: an operator on a type parameter (`Partial<T>` in a generic
+  function) is not supported yet (#350); and a type can't apply one to itself in its own fields
   (`interface Node { patches: Partial<Node>[] }`).
 
 ```ts

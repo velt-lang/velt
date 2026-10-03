@@ -269,15 +269,9 @@ impl FnLower<'_, '_> {
     }
 }
 
-/// `x?: T` fields: an option-typed field whose default is `null`.
-pub(super) fn is_optional(f: &hir::FieldDef) -> bool {
-    matches!(
-        f.default,
-        Some(hir::Expr {
-            kind: hir::ExprKind::Lit(hir::Lit::Null),
-            ..
-        })
-    )
+/// `x?: T` fields, which may be absent.
+pub(in crate::lower) fn is_optional(f: &hir::FieldDef) -> bool {
+    f.optional
 }
 
 /// `"name":` with the name escaped like `JSON.stringify` does.

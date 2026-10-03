@@ -56,7 +56,10 @@ impl Cx<'_> {
                 let fs: Vec<String> = a
                     .fields
                     .iter()
-                    .map(|f| format!("{}: {}", f.name, self.type_key_in(f.ty, &env, stack)))
+                    .map(|f| {
+                        let q = if f.optional { "?" } else { "" };
+                        format!("{}{q}: {}", f.name, self.type_key_in(f.ty, &env, stack))
+                    })
                     .collect();
                 stack.pop();
                 format!("{{ {} }}", fs.join("; "))

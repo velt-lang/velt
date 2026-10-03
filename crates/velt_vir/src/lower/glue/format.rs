@@ -241,6 +241,19 @@ impl FnLower<'_, '_> {
             .filter(|(_, _, t, private)| !(*private && self.is_empty_struct(*t)))
             .map(|(i, n, t, _)| (i, n, t))
             .collect();
+        let optional: Vec<bool> = {
+            let def = self.cx.adt_def(d);
+            shown
+                .iter()
+                .map(|(i, _, t)| {
+                    crate::lower::json::write::is_optional(&def.fields[*i as usize])
+                        && matches!(self.cx.kind(*t), TyKind::Option(_))
+                })
+                .collect()
+        };
+        if optional.iter().any(|o| *o) {
+            return self.format_fields_optional(buf, name, place, ty, &shown, &optional);
+        }
         let names: Vec<&String> = shown.iter().map(|(_, n, _)| n).collect();
         let open = match &name {
             Some(n) if names.is_empty() => format!("{n} {{}}"),
@@ -262,6 +275,66 @@ impl FnLower<'_, '_> {
             self.format_nested(buf, &fp, *t);
         }
         self.push_text(buf, " }");
+    }
+
+    /// [`format_fields`](Self::format_fields) for a type with optional fields (`a?: T`): an
+    /// absent one (`null`) is left out, as Node leaves out a missing key, so which fields show
+    /// and where the separators go is decided at run time. `written` is a Bool local, true once
+    /// a field was printed; the opening text is the first field's separator.
+    fn format_fields_optional(
+        &mut self,
+        buf: &Operand,
+        name: Option<String>,
+        place: &Place,
+        ty: TyId,
+        shown: &[(u32, String, TyId)],
+        optional: &[bool],
+    ) {
+        let open = match &name {
+            Some(n) => format!("{n} {{ "),
+            None => "{ ".into(),
+        };
+        let written = self.temp(Ty::Bool);
+        self.assign(
+            Place::local(written),
+            Rvalue::Use(Operand::Const(vir::Const::Bool(false), Ty::Bool)),
+        );
+        for ((index, n, t), opt) in shown.iter().zip(optional) {
+            let fp = self.field_place(place, ty, *index);
+            let skip = self.new_block();
+            if *opt {
+                let some = self.option_is_some(&fp, *t);
+                let print = self.new_block();
+                self.branch(some, print, skip);
+                self.switch_to(print);
+            }
+            let (first, rest, join) = (self.new_block(), self.new_block(), self.new_block());
+            self.branch(Operand::Copy(Place::local(written)), rest, first);
+            self.switch_to(first);
+            self.push_text(buf, &format!("{open}{n}: "));
+            self.goto(join);
+            self.switch_to(rest);
+            self.push_text(buf, &format!(", {n}: "));
+            self.goto(join);
+            self.switch_to(join);
+            self.assign(Place::local(written), Rvalue::Use(FnLower::ctrue()));
+            self.format_nested(buf, &fp, *t);
+            self.goto(skip);
+            self.switch_to(skip);
+        }
+        let (some, none, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(Operand::Copy(Place::local(written)), some, none);
+        self.switch_to(some);
+        self.push_text(buf, " }");
+        self.goto(done);
+        self.switch_to(none);
+        let empty = match &name {
+            Some(n) => format!("{n} {{}}"),
+            None => "{}".into(),
+        };
+        self.push_text(buf, &empty);
+        self.goto(done);
+        self.switch_to(done);
     }
 
     /// A struct without fields (zero-sized).

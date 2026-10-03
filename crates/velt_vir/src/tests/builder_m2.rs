@@ -57,6 +57,14 @@ pub(super) fn adt(name: &str, kind: AdtKind, fields: Vec<(&str, TyId, Option<Exp
             .map(|(n, ty, default)| FieldDef {
                 name: n.into(),
                 ty,
+                // Hand-built fields with a `null` default stand for `x?: T`.
+                optional: matches!(
+                    default,
+                    Some(velt_sema::hir::Expr {
+                        kind: velt_sema::hir::ExprKind::Lit(velt_sema::hir::Lit::Null),
+                        ..
+                    })
+                ),
                 default,
                 private: false,
             })
