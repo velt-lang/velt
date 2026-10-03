@@ -1,0 +1,56 @@
+get 0
+set 1
+get 1
+set 2
+get 2
+set 1
+get 1
+rhs 1
+set 0
+get 0
+get 0
+set 2
+get 2
+set 3
+get 3
+set 6
+bump 6
+pick a
+get 6
+set 7
+pick b
+get 7
+rhs 3
+set 21
+get 21
+set 31
+i 1
+get 31
+set 32
+get 32
+set 33
+get 33
+set 36
+pick c
+get 36
+set 35
+31 33 36 36 15
+get text
+set text ab
+get text
+set text abc
+abc
+get name
+fallback first
+set name first
+get name
+get flag
+set flag true
+get flag
+get flag
+set flag false
+get flag
+get text
+get name
+get flag
+abc first false

@@ -103,8 +103,11 @@ hidden classes and no runtime shape checks.
   `static readonly NAME: T = const;` constants (`Account.LIMIT`, `Math.PI`). Mutable statics
   and `protected` members don't exist (only a constructor can be `protected`).
 - **Getters and setters**: `get size(): T { … }` is read as a property (`x.size`) and cannot be
-  called or assigned; `set size(v: T) { … }` runs on `x.size = v`; with both, `x.size += 1` and
-  `x.size++` use both. Implementations and overrides of a getter or setter must be accessors
+  called or assigned; `set size(v: T) { … }` runs on `x.size = v`; with both, `x.size += 1`,
+  `x.size++` and `x.size ??= v` (also `||=`, `&&=`) use both, as in JS: `x` is evaluated once,
+  then the getter runs, then the right-hand side, then the setter (which `??=`, `||=` and `&&=`
+  skip when the old value decides). A getter may change its object (a signal recording who
+  read it). `x.size ??= v` cannot be used as a value. Implementations and overrides of a getter or setter must be accessors
   too. Getters cannot be `static` or `async`.
 - Instances are references, as in JS ([Memory model](memory.md#values-and-references)):
   `const b = a` refers to the same object. `x.clone()` makes an independent deep copy of any
