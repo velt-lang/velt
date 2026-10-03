@@ -3,7 +3,8 @@
 // `splice`, awaited together with
 // `Promise.all`, counted or removed in a `Map`
 // without being read; a class instance holding a promise is shared, so reading it out of an
-// array or a `Map` works. Copying a promise is an error (lang/errors/promise_out_of_array,
+// array or a `Map` works, and so does building a subclass instance that holds one (its
+// overrides copy nothing until it is used as its base class). Copying a promise is an error (lang/errors/promise_out_of_array,
 // promise_out_of_map).
 async function work(n: i64): Promise<string> {
   return `done ${n}`;
@@ -15,6 +16,25 @@ class Job {
   constructor(name: string, run: Promise<string>) {
     this.name = name;
     this.run = run;
+  }
+}
+
+class Cell<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+  peek(): T | null {
+    return null;
+  }
+}
+
+class LoudCell<T> extends Cell<T> {
+  constructor(v: T) {
+    super(v);
+  }
+  override peek(): T | null {
+    return this.v;
   }
 }
 
@@ -42,4 +62,7 @@ async function main() {
   if (b != null) {
     console.log(b.name);
   }
+
+  const loud = new LoudCell(work(9));
+  console.log("built");
 }

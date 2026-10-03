@@ -49,6 +49,12 @@ struct Facts {
 struct Collect<'a> {
     facts: &'a mut Facts,
     ctors: &'a HashMap<DefId, DefId>,
+    /// Constructors: `super(...)` passes `this` upcast to one.
+    ctor_fns: &'a HashSet<DefId>,
+    /// Spans of `this` upcast for a base constructor (`super(...)`), which is not a use of the
+    /// subclass as its base: counting it would give every subclass constructor its overrides'
+    /// copies.
+    super_receivers: HashSet<Span>,
 }
 
 impl VisitMut for Collect<'_> {
@@ -70,8 +76,22 @@ impl VisitMut for Collect<'_> {
             }
             E::Call {
                 callee: Callee::Def(d, targs),
-                ..
-            } if !targs.is_empty() => self.facts.calls.push((*d, targs.clone(), e.span)),
+                args,
+            } => {
+                if self.ctor_fns.contains(d) {
+                    if let Some(
+                        recv @ Expr {
+                            kind: E::Upcast(_), ..
+                        },
+                    ) = args.first()
+                    {
+                        self.super_receivers.insert(recv.span);
+                    }
+                }
+                if !targs.is_empty() {
+                    self.facts.calls.push((*d, targs.clone(), e.span));
+                }
+            }
             // A constructor copies from its arguments (`new Map(entries)`); without any (only
             // empty array literals) there is nothing to copy.
             E::New {
@@ -90,6 +110,11 @@ impl VisitMut for Collect<'_> {
             }
             // Dynamic dispatch: the methods a class value's vtable can reach.
             E::ToDyn { expr, .. } => self.facts.dispatch.push((expr.ty, e.span)),
+            // A subclass instance used as its base: virtual calls on the base reach the
+            // subclass's overrides, which the receiver's (base) type doesn't list.
+            E::Upcast(inner) if !self.super_receivers.contains(&e.span) => {
+                self.facts.dispatch.push((inner.ty, e.span));
+            }
             E::Call {
                 callee: Callee::Virtual { .. },
                 args,
@@ -180,6 +205,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
             _ => None,
         })
         .collect();
+    let ctor_fns: HashSet<DefId> = ctors.values().copied().collect();
     let mut out = vec![];
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
@@ -197,6 +223,8 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
             &mut Collect {
                 facts: &mut facts,
                 ctors: &ctors,
+                ctor_fns: &ctor_fns,
+                super_receivers: HashSet::new(),
             },
         );
         out.push((DefId(i as u32), facts));
