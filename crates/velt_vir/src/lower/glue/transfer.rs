@@ -353,7 +353,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.branch(one, unique, shared);
         lw.switch_to(shared);
         if let Some(t) = uncopyable {
-            lw.panic_uncopyable(t);
+            // The function value is still used here (or held elsewhere), so the task would
+            // need a copy of its environment.
+            let why = lw.uncopyable_why(t);
+            let name = lw.cx.type_name(t);
+            lw.panic_msg(&format!(
+                "cannot copy a function value that captured a `{name}` for another task: the function value is still used here, and {why}"
+            ));
         }
         let clone = cfunc(lw.cx.func(Work::EnvClone(def, targs.to_vec())));
         let ev = Operand::Copy(Place::local(env));

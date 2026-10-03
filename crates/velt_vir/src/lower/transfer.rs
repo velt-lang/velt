@@ -234,10 +234,10 @@ impl FnLower<'_, '_> {
         match (part == ty, promise) {
             (_, true) => "it holds a promise, which cannot be copied".to_string(),
             (true, false) => {
-                "it owns a resource ([Symbol.dispose]) and has no clone() method".to_string()
+                "it owns a resource ([Symbol.dispose]) without a clone() method".to_string()
             }
             (false, false) => format!(
-                "it holds a `{pname}`, which owns a resource ([Symbol.dispose]) and has no clone() method"
+                "it holds a `{pname}`, which owns a resource ([Symbol.dispose]) without a clone() method"
             ),
         }
     }

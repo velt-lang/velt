@@ -1,0 +1,1 @@
+panic: a function value that captured a `Conn` is shared between threads (`shared(...)` or an HTTP handler): each call would share the `Conn` from several threads at once, and it owns a resource ([Symbol.dispose]) without a clone() method
