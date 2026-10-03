@@ -51,6 +51,11 @@ hidden classes and no runtime shape checks.
   `const b = a` refers to the same object. `x.clone()` makes an independent deep copy of any
   class, struct or union (like `structuredClone`), except values owning a `[Symbol.dispose]`
   resource, which may define `clone()` themselves.
+- **Symbol method names**: `[Symbol.iterator]()` and `[Symbol.asyncIterator]()` (the
+  [iteration protocol](control-flow.md#iterables)), `[Symbol.dispose]()` and
+  `[Symbol.asyncDispose]()` ([resource cleanup](memory.md#resource-cleanup-using-and-symboldispose))
+  name methods as in TypeScript and are called as `x[Symbol.iterator]()`. Other symbols do not
+  exist.
 - Async methods take `this` by value: the promise owns it.
 - An overridden method returning a promise reports its errors through the promise: when the
   base method or any override can fail, all of them must be `async`
@@ -244,7 +249,9 @@ Classes, structs, interfaces and functions take type parameters (`class Stack<T>
 `interface Box<T>`, `function f<T extends Comparable<T>>`). Every instantiation is compiled
 separately (monomorphization): no boxing, and bounds resolve to direct calls. Bounds are
 interfaces (an interface with only fields is satisfied by any type with its fields), not object
-types. There are no default type arguments.
+types. Classes, structs, interfaces and type aliases may give type parameters **defaults**
+(`interface Iterator<T, E = never>`), used when a type leaves the argument out (`Iterator<i64>`
+is `Iterator<i64, never>`); functions and methods cannot.
 
 ```ts
 class Stack<T> {

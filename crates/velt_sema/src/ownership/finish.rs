@@ -44,7 +44,7 @@ pub(super) fn demote_fn_values(cx: &mut Ctx) {
 /// Fixed-ABI functions cannot reassign a borrowed (non-Copy) param.
 pub(super) fn reassigned_fixed_params(cx: &mut Ctx, d: DefId, f: &mut FnDef) {
     let info = cx.fn_info(d);
-    if !info.fixed_modes || info.is_async || info.kind == FnKind::Extern {
+    if !info.fixed_modes || info.is_async || info.is_generator || info.kind == FnKind::Extern {
         return;
     }
     let what = match info.kind {

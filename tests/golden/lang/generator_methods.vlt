@@ -1,0 +1,112 @@
+// check: no leaks
+// Generator methods (`*name()`, `static *name()`, `*[Symbol.iterator]()`) see `this` when they
+// run, not when they are called: the generator keeps a reference to the object, like the
+// arguments and locals it captures. A class whose `[Symbol.iterator]` is a generator method is
+// iterable without an iterator class.
+class Playlist implements Iterable<string> {
+  name: string;
+  songs: string[] = [];
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  add(song: string): void {
+    this.songs.push(song);
+  }
+
+  *[Symbol.iterator](): Iterator<string> {
+    for (const s of this.songs) {
+      yield `${this.name}: ${s}`;
+    }
+  }
+
+  *shuffled(seed: i64): Generator<string> {
+    const n = this.songs.length as i64;
+    for (let i = 0; i < n; i++) {
+      yield this.songs[((i * seed) % n) as usize];
+    }
+  }
+
+  static *numbered(items: string[]): Generator<string> {
+    let i = 1;
+    for (const it of items) {
+      yield `${i}. ${it}`;
+      i++;
+    }
+  }
+}
+
+class Point {
+  x: i64;
+  y: i64;
+
+  constructor(x: i64, y: i64) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+// Captures an object argument and builds new objects per item.
+function* path(start: Point, steps: i64): Generator<Point> {
+  for (let i = 0; i < steps; i++) {
+    yield new Point(start.x + i, start.y - i);
+  }
+}
+
+class Holder {
+  gen: Generator<string> | null = null;
+}
+
+function holding(p: Playlist): Holder {
+  const h = new Holder();
+  h.gen = p.shuffled(1);
+  return h;
+}
+
+function count(src: Iterable<string>): i64 {
+  let n = 0;
+  for (const _ of src) {
+    n++;
+  }
+  return n;
+}
+
+function main(): void {
+  const p = new Playlist("mix");
+  p.add("one");
+  p.add("two");
+  p.add("three");
+  for (const s of p) {
+    console.log(s);
+  }
+  console.log(count(p));
+
+  // The generator reads `this` lazily: a change before the first `next()` is seen.
+  const later = p.shuffled(2);
+  p.add("four");
+  for (const s of later) {
+    console.log(`shuffled ${s}`);
+  }
+  for (const s of Playlist.numbered(["a", "b"])) {
+    console.log(s);
+  }
+
+  const origin = new Point(10, 10);
+  const pts: Point[] = [];
+  for (const q of path(origin, 3)) {
+    pts.push(q);
+  }
+  origin.x = 0;
+  for (const q of pts) {
+    console.log(q.x, q.y);
+  }
+
+  const g = holding(p).gen;
+  if (g != null) {
+    const r = g.next();
+    if (!r.done) {
+      console.log(`held ${r.value}`);
+    }
+  }
+}

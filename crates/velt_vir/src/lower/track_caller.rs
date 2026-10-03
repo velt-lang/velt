@@ -20,7 +20,7 @@ impl Cx<'_> {
         let hir_prog = self.hir;
         let tracked = match (hir_prog.def(def), self.locs.as_ref()) {
             (hir::Def::Fn(f), Some(m))
-                if m.is_std(f.span) && !f.is_async && f.captures.is_empty() =>
+                if m.is_std(f.span) && !f.is_async && !f.is_generator && f.captures.is_empty() =>
             {
                 let mut callees = vec![];
                 let direct = block_panics(&f.body.block, &mut callees);

@@ -1,0 +1,10 @@
+30
+parse failed at line 2
+first 10
+next threw: bad line 2
+done after error: true
+bounded 0
+bounded 1
+bounded 2
+limit: over 2
+ok 10

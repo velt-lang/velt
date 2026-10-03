@@ -1,0 +1,22 @@
+// `for...of` over a direct generator call: the generator's state lives in the loop (no
+// allocation, no `IteratorResult`), resumed directly. Compare with hand_loop.vlt.
+function* range(n: i64): Generator<i64> {
+  let i = 0;
+  while (i < n) {
+    yield i;
+    i++;
+  }
+}
+
+function main(): void {
+  let sum = 0;
+  for (let round = 0; round < 20; round++) {
+    for (const x of range(30000000)) {
+      sum += x;
+      if (sum >= 1000000007) {
+        sum -= 1000000007;
+      }
+    }
+  }
+  console.log(sum);
+}

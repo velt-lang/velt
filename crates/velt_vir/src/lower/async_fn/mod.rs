@@ -26,6 +26,8 @@ mod all;
 mod all_settle;
 mod channel;
 mod ctor;
+mod gen_object;
+mod generator;
 mod handler;
 mod kept;
 mod spill;
@@ -38,6 +40,7 @@ mod widen;
 
 use std::collections::HashMap;
 
+pub(super) use generator::GenLocal;
 use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId, TyKind};
 
 use super::flags::FlagScan;
@@ -50,6 +53,10 @@ use crate::vir::{
 const PLACEHOLDER: AggId = AggId(u32::MAX);
 /// Tag bit that turns a resume into a cancellation (set by the drop function).
 const DROP_BIT: i128 = 0x8000_0000;
+/// Tag bit that turns a resume of an async generator into its *awaited* close (generator.rs:
+/// `return()`): at a `yield` it runs the `finally` blocks and disposals, which may `await`.
+/// `DONE | CLOSE_BIT` is `DONE`.
+const CLOSE_BIT: i128 = 0x4000_0000;
 /// Tag of a finished state machine (never resumed; dropping it is a no-op).
 const DONE: i128 = 0x7FFF_FFFF;
 
@@ -71,6 +78,12 @@ pub(super) struct AsyncCx {
     /// Entry dispatch: (tag, block).
     cases: Vec<(i128, BlockId)>,
     next_tag: i128,
+    /// The resume function of a generator (generator.rs): `yield`s suspend, results are
+    /// `GEN_DONE` / `GEN_YIELDED` / `GEN_THREW`.
+    generator: bool,
+    /// The poll function of an async generator: also `await`s suspend (PENDING, 0), and the
+    /// results are the `GEN_*` codes plus one (generator.rs `gen_code`).
+    async_gen: bool,
 }
 
 impl Cx<'_> {
@@ -98,6 +111,10 @@ impl Cx<'_> {
     /// Result type and thrown type of a *call* of `f`: an async function's call yields
     /// `Promise<T, E>` and never throws (its errors surface at `await`). Unsubstituted.
     pub(super) fn call_sig(&mut self, f: &FnDef) -> (TyId, Option<TyId>) {
+        if f.is_generator {
+            // The call creates the generator; its errors come out of `next()`.
+            return (f.ret, None);
+        }
         if f.is_async {
             let r = self.async_result(f);
             let never = self.intern(TyKind::Never);
@@ -110,9 +127,9 @@ impl Cx<'_> {
         }
     }
 
-    /// Is `def` a compiled async function?
+    /// Is `def` a compiled async function (not an async generator)?
     pub(super) fn is_async_fn(&self, def: DefId) -> bool {
-        matches!(self.hir.def(def), hir::Def::Fn(f) if f.is_async)
+        matches!(self.hir.def(def), hir::Def::Fn(f) if f.is_async && !f.is_generator)
     }
 
     /// Build `f$poll` and record the state layout in `asyncs`.
@@ -160,9 +177,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
     fn lower_poll_body(&mut self, f: &FnDef, shared: Option<Vec<PassMode>>) -> Vec<Option<Local>> {
         let state = self.new_local(Ty::Ptr, Some("state".into()));
         let cx = self.new_local(Ty::Ptr, Some("cx".into()));
-        let result = self.cx.async_result(f);
-        self.ret_ty = Some(self.sub(result));
         let targs = self.targs.clone();
+        let result = match f.is_generator {
+            true => self.cx.gen_args(f, &targs).0,
+            false => self.cx.async_result(f),
+        };
+        self.ret_ty = Some(self.sub(result));
         self.throws = self.cx.fn_throws(f, &targs);
         self.out_ptr = Some(state);
         let start = self.new_block();
@@ -172,8 +192,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
             cx,
             cases: vec![(0, start)],
             next_tag: 1,
+            generator: f.is_generator,
+            async_gen: f.is_generator && f.is_async,
         });
         self.switch_to(start);
+        if f.is_generator {
+            self.set_tag(generator::GEN_RUNNING);
+        }
         let scan = FlagScan::run(self.cx.hir, &f.body);
         self.ref_bindings = scan.ref_bindings.iter().copied().collect();
         let inputs = self.declare_async_locals(f, shared);
@@ -251,10 +276,46 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.assign(p, Rvalue::Use(cint(tag, Ty::U32)));
     }
 
-    /// Terminator of a completed body: the result is stored, report READY.
+    /// Terminator of a completed body: the result is stored, report READY (a generator: DONE).
     pub(super) fn finish_poll(&mut self) {
         self.set_tag(DONE);
-        self.terminate(Terminator::Return(cint(1, Ty::U32)));
+        let ready = if self.in_generator() {
+            self.gen_code(generator::GEN_DONE)
+        } else {
+            1
+        };
+        self.terminate(Terminator::Return(cint(ready, Ty::U32)));
+    }
+
+    /// Terminator of a body that threw (`Err` stored): READY, or a generator's THREW.
+    pub(in crate::lower) fn finish_poll_err(&mut self) {
+        if !self.in_generator() {
+            return self.finish_poll();
+        }
+        self.set_tag(DONE);
+        let threw = self.gen_code(generator::GEN_THREW);
+        self.terminate(Terminator::Return(cint(threw, Ty::U32)));
+    }
+
+    /// Dispatch cases of a cancel block `d` of suspension `k`: `DROP_BIT | k`, and for an async
+    /// generator also `CLOSE_BIT | k` (closing it while it awaits cancels the await).
+    fn cancel_cases(&mut self, k: i128, d: BlockId) {
+        let a = self.actx();
+        a.cases.push((DROP_BIT | k, d));
+        if a.async_gen {
+            a.cases.push((CLOSE_BIT | k, d));
+        }
+    }
+
+    /// End of a cancel block: in an async generator, which may be polled again (`next()` after
+    /// a closing `return()`), it is DONE.
+    fn finish_cancel(&mut self) {
+        if !self.actx().async_gen {
+            return self.terminate(Terminator::Return(cint(0, Ty::U32)));
+        }
+        self.set_tag(DONE);
+        let done = self.gen_code(generator::GEN_DONE);
+        self.terminate(Terminator::Return(cint(done, Ty::U32)));
     }
 
     /// Cancellation before the first poll: drop the owned inputs (their drop flags, if any,
@@ -272,9 +333,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 self.drop_glue(place, ty);
             }
         }
-        self.terminate(Terminator::Return(cint(0, Ty::U32)));
+        // Finished: a generator closed before it started is done (`next()` after `return()`).
+        self.set_tag(DONE);
+        let done = match self.in_generator() {
+            true => self.gen_code(generator::GEN_DONE),
+            false => 0,
+        };
+        self.terminate(Terminator::Return(cint(done, Ty::U32)));
         self.switch_to(saved);
-        self.actx().cases.push((DROP_BIT, d));
+        self.cancel_cases(0, d);
     }
 
     /// Fill the entry block: `switch state.tag`.
@@ -282,6 +349,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.switch_to(BlockId(0));
         let tp = self.tag_place();
         let tag = self.rvalue_temp(Ty::U32, Rvalue::Use(Operand::Copy(tp)));
+        if self.in_generator() {
+            self.running_case();
+            self.switch_to(BlockId(0));
+        }
+        if self.actx().async_gen {
+            self.done_case();
+            self.switch_to(BlockId(0));
+        }
         let other = self.new_block();
         let cases = std::mem::take(&mut self.actx().cases);
         self.terminate(Terminator::Switch {

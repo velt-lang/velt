@@ -1,0 +1,85 @@
+// check: no leaks
+// `yield*` in an async generator delegates to an async iterable (another async generator, a
+// class with `[Symbol.asyncIterator]()`) and, like JS, to a sync one (a generator, an array).
+// Closing the outer generator while it is inside closes the inner one.
+class Tree {
+  value: i64;
+  left: Tree | null;
+  right: Tree | null;
+
+  constructor(value: i64, left: Tree | null, right: Tree | null) {
+    this.value = value;
+    this.left = left;
+    this.right = right;
+  }
+}
+
+async function* walk(t: Tree | null): AsyncGenerator<i64> {
+  if (t == null) {
+    return;
+  }
+  yield* walk(t.left);
+  await sleep(1);
+  yield t.value;
+  yield* walk(t.right);
+}
+
+async function* inner(): AsyncGenerator<string> {
+  try {
+    yield "a";
+    await sleep(1);
+    yield "b";
+  } finally {
+    console.log("inner closed");
+  }
+}
+
+function* syncLetters(): Generator<string> {
+  yield "s1";
+  yield "s2";
+}
+
+class Pair implements AsyncIterable<string> {
+  [Symbol.asyncIterator](): AsyncIterator<string> {
+    return new PairIter();
+  }
+}
+
+class PairIter implements AsyncIterator<string> {
+  n: i64 = 0;
+
+  async next(): Promise<IteratorResult<string>> {
+    await sleep(1);
+    this.n += 1;
+    if (this.n > 2) {
+      return { done: true };
+    }
+    return { done: false, value: `p${this.n}` };
+  }
+}
+
+async function* outer(): AsyncGenerator<string> {
+  yield "start";
+  yield* inner();
+  yield* syncLetters();
+  yield* ["x", "y"];
+  yield* new Pair();
+  yield "end";
+}
+
+async function main() {
+  const t = new Tree(2, new Tree(1, null, null), new Tree(3, null, null));
+  for await (const v of walk(t)) {
+    console.log("walk", v);
+  }
+  for await (const s of outer()) {
+    console.log("outer", s);
+  }
+  for await (const s of outer()) {
+    console.log("outer", s);
+    if (s == "a") {
+      break;
+    }
+  }
+  console.log("end");
+}

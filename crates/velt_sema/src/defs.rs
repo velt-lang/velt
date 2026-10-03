@@ -165,6 +165,14 @@ pub(crate) struct FnInfo<'m> {
     pub owner: Option<DefId>,
     /// `declare async function` (M3 rt futures); other async functions are rejected in M2.
     pub is_async: bool,
+    /// `function*` / `*name()`: a generator. `ret` is the declared result (`Generator<T>`,
+    /// `Iterator<T>` or `Iterable<T>`, its `E` moved into `declared_throws`); a call returns it
+    /// with the generator's final error type as `E` (`generators.rs`).
+    pub is_generator: bool,
+    /// `async function*` / `async *name()`: an async generator (`is_generator` is set too, and
+    /// `is_async` is not: a call creates an `AsyncGenerator<T>`, not a promise). Its body may
+    /// `await`; HIR `FnDef::is_async` is set for it.
+    pub is_async_gen: bool,
     /// Arguments (spans of their places) moved into async calls: if the place is used again
     /// (or cannot be moved from), the argument becomes a clone (`crate::ownership::soft`).
     pub soft_moves: Vec<Span>,

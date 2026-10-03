@@ -69,7 +69,9 @@ to the server is async.
   rows copied, `w.abort()` cancels it (nothing is copied). `copyTo(sql): CopyReader` starts
   `COPY … TO STDOUT`; `await r.read()` returns the data received so far (whole rows in the
   text and CSV formats, up to ~64 KiB per call), `readBytes()` the same as bytes (binary
-  format), both null at the end; `r.close()` stops early. The connection is busy until the
+  format), both null at the end; `r.close()` stops early. A `CopyReader` is an
+  `AsyncIterable<string, PgError>`: `for await (const chunk of r)` reads the text chunks to the
+  end (leaving the loop early keeps the copy open: `close()` it). The connection is busy until the
   copy ends; a failed copy counts against an enclosing `transaction`.
 - `createPool({ url, max? }): Pool` (default `max` 10; a bad connection string throws here,
   connections open on first use). A `Pool` has the same `query`/`queryOne`/`execute`/`select`/

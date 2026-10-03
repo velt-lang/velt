@@ -113,6 +113,10 @@ impl FnCx<'_, '_> {
         if async_call {
             c.ret = self.async_call_ret(d, c.ret);
         }
+        if self.is_generator_fn(d) {
+            let span = self.cx.fn_info(d).name_span;
+            c.ret = self.generator_call_ret(d, c.ret, span);
+        }
         c
     }
 

@@ -119,6 +119,7 @@ fn expr(e: &ast::Expr) -> Option<Span> {
         E::Cond { cond, then, els } => expr(cond).or_else(|| expr(then)).or_else(|| expr(els)),
         E::Call { callee, args, .. } => expr(callee).or_else(|| args.iter().find_map(expr)),
         E::New { args, .. } => args.iter().find_map(expr),
+        E::Yield { arg, .. } => arg.as_deref().and_then(expr),
         E::Index { object, index, .. } => expr(object).or_else(|| expr(index)),
         E::Arrow { body, .. } => match body {
             ast::ArrowBody::Expr(x) => expr(x),

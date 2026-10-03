@@ -117,7 +117,7 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
         None => (cx.ty.unit, None),
     };
     let mut throws = throws_clause(cx, sig, &env);
-    if sig.is_async {
+    if sig.is_async && !sig.is_generator {
         ret = async_ret(cx, ret, sig);
         match kind {
             FnKind::Ctor => cx.err("constructors cannot be `async`", sig.name.span),
@@ -125,6 +125,9 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
             _ => owned_async_params(cx, &mut ps),
         }
         (ret, throws) = promise_throws(cx, ret, throws, sig);
+    }
+    if sig.is_generator {
+        (ret, throws) = super::generator_sig::generator_sig(cx, kind, ret, throws, sig, &mut ps);
     }
     if kind == FnKind::Extern && throws.is_some() {
         cx.err(
@@ -135,7 +138,9 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
     }
     let f = cx.fn_info_mut(d);
     f.declared_throws = throws;
-    f.is_async = sig.is_async;
+    f.is_async = sig.is_async && !sig.is_generator;
+    f.is_generator = sig.is_generator;
+    f.is_async_gen = sig.is_async && sig.is_generator;
     f.generics = generics;
     f.params = ps;
     f.ret = ret;
@@ -201,7 +206,7 @@ fn async_ret(cx: &mut Ctx, ret: TyId, sig: &ast::FnSig) -> TyId {
 
 /// Params of async functions are moved into the future (docs/reference/async.md):
 /// always owned (or copied), never borrowed.
-fn owned_async_params(cx: &mut Ctx, ps: &mut [ParamSig]) {
+pub(super) fn owned_async_params(cx: &mut Ctx, ps: &mut [ParamSig]) {
     for p in ps.iter_mut() {
         p.mode = if cx.is_copy(p.ty) {
             PassMode::Copy
@@ -211,10 +216,11 @@ fn owned_async_params(cx: &mut Ctx, ps: &mut [ParamSig]) {
     }
 }
 
-/// `this` of a method: async → owned (moved into the future); `mutates` (setters, `[Symbol.dispose]`)
+/// `this` of a method: async or generator (`resumable`) → owned (kept by the future or the
+/// generator); `mutates` (setters, `[Symbol.dispose]`)
 /// → mutable borrow; otherwise borrowed until mutation inference (`crate::ownership`) decides.
-fn method_this(ty: TyId, mutates: bool, is_async: bool) -> ThisSig {
-    if is_async {
+fn method_this(ty: TyId, mutates: bool, resumable: bool) -> ThisSig {
+    if resumable {
         return ThisSig {
             ty,
             mode: PassMode::Owned,
@@ -304,8 +310,8 @@ fn method_def<'m>(cx: &mut Ctx<'m>, o: &Owner, m: &'m ast::Method) -> DefId {
     info.owner = Some(o.d);
     info.is_private = m.is_private;
     info.is_getter = m.is_getter;
-    let is_async = m.decl.sig.is_async;
-    info.this = (!m.is_static).then(|| method_this(o.self_ty, always_mutates(m), is_async));
+    let resumable = m.decl.sig.is_async || m.decl.sig.is_generator;
+    info.this = (!m.is_static).then(|| method_this(o.self_ty, always_mutates(m), resumable));
     let def = cx.alloc_def(name.span, DefInfo::Fn(Box::new(info)));
     fill_sig(cx, def, &m.decl.sig, o.generics, o.module);
     if is_dispose(m) {
@@ -525,8 +531,8 @@ fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut 
         let src = Some(FnSource::Decl(&meth.decl));
         let mut info = fn_placeholder(full, name.span, meth.decl.sig.span, m, kind, src);
         info.is_getter = meth.is_getter;
-        let is_async = meth.decl.sig.is_async;
-        info.this = (!meth.is_static).then(|| method_this(target, always_mutates(meth), is_async));
+        let resumable = meth.decl.sig.is_async || meth.decl.sig.is_generator;
+        info.this = (!meth.is_static).then(|| method_this(target, always_mutates(meth), resumable));
         let def = cx.alloc_def(name.span, DefInfo::Fn(Box::new(info)));
         fill_sig(cx, def, &meth.decl.sig, &generics, m);
         if methods.contains_key(&key) {

@@ -1,0 +1,84 @@
+// check: no leaks
+// `for await (const x of src)` over any async iterable: a class with `[Symbol.asyncIterator]()`
+// returning an `AsyncIterator<T>` (`await it.next()` per element; `await it.return()` once
+// when the loop is left early, not after the end), an `AsyncIterable<T>` value, and, like JS,
+// over sync sources: an array (or iterable) of promises has each promise awaited, other values
+// are used as they are.
+class Countdown implements AsyncIterable<i64> {
+  from: i64;
+
+  constructor(from: i64) {
+    this.from = from;
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<i64> {
+    return new CountdownIter(this.from);
+  }
+}
+
+class CountdownIter implements AsyncIterator<i64> {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+
+  async next(): Promise<IteratorResult<i64>> {
+    await sleep(1);
+    if (this.n <= 0) {
+      return { done: true };
+    }
+    this.n -= 1;
+    return { done: false, value: this.n + 1 };
+  }
+
+  async return(): Promise<void> {
+    await sleep(1);
+    console.log("countdown closed");
+  }
+}
+
+async function value(x: string): Promise<string> {
+  await sleep(1);
+  return x;
+}
+
+function* syncPromises(): Generator<Promise<string>> {
+  yield value("g1");
+  yield value("g2");
+}
+
+async function firstOver(src: AsyncIterable<i64>, limit: i64): Promise<i64> {
+  for await (const n of src) {
+    if (n <= limit) {
+      return n;
+    }
+  }
+  return -1;
+}
+
+async function main() {
+  for await (const n of new Countdown(3)) {
+    console.log("countdown", n);
+  }
+  for await (const n of new Countdown(5)) {
+    if (n == 3) {
+      break;
+    }
+    console.log("countdown", n);
+  }
+  console.log("first", await firstOver(new Countdown(4), 2));
+  for await (const v of [value("p1"), value("p2")]) {
+    console.log("promise", v);
+  }
+  const ps = [value("q1"), value("q2")];
+  for await (const v of ps) {
+    console.log("promise", v);
+  }
+  for await (const v of syncPromises()) {
+    console.log("generated", v);
+  }
+  for await (const v of [1, 2]) {
+    console.log("plain", v);
+  }
+}

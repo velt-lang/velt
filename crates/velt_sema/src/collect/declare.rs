@@ -75,6 +75,8 @@ pub(crate) fn fn_placeholder<'m>(
         local_kinds: vec![],
         owner: None,
         is_async: false,
+        is_generator: false,
+        is_async_gen: false,
         soft_moves: vec![],
         is_private: false,
         is_getter: false,

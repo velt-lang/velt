@@ -111,8 +111,63 @@ Maintainer-owned, like hir.rs.
   throw) the elements not reached yet are dropped; then the buffer is freed without dropping the
   elements that were moved out. `consume: false` is the borrowing loop (elements borrowed, or
   copied when Copy).
+- `for...of` over an iterable (a type with `[Symbol.iterator]()`, docs/internals/design/
+  iteration.md) has no HIR form of its own: sema emits a `Block` with `let <iterator@N> =
+  src[Symbol.iterator]()`, a `<open@N>` flag and a `Try { finally }` around a `While` that calls
+  `next()`, binds `value` and runs the body; the `finally` calls `return()` when the body was
+  left early (a direct generator call has its own form, "Generators"). `StmtKind::ForOf` stays
+  the array loop. Locals named `<…>` are compiler-made.
 - Exclusive access (docs/reference/memory.md) is checked by sema; lowering relies on it for VIR
   parameter attributes (vir.rs invariant 9, `noalias` etc.).
+
+## Generators
+(docs/reference/functions.md "Generators", docs/internals/design/iteration.md §3)
+- `FnDef::is_generator`: a `function*` / `*name()`. `FnDef::ret` is its declared result —
+  `Generator<T, E>` (the prelude class `std/prelude/iter::Generator`), `Iterator<T, E>` or
+  `Iterable<T, E>` — with `E` = `FnDef::throws` (or `never`); `T` is the yield type. A call of
+  it (`Callee::Def`, also through `FnRef` values and vtables) has type `ret`, never throws, and
+  only creates the generator; lowering builds a `Generator` object and, for an interface
+  `ret`, the interface value of it. Params are `Owned` or `Copy` (methods: `this` too), as for
+  async functions.
+- In the body: `Call { Intrinsic(Yield), [v] }` (`v: T` owned, type `Unit`) is `yield v`;
+  `Return(None)` ends the generator (no `Return(Some)` occurs); `yield* src` has no form of its
+  own (a `Block` expression holding the desugared `for...of` that yields each value). No
+  `finally` block of a generator contains a `Yield`, can throw, or contains a `Break` /
+  `Continue` whose target loop is outside it (sema).
+- The `Generator` class's methods (prelude) use `Intrinsic::GeneratorResume` (`bool`, throws
+  `E`), `GeneratorValue` (`T`, moved out; only after a resume returned true) and
+  `GeneratorReturn` (close), each taking the `Generator<T, E>` operand `BorrowMut`.
+- `for...of` over a direct generator call (`gen(a)`, or the generator `[Symbol.iterator]()`
+  method it would call) is `Block { Let <generator@N> = Call { Intrinsic(GeneratorEmbed),
+  [call] } : Generator<T, E>; While { cond: GeneratorResume(<generator@N>), body: [LetPat
+  pattern = GeneratorValue(<generator@N>), Block(body)] } }`: lowering keeps the generator's
+  state in that local (the local is only an operand of the generator intrinsics and is
+  dropped at the block's end, which closes it). A `GeneratorEmbed` it cannot embed (a
+  generator iterating a direct call of itself) is the call's `Generator` object.
+
+## Async generators
+(docs/reference/functions.md "Async generators", docs/internals/design/iteration.md §4)
+- An `async function*` / `async *name()` has `FnDef::is_generator` **and** `FnDef::is_async`.
+  `ret` is `AsyncGenerator<T, E>` (prelude class `std/prelude/iter::AsyncGenerator`),
+  `AsyncIterator<T, E>` or `AsyncIterable<T, E>`, with `E` = `FnDef::throws`; a call has type
+  `ret`, never throws and creates the generator (an `AsyncGenerator` object, or the interface
+  value of it). The body contains `Await`s and `Yield`s; its `finally` blocks follow the
+  generator rules above but may contain `Await`.
+- The `AsyncGenerator` class's methods use `Intrinsic::AsyncGeneratorResume` (type
+  `Promise<bool, E>`; only as the operand of `Await`, which rejects with `E`),
+  `AsyncGeneratorValue` (`T`), `AsyncGeneratorReturn` (`Promise<void>`, only under `Await`:
+  the awaited close) and `AsyncGeneratorDispose` (the close without awaiting), each taking the
+  `AsyncGenerator<T, E>` operand `BorrowMut`.
+- `for await` has no HIR form of its own: over an async iterable sema emits the `for...of`
+  protocol block with `Await(next())` and, in the `finally`, `Await(return())`. Over a direct
+  async generator call it is `Block { Let <generator@N> = Call { Intrinsic(GeneratorEmbed),
+  [call] } : AsyncGenerator<T, E>; Try { body: [While { cond: Await(AsyncGeneratorResume(
+  <generator@N>)), body: [LetPat pattern = AsyncGeneratorValue(<generator@N>), Block(body)]
+  }], finally: [Await(AsyncGeneratorReturn(<generator@N>))] } }` (the close is a no-op once
+  the generator is done). Over a sync source it is the `for...of` form whose bound value is
+  `Await(value)` when the elements are promises; an array of promises is a consuming `ForOf`
+  (its place operand `UseMode::Move`).
+- `yield* src` in an async generator is the desugared `for await` that yields each value.
 
 ## Mutation inference (no `mut` in the language)
 - Pass modes are inferred (docs/reference/memory.md): `BorrowMut` = the callee may
@@ -259,11 +314,19 @@ Maintainer-owned, like hir.rs.
   `Never` and the error is the result promise's `E`.
 - Dispatch groups share one error type: every method in an interface slot (its default and all
   implementations) and in a vtable slot (the base method and all overrides) has the same
-  `FnDef::throws`, with no type params (interface methods whose error type would depend on them
-  are rejected), so `Callee::Dyn` / `Virtual` / `ParamMethod` calls use any member's — except
-  in a promise slot (`InterfaceMethodDef::promise`: the interface method returns a promise that
-  carries the group's errors): its members are async, or synchronous with no `throws`, and a
-  call through the slot never throws.
+  `FnDef::throws`, with no type params, so `Virtual` / `ParamMethod` calls use any member's —
+  except in a promise slot (`InterfaceMethodDef::promise`: the interface method returns a
+  promise that carries the group's errors): its members are async, or synchronous with no
+  `throws`, and a call through the slot never throws. A `Callee::Dyn` call throws
+  `InterfaceMethodDef::throws` (in the interface's type params) substituted with the `Dyn`'s
+  type args. That type may mention the interface's params when the interface method's `throws`
+  clause does (`next(): IteratorResult<T> throws E` in `Iterator<T, E>`); each member's
+  `FnDef::throws` is then that clause with the interface args of its implementation
+  (`implements Iterator<string, IoError>`: `IoError`), so the members of one slot agree per
+  interface instantiation, which is all one vtable holds. A generator method (`is_generator`)
+  is no member: its call never throws, and its `FnDef::throws` is its own `E` (the `E` of
+  `ret`), so a slot's members may be generators with different `E`s (`[Symbol.asyncIterator]()`
+  of `AsyncIterable<T, E>`, whose result type carries `E`).
 - Promises: `TyKind::Promise(T, E)` resolves to `T` or rejects with `E` (`Never`: cannot reject).
   An async fn's call has type `Promise<ret, throws>`; `await` of a direct call checks the child
   state's `Result<T, E>` (result region at offset 0), and a promise *value* (heap future) holds

@@ -1,0 +1,30 @@
+created
+start x
+x-a
+middle x
+x-b
+end x
+start y
+loop y-a
+middle y
+loop y-b
+end y
+sum 10
+0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89
+next 0
+next 1
+true true
+hi
+hi
+hi
+a
+b
+c
+countdown 3
+countdown 2
+countdown 1
+55
+6
+empty runs
+pair 0 0
+pair 1 0

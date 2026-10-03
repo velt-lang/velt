@@ -9,7 +9,7 @@
 // `IoError` `EBADF` and closing again does nothing. A writer's `close()` also flushes and
 // reports write errors.
 
-import { IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
+import { IoError, IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
 
 // The runtime's `LineRead` (§14.4).
 struct LineRead {
@@ -51,6 +51,18 @@ export struct FileReader {
       return null;
     }
     return unwrapIo(r.line);
+  }
+
+  // The remaining lines, as `readLine` reads them: `for await (const line of r.lines())`.
+  // Leaving the loop early keeps the reader open at the next line.
+  async *lines(): AsyncGenerator<string, IoError> {
+    while (true) {
+      const r = await velt_rt_fs_reader_read_line(this.handle);
+      if (r.eof) {
+        return;
+      }
+      yield unwrapIo(r.line);
+    }
   }
 
   // Closes the file (reads in flight finish first).

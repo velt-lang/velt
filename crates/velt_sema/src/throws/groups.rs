@@ -7,7 +7,15 @@
 //! written — the implementations may throw only what it allows — else the union of what the
 //! members throw (inferred). For an interface method or a base class method returning a promise
 //! it is what the promises reject with (implemented by async methods), as for async functions.
-//! Group error types cannot mention type parameters (every member would see them differently).
+//! An inferred group error type cannot mention type parameters (every member would see them
+//! differently). A generator method is no member: calling it only creates the generator and
+//! never throws (its error type is the `E` of its result, `Iterator<T, E>`), so it neither adds
+//! to nor takes the group's error type. A written bound on a generic interface's method may
+//! mention the interface's own parameters (`next(): IteratorResult<T> throws E` in
+//! `Iterator<T, E>`): each member then sees it with the interface arguments of its
+//! implementation ([`member_bound`]), and a call through an interface value with that value's
+//! arguments; vtable entries of different instantiations never mix, because each
+//! `Iterator<T, E>` instantiation has its own vtable.
 
 use std::collections::HashMap;
 
@@ -30,6 +38,9 @@ pub(crate) struct GroupBound {
     pub decl: DeclaredThrows,
     /// "`I.m`" / "`Base.m`".
     pub owner: String,
+    /// The interface whose method declares it (its type parameters are the ones `decl` may
+    /// mention); `None` for a base class method.
+    pub iface: Option<DefId>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -133,6 +144,7 @@ pub(crate) fn build(cx: &mut Ctx) -> Groups {
             groups.list.len() - 1
         });
         match uf.nodes[i] {
+            Node::Def(d) if cx.try_fn(d).is_some_and(|f| f.is_generator) => {}
             Node::Def(d) => {
                 groups.of.insert(d, g);
                 groups.list[g].members.push(d);
@@ -156,7 +168,10 @@ pub(crate) fn build(cx: &mut Ctx) -> Groups {
         }
     }
     for root in roots {
-        let g = &mut groups.list[groups.of[&root]];
+        let Some(&g) = groups.of.get(&root) else {
+            continue;
+        };
+        let g = &mut groups.list[g];
         if g.owner.as_ref().is_some_and(|o| o.interface) {
             continue;
         }
@@ -181,20 +196,28 @@ pub(crate) fn build(cx: &mut Ctx) -> Groups {
 }
 
 fn set_bound(cx: &mut Ctx, g: &mut Group, b: GroupBound) {
-    if let Some(t) = b.decl.ty {
-        if cx.mentions_params(t) {
-            cx.error(
-                Diagnostic::error(
-                    "the `throws` clause of an interface method or an overridden method cannot mention type parameters",
-                    b.decl.span,
-                )
-                .with_note("implementations are called through one dynamic entry, which needs one error type"),
-            );
+    let generic = b.decl.ty.is_some_and(|t| cx.mentions_params(t));
+    if generic {
+        if b.iface.is_some() {
+            // Bounds in terms of different interfaces' parameters (`J<T> extends I<T>`) are not
+            // comparable: the first one stands for the group.
+            if g.bound.is_none() {
+                g.bound = Some(b);
+            }
             return;
         }
+        cx.error(
+            Diagnostic::error(
+                "the `throws` clause of an overridden method cannot mention type parameters",
+                b.decl.span,
+            )
+            .with_note("overrides are called through one vtable entry, which needs one error type"),
+        );
+        return;
     }
     match &g.bound {
         None => g.bound = Some(b),
+        Some(old) if old.decl.ty.is_some_and(|t| cx.mentions_params(t)) => {}
         Some(old) => {
             let (a, c) = (cx.canon_error(old.decl.ty), cx.canon_error(b.decl.ty));
             if a != c {
@@ -237,7 +260,8 @@ fn link_interfaces(cx: &mut Ctx, uf: &mut UnionFind, bounds: &mut Vec<(Node, Gro
             }
             if let Some(decl) = m.throws {
                 let owner = format!("{}.{}", info.name, m.name);
-                bounds.push((node, GroupBound { decl, owner }));
+                let iface = Some(iface);
+                bounds.push((node, GroupBound { decl, owner, iface }));
             }
         }
     }
@@ -268,7 +292,8 @@ fn link_vtables(
                 None => {
                     if let Some(decl) = cx.try_fn(m).and_then(|f| f.declared_throws) {
                         let owner = cx.fn_info(m).name.clone();
-                        bounds.push((Node::Def(m), GroupBound { decl, owner }));
+                        let iface = None;
+                        bounds.push((Node::Def(m), GroupBound { decl, owner, iface }));
                     }
                     if cx.try_fn(m).is_some() {
                         roots.push(m);
@@ -278,4 +303,64 @@ fn link_vtables(
         }
     }
     roots
+}
+
+/// Bound `b` as member `m` sees it: a bound mentioning the parameters of its interface, with
+/// the interface arguments of `m`'s owner (`class R implements Iterator<i64, IoError>`: `E` is
+/// `IoError`; a default body or an interface extending it: in that interface's terms). `None`
+/// when `m` does not throw.
+pub(crate) fn member_bound(cx: &mut Ctx, b: &GroupBound, m: DefId) -> Option<TyId> {
+    let t = b.decl.ty?;
+    let Some(iface) = b.iface.filter(|_| cx.mentions_params(t)) else {
+        return cx.canon_error(Some(t));
+    };
+    let owner = cx.try_fn(m).and_then(|f| f.owner);
+    let args = match owner {
+        Some(o) if o == iface => return cx.canon_error(Some(t)),
+        Some(o) => iface_args_of(cx, o, iface, 0),
+        None => None,
+    };
+    let args = args.or_else(|| impl_args(cx, iface, m));
+    let t = match args {
+        Some(args) => cx.ty.subst(t, &args),
+        None => t,
+    };
+    cx.canon_error(Some(t))
+}
+
+/// The arguments of `iface` as type (class, struct or interface) `d` implements or extends it,
+/// in `d`'s terms: through its `implements` list, the interfaces those extend, and its base
+/// classes.
+fn iface_args_of(cx: &mut Ctx, d: DefId, iface: DefId, depth: u32) -> Option<Vec<TyId>> {
+    if depth > 64 {
+        return None;
+    }
+    if let Some(i) = cx.iface(d) {
+        return i
+            .parents
+            .iter()
+            .find(|p| p.iface == iface)
+            .map(|p| p.args.clone());
+    }
+    let a = cx.adt(d)?;
+    let (implements, base) = (a.implements.clone(), a.base);
+    for imp in implements {
+        if imp.iface == iface {
+            return Some(imp.args);
+        }
+        if let Some(args) = iface_args_of(cx, imp.iface, iface, depth + 1) {
+            return Some(args.iter().map(|t| cx.ty.subst(*t, &imp.args)).collect());
+        }
+    }
+    let (bd, bargs) = base.and_then(|b| cx.class_of(b))?;
+    let args = iface_args_of(cx, bd, iface, depth + 1)?;
+    Some(args.iter().map(|t| cx.ty.subst(*t, &bargs)).collect())
+}
+
+/// The interface arguments of an implementation of `iface` that uses `m` (`extend` blocks).
+fn impl_args(cx: &Ctx, iface: DefId, m: DefId) -> Option<Vec<TyId>> {
+    cx.impls
+        .iter()
+        .find(|imp| imp.iface == iface && imp.methods.contains(&m))
+        .map(|imp| imp.iface_args.clone())
 }

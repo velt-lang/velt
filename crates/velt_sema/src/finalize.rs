@@ -23,8 +23,20 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
             if cx.try_fn(d).is_some_and(|f| !f.is_async) && cx.throw_groups().in_promise_group(d) {
                 throws = None;
             }
+            // A generator's declared result carries its final error type as `E`.
+            let gen_ret = match &cx.defs[i] {
+                Some(Def::Fn(f)) if f.is_generator => Some(f.ret),
+                _ => None,
+            };
+            let gen_ret = gen_ret.map(|r| {
+                let e = throws.unwrap_or(cx.ty.never);
+                cx.with_generator_error(r, e)
+            });
             if let Some(Def::Fn(f)) = &mut cx.defs[i] {
                 f.throws = throws;
+                if let Some(r) = gen_ret {
+                    f.ret = r;
+                }
             }
             continue;
         }
@@ -64,6 +76,10 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
             g.slot_group(d, s).is_some_and(|g2| g.list[g2].promise)
         })
         .collect();
+    let throws: Vec<Option<hir::TyId>> = (0..n as u32)
+        .zip(&promise)
+        .map(|(s, p)| if *p { None } else { slot_throws(cx, d, s) })
+        .collect();
     let i = cx.iface(d).expect("ICE: interface info");
     InterfaceDef {
         name: i.qual_name.clone(),
@@ -82,19 +98,35 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
             .methods
             .iter()
             .zip(promise)
-            .map(|(m, promise)| InterfaceMethodDef {
+            .zip(throws)
+            .map(|((m, promise), throws)| InterfaceMethodDef {
                 name: m.name.clone(),
                 default: m.default,
                 promise,
+                throws,
             })
             .chain(i.fields.iter().map(|f| InterfaceMethodDef {
                 name: format!("<{}>", f.name),
                 default: None,
                 promise: false,
+                throws: None,
             }))
             .collect(),
         span: i.span,
     }
+}
+
+/// What a call through slot `s` of interface `d` throws, in the interface's terms: its `throws`
+/// clause, else the error type its dispatch group inferred (which mentions no type parameters).
+fn slot_throws(cx: &mut Ctx, d: DefId, s: u32) -> Option<hir::TyId> {
+    if let Some(t) = crate::throws::slot_clause(cx, d, s) {
+        return cx.canon_error(t);
+    }
+    let g = cx.throw_groups();
+    let m = g
+        .slot_group(d, s)
+        .and_then(|g2| g.list[g2].members.first().copied())?;
+    cx.fn_info(m).throws.filter(|t| !cx.mentions_params(*t))
 }
 
 /// Field defaults of a class incl. inherited ones (base defaults with the base's type args).

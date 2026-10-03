@@ -42,7 +42,7 @@ impl FnCx<'_, '_> {
         let slots = ctor_args.iter().map(|t| Some(*t)).collect();
         let ck = self.check_call(&c, slots, args, None, span);
         let this = self.this_expr(Want::BorrowMut, span);
-        let recv = self.receiver(this, Some(ctor_ty), PassMode::BorrowMut);
+        let recv = self.receiver(this, Some(ctor_ty), PassMode::BorrowMut, false);
         let mut all = vec![recv];
         all.extend(ck.args);
         self.throw_src(ThrowSrc::Call(ctor, ck.type_args.clone(), span));

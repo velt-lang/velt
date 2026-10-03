@@ -87,6 +87,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::Main => Self::build_main(cx),
             Work::Poll(def, targs) => Self::build_poll(cx, *def, targs),
             Work::AsyncDrop(def, targs) => Self::build_async_drop(cx, *def, targs),
+            Work::AsyncCloseStart(def, targs) => Self::build_close_start(cx, *def, targs),
             Work::ValuePoll(def, targs) => Self::build_value_poll(cx, *def, targs),
             Work::ValueDrop(def, targs) => Self::build_value_drop(cx, *def, targs),
             Work::AllPoll(t) => Self::build_all_poll(cx, *t),
@@ -97,6 +98,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::WidenDrop(from, to) => Self::build_widen_drop(cx, *from, *to),
             Work::HandlerInit(def, targs) => Self::build_handler_init(cx, *def, targs),
             Work::Unclaimed(t) => Self::build_unclaimed(cx, *t),
+            Work::GenNew(def, targs) => Self::build_gen_new(cx, *def, targs),
+            Work::GenFree(def, targs) => Self::build_gen_free(cx, *def, targs),
         }
     }
 
@@ -135,6 +138,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let hir::Def::Fn(f) = hir_prog.def(def) else {
             ice("function instance is not a Def::Fn")
         };
+        if f.is_generator {
+            return Self::build_gen_fn(cx, def, targs);
+        }
         if f.is_async {
             return Self::build_async_new(cx, def, targs);
         }
@@ -292,7 +298,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         for s in &f.body.block.stmts {
             self.stmt(s);
         }
-        let returns_value = !self.returns_unit();
+        // A generator's body yields its values and returns nothing.
+        let returns_value = !self.returns_unit() && !self.in_generator();
         if let Some(v) = &f.body.block.value {
             // A trailing value expression of a function body is its return value.
             self.push_scope(ScopeKind::Temps);
@@ -386,6 +393,7 @@ impl LInfo {
             moved_fields: vec![],
             zero_parts: false,
             cell: false,
+            gen: None,
         }
     }
 }

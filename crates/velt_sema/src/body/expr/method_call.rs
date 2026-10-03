@@ -51,6 +51,7 @@ impl FnCx<'_, '_> {
         let Some(r) = self.resolve_method(recv.ty, &prop.name) else {
             return self.no_method(recv, prop, args, span);
         };
+        self.no_generator_send(recv.ty, &prop.name, span);
         self.check_extension_ambiguity(&r, recv.ty, &prop.name, prop.span);
         self.check_private(self.method_private_to(&r), &prop.name, prop.span);
         self.rec_method(prop.span, &r);
@@ -82,7 +83,7 @@ impl FnCx<'_, '_> {
             Resolved::Virtual { def, slot, slots } => {
                 let c = self.fn_callable(def, format!("method `{}`", prop.name));
                 let ck = self.check_call(&c, slots, args, exp, span);
-                let recv = self.receiver(recv, None, self.this_mode(def));
+                let recv = self.receiver(recv, None, self.this_mode(def), self.is_async_fn(def));
                 let mut all = vec![recv];
                 all.extend(ck.args);
                 self.call_throws(def, &ck.type_args, ck.ret, span);
@@ -138,7 +139,12 @@ impl FnCx<'_, '_> {
         self.explicit_type_args(&mut slots, own, type_args, span);
         let ck = self.check_call(&c, slots, args, exp, span);
         self.note_async_args(def, &ck.args);
-        let recv = self.receiver(recv, Some(recv_ty), self.this_mode(def));
+        let recv = self.receiver(
+            recv,
+            Some(recv_ty),
+            self.this_mode(def),
+            self.is_async_fn(def),
+        );
         let mut all = vec![recv];
         all.extend(ck.args);
         self.call_throws(def, &ck.type_args, ck.ret, span);
@@ -149,12 +155,14 @@ impl FnCx<'_, '_> {
         self.mk(kind, ck.ret, span)
     }
 
-    /// The receiver argument: upcast to the declaring type, then used per the `this` mode.
+    /// The receiver argument: upcast to the declaring type, then used per the `this` mode
+    /// (`is_async`: of an async method).
     pub(super) fn receiver(
         &mut self,
         recv: hir::Expr,
         to: Option<TyId>,
         mode: PassMode,
+        is_async: bool,
     ) -> hir::Expr {
         let mut recv = match to {
             Some(t) if t != recv.ty => self.coerce(recv, t),
@@ -166,7 +174,15 @@ impl FnCx<'_, '_> {
         };
         match mode {
             PassMode::BorrowMut => self.use_mutably(target, "call a mutating method on"),
-            PassMode::Owned => self.force_move(target),
+            PassMode::Owned => {
+                self.force_move(target);
+                // An async method's receiver (an object) is shared with the call when the place
+                // is used again or cannot be moved from (a `using` variable), like an argument.
+                let ty = target.ty;
+                if crate::body::places::is_place(target) && self.cx.is_shared_value(ty) {
+                    self.soft_move(target, is_async);
+                }
+            }
             PassMode::Copy | PassMode::Borrow => set_place_mode(target, UseMode::Borrow),
         }
         recv
@@ -229,5 +245,25 @@ impl FnCx<'_, '_> {
         };
         let h = self.method_call_on(recv, &prop, &[], &[], None, span);
         (!self.cx.ty.is_bottom(h.ty)).then_some(h)
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// `ch.send(v)` / `ch.trySend(v)` on std's `Channel<T>` copies `v` to the receiving task
+    /// like a `spawn` argument: `T` cannot hold a generator.
+    fn no_generator_send(&mut self, recv: TyId, name: &str, span: Span) {
+        if name != "send" && name != "trySend" {
+            return;
+        }
+        let TyKind::Adt(d, args) = self.cx.ty.kind(recv).clone() else {
+            return;
+        };
+        let is_channel = self
+            .cx
+            .adt(d)
+            .is_some_and(|a| a.name == "Channel" && self.cx.scopes[a.module].is_std);
+        if let (true, [t]) = (is_channel, args.as_slice()) {
+            self.no_generator_copy(*t, crate::body::GenCopy::Task, span);
+        }
     }
 }

@@ -130,4 +130,44 @@ pub enum Intrinsic {
     /// `attempt(f)`: call `f: () => T throws E` (borrowed) and return its result or error as a
     /// value, of type `T | E` (or `E | null` when `T` is `void`); hir_encodings.md "Errors".
     Attempt,
+
+    // Generators (hir_encodings.md "Generators")
+    /// Compiler-internal: `yield v` in a generator body (`v: T` owned, the generator's yield
+    /// type) → unit. Suspends the generator with `v` in its value slot.
+    Yield,
+    /// std only: `__intrinsic_generator_resume<T, E>(g: Generator<T, E> (modified)): bool`,
+    /// throws `E` — run the generator to its next `yield` (true: a value is in the slot) or to
+    /// its end (false; also every later call). An error thrown by the body is thrown here.
+    GeneratorResume,
+    /// std only: `__intrinsic_generator_value<T, E>(g: Generator<T, E> (modified)): T` — move
+    /// the value of the last `yield` out of the slot (once, after `GeneratorResume` returned true).
+    GeneratorValue,
+    /// std only: `__intrinsic_generator_return<T, E>(g: Generator<T, E> (modified))` — close
+    /// the generator: a suspended body runs its `finally` blocks and disposes its `using`
+    /// values as if the `yield` were a `return`; then it is done.
+    GeneratorReturn,
+    /// Compiler-internal: `(call: owned) -> Generator<T, E>`, the initializer of the hidden
+    /// local of a `for...of` over a direct generator call (`for (x of gen(a))`): lowering keeps
+    /// the generator's state inline in that local instead of a heap object.
+    GeneratorEmbed,
+
+    // Async generators (hir_encodings.md "Async generators")
+    /// std only: `__intrinsic_async_generator_resume<T, E>(g: AsyncGenerator<T, E> (modified)):
+    /// Promise<bool, E>`, only as the operand of `await` — run the generator to its next
+    /// `yield` (true) or its end (false; also every later call), suspending the awaiting
+    /// function while the generator awaits. An error thrown by the body rejects it.
+    AsyncGeneratorResume,
+    /// std only: `__intrinsic_async_generator_value<T, E>(g: AsyncGenerator<T, E> (modified)):
+    /// T` — like `GeneratorValue`.
+    AsyncGeneratorValue,
+    /// std only: `__intrinsic_async_generator_return<T, E>(g: AsyncGenerator<T, E> (modified)):
+    /// Promise<void>`, only as the operand of `await` — close the generator: a body suspended
+    /// at a `yield` runs its `finally` blocks and disposals (which may `await`) as if the
+    /// `yield` were a `return`; one suspended at an `await` is cancelled. Then it is done.
+    AsyncGeneratorReturn,
+    /// std only: `__intrinsic_async_generator_dispose<T, E>(g: AsyncGenerator<T, E>
+    /// (modified))` — close the generator without awaiting (its drop): like
+    /// `AsyncGeneratorReturn`, except that a body whose cleanup at that `yield` would `await`
+    /// is cancelled instead (drops only, like a cancelled async function).
+    AsyncGeneratorDispose,
 }

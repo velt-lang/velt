@@ -248,14 +248,17 @@ fn base_class(cx: &mut Ctx, t: &ast::TypeExpr, kind: AdtKind, env: &TyEnv) -> Op
         }
         return None;
     };
-    // A record's values only come from the runtime (a record with every key), which a
-    // subclass's constructor would bypass.
-    if cx.prelude_adt("Record") == Some(bd) {
-        cx.error(
-            Diagnostic::error("`Record` cannot be extended", t.span)
-                .with_note("use composition instead: a class with a `Record` field"),
-        );
-        return None;
+    // Their values only come from the runtime or the compiler (a record with every key, a
+    // generator's state), which a subclass's constructor would bypass.
+    for sealed in ["Record", "Generator", "AsyncGenerator"] {
+        if cx.prelude_adt(sealed) == Some(bd) {
+            cx.error(
+                Diagnostic::error(format!("`{sealed}` cannot be extended"), t.span).with_note(
+                    format!("use composition instead: a class with a `{sealed}` field"),
+                ),
+            );
+            return None;
+        }
     }
     let private_ctor = cx
         .adt(bd)

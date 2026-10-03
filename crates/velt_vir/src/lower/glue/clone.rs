@@ -178,6 +178,15 @@ impl FnLower<'_, '_> {
     }
 
     pub(super) fn obj_clone_body(&mut self, obj: vir::Local, ty: TyId) {
+        if self.cx.is_generator_obj(ty) {
+            // Its state (suspended locals, `finally` blocks to run) cannot be duplicated.
+            let msg = self.str_lit(
+                "a generator cannot be copied (`clone()`, or a value passed to a spawned task)",
+            );
+            let p = self.operand_addr(msg, Ty::Agg(crate::vir::STR_AGG));
+            self.call_rt(crate::lower::rt::Rt::Panic, vec![p], None);
+            return;
+        }
         let oa = self.cx.obj_agg(ty);
         let new = self.object_alloc(ty);
         let src = proj(&Place::local(obj), Proj::Deref(Ty::Agg(oa)));

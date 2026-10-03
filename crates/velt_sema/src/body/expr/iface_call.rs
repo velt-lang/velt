@@ -105,7 +105,7 @@ impl FnCx<'_, '_> {
         } else {
             PassMode::Borrow
         };
-        let recv = self.receiver(recv, None, mode);
+        let recv = self.receiver(recv, None, mode, false);
         let mut all = vec![recv];
         all.extend(ck.args);
         let src = ThrowSrc::Slot {

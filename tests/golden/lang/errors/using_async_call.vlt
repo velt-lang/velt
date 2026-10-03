@@ -1,0 +1,69 @@
+// A `using` variable is disposed at the end of its block. Passing it to an async call (as the
+// receiver or an argument) is allowed only when the call is awaited where it is made: a stored
+// or returned promise could still use it after the disposal, and a spawned task would get a
+// copy that is disposed a second time.
+class Res {
+  n: string;
+  constructor(n: string) {
+    this.n = n;
+  }
+  async read(): Promise<string> {
+    await sleep(1);
+    return `${this.n} read`;
+  }
+  [Symbol.dispose](): void {
+    console.log(`dispose ${this.n}`);
+  }
+}
+
+async function use(r: Res): Promise<string> {
+  await sleep(1);
+  return `use ${r.n}`;
+}
+
+async function* lines(): AsyncGenerator<string> {
+  yield "a";
+}
+
+async function stored(): Promise<string> {
+  let p: Promise<string> | null = null;
+  {
+    using r = new Res("A");
+    p = r.read();
+  }
+  return p != null ? await p : "";
+}
+
+function returned(): Promise<string> {
+  using r = new Res("B");
+  return use(r);
+}
+
+async function spawned() {
+  {
+    using r = new Res("C");
+    console.log(await spawn(r.read()));
+  }
+  {
+    using r = new Res("D");
+    console.log(await spawn(use(r)));
+  }
+}
+
+async function generator() {
+  using g = lines();
+  const p = g.next();
+  const r = await p;
+  console.log(r.done);
+}
+
+async function main() {
+  console.log(await stored());
+  console.log(await returned());
+  await spawned();
+  await generator();
+  // Awaited where it is made: fine.
+  using r = new Res("F");
+  console.log(await r.read());
+  console.log(await use(r));
+}
