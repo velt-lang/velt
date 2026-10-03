@@ -7,9 +7,10 @@
 //! that does not modify those parameters: `save(v.name)`, `read(v)`), it gets a copy instead,
 //! like a spawned call (an error when the copy would need to duplicate a resource without
 //! `clone()`); otherwise it is an error. Calling a function value kept in the value is
-//! allowed
-//! (`m.with((f) => f())`): an async closure copies what it captured per call. `spawn`
-//! transfers what it is given, so a spawned call is allowed too.
+//! allowed (`m.with((f) => f())`), and so is calling an async closure that captured the
+//! value: an async closure copies what it captured per call. `spawn` transfers what it is
+//! given, so a spawned call is allowed too, and `Promise.all` and the other combinators only
+//! wait for the promises they are given, each checked where it is made.
 
 use std::collections::HashSet;
 
@@ -85,6 +86,11 @@ impl Promises<'_, '_, '_, '_> {
                 return;
             }
         }
+        if combinator(self.cx, callee) {
+            // `Promise.all` and the like only wait for the promises they are given, each
+            // checked where it is made.
+            return;
+        }
         if self.cx.holds_promise(e.ty) {
             let used: Vec<usize> = (0..args.len())
                 .filter(|&i| self.reaches_value(&args[i]))
@@ -133,6 +139,24 @@ impl Promises<'_, '_, '_, '_> {
             }
         }
         true
+    }
+}
+
+/// `Promise.all`, `Promise.race`, `Promise.any` or `Promise.allSettled`.
+fn combinator(cx: &Ctx, callee: &Callee) -> bool {
+    match callee {
+        Callee::Intrinsic(
+            Intrinsic::PromiseAll | Intrinsic::PromiseRace | Intrinsic::PromiseAny,
+        ) => true,
+        Callee::Def(g, _) => {
+            let info = cx.fn_info(*g);
+            cx.scopes[info.module].is_std
+                && matches!(
+                    info.name.rsplit("::").next(),
+                    Some("promiseAllSettled" | "promiseAny")
+                )
+        }
+        _ => false,
     }
 }
 
