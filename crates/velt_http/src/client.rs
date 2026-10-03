@@ -56,19 +56,7 @@ pub fn fetch_within(
     body: &[u8],
     limits: Limits,
 ) -> Result<Response, String> {
-    // A line break in the request line or a header would end it early: what follows would be
-    // read as headers of its own (a token from a file or the environment must not inject any).
-    let line_break = |s: &str| s.contains(['\r', '\n']);
-    if line_break(method) || line_break(url) {
-        return Err(format!(
-            "{method:?} {url:?}: a line break in the request line"
-        ));
-    }
-    if let Some((name, _)) = headers.iter().find(|(n, v)| line_break(n) || line_break(v)) {
-        return Err(format!(
-            "{method} {url}: the {name:?} header contains a line break"
-        ));
-    }
+    check_request(method, url, headers)?;
     let deadline = Instant::now() + limits.total;
     if let Some(rest) = url.strip_prefix("http://") {
         return plain(method, rest, headers, body, limits, deadline)
@@ -82,6 +70,106 @@ pub fn fetch_within(
     Err(format!(
         "unsupported URL `{url}` (expected http:// or https://)"
     ))
+}
+
+/// The request line and headers are written as text: a CR or LF in any part (a token read from
+/// a file with a trailing `\r`, a crafted URL) would end a line early and inject headers or a
+/// second request, so control characters are refused before anything is sent. The message names
+/// the header, never its value (which may be a token).
+///
+/// The host is everything between the scheme and the first `/` ([`split`]). An `@`, `?`, `#` or
+/// `\` there would make other URL parsers (the registry token's loopback rule, a browser) see a
+/// different host than the one connected to: `http://localhost?.attacker.example/` is
+/// `localhost` to them and `localhost?.attacker.example` here. Such URLs are refused.
+fn check_request(method: &str, url: &str, headers: &[(&str, &str)]) -> Result<(), String> {
+    let control = |s: &str| s.chars().any(|c| c.is_control());
+    if method.is_empty() || !method.bytes().all(|b| b.is_ascii_uppercase()) {
+        return Err(format!(
+            "invalid HTTP method {method:?}: a line break or another character that is not an uppercase letter in the request line"
+        ));
+    }
+    if control(url) || url.contains(' ') {
+        return Err(format!(
+            "{method} {url:?}: a line break, another control character or a space in the request line"
+        ));
+    }
+    if let Err(e) = url_host(url) {
+        // An unknown scheme is reported when the request is dispatched.
+        if !e.starts_with("unsupported URL") {
+            return Err(format!("{method} {url}: {e}"));
+        }
+    }
+    for (name, value) in headers {
+        let token_char = |b: u8| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b);
+        if name.is_empty() || !name.bytes().all(token_char) {
+            return Err(format!(
+                "{method} {url}: invalid HTTP header name {name:?} (it contains a line break or another character a header name can't have)"
+            ));
+        }
+        if control(value) {
+            return Err(format!(
+                "{method} {url}: the `{name}` header contains a line break or another control character"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The host part of a URL as this client reads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UrlHost<'a> {
+    /// `https://` (TLS) rather than `http://`.
+    pub tls: bool,
+    /// `host`, `host:port`, `[v6]` or `[v6]:port`.
+    pub authority: &'a str,
+}
+
+impl UrlHost<'_> {
+    /// The host name or address without port and brackets.
+    pub fn host(&self) -> &str {
+        match self.authority.strip_prefix('[') {
+            Some(v6) => v6.split(']').next().unwrap_or(v6),
+            None => self.authority.split(':').next().unwrap_or(self.authority),
+        }
+    }
+
+    /// Whether the host is this machine: `localhost` or a loopback address.
+    pub fn is_loopback(&self) -> bool {
+        let host = self.host();
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    }
+}
+
+/// The host part of an `http://` or `https://` URL (scheme in any case): everything between the
+/// scheme and the first `/`, which is what this client connects to. It is refused when empty or
+/// when it contains `@`, `?`, `#` or `\`: other parsers (a token's loopback rule, a browser)
+/// would read another host there (`localhost` in `http://localhost?.attacker.example/`). The one
+/// parser of a registry URL's host, for this client and for vpm's token rules.
+pub fn url_host(url: &str) -> Result<UrlHost<'_>, String> {
+    let scheme_is = |scheme: &str| {
+        url.get(..scheme.len())
+            .is_some_and(|s| s.eq_ignore_ascii_case(scheme))
+    };
+    let (tls, rest) = if scheme_is("https://") {
+        (true, &url["https://".len()..])
+    } else if scheme_is("http://") {
+        (false, &url["http://".len()..])
+    } else {
+        return Err(format!(
+            "unsupported URL `{url}` (expected http:// or https://)"
+        ));
+    };
+    let (authority, _) = split(rest);
+    if authority.is_empty() || authority.contains(['@', '?', '#', '\\']) {
+        return Err(
+            "the host part may not be empty or contain `@`, `?`, `#` or `\\` (write the URL with a `/` after the host)"
+                .into(),
+        );
+    }
+    Ok(UrlHost { tls, authority })
 }
 
 /// `host[:port]` and `/path?query` of a URL without its scheme.
@@ -271,6 +359,77 @@ mod tests {
     use super::*;
 
     #[test]
+    fn url_hosts() {
+        let h = url_host("HTTPS://Reg.example.com:8443/api?q=1").unwrap();
+        assert!(h.tls);
+        assert_eq!(
+            (h.authority, h.host()),
+            ("Reg.example.com:8443", "Reg.example.com")
+        );
+        let h = url_host("http://[::1]:8091/").unwrap();
+        assert!(!h.tls && h.is_loopback());
+        assert_eq!(h.host(), "::1");
+        assert!(url_host("http://127.1.2.3").unwrap().is_loopback());
+        assert!(url_host("http://LOCALHOST:1/x").unwrap().is_loopback());
+        assert!(!url_host("http://localhost.example.com")
+            .unwrap()
+            .is_loopback());
+        for bad in [
+            "http://localhost?.a.example/",
+            "http://a@b/",
+            "http:///x",
+            "http://a\\b",
+        ] {
+            assert!(url_host(bad).unwrap_err().contains("host part"), "{bad}");
+        }
+        assert!(url_host("ftp://x").unwrap_err().contains("unsupported"));
+    }
+
+    #[test]
+    fn control_characters_and_ambiguous_hosts_never_reach_the_request() {
+        // Refused before connecting: port 1 would fail with "cannot connect" otherwise.
+        let url = "http://127.0.0.1:1/x";
+        for token in ["abc\r\nX-Evil: 1", "abc\n", "abc\r", "a\0b", "tab\there"] {
+            let auth = format!("Bearer {token}");
+            let err = fetch("PUT", url, &[("Authorization", &auth)], b"").unwrap_err();
+            assert_eq!(
+                err,
+                "PUT http://127.0.0.1:1/x: the `Authorization` header contains a line break or another control character"
+            );
+        }
+        for bad in [
+            "http://127.0.0.1:1/a\r\nHost: evil",
+            "http://127.0.0.1:1/a b",
+        ] {
+            let err = fetch("GET", bad, &[], b"").unwrap_err();
+            assert!(err.contains("in the request line"), "{err}");
+        }
+        let err = fetch("GET\r\n", url, &[], b"").unwrap_err();
+        assert!(err.starts_with("invalid HTTP method"), "{err}");
+        let err = fetch("GET", url, &[("X-A\r\nB", "v")], b"").unwrap_err();
+        assert!(err.contains("invalid HTTP header name"), "{err}");
+        // The host ends at the first `/`: `?`, `#`, `@` or `\` before it would let another parser
+        // (the token's loopback rule) see `localhost` where this client connects elsewhere.
+        for bad in [
+            "http://localhost?.attacker.example/",
+            "http://localhost#.attacker.example/",
+            "http://localhost@attacker.example/",
+            "http://127.0.0.1:1@attacker.example/",
+            "http://localhost\\.attacker.example/",
+            "https://registry.example.com?x/",
+            "http:///path",
+        ] {
+            let err = fetch("GET", bad, &[], b"").unwrap_err();
+            assert!(err.contains("the host part may not"), "{bad}: {err}");
+        }
+        // Ordinary requests pass the check (and then fail to connect), `?` after the path too.
+        for ok in [url, "http://127.0.0.1:1/search?q=a#b", "http://127.0.0.1:1"] {
+            let err = fetch("GET", ok, &[("Authorization", "Bearer 0123abcd")], b"").unwrap_err();
+            assert!(err.contains("cannot connect"), "{ok}: {err}");
+        }
+    }
+
+    #[test]
     fn unsupported_and_unreachable_urls() {
         assert!(fetch("GET", "ftp://x", &[], b"")
             .unwrap_err()
@@ -334,7 +493,8 @@ mod tests {
             );
         }
         let err = fetch("GET", &format!("{url}x\r\nX: y"), &[], b"").unwrap_err();
-        assert!(err.contains("a line break in the request line"), "{err}");
+        assert!(err.contains("a line break"), "{err}");
+        assert!(err.contains("in the request line"), "{err}");
         assert!(listener.accept().is_err(), "no connection was made");
     }
 }

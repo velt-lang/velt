@@ -11,6 +11,9 @@
 //! 5. [`impls`]: `implements` checking and `Program::impls`; [`comparable`]: `extend` blocks
 //!    defining `compareTo` implement the builtin `Comparable<T>`.
 //!
+//! [`field_only`]: field-only interfaces are object types (declared after phase 1, filled after
+//! phase 3).
+//!
 //! [`lookup`] finds a class's methods (own, inherited, interface defaults) for all of the above.
 
 mod classes;
@@ -18,8 +21,9 @@ mod comparable;
 mod constants;
 mod declare;
 mod exports;
+mod field_only;
 mod forwarders;
-mod getters;
+pub(crate) mod getters;
 mod iface_extends;
 mod impls;
 mod imports;
@@ -44,9 +48,12 @@ pub(crate) type ItemDefs = Vec<DefId>;
 pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     let mut items = ItemDefs::new();
     declare::declare_all(cx, &mut items);
+    field_only::declare(cx);
     shapes::resolve_shapes(cx, &items);
+    cx.shapes_done = true;
     sigs::resolve_sigs(cx, &items);
     iface_extends::flatten_all(cx);
+    field_only::fill(cx);
     classes::check_classes(cx);
     impls::build_impls(cx);
     comparable::extension_impls(cx);

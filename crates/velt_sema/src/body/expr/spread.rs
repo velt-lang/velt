@@ -253,7 +253,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let mut lets = vec![];
-        let mut sources: Vec<Option<hir::Expr>> = vec![];
+        let mut sources: Vec<Option<(hir::Expr, TyId)>> = vec![];
         let mut elem = exp_elem;
         for e in elems {
             let ast::ExprKind::Spread(inner) = &e.kind else {
@@ -279,13 +279,29 @@ impl FnCx<'_, '_> {
                 self.temp("<spread>", h, &mut lets)
             };
             set_place_mode(&mut src, UseMode::Borrow);
-            sources.push(Some(src));
+            sources.push(Some((src, et)));
         }
         let Some(elem) = elem else {
             return self.error_expr(span);
         };
+        for (e, src) in elems.iter().zip(&sources) {
+            let Some((_, et)) = src else { continue };
+            // Integers spread into a float array are numbers too (`[...[1, 2]]` as `number[]`).
+            let fits = *et == elem || (self.cx.ty.is_int(*et) && self.cx.ty.is_float(elem));
+            if !fits && !self.cx.ty.has_error(*et) {
+                let (from, to) = (self.cx.display(*et), self.cx.display(elem));
+                self.cx.err(
+                    format!("cannot spread `{from}` elements into an array of `{to}`"),
+                    e.span,
+                );
+            }
+        }
         let arr_ty = self.cx.ty.array(elem);
-        let cap = self.spread_capacity(elems, &sources, span);
+        let srcs: Vec<Option<hir::Expr>> = sources
+            .iter()
+            .map(|s| s.as_ref().map(|(h, _)| h.clone()))
+            .collect();
+        let cap = self.spread_capacity(elems, &srcs, span);
         let init = self.intrinsic(Intrinsic::ArrayWithCapacity, vec![cap], arr_ty, span);
         let out_l = self.new_local("<array>", arr_ty, true, span, LocalKind::Temp);
         lets.push(hir::Stmt {
@@ -297,7 +313,7 @@ impl FnCx<'_, '_> {
         });
         for (e, src) in elems.iter().zip(sources) {
             let stmt = match (src, &e.kind) {
-                (Some(src), _) => self.push_all(out_l, arr_ty, src, elem, e.span),
+                (Some((src, et)), _) => self.push_all(out_l, arr_ty, src, (et, elem), e.span),
                 (None, ast::ExprKind::Spread(_)) => continue,
                 (None, _) => {
                     let v = self.expr_coerce(e, elem, Want::Move);
@@ -346,21 +362,24 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `for (const e of src) out.push(e / e.clone());`
+    /// `for (const e of src) out.push(e / e.clone());`, converting integer elements of a source
+    /// to the float `elem` of the result.
     fn push_all(
         &mut self,
         out: hir::LocalId,
         arr_ty: TyId,
         src: hir::Expr,
-        elem: TyId,
+        (src_elem, elem): (TyId, TyId),
         span: Span,
     ) -> hir::Stmt {
-        let copy = self.cx.is_copy(elem);
-        self.reject_promise_spread(elem, span);
+        let copy = self.cx.is_copy(src_elem);
+        self.reject_promise_spread(src_elem, span);
         let mode = if copy { UseMode::Copy } else { UseMode::Borrow };
-        let e = self.new_local("<elem>", elem, false, span, LocalKind::Elem);
-        let read = self.mk(H::Local(e, mode), elem, span);
-        let value = if copy {
+        let e = self.new_local("<elem>", src_elem, false, span, LocalKind::Elem);
+        let read = self.mk(H::Local(e, mode), src_elem, span);
+        let value = if src_elem != elem && self.cx.ty.is_float(elem) {
+            self.mk(H::Cast(Box::new(read)), elem, span)
+        } else if copy {
             read
         } else {
             self.intrinsic(Intrinsic::Share, vec![read], elem, span)
@@ -368,7 +387,7 @@ impl FnCx<'_, '_> {
         let push = self.push_stmt(out, arr_ty, value);
         let binding = Pat {
             kind: PatKind::Binding(e, mode),
-            ty: elem,
+            ty: src_elem,
             span,
         };
         hir::Stmt {

@@ -12,7 +12,7 @@ use velt_syntax::ast;
 use super::ops::untyped;
 use crate::body::{FnCx, Want};
 use crate::defs::{Bound, ParamSig};
-use crate::hir::{self, PassMode, TyId, TyKind};
+use crate::hir::{self, ExprKind as H, PassMode, TyId, TyKind};
 
 /// A callable signature; `Param(i)` in its types are the callee's type parameters ("slots").
 pub(crate) struct Callable {
@@ -22,6 +22,12 @@ pub(crate) struct Callable {
     pub ret: TyId,
     pub slot_names: Vec<String>,
     pub bounds: Vec<Vec<Bound>>,
+    /// A `std/` function called from user code: a float argument for an integer parameter is
+    /// a JS number and converts like JS's `ToIntegerOrInfinity` (`xs.slice(0, xs.length / 2)`).
+    pub js_numbers: bool,
+    /// The last parameter is a rest parameter (`...xs: T[]`): the remaining arguments, spreads
+    /// included, become one array literal.
+    pub rest: bool,
 }
 
 /// Checked arguments, the instantiated result type and the inferred type arguments.
@@ -67,6 +73,17 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> Checked {
+        let packed;
+        let args = match self.pack_rest(c, args) {
+            Some((p, skip)) if !skip.is_empty() => {
+                return self.check_call_skipping(c, skip, slots, &p, exp, span)
+            }
+            Some((p, _)) => {
+                packed = p;
+                &packed[..]
+            }
+            None => args,
+        };
         let min = c
             .params
             .iter()
@@ -106,6 +123,13 @@ impl FnCx<'_, '_> {
         let mut hargs = vec![];
         for (h, p) in checked.into_iter().zip(&c.params) {
             let target = self.cx.ty.subst(p.ty, &type_args);
+            let h = if c.js_numbers && self.cx.ty.is_int(target) && self.cx.ty.is_float(h.ty) {
+                // A saturating cast: truncates, NaN gives 0, ±Infinity the type's bounds.
+                let span = h.span;
+                self.mk(H::Cast(Box::new(h)), target, span)
+            } else {
+                h
+            };
             let mut h = self.coerce(h, target);
             if p.mode == PassMode::BorrowMut {
                 self.use_mutably(&mut h, "modify");
@@ -124,6 +148,88 @@ impl FnCx<'_, '_> {
             ret,
             type_args,
         }
+    }
+
+    /// The arguments of a call to a function with a rest parameter: those from the rest
+    /// parameter's position on, spreads included, as one array literal (`f(1, ...xs)` passes
+    /// `[1, ...xs]`), and the parameters a spread skips (see below). `None` when nothing needs
+    /// packing.
+    ///
+    /// A spread before the rest parameter's position may skip defaulted parameters of a `std/`
+    /// function, whose defaults there are identities (`Math.max(...xs)`: `a` and `b` are
+    /// `-Infinity`, all of `xs` goes to `rest`). Elsewhere JS would bind `xs[0]` to the first
+    /// parameter, which Velt does not do, so it is an error.
+    fn pack_rest(
+        &mut self,
+        c: &Callable,
+        args: &[ast::Expr],
+    ) -> Option<(Vec<ast::Expr>, std::ops::Range<usize>)> {
+        let at = c.params.len().checked_sub(1).filter(|_| c.rest)?;
+        let spread = args[..at.min(args.len())]
+            .iter()
+            .position(|a| matches!(a.kind, ast::ExprKind::Spread(_)));
+        let mut from = at;
+        if let Some(k) = spread {
+            if c.js_numbers && c.params[k..at].iter().all(|p| p.default.is_some()) {
+                from = k;
+            } else {
+                self.cx.err(
+                    "a spread argument can only fill the rest parameter (`...xs: T[]`)",
+                    args[k].span,
+                );
+            }
+        }
+        if args.len() <= from {
+            return None;
+        }
+        let rest = &args[from..];
+        let span = rest[0].span.to(rest[rest.len() - 1].span);
+        let array = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Array(rest.to_vec()),
+            span,
+        };
+        let mut out = args[..from].to_vec();
+        out.push(array);
+        Some((out, from..at))
+    }
+
+    /// A call whose spread skipped the defaulted parameters `skip` (see `pack_rest`): checked
+    /// without them, then their defaults are put in place.
+    fn check_call_skipping(
+        &mut self,
+        c: &Callable,
+        skip: std::ops::Range<usize>,
+        slots: Vec<Option<TyId>>,
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Checked {
+        let mut params = c.params.clone();
+        let skipped: Vec<ParamSig> = params.drain(skip.clone()).collect();
+        let packed = Callable {
+            what: c.what.clone(),
+            params,
+            ret: c.ret,
+            slot_names: c.slot_names.clone(),
+            bounds: c.bounds.clone(),
+            js_numbers: c.js_numbers,
+            rest: false,
+        };
+        let mut ck = self.check_call(&packed, slots, args, exp, span);
+        if ck.args.is_empty() {
+            return ck;
+        }
+        for (k, p) in skipped.iter().enumerate() {
+            let mut d = p
+                .default
+                .clone()
+                .expect("ICE: skipped parameters have defaults");
+            crate::visit::map_expr_types(&mut d, &mut |t| self.cx.ty.subst(t, &ck.type_args));
+            d.span = span;
+            ck.args.insert(skip.start + k, d);
+        }
+        ck
     }
 
     /// Check `args` (typed ones first, then context-typed literals, then arrows), binding
@@ -153,9 +259,13 @@ impl FnCx<'_, '_> {
             let known: Vec<Option<TyId>> =
                 slots.iter().zip(context).map(|(s, c)| s.or(*c)).collect();
             let expected = self.cx.ty.subst_known(p.ty, &known);
-            let h = match as_arrow(&args[i]) {
+            let adapter = self.fewer_params_adapter(&args[i], expected);
+            let h = match adapter.as_ref().or(as_arrow(&args[i])) {
                 Some(a) if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) => {
-                    self.arrow_arg(a, expected, p.mode == PassMode::Owned)
+                    self.std_callback = c.js_numbers;
+                    let h = self.arrow_arg(a, expected, p.mode == PassMode::Owned);
+                    self.std_callback = false;
+                    h
                 }
                 _ => self.expr(&args[i], Some(expected), want_of(p.mode)),
             };
@@ -260,13 +370,27 @@ impl FnCx<'_, '_> {
                         .iface(b.iface)
                         .map(|i| i.name.clone())
                         .unwrap_or_default();
-                    self.cx.error(
-                        Diagnostic::error(
-                            format!("the type `{tn}` does not implement `{bn}`"),
-                            span,
-                        )
-                        .with_note(format!("required by `{name} extends {bn}` of {}", c.what)),
-                    );
+                    let mut d = Diagnostic::error(
+                        format!("the type `{tn}` does not implement `{bn}`"),
+                        span,
+                    )
+                    .with_note(format!("required by `{name} extends {bn}` of {}", c.what));
+                    if let Some(i) = self
+                        .cx
+                        .iface(b.iface)
+                        .filter(|_| self.cx.field_only.contains_key(&b.iface))
+                    {
+                        let fields: Vec<String> = i
+                            .fields
+                            .iter()
+                            .map(|f| format!("{}: {}", f.name, self.cx.display(f.ty)))
+                            .collect();
+                        d = d.with_note(format!(
+                            "`{bn}` has only fields: a type satisfies it by having them ({})",
+                            fields.join(", ")
+                        ));
+                    }
+                    self.cx.error(d);
                 }
             }
             out.push(t);

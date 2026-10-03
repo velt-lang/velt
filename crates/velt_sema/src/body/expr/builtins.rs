@@ -169,6 +169,8 @@ impl FnCx<'_, '_> {
         let mut out = vec![];
         for a in args {
             let h = self.expr(a, None, Want::Borrow);
+            // A `Date` prints as its ISO string, like Node.
+            let h = self.own_to_string(h, "__inspect");
             if !self.printable(h.ty) {
                 let tn = self.cx.display(h.ty);
                 self.cx
@@ -217,6 +219,8 @@ impl FnCx<'_, '_> {
             ret,
             slot_names: names,
             bounds: vec![vec![]; n],
+            js_numbers: false,
+            rest: false,
         };
         let ck = self.check_call(&c, vec![None; n], args, self.hint(exp), span);
         let kind = H::Variant {

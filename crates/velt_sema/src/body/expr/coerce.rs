@@ -75,11 +75,23 @@ impl FnCx<'_, '_> {
         if self.cx.class_of(exp).is_some() && self.cx.class_of(h.ty).is_some() {
             return self.upcast(h, exp);
         }
+        if self.cx.same_layout(h.ty, exp) {
+            // Object types that differ only in `readonly`: the same object, seen through the
+            // other type (`crate::readonly` makes them one type before lowering).
+            let span = h.span;
+            return Ok(self.mk(H::Upcast(Box::new(h)), exp, span));
+        }
         if let TyKind::Dyn(iface, args) = self.cx.ty.kind(exp).clone() {
             return self.dyn_value(h, exp, iface, &args);
         }
         if self.cx.ty.is_float(exp) && self.is_inferred_int(&h) {
             return Ok(self.int_to_float(h, exp));
+        }
+        // A JS number held as an integer adapts to the integer type expected (`s.slice(0,
+        // s.length - 1)`, where `slice` takes `i64` and the length is a `usize`).
+        let inferred = self.int_origin(&h) == super::numbers::IntOrigin::Inferred;
+        if self.cx.ty.is_int(exp) && self.cx.ty.is_int(h.ty) && inferred {
+            return Ok(self.int_as(h, exp));
         }
         Err(h)
     }
@@ -199,7 +211,51 @@ impl FnCx<'_, '_> {
         if let TyKind::Dyn(..) = self.cx.ty.kind(expected) {
             d = d.with_note(format!("`{f}` does not declare `implements {e}`"));
         }
+        if let Some(note) = self.class_to_data_note(expected, found) {
+            d = d.with_note(format!("`{e}` has only fields, so it is a data type, like `type {e} = {{ … }}`: a class instance is shared by reference and is not one"))
+                .with_note(note);
+        }
+        if e == f && self.is_anon(expected) && self.is_anon(found.ty) {
+            // An instance of a generic alias (`Box<number>`) and the object type it spells out
+            // (`{ v: number }`) are separate types today.
+            d = d.with_note(
+                "the two object types have the same fields but come from different declarations (a generic type's instance and a written object type don't convert yet); use one of them for both",
+            );
+        }
         self.cx.error(d);
+    }
+
+    /// For a class instance where a field-only interface's object type is expected: how to build
+    /// one from the instance (copying is explicit, so later writes to the instance are not
+    /// silently lost).
+    fn class_to_data_note(&mut self, expected: TyId, found: &hir::Expr) -> Option<String> {
+        let TyKind::Adt(d, _) = self.cx.ty.kind(expected).clone() else {
+            return None;
+        };
+        self.cx.field_only_of.get(&d)?;
+        self.cx.class_of(found.ty)?;
+        let src = match &found.kind {
+            H::Local(l, _) => self.f.locals[l.0 as usize].name.clone(),
+            _ => "x".into(),
+        };
+        let fields: Vec<String> = self
+            .cx
+            .adt(d)?
+            .fields
+            .iter()
+            .map(|f| format!("{0}: {src}.{0}", f.name))
+            .collect();
+        let e = self.cx.display(expected);
+        Some(format!(
+            "build one from it: `{{ {} }}`, or give `{e}` a method to make it an interface classes implement",
+            fields.join(", ")
+        ))
+    }
+
+    /// Is `t` an anonymous object type (`{ v: number }`, a generic alias's instance)?
+    fn is_anon(&self, t: TyId) -> bool {
+        matches!(self.cx.ty.kind(t), TyKind::Adt(d, _)
+            if self.cx.adt(*d).is_some_and(|a| a.kind == crate::hir::AdtKind::Anon))
     }
 
     /// Is `found` acceptable where `expected` is required (without conversion)?

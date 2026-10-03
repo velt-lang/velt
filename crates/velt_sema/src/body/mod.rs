@@ -43,6 +43,7 @@ mod locals;
 mod loops;
 pub(crate) mod narrow;
 mod pattern;
+mod pattern_defaults;
 pub(crate) mod places;
 mod stmt;
 pub(crate) mod switch;
@@ -153,6 +154,9 @@ pub(crate) struct Frame {
     pub soft_moves: Vec<Span>,
     /// Locals holding inferred integers (`expr::numbers`).
     pub inferred_ints: std::collections::HashSet<LocalId>,
+    /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
+    /// call `f(…)` fills in.
+    pub closure_consts: std::collections::HashMap<LocalId, DefId>,
     /// Throw sources of the enclosing `try` bodies (innermost last).
     pub tries: Vec<Vec<ThrowSrc>>,
     pub uncaught: Vec<ThrowSrc>,
@@ -180,6 +184,7 @@ impl Frame {
             is_async: false,
             soft_moves: vec![],
             inferred_ints: Default::default(),
+            closure_consts: Default::default(),
             tries: vec![],
             uncaught: vec![],
             super_ok: false,
@@ -208,6 +213,9 @@ pub(crate) struct FnCx<'a, 'm> {
     pub outer: Vec<Frame>,
     /// The span of a `new Promise` that is the operand of the `await` being checked.
     pub direct_await: Option<Span>,
+    /// The arrow being checked is an argument of a `std/` function called from user code: its
+    /// unannotated integer parameters (an index, a `reduce` accumulator) are JS numbers.
+    pub std_callback: bool,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -223,6 +231,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             f: frame,
             outer: vec![],
             direct_await: None,
+            std_callback: false,
         }
     }
 

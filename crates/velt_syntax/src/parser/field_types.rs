@@ -39,7 +39,7 @@ fn stated_type(e: &Expr) -> Option<TypeExpr> {
         ExprKind::Lit(Lit::Int { suffix, .. }) => Some(named(suffix.as_deref().unwrap_or("i64"))),
         ExprKind::Lit(Lit::Float { suffix, .. }) => Some(named(suffix.as_deref().unwrap_or("f64"))),
         ExprKind::Lit(Lit::Str(_)) | ExprKind::Template { .. } => Some(named("string")),
-        ExprKind::Lit(Lit::Bool(_)) => Some(named("bool")),
+        ExprKind::Lit(Lit::Bool(_)) => Some(named("boolean")),
         ExprKind::Unary {
             op: UnaryOp::Neg,
             expr,

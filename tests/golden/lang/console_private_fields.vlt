@@ -1,0 +1,23 @@
+// console.log shows a public empty-struct field next to a private field (only private
+// zero-sized fields, such as std's runtime markers, are left out), and shows private fields as
+// Node shows a TypeScript `private` field.
+struct Marker {}
+
+class Account {
+  private balance: i64 = 0;
+  marker: Marker = Marker {};
+  owner: string;
+  constructor(owner: string) {
+    this.owner = owner;
+  }
+  deposit(n: i64) {
+    this.balance += n;
+  }
+}
+
+function main() {
+  const a = new Account("ann");
+  a.deposit(5);
+  console.log(a);
+  console.log([a.marker]);
+}

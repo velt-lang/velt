@@ -91,24 +91,24 @@ impl Ctx<'_> {
 
     /// `{ a: A; b: B }`: the anonymous object type of that shape.
     fn resolve_object(&mut self, fields: &[ast::ObjectTypeField], env: &TyEnv) -> TyId {
-        let mut out: Vec<(String, TyId)> = vec![];
+        let mut out: Vec<(String, TyId, bool)> = vec![];
         let mut spans = vec![];
         for f in fields {
             let t = self.resolve_type(&f.ty, env);
-            if out.iter().any(|(n, _)| *n == f.name.name) {
+            if out.iter().any(|(n, ..)| *n == f.name.name) {
                 self.err(
                     format!("duplicate field `{}` in object type", f.name.name),
                     f.name.span,
                 );
                 continue;
             }
-            out.push((f.name.name.clone(), t));
+            out.push((f.name.name.clone(), t, f.readonly));
             spans.push(f.name.span);
         }
-        if out.iter().any(|(_, t)| *t == self.ty.error) {
+        if out.iter().any(|(_, t, _)| *t == self.ty.error) {
             return self.ty.error;
         }
-        let t = self.anon_type(&out, env.module);
+        let t = self.anon_type_with(&out, env.module);
         self.declare_anon_fields(t, &spans);
         t
     }
@@ -212,6 +212,9 @@ impl Ctx<'_> {
             "Promise" if args.len() == 2 => 2,
             "Promise" => 1,
             "Result" => return Some(self.removed_result(t)),
+            n if crate::utility_types::OPERATORS.contains(&n) => {
+                return Some(self.resolve_utility(t, name, args, env))
+            }
             _ => return None,
         };
         let args: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, env)).collect();
@@ -273,7 +276,10 @@ impl Ctx<'_> {
         if Some(d) == self.prelude_adt("Record") && !self.check_record_key(args[0], t.span, None) {
             return self.ty.error;
         }
-        if is_iface {
+        if let Some(&object) = self.field_only.get(&d) {
+            // A field-only interface is an object type (`collect::field_only`).
+            self.ty.intern(TyKind::Adt(object, args))
+        } else if is_iface {
             self.ty.intern(TyKind::Dyn(d, args))
         } else {
             self.ty.intern(TyKind::Adt(d, args))

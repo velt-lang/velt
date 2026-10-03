@@ -12,6 +12,7 @@
 pub mod archive;
 pub mod cache;
 pub mod contents;
+pub mod credentials;
 pub mod edit;
 pub mod graph;
 pub mod install;
@@ -27,6 +28,7 @@ pub mod remote;
 pub mod resolve;
 pub mod scaffold;
 pub mod search;
+pub mod sources;
 pub mod yank;
 
 pub use graph::PackageGraph;

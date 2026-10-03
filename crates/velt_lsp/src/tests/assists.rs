@@ -88,6 +88,28 @@ fn inlay_hints_show_inferred_types_and_parameter_names() {
     client.shutdown();
 }
 
+/// `bool` and `boolean` are one type, which hover and inlay hints print with TypeScript's name.
+#[test]
+fn hover_and_hints_print_bool_as_boolean() {
+    let text = "function flip(a: bool): boolean {\n  return !a;\n}\n\nfunction main() {\n  const on = flip(false);\n  console.log(on);\n}\n";
+    let mut client = Client::start();
+    let doc = uri("assist_boolean.vlt");
+    client.open(&doc, text);
+    assert_eq!(client.diagnostics(&doc)["diagnostics"], json!([]));
+    let (line, col) = pos_of(text, "flip(false)", 0);
+    let hover = client.request("textDocument/hover", at(&doc, line, col));
+    let value = hover["contents"]["value"].as_str().unwrap_or_default();
+    assert!(
+        value.contains("function flip(a: boolean): boolean"),
+        "{value}"
+    );
+    let (line, col) = pos_of(text, "on = flip", 2);
+    let wanted = (line as u64, col as u64, ": boolean".to_string());
+    let hints = hints(&mut client, &doc);
+    assert!(hints.contains(&wanted), "missing {wanted:?} in {hints:#?}");
+    client.shutdown();
+}
+
 #[test]
 fn signature_help_while_typing_a_call() {
     let mut client = Client::start();
@@ -241,6 +263,13 @@ fn workspace_symbols_search_open_programs_and_folders() {
     )
     .unwrap();
     std::fs::write(dir.join("target/skip.vlt"), "function areaSkipped() {}\n").unwrap();
+    std::fs::write(dir.join("src/shapes.ts"), "export function areaOfTs() {}\n").unwrap();
+    std::fs::write(dir.join("src/card.tsx"), "export function areaCard() {}\n").unwrap();
+    std::fs::write(
+        dir.join("src/types.d.ts"),
+        "declare function areaDecl(): void;\n",
+    )
+    .unwrap();
     let root = Url::from_file_path(&dir).unwrap();
 
     let mut client = Client::start_with(json!({ "capabilities": {}, "rootUri": root }));
@@ -263,7 +292,9 @@ fn workspace_symbols_search_open_programs_and_folders() {
         names,
         [
             ("area".to_string(), "assist_ws.vlt".to_string()),
+            ("areaCard".to_string(), "card.tsx".to_string()),
             ("areaOfSquare".to_string(), "geometry.vlt".to_string()),
+            ("areaOfTs".to_string(), "shapes.ts".to_string()),
         ]
     );
     let members = client.request("workspace/symbol", json!({ "query": "scaled" }));

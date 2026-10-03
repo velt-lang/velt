@@ -62,5 +62,5 @@ export type Native = {
   /// `"x86_64-unknown-linux-gnu"` or `"aarch64-apple-darwin"`.
   targets?: string[];
   /// WebAssembly libraries are not supported yet: must be `false` (the default).
-  wasm?: bool;
+  wasm?: boolean;
 };

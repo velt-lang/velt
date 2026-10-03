@@ -12,6 +12,8 @@ hidden classes and no runtime shape checks.
   throw ([Errors](errors.md#throwing)). This order is a known difference from TypeScript, which
   runs the base class's initializers and constructor before the derived class's initializers
   (tracked in [#273](https://github.com/velt-lang/velt/issues/273)).
+  A field declared from an integer literal (`count = 0`) holds a JS number, like
+  `let count = 0` ([Numbers](types.md#numbers)).
 - **Parameter properties**: `constructor(private readonly name: string, public age: i64) {}`
   declares the fields and assigns them, as in TypeScript (`protected` is accepted there and
   means public: there are no `protected` members).
@@ -34,7 +36,9 @@ hidden classes and no runtime shape checks.
   overridden methods go through a vtable, and only where the static type is a base class.
 - **Members**: `private` (usable only inside the declaring type's body, including closures
   there, but not in subclasses: ``` `x` is private ```; the standard library's own modules may
-  use the private members of its types, which is how std types build each other's handles),
+  use the private members of its types, which is how std types build each other's handles;
+  `console.log` shows private fields, as Node shows a TypeScript `private` field, except
+  zero-sized ones such as std's `runtime` markers),
   `public` (the default), `readonly`
   fields (assignable only in the constructor), `static` methods, and
   `static readonly NAME: T = const;` constants (`Account.LIMIT`, `Math.PI`). Mutable statics
@@ -51,6 +55,8 @@ hidden classes and no runtime shape checks.
 - An overridden method returning a promise reports its errors through the promise: when the
   base method or any override can fail, all of them must be `async`
   ([Async](async.md#errors)).
+- A template literal calls a class's (or struct's) own `toString(): string`, as in JS
+  (`` `total: ${price}` ``); without one it shows the value the way `console.log` does.
 
 ```ts
 class Account {
@@ -156,8 +162,18 @@ console.log(p.len(), q.len());  // 4 4
 - An interface lists the methods, getters, setters and fields an implementing type must have,
   and may give methods **default bodies** (mixins). `class C implements I, J` takes any number;
   `interface B extends A, C` inherits everything.
-- Interfaces are nominal: a type implements an interface only by declaring `implements` (or
-  through an [`extend`](#extend) block); an object literal does not satisfy one.
+- An interface with **methods** (or getters or setters, own or inherited) is nominal: a type
+  implements it only by declaring `implements` (or through an [`extend`](#extend) block); an
+  object literal does not satisfy one.
+- An interface with **only fields** (at least one, no methods, extending only such interfaces)
+  describes data: it is an object type, like `type User = { … }`, so object literals satisfy
+  it, field reads are loads and it has a JSON form. It converts to and from object types with
+  the same fields and stays the same object. `class C implements User` checks that the class
+  has the fields, but a class instance is not a `User` (it is shared by reference; build one
+  from its fields). As a bound, `<T extends HasId>` is satisfied by any type with the fields
+  (a struct, class or object type, not generic). An interface that refers to itself through a
+  field (`next?: Node`) has infinite size, as a struct does; through an array
+  (`children: Node[]`) it is fine.
 - Used as a **generic bound** (`<T extends Named>`), an interface is resolved at compile time
   (direct calls). Used as a **value type** (`Named[]` holding different classes), it is a fat
   pointer (data plus vtable), like Rust's `dyn`.
@@ -203,12 +219,32 @@ for (const p of pets) {
 console.log(loudest(new Dog()));
 ```
 
+```ts
+interface User {                          // only fields: an object type
+  readonly id: i64;
+  name: string;
+  email?: string;
+}
+
+interface HasId {
+  id: i64;
+}
+
+function idOf<T extends HasId>(x: T): i64 { // any type with an `id: i64` field
+  return x.id;
+}
+
+const u: User = { id: 1, name: "ann" };   // an object literal satisfies it
+console.log(JSON.stringify(u), idOf(u));
+```
+
 ## Generics
 
 Classes, structs, interfaces and functions take type parameters (`class Stack<T>`,
 `interface Box<T>`, `function f<T extends Comparable<T>>`). Every instantiation is compiled
 separately (monomorphization): no boxing, and bounds resolve to direct calls. Bounds are
-interfaces, not object types. There are no default type arguments.
+interfaces (an interface with only fields is satisfied by any type with its fields), not object
+types. There are no default type arguments.
 
 ```ts
 class Stack<T> {
@@ -311,8 +347,8 @@ The prelude declares `interface Comparable<T> { compareTo(other: T): i64; }` and
 for every number type, `string` (bytewise) and `bool`. With `T extends Comparable<T>`, the
 operators `<`, `<=`, `>` and `>=` work on `T` (static dispatch after monomorphization), and
 `sort()` orders Comparable elements (floats put `NaN` last). User types implement it with
-`implements Comparable<X>` or an `extend` block. On a concrete class the operators are not
-available yet: call `a.compareTo(b)` or go through a generic.
+`implements Comparable<X>` or an `extend` block, and then `<`, `<=`, `>` and `>=` work on their
+values too (`v1 < v2` is `v1.compareTo(v2) < 0`).
 
 ```ts
 class Version implements Comparable<Version> {

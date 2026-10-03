@@ -14,7 +14,7 @@ export const pkg: Package = {
     http: { version: "0.3" },   // object form
     util: { path: "../util" },  // local package (version optional)
   },
-  paths: { "@app/*": "src/*" }, // import { x } from "@app/util"  →  src/util.vlt
+  paths: { "@app/*": "src/*" }, // import { x } from "@app/util"  →  src/util.vlt (or .ts, .tsx)
 };
 ```
 

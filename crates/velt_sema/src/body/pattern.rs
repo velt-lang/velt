@@ -53,6 +53,14 @@ impl FnCx<'_, '_> {
             ast::PatternKind::Array { elems, rest } => {
                 self.array_pattern(elems, rest.as_ref(), ty, ctx, p.span)
             }
+            // `const`/`let` declarations rewrite defaults first (`pattern_defaults`).
+            ast::PatternKind::Default { pattern, .. } => {
+                self.cx.err(
+                    "defaults in a destructuring pattern are only supported in `const` and `let` declarations",
+                    p.span,
+                );
+                self.pattern_kind(pattern, ty, ctx)
+            }
         }
     }
 

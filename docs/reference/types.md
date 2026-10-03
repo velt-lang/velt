@@ -4,7 +4,7 @@
 |---|---|
 | `i8 i16 i32 i64 isize`, `u8 u16 u32 u64 usize` | fixed-width integers |
 | `f32 f64`; `number` | floats; `number` is `f64` |
-| `bool` | `true` / `false` |
+| `boolean`, `bool` | `true` / `false`; one type with two names ([Booleans](#booleans)) |
 | `string` | immutable UTF-8 text, a value ([Strings](#strings)) |
 | `void`, `never` | no value; no possible value ([`switch`](control-flow.md#switch)) |
 | `T[]` | growable array |
@@ -22,6 +22,23 @@ return type means `void`). Everything else is inferred. `type Name = …` declar
 alias cannot refer to itself. There is no `any` or `unknown`: dynamic JSON is `JsonValue`
 ([`velt:json`](../std/json.md)).
 
+## Booleans
+
+`boolean` and `bool` are the same type, and either name can be used anywhere a type is written:
+annotations, generic arguments, unions and function types. `boolean` is TypeScript's name, so
+code that is shared with TypeScript uses it; `bool` is the shorter name Velt code has used.
+Diagnostics, hover and inlay hints print `boolean`; `velt fmt` keeps the name you wrote.
+
+```ts
+function isEven(n: i64): boolean {
+  return n % 2 == 0;
+}
+
+const check: (n: i64) => bool = isEven;
+const flags: (boolean | null)[] = [check(2), null];
+console.log(flags);               // [ true, null ]
+```
+
 ## Numbers
 
 Numbers behave like JavaScript numbers wherever the difference would show, while integer types
@@ -29,25 +46,36 @@ keep integer speed. Every integer value is either **declared** or **inferred**:
 
 - **Declared**: its integer type is written or implied by a declaration: an annotated variable
   (`let n: i64 = 7`), a parameter, field or return type, a literal suffix (`7i32`), an `as`
-  cast, an API result (`xs.length`, `s.indexOf(t)`, `Date.now()`), an array element or map
-  value of an integer type, or an integer literal typed by such a context (`x + 2` with `x`
-  declared, `f(2)`, `const n: u8 = 200`).
+  cast, an array element or map value of an integer type, or an integer literal typed by such a
+  context (`x + 2` with `x` declared, `f(2)`, `const n: u8 = 200`).
 - **Inferred**: an integer literal with no context (`7`), a variable declared without a type
-  whose initializer is inferred (`const a = 7`, `let i = 0`, `let n = a * 2`), and arithmetic
-  with at least one inferred operand.
+  whose initializer is inferred (`const a = 7`, `let i = 0`, `let n = a * 2`), a field declared
+  without a type from an integer literal (`count = 0;`), arithmetic with at least one inferred
+  operand, and every integer the standard library hands to your code: `xs.length`,
+  `s.indexOf(t)`, `m.size`, `Date.now()`, the index of `entries()` and of array callbacks. You
+  wrote no integer type for those, so they are JS numbers (inside `std/` they stay declared).
 
 Both are stored as integers (inferred ones as `i64`), so loop counters, indexes and counts run
 at integer speed. The rules:
 
 - **`/` yields `f64` unless both operands are declared integers**: `const a = 7; a / 2` is
-  `3.5`, `7 / 2` is `3.5`, `xs.length / 2` truncates (both declared), and
+  `3.5`, `7 / 2` is `3.5`, `xs.length / 2` is `1.5` for three elements, and
   `const h: i64 = 7 / 2` is `3`.
 - **Integer division is explicit**: `Math.trunc(a / b)` with integer operands is one integer
   division instruction (truncating toward zero, exactly JS's `Math.trunc` of the quotient).
 - Next to a float, or where a float is expected, an inferred integer converts: `a + 0.5`,
-  `Math.sqrt(16)`, `const f: f64 = 1`. A declared integer never converts implicitly: write
-  `x as f64`. Different declared integer types don't mix either: `xs.length` is a `usize`, so
-  compare it with a `usize` (`let i: usize = 0`) or cast (`i as usize`).
+  `Math.sqrt(16)`, `const f: f64 = 1`. Next to an integer of another type, or where one is
+  expected, it adapts: `let i = 0; i < xs.length` and `s.slice(0, s.length - 1)` compile as in
+  JS. A declared type other than `usize` wins; otherwise both sides become `i64`, so
+  `let i = -1; i < xs.length` is `true`. A declared integer never converts implicitly: write
+  `x as f64`, and different declared integer types don't mix (`let n: i32 = 1; let m: u8 = 2;
+  n < m` is an error).
+- **A float index** (`xs[i]` with `i: number`, `xs[Math.floor(n / 2)]`, `xs[parseInt(s)]`) must
+  be a whole number at run time; anything else panics like an index out of bounds (JS reads
+  `undefined`). Indexing with a quotient directly, `xs[n / 2]`, stays an error: write
+  `Math.trunc(n / 2)`.
+- A float passed to an integer parameter of a standard library function converts like JS's
+  `ToIntegerOrInfinity`: `xs.slice(0, xs.length / 2)` takes the first half.
 - `x /= y` on an integer variable is allowed only when it is integer division; otherwise it is
   an error (it would store a float).
 - `%` on integers is the remainder truncated toward zero (sign of the dividend), like JS.
@@ -82,11 +110,13 @@ usable and no copy method is needed.
 - **No implicit conversion**: `"Total: " + 5` and `"a" + true` are compile errors. Build text
   with a template literal (`` `Total: ${n}` ``), which formats any value the way `console.log`
   does.
-- `s.length` is the **byte** length (`usize`); positions (`slice`, `indexOf`, regex offsets) are
-  byte offsets. There is no `s[i]` indexing and no `for...of` over a string; use `slice` or
-  `charCodeAt`.
+- `s.length` is the **byte** length; positions (`slice`, `indexOf`, regex offsets, `s[i]`) are
+  byte offsets. For ASCII text that is JS's answer; for other text it differs
+  (`"Zoë".length` is 4, where JS says 3).
+- `s[i]` is `s.charAt(i)`: the character starting at position `i`, or `""` past the end (JS:
+  `undefined`). `for (const c of s)` iterates the characters (`s.split("")`), emoji included.
 - Methods: `slice substring indexOf lastIndexOf includes startsWith endsWith split trim
-  trimStart trimEnd toUpperCase toLowerCase replace replaceAll repeat padStart padEnd
+  trimStart trimEnd toUpperCase toLowerCase replace replaceAll repeat padStart padEnd charAt at
   charCodeAt`, plus `String.fromCharCode`, `parseInt`, `parseFloat` and `Number(s)`
   ([prelude](../std/prelude.md#strings)).
 - `<` and `>` compare bytewise; `==` compares content.
@@ -117,8 +147,9 @@ console.log(label("tea", 3), "a,b".split(","), "  x ".trim().padStart(3, "*"));
 - Content comparison: `deepEqual(a, b)` ([prelude](../std/prelude.md)) compares arrays,
   structs and object literals by their contents, recursively; maps and records by their keys
   and values, in any key order; other class instances by identity. `assertEq` uses it.
-- `<`, `<=`, `>`, `>=` work on numbers and strings, and on a generic `T extends Comparable<T>`
-  ([Comparable](classes.md#comparable)).
+- `<`, `<=`, `>`, `>=` work on numbers and strings, and on a class or struct implementing
+  `Comparable` (`Date`, `DateTime`) or a generic `T extends Comparable<T>`: `a < b` is
+  `a.compareTo(b) < 0` ([Comparable](classes.md#comparable)).
 
 ## Null
 
@@ -130,6 +161,10 @@ has type `T | null`, stored without an extra allocation where possible.
 - `x ?? d` (default), `x?.f` / `x?.m()` (optional access; the result is nullable),
   `if (x != null) { … }` and early exits narrow `x` to `T` (a local or a field path of one,
   see below); `switch` supports `case null`.
+- `x ??= d` assigns `d` when `x` is `null` and narrows `x` (likewise `x ||= d` and `x &&= d`).
+  The target may not call a function yet (`m[key()] ??= v`): store the key in a variable first.
+- `x!` is `x` known not to be `null` (TS's non-null assertion). TypeScript trusts it; Velt
+  checks it: a `null` panics with `non-null assertion failed`.
 - `a?: T` is `T | null` everywhere: an optional parameter `b?: T` is `b: T | null = null`
   (callers may leave it out or pass `null`; it cannot also have a default), an optional class
   or interface field starts as `null` (and is omitted by `JSON.stringify` when null), and an
@@ -192,6 +227,8 @@ A string, number or bool literal is a type with that one value: `"circle"`, `42`
 - A literal type is zero-sized; a union of literals is only its tag. Printing, `${}` and
   `JSON.stringify` show the value; `typeof` gives the base type's tag.
 - `JSON.parse` checks a literal type against its value (`expected "task" at $.kind`).
+- `e as const` is accepted and keeps the value as it is: Velt arrays and literals need no
+  `readonly` or literal-type annotation for it.
 
 ## Union types
 
@@ -305,18 +342,57 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   `{ name: string; n: i64 }` with a fixed layout (a field access is one load). An object type
   accepts exactly its fields: extra fields are a type error, and adding a property later is an
   error (use a `Map` or a `Record`).
+- **`readonly` fields**: in `{ readonly id: i64; name: string }`, assigning `id` is an error
+  (``cannot assign to `id`: it is a readonly field``); like TypeScript's, the check is shallow
+  (`u.tags.push(x)` is fine). A value converts between a type and the same type without
+  `readonly`, in both directions, and stays the same object.
+- **Utility types** build an object type from a concrete one (an object type, an interface
+  with only fields, or a class or struct, whose public fields are used):
+  `Partial<T>` (every field optional), `Required<T>` (every nullable field non-null),
+  `Readonly<T>` (every field `readonly`), `Pick<T, K>` (only the fields named in `K`) and
+  `Omit<T, K>` (every other field). `K` is a string literal type or a union of them
+  (`"id" | "email"`); a name that is not a field is an error in both `Pick` and `Omit`. The
+  results are ordinary object types: `Pick<User, "name">` *is* `{ name: string }`.
+  Differences from TypeScript: `Required` also removes `null` from fields written `a: T | null`
+  (in Velt `a?: T` is `T | null`); an operator on a type parameter (`Partial<T>` in a generic
+  function) is not supported yet; and a field type can only apply one to a type declared before
+  it.
+
+```ts
+interface User {
+  readonly id: i64;
+  name: string;
+  email?: string;
+}
+
+type Patch = Partial<User>;               // { readonly id?: i64; name?: string; email?: string }
+type Summary = Pick<User, "id" | "name">; // { readonly id: i64; name: string }
+
+function apply(u: User, p: Patch): User {
+  return { id: u.id, name: p.name ?? u.name, email: p.email ?? u.email };
+}
+
+const s: Summary = { id: 1, name: "ann" };
+console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
+```
+
 - **Spread**: `{ ...a, b: 1 }` builds a merged object at compile time (later keys win);
-  `[x, ...xs]` builds a new array. Spread arguments, `f(...xs)`, are not supported.
+  `[x, ...xs]` builds a new array (integer elements spread into a `number[]` convert). Spread
+  arguments, `f(...xs)`, fill a rest parameter ([Functions](functions.md)).
 - **Destructuring**: `const [a, b] = pair;`, `const [head, ...rest] = xs;`,
-  `const { a, b } = obj;`, and `for (const [k, v] of map)`. Defaults inside patterns and
-  parameter patterns are not supported. Array destructuring checks the length like indexing: a
-  shorter array panics with the same `index out of bounds` message.
-- **Arrays** `T[]`: `length` (`usize`), `xs[i]` (bounds-checked: panics
+  `const { a, b } = obj;`, and `for (const [k, v] of map)`. Array destructuring checks the
+  length like indexing: a shorter array panics with the same `index out of bounds` message.
+- **Defaults** in `const` and `let` patterns: `const { host = "localhost", port = 80 } = opts;`
+  takes the default when the field is `null`, and `const [first = 0] = xs;` when the array is
+  too short (where JS reads `undefined`). Defaults in `for...of` patterns and parameter patterns
+  are not supported.
+- **Arrays** `T[]`: `length`, `xs[i]` (bounds-checked: panics
   `index out of bounds: the len is L but the index is I`), `push`, `pop(): T | null`,
   `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat
   reverse isEmpty entries fill`, `join` (any elements, shown as `${x}` shows them), `sort()` on
   numbers, strings and `Comparable` elements, and `sort(cmp)` (stable, any element type, like
-  JS's `Array.prototype.sort(compareFn)`). The full list is in the
+  JS's `Array.prototype.sort(compareFn)`). Callbacks get the element and its index, like JS
+  (`xs.map((x, i) => …)`), and may take fewer parameters. The full list is in the
   [prelude](../std/prelude.md#arrays).
 - `new Array<T>(n).fill(v)` and `Array.from({ length: n }, (_, i) => f(i))` build an array of
   `n` elements in one allocation. A bare `new Array<T>(n)` is an error: arrays have no holes.

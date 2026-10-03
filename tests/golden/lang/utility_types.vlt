@@ -1,0 +1,52 @@
+// Partial, Required, Readonly, Pick and Omit build object types from a concrete object type
+// (docs/internals/design/shared-models.md, step 3). The results are ordinary object types.
+
+interface Base {
+  readonly id: number;
+}
+
+interface User extends Base {
+  name: string;
+  email?: string;
+}
+
+class Account {
+  owner: string = "ann";
+  private secret: string = "s";
+  balance: number = 10;
+}
+
+type Patch = Partial<User>;
+type Summary = Pick<User, "id" | "name">;
+type Draft = Omit<User, "id">;
+type Complete = Required<User>;
+type Point = Readonly<{ x: number; y: number }>;
+type AccountView = Readonly<Account>;
+type Key = "name";
+type NameOnly = Pick<User, Key>;
+
+function apply(u: User, p: Patch): User {
+  return { id: u.id, name: p.name ?? u.name, email: p.email ?? u.email };
+}
+
+function main() {
+  const u: User = { id: 1, name: "ann" };
+  console.log(apply(u, { email: "a@x" }).email ?? "-", apply(u, {}).name);
+
+  // `Pick<User, "id" | "name">` is the object type `{ readonly id: number; name: string }`.
+  const s: Summary = { id: 2, name: "bo" };
+  const plain: { readonly id: number; name: string } = s;
+  const n: NameOnly = { name: "cy" };
+  console.log(plain.name, n.name);
+
+  const d: Draft = { name: "dee", email: "d@x" };
+  const c: Complete = { id: 3, name: "eve", email: "e@x" };
+  console.log(JSON.stringify(d), c.email.length);
+
+  const p: Point = { x: 1, y: 2 };
+  const view: AccountView = { owner: "fay", balance: 5 };
+  console.log(p.x + p.y, view.owner, view.balance);
+
+  const fromJson = JSON.parse<Patch>("{\"name\":\"gus\"}");
+  console.log(fromJson.name ?? "-", fromJson.email ?? "-");
+}

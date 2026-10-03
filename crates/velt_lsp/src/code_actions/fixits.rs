@@ -45,7 +45,7 @@ pub fn for_diagnostic(
         let found = d
             .notes
             .iter()
-            .find_map(|n| n.strip_prefix("expected bool, found "))?;
+            .find_map(|n| n.strip_prefix("expected boolean, found "))?;
         return compare_to_zero_value(analysis, span, span, found, "!==");
     }
     let negated = d

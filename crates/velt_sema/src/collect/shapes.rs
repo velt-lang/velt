@@ -36,7 +36,7 @@ pub(super) fn resolve_shapes(cx: &mut Ctx, items: &ItemDefs) {
 }
 
 /// Structs and enums are stored inline, so one cannot contain itself by value.
-fn check_finite(cx: &mut Ctx, d: DefId) {
+pub(super) fn check_finite(cx: &mut Ctx, d: DefId) {
     let (name, span, n) = match &cx.info[d.0 as usize] {
         DefInfo::Adt(a) if a.kind != AdtKind::Class => (a.name.clone(), a.span, a.generics.len()),
         DefInfo::Enum(e) => (e.name.clone(), e.span, e.generics.len()),
@@ -109,6 +109,11 @@ pub(crate) fn iface_bound(cx: &mut Ctx, t: &ast::TypeExpr, env: &TyEnv) -> Optio
             iface: *iface,
             args: args.clone(),
         }),
+        // A field-only interface written as a type is its object type; here it is the bound.
+        TyKind::Adt(d, args) if cx.field_only_of.contains_key(d) => Some(Bound {
+            iface: cx.field_only_of[d],
+            args: args.clone(),
+        }),
         TyKind::Error => None,
         _ => {
             let tn = cx.display(ty);
@@ -139,7 +144,29 @@ fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldI
         default: None,
         default_throws: vec![],
         private_to: f.is_private.then_some(owner),
+        inferred_int: untyped_int_field(f),
     }
+}
+
+/// `count = 0;`: the parser took the type `i64` from the literal itself (same span).
+fn untyped_int_field(f: &ast::Field) -> bool {
+    let Some(d) = &f.default else {
+        return false;
+    };
+    let mut e = d;
+    while let ast::ExprKind::Paren(x)
+    | ast::ExprKind::Unary {
+        op: ast::UnaryOp::Neg,
+        expr: x,
+    } = &e.kind
+    {
+        e = x;
+    }
+    d.span == f.ty.span
+        && matches!(
+            e.kind,
+            ast::ExprKind::Lit(ast::Lit::Int { suffix: None, .. })
+        )
 }
 
 fn push_field(cx: &mut Ctx, fields: &mut Vec<FieldInfo>, f: FieldInfo) {

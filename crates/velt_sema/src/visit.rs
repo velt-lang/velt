@@ -204,6 +204,11 @@ pub(crate) fn map_expr_types(e: &mut Expr, m: &mut dyn FnMut(TyId) -> TyId) {
     expr(e, &mut TypeMap(m));
 }
 
+/// [`map_expr_types`] over a whole block.
+pub(crate) fn map_block_types(b: &mut Block, m: &mut dyn FnMut(TyId) -> TyId) {
+    block(b, &mut TypeMap(m));
+}
+
 struct Remap<'a>(&'a [LocalId]);
 
 impl VisitMut for Remap<'_> {

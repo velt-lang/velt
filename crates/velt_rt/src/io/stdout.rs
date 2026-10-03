@@ -2,13 +2,18 @@
 //!
 //! Each thread appends to its own buffer (no lock per `write_*` call, and a `console.log` line built
 //! from several calls is never interleaved with another thread's). A thread's buffer is *published*
-//! into one shared buffer (one mutex acquisition) when it fills, when stdout is flushed, and at the
-//! end of every task poll (`publish_thread_output`) — before the task can resume on another worker,
-//! so `log a; await; log b` always prints `a` before `b`. The shared buffer reaches the OS when it
-//! fills, on explicit flushes, and when a worker goes idle. On an interactive terminal every
+//! into one shared buffer (one mutex acquisition) when it fills, when stdout is flushed, at the end
+//! of every task poll (`publish_thread_output`) — before the task can resume on another worker, so
+//! `log a; await; log b` always prints `a` before `b` — and before the task hands work to another
+//! (`publish_before_handoff`, called before the hand-off becomes visible: spawning a task, a channel
+//! send or close, a receive that frees room in a bounded channel, settling a `new Promise`, aborting
+//! a signal, a child leaving a task group), so a line logged before `spawn(f())` prints before
+//! anything `f` prints. Hand-offs through shared state (`shared`, a `Mutex`) and timers are not
+//! covered: such lines may still appear out of order. The shared buffer reaches the OS
+//! when it fills, on explicit flushes, and when a worker goes idle. On an interactive terminal every
 //! completed line is written through immediately (line buffering, like C stdio).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Mutex, MutexGuard, TryLockError};
@@ -39,6 +44,9 @@ impl Drop for Local {
 
 thread_local! {
     static LOCAL: Local = const { Local(RefCell::new(Vec::new())) };
+    /// Whether this thread's buffer may hold bytes: a cheap check (no destructor) for the
+    /// hand-off points, which mostly find the buffer empty.
+    static BUFFERED: Cell<bool> = const { Cell::new(false) };
 }
 
 fn line_buffered() -> bool {
@@ -140,6 +148,10 @@ pub fn append(f: impl FnOnce(&mut Vec<u8>)) {
             publish_all(&mut buf);
             write_shared(&mut lock_shared());
         }
+        if start == 0 {
+            // Only when the buffer starts filling: an over-approximation is harmless.
+            BUFFERED.set(true);
+        }
     });
     if let Some(f) = f {
         // Thread buffer unavailable (thread shutting down): go through the shared buffer.
@@ -156,8 +168,22 @@ pub fn publish_local() {
             if !buf.is_empty() {
                 publish_all(&mut buf);
             }
+            BUFFERED.set(false);
         }
     });
+}
+
+/// Bytes in this thread's buffer (for tests).
+#[cfg(test)]
+pub(crate) fn local_len() -> usize {
+    LOCAL.with(|l| l.0.borrow().len())
+}
+
+/// [`publish_local`], with a cheap check first for the common case of an empty buffer.
+pub fn publish_if_buffered() {
+    if BUFFERED.get() {
+        publish_local();
+    }
 }
 
 /// Write everything buffered by this thread and the shared buffer to the OS.

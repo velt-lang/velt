@@ -10,6 +10,6 @@ pub mod message;
 pub mod server;
 pub mod tls;
 
-pub use client::{fetch, fetch_within, Limits};
+pub use client::{fetch, fetch_within, url_host, Limits, UrlHost};
 pub use message::{Request, Response};
 pub use server::{serve, Handler, Server};

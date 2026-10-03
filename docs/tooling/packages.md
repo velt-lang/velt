@@ -16,6 +16,7 @@ pins them.
 | `velt search <text>` | find packages by name, keywords and description (`--json` for scripts) |
 | `velt yank <pkg>@<version> [--undo]` | withdraw a published version: lockfiles that pin it keep working, new requirements skip it |
 | `velt owner list\|add\|remove <pkg> [<user>]` | who may publish a package on a registry server |
+| `velt login <url>` / `velt logout <url>` | store or forget your token for a registry server |
 
 ```sh
 velt new textkit --template lib     # a library with doc comments and tests
@@ -41,9 +42,9 @@ import { slugify } from "textkit";
   directly.
 - `velt registry serve` speaks plain HTTP, so tokens and packages cross the network unencrypted.
   Beyond localhost, put it behind a reverse proxy that terminates TLS (Caddy, nginx) and give
-  clients the `https://` URL. `velt` sends `VELT_REGISTRY_TOKEN` only to an `https://` registry
-  or to `http://` on this machine (`localhost`, `127.0.0.0/8`, `[::1]`), and refuses a write to
-  any other registry while the variable is set.
+  clients the `https://` URL. `velt` sends a token (from `velt login` or `VELT_REGISTRY_TOKEN`)
+  only to an `https://` registry or to `http://` on this machine (`localhost`, `127.0.0.0/8`,
+  `[::1]`), and refuses a write that would send one anywhere else.
 - A request may take 10 minutes in all. `velt` gives up on a server that stays silent for 60
   seconds, or that it can't connect to within 10 seconds.
 - Package archives contain `package.vlt`, `src/**` and the sources of a `native` crate. Their checksum is the content hash that
@@ -58,11 +59,20 @@ registry while `VELT_REGISTRY_TOKEN` is set, since that variable no longer prote
 
 ```sh
 velt registry user add alice --dir ./registry    # prints alice's token, once
-export VELT_REGISTRY_TOKEN=<the token>           # on alice's machine
+velt login https://registry.example.com          # on alice's machine: paste the token
 velt publish                                     # alice publishes `textkit` and owns it
 velt owner add textkit bob                       # bob may publish it too
 velt yank textkit@1.2.0                          # withdraw a broken version
 ```
+
+`velt login <url>` reads the token from stdin (a prompt that doesn't echo in a terminal, or a
+pipe in a script) and stores it in `$VELT_HOME/credentials.json`, keyed by the registry's URL and
+readable only by you (mode 0600 on Unix; on Windows an access list for its owner alone). `velt`
+sends a stored token only to the registry it was stored for, so a checkout whose `package.vlt`
+names another registry never receives it, and `velt login` refuses a plain `http://` registry on
+another machine. `velt logout <url>` forgets the token. `VELT_REGISTRY_TOKEN`, if set,
+overrides the stored tokens and is sent to whichever registry the command uses, which suits CI
+jobs that publish to one registry.
 
 `velt registry user token alice` replaces a lost or leaked token, and `velt registry user remove`
 deletes a user; removing the last one opens the registry again and needs `--open`. A removed

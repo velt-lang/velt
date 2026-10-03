@@ -53,6 +53,14 @@ impl<'a> Parser<'a> {
                     prefix: false,
                     target: Box::new(e),
                 },
+                // `x!` (TS's non-null assertion), unless the `!` starts the next line's
+                // statement.
+                Tok::Bang
+                    if !self.src[e.span.hi as usize..self.cur_lo() as usize].contains('\n') =>
+                {
+                    self.bump();
+                    ExprKind::NonNull(Box::new(e))
+                }
                 Tok::Question if !self.question_is_ternary() => {
                     self.reject_question_operator();
                     continue;

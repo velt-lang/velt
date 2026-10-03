@@ -1,0 +1,57 @@
+// JSON (same workload as json.js): `JSON.stringify` and `JSON.parse<Item[]>` of 50k objects whose
+// string fields hold accents, CJK and emoji, 3 rounds.
+class Rng {
+  seed: i64 = 42;
+
+  next(n: i64): i64 {
+    this.seed = (this.seed * 48271) % 2147483647;
+    return this.seed % n;
+  }
+
+  pick(xs: string[]): string {
+    return xs[this.next(xs.length as i64)];
+  }
+}
+
+struct Item {
+  id: i64;
+  name: string;
+  note: string;
+  tags: string[];
+}
+
+const NAMES = "José|Zoë|Ægir|Søren|François|Łukasz|Ana|Bob|Chloé|Dvořák";
+const NOTES =
+  "héllo wörld 😀|東京で会いましょう 🎉|ship it 🚀🚀|çà et là|👍🏽 looks good|I ❤️ JSON|plain ascii note|🔥🔥🔥|naïve café|emoji at end 🍕";
+const TAGS = "😀|dev|日本|ü|🚀|ops|👍🏽|ß";
+
+function main() {
+  const rng = new Rng();
+  const names = NAMES.split("|");
+  const notes = NOTES.split("|");
+  const tags = TAGS.split("|");
+  const items: Item[] = [];
+  for (let i = 0; i < 50000; i++) {
+    items.push({
+      id: i,
+      name: rng.pick(names),
+      note: `${rng.pick(notes)} #${rng.next(1000)}`,
+      tags: [rng.pick(tags), rng.pick(tags)],
+    });
+  }
+  let text = "";
+  let chars: i64 = 0;
+  let count = 0;
+  let current = items;
+  for (let round = 0; round < 3; round++) {
+    text = JSON.stringify(current);
+    current = JSON.parse<Item[]>(text);
+    for (const it of current) {
+      chars += (it.name.length + it.note.length + it.tags[0].length + it.tags[1].length) as i64;
+      count++;
+    }
+  }
+  console.log(
+    `text=${text.length} items=${count} chars=${chars} sample=${JSON.stringify(current[12345])}`,
+  );
+}

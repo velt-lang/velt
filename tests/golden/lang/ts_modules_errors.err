@@ -1,0 +1,5 @@
+ts_modules_errors.vlt:4:23
+error: module `./_ts_dup` is ambiguous: it could be `_ts_dup.vlt` or `_ts_dup.ts`
+_ts_jsx_in_ts.ts:2:10
+error: JSX is not allowed in a `.ts` file
+rename it to `_ts_jsx_in_ts.tsx`

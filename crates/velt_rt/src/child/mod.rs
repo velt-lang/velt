@@ -17,7 +17,7 @@ mod pipes;
 use crate::registry::{closed, closed_error, Key, Registry};
 use crate::result::{IoResult, VeltErr};
 use crate::str::VeltStr;
-use command::VeltCommand;
+use command::{StdioMode, VeltCommand};
 use futures_util::future::Either;
 use pipes::Reader;
 use std::sync::Arc;
@@ -69,8 +69,15 @@ fn spawn_error(program: &VeltStr, e: &std::io::Error) -> VeltErr {
 }
 
 fn start(spec: &VeltCommand) -> Result<ChildObj, VeltErr> {
+    let modes = spec.modes();
+    // A child writing to our stdout or stderr must come after what we printed before starting
+    // it: our buffered stdout has to reach the OS first (stderr is unbuffered, but a stderr
+    // write is ordered after earlier stdout output too).
+    if modes[1] == StdioMode::Inherit || modes[2] == StdioMode::Inherit {
+        crate::io::flush_stdout();
+    }
     // SAFETY: the spec is borrowed from Velt for the duration of the call.
-    let cmd = unsafe { spec.build(spec.modes()) };
+    let cmd = unsafe { spec.build(modes) };
     // Spawning registers the child with the reactor: it needs the runtime context.
     let _guard = crate::task::runtime::handle().enter();
     let mut child = tokio::process::Command::from(cmd)

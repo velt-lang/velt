@@ -53,6 +53,7 @@ pub extern "C" fn velt_rt_group_enter(g: Key<Group>) -> bool {
 #[no_mangle]
 pub extern "C" fn velt_rt_group_leave(g: Key<Group>) {
     if let Some(grp) = GROUPS.get(g) {
+        crate::io::publish_before_handoff();
         if grp.live.fetch_sub(1, Ordering::AcqRel) == 1 {
             grp.idle.notify_waiters();
         }
@@ -95,6 +96,17 @@ mod tests {
         let mut cx = Context::from_waker(Waker::noop());
         // SAFETY: a live leaf future.
         unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx)) }
+    }
+
+    #[test]
+    fn leaving_publishes_this_threads_output_first() {
+        use crate::io::handoff_probe::{buffer_output, published};
+        let g = velt_rt_group_new();
+        assert!(velt_rt_group_enter(g));
+        buffer_output();
+        velt_rt_group_leave(g);
+        assert!(published());
+        velt_rt_group_free(g);
     }
 
     #[test]

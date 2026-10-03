@@ -1,0 +1,13 @@
+// Arrow functions with default and optional parameters, as in TS.
+const fmt = (n: number, digits: number = 2) => n.toFixed(digits);
+const greet = (name?: string) => `hello ${name ?? "world"}`;
+const scale = (x: number, k = 3) => x * k;
+console.log(fmt(3.14159), fmt(3.14159, 4));
+console.log(greet(), greet("velt"));
+console.log(scale(2), scale(2, 5), scale(1) / 2);
+
+function apply(f: (x: number) => number): number {
+  return f(10);
+}
+
+console.log(apply((x, k = 2) => x * k));

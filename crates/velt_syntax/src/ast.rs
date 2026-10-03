@@ -107,6 +107,9 @@ pub struct Param {
     pub default: Option<Expr>,
     /// `name?: T` — parsed as `name: T | null = null` (the flag only keeps the spelling).
     pub optional: bool,
+    /// `...name: T[]` (the last parameter): a call's remaining arguments, spreads included,
+    /// as one array. Parsed with the default `[]`.
+    pub rest: bool,
     pub span: Span,
 }
 
@@ -275,7 +278,7 @@ pub enum TypeExprKind {
     Void,
 }
 
-/// `name: T` / `name?: T` in an object type.
+/// `name: T` / `name?: T` / `readonly name: T` in an object type.
 #[derive(Clone, Debug)]
 pub struct ObjectTypeField {
     pub name: Ident,
@@ -284,6 +287,8 @@ pub struct ObjectTypeField {
     /// `name?: T` — parsed as `name: T | null` (the flag only keeps the spelling); an object
     /// literal may leave out any `T | null` field of an object type.
     pub optional: bool,
+    /// `readonly name: T` — the field can't be assigned (docs/internals/design/shared-models.md).
+    pub readonly: bool,
     pub span: Span,
 }
 
@@ -471,8 +476,14 @@ pub enum ArrowBody {
 #[derive(Clone, Debug)]
 pub struct ArrowParam {
     pub name: Ident,
-    /// Optional in arrows when inferable from context.
+    /// Optional in arrows when inferable from context. For an optional parameter with a
+    /// written type, that type plus `| null`.
     pub ty: Option<TypeExpr>,
+    /// `(x: T = e) => …`: the value when a call leaves the argument out; `null` for an
+    /// optional parameter.
+    pub default: Option<Expr>,
+    /// `(x?: T) => …`, parsed as `(x: T | null = null) => …` (the flag keeps the spelling).
+    pub optional: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -583,6 +594,8 @@ pub enum ExprKind {
     },
     /// `(a, b)` is not a tuple; tuples use `[a, b]` with a tuple type context.
     Paren(Box<Expr>),
+    /// `x!`: the value of `x`, which must not be `null` (checked: a `null` panics).
+    NonNull(Box<Expr>),
     /// A JSX element or fragment: `<div class="a">{x}</div>`, `<></>`. Parentheses around an
     /// element are not kept (`(<a />)` is just the element).
     Jsx(Box<JsxElement>),
@@ -612,6 +625,12 @@ pub enum PatternKind {
     Array {
         elems: Vec<Pattern>,
         rest: Option<Ident>,
+    },
+    /// `p = value` inside an object or array pattern (`{ a = 1 }`, `[x = 0]`): `value` when the
+    /// field is `null` or the element is past the end (where JS reads `undefined`).
+    Default {
+        pattern: Box<Pattern>,
+        value: Box<Expr>,
     },
 }
 

@@ -321,6 +321,9 @@ pub struct FieldDef {
     pub ty: TyId,
     /// Default initializer (class field `= expr`, or `null` for optional fields).
     pub default: Option<Expr>,
+    /// Declared `private` (in this type or the base class that declares it). Interface fields
+    /// are never private.
+    pub private: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -684,7 +687,9 @@ pub enum ExprKind {
         type_args: Vec<TyId>,
         args: Vec<Expr>,
     },
-    /// Subclass instance -> base class (no-op on the pointer); `Expr::ty` is the base type.
+    /// Subclass instance -> base class (no-op on the pointer); `Expr::ty` is the base type. Also
+    /// an object type -> one that differs only in `readonly` fields, which are the same type
+    /// once the program is finished (docs/internals/design/shared-models.md).
     Upcast(Box<Expr>),
     /// Concrete value -> interface value via `Program::impls[impl_index]`; the value is moved.
     ToDyn {

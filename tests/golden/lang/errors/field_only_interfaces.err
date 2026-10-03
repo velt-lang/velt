@@ -1,0 +1,6 @@
+field_only_interfaces.vlt:17:19: error: mismatched types
+`User` has only fields, so it is a data type, like `type User = { … }`: a class instance is shared by reference and is not one
+build one from it: `{ id: a.id, name: a.name }`, or give `User` a method to make it an interface classes implement
+field_only_interfaces.vlt:20:5: error: cannot assign to `id`: it is a readonly field
+field_only_interfaces.vlt:21:23: error: the type `Other` does not implement `HasId`
+`HasId` has only fields: a type satisfies it by having them (id: f64)

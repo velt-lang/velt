@@ -41,6 +41,7 @@ pub unsafe extern "C" fn velt_rt_latch_free(h: Handle<Latch>) {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_latch_open(h: Handle<Latch>) {
     let l = h.obj();
+    crate::io::publish_before_handoff();
     if !l.open.swap(true, Ordering::AcqRel) {
         l.notify.notify_waiters();
     }
@@ -74,6 +75,19 @@ mod tests {
         let mut cx = Context::from_waker(Waker::noop());
         // SAFETY: a live leaf future.
         unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx)) }
+    }
+
+    #[test]
+    fn opening_publishes_this_threads_output_first() {
+        use crate::io::handoff_probe::{buffer_output, published};
+        let h = velt_rt_latch_new();
+        buffer_output();
+        // SAFETY: `h` is live until freed.
+        unsafe {
+            velt_rt_latch_open(h);
+            velt_rt_latch_free(h);
+        }
+        assert!(published());
     }
 
     #[test]

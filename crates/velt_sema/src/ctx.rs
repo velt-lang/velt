@@ -50,7 +50,20 @@ pub(crate) struct Ctx<'m> {
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
     /// Anonymous object types by shape.
-    pub anon: HashMap<Vec<(String, TyId)>, DefId>,
+    /// Anonymous object defs by shape: field names, types and `readonly` flags, in order.
+    pub anon: HashMap<Vec<(String, TyId, bool)>, DefId>,
+    /// Object type defs replaced before lowering (`crate::readonly`): anonymous ones with
+    /// `readonly` fields → their twin without, and field-only interfaces' object types → the
+    /// anonymous object type of their fields. With a template, the twin's type arguments are
+    /// the template's types with the original arguments substituted (a param order change).
+    pub readonly_twins: HashMap<DefId, (DefId, Option<Vec<TyId>>)>,
+    /// Field-only interface → its object type's def (`collect::field_only`).
+    pub field_only: HashMap<DefId, DefId>,
+    /// The reverse of `field_only`.
+    pub field_only_of: HashMap<DefId, DefId>,
+    /// Every declared type's fields are resolved (`collect::shapes`); before that, a utility
+    /// type (`crate::utility_types`) may only read the fields of types already shaped.
+    pub shapes_done: bool,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: HashMap<Vec<TyId>, DefId>,
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
@@ -115,6 +128,10 @@ impl<'m> Ctx<'m> {
             impls: vec![],
             impl_index: Default::default(),
             anon: HashMap::new(),
+            readonly_twins: HashMap::new(),
+            field_only: HashMap::new(),
+            field_only_of: HashMap::new(),
+            shapes_done: false,
             unions: HashMap::new(),
             alias_names: HashMap::new(),
             generic_overrides: vec![],
@@ -464,7 +481,7 @@ impl<'m> Ctx<'m> {
             TyKind::Int(i) => int_name(*i).to_string(),
             TyKind::Float(crate::hir::FloatTy::F32) => "f32".into(),
             TyKind::Float(crate::hir::FloatTy::F64) => "f64".into(),
-            TyKind::Bool => "bool".into(),
+            TyKind::Bool => "boolean".into(),
             TyKind::Str => "string".into(),
             TyKind::Unit => "void".into(),
             TyKind::Never => "never".into(),

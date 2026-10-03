@@ -12,7 +12,7 @@ use crate::ctx::Ctx;
 use crate::defs::{member_key, FnSource};
 use crate::hir::{DefId, TyId};
 
-pub(super) fn fn_sig_ast<'m>(src: FnSource<'m>) -> &'m ast::FnSig {
+pub(crate) fn fn_sig_ast<'m>(src: FnSource<'m>) -> &'m ast::FnSig {
     match src {
         FnSource::Decl(f) => &f.sig,
         FnSource::Default(s, _) => s,
@@ -53,6 +53,33 @@ fn check_default(
     let h = fcx.expr_coerce(e, ty, Want::Move);
     cx.display_params = saved;
     h
+}
+
+/// Defaults of an arrow's parameters (`(x: T = e) => …`), checked like a function's: in the
+/// module's scope, and evaluated at the call site.
+pub(crate) fn arrow_defaults(
+    cx: &mut Ctx,
+    module: usize,
+    closure: DefId,
+    params: &[ast::ArrowParam],
+) {
+    let name = cx.fn_info(closure).name.clone();
+    for (i, p) in params.iter().enumerate() {
+        let Some(e) = &p.default else { continue };
+        let Some(ty) = cx.fn_info(closure).params.get(i).map(|p| p.ty) else {
+            continue;
+        };
+        let h = check_default(cx, module, &[], &name, None, e, ty);
+        cx.fn_info_mut(closure).params[i].default = Some(h);
+    }
+}
+
+/// The type of an arrow parameter written with only a default (`(digits = 2) => …`), as TS
+/// infers it.
+pub(crate) fn default_type(cx: &mut Ctx, module: usize, e: &ast::Expr) -> TyId {
+    let mut fcx = detached(cx, module, &[]);
+    let h = fcx.expr(e, None, Want::Move);
+    fcx.widen_value(h).ty
 }
 
 pub(super) fn iface_defaults(cx: &mut Ctx) {

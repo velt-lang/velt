@@ -1,4 +1,5 @@
-//! Finding test files (`*.test.vlt`) and the test functions inside them.
+//! Finding test files (`*.test.vlt`, `*.test.ts`, `*.test.tsx`) and the test functions inside
+//! them.
 //!
 //! A test is a top-level `export function test_*()` (or `export async function test_*()`) with no
 //! parameters and no generics. Tests must be exported because the generated harness imports them
@@ -9,11 +10,17 @@ use std::path::{Path, PathBuf};
 
 use velt_syntax::ast;
 
-/// Suffix of test files.
-pub const TEST_SUFFIX: &str = ".test.vlt";
+/// How test files are named, for messages.
+pub const TEST_FILES: &str = "*.test.vlt, *.test.ts, *.test.tsx";
 
-/// Test files under `path` (recursively, skipping `target/`, hidden and symlinked directories),
-/// sorted. An explicitly named file is used even without the `.test.vlt` suffix.
+/// Whether a file named `name` is a test file: a source module (`vpm::sources`) whose name
+/// without the extension ends in `.test`.
+pub fn is_test_file(name: &str) -> bool {
+    vpm::sources::strip_source_extension(name).is_some_and(|stem| stem.ends_with(".test"))
+}
+
+/// Test files under `path` (recursively, skipping `target/`, `node_modules/`, hidden and symlinked
+/// directories), sorted. An explicitly named file is used even without the `.test` suffix.
 pub fn find_test_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     if path.is_file() {
         return Ok(vec![path.to_path_buf()]);
@@ -21,20 +28,26 @@ pub fn find_test_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     if !path.is_dir() {
         return Err(format!("`{}` does not exist", path.display()));
     }
-    files_with_suffix(path, TEST_SUFFIX)
+    files_where(path, &is_test_file)
 }
 
-/// Files under `dir` whose names end in `suffix` (recursively, skipping `target/`, hidden and
-/// symlinked directories), sorted. A symlinked directory can lead back up (`src/up -> ..`),
-/// which would walk the package again, or forever.
-pub fn files_with_suffix(dir: &Path, suffix: &str) -> Result<Vec<PathBuf>, String> {
+/// Source modules under `dir` (`.vlt`, `.ts`, `.tsx`; recursively, skipping `target/`,
+/// `node_modules/`, hidden and symlinked directories), sorted.
+pub fn source_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    files_where(dir, &vpm::sources::is_source_name)
+}
+
+/// Files under `dir` whose names satisfy `keep` (recursively, skipping `target/`,
+/// `node_modules/`, hidden and symlinked directories), sorted. A symlinked directory can lead
+/// back up (`src/up -> ..`), which would walk the package again, or forever.
+fn files_where(dir: &Path, keep: &dyn Fn(&str) -> bool) -> Result<Vec<PathBuf>, String> {
     let mut out = vec![];
-    collect(dir, suffix, &mut out)?;
+    collect(dir, keep, &mut out)?;
     out.sort();
     Ok(out)
 }
 
-fn collect(dir: &Path, suffix: &str, out: &mut Vec<PathBuf>) -> Result<(), String> {
+fn collect(dir: &Path, keep: &dyn Fn(&str) -> bool, out: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries =
         std::fs::read_dir(dir).map_err(|e| format!("cannot read `{}`: {e}", dir.display()))?;
     for entry in entries.flatten() {
@@ -42,10 +55,10 @@ fn collect(dir: &Path, suffix: &str, out: &mut Vec<PathBuf>) -> Result<(), Strin
         let name = entry.file_name().to_string_lossy().into_owned();
         if path.is_dir() {
             let link = entry.file_type().is_ok_and(|t| t.is_symlink());
-            if !link && name != "target" && !name.starts_with('.') {
-                collect(&path, suffix, out)?;
+            if !link && name != "target" && name != "node_modules" && !name.starts_with('.') {
+                collect(&path, keep, out)?;
             }
-        } else if name.ends_with(suffix) {
+        } else if keep(&name) {
             out.push(path);
         }
     }
@@ -105,6 +118,9 @@ mod tests {
         for f in [
             "a.test.vlt",
             "sub/b.test.vlt",
+            "sub/c.test.ts",
+            "sub/d.test.tsx",
+            "sub/e.test.d.ts",
             "main.vlt",
             "target/c.test.vlt",
             ".git/d.test.vlt",
@@ -118,7 +134,9 @@ mod tests {
             found,
             [
                 tmp.path().join("a.test.vlt"),
-                tmp.path().join("sub/b.test.vlt")
+                tmp.path().join("sub/b.test.vlt"),
+                tmp.path().join("sub/c.test.ts"),
+                tmp.path().join("sub/d.test.tsx"),
             ]
         );
         assert_eq!(
@@ -138,10 +156,10 @@ mod tests {
         std::fs::write(tmp.path().join("b.vlt"), "").unwrap();
         std::os::unix::fs::symlink("..", sub.join("up")).unwrap();
         std::os::unix::fs::symlink("b.vlt", tmp.path().join("link.vlt")).unwrap();
-        let found = files_with_suffix(&sub, ".vlt").unwrap();
+        let found = source_files(&sub).unwrap();
         assert_eq!(found, [sub.join("a.test.vlt")]);
         // A symlinked file is still a file.
-        let found = files_with_suffix(tmp.path(), ".vlt").unwrap();
+        let found = source_files(tmp.path()).unwrap();
         let link = tmp.path().join("link.vlt");
         assert_eq!(
             found,

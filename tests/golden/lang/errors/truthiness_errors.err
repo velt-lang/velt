@@ -1,20 +1,20 @@
 truthiness_errors.vlt:13:7: error: mismatched types
-expected bool, found i64
+expected boolean, found i64
 numbers are not conditions: compare explicitly, e.g. `count !== 0`
 truthiness_errors.vlt:16:10: error: mismatched types
-expected bool, found string
+expected boolean, found string
 strings are not conditions: compare explicitly, e.g. `name !== ""`
 truthiness_errors.vlt:17:13: error: mismatched types
-expected bool, found i64 | null
-only `bool` and nullable objects are conditions (`0` and `""` are not falsy in Velt): compare with `!== null`
+expected boolean, found i64 | null
+only `boolean` and nullable objects are conditions (`0` and `""` are not falsy in Velt): compare with `!== null`
 truthiness_errors.vlt:18:13: error: cannot apply unary operator `!` to type `string`
 strings are not conditions: compare explicitly, e.g. `name !== ""`
-truthiness_errors.vlt:19:16: error: `||` needs a `bool` or nullable left side, found `i64`
+truthiness_errors.vlt:19:16: error: `||` needs a `boolean` or nullable left side, found `i64`
 use `??` for a default (`x ?? d` replaces only `null`)
 numbers are not conditions: compare explicitly, e.g. `count !== 0`
 truthiness_errors.vlt:20:27: error: mismatched types
-expected bool, found string
+expected boolean, found string
 strings are not conditions: compare explicitly, e.g. `name !== ""`
 truthiness_errors.vlt:21:7: error: mismatched types
-expected bool, found Color
-only `bool` and nullable values are conditions: compare explicitly
+expected boolean, found Color
+only `boolean` and nullable values are conditions: compare explicitly

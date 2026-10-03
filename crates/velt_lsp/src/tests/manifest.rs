@@ -76,7 +76,7 @@ fn completion_and_hover_come_from_the_schema() {
     let (line, character) = pos_of(&text, "wasm", 1);
     let hover = client.request("textDocument/hover", at(&doc, line, character));
     let value = hover["contents"]["value"].as_str().unwrap();
-    assert!(value.starts_with("```velt\nwasm?: bool\n```"), "{value}");
+    assert!(value.starts_with("```velt\nwasm?: boolean\n```"), "{value}");
     // Program features have nothing to say about data.
     let defs = client.request("textDocument/definition", at(&doc, line, character));
     assert_eq!(defs, Value::Null);

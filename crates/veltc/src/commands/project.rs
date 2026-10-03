@@ -90,7 +90,7 @@ fn missing_entry_message(root: &Path, manifest: &Manifest) -> String {
 }
 
 /// The error for a package command run outside any package: what is missing, and the two ways
-/// forward (a single file, if there are `.vlt` files here, or making a package).
+/// forward (a single file, if there are source files here, or making a package).
 fn no_package_message(cwd: &Path) -> String {
     let mut msg = format!(
         "no `package.vlt` in `{}` or any parent directory, so there is no package here",
@@ -111,7 +111,8 @@ fn no_package_message(cwd: &Path) -> String {
     msg
 }
 
-/// Names of the `.vlt` files directly in `dir`, sorted (at most five).
+/// Names of the source files (`.vlt`, `.ts`, `.tsx`; not tests) directly in `dir`, sorted (at
+/// most five).
 fn velt_files(dir: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return vec![];
@@ -119,7 +120,7 @@ fn velt_files(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = entries
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.ends_with(".vlt") && !n.ends_with(".test.vlt"))
+        .filter(|n| vpm::sources::is_source_name(n) && !super::test::discover::is_test_file(n))
         .collect();
     names.sort();
     names.truncate(5);
@@ -140,7 +141,7 @@ pub fn check_input_file(file: &Path) -> Result<(), String> {
                 file.display()
             )
         } else {
-            "name a `.vlt` file".to_string()
+            "name a `.vlt`, `.ts` or `.tsx` file".to_string()
         };
         return Err(format!("`{}` is a directory ({hint})", file.display()));
     }

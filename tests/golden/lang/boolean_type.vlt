@@ -1,0 +1,61 @@
+// `boolean` (TypeScript's name) and `bool` are the same type: values, generic arguments, unions,
+// function types, arrays, maps and interface methods mix the two spellings freely (#353).
+interface Check {
+  passes(n: i64): bool;
+}
+
+class Even implements Check {
+  passes(n: i64): boolean {
+    return n % 2 == 0;
+  }
+}
+
+class Box<T> {
+  value: T;
+  constructor(value: T) {
+    this.value = value;
+  }
+}
+
+function identity<T>(x: T): T {
+  return x;
+}
+
+function not(b: boolean): bool {
+  return !b;
+}
+
+function describe(v: string | boolean): string {
+  if (typeof v === "boolean") {
+    return v ? "yes" : "no";
+  }
+  return v;
+}
+
+function main() {
+  const a: bool = true;
+  const b: boolean = a;
+  let c: bool = b;
+  c = not(c);
+  console.log(a, b, c);
+
+  const boxed: Box<boolean> = new Box<bool>(true);
+  const same: bool = identity<boolean>(boxed.value);
+  console.log(same, identity<bool>(false));
+
+  const maybe: boolean | null = null;
+  const other: bool | null = maybe ?? true;
+  console.log(other, describe(true), describe(false), describe("text"));
+
+  const f: (x: bool) => boolean = not;
+  const g: (x: boolean) => bool = f;
+  console.log(g(false), g(true));
+
+  const flags: boolean[] = [true, false];
+  const copy: bool[] = flags;
+  const seen = new Map<string, bool>();
+  seen.set("x", copy[1]);
+  const check: Check = new Even();
+  console.log(copy.length, seen.get("x"), check.passes(4), check.passes(3));
+  console.log(JSON.parse<boolean>("true"), JSON.stringify<bool[]>(flags));
+}
