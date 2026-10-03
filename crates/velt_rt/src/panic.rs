@@ -8,7 +8,12 @@
 //! uncaught error (`Uncaught E: msg at file.vlt:3:5`). A task's error can be read on another
 //! thread than the one that threw it (`async main` runs on a worker, a spawned task's handle is
 //! awaited anywhere), so finished tasks carry the slot to whoever takes their result
-//! ([`ThrowLoc`]).
+//! ([`ThrowLoc`]). Each poll of a task starts with an empty slot, so a task that threw nothing in
+//! its last poll hands over no location and leaves the taker's own in place. Known limits (the
+//! slot is "the last throw on this thread", not part of the error value): a task that throws,
+//! then awaits before its error leaves it (in a `finally`), reports no location; and a task that
+//! threw and caught an error in its last poll hands that location to a taker that is itself
+//! propagating an error (#356).
 
 use std::cell::Cell;
 
@@ -104,6 +109,19 @@ impl ThrowLoc {
     /// Make it this thread's location.
     pub(crate) fn restore(self) {
         velt_rt_set_throw_loc(self.0);
+    }
+
+    /// Make it this thread's location if it is known (a task that threw nothing keeps the
+    /// taker's location).
+    pub(crate) fn restore_if_known(self) {
+        if !self.0.is_null() {
+            velt_rt_set_throw_loc(self.0);
+        }
+    }
+
+    /// Forget this thread's location (a task poll starts with none).
+    pub(crate) fn clear() {
+        velt_rt_set_throw_loc(std::ptr::null());
     }
 }
 

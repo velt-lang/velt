@@ -56,6 +56,7 @@ impl Future for FutBody {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         let this = self.get_mut();
         let f = this.fut.0;
+        ThrowLoc::clear();
         let r = this.locals.poll_root(cx, |cx| {
             // SAFETY: an owned, live heap future.
             match unsafe { ((*f).poll)(f, raw_cx(cx)) } {
@@ -150,7 +151,7 @@ unsafe extern "C" fn join_poll<const R: usize>(f: *mut VeltFut, cx: *mut c_void)
             out.result_drop = None;
             obj.result = out.bytes;
             // An error in the result is rethrown here: report it where the task threw it.
-            out.loc.restore();
+            out.loc.restore_if_known();
             READY
         }
         Poll::Ready(Err(e)) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
