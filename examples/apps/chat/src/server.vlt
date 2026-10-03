@@ -27,16 +27,22 @@ async function reply(ws: WebSocket, msg: ServerMessage) {
   await sendQuietly(ws, encode(msg));
 }
 
+// The members to tell are taken when the newcomer is added, under the same lock. Taken after
+// the welcome is sent, they could include a client that connected and joined in between: its
+// own welcome already lists the newcomer, and it would also be told that the newcomer joined.
 async function join(ws: WebSocket, id: i64, name: string, room: shared<Mutex<Room<WebSocket>>>) {
-  const err = room.with((r) => r.join(id, name, ws));
-  if (err != null) {
-    await reply(ws, { type: "error", message: err });
-    return;
+  const a = room.with((r) => r.admit(id, name, ws));
+  switch (a.type) {
+    case "refused":
+      await reply(ws, { type: "error", message: a.reason });
+      return;
+    case "welcome": {
+      const me = name.trim();
+      await reply(ws, { type: "welcome", name: me.clone(), users: a.users });
+      await broadcast(a.peers, { type: "joined", name: me });
+      return;
+    }
   }
-  const users = room.with((r) => r.names());
-  const me = name.trim();
-  await reply(ws, { type: "welcome", name: me.clone(), users });
-  await broadcast(room.with((r) => r.sockets(id)), { type: "joined", name: me });
 }
 
 async function say(ws: WebSocket, id: i64, text: string, room: shared<Mutex<Room<WebSocket>>>) {

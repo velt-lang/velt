@@ -5,6 +5,11 @@
 
 type Member<S> = { name: string; socket: S };
 
+// The outcome of `admit`.
+export type Admission<S> =
+  | { type: "welcome"; users: string[]; peers: S[] }
+  | { type: "refused"; reason: string };
+
 const MAX_NAME: usize = 20;
 
 export class Room<S> {
@@ -26,6 +31,17 @@ export class Room<S> {
     }
     this.members.set(id, { name: clean, socket });
     return null;
+  }
+
+  // `join`, and on success who is online and the sockets of the members who were there before:
+  // in one call, so under one lock. Those members, and only those, are told about the newcomer;
+  // anyone who joins later already sees the name in their own welcome.
+  admit(id: i64, name: string, socket: S): Admission<S> {
+    const reason = this.join(id, name, socket);
+    if (reason != null) {
+      return { type: "refused", reason };
+    }
+    return { type: "welcome", users: this.names(), peers: this.sockets(id) };
   }
 
   // Removes client `id`; its name if it had joined.
