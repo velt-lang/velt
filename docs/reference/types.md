@@ -145,6 +145,7 @@ has type `T | null`, stored without an extra allocation where possible.
   `if (x != null) { … }` and early exits narrow `x` to `T` (a local or a field path of one,
   see below); `switch` supports `case null`.
 - `x ??= d` assigns `d` when `x` is `null` and narrows `x` (likewise `x ||= d` and `x &&= d`).
+  The target may not call a function yet (`m[key()] ??= v`): store the key in a variable first.
 - `x!` is `x` known not to be `null` (TS's non-null assertion). TypeScript trusts it; Velt
   checks it: a `null` panics with `non-null assertion failed`.
 - `a?: T` is `T | null` everywhere: an optional parameter `b?: T` is `b: T | null = null`

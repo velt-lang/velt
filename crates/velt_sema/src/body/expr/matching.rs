@@ -79,7 +79,8 @@ impl FnCx<'_, '_> {
     }
 
     /// `a ?? b` → `match (a) { Some(v) => v, null => b }`.
-    /// `x!` is `x ?? panic(…)`: TS trusts the assertion, Velt checks it.
+    /// `x!` is `x ?? panic(…)`: TS trusts the assertion, Velt checks it. On a value that is never
+    /// `null` it is the value itself, as in TS.
     pub(crate) fn non_null(
         &mut self,
         inner: &ast::Expr,
@@ -103,7 +104,11 @@ impl FnCx<'_, '_> {
             args: vec![msg],
             optional: false,
         });
-        self.nullish(inner, &panic, exp, span)
+        let h = self.expr(inner, None, Want::Borrow);
+        if self.cx.ty.opt_payload(h.ty).is_none() {
+            return h;
+        }
+        self.nullish_checked(h, &panic, exp, span)
     }
 
     pub(crate) fn nullish(
