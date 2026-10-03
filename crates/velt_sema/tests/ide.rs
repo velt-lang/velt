@@ -269,6 +269,28 @@ function main() { try { load(\"x\"); } catch (e) { console.log(e.message); } con
 }
 
 #[test]
+fn constructor_detail_shows_its_visibility() {
+    let src = "class Token {
+  private constructor(readonly id: i64) {}
+  static make(): Token { return new Token(1); }
+}
+class Base { protected constructor() {} }
+function main() { console.log(Token.make().id); }
+";
+    let (a, file) = analyze(src);
+    let detail = |needle: &str| {
+        let d = a.def_at(file, at(src, needle, 0, 1)).expect("constructor");
+        assert_eq!(d.kind, DefKind::Constructor);
+        d.detail
+    };
+    assert_eq!(
+        detail("constructor(readonly"),
+        "private constructor Token(id: i64)"
+    );
+    assert_eq!(detail("constructor() {}"), "protected constructor Base()");
+}
+
+#[test]
 fn jsx_tags_and_attributes() {
     let src = "// @jsxImportSource ./_jsx_test_provider
 function main() { const e = <a href=\"/x\">x</a>; }";

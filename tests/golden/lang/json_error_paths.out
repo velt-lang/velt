@@ -1,0 +1,9 @@
+expected string at $.kids[0].kids[0].name
+expected string at $.kids[0].kids[0].kids[0].kids[0].kids[0]…[0].kids[0].kids[0].kids[0].kids[0].name
+unknown field at $.kids[0].kids[0].kids[0].kids[0].kids[0]…[0].kids[0].kids[0].kids[0].kids[0].x
+JSON nested deeper than 30 levels at $.kids[0].kids[0].kids[0].kids[0].kids[0]….kids[0].kids[0].kids[0].kids[0].kids[0] (byte 300)
+invalid JSON at $[0][0][1]: unexpected character '}' (byte 5)
+invalid JSON at $[0][0][1]: unexpected character '}' (byte 5)
+invalid JSON at $[0][0][0][0][0][0][0][0][0][0]…[0][0][0][0][0][0][0][0][0][1]: unexpected character '}' (byte 32)
+JSON nested deeper than 25 levels at $[0][0][0][0][0][0][0][0][0][0]…[0][0][0][0][0][0][0][0][0][0] (byte 25)
+JSON nested deeper than 30 levels at $ (byte 30)

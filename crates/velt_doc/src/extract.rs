@@ -312,7 +312,12 @@ impl Source<'_> {
             .filter(|f| !f.is_private)
             .map(|f| self.field(f))
             .collect();
-        if let Some(ctor) = &t.constructor {
+        // A private constructor is not part of the API, like private methods.
+        let ctor = t
+            .constructor
+            .as_ref()
+            .filter(|_| t.ctor_visibility != ast::CtorVisibility::Private);
+        if let Some(ctor) = ctor {
             members.push(self.member_fn(Kind::Constructor, &ctor.sig));
         }
         members.extend(self.methods(&t.methods));
@@ -492,5 +497,18 @@ mod tests {
         assert_eq!(m.items[2].members.len(), 2);
         assert_eq!(m.items[3].signature, "const LIMIT: i64 = 10");
         assert_eq!(m.items[4].signature, "async function wait(ms: i64)");
+    }
+
+    #[test]
+    fn private_constructors_are_hidden() {
+        let src = "export class A {\n  private constructor() {}\n}\n\nexport class B {\n  protected constructor(x: i64) {}\n}\n";
+        let m = extract("demo", src);
+        assert!(m.items[0].members.is_empty());
+        let b: Vec<&str> = m.items[1]
+            .members
+            .iter()
+            .map(|m| m.signature.as_str())
+            .collect();
+        assert_eq!(b, ["protected constructor(x: i64)"]);
     }
 }

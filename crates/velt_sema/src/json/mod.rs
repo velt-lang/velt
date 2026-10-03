@@ -2,7 +2,9 @@
 //! `bool`, `string`, arrays, `T | null`, C-like enums, unions (stringify only), structs / classes
 //! / object literals whose fields are all public and serializable, and the prelude's `JsonValue`.
 //! A type with a private field has no JSON form: std types keep runtime handles (pointers) in
-//! private fields, and decoding one from untrusted input would forge it. The intrinsics sit in generic prelude code
+//! private fields, and decoding one from untrusted input would forge it. A class with a private
+//! or protected constructor can be written but not decoded: decoding fills the fields without
+//! running a constructor, which would bypass the class's factories and their checks. The intrinsics sit in generic prelude code
 //! (`JSON.stringify<T>`), so a requirement on a type parameter propagates to every caller (and
 //! from a closure to its enclosing function) until it meets a concrete type, which is checked at
 //! that call site. A method dispatched dynamically (through an interface or a base class) has
@@ -12,6 +14,7 @@
 use std::collections::{HashMap, HashSet};
 
 use velt_common::{Diagnostic, Span};
+use velt_syntax::ast;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
@@ -199,6 +202,9 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
         );
         return true;
     }
+    if parse && report_restricted_ctor(cx, t, bad, span) {
+        return true;
+    }
     let private = private_field(cx, bad);
     let what = match (&private, t == bad) {
         (Some((field, _)), true) => {
@@ -223,6 +229,41 @@ fn check(cx: &mut Ctx, t: TyId, span: Span, parse: bool) -> bool {
         d = d.with_note("a `Map` converts to a JSON object only with `string` keys");
     }
     cx.error(d);
+    true
+}
+
+/// Reports decoding `bad` (part of `t`) if its constructor is private or protected (`true`:
+/// reported).
+fn report_restricted_ctor(cx: &mut Ctx, t: TyId, bad: TyId, span: Span) -> bool {
+    let TyKind::Adt(d, _) = cx.ty.kind(bad) else {
+        return false;
+    };
+    let visibility = match cx.ctor_visibility(*d) {
+        ast::CtorVisibility::Public => return false,
+        ast::CtorVisibility::Private => "private",
+        ast::CtorVisibility::Protected => "protected",
+    };
+    let name = cx.adt(*d).map(|a| a.name.clone()).unwrap_or_default();
+    let within = if t == bad {
+        String::new()
+    } else {
+        format!(" (in `{}`)", cx.display(t))
+    };
+    let article = if name.starts_with(['A', 'E', 'I', 'O', 'U']) {
+        "an"
+    } else {
+        "a"
+    };
+    cx.error(
+        Diagnostic::error(
+            format!("`JSON.parse` cannot create {article} `{name}`{within}: its constructor is {visibility}"),
+            span,
+        )
+        .with_note(match cx.factories(*d) {
+            Some(f) => format!("decoding fills the fields without running a constructor; decode into a plain object type and call {f}"),
+            None => format!("decoding fills the fields without running a constructor; decode into a plain object type and create the `{name}` from it with a static factory method"),
+        }),
+    );
     true
 }
 
@@ -283,6 +324,10 @@ fn unserializable(cx: &mut Ctx, t: TyId, stack: &mut Vec<TyId>, parse: bool) -> 
                     }
                     _ => Some(t),
                 };
+            }
+            // Decoding would create an instance without running its non-public constructor.
+            if parse && cx.ctor_visibility(d) != ast::CtorVisibility::Public {
+                return Some(t);
             }
             let tys: Vec<TyId> = match &cx.info[d.0 as usize] {
                 // Private fields hold what a type keeps to itself (runtime handles in std).

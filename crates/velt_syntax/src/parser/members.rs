@@ -1,5 +1,5 @@
 //! Members of declaration bodies: modifiers (`private public readonly static async override`,
-//! accessors `get` / `set`), fields
+//! accessors `get` / `set`, `protected` on a constructor only), fields
 //! (including optional `name?: T`), methods and constructors of `struct`/`class`/`extend`, and the
 //! fields and (optionally defaulted) methods of `interface`.
 
@@ -17,20 +17,31 @@ pub(super) struct Modifiers {
     is_private: bool,
     /// `public` is the default visibility; accepted for TypeScript familiarity.
     is_public: bool,
+    /// Only on a constructor: Velt has no `protected` members.
+    is_protected: bool,
     is_getter: bool,
     is_setter: bool,
 }
 
 impl Modifiers {
-    fn any(&self) -> bool {
+    /// Modifiers other than the visibility of a constructor.
+    fn any_but_visibility(&self) -> bool {
         self.readonly
             || self.is_static
             || self.is_async
             || self.is_override
-            || self.is_private
-            || self.is_public
             || self.is_getter
             || self.is_setter
+    }
+
+    fn ctor_visibility(&self) -> CtorVisibility {
+        if self.is_private {
+            CtorVisibility::Private
+        } else if self.is_protected {
+            CtorVisibility::Protected
+        } else {
+            CtorVisibility::Public
+        }
     }
 }
 
@@ -38,8 +49,8 @@ impl Modifiers {
 pub(super) enum Member {
     Field(Field),
     Method(Method),
-    /// The constructor and the fields its parameter properties declare.
-    Constructor(FnDecl, Vec<Field>),
+    /// The constructor, who may call it, and the fields its parameter properties declare.
+    Constructor(FnDecl, CtorVisibility, Vec<Field>),
 }
 
 impl<'a> Parser<'a> {
@@ -58,8 +69,15 @@ impl<'a> Parser<'a> {
                 }
                 // `override` is contextual (not in the keyword list), so it arrives as an identifier.
                 None if self.at_word("override") => &mut m.is_override,
-                None if self.at_word("private") && !m.is_public => &mut m.is_private,
-                None if self.at_word("public") && !m.is_private => &mut m.is_public,
+                None if self.at_word("private") && !m.is_public && !m.is_protected => {
+                    &mut m.is_private
+                }
+                None if self.at_word("public") && !m.is_private && !m.is_protected => {
+                    &mut m.is_public
+                }
+                None if self.at_word("protected") && !m.is_private && !m.is_public => {
+                    &mut m.is_protected
+                }
                 // `get name(` starts a getter; `get(` / `get: T` are a member named `get`.
                 None if self.at_word("get") && self.nth(2) == Tok::LParen => &mut m.is_getter,
                 None if self.at_word("set") && self.nth(2) == Tok::LParen => &mut m.is_setter,
@@ -80,9 +98,10 @@ impl<'a> Parser<'a> {
         let mods = self.parse_modifiers();
         if self.at_kw(Kw::Constructor) && self.nth(1) == Tok::LParen {
             let (ctor, fields) = self.parse_constructor(lo, &mods)?;
-            return Ok(Member::Constructor(ctor, fields));
+            return Ok(Member::Constructor(ctor, mods.ctor_visibility(), fields));
         }
         let name = self.parse_member_name()?;
+        self.reject_protected(&mods, &name);
         if !self.at_method_start() {
             return Ok(Member::Field(self.parse_field_rest(lo, name, &mods)?));
         }
@@ -100,6 +119,16 @@ impl<'a> Parser<'a> {
             is_setter: mods.is_setter,
             is_override: mods.is_override,
         }))
+    }
+
+    /// `protected` exists only on constructors (and constructor parameter properties).
+    fn reject_protected(&mut self, mods: &Modifiers, name: &Ident) {
+        if mods.is_protected {
+            self.error(
+                "Velt has no `protected` members: use `private` (this class only) or leave the member public; only a constructor can be `protected`",
+                name.span,
+            );
+        }
     }
 
     /// Accessor shapes: a getter takes no parameters or type parameters and declares its type;
@@ -204,8 +233,11 @@ impl<'a> Parser<'a> {
 
     fn parse_constructor(&mut self, lo: u32, mods: &Modifiers) -> PResult<(FnDecl, Vec<Field>)> {
         let name = self.take_ident();
-        if mods.any() {
-            self.error("modifiers are not allowed on a constructor", name.span);
+        if mods.any_but_visibility() {
+            self.error(
+                "a constructor can only be `public`, `protected` or `private`",
+                name.span,
+            );
         }
         let (params, fields) = self.parse_ctor_params()?;
         if self.at(Tok::Colon) {
@@ -235,6 +267,7 @@ impl<'a> Parser<'a> {
         let lo = self.cur_lo();
         let mods = self.parse_modifiers();
         let name = self.parse_member_name()?;
+        self.reject_protected(&mods, &name);
         if !self.at_method_start() {
             let field = self.parse_field_rest(lo, name, &mods)?;
             if let Some(default) = &field.default {

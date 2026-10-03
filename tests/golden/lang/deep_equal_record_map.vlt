@@ -1,0 +1,90 @@
+// check: no leaks
+// Issue #231: `deepEqual` on `Record` and `Map` works like Node's `util.isDeepStrictEqual`: the
+// same keys with deeply equal values, in any key order. `==` still compares them by identity.
+type Limit = "cpu" | "mem";
+
+class Box {
+  m: Map<string, i64> = new Map();
+}
+
+function records() {
+  const a: Record<string, i64> = { x: 1, y: 2 };
+  const b: Record<string, i64> = { y: 2, x: 1 };
+  const extra: Record<string, i64> = { x: 1, y: 2, z: 3 };
+  const other: Record<string, i64> = { x: 1, y: 3 };
+  const empty: Record<string, i64> = {};
+  console.log(deepEqual(a, b), a == b, deepEqual(a, extra), deepEqual(extra, a));
+  console.log(deepEqual(a, other), deepEqual(empty, {}), deepEqual(empty, a));
+  const c1: Record<Limit, i64> = { cpu: 2, mem: 512 };
+  const c2: Record<Limit, i64> = { mem: 512, cpu: 2 };
+  const c3: Record<Limit, i64> = { cpu: 2, mem: 256 };
+  console.log(deepEqual(c1, c2), deepEqual(c1, c3));
+  const n1: Record<string, Record<string, i64[]>> = { p: { q: [1, 2] }, r: {} };
+  const n2: Record<string, Record<string, i64[]>> = { r: {}, p: { q: [1, 2] } };
+  const n3: Record<string, Record<string, i64[]>> = { r: {}, p: { q: [1, 3] } };
+  console.log(deepEqual(n1, n2), deepEqual(n1, n3));
+  // A deleted key no longer counts.
+  b["z"] = 3;
+  console.log(deepEqual(b, extra));
+  delete b["z"];
+  console.log(deepEqual(a, b));
+}
+
+function maps() {
+  const a = new Map<i64, string>();
+  a.set(1, "a");
+  a.set(2, "b");
+  const b = new Map<i64, string>();
+  b.set(2, "b");
+  b.set(1, "a");
+  const c = new Map<i64, string>();
+  c.set(1, "a");
+  console.log(deepEqual(a, b), a == b, deepEqual(a, c), deepEqual(c, a));
+  c.set(2, "x");
+  console.log(deepEqual(a, c));
+  const nested1 = new Map<string, Map<string, i64[]>>();
+  const nested2 = new Map<string, Map<string, i64[]>>();
+  const inner1 = new Map<string, i64[]>();
+  inner1.set("k", [1, 2]);
+  const inner2 = new Map<string, i64[]>();
+  inner2.set("k", [1, 2]);
+  nested1.set("m", inner1);
+  nested2.set("m", inner2);
+  console.log(deepEqual(nested1, nested2));
+  inner2.set("k", [2, 1]);
+  console.log(deepEqual(nested1, nested2));
+  // Array keys match by content, as `get` matches them.
+  const k1 = new Map<i64[], bool>();
+  k1.set([1], true);
+  const k2 = new Map<i64[], bool>();
+  k2.set([1], true);
+  console.log(deepEqual(k1, k2));
+}
+
+function mixed() {
+  const r1: Record<string, i64> = { a: 1, b: 2 };
+  const r2: Record<string, i64> = { b: 2, a: 1 };
+  console.log(deepEqual([r1], [r2]), deepEqual({ tag: "t", r: r1 }, { tag: "t", r: r2 }));
+  const m1 = new Map<string, Record<string, i64>>();
+  m1.set("r", r1);
+  const m2 = new Map<string, Record<string, i64>>();
+  m2.set("r", r2);
+  console.log(deepEqual([m1], [m2]), deepEqual([m1], [new Map()]));
+  // Class instances compare by identity; the maps they hold compare by content.
+  const x = new Box();
+  const y = new Box();
+  x.m.set("a", 1);
+  y.m.set("a", 1);
+  console.log(deepEqual(x, y), deepEqual(x, x), deepEqual(x.m, y.m));
+  assertEq(r1, r2);
+  // A map used as a map key matches by content too.
+  const byMap = new Map<Record<string, i64>, string>();
+  byMap.set(r1, "found");
+  console.log(byMap.get(r2), byMap.get({ a: 1 }));
+}
+
+function main() {
+  records();
+  maps();
+  mixed();
+}

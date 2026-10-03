@@ -17,9 +17,9 @@ export function assertEq<T>(left: T, right: T, msg: string = "assertEq failed") 
   }
 }
 
-// Deep (structural) equality: arrays, structs and object literals compare their contents,
-// recursively; class instances (`Map` included) by identity. `==` compares every object by
-// identity, like JS.
+// Deep (structural) equality, like Node's `util.isDeepStrictEqual`: arrays, structs and object
+// literals compare their contents, recursively; `Map` and `Record` their keys and values in any
+// key order; other class instances by identity. `==` compares every object by identity, like JS.
 export function deepEqual<T>(a: T, b: T): bool {
   return __intrinsic_eq(a, b);
 }

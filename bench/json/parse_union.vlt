@@ -1,0 +1,33 @@
+// Union parse: 200k shapes told apart by `kind`, first in circles and last in rectangles, 8 times.
+type Shape = { kind: "circle"; r: f64 } | { kind: "rect"; w: f64; h: f64 };
+
+function doc(n: i64): string {
+  const parts: string[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    if (i % 2 == 0) {
+      parts.push(`{"kind":"circle","r":${i % 100}.5}`);
+    } else {
+      parts.push(`{"w":${i % 100},"h":${i % 7},"kind":"rect"}`);
+    }
+  }
+  return `[${parts.join(",")}]`;
+}
+
+function main() {
+  const text = doc(200000);
+  let sum: i64 = 0;
+  for (let round = 0; round < 8; round++) {
+    const shapes = JSON.parse<Shape[]>(text);
+    for (const s of shapes) {
+      switch (s.kind) {
+        case "circle":
+          sum += (s.r * 2) as i64;
+          break;
+        case "rect":
+          sum += (s.w * s.h) as i64;
+          break;
+      }
+    }
+  }
+  console.log(text.length, sum);
+}

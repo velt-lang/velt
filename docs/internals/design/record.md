@@ -26,7 +26,8 @@ enum. Any other `K` is an error that suggests `Map<K, V>`. A written key type is
 the type is resolved; a type parameter used as a key is checked at each instantiation, where it
 meets a concrete type (sema `record_keys.rs`, like the JSON check). Like JS objects and `Map`, a record is a
 reference type: assigning one shares it (both names see the same entries, and `==` compares
-identity), and `clone()` copies it.
+identity), and `clone()` copies it. `deepEqual` compares two records by their entries in any
+key order (equality glue: `Map.__deepEquals`).
 
 **Representation.** It is a prelude class over the same insertion-ordered hash table as `Map`. The
 compiler sees it as an ordinary class; the new parts are the typing rules below. No new runtime is
@@ -38,7 +39,8 @@ needed.
 |---|---|---|
 | `r[k]` | `V \| null`: the key may be missing (TS `noUncheckedIndexedAccess`) | `V`: every key is always present |
 | `r.name` (an identifier key) | same as `r["name"]` | same, and only for members of `K` (a typo is an error); for a string enum, the member whose value is `"name"` |
-| `r[k] = v`, `r[k] += 1` | insert or replace | replace |
+| `r[k] = v` | insert or replace | replace |
+| `r[k] += 1`, `r[k]++` | an error: the key may be missing (fix-it `r[k] = (r[k] ?? 0) + 1`); `r[k] ??= v` sets a missing key | replace |
 | `k in r` | presence test (needs the `in` operator from #18) | always true; a warning |
 
 **Construction.** An object literal can be used wherever a `Record` is expected:
@@ -51,7 +53,15 @@ needed.
 **Iteration and helpers.** These follow TypeScript, in insertion order:
 
 - `Object.keys(r)`, `Object.values(r)` and `Object.entries(r)` return arrays.
-- `for (const [k, v] of Object.entries(r))`.
+- `for (const [k, v] of Object.entries(r))`. A record itself is not iterable (`for (const k of
+  r)` is an error suggesting `Object.keys(r)` / `Object.entries(r)`).
+- Given an object literal (`Object.values({ a: 1 })`), `Object.values` and `Object.entries`
+  read it as a `Record<string, V>` with `V` the first value's type (widened), which every
+  other value must have.
+- `Object.keys(x)` returns a `string[]` and accepts any object, as in TypeScript (issue #230):
+  a record, an object literal or object type, a struct, or a class instance (its fields in
+  declaration order, base class first; not a class with subclasses, whose dynamic fields sema
+  cannot know).
 
 They are prelude functions generic over `Record`. A record has no methods of its own, because in
 TypeScript `r.size` would read the key `"size"`.
@@ -97,3 +107,6 @@ methods are internal: calling one outside the prelude is an error.
 1. `r[k]` on a `string`-keyed record is `V | null` (sound); literal-key records give `V`.
 2. `delete r[k]` removes a key (only on `string`-keyed records).
 3. `r.name` is `r["name"]` on every record.
+4. Compound assignment (`r[k] += 1`, `r[k]++`, …) on an open record is an error with the fix-it
+   `r[k] = (r[k] ?? 0) + 1` (issue #230): reads stay honest, with no `NaN` from a missing key
+   as in JS. Closed records keep it.

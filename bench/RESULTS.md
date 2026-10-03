@@ -937,3 +937,43 @@ less than 50 ms. Its memory is a peak of 9% on the large program (gimli's tables
 image), 2% on log-pipeline. Neither crosses the thresholds set in #191 (5% or 50 ms of startup,
 10% of peak RSS), so the image is still built on the startup path. `VELT_DEV_DEBUG_INFO=0`
 turns it off.
+
+## JSON (#228, #229, 2026-10-02)
+
+`bench/json/run.sh 5`: each program in bench/json/ (Velt LLVM release), a Rust version with
+serde (derive) and serde_json (`preserve_order`, so objects keep insertion order like JavaScript
+and Velt), and a Node version; the harness checks that all print the same output. Apple M4
+(4 performance + 6 efficiency cores), macOS 26.6, rustc 1.99.0, Node 24.11.1. The machine was
+shared with other builds (load average 40–90), so the numbers vary by ±20% or more between runs;
+compare columns of the same run only.
+
+| benchmark | Velt (LLVM release) | Rust serde_json | Node |
+|---|---|---|---|
+| edit | 11 | 556 | 29 |
+| navigate | 160 | 240 | 73 |
+| parse_typed | 257 | 303 | 258 |
+| parse_union | 205 | 143 | 244 |
+| parse_value | 408 | 465 | 264 |
+| stringify | 119 | 69 | 252 |
+
+- **parse_typed**: `JSON.parse<Item[]>` of 100k objects (8 MB), 8 times (Node: `JSON.parse`).
+- **parse_union**: `JSON.parse<Shape[]>` of 200k objects of a two-member union, the
+  discriminant first in one member and last in the other, 8 times (Rust: an internally tagged
+  enum).
+- **stringify**: `JSON.stringify` of 100k structs, 8 times.
+- **parse_value**: `JSON.parseValue` of the parse_typed document, 8 times.
+- **navigate**: `at(i)` and `get(key)` over the parsed document, 20 passes.
+- **edit**: `set` 10k keys into an object, then `delete` them all from the front, 4 times
+  (Rust: `shift_remove`, which keeps the order and moves the later members, O(n) per delete).
+
+Before and after #228 (interleaved runs of both builds, best of 7, ms): parse_typed 297 → 292,
+parse_union 458 → 430, parse_value 654 → 609, navigate 299 → 293, stringify 159 → 157, edit
+537 → 23. Deleting from the front was O(n) per delete and is now O(1) amortized; `json.Value`
+nodes shrank from 80 to 40 bytes (an object's key index moved behind a box), which makes
+`parseValue` a little faster.
+
+Positions after deletes in the middle (Fenwick tree of the live slots, 2026-10-03; interleaved
+runs, best of 21, CPU ms): parse_value 313 → 315, navigate 170 → 174, edit 10 → 10, the rest
+unchanged (within ±2%). Deleting 80k keys from the middle of a 160k-key object, each followed
+by two `at` calls: 9.9 s → 0.04 s (each `at` rebuilt a table of the live positions in O(n);
+it now costs O(log n)).

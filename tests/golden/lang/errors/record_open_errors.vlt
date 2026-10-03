@@ -1,0 +1,25 @@
+// Open records (`Record<string, V>`): a key may be missing, so its value is `V | null`.
+function bump<K>(r: Record<K, i64>, k: K) {
+  r[k] += 1;
+}
+
+function main() {
+  const counts: Record<string, i64> = {};
+  counts["a"] += 1;
+  counts["a"]++;
+  ++counts.b;
+  counts["a"] -= 2;
+  const k = "c";
+  counts[k] *= 3;
+  counts[k] **= 2;
+  const names: Record<string, string> = {};
+  names["x"] += "!";
+  const flags: Record<string, bool> = {};
+  flags["on"] &&= true;
+  for (const key of counts) {
+    console.log(key);
+  }
+  console.log(Object.values({}));
+  counts["a"] ||= 1;
+  names["x"] &&= "y";
+}

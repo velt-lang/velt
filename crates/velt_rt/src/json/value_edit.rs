@@ -98,7 +98,7 @@ pub unsafe extern "C" fn velt_rt_json_value_delete(
 ) -> u8 {
     let key = String::from_utf8_lossy((*key).as_bytes());
     match (*slot).get() {
-        Some(Value::Object(obj)) if obj.find(&key).is_some() => {}
+        Some(Value::Object(obj)) if obj.get(&key).is_some() => {}
         _ => return 0,
     }
     match edit(slot) {

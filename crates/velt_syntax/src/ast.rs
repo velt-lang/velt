@@ -170,7 +170,20 @@ pub struct TypeDecl {
     pub implements: Vec<TypeExpr>,
     pub fields: Vec<Field>,
     pub constructor: Option<FnDecl>,
+    /// `private constructor` / `protected constructor` (`Public` without a constructor).
+    pub ctor_visibility: CtorVisibility,
     pub methods: Vec<Method>,
+}
+
+/// Who may call a class's constructor (TypeScript's rules, docs/reference/classes.md): anyone;
+/// the class body and its subclasses (`protected`); only the class body, and the class cannot
+/// be extended (`private`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CtorVisibility {
+    #[default]
+    Public,
+    Protected,
+    Private,
 }
 
 #[derive(Clone, Debug)]

@@ -8,7 +8,8 @@
 //! All accessors accept a null handle (the result of a failed `get`/`at`).
 
 use super::error::syntax_message;
-use super::value::{parse, stringify_into, Value};
+use super::text::stringify_into;
+use super::value::{parse, Value};
 use crate::handle::Handle;
 use crate::str::VeltStr;
 use std::sync::Arc;
@@ -106,10 +107,7 @@ pub unsafe extern "C" fn velt_rt_json_value_get(
     let Ok(key) = std::str::from_utf8((*key).as_bytes()) else {
         return Handle::NULL;
     };
-    match obj.find(key) {
-        Some(i) => new_handle(&obj.entries[i].1),
-        None => Handle::NULL,
-    }
+    obj.get(key).map_or(Handle::NULL, new_handle)
 }
 
 /// `v.at(i)`: new handle to array element `i` (or the `i`-th member value of an object), or null.
@@ -120,7 +118,7 @@ pub unsafe extern "C" fn velt_rt_json_value_at(h: ValueHandle, i: u64) -> ValueH
     };
     let child = match h.get() {
         Some(Value::Array(items)) => items.get(i),
-        Some(Value::Object(obj)) => obj.entries.get(i).map(|(_, v)| v),
+        Some(Value::Object(obj)) => obj.entry_at(i).map(|(_, v)| v),
         _ => None,
     };
     child.map_or(Handle::NULL, new_handle)
@@ -137,7 +135,7 @@ pub unsafe extern "C" fn velt_rt_json_value_key_at(
     let Some(Value::Object(obj)) = h.get() else {
         return 0;
     };
-    match to_index::<usize>(i).and_then(|i| obj.entries.get(i)) {
+    match to_index::<usize>(i).and_then(|i| obj.entry_at(i)) {
         Some((key, _)) => {
             out.write(VeltStr::from_vec(key.as_bytes().to_vec()));
             1
@@ -151,7 +149,7 @@ pub unsafe extern "C" fn velt_rt_json_value_key_at(
 pub unsafe extern "C" fn velt_rt_json_value_len(h: ValueHandle) -> u64 {
     match h.get() {
         Some(Value::Array(items)) => items.len() as u64,
-        Some(Value::Object(obj)) => obj.entries.len() as u64,
+        Some(Value::Object(obj)) => obj.len() as u64,
         Some(Value::String(s)) => s.len() as u64,
         _ => 0,
     }

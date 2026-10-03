@@ -2,8 +2,8 @@
 //! methods are separate lists in the AST), `interface`, `extend` and `enum`.
 
 use velt_syntax::ast::{
-    EnumDecl, ExtendDecl, Field, FnDecl, InterfaceDecl, InterfaceMethod, Method, TypeDecl,
-    TypeExpr, Variant,
+    CtorVisibility, EnumDecl, ExtendDecl, Field, FnDecl, InterfaceDecl, InterfaceMethod, Method,
+    TypeDecl, TypeExpr, Variant,
 };
 
 use super::Printer;
@@ -12,7 +12,7 @@ use crate::doc::{cat, hardline, indent, join, nil, text, Doc};
 /// A member of a declaration body, borrowed from whichever AST list holds it.
 enum Member<'d> {
     Field(&'d Field),
-    Constructor(&'d FnDecl),
+    Constructor(&'d FnDecl, CtorVisibility),
     Method(&'d Method),
     InterfaceMethod(&'d InterfaceMethod),
 }
@@ -21,7 +21,7 @@ impl Member<'_> {
     fn range(&self) -> (u32, u32) {
         match self {
             Member::Field(f) => (f.span.lo, f.span.hi),
-            Member::Constructor(c) => (c.sig.span.lo, c.body.span.hi),
+            Member::Constructor(c, _) => (c.sig.span.lo, c.body.span.hi),
             Member::Method(m) => (m.decl.sig.span.lo, m.decl.body.span.hi),
             Member::InterfaceMethod(m) => {
                 let hi = m.body.as_ref().map_or(m.sig.span.hi, |b| b.span.hi);
@@ -37,7 +37,12 @@ impl<'a> Printer<'a> {
         let sig = decl.constructor.as_ref().map(|c| c.sig.span);
         let own = |f: &&Field| sig.is_none_or(|s| f.span.lo < s.lo || f.span.hi > s.hi);
         let mut members: Vec<Member> = decl.fields.iter().filter(own).map(Member::Field).collect();
-        members.extend(decl.constructor.iter().map(Member::Constructor));
+        let visibility = decl.ctor_visibility;
+        members.extend(
+            decl.constructor
+                .iter()
+                .map(|c| Member::Constructor(c, visibility)),
+        );
         members.extend(decl.methods.iter().map(Member::Method));
         let mut head = cat![
             keyword,
@@ -136,13 +141,18 @@ impl<'a> Printer<'a> {
     fn member(&mut self, member: &Member) -> Doc {
         match member {
             Member::Field(f) => self.field(f),
-            Member::Constructor(c) => {
+            Member::Constructor(c, visibility) => {
                 // Without the `this.x = x` stores the parser adds for parameter properties
                 // (they sit before the body).
                 let mut c = (*c).clone();
                 let body_lo = c.body.span.lo;
                 c.body.stmts.retain(|s| s.span.lo >= body_lo);
-                self.fn_decl(&c, "")
+                let mods = match visibility {
+                    CtorVisibility::Public => "",
+                    CtorVisibility::Protected => "protected ",
+                    CtorVisibility::Private => "private ",
+                };
+                cat![mods, self.fn_decl(&c, "")]
             }
             Member::Method(m) => {
                 let mut mods = String::new();

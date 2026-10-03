@@ -1,9 +1,11 @@
 // A `JsonValue` wraps a runtime handle that safe code can neither pass in nor change: the
-// constructor makes JSON null, and the handle and the function that adopts one are private.
+// constructor and the handle are private, and only the static methods make values.
 function main() {
   const a = new JsonValue(4096);
   const b = JsonValue.of(1);
   b.handle = 4096;
-  const c = JsonValue.adopt(4096);
-  console.log(new JsonValue().isNull(), JsonValue.parse("[1]").len());
+  const c = new JsonValue();
+  console.log(JsonValue.of(null).isNull(), JsonValue.parse("[1]").len());
 }
+
+class Forged extends JsonValue {}
