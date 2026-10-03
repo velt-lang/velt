@@ -64,6 +64,9 @@ pub(crate) struct Ctx<'m> {
     /// Every declared type's fields are resolved (`collect::shapes`); before that, a utility
     /// type (`crate::utility_types`) may only read the fields of types already shaped.
     pub shapes_done: bool,
+    /// Checking type aliases nothing uses (`resolve::check_unused_aliases`): a utility type on
+    /// one of the alias's own type parameters is fine there (it is resolved at each use).
+    pub checking_unused_aliases: bool,
     /// Type definitions whose shape (`collect::shapes`) is resolved, and those being resolved
     /// now: a utility type in a field type shapes the type it reads first, whatever the
     /// declaration order.
@@ -139,6 +142,7 @@ impl<'m> Ctx<'m> {
             field_only: HashMap::new(),
             field_only_of: HashMap::new(),
             shapes_done: false,
+            checking_unused_aliases: false,
             shaped: HashSet::new(),
             shaping: vec![],
             laid_out: HashSet::new(),

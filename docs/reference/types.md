@@ -19,8 +19,8 @@
 
 Types are required on function parameters, and on return types other than `void` (a missing
 return type means `void`). Everything else is inferred. `type Name = …` declares an alias; an
-alias cannot refer to itself. There is no `any` or `unknown`: dynamic JSON is `JsonValue`
-([`velt:json`](../std/json.md)).
+alias cannot refer to itself, and it is checked even where nothing uses it. There is no `any`
+or `unknown`: dynamic JSON is `JsonValue` ([`velt:json`](../std/json.md)).
 
 ## Booleans
 

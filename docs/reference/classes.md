@@ -235,9 +235,12 @@ console.log(p.len(), q.len());  // 4 4
   the same fields and stays the same object. `class C implements User` checks that the class
   has the fields, but a class instance is not a `User` (it is shared by reference; build one
   from its fields). As a bound, `<T extends HasId>` is satisfied by any type with the fields
-  (a struct, class or object type, not generic). An interface that refers to itself through a
-  field (`next?: Node`) has infinite size, as a struct does; through an array
-  (`children: Node[]`) it is fine.
+  (a struct, class or object type, not generic). An interface may refer to itself through a
+  field (`next?: Node`, `parent?: Category`, or a union such as `left: Tree`): such an object is
+  stored behind a pointer, like a class instance, so its size is finite. Like JavaScript,
+  `JSON.stringify` of an object that contains itself (`n.next = n`) fails: it panics with
+  "converting circular structure to JSON". A struct that contains itself is still an error
+  (``recursive type `S` has infinite size``): structs are stored inline.
 - Used as a **generic bound** (`<T extends Named>`), an interface is resolved at compile time
   (direct calls). Used as a **value type** (`Named[]` holding different classes), it is a fat
   pointer (data plus vtable), like Rust's `dyn`.
