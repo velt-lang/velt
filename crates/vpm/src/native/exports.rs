@@ -82,15 +82,17 @@ fn exported_symbols(file: &object::File) -> Result<Vec<(String, u64)>, String> {
 
 /// A Windows import library (`bytes`) must import exactly `exports` (the DLL's export names), each
 /// by its own name from `dll`: an import library could otherwise map a package's function to
-/// another DLL's (`free` in the C runtime) for the executable that links it.
+/// another DLL's (`free` in the C runtime) for the executable that links it. The archive's symbol
+/// map, which the linker searches instead of the members, must point each name at a member that
+/// defines it.
 pub fn check_import_library(
     bytes: &[u8],
     dll: &str,
     exports: &BTreeSet<String>,
 ) -> Result<(), String> {
     use object::read::coff::{ImportFile, ImportName};
-    let archive = object::read::archive::ArchiveFile::parse(bytes)
-        .map_err(|e| format!("cannot read the import library: {e}"))?;
+    let bad = |e: object::read::Error| format!("cannot read the import library: {e}");
+    let archive = object::read::archive::ArchiveFile::parse(bytes).map_err(bad)?;
     let stem = dll.strip_suffix(".dll").unwrap_or(dll);
     let descriptors = [
         format!("__IMPORT_DESCRIPTOR_{stem}"),
@@ -99,11 +101,12 @@ pub fn check_import_library(
     ];
     let mut imported = BTreeSet::new();
     let mut problems = vec![];
+    // Member (by its data's range) → the names it defines.
+    let mut defined: BTreeMap<(u64, u64), BTreeSet<String>> = BTreeMap::new();
     for member in archive.members() {
-        let member = member.map_err(|e| format!("cannot read the import library: {e}"))?;
-        let data = member
-            .data(bytes)
-            .map_err(|e| format!("cannot read the import library: {e}"))?;
+        let member = member.map_err(bad)?;
+        let data = member.data(bytes).map_err(bad)?;
+        let names = defined.entry(member.file_range()).or_default();
         match ImportFile::parse(data) {
             Ok(import) => {
                 let symbol = String::from_utf8_lossy(import.symbol()).into_owned();
@@ -121,12 +124,13 @@ pub fn check_import_library(
                         problems.push(format!("`{symbol}` is imported by ordinal {n}"))
                     }
                 }
+                names.insert(format!("__imp_{symbol}"));
+                names.insert(symbol.clone());
                 imported.insert(symbol);
             }
             // The import descriptor and thunk objects define only their fixed names.
             Err(_) => {
-                let object = object::File::parse(data)
-                    .map_err(|e| format!("cannot read the import library: {e}"))?;
+                let object = object::File::parse(data).map_err(bad)?;
                 for symbol in object.symbols() {
                     if symbol.is_undefined() || symbol.is_local() {
                         continue;
@@ -136,8 +140,24 @@ pub fn check_import_library(
                     if !descriptors.contains(&name) {
                         problems.push(format!("the import library defines `{name}`"));
                     }
+                    names.insert(name);
                 }
             }
+        }
+    }
+    for symbol in archive.symbols().map_err(bad)?.into_iter().flatten() {
+        let symbol = symbol.map_err(bad)?;
+        let name = String::from_utf8_lossy(symbol.name()).into_owned();
+        let target = archive.member(symbol.offset()).ok().map(|m| m.file_range());
+        match target.and_then(|t| defined.get(&t)) {
+            Some(names) if names.contains(&name) => {}
+            Some(_) => problems.push(format!(
+                "the symbol map points `{name}` at a member that does not define it"
+            )),
+            None => problems.push(format!(
+                "the symbol map points `{name}` at offset {} where no member starts",
+                symbol.offset().0
+            )),
         }
     }
     for name in exports.difference(&imported) {
@@ -172,7 +192,10 @@ pub fn check_static_object(
     let init = init_symbol(package);
     let mut extra = BTreeSet::new();
     for symbol in file.symbols() {
-        if symbol.is_undefined() || symbol.is_local() {
+        // A Mach-O tentative definition (a common symbol) is N_UNDF with a size in n_value; it
+        // wins over a dylib's definition (`-commons ignore_dylibs`), so it is one.
+        let common = macho && symbol.is_undefined() && symbol.address() != 0;
+        if (symbol.is_undefined() && !common) || symbol.is_local() {
             continue;
         }
         let raw = String::from_utf8_lossy(
@@ -466,48 +489,111 @@ pub fn sample_object(package: &str, exports: &BTreeMap<String, String>, note: &s
     SampleElf::static_object(package, exports, note).bytes()
 }
 
-/// A Windows import library for `dll`: one short import member per name of `imports`
-/// (`(symbol, import name)`), as `link.exe` writes them for x64.
+/// A short import member (`IMPORT_OBJECT_HEADER` + names) importing `symbol` from `dll` as
+/// `import` (`None`: by ordinal 1), as `link.exe` writes them for x64.
 #[doc(hidden)]
-pub fn sample_import_library(dll: &str, imports: &[(String, String)]) -> Vec<u8> {
-    let mut out = b"!<arch>\n".to_vec();
-    let mut member = |name: &str, data: &[u8]| {
-        let header = format!(
-            "{:<16}{:<12}{:<6}{:<6}{:<8}{:<10}`\n",
-            name,
-            0,
-            0,
-            0,
-            644,
-            data.len()
-        );
-        out.extend_from_slice(header.as_bytes());
-        out.extend_from_slice(data);
-        if data.len() % 2 == 1 {
-            out.push(b'\n');
+pub fn sample_short_import(symbol: &str, dll: &str, import: Option<&str>) -> Vec<u8> {
+    let mut names = format!("{symbol}\0{dll}\0").into_bytes();
+    // Name type: IMPORT_OBJECT_ORDINAL (0), _NAME (1) or _EXPORTAS (4).
+    let name_type: u16 = match import {
+        None => 0,
+        Some(i) if i == symbol => 1,
+        Some(i) => {
+            names.extend_from_slice(format!("{i}\0").as_bytes());
+            4
         }
     };
-    for (symbol, import) in imports {
-        let export_as = symbol != import;
-        let mut names = format!("{symbol}\0{dll}\0").into_bytes();
-        if export_as {
-            names.extend_from_slice(format!("{import}\0").as_bytes());
+    let mut data = vec![];
+    data.extend_from_slice(&0u16.to_le_bytes()); // Sig1
+    data.extend_from_slice(&0xffffu16.to_le_bytes()); // Sig2
+    data.extend_from_slice(&0u16.to_le_bytes()); // Version
+    data.extend_from_slice(&0x8664u16.to_le_bytes()); // Machine: AMD64
+    data.extend_from_slice(&0u32.to_le_bytes()); // TimeDateStamp
+    data.extend_from_slice(&(names.len() as u32).to_le_bytes()); // SizeOfData
+    data.extend_from_slice(&u16::from(import.is_none()).to_le_bytes()); // OrdinalOrHint
+    data.extend_from_slice(&(name_type << 2).to_le_bytes()); // Type: code (0)
+    data.extend_from_slice(&names);
+    data
+}
+
+/// Where a [`sample_archive`] symbol map entry points.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug)]
+pub enum MapTarget {
+    /// The header of member `n`.
+    Member(usize),
+    /// A raw file offset.
+    Offset(u32),
+}
+
+/// An `ar` archive of `members` with a symbol map (a GNU/COFF first linker member) of `map`.
+#[doc(hidden)]
+pub fn sample_archive(members: &[Vec<u8>], map: &[(String, MapTarget)]) -> Vec<u8> {
+    fn header(name: &str, size: usize) -> Vec<u8> {
+        format!("{name:<16}{:<12}{:<6}{:<6}{:<8}{size:<10}`\n", 0, 0, 0, 644).into_bytes()
+    }
+    let padded = |n: usize| n + n % 2;
+    let names_len: usize = map.iter().map(|(n, _)| n.len() + 1).sum();
+    let map_len = 4 + 4 * map.len() + names_len;
+    let first = 8 + if map.is_empty() {
+        0
+    } else {
+        60 + padded(map_len)
+    };
+    let mut starts = vec![];
+    let mut at = first;
+    for m in members {
+        starts.push(at as u32);
+        at += 60 + padded(m.len());
+    }
+    let mut out = b"!<arch>\n".to_vec();
+    if !map.is_empty() {
+        out.extend_from_slice(&header("/", map_len));
+        out.extend_from_slice(&(map.len() as u32).to_be_bytes());
+        for (_, target) in map {
+            let offset = match *target {
+                MapTarget::Member(n) => starts[n],
+                MapTarget::Offset(o) => o,
+            };
+            out.extend_from_slice(&offset.to_be_bytes());
         }
-        let mut data = vec![];
-        data.extend_from_slice(&0u16.to_le_bytes()); // Sig1
-        data.extend_from_slice(&0xffffu16.to_le_bytes()); // Sig2
-        data.extend_from_slice(&0u16.to_le_bytes()); // Version
-        data.extend_from_slice(&0x8664u16.to_le_bytes()); // Machine: AMD64
-        data.extend_from_slice(&0u32.to_le_bytes()); // TimeDateStamp
-        data.extend_from_slice(&(names.len() as u32).to_le_bytes()); // SizeOfData
-        data.extend_from_slice(&0u16.to_le_bytes()); // OrdinalOrHint
-                                                     // Type: code (0); name type: IMPORT_OBJECT_NAME (1) or _EXPORTAS (4).
-        let name_type: u16 = if export_as { 4 } else { 1 };
-        data.extend_from_slice(&(name_type << 2).to_le_bytes());
-        data.extend_from_slice(&names);
-        member("import/", &data);
+        for (name, _) in map {
+            out.extend_from_slice(name.as_bytes());
+            out.push(0);
+        }
+        if map_len % 2 == 1 {
+            out.push(b'\n');
+        }
+    }
+    for m in members {
+        out.extend_from_slice(&header("import/", m.len()));
+        out.extend_from_slice(m);
+        if m.len() % 2 == 1 {
+            out.push(b'\n');
+        }
     }
     out
+}
+
+/// A Windows import library for `dll`: one short import member per `(symbol, import name)` of
+/// `imports`, and a symbol map naming each symbol and its `__imp_` form.
+#[doc(hidden)]
+pub fn sample_import_library(dll: &str, imports: &[(String, String)]) -> Vec<u8> {
+    let members: Vec<Vec<u8>> = imports
+        .iter()
+        .map(|(symbol, import)| sample_short_import(symbol, dll, Some(import)))
+        .collect();
+    let map: Vec<(String, MapTarget)> = imports
+        .iter()
+        .enumerate()
+        .flat_map(|(n, (symbol, _))| {
+            [
+                (format!("__imp_{symbol}"), MapTarget::Member(n)),
+                (symbol.clone(), MapTarget::Member(n)),
+            ]
+        })
+        .collect();
+    sample_archive(&members, &map)
 }
 
 #[cfg(test)]
@@ -606,6 +692,103 @@ mod tests {
         let mut elf = SampleElf::static_object("db", &exports, "");
         elf.symbols.push(("malloc".into(), GLOBAL_FUNC, 0, 0, 0));
         check_static_object(&elf.bytes(), "db", &exports).unwrap();
+    }
+
+    /// A relocatable object of `format` defining each of `defined` in `.text` and `common` as a
+    /// common (tentative) symbol.
+    fn written_object(format: object::BinaryFormat, defined: &[&str], common: &[&str]) -> Vec<u8> {
+        use object::write::{Object as Written, Symbol, SymbolSection};
+        use object::{Architecture, Endianness, SymbolFlags, SymbolKind, SymbolScope};
+        let mut obj = Written::new(format, Architecture::X86_64, Endianness::Little);
+        let text = obj.section_id(object::write::StandardSection::Text);
+        obj.append_section_data(text, &[0xc3; 16], 1);
+        let symbol = |name: &str, section| Symbol {
+            name: name.as_bytes().to_vec(),
+            value: 0,
+            size: 0,
+            kind: SymbolKind::Text,
+            scope: SymbolScope::Dynamic,
+            weak: false,
+            section,
+            flags: SymbolFlags::None,
+        };
+        for name in defined {
+            obj.add_symbol(symbol(name, SymbolSection::Section(text)));
+        }
+        for name in common {
+            let mut s = symbol(name, SymbolSection::Undefined);
+            s.kind = SymbolKind::Data;
+            obj.add_common_symbol(s, 8, 8);
+        }
+        obj.write().unwrap()
+    }
+
+    #[test]
+    fn import_library_symbol_maps_point_at_their_definitions() {
+        let dll = "velt_native_db.dll";
+        let imports = [
+            ("db_open", Some("db_open")),
+            ("velt_native_init_db", Some("velt_native_init_db")),
+        ];
+        let members: Vec<Vec<u8>> = imports
+            .iter()
+            .map(|(s, i)| sample_short_import(s, dll, *i))
+            .collect();
+        let names: BTreeSet<String> = imports.iter().map(|(s, _)| s.to_string()).collect();
+        let ok = [("db_open".to_string(), MapTarget::Member(0))];
+        check_import_library(&sample_archive(&members, &ok), dll, &names).unwrap();
+        // The linker would take `free` from the `db_open` member.
+        let wrong = [("free".to_string(), MapTarget::Member(0))];
+        let e = check_import_library(&sample_archive(&members, &wrong), dll, &names).unwrap_err();
+        assert!(
+            e.contains("points `free` at a member that does not define it"),
+            "{e}"
+        );
+        // An offset inside a member's data, where another header could hide.
+        let lib = sample_archive(&members, &ok);
+        let inside = (lib.len() - 10) as u32;
+        let hidden = [("db_open".to_string(), MapTarget::Offset(inside))];
+        let e = check_import_library(&sample_archive(&members, &hidden), dll, &names).unwrap_err();
+        assert!(e.contains("where no member starts"), "{e}");
+    }
+
+    #[test]
+    fn ordinal_imports_and_foreign_definitions_are_refused() {
+        let dll = "velt_native_db.dll";
+        let names = BTreeSet::from(["db_open".to_string()]);
+        let by_ordinal = sample_archive(&[sample_short_import("db_open", dll, None)], &[]);
+        let e = check_import_library(&by_ordinal, dll, &names).unwrap_err();
+        assert!(e.contains("`db_open` is imported by ordinal 1"), "{e}");
+        // A long-format member may define only the import descriptor names.
+        let members = [
+            sample_short_import("db_open", dll, Some("db_open")),
+            written_object(
+                object::BinaryFormat::Coff,
+                &["__IMPORT_DESCRIPTOR_velt_native_db", "free"],
+                &[],
+            ),
+        ];
+        let e = check_import_library(&sample_archive(&members, &[]), dll, &names).unwrap_err();
+        assert!(e.contains("the import library defines `free`"), "{e}");
+        assert!(!e.contains("`__IMPORT_DESCRIPTOR_velt_native_db`"), "{e}");
+    }
+
+    #[test]
+    fn common_symbols_are_definitions_in_static_objects() {
+        let exports = db_exports();
+        // ELF SHN_COMMON.
+        let mut elf = SampleElf::static_object("db", &exports, "");
+        elf.symbols
+            .push(("free".into(), (1 << 4) | 1, 0, 0xfff2, 8));
+        let e = check_static_object(&elf.bytes(), "db", &exports).unwrap_err();
+        assert!(e.contains("`free`"), "{e}");
+        // Mach-O: a tentative `_free` (N_UNDF | N_EXT, n_value = its size).
+        let macho = object::BinaryFormat::MachO;
+        let good = written_object(macho, &["velt_native_init_db", "db_open"], &[]);
+        check_static_object(&good, "db", &exports).unwrap();
+        let bad = written_object(macho, &["velt_native_init_db", "db_open"], &["free"]);
+        let e = check_static_object(&bad, "db", &exports).unwrap_err();
+        assert!(e.contains("not the package's exports: `free`"), "{e}");
     }
 
     #[test]

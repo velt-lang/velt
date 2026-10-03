@@ -17,4 +17,6 @@ velt_http = { path = "../velt_http" }
 velt_syntax.workspace = true
 
 [dev-dependencies]
+# Writes the COFF and Mach-O objects of the bundle-check tests.
+object = { version = "0.39", default-features = false, features = ["read", "std", "write_std", "coff", "elf", "macho"] }
 tempfile = "3.27.0"
