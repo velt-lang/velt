@@ -24,7 +24,8 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
 - **Calls borrow**: passing an object to a function lends it, so `log(user); save(user);` costs
   nothing. The compiler infers per parameter whether the callee reads it, modifies it, or keeps
   it. A parameter the body stores or returns takes ownership: a caller that does not use its
-  variable again hands it over for free, one that does shares it.
+  variable again hands it over for free, one that does shares it. Returning a field of a class
+  instance (a getter's `return this.ctl.sig`) shares the field and only borrows the instance.
 - A **promise** has one owner: `await` a stored promise once; using a promise variable after
   handing it on is ``use of moved value `p` ``.
 - Reference cycles (`a.next = b; b.next = a`) are never freed. **Planned**

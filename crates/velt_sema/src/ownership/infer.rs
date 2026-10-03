@@ -106,7 +106,8 @@ pub(super) fn with_body(
 /// Locals moved from (wholly or partially), incl. by escaping-closure captures. Soft moves
 /// (async-call arguments, `soft`) do not count: they become clones rather than take ownership.
 /// Neither do strings taken out of a larger value or captured by a closure: they become copies
-/// when the root stays alive (`super::strings`), so `return this.name` borrows `this`.
+/// when the root stays alive (`super::strings`), so `return this.name` borrows `this`; nor do
+/// fields taken out of a class instance, which become shares.
 fn moved_roots(cx: &Ctx, b: &mut Block, soft: &HashSet<Span>) -> HashSet<LocalId> {
     let mut out = HashSet::new();
     visit::exprs_mut(b, &mut |e: &mut Expr| match &e.kind {
@@ -132,6 +133,10 @@ fn moved_roots(cx: &Ctx, b: &mut Block, soft: &HashSet<Span>) -> HashSet<LocalId
         _ if soft.contains(&e.span) && super::soft::is_moved_place(e) => {}
         E::Field { .. } | E::UnwrapSome(..) | E::UnwrapVariant { .. }
             if cx.is_string_value(e.ty) => {}
+        // A field can't leave a class instance: the move becomes a share (`super::validate`),
+        // so it takes nothing from the root (`get signal() { return this.ctl.sig; }` borrows
+        // `this`).
+        E::Field { .. } | E::UnwrapSome(..) | E::UnwrapVariant { .. } if through_class(cx, e) => {}
         E::Local(l, UseMode::Move) => {
             out.insert(*l);
         }
@@ -161,6 +166,22 @@ fn moved_roots(cx: &Ctx, b: &mut Block, soft: &HashSet<Span>) -> HashSet<LocalId
         _ => {}
     });
     out
+}
+
+/// Does place `e` lie inside a class instance (a field reached through one)?
+fn through_class(cx: &Ctx, e: &Expr) -> bool {
+    let mut cur = e;
+    loop {
+        cur = match &cur.kind {
+            E::Field { base, .. }
+            | E::UnwrapSome(base, _)
+            | E::UnwrapVariant { expr: base, .. } => base,
+            _ => return false,
+        };
+        if cx.class_of(cur.ty).is_some() {
+            return true;
+        }
+    }
 }
 
 fn infer_body(cx: &mut Ctx, d: DefId, f: &mut FnDef) -> bool {

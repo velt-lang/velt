@@ -143,3 +143,21 @@ fn optional_chains_short_circuit() {
          function main() { console.log(len(null), up(new User())); }",
     );
 }
+
+#[test]
+fn getters_returning_a_field_borrow_this() {
+    // A field can't leave a class instance (it is shared), so the getter takes nothing from
+    // `this` and callers keep their receiver (#145).
+    let p = common::programs::ok_src(
+        "class Sig { n: i64 = 1; }
+         class Ctl { sig: Sig = new Sig(); }
+         class Scope {
+           private ctl: Ctl = new Ctl();
+           get signal(): Sig { return this.ctl.sig; }
+           read(s: Sig): i64 { return s.n; }
+         }
+         function main() { const s = new Scope(); console.log(s.read(s.signal)); }",
+    );
+    let getter = common::hir_walk::func(&p, "Scope.signal");
+    assert_eq!(getter.params[0].mode, velt_sema::hir::PassMode::Borrow);
+}
