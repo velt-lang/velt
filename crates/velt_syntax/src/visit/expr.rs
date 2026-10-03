@@ -1,10 +1,10 @@
 //! Visiting expressions: an expression, the types written in it, then its sub-expressions
-//! (arrow bodies and JSX included).
+//! (arrow and function bodies and JSX included).
 
 use crate::ast::{self, ExprKind as E};
 
 use super::types::expr_types;
-use super::{walk_block, Visit};
+use super::{walk_block, walk_fn, Visit};
 
 pub(super) fn opt_expr<'a>(e: Option<&'a ast::Expr>, v: &mut dyn Visit<'a>) {
     if let Some(e) = e {
@@ -22,14 +22,15 @@ pub fn walk_expr<'a>(e: &'a ast::Expr, v: &mut dyn Visit<'a>) {
             ast::ArrowBody::Expr(x) => walk_expr(x, v),
             ast::ArrowBody::Block(b) => walk_block(b, v),
         },
+        E::Function(f) => walk_fn(f, v),
         _ => children(e, &mut |c| walk_expr(c, v)),
     }
 }
 
-/// Call `f` on every direct sub-expression of `e` (arrow bodies excluded).
+/// Call `f` on every direct sub-expression of `e` (arrow and function bodies excluded).
 fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
     match &e.kind {
-        E::Lit(_) | E::Ident(_) | E::This | E::Super | E::Arrow { .. } => {}
+        E::Lit(_) | E::Ident(_) | E::This | E::Super | E::Arrow { .. } | E::Function(_) => {}
         E::Template { exprs, .. } | E::Array(exprs) => exprs.iter().for_each(f),
         E::Unary { expr, .. }
         | E::Update { target: expr, .. }

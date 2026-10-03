@@ -295,6 +295,16 @@ fn walk_expr<'m>(e: &'m ast::Expr, f: &mut dyn FnMut(Found<'m>)) {
                 ast::ArrowBody::Block(b) => walk_block(b, f),
             }
         }
+        E::Function(d) => {
+            if !d.sig.name.name.is_empty() {
+                f(Found::Bind(&d.sig.name.name));
+            }
+            for p in &d.sig.params {
+                f(Found::Bind(&p.name.name));
+                p.default.iter().for_each(|x| walk_expr(x, f));
+            }
+            walk_block(&d.body, f);
+        }
         _ => crate::ast_walk::children(e, &mut |c| walk_expr(c, f)),
     }
 }

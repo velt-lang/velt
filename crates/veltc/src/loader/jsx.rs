@@ -125,6 +125,7 @@ fn expr(e: &ast::Expr) -> Option<Span> {
             ast::ArrowBody::Expr(x) => expr(x),
             ast::ArrowBody::Block(b) => block(b),
         },
+        E::Function(f) => block(&f.body),
         E::Object(props) | E::StructLit { props, .. } => props.iter().find_map(|p| match p {
             ast::ObjectProp::KeyValue(_, v) | ast::ObjectProp::Spread(v) => expr(v),
             ast::ObjectProp::Shorthand(_) => None,

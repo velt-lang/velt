@@ -157,6 +157,8 @@ pub(crate) struct Frame {
     pub is_async: bool,
     /// Body of a generator: the type of the values it yields (`yield` is allowed).
     pub yield_ty: Option<TyId>,
+    /// Body of a named generator function expression: its name (not in scope there).
+    pub fn_expr_name: Option<String>,
     /// Nesting depth of the `finally` blocks being checked (`yield` is not allowed in them).
     pub finally_depth: u32,
     /// In a generator's `finally` block: the loop stack's length when it was entered (a
@@ -209,6 +211,7 @@ impl Frame {
             escaping: false,
             is_async: false,
             yield_ty: None,
+            fn_expr_name: None,
             finally_depth: 0,
             finally_loops: None,
             stmt_yields: Default::default(),

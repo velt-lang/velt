@@ -581,6 +581,10 @@ pub enum ExprKind {
         body: ArrowBody,
         is_async: bool,
     },
+    /// `function* name(params): R { body }` (`async function*` too): a function expression.
+    /// The name is optional (empty when left out). Only generators are allowed (sema); other
+    /// functions are written as arrows.
+    Function(Box<FnDecl>),
     /// `[a, b, ...c]` (spread elements are `Spread`).
     Array(Vec<Expr>),
     /// `{ a: 1, b }` — anonymous struct literal, or struct literal when typed by context.

@@ -142,6 +142,24 @@ impl<'a> Parser<'a> {
         Ok(FnDecl { sig, body })
     }
 
+    /// A function expression at `function` (after `async`, with `is_async`): `function*
+    /// [name](...)[: R] { ... }`; the name may be left out (empty). Sema allows only generators.
+    pub(super) fn parse_fn_expr(&mut self, lo: u32, is_async: bool) -> PResult<ExprKind> {
+        self.expect_kw(Kw::Function, "function")?;
+        let is_generator = self.eat(Tok::Star);
+        let name = match Self::is_ident_like(self.peek()) {
+            true => self.parse_binding_ident()?,
+            false => Ident {
+                name: String::new(),
+                span: self.span_from(lo),
+            },
+        };
+        let mut sig = self.parse_sig_rest(lo, name, is_async)?;
+        sig.is_generator = is_generator;
+        let body = self.parse_block()?;
+        Ok(ExprKind::Function(Box::new(FnDecl { sig, body })))
+    }
+
     /// `function name(...)` or `function* name(...)` (a generator).
     fn parse_fn_sig(&mut self, lo: u32, is_async: bool) -> PResult<FnSig> {
         self.expect_kw(Kw::Function, "function")?;

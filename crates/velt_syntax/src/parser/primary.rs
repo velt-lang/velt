@@ -1,5 +1,5 @@
-//! Primary (atomic) expressions: literals, identifiers, `this`, `super`, `new`, parenthesized
-//! expressions, array/object/struct literals, template literals and regular expression literals.
+//! Primary (atomic) expressions: literals, identifiers, `this`, `super`, `new`, function
+//! expressions (`function* () {}`), parenthesized expressions, array/object/struct literals, template literals and regular expression literals.
 //! JSX elements are parsed in `jsx`: a `<` directly followed by a name or `>` starts one here.
 
 use super::{Fail, PResult, Parser};
@@ -36,6 +36,11 @@ impl<'a> Parser<'a> {
                 ExprKind::This
             }
             Tok::Kw(Kw::New) => self.parse_new()?,
+            Tok::Kw(Kw::Function) => self.parse_fn_expr(lo, false)?,
+            Tok::Kw(Kw::Async) if self.nth(1) == Tok::Kw(Kw::Function) => {
+                self.bump(); // async
+                self.parse_fn_expr(lo, true)?
+            }
             Tok::Ident if self.at_word("super") => self.parse_super(),
             Tok::Ident if self.at_word("match") && self.is_removed_match() => {
                 self.diags.push(

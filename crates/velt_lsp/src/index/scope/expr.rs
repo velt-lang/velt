@@ -1,5 +1,5 @@
 //! Expressions for the scope walker: descend into the one child that contains the cursor, opening
-//! scopes for arrow functions and match arms.
+//! scopes for arrow functions, function expressions and match arms.
 
 use velt_syntax::ast;
 
@@ -32,6 +32,7 @@ impl<'a> Walker<'a> {
                 body,
                 ..
             } => self.arrow(params, [ret.as_ref(), throws.as_ref()], body),
+            ast::ExprKind::Function(f) => self.function(&f.sig, Some(&f.body)),
             ast::ExprKind::Object(props) => self.props(props),
             ast::ExprKind::StructLit { name, props } => {
                 self.ty(name);

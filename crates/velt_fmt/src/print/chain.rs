@@ -232,6 +232,7 @@ fn is_simple(e: &Expr, depth: u32) -> bool {
             ArrowBody::Block(_) => true,
             ArrowBody::Expr(b) => is_simple(b, depth),
         },
+        ExprKind::Function(_) => true,
         ExprKind::Unary { expr: inner, .. }
         | ExprKind::Paren(inner)
         | ExprKind::Member { object: inner, .. } => is_simple(inner, depth),
