@@ -4,8 +4,8 @@
 //! Windows, DWARF elsewhere), checked with `llvm-symbolizer` when it sits next to clang.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
+mod no_window;
 mod runtime_support;
 
 fn root() -> PathBuf {
@@ -16,7 +16,7 @@ fn root() -> PathBuf {
 }
 
 fn emit_llvm(args: &[&str]) -> String {
-    let o = Command::new(env!("CARGO_BIN_EXE_velt"))
+    let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["build", "--emit", "llvm"])
         .args(args)
         .arg("tests/golden/lang/panic_div.vlt")
@@ -68,7 +68,7 @@ fn g_release_binary_maps_addresses_to_velt_lines() {
     let root = root();
     runtime_support::build_native_runtime(&root);
     let out = root.join("target/golden-work-debuginfo/panic_div");
-    let o = Command::new(env!("CARGO_BIN_EXE_velt"))
+    let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["build", "--release", "-g", "--backend", "llvm", "-o"])
         .arg(&out)
         .arg("tests/golden/lang/panic_div.vlt")
@@ -94,7 +94,7 @@ fn g_release_binary_maps_addresses_to_velt_lines() {
     let addrs: Vec<String> = (0..64u64)
         .map(|i| format!("{:#x}", 0x1_4000_1000 + i * 4))
         .collect();
-    let s = Command::new(&symbolizer)
+    let s = crate::no_window::command(&symbolizer)
         .arg(format!("--obj={}", exe.display()))
         .args(&addrs)
         .output()

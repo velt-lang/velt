@@ -3,14 +3,15 @@
 //! check), and that every rule fixture of `velt_tscompat` is valid Velt.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 use serde_json::Value;
 
+mod no_window;
 mod test_dir;
 
 fn velt(cwd: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_velt"))
+    crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(args)
         .current_dir(cwd)
         .output()

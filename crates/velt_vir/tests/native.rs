@@ -35,6 +35,20 @@ use std::time::Duration;
 
 use velt_sema::hir;
 
+/// `Command::new(program)`, with `CREATE_NO_WINDOW` on Windows: a test run without a console would
+/// otherwise open a window for every program it starts.
+fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -51,7 +65,7 @@ fn ensure_runtime() {
         if cfg!(debug_assertions) && prebuilt {
             return;
         }
-        let st = Command::new(env!("CARGO"))
+        let st = command(env!("CARGO"))
             .args(["build", "-p", "velt_rt"])
             .current_dir(root())
             .status()
@@ -63,7 +77,7 @@ fn ensure_runtime() {
 /// Lower, compile, link and run; returns (stdout, exit code).
 fn run_native(name: &str, p: &hir::Program) -> (String, i32) {
     let exe = build_native(name, p);
-    let out = Command::new(&exe).output().expect("run program");
+    let out = command(&exe).output().expect("run program");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.is_empty(), "{name} stderr: {stderr}");
     let stdout = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n");
@@ -165,7 +179,7 @@ fn http_request(port: u16, method: &str, path: &str, body: &str) -> (u32, String
 #[test]
 fn http_server_handles_real_requests() {
     let exe = build_native("http_server", &programs_http::http_server());
-    let mut child = Command::new(&exe)
+    let mut child = command(&exe)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

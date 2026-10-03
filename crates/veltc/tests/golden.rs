@@ -34,6 +34,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod no_window;
 mod runtime_support;
 
 fn root() -> PathBuf {
@@ -208,7 +209,7 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
         return failures;
     }
     if err_file.exists() {
-        let o = Command::new(velt)
+        let o = crate::no_window::command(velt)
             .arg("build")
             .arg(f)
             .current_dir(work)
@@ -243,7 +244,7 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             // (Defender scan), so the release link must not overwrite the debug executable.
             let dir = work.join(if mode.is_some() { "release" } else { "debug" });
             std::fs::create_dir_all(&dir).unwrap();
-            let mut cmd = Command::new(velt);
+            let mut cmd = crate::no_window::command(velt);
             cmd.arg("run").args(mode).arg(f).current_dir(&dir);
             // The debug run checks every allocation (use after free, double free, overflow)
             // unless the caller chose otherwise (`VELT_RT_DEBUG_ALLOC=0`).
