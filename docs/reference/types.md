@@ -318,7 +318,8 @@ for (const s of shapes) {
   (else by its field names); an impossible discriminant is an error
   (``"square"` is not a valid `kind` for `Shape` ``).
 - `x.kind === "circle"` / `!==` and `switch (x.kind)` narrow a local `x`; comparing with an
-  impossible literal is an error.
+  impossible literal is an error. A `bool` discriminant is also a condition:
+  `if (r.done)` / `if (!r.done)` narrow `r` of `{ done: false; value: T } | { done: true }`.
 - A field every member has (like `kind`) can be read without narrowing; other fields need
   narrowing (``no field `r` on type `Shape` ``). Fields cannot be assigned through the union.
 - Recursive discriminated unions need a nominal member (a class or struct:

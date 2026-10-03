@@ -115,6 +115,11 @@ Maintainer-owned, like hir.rs.
   throw) the elements not reached yet are dropped; then the buffer is freed without dropping the
   elements that were moved out. `consume: false` is the borrowing loop (elements borrowed, or
   copied when Copy).
+- `for...of` over an iterable (a type with `[Symbol.iterator]()`, docs/internals/design/
+  iteration.md) has no HIR form of its own: sema emits a `Block` with `let <iterator@N> =
+  src[Symbol.iterator]()`, a `<open@N>` flag and a `Try { finally }` around a `While` that calls
+  `next()`, binds `value` and runs the body; the `finally` calls `return()` when the body was
+  left early. `StmtKind::ForOf` stays the array loop. Locals named `<…>` are compiler-made.
 - Exclusive access (docs/reference/memory.md) is checked by sema; lowering relies on it for VIR
   parameter attributes (vir.rs invariant 9, `noalias` etc.).
 
@@ -263,11 +268,16 @@ Maintainer-owned, like hir.rs.
   `Never` and the error is the result promise's `E`.
 - Dispatch groups share one error type: every method in an interface slot (its default and all
   implementations) and in a vtable slot (the base method and all overrides) has the same
-  `FnDef::throws`, with no type params (interface methods whose error type would depend on them
-  are rejected), so `Callee::Dyn` / `Virtual` / `ParamMethod` calls use any member's — except
-  in a promise slot (`InterfaceMethodDef::promise`: the interface method returns a promise that
-  carries the group's errors): its members are async, or synchronous with no `throws`, and a
-  call through the slot never throws.
+  `FnDef::throws`, with no type params, so `Virtual` / `ParamMethod` calls use any member's —
+  except in a promise slot (`InterfaceMethodDef::promise`: the interface method returns a
+  promise that carries the group's errors): its members are async, or synchronous with no
+  `throws`, and a call through the slot never throws. A `Callee::Dyn` call throws
+  `InterfaceMethodDef::throws` (in the interface's type params) substituted with the `Dyn`'s
+  type args. That type may mention the interface's params when the interface method's `throws`
+  clause does (`next(): IteratorResult<T> throws E` in `Iterator<T, E>`); each member's
+  `FnDef::throws` is then that clause with the interface args of its implementation
+  (`implements Iterator<string, IoError>`: `IoError`), so the members of one slot agree per
+  interface instantiation, which is all one vtable holds.
 - Promises: `TyKind::Promise(T, E)` resolves to `T` or rejects with `E` (`Never`: cannot reject).
   An async fn's call has type `Promise<ret, throws>`; `await` of a direct call checks the child
   state's `Result<T, E>` (result region at offset 0), and a promise *value* (heap future) holds

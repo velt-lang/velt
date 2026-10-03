@@ -225,8 +225,9 @@ reference count. Reference cycles are not freed (**planned**: `weak` references)
 ## Not supported
 
 `var`, `eval`, prototypes, `delete` (other than on a `Record`), `for...in`, `with`, getters on object literals,
-decorators, generators (`function*`, `yield`), `Symbol` (other than `Symbol.dispose` and
-`Symbol.asyncDispose`), `BigInt` literals (use [`velt:bigint`](../std/bigint.md)), Unicode
+decorators, generators (`function*`, `yield`; planned), `for await` (planned), `Symbol` (other
+than `Symbol.dispose`, `Symbol.asyncDispose`, `Symbol.iterator` and `Symbol.asyncIterator` as
+method names), `BigInt` literals (use [`velt:bigint`](../std/bigint.md)), Unicode
 identifiers. `x!` is checked (a `null` panics) where TypeScript trusts it, and `as const` keeps
 the value as it is. `Date` follows JS (months 0-11, local-time getters); its `toString()` has no
 time zone name and its `toLocale…` methods always format as `en-US`. JSX is supported for
@@ -262,6 +263,7 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | `process.argv` | `args()` from `velt:process`: the arguments after the program, like `process.argv.slice(2)` | — |
 | `a.localeCompare(b, locale, options)` (the host's locale by default) | `a.localeCompare(b)`: the CLDR root collation, like `new Intl.Collator("und").compare(a, b)`; no locales | — |
 | `export default` | named exports only | — |
+| `for...of` over any `Iterable`; `IteratorResult` has `value: undefined` when done | the same protocol (`[Symbol.iterator]()`, `next()`, `return()` on early exit); a done result has no `value`; `Iterator<T, E>` carries the error type `next()` throws | generators (`function*`), `for await` |
 | string length in UTF-16 units | length and offsets in UTF-8 bytes | — |
 | (no equivalent) | `extend` adds members to any type | module-scoped extensions, retroactive `implements` |
 | JSX | server-side rendering through a `jsxImportSource` provider ([`velt:jsx`](../std/jsx.md)) | no client-side DOM; see [TSX](../internals/design/tsx.md) for what is planned |

@@ -1,0 +1,35 @@
+// `for...of` needs an array, a `Map` / `entries()` class, or an iterable (`[Symbol.iterator]()`
+// returning an `Iterator<T>`). An iterator itself is not iterable (as in TS).
+class Bag {
+  items: i64[] = [];
+}
+
+class Counter implements Iterator<i64> {
+  n: i64 = 0;
+
+  next(): IteratorResult<i64> {
+    this.n += 1;
+    return this.n > 3 ? { done: true } : { done: false, value: this.n };
+  }
+}
+
+class Odd {
+  [Symbol.iterator](): Counter[] {
+    return [];
+  }
+}
+
+function main() {
+  for (const x of 5) {
+    console.log(x);
+  }
+  for (const x of new Bag()) {
+    console.log(x);
+  }
+  for (const x of new Counter()) {
+    console.log(x);
+  }
+  for (const x of new Odd()) {
+    console.log(x);
+  }
+}

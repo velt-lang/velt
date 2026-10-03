@@ -81,10 +81,42 @@ fn symbol_keys_name_members() {
         panic!("index")
     };
     assert!(matches!(index.kind, ExprKind::Index { .. }));
-    let e = errors("class I { [Symbol.iterator]() {} }");
+    let e = errors("class I { [Symbol.species]() {} }");
     assert!(
         e.iter()
-            .any(|m| m.contains("`Symbol.iterator` is not supported")),
+            .any(|m| m.contains("`Symbol.species` is not supported")),
         "{e:?}"
+    );
+}
+
+#[test]
+fn iterator_symbol_keys_name_members() {
+    let m = parse_ok(
+        "class R implements Iterable<i64> { [Symbol.iterator](): Iterator<i64> { return new It(); } }
+         interface A<T> { [Symbol.asyncIterator](): AsyncIterator<T>; }
+         function f(r: R) { const it = r[Symbol.iterator](); }",
+    );
+    let ItemKind::Class(c) = &m.items[0].kind else {
+        panic!("class")
+    };
+    assert_eq!(c.methods[0].decl.sig.name.name, SYMBOL_ITERATOR);
+    let ItemKind::Interface(i) = &m.items[1].kind else {
+        panic!("interface")
+    };
+    assert_eq!(i.methods[0].sig.name.name, SYMBOL_ASYNC_ITERATOR);
+    let ItemKind::Function(f) = &m.items[2].kind else {
+        panic!("function")
+    };
+    let StmtKind::Var(v) = &f.body.stmts[0].kind else {
+        panic!("let: {:?}", f.body.stmts[0].kind)
+    };
+    let Some(init) = &v.init else { panic!("init") };
+    let ExprKind::Call { callee, .. } = &init.kind else {
+        panic!("call")
+    };
+    assert!(
+        matches!(&callee.kind, ExprKind::Member { prop, .. } if prop.name == SYMBOL_ITERATOR),
+        "{:?}",
+        callee.kind
     );
 }

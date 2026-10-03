@@ -168,6 +168,7 @@ fn dyn_values_clone_print_and_enum_eq() {
                 name: "get".into(),
                 default: None,
                 promise: false,
+                throws: None,
             }],
             span: SP,
         }),

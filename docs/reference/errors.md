@@ -85,8 +85,12 @@ nothing; `null` means success).
 A closure created inside a recursive function that it calls, and a `catch` or promise whose
 error type depends on a function still being checked through recursion, may need a `throws`
 clause (``` the error type of this function is not known yet ```); when the recursion goes
-through an interface value, the `throws` clause goes on the interface method. Error types of interface and
-overridden methods cannot depend on type parameters.
+through an interface value, the `throws` clause goes on the interface method. Error types of
+overridden methods, and inferred error types of interface methods, cannot depend on type
+parameters; a written `throws` clause of a generic interface's method can name the interface's
+own parameters (`next(): IteratorResult<T> throws E` in `Iterator<T, E>`): an implementation
+then throws what its `implements Iterator<string, IoError>` says, and a call through an
+`Iterator<string, E>` value throws `E`.
 
 ## Example
 

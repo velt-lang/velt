@@ -152,6 +152,18 @@ On any `T | null`: `isNull()`, `unwrap()` (panics on `null`), `unwrapOr(fallback
 `map(f)`. The value-extracting helpers return the payload itself (an object is shared, not
 copied).
 
+## Iteration
+
+The iteration protocol behind `for...of` ([Control flow](../reference/control-flow.md#iterables)):
+
+| Declaration | Notes |
+|---|---|
+| `type IteratorResult<T> = { done: false; value: T } \| { done: true }` | narrows on `r.done`; a done result has no `value` |
+| `interface Iterator<T, E = never>` | `next(): IteratorResult<T> throws E`; `return(): void` (default: nothing) runs when a loop leaves early |
+| `interface Iterable<T, E = never>` | `[Symbol.iterator](): Iterator<T, E>`; what `for...of` iterates |
+| `interface AsyncIterator<T, E = never>` | `next(): Promise<IteratorResult<T>, E>`; `async return(): Promise<void>` (default: nothing) |
+| `interface AsyncIterable<T, E = never>` | `[Symbol.asyncIterator](): AsyncIterator<T, E>`; for `for await` (**Planned**) |
+
 ## JSON
 
 `JSON.stringify<T>(x)`, `JSON.parse<T>(text, options?)` (throws `JsonError`) and

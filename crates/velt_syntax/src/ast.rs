@@ -22,6 +22,12 @@ pub const SYMBOL_DISPOSE: &str = "[Symbol.dispose]";
 /// Member name of the computed key `[Symbol.asyncDispose]` (see [`SYMBOL_DISPOSE`]).
 pub const SYMBOL_ASYNC_DISPOSE: &str = "[Symbol.asyncDispose]";
 
+/// Member name of the computed key `[Symbol.iterator]` (see [`SYMBOL_DISPOSE`]).
+pub const SYMBOL_ITERATOR: &str = "[Symbol.iterator]";
+
+/// Member name of the computed key `[Symbol.asyncIterator]` (see [`SYMBOL_DISPOSE`]).
+pub const SYMBOL_ASYNC_ITERATOR: &str = "[Symbol.asyncIterator]";
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ident {
     pub name: String,
@@ -96,6 +102,8 @@ pub struct GenericParam {
     pub name: Ident,
     /// `T extends A & B`
     pub bounds: Vec<TypeExpr>,
+    /// `T = Default` (classes, structs, interfaces and type aliases only).
+    pub default: Option<TypeExpr>,
 }
 
 #[derive(Clone, Debug)]

@@ -140,9 +140,12 @@ fn def_now(cx: &mut Ctx, d: DefId, visited: &mut Visited) -> Option<TyId> {
     if let Some(decl) = f.declared_throws {
         return decl.ty;
     }
-    match cx.throw_groups().group_of(d) {
-        Some(g) => group_now(cx, g, visited),
-        None => own_now(cx, d, visited),
+    let Some(g) = cx.throw_groups().group_of(d) else {
+        return own_now(cx, d, visited);
+    };
+    match cx.throw_groups().list[g].bound.clone() {
+        Some(b) => groups::member_bound(cx, &b, d),
+        None => group_now(cx, g, visited),
     }
 }
 
@@ -172,9 +175,20 @@ fn group_now(cx: &mut Ctx, g: usize, visited: &mut Visited) -> Option<TyId> {
     acc
 }
 
+/// What a call through slot `slot` of `iface` throws, in the interface's terms.
 fn slot_now(cx: &mut Ctx, iface: DefId, slot: u32, visited: &mut Visited) -> Option<TyId> {
+    if let Some(t) = slot_clause(cx, iface, slot) {
+        return t;
+    }
     let g = cx.throw_groups().slot_group(iface, slot)?;
     group_now(cx, g, visited)
+}
+
+/// The `throws` clause of interface method `slot` of `iface` (in the interface's terms, also
+/// for an inherited method), when written: what a call through the slot throws.
+pub(crate) fn slot_clause(cx: &Ctx, iface: DefId, slot: u32) -> Option<Option<TyId>> {
+    let m = cx.iface(iface)?.methods.get(slot as usize)?;
+    m.throws.map(|t| t.ty)
 }
 
 impl Ctx<'_> {

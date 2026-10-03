@@ -49,6 +49,16 @@ async function f(r: R) {
 }
 
 #[test]
+fn iteration_protocol() {
+    holds(
+        "interface It<T, E   = never> { next(): IteratorResult<T> throws E; }
+class R implements Iterable<i64> { [Symbol.iterator](): Iterator<i64> { return new I(); } }
+type P<T, U=T[]> = U;
+function f(r: R) { const it = r[Symbol.iterator](); }",
+    );
+}
+
+#[test]
 fn statements() {
     holds(
         "function f() {

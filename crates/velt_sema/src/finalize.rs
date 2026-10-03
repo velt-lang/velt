@@ -64,6 +64,10 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
             g.slot_group(d, s).is_some_and(|g2| g.list[g2].promise)
         })
         .collect();
+    let throws: Vec<Option<hir::TyId>> = (0..n as u32)
+        .zip(&promise)
+        .map(|(s, p)| if *p { None } else { slot_throws(cx, d, s) })
+        .collect();
     let i = cx.iface(d).expect("ICE: interface info");
     InterfaceDef {
         name: i.qual_name.clone(),
@@ -82,19 +86,35 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
             .methods
             .iter()
             .zip(promise)
-            .map(|(m, promise)| InterfaceMethodDef {
+            .zip(throws)
+            .map(|((m, promise), throws)| InterfaceMethodDef {
                 name: m.name.clone(),
                 default: m.default,
                 promise,
+                throws,
             })
             .chain(i.fields.iter().map(|f| InterfaceMethodDef {
                 name: format!("<{}>", f.name),
                 default: None,
                 promise: false,
+                throws: None,
             }))
             .collect(),
         span: i.span,
     }
+}
+
+/// What a call through slot `s` of interface `d` throws, in the interface's terms: its `throws`
+/// clause, else the error type its dispatch group inferred (which mentions no type parameters).
+fn slot_throws(cx: &mut Ctx, d: DefId, s: u32) -> Option<hir::TyId> {
+    if let Some(t) = crate::throws::slot_clause(cx, d, s) {
+        return cx.canon_error(t);
+    }
+    let g = cx.throw_groups();
+    let m = g
+        .slot_group(d, s)
+        .and_then(|g2| g.list[g2].members.first().copied())?;
+    cx.fn_info(m).throws.filter(|t| !cx.mentions_params(*t))
 }
 
 /// Field defaults of a class incl. inherited ones (base defaults with the base's type args).

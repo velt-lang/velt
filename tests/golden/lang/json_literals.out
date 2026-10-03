@@ -12,7 +12,7 @@ expected one of 10, 20 at $.level
 expected one of "low", "normal", "high" at $.due
 invalid JSON at $.priority: unexpected character 'l' (byte 38)
 [ 'auto', 0, 1.5, false ]
-expected one of "auto", 0, 1.5, false at $
+expected one of false, "auto", 0, 1.5 at $
 42 true red
 { k: 'x', xs: [ 'x', 'x' ] }
 expected "x" at $.xs[1]
