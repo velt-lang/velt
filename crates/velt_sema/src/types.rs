@@ -182,6 +182,21 @@ impl Types {
         })
     }
 
+    /// Does `t` mention `Error` outside its error types (what a promise rejects with, what a
+    /// function type throws)?
+    pub fn has_error_outside_error_types(&self, t: TyId) -> bool {
+        let any = |ts: &[TyId]| ts.iter().any(|x| self.has_error_outside_error_types(*x));
+        match self.kind(t) {
+            TyKind::Error => true,
+            TyKind::Promise(v, _) => self.has_error_outside_error_types(*v),
+            TyKind::FnPtr { params, ret, .. } => any(params) || any(&[*ret]),
+            TyKind::Adt(_, args) | TyKind::Dyn(_, args) | TyKind::Tuple(args) => any(args),
+            TyKind::Array(e) | TyKind::Option(e) | TyKind::Shared(e) => any(&[*e]),
+            TyKind::Map(a, b) | TyKind::Result(a, b) => any(&[*a, *b]),
+            _ => false,
+        }
+    }
+
     /// `t` with every error type (of a promise, thrown by a function type) made `Error`, i.e.
     /// unconstrained: `Promise<T>` as a contextual type says nothing about what it rejects with.
     pub fn without_error_types(&mut self, t: TyId) -> TyId {

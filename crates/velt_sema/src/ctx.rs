@@ -93,6 +93,8 @@ pub(crate) struct Ctx<'m> {
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
     pub shared_memo: HashMap<TyId, bool>,
+    /// Set while [`Ctx::match_context`] runs (`crate::infer`).
+    pub matching_context: bool,
     pub diags: Diagnostics,
 }
 
@@ -136,6 +138,7 @@ impl<'m> Ctx<'m> {
             jsx_adapters: vec![],
             ide: None,
             shared_memo: HashMap::new(),
+            matching_context: false,
             diags: vec![],
         }
     }

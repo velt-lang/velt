@@ -93,7 +93,7 @@ impl FnCx<'_, '_> {
         let mut context = slots.clone();
         if let Some(e) = exp {
             let e = self.cx.ty.without_error_types(e);
-            self.cx.match_ty(c.ret, e, &mut context);
+            self.cx.match_context(c.ret, e, &mut context);
         }
         let checked = self.args_in_rounds(c, &mut slots, &context, args);
         if let Some(e) = exp {

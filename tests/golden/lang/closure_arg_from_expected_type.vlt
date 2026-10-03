@@ -1,0 +1,51 @@
+// An arrow passed where only the expected type fixes the type parameter is checked against the
+// instantiated parameter type (#241), as in TypeScript: `id((x) => x + 1)` assigned to a
+// `(x: i32) => i32` gives `x` the type `i32`.
+function id<T>(x: T): T {
+  return x;
+}
+
+async function later<T>(x: T): Promise<T> {
+  return x;
+}
+
+function wrap<T>(xs: T[]): T[] {
+  return xs;
+}
+
+function pick<T>(o: { f: T }): T {
+  return o.f;
+}
+
+function mapper<T, U>(f: (x: T) => U): (xs: T[]) => U[] {
+  return (xs) => xs.map((x) => f(x));
+}
+
+class Keeper {
+  keep<T>(x: T): T {
+    return x;
+  }
+
+  static of<T>(x: T): T {
+    return x;
+  }
+}
+
+async function main() {
+  const f: (x: i32) => i32 = id((x) => x + 1);
+  console.log(f(1));
+  const g: (s: string) => usize = await later((s) => s.length);
+  console.log(g("abc"));
+  const p: Promise<(x: i64) => i64> = later((x) => x * 3);
+  console.log((await p)(2));
+  const fs: ((x: i64) => i64)[] = wrap([(x) => x * 2, (x) => x + 1]);
+  console.log(fs[0](5), fs[1](5));
+  const h: (x: i64) => string = pick({ f: (x) => `${x}!` });
+  console.log(h(3));
+  const lengths: (xs: string[]) => usize[] = mapper((s) => s.length);
+  console.log(lengths(["a", "bcd"]));
+  const k: (x: i64) => bool = new Keeper().keep((x) => x > 2);
+  console.log(k(3), k(1));
+  const join: (a: string, b: string) => string = Keeper.of((a, b) => a + b);
+  console.log(join("x", "y"));
+}

@@ -46,6 +46,21 @@ function main() {
 }
 ```
 
+An arrow function argument is checked against its parameter type with the type parameters the
+expected type fixed, so its parameters need no annotations there either:
+
+```ts
+function id<T>(x: T): T {
+  return x;
+}
+
+function main() {
+  const inc: (x: i32) => i32 = id((x) => x + 1); // x: i32
+  const lengths: ((s: string) => usize)[] = id([(s) => s.length]);
+  console.log(inc(1), lengths[0]("abc")); // 2 3
+}
+```
+
 Because each instantiation is compiled, a generic function may call itself (directly or
 through other generic functions) with the same type arguments, but not with growing ones:
 `f<T>` calling `f<T[]>` would need `f<T[][]>`, `f<T[][][]>` and so on without end. The

@@ -29,6 +29,9 @@ impl FnCx<'_, '_> {
         // A tuple element type that is only partly known (`[K, V][]` while inferring `K` and
         // `V`) still says the elements are tuples: the first one is checked against it.
         let tuple_shape = raw_elem.filter(|t| matches!(self.cx.ty.kind(*t), TyKind::Tuple(_)));
+        // A function type unknown only in what it throws (from a generic callee's expected
+        // result) still types the parameters of an arrow element.
+        let first_hint = tuple_shape.or_else(|| raw_elem.and_then(|t| self.error_types_unknown(t)));
         if elems
             .iter()
             .any(|e| matches!(e.kind, ast::ExprKind::Spread(_)))
@@ -46,7 +49,7 @@ impl FnCx<'_, '_> {
             Some(e) => e,
             None => {
                 let first = elems.iter().position(|e| !untyped(e)).unwrap_or(0);
-                let h = self.expr(&elems[first], tuple_shape, Want::Move);
+                let h = self.expr(&elems[first], first_hint, Want::Move);
                 // `[c.kind, "x"]` is a `string[]`: literal types widen for inference.
                 let t = self.cx.widened(h.ty);
                 out[first] = Some(h);
@@ -202,16 +205,20 @@ impl FnCx<'_, '_> {
                 );
                 return self.error_expr(span);
             }
-            // Unknown type arguments (a generic callee's `T` not inferred yet) come from the fields.
+            // Unknown type arguments (a generic callee's `T` not inferred yet) come from the fields;
+            // one unknown only in its error types (a function type) is still a hint for them.
             let error = self.cx.ty.error;
+            let hints: Vec<Option<TyId>> =
+                args.iter().map(|a| self.error_types_unknown(*a)).collect();
             let slots = args
-                .into_iter()
-                .map(|a| (a != error).then_some(a))
+                .iter()
+                .zip(&hints)
+                .map(|(a, h)| (*a != error && h.is_none()).then_some(*a))
                 .collect();
             if super::spread::has_spread(props) {
                 return self.spread_object(props, Some((d, slots)), None, span);
             }
-            return self.fill_struct(d, slots, props, None, span);
+            return self.fill_struct(d, slots, &hints, props, None, span);
         }
         if super::spread::has_spread(props) {
             return self.spread_object(props, None, None, span);
@@ -255,7 +262,7 @@ impl FnCx<'_, '_> {
         if super::spread::has_spread(props) {
             return self.spread_object(props, Some((d, slots)), self.hint(exp), span);
         }
-        self.fill_struct(d, slots, props, self.hint(exp), span)
+        self.fill_struct(d, slots, &[], props, self.hint(exp), span)
     }
 
     /// `P` / `P<T>` in `P { .. }`: the struct def and its (possibly unknown) type args.
@@ -305,13 +312,14 @@ impl FnCx<'_, '_> {
         &mut self,
         d: DefId,
         mut slots: Vec<Option<TyId>>,
+        hints: &[Option<TyId>],
         props: &[ast::ObjectProp],
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
         let a = self.cx.adt(d).expect("ICE: struct");
         let (sname, fields) = (a.name.clone(), a.fields.clone());
-        let values = self.struct_values(d, &sname, &fields, &mut slots, props);
+        let values = self.struct_values(d, &sname, &fields, (&mut slots, hints), props);
         self.finish_struct(d, slots, values, exp, span)
     }
 
@@ -393,7 +401,7 @@ impl FnCx<'_, '_> {
         d: DefId,
         sname: &str,
         fields: &[FieldInfo],
-        slots: &mut [Option<TyId>],
+        (slots, hints): (&mut [Option<TyId>], &[Option<TyId>]),
         props: &[ast::ObjectProp],
     ) -> Vec<Option<hir::Expr>> {
         let ps = self.props(props);
@@ -415,11 +423,21 @@ impl FnCx<'_, '_> {
             self.check_private(fields[i].private_to, &pname.name, pname.span);
             self.cx
                 .rec_ref(pname.span, crate::ide::record::Target::Field(d, i as u32));
-            let expected = self.cx.ty.subst_known(fields[i].ty, slots);
+            let known: Vec<Option<TyId>> = slots
+                .iter()
+                .enumerate()
+                .map(|(k, s)| s.or(hints.get(k).copied().flatten()))
+                .collect();
+            let expected = self.cx.ty.subst_known(fields[i].ty, &known);
             let h = self.prop_value(pname, *value, Some(expected));
             self.cx.match_ty(fields[i].ty, h.ty, slots);
             values[i] = Some(h);
         }
         values
+    }
+
+    /// `t` when only its error types are unknown (`Error`): a hint, though not a type yet.
+    fn error_types_unknown(&self, t: TyId) -> Option<TyId> {
+        (self.cx.ty.has_error(t) && !self.cx.ty.has_error_outside_error_types(t)).then_some(t)
     }
 }

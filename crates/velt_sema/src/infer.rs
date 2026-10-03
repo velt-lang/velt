@@ -8,6 +8,21 @@ use crate::defs::Bound;
 use crate::hir::{DefId, ImplDef, TyId, TyKind};
 
 impl Ctx<'_> {
+    /// [`match_ty`](Self::match_ty) against an expected type whose error types are unknown
+    /// ([`without_error_types`](crate::types::Types::without_error_types)): a slot may then be a
+    /// type that is unknown only in its error types (`T` = `(x: i32) => i32 throws ?` for
+    /// `const f: (x: i32) => i32 = id((x) => x + 1)`), so a closure argument of type `T` is
+    /// checked against it and infers its own error type, as in TS.
+    pub fn match_context(&mut self, pat: TyId, actual: TyId, slots: &mut [Option<TyId>]) {
+        self.matching_context = true;
+        self.match_ty(pat, actual, slots);
+        self.matching_context = false;
+    }
+
+    fn context_slot_ok(&self, actual: TyId) -> bool {
+        self.matching_context && !self.ty.has_error_outside_error_types(actual)
+    }
+
     /// Bind unknown slots in `pat` from `actual`. Returns false on a structural mismatch (the
     /// caller reports mismatches later, after coercions, so the result is advisory).
     pub fn match_ty(&mut self, pat: TyId, actual: TyId, slots: &mut [Option<TyId>]) -> bool {
@@ -19,7 +34,7 @@ impl Ctx<'_> {
         match (pk, ak) {
             (TyKind::Param(i), _) if (i as usize) < slots.len() => match slots[i as usize] {
                 None => {
-                    if !self.ty.has_error(actual) {
+                    if !self.ty.has_error(actual) || self.context_slot_ok(actual) {
                         slots[i as usize] = Some(actual);
                     }
                     true
