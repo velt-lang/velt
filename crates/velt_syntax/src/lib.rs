@@ -26,6 +26,13 @@ pub fn parse_file(file: FileId, src: &str) -> (ast::Module, Diagnostics) {
     (module, diags)
 }
 
+/// [`parse_file`] for a plain TypeScript file (`.ts`): there `<T>x` is TypeScript's type
+/// assertion, which is reported as unsupported (with a fix) instead of being parsed as JSX.
+pub fn parse_ts_file(file: FileId, src: &str) -> (ast::Module, Diagnostics) {
+    let (module, diags, _) = on_parser_thread(|| parse_source(file, src, true));
+    (module, diags)
+}
+
 /// Runs `f` on a thread with the parser's stack (on this thread if none can be spawned).
 fn on_parser_thread<T: Send>(f: impl Fn() -> T + Sync) -> T {
     std::thread::scope(|s| {
@@ -47,7 +54,17 @@ fn parse_with_comments(
     file: FileId,
     src: &str,
 ) -> (ast::Module, Diagnostics, Vec<std::ops::Range<u32>>) {
+    parse_source(file, src, false)
+}
+
+/// [`parse_with_comments`], with `<T>x` read as a type assertion when `plain_ts`.
+fn parse_source(
+    file: FileId,
+    src: &str,
+    plain_ts: bool,
+) -> (ast::Module, Diagnostics, Vec<std::ops::Range<u32>>) {
     let mut parser = parser::Parser::new(file, src);
+    parser.plain_ts = plain_ts;
     let module = parser.parse_module();
     let (mut diags, comments) = parser.finish();
     // Lexer and parser diagnostics interleave by position (stable sort keeps same-offset order).

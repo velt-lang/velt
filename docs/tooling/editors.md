@@ -59,6 +59,11 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
 The server answers even when the program has errors, and a failing request never takes the
 server down.
 
+`.ts` and `.tsx` modules ([TypeScript files](../reference/modules.md#typescript-files-ts-and-tsx))
+are part of the programs the server analyzes and of the workspace symbol index, and it asks the
+editor to report changes to them. Whether the editor sends it `.ts` and `.tsx` documents to
+analyze is up to the client: the VS Code extension leaves them to VS Code's TypeScript support.
+
 ## Visual Studio Code
 
 The extension adds syntax highlighting and starts `velt lsp`.

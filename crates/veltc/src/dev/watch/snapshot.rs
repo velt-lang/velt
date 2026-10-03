@@ -29,10 +29,10 @@ pub const SLACK: Duration = Duration::from_secs(2);
 /// The watched files' and directories' state at the start of a build.
 pub struct Snapshot {
     taken: SystemTime,
-    /// Path (as the watcher spells it) → stamp, for the watched files and the `.vlt` files that
+    /// Path (as the watcher spells it) → stamp, for the watched files and the source files that
     /// appeared in watched directories since the last build.
     stamps: HashMap<PathBuf, Option<Stamp>>,
-    /// Directory (as the watcher spells it) → its `.vlt` files.
+    /// Directory (as the watcher spells it) → its source files.
     listings: HashMap<PathBuf, BTreeSet<PathBuf>>,
     /// Canonical spelling → the watcher's spelling, built only when a path the build reports is
     /// spelled differently.
@@ -48,7 +48,7 @@ impl Snapshot {
         }
     }
 
-    /// The `.vlt` files `dir` held when the snapshot was taken (spelled under `dir`).
+    /// The source files `dir` held when the snapshot was taken (spelled under `dir`).
     pub(super) fn listing(&self, dir: &Path) -> Option<BTreeSet<PathBuf>> {
         let (known, files) = match self.listings.get_key_value(dir) {
             Some(entry) => entry,

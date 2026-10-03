@@ -3,8 +3,10 @@
 //! Order of the result: the prelude (`std/prelude/*.vlt`, canonical `"std/prelude/<name>"`), then
 //! the root (`"main"`), then imported modules in breadth-first discovery order, then any extra
 //! roots ([`load_with_roots`]) not loaded yet, each followed by what it imports. Specifiers resolve as
-//! - `"./x"`, `"../x"` → `x.vlt` or the folder module `x/index.vlt` relative to the importing
-//!   file ([`spec`]);
+//! - `"./x"`, `"../x"` → `x.vlt`, `x.ts` or `x.tsx`, else the folder module `x/index.vlt`,
+//!   `x/index.ts` or `x/index.tsx`, relative to the importing file (two of a kind existing at once
+//!   is an ambiguity error); `"./x.ts"` (any source extension) names exactly that file, and
+//!   `"./x.js"` / `"./x.jsx"` the `.ts` / `.tsx` file, as in TypeScript ([`spec`], [`locate`]);
 //! - `"std/x"` → `<std root>/x.vlt` or `<std root>/x/index.vlt` ([`std_root`]);
 //! - a `paths` alias of the importing package (`"@app/*": "src/*"` in `package.vlt`) → the
 //!   aliased file, like a relative import ([`PackageResolver::path_alias`]);
@@ -13,7 +15,8 @@
 //!   package graph).
 //!
 //! Local export lists (`export { a, b };`, an import item with an empty specifier) load nothing.
-//! A module containing JSX also imports its JSX runtime ([`jsx`]).
+//! A module containing JSX also imports its JSX runtime ([`jsx`]); JSX in a `.ts` file is an
+//! error (TypeScript allows it only in `.tsx` files).
 //!
 //! Modules are deduplicated by canonical file path, so import cycles simply reuse the already
 //! loaded module (sema handles cyclic references between functions and types).
@@ -33,7 +36,7 @@ use velt_common::{Diagnostic, Diagnostics, SourceMap, Span};
 use velt_sema::SourceModule;
 use velt_syntax::ast;
 
-pub use locate::{Origin, PackageResolver};
+pub use locate::{module_path, Origin, PackageResolver};
 pub use spec::{resolve_spec, ModuleRef};
 pub use std_root::{prelude_files, std_root};
 
@@ -186,7 +189,12 @@ impl Loader<'_, '_> {
         origin: Origin,
     ) -> usize {
         let file = self.sm.add(path, src);
-        let (ast, parse_diags) = velt_syntax::parse_file(file, &self.sm.get(file).src);
+        let src = &self.sm.get(file).src;
+        let (ast, parse_diags) = if vpm::sources::is_plain_ts(path) {
+            velt_syntax::parse_ts_file(file, src)
+        } else {
+            velt_syntax::parse_file(file, src)
+        };
         self.diags.extend(parse_diags);
         let index = self.modules.len();
         self.by_file.insert(key, index);
@@ -284,6 +292,19 @@ impl Loader<'_, '_> {
         let Some(span) = jsx::first_jsx(&self.modules[index].ast) else {
             return;
         };
+        let file = &self.origins[index].0;
+        if vpm::sources::is_plain_ts(file) {
+            let tsx = file.with_extension("tsx");
+            let note = format!(
+                "TypeScript allows JSX only in `.tsx` files: rename it to `{}`",
+                tsx.file_name().unwrap_or_default().to_string_lossy()
+            );
+            self.error(
+                "JSX is not allowed in a `.ts` file".to_string(),
+                vec![note],
+                span,
+            );
+        }
         let (source, from) = match &self.modules[index].ast.jsx_import_source {
             Some(s) => (s.clone(), "its `// @jsxImportSource` comment"),
             None => match self
@@ -322,6 +343,7 @@ impl Loader<'_, '_> {
         let dir = importer.parent().unwrap_or(Path::new(""));
         let alias = self.path_alias(&importer, spec);
         let aliased = alias.is_some();
+        let show = |f: &Path| shown_path(f, dir, aliased || spec.starts_with('.'));
         let module = match alias {
             Some(file) => ModuleRef::Relative { file },
             None => match resolve_spec(spec, dir) {
@@ -339,13 +361,32 @@ impl Loader<'_, '_> {
             Ok(t) => t,
             Err((msg, notes)) => return self.error(msg, notes, span),
         };
-        let Some(file) = target.candidates.iter().find(|f| self.exists(f)).cloned() else {
-            let notes = target
-                .candidates
-                .iter()
-                .map(|f| format!("tried `{}`", f.display()))
-                .collect();
-            return self.error(format!("cannot find module `{spec}`"), notes, span);
+        let found = target.candidates.iter().find_map(|group| {
+            let existing: Vec<&PathBuf> = group.iter().filter(|f| self.exists(f)).collect();
+            (!existing.is_empty()).then_some(existing)
+        });
+        let file = match found.as_deref() {
+            Some([file]) => (*file).clone(),
+            Some(files) => {
+                let mut names: Vec<String> =
+                    files.iter().map(|f| format!("`{}`", show(f))).collect();
+                let last = names.pop().unwrap_or_default();
+                let msg = format!(
+                    "module `{spec}` is ambiguous: it could be {} or {last}",
+                    names.join(", ")
+                );
+                let note = "rename or remove all but one of them".to_string();
+                return self.error(msg, vec![note], span);
+            }
+            None => {
+                let notes = target
+                    .candidates
+                    .iter()
+                    .flatten()
+                    .map(|f| format!("tried `{}`", show(f)))
+                    .collect();
+                return self.error(format!("cannot find module `{spec}`"), notes, span);
+            }
         };
         let key = file_key(&file);
         if let Err(msg) = self.std_membership(&target.origin, &key, spec) {
@@ -411,8 +452,7 @@ impl Loader<'_, '_> {
             Origin::Std(_) => Ok(()),
             _ if inside => {
                 let rel = vpm::relpath::relative(key, std_key);
-                let rel = rel.strip_suffix(".vlt").unwrap_or(&rel);
-                let rel = rel.strip_suffix("/index").unwrap_or(rel);
+                let rel = module_path(&rel);
                 Err(format!(
                     "module `{spec}` is a file of the standard library: import it as `velt:{rel}`"
                 ))
@@ -421,19 +461,14 @@ impl Loader<'_, '_> {
         }
     }
 
-    /// The file a `paths` alias maps `spec` to (bare specifiers only: relative and `velt:`
-    /// imports are never aliased).
+    /// The path a `paths` alias maps `spec` to, resolved like a relative import's (bare
+    /// specifiers only: relative and `velt:` imports are never aliased).
     fn path_alias(&self, importer: &Path, spec: &str) -> Option<PathBuf> {
         if spec.starts_with("./") || spec.starts_with("../") || spec.starts_with("velt:") {
             return None;
         }
-        let mut file = self
-            .opts
-            .packages?
-            .path_alias(importer, spec)?
-            .into_os_string();
-        file.push(".vlt");
-        Some(vpm::relpath::normalize(Path::new(&file)))
+        let file = self.opts.packages?.path_alias(importer, spec)?;
+        Some(vpm::relpath::normalize(&file))
     }
 
     fn error(&mut self, msg: String, notes: Vec<String>, span: Span) -> Option<usize> {
@@ -465,5 +500,17 @@ fn file_key(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| vpm::relpath::absolute(path))
 }
 
+/// How a message names `file`, a candidate for an import in directory `dir`: relative to `dir`
+/// for relative (and path alias) imports (`dup.ts`, `../lib/x.vlt`), the full path otherwise.
+fn shown_path(file: &Path, dir: &Path, relative: bool) -> String {
+    if relative {
+        vpm::relpath::relative(file, dir)
+    } else {
+        file.display().to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod ts_tests;
