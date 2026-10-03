@@ -37,7 +37,9 @@ M2 programs (the Rust and Node versions are the same algorithm, written idiomati
   capturing arrows, then 20M calls of a stored (escaping) closure. Rust materializes every
   `map` / `filter` into a `Vec` like JS does, and stores the closure as `Box<dyn Fn>`.
 - **strings**: 1M template-literal lines, `join("\n")`, then a `charCodeAt` scan of the 24 MB
-  result. Rust uses `format!`, `join` and a byte loop.
+  result; then 100k `s += "…"` appends and 100k `` t = `${t}…${i}…` `` appends. Rust uses
+  `format!`, `join`, a byte loop, `push_str` and `write!`. (The table's row predates the
+  appends, which add a few milliseconds to the Velt columns now that they append in place.)
 - **shapes**: 1M shapes in a discriminated union (`{ kind: "circle"; r } | ...`), 40 passes of
   `switch (s.kind)` plus a `s.kind === "empty"` test. Rust uses an enum and `match`, Node plain
   objects and `switch`.

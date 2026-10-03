@@ -1,0 +1,19 @@
+// An error from a spawned task, rethrown by `await` and escaping `main`, reports where the task
+// threw it, on whichever thread ran the task (#162).
+class Overheated extends Error {}
+
+async function measure(limit: i64): Promise<i64> {
+  await sleep(1);
+  if (limit > 100) {
+    throw new Overheated(`over ${limit}`);
+  }
+  return limit;
+}
+
+async function main() {
+  const ok = spawn(measure(50));
+  const hot = spawn(measure(150));
+  console.log(await ok);
+  console.log(await hot);
+  console.log("unreachable");
+}
