@@ -31,6 +31,23 @@ pub unsafe extern "C" fn velt_rt_env_get(name: *const VeltStr, out: *mut VeltStr
     }
 }
 
+/// `envAll()`: every environment variable as `[name0, value0, name1, value1, …]`, in the order
+/// the OS keeps them (Node's `process.env` order). Windows' per-drive `=C:` entries are left
+/// out, as Node does; names and values that are not Unicode are converted lossily.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_env_all(out: *mut VeltStrArray) {
+    let pairs = std::env::vars_os()
+        .map(|(k, v)| {
+            (
+                k.to_string_lossy().into_owned(),
+                v.to_string_lossy().into_owned(),
+            )
+        })
+        .filter(|(k, _)| !k.is_empty() && !k.starts_with('='))
+        .flat_map(|(k, v)| [k, v]);
+    out.write(VeltStrArray::from_strings(pairs));
+}
+
 /// `process.env[name] = value`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_env_set(name: *const VeltStr, value: *const VeltStr) {
@@ -93,6 +110,23 @@ mod tests {
             assert_eq!(velt_rt_env_get(&name, &mut out), 1);
             assert_eq!(out.as_bytes(), b"yes");
             crate::str::velt_rt_str_drop(&mut out);
+        }
+        let mut all = MaybeUninit::<VeltStrArray>::uninit();
+        unsafe { velt_rt_env_all(all.as_mut_ptr()) };
+        let mut all = unsafe { all.assume_init() };
+        let pairs: Vec<String> = (0..all.len as usize)
+            .map(|i| String::from_utf8_lossy(unsafe { (*all.ptr.add(i)).as_bytes() }).into_owned())
+            .collect();
+        assert_eq!(pairs.len() % 2, 0);
+        let at = pairs
+            .iter()
+            .step_by(2)
+            .position(|k| k == "VELT_RT_WASM_TEST_ENV")
+            .expect("the variable just set is listed");
+        assert_eq!(pairs[2 * at + 1], "yes");
+        assert!(pairs.iter().step_by(2).all(|k| !k.starts_with('=')));
+        unsafe { crate::str_array::velt_rt_str_array_drop(&mut all) };
+        unsafe {
             velt_rt_env_remove(&name);
             assert_eq!(velt_rt_env_get(&name, &mut out), 0);
         }
