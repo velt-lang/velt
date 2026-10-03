@@ -40,6 +40,8 @@ impl FnCx<'_, '_> {
             .map(|k| ast::ArrowParam {
                 name: name(k),
                 ty: None,
+                default: None,
+                optional: false,
             })
             .collect();
         let call = mk(ast::ExprKind::Call {

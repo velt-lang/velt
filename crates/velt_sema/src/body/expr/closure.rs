@@ -101,6 +101,13 @@ impl FnCx<'_, '_> {
             .map_or(vec![], |ps| ps[params.len()..].to_vec());
         ptys.extend(&extra);
         let std_callback = std::mem::take(&mut self.std_callback);
+        // Trailing parameters with defaults beyond the expected function type's
+        // (`apply((x, k = 2) => x * k)`): never passed, so they are locals set to the default.
+        let n_params = exp_params
+            .as_deref()
+            .map(|ps| ps.len())
+            .filter(|&n| n < params.len() && params[n..].iter().all(|p| p.default.is_some()))
+            .unwrap_or(params.len());
         let ret_ty = match ret {
             Some(t) => Some(self.closure_ret_annotation(t, is_async)),
             None => exp_ret
@@ -122,9 +129,16 @@ impl FnCx<'_, '_> {
         let saved = std::mem::replace(&mut self.f, frame);
         self.outer.push(saved);
         let mut declared = vec![];
-        for (p, ty) in params.iter().zip(&ptys) {
+        let mut locals = vec![];
+        for (k, (p, ty)) in params.iter().zip(&ptys).enumerate() {
+            if k >= n_params {
+                locals.push(self.defaulted_local(p, *ty));
+                continue;
+            }
             let l = self.declare_local_mut(&p.name, *ty, LocalKind::Param, false);
-            if std_callback && p.ty.is_none() && self.cx.ty.is_int(*ty) {
+            // A JS number: an index or accumulator from a std callback, or `(n = 0) => …`.
+            let js_number = std_callback || p.default.is_some();
+            if js_number && p.ty.is_none() && self.cx.ty.is_int(*ty) {
                 self.f.inferred_ints.insert(l);
             }
             declared.push(l);
@@ -138,7 +152,14 @@ impl FnCx<'_, '_> {
             let l = self.declare_local_mut(&name, *ty, LocalKind::Param, false);
             declared.push(l);
         }
-        let block = self.closure_body(body, span);
+        let mut block = self.closure_body(body, span);
+        block.stmts.splice(0..0, locals);
+        let ptys: Vec<TyId> = ptys
+            .iter()
+            .enumerate()
+            .filter(|(k, _)| *k < n_params || *k >= params.len())
+            .map(|(_, t)| *t)
+            .collect();
         self.rec_frame_scopes();
         let body_ret = self.f.ret.unwrap_or(self.cx.ty.unit);
         let parent = self.outer.pop().expect("ICE: closure frame");
@@ -167,7 +188,25 @@ impl FnCx<'_, '_> {
             is_async,
             span,
         });
+        crate::body::defaults::arrow_defaults(self.cx, self.module, def, params);
         self.mk(H::Closure(def), fn_ty, span)
+    }
+
+    /// `let p = <default>;` for an arrow parameter that is never passed (see `closure`).
+    fn defaulted_local(&mut self, p: &ast::ArrowParam, ty: TyId) -> hir::Stmt {
+        let e = p.default.as_ref().expect("ICE: a defaulted parameter");
+        let init = self.expr_coerce(e, ty, Want::Move);
+        let local = self.declare_local_mut(&p.name, ty, LocalKind::Let, true);
+        if p.ty.is_none() && self.cx.ty.is_int(ty) {
+            self.f.inferred_ints.insert(local);
+        }
+        hir::Stmt {
+            kind: S::Let {
+                local,
+                init: Some(init),
+            },
+            span: p.name.span,
+        }
     }
 
     /// Async closures run as tasks, possibly on another thread and after the enclosing function

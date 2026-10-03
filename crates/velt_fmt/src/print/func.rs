@@ -121,14 +121,26 @@ impl<'a> Printer<'a> {
             ret.map_or(body_lo, |r| r.span.lo),
             |p| {
                 let hi = p.ty.as_ref().map_or(p.name.span.hi, |t| t.span.hi);
+                let hi = p.default.as_ref().map_or(hi, |d| d.span.hi.max(hi));
                 (p.name.span.lo, hi)
             },
             |p, param| {
+                if param.optional {
+                    let ty = match &param.ty {
+                        Some(ty) => cat![": ", p.ty_optional(ty)],
+                        None => nil(),
+                    };
+                    return cat![param.name.name.clone(), "?", ty];
+                }
                 let ty = match &param.ty {
                     Some(ty) => cat![": ", p.ty(ty)],
                     None => nil(),
                 };
-                cat![param.name.name.clone(), ty]
+                let default = match &param.default {
+                    Some(d) => cat![" = ", p.expr(d)],
+                    None => nil(),
+                };
+                cat![param.name.name.clone(), ty, default]
             },
         );
         let asyncness = if is_async { "async " } else { "" };

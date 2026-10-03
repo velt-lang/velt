@@ -458,8 +458,14 @@ pub enum ArrowBody {
 #[derive(Clone, Debug)]
 pub struct ArrowParam {
     pub name: Ident,
-    /// Optional in arrows when inferable from context.
+    /// Optional in arrows when inferable from context. For an optional parameter with a
+    /// written type, that type plus `| null`.
     pub ty: Option<TypeExpr>,
+    /// `(x: T = e) => …`: the value when a call leaves the argument out; `null` for an
+    /// optional parameter.
+    pub default: Option<Expr>,
+    /// `(x?: T) => …`, parsed as `(x: T | null = null) => …` (the flag keeps the spelling).
+    pub optional: bool,
 }
 
 #[derive(Clone, Debug)]

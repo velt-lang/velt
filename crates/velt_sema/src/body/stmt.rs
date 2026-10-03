@@ -315,6 +315,11 @@ impl FnCx<'_, '_> {
         if let (None, Some(h)) = (ann, &init) {
             self.note_inferred_local(local, h);
         }
+        if let (LocalKind::Const, Some(hir::ExprKind::Closure(d))) =
+            (kind, init.as_ref().map(|h| &h.kind))
+        {
+            self.f.closure_consts.insert(local, *d);
+        }
         if v.kind == ast::VarKind::Using {
             self.check_disposable(ty, false, v.span);
         }

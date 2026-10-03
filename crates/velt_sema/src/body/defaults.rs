@@ -55,6 +55,33 @@ fn check_default(
     h
 }
 
+/// Defaults of an arrow's parameters (`(x: T = e) => …`), checked like a function's: in the
+/// module's scope, and evaluated at the call site.
+pub(crate) fn arrow_defaults(
+    cx: &mut Ctx,
+    module: usize,
+    closure: DefId,
+    params: &[ast::ArrowParam],
+) {
+    let name = cx.fn_info(closure).name.clone();
+    for (i, p) in params.iter().enumerate() {
+        let Some(e) = &p.default else { continue };
+        let Some(ty) = cx.fn_info(closure).params.get(i).map(|p| p.ty) else {
+            continue;
+        };
+        let h = check_default(cx, module, &[], &name, None, e, ty);
+        cx.fn_info_mut(closure).params[i].default = Some(h);
+    }
+}
+
+/// The type of an arrow parameter written with only a default (`(digits = 2) => …`), as TS
+/// infers it.
+pub(crate) fn default_type(cx: &mut Ctx, module: usize, e: &ast::Expr) -> TyId {
+    let mut fcx = detached(cx, module, &[]);
+    let h = fcx.expr(e, None, Want::Move);
+    fcx.widen_value(h).ty
+}
+
 pub(super) fn iface_defaults(cx: &mut Ctx) {
     let ifaces: Vec<DefId> = (0..cx.info.len() as u32)
         .map(DefId)

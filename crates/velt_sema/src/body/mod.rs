@@ -153,6 +153,9 @@ pub(crate) struct Frame {
     pub soft_moves: Vec<Span>,
     /// Locals holding inferred integers (`expr::numbers`).
     pub inferred_ints: std::collections::HashSet<LocalId>,
+    /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
+    /// call `f(…)` fills in.
+    pub closure_consts: std::collections::HashMap<LocalId, DefId>,
     /// Throw sources of the enclosing `try` bodies (innermost last).
     pub tries: Vec<Vec<ThrowSrc>>,
     pub uncaught: Vec<ThrowSrc>,
@@ -180,6 +183,7 @@ impl Frame {
             is_async: false,
             soft_moves: vec![],
             inferred_ints: Default::default(),
+            closure_consts: Default::default(),
             tries: vec![],
             uncaught: vec![],
             super_ok: false,
