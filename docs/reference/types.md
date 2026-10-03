@@ -122,10 +122,12 @@ usable and no copy method is needed.
   charCodeAt`, plus `String.fromCharCode`, `parseInt`, `parseFloat` and `Number(s)`
   ([prelude](../std/prelude.md#strings)).
 - `<` and `>` compare bytewise; `==` compares content.
-- Cost model: strings of up to 23 bytes are stored inline (no heap allocation); longer ones live
-  in a reference-counted immutable buffer. A copy is 24 bytes plus, for a heap string, one count
-  increment, and the compiler moves instead of copying at a last use. `s.clone()` compiles and
-  is just a copy.
+- Cost model: strings of up to 23 bytes (22 when they are not ASCII) are stored inline (no heap
+  allocation); longer ones live in a reference-counted immutable buffer. A copy is 24 bytes
+  plus, for a heap string, one count increment, and the compiler moves instead of copying at a
+  last use. `s.clone()` compiles and is just a copy.
+- A string holds less than 2 GiB of text (more than JS engines allow). Making a longer one stops
+  the program with `string too long` (`repeat` panics with JS's `RangeError` message instead).
 
 ```ts
 function label(name: string, count: i64): string {
