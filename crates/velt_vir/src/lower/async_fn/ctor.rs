@@ -116,6 +116,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 }
             },
             PassMode::Copy => Operand::Copy(slot),
+            // A resource that cannot be copied is shared with the state instead (#122): the
+            // call runs on the task that owns the environment, and a call spawned through a
+            // function value works on a copy of the closure made for the task (callee.rs
+            // `call_indirect`), whose transfer rejects a resource still referenced here.
+            PassMode::Owned if self.cx.uncopyable(ty) => self.share_value(Operand::Copy(slot), ty),
             PassMode::Owned => self.clone_value(Operand::Copy(slot), ty),
         })
     }

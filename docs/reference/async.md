@@ -30,15 +30,34 @@ Promises behave like JavaScript's, at Rust's cost:
   the promise (objects) or copied (numbers, strings), otherwise moved, because the promise may
   outlive the caller's frame. A promise has one owner: using a promise variable after handing
   it on is ``use of moved value``, and an explicit `p.clone()` is ``a promise cannot be copied``.
-- Values handed to `spawn` (and captured by an HTTP handler) go to another thread: an object
-  the program still shares is deep-copied for the task (like a structured clone), so threads
-  never share reference counts. That includes the receiver of `spawn(obj.method())` (also
-  through a base-class reference or an interface value) and what a closure or interface value
-  passed to the task reaches. A closure the caller still uses afterwards is copied too, with
-  what it captures, so the task and the caller each run their own copy. Objects the program
-  never shares move instead: a closure handed on for the last time that captures only those
-  (an HTTP handler capturing a disposable resource, say) goes to the task as it is, and a
-  captured value's `[Symbol.dispose]()` runs once.
+- Values handed to `spawn` (and captured by an HTTP handler, sent over a channel, or settled on
+  a promise from another task) go to another thread. What the program no longer references
+  anywhere else moves as it is; an object it still shares is deep-copied for the task (like a
+  structured clone), so threads never share reference counts. That includes the receiver of
+  `spawn(obj.method())` (also through a base-class reference or an interface value) and what a
+  closure or interface value passed to the task reaches. A closure the caller still uses
+  afterwards is copied too, with what it captures (also a variable it assigns), so the task and
+  the caller each run their own copy. A closure handed on for the last time that captures only
+  values nothing else references (an HTTP handler capturing a disposable resource, say) goes to
+  the task as it is. `spawn(async () => …)` and `spawn((async () => …)())` hand the captured
+  values themselves to the task, so a captured resource the program no longer uses moves and
+  its `[Symbol.dispose]()` runs once, on the task. Each call of an async closure otherwise gets
+  its own copy of what the closure captured, except a resource without `clone()`, which the
+  call shares with the closure (it is released once, after both). So `spawn(f())` through an
+  async closure value `f` gives the task a copy of `f`, and stops the program
+  (``panic: cannot copy …``) when `f` captured such a resource.
+- A value owning a `[Symbol.dispose]` resource is copied by its class's own `clone()` method
+  ([Classes](classes.md)), so each copy releases its own resource; what the returned object
+  still shares with the original (a shallow `clone()`) is deep-copied in turn, and a `clone()`
+  that returns `this` stops the program. Classes without a resource are copied field by
+  field, whatever their `clone()` does. One without `clone()` cannot
+  be copied: passing it to `spawn` and using it afterwards is an error ("`r` is still used
+  after `spawn`, so the task would get a copy, …"), and so is passing one an object still
+  holds (`spawn(serve(this.conn))`: "`this.conn` stays where it is held, …"); pass the last
+  reference, give the class a `clone()`, or share it with `shared(new Mutex(conn))` (a class
+  is shared behind a [`Mutex`](#thread-safety)). When another reference is only found at run time
+  (the value is also in an array, say), the program stops with ``panic: cannot copy a `Conn`
+  for another thread …``.
 
 ## Combinators
 
@@ -65,8 +84,14 @@ as uncaught.
 ## Tasks
 
 `spawn(p)` returns a `Promise<T>` join handle. `spawn(f())`, or `spawn(async () => { … })`, runs
-`f` as a task of its own on any core, and a spawned task runs even if nobody awaits it. A
-promise that already started stays on the task that started it.
+`f` as a task of its own on any core, and a spawned task runs even if nobody awaits it.
+`spawn(c ? f(x) : g(y))` spawns the call the condition picks, like
+`c ? spawn(f(x)) : spawn(g(y))`. A promise that already started (`const p = f(); spawn(p)`)
+stays on the task that started it. A promise that goes to another task (`spawn(p)`,
+`spawn(g(p))`, a channel), and a task's own result awaited through its join handle, deliver
+the value there as a transferred one: moved if the task that produced it no longer references
+it (a promise it started still may), else a copy made where it was produced, so two tasks never
+use one object (also on single-threaded WebAssembly, where tasks share the one thread).
 
 Tasks exchange values through channels ([`velt:channel`](../std/channel.md)): typed,
 bounded or unbounded queues where `send` waits while a bounded channel is full.
@@ -112,7 +137,24 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
   passing or capturing it adds a reference (so does `.clone()`); it is never deep-copied. For
   64-bit integers, `.add(n)`, `.get()` and `.set(v)` are atomic.
 - `shared(new Mutex<T>(x))` with `m.with((v) => …)`: a synchronous lock. The callback gets the
-  value itself (assigning `v` updates it), returns a result, and must not be async.
+  value itself (assigning `v` updates it), returns a result, and must not be async. The result
+  leaves the lock like a value going to another task: an object the callback made moves out,
+  a part of the protected value comes out as a copy (`m.with((v) => v.inner)` is a snapshot;
+  change the value inside the callback). A function value stored in the value must not have
+  captured a resource without `clone()` (the program stops when the lock is released).
+
+`shared(x)` is a thread boundary like `spawn`, and it takes `x` itself: a variable used after
+it went into `shared(...)` (also inside `new Mutex(o)`, a literal or a constructor call there)
+is an error ("`o` is still used after `shared(...)`; `shared` takes the value itself …"):
+use it through the `shared` value from then on, or pass `o.clone()`. A reference the compiler
+cannot see (the object is also in an array, say) gets a copy at run time, and a resource
+without `clone()` then stops the program. A function value in it, and an HTTP handler, may be
+called from several threads at once, and each call gets its own copy of what the function
+captured, so a captured resource needs a `clone()`: capturing one without it there is an
+error ("this function captures `store`, and it handles HTTP requests, …"), or, when the
+function arrives through a parameter, ``panic: a function value that captured a `Store` is
+shared between threads …`` where the `shared` or the server is made. Capture a
+`shared(new Mutex(store))` instead to use one resource from every call.
 
 ## Errors
 
@@ -190,10 +232,14 @@ async function main() {
 - The first `resolve(value)` or `reject(reason)` settles the promise; later calls do nothing.
   An error the executor throws rejects it.
 - A value settled on the promise's own task is the same object the awaiter gets (like JS); one
-  settled from another task is copied, like a `spawn` argument. (On single-threaded WebAssembly
+  settled from another task is transferred like a `spawn` argument, once the settling task has
+  finished its current step: moved when that task no longer references it (a value made for the
+  call, `resolve(new Result(…))`), copied when it still does. Such a settlement lands when
+  the settling task next yields (an `await` that waits, or its end), so the awaiter wakes then. A
+  value that cannot reach an object (a number, a string, a struct of them) has nothing to
+  transfer and settles at once. (On single-threaded WebAssembly
   there is only one thread, so it is shared there too.) A promise passed on to a spawned task
-  and awaited there is not copied yet, as for any promise (#160): don't keep using the value
-  on the settling task then.
+  and awaited there delivers a copy when the settling task still uses the value.
 - The executor must be an arrow-function literal (``the executor of `new Promise` must be an
   arrow function``); it runs at once and is released before the promise waits.
 - A promise whose `resolve` and `reject` are all dropped without settling never settles, like
@@ -234,8 +280,8 @@ type.
 - `resolve` and `reject` work like a `new Promise` executor's: store them, move them into a
   spawned task, or send them over a [channel](../std/channel.md) and call them there; the
   awaiting task wakes. The first settlement wins and later calls do nothing.
-- A value settled from another task is copied, one settled on the promise's own task is the same
-  object, as for `new Promise`.
+- A value settled from another task is transferred (moved, or copied while that task still uses
+  it), one settled on the promise's own task is the same object, as for `new Promise`.
 - A promise whose `resolve` and `reject` are all dropped without settling never settles, like in
   JS: it can lose a `Promise.race`, and awaiting it otherwise waits forever. A pending promise
   keeps the process alive (#147).

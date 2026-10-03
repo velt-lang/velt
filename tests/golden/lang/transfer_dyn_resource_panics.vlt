@@ -1,0 +1,43 @@
+// An interface value inside an object the program still uses after `spawn` is copied with the
+// object for the task (#340). Its implementor holds a resource without `clone()`, which cannot
+// be copied: the copy stops the program instead of releasing the resource twice.
+class Conn {
+  id: i64;
+  constructor(id: i64) {
+    this.id = id;
+  }
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+interface Source {
+  name(): string;
+}
+
+class ConnSource implements Source {
+  conn: Conn;
+  constructor(conn: Conn) {
+    this.conn = conn;
+  }
+  name(): string {
+    return `conn ${this.conn.id}`;
+  }
+}
+
+class Box {
+  s: Source;
+  constructor(s: Source) {
+    this.s = s;
+  }
+}
+
+async function use(b: Box): Promise<void> {
+  console.log(b.s.name());
+}
+
+async function main() {
+  const b = new Box(new ConnSource(new Conn(1)));
+  await spawn(use(b));
+  console.log(b.s.name());
+}

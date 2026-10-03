@@ -333,15 +333,16 @@ mod tests {
         }
     }
 
+    /// 200,000 children take milliseconds; the quadratic `tidy_reference` takes minutes. CPU
+    /// time of this thread, which a loaded machine doesn't stretch the way it does wall-clock time.
     #[test]
     fn tidy_is_linear_in_the_number_of_children() {
         let mut parts = vec![Part::Empty];
         for _ in 0..200_000 {
             parts.extend([Part::Hard, Part::Empty, Part::Hard, word("w")]);
         }
-        let started = std::time::Instant::now();
-        tidy(&mut parts, true);
-        assert!(started.elapsed().as_secs() < 2, "{:?}", started.elapsed());
+        let cpu = super::super::thread_cpu::measure(|| tidy(&mut parts, true));
+        assert!(cpu.as_secs() < 2, "{cpu:?} of CPU time");
         // Each `hard, "", hard` pair becomes one line break; the leading `"", hard` is trimmed.
         assert_eq!(parts.len(), 399_999);
     }

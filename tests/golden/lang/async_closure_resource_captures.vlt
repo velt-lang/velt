@@ -1,0 +1,76 @@
+// check: no leaks
+// A resource without `clone()` captured by an async closure is released once (#122, #263).
+// Spawning an async closure literal called at once hands the task the captured values
+// themselves (moved when nothing else uses them, like `spawn(async () => …)`), and an ordinary
+// call shares such a capture with the closure instead of copying it field by field. Other
+// captures are still copied per call or for the task.
+class Res {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  [Symbol.dispose]() {
+    console.log("dispose", this.name);
+  }
+}
+
+class Box {
+  r: Res;
+
+  constructor(r: Res) {
+    this.r = r;
+  }
+}
+
+class Counter {
+  n: i64 = 0;
+}
+
+function bump(c: Counter) {
+  c.n += 1;
+}
+
+async function main() {
+  // The program of #263.
+  const { promise, resolve } = Promise.withResolvers<Res>();
+  const t = spawn(
+    (async () => {
+      resolve(new Res("from task"));
+    })(),
+  );
+  const r = await promise;
+  console.log(r.name);
+  await t;
+
+  // Called on this task: each call shares the captured resource.
+  const d = new Res("called");
+  const f = async (): Promise<string> => d.name;
+  console.log(await f(), await f());
+  console.log(await (async (): Promise<string> => d.name)());
+  const g = async (): Promise<string> => {
+    const b = new Box(d);
+    return b.r.name;
+  };
+  console.log(await g(), await g());
+
+  // Spawned at once: the captured resource moves to the task (and back).
+  const e = new Res("moved");
+  const back = await spawn((async (): Promise<Res> => e)());
+  console.log(back.name);
+
+  // A value this task keeps using is copied for the task.
+  const c = new Counter();
+  const u = spawn(
+    (async (): Promise<i64> => {
+      await sleep(20);
+      return c.n;
+    })(),
+  );
+  for (let k = 0; k < 1000; k++) {
+    bump(c);
+  }
+  console.log("task saw", await u, "main has", c.n);
+  console.log("end");
+}

@@ -20,7 +20,7 @@ mod groups;
 mod infer;
 mod sets;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use velt_common::Span;
 
@@ -30,6 +30,35 @@ pub(crate) use infer::infer_all;
 use crate::ctx::Ctx;
 use crate::defs::ThrowSrc;
 use crate::hir::{DefId, TyId};
+
+/// What a resolution of throw sources has already counted.
+#[derive(Default)]
+struct Visited {
+    /// Functions whose bodies' sources are counted (in their own generic context).
+    fns: HashSet<DefId>,
+    inits: InitsSeen,
+}
+
+/// How many instantiations of one class's field initializers a resolution counts separately.
+/// Initializers can construct their class with ever larger type arguments (`Box<T>` running
+/// `new Box<Box<T>>()`), which would never end; past this many, further instantiations of the
+/// class count as already seen (its first ones count). Ordinary programs construct a class with
+/// a few distinct type arguments in one chain of initializers.
+const MAX_INIT_INSTANCES: usize = 16;
+
+/// The classes whose field initializers ([`ThrowSrc::Defaults`]) are already counted, keyed on
+/// the class and its type arguments: `Box<E1>` and `Box<E2>` throw different errors.
+#[derive(Default)]
+pub(crate) struct InitsSeen(HashMap<DefId, HashSet<Vec<TyId>>>);
+
+impl InitsSeen {
+    /// Record class `d` with type arguments `args`: false when they are counted already (or
+    /// the class has [`MAX_INIT_INSTANCES`] counted).
+    pub(crate) fn insert(&mut self, d: DefId, args: &[TyId]) -> bool {
+        let seen = self.0.entry(d).or_default();
+        seen.len() < MAX_INIT_INSTANCES && seen.insert(args.to_vec())
+    }
+}
 
 /// A type sema built from what `srcs` throw at checking time; the final inference must agree
 /// (`exact`: equal, for promises whose layout depends on it; else the final type may be smaller).
@@ -43,18 +72,18 @@ pub(crate) struct ThrowCheck {
 
 /// What calling `d` with type args `targs` throws, from what is known now.
 pub(crate) fn throws_now(cx: &mut Ctx, d: DefId, targs: &[TyId]) -> Option<TyId> {
-    let mut visited = HashSet::new();
+    let mut visited = Visited::default();
     let t = def_now(cx, d, &mut visited);
     subst_error(cx, t, targs)
 }
 
 /// What the throw sources `srcs` throw, from what is known now.
 pub(crate) fn srcs_now(cx: &mut Ctx, srcs: &[ThrowSrc]) -> Option<TyId> {
-    let mut visited = HashSet::new();
+    let mut visited = Visited::default();
     srcs_now_in(cx, srcs, &mut visited)
 }
 
-fn srcs_now_in(cx: &mut Ctx, srcs: &[ThrowSrc], visited: &mut HashSet<DefId>) -> Option<TyId> {
+fn srcs_now_in(cx: &mut Ctx, srcs: &[ThrowSrc], visited: &mut Visited) -> Option<TyId> {
     let mut acc = None;
     for s in srcs {
         let t = match s {
@@ -69,10 +98,35 @@ fn srcs_now_in(cx: &mut Ctx, srcs: &[ThrowSrc], visited: &mut HashSet<DefId>) ->
                 let t = slot_now(cx, *iface, *slot, visited);
                 subst_error(cx, t, args)
             }
+            ThrowSrc::Defaults(d, args, span) => {
+                if !visited.inits.insert(*d, args) {
+                    continue;
+                }
+                let srcs = defaults_srcs(cx, *d, args, *span);
+                srcs_now_in(cx, &srcs, visited)
+            }
         };
         acc = cx.join_errors(acc, t);
     }
     acc
+}
+
+/// The throw sources of the own field initializers of class `d` (in the context of `args`),
+/// as run by a `new` or a constructor at `span`. An initializer may itself construct a class
+/// ([`ThrowSrc::Defaults`]); resolving those with a visited set computes a cycle's errors as a
+/// fixpoint (the union over every class reachable from `d`).
+pub(crate) fn defaults_srcs(cx: &mut Ctx, d: DefId, args: &[TyId], span: Span) -> Vec<ThrowSrc> {
+    crate::body::field_defaults(cx, d);
+    let Some(a) = cx.adt(d) else {
+        return vec![];
+    };
+    let own: Vec<ThrowSrc> = a.fields[a.own_fields_start..]
+        .iter()
+        .flat_map(|f| f.default_throws.iter().cloned())
+        .collect();
+    own.iter()
+        .map(|s| s.used_at(span, |t| cx.ty.subst(t, args)))
+        .collect()
 }
 
 fn subst_error(cx: &mut Ctx, t: Option<TyId>, targs: &[TyId]) -> Option<TyId> {
@@ -81,7 +135,7 @@ fn subst_error(cx: &mut Ctx, t: Option<TyId>, targs: &[TyId]) -> Option<TyId> {
 }
 
 /// `d`'s error type in its own generic context.
-fn def_now(cx: &mut Ctx, d: DefId, visited: &mut HashSet<DefId>) -> Option<TyId> {
+fn def_now(cx: &mut Ctx, d: DefId, visited: &mut Visited) -> Option<TyId> {
     let f = cx.try_fn(d)?;
     if let Some(decl) = f.declared_throws {
         return decl.ty;
@@ -93,8 +147,8 @@ fn def_now(cx: &mut Ctx, d: DefId, visited: &mut HashSet<DefId>) -> Option<TyId>
 }
 
 /// What `d`'s body throws (its body is checked on demand).
-fn own_now(cx: &mut Ctx, d: DefId, visited: &mut HashSet<DefId>) -> Option<TyId> {
-    if !visited.insert(d) {
+fn own_now(cx: &mut Ctx, d: DefId, visited: &mut Visited) -> Option<TyId> {
+    if !visited.fns.insert(d) {
         return None;
     }
     if let Some(decl) = cx.try_fn(d).and_then(|f| f.declared_throws) {
@@ -105,7 +159,7 @@ fn own_now(cx: &mut Ctx, d: DefId, visited: &mut HashSet<DefId>) -> Option<TyId>
     srcs_now_in(cx, &srcs, visited)
 }
 
-fn group_now(cx: &mut Ctx, g: usize, visited: &mut HashSet<DefId>) -> Option<TyId> {
+fn group_now(cx: &mut Ctx, g: usize, visited: &mut Visited) -> Option<TyId> {
     let group = cx.throw_groups().list[g].clone();
     if let Some(b) = group.bound {
         return b.decl.ty;
@@ -118,7 +172,7 @@ fn group_now(cx: &mut Ctx, g: usize, visited: &mut HashSet<DefId>) -> Option<TyI
     acc
 }
 
-fn slot_now(cx: &mut Ctx, iface: DefId, slot: u32, visited: &mut HashSet<DefId>) -> Option<TyId> {
+fn slot_now(cx: &mut Ctx, iface: DefId, slot: u32, visited: &mut Visited) -> Option<TyId> {
     let g = cx.throw_groups().slot_group(iface, slot)?;
     group_now(cx, g, visited)
 }

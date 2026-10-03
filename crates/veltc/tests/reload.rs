@@ -239,7 +239,7 @@ impl Run<'_> {
         if self.probe.is_none() {
             self.probe = Some(Probe::start(port));
         }
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(60);
         loop {
             match get(port, path) {
                 Ok(got) if got == *body => return Ok(()),
@@ -332,7 +332,8 @@ fn spare_host_is_discarded() {
     write(main.replace("1000000000", "1000000001"));
     ok(dev.wait_stderr(mark, "velt dev: restarted"));
     let one_program = |what: &str| {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // A hang guard: the spare is gone at once, but a loaded machine may take its time.
+        let deadline = Instant::now() + Duration::from_secs(60);
         while dev.children().len() != 1 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -395,46 +396,110 @@ fn quiet_host_prints_no_diagnostics() {
     assert_eq!(host(true), (Some(1), String::new()));
 }
 
-/// A second SIGTERM exits at once, and takes the program along: the program (busy with a
-/// request it would otherwise drain for a second) is gone right after `velt dev` exits,
-/// instead of running on, orphaned.
+/// A second SIGTERM exits at once, and takes the program along: the program is killed when
+/// `velt dev` exits, instead of draining or running on, orphaned. Checked by how the program
+/// ended, not by how soon: the test process becomes the subreaper of its descendants, so the
+/// orphaned program becomes its child and its exit status can be read.
+///
+/// The program is stopped (SIGSTOP) before the first SIGTERM, so it cannot drain and exit by
+/// itself; only a SIGKILL ends it. `velt dev`'s graceful stop sends that too, but only after
+/// its stop grace (1.5 s), and then reaps the program itself: the second SIGTERM follows the
+/// first one's delivery within milliseconds, so the program ends as a SIGKILLed zombie handed
+/// on to the test process, and only the second-interrupt path produces that.
 #[cfg(target_os = "linux")]
 #[test]
 fn second_interrupt_kills_the_program() {
     let dir = TestDir::new();
-    apply(&root().join("tests/reload/in_flight/1"), dir.path());
+    apply(&root().join("tests/reload/hello_server/1"), dir.path());
+    // Before `Dev`: dropped after it, so it reaps the program `Dev`'s drop kills.
+    let mut reaper = Subreaper::become_one();
     let mut dev = Dev::start(dir.path(), &[]);
     let started = dev.wait_stderr(Mark::default(), "velt dev: started");
     started.unwrap_or_else(|e| panic!("{e}"));
     let port = dev.port().unwrap_or_else(|e| panic!("{e}"));
+    assert!(get(port, "/").is_ok());
     let programs = dev.children();
     assert_eq!(programs.len(), 1, "{programs:?}");
-    let slow = Background::start(port, "/slow");
-    std::thread::sleep(Duration::from_millis(200));
+    let program = programs[0] as libc::pid_t;
+    reaper.program = Some(program);
+    // SAFETY: plain syscall on a child of `velt dev`, which has not reaped it (it is running).
+    let rc = unsafe { libc::kill(program, libc::SIGSTOP) };
+    assert_eq!(rc, 0, "SIGSTOP: {}", std::io::Error::last_os_error());
     dev.signal(libc::SIGTERM);
-    std::thread::sleep(Duration::from_millis(50));
+    // A second signal sent before the first is delivered would merge with it.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while dev.signal_pending(libc::SIGTERM) {
+        assert!(
+            Instant::now() < deadline,
+            "the first SIGTERM was not delivered"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
     dev.signal(libc::SIGTERM);
     assert_eq!(
-        dev.wait_exit(Duration::from_secs(5)),
+        dev.wait_exit(Duration::from_secs(60)),
         Some(128 + libc::SIGTERM)
     );
-    let alive = |pid: u32| {
-        std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
-            !stat
-                .rsplit(')')
-                .next()
-                .unwrap_or("")
-                .trim_start()
-                .starts_with('Z')
-        })
-    };
-    // Killed: gone within moments (a drained program would live on for up to a second).
-    let deadline = Instant::now() + Duration::from_millis(300);
-    while alive(programs[0]) && Instant::now() < deadline {
+    // The program was killed before `velt dev` exited: a zombie handed on to us. A hang guard
+    // only: a program left stopped would wait forever.
+    let mut status = 0;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let reaped = loop {
+        // SAFETY: plain syscall; `status` is writable.
+        match unsafe { libc::waitpid(program, &mut status, libc::WNOHANG) } {
+            0 => {}
+            pid => break pid,
+        }
+        assert!(Instant::now() < deadline, "the program outlived velt dev");
         std::thread::sleep(Duration::from_millis(5));
+    };
+    let error = std::io::Error::last_os_error();
+    reaper.program = None;
+    assert_eq!(
+        reaped, program,
+        "waitpid: {error} (ECHILD: `velt dev` reaped the program itself, after its stop grace)"
+    );
+    assert!(
+        libc::WIFSIGNALED(status) && libc::WTERMSIG(status) == libc::SIGKILL,
+        "the program was not killed: wait status {status:#x}"
+    );
+    assert!(get(port, "/").is_err(), "the port is still open");
+}
+
+/// Makes the test process the subreaper of its orphaned descendants (Linux) until dropped.
+/// Drop kills and reaps `program` if it was not reaped yet, so a failed test leaves no stopped
+/// process behind.
+#[cfg(target_os = "linux")]
+struct Subreaper {
+    program: Option<libc::pid_t>,
+}
+
+#[cfg(target_os = "linux")]
+impl Subreaper {
+    fn become_one() -> Subreaper {
+        // SAFETY: plain syscall; it only changes who reaps this process's orphaned
+        // descendants. Other tests' orphans then end as zombies of the test process, which
+        // they count as gone.
+        let rc = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) };
+        assert_eq!(rc, 0, "prctl: {}", std::io::Error::last_os_error());
+        Subreaper { program: None }
     }
-    assert!(!alive(programs[0]), "the program outlived velt dev");
-    assert!(slow.finish().1.is_err(), "the slow request was not cut off");
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for Subreaper {
+    fn drop(&mut self) {
+        if let Some(program) = self.program {
+            // SAFETY: plain syscalls. `program` is not reaped yet (we would have cleared it),
+            // so its pid is not reused; if it is `velt dev`'s child still, waitpid fails.
+            unsafe {
+                libc::kill(program, libc::SIGKILL);
+                libc::waitpid(program, std::ptr::null_mut(), 0);
+            }
+        }
+        // SAFETY: plain syscall.
+        unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 0, 0, 0, 0) };
+    }
 }
 
 /// How the benchmark edits `hello_server` for edit number `n`.

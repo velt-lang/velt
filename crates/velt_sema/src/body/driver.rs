@@ -205,7 +205,11 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     fcx.enclosing_locals = enclosing_locals;
     let params = fcx.declare_params(&f);
     let mut stmts = vec![];
-    fcx.f.super_ok = f.kind == FnKind::Ctor;
+    if f.kind == FnKind::Ctor && fcx.this_base().is_some() {
+        // Until `super(...)`, which a base class with a constructor requires.
+        fcx.f.before_super =
+            fcx.base_ctor(&f).is_some() || body.stmts.iter().any(super::stmt::is_super_call);
+    }
     fcx.stmts_into(&body.stmts, &mut stmts);
     let block = hir::Block {
         stmts,
@@ -284,15 +288,20 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// The constructor of the base class of constructor `f`'s class, if any.
+    fn base_ctor(&mut self, f: &crate::defs::FnInfo) -> Option<DefId> {
+        let a = self.cx.adt(f.owner?)?;
+        let (b, _) = self.cx.class_of(a.base?)?;
+        self.cx.adt(b).and_then(|x| x.ctor)
+    }
+
     /// Constructor rules: `super(...)` first when the base class has a constructor, and every
-    /// own field without a default assigned on every path.
+    /// own field without a default assigned on every path. Records what the field initializers
+    /// the constructor runs on entry may throw.
     fn check_ctor(&mut self, f: &crate::defs::FnInfo, block: &hir::Block) {
         let Some(owner) = f.owner else { return };
+        let base_ctor = self.base_ctor(f);
         let a = self.cx.adt(owner).expect("ICE: ctor owner");
-        let base_ctor = a
-            .base
-            .and_then(|b| self.cx.class_of(b))
-            .and_then(|(b, _)| self.cx.adt(b).and_then(|x| x.ctor));
         let needed: Vec<(u32, String)> = a.fields[a.own_fields_start..]
             .iter()
             .enumerate()
@@ -300,10 +309,18 @@ impl FnCx<'_, '_> {
             .map(|(i, fl)| ((a.own_fields_start + i) as u32, fl.name.clone()))
             .collect();
         let class = a.name.clone();
+        if base_ctor.is_none() {
+            // No ancestor has a constructor: this one runs every field initializer on entry
+            // (with one, they run after `super(...)`, which accounts for them).
+            let this_ty = self.this_ty();
+            for s in self.class_default_throws(this_ty, None, f.name_span) {
+                self.throw_src(s);
+            }
+        }
         if base_ctor.is_some() && !self.f.super_called {
             self.cx.error(
                 Diagnostic::error(
-                    format!("the constructor of `{class}` must call `super(...)` first"),
+                    format!("the constructor of `{class}` must call `super(...)`"),
                     f.name_span,
                 )
                 .with_note("the base class has a constructor that must run"),

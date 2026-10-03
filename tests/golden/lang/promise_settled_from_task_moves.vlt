@@ -1,0 +1,56 @@
+// check: no leaks
+// A value settled from another task than the promise's own moves to the awaiter when nothing
+// else references it, and is copied only when the settling task still uses it (#263): a
+// disposable is released once either way, and a copy has its own count.
+class Res {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  [Symbol.dispose]() {
+    console.log("dispose", this.name);
+  }
+}
+
+class Fail extends Error {}
+
+class Box {
+  n: i64 = 0;
+}
+
+async function main() {
+  const { promise, resolve } = Promise.withResolvers<Res>();
+  const t = spawn(async () => {
+    resolve(new Res("from task"));
+  });
+  const r = await promise;
+  console.log("got", r.name);
+  await t;
+
+  const p2 = new Promise<Res, Fail>((resolve, reject) => {
+    spawn(async () => {
+      reject(new Fail("no"));
+    });
+  });
+  try {
+    await p2;
+  } catch (e) {
+    console.log("rejected:", e.message);
+  }
+
+  const kept = Promise.withResolvers<Box>();
+  const settle = kept.resolve;
+  const u = spawn(async (): Promise<i64> => {
+    const b = new Box();
+    b.n = 1;
+    settle(b);
+    await sleep(20);
+    b.n = 2;
+    return b.n;
+  });
+  const b = await kept.promise;
+  console.log("awaiter sees", b.n, "task has", await u);
+  console.log("end");
+}

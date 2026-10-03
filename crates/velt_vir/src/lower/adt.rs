@@ -95,28 +95,30 @@ impl FnLower<'_, '_> {
         Place::local(obj)
     }
 
-    /// `new C<T>(args)`: allocate, evaluate field defaults (in the class's type context), call
-    /// the constructor (with the type args of the class declaring it) with the object as `this`.
+    /// `new C<T>(args)`: allocate (half-built until the end: a throw frees the object without
+    /// disposing it, drops.rs), call the constructor (with the type args of the class
+    /// declaring it) with the object as `this`, then run the field initializers that
+    /// constructor does not run (ctor_init.rs): those of the classes below the one declaring it,
+    /// or every one when no class in the chain has a constructor.
     pub(super) fn new_object(&mut self, ty: TyId, args: &[hir::Expr]) -> Operand {
         let ty = self.sub(ty);
-        let TyKind::Adt(d, cargs) = self.cx.kind(ty) else {
+        let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             ice("new of a non-class type")
         };
-        let obj = self.alloc_object(ty);
-        let adt = self.cx.adt_def(d);
-        let saved = std::mem::replace(&mut self.targs, cargs.clone());
-        for (i, f) in adt.fields.iter().enumerate() {
-            if let Some(def) = &f.default {
-                let v = self.consume(def);
-                let p = self.field_place(&obj, ty, i as u32);
-                self.store(p, v);
+        let obj = self.alloc_object_raw(ty);
+        self.own_half_built(obj.clone(), ty);
+        let from = match self.cx.adt_def(d).ctor {
+            Some(ctor) => {
+                let cargs = self.cx.ctor_type_args(ctor, ty);
+                self.call_def(ctor, cargs, vec![Operand::Copy(obj.clone())], args);
+                self.ctor_fields(ctor)
             }
+            None => 0,
+        };
+        if !self.dead() {
+            self.new_inits(&obj, ty, from);
         }
-        self.targs = saved;
-        if let Some(ctor) = adt.ctor {
-            let cargs = self.cx.ctor_type_args(ctor, ty);
-            self.call_def(ctor, cargs, vec![Operand::Copy(obj.clone())], args);
-        }
+        self.own_built(&obj);
         Operand::Copy(obj)
     }
 
@@ -189,6 +191,19 @@ impl FnLower<'_, '_> {
     pub(super) fn shared_new(&mut self, arg: &hir::Expr, ty: TyId) -> Operand {
         let inner = self.sub(arg.ty);
         let v = self.consume(arg);
+        // The value becomes reachable from every thread holding the `shared` (a thread
+        // boundary): transferred like a `spawn` argument, then checked for function values
+        // that could not be called from several threads at once (glue/many.rs).
+        let v = self.transfer_value(v, inner);
+        let v = match self.cx.reaches_fn(inner) {
+            true => {
+                let vt = self.cx.ty(inner);
+                let t = Place::local(self.copy_to_temp(v, vt));
+                self.many_check(t.clone(), inner);
+                Operand::Copy(t)
+            }
+            false => v,
+        };
         let bx = self.cx.shared_box(inner);
         let p = self.alloc(Ty::Agg(bx));
         let bp = proj(

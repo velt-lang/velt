@@ -1,5 +1,6 @@
-//! Throughput sanity checks (timings are printed; run with `--release --nocapture` for real
-//! numbers). Limits are generous so that debug builds and loaded CI machines pass.
+//! Throughput sanity checks: the results are checked, the timings only printed (run with
+//! `--release --nocapture` for real numbers). No time limit: on a loaded machine any limit is a
+//! guess. Speed is measured by the benchmarks (`bench/async/spawn_many.vlt`, `bench/async/run.sh`).
 
 use super::core::run_fanout;
 use super::fake::block_on_fut;
@@ -20,11 +21,6 @@ fn spawn_join_100k() {
         elapsed,
         elapsed.as_nanos() as f64 / n as f64,
         worker_count()
-    );
-    let limit = if cfg!(debug_assertions) { 10.0 } else { 1.0 };
-    assert!(
-        elapsed.as_secs_f64() < limit,
-        "100k spawn/join took {elapsed:?}"
     );
     eprintln!("same workload in plain tokio: {:?}", tokio_baseline(n));
 }

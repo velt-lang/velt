@@ -31,6 +31,7 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         };
         let mut errors = vec![];
         let mut copied_captures = vec![];
+        let mut deep_copies = vec![];
         let kinds = cx.fn_info(d).local_kinds.clone();
         let fixed = cx.fn_info(d).fixed_modes;
         let keeps_fn_params = cx.fn_info(d).keeps_fn_params;
@@ -60,7 +61,10 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
                         Some(err) => errors.push(err),
                         // An async closure may run on several threads at once (an http
                         // handler) and counts are not atomic: it copies what it captured.
-                        None if v.f.is_async && v.captured(e) => soft::make_deep_copy(e),
+                        None if v.f.is_async && v.captured(e) => {
+                            deep_copies.push((e.span, e.ty));
+                            soft::make_deep_copy(e)
+                        }
                         None => soft::make_share(e),
                     }
                     return;
@@ -75,6 +79,7 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
             v.check(e, &mut errors)
         });
         cx.diags.extend(errors);
+        share_uncopyable(cx, &mut block, &deep_copies);
         f.body.block = block;
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
         for (c, pinned) in copied_captures {
@@ -82,6 +87,32 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         }
     }
     fn_values(cx);
+}
+
+/// Of the captures an async closure deep-copies (`deep_copies`: the copy's span and type),
+/// those owning a resource without `clone()` are shared instead (#122): a copy would release
+/// the resource twice, and the call runs on the task that owns the closure. (An http handler
+/// clones what its body consumes per request, and that copy panics on such a resource.)
+fn share_uncopyable(cx: &mut Ctx, b: &mut crate::hir::Block, deep_copies: &[(Span, TyId)]) {
+    let spans: HashSet<Span> = deep_copies
+        .iter()
+        .filter(|(_, t)| cx.owns_uncopyable(*t))
+        .map(|(s, _)| *s)
+        .collect();
+    if spans.is_empty() {
+        return;
+    }
+    visit::exprs_mut(b, &mut |e: &mut Expr| {
+        if let E::Call {
+            callee: c @ Callee::Intrinsic(Intrinsic::Clone),
+            ..
+        } = &mut e.kind
+        {
+            if spans.contains(&e.span) {
+                *c = Callee::Intrinsic(Intrinsic::Share);
+            }
+        }
+    });
 }
 
 /// The shared captures (`super::shares::shared_captures`) of every closure created in `b`.

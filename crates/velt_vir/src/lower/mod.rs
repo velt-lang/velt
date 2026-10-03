@@ -32,6 +32,7 @@ mod cells;
 mod cfg;
 mod closure;
 mod console;
+mod ctor_init;
 mod dispatch;
 mod drops;
 mod entry;
@@ -164,6 +165,9 @@ enum Work {
     /// Drop / clone of a heap closure environment for closure `(def, targs)`.
     EnvDrop(DefId, Vec<TyId>),
     EnvClone(DefId, Vec<TyId>),
+    /// `(env: ptr) -> ptr`: the environment of closure `(def, targs)` made safe for another
+    /// thread (glue/transfer.rs).
+    EnvTransfer(DefId, Vec<TyId>),
     /// `(len: u64, index: i64|u64, at: ptr)`: index-out-of-bounds panic (true = signed index;
     /// `at` points to the ` at <location>` string suffix).
     Oob(bool),
@@ -196,6 +200,10 @@ enum Work {
     Unclaimed(TyId),
     /// `(env, req, state)` initializer of an http handler closure's per-request state.
     HandlerInit(DefId, Vec<TyId>),
+    /// `(this: ptr)`: the field initializers `new` runs for class `T` (after its constructor),
+    /// throwing `E`; built only for classes whose initializers construct each other in a
+    /// cycle (ctor_init.rs).
+    Init(TyId, Option<TyId>),
 }
 
 /// Program-level lowering state.
@@ -237,6 +245,11 @@ struct Cx<'h> {
     facts: boxing::Facts,
     /// `Program::impls` indexes per interface (`impls_of`), built on first use.
     iface_impls: Option<HashMap<DefId, Rc<[u32]>>>,
+    /// Classes with a `clone()` of their own, and that method (`own_clone`, transfer.rs),
+    /// found on first use.
+    own_clones: Option<HashMap<DefId, DefId>>,
+    /// Memoized `own_clone` answers per class type (only resource owners' are honoured).
+    honoured_clones: HashMap<TyId, Option<DefId>>,
     /// Memoized `dyn_modes` per (interface, slot).
     dyn_modes_memo: HashMap<(DefId, u32), Option<Vec<hir::PassMode>>>,
 }
@@ -278,6 +291,10 @@ enum DropEntry {
     Local(LocalId),
     /// Owned temporary value at a place, with its concrete type for drop glue.
     Temp(Place, TyId),
+    /// A class object `new` is constructing (adt.rs): on a throw from its constructor or field
+    /// initializers its fields drop and it is freed, but its `[Symbol.dispose]()` does not run.
+    /// Becomes a `Temp` once constructed.
+    HalfBuilt(Place, TyId),
     /// An owned value from which a pattern moved some parts: drop everything else.
     Rest(Place, TyId, Rc<hir::Pat>),
     /// An array consumed by `for…of`: elements `next..len` (of type `elem`) are still owned,
@@ -358,4 +375,10 @@ struct FnLower<'c, 'h> {
     transfer_call: bool,
     /// Building `Glue::Same`: objects inside the compared values compare by identity (same.rs).
     same_mode: bool,
+    /// While lowering a class's constructor: the (concrete) class type, whose field
+    /// initializers the constructor runs (ctor_init.rs).
+    ctor_self: Option<TyId>,
+    /// Classes whose initializers a `new` is inlining here (ctor_init.rs): a `new` of one of
+    /// them inside them calls an out-of-line initializer function instead.
+    init_stack: Vec<TyId>,
 }

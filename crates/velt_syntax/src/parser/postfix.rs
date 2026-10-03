@@ -160,6 +160,7 @@ impl<'a> Parser<'a> {
                 Tok::Gt
                     | Tok::LParen
                     | Tok::LBracket
+                    | Tok::LBrace
                     | Tok::Pipe
                     | Tok::Kw(Kw::Null)
                     | Tok::Kw(Kw::Void)

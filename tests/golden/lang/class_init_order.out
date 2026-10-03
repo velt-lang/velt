@@ -1,0 +1,37 @@
+-- new B
+A field
+A ctor 1
+B field
+B { a: 1, b: 1 }
+-- new C
+C super arg
+A field
+A ctor 1
+B field
+C field 1
+C field 2
+C ctor
+C { a: 1, b: 1, c1: 1, c2: 1 }
+-- new D
+C super arg
+A field
+A ctor 1
+B field
+C field 1
+C field 2
+C ctor
+D field
+D { a: 1, b: 1, c1: 1, c2: 1, d: 1 }
+-- new Q
+P field
+Q field
+Q { p: 1, q: 1 }
+-- new R
+P field
+R field
+R ctor
+R { p: 1, r: 1 }
+-- new Pair
+Box ctor
+Pair field
+[ 'x', 'y' ] 2

@@ -1,0 +1,13 @@
+dispose 1
+dispose 3
+dispose 4
+dispose 5
+Own ctor 2 init [ 'init' ] 0 init true
+2 init [ 'init' ] init
+dispose 10
+20 [ 'init' ]
+dispose 100
+200 x
+dispose 200
+dispose 20
+dispose 2

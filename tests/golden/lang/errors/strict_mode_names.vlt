@@ -1,0 +1,14 @@
+// Velt modules are strict-mode code: no declaration may be named `arguments` or `eval` (#265).
+async function arguments() {}
+
+class eval {}
+
+function f(eval: i64): i64 {
+  const arguments = eval + 1;
+  const g = (arguments: i64) => arguments;
+  return g(arguments);
+}
+
+function main() {
+  console.log(f(1));
+}

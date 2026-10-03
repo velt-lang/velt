@@ -1,0 +1,30 @@
+// A resource a field holds cannot go to a spawned task: the object keeps its reference, so
+// the task would get a copy, and the resource has no `clone()`. The error names the place.
+class Conn {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+class Server {
+  conn: Conn = new Conn(1);
+
+  go(): Promise<i64> {
+    return spawn(serve(this.conn));
+  }
+}
+
+async function serve(c: Conn): Promise<i64> {
+  return c.id;
+}
+
+async function main() {
+  const s = new Server();
+  console.log(await s.go());
+}

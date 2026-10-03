@@ -1,0 +1,21 @@
+// `spawn(g())` through a function value that is used again needs a copy of what it captured
+// for the task. A resource without `clone()` cannot be copied: the program stops instead of
+// releasing it twice.
+class Conn {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+async function main() {
+  const c = new Conn(1);
+  const g = async (): Promise<i64> => c.id;
+  console.log(await spawn(g()));
+  console.log(await g());
+}

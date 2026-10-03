@@ -1,0 +1,23 @@
+// check: no leaks
+// A value with nothing to transfer (a number, a string) settled from another task than the
+// promise's own settles at once, without the extra step a value reaching an object takes
+// (std/prelude/promise.vlt); both reach the awaiter intact, and the first settlement wins.
+async function server(
+  resolveNum: (v: i64) => void,
+  resolveStr: (v: string) => void,
+  rejectNum: (e: Error) => void,
+): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    resolveNum(40 + i);
+  }
+  rejectNum(new Error("too late"));
+  resolveStr(`reply ${42}`);
+}
+
+async function main() {
+  const num = Promise.withResolvers<i64, Error>();
+  const str = Promise.withResolvers<string>();
+  const t = spawn(server(num.resolve, str.resolve, num.reject));
+  console.log(await num.promise, await str.promise);
+  await t;
+}

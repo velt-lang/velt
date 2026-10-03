@@ -1,0 +1,38 @@
+// Parameter properties are the first fields of their class, before the declared ones, as
+// TypeScript emits them (ES2022 class fields): field initializers run before the constructor
+// body, which assigns the parameter properties first (after `super(...)`).
+
+function log(s: string): i64 {
+  console.log(s);
+  return 1;
+}
+
+class B {
+  z: i64 = log("B.z");
+  constructor(public y: i64) {
+    log("B ctor");
+  }
+}
+
+class P extends B {
+  a: i64 = log("P.a");
+  constructor(public b: i64, readonly c: string) {
+    super(5);
+    log("P ctor");
+  }
+  d: i64 = 4;
+}
+
+class Point {
+  label: string = "pt";
+  constructor(public x: f64, public y: f64) {}
+}
+
+function main() {
+  const p = new P(2, "three");
+  console.log(p);
+  console.log(JSON.stringify(p));
+  const pt = new Point(1.5, 2);
+  console.log(pt);
+  console.log(JSON.stringify(pt));
+}

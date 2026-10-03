@@ -1,0 +1,4 @@
+shared_closure_captures_resource.vlt:15:13: error: this function captures `c`, and it is in `shared(...)`, so several threads may call it at once: each call would share `c` across threads, but `Conn` owns a resource (`[Symbol.dispose]`) and has no `clone()`
+  = note: give `Conn` a `clone()` method that duplicates the resource (each call then gets its own copy), or capture a shared one: `shared(new Mutex(…))`
+shared_closure_captures_resource.vlt:18:41: error: this function captures `d`, and it is in `shared(...)`, so several threads may call it at once: each call would share `d` across threads, but `Conn` owns a resource (`[Symbol.dispose]`) and has no `clone()`
+  = note: give `Conn` a `clone()` method that duplicates the resource (each call then gets its own copy), or capture a shared one: `shared(new Mutex(…))`

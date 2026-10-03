@@ -228,7 +228,19 @@ impl FnLower<'_, '_> {
         transfer: bool,
     ) -> Operand {
         let fty = self.sub(f.ty);
-        let fv = self.expr(f);
+        let fv = match transfer {
+            // A spawned call: the callee's state takes its captures from the environment (an
+            // async closure copies them, or shares a resource that cannot be copied,
+            // async_fn/ctor.rs `take_capture`), so it gets an environment of the task's own:
+            // the function value itself when this was its last use (sema made the callee a
+            // soft move; a unique environment moves), else a copy.
+            true => {
+                let v = self.consume(f);
+                let v = self.transfer_value(v, fty);
+                self.own_value(v, fty)
+            }
+            false => self.expr(f),
+        };
         let fp = self.place_of(fv, fty);
         let code = self.rvalue_temp(
             Ty::Ptr,

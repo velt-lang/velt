@@ -90,6 +90,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.transfer_args = true;
         self.fill_env(def, env.clone(), drop, cint(0, Ty::Ptr));
         self.transfer_args = false;
+        // Concurrent requests may call the function values it captured from several threads
+        // at once (glue/many.rs).
+        let ea = self.cx.env_agg(def, &self.targs.clone());
+        let ep = self.operand_place(env.clone(), Ty::Ptr);
+        let base = proj(&ep, Proj::Deref(Ty::Agg(ea)));
+        for (field, mode, ty) in self.value_captures(def) {
+            if mode == PassMode::Owned {
+                self.many_check(proj(&base, Proj::Field(field)), ty);
+            }
+        }
         env
     }
 

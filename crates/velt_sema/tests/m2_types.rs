@@ -114,12 +114,17 @@ fn constructor_rules() {
     );
     let r = err_src(
         "class A { n: i64; constructor(n: i64) { this.n = n; } }
-         class B extends A { constructor() { console.log(1); super(2); } }
+         class B extends A { constructor() { console.log(this.n); super(2); } }
          function main() {}",
     );
     assert!(
-        r.contains("`super(...)` must be the first statement"),
+        r.contains("'super' must be called before accessing 'this'"),
         "{r}"
+    );
+    ok_src(
+        "class A { n: i64; constructor(n: i64) { this.n = n; } }
+         class B extends A { constructor(k: i64) { const d = k * 2; super(d); console.log(this.n); } }
+         function main() {}",
     );
     let r = err_src("class C { constructor(a: i64) {} } function main() { new C(); }");
     assert!(

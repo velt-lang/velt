@@ -1,0 +1,84 @@
+// check: no leaks
+// A field initializer that throws after the base constructor ran: `new` throws it, and the
+// half-built object is freed (its base fields disposed exactly once).
+
+class Oops extends Error {}
+
+class Res {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+    console.log(`open ${name}`);
+  }
+  [Symbol.dispose]() {
+    console.log(`close ${this.name}`);
+  }
+}
+
+function risky(ok: bool, what: string): i64 throws Oops {
+  console.log(`init ${what}`);
+  if (!ok) {
+    throw new Oops(`${what} failed`);
+  }
+  return 1;
+}
+
+class Base {
+  res: Res = new Res("base field");
+  tags: string[] = ["a", "b"];
+  owned: Res;
+  constructor() {
+    this.owned = new Res("base ctor");
+    console.log("base ctor");
+  }
+}
+
+class Derived extends Base {
+  first: Res = new Res("derived field");
+  n: i64 = risky(false, "derived n");
+  last: Res = new Res("never");
+  constructor() {
+    super();
+    console.log("derived ctor (not reached)");
+  }
+}
+
+// Implicit constructor: the initializer runs after the inherited constructor.
+class Implicit extends Base {
+  n: i64 = risky(false, "implicit n");
+}
+
+// The base class's own initializer throws before its constructor body runs.
+class Early {
+  res: Res = new Res("early field");
+  n: i64 = risky(false, "early n");
+  constructor() {
+    console.log("early ctor (not reached)");
+  }
+}
+
+class Later extends Early {
+  more: Res = new Res("later field (not reached)");
+}
+
+function main() {
+  try {
+    const d = new Derived();
+    console.log(d.n);
+  } catch (e) {
+    console.log("caught:", e.message);
+  }
+  try {
+    const i = new Implicit();
+    console.log(i.n);
+  } catch (e) {
+    console.log("caught:", e.message);
+  }
+  try {
+    const l = new Later();
+    console.log(l.n);
+  } catch (e) {
+    console.log("caught:", e.message);
+  }
+  console.log("done");
+}

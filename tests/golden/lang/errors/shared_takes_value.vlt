@@ -1,0 +1,44 @@
+// `shared(x)` takes the value itself, like a `spawn` argument: a variable still used after it
+// went into `shared(...)` would silently stop aliasing the shared value (a copy), so it is an
+// error; so is a field the object keeps.
+class Obj {
+  n: i64 = 0;
+}
+
+class Conn {
+  id: i64;
+  constructor(id: i64) {
+    this.id = id;
+  }
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+class Holder {
+  o: Obj = new Obj();
+  share(): shared<Mutex<Obj>> {
+    return shared(new Mutex<Obj>(this.o));
+  }
+}
+
+async function bump(m: shared<Mutex<Obj>>): Promise<void> {
+  m.with((v) => {
+    v.n += 1;
+  });
+}
+
+async function main() {
+  const o = new Obj();
+  const m = shared(new Mutex<Obj>(o));
+  await spawn(bump(m));
+  console.log(o.n, m.with((v) => v.n));
+  const c = new Conn(1);
+  const mc = shared(new Mutex<Conn>(c));
+  console.log(c.id, mc.with((v) => v.id));
+  const h = new Holder();
+  console.log(h.share().with((v) => v.n));
+  const p = new Obj();
+  const ok = shared(new Mutex<Obj>(p.clone()));
+  console.log(p.n, ok.with((v) => v.n));
+}

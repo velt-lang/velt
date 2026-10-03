@@ -1,0 +1,24 @@
+// A resource's `clone()` that returns `this` gives another task no copy of its own: both tasks
+// would use (and release) one object. The copy for the task stops the program instead.
+class Same {
+  id: i64 = 1;
+
+  clone(): Same {
+    return this;
+  }
+
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+async function use(s: Same): Promise<i64> {
+  return s.id;
+}
+
+async function main() {
+  const s = new Same();
+  const all = [s];
+  console.log(await spawn(use(s)));
+  console.log(all.length);
+}
