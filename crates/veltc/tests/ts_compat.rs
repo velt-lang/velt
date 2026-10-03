@@ -436,6 +436,34 @@ fn without_paths_the_packages_ts_compat_folders_are_linted() {
 }
 
 #[test]
+fn a_package_nested_in_a_folder_is_left_out() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    write(dir, "package.vlt", &manifest_with_ts_compat("[\"shared\"]"));
+    write(dir, "shared/user.ts", "export const age: number = 1;\n");
+    // Another package's files, with findings of their own, and its manifest are not linted.
+    write(dir, "shared/inner/package.vlt", &manifest("inner"));
+    write(
+        dir,
+        "shared/inner/item.ts",
+        "export const ok: bool = true;\n",
+    );
+    let o = velt(dir, &["check", "--ts-compat"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let o = velt(dir, &["check", "--ts-compat", "shared"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    // Named itself, the nested package is linted (as its own package).
+    let report = json(&velt(
+        dir,
+        &["check", "--ts-compat", "--json", "shared/inner"],
+    ));
+    assert_eq!(
+        files_and_codes(&report),
+        [("item.ts".to_string(), "bool-type".to_string())]
+    );
+}
+
+#[test]
 fn without_paths_a_package_must_list_existing_folders() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
@@ -449,7 +477,10 @@ fn without_paths_a_package_must_list_existing_folders() {
         ),
         "{err}"
     );
-    assert!(err.contains("`velt check --ts-compat src/models`"), "{err}");
+    assert!(
+        err.contains("or any parent directory. Or name the files or directories to lint: `velt check --ts-compat src/models`"),
+        "{err}"
+    );
     // A package without `tsCompat`.
     write(dir, "package.vlt", &manifest("app"));
     write(dir, "src/main.vlt", "export function main() {}\n");

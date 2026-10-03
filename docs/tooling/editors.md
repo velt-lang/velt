@@ -78,8 +78,13 @@ JavaScript would run it differently, warnings where it may. Each finding's code 
 does and what to write. A finding with a mechanical replacement (`f64` → `number`, `bool` →
 `boolean`, a dropped suffix) offers it as a preferred quick fix, so **Fix all** applies it too.
 
-- The findings follow your edits, also unsaved edits to `package.vlt`'s `tsCompat`. A folder
-  `tsCompat` lists that doesn't exist is a warning in `package.vlt`.
+- The findings follow your edits, also unsaved edits to `package.vlt`'s `tsCompat`; closing
+  `package.vlt` without saving goes back to the file on disk. Changes made outside the editor
+  (`package.vlt` saved by another program, folders created or deleted) apply when the editor
+  reports them (VS Code does). A folder `tsCompat` lists that doesn't exist is a warning in
+  `package.vlt`.
+- The files in the folders are the ones `velt check --ts-compat` finds: not under
+  `node_modules/`, `target/`, hidden or symlinked directories, or in a nested package.
 - Like the command, the lint skips a file with errors of its own: fix those first.
 - An import of a file outside the folders is the finding `outside-import`.
 - Files outside the folders never get findings, and nothing changes for them.

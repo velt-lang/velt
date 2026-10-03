@@ -10,19 +10,30 @@ use velt_sema::SourceModule;
 
 use crate::{Finding, LintModule};
 
-/// Lint the modules of a loaded program that are in scope (`in_scope` of their canonical path)
-/// and have no error in `diagnostics` (the load's and the checker's), so the rules only see
-/// valid Velt. The files in scope are the loaded ones `in_scope` accepts: a relative import of
-/// any other file leaves the subset. Standard library modules are never linted.
+/// Lint the modules of a loaded program that are in scope (`in_scope` of their canonical path),
+/// that `lint` selects (by file) and that have no error in `diagnostics` (the load's and the
+/// checker's), so the rules only see valid Velt. The files in scope are the loaded ones
+/// `in_scope` accepts, linted or not: a relative import of any other file leaves the subset.
+/// `velt check --ts-compat` lints every module in scope; the language server only the open
+/// document, whose imports are still judged against the whole scope. Standard library modules are
+/// never in scope (nor canonicalized).
 pub fn lint_program(
     modules: &[SourceModule],
     sm: &SourceMap,
     diagnostics: &[Diagnostic],
     in_scope: &dyn Fn(&Path) -> bool,
+    lint: &dyn Fn(FileId) -> bool,
 ) -> Vec<Finding> {
     let paths: Vec<PathBuf> = modules
         .iter()
-        .map(|m| canonical(&sm.get(m.file).path))
+        .map(|m| {
+            let path = &sm.get(m.file).path;
+            if m.is_std {
+                path.clone()
+            } else {
+                canonical(path)
+            }
+        })
         .collect();
     let scoped: Vec<bool> = modules
         .iter()
@@ -41,7 +52,7 @@ pub fn lint_program(
         .collect();
     let mut lint_modules = vec![];
     for (i, m) in modules.iter().enumerate() {
-        if !scoped[i] || failed.contains(&m.file) {
+        if !scoped[i] || !lint(m.file) || failed.contains(&m.file) {
             continue;
         }
         let imports = m

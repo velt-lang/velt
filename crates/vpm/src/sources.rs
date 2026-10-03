@@ -2,8 +2,19 @@
 //! can be shared with a TypeScript project). Declaration files (`.d.ts`) are not modules. Every
 //! tool that enumerates source files (the loader's relative imports, `velt check` in a package,
 //! `velt test`, `velt fmt`, `velt doc`, the language server) uses these rules.
+//!
+//! A folder's source files are found by walking it ([`walks_into`]): below the folder, the walk
+//! skips `target/`, `node_modules/`, hidden and symlinked directories, and nested packages (a
+//! directory with its own manifest belongs to that package); a manifest is never a module.
+//! [`in_folder`] answers the same question for one file, so the language server's idea of the
+//! files under a `tsCompat` folder is the CLI's.
 
 use std::path::Path;
+
+use crate::manifest::{LEGACY_MANIFEST_FILE, MANIFEST_FILE};
+
+/// Directories a walk for source files never enters (besides hidden ones).
+pub const SKIPPED_DIRS: [&str; 2] = ["target", "node_modules"];
 
 /// Source file extensions, in the order a relative import tries them (`./x` → `x.vlt`, `x.ts`,
 /// `x.tsx`).
@@ -34,6 +45,49 @@ pub fn strip_source_extension(name: &str) -> Option<&str> {
     })
 }
 
+/// Whether a walk for source files below a folder enters its subdirectory `dir`: not a symlink
+/// (which can lead back up, `src/up -> ..`, walking the package again or forever), not `target/`,
+/// `node_modules/` or hidden, and not the root of a nested package.
+pub fn walks_into(dir: &Path) -> bool {
+    let Some(name) = dir.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let link = std::fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink());
+    !link
+        && !SKIPPED_DIRS.contains(&name)
+        && !name.starts_with('.')
+        && !dir.join(MANIFEST_FILE).is_file()
+        && !dir.join(LEGACY_MANIFEST_FILE).is_file()
+}
+
+/// Whether a walk for source files keeps a file named `name`: a source module that
+/// is not a package manifest.
+pub fn walk_keeps(name: &str) -> bool {
+    name != MANIFEST_FILE && is_source_name(name)
+}
+
+/// Whether the walk of `folder` finds the source file `file`: `file` is under it, every directory
+/// between them is one the walk enters ([`walks_into`]), and the walk keeps its name
+/// ([`walk_keeps`]). Both paths are compared as given, so callers pass them in the same form
+/// (both canonical, say).
+pub fn in_folder(folder: &Path, file: &Path) -> bool {
+    let Ok(rel) = file.strip_prefix(folder) else {
+        return false;
+    };
+    let Some(name) = rel.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    if !walk_keeps(name) {
+        return false;
+    }
+    let mut dir = folder.to_path_buf();
+    let parts: Vec<_> = rel.components().collect();
+    parts[..parts.len() - 1].iter().all(|part| {
+        dir.push(part);
+        walks_into(&dir)
+    })
+}
+
 /// Whether `path` is a TypeScript file without JSX (`.ts`): JSX is allowed only in `.tsx` (and
 /// `.vlt`) files, as in TypeScript.
 pub fn is_plain_ts(path: &Path) -> bool {
@@ -56,5 +110,57 @@ mod tests {
         assert_eq!(strip_source_extension("dir/x.tsx"), Some("dir/x"));
         assert!(is_plain_ts(Path::new("x.ts")));
         assert!(!is_plain_ts(Path::new("x.tsx")));
+    }
+
+    #[test]
+    fn folder_membership_follows_the_walk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for f in [
+            "a.vlt",
+            "sub/b.ts",
+            "node_modules/c.ts",
+            "target/d.vlt",
+            ".hidden/e.vlt",
+            "nested/package.vlt",
+            "nested/f.vlt",
+            "legacy/velt.toml",
+            "legacy/g.vlt",
+        ] {
+            let p = root.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "").unwrap();
+        }
+        assert!(in_folder(root, &root.join("a.vlt")));
+        assert!(in_folder(root, &root.join("sub/b.ts")));
+        // A file not saved yet counts by its name and folders.
+        assert!(in_folder(root, &root.join("sub/new.vlt")));
+        for f in [
+            "node_modules/c.ts",
+            "target/d.vlt",
+            ".hidden/e.vlt",
+            "nested/f.vlt",
+            "nested/package.vlt",
+            "legacy/g.vlt",
+            "package.vlt",
+            "x.d.ts",
+            "x.json",
+        ] {
+            assert!(!in_folder(root, &root.join(f)), "{f}");
+        }
+        assert!(!in_folder(&root.join("sub"), &root.join("a.vlt")));
+        // The folder itself may be anything: only what is below it counts.
+        assert!(in_folder(&root.join("nested"), &root.join("nested/f.vlt")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_directories_are_outside() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir(root.join("real")).unwrap();
+        std::os::unix::fs::symlink("real", root.join("link")).unwrap();
+        assert!(in_folder(root, &root.join("real/a.vlt")));
+        assert!(!in_folder(root, &root.join("link/a.vlt")));
     }
 }

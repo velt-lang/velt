@@ -65,11 +65,13 @@ impl Analysis {
     }
 }
 
-/// Analyze the document at `path` whose current text is `overlay[path]`.
+/// Analyze the document at `path` whose current text is `overlay[path]`; `ts_folders` caches the
+/// packages' `tsCompat` folders across analyses.
 pub fn analyze(
     loader: &dyn ProgramLoader,
     path: &Path,
     overlay: &HashMap<PathBuf, String>,
+    ts_folders: &mut crate::ts_compat::FolderCache,
 ) -> Analysis {
     let mut sm = SourceMap::new();
     let mut diagnostics = vec![];
@@ -92,7 +94,7 @@ pub fn analyze(
     };
     run_sema(&mut analysis);
     let linted = catch_unwind(AssertUnwindSafe(|| {
-        crate::ts_compat::findings(&analysis, path, overlay)
+        crate::ts_compat::findings(&analysis, path, overlay, ts_folders)
     }));
     // A crash in the lint costs its findings, not the document's analysis.
     analysis.ts_compat = linted.unwrap_or_default();

@@ -47,35 +47,41 @@ const SHAPE: &str = "the manifest must be one `export const pkg: Package = { …
 impl Manifest {
     /// Read and validate the text of a `package.vlt`. Every problem is a diagnostic in `file`.
     pub fn read(file: FileId, src: &str) -> Result<Manifest, Diagnostics> {
-        if src.len() > MAX_BYTES {
-            return Err(vec![Diagnostic::error(
-                format!("the manifest is larger than {} KiB", MAX_BYTES / 1024),
-                Span::new(file, 0, 0),
-            )]);
-        }
-        let (module, diags) = velt_syntax::parse_file(file, src);
-        if diags.iter().any(Diagnostic::is_error) {
-            return Err(diags);
-        }
-        let mut reader = Reader {
-            src,
-            diags: Vec::new(),
-            values: 0,
-            too_many: false,
-        };
-        let init = reader.declaration(&module);
-        let value = init.and_then(|e| reader.value(e));
-        if let Some(value) = value {
-            let manifest = reader.manifest(&value);
-            if reader.diags.is_empty() {
-                return Ok(manifest);
-            }
-        }
-        if reader.diags.is_empty() {
-            reader.diags.push(Diagnostic::error(SHAPE, module.span));
-        }
-        Err(reader.diags)
+        read_with_value(file, src).map(|(manifest, _)| manifest)
     }
+}
+
+/// [`Manifest::read`], also returning the data the manifest was decoded from (for the checks
+/// that point at its values, like [`missing_ts_compat_dirs`]), from one parse.
+fn read_with_value(file: FileId, src: &str) -> Result<(Manifest, Value), Diagnostics> {
+    if src.len() > MAX_BYTES {
+        return Err(vec![Diagnostic::error(
+            format!("the manifest is larger than {} KiB", MAX_BYTES / 1024),
+            Span::new(file, 0, 0),
+        )]);
+    }
+    let (module, diags) = velt_syntax::parse_file(file, src);
+    if diags.iter().any(Diagnostic::is_error) {
+        return Err(diags);
+    }
+    let mut reader = Reader {
+        src,
+        diags: Vec::new(),
+        values: 0,
+        too_many: false,
+    };
+    let init = reader.declaration(&module);
+    let value = init.and_then(|e| reader.value(e));
+    if let Some(value) = value {
+        let manifest = reader.manifest(&value);
+        if reader.diags.is_empty() {
+            return Ok((manifest, value));
+        }
+    }
+    if reader.diags.is_empty() {
+        reader.diags.push(Diagnostic::error(SHAPE, module.span));
+    }
+    Err(reader.diags)
 }
 
 /// A data value of the manifest, with its location.

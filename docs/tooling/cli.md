@@ -84,8 +84,9 @@ It exits with 0 when there are no errors (warnings are allowed) and with 1 when 
   including exported functions nothing calls. `velt build` and `velt run` still require `main`.
 - In a package, `velt check` without a file checks the whole package, like `tsc` checks a
   project: every `.vlt`, `.ts` and `.tsx` module under `src/` and `tests/` (recursively,
-  skipping `target/`, `node_modules/`, hidden and symlinked directories; `.d.ts` files are not
-  modules), including `src/lib.vlt` next to `src/main.vlt`, modules nothing imports, and test
+  skipping `target/`, `node_modules/`, hidden and symlinked directories, and nested packages:
+  a directory with its own `package.vlt` is that package's, so check it there; `.d.ts` files are
+  not modules), including `src/lib.vlt` next to `src/main.vlt`, modules nothing imports, and test
   files. The entry (`package.entry`, default `src/main.vlt`) must define a valid `main`; every
   other module is checked as a library module. A library package (no configured entry and no
   `src/main.vlt`) checks `src/lib.vlt` and the rest the same way. All modules are checked

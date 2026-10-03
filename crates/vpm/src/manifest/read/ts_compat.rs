@@ -64,23 +64,35 @@ fn check_dir(dir: &str) -> Result<(), String> {
 }
 
 /// Each folder once: not listed before, and not inside (or around) a folder listed before.
+/// Names are compared ignoring case: `src/Models` is `src/models` on case-insensitive file
+/// systems (macOS and Windows by default), and two entries that differ only in case are
+/// suspicious on any OS, so the manifest means the same everywhere.
 fn check_overlap(dir: &str, earlier: &[String]) -> Result<(), String> {
+    let key = |d: &str| d.to_lowercase();
     let within = |inner: &str, outer: &str| {
-        inner
-            .strip_prefix(outer)
+        key(inner)
+            .strip_prefix(&key(outer))
             .is_some_and(|rest| rest.starts_with('/'))
     };
-    match earlier.iter().find(|e| *e == dir) {
-        Some(_) => Err(format!("`tsCompat` lists `{dir}` twice")),
-        None => match earlier.iter().find(|e| within(dir, e) || within(e, dir)) {
-            Some(e) if within(dir, e) => Err(format!(
-                "`{dir}` is inside `{e}`, which `tsCompat` already lists"
-            )),
-            Some(e) => Err(format!(
-                "`{dir}` contains `{e}`, which `tsCompat` already lists; keep one of them"
-            )),
-            None => Ok(()),
-        },
+    let same = |e: &&String| key(e) == key(dir);
+    if let Some(e) = earlier.iter().find(same) {
+        return Err(if e == dir {
+            format!("`tsCompat` lists `{dir}` twice")
+        } else {
+            format!(
+                "`tsCompat` lists `{dir}` and `{e}`, which differ only in case (the same folder \
+                 on case-insensitive file systems); keep one of them"
+            )
+        });
+    }
+    match earlier.iter().find(|e| within(dir, e) || within(e, dir)) {
+        Some(e) if within(dir, e) => Err(format!(
+            "`{dir}` is inside `{e}`, which `tsCompat` already lists"
+        )),
+        Some(e) => Err(format!(
+            "`{dir}` contains `{e}`, which `tsCompat` already lists; keep one of them"
+        )),
+        None => Ok(()),
     }
 }
 
@@ -88,24 +100,13 @@ fn check_overlap(dir: &str, earlier: &[String]) -> Result<(), String> {
 /// (the package root), each at the string that names it. Folders the reader rejects are left to
 /// its errors, and a manifest it cannot read gives no warnings.
 pub fn missing_ts_compat_dirs(file: FileId, src: &str, root: &Path) -> Diagnostics {
-    let Ok(manifest) = super::Manifest::read(file, src) else {
+    let Ok((manifest, value)) = super::read_with_value(file, src) else {
         return vec![];
     };
     if manifest.ts_compat.is_empty() {
         return vec![];
     }
-    let (module, _) = velt_syntax::parse_file(file, src);
-    let mut reader = Reader {
-        src,
-        diags: Vec::new(),
-        values: 0,
-        too_many: false,
-    };
-    let Some(ValueKind::Object(fields)) = reader
-        .declaration(&module)
-        .and_then(|e| reader.value(e))
-        .map(|v| v.kind)
-    else {
+    let ValueKind::Object(fields) = &value.kind else {
         return vec![];
     };
     let Some((

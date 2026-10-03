@@ -103,8 +103,9 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   need not define `main` (a library module; every function body is still checked), a `main` that
   is there is validated as for `build`, which, like `run`, still requires one. Without a file, in
   a package: every source module (`.vlt`, `.ts`, `.tsx`; not `.d.ts`) under `src/` and `tests/`
-  (recursively, skipping `target/`, `node_modules/`, hidden and symlinked directories; no other
-  directory), loaded together in one front-end run with the package's root module: the entry
+  (recursively, skipping `target/`, `node_modules/`, hidden and symlinked directories and nested
+  packages, i.e. directories with their own manifest, whose `package.vlt` is never a module; no
+  other directory; `vpm::sources::walks_into`), loaded together in one front-end run with the package's root module: the entry
   (`package.entry`, default `src/main.vlt`), which must define a valid `main`, or, when there is
   no configured entry and no `src/main.vlt`, `src/lib.vlt` as a library module. Every other
   module is a library module; one whose module path is taken or reserved (`src/std/x.vlt`, a
@@ -209,7 +210,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   a test file or the manifest/lockfile (each run discovers test files anew). Runs until
   interrupted.
 - `test`: finds `*.test.vlt`, `*.test.ts` and `*.test.tsx` (recursively, skipping `target/`,
-  `node_modules/`, hidden and symlinked directories); every `export function test_*()` (no
+  `node_modules/`, hidden and symlinked directories and nested packages below the searched
+  directory); every `export function test_*()` (no
   params) is a test (additive: `export async function test_*()` too; the harness awaits it).
   Prints `ok <name>` / `FAILED <name>` and a summary; exit 1 on any failure. Test binaries in
   `<pkg or cwd>/target/velt/test/`.

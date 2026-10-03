@@ -565,6 +565,19 @@ fn ts_compat_folders() {
             "`src/a` contains `src/a/b`, which `tsCompat` already lists; keep one of them".into(),
             "\"src/a\"",
         ),
+        // Case is ignored: these are one folder on case-insensitive file systems.
+        (
+            "tsCompat: [\"src/models\", \"src/Models/sub\"]",
+            "`src/Models/sub` is inside `src/models`, which `tsCompat` already lists".into(),
+            "\"src/Models/sub\"",
+        ),
+        (
+            "tsCompat: [\"src/Models\", \"src/models\"]",
+            "`tsCompat` lists `src/models` and `src/Models`, which differ only in case (the same \
+             folder on case-insensitive file systems); keep one of them"
+                .into(),
+            "\"src/models\"",
+        ),
     ];
     for (fields, message, text) in cases {
         let (got, covered) = error(&with(fields));

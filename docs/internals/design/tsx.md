@@ -201,10 +201,15 @@ files; outside a package or without `tsCompat` it fails with a message pointing 
 plain `velt check` doesn't lint them: the lint stays opt-in (one flag for CI), so a package's
 check result doesn't change when a folder is shared. The language server lints an open document
 inside the folders on its own analysis (`velt_tscompat::lint_program` takes the loaded modules
-and the checker's diagnostics, so nothing is checked twice), publishes the findings as
+and the checker's diagnostics, so nothing is checked twice, and lints only the document, though
+its imports are judged against every loaded file in the folders), publishes the findings as
 diagnostics (code = rule, source `velt ts-compat`) and offers each fix as a preferred quick fix
-([editors](../../tooling/editors.md#code-shared-with-typescript)). In both, the files in scope
-are those in the folders, so an import leaving them is `outside-import`.
+([editors](../../tooling/editors.md#code-shared-with-typescript)). It caches each package's
+folders by the manifest's text or modification time and re-analyzes the open documents when a
+manifest closes or changes on disk, or a folder appears or disappears. In both, the files in
+scope are those in the folders, found by one walk (`vpm::sources::walks_into`: no
+`node_modules/`, `target/`, hidden, symlinked or nested package directories), so an import
+leaving them is `outside-import`.
 
 **Planned:** the typed rules (a type query, `ide::type_of(span)`, on the checked program) and
 the oracle's Node runs for behaviour samples.

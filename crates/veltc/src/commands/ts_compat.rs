@@ -53,6 +53,7 @@ pub(super) fn run(
                 &sess.sm,
                 &sess.diagnostics,
                 &|path| scope.contains(path),
+                &|_| true,
             );
             super::check::report_same_path(sess, &same_path, first);
             let checked = match checked {
@@ -107,14 +108,14 @@ fn one_package(files: &[PathBuf]) -> Result<(), String> {
 /// directory names them. Outside a package, or without `tsCompat`, the message says to list
 /// folders or name paths; a folder that is not there is an error.
 fn package_folders() -> Result<Vec<PathBuf>, String> {
-    const NAME_PATHS: &str = "or name the files or directories to lint: `velt check --ts-compat \
+    const NAME_PATHS: &str = "Or name the files or directories to lint: `velt check --ts-compat \
                               src/models`";
     let cwd =
         std::env::current_dir().map_err(|e| format!("cannot read the current directory: {e}"))?;
     let Some(root) = vpm::manifest::find_package_root(&cwd) else {
         return Err(format!(
             "`velt check --ts-compat` without paths lints the folders a package's `tsCompat` \
-             lists, but there is no `package.vlt` in `{}` or any parent directory; {NAME_PATHS}",
+             lists, but there is no `package.vlt` in `{}` or any parent directory. {NAME_PATHS}",
             cwd.display()
         ));
     };
@@ -123,7 +124,7 @@ fn package_folders() -> Result<Vec<PathBuf>, String> {
     if manifest.ts_compat.is_empty() {
         return Err(format!(
             "package `{name}` has no `tsCompat` folders to lint: list them in package.vlt \
-             (`tsCompat: [\"src/models\"]`), {NAME_PATHS}"
+             (`tsCompat: [\"src/models\"]`). {NAME_PATHS}"
         ));
     }
     let mut dirs = vec![];

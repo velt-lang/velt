@@ -119,7 +119,12 @@ plain `velt check` never lint.
 
 - Each entry is a `/`-separated path relative to the package root (`src/models`; not
   `./src/models`, `../shared` or `/abs`, no trailing `/`).
-- Each folder once: a folder listed twice, or inside another listed one, is an error.
+- Each folder once: a folder listed twice, or inside another listed one, is an error. Case
+  doesn't matter here (`src/models` and `src/Models/sub` overlap): on macOS and Windows they
+  are the same folder, so such a list would mean something else on Linux.
+- The files in a folder are found as `velt check` finds a package's: `node_modules/`,
+  `target/`, hidden and symlinked directories are skipped, and so is a package nested in the
+  folder (a directory with its own `package.vlt`), which lints its own `tsCompat`.
 - Not empty: leave the field out instead of writing `[]`.
 - A folder that doesn't exist is a warning in the editor and an error for
   `velt check --ts-compat`.

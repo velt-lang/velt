@@ -87,7 +87,12 @@ fn the_ast_fallback_sees_spreads_and_fragments() {
         (path.clone(), text.to_string()),
         (dir.join("jsx_ui/jsx-runtime.vlt"), RUNTIME.to_string()),
     ]);
-    let analysis = crate::analysis::analyze(&super::loader::TestLoader, &path, &overlay);
+    let analysis = crate::analysis::analyze(
+        &super::loader::TestLoader,
+        &path,
+        &overlay,
+        &mut Default::default(),
+    );
     for needle in ["rest}", "items}"] {
         let offset = text.find(needle).unwrap() as u32 + 1;
         let info = scope::at_offset(&analysis, offset);
