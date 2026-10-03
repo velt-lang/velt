@@ -1,0 +1,36 @@
+// The error type of a generator's result bounds what its body throws also when the result is
+// written through a type alias (`type Gen = Generator<i64, A>`), as when it is written out.
+class A extends Error {
+  constructor() {
+    super("a");
+  }
+}
+
+class B extends Error {
+  constructor() {
+    super("b");
+  }
+}
+
+type Gen = Generator<i64, A>;
+type AGen = AsyncGenerator<i64, A>;
+type It<E> = Iterator<i64, E>;
+
+function* g(): Gen {
+  yield 1;
+  throw new B();
+}
+
+async function* ag(): AGen {
+  yield 1;
+  throw new B();
+}
+
+function* h(): It<A> {
+  throw new B();
+}
+
+function* ok(): Gen {
+  yield 1;
+  throw new A();
+}

@@ -35,7 +35,7 @@ pub(super) fn generator_sig(
         report_bad_result(cx, ret, sig);
         return (cx.ty.error, throws);
     };
-    let written = written_error(sig).then_some(args[1]);
+    let written = (written_error(sig) || args[1] != cx.ty.never).then_some(args[1]);
     let throws = match (throws, written) {
         (Some(DeclaredThrows { ty, span, .. }), w) => Some(DeclaredThrows {
             ty: cx.join_errors(ty, w),
@@ -60,7 +60,9 @@ fn generator_args(cx: &Ctx, ret: TyId, is_async: bool) -> Option<Vec<TyId>> {
     (args.len() == 2 && async_ == is_async).then_some(args)
 }
 
-/// Is the error type argument written (`Generator<T, E>`), rather than the default?
+/// Is the error type argument written (`Generator<T, E>`), rather than the default? Also when
+/// it is not `never` (`type Gen = Generator<i64, A>`: written in the alias); `never` through an
+/// alias counts as the default.
 fn written_error(sig: &ast::FnSig) -> bool {
     matches!(
         sig.ret.as_ref().map(|t| &t.kind),
