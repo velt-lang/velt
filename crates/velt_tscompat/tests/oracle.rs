@@ -75,6 +75,7 @@ const CLAIMS: &[(&str, Claim)] = &[
     ("json-map", Claim::Behaviour),
     ("string-offsets", Claim::Behaviour),
     ("unsigned-arith", Claim::Behaviour),
+    ("null-default", Claim::Behaviour),
     ("map-iter-as-array", Claim::Rejected),
     ("velt-global", Claim::Rejected),
     ("velt-member", Claim::Rejected),
@@ -96,12 +97,7 @@ const IGNORED: &[(&str, &str, &str)] = &[(
 /// Lines where `tsc` rejects code the lint passes, each a rule still to write: `(file in the
 /// project, line, why)`. The oracle fails when one of them compiles, so the entry goes when the
 /// rule comes.
-const KNOWN_GAPS: &[(&str, usize, &str)] = &[(
-    "defaults.fixed.ts",
-    8,
-    "a destructuring default replaces `null` in Velt but only `undefined` in JavaScript, so \
-     `tsc` keeps `x: number | null` (and Node computes with `null`); a typed rule (#13 step 2)",
-)];
+const KNOWN_GAPS: &[(&str, usize, &str)] = &[];
 
 fn claim(code: &str) -> &'static Claim {
     &CLAIMS

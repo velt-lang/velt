@@ -6,6 +6,7 @@
 //! - [`nulls`] for `strict-null-eq` and `undefined-into-null` (and which expressions are
 //!   `undefined` in JavaScript);
 //! - [`slots`] for `null-into-optional` and `undefined-into-null` in arguments and fields;
+//! - [`defaults`] for `null-default`;
 //! - [`templates`] for `object-in-template`, `nullable-in-template`, `json-map`;
 //! - [`strings`] for `string-offsets`, `map-iter-as-array`;
 //! - [`globals`] for `velt-global`, `velt-member`, with the prelude's classification in
@@ -13,6 +14,7 @@
 //! - [`catch`] for `catch-unknown`.
 
 mod catch;
+mod defaults;
 mod globals;
 mod nulls;
 mod numbers;
@@ -236,6 +238,7 @@ impl<'a> Visit<'a> for Walk<'a> {
             strings::iter_as_array(init, &mut self.t);
         }
         nulls::var_decl(v, &mut self.t);
+        defaults::var_decl(v, &mut self.t);
         visit::walk_pattern(&v.pattern, self);
     }
 

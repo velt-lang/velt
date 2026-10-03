@@ -145,6 +145,7 @@ Accepted by `tsc`, but behaves differently:
 | `object-in-template` | `${x}` of an array, tuple, map, object or class instance without its own `toString()`: Velt prints the contents | error | |
 | `default-sort` | `sort()` / `toSorted()` without a comparator on numbers | error (a fix: `(a, b) => a - b`, not for unsigned elements) | |
 | `json-map` | `JSON.stringify` of a value holding a `Map` (in a field, element or union member) | error | |
+| `null-default` | a destructuring default on a property whose type includes `null` (not optional): Velt applies it to `null`, JS only to `undefined` (#431) | error (a fix: `const x = p.x ?? d`) | |
 | `nullable-in-template` | `${x}` where `x: T \| null` | warning | |
 | `string-offsets` | `length`, `slice`, `indexOf`, `charCodeAt`, `s[i]`, … on a string: UTF-8 vs UTF-16 offsets (silent on ASCII literals) | warning | |
 | `unsigned-arith` | `-`, `-=`, `--` with an unsigned result (`xs.length - 1` wraps at zero) | warning | |
@@ -200,6 +201,9 @@ Notes on the rules as built, against the issue's first design:
 - `catch-unknown` treats `e` as narrowed inside an `if (e instanceof C)` branch, after
   `e instanceof C &&` and in the `?` branch of `e instanceof C ? … : …`; not yet after an early
   exit (`if (!(e instanceof C)) throw e;`).
+- `null-default` skips optional properties (`x?: T`): JavaScript leaves them `undefined`, so the
+  default applies in both. Its fix rewrites the declaration when the destructured value is a
+  variable or a field path, with one `const x = p.x ?? d` per such property.
 - Not built: `comparable`'s `<` on a `T extends Comparable<T>` (the bound's type is
   `velt-global`), `implicit-dispose` and `init-order`. Nor `JSON.stringify` of an optional field
   of an object type, which Velt writes as `null` and JavaScript leaves out.

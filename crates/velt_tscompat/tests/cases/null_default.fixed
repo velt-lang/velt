@@ -1,0 +1,19 @@
+// A destructuring default replaces `null` in Velt, but only `undefined` in JavaScript (#431).
+// Optional fields are left out (`undefined`) in JavaScript, so their defaults agree.
+
+export type Pt = { x: number | null; y: number };
+
+export function sum(p: Pt): number {
+  const { y = 0.0 } = p;
+  const x = p.x ?? 1.0; //~ null-default
+  return x + y;
+}
+
+export type Size = { w: number | null; h: number | null; unit?: string };
+
+export function area(s: Size): string {
+  const w = s.w ?? 0.0;
+  const h = s.h ?? 0.0; //~ null-default null-default
+  const { unit = "px" } = s;
+  return `${w * h}${unit}`;
+}

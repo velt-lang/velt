@@ -54,6 +54,7 @@ pub const RULES: &[&str] = &[
     "null-into-optional",
     "undefined-into-null",
     "catch-unknown",
+    "null-default",
 ];
 
 /// How serious a [`Finding`] is.
