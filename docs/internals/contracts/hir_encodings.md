@@ -6,10 +6,14 @@ Maintainer-owned, like hir.rs.
 ## M2 additions
 (see docs/reference/classes.md and docs/reference/memory.md):
 - Class instances are heap-allocated and referenced by a pointer; `Option<Class>` uses null.
-  `new C(args)` is `ExprKind::New`: lowering allocates, evaluates field defaults
-  (`FieldDef::default`, in field order, base-class fields first), then calls the constructor
-  (a `Def::Fn` whose first param is `this` with `PassMode::BorrowMut`). `super(args)` in a
-  constructor is a `Call` of the base constructor with `Upcast(this)`.
+  `new C(args)` is `ExprKind::New`: lowering allocates and calls the constructor (a `Def::Fn`
+  whose first param is `this` with `PassMode::BorrowMut`). `super(args)` in a constructor is a
+  `Call` of the base constructor with `Upcast(this)`. Field defaults (`FieldDef::default`) run
+  in JavaScript's order: a constructor evaluates those of its class's fields that its base
+  constructor's class does not have, right after the `super(args)` call (on entry when no
+  ancestor has a constructor); `new` evaluates the rest (those of the classes below the one
+  declaring the constructor, or all of them without one) after the constructor returns.
+  Sema's throw sets follow the same split.
 - Virtual dispatch only for methods overridden somewhere: `Callee::Virtual { slot }` indexes
   `AdtDef::vtable` of the receiver's dynamic class; all other method calls are `Callee::Def`.
 - Interface values (`Shape[]`) are `TyKind::Dyn`: fat pointer (data, vtable). `ExprKind::ToDyn`

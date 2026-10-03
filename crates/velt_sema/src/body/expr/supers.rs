@@ -46,6 +46,12 @@ impl FnCx<'_, '_> {
         let mut all = vec![recv];
         all.extend(ck.args);
         self.throw_src(ThrowSrc::Call(ctor, ck.type_args.clone(), span));
+        // The field initializers of this class (and of those between it and `owner`) run
+        // right after the base constructor returns (lowering's ctor_init.rs).
+        let this_ty = self.this_ty();
+        for s in self.class_default_throws(this_ty, Some(owner), span) {
+            self.throw_src(s);
+        }
         let kind = H::Call {
             callee: Callee::Def(ctor, ck.type_args),
             args: all,
@@ -101,8 +107,20 @@ impl FnCx<'_, '_> {
 
     /// Base class type of the enclosing method's `this`.
     pub(super) fn this_base(&mut self) -> Option<TyId> {
-        let l = self.f.scopes.first()?.names.get("this").copied()?;
-        let t = self.local_ty(l);
+        let t = self.this_ty();
         self.cx.base_of(t)
+    }
+
+    /// The type of the enclosing method's `this` (the error type outside methods).
+    pub(crate) fn this_ty(&mut self) -> TyId {
+        match self
+            .f
+            .scopes
+            .first()
+            .and_then(|s| s.names.get("this").copied())
+        {
+            Some(l) => self.local_ty(l),
+            None => self.cx.ty.error,
+        }
     }
 }

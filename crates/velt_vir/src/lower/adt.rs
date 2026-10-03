@@ -95,27 +95,26 @@ impl FnLower<'_, '_> {
         Place::local(obj)
     }
 
-    /// `new C<T>(args)`: allocate, evaluate field defaults (in the class's type context), call
-    /// the constructor (with the type args of the class declaring it) with the object as `this`.
+    /// `new C<T>(args)`: allocate, call the constructor (with the type args of the class
+    /// declaring it) with the object as `this`, then run the field initializers that
+    /// constructor does not run (ctor_init.rs): those of the classes below the one declaring it,
+    /// or every one when no class in the chain has a constructor.
     pub(super) fn new_object(&mut self, ty: TyId, args: &[hir::Expr]) -> Operand {
         let ty = self.sub(ty);
-        let TyKind::Adt(d, cargs) = self.cx.kind(ty) else {
+        let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             ice("new of a non-class type")
         };
         let obj = self.alloc_object(ty);
-        let adt = self.cx.adt_def(d);
-        let saved = std::mem::replace(&mut self.targs, cargs.clone());
-        for (i, f) in adt.fields.iter().enumerate() {
-            if let Some(def) = &f.default {
-                let v = self.consume(def);
-                let p = self.field_place(&obj, ty, i as u32);
-                self.store(p, v);
+        let from = match self.cx.adt_def(d).ctor {
+            Some(ctor) => {
+                let cargs = self.cx.ctor_type_args(ctor, ty);
+                self.call_def(ctor, cargs, vec![Operand::Copy(obj.clone())], args);
+                self.ctor_fields(ctor)
             }
-        }
-        self.targs = saved;
-        if let Some(ctor) = adt.ctor {
-            let cargs = self.cx.ctor_type_args(ctor, ty);
-            self.call_def(ctor, cargs, vec![Operand::Copy(obj.clone())], args);
+            None => 0,
+        };
+        if !self.dead() {
+            self.init_fields(&obj, ty, from);
         }
         Operand::Copy(obj)
     }

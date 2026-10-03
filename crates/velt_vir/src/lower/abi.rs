@@ -68,6 +68,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             transfer_args: false,
             transfer_call: false,
             same_mode: false,
+            ctor_self: None,
         };
         let entry = lw.new_block();
         lw.live[entry.0 as usize] = true;
@@ -144,6 +145,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let ret = lw.sub(f.ret);
         lw.ret_ty = Some(ret);
         lw.throws = lw.cx.fn_throws(f, targs);
+        lw.ctor_self = lw.ctor_class(def, f);
         let scan = FlagScan::run(hir_prog, &f.body);
         lw.ref_bindings = scan.ref_bindings.iter().copied().collect();
         let (params, attrs) = lw.declare_locals(def, f);
@@ -289,6 +291,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.cancel_before_start(f);
         }
         self.push_scope(ScopeKind::Block);
+        self.ctor_entry_inits();
         for s in &f.body.block.stmts {
             self.stmt(s);
         }

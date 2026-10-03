@@ -153,9 +153,8 @@ contents.
   classes and no `protected` members (`private` is private to the declaring class); a
   constructor can be `private` or `protected`, with TypeScript's rules.
 - `static readonly` constants exist; mutable statics don't.
-- `new` evaluates all field initializers (base class first) before running the constructors;
-  TypeScript runs the base initializers and constructor before the derived initializers. A known
-  difference, tracked in [#273](https://github.com/velt-lang/velt/issues/273).
+- Field initializers and constructors run in JavaScript's order: base initializers, base
+  constructor, derived initializers, derived constructor.
 - A method that is never overridden is called directly; only overridden methods use a vtable.
 - `struct` declares an object type with the same members as a class, built from a literal
   (no constructor). **Planned**

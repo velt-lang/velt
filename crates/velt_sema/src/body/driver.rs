@@ -285,7 +285,8 @@ impl FnCx<'_, '_> {
     }
 
     /// Constructor rules: `super(...)` first when the base class has a constructor, and every
-    /// own field without a default assigned on every path.
+    /// own field without a default assigned on every path. Records what the field initializers
+    /// the constructor runs on entry may throw.
     fn check_ctor(&mut self, f: &crate::defs::FnInfo, block: &hir::Block) {
         let Some(owner) = f.owner else { return };
         let a = self.cx.adt(owner).expect("ICE: ctor owner");
@@ -300,6 +301,14 @@ impl FnCx<'_, '_> {
             .map(|(i, fl)| ((a.own_fields_start + i) as u32, fl.name.clone()))
             .collect();
         let class = a.name.clone();
+        if base_ctor.is_none() {
+            // No ancestor has a constructor: this one runs every field initializer on entry
+            // (with one, they run after `super(...)`, which accounts for them).
+            let this_ty = self.this_ty();
+            for s in self.class_default_throws(this_ty, None, f.name_span) {
+                self.throw_src(s);
+            }
+        }
         if base_ctor.is_some() && !self.f.super_called {
             self.cx.error(
                 Diagnostic::error(

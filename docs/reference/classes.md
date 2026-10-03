@@ -7,11 +7,14 @@ hidden classes and no runtime shape checks.
 
 - Fields need a type (`count: i64 = 0`), or an initializer that states one (`count = 0`,
   `done = false`, `items = new Map<string, i64>()`). A field without a default must be assigned
-  in the `constructor`. `new C(…)` allocates the object on the heap, evaluates the field
-  initializers (base class ones first) and then runs the constructor; it throws whatever they
-  throw ([Errors](errors.md#throwing)). This order is a known difference from TypeScript, which
-  runs the base class's initializers and constructor before the derived class's initializers
-  (tracked in [#273](https://github.com/velt-lang/velt/issues/273)).
+  in the `constructor`. `new C(…)` allocates the object on the heap and constructs it in
+  JavaScript's order: a class's field initializers run once its base class is constructed
+  (right after `super(…)` returns, or after the inherited constructor when the class has no
+  constructor of its own), in declaration order, before the rest of its constructor body. So for
+  `class D extends B`: the arguments, B's initializers, B's constructor body, D's initializers,
+  D's constructor body. `new` throws whatever the initializers and constructors throw
+  ([Errors](errors.md#throwing)); a constructor's `throws` clause covers the initializers it
+  runs (those of its class and of the classes between it and the next constructor up).
   A field declared from an integer literal (`count = 0`) holds a JS number, like
   `let count = 0` ([Numbers](types.md#numbers)).
 - **Parameter properties**: `constructor(private readonly name: string, public age: i64) {}`

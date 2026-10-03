@@ -79,8 +79,10 @@ impl FnCx<'_, '_> {
                 return self.error_expr(span);
             }
         }
-        // `new` evaluates every field default (own and inherited) before the constructor.
-        for s in self.class_default_throws(ck.ret, span) {
+        // `new` runs the constructor, which runs the field initializers of its class and the
+        // classes above it, then those of the classes below the one declaring it.
+        let owner = ctor.and_then(|c| self.cx.fn_info(c).owner);
+        for s in self.class_default_throws(ck.ret, owner, span) {
             self.throw_src(s);
         }
         if let Some(c) = ctor {
@@ -98,12 +100,20 @@ impl FnCx<'_, '_> {
         self.mk(kind, ck.ret, span)
     }
 
-    /// What the field defaults of class type `ty` (and of its base classes) may throw, as
-    /// thrown by the `new` at `span`.
-    fn class_default_throws(&mut self, ty: TyId, span: Span) -> Vec<ThrowSrc> {
+    /// What the field initializers of class type `ty` and of its base classes up to (not
+    /// including) class `stop` may throw, as thrown at `span`.
+    pub(crate) fn class_default_throws(
+        &mut self,
+        ty: TyId,
+        stop: Option<DefId>,
+        span: Span,
+    ) -> Vec<ThrowSrc> {
         let TyKind::Adt(d, args) = self.cx.ty.kind(ty).clone() else {
             return vec![];
         };
+        if Some(d) == stop {
+            return vec![];
+        }
         crate::body::field_defaults(self.cx, d);
         let Some(a) = self.cx.adt(d) else {
             return vec![];
@@ -119,7 +129,7 @@ impl FnCx<'_, '_> {
             .collect();
         if let Some(b) = base {
             let b = self.cx.ty.subst(b, &args);
-            out.extend(self.class_default_throws(b, span));
+            out.extend(self.class_default_throws(b, stop, span));
         }
         out
     }

@@ -32,6 +32,7 @@ mod cells;
 mod cfg;
 mod closure;
 mod console;
+mod ctor_init;
 mod dispatch;
 mod drops;
 mod entry;
@@ -358,4 +359,7 @@ struct FnLower<'c, 'h> {
     transfer_call: bool,
     /// Building `Glue::Same`: objects inside the compared values compare by identity (same.rs).
     same_mode: bool,
+    /// While lowering a class's constructor: the (concrete) class type, whose field
+    /// initializers the constructor runs (ctor_init.rs).
+    ctor_self: Option<TyId>,
 }

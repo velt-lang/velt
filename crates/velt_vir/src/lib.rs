@@ -60,7 +60,8 @@
 //!   space and have no VIR field (later fields shift down);
 //! * class → `Ptr` to a heap object `[vtable: ptr]? + fields` (base-class fields first; the vtable
 //!   pointer exists when the class hierarchy has a subclass or a virtual method). Objects are
-//!   allocated with `velt_rt_alloc`, zero-filled, then field defaults and the constructor run;
+//!   allocated with `velt_rt_alloc`, zero-filled, then the constructors and field initializers
+//!   run in JavaScript's order (`lower/ctor_init.rs`);
 //! * C-like enum → `I64` discriminant; other enums → `{ tag: u32 }` base sized for the largest
 //!   `{ tag, payload… }` variant view (tag = variant index);
 //! * `T | null` → `Ptr` (null = none) for classes and `shared<T>`; otherwise `{ bool, T }`;
