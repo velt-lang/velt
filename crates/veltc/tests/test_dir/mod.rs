@@ -40,8 +40,8 @@ impl Drop for TestDir {
     }
 }
 
-/// How long Windows may take to release the files of programs that have exited.
-const RELEASE_LIMIT: Duration = Duration::from_secs(10);
+/// How long Windows may take to release the files of programs that have exited (a hang guard).
+const RELEASE_LIMIT: Duration = Duration::from_secs(60);
 
 /// Remove `dir` and everything in it. On Windows the executable and DLLs of a program that has
 /// exited, and been waited for, can stay locked for a few more milliseconds (the system tears

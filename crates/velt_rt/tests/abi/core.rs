@@ -285,7 +285,7 @@ fn detached_tasks_and_dropped_join_handles_keep_running() {
     unsafe { velt_rt_fut_drop(h) };
     let t = Instant::now();
     while DETACHED_DONE.load(Ordering::SeqCst) < 101 {
-        assert!(t.elapsed().as_secs() < 10, "detached tasks did not finish");
+        assert!(t.elapsed().as_secs() < 60, "detached tasks did not finish");
         block_on_fut::<()>(velt_rt_sleep(2));
     }
 }

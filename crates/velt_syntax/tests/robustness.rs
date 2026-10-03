@@ -241,7 +241,7 @@ fn deep_nesting_is_an_error_not_a_crash() {
 
 /// 60 levels parse (exponential cost would never finish); `src/linear_tests.rs` counts the work.
 #[test]
-fn nested_ternaries_are_not_exponential() {
+fn sixty_nested_ternaries_parse() {
     let mut s = String::from("x");
     for i in 0..60 {
         s = format!("c{} ? {} : y{}", i, s, i);
