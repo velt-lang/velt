@@ -41,7 +41,10 @@ Promises behave like JavaScript's, at Rust's cost:
   values nothing else references (an HTTP handler capturing a disposable resource, say) goes to
   the task as it is, and a captured value's `[Symbol.dispose]()` runs once.
 - A value owning a `[Symbol.dispose]` resource is copied by its class's own `clone()` method
-  ([Classes](classes.md)), so each copy releases its own resource. One without `clone()` cannot
+  ([Classes](classes.md)), so each copy releases its own resource; what the returned object
+  still shares with the original (a shallow `clone()`) is deep-copied in turn, and a `clone()`
+  that returns `this` stops the program. Classes without a resource are copied field by
+  field, whatever their `clone()` does. One without `clone()` cannot
   be copied: passing it to `spawn` and using it afterwards is an error ("`r` is still used
   after `spawn`, so the task would get a copy, …"); pass the last reference, give the class a
   `clone()`, or share it with `shared(...)`. When another reference is only found at run time

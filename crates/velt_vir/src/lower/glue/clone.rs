@@ -1,6 +1,6 @@
 //! Clone glue bodies (`x.clone()`, owned copies of borrowed values): a bitwise copy first, then
-//! every part that owns resources is replaced by its own deep copy. A class with a `clone()` of
-//! its own (`Cx::own_clone`, transfer.rs) is copied by that method.
+//! every part that owns resources is replaced by its own deep copy. A resource-owning class with
+//! a `clone()` of its own (`Cx::own_clone`, transfer.rs) is copied by that method.
 
 use velt_sema::hir::{PassMode, TyId, TyKind};
 

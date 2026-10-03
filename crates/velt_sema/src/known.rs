@@ -132,8 +132,9 @@ impl Ctx<'_> {
     }
 
     /// The class's own `clone()` method: declared on class `d` itself, without parameters,
-    /// neither async nor throwing, returning the class. Deep copies call it (velt_vir
-    /// `Cx::own_clone` finds the same method).
+    /// neither async nor throwing, returning the class. Deep copies call it when the class owns
+    /// a resource (velt_vir `Cx::own_clone` finds the same method; a class without a resource
+    /// is copied field by field, and needs no `clone()` here either).
     pub fn own_clone(&self, d: DefId) -> Option<DefId> {
         let DefInfo::Adt(a) = &self.info[d.0 as usize] else {
             return None;

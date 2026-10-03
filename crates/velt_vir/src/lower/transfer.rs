@@ -54,15 +54,40 @@ impl Cx<'_> {
         parts.into_iter().any(|p| self.holds_counted_in(p, seen))
     }
 
+    /// Can a deep copy of a `t` call a class's own `clone()` (`own_clone`)? Function and
+    /// interface values may hold any type: assumed to.
+    pub(super) fn reaches_own_clone(&mut self, t: TyId) -> bool {
+        self.reaches_own_clone_in(t, &mut HashSet::new())
+    }
+
+    fn reaches_own_clone_in(&mut self, t: TyId, seen: &mut HashSet<TyId>) -> bool {
+        if !seen.insert(t) {
+            return false;
+        }
+        let parts = match self.kind(t) {
+            TyKind::Dyn(..) | TyKind::Closure(_) | TyKind::FnPtr { .. } => return true,
+            TyKind::Shared(_) | TyKind::Promise(..) => return false,
+            TyKind::Adt(..) if self.own_clone(t).is_some() => return true,
+            TyKind::Array(e) => vec![e],
+            TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
+            _ => self.part_types(t),
+        };
+        parts
+            .into_iter()
+            .any(|p| self.reaches_own_clone_in(p, seen))
+    }
+
     /// Does a value of `t` own a resource that cannot be deep-copied: a value with a
     /// `[Symbol.dispose]()` hook and no `clone()` of its own, or a promise (directly, or in a
     /// field, element or payload)? Function and interface values are checked when they are
     /// copied (their environment's or implementor's own glue).
     pub(super) fn uncopyable(&mut self, t: TyId) -> bool {
-        self.uncopyable_in(t, &mut HashSet::new())
+        self.uncopyable_in(t, true, &mut HashSet::new())
     }
 
-    fn uncopyable_in(&mut self, t: TyId, seen: &mut HashSet<TyId>) -> bool {
+    /// `uncopyable`, or with `honour_clones` false: could a field-by-field copy of `t` duplicate
+    /// a resource (whatever `clone()` methods its classes have)?
+    fn uncopyable_in(&mut self, t: TyId, honour_clones: bool, seen: &mut HashSet<TyId>) -> bool {
         if !seen.insert(t) {
             return false;
         }
@@ -71,18 +96,23 @@ impl Cx<'_> {
             TyKind::Shared(_) | TyKind::Dyn(..) | TyKind::Closure(_) | TyKind::FnPtr { .. } => {
                 return false
             }
-            TyKind::Adt(..) if self.own_clone(t).is_some() => return false,
+            TyKind::Adt(..) if honour_clones && self.own_clone(t).is_some() => return false,
             TyKind::Adt(d, _) if self.dispose_of(d).is_some() => return true,
             TyKind::Array(e) => vec![e],
             TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
             _ => self.part_types(t),
         };
-        parts.into_iter().any(|p| self.uncopyable_in(p, seen))
+        parts
+            .into_iter()
+            .any(|p| self.uncopyable_in(p, honour_clones, seen))
     }
 
     /// The class's own `clone()` method (declared on the class itself, no parameters, not
-    /// async, cannot throw, returns the class): what a deep copy of an instance calls instead
-    /// of copying it field by field.
+    /// async, cannot throw, returns the class) when the class owns a resource that a
+    /// field-by-field copy would duplicate (a `[Symbol.dispose]` hook, its own or a part's, or
+    /// a promise): what a deep copy of an instance calls instead (#122). Any other class is
+    /// deep-copied field by field whatever its `clone()` does, so a shallow `clone()` cannot
+    /// leave a deep copy sharing objects (a copy for another thread least of all).
     pub(super) fn own_clone(&mut self, t: TyId) -> Option<DefId> {
         let TyKind::Adt(d, _) = self.kind(t) else {
             return None;
@@ -90,10 +120,16 @@ impl Cx<'_> {
         if !self.is_class(t) {
             return None;
         }
+        if let Some(&m) = self.honoured_clones.get(&t) {
+            return m;
+        }
         if self.own_clones.is_none() {
             self.own_clones = Some(self.find_own_clones());
         }
-        self.own_clones.as_ref().and_then(|m| m.get(&d).copied())
+        let m = self.own_clones.as_ref().and_then(|m| m.get(&d).copied());
+        let m = m.filter(|_| self.uncopyable_in(t, false, &mut HashSet::new()));
+        self.honoured_clones.insert(t, m);
+        m
     }
 
     fn find_own_clones(&self) -> HashMap<DefId, DefId> {

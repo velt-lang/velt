@@ -1,0 +1,1 @@
+panic: `Same.clone()` returned an object that is still referenced elsewhere (`this`, or one it also stored); a copy for another task must be a new object

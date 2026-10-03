@@ -248,6 +248,8 @@ struct Cx<'h> {
     /// Classes with a `clone()` of their own, and that method (`own_clone`, transfer.rs),
     /// found on first use.
     own_clones: Option<HashMap<DefId, DefId>>,
+    /// Memoized `own_clone` answers per class type (only resource owners' are honoured).
+    honoured_clones: HashMap<TyId, Option<DefId>>,
     /// Memoized `dyn_modes` per (interface, slot).
     dyn_modes_memo: HashMap<(DefId, u32), Option<Vec<hir::PassMode>>>,
 }

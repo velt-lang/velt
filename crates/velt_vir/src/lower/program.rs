@@ -48,6 +48,7 @@ impl<'h> Cx<'h> {
             facts: Default::default(),
             iface_impls: None,
             own_clones: None,
+            honoured_clones: HashMap::new(),
             dyn_modes_memo: HashMap::new(),
         }
     }

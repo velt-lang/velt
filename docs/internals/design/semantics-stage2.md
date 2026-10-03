@@ -155,8 +155,12 @@ copied, so the task's assignments stay in the task. A promise is marked
 promise from another task is transferred by a promise that task drives, at its next step, after
 the settling statement released its own reference (std/prelude/promise.vlt, #263).
 
-A deep copy of a class with its own `clone()` calls it, so a resource is duplicated by its
-type (#122). A resource without one cannot be copied: sema rejects a `spawn` argument or
+A deep copy of a class with its own `clone()` calls it when a field-by-field copy would
+duplicate a resource (a `[Symbol.dispose]` hook of its own or of a part, or a promise), so a
+resource is duplicated by its type (#122); other classes are copied field by field (a
+shallow `clone()` must not leave a thread copy sharing objects). A copy for another thread
+that called such a `clone()` is transferred in turn (glue/transfer.rs `settle_copy`): parts
+the returned object still shares are deep-copied, and one that is not a new object panics. A resource without one cannot be copied: sema rejects a `spawn` argument or
 spawned capture that is still used afterwards, and one passed through a function value,
 vtable or interface (ownership/boundary.rs); a copy that only turns out to be needed at run
 time panics. A borrow-ABI argument of a call through a function value, vtable or interface

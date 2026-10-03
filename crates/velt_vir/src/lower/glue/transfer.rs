@@ -1,8 +1,8 @@
 //! Transfer glue bodies (lower/transfer.rs): make a value that is about to enter another
 //! thread safe there, in place. A counted object the sender holds the only reference to (a
 //! count of 1) stays, and its parts are transferred in turn; one that is still shared is replaced by a
-//! deep copy (made by the clone glue, so a resource is copied by its own `clone()`) and the
-//! sender's reference released. Values that cannot reach a counted object are left alone.
+//! deep copy (made by the clone glue, so a resource is copied by its own `clone()`, whose result
+//! is transferred in turn: `settle_copy`) and the sender's reference released. Values that cannot reach a counted object are left alone.
 //!
 //! Class objects in a hierarchy with a vtable and interface values transfer through their
 //! vtable (`SLOT_TRANSFER`), closures through their environment's transfer entry
@@ -99,6 +99,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let new = self.shared_copy(o.clone(), ty, |lw, v| {
                 lw.call_glue(Glue::ObjClone, ty, vec![v])
             });
+            let new = self.settle_copy(new, ty);
             self.assign(Place::local(out), Rvalue::Use(new));
             self.goto(done);
             self.switch_to(unique);
@@ -141,6 +142,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let c = lw.clone_value(v, ty);
             lw.rvalue_temp(Ty::Ptr, Rvalue::Use(c))
         });
+        let new = self.settle_copy(new, ty);
         self.assign(place.clone(), Rvalue::Use(new));
         self.goto(done);
         self.switch_to(unique);
@@ -183,6 +185,41 @@ impl<'c, 'h> FnLower<'c, 'h> {
         );
         self.assign(c, Rvalue::Use(n));
         new
+    }
+
+    /// The fresh copy `new` (a counted pointer of type `ty`) made safe for the other thread
+    /// when a class's own `clone()` made part of it: that method may keep sharing parts of the
+    /// original (a shallow copy), so the copy is transferred in turn, and parts it still shares
+    /// are deep-copied. A `clone()` that returns an object referenced elsewhere (`this`, or one
+    /// it also stored) is a bug in the program: it panics, as the copy cannot be moved.
+    fn settle_copy(&mut self, new: Operand, ty: TyId) -> Operand {
+        if !self.cx.reaches_own_clone(ty) {
+            return new;
+        }
+        let new = self.rvalue_temp(Ty::Ptr, Rvalue::Use(new));
+        if self.cx.own_clone(ty).is_some() {
+            let ok = self.new_block();
+            let one = self.count_is_one(new.clone());
+            self.when_not(one, ok);
+            let name = self.cx.type_name(ty);
+            let msg = self.str_lit(&format!(
+                "`{name}.clone()` returned an object that is still referenced elsewhere (`this`, or one it also stored); a copy for another task must be a new object"
+            ));
+            let at = self.operand_addr(msg, Ty::Agg(vir::STR_AGG));
+            self.call_rt(Rt::Panic, vec![at], None);
+            self.goto(ok);
+            self.switch_to(ok);
+        }
+        let t = Place::local(self.copy_to_temp(new, Ty::Ptr));
+        self.transfer_in_place(t.clone(), ty);
+        Operand::Copy(t)
+    }
+
+    /// Continue in a fresh block when `cond` is false, else jump to `skip`.
+    fn when_not(&mut self, cond: Operand, skip: vir::BlockId) {
+        let then = self.new_block();
+        self.branch(cond, skip, then);
+        self.switch_to(then);
     }
 
     /// `count(p) == 1` for the counted object `p`.
