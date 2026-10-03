@@ -329,8 +329,11 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   `values()`, `entries()`, `for (const [k, v] of m)`, plus single-lookup updates: `upsert(k, init, (v) => v + 1)`,
   `update(k, (v) => { v.push(x); }): bool` (the callback gets the stored value itself) and
   `getOrInsert(k, () => v)`. Keys: numbers, `bool`, `string`, class instances (by identity),
-  and structs, object types and tuples, which compare by content (in JS two equal object
-  literals are two different keys). Iteration follows insertion order, like JS.
+  and structs, object types, tuples, arrays, maps and records, which compare by content (in JS
+  two equal object literals are two different keys). Float keys compare with `==`, so a `NaN`
+  key is never found (JS's SameValueZero finds it), and a content key changed after insertion
+  makes its entry unreachable
+  ([Map](../std/prelude.md#map)). Iteration follows insertion order, like JS.
 - **`Record<K, V>`**: a dictionary written with object syntax, like TypeScript's `Record`.
   `K` is `string`, a union of string literal types, or a string enum; any other key type is
   an error (use a `Map`), also when a generic function or class gets it as a type argument.
