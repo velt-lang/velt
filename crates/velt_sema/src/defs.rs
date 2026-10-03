@@ -94,12 +94,20 @@ pub(crate) enum ThrowSrc {
         args: Vec<TyId>,
         span: Span,
     },
+    /// The field initializers of class `C<args>` run by a `new` or a constructor: what `C`'s
+    /// own initializers throw (a base class's have a source of their own). Kept unexpanded
+    /// until resolved ([`crate::throws`]), so classes whose initializers construct each other
+    /// in a cycle get the whole cycle's errors whatever order they are checked in.
+    Defaults(DefId, Vec<TyId>, Span),
 }
 
 impl ThrowSrc {
     pub fn span(&self) -> Span {
         match self {
-            ThrowSrc::Direct(_, s) | ThrowSrc::Call(_, _, s) | ThrowSrc::Slot { span: s, .. } => *s,
+            ThrowSrc::Direct(_, s)
+            | ThrowSrc::Call(_, _, s)
+            | ThrowSrc::Defaults(_, _, s)
+            | ThrowSrc::Slot { span: s, .. } => *s,
         }
     }
 
@@ -110,6 +118,9 @@ impl ThrowSrc {
             ThrowSrc::Direct(t, _) => ThrowSrc::Direct(f(*t), span),
             ThrowSrc::Call(d, args, _) => {
                 ThrowSrc::Call(*d, args.iter().map(|&t| f(t)).collect(), span)
+            }
+            ThrowSrc::Defaults(d, args, _) => {
+                ThrowSrc::Defaults(*d, args.iter().map(|&t| f(t)).collect(), span)
             }
             ThrowSrc::Slot {
                 iface, slot, args, ..

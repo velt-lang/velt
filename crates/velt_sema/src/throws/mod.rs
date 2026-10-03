@@ -69,10 +69,35 @@ fn srcs_now_in(cx: &mut Ctx, srcs: &[ThrowSrc], visited: &mut HashSet<DefId>) ->
                 let t = slot_now(cx, *iface, *slot, visited);
                 subst_error(cx, t, args)
             }
+            ThrowSrc::Defaults(d, args, span) => {
+                if !visited.insert(*d) {
+                    continue;
+                }
+                let srcs = defaults_srcs(cx, *d, args, *span);
+                srcs_now_in(cx, &srcs, visited)
+            }
         };
         acc = cx.join_errors(acc, t);
     }
     acc
+}
+
+/// The throw sources of the own field initializers of class `d` (in the context of `args`),
+/// as run by a `new` or a constructor at `span`. An initializer may itself construct a class
+/// ([`ThrowSrc::Defaults`]); resolving those with a visited set computes a cycle's errors as a
+/// fixpoint (the union over every class reachable from `d`).
+pub(crate) fn defaults_srcs(cx: &mut Ctx, d: DefId, args: &[TyId], span: Span) -> Vec<ThrowSrc> {
+    crate::body::field_defaults(cx, d);
+    let Some(a) = cx.adt(d) else {
+        return vec![];
+    };
+    let own: Vec<ThrowSrc> = a.fields[a.own_fields_start..]
+        .iter()
+        .flat_map(|f| f.default_throws.iter().cloned())
+        .collect();
+    own.iter()
+        .map(|s| s.used_at(span, |t| cx.ty.subst(t, args)))
+        .collect()
 }
 
 fn subst_error(cx: &mut Ctx, t: Option<TyId>, targs: &[TyId]) -> Option<TyId> {

@@ -101,35 +101,25 @@ impl FnCx<'_, '_> {
     }
 
     /// What the field initializers of class type `ty` and of its base classes up to (not
-    /// including) class `stop` may throw, as thrown at `span`.
+    /// including) class `stop` may throw, as thrown at `span`: one deferred source per class.
+    /// The initializers are checked first (diagnostics in source order); what they throw is
+    /// resolved later, since initializers that construct each other in a cycle are still
+    /// being checked here (`crate::throws::defaults_srcs`).
     pub(crate) fn class_default_throws(
         &mut self,
         ty: TyId,
         stop: Option<DefId>,
         span: Span,
     ) -> Vec<ThrowSrc> {
-        let TyKind::Adt(d, args) = self.cx.ty.kind(ty).clone() else {
-            return vec![];
-        };
-        if Some(d) == stop {
-            return vec![];
-        }
-        crate::body::field_defaults(self.cx, d);
-        let Some(a) = self.cx.adt(d) else {
-            return vec![];
-        };
-        let own: Vec<ThrowSrc> = a.fields[a.own_fields_start..]
-            .iter()
-            .flat_map(|f| f.default_throws.iter().cloned())
-            .collect();
-        let base = a.base;
-        let mut out: Vec<ThrowSrc> = own
-            .iter()
-            .map(|s| s.used_at(span, |t| self.cx.ty.subst(t, &args)))
-            .collect();
-        if let Some(b) = base {
-            let b = self.cx.ty.subst(b, &args);
-            out.extend(self.class_default_throws(b, stop, span));
+        let mut out = vec![];
+        let mut cur = Some(ty);
+        while let Some((d, args)) = cur.and_then(|t| self.cx.class_of(t)) {
+            if Some(d) == stop || out.len() > 64 {
+                break;
+            }
+            crate::body::field_defaults(self.cx, d);
+            cur = self.cx.adt(d).and_then(|a| a.base).map(|b| self.cx.ty.subst(b, &args));
+            out.push(ThrowSrc::Defaults(d, args, span));
         }
         out
     }
