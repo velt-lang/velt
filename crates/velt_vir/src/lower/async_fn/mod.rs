@@ -335,9 +335,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
         }
         // Finished: a generator closed before it started is done (`next()` after `return()`).
-        self.set_tag(DONE);
+        // A cancelled async function is never polled again: its tag can stay.
         let done = match self.in_generator() {
-            true => self.gen_code(generator::GEN_DONE),
+            true => {
+                self.set_tag(DONE);
+                self.gen_code(generator::GEN_DONE)
+            }
             false => 0,
         };
         self.terminate(Terminator::Return(cint(done, Ty::U32)));
