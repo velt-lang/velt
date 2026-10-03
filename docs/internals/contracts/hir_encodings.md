@@ -295,6 +295,9 @@ Maintainer-owned, like hir.rs.
   its captures (any by-value mode) hold the cell; borrowed captures point into it as usual.
 - `AdtDef::assigned`: a field of the object type is assigned somewhere; such a type is shared as
   one counted object, others may be shared by copying their fields.
+- `FieldDef::private` (additive): the field is declared `private` (in the type or the base class
+  that declares it; interface fields never are). `console.log` / `inspect` leave out private
+  fields of zero size (std's `runtime` markers); other private fields show, as in Node.
 - `AdtDef::private_fields` (additive): some field, own or inherited, is `private`. Such a type has
   no JSON form: sema rejects it for `JSON.parse`/`JSON.stringify`, and lowering never writes a
   value of it dynamically (a subclass with private fields is written as its static class).

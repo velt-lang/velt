@@ -1,0 +1,2 @@
+Account { balance: 5, marker: Marker {}, owner: 'ann' }
+[ Marker {} ]
