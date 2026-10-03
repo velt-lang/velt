@@ -40,7 +40,8 @@ pub(super) fn patch_calls(
         let (modes, args) = match &mut e.kind {
             E::Call { callee, args } => {
                 if fixed_callee(cx, callee, args) {
-                    changed |= escape_literal_args(cx, args, borrowed);
+                    let keeps = generic_params(cx, callee, args);
+                    changed |= escape_literal_args(cx, args, &keeps, borrowed);
                 }
                 (call_modes(cx, callee, args), args)
             }
@@ -95,22 +96,46 @@ fn fixed_callee(cx: &Ctx, callee: &Callee, args: &[Expr]) -> bool {
 
 /// A closure literal passed directly to a callee with fixed modes captures by value and owns a
 /// heap environment: the callee may keep it (functions.md "Captures"). Not one that forwards a
-/// borrowed function (captures one of `borrowed`), which could not keep that function: it stays
-/// in the caller's frame, as the callee's borrowed parameter. Returns whether a closure changed.
-fn escape_literal_args(cx: &mut Ctx, args: &[Expr], borrowed: &HashSet<LocalId>) -> bool {
+/// borrowed function (captures one of `borrowed`) to a parameter of function type, which the
+/// callee cannot keep: it stays in the caller's frame, as the callee's borrowed parameter. A
+/// parameter declared with a generic type (`keep(x: T)`, `keeps[k]`) may be kept when `T` is a
+/// function type, so a forwarding closure passed there escapes too: it captures the forwarded
+/// function by value, which makes that parameter owned in turn. Returns whether a closure
+/// changed.
+fn escape_literal_args(
+    cx: &mut Ctx,
+    args: &[Expr],
+    keeps: &[bool],
+    borrowed: &HashSet<LocalId>,
+) -> bool {
     let mut changed = false;
-    for a in args {
+    for (k, a) in args.iter().enumerate() {
         if let E::Closure(def) = a.kind {
             let forwards = match &cx.defs[def.0 as usize] {
                 Some(Def::Fn(c)) => c.captures.iter().any(|cap| borrowed.contains(&cap.outer)),
                 _ => false,
             };
-            if !forwards {
+            if !forwards || keeps.get(k).copied().unwrap_or(false) {
                 changed |= super::fn_values::escape_closure(cx, def);
             }
         }
     }
     changed
+}
+
+/// Per argument of a call with fixed modes (`this` first): is the callee's parameter declared
+/// with a type that is not a function type (a generic `T` instantiated with one), so that the
+/// callee may keep a function passed there?
+fn generic_params(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Vec<bool> {
+    let Some(Target::Iface(iface, slot)) = call_target(cx, callee, args) else {
+        return vec![];
+    };
+    let Some(m) = cx.iface(iface).and_then(|i| i.methods.get(slot as usize)) else {
+        return vec![];
+    };
+    std::iter::once(false)
+        .chain(m.params.iter().map(|p| !super::fn_values::is_fn(cx, p.ty)))
+        .collect()
 }
 
 /// Where a call's callee modes come from, when known statically.

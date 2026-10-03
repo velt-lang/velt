@@ -113,7 +113,9 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   owns a heap environment. Unless it captures a borrowed function parameter of the enclosing
   function, as a middleware forwarding its `next` does (`inner.handle(req, (r) => next(r))`):
   then it stays non-escaping, like the parameter it forwards, and is safe as long as the callee
-  only calls it.
+  only calls it. A parameter declared with a generic type (`keep(x: T)`, with `T` a function
+  type) may be kept, so a forwarding closure passed there escapes like any other: it captures
+  the function it forwards by value, and that parameter of the enclosing function becomes owned.
 - A closure stored in a variable, field or array, or returned, is **escaping** and captures by
   value: objects are shared with it (the closure and the enclosing code see the same object),
   numbers and strings are copied. A captured object the enclosing code does not use again moves
