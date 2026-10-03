@@ -120,6 +120,15 @@ pub const PACKAGE: &[Field] = &[
         required: false,
         doc: "A Rust crate in the package, built into a native library.",
     },
+    Field {
+        key: "tsCompat",
+        kind: Kind::StrArray { values: &[] },
+        ty: "string[]",
+        required: false,
+        doc: "Folders whose modules stay valid TypeScript too, such as \
+              `[\"src/components\", \"src/models\"]`: `/`-separated paths relative to the \
+              package root. `velt check --ts-compat` and the editor lint them.",
+    },
 ];
 
 /// The object form of a dependency.

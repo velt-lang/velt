@@ -23,6 +23,7 @@ export const pkg: Package = {
     path: "native",             // the crate's directory, one name in the package root (default)
     targets: ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"],  // published prebuilt
   },
+  tsCompat: ["src/models"],     // optional: folders kept TypeScript-compatible (additive)
 };
 ```
 
@@ -150,6 +151,26 @@ jsx: { importSource: "sigx" },  // or "velt:jsx" (the default), an "@alias" from
   path starting with `./` / `../`, which is relative to the package root (not to the importing
   file, unlike a pragma). Each package's `jsx` applies to its own modules only
   (`vpm::PackageGraph::jsx_import_source`).
+
+## TypeScript-compatible folders (additive)
+```ts ignore
+tsCompat: ["src/components", "src/models"],
+```
+- `vpm::Manifest::ts_compat` (`Vec<String>`, in the order written; empty when absent): folders
+  whose modules `velt check --ts-compat` without paths and the language server lint
+  ([cli.md](cli.md), docs/internals/design/tsx.md). A folder's modules are its source files as
+  `vpm::sources::walks_into` walks it (no `target/`, `node_modules/`, hidden, symlinked or
+  nested package directories); `vpm::sources::in_folder` decides membership the same way for one
+  file.
+- The reader's errors, at the value: not an array; an empty array ("remove the field
+  instead"); an entry that is not a string; an entry that is not a `/`-separated relative path
+  of non-empty parts other than `.` and `..` without `\` or `:` (so no leading or trailing
+  `/`); an entry equal to, inside or containing an earlier one, compared ignoring case (an
+  overlap on a case-insensitive file system is one on every OS).
+- The reader doesn't look at the disk. `vpm::manifest::read::missing_ts_compat_dirs(file, src,
+  root)` returns a warning, at its string, for each entry that is not a directory under `root`
+  (the language server shows them in `package.vlt`); `velt check --ts-compat` fails on one.
+- `to_vlt` writes `tsCompat` last; `velt manifest --json` prints it when present.
 
 ## Native libraries (additive)
 Contract: [native_abi.md](native_abi.md).

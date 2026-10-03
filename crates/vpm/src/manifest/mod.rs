@@ -15,6 +15,7 @@
 //!   paths: { "@app/*": "src/*" },       // import aliases (`crate::paths`)
 //!   jsx: { importSource: "sigx" },      // JSX runtime of the package's modules
 //!   native: { targets: ["x86_64-unknown-linux-gnu"] },  // a Rust crate (`crate::native`)
+//!   tsCompat: ["src/models"],           // folders kept TypeScript-compatible
 //! };
 //! ```
 //!
@@ -67,6 +68,12 @@ pub struct Manifest {
     /// `jsx`: how the package's modules compile JSX.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jsx: Option<JsxConfig>,
+    /// `tsCompat`: folders, relative to the package root, whose modules stay in the
+    /// TypeScript/Velt common subset (`velt check --ts-compat` and the language server lint
+    /// them; docs/internals/design/tsx.md). `/`-separated, inside the package, none inside
+    /// another; checked to exist by the tools that lint them ([`read::missing_ts_compat_dirs`]).
+    #[serde(default, rename = "tsCompat", skip_serializing_if = "Vec::is_empty")]
+    pub ts_compat: Vec<String>,
 }
 
 /// The `jsx` object (docs/internals/contracts/jsx.md "Choosing the provider").
@@ -241,6 +248,11 @@ impl Manifest {
     /// filled in.
     pub fn to_json(&self) -> serde_json::Value {
         write::to_json(self)
+    }
+
+    /// The `tsCompat` folders of the package rooted at `root`, as paths under it.
+    pub fn ts_compat_dirs(&self, root: &Path) -> Vec<PathBuf> {
+        self.ts_compat.iter().map(|dir| root.join(dir)).collect()
     }
 
     /// The package version as a parsed semver version (validated on parse).

@@ -287,6 +287,24 @@ fn check_checks_modules_under_a_std_directory() {
     assert!(err.contains(&at), "missing `{at}` in:\n{err}");
 }
 
+#[test]
+fn check_and_test_leave_nested_packages_alone() {
+    let s = sandbox();
+    s.ok("", &["new", "app"]);
+    // A package inside `src/`: its manifest is not a module, and its files are its own.
+    s.ok("app/src", &["new", "vendored", "--lib"]);
+    s.write("app/src/vendored/src/lib.vlt", BAD);
+    s.write(
+        "app/src/vendored/src/lib.test.vlt",
+        "export function test_fails() {\n  assertEq(1, 2);\n}\n",
+    );
+    s.ok("app", &["check"]);
+    let out = s.ok("app", &["test"]);
+    assert!(!out.contains("test_fails"), "{out}");
+    // In the nested package, its files are checked.
+    s.fail("app/src/vendored", &["check"]);
+}
+
 #[cfg(unix)]
 #[test]
 fn check_does_not_follow_symlinked_directories() {

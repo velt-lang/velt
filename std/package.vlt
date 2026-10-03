@@ -34,6 +34,10 @@ export type Package = {
   jsx?: Jsx;
   /// A Rust crate in the package, built into a native library.
   native?: Native;
+  /// Folders whose modules stay valid TypeScript too, such as `["src/components", "src/models"]`:
+  /// `/`-separated paths relative to the package root. `velt check --ts-compat` and the editor
+  /// lint them.
+  tsCompat?: string[];
 };
 
 /// A dependency: a semver requirement such as `"^1.2"`, or where to get it.

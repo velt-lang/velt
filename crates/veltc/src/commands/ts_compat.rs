@@ -1,27 +1,32 @@
-//! `velt check --ts-compat <file|dir>...`: check exactly the given files (directories: their
-//! source files) in one front-end run, then lint the ones that passed for the TypeScript/Velt
-//! common subset ([`velt_tscompat`]). A file with an error of its own is reported and not
-//! linted, so the rules only ever see valid Velt.
+//! `velt check --ts-compat [<file|dir>...]`: check exactly the given files (directories: their
+//! source files; no paths: the package's `tsCompat` folders) in one front-end run, then lint the
+//! ones that passed for the TypeScript/Velt common subset ([`velt_tscompat`]). A file with an
+//! error of its own is reported and not linted, so the rules only ever see valid Velt.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use velt_common::{Diagnostic, FileId, Severity};
-use velt_tscompat::{Finding, LintModule};
+use velt_common::{Diagnostic, Severity};
+use velt_tscompat::{canonical, Finding};
 
 use super::test::discover;
 use crate::cli::CheckArgs;
 use crate::driver::{self, BuildError, CheckScope, Session};
-use crate::loader::Loaded;
 
-/// Check the files in `paths` together, as library modules (no `main` required), then lint
-/// those without errors. Returns the check's outcome and the findings.
+/// Check the files in `paths` (none: the package's `tsCompat` folders) together, as library
+/// modules (no `main` required), then lint those without errors. Returns the check's outcome
+/// and the findings.
 pub(super) fn run(
     sess: &mut Session,
     args: &CheckArgs,
     paths: &[PathBuf],
 ) -> (Result<(), BuildError>, Vec<Finding>) {
-    let files = match expand(paths) {
+    let files = if paths.is_empty() {
+        package_folders().and_then(|dirs| folder_files(&dirs))
+    } else {
+        expand(paths)
+    };
+    let files = match files {
         Ok(files) => files,
         Err(msg) => return (Err(BuildError::Failed(msg)), vec![]),
     };
@@ -42,7 +47,14 @@ pub(super) fn run(
     let same_path = super::check::same_path_groups(&files);
     match driver::check_for_lint(sess, &opts, &scope) {
         Ok((loaded, checked)) => {
-            let findings = lint_loaded(sess, &loaded, &files);
+            let scope: HashSet<PathBuf> = files.iter().map(|f| canonical(f)).collect();
+            let findings = velt_tscompat::lint_program(
+                &loaded.modules,
+                &sess.sm,
+                &sess.diagnostics,
+                &|path| scope.contains(path),
+                &|_| true,
+            );
             super::check::report_same_path(sess, &same_path, first);
             let checked = match checked {
                 Ok(()) if !same_path.is_empty() => Err(BuildError::Diagnostics),
@@ -92,6 +104,65 @@ fn one_package(files: &[PathBuf]) -> Result<(), String> {
     ))
 }
 
+/// The `tsCompat` folders of the package around the current directory, as the current
+/// directory names them. Outside a package, or without `tsCompat`, the message says to list
+/// folders or name paths; a folder that is not there is an error.
+fn package_folders() -> Result<Vec<PathBuf>, String> {
+    const NAME_PATHS: &str = "Or name the files or directories to lint: `velt check --ts-compat \
+                              src/models`";
+    let cwd =
+        std::env::current_dir().map_err(|e| format!("cannot read the current directory: {e}"))?;
+    let Some(root) = vpm::manifest::find_package_root(&cwd) else {
+        return Err(format!(
+            "`velt check --ts-compat` without paths lints the folders a package's `tsCompat` \
+             lists, but there is no `package.vlt` in `{}` or any parent directory. {NAME_PATHS}",
+            cwd.display()
+        ));
+    };
+    let manifest = vpm::Manifest::from_dir(&root)?;
+    let name = &manifest.package.name;
+    if manifest.ts_compat.is_empty() {
+        return Err(format!(
+            "package `{name}` has no `tsCompat` folders to lint: list them in package.vlt \
+             (`tsCompat: [\"src/models\"]`). {NAME_PATHS}"
+        ));
+    }
+    let mut dirs = vec![];
+    for (listed, dir) in manifest
+        .ts_compat
+        .iter()
+        .zip(manifest.ts_compat_dirs(&root))
+    {
+        if !dir.is_dir() {
+            let what = if dir.exists() {
+                "is not a folder"
+            } else {
+                "does not exist"
+            };
+            return Err(format!(
+                "package `{name}`: `tsCompat` folder `{listed}` {what}"
+            ));
+        }
+        dirs.push(PathBuf::from(vpm::relpath::relative(&dir, &cwd)));
+    }
+    Ok(dirs)
+}
+
+/// The source files of the `tsCompat` folders `dirs`; an empty folder adds none, but there must
+/// be at least one file.
+fn folder_files(dirs: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
+    let mut files = vec![];
+    for dir in dirs {
+        // The current directory's files are named without `./`, like the folders' are.
+        let found = discover::source_files(dir)?.into_iter();
+        files.extend(found.map(|f| f.strip_prefix(".").map(Path::to_path_buf).unwrap_or(f)));
+    }
+    if files.is_empty() {
+        return Err("the `tsCompat` folders have no `.vlt`, `.ts` or `.tsx` files to lint".into());
+    }
+    Ok(files)
+}
+
 /// The source files `paths` name: files as given, directories' `.vlt`, `.ts` and `.tsx` files
 /// (recursively, as `velt check` finds a package's modules), each once.
 fn expand(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
@@ -119,55 +190,6 @@ fn expand(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     let mut seen = HashSet::new();
     files.retain(|f| seen.insert(canonical(f)));
     Ok(files)
-}
-
-/// `path` with links and `..` resolved, for comparing files named in different ways.
-fn canonical(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
-}
-
-/// Lint the loaded modules that are among `files` and have no error of their own.
-fn lint_loaded(sess: &Session, loaded: &Loaded, files: &[PathBuf]) -> Vec<Finding> {
-    let scope: Vec<PathBuf> = files.iter().map(|f| canonical(f)).collect();
-    let paths: Vec<PathBuf> = loaded
-        .modules
-        .iter()
-        .map(|m| canonical(&sess.sm.get(m.file).path))
-        .collect();
-    let failed: HashSet<FileId> = sess
-        .diagnostics
-        .iter()
-        .filter(|d| d.is_error())
-        .filter_map(|d| d.labels.first().map(|l| l.span.file))
-        .collect();
-    let index: HashMap<&str, usize> = loaded
-        .modules
-        .iter()
-        .enumerate()
-        .map(|(i, m)| (m.path.as_str(), i))
-        .collect();
-    let mut modules = vec![];
-    for (i, m) in loaded.modules.iter().enumerate() {
-        if m.is_std || failed.contains(&m.file) || !scope.contains(&paths[i]) {
-            continue;
-        }
-        let imports = m
-            .imports
-            .iter()
-            .filter_map(|(spec, target)| index.get(target.as_str()).map(|&j| (spec, j)))
-            .map(|(spec, j)| (spec.clone(), paths[j].clone()))
-            .collect();
-        let runtime = m.jsx_runtime.as_deref().and_then(|rt| index.get(rt));
-        modules.push(LintModule {
-            path: &paths[i],
-            src: &sess.sm.get(m.file).src,
-            ast: &m.ast,
-            imports,
-            default_jsx_provider: runtime.is_some_and(|&j| loaded.modules[j].is_std),
-        });
-    }
-    let scope: Vec<&Path> = scope.iter().map(PathBuf::as_path).collect();
-    velt_tscompat::lint(&modules, &scope)
 }
 
 /// `f` as a diagnostic, its code in the last note: `ts-compat(<code>)`.
