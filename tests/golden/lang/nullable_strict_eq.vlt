@@ -1,0 +1,45 @@
+// `===` / `!==` between `T | null` and `T`, both operand orders (#264): identity for classes,
+// by value for primitives, false for null against a value.
+// check: no leaks
+class Job {
+  id: i64 = 0;
+}
+
+class Big extends Job {}
+
+function maybe(j: Job, keep: bool): Job | null {
+  return keep ? j : null;
+}
+
+function main() {
+  const j = new Job();
+  const k = new Job();
+  const r: Job | null = j;
+  const n: Job | null = null;
+  console.log(r === j, j === r, r !== j, r === k, k === r, n === j, j !== n);
+  console.log(j.id, r?.id);
+  console.log(r === new Job(), new Job() === r, maybe(j, true) === j, j === maybe(j, false));
+  const b = new Big();
+  const rb: Job | null = b;
+  console.log(rb === b, b === rb, rb == b);
+  const s: string | null = "ab";
+  const a = "a";
+  console.log(s === a + "b", `${a}b` === s, s !== a, null === s);
+  const x: f64 | null = 1.5;
+  console.log(x === 1.5, 3 === x, x !== 1.5);
+  const items: (Job | null)[] = [j, null, k];
+  console.log(items[0] === j, items[1] === j, k === items[2]);
+  const m = new Map<string, Job>();
+  m.set("j", j);
+  console.log(m.get("j") === j, k === m.get("j"), m.get("x") === k);
+  console.log(j.id);
+  generic();
+}
+
+function same<T>(a: T | null, b: T): bool {
+  return a === b && b === a;
+}
+
+function generic() {
+  console.log(same<i64>(1, 1), same<string>(null, "x"), same<i64>(2, 3));
+}
