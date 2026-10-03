@@ -114,8 +114,12 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   function, as a middleware forwarding its `next` does (`inner.handle(req, (r) => next(r))`):
   then it stays non-escaping, like the parameter it forwards, and is safe as long as the callee
   only calls it. A parameter declared with a generic type (`keep(x: T)`, with `T` a function
-  type) may be kept, so a forwarding closure passed there escapes like any other: it captures
-  the function it forwards by value, and that parameter of the enclosing function becomes owned.
+  type) may be kept, and so may anything passed to a callee that returns a promise the caller
+  does not `await` right away (the callee may run after the caller returned): a forwarding
+  closure passed there escapes like any other. It captures the function it forwards by value,
+  and that parameter of the enclosing function becomes owned. Where that parameter cannot become
+  owned (in a closure, or an overridden or interface method), this is the error
+  ``cannot keep a copy of `next`, a borrowed function parameter``.
 - A closure stored in a variable, field or array, or returned, is **escaping** and captures by
   value: objects are shared with it (the closure and the enclosing code see the same object),
   numbers and strings are copied. A captured object the enclosing code does not use again moves

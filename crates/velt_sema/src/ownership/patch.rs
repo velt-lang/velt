@@ -36,11 +36,19 @@ pub(super) fn patch_calls(
 ) -> bool {
     let mut changed = false;
     let mut errors = vec![];
+    let awaited = awaited_calls(b);
     visit::exprs_mut(b, &mut |e: &mut Expr| {
+        let returns_promise = matches!(cx.ty.kind(e.ty), TyKind::Promise(..));
+        let span = e.span;
         let (modes, args) = match &mut e.kind {
             E::Call { callee, args } => {
                 if fixed_callee(cx, callee, args) {
-                    let keeps = generic_params(cx, callee, args);
+                    // A promise the call returns may run the callee after this frame is gone
+                    // (unless it is awaited right here): it may keep every argument.
+                    let keeps = match returns_promise && !awaited.contains(&span) {
+                        true => vec![true; args.len()],
+                        false => generic_params(cx, callee, args),
+                    };
                     changed |= escape_literal_args(cx, args, &keeps, borrowed);
                 }
                 (call_modes(cx, callee, args), args)
@@ -99,9 +107,10 @@ fn fixed_callee(cx: &Ctx, callee: &Callee, args: &[Expr]) -> bool {
 /// borrowed function (captures one of `borrowed`) to a parameter of function type, which the
 /// callee cannot keep: it stays in the caller's frame, as the callee's borrowed parameter. A
 /// parameter declared with a generic type (`keep(x: T)`, `keeps[k]`) may be kept when `T` is a
-/// function type, so a forwarding closure passed there escapes too: it captures the forwarded
-/// function by value, which makes that parameter owned in turn. Returns whether a closure
-/// changed.
+/// function type, and so may a callee whose result is a promise that is not awaited at once (it
+/// may call the closure after this frame is gone): a forwarding closure passed there escapes too.
+/// It captures the forwarded function by value, which makes that parameter owned in turn.
+/// Returns whether a closure changed.
 fn escape_literal_args(
     cx: &mut Ctx,
     args: &[Expr],
@@ -121,6 +130,20 @@ fn escape_literal_args(
         }
     }
     changed
+}
+
+/// Spans of the calls in `b` that are awaited directly (`await f(...)`): their callee finishes
+/// before the caller's frame does.
+fn awaited_calls(b: &mut Block) -> HashSet<Span> {
+    let mut out = HashSet::new();
+    visit::exprs_mut(b, &mut |e: &mut Expr| {
+        if let E::Await(inner) = &e.kind {
+            if matches!(inner.kind, E::Call { .. }) {
+                out.insert(inner.span);
+            }
+        }
+    });
+    out
 }
 
 /// Per argument of a call with fixed modes (`this` first): is the callee's parameter declared
