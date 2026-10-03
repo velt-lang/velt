@@ -29,9 +29,11 @@ pub fn build_command(args: &BuildArgs) -> ExitCode {
 
 /// `velt run`: build, then run with inherited stdio and exit with the program's exit code.
 pub fn run_command(args: &BuildArgs, prog_args: &[std::ffi::OsString]) -> ExitCode {
-    let exe = match build(args) {
-        Ok(Artifact::Executable(p)) => vpm::relpath::absolute(&p),
-        Ok(other) => unreachable!("ICE: run built {other:?}"),
+    let (exe, script) = match build_with_input(args) {
+        Ok((Artifact::Executable(p), input)) => {
+            (vpm::relpath::absolute(&p), vpm::relpath::absolute(&input))
+        }
+        Ok((other, _)) => unreachable!("ICE: run built {other:?}"),
         Err(code) => return code,
     };
     let command = match args.target.as_deref().filter(|t| super::wasm::is_wasm(t)) {
@@ -39,6 +41,8 @@ pub fn run_command(args: &BuildArgs, prog_args: &[std::ffi::OsString]) -> ExitCo
         None => {
             let mut cmd = std::process::Command::new(&exe);
             cmd.args(prog_args);
+            // Node's `process.argv[1]`: the script, which the runtime reads once at start-up.
+            cmd.env("VELT_SCRIPT", &script);
             Ok(cmd)
         }
     };
@@ -62,6 +66,11 @@ pub fn run_command(args: &BuildArgs, prog_args: &[std::ffi::OsString]) -> ExitCo
 /// Resolve the build inputs (file or package), run the pipeline, print diagnostics / timings.
 /// `Err` carries the process exit code.
 fn build(args: &BuildArgs) -> Result<Artifact, ExitCode> {
+    build_with_input(args).map(|(artifact, _)| artifact)
+}
+
+/// [`build`], also returning the entry source file (a package's entry when no file was given).
+fn build_with_input(args: &BuildArgs) -> Result<(Artifact, std::path::PathBuf), ExitCode> {
     let checked = match &args.input {
         Some(file) => super::project::check_input_file(file),
         None => Ok(()),
@@ -84,7 +93,7 @@ fn build(args: &BuildArgs) -> Result<Artifact, ExitCode> {
             warn_debug_runtime(&opts.target());
         }
     }
-    Ok(artifact)
+    Ok((artifact, opts.input.clone()))
 }
 
 /// A release build linked against a debug runtime is several times slower with no other sign

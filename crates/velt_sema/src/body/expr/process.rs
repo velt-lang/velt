@@ -1,7 +1,8 @@
 //! Node's `process` members that cost nothing at run time, on the builtin `process` namespace:
 //! `process.stdout.write(s)` and `process.stderr.write(s)` (a string, without a newline; `true`
 //! like Node), and `process.env.NAME` / `process.env[name]` (`string | null`: there is no
-//! `undefined`). They are calls of the prelude's `__processWrite` / `__processEnv`
+//! `undefined`), and `process.argv` (Node's layout). They are calls of the prelude's
+//! `__processWrite` / `__processEnv` / `__processArgv`
 //! (std/prelude/process.vlt). `process.exit` is an intrinsic (`builtins`); the rest of Node's
 //! `process` lives in `velt:process`.
 
@@ -102,6 +103,21 @@ impl FnCx<'_, '_> {
             prop.span,
         );
         Some(self.prelude_call("__processEnv", "process.env", &[], &[name], exp, span))
+    }
+
+    /// `process.argv`: Node's `[runtime, script, ...args]`, a fresh array per read; `None` for
+    /// anything else.
+    pub(super) fn process_argv_member(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        if prop.name != "argv" || !self.is_builtin_process(object) {
+            return None;
+        }
+        Some(self.prelude_call("__processArgv", "process.argv", &[], &[], exp, span))
     }
 
     /// Is `target` `process.env.NAME` or `process.env[name]`?

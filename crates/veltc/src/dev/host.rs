@@ -78,6 +78,9 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
     let mut argv = vec![opts.input.display().to_string()];
     argv.extend(args.args.iter().map(|a| a.to_string_lossy().into_owned()));
     velt_rt_host::process::set_args(argv);
+    // Node's `process.argv[1]`: the script (`argv[0]` is the running `velt`).
+    let script = vpm::relpath::absolute(&opts.input);
+    velt_rt_host::process::set_script(script.display().to_string());
     let code = velt_rt_host::entry::run_main(loaded.main());
     std::process::exit(code)
 }

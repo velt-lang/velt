@@ -32,3 +32,11 @@ export type MemoryUsage = { rss: i64; heapUsed: i64 };
 export function processMemoryUsage(): MemoryUsage {
   return { rss: velt_rt_memory_rss(), heapUsed: velt_rt_memory_heap() };
 }
+
+declare function velt_rt_process_node_argv(): string[];
+
+// Node's `process.argv`: `[runtime, script, ...args]` (the running executable, the script under
+// `velt run` / `velt dev` or the executable again, then the arguments).
+export function __processArgv(): string[] {
+  return velt_rt_process_node_argv();
+}

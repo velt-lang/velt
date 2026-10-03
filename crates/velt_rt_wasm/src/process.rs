@@ -17,6 +17,17 @@ pub unsafe extern "C" fn velt_rt_process_args(out: *mut VeltStrArray) {
     out.write(VeltStrArray::from_strings(platform::args()));
 }
 
+/// Node's `process.argv`: `[program, program, ...args]` (WebAssembly has no separate runtime
+/// path or script; the browser passes no arguments).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_process_node_argv(out: *mut VeltStrArray) {
+    let args = platform::args();
+    let program = args.first().cloned().unwrap_or_default();
+    let mut all = vec![program.clone(), program];
+    all.extend(args.into_iter().skip(1));
+    out.write(VeltStrArray::from_strings(all));
+}
+
 /// `process.env[name]`: 1 and an owned string in `out` if set, else 0 (`out` untouched).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_env_get(name: *const VeltStr, out: *mut VeltStr) -> u8 {
