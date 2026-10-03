@@ -174,6 +174,7 @@ impl<'a> Parser<'a> {
 
     #[inline]
     fn bump(&mut self) {
+        crate::work::add(1);
         let t = self.tok(self.pos);
         if t.kind != Tok::Eof {
             self.prev_hi = t.hi;

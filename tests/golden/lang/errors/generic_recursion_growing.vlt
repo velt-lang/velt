@@ -1,0 +1,56 @@
+// Generic recursion whose type arguments grow has infinitely many instantiations.
+type Box<T> = { v: T };
+
+// Direct, through `JSON.parse` (used to hang the compiler).
+function viaJson<T>(s: string, n: i64): string {
+  if (n == 0) {
+    return JSON.stringify(JSON.parse<Box<T>>(s));
+  }
+  return viaJson<T[]>(s, n - 1);
+}
+
+// Direct, without JSON (used to hang lowering).
+function direct<T>(x: T, n: i64): i64 {
+  return n == 0 ? 0 : direct<Box<T>>({ v: x }, n - 1);
+}
+
+// Mutual, through a third function and a closure.
+function first<T>(x: T, n: i64): i64 {
+  return n == 0 ? 0 : second<T[]>([x], n - 1);
+}
+function second<U>(x: U, n: i64): i64 {
+  return third<U>(x, n);
+}
+function third<V>(x: V, n: i64): i64 {
+  const k = (y: V): i64 => first<V>(y, n);
+  return k(x);
+}
+
+// Not growing: the same arguments, or swapped ones.
+function same<T>(x: T, n: i64): i64 {
+  return n == 0 ? 0 : same<T>(x, n - 1);
+}
+function swap<A, B>(a: A, b: B, n: i64): i64 {
+  return n == 0 ? 0 : swap<B, A>(b, a, n - 1);
+}
+
+// A closure calling its own function, and two functions calling each other from closures.
+function closure<T>(x: T, n: i64): i64 {
+  const k = (y: T): i64 => closure<[T, T]>([y, y], n - 1);
+  return n == 0 ? 0 : k(x);
+}
+function outer<T>(x: T, n: i64): i64 {
+  const k = (y: T): i64 => inner<T[]>([y], n - 1);
+  return n == 0 ? 0 : k(x);
+}
+function inner<U>(x: U, n: i64): i64 {
+  const k = (y: U): i64 => outer<U>(y, n);
+  return k(x);
+}
+
+function main() {
+  console.log(closure<i64>(1, 1), outer<i64>(1, 1));
+  console.log(viaJson<i64>("{\"v\":1}", 0));
+  console.log(direct<i64>(1, 2), first<i64>(1, 2));
+  console.log(same<i64>(1, 2), swap<i64, string>(1, "a", 2));
+}

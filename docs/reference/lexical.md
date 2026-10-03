@@ -53,7 +53,7 @@ type typeof void while
 Contextual keywords: `extend`, `get`, `set`, `override`, `private`, `public`, `throws`, `using`.
 
 Not part of the language: `var`, `undefined`, `any`, `unknown`, `abstract`, `protected` (as a
-member modifier; accepted on constructor parameter properties), `delete` (except
+member modifier; accepted on constructors and constructor parameter properties), `delete` (except
 `delete r[k]` on a [`Record`](types.md#objects-arrays-tuples-and-maps)), `for...in`,
 `export default`, `function` expressions (use arrow functions), `mut`, `match`. Writing most of
 these is an error that names the Velt replacement.

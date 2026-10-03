@@ -1,0 +1,44 @@
+// Decoding fills fields without running a constructor, so a class whose constructor is private
+// or protected cannot be decoded, wherever it appears in the target type. Writing one is fine,
+// and so is decoding `JsonValue` (made by the runtime, not from fields).
+class Money {
+  amount: i64;
+  private constructor(amount: i64) {
+    this.amount = amount;
+  }
+  static of(amount: i64): Money {
+    return new Money(amount);
+  }
+}
+
+class Token {
+  id: i64;
+  protected constructor(id: i64) {
+    this.id = id;
+  }
+}
+
+class Admin extends Token {}
+
+type Order = { total: Money; id: i64 };
+type Doc = { v: JsonValue; vs: JsonValue[] };
+
+function decode<T>(s: string): T {
+  return JSON.parse<T>(s);
+}
+
+function main() {
+  const a = JSON.parse<Money>("{\"amount\": 1}");
+  const b = JSON.parse<Order>("{\"total\": {\"amount\": 1}, \"id\": 2}");
+  const c = JSON.parse<Money[]>("[]");
+  const d = JSON.parse<Money | string>("\"x\"");
+  const e = JSON.parse<Map<string, Money>>("{}");
+  const f = decode<Money>("{\"amount\": 1}");
+  const g = JsonValue.parse("{\"amount\": 1}").as<Money>();
+  const h = JSON.parse<Token>("{\"id\": 1}");
+  const i = JSON.parse<Admin>("{\"id\": 1}");
+  const j = JSON.parse<Record<string, Money>>("{}");
+  const v = JSON.parse<JsonValue>("{\"a\": 1}");
+  const w = JSON.parse<Doc>("{\"v\": 1, \"vs\": [2]}");
+  console.log(JSON.stringify(Money.of(3)), JSON.stringify([Money.of(4)]), v, w.v);
+}

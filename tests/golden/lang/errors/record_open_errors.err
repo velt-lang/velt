@@ -1,0 +1,26 @@
+record_open_errors.vlt:3:3: error: cannot use `+=` on a key of a `Record<K, i64>`: the key may be missing, so `r[k]` is `i64 | null`
+say what a missing key starts from: `r[k] = (r[k] ?? 0) + 1`
+record_open_errors.vlt:8:3: error: cannot use `+=` on a key of a `Record<string, i64>`: the key may be missing, so `counts["a"]` is `i64 | null`
+say what a missing key starts from: `counts["a"] = (counts["a"] ?? 0) + 1`
+record_open_errors.vlt:9:3: error: cannot use `++` on a key of a `Record<string, i64>`: the key may be missing, so `counts["a"]` is `i64 | null`
+say what a missing key starts from: `counts["a"] = (counts["a"] ?? 0) + 1`
+record_open_errors.vlt:10:5: error: cannot use `++` on a key of a `Record<string, i64>`: the key may be missing, so `counts.b` is `i64 | null`
+say what a missing key starts from: `counts.b = (counts.b ?? 0) + 1`
+record_open_errors.vlt:11:3: error: cannot use `-=` on a key of a `Record<string, i64>`: the key may be missing, so `counts["a"]` is `i64 | null`
+say what a missing key starts from: `counts["a"] = (counts["a"] ?? 0) - 2`
+record_open_errors.vlt:13:3: error: cannot use `*=` on a key of a `Record<string, i64>`: the key may be missing, so `counts[k]` is `i64 | null`
+say what a missing key starts from: `counts[k] = (counts[k] ?? 0) * 3`
+record_open_errors.vlt:14:3: error: cannot use `**=` on a key of a `Record<string, i64>`: the key may be missing, so `counts[k]` is `i64 | null`
+say what a missing key starts from: `counts[k] = (counts[k] ?? 0) ** 2`
+record_open_errors.vlt:16:3: error: cannot use `+=` on a key of a `Record<string, string>`: the key may be missing, so `names["x"]` is `string | null`
+say what a missing key starts from: `names["x"] = (names["x"] ?? "") + "!"`
+record_open_errors.vlt:18:3: error: cannot use `&&=` on a key of a `Record<string, bool>`: the key may be missing, so `flags["on"]` is `bool | null`
+say what a missing key counts as: `flags["on"] = (flags["on"] ?? false) && true`
+record_open_errors.vlt:19:21: error: cannot iterate over a `Record<string, i64>` with `for...of`
+iterate its keys with `for (const k of Object.keys(counts))` or its entries with `for (const [k, v] of Object.entries(counts))`
+record_open_errors.vlt:22:15: error: cannot infer type parameters `K` and `V` of `Object.values`
+add explicit type arguments, e.g. `f<i64>(...)`, or annotate the result
+record_open_errors.vlt:23:3: error: cannot use `||=` on a key of a `Record<string, i64>`: the key may be missing, so `counts["a"]` is `i64 | null`
+to set `counts["a"]` only when the key is missing, use `counts["a"] ??= 1`
+record_open_errors.vlt:24:3: error: cannot use `&&=` on a key of a `Record<string, string>`: the key may be missing, so `names["x"]` is `string | null`
+to set `names["x"]` only when the key is present, write `if (names["x"] != null) names["x"] = "y"`

@@ -72,7 +72,29 @@ Byte arrays are plain `u8[]` with faster versions of `indexOf`, `lastIndexOf`, `
 ## Map
 
 `Map<K, V>` is an insertion-ordered hash map. Keys are numbers, `bool`, `string`, class
-instances (compared by identity), and structs, object types and tuples (compared by content).
+instances (compared by identity), and structs, object types, tuples, arrays, maps and records
+(compared by content, as `deepEqual` compares them).
+
+Two differences from JavaScript's keys (SameValueZero):
+
+- **Float keys** are matched as `get` matches them: hashed by their bits, then compared with
+  `==`. A `NaN` key never matches, not even itself (each `set` of `NaN` adds an entry that
+  `get` cannot find), and `0` and `-0` hash differently, so they are normally two keys
+  (JavaScript treats both as one key). Use integer keys, or normalize floats before using them
+  as keys.
+- **Content keys are hashed when they are inserted.** Changing an array, object, `Map` or
+  `Record` after using it as a key leaves its entry unreachable: `get` finds it neither by the
+  new content nor by the old (it still counts in `size` and shows up when iterating). Don't
+  change a key while it is in a map; insert a copy, or delete the entry and insert it again.
+
+```ts
+const key: i64[] = [1];
+const m = new Map<i64[], string>();
+m.set(key, "one");
+console.log(m.get([1])); // one
+key.push(2);
+console.log(m.get(key), m.get([1]), m.size); // null null 1
+```
 
 | Member | Notes |
 |---|---|
@@ -89,7 +111,19 @@ instances (compared by identity), and structs, object types and tuples (compared
 `Record<K, V>` is a dictionary written with TypeScript object syntax: `r[k]`, `r.name`,
 `r[k] = v`, `delete r[k]` and object literals
 ([Reference](../reference/types.md#objects-arrays-tuples-and-maps)). `Object.keys(r)`,
-`Object.values(r)` and `Object.entries(r)` return arrays in insertion order.
+`Object.values(r)` and `Object.entries(r)` return arrays in insertion order; `Object.keys`
+returns a `string[]` and, as in TypeScript, also lists the fields of any object, struct or
+class instance.
+
+```ts
+class User {
+  name = "a";
+  private age = 3;
+  static readonly limit = 9;
+}
+console.log(Object.keys({ id: 1, tag: "x" }), Object.keys(new User()));
+// [ 'id', 'tag' ] [ 'name', 'age' ]
+```
 
 ```ts
 const env: Record<string, string> = { HOME: "/home/a" };
@@ -98,6 +132,18 @@ const limits: Record<"cpu" | "mem", i64> = { cpu: 2, mem: 512 };
 limits.cpu += 1;
 console.log(env.HOME ?? "/", Object.keys(env), limits);
 // /home/a [ 'HOME', 'PATH' ] { cpu: 3, mem: 512 }
+```
+
+A key of a `Record<string, V>` may be missing, so counting needs a starting value:
+`r[k] += 1` is an error there, and `??` supplies it. `r[k] ||= v` and `r[k] &&= v` are errors
+too; `r[k] ??= v` sets the key only when it is missing.
+
+```ts
+const seen: Record<string, i64> = {};
+for (const w of ["a", "b", "a"]) {
+  seen[w] = (seen[w] ?? 0) + 1;
+}
+console.log(seen); // { a: 2, b: 1 }
 ```
 
 ## Nullable values
@@ -121,8 +167,18 @@ nest 128 levels deep unless `options.maxDepth` says otherwise.
   panics, for bugs. `assertThrows(() => f(), msg?)` returns the error `f` throws and panics if
   it returns normally.
 - `deepEqual(a, b): bool`: content comparison. Arrays, structs and object literals compare
-  their contents recursively, class instances (`Map` included) by identity; `==` compares
-  every object by identity.
+  their contents recursively. A `Map` or `Record` equals another with the same keys, each with
+  a deeply equal value, in any order (a key is matched as `get` matches it). Other class
+  instances compare by identity; `==` compares every object by identity. This is Node's
+  `util.isDeepStrictEqual` except for floats, which compare with `==` as map keys do:
+  `deepEqual([NaN], [NaN])` is `false` (Node says `true`) and `deepEqual([0.0], [-0.0])` is
+  `true` (Node says `false`).
+
+```ts
+const a: Record<string, i64[]> = { x: [1], y: [2] };
+const b: Record<string, i64[]> = { y: [2], x: [1] };
+console.log(deepEqual(a, b), a == b); // true false
+```
 
 ## Date
 

@@ -243,17 +243,29 @@ fn base_class(cx: &mut Ctx, t: &ast::TypeExpr, kind: AdtKind, env: &TyEnv) -> Op
         }
         return None;
     };
-    // Their values only come from the runtime (a JSON handle, a record with every key), which a
+    // A record's values only come from the runtime (a record with every key), which a
     // subclass's constructor would bypass.
-    for sealed in ["Record", "JsonValue"] {
-        if cx.prelude_adt(sealed) == Some(bd) {
-            cx.error(
-                Diagnostic::error(format!("`{sealed}` cannot be extended"), t.span).with_note(
-                    format!("use composition instead: a class with a `{sealed}` field"),
-                ),
-            );
-            return None;
-        }
+    if cx.prelude_adt("Record") == Some(bd) {
+        cx.error(
+            Diagnostic::error("`Record` cannot be extended", t.span)
+                .with_note("use composition instead: a class with a `Record` field"),
+        );
+        return None;
+    }
+    let private_ctor = cx
+        .adt(bd)
+        .and_then(|a| a.decl)
+        .is_some_and(|d| d.ctor_visibility == ast::CtorVisibility::Private);
+    if private_ctor {
+        let name = cx.adt(bd).map(|a| a.name.clone()).unwrap_or_default();
+        cx.error(
+            Diagnostic::error(
+                format!("cannot extend `{name}`: its constructor is private"),
+                t.span,
+            )
+            .with_note(format!("use composition: a class with a `{name}` field")),
+        );
+        return None;
     }
     Some(bt)
 }

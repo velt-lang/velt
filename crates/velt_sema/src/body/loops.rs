@@ -235,7 +235,10 @@ impl FnCx<'_, '_> {
         out: &mut Vec<hir::Stmt>,
     ) {
         let mut it = self.expr(iter, None, Want::Borrow);
-        if self.cx.class_of(it.ty).is_some() {
+        if self.record_args(it.ty).is_some() {
+            self.record_not_iterable(it.ty, iter);
+            it = self.error_expr(iter.span);
+        } else if self.cx.class_of(it.ty).is_some() {
             it = self.entries_of(it, iter.span);
         }
         if it.ty == self.cx.ty.str_ {

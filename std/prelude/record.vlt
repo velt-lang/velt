@@ -43,8 +43,14 @@ export class Record<K, V> {
     return this.entries.size;
   }
 
-  __keys(): K[] {
-    return this.entries.keys();
+  // `Object.keys(r)`: TypeScript lists an object's keys as strings, so a string enum key is
+  // listed as its value.
+  __keyNames(): string[] {
+    const out: string[] = [];
+    for (const k of this.entries.keys()) {
+      out.push(`${k}`);
+    }
+    return out;
   }
 
   __values(): V[] {
@@ -57,9 +63,11 @@ export class Record<K, V> {
 }
 
 // TypeScript's `Object.keys` / `Object.values` / `Object.entries`, for records (insertion order).
+// Sema checks calls of them itself: `Object.keys` also lists the fields of any object
+// (crates/velt_sema/src/body/expr/object_keys.rs).
 export class Object {
-  static keys<K, V>(r: Record<K, V>): K[] {
-    return r.__keys();
+  static keys<K, V>(r: Record<K, V>): string[] {
+    return r.__keyNames();
   }
 
   static values<K, V>(r: Record<K, V>): V[] {

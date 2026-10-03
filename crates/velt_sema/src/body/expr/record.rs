@@ -4,11 +4,12 @@
 //!
 //! - `r[k]`, `r.name`: `r.__get(k)` (`V | null`) on open records, `r.__at(k)` (`V`) on closed
 //!   ones: the stored value itself, so modifying it modifies the record's entry (as in JS).
-//! - `r[k] = v`: `r.__set(k, v)`; `r[k] op= v` and `++`/`--` are `r.__set(k, r[k] op v)`, so the
-//!   receiver and key must be free of side effects (like setters).
+//! - `r[k] = v`: `r.__set(k, v)`; `r[k] ??= v` and, on closed records, `r[k] op= v` and
+//!   `++`/`--` are `r.__set(k, r[k] op v)`, so the receiver and key must be free of side effects
+//!   (like setters). On open records the arithmetic forms are errors (`record_compound.rs`).
 //! - `delete r[k]`: `r.__delete(k)` (open records only).
 //! - An object literal where a record is expected: `{ let t = new Record(); t.__set("a", ..);
-//!   t.__extend(spread); t }`. A closed record's literal must have every key.
+//!   t.__extend(spread); t }` (`record_literal.rs`).
 //! - A type-parameter key may stand for a closed key type: such a record is read as open (`V |
 //!   null`), but cannot start empty (except from a spread) or lose a key.
 //!
@@ -20,8 +21,8 @@ use velt_syntax::ast;
 
 pub(super) use super::record_call::{record_parts, RecordKey};
 use super::setters::{side_effect_free, synth};
-use crate::body::{FnCx, LocalKind, Want};
-use crate::hir::{self, DefId, ExprKind as H, StmtKind as S, TyId, TyKind, UseMode};
+use crate::body::{FnCx, Want};
+use crate::hir::{self, TyId, TyKind};
 
 /// The note on rejected constructions and deletions with a type-parameter key.
 const GENERIC_KEY_NOTE: &str = "the key type may be a union of string literals or a string enum, whose records always have every key; build or change the record where its key type is known, or use `Record<string, V>`";
@@ -78,7 +79,7 @@ impl FnCx<'_, '_> {
 
     /// Reports (at `span`) that `what` (`{R}`: the record type) needs a known key type if `k`
     /// mentions a type parameter.
-    fn reject_generic_key(&mut self, k: TyId, what: &str, span: Span) -> bool {
+    pub(super) fn reject_generic_key(&mut self, k: TyId, what: &str, span: Span) -> bool {
         if !self.cx.is_generic_key(k) {
             return false;
         }
@@ -116,7 +117,7 @@ impl FnCx<'_, '_> {
         self.record_call_keyed(obj, method, key, &[], span)
     }
 
-    fn record_has_key(&mut self, k: TyId, name: &str, span: Span) -> bool {
+    pub(super) fn record_has_key(&mut self, k: TyId, name: &str, span: Span) -> bool {
         let keys = self.record_keys(k).unwrap_or_default();
         if keys.iter().any(|s| s == name) {
             return true;
@@ -139,9 +140,17 @@ impl FnCx<'_, '_> {
         value: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
-        let (k, _) = self
+        let (k, v) = self
             .record_args(obj.ty)
             .expect("ICE: record write on a non-record");
+        // `r[k] ??= v` is defined for a missing key (`r.__set(k, r[k] ?? v)`).
+        let arithmetic = op.filter(|o| *o != ast::BinaryOp::Nullish);
+        if let (Some(bop), None) = (arithmetic, self.record_keys(k)) {
+            let sym = format!("{}=", super::ops::op_str(bop));
+            self.open_record_compound(obj.ty, v, target, &sym, bop, Some(value));
+            self.check_args_loose(std::slice::from_ref(value));
+            return self.error_expr(span);
+        }
         if let RecordKey::Name(id) = &key {
             if self.record_keys(k).is_some() && !self.record_has_key(k, &id.name, id.span) {
                 self.check_args_loose(std::slice::from_ref(value));
@@ -184,6 +193,17 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let opname = if op == ast::UpdateOp::Inc { "++" } else { "--" };
+        let bop = if op == ast::UpdateOp::Inc {
+            ast::BinaryOp::Add
+        } else {
+            ast::BinaryOp::Sub
+        };
+        if let Some((k, v)) = self.record_args(obj.ty) {
+            if self.record_keys(k).is_none() {
+                self.open_record_compound(obj.ty, v, target, opname, bop, None);
+                return self.error_expr(span);
+            }
+        }
         if as_value {
             self.cx.err(
                 format!("`{opname}` on a `Record` key cannot be used as a value"),
@@ -191,11 +211,6 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
-        let bop = if op == ast::UpdateOp::Inc {
-            ast::BinaryOp::Add
-        } else {
-            ast::BinaryOp::Sub
-        };
         let one = synth(
             ast::ExprKind::Lit(ast::Lit::Int {
                 value: 1,
@@ -258,125 +273,5 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         self.record_call_keyed(obj, "__delete", key, &[], span)
-    }
-
-    /// Reports why an object literal cannot build a `Record<k, ...>`, if it cannot: a bad key, an
-    /// enum key, or a type-parameter key without a spread (which would bring every key).
-    fn record_literal_unsupported(
-        &mut self,
-        k: TyId,
-        props: &[ast::ObjectProp],
-        span: Span,
-    ) -> bool {
-        if !self.check_record_key(k, span) {
-            return true;
-        }
-        let enum_keys =
-            matches!(self.cx.ty.kind(k), TyKind::Adt(..)) && self.cx.union_def(k).is_none();
-        if enum_keys {
-            let kn = self.cx.display(k);
-            self.cx.err(
-                format!("a `Record` keyed by the enum `{kn}` cannot be written as an object literal yet"),
-                span,
-            );
-            return true;
-        }
-        let spread = props
-            .iter()
-            .any(|p| matches!(p, ast::ObjectProp::Spread(_)));
-        !spread
-            && self.reject_generic_key(
-                k,
-                "cannot build a {R} from an object literal without a spread",
-                span,
-            )
-    }
-
-    /// An object literal where `Record<K, V>` (`d`) is expected.
-    pub(super) fn record_literal(
-        &mut self,
-        d: DefId,
-        k: TyId,
-        v: TyId,
-        props: &[ast::ObjectProp],
-        span: Span,
-    ) -> hir::Expr {
-        if self.record_literal_unsupported(k, props, span) {
-            return self.error_expr(span);
-        }
-        let keys = self.record_keys(k);
-        let ty = self.cx.ty.intern(TyKind::Adt(d, vec![k, v]));
-        let new = self.mk(
-            H::New {
-                def: d,
-                type_args: vec![k, v],
-                args: vec![],
-            },
-            ty,
-            span,
-        );
-        let t = self.new_local("<record>", ty, false, span, LocalKind::Temp);
-        let mut stmts = vec![hir::Stmt {
-            kind: S::Let {
-                local: t,
-                init: Some(new),
-            },
-            span,
-        }];
-        let mut seen: Vec<String> = vec![];
-        let mut complete = false;
-        for p in props {
-            let recv = self.mk(H::Local(t, UseMode::Borrow), ty, span);
-            let call = match p {
-                ast::ObjectProp::Spread(e) => {
-                    complete = true;
-                    self.record_call(recv, "__extend", std::slice::from_ref(e), e.span)
-                }
-                ast::ObjectProp::KeyValue(name, _) | ast::ObjectProp::Shorthand(name) => {
-                    if keys.is_some() && !self.record_has_key(k, &name.name, name.span) {
-                        continue;
-                    }
-                    if seen.contains(&name.name) {
-                        self.cx.err(
-                            format!("duplicate key `{}` in object literal", name.name),
-                            name.span,
-                        );
-                        continue;
-                    }
-                    seen.push(name.name.clone());
-                    let value = match p {
-                        ast::ObjectProp::KeyValue(_, value) => value.clone(),
-                        _ => synth(ast::ExprKind::Ident(name.clone()), name.span),
-                    };
-                    let key = RecordKey::Name(name);
-                    self.record_call_keyed(recv, "__set", key, std::slice::from_ref(&value), span)
-                }
-            };
-            stmts.push(hir::Stmt {
-                kind: S::Expr(call),
-                span,
-            });
-        }
-        if let (Some(keys), false) = (&keys, complete) {
-            let missing: Vec<&String> = keys.iter().filter(|k| !seen.contains(k)).collect();
-            if !missing.is_empty() {
-                let list: Vec<String> = missing.iter().map(|k| format!("\"{k}\"")).collect();
-                let kn = self.cx.display(k);
-                self.cx.err(
-                    format!(
-                        "missing key {} in a `Record<{kn}, ...>` literal",
-                        list.join(", ")
-                    ),
-                    span,
-                );
-            }
-        }
-        let value = self.mk(H::Local(t, UseMode::Move), ty, span);
-        let block = hir::Block {
-            stmts,
-            value: Some(Box::new(value)),
-            span,
-        };
-        self.mk(H::Block(block), ty, span)
     }
 }

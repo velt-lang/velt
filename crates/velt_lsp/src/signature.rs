@@ -19,7 +19,20 @@ pub fn decl(analysis: &Analysis, d: &Decl) -> String {
             format!("(method) {prefix}{owner}.{}", fn_sig_tail(analysis, sig))
         }
         DeclKind::Constructor(sig, owner) => {
-            format!("{owner}.constructor({})", params(analysis, &sig.params))
+            // `private ` / `protected ` as written (the signature's span starts at them).
+            let mods = analysis.snippet(velt_common::Span {
+                hi: sig.name.span.lo,
+                ..sig.span
+            });
+            let mods: String = mods
+                .split_whitespace()
+                .filter(|w| *w != "public")
+                .map(|w| format!("{w} "))
+                .collect();
+            format!(
+                "{mods}{owner}.constructor({})",
+                params(analysis, &sig.params)
+            )
         }
         DeclKind::Variant(v, owner) => variant(analysis, v, owner),
         DeclKind::Local(local) => local.detail.clone(),

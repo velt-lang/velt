@@ -481,3 +481,86 @@ fn windows_std_specifiers_cannot_leave_the_std_root() {
         assert!(l.modules.iter().all(|m| m.path == "main"), "{spec}");
     }
 }
+
+#[test]
+fn extra_roots_load_once_after_the_root_program() {
+    let t = Tree::new();
+    let root = t.write(
+        "pkg/src/main.vlt",
+        "import { a } from \"./a\";\nfunction main() {}\n",
+    );
+    let a = t.write("pkg/src/a.vlt", "export function a() {}\n");
+    let lib = t.write(
+        "pkg/src/lib.vlt",
+        "import { a } from \"./a\";\nimport { h } from \"./util/h\";\n",
+    );
+    t.write("pkg/src/util/h.vlt", "export function h() {}\n");
+    let test = t.write(
+        "pkg/tests/lib.test.vlt",
+        "import { h } from \"../src/util/h\";\n",
+    );
+    let main = t.write("pkg/tests/main.vlt", "");
+    let mut sm = SourceMap::new();
+    let mut diags = vec![];
+    let extra = [a, lib, test, root.clone(), main];
+    let l = load_with_roots(&mut sm, &root, &extra, LoadOptions::default(), &mut diags).unwrap();
+    assert!(diags.is_empty(), "{:?}", messages(&diags));
+    assert_eq!(
+        paths(&l),
+        [
+            "main",
+            "a",
+            "lib",
+            "util/h",
+            "../tests/lib.test",
+            "../tests/main"
+        ]
+    );
+    assert_eq!(imports(&l, "../tests/lib.test")[0].1, "util/h");
+}
+
+#[test]
+fn extra_roots_with_taken_or_reserved_paths_get_fallback_names() {
+    let t = Tree::new();
+    t.write("package.vlt", "");
+    let root = t.write("src/app.vlt", "function main() {}\n");
+    let main = t.write("src/main.vlt", "");
+    let std = t.write("src/std/x.vlt", "");
+    let b = t.write(
+        "src/b.vlt",
+        "import { f } from \"./main\";\nimport { g } from \"./main/index\";\n",
+    );
+    t.write("src/main/index.vlt", "");
+    let mut sm = SourceMap::new();
+    let mut diags = vec![];
+    let extra = [main.clone(), std, b];
+    let l = load_with_roots(&mut sm, &root, &extra, LoadOptions::default(), &mut diags).unwrap();
+    assert!(diags.is_empty(), "{:?}", messages(&diags));
+    assert_eq!(paths(&l), ["main", "#main", "#std/x", "b", "#main#2"]);
+    // The relative import finds the extra root by its file, under its fallback name.
+    let b_imports: Vec<String> = imports(&l, "b").into_iter().map(|(_, p)| p).collect();
+    assert_eq!(b_imports, ["#main", "#main#2"]);
+    // Diagnostics show the file, not the name.
+    assert_eq!(sm.get(l.modules[1].file).path, main);
+}
+
+#[test]
+fn unreadable_extra_roots_are_reported_in_their_file() {
+    let t = Tree::new();
+    t.write("package.vlt", "");
+    let root = t.write("src/main.vlt", "function main() {}\n");
+    let gone = t.path("src/gone.vlt");
+    let mut sm = SourceMap::new();
+    let mut diags = vec![];
+    let extra = [gone.clone()];
+    let l = load_with_roots(&mut sm, &root, &extra, LoadOptions::default(), &mut diags).unwrap();
+    assert_eq!(paths(&l), ["main"]);
+    let msgs = messages(&diags);
+    assert_eq!(msgs.len(), 1, "{msgs:?}");
+    assert!(
+        msgs[0].starts_with("cannot read `src/gone.vlt`: "),
+        "{msgs:?}"
+    );
+    let span = diags[0].labels[0].span;
+    assert_eq!(sm.get(span.file).path, gone);
+}
