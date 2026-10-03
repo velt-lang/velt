@@ -77,6 +77,7 @@ pub fn manifest_text_with(name: &str, description: Option<&str>) -> String {
         paths: BTreeMap::new(),
         native: None,
         jsx: None,
+        ts_compat: vec![],
     }
     .to_vlt()
 }

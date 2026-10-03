@@ -44,6 +44,8 @@ const TOOLING: &[(&str, &[&str])] = &[
             "native_packages",
             "templates",
             "install_layout",
+            // `velt check --ts-compat` in a package reads `tsCompat` from the manifest.
+            "ts_compat",
         ],
     ),
     ("velt_registry", &["registry_cli", "cli_package"]),

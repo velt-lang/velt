@@ -11,6 +11,7 @@
 //!   paths: { "@app/*": "src/*" },
 //!   jsx: { importSource: "sigx" },
 //!   native: { targets: ["x86_64-unknown-linux-gnu"] },
+//!   tsCompat: ["src/models"],
 //! };
 //! ```
 //!
@@ -264,6 +265,7 @@ impl Reader<'_> {
             paths: BTreeMap::new(),
             native: None,
             jsx: None,
+            ts_compat: vec![],
         };
         let Some(fields) = self.object(value, "the manifest") else {
             return manifest;
@@ -308,6 +310,7 @@ impl Reader<'_> {
                 "paths" => manifest.paths = self.paths(v),
                 "jsx" => manifest.jsx = self.jsx(v),
                 "native" => manifest.native = self.native(v),
+                "tsCompat" => manifest.ts_compat = self.ts_compat(v),
                 _ => self.unknown_key(key, schema::PACKAGE),
             }
         }
@@ -534,3 +537,6 @@ fn edit_distance(a: &str, b: &str) -> usize {
 mod native;
 #[cfg(test)]
 mod tests;
+mod ts_compat;
+
+pub use ts_compat::missing_ts_compat_dirs;
