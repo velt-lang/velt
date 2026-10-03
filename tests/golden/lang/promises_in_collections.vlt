@@ -1,0 +1,20 @@
+// check: no leaks
+// Promises in collections: replaced in place, taken out with `pop()`, awaited together with
+// `Promise.all`, and counted or removed in a `Map` without being read (reading one is an error:
+// lang/errors/promise_out_of_array, promise_out_of_map).
+async function work(n: i64): Promise<string> {
+  return `done ${n}`;
+}
+
+async function main() {
+  const arr: Promise<string>[] = [work(1), work(2)];
+  arr[0] = work(3);
+  const last = arr.pop();
+  if (last != null) {
+    console.log(await last);
+  }
+  console.log(arr.length, await Promise.all(arr));
+  const m = new Map<string, Promise<string>>();
+  m.set("a", work(4));
+  console.log(m.has("a"), m.size, m.delete("a"));
+}

@@ -1,0 +1,26 @@
+// A promise has one owner and can't be copied, so `Map` methods that return copies of the
+// stored values are errors when the values hold promises (they used to panic at run time).
+async function work(n: i64): Promise<string> {
+  return `done ${n}`;
+}
+
+class Job {
+  run: Promise<string>;
+  constructor(run: Promise<string>) {
+    this.run = run;
+  }
+}
+
+async function main() {
+  const m = new Map<string, Promise<string>>();
+  m.set("a", work(1));
+  const p = m.get("a");
+  const all = m.values();
+  const pairs = m.entries();
+  const jobs = new Map<string, Job>();
+  jobs.set("j", new Job(work(2)));
+  const j = jobs.get("j");
+  const results = new Map<string, string>();
+  results.set("ok", await work(3));
+  console.log(results.get("ok"), m.has("a"), m.size);
+}

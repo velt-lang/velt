@@ -1,0 +1,18 @@
+// A promise can't be moved out of an array element (it has one owner and can't be copied), and
+// array methods that copy elements are errors for promises; `pop()`, `splice` and `Promise.all`
+// take them out.
+async function work(n: i64): Promise<string> {
+  return `done ${n}`;
+}
+
+async function main() {
+  const arr: Promise<string>[] = [work(1), work(2)];
+  const w: Promise<string> = arr[0];
+  const first = await arr[1];
+  const later = arr.slice(1);
+  const at = arr.at(0);
+  const last = arr.pop();
+  const rest = arr.splice(0, 1);
+  const done = await Promise.all(rest);
+  console.log(arr.length, done);
+}

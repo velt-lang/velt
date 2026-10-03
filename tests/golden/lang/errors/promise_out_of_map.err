@@ -1,0 +1,8 @@
+promise_out_of_map.vlt:17:15: error: `get` would copy a `Promise<string>` out of the `Map`
+  = note: a promise has one owner and can't be copied: store the awaited result (`m.set(k, await p)`), or keep the promises in an array and take them out with `pop()`
+promise_out_of_map.vlt:18:17: error: `values` would copy a `Promise<string>` out of the `Map`
+  = note: a promise has one owner and can't be copied: store the awaited result (`m.set(k, await p)`), or keep the promises in an array and take them out with `pop()`
+promise_out_of_map.vlt:19:19: error: `entries` would copy a `Promise<string>` out of the `Map`
+  = note: a promise has one owner and can't be copied: store the awaited result (`m.set(k, await p)`), or keep the promises in an array and take them out with `pop()`
+promise_out_of_map.vlt:22:18: error: `get` would copy a `Job` out of the `Map`
+  = note: a promise has one owner and can't be copied: store the awaited result (`m.set(k, await p)`), or keep the promises in an array and take them out with `pop()`

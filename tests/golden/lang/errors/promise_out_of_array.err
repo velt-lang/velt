@@ -1,0 +1,8 @@
+promise_out_of_array.vlt:10:30: error: cannot read a `Promise<string>` out of an array element
+  = note: a promise has one owner and can't be copied: take it out of the array with `pop()` or `splice(i, 1)`, or await the promises together with `Promise.all(arr)`
+promise_out_of_array.vlt:11:23: error: cannot read a `Promise<string>` out of an array element
+  = note: a promise has one owner and can't be copied: take it out of the array with `pop()` or `splice(i, 1)`, or await the promises together with `Promise.all(arr)`
+promise_out_of_array.vlt:12:21: error: `slice` would copy a `Promise<string>` out of the array
+  = note: a promise has one owner and can't be copied: take promises out with `pop()` or `splice(i, 1)`, or await them together with `Promise.all(arr)`
+promise_out_of_array.vlt:13:18: error: `at` would copy a `Promise<string>` out of the array
+  = note: a promise has one owner and can't be copied: take promises out with `pop()` or `splice(i, 1)`, or await them together with `Promise.all(arr)`
