@@ -1,36 +1,53 @@
-//! Generic arrow functions (`<T>(x: T): T => x`, or `<T,>` as `.tsx` spells it): a module-level
+//! Generic arrow functions (`<T>(x: T): T => x`, or `<T,>` as `.tsx` spells it): a
 //! `const f = <T>(x: T): R => body;` with typed parameters and a return type is checked as the
-//! generic function `function f<T>(x: T): R { return body; }` (same spans, same `export`). The
-//! syntax is rewritten before collection, so every later pass sees an ordinary generic function.
-//! Generic arrows anywhere else are reported by `body::expr::closure` (a closure value has one
-//! type; Velt has no generic function values).
+//! generic function `function f<T>(x: T): R { return body; }` (same spans; at module level with
+//! the same `export`, in a body as a nested function, see [`local`]). The syntax is rewritten
+//! before collection, so every later pass sees an ordinary generic function. Generic arrows
+//! anywhere else are reported by `body::expr::closure` (a closure value has one type; Velt has
+//! no generic function values).
 
+mod local;
+
+use std::collections::HashSet;
+
+use velt_common::Span;
 use velt_syntax::ast;
 
 use crate::SourceModule;
 
+/// The modules with their generic arrow constants rewritten into functions.
+pub(crate) struct Lifted {
+    pub modules: Vec<SourceModule>,
+    /// Name spans of the functions made from local (non-module-level) generic arrows.
+    pub local_fns: HashSet<Span>,
+}
+
 /// The modules with their liftable generic arrow constants rewritten into functions, or `None`
 /// when no module has one (the common case: nothing is copied).
-pub(crate) fn lift(modules: &[SourceModule]) -> Option<Vec<SourceModule>> {
-    let any = modules
-        .iter()
-        .any(|m| m.ast.items.iter().any(|i| as_function(i).is_some()));
+pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
+    let any = modules.iter().any(|m| {
+        m.ast
+            .items
+            .iter()
+            .any(|i| as_function(i).is_some() || local::item_has_local(i))
+    });
     if !any {
         return None;
     }
-    let lifted = modules
+    let mut locals = local::Rewriter::default();
+    let mut lift_item = |i: &ast::Item| {
+        let mut i = as_function(i).unwrap_or_else(|| i.clone());
+        locals.item(&mut i);
+        i
+    };
+    let modules = modules
         .iter()
         .map(|m| SourceModule {
             path: m.path.clone(),
             is_std: m.is_std,
             file: m.file,
             ast: ast::Module {
-                items: m
-                    .ast
-                    .items
-                    .iter()
-                    .map(|i| as_function(i).unwrap_or_else(|| i.clone()))
-                    .collect(),
+                items: m.ast.items.iter().map(&mut lift_item).collect(),
                 span: m.ast.span,
                 jsx_import_source: m.ast.jsx_import_source.clone(),
             },
@@ -38,14 +55,27 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Vec<SourceModule>> {
             jsx_runtime: m.jsx_runtime.clone(),
         })
         .collect();
-    Some(lifted)
+    Some(Lifted {
+        modules,
+        local_fns: locals.lifted.into_iter().collect(),
+    })
 }
 
-/// `const f = <T>(x: T): R => body;` as `function f<T>(x: T): R { return body; }`.
+/// A module-level `const f = <T>(x: T): R => body;` as `function f<T>(x: T): R { return body; }`.
 fn as_function(item: &ast::Item) -> Option<ast::Item> {
     let ast::ItemKind::Var(v) = &item.kind else {
         return None;
     };
+    Some(ast::Item {
+        kind: ast::ItemKind::Function(arrow_function(v)?),
+        exported: item.exported,
+        span: item.span,
+    })
+}
+
+/// The function a generic arrow constant `v` declares, if it is one with typed parameters and
+/// a return type.
+fn arrow_function(v: &ast::VarDecl) -> Option<ast::FnDecl> {
     let ast::PatternKind::Ident(name) = &v.pattern.kind else {
         return None;
     };
@@ -99,11 +129,7 @@ fn as_function(item: &ast::Item) -> Option<ast::Item> {
         is_async: *is_async,
         span: v.span,
     };
-    Some(ast::Item {
-        kind: ast::ItemKind::Function(ast::FnDecl { sig, body }),
-        exported: item.exported,
-        span: item.span,
-    })
+    Some(ast::FnDecl { sig, body })
 }
 
 #[cfg(test)]
@@ -123,7 +149,7 @@ mod tests {
             imports: vec![],
             jsx_runtime: None,
         };
-        lift(&[m]).map(|mut ms| ms.remove(0).ast.items.remove(0).kind)
+        lift(&[m]).map(|mut l| l.modules.remove(0).ast.items.remove(0).kind)
     }
 
     #[test]
@@ -146,5 +172,37 @@ mod tests {
         assert!(lifted("const id = <T,>(x): T => x;").is_none());
         assert!(lifted("const f = (x: i64): i64 => x;").is_none());
         assert!(lifted("const n = 1;").is_none());
+    }
+
+    #[test]
+    fn lifts_local_generic_arrows_in_blocks_and_arrow_bodies() {
+        let src = "function f() { if (true) { const id = <T,>(x: T): T => x; } \
+                   const g = () => { const one = <T,>(xs: T[]): T => xs[0]; }; let k = 1; }";
+        let Some(ast::ItemKind::Function(f)) = lifted(src) else {
+            panic!("not a function");
+        };
+        let ast::StmtKind::If { then, .. } = &f.body.stmts[0].kind else {
+            panic!("not an if");
+        };
+        assert!(matches!(then.stmts[0].kind, ast::StmtKind::Item(_)));
+        let ast::StmtKind::Var(g) = &f.body.stmts[1].kind else {
+            panic!("not a var");
+        };
+        let Some(ast::ExprKind::Arrow {
+            body: ast::ArrowBody::Block(b),
+            ..
+        }) = g.init.as_ref().map(|e| &e.kind)
+        else {
+            panic!("not an arrow");
+        };
+        assert!(matches!(b.stmts[0].kind, ast::StmtKind::Item(_)));
+        assert!(matches!(f.body.stmts[2].kind, ast::StmtKind::Var(_)));
+    }
+
+    #[test]
+    fn leaves_bodies_without_generic_arrows_alone() {
+        assert!(lifted("function f() { let id = <T,>(x: T): T => x; }").is_none());
+        assert!(lifted("function f() { const id = <T,>(x: T) => x; }").is_none());
+        assert!(lifted("function f() { const g = (x: i64): i64 => x; }").is_none());
     }
 }

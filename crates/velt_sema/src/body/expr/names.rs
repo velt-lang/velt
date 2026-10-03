@@ -175,6 +175,17 @@ impl FnCx<'_, '_> {
                 .err(format!("cannot find `{}` in this scope", id.name), id.span);
             return;
         }
+        if self.generic_arrow {
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`{}` cannot be captured by a generic arrow function", id.name),
+                    id.span,
+                )
+                .with_note("a local generic arrow function is a generic function nested in this one: it cannot use the local variables of enclosing functions")
+                .with_note(format!("pass `{}` as a parameter, or drop the type parameters to make it a closure", id.name)),
+            );
+            return;
+        }
         self.cx.error(
             Diagnostic::error(
                 format!("`{}` cannot be captured by a nested function", id.name),

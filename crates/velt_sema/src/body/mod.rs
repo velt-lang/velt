@@ -237,6 +237,8 @@ pub(crate) struct FnCx<'a, 'm> {
     pub owner: Option<DefId>,
     /// Locals of the functions enclosing a nested declaration (see `collect::nested`).
     pub enclosing_locals: Vec<String>,
+    /// The body is a local generic arrow function (checked as a nested function).
+    pub generic_arrow: bool,
     pub f: Frame,
     /// Enclosing frames of the closure being checked (innermost last).
     pub outer: Vec<Frame>,
@@ -257,6 +259,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             fn_name: String::new(),
             owner: None,
             enclosing_locals: vec![],
+            generic_arrow: false,
             f: frame,
             outer: vec![],
             direct_await: None,

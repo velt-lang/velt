@@ -192,14 +192,21 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   `xs.map((x) => x * 2)` where `map` passes `(x, i)`, and `xs.map(double)` with a one-parameter
   `double`. An arrow may also take more, when the extra ones have defaults.
 - **Generic arrow functions** are written as in `.ts` files, `<T>(x: T): T => x` (the `.tsx`
-  spelling `<T,>` works too, and JSX is allowed alongside). One must be a module-level `const`
-  with typed parameters and a return type; it is then a generic function:
+  spelling `<T,>` works too, and JSX is allowed alongside). One must be the value of a `const`
+  with typed parameters and a return type; it is then a generic function. At module level it
+  is an ordinary generic function; in a function body it is a generic function nested there,
+  so each call instantiates it, and like any [nested function](#declarations) it cannot use
+  the local variables around it. A function value has one type, so using one as a value needs
+  a function type to instantiate it at (`const f: (x: i64) => i64 = id;`), and a generic arrow
+  anywhere else (an argument, a `let`) is an error:
 
   ```ts
   const firstOr = <T>(xs: T[], fallback: T): T => (xs.length > 0 ? xs[0].clone() : fallback);
 
   function main() {
     console.log(firstOr([3, 4], 0), firstOr([], "none"));
+    const pair = <A, B>(a: A, b: B): string => `${a}:${b}`;
+    console.log(pair(1, true), pair("x", 2.5)); // 1:true x:2.5
   }
   ```
 

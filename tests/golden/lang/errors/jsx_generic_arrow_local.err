@@ -1,2 +1,6 @@
-jsx_generic_arrow_local.vlt:3:22: error: a generic arrow function must be a module-level constant with typed parameters and a return type
-jsx_generic_arrow_local.vlt:6:14: error: a generic arrow function must be a module-level constant with typed parameters and a return type
+jsx_generic_arrow_local.vlt:5:22: error: a generic arrow function must be the value of a `const` with typed parameters and a return type
+jsx_generic_arrow_local.vlt:14:19: error: cannot infer the type arguments of generic function `id`
+use it where a function type is expected
+jsx_generic_arrow_local.vlt:15:21: error: a generic arrow function must be the value of a `const` with typed parameters and a return type
+jsx_generic_arrow_local.vlt:16:40: error: `k` cannot be captured by a generic arrow function
+pass `k` as a parameter

@@ -73,8 +73,11 @@ pub fn check_for_ide(modules: &[SourceModule], root: usize) -> Analysis {
 
 fn check_on_current_thread(modules: &[SourceModule], root: usize) -> Analysis {
     let lifted = crate::generic_arrows::lift(modules);
-    let modules = lifted.as_deref().unwrap_or(modules);
+    let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
     let mut cx = crate::ctx::Ctx::new(modules, root.min(modules.len().saturating_sub(1)));
+    if let Some(l) = &lifted {
+        cx.generic_arrow_fns = l.local_fns.clone();
+    }
     cx.ide = Some(Box::default());
     if !modules.is_empty() {
         crate::analyze(&mut cx);

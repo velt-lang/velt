@@ -318,9 +318,13 @@ pub fn sx(e: &Expr) -> String {
 }
 
 /// Compact rendering of a JSX element: `<div a="v" b={x} {...p}>["text" {y} {} <br/>]`
-/// (fragments have an empty name; no children = `/>`).
+/// (fragments have an empty name; no children = `/>`; type arguments as `<List<i64>`).
 pub fn jsx(el: &JsxElement) -> String {
-    let name = el.name.as_ref().map(JsxName::to_source).unwrap_or_default();
+    let mut name = el.name.as_ref().map(JsxName::to_source).unwrap_or_default();
+    if !el.type_args.is_empty() {
+        let args: Vec<String> = el.type_args.iter().map(ty).collect();
+        name = format!("{name}<{}>", args.join(", "));
+    }
     let attrs: String = el
         .attrs
         .iter()

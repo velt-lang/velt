@@ -243,15 +243,46 @@ impl FnCx<'_, '_> {
             UseMode::Borrow
         };
         let l = self.new_local("<case>", ty, false, span, LocalKind::Bind);
-        let v = self.expr_coerce(test, ty, Want::Borrow);
+        let v = self.expr(test, Some(ty), Want::Borrow);
         let cur = self.mk(hir::ExprKind::Local(l, mode), ty, span);
-        let guard = self.eq_values(cur, v, span);
+        let guard = match self.case_operands(cur, v) {
+            Some((cur, v)) => self.eq_values(cur, v, span),
+            None => self.mk(
+                hir::ExprKind::Lit(hir::Lit::Bool(false)),
+                self.cx.ty.bool_,
+                span,
+            ),
+        };
         Sel {
             pat: self.pat(P::Binding(l, mode), ty, span),
             guard: Some(guard),
             touched: (0..s.slots.len()).collect(),
             covered: vec![],
             lit: None,
+        }
+    }
+
+    /// The scrutinee `cur` and case value `v` as operands of one `===` (#337): a `T | null`
+    /// case on a `T` scrutinee compares the scrutinee converted to `T | null` (TypeScript
+    /// accepts it; `null` matches no value), any other case value converts to the scrutinee's
+    /// type. `None` after reporting a case value of another type (once: the comparison is not
+    /// checked again).
+    fn case_operands(&mut self, cur: hir::Expr, v: hir::Expr) -> Option<(hir::Expr, hir::Expr)> {
+        let t = &self.cx.ty;
+        let cur = if t.opt_payload(cur.ty).is_none() && t.opt_payload(v.ty).is_some() {
+            match self.try_coerce(cur, v.ty) {
+                Ok(cur) => return Some((cur, v)),
+                Err(cur) => cur,
+            }
+        } else {
+            cur
+        };
+        match self.try_coerce(v, cur.ty) {
+            Ok(v) => Some((cur, v)),
+            Err(v) => {
+                self.report_mismatch(cur.ty, &v);
+                None
+            }
         }
     }
 

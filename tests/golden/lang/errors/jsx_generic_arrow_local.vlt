@@ -1,7 +1,17 @@
-// A generic arrow function is a module-level constant with typed parameters and a return type.
+// A generic arrow function is the value of a `const` with typed parameters and a return type.
+// A local one is a generic function nested in its function: it captures nothing, and a use as
+// a value needs a function type to instantiate it at.
 
 const noReturnType = <T,>(x: T) => x;
 
+function apply(f: (x: i64) => i64): i64 {
+  return f(1);
+}
+
 function main() {
+  const k = 3;
   const id = <T,>(x: T): T => x;
+  const asValue = id;
+  console.log(apply(<T,>(x: T): T => x));
+  const capturing = <T,>(x: T): i64 => k;
 }

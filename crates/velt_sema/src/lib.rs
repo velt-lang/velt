@@ -133,12 +133,15 @@ fn check_on_current_thread(
     opts: CheckOptions,
 ) -> (Option<hir::Program>, Diagnostics) {
     let lifted = generic_arrows::lift(modules);
-    let modules = lifted.as_deref().unwrap_or(modules);
+    let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return (None, vec![d]);
     };
     let mut cx = ctx::Ctx::new(modules, root);
+    if let Some(l) = &lifted {
+        cx.generic_arrow_fns = l.local_fns.clone();
+    }
     analyze(&mut cx);
     let entry = check_main(&mut cx, root, root_mod, opts.require_main);
     check_imported_scripts(&mut cx, root, modules);

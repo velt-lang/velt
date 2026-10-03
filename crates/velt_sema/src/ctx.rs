@@ -94,6 +94,8 @@ pub(crate) struct Ctx<'m> {
     /// For each nested definition: names bound in its enclosing functions (for the
     /// "nested functions cannot capture" error).
     pub nested_locals: HashMap<DefId, Vec<String>>,
+    /// Name spans of the nested functions made from local generic arrows (`generic_arrows`).
+    pub generic_arrow_fns: HashSet<Span>,
     /// The JSX runtime of each module that uses JSX, resolved on first use (`None` after its
     /// errors were reported).
     pub jsx_providers: HashMap<usize, Option<std::rc::Rc<crate::body::expr::jsx::Provider>>>,
@@ -154,6 +156,7 @@ impl<'m> Ctx<'m> {
             throw_checks: vec![],
             nested: vec![],
             nested_locals: HashMap::new(),
+            generic_arrow_fns: HashSet::new(),
             jsx_providers: HashMap::new(),
             jsx_adapters: vec![],
             ide: None,
