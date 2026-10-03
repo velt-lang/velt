@@ -28,7 +28,10 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   instance (a getter's `return this.ctl.sig`) shares the field and only borrows the instance.
 - A **promise** has one owner: `await` a stored promise once; using a promise variable after
   handing it on is ``use of moved value `p` ``.
-- Reference cycles (`a.next = b; b.next = a`) are never freed. **Planned**
+- Reference cycles (`a.next = b; b.next = a`) are never freed, and that includes an object
+  holding a closure that captured it (`this.onChange = () => this.render()` in a constructor
+  or method: the closure refers to the object, the object to the closure); replace the field
+  (`this.onChange = () => {}`) when the object is done to free both. **Planned**
   ([semantics — cycles](../internals/design/semantics.md#reference-cycles--without-a-collector)):
   `weak` references and a compile-time warning for reference cycles.
 
