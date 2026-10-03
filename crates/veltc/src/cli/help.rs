@@ -173,10 +173,10 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "test",
-        summary: "Run the tests (`export function test_*` in *.test.vlt)",
+        summary: "Run the tests (`export function test_*` in *.test.vlt, .ts, .tsx)",
         usage: &["test [<file|dir>] [--release] [--locked] [--watch]"],
         about: "Every `export function test_*()` (or `export async function test_*()`) in a \
-                *.test.vlt file is a test. Prints `ok <name>` / `FAILED <name>` and exits \
+                *.test.vlt (or .test.ts, .test.tsx) file is a test. Prints `ok <name>` / `FAILED <name>` and exits \
                 with 1 if any test failed.",
         options: &[
             ("--release", "build the tests optimized"),
@@ -191,10 +191,10 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "fmt",
-        summary: "Format .vlt files",
+        summary: "Format .vlt (and .ts, .tsx) files",
         usage: &["fmt [<file|dir>...] [--check]"],
-        about: "Without paths, formats the package's package.vlt and src/ (or every .vlt file \
-                under the current directory).",
+        about: "Without paths, formats the package's package.vlt and the .vlt, .ts and .tsx \
+                files of src/ (or every .vlt file under the current directory).",
         options: &[("--check", "write nothing; list unformatted files and exit 1 if any")],
         examples: &[
             ("velt fmt", "format the package"),

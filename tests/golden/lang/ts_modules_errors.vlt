@@ -1,0 +1,9 @@
+// Module errors specific to `.ts` and `.tsx` files: two files a relative import could name, and
+// JSX in a `.ts` file (TypeScript allows it only in `.tsx` files).
+
+import { twice } from "./_ts_dup";
+import { Label } from "./_ts_jsx_in_ts";
+
+function main() {
+  console.log(twice(2), Label());
+}

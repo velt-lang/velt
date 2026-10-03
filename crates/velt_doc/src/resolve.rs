@@ -27,14 +27,19 @@ impl ModuleIndex {
     }
 
     /// The module that `spec`, written in module `from`, names: `velt:x` is `std/x`; `./x` and
-    /// `../x` are relative to `from`'s directory (or to `from` itself, when it is a directory's
-    /// `index.vlt`); anything else is a module name (`pkg`, `pkg/sub`). `None` when that module
-    /// is not documented.
+    /// `../x` (or `./x.ts`, with any extension a relative import may name) are relative to
+    /// `from`'s directory (or to `from` itself, when it is a directory's `index` file); anything
+    /// else is a module name (`pkg`, `pkg/sub`). `None` when that module is not documented.
     pub fn resolve(&self, from: &str, spec: &str) -> Option<usize> {
         if let Some(std) = spec.strip_prefix("velt:") {
             return self.0.get(&format!("std/{std}")).copied();
         }
         if spec.starts_with("./") || spec.starts_with("../") {
+            // `./x.ts`, `./x.js` (TypeScript's spelling of `x.ts`): the module `x`.
+            let spec = [".vlt", ".tsx", ".ts", ".jsx", ".js"]
+                .iter()
+                .find_map(|ext| spec.strip_suffix(ext))
+                .unwrap_or(spec);
             let parent = from.rsplit_once('/').map_or("", |(dir, _)| dir);
             return [parent, from]
                 .iter()
@@ -222,6 +227,8 @@ mod tests {
         let idx = ModuleIndex::new(&ms);
         assert_eq!(idx.resolve("pkg", "velt:fs"), Some(0));
         assert_eq!(idx.resolve("pkg", "./util"), Some(4));
+        assert_eq!(idx.resolve("pkg", "./util.ts"), Some(4));
+        assert_eq!(idx.resolve("pkg", "./util.js"), Some(4));
         assert_eq!(idx.resolve("pkg/shapes/circle", "../util"), Some(4));
         // `pkg/shapes` is shapes/index.vlt: `./circle` is next to it.
         assert_eq!(idx.resolve("pkg/shapes", "./circle"), Some(3));

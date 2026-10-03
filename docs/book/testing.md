@@ -1,6 +1,6 @@
 # Testing
 
-`velt test` finds every `*.test.vlt` file and runs every exported function whose name starts
+`velt test` finds every `*.test.vlt` file (and `*.test.ts`, `*.test.tsx`) and runs every exported function whose name starts
 with `test_`. There is no framework to install and no configuration.
 
 ```ts ignore
@@ -73,7 +73,7 @@ FAILED test_uncaught (exit code 1)
 ## Running tests
 
 ```sh
-velt test                       # every *.test.vlt of the package (or under the current directory)
+velt test                       # every *.test.vlt (.ts, .tsx) of the package (or under the current directory)
 velt test tests/api.test.vlt    # one file
 velt test --release             # optimized build
 velt test --watch               # rerun on every change
