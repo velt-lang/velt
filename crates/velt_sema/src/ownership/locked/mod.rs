@@ -23,6 +23,7 @@
 //! deliberately (std/prelude/promise.vlt `takeSettlement`).
 
 mod callbacks;
+mod kept;
 mod opaque;
 mod promises;
 mod regions;
@@ -229,7 +230,8 @@ fn check_callback(
         let span = match &m {
             promises::Made::Here(span, _)
             | promises::Made::ByCall(span, _)
-            | promises::Made::Resource(span, _) => *span,
+            | promises::Made::Resource(span, _)
+            | promises::Made::Kept(span) => *span,
         };
         if !reported.insert(span) {
             continue;
@@ -259,6 +261,12 @@ fn promise_error(cx: &mut Ctx, m: promises::Made) {
             let pn = cx.display(part);
             let msg = format!("the promise made here runs after `with` releases the lock, so it would need its own copy of this `{t}`, but {why}");
             let note = format!("give `{pn}` a `clone()` method that duplicates the resource, take what the promise needs out of the value (`m.with((v) => v.x)`) and start it after `with`, or keep the resource shared: `shared(new Mutex(…))`");
+            cx.error(Diagnostic::error(msg, span).with_note(note));
+            return;
+        }
+        promises::Made::Kept(span) => {
+            let msg = "this calls a function kept in the locked value, and the promise it makes may use what that function captured after `with` releases the lock";
+            let note = "a function kept in a `Mutex`'s value that captured objects and makes a promise must be an async closure (each call gets its own copy of what it captured), or take what it needs as arguments; or take what you need out of the value and start the work after `with`";
             cx.error(Diagnostic::error(msg, span).with_note(note));
             return;
         }

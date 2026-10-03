@@ -1,0 +1,4 @@
+mutex_with_kept_function.vlt:27:33
+mutex_with_kept_function.vlt:30:15
+error: this calls a function kept in the locked value, and the promise it makes may use what that function captured after `with` releases the lock
+must be an async closure (each call gets its own copy of what it captured)

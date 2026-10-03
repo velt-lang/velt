@@ -269,7 +269,10 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
     visible may not return a promise either; through a generic helper
     (`function run<T>(m, fs: ((s: S) => T)[]): T`) that is reported where `T` is a promise.
   - A function value stored in the value must not have captured a resource without `clone()`
-    (the program stops when the lock is released).
+    (the program stops when the lock is released). Calling one that returns or starts a
+    promise (`m.with((f) => f())`) is an error when a synchronous closure of its type captured
+    objects: the promise would use them after the lock is released. An async closure there is
+    fine, since each call gets its own copy of what it captured.
 
 `shared(x)` is a thread boundary like `spawn`, and it takes `x` itself: a variable used after
 it went into `shared(...)` (also inside `new Mutex(o)`, a literal or a constructor call there)

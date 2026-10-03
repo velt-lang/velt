@@ -7,7 +7,8 @@
 //! that does not modify those parameters: `save(v.name)`, `read(v)`), it gets a copy instead,
 //! like a spawned call (an error when the copy would need to duplicate a resource without
 //! `clone()`); otherwise it is an error. Calling a function value kept in the value is
-//! allowed (`m.with((f) => f())`), and so is calling an async closure that captured the
+//! allowed when no function of its type is a synchronous closure that captured objects and
+//! makes a promise (`super::kept`), and so is calling an async closure that captured the
 //! value: an async closure copies what it captured per call. `spawn` transfers what it is
 //! given, so a spawned call is allowed too, and `Promise.all` and the other combinators only
 //! wait for the promises they are given, each checked where it is made.
@@ -31,6 +32,8 @@ pub(super) enum Made {
     Here(Span, TyId),
     /// A promise that would need a copy of an argument owning a resource without `clone()`.
     Resource(Span, TyId),
+    /// A call of a function kept in the value, whose promise may use what it captured.
+    Kept(Span),
     /// A call of a function that makes one and leaves it running.
     ByCall(Span, String),
 }
@@ -87,6 +90,13 @@ impl Promises<'_, '_, '_, '_> {
                 for g in self.r.named.get(&c.span).cloned().unwrap_or_default() {
                     self.call(e, &Callee::Def(g, vec![]), args);
                 }
+                return;
+            }
+        }
+        if let Callee::Indirect(c) = callee {
+            // A function kept in the value: its promise may use what it captured.
+            if self.reaches_value(c) && super::kept::may_promise_captures(self.cx, c.ty) {
+                self.found.push(Made::Kept(e.span));
                 return;
             }
         }
