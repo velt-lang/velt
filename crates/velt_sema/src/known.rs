@@ -1,7 +1,8 @@
 //! Prelude types the compiler knows by name: `Mutex<T>` (the lock-word struct behind
 //! `new Mutex(x)` / `.with`), `JsonError` (thrown by `JSON.parse`), the dynamic JSON value
 //! (`json::JsonValue`), `Map` (not JSON-serializable), the shared-state receiver shapes, and the
-//! `Comparable<T>` interface behind ordering operators on generic params.
+//! `Comparable<T>` interface behind ordering operators on generic params, and the `Iterator<T, E>`
+//! interface behind `for...of` over iterables.
 
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
@@ -14,6 +15,14 @@ impl Ctx<'_> {
     /// `interface Comparable<T> { compareTo(other: T): i64 }` from the prelude.
     pub fn comparable_iface(&self) -> Option<DefId> {
         match self.prelude.get("Comparable") {
+            Some(Item::Def(d)) if self.iface(*d).is_some() => Some(*d),
+            _ => None,
+        }
+    }
+
+    /// An interface exported by the prelude under `name` (`Iterator`, `Iterable`).
+    pub fn prelude_iface(&self, name: &str) -> Option<DefId> {
+        match self.prelude.get(name) {
             Some(Item::Def(d)) if self.iface(*d).is_some() => Some(*d),
             _ => None,
         }

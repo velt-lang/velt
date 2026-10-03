@@ -1,0 +1,34 @@
+open all
+read a
+read c
+eof all
+open break
+read a
+close break after 2
+open return
+close return after 2
+return: b
+open throw
+close throw after 2
+caught stop at b
+open continue1
+close continue1 after 2
+open continue2
+close continue2 after 2
+open labelled1
+close labelled1 after 1
+open outer
+open inner-a
+close inner-a after 1
+open inner-b
+close inner-b after 2
+close outer after 2
+open failing
+read x
+read y
+caught bad line 2 2
+open count
+eof count
+count 3
+open bad
+count failed at line 0

@@ -374,6 +374,10 @@ pub struct InterfaceMethodDef {
     /// holds such a method): its implementations reject the promise, so a call through the slot
     /// never throws (hir_encodings.md "Errors").
     pub promise: bool,
+    /// What a call through the slot throws, in terms of the interface's type params (`E` of
+    /// `next(): IteratorResult<T> throws E`): substituted with the `Dyn`'s type args. `None`
+    /// for a promise slot or one that cannot throw.
+    pub throws: Option<TyId>,
 }
 
 #[derive(Clone, Debug)]

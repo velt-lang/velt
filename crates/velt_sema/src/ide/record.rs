@@ -202,7 +202,8 @@ impl FnCx<'_, '_> {
 
     /// `span` uses local `l`.
     pub(crate) fn rec_local(&mut self, span: Span, l: LocalId) {
-        if self.cx.recording() {
+        // Compiler-made locals (`<iterator@N>` of a desugared `for...of`) are not shown.
+        if self.cx.recording() && !self.f.locals[l.0 as usize].name.starts_with('<') {
             let t = self.local_target(l);
             self.cx.rec_ref(span, t);
         }
@@ -210,7 +211,7 @@ impl FnCx<'_, '_> {
 
     /// Local `l` was declared by the identifier at its span.
     pub(crate) fn rec_local_decl(&mut self, l: LocalId) {
-        if self.cx.recording() {
+        if self.cx.recording() && !self.f.locals[l.0 as usize].name.starts_with('<') {
             let def = &self.f.locals[l.0 as usize];
             let (span, ty) = (def.span, def.ty);
             self.rec_local(span, l);

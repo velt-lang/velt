@@ -37,10 +37,10 @@ impl Ctx<'_> {
                 None => false,
             },
             (TyKind::Dyn(d, ps), TyKind::Dyn(d2, as_)) if d == d2 => {
-                self.match_all(&ps, &as_, slots)
+                self.match_iface_args(&ps, &as_, slots)
             }
             (TyKind::Dyn(d, ps), _) => match self.impl_args(actual, d) {
-                Some(as_) => self.match_all(&ps, &as_, slots),
+                Some(as_) => self.match_iface_args(&ps, &as_, slots),
                 None => false,
             },
             (TyKind::Array(p), TyKind::Array(a))
@@ -141,6 +141,19 @@ impl Ctx<'_> {
             _ => self.union_of(&rest, false, velt_common::Span::DUMMY),
         };
         Some(self.match_ty(*param, t, slots))
+    }
+
+    /// Interface arguments: an argument may be an error type (`E` of `Iterable<T, E>`), so
+    /// `never` binds a parameter there, as in [`Self::match_error`].
+    fn match_iface_args(&mut self, ps: &[TyId], as_: &[TyId], slots: &mut [Option<TyId>]) -> bool {
+        if ps.len() != as_.len() {
+            return false;
+        }
+        let mut ok = true;
+        for (p, a) in ps.iter().zip(as_) {
+            ok &= self.match_error(*p, *a, slots);
+        }
+        ok
     }
 
     fn match_all(&mut self, ps: &[TyId], as_: &[TyId], slots: &mut [Option<TyId>]) -> bool {

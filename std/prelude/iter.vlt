@@ -1,0 +1,30 @@
+// Prelude: the iteration protocol (docs/reference/control-flow.md "for...of").
+//
+// `for (const x of src)` works on arrays, on `Map`s and other classes with `entries()`, and on
+// any `Iterable<T, E>`: it calls `src[Symbol.iterator]()` once, then `next()` until a result
+// is `done`, and calls the iterator's `return()` when the loop is left early (`break`,
+// `return`, a thrown error). `E` is what `next()` throws (`never`: nothing); the loop throws
+// it too. Velt has no `undefined`, so a finished result has no `value`.
+
+export type IteratorResult<T> = { done: false; value: T } | { done: true };
+
+export interface Iterator<T, E = never> {
+  next(): IteratorResult<T> throws E;
+
+  // Early exit: release what the iterator holds. Not called after `next()` reported `done`.
+  return(): void {}
+}
+
+export interface Iterable<T, E = never> {
+  [Symbol.iterator](): Iterator<T, E>;
+}
+
+export interface AsyncIterator<T, E = never> {
+  next(): Promise<IteratorResult<T>, E>;
+
+  async return(): Promise<void> {}
+}
+
+export interface AsyncIterable<T, E = never> {
+  [Symbol.asyncIterator](): AsyncIterator<T, E>;
+}

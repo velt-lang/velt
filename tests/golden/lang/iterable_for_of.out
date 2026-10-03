@@ -1,0 +1,16 @@
+first 1
+first 2
+first 3
+second 10
+second 20
+second 30
+nested 0 1
+nested 0 2
+nested 0 3
+nested 1 1
+nested 1 2
+nested 1 3
+sum 6 0
+APPLE! 4
+PEAR! 6
+[ 'APPLE', 'PEAR' ]

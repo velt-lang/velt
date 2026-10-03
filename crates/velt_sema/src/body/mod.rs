@@ -39,6 +39,7 @@ mod defaults;
 mod driver;
 pub(crate) mod expr;
 mod field_narrow;
+mod for_iter;
 mod locals;
 mod loops;
 pub(crate) mod narrow;

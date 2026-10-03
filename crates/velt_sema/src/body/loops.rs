@@ -1,10 +1,12 @@
 //! Loops: `while` (with null narrowing), `do...while`, C-style `for` (desugared) and
 //! `for...of` over arrays (elements borrowed, or copied when Copy; a temporary array of
 //! non-Copy elements is consumed instead: `ForOf { consume: true }` with owned bindings).
+//! `for...of` over an iterable (`[Symbol.iterator]()`) is desugared in `for_iter.rs`.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use super::for_iter::ForOfParts;
 use super::pattern::BindCtx;
 use super::{FnCx, LoopCx, Want};
 use crate::hir::{self, ExprKind as H, StmtKind as S, TyId};
@@ -238,7 +240,17 @@ impl FnCx<'_, '_> {
         if self.record_args(it.ty).is_some() {
             self.record_not_iterable(it.ty, iter);
             it = self.error_expr(iter.span);
-        } else if self.cx.class_of(it.ty).is_some() {
+        } else if self.is_iterable(it.ty) {
+            let parts = ForOfParts {
+                kind,
+                pattern,
+                body,
+                label,
+                iter_span: iter.span,
+                span,
+            };
+            return self.for_of_iterable(it, parts, out);
+        } else if self.cx.class_of(it.ty).is_some() && self.method_exists(it.ty, "entries") {
             it = self.entries_of(it, iter.span);
         }
         if it.ty == self.cx.ty.str_ {
@@ -248,11 +260,7 @@ impl FnCx<'_, '_> {
             Some(e) => e,
             None if self.cx.ty.is_bottom(it.ty) => self.cx.ty.error,
             None => {
-                let tn = self.cx.display(it.ty);
-                self.cx.error(
-                    Diagnostic::error(format!("cannot iterate over a value of type `{tn}`"), iter.span)
-                        .with_note("`for...of` works on arrays (`T[]`) and on classes with an `entries()` method"),
-                );
+                self.not_iterable(it.ty, iter.span);
                 self.cx.ty.error
             }
         };
@@ -280,6 +288,18 @@ impl FnCx<'_, '_> {
             consume,
         };
         Self::push(out, f, span);
+    }
+
+    fn not_iterable(&mut self, t: TyId, span: Span) {
+        let tn = self.cx.display(t);
+        let mut d = Diagnostic::error(format!("cannot iterate over a value of type `{tn}`"), span)
+            .with_note("`for...of` works on arrays (`T[]`), on `Map`s and classes with an `entries()` method, and on iterables: values with a `[Symbol.iterator]()` method (`implements Iterable<T>`)");
+        if self.method_exists(t, "next") {
+            d = d.with_note(format!(
+                "`{tn}` looks like an iterator: iterate the iterable that creates it, or give it a `[Symbol.iterator]()` method"
+            ));
+        }
+        self.cx.error(d);
     }
 
     /// Does `for...of` over the checked `iter` with element type `elem` consume it? When the

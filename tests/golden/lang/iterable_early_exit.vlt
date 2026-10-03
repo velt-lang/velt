@@ -1,0 +1,150 @@
+// check: no leaks
+// Leaving a `for...of` over an iterable early calls the iterator's `return()` exactly once:
+// `break`, `return`, a thrown error, and a labelled `break` / `continue` to an outer loop. Running
+// to the end, `continue`, and an error thrown by `next()` itself do not call it (as in JS). The
+// error `next()` throws is typed: the loop (and the function around it) throws it.
+class ReadError extends Error {
+  line: i64;
+
+  constructor(line: i64) {
+    super(`bad line ${line}`);
+    this.line = line;
+  }
+}
+
+class Stop extends Error {}
+
+// An iterator holding a resource it releases in `return()`.
+class LineIter implements Iterator<string, ReadError> {
+  name: string;
+  lines: string[];
+  i: usize = 0;
+  failAt: i64;
+
+  constructor(name: string, lines: string[], failAt: i64) {
+    this.name = name;
+    this.lines = lines;
+    this.failAt = failAt;
+    console.log(`open ${name}`);
+  }
+
+  next(): IteratorResult<string> throws ReadError {
+    if (this.i as i64 == this.failAt) {
+      throw new ReadError(this.failAt);
+    }
+    if (this.i >= this.lines.length) {
+      console.log(`eof ${this.name}`);
+      return { done: true };
+    }
+    const line = this.lines[this.i];
+    this.i += 1;
+    return { done: false, value: line };
+  }
+
+  return(): void {
+    console.log(`close ${this.name} after ${this.i}`);
+  }
+}
+
+class File implements Iterable<string, ReadError> {
+  name: string;
+  lines: string[];
+  failAt: i64;
+
+  constructor(name: string, lines: string[], failAt: i64) {
+    this.name = name;
+    this.lines = lines;
+    this.failAt = failAt;
+  }
+
+  [Symbol.iterator](): Iterator<string, ReadError> {
+    return new LineIter(this.name, this.lines, this.failAt);
+  }
+}
+
+function file(name: string): File {
+  return new File(name, ["a", "b", "c"], -1);
+}
+
+function firstLong(f: File): string | null {
+  for (const line of f) {
+    if (line == "b") {
+      return line;
+    }
+  }
+  return null;
+}
+
+function throwing(f: File) {
+  for (const line of f) {
+    if (line == "b") {
+      throw new Stop(`stop at ${line}`);
+    }
+  }
+}
+
+function count<E>(xs: Iterable<string, E>): i64 throws E {
+  let n = 0;
+  for (const _ of xs) {
+    n += 1;
+  }
+  return n;
+}
+
+function main() {
+  for (const line of file("all")) {
+    if (line == "b") {
+      continue;
+    }
+    console.log("read", line);
+  }
+  for (const line of file("break")) {
+    if (line == "b") {
+      break;
+    }
+    console.log("read", line);
+  }
+  console.log("return:", firstLong(file("return")));
+  try {
+    throwing(file("throw"));
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+  outer: for (const i of [1, 2]) {
+    for (const line of file(`continue${i}`)) {
+      if (line == "b") {
+        continue outer;
+      }
+    }
+  }
+  outer2: for (const i of [1, 2]) {
+    for (const line of file(`labelled${i}`)) {
+      if (line == "a") {
+        break outer2;
+      }
+    }
+  }
+  for (const a of file("outer")) {
+    for (const b of file(`inner-${a}`)) {
+      if (b == a) {
+        break;
+      }
+    }
+    if (a == "b") {
+      break;
+    }
+  }
+  try {
+    for (const line of new File("failing", ["x", "y", "z"], 2)) {
+      console.log("read", line);
+    }
+  } catch (e) {
+    console.log("caught", e.message, e.line);
+  }
+  try {
+    console.log("count", count(file("count")));
+    console.log("count", count(new File("bad", ["x"], 0)));
+  } catch (e) {
+    console.log("count failed at line", e.line);
+  }
+}
