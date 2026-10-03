@@ -11,7 +11,9 @@ byte offsets; a negative position counts from the end, as in JS.
 
 | Method | Notes |
 |---|---|
-| `length` | byte length (`usize`) |
+| `length` | byte length |
+| `charAt(i = 0)`, `s[i]` | the character starting at `i`, or `""` |
+| `at(i): string \| null` | like `charAt`; a negative `i` counts from the end, `null` past the end |
 | `slice(start = 0, end?)`, `substring(start, end?)` | |
 | `indexOf(s, from = 0)`, `lastIndexOf(s, from?)`, `includes(s)` | `-1` when absent |
 | `startsWith(s)`, `endsWith(s)` | |
@@ -35,8 +37,9 @@ return `f64`, `NaN` on failure), `Number(s)`.
   `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY` are JS's, on `f64` (they live in the prelude
   class `NumberConstructor`, TypeScript's name for the type of `Number`).
 - `x.toFixed(digits = 0)` on `f64`, rounded like JS.
-- `Math`: `PI`, `E`, `sqrt floor ceil round trunc abs sign pow hypot`, `max(a, b)` and
-  `min(a, b)` (two arguments). On integer operands, `Math.trunc(a / b)` is integer division.
+- `Math`: `PI`, `E`, `sqrt floor ceil round trunc abs sign pow`, `max`, `min` and `hypot` (any
+  number of values, spreads included: `Math.max(...xs)`), and `random()` (uniform in `[0, 1)`,
+  not for secrets). On integer operands, `Math.trunc(a / b)` is integer division.
 - Every number type implements `Comparable` ([Comparable](../reference/classes.md#comparable)).
 
 ## Arrays
@@ -48,8 +51,8 @@ Callback methods rethrow what their callback throws.
 |---|---|
 | `length`, `push(x)`, `pop(): T \| null` | built in |
 | `at(i): T \| null` | a negative `i` counts from the end |
-| `forEach`, `map`, `filter`, `reduce(f, init)` | |
-| `find`, `findIndex`, `findLast`, `findLastIndex`, `some`, `every` | |
+| `forEach`, `map`, `filter`, `reduce(f, init)` | callbacks get `(x, i)` (`reduce`: `(acc, x, i)`) and may take fewer |
+| `find`, `findIndex`, `findLast`, `findLastIndex`, `some`, `every` | likewise |
 | `indexOf`, `lastIndexOf`, `includes` | structural equality, so `NaN` is never found |
 | `slice(start = 0, end?)`, `concat(other)` | |
 | `reverse()`, `fill(v, start?, end?)`, `sort()` | in place, returning nothing (JS returns the array: returning it would share it, which makes every array of its type reference counted) |
@@ -57,7 +60,7 @@ Callback methods rethrow what their callback throws.
 | `splice(start, deleteCount?): T[]` | removes and returns `deleteCount` elements (the rest when omitted); inserting items needs rest parameters (**Planned**) |
 | `truncate(n)` | JS `xs.length = n`: drops the elements from `n` on (`length` is read-only) |
 | `flat()` | on `T[][]`: the inner elements, one level deep |
-| `isEmpty()`, `entries(): [usize, T][]` | |
+| `isEmpty()`, `entries(): [usize, T][]` | the index is a JS number, like `length` |
 | `join(sep = ",")` | any element type: strings, numbers and booleans like JS; one level of inner arrays joined with `","` and `null` elements as empty text, like JS; other values formatted like `${x}` (JS writes `[object Object]`), and so are deeper levels, `null` inside inner arrays and arrays inside nullable elements, which JS joins recursively |
 | `sort()`, `sort(cmp)` | `sort()` on numbers, strings and `Comparable` elements (unstable, pdqsort); `sort(cmp)` is stable on any element type |
 | `new Array<T>(n).fill(v)`, `Array.from({ length: n }, (_, i) => f(i))` | `n` elements in one allocation |
@@ -120,6 +123,33 @@ nest 128 levels deep unless `options.maxDepth` says otherwise.
 - `deepEqual(a, b): bool`: content comparison. Arrays, structs and object literals compare
   their contents recursively, class instances (`Map` included) by identity; `==` compares
   every object by identity.
+
+## Date
+
+`Date` is JavaScript's: an instant in milliseconds since the epoch (`NaN` when invalid), with
+months 0-11, local-time getters and setters (the OS time zone, DST-aware) and their `UTC`
+variants. It is built on [`velt:datetime`](datetime.md), whose `DateTime` (UTC-first, months
+1-12) is the better choice for new code.
+
+- `new Date()`, `new Date(ms)`, `new Date(string)`, `new Date(date)`,
+  `new Date(year, month, day?, hours?, minutes?, seconds?, ms?)` (local time, rolling over).
+- `Date.now()`, `Date.parse(s)` (ISO 8601 and HTTP dates; a date alone is UTC, a date-time
+  without an offset local time, as in JS), `Date.UTC(year, month, …)`.
+- `getTime()`, `valueOf()`, `getTimezoneOffset()`; `getFullYear getMonth getDate getDay
+  getHours getMinutes getSeconds getMilliseconds` and the `getUTC…` ones; the matching `set…`
+  and `setUTC…` setters (with JS's optional extra fields), and `setTime`.
+- `toISOString()` (an invalid date panics), `toJSON()`, `toUTCString()`, `toString()`,
+  `toDateString()`, `toTimeString()`, and `toLocaleString()`, `toLocaleDateString()`,
+  `toLocaleTimeString()` (always `en-US`).
+- Dates compare with `<` (`Date` implements `Comparable`); `console.log` prints one as its ISO
+  string, as Node does.
+
+```ts
+const start = new Date(Date.UTC(2024, 0, 31, 12));
+const end = new Date(start);
+end.setUTCDate(end.getUTCDate() + 1);
+console.log(start.toISOString(), end.getUTCMonth(), start < end); // 2024-01-31T12:00:00.000Z 1 true
+```
 
 ## Async and concurrency
 

@@ -15,7 +15,7 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `assertThrows(() => f())` | the error `f` throws; panics if it returns normally |
 | `deepEqual(a, b)` | content comparison (`==` compares objects by identity) |
 | `attempt(() => f())` | a throwing call as a value: `T \| E` ([Errors](errors.md#errors-as-values)) |
-| `Math` | `PI`, `E`, `sqrt floor ceil round trunc abs sign max min pow hypot`, … |
+| `Math` | `PI`, `E`, `sqrt floor ceil round trunc abs sign max min pow hypot random`, … |
 | `Number(s)`, `parseInt(s, radix)`, `parseFloat(s)`, `String.fromCharCode(c)`, `NaN`, `Infinity` | conversions |
 | `Number.isInteger(x)`, `Number.isNaN`, `isFinite`, `isSafeInteger`, `parseInt`, `parseFloat`, `Number.MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, `EPSILON`, `MAX_VALUE`, `MIN_VALUE`, `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY` | JS's `Number` members, on `f64` |
 | `JSON.stringify`, `JSON.parse<T>`, `JSON.parseValue`, `JsonValue`, `JsonError` | JSON ([`velt:json`](../std/json.md)) |
@@ -25,6 +25,7 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `sleep(ms)`, `yieldNow()`, `spawn(p)`, `Promise.all/race/allSettled/any/withResolvers` | async ([Async](async.md)) |
 | `shared(x)`, `shared<T>`, `Mutex<T>` | thread-safe shared state ([Async](async.md#thread-safety)) |
 | `performance.now(): f64`, `Date.now(): i64` | monotonic and wall-clock milliseconds |
+| `Date` | JavaScript's dates ([prelude](../std/prelude.md#date)) |
 | `Symbol.dispose`, `Symbol.asyncDispose` | cleanup method names ([Memory model](memory.md#resource-cleanup-using-and-symboldispose)) |
 
 Integer helpers (`gcd`, `clamp`, …) are in [`velt:math`](../std/math.md). Everything else is
