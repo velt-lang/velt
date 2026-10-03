@@ -11,7 +11,7 @@ use velt_common::Span;
 
 use crate::body::places::set_place_mode;
 use crate::ctx::Ctx;
-use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, UseMode};
+use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalId, UseMode};
 use crate::visit;
 
 /// Turn the place `e` (moved) into `share(e)`.
@@ -67,21 +67,26 @@ pub(super) fn is_moved_place(e: &Expr) -> bool {
     )
 }
 
-/// Clone the soft moves whose place the move dataflow saw used again (for a closure: copy its
-/// string captures).
-pub(crate) fn clone_reused(cx: &mut Ctx, reused: &HashMap<DefId, HashSet<Span>>) {
-    let mut closures = vec![];
-    for (d, spans) in reused {
+/// Share the soft moves whose place the move dataflow saw used again; for a closure, the
+/// captures of the variables used again (its other captures stay moves, so they live exactly
+/// as long as the closure).
+pub(crate) fn clone_reused(cx: &mut Ctx, reused: &HashMap<DefId, HashSet<(Span, LocalId)>>) {
+    let mut closures: Vec<(DefId, Vec<LocalId>)> = vec![];
+    for (d, sites) in reused {
         let Some(Def::Fn(f)) = &mut cx.defs[d.0 as usize] else {
             continue;
         };
+        let spans: HashSet<Span> = sites.iter().map(|(span, _)| *span).collect();
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| match &e.kind {
-            E::Closure(c) if spans.contains(&e.span) => closures.push(*c),
+            E::Closure(c) if spans.contains(&e.span) => {
+                let used = sites.iter().filter(|(s, _)| *s == e.span);
+                closures.push((*c, used.map(|(_, l)| *l).collect()));
+            }
             _ if is_moved_place(e) && spans.contains(&e.span) => make_share(e),
             _ => {}
         });
     }
-    for c in closures {
-        super::shares::share_captures(cx, c);
+    for (c, used) in closures {
+        super::shares::share_captures(cx, c, &used);
     }
 }

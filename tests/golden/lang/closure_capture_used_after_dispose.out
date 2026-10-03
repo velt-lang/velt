@@ -1,0 +1,17 @@
+local store seen
+local store seen
+dropping the closure
+local store disposed
+closure gone, counter 2
+param store seen
+dropping the closure
+param store disposed
+closure gone, counter 10
+store b seen
+dropping g
+store b disposed
+store a seen
+dropping f
+store a disposed
+both gone, counter 3
+done

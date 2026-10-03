@@ -1,0 +1,84 @@
+// check: no leaks
+// A closure capturing a variable that the function uses afterwards shares only that variable:
+// its other captures still move into the closure and are released when the closure is (#262).
+class Store {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  [Symbol.dispose]() {
+    console.log(`${this.name} disposed`);
+  }
+}
+
+class Counter {
+  n: i64 = 0;
+}
+
+function keep(f: () => void): () => void {
+  return f;
+}
+
+// `counter` is used after the closure is gone, `store` is not.
+function usedAfterwards() {
+  const store = new Store("local store");
+  const counter = new Counter();
+  {
+    const f = keep(() => {
+      counter.n += 1;
+      console.log(`${store.name} seen`);
+    });
+    f();
+    f();
+    console.log("dropping the closure");
+  }
+  console.log(`closure gone, counter ${counter.n}`);
+}
+
+// A capture of a borrowed parameter cannot move: it is shared, the local store still moves.
+function borrowedParam(counter: Counter) {
+  const store = new Store("param store");
+  {
+    const f = keep(() => {
+      counter.n += 10;
+      console.log(`${store.name} seen`);
+    });
+    f();
+    console.log("dropping the closure");
+  }
+  console.log(`closure gone, counter ${counter.n}`);
+}
+
+// Two closures share `counter`; each owns its own store.
+function twoClosures() {
+  const counter = new Counter();
+  const a = new Store("store a");
+  const b = new Store("store b");
+  {
+    const f = keep(() => {
+      counter.n += 1;
+      console.log(`${a.name} seen`);
+    });
+    {
+      const g = keep(() => {
+        counter.n += 2;
+        console.log(`${b.name} seen`);
+      });
+      g();
+      console.log("dropping g");
+    }
+    f();
+    console.log("dropping f");
+  }
+  console.log(`both gone, counter ${counter.n}`);
+}
+
+function main() {
+  usedAfterwards();
+  const counter = new Counter();
+  borrowedParam(counter);
+  twoClosures();
+  console.log("done");
+}
