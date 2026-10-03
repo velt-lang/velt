@@ -148,7 +148,10 @@ pub fn append(f: impl FnOnce(&mut Vec<u8>)) {
             publish_all(&mut buf);
             write_shared(&mut lock_shared());
         }
-        BUFFERED.set(!buf.is_empty());
+        if start == 0 {
+            // Only when the buffer starts filling: an over-approximation is harmless.
+            BUFFERED.set(true);
+        }
     });
     if let Some(f) = f {
         // Thread buffer unavailable (thread shutting down): go through the shared buffer.
