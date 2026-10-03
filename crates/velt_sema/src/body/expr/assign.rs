@@ -23,7 +23,7 @@ enum AssignTarget {
 impl FnCx<'_, '_> {
     /// Resolve an assignment target to a writable place or a setter. Reports errors.
     fn assign_target(&mut self, target: &ast::Expr, span: Span) -> Option<AssignTarget> {
-        if self.reject_env_assign(target) {
+        if self.reject_env_assign(target) || self.reject_argv_assign(target) {
             return None;
         }
         let place = match &target.kind {

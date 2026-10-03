@@ -394,6 +394,7 @@ body setters and `resp_json` drop the body and add no `content-type`.
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_process_args` | `(VeltStrArray* out)` | UTF-8 (wide APIs on Windows), argv[0] included |
+| `velt_rt_process_node_argv` | `(VeltStrArray* out)` | Node's `process.argv`: `[current executable, script, ...args]`; the script is `$VELT_SCRIPT` (read and removed at start-up; `velt run` sets it) or the JIT host's `set_script`, else the executable. wasm: `[program, program, ...args]` (WASI: the module path; the browser passes none, so `["", ""]`) |
 | `velt_rt_env_get` | `(const VeltStr* name, VeltStr* out) -> u8` | 0 = unset (`out` untouched) |
 | `velt_rt_env_set` | `(const VeltStr* name, const VeltStr* value)` | not synchronized with concurrent env readers |
 | `velt_rt_env_remove` | `(const VeltStr* name)` | |
@@ -727,8 +728,10 @@ workspace build and would strip `main` from the staticlib every program links). 
   with `JITBuilder::symbol`. A test checks it contains every `velt_rt_*` name in rt_abi.md and
   this file. Other symbols (`memcpy`, `fmod`, ...) resolve from the process.
 - `entry::run_main(velt_main)`: what `main` does (runtime init, call, flush stdout) → exit code.
-- `process::set_args(argv)`: `process.argv` for the hosted program (`velt`'s own arguments are not
-  the program's).
+- `process::set_args(argv)`: `argv()` / `args()` for the hosted program (`velt`'s own arguments
+  are not the program's).
+- `process::set_script(path)`: the script of Node's `process.argv[1]` for the hosted program
+  (`velt dev`); otherwise the runtime reads `$VELT_SCRIPT` once at start-up and removes it.
 
 On Windows x64 the JIT (`velt_codegen_cl::DevSession`) registers each loaded program's unwind
 info with `RtlAddFunctionTable` (code and records in one arena), so stack walks get through JIT
