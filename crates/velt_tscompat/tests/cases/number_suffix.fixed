@@ -1,0 +1,8 @@
+// Literal suffixes give a literal a Velt number type.
+
+export const small = 5; //~ number-suffix
+export const half = 0.5; //~ number-suffix
+
+export type Small = 1 | 2; //~ number-suffix number-suffix
+
+export const plain = 5;

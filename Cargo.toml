@@ -19,6 +19,7 @@ velt_link = { path = "crates/velt_link" }
 vpm = { path = "crates/vpm" }
 velt_fmt = { path = "crates/velt_fmt" }
 velt_lsp = { path = "crates/velt_lsp" }
+velt_tscompat = { path = "crates/velt_tscompat" }
 
 [profile.dev]
 # Keep debug builds reasonably fast when running compiled test programs.

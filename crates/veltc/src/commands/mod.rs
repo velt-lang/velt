@@ -1,9 +1,10 @@
-//! Executing parsed `velt` commands: [`build`] (build/run), [`check`] (front end only),
-//! [`create`] (new/init from templates), [`package`] (add/install/update/publish), [`clean`],
-//! [`test`] (the test runner), [`fmt`] (the formatter), [`lsp`] (the language server), [`doctor`]
-//! (installation checks), [`version`] (`--version`); [`project`] finds and installs the enclosing
-//! package; [`wasm`] runs WebAssembly builds. `velt dev` lives in [`crate::dev`]; help and
-//! completions come from [`crate::cli`].
+//! Executing parsed `velt` commands: [`build`] (build/run), [`check`] (front end only, and its
+//! TypeScript-compatibility lint [`ts_compat`]), [`create`] (new/init from templates),
+//! [`package`] (add/install/update/publish), [`clean`], [`test`] (the test runner), [`fmt`] (the
+//! formatter), [`lsp`] (the language server), [`doctor`] (installation checks), [`version`]
+//! (`--version`); [`project`] finds and installs the enclosing package; [`wasm`] runs
+//! WebAssembly builds. `velt dev` lives in [`crate::dev`]; help and completions come from
+//! [`crate::cli`].
 
 mod build;
 mod check;
@@ -17,6 +18,7 @@ mod package;
 mod project;
 mod registry;
 pub mod test;
+mod ts_compat;
 mod version;
 mod wasm;
 

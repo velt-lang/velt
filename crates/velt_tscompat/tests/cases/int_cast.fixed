@@ -1,0 +1,11 @@
+// `as` to an integer type converts in Velt; TypeScript's `as` never changes a value.
+
+export function whole(x: number): number {
+  const n = Math.trunc(x); //~ int-cast
+  const m = Math.trunc(x); //~ int-cast
+  return (n as number) + (m as number);
+}
+
+export function same(x: number): number {
+  return x as number;
+}

@@ -34,6 +34,7 @@ const PIPELINE: &[&str] = &[
 const TOOLING: &[(&str, &[&str])] = &[
     ("velt_lsp", &[]),
     ("velt_doc", &[]),
+    ("velt_tscompat", &["ts_compat"]),
     ("velt_fmt", &["templates", "cli_package"]),
     (
         "vpm",
