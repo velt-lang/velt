@@ -17,10 +17,12 @@ The differences come from three rules:
 
 ## Programs are compiled
 
-- A program starts at `function main()` or `async function main()` in its root file. `main`
-  may return an `i32` exit code.
-- Module scope holds declarations only: functions, classes, types, imports and constants. Top-
-  level statements go in `main`, and a module-level `let` is an error ("mutable module-level
+- A program starts at its root file's top-level statements, as a TS file does, or at
+  `function main()` / `async function main()` (which may return an `i32` exit code). Top-level
+  statements run in a generated `main`; only the root file may have them
+  ([Scripts](../reference/modules.md#scripts-top-level-statements)).
+- Module scope holds no mutable state: a top-level variable that functions use stays a module
+  constant, and a module-level `let` that a function uses is an error ("mutable module-level
   state is not allowed"). *Why*: no hidden global state means request handlers can't race on
   it, and `velt dev` can hot-swap code without migrating globals.
 - Types are checked once, at compile time, and then gone: there are no runtime type checks,
@@ -36,19 +38,24 @@ const a = 7;
 console.log(a / 2, 0.1 + 0.2);    // 3.5 0.30000000000000004
 ```
 
+Numbers the standard library gives you behave the same: lengths, `indexOf`, `size`, indexes.
+`for (let i = 0; i < xs.length; i++)` works, `xs.length / 2` is `1.5` for three elements, and
+`xs[i]` takes a `number` (a non-whole index panics).
+
 The difference: integer types (`i8` … `i64`, `u8` … `u64`, `isize`, `usize`) exist, and you
 opt into them by writing them. Declared integers do integer arithmetic: `/` truncates when both
 sides are declared integers, values wrap at their width instead of losing precision past 2^53,
-and integer division by zero panics. Lengths and indexes are `usize`. *Why*: integer loops and
-indexes run at integer speed, and you decide where integer semantics apply
-([Numbers](../reference/types.md#numbers)).
+and integer division by zero panics. *Why*: integer loops and indexes run at integer speed
+either way (numbers that hold whole values are stored as integers), and you decide where
+integer semantics apply ([Numbers](../reference/types.md#numbers)).
 
 Declared types don't convert implicitly; `as` converts between number types:
 
 ```ts
-const len = [1, 2, 3].length;     // usize
-const half = len as f64 / 2.0;    // 1.5
-console.log(half, 300 as u8);     // 1.5 44 (integers wrap)
+const xs = [1, 2, 3];
+console.log(xs.length / 2);       // 1.5
+const n: i64 = 7;
+console.log(n / 2, n as f64 / 2, 300 as u8); // 3 3.5 44 (integers wrap)
 ```
 
 ## Booleans
@@ -64,9 +71,9 @@ accept; compiler messages and editors print `boolean` either way
   template literal, `` `Total: ${n}` ``. *Why*: `"5" + 1 === "51"` and
   `"Total: " + a + b` bugs can't happen.
 - **Lengths and positions are in bytes** of UTF-8, not UTF-16 code units: `"héllo".length` is
-  6. `slice`, `indexOf` and regex offsets are byte offsets. There is no `s[i]` and no
-  `for...of` over a string; use `slice`, `split("")` or `charCodeAt`. *Why*: strings are UTF-8
-  throughout, so no conversion is ever needed.
+  6. `slice`, `indexOf`, `s[i]` and regex offsets are byte offsets; for ASCII text they agree
+  with JS. `s[i]` is `s.charAt(i)` (`""` past the end), and `for (const c of s)` iterates the
+  characters. *Why*: strings are UTF-8 throughout, so no conversion is ever needed.
 - Strings are immutable values, as in JS, and cheap to copy.
 
 ## `null`, not `undefined`
@@ -151,8 +158,9 @@ contents.
 ## Functions
 
 - No `function` expressions (use arrows), no `this` rebinding, no `arguments`.
-- No rest parameters, no spread arguments (`f(...xs)`), no overloads. Optional and default
-  parameters work.
+- No overloads. Optional and default parameters work, on arrows too; rest parameters
+  (`...xs: T[]`) take spread arguments (`f(...xs)`) at their position. Callbacks may take fewer
+  parameters than they are passed (`xs.map((x) => …)` gets `(x, i)`).
 - Parameter types are required; the return type is inferred only as `void` when omitted.
 - Generics are compiled per instantiation (monomorphized), so generic code is as fast as
   hand-written code. Bounds are interfaces.
@@ -207,7 +215,9 @@ reference count. Reference cycles are not freed (**planned**: `weak` references)
 `var`, `eval`, prototypes, `delete` (other than on a `Record`), `for...in`, `with`, getters on object literals,
 decorators, generators (`function*`, `yield`), `Symbol` (other than `Symbol.dispose` and
 `Symbol.asyncDispose`), `BigInt` literals (use [`velt:bigint`](../std/bigint.md)), Unicode
-identifiers, and the logical assignments `&&=`, `||=`, `??=` (planned). JSX is supported for
+identifiers. `x!` is checked (a `null` panics) where TypeScript trusts it, and `as const` keeps
+the value as it is. `Date` follows JS (months 0-11, local-time getters); its `toString()` has no
+time zone name and its `toLocale…` methods always format as `en-US`. JSX is supported for
 server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `children` yet.
 
 ## Quick reference
@@ -228,6 +238,7 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | floating promises lose errors | a floating promise is a compile error | — |
 | `new Promise(...)` | same, with an arrow-function executor; `await` of one abandoned unsettled is reported | `new Promise(...)` |
 | single-threaded event loop | multi-core runtime; `spawn`, `shared`, `Mutex`; data races are compile errors | — |
+| top-level statements | run in a generated `main` (root file only) | — |
 | mutable module globals | constants only | — |
 | `arr.sort()` sorts as strings | `sort()` and `toSorted()` sort numbers numerically; with a comparator they work like TypeScript | — |
 | `xs.sort()`, `xs.reverse()`, `xs.fill(v)` return the array | they work in place and return nothing (returning the array would make it reference counted); `xs.toSorted()` and `xs.toReversed()` return sorted / reversed copies, as in ES2023 | — |

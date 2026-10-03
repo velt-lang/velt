@@ -113,6 +113,7 @@ impl<'a> Printer<'a> {
                 cat![inner, " instanceof ", self.ty(ty)]
             }
             ExprKind::Paren(inner) => self.paren(inner),
+            ExprKind::NonNull(inner) => cat![self.expr(inner), "!"],
             ExprKind::Jsx(element) => self.jsx_element(element),
         }
     }

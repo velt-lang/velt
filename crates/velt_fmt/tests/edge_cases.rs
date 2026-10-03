@@ -190,3 +190,10 @@ fn bool_and_boolean_keep_their_spelling() {
     holds(src);
     assert_eq!(velt_fmt::format_source(src).ok().as_deref(), Some(src));
 }
+
+#[test]
+fn readonly_fields_in_object_types() {
+    holds("type User = { readonly id: number; readonly email?: string; readonly: bool };\n");
+    let out = velt_fmt::format_source("type U = {readonly   id : i64};\n").unwrap();
+    assert_eq!(out, "type U = { readonly id: i64 };\n");
+}

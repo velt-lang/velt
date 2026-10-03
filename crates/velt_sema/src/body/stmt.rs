@@ -236,6 +236,14 @@ impl FnCx<'_, '_> {
             );
             return;
         };
+        if super::pattern_defaults::has_default(&v.pattern) {
+            let e = match &v.ty {
+                // `const { a = 1 }: Opts = x`: the annotation types the value taken apart.
+                Some(t) => self.typed_temp(e, t, out),
+                None => e.clone(),
+            };
+            return self.decl_with_defaults(v.kind, &v.pattern, e, out);
+        }
         let init = match ann {
             Some(t) => self.expr_coerce(e, t, Want::Borrow),
             None => self.expr(e, None, Want::Borrow),
@@ -246,6 +254,7 @@ impl FnCx<'_, '_> {
             place,
         };
         let pat = self.pattern(&v.pattern, init.ty, ctx);
+        self.note_inferred_bindings(&pat, &init);
         Self::push(out, S::LetPat { pat, init }, span);
     }
 
@@ -313,6 +322,11 @@ impl FnCx<'_, '_> {
         let local = self.declare_local(name, ty, kind);
         if let (None, Some(h)) = (ann, &init) {
             self.note_inferred_local(local, h);
+        }
+        if let (LocalKind::Const, Some(hir::ExprKind::Closure(d))) =
+            (kind, init.as_ref().map(|h| &h.kind))
+        {
+            self.f.closure_consts.insert(local, *d);
         }
         if v.kind == ast::VarKind::Using {
             self.check_disposable(ty, false, v.span);

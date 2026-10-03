@@ -1,0 +1,12 @@
+// String indexing (`s[i]` is `s.charAt(i)`), `at`, `for...of` over a string's characters, and
+// `Math.random`.
+const word = "hello";
+console.log(word[0], word[4], word.charAt(1), word.at(-1), word.at(10) ?? "none");
+let out = "";
+for (const c of "abc") {
+  out += c.toUpperCase();
+}
+console.log(out);
+const xs = ["a", "b", "c"];
+const pick = xs[Math.floor(Math.random() * xs.length)];
+console.log(xs.includes(pick), Math.random() < 1);

@@ -394,6 +394,7 @@ pub fn func(name: &str, params: &[(&str, &str)], ret: Option<&str>, body: Vec<St
             ty: ty(t),
             default: None,
             optional: false,
+            rest: false,
             span: D,
         })
         .collect();

@@ -1,0 +1,3 @@
+readonly_object_fields.vlt:8:5: error: cannot assign to `id`: it is a readonly field
+readonly_object_fields.vlt:9:5: error: cannot assign to `id`: it is a readonly field
+readonly_object_fields.vlt:12:5: error: cannot assign to `user`: it is a readonly field

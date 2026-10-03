@@ -2,7 +2,8 @@
 //
 // Conventions (see std/README.md):
 // - Callbacks are non-escaping function params; elements are passed to them as borrows, so
-//   iterating never copies non-Copy elements. A callback may throw: the method throws what its
+//   iterating never copies non-Copy elements. Like JS, they also get the element's index (a
+//   callback may take fewer parameters: `xs.map((x) => …)`). A callback may throw: the method throws what its
 //   callback throws (`E`, inferred per call; `never` when the callback cannot throw).
 // - Methods that return elements *out of* the array (`find`, `filter`, `slice`, `concat`) return
 //   the elements themselves, like JS: objects are shared (another reference to the same object,
@@ -12,42 +13,42 @@
 // - Sorting (`sort()`, `sort(cmp)`) lives in sort.vlt. `clone()` (a deep copy) is compiler-provided.
 
 extend<T> Array<T> {
-  forEach<E>(f: (x: T) => void throws E) throws E {
+  forEach<E>(f: (x: T, i: i64) => void throws E) throws E {
     for (let i: usize = 0; i < this.length; i++) {
-      f(this[i]);
+      f(this[i], i as i64);
     }
   }
 
-  map<U, E>(f: (x: T) => U throws E): U[] throws E {
+  map<U, E>(f: (x: T, i: i64) => U throws E): U[] throws E {
     const out: U[] = __intrinsic_array_with_capacity(this.length);
     for (let i: usize = 0; i < this.length; i++) {
-      out.push(f(this[i]));
+      out.push(f(this[i], i as i64));
     }
     return out;
   }
 
-  filter<E>(keep: (x: T) => bool throws E): T[] throws E {
+  filter<E>(keep: (x: T, i: i64) => bool throws E): T[] throws E {
     const out: T[] = [];
     for (let i: usize = 0; i < this.length; i++) {
-      if (keep(this[i])) {
+      if (keep(this[i], i as i64)) {
         out.push(__intrinsic_share(this[i]));
       }
     }
     return out;
   }
 
-  reduce<A, E>(f: (acc: A, x: T) => A throws E, init: A): A throws E {
+  reduce<A, E>(f: (acc: A, x: T, i: i64) => A throws E, init: A): A throws E {
     let acc = init;
     for (let i: usize = 0; i < this.length; i++) {
-      acc = f(acc, this[i]);
+      acc = f(acc, this[i], i as i64);
     }
     return acc;
   }
 
   // First element matching `pred` (see header), or null.
-  find<E>(pred: (x: T) => bool throws E): T | null throws E {
+  find<E>(pred: (x: T, i: i64) => bool throws E): T | null throws E {
     for (let i: usize = 0; i < this.length; i++) {
-      if (pred(this[i])) {
+      if (pred(this[i], i as i64)) {
         return __intrinsic_share(this[i]);
       }
     }
@@ -55,9 +56,9 @@ extend<T> Array<T> {
   }
 
   // Index of the first element matching `pred`, or -1.
-  findIndex<E>(pred: (x: T) => bool throws E): i64 throws E {
+  findIndex<E>(pred: (x: T, i: i64) => bool throws E): i64 throws E {
     for (let i: usize = 0; i < this.length; i++) {
-      if (pred(this[i])) {
+      if (pred(this[i], i as i64)) {
         return i as i64;
       }
     }
@@ -65,17 +66,17 @@ extend<T> Array<T> {
   }
 
   // Last element matching `pred` (see header), or null.
-  findLast<E>(pred: (x: T) => bool throws E): T | null throws E {
+  findLast<E>(pred: (x: T, i: i64) => bool throws E): T | null throws E {
     const i = this.findLastIndex(pred);
     return i < 0 ? null : __intrinsic_share(this[i as usize]);
   }
 
   // Index of the last element matching `pred`, or -1.
-  findLastIndex<E>(pred: (x: T) => bool throws E): i64 throws E {
+  findLastIndex<E>(pred: (x: T, i: i64) => bool throws E): i64 throws E {
     let i = this.length;
     while (i > 0) {
       i--;
-      if (pred(this[i])) {
+      if (pred(this[i], i as i64)) {
         return i as i64;
       }
     }
@@ -103,18 +104,18 @@ extend<T> Array<T> {
     }
   }
 
-  some<E>(pred: (x: T) => bool throws E): bool throws E {
+  some<E>(pred: (x: T, i: i64) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.length; i++) {
-      if (pred(this[i])) {
+      if (pred(this[i], i as i64)) {
         return true;
       }
     }
     return false;
   }
 
-  every<E>(pred: (x: T) => bool throws E): bool throws E {
+  every<E>(pred: (x: T, i: i64) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.length; i++) {
-      if (!pred(this[i])) {
+      if (!pred(this[i], i as i64)) {
         return false;
       }
     }
@@ -178,24 +179,33 @@ extend<T> Array<T> {
     reverseRange(this, 0, this.length);
   }
 
-  // Removes `deleteCount` elements starting at `start` (a negative `start` counts from the end;
-  // both are clamped, like JS) and returns them in order; omitting `deleteCount` removes the
-  // rest. O(length). Inserting (`splice(i, 0, x)`) needs rest parameters (planned).
-  splice(start: i64, deleteCount: i64 = 9223372036854775807): T[] {
+  // Removes `deleteCount` elements from `start` (positions as in `slice`; omitted: the rest),
+  // inserts `items` there, and returns the removed elements, like JS. O(length).
+  splice(start: i64, deleteCount: i64 = 9223372036854775807, ...items: T[]): T[] {
     const len = this.length;
     const lo = clampPosition(start, len);
     const room = (len - lo) as i64;
     const k: usize = deleteCount <= 0 ? 0 : (deleteCount < room ? deleteCount : room) as usize;
     const out: T[] = __intrinsic_array_with_capacity(k);
-    if (k == 0) {
-      return out;
+    if (k > 0) {
+      // [lo, len) holds the removed block X then the rest Y: reversing it gives rev(Y) rev(X),
+      // reversing rev(Y) back gives Y rev(X), so the removed elements come off the end in order.
+      reverseRange(this, lo, len);
+      reverseRange(this, lo, len - k);
+      for (let i: usize = 0; i < k; i++) {
+        out.push(__intrinsic_array_remove(this, this.length - 1));
+      }
     }
-    // [lo, len) holds the removed block X then the rest Y: reversing it gives rev(Y) rev(X),
-    // reversing rev(Y) back gives Y rev(X), so the removed elements come off the end in order.
-    reverseRange(this, lo, len);
-    reverseRange(this, lo, len - k);
-    for (let i: usize = 0; i < k; i++) {
-      out.push(__intrinsic_array_remove(this, this.length - 1));
+    if (items.length > 0) {
+      // The array is A Y; pushing the items gives A Y I, and the same two reversals of [lo, end)
+      // turn Y I into I Y.
+      const rest = this.length - lo;
+      for (const x of items) {
+        this.push(__intrinsic_share(x));
+      }
+      reverseRange(this, lo, this.length);
+      reverseRange(this, lo, lo + items.length);
+      reverseRange(this, lo + items.length, lo + items.length + rest);
     }
     return out;
   }
@@ -226,18 +236,22 @@ extend<T> Array<T> {
     return out;
   }
 
-  // `splice(start, deleteCount)` on a copy: the array without the removed elements. Inserting
-  // items needs rest parameters (planned).
-  toSpliced(start: i64, deleteCount: i64 = 9223372036854775807): T[] {
+  // `splice(start, deleteCount, ...items)` on a copy: the array with the elements removed and
+  // `items` inserted.
+  toSpliced(start: i64, deleteCount: i64 = 9223372036854775807, ...items: T[]): T[] {
     const len = this.length;
     const lo = clampPosition(start, len);
     const room = (len - lo) as i64;
     const k: usize = deleteCount <= 0 ? 0 : (deleteCount < room ? deleteCount : room) as usize;
-    const out: T[] = __intrinsic_array_with_capacity(len - k);
-    for (let i: usize = 0; i < len; i++) {
-      if (i < lo || i >= lo + k) {
-        out.push(__intrinsic_share(this[i]));
-      }
+    const out: T[] = __intrinsic_array_with_capacity(len - k + items.length);
+    for (let i: usize = 0; i < lo; i++) {
+      out.push(__intrinsic_share(this[i]));
+    }
+    for (const x of items) {
+      out.push(__intrinsic_share(x));
+    }
+    for (let i = lo + k; i < len; i++) {
+      out.push(__intrinsic_share(this[i]));
     }
     return out;
   }

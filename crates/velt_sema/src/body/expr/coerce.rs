@@ -75,11 +75,23 @@ impl FnCx<'_, '_> {
         if self.cx.class_of(exp).is_some() && self.cx.class_of(h.ty).is_some() {
             return self.upcast(h, exp);
         }
+        if self.cx.same_layout(h.ty, exp) {
+            // Object types that differ only in `readonly`: the same object, seen through the
+            // other type (`crate::readonly` makes them one type before lowering).
+            let span = h.span;
+            return Ok(self.mk(H::Upcast(Box::new(h)), exp, span));
+        }
         if let TyKind::Dyn(iface, args) = self.cx.ty.kind(exp).clone() {
             return self.dyn_value(h, exp, iface, &args);
         }
         if self.cx.ty.is_float(exp) && self.is_inferred_int(&h) {
             return Ok(self.int_to_float(h, exp));
+        }
+        // A JS number held as an integer adapts to the integer type expected (`s.slice(0,
+        // s.length - 1)`, where `slice` takes `i64` and the length is a `usize`).
+        let inferred = self.int_origin(&h) == super::numbers::IntOrigin::Inferred;
+        if self.cx.ty.is_int(exp) && self.cx.ty.is_int(h.ty) && inferred {
+            return Ok(self.int_as(h, exp));
         }
         Err(h)
     }

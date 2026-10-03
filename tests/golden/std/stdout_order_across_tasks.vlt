@@ -1,0 +1,45 @@
+// check: no leaks
+// A line logged before handing work to another task prints before anything that task prints,
+// although each worker thread buffers its output: before `spawn` and before a channel `send`, the
+// line is made visible (#249). `main` keeps computing after each
+// hand-off, so without that the other task, running on another worker, would print first.
+import { channel, Channel } from "velt:channel";
+
+async function report(i: i64, done: Channel<i64>): Promise<void> {
+  console.log(`task ${i}`);
+  try {
+    await done.send(i);
+  } catch (e) {
+    console.log("send failed");
+  }
+}
+
+async function nothing(): Promise<void> {}
+
+// Busy for a while without yielding.
+function work(n: i64): i64 {
+  let x = 0;
+  for (let k = 0; k < n; k++) {
+    x = (x * 31 + k) % 1000003;
+  }
+  return x;
+}
+
+async function main() {
+  const done = channel<i64>();
+  let sum = 0;
+  for (let i = 0; i < 20; i++) {
+    console.log(`main ${i}`);
+    spawn(report(i, done));
+    // A second task takes the worker's next-to-run slot, so `report` can be picked up by another
+    // worker while `main` is still busy.
+    spawn(nothing());
+    sum += work(200000);
+    const got = await done.receive();
+    if (got != null) {
+      sum += got;
+    }
+  }
+  done.close();
+  console.log("done", sum > 0);
+}

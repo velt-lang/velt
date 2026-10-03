@@ -134,6 +134,29 @@ extend string {
     return velt_rt_str_locale_compare(this, that);
   }
 
+  // The character that starts at position `i` (positions count bytes, as in `slice`; for ASCII
+  // text that is JS's `charAt`), or "" past the end or inside a multi-byte character. `s[i]` is
+  // the same.
+  charAt(i: i64 = 0): string {
+    const b = __intrinsic_str_char_code_at(this, i);
+    if (b < 0 || (b >= 128 && b < 192)) {
+      return "";
+    }
+    const n = b < 128 ? 1 : b < 224 ? 2 : b < 240 ? 3 : 4;
+    return velt_rt_str_slice(this, i, i + n);
+  }
+
+  // Like `charAt`, but a negative `i` counts from the end, and past the end is null (JS:
+  // `undefined`).
+  at(i: i64): string | null {
+    const n = this.length as i64;
+    const k = i < 0 ? i + n : i;
+    if (k < 0 || k >= n) {
+      return null;
+    }
+    return this.charAt(k);
+  }
+
   // The byte at `i` (POC: bytes, not UTF-16 units), or -1 if out of range (JS: NaN).
   charCodeAt(i: i64 = 0): i64 {
     return __intrinsic_str_char_code_at(this, i);

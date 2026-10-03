@@ -50,7 +50,10 @@ pub(crate) struct Ctx<'m> {
     /// `impls` by interface (`Ctx::find_impl`).
     pub impl_index: crate::infer::ImplIndex,
     /// Anonymous object types by shape.
-    pub anon: HashMap<Vec<(String, TyId)>, DefId>,
+    /// Anonymous object defs by shape: field names, types and `readonly` flags, in order.
+    pub anon: HashMap<Vec<(String, TyId, bool)>, DefId>,
+    /// Anonymous object defs with `readonly` fields → their twin without (`crate::readonly`).
+    pub readonly_twins: HashMap<DefId, DefId>,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: HashMap<Vec<TyId>, DefId>,
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
@@ -115,6 +118,7 @@ impl<'m> Ctx<'m> {
             impls: vec![],
             impl_index: Default::default(),
             anon: HashMap::new(),
+            readonly_twins: HashMap::new(),
             unions: HashMap::new(),
             alias_names: HashMap::new(),
             generic_overrides: vec![],

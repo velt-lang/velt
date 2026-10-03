@@ -46,6 +46,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 impl Signal {
     fn abort(&self, reason: &Reason) {
+        crate::io::publish_before_handoff();
         {
             let mut r = lock(&self.reason);
             if self.aborted.load(Ordering::Acquire) {
@@ -221,6 +222,20 @@ mod tests {
         let mut cx = Context::from_waker(Waker::noop());
         // SAFETY: a live leaf future.
         unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx)) }
+    }
+
+    #[test]
+    fn abort_publishes_this_threads_output_first() {
+        use crate::io::handoff_probe::{buffer_output, published};
+        let reason = VeltStr::from_vec(b"stop".to_vec());
+        // SAFETY: the handle is live until freed.
+        unsafe {
+            let s = velt_rt_signal_new();
+            buffer_output();
+            velt_rt_signal_abort(s, &reason);
+            assert!(published());
+            velt_rt_signal_free(s);
+        }
     }
 
     #[test]

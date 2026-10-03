@@ -12,6 +12,8 @@ hidden classes and no runtime shape checks.
   throw ([Errors](errors.md#throwing)). This order is a known difference from TypeScript, which
   runs the base class's initializers and constructor before the derived class's initializers
   (tracked in [#273](https://github.com/velt-lang/velt/issues/273)).
+  A field declared from an integer literal (`count = 0`) holds a JS number, like
+  `let count = 0` ([Numbers](types.md#numbers)).
 - **Parameter properties**: `constructor(private readonly name: string, public age: i64) {}`
   declares the fields and assigns them, as in TypeScript (`protected` is accepted there and
   means public: there are no `protected` members).
@@ -51,6 +53,8 @@ hidden classes and no runtime shape checks.
 - An overridden method returning a promise reports its errors through the promise: when the
   base method or any override can fail, all of them must be `async`
   ([Async](async.md#errors)).
+- A template literal calls a class's (or struct's) own `toString(): string`, as in JS
+  (`` `total: ${price}` ``); without one it shows the value the way `console.log` does.
 
 ```ts
 class Account {
@@ -311,8 +315,8 @@ The prelude declares `interface Comparable<T> { compareTo(other: T): i64; }` and
 for every number type, `string` (bytewise) and `bool`. With `T extends Comparable<T>`, the
 operators `<`, `<=`, `>` and `>=` work on `T` (static dispatch after monomorphization), and
 `sort()` orders Comparable elements (floats put `NaN` last). User types implement it with
-`implements Comparable<X>` or an `extend` block. On a concrete class the operators are not
-available yet: call `a.compareTo(b)` or go through a generic.
+`implements Comparable<X>` or an `extend` block, and then `<`, `<=`, `>` and `>=` work on their
+values too (`v1 < v2` is `v1.compareTo(v2) < 0`).
 
 ```ts
 class Version implements Comparable<Version> {

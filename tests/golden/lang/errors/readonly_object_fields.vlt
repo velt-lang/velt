@@ -1,0 +1,15 @@
+// Assigning a readonly field of an object type is an error, also through compound assignment
+// and through a shape that differs only in readonly; the other fields stay writable.
+type User = { readonly id: number; name: string };
+type Box = { readonly user: User };
+
+function main() {
+  let u: User = { id: 1, name: "ann" };
+  u.id = 2;
+  u.id += 1;
+  u.name = "bo";
+  let b: Box = { user: u };
+  b.user = { id: 3, name: "cy" };
+  b.user.name = "dee";
+  console.log(u.name, b.user.name);
+}

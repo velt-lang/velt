@@ -30,7 +30,7 @@ fn using_declarations() {
 
 #[test]
 fn using_errors() {
-    let e = errors("using top = 1; function f() { using r; }");
+    let e = errors("export using top = 1; function f() { using r; }");
     assert!(
         e.iter().any(|m| m.contains("only allowed inside a block")),
         "{e:?}"

@@ -1,0 +1,409 @@
+// Prelude: the JS `Date` object. An instant as milliseconds since 1970-01-01T00:00:00Z, held as a
+// number (NaN for an invalid date), with JS's conventions: months are 0-11, the plain getters and
+// setters are local time (the OS time zone, DST-aware) and the `UTC` ones are UTC, and strings
+// parse like `Date.parse` (a date alone is UTC, a date-time without an offset is local time).
+// The calendar arithmetic is velt:datetime's; prefer its `DateTime` (UTC-first, months 1-12) in
+// new code.
+//
+// Differences from JS: `toString()` has no time zone name in parentheses, and the `toLocale…`
+// methods always use the `en-US` format.
+
+import { DateParts, partsOf, epochMsOf, monthShort, weekdayShort } from "velt:datetime/civil";
+import { pad, offsetString, isoString, httpString } from "velt:datetime/format";
+import { parseIso, parseHttp } from "velt:datetime/parse";
+
+declare function velt_rt_date_now(): i64;
+declare function velt_rt_local_offset_minutes(epochMs: i64): i32;
+
+// The largest distance from the epoch a JS date can be (100,000,000 days).
+const MAX_TIME: f64 = 8640000000000000.0;
+
+export class Date implements Comparable<Date> {
+  private t: f64;
+
+  // `new Date()` is now; `new Date(ms)` an epoch time; `new Date("2024-01-15")` a parsed string
+  // (see `Date.parse`); `new Date(d)` a copy; `new Date(year, month, day?, hours?, minutes?,
+  // seconds?, ms?)` local time, with month 0-11 and fields rolling over like JS.
+  constructor(
+    value: number | string | Date | null = null,
+    month: number | null = null,
+    day: number = 1,
+    hours: number = 0,
+    minutes: number = 0,
+    seconds: number = 0,
+    ms: number = 0,
+  ) {
+    if (month != null) {
+      const y = typeof value === "number" ? value : 0.0 / 0.0;
+      this.t = fromFields(false, [y, month, day, hours, minutes, seconds, ms]);
+    } else if (value == null) {
+      this.t = velt_rt_date_now() as f64;
+    } else if (typeof value === "number") {
+      this.t = timeClip(value);
+    } else if (typeof value === "string") {
+      this.t = Date.parse(value);
+    } else {
+      this.t = value.getTime();
+    }
+  }
+
+  // Milliseconds since the epoch, now.
+  static now(): i64 {
+    return velt_rt_date_now();
+  }
+
+  // The epoch time of a date string, or NaN: ISO 8601 (`2024-01-15`, `2024-01-15T10:30:00Z`,
+  // `2024-01-15T10:30:00.000+01:00`; without an offset a date alone is UTC and a date-time is
+  // local time, as in JS) and HTTP dates (`Mon, 15 Jan 2024 10:30:00 GMT`).
+  static parse(s: string): number {
+    const iso = parseIso(s);
+    if (iso != null) {
+      return isLocalForm(s) ? localToUtc(iso) as f64 : timeClip(iso as f64);
+    }
+    const http = parseHttp(s);
+    if (http != null) {
+      return http as f64;
+    }
+    return 0.0 / 0.0;
+  }
+
+  // The epoch time of UTC fields (month 0-11), rolling over like JS.
+  static UTC(
+    year: number,
+    month: number = 0,
+    day: number = 1,
+    hours: number = 0,
+    minutes: number = 0,
+    seconds: number = 0,
+    ms: number = 0,
+  ): number {
+    return fromFields(true, [year, month, day, hours, minutes, seconds, ms]);
+  }
+
+  getTime(): number {
+    return this.t;
+  }
+
+  valueOf(): number {
+    return this.t;
+  }
+
+  compareTo(other: Date): i64 {
+    return this.t < other.t ? -1 : this.t > other.t ? 1 : 0;
+  }
+
+  getFullYear(): number {
+    return this.field(false, 0);
+  }
+
+  getMonth(): number {
+    return this.field(false, 1);
+  }
+
+  getDate(): number {
+    return this.field(false, 2);
+  }
+
+  getHours(): number {
+    return this.field(false, 3);
+  }
+
+  getMinutes(): number {
+    return this.field(false, 4);
+  }
+
+  getSeconds(): number {
+    return this.field(false, 5);
+  }
+
+  getMilliseconds(): number {
+    return this.field(false, 6);
+  }
+
+  // 0 = Sunday … 6 = Saturday.
+  getDay(): number {
+    return this.field(false, 7);
+  }
+
+  getUTCFullYear(): number {
+    return this.field(true, 0);
+  }
+
+  getUTCMonth(): number {
+    return this.field(true, 1);
+  }
+
+  getUTCDate(): number {
+    return this.field(true, 2);
+  }
+
+  getUTCHours(): number {
+    return this.field(true, 3);
+  }
+
+  getUTCMinutes(): number {
+    return this.field(true, 4);
+  }
+
+  getUTCSeconds(): number {
+    return this.field(true, 5);
+  }
+
+  getUTCMilliseconds(): number {
+    return this.field(true, 6);
+  }
+
+  getUTCDay(): number {
+    return this.field(true, 7);
+  }
+
+  // Minutes from local time to UTC (JS's sign: -60 for UTC+01:00).
+  getTimezoneOffset(): number {
+    if (this.t != this.t) {
+      return this.t;
+    }
+    return -(localOffset(this.t as i64) as f64);
+  }
+
+  setTime(t: number): number {
+    this.t = timeClip(t);
+    return this.t;
+  }
+
+  setFullYear(year: number, month: number | null = null, day: number | null = null): number {
+    return this.set(false, [year, month, day, null, null, null, null]);
+  }
+
+  setMonth(month: number, day: number | null = null): number {
+    return this.set(false, [null, month, day, null, null, null, null]);
+  }
+
+  setDate(day: number): number {
+    return this.set(false, [null, null, day, null, null, null, null]);
+  }
+
+  setHours(
+    hours: number,
+    minutes: number | null = null,
+    seconds: number | null = null,
+    ms: number | null = null,
+  ): number {
+    return this.set(false, [null, null, null, hours, minutes, seconds, ms]);
+  }
+
+  setMinutes(minutes: number, seconds: number | null = null, ms: number | null = null): number {
+    return this.set(false, [null, null, null, null, minutes, seconds, ms]);
+  }
+
+  setSeconds(seconds: number, ms: number | null = null): number {
+    return this.set(false, [null, null, null, null, null, seconds, ms]);
+  }
+
+  setMilliseconds(ms: number): number {
+    return this.set(false, [null, null, null, null, null, null, ms]);
+  }
+
+  setUTCFullYear(year: number, month: number | null = null, day: number | null = null): number {
+    return this.set(true, [year, month, day, null, null, null, null]);
+  }
+
+  setUTCMonth(month: number, day: number | null = null): number {
+    return this.set(true, [null, month, day, null, null, null, null]);
+  }
+
+  setUTCDate(day: number): number {
+    return this.set(true, [null, null, day, null, null, null, null]);
+  }
+
+  setUTCHours(
+    hours: number,
+    minutes: number | null = null,
+    seconds: number | null = null,
+    ms: number | null = null,
+  ): number {
+    return this.set(true, [null, null, null, hours, minutes, seconds, ms]);
+  }
+
+  setUTCMinutes(minutes: number, seconds: number | null = null, ms: number | null = null): number {
+    return this.set(true, [null, null, null, null, minutes, seconds, ms]);
+  }
+
+  setUTCSeconds(seconds: number, ms: number | null = null): number {
+    return this.set(true, [null, null, null, null, null, seconds, ms]);
+  }
+
+  setUTCMilliseconds(ms: number): number {
+    return this.set(true, [null, null, null, null, null, null, ms]);
+  }
+
+  // `2024-01-15T09:30:00.000Z`. An invalid date panics (JS throws a RangeError).
+  toISOString(): string {
+    if (this.t != this.t) {
+      panic("RangeError: Invalid time value");
+    }
+    return isoString(this.t as i64, 0, true);
+  }
+
+  // What `JSON.stringify` writes for a date: its ISO string, or null when invalid.
+  toJSON(): string | null {
+    return this.t != this.t ? null : isoString(this.t as i64, 0, true);
+  }
+
+  // `Mon, 15 Jan 2024 09:30:00 GMT`.
+  toUTCString(): string {
+    return this.t != this.t ? "Invalid Date" : httpString(this.t as i64);
+  }
+
+  // `Mon Jan 15 2024 10:30:00 GMT+0100` (local time).
+  toString(): string {
+    if (this.t != this.t) {
+      return "Invalid Date";
+    }
+    return `${this.toDateString()} ${this.toTimeString()}`;
+  }
+
+  // `Mon Jan 15 2024` (local time).
+  toDateString(): string {
+    if (this.t != this.t) {
+      return "Invalid Date";
+    }
+    const p = this.parts(false);
+    return `${weekdayShort(p.dayOfWeek)} ${monthShort(p.month)} ${pad(p.day, 2)} ${pad(p.year, 4)}`;
+  }
+
+  // `10:30:00 GMT+0100` (local time).
+  toTimeString(): string {
+    if (this.t != this.t) {
+      return "Invalid Date";
+    }
+    const p = this.parts(false);
+    const zone = offsetString(p.offsetMinutes, false);
+    return `${pad(p.hour, 2)}:${pad(p.minute, 2)}:${pad(p.second, 2)} GMT${zone}`;
+  }
+
+  // `1/15/2024` (local time, en-US).
+  toLocaleDateString(): string {
+    if (this.t != this.t) {
+      return "Invalid Date";
+    }
+    const p = this.parts(false);
+    return `${p.month}/${p.day}/${p.year}`;
+  }
+
+  // `10:30:00 AM` (local time, en-US).
+  toLocaleTimeString(): string {
+    if (this.t != this.t) {
+      return "Invalid Date";
+    }
+    const p = this.parts(false);
+    const h = p.hour % 12 == 0 ? 12 : p.hour % 12;
+    const half = p.hour < 12 ? "AM" : "PM";
+    return `${h}:${pad(p.minute, 2)}:${pad(p.second, 2)} ${half}`;
+  }
+
+  // `1/15/2024, 10:30:00 AM` (local time, en-US).
+  toLocaleString(): string {
+    if (this.t != this.t) {
+      return "Invalid Date";
+    }
+    return `${this.toLocaleDateString()}, ${this.toLocaleTimeString()}`;
+  }
+
+  // How `console.log` shows a date, like Node: its ISO string, or `Invalid Date`.
+  __inspect(): string {
+    return this.t != this.t ? "Invalid Date" : isoString(this.t as i64, 0, true);
+  }
+
+  // Calendar fields, local or UTC.
+  private parts(utc: bool): DateParts {
+    const t = this.t as i64;
+    return partsOf(t, utc ? 0 : localOffset(t));
+  }
+
+  // Field `k` of `[year, month 0-11, day, hours, minutes, seconds, ms, weekday]`, or NaN.
+  private field(utc: bool, k: i64): number {
+    if (this.t != this.t) {
+      return this.t;
+    }
+    const p = this.parts(utc);
+    const fields = [
+      p.year,
+      p.month - 1,
+      p.day,
+      p.hour,
+      p.minute,
+      p.second,
+      p.millisecond,
+      p.dayOfWeek,
+    ];
+    return fields[k] as f64;
+  }
+
+  // The setters: `changes` replaces the fields that are not null (`[year, month 0-11, day,
+  // hours, minutes, seconds, ms]`); the others keep their current values.
+  private set(utc: bool, changes: (number | null)[]): number {
+    if (this.t != this.t && changes[0] == null) {
+      return this.t;
+    }
+    // An invalid date gets a year from `setFullYear`, counted from 1970-01-01 (as in JS).
+    const p = this.t != this.t ? partsOf(0, 0) : this.parts(utc);
+    const now = [p.year, p.month - 1, p.day, p.hour, p.minute, p.second, p.millisecond];
+    const fields: number[] = [];
+    for (const [k, c] of changes.entries()) {
+      fields.push(c ?? now[k] as f64);
+    }
+    this.t = fromFields(utc, fields);
+    return this.t;
+  }
+}
+
+// JS's TimeClip: NaN outside ±8.64e15 ms, else the time truncated to whole milliseconds.
+function timeClip(t: f64): f64 {
+  if (!(t >= -MAX_TIME && t <= MAX_TIME)) {
+    return 0.0 / 0.0;
+  }
+  return Math.trunc(t) + 0.0;
+}
+
+// The epoch time of calendar fields `[year, month 0-11, day, hours, minutes, seconds, ms]`, UTC
+// or local; NaN if one is not finite. Years 0-99 mean 1900-1999, as in JS.
+function fromFields(utc: bool, fields: f64[]): f64 {
+  const n: i64[] = [];
+  for (const f of fields) {
+    if (!(f - f == 0.0)) {
+      return 0.0 / 0.0;
+    }
+    n.push(Math.trunc(f) as i64);
+  }
+  const year = n[0] >= 0 && n[0] <= 99 ? n[0] + 1900 : n[0];
+  const t = epochMsOf(year, n[1] + 1, n[2], n[3], n[4], n[5], n[6]);
+  return timeClip((utc ? t : localToUtc(t)) as f64);
+}
+
+// Minutes added to UTC to get local time at epoch time `t`.
+function localOffset(t: i64): i64 {
+  return velt_rt_local_offset_minutes(t) as i64;
+}
+
+// The epoch time of a local date-time `local` (its fields read as if they were UTC). Around a DST
+// change the offset is taken at the result, as JS does.
+function localToUtc(local: i64): i64 {
+  const first = local - localOffset(local) * 60000;
+  const second = local - localOffset(first) * 60000;
+  return second;
+}
+
+// Is `s` a date-time without an offset (`2024-01-15T10:30`), which JS reads as local time?
+function isLocalForm(s: string): bool {
+  const text = s.trim();
+  if (text.length <= 10) {
+    return false;
+  }
+  const rest = text.slice(10);
+  const sep = rest.charAt(0);
+  if (sep != "T" && sep != "t" && sep != " ") {
+    return false;
+  }
+  const time = rest.slice(1);
+  return !(time.endsWith("Z") || time.endsWith("z") || time.includes("+") || time.includes("-"));
+}

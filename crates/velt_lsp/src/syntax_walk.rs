@@ -174,6 +174,7 @@ fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
         | E::Cast { expr, .. }
         | E::InstanceOf { expr, .. }
         | E::Paren(expr)
+        | E::NonNull(expr)
         | E::Member { object: expr, .. } => f(expr),
         E::Binary { lhs, rhs, .. } => {
             f(lhs);
