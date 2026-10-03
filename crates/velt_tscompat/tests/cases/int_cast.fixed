@@ -8,7 +8,7 @@ export function whole(x: number): number {
 }
 
 function half(n: i64): i64 { //~ velt-number-type velt-number-type
-  return n / 2; //~ int-division
+  return Math.trunc(n / 2); //~ int-division
 }
 
 export function typed(x: number): number {

@@ -92,6 +92,38 @@ fn findings_in_the_folders_come_live_with_their_fix() {
     client.shutdown();
 }
 
+/// The rules on types run on the document's analysis too: an error with its fix, then a warning
+/// on the next change.
+#[test]
+fn typed_findings_come_live() {
+    let tmp = package();
+    let mut client = Client::start();
+    let text = "export function missing(x?: string): boolean {\n  return x === null;\n}\n";
+    let doc = uri_in(&tmp, "shared/lookup.ts");
+    client.open(&doc, text);
+    let diags = published(&mut client, &doc);
+    assert_eq!(sources(&diags), [ts_compat("strict-null-eq")]);
+    let offered = actions(&mut client, &doc, text, "===", &diags);
+    let fixed = apply(
+        text,
+        find(&offered, "compare with `==`, which matches `undefined` too"),
+        &doc,
+    );
+    assert!(fixed.contains("return x == null;"), "{fixed}");
+    client.change(&doc, 2, &fixed);
+    assert_eq!(published(&mut client, &doc), [] as [Value; 0]);
+
+    client.change(
+        &doc,
+        3,
+        "export function size(s: string): number {\n  return s.length;\n}\n",
+    );
+    let diags = published(&mut client, &doc);
+    assert_eq!(sources(&diags), [ts_compat("string-offsets")]);
+    assert_eq!(diags[0]["severity"], json!(2));
+    client.shutdown();
+}
+
 #[test]
 fn files_outside_the_folders_and_files_with_errors_get_no_findings() {
     let tmp = package();

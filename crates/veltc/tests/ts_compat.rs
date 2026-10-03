@@ -10,6 +10,7 @@ use serde_json::Value;
 
 mod no_window;
 mod test_dir;
+mod ts_compat_node;
 
 fn velt(cwd: &Path, args: &[&str]) -> Output {
     crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
@@ -149,6 +150,45 @@ fn findings_print_as_diagnostics_with_their_code_and_fail() {
     assert!(err.contains("= note: ts-compat(velt-number-type)"), "{err}");
     // A plain check doesn't lint.
     assert!(velt(dir, &["check", "a.vlt"]).status.success());
+}
+
+/// The rules on types run in the command too; a warning alone doesn't fail it.
+#[test]
+fn typed_findings_and_warnings() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    write(
+        dir,
+        "a.ts",
+        "export function has(m: Map<string, number>): boolean {\n  \
+         return m.get(\"a\") === null;\n}\n",
+    );
+    write(
+        dir,
+        "b.ts",
+        "export function size(s: string): number {\n  return s.length;\n}\n",
+    );
+    let o = velt(dir, &["check", "--ts-compat", "a.ts", "--json"]);
+    assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
+    let report = json(&o);
+    assert_eq!(codes(&report), ["strict-null-eq"]);
+    assert_eq!(report["diagnostics"][0]["fix"]["replacement"], "==");
+    let o = velt(dir, &["check", "--ts-compat", "b.ts", "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&o);
+    assert_eq!(codes(&report), ["string-offsets"]);
+    assert_eq!(report["diagnostics"][0]["severity"], "warning");
+    assert_eq!(
+        (report["errors"].as_u64(), report["warnings"].as_u64()),
+        (Some(0), Some(1))
+    );
+    let o = velt(dir, &["check", "--ts-compat", "b.ts"]);
+    assert!(o.status.success());
+    assert!(
+        stderr(&o).contains("b.ts:2:10: warning: `length` on a string counts UTF-8 bytes"),
+        "{}",
+        stderr(&o)
+    );
 }
 
 #[test]

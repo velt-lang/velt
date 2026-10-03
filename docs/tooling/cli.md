@@ -137,7 +137,13 @@ src/models/user.ts:3:14: error: `f64` is not a TypeScript type
   and, when the replacement is mechanical, a `fix`: `{"location", "replacement", "title"}`.
 - A relative import must stay among the files passed (or in the `tsCompat` folders): `tsc`
   compiles every file a shared file imports.
-- It exits with 1 when there is an error, from the check or from the lint.
+- Some rules need types: they ask the checker about what a name refers to and what type a
+  value has (`=== null` on a `Map.get`, `${xs}` of an array, `sort()` of numbers), so the
+  files are checked once more for them, which costs a few milliseconds.
+- A finding that depends on values the lint can't see is a warning (`${x}` where `x` may be
+  `null`, string lengths and positions, `xs.length - 1`); the others are errors.
+- It exits with 1 when there is an error, from the check or from the lint; warnings alone
+  don't fail it.
 - The rules and the subset are listed in
   [the TSX design](../internals/design/tsx.md#the-common-subset). `velt build` never runs the
   lint.
