@@ -54,7 +54,9 @@ pub(crate) fn check_boundaries(cx: &mut Ctx) {
                 return;
             };
             match (i, args.as_slice()) {
-                (Intrinsic::Spawn, [p]) => spawned_copies(cx, p, &locals, &mut found),
+                (Intrinsic::Spawn | Intrinsic::SpawnHandled, [p]) => {
+                    spawned_copies(cx, p, &locals, &mut found)
+                }
                 (Intrinsic::SharedNew, [x]) => shared_kept(cx, x, &locals, &mut kept),
                 _ => {}
             }
