@@ -132,7 +132,8 @@ Maintainer-owned, like hir.rs.
 - In the body: `Call { Intrinsic(Yield), [v] }` (`v: T` owned, type `Unit`) is `yield v`;
   `Return(None)` ends the generator (no `Return(Some)` occurs); `yield* src` has no form of its
   own (a `Block` expression holding the desugared `for...of` that yields each value). No
-  `finally` block of a generator contains a `Yield` or can throw (sema).
+  `finally` block of a generator contains a `Yield`, can throw, or contains a `Break` /
+  `Continue` whose target loop is outside it (sema).
 - The `Generator` class's methods (prelude) use `Intrinsic::GeneratorResume` (`bool`, throws
   `E`), `GeneratorValue` (`T`, moved out; only after a resume returned true) and
   `GeneratorReturn` (close), each taking the `Generator<T, E>` operand `BorrowMut`.
@@ -143,6 +144,30 @@ Maintainer-owned, like hir.rs.
   state in that local (the local is only an operand of the generator intrinsics and is
   dropped at the block's end, which closes it). A `GeneratorEmbed` it cannot embed (a
   generator iterating a direct call of itself) is the call's `Generator` object.
+
+## Async generators
+(docs/reference/functions.md "Async generators", docs/internals/design/iteration.md §4)
+- An `async function*` / `async *name()` has `FnDef::is_generator` **and** `FnDef::is_async`.
+  `ret` is `AsyncGenerator<T, E>` (prelude class `std/prelude/iter::AsyncGenerator`),
+  `AsyncIterator<T, E>` or `AsyncIterable<T, E>`, with `E` = `FnDef::throws`; a call has type
+  `ret`, never throws and creates the generator (an `AsyncGenerator` object, or the interface
+  value of it). The body contains `Await`s and `Yield`s; its `finally` blocks follow the
+  generator rules above but may contain `Await`.
+- The `AsyncGenerator` class's methods use `Intrinsic::AsyncGeneratorResume` (type
+  `Promise<bool, E>`; only as the operand of `Await`, which rejects with `E`),
+  `AsyncGeneratorValue` (`T`), `AsyncGeneratorReturn` (`Promise<void>`, only under `Await`:
+  the awaited close) and `AsyncGeneratorDispose` (the close without awaiting), each taking the
+  `AsyncGenerator<T, E>` operand `BorrowMut`.
+- `for await` has no HIR form of its own: over an async iterable sema emits the `for...of`
+  protocol block with `Await(next())` and, in the `finally`, `Await(return())`. Over a direct
+  async generator call it is `Block { Let <generator@N> = Call { Intrinsic(GeneratorEmbed),
+  [call] } : AsyncGenerator<T, E>; Try { body: [While { cond: Await(AsyncGeneratorResume(
+  <generator@N>)), body: [LetPat pattern = AsyncGeneratorValue(<generator@N>), Block(body)]
+  }], finally: [Await(AsyncGeneratorReturn(<generator@N>))] } }` (the close is a no-op once
+  the generator is done). Over a sync source it is the `for...of` form whose bound value is
+  `Await(value)` when the elements are promises; an array of promises is a consuming `ForOf`
+  (its place operand `UseMode::Move`).
+- `yield* src` in an async generator is the desugared `for await` that yields each value.
 
 ## Mutation inference (no `mut` in the language)
 - Pass modes are inferred (docs/reference/memory.md): `BorrowMut` = the callee may

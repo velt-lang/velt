@@ -51,6 +51,10 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "generator_resume" => I::GeneratorResume,
         "generator_value" => I::GeneratorValue,
         "generator_return" => I::GeneratorReturn,
+        "async_generator_resume" => I::AsyncGeneratorResume,
+        "async_generator_value" => I::AsyncGeneratorValue,
+        "async_generator_return" => I::AsyncGeneratorReturn,
+        "async_generator_dispose" => I::AsyncGeneratorDispose,
         _ => return None,
     })
 }
@@ -86,7 +90,11 @@ impl FnCx<'_, '_> {
                 | Intrinsic::PromiseAny
                 | Intrinsic::GeneratorResume
                 | Intrinsic::GeneratorValue
-                | Intrinsic::GeneratorReturn,
+                | Intrinsic::GeneratorReturn
+                | Intrinsic::AsyncGeneratorResume
+                | Intrinsic::AsyncGeneratorValue
+                | Intrinsic::AsyncGeneratorReturn
+                | Intrinsic::AsyncGeneratorDispose,
             ) => {
                 vec!["T".into(), "E".into()]
             }
@@ -148,6 +156,7 @@ impl FnCx<'_, '_> {
         let mutex = self.cx.mutex_ty();
         let (t0, e0) = (self.cx.ty.param(0), self.cx.ty.param(1));
         let gen = self.cx.generator_ty(t0, e0);
+        let agen = self.cx.async_generator_ty(t0, e0);
         let ty = &mut self.cx.ty;
         let (t, e) = (ty.param(0), ty.param(1));
         let (unit, str_, i64_, u64_) = (ty.unit, ty.str_, ty.i64, ty.u64);
@@ -190,6 +199,13 @@ impl FnCx<'_, '_> {
             I::GeneratorResume => (vec![(gen, PassMode::BorrowMut)], ty.bool_, true),
             I::GeneratorValue => (vec![(gen, PassMode::BorrowMut)], t, true),
             I::GeneratorReturn => (vec![(gen, PassMode::BorrowMut)], unit, true),
+            I::AsyncGeneratorResume => {
+                let r = ty.promise_rejecting(ty.bool_, e);
+                (vec![(agen, PassMode::BorrowMut)], r, true)
+            }
+            I::AsyncGeneratorValue => (vec![(agen, PassMode::BorrowMut)], t, true),
+            I::AsyncGeneratorReturn => (vec![(agen, PassMode::BorrowMut)], ty.promise(unit), true),
+            I::AsyncGeneratorDispose => (vec![(agen, PassMode::BorrowMut)], unit, true),
             _ => unreachable!("ICE: intrinsic {i:?} has an M2 signature"),
         }
     }

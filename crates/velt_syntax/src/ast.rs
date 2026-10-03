@@ -372,12 +372,13 @@ pub enum StmtKind {
         update: Option<Expr>,
         body: Block,
     },
-    /// `for (const x of xs) body`
+    /// `for (const x of xs) body`, or `for await (const x of xs) body` (`is_await`).
     ForOf {
         kind: VarKind,
         pattern: Pattern,
         iter: Expr,
         body: Block,
+        is_await: bool,
     },
     Break(Option<Ident>),
     Continue(Option<Ident>),

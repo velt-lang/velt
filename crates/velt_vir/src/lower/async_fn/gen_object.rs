@@ -1,7 +1,8 @@
 //! Generator objects (generator.rs module docs): the prelude class `Generator<T, E>` whose one
 //! field (`state: u64`) is the table pointer, followed by the generator's state. A generator
 //! instance `def<targs>` has
-//! - a static table `[resume, close, free]` (`f$poll`, `f$drop`, [`Work::GenFree`]);
+//! - a static table `[resume, close, free]` (`f$poll`, `f$drop`, [`Work::GenFree`]), and for an
+//!   async generator (class `AsyncGenerator<T, E>`) `close-start` ([`Work::AsyncCloseStart`]);
 //! - [`Work::GenNew`]: its constructor with the ordinary calling convention, returning the
 //!   object (one allocation, counted when `Generator<T, E>` is);
 //! - [`Work::Fn`]: what a call returns — the object, or an interface value of it when the
@@ -21,28 +22,41 @@ use crate::vir::{
     StaticId, Terminator, Ty,
 };
 
-/// Qualified name of the prelude's generator class (std/prelude/iter.vlt).
+/// Qualified names of the prelude's generator classes (std/prelude/iter.vlt).
 const PRELUDE_GENERATOR: &str = "std/prelude/iter::Generator";
+const PRELUDE_ASYNC_GENERATOR: &str = "std/prelude/iter::AsyncGenerator";
 
 impl Cx<'_> {
-    /// Is `t` the prelude's `Generator<T, E>` class?
+    /// Is `t` the prelude's `Generator<T, E>` or `AsyncGenerator<T, E>` class?
     pub(in crate::lower) fn is_generator_obj(&self, t: TyId) -> bool {
-        match self.types.kind(t) {
-            TyKind::Adt(d, _) => {
-                matches!(self.hir.def(*d), hir::Def::Adt(a) if a.name == PRELUDE_GENERATOR)
-            }
-            _ => false,
+        self.generator_obj_kind(t).is_some()
+    }
+
+    /// For a generator class type: whether it is the async one.
+    pub(in crate::lower) fn generator_obj_kind(&self, t: TyId) -> Option<bool> {
+        let TyKind::Adt(d, _) = self.types.kind(t) else {
+            return None;
+        };
+        match self.hir.def(*d) {
+            hir::Def::Adt(a) if a.name == PRELUDE_GENERATOR => Some(false),
+            hir::Def::Adt(a) if a.name == PRELUDE_ASYNC_GENERATOR => Some(true),
+            _ => None,
         }
     }
 
-    /// `Generator<T, E>` (the class type) of generator instance `def<targs>`.
+    /// `Generator<T, E>` (or `AsyncGenerator<T, E>`: the class type) of generator instance
+    /// `def<targs>`.
     pub(in crate::lower) fn gen_class_ty(&mut self, def: DefId, targs: &[TyId]) -> TyId {
         let f = self.fn_def(def);
         let (t, e) = self.gen_args(f, targs);
+        let name = match f.is_async {
+            true => PRELUDE_ASYNC_GENERATOR,
+            false => PRELUDE_GENERATOR,
+        };
         let d = (0..self.hir.defs.len() as u32)
             .map(DefId)
-            .find(|&d| matches!(self.hir.def(d), hir::Def::Adt(a) if a.name == PRELUDE_GENERATOR))
-            .unwrap_or_else(|| ice("the prelude has no `Generator` class"));
+            .find(|&d| matches!(self.hir.def(d), hir::Def::Adt(a) if a.name == name))
+            .unwrap_or_else(|| ice("the prelude has no generator class"));
         self.intern(TyKind::Adt(d, vec![t, e]))
     }
 
@@ -68,12 +82,16 @@ impl Cx<'_> {
         }
         let close = self.func(Work::AsyncDrop(def, targs.to_vec()));
         let free = self.func(Work::GenFree(def, targs.to_vec()));
-        let relocs = vec![
+        let mut relocs = vec![
             (0, Const::Func(info.poll)),
             (8, Const::Func(close)),
             (16, Const::Func(free)),
         ];
-        let bytes = vec![0; 24];
+        if self.fn_def(def).is_async {
+            let start = self.func(Work::AsyncCloseStart(def, targs.to_vec()));
+            relocs.push((24, Const::Func(start)));
+        }
+        let bytes = vec![0; relocs.len() * 8];
         self.statics.push(StaticData {
             bytes,
             align: 8,

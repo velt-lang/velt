@@ -150,4 +150,24 @@ pub enum Intrinsic {
     /// local of a `for...of` over a direct generator call (`for (x of gen(a))`): lowering keeps
     /// the generator's state inline in that local instead of a heap object.
     GeneratorEmbed,
+
+    // Async generators (hir_encodings.md "Async generators")
+    /// std only: `__intrinsic_async_generator_resume<T, E>(g: AsyncGenerator<T, E> (modified)):
+    /// Promise<bool, E>`, only as the operand of `await` — run the generator to its next
+    /// `yield` (true) or its end (false; also every later call), suspending the awaiting
+    /// function while the generator awaits. An error thrown by the body rejects it.
+    AsyncGeneratorResume,
+    /// std only: `__intrinsic_async_generator_value<T, E>(g: AsyncGenerator<T, E> (modified)):
+    /// T` — like `GeneratorValue`.
+    AsyncGeneratorValue,
+    /// std only: `__intrinsic_async_generator_return<T, E>(g: AsyncGenerator<T, E> (modified)):
+    /// Promise<void>`, only as the operand of `await` — close the generator: a body suspended
+    /// at a `yield` runs its `finally` blocks and disposals (which may `await`) as if the
+    /// `yield` were a `return`; one suspended at an `await` is cancelled. Then it is done.
+    AsyncGeneratorReturn,
+    /// std only: `__intrinsic_async_generator_dispose<T, E>(g: AsyncGenerator<T, E>
+    /// (modified))` — close the generator without awaiting (its drop): like
+    /// `AsyncGeneratorReturn`, except that a body whose cleanup at that `yield` would `await`
+    /// is cancelled instead (drops only, like a cancelled async function).
+    AsyncGeneratorDispose,
 }

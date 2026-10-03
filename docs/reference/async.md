@@ -62,6 +62,44 @@ a runtime operation that loses, such as `sleep(ms)` or an I/O call, is cancelled
 kept as a value is itself a stored promise: if nobody awaits it, its own rejection is reported
 as uncaught.
 
+## Async iteration
+
+`for await (const x of src)` awaits each element of an async iterable
+([Control flow](control-flow.md#for-await)), and an `async function*`
+([async generator](functions.md#async-generators)) produces one, awaiting and yielding as it
+goes:
+
+```ts
+async function* lines(texts: string[]): AsyncGenerator<string> {
+  for (const t of texts) {
+    await sleep(1);                        // e.g. read the next line
+    yield t;
+  }
+}
+
+async function count(): Promise<i64> {
+  let n = 0;
+  for await (const line of lines(["a", "b"])) {
+    console.log(line);
+    n += 1;
+  }
+  return n;
+}
+```
+
+| Code | Behavior | Cost |
+|---|---|---|
+| `for await (const x of agen(a))` | the generator runs inside the caller, step by step | nothing: its state is part of the caller's, no allocation per item |
+| `const g = agen(a)` … `await g.next()` | an `AsyncGenerator<T>` object | one allocation for the generator; each `next()` is a direct call |
+| `for await` over an `AsyncIterable<T>` value | `next()` through the interface | one allocation per `next()` (its promise) |
+
+- Leaving a `for await` early awaits the iterator's `return()`, which runs the generator's
+  `finally` blocks (they may `await`).
+- An async generator, like a started promise, belongs to the task that created it: passing one
+  to `spawn` (or a channel) or capturing one in an async closure is a compile-time error. A task
+  dropped while it is suspended inside a `for await` drops the generator with it (cancellation:
+  its values are dropped; `finally` blocks that would `await` do not run).
+
 ## Tasks
 
 `spawn(p)` returns a `Promise<T>` join handle. `spawn(f())`, or `spawn(async () => { … })`, runs

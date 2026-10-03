@@ -49,7 +49,8 @@ use super::{FnCx, LocalKind};
 use crate::defs::ThrowSrc;
 use crate::hir::{self, Callee, ExprKind as H, Intrinsic, StmtKind as S, TyId, TyKind, UseMode};
 
-/// The source pieces of one `for...of` statement.
+/// The source pieces of one `for...of` (or `for await`) statement.
+#[derive(Clone, Copy)]
 pub(super) struct ForOfParts<'a> {
     pub kind: ast::VarKind,
     pub pattern: &'a ast::Pattern,
@@ -58,6 +59,8 @@ pub(super) struct ForOfParts<'a> {
     /// The iterated expression's span.
     pub iter_span: Span,
     pub span: Span,
+    /// `for await` over a sync source: promise values are awaited (`for_await.rs`).
+    pub await_each: bool,
 }
 
 impl FnCx<'_, '_> {
@@ -73,7 +76,6 @@ impl FnCx<'_, '_> {
         p: ForOfParts<'_>,
         out: &mut Vec<hir::Stmt>,
     ) {
-        let span = p.span;
         if self.is_generator_call(&src) {
             return self.for_of_generator(src, p, out);
         }
@@ -84,6 +86,23 @@ impl FnCx<'_, '_> {
         if self.is_generator_call(&call) {
             return self.for_of_generator(call, p, out);
         }
+        let await_value = p.await_each && self.yields_promises(call.ty, "Iterator");
+        self.protocol_loop(call, p, false, await_value, out);
+    }
+
+    /// The protocol loop (module docs) over `call`, the checked `[Symbol.iterator]()` (or, with
+    /// `is_async`, `[Symbol.asyncIterator]()`) call: `next()` and `return()` are awaited for an
+    /// async iterator, and with `await_value` each value is (a sync iterator of promises under
+    /// `for await`).
+    pub(super) fn protocol_loop(
+        &mut self,
+        call: hir::Expr,
+        p: ForOfParts<'_>,
+        is_async: bool,
+        await_value: bool,
+        out: &mut Vec<hir::Stmt>,
+    ) {
+        let span = p.span;
         self.push_scope_until(span.hi);
         let names = Hidden::new(span);
         let it = ast::Ident {
@@ -98,7 +117,7 @@ impl FnCx<'_, '_> {
             },
             span: p.iter_span,
         }];
-        for s in names.desugar(&p) {
+        for s in names.desugar(&p, is_async, await_value) {
             self.stmt(&s, &mut stmts);
         }
         self.pop_scope();
@@ -110,22 +129,50 @@ impl FnCx<'_, '_> {
         Self::push(out, S::Block(block), span);
     }
 
-    /// A direct call of a generator function or method (`gen(a)`, `obj.items()`, or a
+    /// Does iterator type `t` (an `Iterator<T>` when `iface` is `"Iterator"`) produce promises?
+    fn yields_promises(&mut self, t: TyId, iface: &str) -> bool {
+        self.iface_args(t, iface)
+            .and_then(|a| a.first().copied())
+            .is_some_and(|v| matches!(self.cx.ty.kind(v), TyKind::Promise(..)))
+    }
+
+    /// A direct call of a (sync) generator function or method (`gen(a)`, `obj.items()`, or a
     /// `*[Symbol.iterator]()` method called by the loop).
     fn is_generator_call(&self, e: &hir::Expr) -> bool {
-        matches!(&e.kind, H::Call { callee: Callee::Def(d, _), .. } if self.is_generator_fn(*d))
+        matches!(&e.kind, H::Call { callee: Callee::Def(d, _), .. }
+            if self.is_generator_fn(*d) && !self.is_async_generator_fn(*d))
+    }
+
+    /// A direct call of an async generator function or method.
+    pub(super) fn is_async_generator_call(&self, e: &hir::Expr) -> bool {
+        matches!(&e.kind, H::Call { callee: Callee::Def(d, _), .. } if self.is_async_generator_fn(*d))
     }
 
     /// `for (kind pattern of call) body` over a direct generator call (module docs): the
     /// generator lives in a hidden local whose state lowering keeps inline (no heap object, no
     /// `IteratorResult`); leaving the loop drops the local, which closes the generator.
     fn for_of_generator(&mut self, call: hir::Expr, p: ForOfParts<'_>, out: &mut Vec<hir::Stmt>) {
+        self.embedded_loop(call, p, false, out);
+    }
+
+    /// The embedded loop over a direct (with `is_async`, async) generator call: the sync loop
+    /// above, or `for_await.rs`'s.
+    pub(super) fn embedded_loop(
+        &mut self,
+        call: hir::Expr,
+        p: ForOfParts<'_>,
+        is_async: bool,
+        out: &mut Vec<hir::Stmt>,
+    ) {
         let span = p.span;
         let Some((_, args)) = self.cx.generator_result(call.ty) else {
             return self.check_body_only(&p);
         };
         let (t, e) = (args[0], args[1]);
-        let gen_ty = self.cx.generator_ty(t, e);
+        let gen_ty = match is_async {
+            true => self.cx.async_generator_ty(t, e),
+            false => self.cx.generator_ty(t, e),
+        };
         self.push_scope_until(span.hi);
         let names = Hidden::new(span);
         let g = ast::Ident {
@@ -143,23 +190,40 @@ impl FnCx<'_, '_> {
         }];
         let use_g = |fx: &Self| fx.mk(H::Local(local, UseMode::BorrowMut), gen_ty, names.at);
         let bool_ = self.cx.ty.bool_;
-        let resume = self.intrinsic_hir(
-            Intrinsic::GeneratorResume,
-            vec![use_g(self)],
-            bool_,
-            names.at,
-        );
+        let resume = match is_async {
+            true => {
+                let pt = self.cx.ty.promise_rejecting(bool_, e);
+                let r = self.intrinsic_hir(
+                    Intrinsic::AsyncGeneratorResume,
+                    vec![use_g(self)],
+                    pt,
+                    names.at,
+                );
+                self.mk(H::Await(Box::new(r)), bool_, names.at)
+            }
+            false => self.intrinsic_hir(
+                Intrinsic::GeneratorResume,
+                vec![use_g(self)],
+                bool_,
+                names.at,
+            ),
+        };
         if e != self.cx.ty.never {
             self.throw_src(ThrowSrc::Direct(e, p.iter_span));
         }
-        let value = self.intrinsic_hir(Intrinsic::GeneratorValue, vec![use_g(self)], t, names.at);
+        let value_i = match is_async {
+            true => Intrinsic::AsyncGeneratorValue,
+            false => Intrinsic::GeneratorValue,
+        };
+        let value = self.intrinsic_hir(value_i, vec![use_g(self)], t, names.at);
+        let value = self.await_each(value, &p);
         self.push_scope_until(span.hi);
         let mutable = p.kind == ast::VarKind::Let;
         let ctx = BindCtx::Let {
             mutable,
             place: false,
         };
-        let pat = self.pattern(p.pattern, t, ctx);
+        let pat = self.pattern(p.pattern, value.ty, ctx);
         self.enter_loop(p.label, false);
         let b = self.block(p.body);
         let label = self.exit_loop().hir_label();
@@ -184,7 +248,11 @@ impl FnCx<'_, '_> {
             body,
             step: None,
         };
-        stmts.push(hir::Stmt { kind: lp, span });
+        let lp = hir::Stmt { kind: lp, span };
+        stmts.push(match is_async {
+            true => self.closing(lp, use_g(self), names.at),
+            false => lp,
+        });
         self.pop_scope();
         let block = hir::Block {
             stmts,
@@ -203,7 +271,7 @@ impl FnCx<'_, '_> {
     }
 
     /// After an error: check the body (for its own diagnostics) with the binding untyped.
-    fn check_body_only(&mut self, p: &ForOfParts<'_>) {
+    pub(super) fn check_body_only(&mut self, p: &ForOfParts<'_>) {
         self.push_scope_until(p.span.hi);
         let mutable = p.kind == ast::VarKind::Let;
         let error = self.cx.ty.error;
@@ -212,6 +280,55 @@ impl FnCx<'_, '_> {
         self.block(p.body);
         self.exit_loop();
         self.pop_scope();
+    }
+
+    /// Under `for await` over a sync source, `await value` when it is a promise.
+    fn await_each(&mut self, value: hir::Expr, p: &ForOfParts<'_>) -> hir::Expr {
+        match self.cx.ty.kind(value.ty).clone() {
+            TyKind::Promise(t, _) if p.await_each => self.await_hir(value, t),
+            _ => value,
+        }
+    }
+
+    /// `await e` (`e: Promise<t, E>`), rethrowing its rejection.
+    pub(super) fn await_hir(&mut self, e: hir::Expr, t: TyId) -> hir::Expr {
+        if let Some(err) = self
+            .cx
+            .ty
+            .promise_error(e.ty)
+            .filter(|&x| x != self.cx.ty.never)
+        {
+            self.throw_src(ThrowSrc::Direct(err, e.span));
+        }
+        let span = e.span;
+        self.mk(H::Await(Box::new(e)), t, span)
+    }
+
+    /// `try { lp } finally { await AsyncGeneratorReturn(g) }`: leaving an embedded async
+    /// generator loop closes the generator, awaiting its cleanup (a no-op once it is done).
+    fn closing(&mut self, lp: hir::Stmt, g: hir::Expr, at: Span) -> hir::Stmt {
+        let unit = self.cx.ty.unit;
+        let pt = self.cx.ty.promise(unit);
+        let close = self.intrinsic_hir(Intrinsic::AsyncGeneratorReturn, vec![g], pt, at);
+        let close = self.mk(H::Await(Box::new(close)), unit, at);
+        let block = |stmts| hir::Block {
+            stmts,
+            value: None,
+            span: at,
+        };
+        let fin = hir::Stmt {
+            kind: S::Expr(close),
+            span: at,
+        };
+        let span = lp.span;
+        hir::Stmt {
+            kind: S::Try {
+                body: block(vec![lp]),
+                catch: None,
+                finally: Some(block(vec![fin])),
+            },
+            span,
+        }
     }
 
     /// Is `t` (what `[Symbol.iterator]()` returns) an `Iterator<T, E>`? Reports it if not.
@@ -234,7 +351,12 @@ impl FnCx<'_, '_> {
 
     /// The type arguments `[T, E]` with which `t` is an `Iterator<T, E>`.
     fn iterator_args(&mut self, t: TyId) -> Option<Vec<TyId>> {
-        let iterator = self.cx.prelude_iface("Iterator")?;
+        self.iface_args(t, "Iterator")
+    }
+
+    /// The type arguments with which `t` implements (or is) the prelude interface `iface`.
+    pub(super) fn iface_args(&mut self, t: TyId, iface: &str) -> Option<Vec<TyId>> {
+        let iterator = self.cx.prelude_iface(iface)?;
         if let TyKind::Dyn(d, args) = self.cx.ty.kind(t).clone() {
             if d == iterator {
                 return Some(args);
@@ -248,7 +370,7 @@ impl FnCx<'_, '_> {
 }
 
 /// The hidden locals of one desugared loop (unique per statement: named by its offset).
-struct Hidden {
+pub(super) struct Hidden {
     iterator: String,
     generator: String,
     open: String,
@@ -261,7 +383,7 @@ struct Hidden {
 }
 
 impl Hidden {
-    fn new(span: Span) -> Self {
+    pub(super) fn new(span: Span) -> Self {
         let at = span.lo;
         Hidden {
             iterator: format!("<iterator@{at}>"),
@@ -273,14 +395,15 @@ impl Hidden {
         }
     }
 
-    /// The statements after `let <iterator> = ...` (see the module docs).
-    fn desugar(&self, p: &ForOfParts<'_>) -> Vec<ast::Stmt> {
+    /// The statements after `let <iterator> = ...` (see the module docs): with `is_async`,
+    /// `next()` and `return()` are awaited, and with `await_value` the value is.
+    fn desugar(&self, p: &ForOfParts<'_>, is_async: bool, await_value: bool) -> Vec<ast::Stmt> {
         let open = self.var(
             ast::VarKind::Let,
             self.ident_pat(&self.open),
             self.bool_lit(false),
         );
-        let next = self.call(&self.iterator, "next");
+        let next = self.awaited(self.call(&self.iterator, "next"), is_async);
         let result = self.var(ast::VarKind::Const, self.ident_pat(&self.result), next);
         let done = self.member(self.name(&self.result), "done");
         let stop = self.stmt(ast::StmtKind::If {
@@ -289,7 +412,7 @@ impl Hidden {
             els: None,
         });
         let value = self.member(self.name(&self.result), "value");
-        let bind = self.var(p.kind, p.pattern.clone(), value);
+        let bind = self.var(p.kind, p.pattern.clone(), self.awaited(value, await_value));
         let body = ast::Stmt {
             kind: ast::StmtKind::Block(p.body.clone()),
             span: p.body.span,
@@ -314,7 +437,9 @@ impl Hidden {
         }
         let close = self.stmt(ast::StmtKind::If {
             cond: self.name(&self.open),
-            then: self.block(vec![self.expr_stmt(self.call(&self.iterator, "return"))]),
+            then: self.block(vec![
+                self.expr_stmt(self.awaited(self.call(&self.iterator, "return"), is_async))
+            ]),
             els: None,
         });
         let guarded = self.stmt(ast::StmtKind::Try {
@@ -323,6 +448,14 @@ impl Hidden {
             finally: Some(self.block(vec![close])),
         });
         vec![open, guarded]
+    }
+
+    /// `await e` when `yes`.
+    fn awaited(&self, e: ast::Expr, yes: bool) -> ast::Expr {
+        match yes {
+            true => self.expr(ast::ExprKind::Await(Box::new(e))),
+            false => e,
+        }
     }
 
     fn expr(&self, kind: ast::ExprKind) -> ast::Expr {

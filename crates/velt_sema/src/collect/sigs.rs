@@ -140,6 +140,7 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
     f.declared_throws = throws;
     f.is_async = sig.is_async && !sig.is_generator;
     f.is_generator = sig.is_generator;
+    f.is_async_gen = sig.is_async && sig.is_generator;
     f.generics = generics;
     f.params = ps;
     f.ret = ret;

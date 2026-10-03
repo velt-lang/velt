@@ -1,26 +1,26 @@
-generator_misuse.vlt:3:11: error: a generator must declare its return type
+generator_misuse.vlt:4:11: error: a generator must declare its return type
 write `Generator<T>`, where `T` is the type of the values it yields
-generator_misuse.vlt:7:21: error: the return type of a generator must be `Generator<T>`, `Iterator<T>` or `Iterable<T>`, found `i64[]`
+generator_misuse.vlt:8:21: error: the return type of a generator must be `Generator<T>`, `Iterator<T>` or `Iterable<T>`, found `i64[]`
 write `Generator<T>`, where `T` is the type of the values it yields (`Generator<i64[]>` if it yields `i64[]` values)
-generator_misuse.vlt:62:17: error: async generators (`async function*`) are not supported yet
-write a generator (`function*`) that yields promises, or an async function that returns an array
-generator_misuse.vlt:67:10: error: async generators (`async function*`) are not supported yet
-write a generator (`function*`) that yields promises, or an async function that returns an array
-generator_misuse.vlt:13:10: error: a generator cannot return a value
+generator_misuse.vlt:14:10: error: a generator cannot return a value
 `return;` ends the generator; to produce a last value, `yield` it before returning
-generator_misuse.vlt:17:3: error: `yield` is only allowed in a generator function
+generator_misuse.vlt:18:3: error: `yield` is only allowed in a generator function
 declare the function with `function*` (methods: `*name()`) and the return type `Generator<T>`
-generator_misuse.vlt:21:9: error: mismatched types
+generator_misuse.vlt:22:9: error: mismatched types
 expected string, found i64
-generator_misuse.vlt:25:3: error: `yield` needs a value of type `i64`
+generator_misuse.vlt:26:3: error: `yield` needs a value of type `i64`
 a bare `yield` is only allowed in a `Generator<void>`
-generator_misuse.vlt:29:3: error: `await` is not allowed in a generator
+generator_misuse.vlt:30:3: error: `await` is not allowed in a generator
 a generator (`function*`) runs synchronously, one `next()` at a time: await the promise before calling the generator, or yield the promise for the caller to await
-generator_misuse.vlt:37:5: error: `yield` cannot be used in a `finally` block
+generator_misuse.vlt:38:5: error: `yield` cannot be used in a `finally` block
 a `finally` block also runs when the generator is closed early (`return()`, or dropping it), where it cannot pause: move the `yield` out of the `finally`
-generator_misuse.vlt:51:5: error: a `finally` block in a generator cannot throw, but this one may throw `Boom`
+generator_misuse.vlt:52:5: error: a `finally` block in a generator cannot throw, but this one may throw `Boom`
 the `finally` block also runs when the generator is closed early (`return()`, or dropping it), where an error has nowhere to go: catch it inside the `finally` block
-generator_misuse.vlt:57:5: error: `yield` is only allowed in a generator function
+generator_misuse.vlt:58:5: error: `yield` is only allowed in a generator function
 arrow functions cannot be generators: write a `function*` declaration (or a `*name()` method) and call it
-generator_misuse.vlt:73:13: error: generators cannot be created with `new`
+generator_misuse.vlt:70:7: error: `break` cannot leave a `finally` block in a generator
+the `finally` block also runs when the generator is closed early (`return()`, or dropping it), where the generator must finish: move the loop into the `finally` block, or the `finally` code out of the loop
+generator_misuse.vlt:84:9: error: `continue` cannot leave a `finally` block in a generator
+the `finally` block also runs when the generator is closed early (`return()`, or dropping it), where the generator must finish: move the loop into the `finally` block, or the `finally` code out of the loop
+generator_misuse.vlt:91:13: error: generators cannot be created with `new`
 write a generator function (`function* f(): Generator<T> { ... }`) and call it

@@ -18,6 +18,11 @@ impl FnLower<'_, '_> {
             (I::GeneratorResume, [g]) => self.gen_resume(g),
             (I::GeneratorValue, [g]) => self.gen_value(g),
             (I::GeneratorReturn, [g]) => self.gen_return(g),
+            (I::AsyncGeneratorValue, [g]) => self.gen_value(g),
+            (I::AsyncGeneratorDispose, [g]) => self.gen_return(g),
+            (I::AsyncGeneratorResume | I::AsyncGeneratorReturn, _) => {
+                crate::lower::ice("async generator resume/return outside `await`")
+            }
             (I::GeneratorEmbed, [_]) => {
                 let e = hir::Expr {
                     kind: hir::ExprKind::Call {

@@ -8,8 +8,10 @@
 #
 # The programs compute the same sum over 0..N: hand_loop.vlt with a while loop, gen_loop.vlt with
 # `for...of` over a generator call (the state embedded in the loop), gen_value.vlt with a
-# generator passed as an `Iterable<i64>`, iterable_class.vlt with an iterator class. Node runs
-# once per program (its generators take tens of seconds here).
+# generator passed as an `Iterable<i64>`, iterable_class.vlt with an iterator class. The async
+# pair sums 20 × 3M values awaiting an async call per value: async_hand.vlt in a while loop,
+# async_gen.vlt with `for await` over an async generator call; they are compared with
+# async_hand. Node runs once per program (its generators take tens of seconds here).
 # Needs: cargo, node, python3 on PATH; clang for the LLVM backend.
 set -euo pipefail
 RUNS=${1:-5}
@@ -54,10 +56,10 @@ for n in names:
     if res != outputs[n]:
         sys.exit(f"{n}: Velt and Node print different results")
     node[n] = t
-base = best.get("hand_loop")
-print("| benchmark | Velt LLVM release (ms) | vs hand_loop | Node (ms) |")
+print("| benchmark | Velt LLVM release (ms) | vs baseline | Node (ms) |")
 print("|---|---|---|---|")
 for n in names:
+    base = best.get("async_hand" if n.startswith("async_") else "hand_loop")
     rel = f"{best[n] / base:.2f}x" if base else "-"
     print(f"| {n} | {round(best[n] * 1000)} | {rel} | {round(node[n] * 1000)} |")
 EOF

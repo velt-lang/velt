@@ -45,6 +45,7 @@ impl<'a> Printer<'a> {
         pattern: &Pattern,
         iter: &Expr,
         body: &Block,
+        is_await: bool,
     ) -> Doc {
         let head = cat![
             kind.keyword(),
@@ -53,7 +54,8 @@ impl<'a> Printer<'a> {
             " of ",
             self.expr(iter)
         ];
-        cat!["for (", head, ") ", self.block(body)]
+        let open = if is_await { "for await (" } else { "for (" };
+        cat![open, head, ") ", self.block(body)]
     }
 
     /// A block the parser made from a `for` with several declarations, printed as that `for`.

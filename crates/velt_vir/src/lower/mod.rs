@@ -177,6 +177,9 @@ enum Work {
     Poll(DefId, Vec<TyId>),
     /// `(state: ptr)` drop function of an async function instance.
     AsyncDrop(DefId, Vec<TyId>),
+    /// `(state: ptr)`: request the awaited close of an async generator instance (sets
+    /// `CLOSE_BIT`; async_fn/generator.rs).
+    AsyncCloseStart(DefId, Vec<TyId>),
     /// Poll / drop of the promise-value wrapper of a throwing async function (async_fn/value.rs).
     ValuePoll(DefId, Vec<TyId>),
     ValueDrop(DefId, Vec<TyId>),

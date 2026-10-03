@@ -198,7 +198,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         body_ret
     };
     let mut frame = Frame::new(f.kind, Some(frame_ret));
-    frame.is_async = f.is_async;
+    frame.is_async = f.is_async || f.is_async_gen;
     frame.yield_ty = yield_ty;
     let enclosing_locals = cx
         .nested_locals
@@ -240,7 +240,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         generics: f.generics.len() as u32,
         params,
         ret: body_ret,
-        is_async: f.is_async,
+        is_async: f.is_async || f.is_async_gen,
         is_generator: f.is_generator,
         self_ty: f.this.as_ref().map(|t| t.ty),
         captures: vec![],

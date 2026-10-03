@@ -39,8 +39,10 @@ mod defaults;
 mod driver;
 pub(crate) mod expr;
 mod field_narrow;
+mod for_await;
 mod for_iter;
 mod generators;
+pub(crate) use generators::GenCopy;
 mod locals;
 mod loops;
 pub(crate) mod narrow;
@@ -53,7 +55,7 @@ mod using;
 
 use std::collections::HashMap;
 
-use velt_common::Span;
+use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::defs::{Bound, FnKind, ThrowSrc};
@@ -156,6 +158,9 @@ pub(crate) struct Frame {
     pub yield_ty: Option<TyId>,
     /// Nesting depth of the `finally` blocks being checked (`yield` is not allowed in them).
     pub finally_depth: u32,
+    /// In a generator's `finally` block: the loop stack's length when it was entered (a
+    /// `break`/`continue` there cannot target a loop outside it).
+    pub finally_loops: Option<usize>,
     /// See `FnInfo::soft_moves`.
     pub soft_moves: Vec<Span>,
     /// Locals holding inferred integers (`expr::numbers`).
@@ -190,6 +195,7 @@ impl Frame {
             is_async: false,
             yield_ty: None,
             finally_depth: 0,
+            finally_loops: None,
             soft_moves: vec![],
             inferred_ints: Default::default(),
             closure_consts: Default::default(),
@@ -320,6 +326,13 @@ impl<'a, 'm> FnCx<'a, 'm> {
         };
         if is_continue && self.f.loops[i].is_switch {
             self.cx.err("`continue` cannot target a `switch`", span);
+            return None;
+        }
+        if self.f.finally_loops.is_some_and(|n| i < n) {
+            self.cx.error(
+                Diagnostic::error(format!("`{what}` cannot leave a `finally` block in a generator"), span)
+                    .with_note("the `finally` block also runs when the generator is closed early (`return()`, or dropping it), where the generator must finish: move the loop into the `finally` block, or the `finally` code out of the loop"),
+            );
             return None;
         }
         Some(i)
