@@ -135,6 +135,10 @@ impl<'a> Walker<'a> {
                 ast::ObjectProp::KeyValue(_, value) => self.expr(value),
                 ast::ObjectProp::Shorthand(ident) => self.value_name(ident),
                 ast::ObjectProp::Spread(e) => self.expr(e),
+                ast::ObjectProp::Method(f) if self.contains(f.body.span) => {
+                    self.function(&f.sig, Some(&f.body))
+                }
+                ast::ObjectProp::Method(_) => {}
             }
         }
     }

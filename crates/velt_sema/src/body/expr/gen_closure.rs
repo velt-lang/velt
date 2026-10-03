@@ -79,7 +79,7 @@ impl FnCx<'_, '_> {
 
     /// The closure of a generator expression yielding `t` with declared result `ret` and the
     /// declared error type `declared` (`throws`, or `E` in the result).
-    fn gen_closure(
+    pub(super) fn gen_closure(
         &mut self,
         d: &ast::FnDecl,
         (ret, t): (TyId, TyId),

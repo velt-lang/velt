@@ -49,7 +49,7 @@ pub(crate) fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
             for p in props {
                 match p {
                     ObjectProp::KeyValue(_, v) | ObjectProp::Spread(v) => f(v),
-                    ObjectProp::Shorthand(_) => {}
+                    ObjectProp::Shorthand(_) | ObjectProp::Method(_) => {}
                 }
             }
         }

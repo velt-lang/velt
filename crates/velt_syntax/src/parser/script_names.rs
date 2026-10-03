@@ -234,6 +234,13 @@ impl Names {
                         ObjectProp::Shorthand(id) => {
                             self.uses.insert(id.name.clone());
                         }
+                        ObjectProp::Method(f) => {
+                            for p in &f.sig.params {
+                                self.decls.insert(p.name.name.clone());
+                                p.default.iter().for_each(|d| self.expr(d));
+                            }
+                            self.block(&f.body);
+                        }
                     }
                 }
             }

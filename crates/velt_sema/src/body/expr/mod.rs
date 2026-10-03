@@ -33,6 +33,7 @@ mod namespaces;
 mod numbers;
 mod object;
 mod object_keys;
+mod object_method;
 mod ops;
 mod ordering;
 mod process;

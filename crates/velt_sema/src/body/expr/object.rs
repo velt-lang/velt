@@ -147,6 +147,8 @@ impl FnCx<'_, '_> {
                         .err("object spread (`...x`) is not supported yet", e.span);
                     continue;
                 }
+                // Literals with methods are checked by `object_method.rs`.
+                ast::ObjectProp::Method(_) => continue,
             };
             if out.iter().any(|(n, _)| n.name == name.name) {
                 self.cx.err(
@@ -178,6 +180,12 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if props
+            .iter()
+            .any(|p| matches!(p, ast::ObjectProp::Method(_)))
+        {
+            return self.method_object(props, span);
+        }
         let exp = match self.hint(exp).filter(|t| self.cx.union_def(*t).is_some()) {
             Some(u) => match self.union_member_for(props, u) {
                 Ok(Some(m)) => Some(m),

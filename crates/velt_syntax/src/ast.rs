@@ -505,6 +505,10 @@ pub enum ObjectProp {
     Shorthand(Ident),
     /// `{ ...other }`
     Spread(Expr),
+    /// `{ name(params) { body } }`, `*[Symbol.iterator]() { ... }`: a method (its name in
+    /// `sig.name`; generators and `async` as on class methods). Sema allows only
+    /// `[Symbol.iterator]` / `[Symbol.asyncIterator]`, as the only member of the literal.
+    Method(Box<FnDecl>),
 }
 
 #[derive(Clone, Debug)]

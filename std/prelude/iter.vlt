@@ -292,3 +292,22 @@ declare function velt_rt_latch_new(): u64;
 declare function velt_rt_latch_free(latch: u64);
 declare function velt_rt_latch_open(latch: u64);
 declare async function velt_rt_latch_wait(latch: u64): Promise<void>;
+
+// An object literal whose member is a `[Symbol.iterator]()` method (`{ *[Symbol.iterator]() {
+// ... } }`, docs/reference/types.md): the method as a function, called by each loop.
+export class __IterableObject<T, E = never> implements Iterable<T, E> {
+  constructor(private iterator: () => Iterator<T, E>) {}
+
+  [Symbol.iterator](): Iterator<T, E> {
+    return this.iterator();
+  }
+}
+
+// The async twin: `{ async *[Symbol.asyncIterator]() { ... } }`.
+export class __AsyncIterableObject<T, E = never> implements AsyncIterable<T, E> {
+  constructor(private iterator: () => AsyncIterator<T, E>) {}
+
+  [Symbol.asyncIterator](): AsyncIterator<T, E> {
+    return this.iterator();
+  }
+}

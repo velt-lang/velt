@@ -224,7 +224,7 @@ fn is_simple(e: &Expr, depth: u32) -> bool {
         ExprKind::Object(props) | ExprKind::StructLit { props, .. } => {
             props.iter().all(|p| match p {
                 ObjectProp::KeyValue(_, v) | ObjectProp::Spread(v) => is_simple(v, depth),
-                ObjectProp::Shorthand(_) => true,
+                ObjectProp::Shorthand(_) | ObjectProp::Method(_) => true,
             })
         }
         ExprKind::Array(elems) => elems.iter().all(|x| is_simple(x, depth)),

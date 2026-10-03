@@ -23,11 +23,19 @@ pub fn walk_expr<'a>(e: &'a ast::Expr, v: &mut dyn Visit<'a>) {
             ast::ArrowBody::Block(b) => walk_block(b, v),
         },
         E::Function(f) => walk_fn(f, v),
+        E::Object(props) | E::StructLit { props, .. } => {
+            children(e, &mut |c| walk_expr(c, v));
+            for p in props {
+                if let ast::ObjectProp::Method(f) = p {
+                    walk_fn(f, v);
+                }
+            }
+        }
         _ => children(e, &mut |c| walk_expr(c, v)),
     }
 }
 
-/// Call `f` on every direct sub-expression of `e` (arrow and function bodies excluded).
+/// Call `f` on every direct sub-expression of `e` (arrow, function and method bodies excluded).
 fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
     match &e.kind {
         E::Lit(_) | E::Ident(_) | E::This | E::Super | E::Arrow { .. } | E::Function(_) => {}
@@ -69,7 +77,7 @@ fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
             for p in props {
                 match p {
                     ast::ObjectProp::KeyValue(_, x) | ast::ObjectProp::Spread(x) => f(x),
-                    ast::ObjectProp::Shorthand(_) => {}
+                    ast::ObjectProp::Shorthand(_) | ast::ObjectProp::Method(_) => {}
                 }
             }
         }

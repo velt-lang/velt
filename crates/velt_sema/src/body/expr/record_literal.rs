@@ -86,7 +86,7 @@ impl FnCx<'_, '_> {
             let (name, value) = match p {
                 ast::ObjectProp::KeyValue(name, value) => (name, Some(value)),
                 ast::ObjectProp::Shorthand(name) => (name, None),
-                ast::ObjectProp::Spread(_) => {
+                ast::ObjectProp::Spread(_) | ast::ObjectProp::Method(_) => {
                     pre.push(None);
                     continue;
                 }
@@ -196,6 +196,7 @@ impl FnCx<'_, '_> {
                         None => continue,
                     }
                 }
+                ast::ObjectProp::Method(_) => continue,
             };
             stmts.push(hir::Stmt {
                 kind: S::Expr(call),

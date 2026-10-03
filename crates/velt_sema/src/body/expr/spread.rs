@@ -71,6 +71,7 @@ impl FnCx<'_, '_> {
                 ast::ObjectProp::Shorthand(k) => {
                     vec![(k.name.clone(), Value::Prop(k.clone(), None))]
                 }
+                ast::ObjectProp::Method(_) => vec![],
             };
             for (name, v) in new {
                 if let Value::Prop(k, _) = &v {
