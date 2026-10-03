@@ -8,7 +8,7 @@ use velt_syntax::ast::{self, ExprKind as E};
 
 use super::char_before;
 use crate::analysis::Analysis;
-use crate::syntax_walk::{self, Visit};
+use velt_syntax::visit::{self, Visit};
 
 /// Note of the parser's `undefined` / `void expr` diagnostics.
 const USE_NULL_NOTE: &str = "use `null`";
@@ -135,6 +135,6 @@ fn binds_tighter_than_equality(analysis: &Analysis, span: Span) -> bool {
         }
     }
     let mut find = Find { span, found: None };
-    syntax_walk::walk_module(&analysis.module().ast, &mut find);
+    visit::walk_module(&analysis.module().ast, &mut find);
     find.found.unwrap_or(false)
 }
