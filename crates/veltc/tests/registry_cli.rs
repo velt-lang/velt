@@ -3,12 +3,13 @@
 
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 
+mod no_window;
 mod test_dir;
 
 fn velt(dir: &Path, home: &Path, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_velt"))
+    crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(args)
         .current_dir(dir)
         .env("VELT_HOME", home)
@@ -31,7 +32,7 @@ impl Drop for Kill {
 
 /// `velt` with the registry token `token`.
 fn velt_as(token: &str, dir: &Path, home: &Path, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_velt"))
+    crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(args)
         .current_dir(dir)
         .env("VELT_HOME", home)
@@ -90,7 +91,7 @@ fn share_a_package_through_the_registry_server() {
         .trim()
         .to_string();
     assert_eq!(token.len(), 64, "{token}");
-    let server = Command::new(env!("CARGO_BIN_EXE_velt"))
+    let server = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["registry", "serve", "--port", "0", "--dir"])
         .arg(&served)
         .stdout(Stdio::null())

@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+mod no_window;
 mod test_dir;
 
 struct Sandbox {
@@ -20,7 +21,7 @@ fn sandbox() -> Sandbox {
 
 impl Sandbox {
     fn command(&self, cwd: &str, args: &[&str]) -> Command {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_velt"));
+        let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
         cmd.args(args)
             .current_dir(self.dir.join(cwd))
             .env("VELT_HOME", self.dir.join("home"))
