@@ -1,0 +1,31 @@
+// What `next()` throws is part of an iterator's type: an `Iterator<i64>` (`E` = `never`) is not
+// an `Iterator<i64, Read>`, whose callers handle `Read` (a call through it returns a result
+// that may hold an error; one through `Iterator<i64>` does not).
+class Read extends Error {
+  constructor(msg: string) {
+    super(msg);
+  }
+}
+
+class Count implements Iterator<i64> {
+  n: i64 = 0;
+  next(): IteratorResult<i64> {
+    this.n += 1;
+    return this.n > 2 ? { done: true } : { done: false, value: this.n };
+  }
+}
+
+function* nums(): Iterator<i64> {
+  yield 1;
+}
+
+function drain(it: Iterator<i64, Read>) {
+  console.log(it.next());
+}
+
+function main() {
+  const a: Iterator<i64> = new Count();
+  drain(a);
+  drain(nums());
+  drain(new Count());
+}

@@ -122,6 +122,14 @@ fn slot_throws(cx: &mut Ctx, d: DefId, s: u32) -> Option<hir::TyId> {
     if let Some(t) = crate::throws::slot_clause(cx, d, s) {
         return cx.canon_error(t);
     }
+    match crate::throws::foreign_bound_slot(cx, d, s) {
+        Some(Ok(t)) => return t,
+        Some(Err(errors)) => {
+            disagreeing_impls(cx, d, s, &errors);
+            return None;
+        }
+        None => {}
+    }
     let g = cx.throw_groups();
     let m = g
         .slot_group(d, s)
@@ -237,4 +245,31 @@ fn enum_def(cx: &mut Ctx, d: DefId) -> EnumDef {
         is_union: e_union,
         span,
     }
+}
+
+/// `throws::foreign_bound_slot` found implementations of slot `s` of `d` (no `throws` clause)
+/// that throw different errors, each fixed by another interface's clause.
+fn disagreeing_impls(cx: &mut Ctx, d: DefId, s: u32, errors: &[(DefId, Option<hir::TyId>)]) {
+    let Some(i) = cx.iface(d) else { return };
+    let Some(m) = i.methods.get(s as usize) else {
+        return;
+    };
+    let (name, span) = (format!("{}.{}", i.name, m.name), m.span);
+    let mut d = velt_common::Diagnostic::error(
+        format!("the implementations of `{name}` throw different errors"),
+        span,
+    );
+    for (f, t) in errors {
+        let what = match t {
+            Some(t) => format!("throws `{}`", cx.display(*t)),
+            None => "throws nothing".to_string(),
+        };
+        let at = cx.fn_info(*f).span;
+        d = d.with_label(at, format!("`{}` {what}", cx.fn_info(*f).name));
+    }
+    cx.error(d.with_note(format!(
+        "`{name}` declares no `throws`, and these methods also implement a method whose `throws` \
+         clause fixes their error type, so a call through `{name}` has no single error type: \
+         make them throw the same type, or give the method its own name"
+    )));
 }

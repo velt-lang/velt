@@ -1,0 +1,87 @@
+// check: no leaks
+// An interface extending `Iterator` / `Iterable` with its type parameters in another order:
+// what `next()` throws is `Iterator`'s `E`, which is `Swapped`'s `X`. Calls through the
+// interface value, through a bound and through `for...of` all see the right error type. So
+// does a call through `Pull.next`, an unrelated interface without a `throws` clause that
+// `Lines.next` implements too.
+class Read extends Error {
+  constructor(msg: string) {
+    super(msg);
+  }
+}
+
+interface Swapped<X, Y> extends Iterator<Y, X> {}
+
+interface SwappedSource<X, Y> extends Iterable<Y, X> {}
+
+interface Pull<A> {
+  next(): IteratorResult<A>;
+}
+
+class Lines implements Swapped<Read, string>, Pull<string> {
+  n: i64 = 0;
+  next(): IteratorResult<string> throws Read {
+    this.n += 1;
+    if (this.n > 2) {
+      throw new Read(`disk gone after ${this.n - 1} lines`);
+    }
+    return { done: false, value: `line ${this.n}` };
+  }
+}
+
+class File implements SwappedSource<Read, string> {
+  [Symbol.iterator](): Iterator<string, Read> {
+    return new Lines();
+  }
+}
+
+function drain(it: Swapped<Read, string>) {
+  try {
+    let r = it.next();
+    while (!r.done) {
+      console.log(r.value);
+      r = it.next();
+    }
+  } catch (e) {
+    console.log("interface value:", e.message);
+  }
+}
+
+function drainBound<I extends Swapped<Read, string>>(it: I) {
+  try {
+    let r = it.next();
+    while (!r.done) {
+      console.log(r.value);
+      r = it.next();
+    }
+  } catch (e) {
+    console.log("bound:", e.message);
+  }
+}
+
+function pull(it: Pull<string>) {
+  try {
+    let r = it.next();
+    while (!r.done) {
+      console.log(r.value);
+      r = it.next();
+    }
+  } catch (e) {
+    console.log("Pull:", e.message);
+  }
+}
+
+function lines(src: SwappedSource<Read, string>) {
+  try {
+    for (const l of src) {
+      console.log(l);
+    }
+  } catch (e) {
+    console.log("for...of:", e.message);
+  }
+}
+
+drain(new Lines());
+drainBound(new Lines());
+lines(new File());
+pull(new Lines());

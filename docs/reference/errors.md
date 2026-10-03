@@ -90,7 +90,11 @@ overridden methods, and inferred error types of interface methods, cannot depend
 parameters; a written `throws` clause of a generic interface's method can name the interface's
 own parameters (`next(): IteratorResult<T> throws E` in `Iterator<T, E>`): an implementation
 then throws what its `implements Iterator<string, IoError>` says, and a call through an
-`Iterator<string, E>` value throws `E`.
+`Iterator<string, E>` value throws `E` (also through an interface extending it with its
+parameters in another order). A method of another interface without a `throws` clause that
+such implementations also implement (`class C implements Iterator<string, IoError>, Pull` with
+`Pull.next()`) throws what they throw, which must then be the same type for all of them
+(``` the implementations of `Pull.next` throw different errors ```).
 
 ## Example
 
