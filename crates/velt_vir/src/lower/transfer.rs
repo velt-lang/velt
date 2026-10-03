@@ -54,6 +54,27 @@ impl Cx<'_> {
         parts.into_iter().any(|p| self.holds_counted_in(p, seen))
     }
 
+    /// Can a value of `t` reach a function or interface value (the many-threads check,
+    /// glue/many.rs)? A `shared<T>` was checked when it was made; a promise's result is not
+    /// reachable from it.
+    pub(super) fn reaches_fn(&mut self, t: TyId) -> bool {
+        self.reaches_fn_in(t, &mut HashSet::new())
+    }
+
+    fn reaches_fn_in(&mut self, t: TyId, seen: &mut HashSet<TyId>) -> bool {
+        if !seen.insert(t) {
+            return false;
+        }
+        let parts = match self.kind(t) {
+            TyKind::Dyn(..) | TyKind::Closure(_) | TyKind::FnPtr { .. } => return true,
+            TyKind::Shared(_) | TyKind::Promise(..) => return false,
+            TyKind::Array(e) => vec![e],
+            TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
+            _ => self.part_types(t),
+        };
+        parts.into_iter().any(|p| self.reaches_fn_in(p, seen))
+    }
+
     /// Can a deep copy of a `t` call a class's own `clone()` (`own_clone`)? Function and
     /// interface values may hold any type: assumed to.
     pub(super) fn reaches_own_clone(&mut self, t: TyId) -> bool {
@@ -222,6 +243,16 @@ impl FnLower<'_, '_> {
         let name = self.cx.type_name(ty);
         self.panic_msg(&format!(
             "cannot copy a `{name}` for another task: other references to it are still in use, and {why}"
+        ));
+    }
+
+    /// Panic: a function value that captured a `ty` (a resource without `clone()`) became
+    /// callable from several threads at once (glue/many.rs).
+    pub(super) fn panic_many_threads(&mut self, ty: TyId) {
+        let why = self.uncopyable_why(ty);
+        let name = self.cx.type_name(ty);
+        self.panic_msg(&format!(
+            "a function value that captured a `{name}` is shared between threads (`shared(...)` or an HTTP handler): each call would share the `{name}` from several threads at once, and {why}"
         ));
     }
 

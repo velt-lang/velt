@@ -190,6 +190,7 @@ fn analyze(cx: &mut ctx::Ctx) {
     ownership::box_cells(cx, &moved.boxed);
     ownership::check_exclusive(cx);
     ownership::check_boundaries(cx);
+    ownership::check_many_threads(cx);
 }
 
 /// Top-level statements run only in the root file: the parser turned an imported module's into

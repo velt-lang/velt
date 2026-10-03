@@ -139,6 +139,15 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
 - `shared(new Mutex<T>(x))` with `m.with((v) => …)`: a synchronous lock. The callback gets the
   value itself (assigning `v` updates it), returns a result, and must not be async.
 
+`shared(x)` is a thread boundary like `spawn`: `x` is transferred (moved, or copied when the
+program still references it elsewhere). A function value in it, and an HTTP handler, may be
+called from several threads at once, and each call gets its own copy of what the function
+captured, so a captured resource needs a `clone()`: capturing one without it there is an
+error ("this function captures `store`, and it handles HTTP requests, …"), or, when the
+function arrives through a parameter, ``panic: a function value that captured a `Store` is
+shared between threads …`` where the `shared` or the server is made. Capture a
+`shared(new Mutex(store))` instead to use one resource from every call.
+
 ## Errors
 
 Errors are typed like everywhere else ([Errors](errors.md)). A promise's type carries what it

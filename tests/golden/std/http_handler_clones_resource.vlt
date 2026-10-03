@@ -1,0 +1,67 @@
+// check: no leaks
+// An HTTP handler runs concurrently on several threads, so each request's call of it gets its
+// own copy of what it captured: a resource is copied by its `clone()` and each copy released
+// once (a resource without `clone()` is a compile error: errors/http_handler_captures_resource).
+// The original is released when the server shuts down.
+import { serve, fetch, Request, Response } from "velt:http";
+
+class Store {
+  name: string;
+  live: shared<i64>;
+
+  constructor(name: string, live: shared<i64>) {
+    this.name = name;
+    this.live = live;
+    live.add(1);
+  }
+
+  clone(): Store {
+    return new Store("copy", this.live.clone());
+  }
+
+  [Symbol.dispose]() {
+    this.live.add(-1);
+    if (this.name == "store") {
+      console.log("store disposed");
+    }
+  }
+}
+
+async function get(url: string): Promise<string> {
+  return await (await fetch(url)).text();
+}
+
+async function client(base: string, n: i64): Promise<i64> {
+  let ok: i64 = 0;
+  for (let i = 0; i < n; i++) {
+    try {
+      if ((await get(`${base}/x`)) == "copy") {
+        ok += 1;
+      }
+    } catch (e) {
+      console.log("request failed");
+    }
+  }
+  return ok;
+}
+
+async function main() {
+  const live = shared<i64>(0);
+  const store = new Store("store", live.clone());
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    await sleep(1);
+    return Response.text(store.name);
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  const ts: Promise<i64>[] = [];
+  for (let i = 0; i < 8; i++) {
+    ts.push(spawn(client(base, 50)));
+  }
+  let sum: i64 = 0;
+  for (const x of await Promise.all(ts)) {
+    sum += x;
+  }
+  console.log("ok", sum);
+  await server.shutdown();
+  console.log("live copies", live.get());
+}

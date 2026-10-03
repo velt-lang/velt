@@ -188,6 +188,19 @@ impl FnLower<'_, '_> {
     pub(super) fn shared_new(&mut self, arg: &hir::Expr, ty: TyId) -> Operand {
         let inner = self.sub(arg.ty);
         let v = self.consume(arg);
+        // The value becomes reachable from every thread holding the `shared` (a thread
+        // boundary): transferred like a `spawn` argument, then checked for function values
+        // that could not be called from several threads at once (glue/many.rs).
+        let v = self.transfer_value(v, inner);
+        let v = match self.cx.reaches_fn(inner) {
+            true => {
+                let vt = self.cx.ty(inner);
+                let t = Place::local(self.copy_to_temp(v, vt));
+                self.many_check(t.clone(), inner);
+                Operand::Copy(t)
+            }
+            false => v,
+        };
         let bx = self.cx.shared_box(inner);
         let p = self.alloc(Ty::Agg(bx));
         let bp = proj(

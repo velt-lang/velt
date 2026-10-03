@@ -9,7 +9,10 @@ it. For a walkthrough, see [Building an HTTP server](../book/http-server.md).
 - `serve<E>(opts: ServeOptions { port; host?; tls?: TlsOptions { cert; key } }, handler: (req:
   Request) => Promise<Response, E>): Promise<Server>`. The default host is 127.0.0.1. With `tls`
   (PEM certificate chain and key) the server speaks HTTPS and offers HTTP/2. Like spawned tasks,
-  handlers must not mutate captured variables (use `shared`). A handler that throws gets a 500
+  handlers must not mutate captured variables (use `shared`). Requests run on several threads
+  at once and each gets its own copy of what the handler captured, so a captured resource
+  (`[Symbol.dispose]`) needs a `clone()`, or capture it as `shared(new Mutex(…))`
+  ([Async](../reference/async.md#thread-safety)). A handler that throws gets a 500
   response (`Internal Server Error`) and its error is printed to stderr.
 - `Request` (a class) with getters `method`, `path`, `query`, `headers: Headers`, `body` and
   `upgrade` (an internal key `velt:websocket` uses), plus `header(name): string | null`. Each read

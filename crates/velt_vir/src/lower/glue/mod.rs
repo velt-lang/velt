@@ -16,7 +16,8 @@
 //! | DynDrop/DynClone/DynFormat | as Obj*, on the data pointer of an interface value |
 //! | DynShare  | `(data: ptr) -> ptr`               | data of another reference (share.rs)     |
 //! | Transfer  | `(p: ptr)`                         | make `*p` safe for another thread, in place (transfer.rs) |
-//! | ObjTransfer/DynTransfer | `(obj: ptr) -> ptr`  | the same for a class object / interface data |
+//! | ObjTransfer/DynTransfer | `(obj: ptr) -> ptr`  | the same for a class object / interface data (a tagged pointer: check for many threads, many.rs) |
+//! | ManyCheck | `(p: ptr)`                         | panic if `*p` holds a function value that cannot be called from several threads (many.rs) |
 //! | JsonWrite | `(buf: ptr, p: ptr)`               | append `JSON.stringify(*p)` to a builder |
 //! | JsonRead  | `(r: ptr, out: ptr, ctx: ptr) -> bool` | decode one value (json/read.rs)      |
 //! | JsonParse | `(src: ptr, flags: u32, max_depth: u32, out: ptr, err: ptr) -> bool` | whole-document `JSON.parse<T>` |
@@ -31,8 +32,10 @@ mod eq;
 mod format;
 mod format_map;
 mod literals;
+mod many;
 mod thunk;
 mod transfer;
+mod transfer_env;
 mod vtable;
 
 #[cfg(test)]
@@ -65,6 +68,7 @@ pub(crate) enum Glue {
     Transfer,
     ObjTransfer,
     DynTransfer,
+    ManyCheck,
     JsonWrite,
     JsonRead,
     JsonParse,
@@ -101,6 +105,7 @@ impl Glue {
             Glue::Transfer => "transfer",
             Glue::ObjTransfer => "objtransfer",
             Glue::DynTransfer => "dyntransfer",
+            Glue::ManyCheck => "manycheck",
             Glue::JsonWrite => "jsonwrite",
             Glue::JsonRead => "jsonread",
             Glue::JsonParse => "jsonparse",
@@ -111,7 +116,9 @@ impl Glue {
     fn sig(self) -> (Vec<Ty>, Ty) {
         use Ty::*;
         match self {
-            Glue::Drop | Glue::ObjDrop | Glue::DynDrop | Glue::Transfer => (vec![Ptr], Unit),
+            Glue::Drop | Glue::ObjDrop | Glue::DynDrop | Glue::Transfer | Glue::ManyCheck => {
+                (vec![Ptr], Unit)
+            }
             Glue::Clone | Glue::Share => (vec![Ptr, Ptr], Unit),
             Glue::ObjClone
             | Glue::DynClone
@@ -152,6 +159,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::Transfer => lw.transfer_body(args[0], ty),
             Glue::ObjTransfer => lw.obj_transfer_body(args[0], ty),
             Glue::DynTransfer => lw.dyn_transfer_body(args[0], ty),
+            Glue::ManyCheck => lw.many_check_body(args[0], ty),
             Glue::JsonWrite => lw.json_write_body(a(0), args[1], ty),
             Glue::JsonRead => lw.json_read_body(args[0], args[1], args[2], ty),
             Glue::JsonParse => {

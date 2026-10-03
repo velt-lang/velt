@@ -171,7 +171,13 @@ call (deep copies of shared captures, `validate`), since an HTTP handler runs th
 concurrently (#8, #208); a capture owning a resource without `clone()` is shared with the call
 instead (`validate` `share_uncopyable`, async_fn/ctor.rs `take_capture`), and a call spawned
 through a function value first copies the closure for the task (callee.rs `call_indirect`), so
-such a capture still referenced by the caller panics in the transfer. `spawn` of an async
+such a capture still referenced by the caller panics in the transfer (a soft move of the callee,
+sema tasks.rs: when it is the last use, the function value itself moves to the task). Where a
+function value becomes callable from several threads at once (`shared(x)`, which also
+transfers `x`, and an HTTP handler's environment), per-call sharing of such a capture would
+race: sema rejects the closures it sees there (ownership/many.rs), and the many-threads check
+glue (glue/many.rs, entered through tagged env-transfer and `SLOT_TRANSFER` pointers) panics
+on the rest. `spawn` of an async
 closure literal called at once is the literal's task (captures transferred, async_fn/spawn.rs).
 A deep copy that reaches a resource without `clone()` elsewhere (a generic `T`, a function
 value's captures, an interface value's implementor) panics (glue/clone.rs). Strings keep their atomic counts (stage 1); `shared<T>` stays atomic.

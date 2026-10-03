@@ -1,7 +1,8 @@
 // check: no leaks
 // A `serve` that fails (a TLS key that does not parse, an address already in use) drops the
 // handler closure it was given, so a captured resource's [Symbol.dispose]() runs. The TLS
-// failure used to leak the closure environment.
+// failure used to leak the closure environment. (A handler runs on several threads at once,
+// so a resource it captures needs a `clone()`: each request gets its own copy.)
 import { serve, Request, Response } from "velt:http";
 import { TEST_CERT } from "./_tls";
 
@@ -10,6 +11,10 @@ class Store {
 
   constructor(name: string) {
     this.name = name;
+  }
+
+  clone(): Store {
+    return new Store(`${this.name} copy`);
   }
 
   [Symbol.dispose]() {

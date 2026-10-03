@@ -1,0 +1,46 @@
+// check: no leaks
+// A function value in `shared(...)` called from several tasks at once: each call gets its own
+// copy of what the function captured (a resource through its `clone()`), released once.
+class Conn {
+  id: i64;
+  live: shared<i64>;
+
+  constructor(id: i64, live: shared<i64>) {
+    this.id = id;
+    this.live = live;
+    live.add(1);
+  }
+
+  clone(): Conn {
+    return new Conn(this.id, this.live.clone());
+  }
+
+  [Symbol.dispose]() {
+    this.live.add(-1);
+  }
+}
+
+async function worker(m: shared<Mutex<() => Promise<i64>>>): Promise<i64> {
+  let s: i64 = 0;
+  for (let k = 0; k < 2000; k++) {
+    const p = m.with((f) => f());
+    s += await p;
+  }
+  return s;
+}
+
+async function main() {
+  const live = shared<i64>(0);
+  const c = new Conn(1, live.clone());
+  const g = async (): Promise<i64> => {
+    await yieldNow();
+    return c.id;
+  };
+  const m = shared(new Mutex<() => Promise<i64>>(g));
+  const ts: Promise<i64>[] = [];
+  for (let i = 0; i < 8; i++) {
+    ts.push(spawn(worker(m.clone())));
+  }
+  const r = await Promise.all(ts);
+  console.log(r.length, r[0], "live", live.get());
+}
