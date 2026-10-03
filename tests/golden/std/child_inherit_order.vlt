@@ -1,0 +1,27 @@
+// A child that shares our stdout prints after what we printed before starting it, even though
+// our output is buffered: starting the child writes the buffer to the OS first. The parent keeps
+// its thread busy after the start (no idle flush), so without that the child's line would come
+// first. The child is this very program, selected by its argument.
+import { spawn } from "velt:child_process";
+import { argv, args } from "velt:process";
+
+async function parent() {
+  const self = argv()[0].clone();
+  console.log("parent before");
+  const p = spawn(self, ["child"]);
+  const start = Date.now();
+  while (Date.now() - start < 300) {}
+  console.log("exit", await p.wait());
+  p.close();
+  console.log("parent after");
+}
+
+async function main(): Promise<i32> {
+  const a = args();
+  if (a.length > 0 && a[0] == "child") {
+    console.log("child");
+    return 0;
+  }
+  await parent();
+  return 0;
+}

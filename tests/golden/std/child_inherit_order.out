@@ -1,0 +1,4 @@
+parent before
+child
+exit 0
+parent after
