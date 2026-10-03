@@ -25,6 +25,25 @@ use std::sync::{Arc, Mutex};
 use velt_http::{Handler, Request, Response};
 use vpm::Locations;
 
+/// Refuse a registry directory written by an older velt (packages with an `index.toml` and no
+/// `index.json`): served as is, every one of its packages would answer "no package".
+pub fn check_dir(root: &Path) -> Result<(), String> {
+    let old = vpm::registry::legacy_packages(root);
+    if old.is_empty() {
+        return Ok(());
+    }
+    let shown: Vec<&str> = old.iter().take(5).map(String::as_str).collect();
+    let more = if old.len() > shown.len() { ", …" } else { "" };
+    Err(format!(
+        "`{}` was written by an older velt: {} package(s) ({}{more}) have an `{}` and no `{}`, which this version reads; publish them again into a new registry directory",
+        root.display(),
+        old.len(),
+        shown.join(", "),
+        vpm::registry::LEGACY_INDEX_FILE,
+        vpm::registry::INDEX_FILE,
+    ))
+}
+
 /// Largest accepted upload.
 pub const MAX_ARCHIVE: usize = 64 << 20;
 
@@ -112,7 +131,10 @@ impl Registry {
         }
         match std::fs::read(self.root.join(name).join(vpm::registry::INDEX_FILE)) {
             Ok(bytes) => Response::bytes(200, "application/json", bytes),
-            Err(_) => Response::text(404, format!("no package `{name}`")),
+            Err(_) => match vpm::registry::legacy_index_error(&self.root, name) {
+                Some(e) => Response::text(500, e),
+                None => Response::text(404, format!("no package `{name}`")),
+            },
         }
     }
 
@@ -148,34 +170,6 @@ impl Registry {
         let v = semver::Version::parse(version).ok()?;
         vpm::manifest::is_valid_package_name(name).then(|| self.root.join(name).join(v.to_string()))
     }
-}
-
-/// `value` as pretty-printed JSON with a trailing newline (the registry's own data files).
-pub(crate) fn to_json(value: &impl serde::Serialize) -> String {
-    let mut text = serde_json::to_string_pretty(value).expect("ICE: registry data serializes");
-    text.push('\n');
-    text
-}
-
-/// Replace `path` with `text` atomically: a temporary file in the same directory, renamed over
-/// it, so a concurrent reader (the server, while `velt registry user` runs) sees the old file or
-/// the new one, never a truncated one.
-pub(crate) fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
-    let name = path
-        .file_name()
-        .map_or_else(Default::default, |n| n.to_string_lossy());
-    let tmp = path.with_file_name(format!(
-        ".{name}.{}-{}.tmp",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    ));
-    let written = std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, path));
-    written.map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        format!("cannot write `{}`: {e}", path.display())
-    })
 }
 
 /// A fresh directory for an upload being checked (inside the registry, so it is on the same

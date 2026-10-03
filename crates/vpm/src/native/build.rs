@@ -173,8 +173,7 @@ pub fn build(req: BuildRequest) -> Result<NativeMeta, String> {
         static_obj: static_rel,
         exports,
     };
-    std::fs::write(tmp.join(META_FILE), meta.to_json())
-        .map_err(|e| format!("cannot write the bundle: {e}"))?;
+    crate::json_file::write_atomic(&tmp.join(META_FILE), &meta.to_json())?;
     if req.out.exists() {
         std::fs::remove_dir_all(req.out)
             .map_err(|e| format!("cannot clean `{}`: {e}", req.out.display()))?;

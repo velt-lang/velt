@@ -1,5 +1,5 @@
 //! `check_declares` against a hand-made package graph: no cargo, no library, only the export
-//! signatures a bundle's `native.toml` would list.
+//! signatures a bundle's `native.json` would list.
 
 use std::collections::BTreeMap;
 use std::path::Path;

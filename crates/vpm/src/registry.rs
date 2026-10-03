@@ -85,15 +85,10 @@ pub fn read_index(loc: &Locations, name: &str) -> Result<Option<Index>, String> 
     }
     let path = loc.registry.join(name).join(INDEX_FILE);
     if !path.is_file() {
-        let old = loc.registry.join(name).join(LEGACY_INDEX_FILE);
-        if old.is_file() {
-            return Err(crate::json_file::legacy_error(
-                &old,
-                INDEX_FILE,
-                "this registry was written by an older velt; publish the package again into a new registry",
-            ));
-        }
-        return Ok(None);
+        return match legacy_index_error(&loc.registry, name) {
+            Some(e) => Err(format!("registry `{}`: {e}", loc.registry.display())),
+            None => Ok(None),
+        };
     }
     let text = std::fs::read_to_string(&path)
         .map_err(|e| format!("cannot read `{}`: {e}", path.display()))?;
@@ -111,9 +106,35 @@ pub fn parse_index(text: &str, what: &str) -> Result<Index, String> {
 }
 
 pub(crate) fn write_index(loc: &Locations, name: &str, index: &Index) -> Result<(), String> {
-    let path = loc.registry.join(name).join(INDEX_FILE);
-    std::fs::write(&path, crate::json_file::to_text(index))
-        .map_err(|e| format!("cannot write `{}`: {e}", path.display()))
+    crate::json_file::write(&loc.registry.join(name).join(INDEX_FILE), index)
+}
+
+/// The error for package `name` of a registry directory written by an older velt (an
+/// `index.toml`, no `index.json`), if it is one. The path in the message is relative to the
+/// registry, so a server can send it.
+pub fn legacy_index_error(registry: &Path, name: &str) -> Option<String> {
+    let dir = registry.join(name);
+    (!dir.join(INDEX_FILE).is_file() && dir.join(LEGACY_INDEX_FILE).is_file()).then(|| {
+        crate::json_file::legacy_error(
+            &Path::new(name).join(LEGACY_INDEX_FILE),
+            INDEX_FILE,
+            "this registry was written by an older velt; publish the package again into a new registry",
+        )
+    })
+}
+
+/// The packages of a registry directory written by an older velt (see [`legacy_index_error`]).
+pub fn legacy_packages(registry: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(registry)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| legacy_index_error(registry, n).is_some())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
 }
 
 /// Publish the package rooted at `root` into the registry (uploading it to a remote one). Versions are immutable: publishing an
@@ -374,6 +395,11 @@ mod tests {
         std::fs::write(dir.join(LEGACY_INDEX_FILE), "[[version]]\n").unwrap();
         let e = read_index(&loc, "lib").unwrap_err();
         assert!(e.contains("(the file is now `index.json`)"), "{e}");
+        let relative = legacy_index_error(&loc.registry, "lib").unwrap();
+        assert!(relative.starts_with("`lib"), "{relative}");
+        assert_eq!(legacy_packages(&loc.registry), ["lib"]);
+        std::fs::write(dir.join(INDEX_FILE), "{\"versions\": []}").unwrap();
+        assert!(legacy_packages(&loc.registry).is_empty());
     }
 
     #[test]

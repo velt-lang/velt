@@ -2,7 +2,10 @@
 
 Status: implemented as a prototype ([#22](https://github.com/velt-lang/velt/issues/22)); the
 contract is [native_abi.md](../contracts/native_abi.md). The sections below are the proposal;
-[Decisions](#decisions) and [As built](#as-built) record what changed.
+[Decisions](#decisions) and [As built](#as-built) record what changed. The generated files were
+later revised by [#188](https://github.com/velt-lang/velt/issues/188): they are JSON, and this
+note uses their current names (`velt.lock.json`, the registry's `index.json`, the bundle's
+`native.json`).
 
 A package can ship a Rust crate (`native/`) next to its Velt sources. Database drivers, image
 codecs and crypto then live in packages instead of `velt_rt`. **Users never need cargo or a Rust
@@ -91,7 +94,7 @@ Every symbol the crate exports starts with `<pkg>_`, where `<pkg>` is the packag
 turned into `_`. The one exception is `velt_native_init`. The rule is checked in two places:
 
 - **At publish:** `velt publish` reads the export list of the built library and refuses
-  unprefixed exports. The list is stored in the bundle's `native.toml`.
+  unprefixed exports. The list is stored in the bundle's `native.json`.
 - **In sema:** a `declare` in a package module must name either an export of that package's own
   native library or a `velt_rt_*` symbol from std's set. Anything else is a diagnostic at the
   `declare` ("`sqlite_opne` is not exported by the native library of `sqlite 1.2.0`"), not a
@@ -144,7 +147,7 @@ all three modes:
 
 - `abi_version` grows by one whenever fields are appended. Fields are never removed or reordered.
   Existing behaviour is frozen in the same way as the `[M3/M4 — frozen]` sections of `rt_abi.md`.
-- A crate records the minimum `abi_version` it needs (`velt_native` writes it into `native.toml`,
+- A crate records the minimum `abi_version` it needs (`velt_native` writes it into `native.json`,
   which becomes `native_abi` in the registry index).
 - `velt_native_init` returns an error code when `api.abi_version` or `api.size` is too small.
 - vpm checks `native_abi` against the running `velt` before downloading anything: "`sqlite 1.2.0`
@@ -224,7 +227,7 @@ headers and per-server handler slots may store code addresses.
 format, with a different allowed-path set.
 
 ```text
-native.toml            # target, abi_version, crate version, export list
+native.json            # target, abi_version, crate version, export list
 shared/libsqlite.so    # or .dylib, or sqlite.dll plus sqlite.dll.lib
 static/sqlite.o        # one prelinked relocatable object
 ```
@@ -256,7 +259,8 @@ These additions extend the remote protocol in `manifest.md` (then `velt_toml.md`
 | `GET <url>/api/v1/<name>/<version>/native/<triple>` | download a bundle |
 | `PUT <url>/api/v1/<name>/<version>/native/<triple>` | upload a bundle (`X-Velt-Checksum`, bearer token) |
 
-The index entry gains two fields:
+The index entry gains two fields (shown in the TOML of the time; `index.json` has the same
+fields as JSON):
 
 ```toml
 [[version]]
@@ -271,7 +275,7 @@ native = { "x86_64-unknown-linux-gnu" = "sha256:…", "aarch64-apple-darwin" = "
   replaced.
 - The source archive now also includes `native/**`, minus `target/`, because the fallback build
   needs it.
-- `velt.lock` records the checksum of **every** published target of each locked package. The
+- `velt.lock.json` records the checksum of **every** published target of each locked package. The
   lockfile is then identical on every OS, and a CI machine verifies the bundle for its own target.
 - Bundles are cached under `~/.velt/cache/native/<name>-<version>/<triple>/`. A cached bundle is
   reused when its checksum matches the lock and replaced when it is tampered with, just like source
@@ -297,8 +301,8 @@ native = { "x86_64-unknown-linux-gnu" = "sha256:…", "aarch64-apple-darwin" = "
          to publish this target.
   ```
 - **Trust.** A native bundle is code that runs in every program that uses the package. `velt add` and
-  `velt install` print once which packages carry native code. The checksums in `velt.lock` pin the
-  exact binaries.
+  `velt install` print once which packages carry native code. The checksums in `velt.lock.json` pin
+  the exact binaries.
 
 ## Linking
 
@@ -362,9 +366,9 @@ Each step below lands with its own tests:
    (`$VELT_HOME/cache`).
 4. **Handles** surface in the package's Velt API as classes with `[Symbol.dispose]()` (and
    `using`), plus a Copy reference type for async calls (`packages/sqlite`).
-5. **Integrity**: bundles are verified against `velt.lock` in a staging directory before they are
-   placed where anything loads or links them; `velt add`/`velt install` list the packages that
-   run native code.
+5. **Integrity**: bundles are verified against `velt.lock.json` in a staging directory before they
+   are placed where anything loads or links them; `velt add`/`velt install` list the packages
+   that run native code.
 
 ## As built
 
@@ -388,7 +392,7 @@ Differences from the proposal above:
 - **Lockfile** `native` is a `[package.native]` subtable. Under `--locked` a locked version keeps
   exactly its locked targets (a target the author added later does not fail CI).
 - **Library names**: the crate's `[lib] name` must be `velt_native_<pkg>`, so files never clash
-  (`-l` names, DLLs next to an executable). `native.toml` may only name the bundle's own files.
+  (`-l` names, DLLs next to an executable). `native.json` may only name the bundle's own files.
 - **Builds from source** use the published `Cargo.lock` (`--locked`) and need
   `VELT_NATIVE_FROM_SOURCE=1` for registry packages, since they run the package's build scripts.
 - **Prototype**: `packages/sqlite` (rusqlite; rows as JSON decoded with `JSON.parse<T[]>`),

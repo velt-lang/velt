@@ -119,9 +119,7 @@ impl Lockfile {
 
     /// Write `<root>/velt.lock.json`.
     pub fn write(&self, root: &Path) -> Result<(), String> {
-        let path = root.join(LOCK_FILE);
-        std::fs::write(&path, self.to_json())
-            .map_err(|e| format!("cannot write `{}`: {e}", path.display()))
+        crate::json_file::write_atomic(&root.join(LOCK_FILE), &self.to_json())
     }
 
     /// The file's text.

@@ -324,7 +324,7 @@ mod tests {
             assert!(e.contains("(the library of package `p`)"), "{shared}: {e}");
         }
 
-        // A malicious native.toml inside a correctly checksummed archive is refused on unpack.
+        // A malicious native.json inside a correctly checksummed archive is refused on unpack.
         let mut evil = good.clone();
         evil.shared = "/usr/lib/libc.so.6".into();
         std::fs::write(b.join(META_FILE), evil.to_json()).unwrap();

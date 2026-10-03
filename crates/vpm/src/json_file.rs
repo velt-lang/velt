@@ -20,6 +20,32 @@ pub fn parse<T: DeserializeOwned>(text: &str, what: &str) -> Result<T, String> {
     serde_json::from_str(text).map_err(|e| format!("invalid {what}: {e}"))
 }
 
+/// Write `value` to `path` as a generated file, atomically ([`write_atomic`]).
+pub fn write(path: &Path, value: &impl Serialize) -> Result<(), String> {
+    write_atomic(path, &to_text(value))
+}
+
+/// Replace `path` with `text` atomically: a temporary file in the same directory, renamed over
+/// it, so a concurrent reader (a registry server answering while a package is published, a
+/// build reading the lock file) sees the old file or the new one, never a truncated one.
+pub fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let name = path
+        .file_name()
+        .map_or_else(Default::default, |n| n.to_string_lossy());
+    let tmp = path.with_file_name(format!(
+        ".{name}.{}-{}.tmp",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    let written = std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, path));
+    written.map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("cannot write `{}`: {e}", path.display())
+    })
+}
+
 /// The error for a directory that still has the former TOML file `old` where `new` belongs.
 pub fn legacy_error(old: &Path, new: &str, fix: &str) -> String {
     format!(
@@ -33,6 +59,22 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+
+    #[test]
+    fn writes_replace_the_file_whole() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("index.json");
+        write(&path, &BTreeMap::from([("a", 1)])).unwrap();
+        write(&path, &BTreeMap::from([("b", 2)])).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\n  \"b\": 2\n}\n"
+        );
+        // No temporary file is left behind.
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
+        let e = write(&tmp.path().join("missing/x.json"), &1).unwrap_err();
+        assert!(e.contains("cannot write"), "{e}");
+    }
 
     #[test]
     fn pretty_sorted_and_newline_terminated() {

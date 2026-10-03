@@ -21,6 +21,7 @@ pub fn serve_command(args: &RegistryArgs) -> Result<(), String> {
     let root = registry_dir(args.dir.as_ref())?;
     std::fs::create_dir_all(&root)
         .map_err(|e| format!("cannot create `{}`: {e}", root.display()))?;
+    velt_registry::check_dir(&root)?;
     let open = velt_registry::auth::is_open(&root)?;
     if open && std::env::var_os(vpm::remote::TOKEN_VAR).is_some_and(|t| !t.is_empty()) {
         return Err(format!(

@@ -36,7 +36,7 @@ first-launch check for programs they start. Documented in
 
 `velt dev [<file>]` builds and runs like `velt run`, then stays up as a **supervisor**:
 
-- It **watches** the files the loader actually read (plus `package.vlt` and `velt.lock`), not a
+- It **watches** the files the loader actually read (plus `package.vlt` and `velt.lock.json`), not a
   directory glob, so imports into std or path dependencies are covered; a new `.vlt` file in one
   of their directories counts too (the module a failed build was missing). Changes come from
   OS notifications (the `notify` crate, each checked against the file's mtime and length), or

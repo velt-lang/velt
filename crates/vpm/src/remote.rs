@@ -34,22 +34,26 @@ fn api(url: &str, name: &str, rest: &str) -> String {
 pub fn read_index(url: &str, name: &str) -> Result<Option<Index>, String> {
     let resp = velt_http::fetch("GET", &api(url, name, "index"), &[], b"")?;
     match resp.status {
-        200 => {
-            let text = resp.body_text();
-            if !text.trim_start().starts_with('{') {
-                // A server from before the index was JSON answers with `index.toml`.
-                return Err(format!(
-                    "registry {url} answered with an `index.toml` for `{name}` (an older `velt registry serve`): upgrade the server, which now serves `index.json`"
-                ));
-            }
-            parse_index(&text, &format!("{url} ({name})")).map(Some)
-        }
+        // A server from before the index was JSON answers with `index.toml`, typed as TOML.
+        200 if is_toml(resp.header("content-type")) => Err(format!(
+            "registry {url} answered with an `index.toml` for `{name}` (an older `velt registry serve`): upgrade the server, which now serves `index.json`"
+        )),
+        200 => parse_index(&resp.body_text(), &format!("{url} ({name})")).map(Some),
         404 => Ok(None),
         s => Err(format!(
             "registry {url}: {s} for `{name}`: {}",
             resp.body_text().trim()
         )),
     }
+}
+
+/// Whether a `Content-Type` is TOML's (`application/toml`, parameters ignored).
+fn is_toml(content_type: Option<&str>) -> bool {
+    content_type.is_some_and(|t| {
+        t.split(';')
+            .next()
+            .is_some_and(|m| m.trim().eq_ignore_ascii_case("application/toml"))
+    })
 }
 
 /// Download `name` `version`, verify it against `checksum`, and unpack it into `dest`
