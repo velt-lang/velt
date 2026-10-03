@@ -42,7 +42,8 @@ impl FnCx<'_, '_> {
                     self.promise_out_of_array(ty, e.span);
                     h = self.error_expr(e.span);
                 }
-                H::Field { .. } => {
+                // Through a class instance (shared): a value type's field moves out as before.
+                H::Field { ref base, .. } if self.cx.class_of(base.ty).is_some() => {
                     self.promise_out_of_object(ty, e.span);
                     h = self.error_expr(e.span);
                 }

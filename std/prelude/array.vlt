@@ -202,13 +202,12 @@ extend<T> Array<T> {
       const rest = this.length - lo;
       // Moved in, not shared: `items` is the call's own array (and may hold promises).
       const n = items.length;
-      reverseRange(items, 0, n);
       for (let i: usize = 0; i < n; i++) {
-        this.push(__intrinsic_array_remove(items, items.length - 1));
+        this.push(__intrinsic_array_remove(items, 0));
       }
       reverseRange(this, lo, this.length);
-      reverseRange(this, lo, lo + items.length);
-      reverseRange(this, lo + items.length, lo + items.length + rest);
+      reverseRange(this, lo, lo + n);
+      reverseRange(this, lo + n, lo + n + rest);
     }
     return out;
   }
