@@ -1,7 +1,7 @@
-// std/prelude/process: Node's `process.stdout.write(s)`, `process.stderr.write(s)` and
-// `process.env.NAME` / `process.env[name]` on the builtin `process` namespace. The compiler turns
-// them into calls of `processWrite` and `processEnv`; the rest of Node's `process` is in
-// `velt:process`.
+// std/prelude/process: the members of the builtin `process` namespace that the compiler turns
+// into calls: `process.stdout.write(s)` / `process.stderr.write(s)` (`processWrite`),
+// `process.env.NAME` / `process.env[name]` (`processEnv`) and `process.memoryUsage()`
+// (`processMemoryUsage`). The rest of Node's `process` is in `velt:process` (docs/std/process.md).
 
 declare function velt_rt_write_str(stream: u32, s: string);
 declare function velt_rt_env_get(name: string, out: string): bool;
@@ -20,4 +20,15 @@ export function processEnv(name: string): string | null {
     return out;
   }
   return null;
+}
+
+declare function velt_rt_memory_rss(): i64;
+declare function velt_rt_memory_heap(): i64;
+
+// What `process.memoryUsage()` returns, in bytes (Node's field names): `rss` is the resident set
+// size the OS reports, `heapUsed` the memory the allocator has committed for the heap.
+export type MemoryUsage = { rss: i64; heapUsed: i64 };
+
+export function processMemoryUsage(): MemoryUsage {
+  return { rss: velt_rt_memory_rss(), heapUsed: velt_rt_memory_heap() };
 }

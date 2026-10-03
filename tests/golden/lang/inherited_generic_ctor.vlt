@@ -1,0 +1,70 @@
+// check: no leaks
+// #221: a constructor inherited from a generic base class runs with the base's type arguments
+// (as given in `extends B<...>`), not the subclass's: its parameters, what it throws and the
+// instance lowering compiles all see `B<string>` for `class D extends B<string>`.
+class Fail extends Error {}
+
+class B<T> {
+  x: T;
+  constructor(x: T) {
+    this.x = x;
+  }
+}
+
+class D extends B<string> {}
+
+class E<U> extends B<U[]> {}
+
+class G<U, V> extends B<V> {
+  tag: U[] = [];
+}
+
+// Two levels down.
+class H extends D {}
+
+// The inherited constructor throws its own type parameter.
+class Checked<T> {
+  err: T;
+  constructor(err: T, fail: bool) throws T {
+    if (fail) {
+      throw err;
+    }
+    this.err = err;
+  }
+}
+
+class Strict extends Checked<Fail> {}
+
+class Wrapped<U> extends Checked<Fail> {
+  extra: U[] = [];
+}
+
+function main() {
+  const d = new D("a string long enough to live on the heap");
+  console.log(d.x);
+  const e = new E<i64>([1, 2, 3]);
+  console.log(e.x.length, e.x[2]);
+  const es = new E<string>(["p", "q"]);
+  console.log(es.x.join(","));
+  const g = new G<i64, string>("gee");
+  g.tag.push(7);
+  console.log(g.x, g.tag.length);
+  const h = new H("two levels");
+  console.log(h.x);
+  const b: B<string> = new D("as the base");
+  console.log(b.x);
+  try {
+    const s = new Strict(new Fail("kept"), false);
+    console.log(s.err.message);
+    const t = new Strict(new Fail("thrown"), true);
+    console.log(t.err.message);
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+  try {
+    const w = new Wrapped<string>(new Fail("wrapped"), true);
+    console.log(w.extra.length);
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+}

@@ -1,0 +1,72 @@
+// Regression (#154): a function value read from an array and captured by `spawn` made
+// ownership inference never settle (an ICE in debug builds). Variants: nested arrays, a
+// field, a Map value, passing the element to a method that keeps it, a
+// `new Promise` resolver kept in an array.
+class Holder {
+  f: (v: i64) => void;
+  constructor(f: (v: i64) => void) {
+    this.f = f;
+  }
+}
+
+class Keeper {
+  kept: ((v: i64) => void)[] = [];
+  keep(f: (v: i64) => void) {
+    this.kept.push(f);
+  }
+}
+
+async function main() {
+  const saved: ((v: i64) => void)[] = [];
+  const f = (v: i64) => {
+    console.log(v);
+  };
+  saved.push(f);
+  const r = saved[0];
+  const t = spawn(async () => {
+    r(2);
+  });
+  await t;
+
+  const nested = [saved];
+  const n = nested[0][0];
+  await spawn(async () => {
+    n(3);
+  });
+
+  const h = new Holder((v: i64) => {
+    console.log("field", v);
+  });
+  const hf = h.f;
+  await spawn(async () => {
+    hf(4);
+  });
+
+  const m = new Map<string, (v: i64) => void>();
+  m.set("k", (v: i64) => {
+    console.log("map", v);
+  });
+  const mf = m.get("k");
+  if (mf !== null) {
+    await spawn(async () => {
+      mf(5);
+    });
+  }
+
+  const k = new Keeper();
+  const s = saved[0];
+  k.keep(s);
+  k.kept[0](6);
+  r(7);
+
+  // The `new Promise` pattern: keep `resolve`, call it from a spawned task.
+  const resolvers: ((v: i64) => void)[] = [];
+  const p = new Promise<i64>((resolve, reject) => {
+    resolvers.push(resolve);
+  });
+  const res = resolvers[0];
+  spawn(async () => {
+    res(8);
+  });
+  console.log(await p);
+}

@@ -9,6 +9,7 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `process.exit(code: i32)` | exit immediately |
 | `process.stdout.write(s)`, `process.stderr.write(s)` | write a string without a newline, ordered with `console.log` / `console.error`; return `true` like Node |
 | `process.env.NAME`, `process.env[name]` | an environment variable as `string \| null` (`null` where Node has `undefined`); set one with `setEnv` of [`velt:process`](../std/process.md), which also has `args()`, `cwd()` and byte writes |
+| `process.memoryUsage()` | `{ rss, heapUsed }` in bytes, a `MemoryUsage` ([`velt:process`](../std/process.md#memory-usage)) |
 | `panic(msg)` | stop with a panic (exit code 101) |
 | `assert(cond, msg)`, `assertEq(a, b)` | panic when the check fails (`assertEq` compares contents) |
 | `assertThrows(() => f())` | the error `f` throws; panics if it returns normally |
@@ -21,7 +22,7 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `Error` | base class of thrown errors: `class Error { message: string }` |
 | `Comparable<T>` | ordering interface ([Comparable](classes.md#comparable)) |
 | `Map<K, V>` | insertion-ordered hash map ([Types](types.md#objects-arrays-tuples-and-maps)) |
-| `sleep(ms)`, `yieldNow()`, `spawn(p)`, `Promise.all/race/allSettled/any` | async ([Async](async.md)) |
+| `sleep(ms)`, `yieldNow()`, `spawn(p)`, `Promise.all/race/allSettled/any/withResolvers` | async ([Async](async.md)) |
 | `shared(x)`, `shared<T>`, `Mutex<T>` | thread-safe shared state ([Async](async.md#thread-safety)) |
 | `performance.now(): f64`, `Date.now(): i64` | monotonic and wall-clock milliseconds |
 | `Symbol.dispose`, `Symbol.asyncDispose` | cleanup method names ([Memory model](memory.md#resource-cleanup-using-and-symboldispose)) |

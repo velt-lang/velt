@@ -167,6 +167,7 @@ fn dyn_values_clone_print_and_enum_eq() {
             methods: vec![InterfaceMethodDef {
                 name: "get".into(),
                 default: None,
+                promise: false,
             }],
             span: SP,
         }),

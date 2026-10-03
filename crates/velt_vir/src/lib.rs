@@ -65,9 +65,9 @@
 //!   `{ tag, payload… }` variant view (tag = variant index);
 //! * `T | null` → `Ptr` (null = none) for classes and `shared<T>`; otherwise `{ bool, T }`;
 //! * `T[]` → `{ data: ptr, len: u64, cap: u64 }`; `shared<T>` → `Ptr` to `{ count: u64, value }`;
-//! * function values → `{ code: ptr, env: ptr }`; the env is `{ drop: ptr, clone: ptr, captures… }`
-//!   (null for named functions / capture-less closures; stack-allocated with null drop/clone when
-//!   the closure only borrows);
+//! * function values → `{ code: ptr, env: ptr }`; the env is
+//!   `{ drop: ptr, clone: ptr, reach: u64, captures… }` (null for named functions / capture-less
+//!   closures; stack-allocated with null drop/clone when the closure only borrows);
 //! * interface values → `{ data: ptr, vtable: ptr }` (data = the object for classes, else a heap box).
 //! * Vtables are read-only tables of function addresses (static data with relocations): slot `k`
 //!   at byte `8 * (k + 3)`; slots -1/-2/-3 are drop/clone/print of the concrete value.

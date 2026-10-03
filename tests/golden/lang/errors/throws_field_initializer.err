@@ -1,0 +1,3 @@
+throws_field_initializer.vlt:15:10: error: `f` throws `JsonError`, which its `throws` clause does not allow
+throws_field_initializer.vlt:19:10: error: `g` throws `JsonError`, which its `throws` clause does not allow
+throws_field_initializer.vlt:23:32: error: this function throws `JsonError`, but the function type it is used as does not allow throwing

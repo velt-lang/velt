@@ -1,7 +1,6 @@
 //! Dynamic callees and static interface dispatch:
 //! - `Callee::Indirect`: closures / function values `{ code, env }` → `code(env, args…)`;
-//! - `Callee::Virtual`: object vtable dispatcher → method entry → `entry(obj, args…)`;
-//! - `Callee::Dyn`: interface value `{ data, vtable }` → `entry(data, args…)`;
+//! - `Callee::Virtual` and `Callee::Dyn`: vtable and interface calls (dispatch.rs);
 //! - `Callee::ParamMethod`: resolved at monomorphization time through `Program::impls`.
 //!
 //! All dynamic calls use the *borrow ABI*: aggregates by pointer, the caller keeps ownership of
@@ -48,65 +47,6 @@ impl super::Cx<'_> {
         }
     }
 
-    /// Param modes (`this` first) of interface method `slot`: the join over the default and
-    /// every implementation (`BorrowMut` if any of them modifies the param); `None` when
-    /// nothing implements the interface.
-    fn dyn_modes(&mut self, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
-        if let Some(modes) = self.dyn_modes_memo.get(&(iface, slot)) {
-            return modes.clone();
-        }
-        let modes = self.join_impl_modes(iface, slot);
-        self.dyn_modes_memo.insert((iface, slot), modes.clone());
-        modes
-    }
-
-    /// [`Self::dyn_modes`] computed (once per slot: every dyn call of a widely implemented
-    /// interface would otherwise visit all its impls).
-    fn join_impl_modes(&mut self, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
-        let hir::Def::Interface(idef) = self.hir.def(iface) else {
-            ice("interface call on a non-interface")
-        };
-        let impls = self.impls_of(iface);
-        let hir_impls = &self.hir.impls;
-        let methods = idef.methods[slot as usize].default.into_iter().chain(
-            impls
-                .iter()
-                .map(|&i| hir_impls[i as usize].methods[slot as usize]),
-        );
-        let mut join: Option<Vec<PassMode>> = None;
-        for m in methods {
-            let modes = method_modes(self.fn_def(m));
-            match &mut join {
-                None => join = Some(modes),
-                Some(j) => {
-                    for (a, b) in j.iter_mut().zip(modes) {
-                        if b == PassMode::BorrowMut {
-                            *a = b;
-                        }
-                    }
-                }
-            }
-        }
-        join
-    }
-
-    /// Error type of interface method `slot`: every implementation (and the default) shares it
-    /// (sema's dispatch groups), and it mentions no type parameters.
-    fn slot_throws(&mut self, iface: DefId, slot: u32) -> Option<TyId> {
-        let hir::Def::Interface(idef) = self.hir.def(iface) else {
-            ice("interface call on a non-interface")
-        };
-        let first_impl = self.impls_of(iface).first().copied();
-        let method = idef.methods[slot as usize]
-            .default
-            .or_else(|| first_impl.map(|i| self.hir.impls[i as usize].methods[slot as usize]))?;
-        let f = self.fn_def(method);
-        if f.is_async {
-            return None;
-        }
-        self.error_ty(f.throws)
-    }
-
     fn match_all(&self, xs: &[TyId], ys: &[TyId], binds: &mut Vec<Option<TyId>>) -> bool {
         xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| self.match_ty(*x, *y, binds))
     }
@@ -116,6 +56,23 @@ impl super::Cx<'_> {
         let mut all = self.self_and_bases(ty);
         all.remove(0);
         all
+    }
+
+    /// Type args of constructor `ctor` for `new` of class type `ty`: an inherited constructor
+    /// takes those of the base class that declares it (`class D extends B<string>`: `[string]`).
+    pub(super) fn ctor_type_args(&mut self, ctor: DefId, ty: TyId) -> Vec<TyId> {
+        let owner = match self.fn_def(ctor).self_ty.map(|t| self.kind(t)) {
+            Some(TyKind::Adt(d, _)) => d,
+            _ => ice("constructor without a class `this`"),
+        };
+        for cand in self.self_and_bases(ty) {
+            if let TyKind::Adt(d, args) = self.kind(cand) {
+                if d == owner {
+                    return args;
+                }
+            }
+        }
+        ice("constructor of a class outside the instantiated class's ancestry")
     }
 
     /// `ty` followed by its base classes (an impl for a base class also serves subclasses).
@@ -136,7 +93,7 @@ impl super::Cx<'_> {
 
     /// Indexes into `Program::impls` of the impls of `iface`, in program order (indexed once,
     /// since programs may hold thousands of impls of one interface).
-    fn impls_of(&mut self, iface: DefId) -> Rc<[u32]> {
+    pub(super) fn impls_of(&mut self, iface: DefId) -> Rc<[u32]> {
         let index = self.iface_impls.get_or_insert_with(|| {
             let mut by_iface: HashMap<DefId, Vec<u32>> = HashMap::new();
             for (i, imp) in self.hir.impls.iter().enumerate() {
@@ -236,19 +193,19 @@ impl FnLower<'_, '_> {
     }
 
     /// Call `target(first, args…)` with the borrow ABI; `modes` are the callee's param modes
-    /// (`this` first) when known.
-    fn call_ptr(
+    /// (`this` first) when known; `transfer`: the call starts a spawned task (its arguments are
+    /// copied for it, transfer.rs).
+    pub(super) fn call_ptr(
         &mut self,
         target: Operand,
         first: Operand,
         args: &[hir::Expr],
         modes: Option<&[PassMode]>,
-        ret: (TyId, Option<TyId>),
+        (ret, throws, transfer): (TyId, Option<TyId>, bool),
     ) -> Operand {
-        let (ret, throws) = ret;
         let receiver_mut = modes.is_some_and(|m| m.first() == Some(&PassMode::BorrowMut));
         let arg_modes = modes.map(|m| m.get(1..).unwrap_or_default());
-        let (mut argv, mut params) = self.borrow_args(args, arg_modes, receiver_mut);
+        let (mut argv, mut params) = self.borrow_args(args, arg_modes, receiver_mut, transfer);
         argv.insert(0, first);
         params.insert(0, Ty::Ptr);
         let abi = self.cx.ret_abi(ret, throws);
@@ -263,7 +220,13 @@ impl FnLower<'_, '_> {
         self.finish_call(callee, argv, ret, throws)
     }
 
-    pub(super) fn call_indirect(&mut self, f: &hir::Expr, args: &[hir::Expr], ty: TyId) -> Operand {
+    pub(super) fn call_indirect(
+        &mut self,
+        f: &hir::Expr,
+        args: &[hir::Expr],
+        ty: TyId,
+        transfer: bool,
+    ) -> Operand {
         let fty = self.sub(f.ty);
         let fv = self.expr(f);
         let fp = self.place_of(fv, fty);
@@ -281,7 +244,7 @@ impl FnLower<'_, '_> {
             _ => None,
         };
         // The callee is unknown: every non-Copy argument is a plain borrow.
-        self.call_ptr(code, env, args, None, (ret, throws))
+        self.call_ptr(code, env, args, None, (ret, throws, transfer))
     }
 
     /// Load the vtable pointer of the class object `obj` (of static class type `cls`).
@@ -291,57 +254,4 @@ impl FnLower<'_, '_> {
         let hdr = proj(&proj(&op, Proj::Deref(Ty::Agg(oa))), Proj::Field(0));
         self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(hdr)))
     }
-
-    pub(super) fn call_virtual(&mut self, slot: u32, args: &[hir::Expr], ty: TyId) -> Operand {
-        let recv = args
-            .first()
-            .unwrap_or_else(|| ice("virtual call without receiver"));
-        let cls = self.sub(recv.ty);
-        let TyKind::Adt(d, cargs) = self.cx.kind(cls) else {
-            ice("virtual call on a non-class receiver")
-        };
-        let method = self.cx.adt_def(d).vtable[slot as usize];
-        let modes = method_modes(self.cx.fn_def(method));
-        let throws = self.cx.call_sig(self.cx.fn_def(method)).1;
-        let throws = throws.map(|e| self.cx.subst(e, &cargs));
-        let throws = self.cx.error_ty(throws);
-        let rv = self.expr(recv);
-        let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(rv));
-        let vt = self.obj_vtable(obj.clone(), cls);
-        let entry = self.dispatch(vt, slot as i128);
-        let ret = self.sub(ty);
-        self.call_ptr(entry, obj, &args[1..], Some(&modes), (ret, throws))
-    }
-
-    pub(super) fn call_dyn(&mut self, slot: u32, args: &[hir::Expr], ty: TyId) -> Operand {
-        let recv = args
-            .first()
-            .unwrap_or_else(|| ice("interface call without receiver"));
-        let dty = self.sub(recv.ty);
-        let (modes, throws) = match self.cx.kind(dty) {
-            TyKind::Dyn(iface, _) => (
-                self.cx.dyn_modes(iface, slot),
-                self.cx.slot_throws(iface, slot),
-            ),
-            _ => ice("interface call on a non-interface receiver"),
-        };
-        let rv = self.expr(recv);
-        let rp = self.place_of(rv, dty);
-        let data = self.rvalue_temp(
-            Ty::Ptr,
-            Rvalue::Use(Operand::Copy(proj(&rp, Proj::Field(0)))),
-        );
-        let vt = self.rvalue_temp(
-            Ty::Ptr,
-            Rvalue::Use(Operand::Copy(proj(&rp, Proj::Field(1)))),
-        );
-        let entry = self.dispatch(vt, slot as i128);
-        let ret = self.sub(ty);
-        self.call_ptr(entry, data, &args[1..], modes.as_deref(), (ret, throws))
-    }
-}
-
-/// Param modes of a method, `this` first.
-fn method_modes(f: &hir::FnDef) -> Vec<PassMode> {
-    f.params.iter().map(|p| p.mode).collect()
 }

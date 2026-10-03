@@ -1,0 +1,29 @@
+// check: no leaks
+// Like spawn_fn_value_used_after_copied, in a program where another, unrelated closure
+// captures a shared object: whether a function value is copied for a task depends only on
+// that value, so this still prints 1 1 2 (and 1 for the other closure).
+class Box {
+  n: i64 = 0;
+}
+
+async function keep(f: () => i64): Promise<i64> {
+  await sleep(1);
+  return f();
+}
+
+async function main() {
+  const shared = new Box();
+  const other = (): i64 => {
+    shared.n += 1;
+    return shared.n;
+  };
+  console.log(other(), shared.n);
+  const b = new Box();
+  const fb = (): i64 => {
+    b.n += 1;
+    return b.n;
+  };
+  const t = spawn(keep(fb));
+  const here = fb();
+  console.log(await t, here, fb());
+}

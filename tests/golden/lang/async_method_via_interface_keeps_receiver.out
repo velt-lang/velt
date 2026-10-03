@@ -1,0 +1,18 @@
+a label long enough to live on the heap 1
+a label long enough to live on the heap 2
+a label long enough to live on the heap 3
+a label long enough to live on the heap 4
+a label long enough to live on the heap 0
+a label long enough to live on the heap 1
+a label long enough to live on the heap 0
+a label long enough to live on the heap 1
+struct in an array 0
+a label long enough to live on the heap 1
+struct in an array 2
+a label long enough to live on the heap 3
+a label long enough to live on the heap 1
+a label long enough to live on the heap 2
+base a name long enough to live on the heap
+derived a name long enough to live on the heap
+base a name long enough to live on the heap
+derived a name long enough to live on the heap

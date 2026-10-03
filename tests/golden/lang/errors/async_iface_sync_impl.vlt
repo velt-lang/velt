@@ -1,0 +1,27 @@
+// An interface method returning a promise reports its errors through the promise (#193): a
+// synchronous implementation would throw them at the call instead.
+class E extends Error {}
+
+interface Load {
+  load(x: i64): Promise<i64> throws E;
+}
+
+class Sync implements Load {
+  load(x: i64): Promise<i64> throws E {
+    if (x < 0) {
+      throw new E("negative");
+    }
+    return new Promise<i64>((resolve, reject) => resolve(x));
+  }
+}
+
+class Async implements Load {
+  async load(x: i64): Promise<i64> throws E {
+    return x;
+  }
+}
+
+async function main() {
+  const l: Load = new Sync();
+  console.log(await l.load(1));
+}

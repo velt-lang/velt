@@ -32,6 +32,7 @@ mod cells;
 mod cfg;
 mod closure;
 mod console;
+mod dispatch;
 mod drops;
 mod entry;
 mod errors;
@@ -352,6 +353,9 @@ struct FnLower<'c, 'h> {
     share_binds: bool,
     /// While lowering the arguments of a spawned call: owned ones are transferred (transfer.rs).
     transfer_args: bool,
+    /// The next call lowered is spawned through a function value, vtable or interface: its
+    /// arguments are transferred (transfer.rs). Taken by that call before anything else.
+    transfer_call: bool,
     /// Building `Glue::Same`: objects inside the compared values compare by identity (same.rs).
     same_mode: bool,
 }

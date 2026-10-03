@@ -1,0 +1,4 @@
+// `Promise.withResolvers` needs its type arguments (or an expected type).
+async function main() {
+  const r = Promise.withResolvers();
+}

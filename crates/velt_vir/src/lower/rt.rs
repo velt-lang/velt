@@ -57,6 +57,7 @@ pub(super) enum Rt {
     AllOrReject,
     ChanSend,
     ChanReceive,
+    ChanTrySend,
     ChanTryReceive,
     BlockOn,
     Spawn,
@@ -171,6 +172,7 @@ impl Rt {
             Rt::AllOrReject => f("velt_rt_all_or_reject", vec![Ptr, U64, U64, Ptr, Ptr], Ptr),
             Rt::ChanSend => f("velt_rt_chan_send", vec![U64, Ptr, U64, Ptr], Ptr),
             Rt::ChanReceive => f("velt_rt_chan_receive", vec![U64, U64, U64, U64], Ptr),
+            Rt::ChanTrySend => f("velt_rt_chan_try_send", vec![U64, Ptr, U64, Ptr], Bool),
             Rt::ChanTryReceive => f("velt_rt_chan_try_receive", vec![U64, Ptr, U64, U64], Unit),
             Rt::BlockOn => f("velt_rt_block_on", vec![Ptr, Ptr], Unit),
             Rt::Spawn => f(

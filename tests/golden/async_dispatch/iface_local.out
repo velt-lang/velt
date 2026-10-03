@@ -1,0 +1,18 @@
+a tally label long enough to live on the heap 1
+a tally label long enough to live on the heap 3
+a tally label long enough to live on the heap 13
+a tally label long enough to live on the heap 23
+a tally label long enough to live on the heap 33
+a tally label long enough to live on the heap 133 133
+a tally label long enough to live on the heap 233 233
+alias sees 3
+before await 8
+a tally label long enough to live on the heap 8 alias sees 8
+checked 1
+caught a tally label long enough to live on the heap: -2
+checked 4
+caught a tally label long enough to live on the heap: -4
+after the loop 4 4
+checked 7
+caught from helper a tally label long enough to live on the heap: -7
+receiver after 7 a tally label long enough to live on the heap 8

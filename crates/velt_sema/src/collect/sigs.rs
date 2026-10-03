@@ -124,26 +124,7 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
             FnKind::Extern => {}
             _ => owned_async_params(cx, &mut ps),
         }
-        if let Some(DeclaredThrows { ty, span, .. }) = throws {
-            // `Promise<T, E>` written as the result is the same as `throws E`.
-            let written = cx.ty.promise_error(ret).filter(|e| *e != cx.ty.never);
-            let joined = cx.join_errors(ty, written);
-            throws = Some(DeclaredThrows {
-                ty: joined,
-                span,
-                from_body: false,
-            });
-        } else if let Some(e) = cx.ty.promise_error(ret).filter(|e| *e != cx.ty.never) {
-            let span = sig.ret.as_ref().map_or(sig.name.span, |t| t.span);
-            throws = Some(DeclaredThrows {
-                ty: Some(e),
-                span,
-                from_body: false,
-            });
-        }
-        if let Some(v) = cx.ty.promise_payload(ret) {
-            ret = cx.ty.promise(v);
-        }
+        (ret, throws) = promise_throws(cx, ret, throws, sig);
     }
     if kind == FnKind::Extern && throws.is_some() {
         cx.err(
@@ -159,6 +140,34 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
     f.params = ps;
     f.ret = ret;
     f.ret_span = ret_span;
+}
+
+/// The result and error type of a function whose promise carries its errors (an async function,
+/// an interface method returning a promise): `Promise<T, E>` written as the result is the same
+/// as `throws E`; the result becomes `Promise<T>` and the clause what the promise rejects with.
+fn promise_throws(
+    cx: &mut Ctx,
+    ret: TyId,
+    throws: Option<DeclaredThrows>,
+    sig: &ast::FnSig,
+) -> (TyId, Option<DeclaredThrows>) {
+    let Some(v) = cx.ty.promise_payload(ret) else {
+        return (ret, throws);
+    };
+    let written = cx.ty.promise_error(ret).filter(|e| *e != cx.ty.never);
+    let throws = match throws {
+        Some(DeclaredThrows { ty, span, .. }) => Some(DeclaredThrows {
+            ty: cx.join_errors(ty, written),
+            span,
+            from_body: false,
+        }),
+        None => written.map(|e| DeclaredThrows {
+            ty: Some(e),
+            span: sig.ret.as_ref().map_or(sig.name.span, |t| t.span),
+            from_body: false,
+        }),
+    };
+    (cx.ty.promise(v), throws)
 }
 
 /// A written `throws E` clause.
@@ -375,8 +384,16 @@ fn iface_methods(cx: &mut Ctx, d: DefId) {
     for m in &decl.methods {
         let name = &m.sig.name;
         let key = member_key(&name.name, m.is_setter);
-        if m.sig.is_async {
-            cx.err("interface methods cannot be `async` yet", name.span);
+        if m.sig.is_async && m.body.is_none() {
+            cx.error(
+                Diagnostic::error(
+                    "only an interface method with a body can be `async`",
+                    name.span,
+                )
+                .with_note(
+                    "declare the method as returning a `Promise`; implementations may be `async`",
+                ),
+            );
         }
         let (own, env) = method_generics(cx, &generics, &m.sig.generics, module);
         if let (Some(gp), Some(_)) = (m.sig.generics.first(), &m.body) {
@@ -386,11 +403,18 @@ fn iface_methods(cx: &mut Ctx, d: DefId) {
             );
         }
         let ps = params(cx, &m.sig.params, &env);
-        let ret = match &m.sig.ret {
+        let mut ret = match &m.sig.ret {
             Some(t) => cx.resolve_type(t, &env),
             None => cx.ty.unit,
         };
+        // An async default: its def (`fill_sig`) reports a result that is not a promise.
+        let not_promise = !matches!(cx.ty.kind(ret), TyKind::Promise(..)) && !cx.ty.is_bottom(ret);
+        if m.sig.is_async && m.body.is_some() && not_promise {
+            ret = cx.ty.promise(ret);
+        }
         let throws = throws_clause(cx, &m.sig, &env);
+        // Like an async function (and a function type): the method's promise carries its errors.
+        let (ret, throws) = promise_throws(cx, ret, throws, &m.sig);
         let default = m
             .body
             .as_ref()
@@ -469,7 +493,7 @@ fn default_method<'m>(
     let self_ty = cx.ty.param(n);
     info.owner = Some(iface);
     info.is_getter = m.is_getter;
-    info.this = Some(this_sig(self_ty, m.is_setter));
+    info.this = Some(method_this(self_ty, m.is_setter, m.sig.is_async));
     let def = cx.alloc_def(name.span, DefInfo::Fn(Box::new(info)));
     fill_sig(cx, def, &m.sig, &g, module);
     def

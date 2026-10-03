@@ -1,0 +1,2 @@
+fn_value_owns_promise.vlt:14:48: error: function `wait` takes ownership of `p`, so it cannot be used as a function value
+  = note: function values borrow their arguments, and a promise has one owner; call the function directly

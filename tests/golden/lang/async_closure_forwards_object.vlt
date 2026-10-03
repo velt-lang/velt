@@ -1,0 +1,81 @@
+// check: no leaks
+// An async closure forwarding its object parameter to an async function value passes the same
+// object, not a copy, so the callee's changes are visible to the caller (#196), as in the sync
+// version. Variants: a wrapped closure, a captured closure, a named function and a method behind
+// the forwarding closure; the object held in a variable, a field, a Map and an array; in a loop.
+class Box {
+  n: i64 = 0;
+}
+
+class Holder {
+  box: Box = new Box();
+}
+
+class Bumper {
+  async bump(b: Box): Promise<i64> {
+    b.n += 1;
+    return b.n;
+  }
+}
+
+async function bumpFn(b: Box): Promise<i64> {
+  b.n += 1;
+  return b.n;
+}
+
+function wrap(f: (b: Box) => Promise<i64>): (b: Box) => Promise<i64> {
+  return async (b: Box): Promise<i64> => await f(b);
+}
+
+function wrapSync(f: (b: Box) => i64): (b: Box) => i64 {
+  return (b: Box): i64 => f(b);
+}
+
+async function main() {
+  const bump = async (b: Box): Promise<i64> => {
+    b.n += 1;
+    return b.n;
+  };
+  const w = wrap(bump);
+  const box = new Box();
+  console.log("wrapped closure", await w(box), await w(box), box.n);
+
+  const fwd = async (b: Box): Promise<i64> => await bump(b);
+  const b2 = new Box();
+  console.log("captured closure", await fwd(b2), await fwd(b2), b2.n);
+
+  const wf = wrap(async (b: Box): Promise<i64> => await bumpFn(b));
+  const b3 = new Box();
+  console.log("wrapped fn", await wf(b3), await wf(b3), b3.n);
+
+  const bumper = new Bumper();
+  const viaMethod = async (b: Box): Promise<i64> => await bumper.bump(b);
+  const wm = wrap(viaMethod);
+  const b4 = new Box();
+  console.log("method", await wm(b4), await viaMethod(b4), b4.n);
+
+  const h = new Holder();
+  console.log("field", await w(h.box), await fwd(h.box), h.box.n);
+
+  const m = new Map<string, Box>();
+  m.set("k", new Box());
+  const mb = m.get("k") ?? new Box();
+  console.log("map", await w(mb), await fwd(mb), (m.get("k") ?? new Box()).n);
+
+  const arr = [new Box(), new Box()];
+  console.log("array", await w(arr[1]), await fwd(arr[1]), arr[1].n, arr[0].n);
+
+  let total = 0;
+  const loopBox = new Box();
+  for (let i = 0; i < 3; i++) {
+    total += await w(loopBox);
+  }
+  console.log("loop", total, loopBox.n);
+
+  const ws = wrapSync((b: Box): i64 => {
+    b.n += 1;
+    return b.n;
+  });
+  const b5 = new Box();
+  console.log("sync", ws(b5), ws(b5), b5.n);
+}

@@ -1,0 +1,48 @@
+// check: no leaks
+// A `serve` that fails (a TLS key that does not parse, an address already in use) drops the
+// handler closure it was given, so a captured resource's [Symbol.dispose]() runs. The TLS
+// failure used to leak the closure environment.
+import { serve, Request, Response } from "velt:http";
+import { TEST_CERT } from "./_tls";
+
+class Store {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  [Symbol.dispose]() {
+    console.log(`released ${this.name}`);
+  }
+}
+
+async function main() {
+  const tlsStore = new Store("tls");
+  try {
+    const bad = await serve(
+      { port: 0, tls: { cert: TEST_CERT, key: "nope" } },
+      async (req: Request): Promise<Response> => Response.text(tlsStore.name),
+    );
+    console.log("unexpected", bad.port);
+  } catch (e) {
+    console.log("tls:", e.code);
+  }
+
+  const server = await serve(
+    { port: 0 },
+    async (req: Request): Promise<Response> => Response.text("first"),
+  );
+  const busyStore = new Store("busy");
+  try {
+    const twice = await serve(
+      { port: server.port },
+      async (req: Request): Promise<Response> => Response.text(busyStore.name),
+    );
+    console.log("unexpected", twice.port);
+  } catch (e) {
+    console.log("in use:", e.code);
+  }
+  await server.shutdown();
+  console.log("done");
+}

@@ -15,7 +15,7 @@ use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
-use crate::lower::{cfunc, cint, ice, unit, Cx, FnLower, Glue, Work};
+use crate::lower::{cfunc, cint, ice, unit, Cx, FnLower, Glue, ScopeKind, Work};
 use crate::vir::{AggId, BinOp, Const, Function, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl Cx<'_> {
@@ -80,7 +80,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             (I::PerfNow, []) => self.rt_value(Rt::PerfNow, vec![], ty),
             (I::DateNow, []) => self.rt_value(Rt::DateNow, vec![], ty),
             (I::PromiseWiden, [p]) => self.promise_widen(p, ty, false),
-            (I::ChanSend | I::ChanReceive | I::ChanTryReceive, _) => {
+            (I::ChanSend | I::ChanTrySend | I::ChanReceive | I::ChanTryReceive, _) => {
                 self.chan_intrinsic(i, args, ty)
             }
             _ => self.sync_intrinsic(i, args, ty),
@@ -162,8 +162,23 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let fut = match self.kind(p.ty) {
             TyKind::Closure(_) | TyKind::FnPtr { .. } => {
-                let v = self.call_indirect(p, &[], pty);
+                let v = self.call_indirect(p, &[], pty, false);
                 self.take_owned(v)
+            }
+            _ if dynamic_call(p) => {
+                // The callee keeps a share of each argument: they are copies for the task,
+                // whose other references are released before it starts (transfer.rs).
+                self.push_scope(ScopeKind::Temps);
+                self.transfer_call = true;
+                let fut = self.take_promise(p);
+                // The spawned call took the flag (call.rs `call_expr`); it must not leak to a
+                // later call.
+                debug_assert!(
+                    !self.transfer_call,
+                    "ICE: spawned call did not take transfer_call"
+                );
+                self.pop_scope();
+                fut
             }
             _ => self.take_promise(p),
         };
@@ -382,4 +397,17 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let sym = format!("_Gall_drop_{}", lw.cx.type_symbol(elem));
         lw.finish(sym, vec![Ty::Ptr], Ty::Unit)
     }
+}
+
+/// Is `p` a call through a function value, vtable or interface (borrow ABI, callee.rs)?
+fn dynamic_call(p: &hir::Expr) -> bool {
+    matches!(
+        p.kind,
+        hir::ExprKind::Call {
+            callee: hir::Callee::Indirect(_)
+                | hir::Callee::Virtual { .. }
+                | hir::Callee::Dyn { .. },
+            ..
+        }
+    )
 }

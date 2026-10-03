@@ -37,6 +37,13 @@ export struct Channel<T> {
     }
   }
 
+  // Queues `value` if the channel has room now, without waiting: true if it was queued, false
+  // (and `value` dropped) if a bounded channel is full or the channel is closed. Synchronous, so
+  // it may be called inside `Mutex.with`.
+  trySend(value: T): bool {
+    return __intrinsic_chan_try_send<T>(this.handle, value);
+  }
+
   // The oldest value, waiting for one; `null` once the channel is closed and empty.
   async receive(): Promise<T | null> {
     return await __intrinsic_chan_receive<T>(this.handle);

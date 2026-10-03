@@ -139,10 +139,12 @@ pub(super) fn generics() -> Program {
                 InterfaceMethodDef {
                     name: "area".into(),
                     default: None,
+                    promise: false,
                 },
                 InterfaceMethodDef {
                     name: "describe".into(),
                     default: Some(describe_default),
+                    promise: false,
                 },
             ],
             span: SP,

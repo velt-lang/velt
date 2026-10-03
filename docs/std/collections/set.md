@@ -5,7 +5,8 @@ semantics plus the ES2025 set algebra. It is built on the prelude `Map`, so elem
 anything a map key can be: numbers, bool, string, class instances (by identity), and structs,
 object types and tuples (by content).
 
-- `new Set<T>()`, `Set.from(xs)`, `size`, `isEmpty()`.
+- `new Set<T>()`, `new Set(values)` (leaves `values` as it is and shares the elements, like JS),
+  `Set.from(xs)` (clones the elements), `size`, `isEmpty()`.
 - `add(v)`: takes ownership. `has(v)`, `delete(v): bool`, `clear()`.
 - `values(): T[]` returns clones in insertion order. `forEach(f)` borrows.
 - Set algebra, each returning a new set: `union`, `intersection`, `difference`,
@@ -16,7 +17,7 @@ object types and tuples (by content).
 import { Set } from "velt:collections/set";
 
 function main() {
-  const seen = Set.from(["a", "b", "a", "c"]);
+  const seen = new Set(["a", "b", "a", "c"]);
   seen.add("d");
   const other = Set.from(["c", "d", "e"]);
   console.log(seen.size, seen.has("b"), seen.values());

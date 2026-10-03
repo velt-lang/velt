@@ -13,7 +13,7 @@
 //!   class hierarchy has more than one class or any virtual slot; it points to a dispatcher
 //!   function (see glue/vtable.rs).
 //! - Shared boxes: `{ count: u64, value: T }`; closure environments: `{ drop: ptr, clone: ptr,
-//!   captures... }` (borrowed captures are pointers).
+//!   reach: u64, captures... }` (borrowed captures are pointers; closure.rs).
 
 use std::collections::{HashMap, HashSet};
 
@@ -330,7 +330,8 @@ impl Cx<'_> {
             })
             .collect();
         let name = format!("{} env", f.name);
-        let mut tys = vec![Ty::Ptr, Ty::Ptr];
+        // closure.rs `ENV_HEADER`: drop entry, clone entry, `reach`.
+        let mut tys = vec![Ty::Ptr, Ty::Ptr, Ty::U64];
         for (mode, t) in caps {
             let t = self.subst(t, targs);
             tys.push(match mode {

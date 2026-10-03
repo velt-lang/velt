@@ -1,0 +1,128 @@
+// check: no leaks
+// Async methods called through an interface value that lives in a class field, a Map value or
+// an array element (#182, #194, #197). Each holder is tried with the receiver held only there
+// (refcount 1) and shared with a concrete alias that is read after the calls (refcount > 1).
+// Mutations made by the callee must be visible through the holder and through the alias.
+class Refused extends Error {}
+
+interface Account {
+  deposit(n: i64): Promise<i64>;
+  withdraw(n: i64): Promise<i64> throws Refused;
+}
+
+class Wallet implements Account {
+  owner: string = "an owner name long enough to live on the heap";
+  balance: i64 = 0;
+
+  async deposit(n: i64): Promise<i64> {
+    this.balance += n;
+    return this.balance;
+  }
+
+  async withdraw(n: i64): Promise<i64> throws Refused {
+    if (n > this.balance) {
+      throw new Refused(`${this.balance} < ${n}`);
+    }
+    this.balance -= n;
+    return this.balance;
+  }
+}
+
+class Bank {
+  main: Account;
+
+  constructor(main: Account) {
+    this.main = main;
+  }
+
+  // Calls through `this.main` from inside a method of the holder.
+  async payIn(times: i64): Promise<i64> {
+    let last: i64 = 0;
+    for (let i = 0; i < times; i++) {
+      last = await this.main.deposit(1);
+    }
+    return last;
+  }
+}
+
+// A class field: refcount 1 (only the field holds it), then a field shared with an alias.
+async function field(): Promise<void> {
+  const bank = new Bank(new Wallet());
+  for (let i = 0; i < 3; i++) {
+    console.log("field deposit", await bank.main.deposit(10));
+  }
+  console.log("field via method", await bank.payIn(2));
+  try {
+    console.log("field withdraw", await bank.main.withdraw(30));
+    console.log("field withdraw", await bank.main.withdraw(30));
+  } catch (e) {
+    console.log("field refused", e.message);
+  }
+
+  const w = new Wallet();
+  const shared = new Bank(w);
+  for (let i = 0; i < 3; i++) {
+    await shared.main.deposit(5);
+  }
+  console.log("field alias sees", w.balance, await shared.payIn(1), w.balance);
+}
+
+// A Map value: looked up on every iteration (the lookup result is the last use), and a value
+// that is also held by an alias.
+async function mapValue(): Promise<void> {
+  const accounts = new Map<string, Account>();
+  accounts.set("solo", new Wallet());
+  const w = new Wallet();
+  accounts.set("shared", w);
+  for (let i = 0; i < 3; i++) {
+    const a = accounts.get("solo");
+    if (a != null) {
+      console.log("map solo", await a.deposit(i + 1));
+    }
+  }
+  for (const key of ["shared", "shared", "solo"]) {
+    const a = accounts.get(key);
+    if (a != null) {
+      try {
+        console.log("map", key, await a.withdraw(2));
+      } catch (e) {
+        console.log("map", key, "refused", e.message);
+      }
+      console.log("map", key, "after", await a.deposit(1));
+    }
+  }
+  console.log("map alias sees", w.balance);
+  const solo = accounts.get("solo");
+  if (solo != null) {
+    console.log("map solo kept", await solo.deposit(0));
+  }
+}
+
+// Array elements: indexed directly, iterated with `for…of`, and copied into a local first
+// (#197). The same wallet sits in two slots and is aliased outside the array.
+async function arrayElement(): Promise<void> {
+  const w = new Wallet();
+  const xs: Account[] = [new Wallet(), w, w];
+  for (let i = 0; i < 6; i++) {
+    await xs[i % 3].deposit(1);
+  }
+  console.log("array alias sees", w.balance);
+  for (const a of xs) {
+    console.log("array for-of", await a.deposit(10));
+  }
+  for (let i = 0; i < 3; i++) {
+    const a = xs[i];
+    try {
+      console.log("array local", await a.withdraw(15));
+    } catch (e) {
+      console.log("array local refused", e.message);
+    }
+  }
+  console.log("array alias end", w.balance, await xs[0].deposit(0));
+}
+
+async function main() {
+  await field();
+  await mapValue();
+  await arrayElement();
+}

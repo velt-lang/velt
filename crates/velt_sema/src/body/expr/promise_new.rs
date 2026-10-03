@@ -7,6 +7,9 @@
 //! the prelude makes, so the literal may keep them (`FnInfo::keeps_fn_params`). The call also
 //! gets the source location of the `new Promise` and whether it is awaited directly, for the
 //! report when an abandoned promise is awaited (std/prelude/promise.vlt).
+//!
+//! `Promise.withResolvers<T, E>()` (ES2024) is the same slot without an executor: a call of the
+//! prelude's `promiseWithResolvers`, whose `resolve` and `reject` are fields of the result.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -50,6 +53,32 @@ impl FnCx<'_, '_> {
         let mut call = self.prelude_call(name, "new Promise", type_args, &args[..1], hint, span);
         self.finish_promise_new(&mut call, span, direct);
         Some(call)
+    }
+
+    /// `Promise.withResolvers<T, E>()`: a call of the prelude's `promiseWithResolvers`. `T` and
+    /// `E` come from the type arguments (`E` defaults to `never`), else from the expected type.
+    pub(super) fn promise_with_resolvers(
+        &mut self,
+        targs: &[ast::TypeExpr],
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let hint = self.hint(exp);
+        let expected = hint
+            .and_then(|h| self.field_of(h, "promise"))
+            .map(|(_, t)| t);
+        let type_args = self.promise_type_args(span, targs, expected);
+        if type_args.is_empty() {
+            self.cx.err(
+                "cannot infer the type of `Promise.withResolvers`: write `Promise.withResolvers<T>()` or `Promise.withResolvers<T, E>()`",
+                span,
+            );
+            self.check_args_loose(args);
+            return self.error_expr(span);
+        }
+        let what = "Promise.withResolvers";
+        self.prelude_call("promiseWithResolvers", what, &type_args, args, hint, span)
     }
 
     /// `T` and `E` from the type arguments or the expected `Promise<T, E>` (`E` defaults to

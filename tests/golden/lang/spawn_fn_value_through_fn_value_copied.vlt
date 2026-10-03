@@ -1,0 +1,34 @@
+// check: no leaks
+// A closure (array element) passed to tasks spawned through a function value, whose arguments
+// use the borrow ABI: each task gets a deep copy (transfer_copy), not a share of the
+// environment, though the closure captures only a unique object (PR #257 review).
+class Counter {
+  n: i64 = 0;
+}
+
+async function main() {
+  const c = new Counter();
+  const fs: (() => i64)[] = [];
+  fs.push((): i64 => {
+    c.n += 1;
+    return c.n;
+  });
+  const run = async (f: () => i64): Promise<i64> => {
+    let s = 0;
+    for (let i = 0; i < 200000; i++) {
+      s = f();
+    }
+    return s;
+  };
+  const ts: Promise<i64>[] = [];
+  for (let i = 0; i < 8; i++) {
+    ts.push(spawn(run(fs[0])));
+  }
+  let mx = 0;
+  for (const v of await Promise.all(ts)) {
+    if (v > mx) {
+      mx = v;
+    }
+  }
+  console.log(mx, fs[0]());
+}

@@ -131,6 +131,9 @@ contents.
 - Single inheritance; `override` is required on redefined methods; there are no abstract
   classes and no `protected` (`private` is private to the declaring class).
 - `static readonly` constants exist; mutable statics don't.
+- `new` evaluates all field initializers (base class first) before running the constructors;
+  TypeScript runs the base initializers and constructor before the derived initializers. A known
+  difference, tracked in [#273](https://github.com/velt-lang/velt/issues/273).
 - A method that is never overridden is called directly; only overridden methods use a vtable.
 - `struct` declares an object type with the same members as a class, built from a literal
   (no constructor). **Planned**
@@ -170,8 +173,8 @@ surprise ([Error handling](errors.md)).
 - A promise's type carries its error type: `Promise<T, E>`.
 - Promises have no `then`, `catch` or `finally`: `await` them, inside `try`/`catch`/`finally`
   to handle their errors. *Why*: one way to sequence async code, and errors stay typed.
-- `new Promise((resolve, reject) => …)` works as in JS; `resolve` and `reject` may be kept and
-  called later from any task. No global `setTimeout` (use
+- `new Promise((resolve, reject) => …)` and `Promise.withResolvers()` work as in JS; `resolve`
+  and `reject` may be kept and called later from any task. No global `setTimeout` (use
   `sleep(ms)` or [`velt:timers`](../std/timers.md)), no `for await`, no async generators.
 
 ## Memory

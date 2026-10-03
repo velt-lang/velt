@@ -1,0 +1,29 @@
+// check: no leaks
+// A closure handed to a spawned task is copied for it with what it captures, like an object
+// argument (#217): the task and the caller never share a reference count.
+class Box {
+  n: i64 = 0;
+}
+
+async function run(f: () => i64): Promise<i64> {
+  await sleep(1);
+  return f();
+}
+
+async function main() {
+  const b = new Box();
+  b.n = 2;
+  const f = (): i64 => {
+    b.n += 1;
+    return b.n;
+  };
+  const tasks: Promise<i64>[] = [];
+  for (let i = 0; i < 20; i++) {
+    tasks.push(spawn(run(f)));
+  }
+  let sum = 0;
+  for (const v of await Promise.all(tasks)) {
+    sum += v;
+  }
+  console.log(sum, b.n, f());
+}

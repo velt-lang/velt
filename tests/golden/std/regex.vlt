@@ -1,3 +1,4 @@
+// check: no leaks
 import { RegExp, RegExpMatch } from "velt:regex";
 
 function showMatch(m: RegExpMatch | null) {

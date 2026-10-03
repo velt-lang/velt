@@ -1,0 +1,78 @@
+// A value written only when a call succeeds and read only after it succeeded (the inlined
+// callee's out-pointer): release builds used to fail VIR verification once the optimizer
+// dropped the dead address (#198, #199).
+class Bad extends Error {}
+
+struct Point {
+  x: i64;
+  y: i64;
+}
+
+function point(ok: bool): Point throws Bad {
+  if (!ok) {
+    throw new Bad("no point");
+  }
+  return { x: 1, y: 2 };
+}
+
+class Holder {
+  n: i64 = 0;
+}
+
+async function afterAwait(text: string): Promise<i64> throws Bad {
+  let a: i64;
+  try {
+    a = JSON.parse<i64>(text);
+  } catch (e) {
+    throw new Bad(e.message);
+  }
+  await sleep(1);
+  return a + 1;
+}
+
+function sum(texts: string[]): f64 {
+  let total = 0.0;
+  for (const t of texts) {
+    try {
+      total += JSON.parse<f64>(t);
+    } catch (e) {
+      console.log("skip:", e.message);
+    }
+  }
+  return total;
+}
+
+async function main() {
+  console.log(JSON.parse<i64>("41") + 1);
+  console.log(JSON.parse<f64>("1.5") * 2.0);
+  console.log(!JSON.parse<bool>("false"));
+  try {
+    console.log(await afterAwait("41"));
+    console.log(await afterAwait("x"));
+  } catch (e) {
+    console.log("bad:", e.message);
+  }
+  console.log(sum(["1.5", "y", "2"]));
+
+  const h = new Holder();
+  h.n = JSON.parse<i64>("7");
+  const m = new Map<string, bool>();
+  m.set("k", JSON.parse<bool>("true"));
+  const xs: f64[] = [JSON.parse<f64>("0.25")];
+  console.log(h.n, m.get("k"), xs[0]);
+
+  let p: Point;
+  try {
+    p = point(true);
+  } catch (e) {
+    throw new Bad(e.message);
+  }
+  await sleep(1);
+  console.log(p.x + p.y);
+  try {
+    const q = point(false);
+    console.log(q.x);
+  } catch (e) {
+    console.log("caught:", e.message);
+  }
+}
