@@ -19,6 +19,9 @@ Maintainer-owned, like hir.rs.
 - Interface values (`Shape[]`) are `TyKind::Dyn`: fat pointer (data, vtable). `ExprKind::ToDyn`
   builds one from a concrete value using `Program::impls[impl_index]`; `Callee::Dyn { slot }`
   calls through it (slot = index into `InterfaceDef::methods`). A Dyn owns a heap box of its value.
+  An impl's `ty` may be any type: builtins (`extend` blocks implementing `Comparable<T>` or
+  `Iterable<T, E>`: `i64`, `T[]`, `string`, `Map<K, V>`) and interface value types
+  (`IterableIterator<T, E>` implements `Iterable<T, E>`; its `ToDyn` boxes the fat pointer).
 - Generic bounds (`T extends Shape`): method calls on a `TyKind::Param` receiver are
   `Callee::ParamMethod`; lowering picks the concrete method via `Program::impls` after
   monomorphization (static dispatch).

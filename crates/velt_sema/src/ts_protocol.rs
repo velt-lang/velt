@@ -1,15 +1,17 @@
 //! TypeScript's spellings of the iteration protocol types (docs/book/ts-developers.md).
 //!
-//! TypeScript's `Generator<T, TReturn, TNext>` (and `Iterator`, `Iterable` and their async
-//! twins) take the return type second and the type `next(value)` takes third; Velt's take the
-//! error type second (`Generator<T, E>`), since its generators return no value and take none
-//! from `next()`. So that TypeScript code keeps compiling, a second argument TypeScript writes
+//! TypeScript's `Generator<T, TReturn, TNext>` (and `Iterator`, `Iterable`, `IterableIterator`,
+//! `IteratorObject` and their async twins) take the return type second and the type
+//! `next(value)` takes third; Velt's take the error type second (`Generator<T, E>`), since its
+//! generators return no value and take none from `next()`. So that TypeScript code keeps compiling, a second argument TypeScript writes
 //! for "returns nothing" (`void`, `undefined`, `unknown`, `any`) and a third argument are
 //! dropped: `Generator<number, void, unknown>` is `Generator<number>`. Any other second argument
 //! must be an error type (a class extending `Error`, a union of them, an interface or a type
 //! parameter); anything else (`Generator<number, string>`) can only be TypeScript's return type,
 //! and is reported at the user's annotation. Classes' base classes are known once
 //! `collect::shapes` ran, so earlier checks wait until then ([`Ctx::check_deferred_ts_returns`]).
+//! `IteratorResult<T, TReturn>` has no error slot: a "returns nothing" `TReturn` is dropped and
+//! any other one is an error ([`Ctx::iterator_result_args`]).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;

@@ -2,7 +2,8 @@
 
 Status: accepted (issue #62), implemented in four phases, **all built**: 1 (the protocol and
 `for...of` over user iterables), 2 (sync generators), 3 (async generators and `for await`) and
-4 (std sources are async iterables).
+4 (std sources are async iterables). Follow-up #424 (section 6): builtin iterables and TS's
+iterator types.
 
 ## Problem
 
@@ -473,6 +474,102 @@ bench/async `channel_pipeline` (1M values from 4 producers) 44.6 ms with the `re
 draining 10 × 1M queued values in one task 432.6 vs 428.6 ms. Every bench/async and bench/iter
 program compiles to a byte-identical object file before and after this phase.
 
+## 6. Builtin iterables and TypeScript's iterator types (#424)
+
+Arrays, strings, `Map`s and `Set`s are `Iterable<T>`, so code written against `Iterable<T>`
+takes them, and TS's `IterableIterator<T>`, `IteratorObject<T>`, `AsyncIterableIterator<T>` and
+two-argument `IteratorResult<T, TReturn>` exist.
+
+### Mechanism: `extend` blocks implement `Iterable`
+
+`extend` blocks cannot list `implements` (retroactive `implements` is planned, classes.md
+"extend"), so, as `compareTo` makes a type `Comparable` (`collect/comparable.rs`), an `extend`
+block defining `[Symbol.iterator](): Iterator<T, E>` makes its target implement `Iterable<T, E>`,
+and one defining `[Symbol.asyncIterator](): AsyncIterator<T, E>` makes it an `AsyncIterable<T,
+E>` (`collect/iterable.rs`: an entry in `Program::impls`, generic when the block is). The rule
+applies to user blocks too. The prelude (std/prelude/iter.vlt) has the blocks:
+
+| Type | `[Symbol.iterator]()` returns | Iterates |
+|---|---|---|
+| `T[]` | `new ArrayIterator<T>(this)` | a live view: the iterator holds the array (a share, not a copy) and reads the length at each step; once done it stays done (JS) |
+| `string` | `new StringIterator(this)` | characters (code points) as strings, by byte offset (`charAt`) |
+| `Map<K, V>` | `new ArrayIterator(this.entries())` | the entries as of the call |
+| `Set<T>` (std/collections/set.vlt) | `new ArrayIterator(this.values())` | the elements as of the call (a class method: `Set` declares `implements Iterable<T>`) |
+
+So `[1, 2, 3]` converts to an `Iterable<i64>` value (`ToDyn` with the impl; the array's header
+is boxed unless the array is already counted, and no element is copied), satisfies an
+`Iterable<T>` bound (`ParamMethod` resolves to the extension), and `a[Symbol.iterator]()` is an
+ordinary extension call returning an `Iterator<T>`. No HIR, VIR or runtime change was needed.
+An array literal written where an `Iterable<T>` is expected takes `T` as its element type
+(`sum([1, 2])` with `sum(xs: Iterable<f64>)`; `known.rs` `iterable_elem`).
+
+**`for...of` keeps its loops.** `body/for_iter.rs` `is_iterable` already skipped arrays; it now
+also skips `string` and the prelude `Map`, so `for (const x of xs)` over them is the same
+`ForOf` as before and only code going through `Iterable<T>` (a value or a bound) uses the
+protocol. Every bench/ program lowers to the same LLVM IR as before this change (`velt build
+--release --emit llvm`, all 62 that compile), except one global's numeric symbol suffix in
+bench/async `all_small_stored` (prelude items shift def numbering).
+
+**The live array view costs a count.** `ArrayIterator` shares the array, so an array type
+whose `[Symbol.iterator]()` is instantiated becomes counted program-wide (semantics stage 2:
+boxed `{ data, len, cap }`), like any shared array; programs that don't iterate arrays through
+`Iterable<T>` keep their representation.
+
+### TypeScript's iterator types
+
+```ts ignore
+interface IterableIterator<T, E = never> extends Iterator<T, E>, Iterable<T, E> {}
+interface IteratorObject<T, E = never> extends Iterator<T, E>, Iterable<T, E> {}
+interface AsyncIterableIterator<T, E = never> extends AsyncIterator<T, E>, AsyncIterable<T, E> {}
+```
+
+- `Generator` implements the first two, `AsyncGenerator` the third; generators may be declared
+  to return them (`known.rs` `SYNC_RESULTS` / `ASYNC_RESULTS`), and `ArrayIterator` /
+  `StringIterator` implement the first two.
+- Their second argument follows `Generator`'s TS rules (`ts_protocol.rs`, and the parser's
+  `undefined` exception): `void` / `undefined` / `unknown` / `any` dropped, an error type is `E`,
+  anything else is TS's `TReturn` and an error.
+- `IteratorResult<T, TReturn>`: a "nothing" `TReturn` is dropped; any other one is an error
+  (``` `IteratorResult` takes no return type: `string` is TypeScript's `TReturn` ```), since a
+  finished result carries no value.
+- **Interface values don't convert to the interfaces they extend** (a general Velt limitation:
+  `ToDyn` needs the concrete type's impl). The prelude closes the gap that matters for
+  iteration with blocks on the interface types themselves: `extend<T, E> IterableIterator<T, E>
+  { [Symbol.iterator](): Iterator<T, E> { return this[Symbol.iterator](); } }` (and for
+  `IteratorObject`, `AsyncIterableIterator`) makes such values `Iterable` / `AsyncIterable`
+  through the rule above: converting one boxes the fat pointer, and its iterator is a call
+  through the inner value. Converting one to `Iterator<T, E>` is still an error, whose note
+  says to call `x[Symbol.iterator]()`.
+
+### Deviations
+
+- `[Symbol.iterator]()` on the builtins returns `Iterator<T>`, not TS's `ArrayIterator<T>` /
+  `MapIterator<T>` / `SetIterator<T>` / `StringIterator<T>` (an `Iterable` implementation must
+  return exactly `Iterator<T, E>`), so its result is not itself iterable; the prelude classes
+  `ArrayIterator<T>` and `StringIterator` are the implementations.
+- `Map` and `Set` iterators see the entries as of the call (like `for...of` over a map, which
+  iterates `entries()`); JS's are live. A live map iterator would have to survive the map's
+  compaction of deleted entries, which renumbers them; `Map.keys()` / `values()` / `entries()`
+  stay arrays.
+- `IterableIterator<T>` / `IteratorObject<T>` declare `[Symbol.iterator]()` as returning
+  `Iterator<T, E>` (no covariant returns), and are two separate interfaces: a value of one does
+  not convert to the other.
+
+### Cost
+
+`bench/iter` (`run.sh 7`), LLVM release, best of 7 interleaved runs (Apple M4, shared with
+other builds): 200 × 3M array elements summed modulo a prime.
+
+| program | ms | vs array_loop | Node (ms) |
+|---|---|---|---|
+| array_loop (`for...of` over the array) | 461 | 1.00 | 3564 |
+| array_iterable (the array as an `Iterable<i64>` parameter) | 465 | 1.01 | 3100 |
+
+Here `total` is inlined into `main`, where the conversion makes the vtable a known constant,
+so the interface calls become direct and the protocol loop runs at the array loop's speed (one
+iterator allocation per loop). Where the implementation is not known at the call, each step
+is an interface call (gen_value in section 3).
+
 ## Follow-ups
 
 - `next(value)` / `throw()` and `return value` (TS's `TNext` / `TReturn`). Today each is an
@@ -484,3 +581,7 @@ program compiles to a byte-identical object file before and after this phase.
 - Keeping an embedded async generator's state in registers across steps (section 4, Cost).
 - Generators cannot cross tasks; stored `Iterable<T>` values backed by one are checked at run
   time.
+- Live `Map` / `Set` iterators (section 6), and `keys()` / `values()` / `entries()` returning
+  iterators.
+- Interface values converting to the interfaces they extend (section 6), which would also let
+  an `IterableIterator<T>` value be an `Iterator<T>`.
