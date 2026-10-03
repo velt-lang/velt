@@ -135,7 +135,8 @@ pub struct Package {
     pub entry: String,
 }
 
-/// Longest `description`, in characters (Unicode scalar values): one line in `velt search`.
+/// Longest `description`, in characters (Unicode scalar values); `velt search` shows as much as
+/// fits on one line.
 pub const MAX_DESCRIPTION: usize = 300;
 /// Most `keywords`.
 pub const MAX_KEYWORDS: usize = 10;
