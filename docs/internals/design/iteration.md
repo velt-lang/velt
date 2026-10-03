@@ -2,8 +2,8 @@
 
 Status: accepted (issue #62), implemented in four phases, **all built**: 1 (the protocol and
 `for...of` over user iterables), 2 (sync generators), 3 (async generators and `for await`) and
-4 (std sources are async iterables). Follow-up #424 (section 6): builtin iterables and TS's
-iterator types.
+4 (std sources are async iterables). Follow-up #424: builtin iterables and TS's iterator types
+(section 6); consuming iterables, generator expressions and iterable object literals (section 7).
 
 ## Problem
 
@@ -569,6 +569,113 @@ Here `total` is inlined into `main`, where the conversion makes the vtable a kno
 so the interface calls become direct and the protocol loop runs at the array loop's speed (one
 iterator allocation per loop). Where the implementation is not known at the call, each step
 is an interface call (gen_value in section 3).
+
+## 7. Consuming iterables and the remaining syntax (#424)
+
+### Consumers
+
+Spread into an array literal or a rest parameter, `Array.from(src[, f])`, array destructuring
+and `new Map(src)` / `new Set(src)` take any iterable. None has HIR of its own: each is a
+`for...of` loop built by the existing statement code (sema `body/consume.rs`): the checked
+source and a synthesized pattern and body go through `for_iter.rs` (`iter_source`, then
+`iter_source_loop`: the embedded loop for a direct generator call, else the protocol loop) or,
+for `Array.from` over an array, string or map, `loops.rs` `for_of`. The body is source text over
+hidden locals (`<array#N>`, `<value#N>`; `#N` numbers them per function), so pushing, mapping
+and narrowing are checked as usual:
+
+```text
+{ let <array#N> = with_capacity(0);
+  for (const <value#N> of src) { <array#N>.push(<value#N>); [if (<array#N>.length >= n) break;] }
+  <array#N> }
+```
+
+- **Spread** (`expr/spread.rs`): an array literal whose spread sources are all arrays is built
+  exactly as before (one allocation of the summed lengths, element loops). An iterable source
+  pushes from such a loop at its position (array sources are still evaluated first). A rest
+  parameter's arguments are packed into an array literal (`pack_rest`), so `f(...gen())` and
+  `Math.max(...values())` need nothing else. Mistyped values (`[...numbers()]` as `string[]`)
+  are reported once, without the loop.
+- **`Array.from(src)`** collects; **`Array.from(src, f)`** checks `f` against `(T, i64) => ?`
+  (its result and error types inferred) and pushes `f(value, i)`; a throw from `f` leaves the
+  loop, which closes the iterator, as JS's `IteratorClose`.
+- **Destructuring** (`stmt.rs` `var_decl`, `pattern_defaults.rs`, the embedded loop's binding,
+  and `loops.rs` for arrays of iterables): an array pattern over a non-array iterable takes
+  `collect(src, n)`, at most `n` values (the pattern's length; all of them with `...rest`),
+  then destructures that array with the array code (defaults, holes, rest, nested patterns,
+  the `index out of bounds` panic for a short one). Breaking at `n` closes the iterator (a
+  protocol `return()`, or the embedded generator's drop), so the iterator is closed exactly
+  when JS closes it: after the last value the pattern needs, unless it reported `done`. A
+  pattern with defaults first binds the source to a hidden `const` (a direct generator call
+  is then a generator object). `for (const [a, b] of rows())` desugars the head to
+  `const [a, b] = <value#N>` at the start of the body.
+- **`new Map(src)` / `new Set(src)`** (`expr/construct.rs`, `args.rs`): their constructors take
+  an array (`[K, V][]`, `T[]`); for the prelude's `Map` and std's `Set` an argument that is a
+  non-array iterable is collected first (`FnCx::collect_iterable_args`, consumed by the next
+  `check_call`). The constructors stay as they are.
+
+**Cost.** `bench/iter` (`run.sh 7`, LLVM release, Apple M4, best of 7): 20 × building a 5M-value
+array and summing it.
+
+| program | ms | vs spread_hand |
+|---|---|---|
+| spread_hand (`xs.push(i)` in a while loop) | 250 | 1.00 |
+| spread_gen (`[...range(n)]`) | 247 | 0.98 |
+
+The generator's state is embedded in the filling loop, so the only allocation is the array
+(grown by doubling, like the hand loop's pushes). Destructuring allocates the small array of the
+values it takes. Every other bench/ program compiles to the same object file as before this
+work, with the std at the same path, except `bench/async/all_small_stored.vlt`, whose code is
+the same but one internal glue symbol is numbered by a type id (`_Gunclaimed_171`, was `_167`):
+the prelude's two new classes intern a few types first.
+
+### Generator function expressions
+
+`function* [name](...): R { ... }` and `async function* ...` are expressions
+(`ast::ExprKind::Function`, a contract change; any other `function` expression parses and is
+an error asking for an arrow, keeping the stance that arrows are the function expression). Sema
+(`expr/gen_closure.rs`) checks one as a closure (`closure.rs`'s machinery) whose `FnDef` has
+`is_generator` (and `is_async`): its frame yields `T`, its declared result is normalized like a
+`function*` declaration's, it always escapes (the generator outlives the call), and its params
+are owned. The value's type is `(...) => R` with the body's error type as `E`; `finalize.rs`
+puts the final `E` into the `FnDef`'s result as for declarations. Lowering needed nothing new:
+a closure call runs the closure's code, which for a generator `FnDef` builds the generator
+object from the env's captures (`ctor_state`, shared with async closures).
+
+- Each generator takes its own copy of the captures when it is created (as an async closure's
+  state does), so changing a captured variable is an error, naming `shared(...)` (JS shares the
+  variable). The expression's own name is not in scope in its body (a function value cannot
+  refer to itself); a use says so. Type parameters and rest parameters are errors.
+- At module level, `const g = function* (...) { ... };` is lifted to the generator function `g`
+  (`generic_arrows.rs`, next to generic arrow constants), since module constants must be
+  constant expressions.
+
+### Iterable object literals
+
+`{ *[Symbol.iterator](): Generator<T> { ... } }` (or `[Symbol.iterator](): Iterator<T> {
+return ... }`, or `async *[Symbol.asyncIterator]()`): object literal methods parse as
+`ast::ObjectProp::Method` (a contract change). Velt's object literals are plain data, so the
+closest workable form is a literal whose *one* member is the iterator method: sema
+(`expr/object_method.rs`) makes the method a function value (a generator expression returning
+`Iterator<T, E>`, or an arrow) and the object `new __IterableObject(f)`, a prelude class
+(`std/prelude/iter.vlt`) implementing `Iterable<T, E>` by calling `f`
+(`__AsyncIterableObject` for `AsyncIterable`). Each loop calls the method again, as in JS.
+
+### Deviations
+
+- Object literals: other members next to the iterator method, `this` in it (TS: the object),
+  and any other method are errors with the fix (variables, a class implementing `Iterable<T>`,
+  or a property holding an arrow). The value is an `__IterableObject<T, E>`, not an object type.
+- Generator expressions: no assignment to captures, no recursion through the name, no type
+  parameters or rest parameters (above).
+- Spread: array sources are evaluated before the other elements (unchanged); an iterable source
+  is iterated where it stands.
+- Destructuring an iterable that has fewer values than the pattern panics like a short array
+  (JS binds `undefined`), unless the pattern gives defaults.
+- `new Set(src)` / `new Map(src)` over an iterable collect the values into an array first (one
+  extra allocation) rather than adding them one at a time; the result is the same.
+- Strings, arrays and maps as `Iterable<T>` values, `a[Symbol.iterator]()`, and the
+  `IterableIterator` family are the other half of #424 (built separately). Until then, spread
+  takes a string only through `Array.from`, which reads its characters.
 
 ## Follow-ups
 
