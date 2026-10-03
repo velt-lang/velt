@@ -59,7 +59,7 @@ impl FnLower<'_, '_> {
         let Some(ty) = self.ctor_self else { return };
         if self.base_ctor(ty).is_none() {
             let this = self.local_place(LocalId(0));
-            self.init_fields(&this, ty, 0);
+            self.init_fields(&this, ty, 0, true);
         }
     }
 
@@ -72,22 +72,37 @@ impl FnLower<'_, '_> {
         }
         let from = self.ctor_fields(def);
         let this = self.local_place(LocalId(0));
-        self.init_fields(&this, ty, from);
+        self.init_fields(&this, ty, from, false);
     }
 
     /// Store the initializer of every field of class `ty` (concrete) from index `from` on
     /// into the object `obj` points to, evaluated in the class's type context.
-    pub(super) fn init_fields(&mut self, obj: &Place, ty: TyId, from: usize) {
+    ///
+    /// `fresh`: nothing has run on the object yet (its fields are still zeroed), so the values
+    /// are plainly stored. Otherwise a base constructor ran first and may have assigned these
+    /// fields (through an overridden method): each initializer then replaces the field like
+    /// `this.f = v` does, dropping the old value (a zeroed field drops as nothing).
+    pub(super) fn init_fields(&mut self, obj: &Place, ty: TyId, from: usize, fresh: bool) {
         let TyKind::Adt(d, cargs) = self.cx.kind(ty) else {
             ice("field initializers of a non-class type")
         };
         let adt = self.cx.adt_def(d);
+        let ftys = self.cx.adt_field_tys(ty);
         let saved = std::mem::replace(&mut self.targs, cargs);
         for (i, f) in adt.fields.iter().enumerate().skip(from) {
             if let Some(def) = &f.default {
                 let v = self.consume(def);
                 let p = self.field_place(obj, ty, i as u32);
-                self.store(p, v);
+                let fty = ftys[i];
+                if fresh || !self.cx.needs_drop(fty) {
+                    self.store(p, v);
+                } else {
+                    // Store first, then drop the old value: its `dispose` may reach the object.
+                    let vt = self.cx.ty(fty);
+                    let old = self.copy_to_temp(Operand::Copy(p.clone()), vt);
+                    self.store(p, v);
+                    self.drop_glue(Place::local(old), fty);
+                }
             }
         }
         self.targs = saved;
@@ -98,7 +113,7 @@ impl FnLower<'_, '_> {
     pub(super) fn new_inits(&mut self, obj: &Place, ty: TyId, from: usize) {
         if !self.init_stack.contains(&ty) {
             self.init_stack.push(ty);
-            self.init_fields(obj, ty, from);
+            self.init_fields(obj, ty, from, false);
             self.init_stack.pop();
             return;
         }
@@ -142,7 +157,7 @@ impl FnLower<'_, '_> {
         }
         lw.init_stack.push(ty);
         lw.push_scope(ScopeKind::Block);
-        lw.init_fields(&Place::local(this), ty, from);
+        lw.init_fields(&Place::local(this), ty, from, false);
         lw.emit_return(None);
         lw.pop_scope();
         let tag = err.map_or(String::new(), |e| format!("E{}_", e.0));
