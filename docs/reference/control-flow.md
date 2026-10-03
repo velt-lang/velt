@@ -167,7 +167,9 @@ no generator object, and stopping early closes the iterator):
   closes the iterator (`return()`, a generator's `finally`) if it has more, as JS does;
   `...rest` takes the remaining values, and a default applies when the iterable ended early
   (`[x = 0]`). Also in `for...of` heads: `for (const [a, b] of rows())` over iterables of
-  iterables.
+  iterables, and nested: `const [[a, b], [c]] = [gen(), gen()]`, `for (const [k, [x, y]] of
+  map)`. A nested pattern takes its values after the outer pattern has taken all of its own
+  (JS goes element by element; only an outer generator with effects can tell).
 - **`new Map(iterable)`** of `[key, value]` pairs and **`new Set(iterable)`**
   ([velt:collections/set](../std/collections/set.md)).
 - An object literal with a `*[Symbol.iterator]()` method is an iterable

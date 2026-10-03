@@ -397,7 +397,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   length like indexing: a shorter array panics with the same `index out of bounds` message.
   A string, a map or an iterable is destructured like in JS (`const [first, ...rest] = "abc"`):
   `const [a, b] = gen()` takes two values and closes the iterator; one that has fewer values
-  panics like a short array, unless the pattern gives defaults.
+  panics like a short array, unless the pattern gives defaults. Nested patterns work too
+  (`const [[a, b], [c]] = [gen(), gen()]`).
 - **Defaults** in `const` and `let` patterns: `const { host = "localhost", port = 80 } = opts;`
   takes the default when the field is `null`, and `const [first = 0] = xs;` when the array is
   too short (where JS reads `undefined`). Defaults in `for...of` patterns and parameter patterns

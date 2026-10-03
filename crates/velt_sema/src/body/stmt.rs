@@ -266,9 +266,15 @@ impl FnCx<'_, '_> {
             mutable: v.kind == ast::VarKind::Let,
             place,
         };
-        let pat = self.pattern(&v.pattern, init.ty, ctx);
+        // `const [[a, b]] = [gen()]`: the inner pattern takes its iterable apart afterwards.
+        let split = self.split_nested(&v.pattern, init.ty);
+        let pattern = split.as_ref().map_or(&v.pattern, |(p, _)| p);
+        let pat = self.pattern(pattern, init.ty, ctx);
         self.note_inferred_bindings(&pat, &init);
         Self::push(out, S::LetPat { pat, init }, span);
+        if let Some((_, nested)) = split {
+            self.nested_decls(v.kind, nested, out);
+        }
     }
 
     fn simple_decl(

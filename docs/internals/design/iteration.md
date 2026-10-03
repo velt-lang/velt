@@ -692,6 +692,12 @@ closest workable form is a literal whose *one* member is the iterator method: se
   is iterated where it stands.
 - Destructuring an iterable that has fewer values than the pattern panics like a short array
   (JS binds `undefined`), unless the pattern gives defaults.
+- Nested array patterns over iterables (`const [[p, q], [r]] = [gen(), gen()]`, also in
+  `for...of` heads and inside object patterns) are split off (`body/nested_pattern.rs`): the
+  outer pattern binds each such value to a hidden local, and a declaration of that local takes
+  it apart afterwards. JS takes an inner pattern's values as it reaches that element of the
+  outer one; here the outer pattern takes all of its values first, which only an outer
+  generator with effects can tell apart.
 - `new Set(src)` / `new Map(src)` over an iterable collect the values into an array first (one
   extra allocation) rather than adding them one at a time; the result is the same.
 - Destructuring a string or a map builds the whole array of its characters or entries (JS

@@ -47,6 +47,7 @@ pub(crate) use generators::GenCopy;
 mod locals;
 mod loops;
 pub(crate) mod narrow;
+mod nested_pattern;
 mod pattern;
 mod pattern_defaults;
 pub(crate) mod places;
