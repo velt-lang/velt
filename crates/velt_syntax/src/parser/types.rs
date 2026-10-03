@@ -32,6 +32,21 @@ impl<'a> Parser<'a> {
     /// and generic arguments are speculative so `a as i64 < b` stays a comparison.
     pub(super) fn parse_cast_type(&mut self) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
+        if self.at_kw(Kw::Const) {
+            // `as const`: the type named `const` (sema keeps the value as it is).
+            let span = self.cur_span();
+            self.bump();
+            return Ok(TypeExpr {
+                kind: TypeExprKind::Named {
+                    path: vec![Ident {
+                        name: "const".into(),
+                        span,
+                    }],
+                    args: vec![],
+                },
+                span,
+            });
+        }
         let mut ty = if self.at_ident_like() {
             let named = self.parse_named_type_with(true)?;
             self.parse_array_suffixes(lo, named)

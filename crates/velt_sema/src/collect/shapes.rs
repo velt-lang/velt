@@ -144,7 +144,29 @@ fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldI
         default: None,
         default_throws: vec![],
         private_to: f.is_private.then_some(owner),
+        inferred_int: untyped_int_field(f),
     }
+}
+
+/// `count = 0;`: the parser took the type `i64` from the literal itself (same span).
+fn untyped_int_field(f: &ast::Field) -> bool {
+    let Some(d) = &f.default else {
+        return false;
+    };
+    let mut e = d;
+    while let ast::ExprKind::Paren(x)
+    | ast::ExprKind::Unary {
+        op: ast::UnaryOp::Neg,
+        expr: x,
+    } = &e.kind
+    {
+        e = x;
+    }
+    d.span == f.ty.span
+        && matches!(
+            e.kind,
+            ast::ExprKind::Lit(ast::Lit::Int { suffix: None, .. })
+        )
 }
 
 fn push_field(cx: &mut Ctx, fields: &mut Vec<FieldInfo>, f: FieldInfo) {

@@ -1,0 +1,2 @@
+generic_object_alias_mismatch.vlt:7:28: error: mismatched types
+the two object types have the same fields but come from different declarations (a generic type's instance and a written object type don't convert yet); use one of them for both

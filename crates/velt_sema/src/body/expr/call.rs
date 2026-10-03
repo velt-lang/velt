@@ -94,12 +94,21 @@ impl FnCx<'_, '_> {
         crate::body::defaults::param_defaults(self.cx, d);
         let async_call = self.rejects_through_promise(d);
         let f = self.cx.fn_info(d);
+        let js_numbers = self.cx.scopes[f.module].is_std && !self.cx.scopes[self.module].is_std;
+        let rest = f.source.is_some_and(|s| {
+            crate::body::defaults::fn_sig_ast(s)
+                .params
+                .last()
+                .is_some_and(|p| p.rest)
+        });
         let mut c = Callable {
             what,
             params: f.params.clone(),
             ret: f.ret,
             slot_names: f.generics.names.clone(),
             bounds: f.generics.bounds.clone(),
+            js_numbers,
+            rest,
         };
         if async_call {
             c.ret = self.async_call_ret(d, c.ret);
@@ -176,6 +185,11 @@ impl FnCx<'_, '_> {
                 return self.error_expr(span);
             }
         };
+        // `const f = (x, y = 1) => …; f(2)`: the closure's defaults fill in left-out arguments.
+        let closure = match &f.kind {
+            H::Local(l, _) => self.f.closure_consts.get(l).copied(),
+            _ => None,
+        };
         let mut ps = vec![];
         for (i, ty) in params.iter().enumerate() {
             // Function values: Copy args by value, others by pointer (the callee may modify
@@ -185,12 +199,15 @@ impl FnCx<'_, '_> {
             } else {
                 PassMode::Borrow
             };
+            let default = closure
+                .and_then(|d| self.cx.fn_info(d).params.get(i))
+                .and_then(|p| p.default.clone());
             ps.push(ParamSig {
                 name: format!("arg{i}"),
                 span,
                 ty: *ty,
                 mode,
-                default: None,
+                default,
             });
         }
         let c = Callable {
@@ -199,6 +216,8 @@ impl FnCx<'_, '_> {
             ret,
             slot_names: vec![],
             bounds: vec![],
+            js_numbers: false,
+            rest: false,
         };
         let ck = self.check_call(&c, vec![], args, None, span);
         if throws != self.cx.ty.never {

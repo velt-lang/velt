@@ -235,11 +235,7 @@ impl FnCx<'_, '_> {
             (l, r)
         };
         let (l, r) = self.mix_numbers(l, r);
-        let (l, r) = if op == B::Div {
-            self.mix_division(l, r)
-        } else {
-            (l, r)
-        };
+        let (l, r) = self.mix_ints(l, r);
         let (l, r) = self.bitwise_int32(op, l, r);
         let bop = hir_binop(op).expect("ICE: logical op in binary");
         if let Some(found) = self.param_ordering(bop, l.ty, r.ty) {

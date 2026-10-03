@@ -44,6 +44,9 @@ The language and the standard library as on native targets, single-threaded:
 - `velt:fs` uses the WASI file system (`velt run` grants the current directory);
   `velt:process` arguments and environment, `performance.now()` and `Date.now()` work on both
   targets;
+- `Math.random()` and `velt:random` work (seeded from WASI's random source, or the clocks in the
+  browser); local time is UTC (`Date`'s local getters, `velt:datetime`'s `localParts()`), since
+  there is no time zone;
 - panics print `panic: …` and exit with 101, like native programs.
 
 **Not available**: TCP, HTTP, child processes and the database drivers; the link fails with a

@@ -1,6 +1,6 @@
-//! `velt test [file|dir]`: find `*.test.vlt` files ([`discover`]), compile a generated harness per
-//! file ([`harness`]) and run it, printing `ok <name>` / `FAILED <name>` and a summary.
-//! Exit code 1 if any test failed or did not build.
+//! `velt test [file|dir]`: find `*.test.vlt` / `*.test.ts` / `*.test.tsx` files ([`discover`]),
+//! compile a generated harness per file ([`harness`]) and run it, printing `ok <name>` / `FAILED
+//! <name>` and a summary. Exit code 1 if any test failed or did not build.
 
 pub(crate) mod discover;
 mod harness;
@@ -80,8 +80,8 @@ pub fn run_all(path: Option<&Path>, release: bool, locked: bool) -> Result<Outco
     }
     if files.is_empty() {
         eprintln!(
-            "no test files (`*{}`) found under `{}`",
-            discover::TEST_SUFFIX,
+            "no test files ({}) found under `{}`",
+            discover::TEST_FILES,
             search.display()
         );
         return Ok(Outcome {
@@ -123,8 +123,11 @@ impl Run {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let Some(module_name) = name.strip_suffix(".vlt") else {
-            return Err(format!("`{}` is not a `.vlt` file", file.display()));
+        let Some(module_name) = vpm::sources::strip_source_extension(&name) else {
+            return Err(format!(
+                "`{}` is not a source file (`.vlt`, `.ts` or `.tsx`)",
+                file.display()
+            ));
         };
         println!("running {}", file.display());
         let Some(found) = self.discover(file)? else {
@@ -172,8 +175,12 @@ impl Run {
         let dir = file.parent().unwrap_or(Path::new(""));
         let opts = BuildOptions {
             input: dir.join(format!("__velt_test_{module_name}.vlt")),
+            // With its extension: `a.test.vlt` and `a.test.ts` side by side are not ambiguous here.
             root_source: Some(harness::harness_source(
-                &format!("./{module_name}"),
+                &format!(
+                    "./{}",
+                    file.file_name().unwrap_or_default().to_string_lossy()
+                ),
                 &tests,
                 async_tests,
             )),

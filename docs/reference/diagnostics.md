@@ -12,7 +12,7 @@ The wording below is stable: tests, editors and tools rely on it.
 | parse | `expected expression`, ``expected `;` ``, `expected <token>, found <token>` |
 | unknown name or type | ``cannot find `name` in this scope``, ``cannot find type `T` in this scope`` |
 | types | `mismatched types` + note `expected i64, found string` |
-| conditions | `mismatched types` + note `expected bool, found i64` + the comparison to write; ``` `\|\|` needs a `bool` or nullable left side, found `T` ``` (+ "use `??` for a default") |
+| conditions | `mismatched types` + note `expected boolean, found i64` + the comparison to write; ``` `\|\|` needs a `boolean` or nullable left side, found `T` ``` (+ "use `??` for a default") |
 | moves (promises, disposed values) | ``use of moved value `name` `` (+ where it moved) |
 | const | ``cannot assign twice to const `name` `` |
 | members | ``no field `x` on type `T` ``, ``` `x` is private ```, ``cannot assign to `x`: it is a readonly field``, ``cannot assign to `x`: it is a getter`` |

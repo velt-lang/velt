@@ -1,0 +1,24 @@
+// A script: top-level statements run in a generated `main` (docs/reference/modules.md).
+// The vector exercise from Comprehensive Rust, written as plain TypeScript.
+const UNIT = 1.0;
+
+function magnitude(vector: number[]): number {
+  return Math.sqrt(vector.reduce((acc, c) => acc + c * c, 0));
+}
+
+function normalize(vector: number[]) {
+  const mag = magnitude(vector);
+  if (mag > 0) {
+    const inverted = UNIT / mag;
+    for (let i = 0; i < vector.length; i++) {
+      vector[i] *= inverted;
+    }
+  }
+}
+
+const vec = [1.0, 2.0, 3.0];
+console.log(`Original vector: [${vec[0]}, ${vec[1]}, ${vec[2]}]`);
+console.log(`Magnitude: ${magnitude(vec)}`);
+normalize(vec);
+console.log(`Normalized vector: [${vec[0]}, ${vec[1]}, ${vec[2]}]`);
+console.log(`Magnitude: ${magnitude(vec)}`, vec.length / 2);

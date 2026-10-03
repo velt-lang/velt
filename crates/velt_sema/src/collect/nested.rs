@@ -277,6 +277,10 @@ fn bindings<'m>(p: &'m ast::Pattern, f: &mut dyn FnMut(Found<'m>)) {
                 f(Found::Bind(&r.name));
             }
         }
+        P::Default { pattern, value } => {
+            bindings(pattern, f);
+            walk_expr(value, f);
+        }
         P::Wildcard => {}
     }
 }

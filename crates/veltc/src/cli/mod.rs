@@ -270,7 +270,7 @@ fn unknown_command(sub: &str) -> String {
     }
     match suggest::closest(sub, &help::command_names()) {
         Some(c) => msg.push_str(&format!("; did you mean `velt {c}`?")),
-        None if sub.ends_with(".vlt") => {
+        None if vpm::sources::is_source_name(sub) => {
             msg.push_str(&format!(" (to run a file: `velt run {sub}`)"))
         }
         None => {}

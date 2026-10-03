@@ -12,7 +12,7 @@ use crate::cli::DocArgs;
 pub fn doc_command(args: &DocArgs) -> Result<(), String> {
     let (title, intro, inputs, default_out) = collect(args)?;
     if inputs.is_empty() {
-        return Err("no .vlt files to document".into());
+        return Err("no .vlt, .ts or .tsx files to document".into());
     }
     let out = args.output.clone().unwrap_or(default_out);
     let index = velt_doc::write_api_docs(&title, &intro, &inputs, &out)?;
@@ -110,7 +110,9 @@ mod tests {
             paths: vec![tmp.path().join("doc")],
             ..args
         };
-        assert!(doc_command(&empty).unwrap_err().contains("no .vlt files"));
+        assert!(doc_command(&empty)
+            .unwrap_err()
+            .contains("no .vlt, .ts or .tsx files"));
     }
 
     #[test]

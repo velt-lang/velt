@@ -86,7 +86,7 @@ impl FnCx<'_, '_> {
     fn report_condition(&mut self, h: &hir::Expr) {
         let found = self.cx.display(h.ty);
         let d = Diagnostic::error("mismatched types", h.span)
-            .with_note(format!("expected bool, found {found}"))
+            .with_note(format!("expected boolean, found {found}"))
             .with_note(self.compare_hint(h.ty));
         self.cx.error(d);
     }
@@ -94,7 +94,7 @@ impl FnCx<'_, '_> {
     /// How to write the test `t` was meant for.
     fn compare_hint(&mut self, t: TyId) -> String {
         if self.cx.ty.opt_payload(t).is_some() {
-            return "only `bool` and nullable objects are conditions (`0` and `\"\"` are not falsy in Velt): compare with `!== null`".into();
+            return "only `boolean` and nullable objects are conditions (`0` and `\"\"` are not falsy in Velt): compare with `!== null`".into();
         }
         let w = self.cx.widened(t);
         if w == self.cx.ty.str_ {
@@ -102,7 +102,7 @@ impl FnCx<'_, '_> {
         } else if self.cx.ty.is_numeric(w) {
             "numbers are not conditions: compare explicitly, e.g. `count !== 0`".into()
         } else {
-            "only `bool` and nullable values are conditions: compare explicitly".into()
+            "only `boolean` and nullable values are conditions: compare explicitly".into()
         }
     }
 
@@ -214,7 +214,7 @@ impl FnCx<'_, '_> {
         let found = self.cx.display(l.ty);
         let hint = self.compare_hint(l.ty);
         let d = Diagnostic::error(
-            format!("`||` needs a `bool` or nullable left side, found `{found}`"),
+            format!("`||` needs a `boolean` or nullable left side, found `{found}`"),
             l.span,
         )
         .with_note("use `??` for a default (`x ?? d` replaces only `null`)")

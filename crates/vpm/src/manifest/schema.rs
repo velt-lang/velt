@@ -173,7 +173,7 @@ pub const NATIVE: &[Field] = &[
     Field {
         key: "wasm",
         kind: Kind::Bool,
-        ty: "bool",
+        ty: "boolean",
         required: false,
         doc: "WebAssembly libraries are not supported yet: must be `false` (the default).",
     },

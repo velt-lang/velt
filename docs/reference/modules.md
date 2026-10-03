@@ -23,6 +23,32 @@
   changes no code, as in TypeScript.
 - `import "…";` loads a module without binding names.
 
+## Scripts: top-level statements
+
+A program starts at `function main()` (or `async function main()`) in its root file, or, as in
+a TS or JS file, at its top-level statements: when the root file has statements outside
+declarations, they run in order in a generated `main` (`async` when one of them awaits). A
+top-level `const` or `let` moves into that `main` with them, unless a function, class, struct,
+`extend` block or module constant refers to it; then it stays a module constant (with the
+rules of [module state](variables.md#no-mutable-module-state)).
+
+```ts
+const GREETING = "hello";               // a function uses it: a module constant
+
+function greet(name: string): string {
+  return `${GREETING} ${name}`;
+}
+
+const names = ["ann", "bob"];           // only statements use it: a local of `main`
+names.push("cy");
+for (const n of names) {
+  console.log(greet(n));
+}
+```
+
+A file with top-level statements cannot also declare `main`, and only the root file runs them:
+an imported module's top-level statements are an error (put the code in a function).
+
 ## Re-exports
 
 Re-exports make one module the public face of others: `export { x, y as z } from "…"`,
@@ -34,13 +60,46 @@ module; importers get the original declaration, and go-to-definition lands there
 
 | Specifier | Resolves to |
 |---|---|
-| `"./file"`, `"../dir/file"` | relative to the importing file, without the `.vlt` extension. A folder is a module through its `index.vlt`: `"./shapes"` is `shapes.vlt` or `shapes/index.vlt` |
+| `"./file"`, `"../dir/file"` | relative to the importing file, without the extension: `file.vlt`, `file.ts` or `file.tsx` ([TypeScript files](#typescript-files-ts-and-tsx)). A folder is a module through its `index` file: `"./shapes"` is `shapes.vlt` (or `.ts`, `.tsx`), else `shapes/index.vlt` (or `.ts`, `.tsx`) |
 | `"velt:x"` | the [standard library](../std/README.md) module `x` (`"velt:fs"`, `"velt:collections/set"`) |
-| an alias from `paths` in `package.vlt` | `"@app/*": "src/*"` makes `"@app/util/strings"` mean `src/util/strings.vlt` ([`package.vlt`](../tooling/manifest.md)) |
+| an alias from `paths` in `package.vlt` | `"@app/*": "src/*"` makes `"@app/util/strings"` mean `src/util/strings.vlt` (or `.ts`, `.tsx`), resolved like a relative import ([`package.vlt`](../tooling/manifest.md)) |
 | `"pkg"`, `"pkg/sub"` | a dependency from `package.vlt`: its `src/lib.vlt`, or `src/sub.vlt` / `src/sub/index.vlt` ([Packages](../tooling/packages.md)) |
 
 The prelude (strings, arrays, `Map`, `Math`, `JSON`, `Error`, `Comparable`, `Mutex`, `assert`,
 …) is always in scope without an import ([Built-ins](builtins.md)).
+
+## TypeScript files (`.ts` and `.tsx`)
+
+A module can be a `.vlt`, `.ts` or `.tsx` file, so a folder can be shared with a TypeScript
+project: Velt reads all three as Velt source, and `tsc` reads the `.ts` and `.tsx` files. A
+program may mix them freely, and `velt run app.ts` works like `velt run app.vlt`.
+
+- `"./util"` tries `util.vlt`, `util.ts` and `util.tsx`, then `util/index.vlt`,
+  `util/index.ts` and `util/index.tsx`. When two of the files tried together exist (`util.vlt`
+  and `util.ts`), the import is an error that names them: rename or remove one.
+- A relative import may name the extension, as TypeScript allows with
+  `allowImportingTsExtensions`: `"./util.ts"` (or `.tsx`, `.vlt`) is exactly that file. As in
+  TypeScript, `"./util.js"` means `util.ts` or `util.tsx`, and `"./card.jsx"` means `card.tsx`.
+- JSX is allowed in `.tsx` and `.vlt` files. In a `.ts` file it is an error, as in TypeScript;
+  rename the file to `.tsx`. The [JSX provider](../internals/contracts/jsx.md#choosing-the-provider) is chosen the same way for every file:
+  the `// @jsxImportSource` comment, else the package's `jsx.importSource`, else `velt:jsx`.
+- Two files in one directory whose names differ only in the extension (`dup.vlt` and
+  `dup.ts`) have the same module path: an import without an extension can't tell them apart,
+  and one program can't load both. `velt check` in a package reports every such pair under
+  `src/` and `tests/` as an error, whether or not anything imports them.
+- Declaration files (`.d.ts`) are not modules: Velt never loads them. `"./types.d"` does not
+  find `types.d.ts`, and `"./types.d.ts"` is an error.
+- TypeScript's older type assertion `<T>x` is an error in a `.ts` file (in `.tsx` and `.vlt`
+  files `<T>` starts JSX, as in a `.tsx` file): narrow with `typeof` or `instanceof`, or
+  annotate the variable's type.
+- For now, the rest of a package stays `.vlt`: standard library modules and the modules of
+  dependencies (`"pkg"`, `"pkg/sub"` → `src/lib.vlt`, `src/sub.vlt`, `src/sub/index.vlt`) are
+  `.vlt` files named without an extension, and a package's default entry is `src/main.vlt`
+  (`src/lib.vlt` for a library); an `entry` in `package.vlt` may name a `.ts` file.
+
+`velt check` in a package, `velt test` (`*.test.ts`, `*.test.tsx`), `velt fmt`, `velt doc`
+and the language server take `.ts` and `.tsx` files along with `.vlt` ones
+([tooling](../tooling/cli.md)).
 
 ## Runtime declarations
 

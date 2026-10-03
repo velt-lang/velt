@@ -123,6 +123,10 @@ impl FnCx<'_, '_> {
             let ty = match (&p.ty, from_ctx) {
                 (Some(t), _) => self.resolve(t),
                 (None, Some(t)) => t,
+                (None, None) if p.default.is_some() => {
+                    let e = p.default.as_ref().expect("ICE: checked above");
+                    crate::body::defaults::default_type(self.cx, self.module, e)
+                }
                 (None, None) => {
                     self.cx.error(
                         Diagnostic::error(format!("type annotations needed for parameter `{}`", p.name.name), p.name.span)
