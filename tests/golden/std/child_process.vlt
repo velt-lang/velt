@@ -1,6 +1,6 @@
 // Spawns this very program as the child (portable: no shell tools needed), selected by argv.
 import { exec, execSync, spawn } from "velt:child_process";
-import { argv, args, env } from "velt:process";
+import { argv, args } from "velt:process";
 import { readLineSync, readAllSync } from "velt:stdin";
 
 // Child modes (the parent passes one as the first argument).
@@ -12,7 +12,7 @@ function child(mode: string): i32 {
     return 7;
   }
   if (mode == "env") {
-    console.log(env("VELT_CHILD_VAR") ?? "unset");
+    console.log(process.env.VELT_CHILD_VAR ?? "unset");
     return 0;
   }
   if (mode == "lines") {

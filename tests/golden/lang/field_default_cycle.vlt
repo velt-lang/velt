@@ -2,22 +2,22 @@
 // Field initializers that construct each other in a cycle (#266) compile and run like
 // JavaScript: the recursion ends at run time, and what an initializer deep in the cycle throws
 // reaches the outer `new`.
-import { env, setEnv } from "velt:process";
+import { setEnv } from "velt:process";
 
 class Oops extends Error {}
 
 // The program from the issue (`random() > 2.0` there): the cycle is never taken at run time.
 class A {
-  b: B | null = env("CYCLE_NEVER") != null ? new B() : null;
+  b: B | null = process.env.CYCLE_NEVER != null ? new B() : null;
 }
 
 class B {
-  a: A | null = env("CYCLE_NEVER") == null ? new A() : null;
+  a: A | null = process.env.CYCLE_NEVER == null ? new A() : null;
 }
 
 // The recursion's run-time budget (an environment variable: module-level state is constant).
 function budget(): i64 {
-  return parseInt(env("CYCLE_BUDGET") ?? "0", 10) as i64;
+  return parseInt(process.env.CYCLE_BUDGET ?? "0", 10) as i64;
 }
 
 function setBudget(n: i64) {
@@ -49,7 +49,7 @@ class Ping {
 
 class Pong {
   ping: Ping | null = take() ? new Ping() : null;
-  n: i64 = check(env("CYCLE_FAIL") == null ? budget() + 1 : -1);
+  n: i64 = check(process.env.CYCLE_FAIL == null ? budget() + 1 : -1);
 }
 
 // With constructors and inheritance: Leaf's initializers run after Base's constructor.

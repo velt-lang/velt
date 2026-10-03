@@ -22,6 +22,10 @@ Promises behave like JavaScript's, at Rust's cost:
   task's other promises (JavaScript's single-threaded model), so no thread-safety rules apply to
   it. When it finishes, whoever awaits it resumes at once, like a JS microtask, so output order
   matches Node. Only `spawn` puts work on another core.
+- Timers of one task fire in order: by deadline, then in the order the `sleep` calls were made.
+  So the started promises (and the task itself) waiting for timers that are due together resume
+  in the order their timers were created, like `setTimeout` callbacks in Node. Timers of
+  different tasks have no order between them, since the tasks run in parallel.
 - **A dropped promise is not cancelled**: a stored promise that is never awaited still runs to
   completion (its result is dropped), and the program waits for it before exiting, like Node
   waits for pending work. A promise created outside async code (for example in a synchronous
@@ -37,6 +41,11 @@ Promises behave like JavaScript's, at Rust's cost:
   compile-time errors for promises and for values that copy one (a struct with a promise
   field); a class instance holding a promise is shared, so reading it out works. Shared
   promises, which would make these reads work as in TypeScript, are planned (#212).
+- A `using` variable may be the receiver or an argument of an async call only when the call is
+  awaited where it is made (`await r.read()`): it is disposed at the end of its block, which a
+  stored or returned promise could outlive (``an async call that keeps it must be awaited
+  here``), and it cannot go to `spawn` at all. An `await using` variable may be shared with a
+  stored promise: the block awaits its `[Symbol.asyncDispose]()` when it ends.
 - Values handed to `spawn` (and captured by an HTTP handler, sent over a channel, or settled on
   a promise from another task) go to another thread. What the program no longer references
   anywhere else moves as it is; an object it still shares is deep-copied for the task (like a
@@ -87,6 +96,92 @@ Losing promises that already started, such as calls of async functions, run to c
 a runtime operation that loses, such as `sleep(ms)` or an I/O call, is cancelled. A combinator
 kept as a value is itself a stored promise: if nobody awaits it, its own rejection is reported
 as uncaught.
+
+## Async iteration
+
+`for await (const x of src)` awaits each element of an async iterable
+([Control flow](control-flow.md#for-await)), and an `async function*`
+([async generator](functions.md#async-generators)) produces one, awaiting and yielding as it
+goes:
+
+```ts
+async function* lines(texts: string[]): AsyncGenerator<string> {
+  for (const t of texts) {
+    await sleep(1);                        // e.g. read the next line
+    yield t;
+  }
+}
+
+async function count(): Promise<i64> {
+  let n = 0;
+  for await (const line of lines(["a", "b"])) {
+    console.log(line);
+    n += 1;
+  }
+  return n;
+}
+```
+
+| Code | Behavior | Cost |
+|---|---|---|
+| `for await (const x of agen(a))` | the generator runs inside the caller, step by step | nothing: its state is part of the caller's, no allocation per item |
+| `const g = agen(a)` … `await g.next()` | an `AsyncGenerator<T>` object | one allocation for the generator; each `next()` is a direct call |
+| `for await` over an `AsyncIterable<T>` value | `next()` through the interface | one allocation per `next()` (its promise) |
+
+- Leaving a `for await` early awaits the iterator's `return()`, which runs the generator's
+  `finally` blocks (they may `await`).
+- Calls of `next()` and `return()` on a stored generator are queued like JS's: one started
+  while another is running waits for its turn, and each promise gets its own step, in call
+  order (`const p1 = g.next(); const p2 = g.next();` gives `p1` the first value whichever is
+  awaited first). A call whose promise is dropped or loses a race still takes its turn. The
+  standard library's async iterators (a channel's, a socket's) are async generators and
+  behave the same. Waiting for a turn costs nothing unless calls overlap.
+- An async generator, like a started promise, belongs to the task that created it: passing one
+  to `spawn` (or a channel) or capturing one in an async closure is a compile-time error. A task
+  dropped while it is suspended inside a `for await` drops the generator with it (cancellation:
+  its values are dropped; `finally` blocks that would `await` do not run).
+- A class whose `[Symbol.asyncIterator]` is an async generator method (`async
+  *[Symbol.asyncIterator]()`) is iterated like a direct call: its state is part of the caller's.
+
+### Std sources
+
+The standard library's streams are async iterables, so a consumer is a `for await` loop. Each
+one also keeps its pull method (`receive()`, `readLine()`, `next()`, `tick()`), and leaving a
+loop early leaves the source open where it was: a channel or a socket may have other users, so
+ending the stream is always an explicit `close()` (or `stop()`).
+
+| Source | Loop | Ends when |
+|---|---|---|
+| [`Channel<T>`](../std/channel.md) | `for await (const job of jobs)` | the channel is closed and drained |
+| [`FileReader`](../std/fs_stream.md) | `for await (const line of reader.lines())` | end of file |
+| [standard input](../std/stdin.md) | `for await (const line of lines())` | end of input |
+| [`WebSocket`](../std/websocket.md) | `for await (const msg of ws)` | the peer closed the connection |
+| [`RedisSubscriber`](../std/redis.md) | `for await (const m of sub)` | `sub.close()` |
+| [`Ticker`](../std/timers.md) | `for await (const n of ticker)` | the ticker is stopped |
+| [postgres `CopyReader`](../std/postgres.md) | `for await (const chunk of reader)` | the end of the `COPY` |
+
+```ts
+import { channel, Channel, ChannelClosed } from "velt:channel";
+
+async function produce(out: Channel<i64>): Promise<void> throws ChannelClosed {
+  for (let i = 1; i <= 3; i++) {
+    await out.send(i * i);
+  }
+  out.close();
+}
+
+async function main() {
+  const squares = channel<i64>(1);
+  const producer = spawn(produce(squares));
+  for await (const n of squares) {
+    console.log(n); // 1, 4, 9
+  }
+  await producer;
+}
+```
+
+Iterating these costs what the pull loop costs: their `[Symbol.asyncIterator]` methods are
+async generators, which a direct `for await` runs inside the caller (no allocation per value).
 
 ## Tasks
 

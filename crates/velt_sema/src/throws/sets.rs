@@ -31,12 +31,14 @@ impl Ctx<'_> {
         }
     }
 
-    /// The canonical error type of a set of thrown types (`None`: nothing is thrown).
+    /// The canonical error type of a set of thrown types (`None`: nothing is thrown). `void`
+    /// throws nothing: written as an error type it is reported where it is written (`throws
+    /// void`, `Promise<T, void>`), and substituted for a type parameter it drops out.
     pub(crate) fn error_union(&mut self, members: &[TyId]) -> Option<TyId> {
         let mut flat = vec![];
         for &m in members {
             for x in self.error_members(m) {
-                if !flat.contains(&x) {
+                if x != self.ty.unit && !flat.contains(&x) {
                     flat.push(x);
                 }
             }

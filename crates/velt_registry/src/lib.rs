@@ -25,9 +25,19 @@ use std::sync::{Arc, Mutex};
 use velt_http::{Handler, Request, Response};
 use vpm::Locations;
 
-/// Refuse a registry directory written by an older velt (packages with an `index.toml` and no
-/// `index.json`): served as is, every one of its packages would answer "no package".
+/// Refuse a registry directory the server can't serve as is: packages whose names the current
+/// rules refuse (they would be unreachable, and their owners couldn't be changed), and packages
+/// written by an older velt (an `index.toml` and no `index.json`: every one would answer "no
+/// package").
 pub fn check_dir(root: &Path) -> Result<(), String> {
+    let names = vpm::registry::name_problems(root);
+    if !names.is_empty() {
+        return Err(format!(
+            "`{}` has packages whose names this version refuses (package names are lowercase words joined by single `-` or `_`, `-` and `_` count as the same, and names starting with `rt`, `sig` or `native` are reserved):\n  {}\nrename or remove those package directories, then start the server again",
+            root.display(),
+            names.join("\n  ")
+        ));
+    }
     let old = vpm::registry::legacy_packages(root);
     if old.is_empty() {
         return Ok(());

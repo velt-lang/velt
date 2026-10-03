@@ -482,6 +482,11 @@ fn recursive_value_types_and_generic_overrides() {
     assert!(r.contains("recursive type `Cons` has infinite size"), "{r}");
     let r = err_src("struct S { next: S | null; } function main() {}");
     assert!(r.contains("recursive type `S` has infinite size"), "{r}");
+    // An interface with only fields is an object type, which lowering boxes when it contains
+    // itself (#376), also through a struct or a union.
+    ok_src(
+        "interface Node { value: i64; next?: Node; } struct Holder { n: Node; } interface Cell { kind: \"cell\"; rest: Cell | Holder; } function main() {}",
+    );
     ok_src(
         "class N { next: N | null = null; } struct Leaf { kind: \"leaf\"; } struct Node { kind: \"node\"; kids: (Leaf | Node)[]; } function main() {}",
     );

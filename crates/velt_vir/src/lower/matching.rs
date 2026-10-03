@@ -30,9 +30,9 @@ impl FnLower<'_, '_> {
     ) -> Operand {
         let sty = self.sub(scrutinee.ty);
         self.push_scope(ScopeKind::Temps);
-        // Through a counted object other owners may replace the scrutinee while an arm runs:
-        // match on a share of it (semantics stage 2, stabilize.rs).
-        let v = match self.through_counted(scrutinee, sty) {
+        // Through a counted object (or a shared cell) other owners may replace the scrutinee
+        // while an arm runs: match on a share of it (semantics stage 2, stabilize.rs).
+        let v = match self.through_counted(scrutinee, sty) || self.in_shared_cell(scrutinee) {
             true => {
                 let v = self.expr(scrutinee);
                 let s = self.share_value(v, sty);

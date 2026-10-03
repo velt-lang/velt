@@ -1,0 +1,6 @@
+6 3
+shop/clothes/shoes {"name":"shoes","parent":{"name":"clothes","parent":{"name":"shop","parent":null}}}
+11
+b
+3
+31 true {"a":{"value":21,"next":null},"b":{"value":10,"next":{"value":21,"next":null}}}

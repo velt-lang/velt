@@ -1,0 +1,10 @@
+// A type alias is checked even when nothing uses it, as in TypeScript. A generic alias that
+// applies a utility type to its own parameter is fine (it is resolved at each use).
+type Missing = Nope;
+type WrongArity = Array<number, string>;
+type Typo = Pick<{ a: number }, "b">;
+type Loop = Loop[];
+type WithoutChildren<P> = Omit<P, "children">;
+type Wrapped<Q> = WithoutChildren<Q>;
+
+function main() {}

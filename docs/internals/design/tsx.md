@@ -37,7 +37,10 @@ already solved it; add nothing JavaScript-specific that causes bugs; keep Rust-l
 Configuration, like TypeScript (`jsx: "react-jsx"` plus `jsxImportSource`):
 
 - `jsx: { importSource: "sigx" }` in `package.vlt` (a package or `velt:jsx`), or per file
-  `// @jsxImportSource sigx` on one of the first lines. The default is `velt:jsx`.
+  `/** @jsxImportSource sigx */` among the comments before the first token. The default is
+  `velt:jsx`. Velt reads the pragma from a line comment (`// @jsxImportSource sigx`) too, but
+  `tsc` reads it only from a block comment, so files shared with a client use the block form
+  (`jsx-pragma-comment` below).
 - The provider module `<source>/jsx-runtime` exports the factory functions and the `JSX`
   namespace (types). Nothing is hard-wired to one framework.
 
@@ -132,6 +135,7 @@ Accepted by `tsc`, but behaves differently:
 | Code | Construct | Severity | |
 |---|---|---|---|
 | `declare-fn` | `declare function` (a `ReferenceError` in JS) | error | |
+| `jsx-pragma-comment` | `// @jsxImportSource x`: `tsc` reads the pragma only from a block comment and builds with the client's configured provider | error (a fix: `/** @jsxImportSource x */`) | |
 | `int-division` | `/` on integer types (Velt truncates) | error | Planned |
 | `strict-null-eq` | `=== null` on values that are `undefined` in JS | error | Planned |
 | `object-in-template` | `${obj}` / `${xs}` | error | Planned |
@@ -163,14 +167,64 @@ Notes on the rules as built, against the issue's first design:
   aliases aren't checked yet.
 - `jsx-provider` reports one finding per module, at its first element.
 - `declare-fn` is valid Velt only in a package with a native library.
+- `jsx-pragma-comment` reports the pragma Velt uses: the first one in the comments before the
+  first token, in a module with JSX (Velt loads no runtime for one without). Its fix rewrites a
+  comment holding only the pragma; a line comment with other text gets the finding without one.
+
+**The oracle.** The claims are checked against the real `tsc` every night
+(`crates/velt_tscompat/tests/oracle.rs`, `gh workflow run nightly -f only=oracle`). It uses a
+pinned `typescript` (`tests/tscompat-oracle/package.json` and its lock file, installed with
+`npm ci`) and the baseline above (`tests/tscompat-oracle/tsconfig.base.json`; JSX goes to a
+stand-in provider declared in `jsx/jsx-runtime.d.ts`, so nothing is fetched). `tsc` reads each
+file through its API (`diagnostics.mjs`), which lists type errors even in a file with syntax
+errors.
+
+- Every rule has a claim: `tsc` rejects it (a sample in `rejected/<code>.ts`), `tsc` accepts it
+  but JavaScript runs it differently (`behaviour/<code>.ts`; `declare-fn` and
+  `jsx-pragma-comment` today), or `tsc` can't
+  decide it, with the reason in the test (`outside-import`: `tsc` follows relative imports
+  anywhere, and the rule is about which files the client shares; `jsx-provider`: `tsc` uses the
+  provider the client configures, the rule is that `velt:jsx` has no JavaScript runtime). A rule
+  in `velt_tscompat::RULES` without a claim and its sample fails `cargo test -p velt_tscompat`,
+  with or without Node.
+- A sample reports only its own rule, is valid Velt (`rejected/`; `veltc`'s `ts_compat` test),
+  and `tsc` reports an error on every line the lint reports. A behaviour sample compiles. One
+  that compiles only because `tsc` ignores the construct is checked with the lint's fix applied
+  too, where `tsc` must report the error the test names: `jsx-pragma-comment`'s sample names a
+  provider that doesn't exist, which `tsc` reports (TS2875) only once the pragma is a block
+  comment.
+- Every rule fixture, its `.fixed` snapshot and `clean.ts` go through `tsc` a top-level
+  declaration at a time: a declaration the lint passes must compile, and one it reports with a
+  rule `tsc` rejects must not.
+- Behaviour samples should also differ under Node while their fixes don't; that runs through
+  `tests/difftest` once the typed rules (step 2) bring samples with a `main`.
+
+Without Node or the installed packages the `tsc` part is skipped with a message, so the pull
+request gate doesn't need Node; the nightly job sets `VELT_TSC_ORACLE=1`, which makes a missing
+`tsc` a failure.
 
 Documented but not linted: `i64` past 2^53, integer `/ 0`, out-of-bounds indexing, `-0` printing,
 exit codes.
 
-**Planned:** the typed rules (a type query, `ide::type_of(span)`, on the checked program), a
-`nightly` oracle running the cases through `tsc` and Node, `tsCompat: ["src/models", …]` in
-`package.vlt` for `velt check --ts-compat` without paths, and the findings with quick fixes in
-the language server.
+**Where it runs** (step 4). `tsCompat: ["src/components", "src/models"]` in `package.vlt` lists
+the shared folders ([the manifest](../../tooling/manifest.md#tscompat)): `/`-separated, inside the
+package, each once and none inside another. `velt check --ts-compat` without paths lints their
+files; outside a package or without `tsCompat` it fails with a message pointing at the field. A
+plain `velt check` doesn't lint them: the lint stays opt-in (one flag for CI), so a package's
+check result doesn't change when a folder is shared. The language server lints an open document
+inside the folders on its own analysis (`velt_tscompat::lint_program` takes the loaded modules
+and the checker's diagnostics, so nothing is checked twice, and lints only the document, though
+its imports are judged against every loaded file in the folders), publishes the findings as
+diagnostics (code = rule, source `velt ts-compat`) and offers each fix as a preferred quick fix
+([editors](../../tooling/editors.md#code-shared-with-typescript)). It caches each package's
+folders by the manifest's text or modification time and re-analyzes the open documents when a
+manifest closes or changes on disk, or a folder appears or disappears. In both, the files in
+scope are those in the folders, found by one walk (`vpm::sources::walks_into`: no
+`node_modules/`, `target/`, hidden, symlinked or nested package directories), so an import
+leaving them is `outside-import`.
+
+**Planned:** the typed rules (a type query, `ide::type_of(span)`, on the checked program) and
+the oracle's Node runs for behaviour samples.
 
 ## Implementation plan
 

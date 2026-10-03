@@ -14,17 +14,17 @@
 
 import { IoResult, IoStatus } from "velt:io";
 
-declare function sqlite_open(path: string): IoResult<u64>;
-declare function sqlite_close(db: u64): IoStatus;
-declare function sqlite_exec(db: u64, sql: string): IoStatus;
-declare function sqlite_query(db: u64, sql: string, params: string): IoResult<string>;
-declare async function sqlite_query_async(
+declare function velt_sqlite__open(path: string): IoResult<u64>;
+declare function velt_sqlite__close(db: u64): IoStatus;
+declare function velt_sqlite__exec(db: u64, sql: string): IoStatus;
+declare function velt_sqlite__query(db: u64, sql: string, params: string): IoResult<string>;
+declare async function velt_sqlite__query_async(
   db: u64,
   sql: string,
   params: string,
 ): Promise<IoResult<string>>;
-declare function sqlite_version(): string;
-declare function sqlite_error_name(code: i32): string;
+declare function velt_sqlite__version(): string;
+declare function velt_sqlite__error_name(code: i32): string;
 
 // A failed SQLite operation. `code` is SQLite's result code name ("SQLITE_ERROR" for bad SQL,
 // "SQLITE_CONSTRAINT_UNIQUE", "SQLITE_MISUSE" for a closed database, ...).
@@ -39,20 +39,20 @@ export class SqliteError extends Error {
 
 function check(s: IoStatus) {
   if (s.code != 0) {
-    throw new SqliteError(sqlite_error_name(s.code), s.message);
+    throw new SqliteError(velt_sqlite__error_name(s.code), s.message);
   }
 }
 
 function unwrap(r: IoResult<string>): string {
   if (r.code != 0) {
-    throw new SqliteError(sqlite_error_name(r.code), r.message);
+    throw new SqliteError(velt_sqlite__error_name(r.code), r.message);
   }
   return r.value;
 }
 
 // The version of the bundled SQLite library ("3.50.4").
 export function version(): string {
-  return sqlite_version();
+  return velt_sqlite__version();
 }
 
 // An open database (a file, or ":memory:").
@@ -61,21 +61,21 @@ export class Database {
 
   // Opens (creating if needed) the database at `path`; throws `SqliteError`.
   constructor(path: string) {
-    const r = sqlite_open(path);
+    const r = velt_sqlite__open(path);
     if (r.code != 0) {
-      throw new SqliteError(sqlite_error_name(r.code), r.message);
+      throw new SqliteError(velt_sqlite__error_name(r.code), r.message);
     }
     this.handle = r.value;
   }
 
   // Runs `;`-separated statements without parameters (schema scripts).
   exec(sql: string) {
-    check(sqlite_exec(this.handle, sql));
+    check(velt_sqlite__exec(this.handle, sql));
   }
 
   // Runs one statement with `params` (a JSON array: `"[1, \"two\"]"`) and decodes its rows.
   query<T>(sql: string, params: string = "[]"): T[] {
-    return JSON.parse<T[]>(unwrap(sqlite_query(this.handle, sql, params)));
+    return JSON.parse<T[]>(unwrap(velt_sqlite__query(this.handle, sql, params)));
   }
 
   // A copyable reference for async queries.
@@ -85,7 +85,7 @@ export class Database {
 
   // Closes the connection. Disposal cannot throw: a failed close is a panic.
   [Symbol.dispose]() {
-    const s = sqlite_close(this.handle);
+    const s = velt_sqlite__close(this.handle);
     if (s.code != 0) {
       panic(`sqlite: closing the database failed: ${s.message}`);
     }
@@ -99,7 +99,7 @@ export struct DatabaseRef {
 
   // `Database.query`, without blocking the calling task.
   async query<T>(sql: string, params: string = "[]"): Promise<T[]> {
-    const json = unwrap(await sqlite_query_async(this.handle, sql, params));
+    const json = unwrap(await velt_sqlite__query_async(this.handle, sql, params));
     return JSON.parse<T[]>(json);
   }
 }

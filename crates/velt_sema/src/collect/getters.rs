@@ -86,6 +86,7 @@ fn getter_def(
         }],
         ret,
         is_async: false,
+        is_generator: false,
         self_ty: Some(self_ty),
         captures: vec![],
         body: hir::Body {

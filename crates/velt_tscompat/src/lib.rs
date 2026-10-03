@@ -10,12 +10,34 @@
 //! This step has the rules that need only the syntax tree ([`rules`]); rules that need types
 //! come with a type query on the checked program.
 
+mod program;
 mod rules;
 
 use std::path::{Path, PathBuf};
 
 use velt_common::Span;
 use velt_syntax::ast;
+
+pub use program::{canonical, lint_program};
+
+/// The code of every rule. The `tsc` oracle (tests/oracle.rs) holds each one to its claim, so a
+/// new rule is listed here and given a sample there.
+pub const RULES: &[&str] = &[
+    "velt-number-type",
+    "bool-type",
+    "number-suffix",
+    "int-cast",
+    "struct",
+    "extend",
+    "throws",
+    "promise-error-type",
+    "interface-body",
+    "velt-import",
+    "outside-import",
+    "jsx-provider",
+    "jsx-pragma-comment",
+    "declare-fn",
+];
 
 /// How serious a [`Finding`] is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

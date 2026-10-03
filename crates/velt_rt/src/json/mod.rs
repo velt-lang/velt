@@ -6,6 +6,7 @@
 //! Everything is byte-level over UTF-8 input: no allocation while lexing except for strings that
 //! contain escapes (and for the owned strings/values handed to generated code).
 
+pub mod cycle;
 pub mod error;
 pub mod escape;
 pub mod object;

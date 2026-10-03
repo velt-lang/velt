@@ -1,0 +1,7 @@
+// A line-comment pragma: Velt reads it, `tsc` reads only the block-comment form.
+// @jsxImportSource ./_jsx_pragma
+//~^ jsx-pragma-comment
+
+export function Badge(props: { label: string }): JSX.Element {
+  return <span class="badge">{props.label}</span>;
+}

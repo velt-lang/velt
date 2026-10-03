@@ -27,8 +27,9 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
             Some(b) => {
                 for &m in &g.members {
                     let own = member_final(cx, m);
-                    if let Some(bad) = cx.error_outside(b.decl.ty, own) {
-                        bound_violation(cx, m, bad, &b.owner, b.decl.span);
+                    let allowed = super::groups::member_bound(cx, b, m);
+                    if let Some(bad) = cx.error_outside(allowed, own) {
+                        bound_violation(cx, m, bad, b);
                     }
                 }
             }
@@ -128,23 +129,36 @@ fn closure_too_early(cx: &mut Ctx, d: DefId, m: TyId) {
     );
 }
 
-fn bound_violation(cx: &mut Ctx, d: DefId, m: TyId, owner: &str, clause: Span) {
+fn bound_violation(cx: &mut Ctx, d: DefId, m: TyId, b: &super::groups::GroupBound) {
     let at = site_of(cx, d, m);
     let mn = cx.display(m);
     let name = short_name(&cx.fn_info(d).name);
-    cx.error(
-        Diagnostic::error(
-            format!(
-                "`{name}` throws `{mn}`, but `{}` does not allow it",
-                short_name(owner)
-            ),
-            at,
-        )
-        .with_label(clause, "the allowed errors are declared here")
-        .with_note(
-            "implementations and overrides may throw only what the method they implement declares",
+    let mut diag = Diagnostic::error(
+        format!(
+            "`{name}` throws `{mn}`, but `{}` does not allow it",
+            short_name(&b.owner)
         ),
+        at,
+    )
+    .with_label(b.decl.span, "the allowed errors are declared here")
+    .with_note(
+        "implementations and overrides may throw only what the method they implement declares",
     );
+    // `throws E` of a generic interface: the implementation's interface arguments choose `E`.
+    let param = b.decl.ty.filter(|t| cx.mentions_params(*t));
+    if let (Some(iface), Some(p)) = (b.iface.and_then(|i| cx.iface(i)), param) {
+        let iname = iface.name.clone();
+        let pn = match cx.ty.kind(p) {
+            crate::hir::TyKind::Param(i) => iface.generics.names.get(*i as usize).cloned(),
+            _ => None,
+        };
+        if let Some(pn) = pn {
+            diag = diag.with_note(format!(
+                "`{pn}` is a type argument of `{iname}`: implement `{iname}` with `{mn}` as `{pn}`"
+            ));
+        }
+    }
+    cx.error(diag);
 }
 
 /// An inferred group error type must not depend on type parameters.

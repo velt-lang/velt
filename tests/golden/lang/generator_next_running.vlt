@@ -1,0 +1,18 @@
+// `next()` on a generator from inside its own body stops the program (JS throws a `TypeError`:
+// "Generator is already running").
+class Holder {
+  g: Generator<i64> | null = null;
+}
+
+function* gen(s: Holder): Generator<i64> {
+  yield 1;
+  console.log(s.g?.next());
+  yield 2;
+}
+
+function main() {
+  const s = new Holder();
+  s.g = gen(s);
+  console.log(s.g?.next());
+  console.log(s.g?.next());
+}

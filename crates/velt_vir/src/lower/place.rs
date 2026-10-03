@@ -322,6 +322,9 @@ impl FnLower<'_, '_> {
     /// `place = value`: evaluate the target's indices, then the new value; drop the old one,
     /// store.
     pub(super) fn assign_expr(&mut self, place: &hir::Expr, value: &hir::Expr) -> Operand {
+        if let Some(done) = self.str_append(place, value) {
+            return done;
+        }
         let mut pre = VecDeque::new();
         self.place_indices(place, &mut pre);
         let v = self.consume(value);
@@ -394,6 +397,11 @@ impl FnLower<'_, '_> {
         place: &hir::Expr,
         value: &hir::Expr,
     ) -> Operand {
+        if op == hir::BinOp::Add {
+            if let Some(done) = self.str_append_compound(place, value) {
+                return done;
+            }
+        }
         let local = match &place.kind {
             hir::ExprKind::Local(id, _) => Some(*id),
             _ => None,

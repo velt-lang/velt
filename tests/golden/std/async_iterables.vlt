@@ -1,0 +1,82 @@
+// check: no leaks
+// std sources as async iterables: a file's lines (`FileReader.lines()`), standard input's lines
+// (`lines()` of velt:stdin, read by this program spawned as its own child) and a `Ticker`.
+// Leaving a loop early leaves the source where it was: the reader continues at the next line,
+// the ticker keeps ticking (each loop numbers its ticks from 1).
+import { openRead, openWrite } from "velt:fs_stream";
+import { remove } from "velt:fs";
+import { tmpdir } from "velt:os";
+import { uuidv4 } from "velt:uuid";
+import { exec } from "velt:child_process";
+import { argv, args } from "velt:process";
+import { lines } from "velt:stdin";
+import { Ticker } from "velt:timers";
+
+async function fileLines() {
+  const path = `${tmpdir()}/velt-lines-${uuidv4()}.txt`;
+  const w = await openWrite(path);
+  for (let i = 1; i <= 500; i++) {
+    await w.write(`line ${i}\n`);
+  }
+  await w.write("crlf\r\nno newline at end");
+  await w.close();
+
+  const r = await openRead(path);
+  let n = 0;
+  for await (const line of r.lines()) {
+    n++;
+    if (n == 3) {
+      break;
+    }
+  }
+  console.log("stopped after", n, "next:", await r.readLine());
+  let rest = 0;
+  let last = "";
+  for await (const line of r.lines()) {
+    rest++;
+    last = line;
+  }
+  console.log(rest, "more lines, last:", last);
+  r.close();
+  await remove(path);
+}
+
+// The child: numbers the lines of its standard input.
+async function numberLines(): Promise<i32> {
+  let n = 0;
+  for await (const line of lines()) {
+    n++;
+    console.log(`${n}: ${line}`);
+  }
+  console.log(`${n} lines`);
+  return 0;
+}
+
+async function ticks() {
+  const t = new Ticker(1);
+  const seen: i64[] = [];
+  for await (const n of t) {
+    seen.push(n);
+    if (n == 2) {
+      break;
+    }
+  }
+  for await (const n of t) {
+    seen.push(n);
+    if (n == 4) {
+      t.stop();
+    }
+  }
+  console.log("ticks", seen);
+}
+
+async function main(): Promise<i32> {
+  if (args().length > 0) {
+    return await numberLines();
+  }
+  await fileLines();
+  const r = await exec(argv()[0].clone(), ["child"], { input: "first\r\nsecond\n\nlast" });
+  console.log(r.stdout.trim());
+  await ticks();
+  return 0;
+}

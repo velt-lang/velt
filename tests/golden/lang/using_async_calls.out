@@ -1,0 +1,13 @@
+A read closed=false
+use A
+A read closed=false
+leaving block
+dispose A
+a
+leaving block
+lines closed
+leaving block
+async dispose B
+after block
+B query closed=true
+end

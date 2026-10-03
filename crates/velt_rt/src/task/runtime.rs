@@ -9,6 +9,7 @@
 
 use super::compiled::{Borrowed, Compiled};
 use super::{PollFn, SendPtr};
+use crate::panic::ThrowLoc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use tokio::runtime::{Handle, Runtime};
@@ -97,12 +98,16 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     let root = Compiled::from_store(poll, never_dropped, Borrowed(SendPtr(state)));
     let rt = runtime();
     // Run the root on a worker (not this thread) so its spawns take the fast local-queue path.
-    let join = rt.spawn(root);
-    if let Err(e) = rt.block_on(join) {
-        if e.is_panic() {
-            std::panic::resume_unwind(e.into_panic());
-        }
-        crate::panic::fatal("async main was cancelled");
+    // The worker that finished it hands over where its error (if any) was thrown: the caller
+    // reports it on this thread.
+    let join = rt.spawn(async move {
+        root.await;
+        ThrowLoc::current()
+    });
+    match rt.block_on(join) {
+        Ok(loc) => loc.restore(),
+        Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
+        Err(_) => crate::panic::fatal("async main was cancelled"),
     }
     crate::io::flush_stdout();
 }

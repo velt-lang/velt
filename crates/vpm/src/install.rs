@@ -121,6 +121,7 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
             }
         }
     }
+    check_native_names(&natives)?;
     if lock_changed {
         lockfile.write(&root)?;
     }
@@ -319,6 +320,22 @@ fn to_lockfile(resolution: &Resolution, root: &Path) -> Lockfile {
         })
         .collect();
     Lockfile::new(packages)
+}
+
+/// Two packages with native code whose names differ only in `-` versus `_` would share an export
+/// prefix, an init function and library file names: refused.
+fn check_native_names(natives: &BTreeMap<String, NativeLib>) -> Result<(), String> {
+    let mut seen: BTreeMap<String, &str> = BTreeMap::new();
+    for name in natives.keys() {
+        let norm = crate::manifest::normalized_name(name);
+        if let Some(other) = seen.insert(norm, name) {
+            return Err(format!(
+                "packages `{other}` and `{name}` both have native code, and their names differ only in `-` and `_`, so their native functions would share names (`velt_{}__…`); depend on only one of them",
+                crate::manifest::normalized_name(name)
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn build_graph(

@@ -238,6 +238,7 @@ impl<'a> Parser<'a> {
                             | Kw::New
                             | Kw::Await
                             | Kw::Async
+                            | Kw::Yield
                     )
             }
             _ => false,

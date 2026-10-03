@@ -1,0 +1,29 @@
+// A generator passed as an `Iterable<i64>` value: one heap object per loop, each step a
+// `next()` call through the interface and the generator's table, returning an
+// `IteratorResult`. Compare with gen_loop.vlt.
+function* range(n: i64): Generator<i64> {
+  let i = 0;
+  while (i < n) {
+    yield i;
+    i++;
+  }
+}
+
+function total(start: i64, src: Iterable<i64>): i64 {
+  let sum = start;
+  for (const x of src) {
+    sum += x;
+    if (sum >= 1000000007) {
+      sum -= 1000000007;
+    }
+  }
+  return sum;
+}
+
+function main(): void {
+  let sum = 0;
+  for (let round = 0; round < 20; round++) {
+    sum = total(sum, range(30000000));
+  }
+  console.log(sum);
+}

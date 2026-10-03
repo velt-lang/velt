@@ -10,8 +10,9 @@
 //! a note when its tools are missing. Filter with `VELT_GOLDEN=<substring>` (several separated
 //! by `,`).
 
+mod no_window;
+
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Mutex;
 
 /// Goldens that cannot run on WebAssembly: the runtime has no sockets.
@@ -27,7 +28,10 @@ fn root() -> PathBuf {
 }
 
 fn has_rust_target(triple: &str) -> bool {
-    let Ok(out) = Command::new("rustc").args(["--print", "sysroot"]).output() else {
+    let Ok(out) = crate::no_window::command("rustc")
+        .args(["--print", "sysroot"])
+        .output()
+    else {
         return false;
     };
     let sysroot = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -39,7 +43,7 @@ fn has_rust_target(triple: &str) -> bool {
 }
 
 fn runs(program: &str) -> bool {
-    Command::new(program)
+    crate::no_window::command(program)
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())
@@ -57,7 +61,7 @@ fn missing_tools(triple: &str, runner: &str) -> Option<String> {
 }
 
 fn build_runtime(root: &Path, triple: &str) {
-    let st = Command::new(env!("CARGO"))
+    let st = crate::no_window::command(env!("CARGO"))
         .args(["build", "-p", "velt_rt_wasm", "--target", triple])
         .current_dir(root)
         .status()
@@ -105,7 +109,7 @@ fn check(file: &Path, target: &str, mode: Option<&str>, work: &Path) -> Result<(
         .ok()
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0);
-    let o = Command::new(env!("CARGO_BIN_EXE_velt"))
+    let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["run", "--target", target])
         .args(mode)
         .arg(file)

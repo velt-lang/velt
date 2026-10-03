@@ -6,7 +6,10 @@ one framework; providers live in their own packages.
 
 ## Choosing the provider
 The import source of a file is, in order:
-1. a `// @jsxImportSource <source>` pragma among the file's leading comments;
+1. a `/** @jsxImportSource <source> */` pragma among the file's leading comments (the comments
+   before the first token). Velt also reads it from a line comment (`// @jsxImportSource
+   <source>`), but `tsc` reads it only from a block comment, so a file shared with a TypeScript
+   client uses the block form (`velt check --ts-compat` reports the line form);
 2. `jsx: { importSource: "<source>" }` in the package's `package.vlt` (manifest.md);
 3. `std/jsx`.
 

@@ -44,7 +44,7 @@ impl FnCx<'_, '_> {
         // The arguments run before the base constructor: `this` is usable after it.
         self.f.before_super = false;
         let this = self.this_expr(Want::BorrowMut, span);
-        let recv = self.receiver(this, Some(ctor_ty), PassMode::BorrowMut);
+        let recv = self.receiver(this, Some(ctor_ty), PassMode::BorrowMut, false);
         let mut all = vec![recv];
         all.extend(ck.args);
         self.throw_src(ThrowSrc::Call(ctor, ck.type_args.clone(), span));

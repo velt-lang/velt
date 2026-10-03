@@ -1,0 +1,105 @@
+// check: no leaks
+// Async generators (`async function*`, `async *name()` methods): each `next()` runs the body
+// to its next `yield`, awaiting what it awaits on the way. `for await` over a direct call keeps
+// the generator's state inside the caller's; a stored generator is an `AsyncGenerator<T>`
+// object, also driven by hand with `next()`. Output order matches Node.
+async function delay(x: i64): Promise<i64> {
+  await sleep(1);
+  return x;
+}
+
+async function* numbers(n: i64): AsyncGenerator<i64> {
+  for (let i = 0; i < n; i++) {
+    const v = await delay(i * 10);
+    yield v;
+  }
+}
+
+// Declared as an async iterable: a caller gets the interface value.
+async function* squares(n: i64): AsyncIterable<i64> {
+  for (let i = 1; i <= n; i++) {
+    yield i * i;
+  }
+}
+
+async function* generic<T>(xs: T[]): AsyncGenerator<T> {
+  for (const x of xs) {
+    await sleep(1);
+    yield x;
+  }
+}
+
+async function* pulses(): AsyncGenerator<void> {
+  yield;
+  await sleep(1);
+  yield;
+}
+
+async function sum(src: AsyncIterable<i64>): Promise<i64> {
+  let s = 0;
+  for await (const x of src) {
+    s += x;
+  }
+  return s;
+}
+
+class Repo {
+  items: string[];
+
+  constructor(items: string[]) {
+    this.items = items;
+  }
+
+  async *each(): AsyncGenerator<string> {
+    for (const s of this.items) {
+      await sleep(1);
+      yield s;
+    }
+  }
+
+  // An async generator as the class's async iterator: `for await (x of repo)`.
+  async *[Symbol.asyncIterator](): AsyncIterator<string> {
+    for (const s of this.items) {
+      yield s.toUpperCase();
+    }
+  }
+}
+
+async function main() {
+  for await (const x of numbers(3)) {
+    console.log("got", x);
+  }
+  const g = numbers(2);
+  for await (const x of g) {
+    console.log("stored", x);
+  }
+  const h = numbers(3);
+  const a = await h.next();
+  if (!a.done) {
+    console.log("next", a.value);
+  }
+  const b = await h.next();
+  if (!b.done) {
+    console.log("next", b.value);
+  }
+  console.log(h);
+  console.log("sum", await sum(squares(3)));
+  console.log("sum", await sum(numbers(4)));
+  for await (const s of generic(["a", "b"])) {
+    console.log("generic", s);
+  }
+  let n = 0;
+  for await (const _ of pulses()) {
+    n++;
+  }
+  console.log("pulses", n);
+  const repo = new Repo(["x", "y"]);
+  for await (const s of repo.each()) {
+    console.log("each", s);
+  }
+  for await (const s of repo) {
+    console.log("iterated", s);
+  }
+  const done = await g.next();
+  console.log("finished generator done:", done.done);
+}

@@ -1,0 +1,36 @@
+row 1
+row 2
+rows: finally
+db: closed
+after break
+first 1
+rows: finally
+db: closed
+after return, done: true
+outer in.1
+in: inner finally
+outer finally
+in: inner finally
+outer finally
+found in.1
+throwing at in.1
+in: inner finally
+outer finally
+caught stop
+row r0.1
+row r0.2
+r0: inner finally
+r1: inner finally
+r2: inner finally
+await using got 1
+await using: finally
+dispose await using
+using got 1
+using: finally
+dispose using
+dropping false Object [AsyncGenerator] {}
+dropped: finally
+dispose dropped
+dropping false Object [AsyncGenerator] {}
+dispose dropped while awaiting cleanup
+end

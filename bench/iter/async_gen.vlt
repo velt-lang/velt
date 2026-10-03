@@ -1,0 +1,27 @@
+// `for await` over a direct async generator call: the generator's state lives in the caller's
+// state (no allocation per value or for the generator), polled directly. The same values and
+// awaits as async_hand.vlt.
+async function step(i: i64): Promise<i64> {
+  return i;
+}
+
+async function* values(n: i64): AsyncGenerator<i64> {
+  let i = 0;
+  while (i < n) {
+    yield await step(i);
+    i++;
+  }
+}
+
+async function main() {
+  let sum = 0;
+  for (let round = 0; round < 20; round++) {
+    for await (const x of values(3000000)) {
+      sum += x;
+      if (sum >= 1000000007) {
+        sum -= 1000000007;
+      }
+    }
+  }
+  console.log(sum);
+}

@@ -128,6 +128,9 @@ impl<'a> Parser<'a> {
         self.bump(); // declare
         let is_async = self.eat_kw(Kw::Async);
         let sig = self.parse_fn_sig(lo, is_async)?;
+        if sig.is_generator {
+            self.error("a `declare function` cannot be a generator", sig.name.span);
+        }
         self.expect_semi()?;
         Ok(sig)
     }
@@ -139,10 +142,14 @@ impl<'a> Parser<'a> {
         Ok(FnDecl { sig, body })
     }
 
+    /// `function name(...)` or `function* name(...)` (a generator).
     fn parse_fn_sig(&mut self, lo: u32, is_async: bool) -> PResult<FnSig> {
         self.expect_kw(Kw::Function, "function")?;
+        let is_generator = self.eat(Tok::Star);
         let name = self.parse_binding_ident()?;
-        self.parse_sig_rest(lo, name, is_async)
+        let mut sig = self.parse_sig_rest(lo, name, is_async)?;
+        sig.is_generator = is_generator;
+        Ok(sig)
     }
 
     /// After the function/method name: generics, parameters, optional return type and
@@ -168,13 +175,25 @@ impl<'a> Parser<'a> {
             ret,
             throws,
             is_async,
+            is_generator: false,
             span: self.span_from(lo),
         })
     }
 
-    /// `<T, U extends A & B>` (empty when there is no `<`).
+    /// `<T, U extends A & B>` (empty when there is no `<`) of a function, method or arrow:
+    /// type parameter defaults are reported.
     pub(super) fn parse_generic_params(&mut self) -> PResult<Vec<GenericParam>> {
-        let mut out = Vec::new();
+        self.generic_params(false)
+    }
+
+    /// `<T, E = never>` of a class, struct, interface or type alias: parameters may have
+    /// defaults (`T = Default`), and a parameter without one may not follow one.
+    pub(super) fn parse_type_generic_params(&mut self) -> PResult<Vec<GenericParam>> {
+        self.generic_params(true)
+    }
+
+    fn generic_params(&mut self, defaults: bool) -> PResult<Vec<GenericParam>> {
+        let mut out: Vec<GenericParam> = Vec::new();
         if !self.eat(Tok::Lt) {
             return Ok(out);
         }
@@ -187,8 +206,18 @@ impl<'a> Parser<'a> {
                     bounds.push(self.parse_type_no_union()?);
                 }
             }
-            self.reject_type_param_default()?;
-            out.push(GenericParam { name, bounds });
+            let default = match defaults {
+                true => self.type_param_default(&out, &name)?,
+                false => {
+                    self.reject_type_param_default()?;
+                    None
+                }
+            };
+            out.push(GenericParam {
+                name,
+                bounds,
+                default,
+            });
             if !self.eat(Tok::Comma) {
                 break;
             }
@@ -221,7 +250,31 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `<T = Default>`: type parameter defaults are not supported. Reported (even while
+    /// `= Default` after a type parameter of a type declaration (`prev`: the parameters before).
+    fn type_param_default(
+        &mut self,
+        prev: &[GenericParam],
+        name: &Ident,
+    ) -> PResult<Option<TypeExpr>> {
+        if self.eat(Tok::Eq) {
+            return Ok(Some(self.parse_type()?));
+        }
+        if prev.iter().any(|g| g.default.is_some()) {
+            self.diags.push(
+                velt_common::Diagnostic::error(
+                    format!(
+                        "type parameter `{}` needs a default: it follows one that has a default",
+                        name.name
+                    ),
+                    name.span,
+                )
+                .with_note("move the parameters with defaults to the end"),
+            );
+        }
+        Ok(None)
+    }
+
+    /// `<T = Default>` on a function, method or arrow: not supported. Reported (even while
     /// speculating: a failed attempt rewinds it) and the default type skipped.
     fn reject_type_param_default(&mut self) -> PResult<()> {
         if !self.at(Tok::Eq) {
@@ -316,7 +369,7 @@ impl<'a> Parser<'a> {
     fn parse_type_alias(&mut self) -> PResult<TypeAlias> {
         self.bump(); // type
         let name = self.parse_ident()?;
-        let generics = self.parse_generic_params()?;
+        let generics = self.parse_type_generic_params()?;
         self.expect(Tok::Eq)?;
         let ty = self.parse_type()?;
         self.expect_semi()?;

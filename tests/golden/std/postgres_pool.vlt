@@ -3,7 +3,6 @@
 // schema named with a fresh UUID (connections of a pool share no temp tables), dropped at the
 // end.
 // requires-env: VELT_TEST_PG_URL
-import { env } from "velt:process";
 import { connect, createPool, Client, PgError, Pool } from "velt:postgres";
 import { uuidv4 } from "velt:uuid";
 
@@ -48,7 +47,7 @@ async function square(db: Client, n: i64): Promise<i64> {
 async function main() {
   const schema = `velt_test_${uuidv4().replaceAll("-", "")}`;
   const table = `${schema}.hits`;
-  const pool = createPool({ url: env("VELT_TEST_PG_URL") ?? "", max: 4 });
+  const pool = createPool({ url: process.env.VELT_TEST_PG_URL ?? "", max: 4 });
   await pool.batch(`CREATE SCHEMA ${schema}; CREATE TABLE ${table} (w int, i int)`);
 
   // 16 tasks share 4 connections.
@@ -97,7 +96,7 @@ async function main() {
   console.log("deleted", kept, "left", after?.n);
 
   // One client shared by spawned tasks pipelines their queries on its connection.
-  const shared = await connect(env("VELT_TEST_PG_URL") ?? "");
+  const shared = await connect(process.env.VELT_TEST_PG_URL ?? "");
   const squares: Promise<i64, PgError>[] = [];
   for (let n = 1; n <= 8; n++) {
     squares.push(spawn(square(shared, n)));

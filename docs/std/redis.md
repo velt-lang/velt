@@ -50,7 +50,9 @@ it in order, so it already works as a connection pool (there is no separate `cre
   URL, or to the server and database a client uses) and resolve once the server confirmed.
 - `RedisSubscriber` (a handle): `next(): Promise<RedisMessage | null>` (null after
   `close()`), `subscribe(channels)`, `unsubscribe(channels)`, `psubscribe(patterns)`,
-  `punsubscribe(patterns)`, `close()` (call once, from any task).
+  `punsubscribe(patterns)`, `close()` (call once, from any task). A subscriber is an
+  `AsyncIterable<RedisMessage, RedisError>`: `for await (const m of sub)` receives messages
+  until `close()`; leaving the loop early keeps the subscription.
 - `RedisMessage { channel; message; pattern: string | null }`.
 - `RedisError { code, message }`: `code` is the server's error code for error replies
   (`"WRONGTYPE"`, `"ERR"`, `"NOAUTH"`, `"WRONGPASS"`, `"EXECABORT"`, …) or an I/O code
@@ -73,11 +75,9 @@ async function main() {
 
   const sub = await subscribe(redis, ["chat"]);
   await redis.publish("chat", "hi");
-  let m = await sub.next();
-  while (m != null) {
+  for await (const m of sub) {
     console.log(`${m.channel}: ${m.message}`); // chat: hi
-    sub.close(); // the next `next()` returns null
-    m = await sub.next();
+    sub.close(); // the loop ends: the next `next()` returns null
   }
   redis.close();
 }
@@ -89,6 +89,6 @@ already sent on it throw `RedisError` "ECONNRESET" (they may have run, so they a
 later commands wait while the client reconnects with exponential backoff (50 ms doubling to 2 s,
 for up to 10 s; then they throw the connect error and the next command tries again).
 Subscribers do not reconnect. Messages are pulled with
-`next()` (there is no `for await`, and the runtime stores no callbacks). Values are UTF-8
+`next()` or `for await` (the runtime stores no callbacks). Values are UTF-8
 strings (invalid bytes read back as U+FFFD). Not available on WebAssembly.
 

@@ -1,0 +1,2 @@
+utility_types.vlt:36:35: warning: `{ label: string; size: f64 }` has no field `children` (in `Omit`)
+there is nothing to omit; TypeScript accepts this too

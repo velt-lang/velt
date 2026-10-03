@@ -5,8 +5,8 @@
 //! `velt build --emit llvm` must print IR without needing clang.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
+mod no_window;
 mod runtime_support;
 
 fn root() -> PathBuf {
@@ -99,7 +99,7 @@ fn run_golden(f: &Path, work: &Path, units: Option<usize>) -> Option<String> {
         .ok()
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0);
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_velt"));
+    let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
     cmd.args(["run", "--release", "--backend", "llvm"])
         .arg(f)
         .current_dir(work);
@@ -122,7 +122,7 @@ fn run_golden(f: &Path, work: &Path, units: Option<usize>) -> Option<String> {
 #[test]
 fn emit_llvm_prints_ir() {
     let root = root();
-    let o = Command::new(env!("CARGO_BIN_EXE_velt"))
+    let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["build", "--emit", "llvm"])
         .arg(root.join("tests/golden/m1/functions.vlt"))
         .output()

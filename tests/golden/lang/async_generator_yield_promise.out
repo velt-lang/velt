@@ -1,0 +1,12 @@
+page 1
+page 2
+caught: page 3 failed
+page 1
+page 2
+skipped: page 3 failed
+page 4
+1
+2
+3
+{ value: 'page 1', done: false }
+true

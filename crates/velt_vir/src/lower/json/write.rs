@@ -205,6 +205,12 @@ impl FnLower<'_, '_> {
             .map(|f| (f.name.clone(), is_optional(f)))
             .collect();
         let tys = self.cx.adt_field_tys(ty);
+        // A recursive object type can contain itself (`n.next = n`): report the cycle as
+        // JavaScript does instead of writing forever.
+        let recursive = self.cx.recursive_object(d);
+        if recursive {
+            self.json_enter(place);
+        }
         self.push_text(buf, "{");
         let mut sep = Sep::First;
         for (i, ((name, optional), fty)) in names.into_iter().zip(tys).enumerate() {
@@ -250,6 +256,25 @@ impl FnLower<'_, '_> {
             }
         }
         self.push_text(buf, "}");
+        if recursive {
+            self.call_rt(Rt::JsonLeave, vec![], None);
+        }
+    }
+
+    /// Mark the boxed object at `place` as being written; panic if it already is.
+    fn json_enter(&mut self, place: &Place) {
+        let ok = self.rt_u8(Rt::JsonEnter, vec![Operand::Copy(place.clone())]);
+        let (cycle, fine) = (self.new_block(), self.new_block());
+        self.branch(ok, fine, cycle);
+        self.switch_to(cycle);
+        let msg = format!(
+            "JSON.stringify: converting circular structure to JSON (an object contains itself){}",
+            self.panic_suffix()
+        );
+        let msg = self.str_lit(&msg);
+        let a = self.operand_addr(msg, Ty::Agg(super::STR_AGG));
+        self.call_rt(Rt::Panic, vec![a], None);
+        self.switch_to(fine);
     }
 
     /// The `,` before a member, as far as `sep` knows whether one was written already.

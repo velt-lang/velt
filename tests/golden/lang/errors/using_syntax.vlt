@@ -2,7 +2,7 @@
 export using top = 1;
 
 class Iter {
-  [Symbol.iterator]() {}
+  [Symbol.species]() {}
 }
 
 function main() {

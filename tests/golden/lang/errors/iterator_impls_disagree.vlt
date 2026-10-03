@@ -1,0 +1,32 @@
+// An interface method without a `throws` clause whose implementations also implement
+// `Iterator.next` (whose clause fixes each one's error type) needs them to agree on one error
+// type: a call through `Pull.next` could reach either.
+class Read extends Error {
+  constructor(msg: string) {
+    super(msg);
+  }
+}
+
+interface Pull<A> {
+  next(): IteratorResult<A>;
+}
+
+class Lines implements Iterator<string, Read>, Pull<string> {
+  next(): IteratorResult<string> throws Read {
+    throw new Read("gone");
+  }
+}
+
+class Empty implements Iterator<string>, Pull<string> {
+  next(): IteratorResult<string> {
+    return { done: true };
+  }
+}
+
+function pull(it: Pull<string>) {
+  console.log(it.next().done);
+}
+
+function main() {
+  pull(new Empty());
+}

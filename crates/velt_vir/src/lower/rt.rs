@@ -8,6 +8,7 @@ use crate::vir::Ty;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Rt {
     StrConcat,
+    StrAppend,
     StrFromI64,
     StrFromU64,
     StrFromF64,
@@ -80,6 +81,8 @@ pub(super) enum Rt {
     StrbufPushBytes,
     StrbufPushI64,
     StrbufPushU64,
+    JsonEnter,
+    JsonLeave,
     StrbufPushF64,
     StrbufPushJsonF64,
     StrbufPushBool,
@@ -120,6 +123,7 @@ impl Rt {
         let math = |s| (s, vec![F64], F64, false);
         match self {
             Rt::StrConcat => ("velt_rt_str_concat", vec![Ptr, Ptr, Ptr], Unit, false),
+            Rt::StrAppend => ("velt_rt_str_append", vec![Ptr, Ptr], Unit, false),
             Rt::StrFromI64 => ("velt_rt_str_from_i64", vec![I64, Ptr], Unit, false),
             Rt::StrFromU64 => ("velt_rt_str_from_u64", vec![U64, Ptr], Unit, false),
             Rt::StrFromF64 => ("velt_rt_str_from_f64", vec![F64, Ptr], Unit, false),
@@ -215,6 +219,8 @@ impl Rt {
             Rt::StrbufPushBytes => f("velt_rt_strbuf_push_bytes", vec![Ptr, Ptr, U64], Unit),
             Rt::StrbufPushI64 => f("velt_rt_strbuf_push_i64", vec![Ptr, I64], Unit),
             Rt::StrbufPushU64 => f("velt_rt_strbuf_push_u64", vec![Ptr, U64], Unit),
+            Rt::JsonEnter => f("velt_rt_json_enter", vec![Ptr], U8),
+            Rt::JsonLeave => f("velt_rt_json_leave", vec![], Unit),
             Rt::StrbufPushF64 => f("velt_rt_strbuf_push_f64", vec![Ptr, F64], Unit),
             Rt::StrbufPushJsonF64 => f("velt_rt_strbuf_push_json_f64", vec![Ptr, F64], Unit),
             Rt::StrbufPushBool => f("velt_rt_strbuf_push_bool", vec![Ptr, Bool], Unit),

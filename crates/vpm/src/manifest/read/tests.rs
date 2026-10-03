@@ -243,7 +243,10 @@ fn field_rules_point_at_the_value() {
         "{message}"
     );
     let (message, covered) = error(&with("dependencies: { Y: \"1\" }"));
-    assert_eq!(message, "invalid dependency name `Y`");
+    assert_eq!(
+        message,
+        "invalid dependency name `Y` (lowercase letters and digits, starting with a letter, with single `-` or `_` between words)"
+    );
     assert_eq!(covered, "Y");
     let (message, _) = error(&with("registry: \"ftp://x\""));
     assert!(
@@ -462,10 +465,10 @@ fn description_and_keywords() {
     assert_eq!(json["description"], "Fast JSON for Velt");
     assert_eq!(json["keywords"][1], "parser");
 
-    let long = "x".repeat(201);
+    let long = "x".repeat(301);
     let cases = [
         ("description: \"\"", "`description` is empty; remove the field instead", "\"\""),
-        (&*format!("description: \"{long}\""), "`description` has 201 characters; at most 200 fit on one line", &*format!("\"{long}\"")),
+        (&*format!("description: \"{long}\""), "`description` has 301 characters; at most 300 are allowed (`velt search` shows the start of a long one)", &*format!("\"{long}\"")),
         ("description: \"a\\nb\"", "`description` must be one line (no line breaks, tabs or other control characters)", "\"a\\nb\""),
         ("description: \" a\"", "`description` starts or ends with whitespace", "\" a\""),
         ("keywords: []", "`keywords` is empty; remove the field instead", "[]"),
@@ -493,6 +496,126 @@ fn description_and_keywords() {
         let (got, _) = error(&with(&format!("description: \"a{c}b\"")));
         assert!(got.contains("contains the invisible character U+"), "{got}");
     }
-    // 200 characters that are not ASCII are fine: characters, not bytes, count.
-    read(&with(&format!("description: \"{}\"", "é".repeat(200))));
+    // 300 characters that are not ASCII are fine: characters, not bytes, count.
+    read(&with(&format!("description: \"{}\"", "é".repeat(300))));
+}
+
+#[test]
+fn ts_compat_folders() {
+    let m = read(&with(
+        "tsCompat: [\"src/components\", \"src/models\", \"shared\"]",
+    ));
+    assert_eq!(m.ts_compat, ["src/components", "src/models", "shared"]);
+    let text = m.to_vlt();
+    assert!(
+        text.contains("tsCompat: [\"src/components\", \"src/models\", \"shared\"]"),
+        "{text}"
+    );
+    assert_eq!(read(&text), m);
+    assert_eq!(m.to_json()["tsCompat"][1], "src/models");
+    assert!(read(&with("")).to_json().get("tsCompat").is_none());
+    let root = std::path::Path::new("pkg");
+    assert_eq!(m.ts_compat_dirs(root)[0], root.join("src/components"));
+
+    let not_inside = |dir: &str| {
+        format!(
+            "`tsCompat` folder `{dir}` must be a `/`-separated path inside the package, relative \
+             to its root (such as `src/models`: no `.` or `..` parts, no leading or trailing `/`)"
+        )
+    };
+    let cases = [
+        (
+            "tsCompat: []",
+            "`tsCompat` is empty; remove the field instead".to_string(),
+            "[]",
+        ),
+        (
+            "tsCompat: \"src\"",
+            "`tsCompat` must be an array, not a string".into(),
+            "\"src\"",
+        ),
+        (
+            "tsCompat: [1]",
+            "`tsCompat` entries must be strings, not a number".into(),
+            "1",
+        ),
+        ("tsCompat: [\"../x\"]", not_inside("../x"), "\"../x\""),
+        ("tsCompat: [\"/abs\"]", not_inside("/abs"), "\"/abs\""),
+        ("tsCompat: [\"src/\"]", not_inside("src/"), "\"src/\""),
+        ("tsCompat: [\"./src\"]", not_inside("./src"), "\"./src\""),
+        ("tsCompat: [\"\"]", not_inside(""), "\"\""),
+        ("tsCompat: [\"C:/x\"]", not_inside("C:/x"), "\"C:/x\""),
+        (
+            "tsCompat: [\"src\\\\a\"]",
+            not_inside("src\\a"),
+            "\"src\\\\a\"",
+        ),
+        (
+            "tsCompat: [\"src/a\", \"src/a\"]",
+            "`tsCompat` lists `src/a` twice".into(),
+            "\"src/a\"",
+        ),
+        (
+            "tsCompat: [\"src\", \"src/a\"]",
+            "`src/a` is inside `src`, which `tsCompat` already lists".into(),
+            "\"src/a\"",
+        ),
+        (
+            "tsCompat: [\"src/a/b\", \"src/a\"]",
+            "`src/a` contains `src/a/b`, which `tsCompat` already lists; keep one of them".into(),
+            "\"src/a\"",
+        ),
+        // Case is ignored: these are one folder on case-insensitive file systems.
+        (
+            "tsCompat: [\"src/models\", \"src/Models/sub\"]",
+            "`src/Models/sub` is inside `src/models`, which `tsCompat` already lists".into(),
+            "\"src/Models/sub\"",
+        ),
+        (
+            "tsCompat: [\"src/Models\", \"src/models\"]",
+            "`tsCompat` lists `src/models` and `src/Models`, which differ only in case (the same \
+             folder on case-insensitive file systems); keep one of them"
+                .into(),
+            "\"src/models\"",
+        ),
+    ];
+    for (fields, message, text) in cases {
+        let (got, covered) = error(&with(fields));
+        assert_eq!(got, message, "{fields}");
+        assert_eq!(covered, text, "{fields}");
+    }
+    // Siblings sharing a prefix are different folders.
+    read(&with("tsCompat: [\"src/a\", \"src/ab\"]"));
+}
+
+#[test]
+fn missing_ts_compat_folders_are_warnings_at_their_string() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("src/models")).unwrap();
+    std::fs::write(tmp.path().join("src/file.ts"), "").unwrap();
+    let src = with("tsCompat: [\"src/models\", \"src/gone\", \"src/file.ts\"]");
+    let warnings = missing_ts_compat_dirs(FILE, &src, tmp.path());
+    let got: Vec<(String, &str)> = warnings
+        .iter()
+        .map(|d| {
+            assert_eq!(d.severity, velt_common::Severity::Warning);
+            let span = d.labels[0].span;
+            (d.message.clone(), &src[span.lo as usize..span.hi as usize])
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (
+                "`tsCompat` folder `src/gone` does not exist".to_string(),
+                "\"src/gone\""
+            ),
+            (
+                "`tsCompat` folder `src/file.ts` is not a folder".to_string(),
+                "\"src/file.ts\""
+            ),
+        ]
+    );
+    // An unreadable manifest is the reader's to report.
+    assert!(missing_ts_compat_dirs(FILE, "export const", tmp.path()).is_empty());
 }

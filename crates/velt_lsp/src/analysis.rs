@@ -2,7 +2,9 @@
 //! the [`ProgramLoader`], then run sema's IDE check (`velt_sema::ide::check_for_ide`) for the
 //! editor queries. Sema's diagnostics are shown only when loading and parsing succeeded — the same
 //! "stop after the first failing stage" policy as `velt build`, so the editor shows exactly what the
-//! compiler would — but its queries also answer on a document the parser had to recover.
+//! compiler would — but its queries also answer on a document the parser had to recover. A
+//! document in a package's `tsCompat` folders is then linted on the same modules
+//! ([`crate::ts_compat`]).
 
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -26,6 +28,8 @@ pub struct Analysis {
     pub diagnostics: Diagnostics,
     /// Sema's query tables (also for programs with errors), unless sema could not run.
     pub ide: Option<ide::Analysis>,
+    /// The TypeScript-compatibility findings in the document (none outside `tsCompat` folders).
+    pub ts_compat: Vec<velt_tscompat::Finding>,
 }
 
 impl Analysis {
@@ -61,11 +65,13 @@ impl Analysis {
     }
 }
 
-/// Analyze the document at `path` whose current text is `overlay[path]`.
+/// Analyze the document at `path` whose current text is `overlay[path]`; `ts_folders` caches the
+/// packages' `tsCompat` folders across analyses.
 pub fn analyze(
     loader: &dyn ProgramLoader,
     path: &Path,
     overlay: &HashMap<PathBuf, String>,
+    ts_folders: &mut crate::ts_compat::FolderCache,
 ) -> Analysis {
     let mut sm = SourceMap::new();
     let mut diagnostics = vec![];
@@ -84,8 +90,14 @@ pub fn analyze(
         root,
         diagnostics,
         ide: None,
+        ts_compat: vec![],
     };
     run_sema(&mut analysis);
+    let linted = catch_unwind(AssertUnwindSafe(|| {
+        crate::ts_compat::findings(&analysis, path, overlay, ts_folders)
+    }));
+    // A crash in the lint costs its findings, not the document's analysis.
+    analysis.ts_compat = linted.unwrap_or_default();
     analysis
 }
 
@@ -134,6 +146,7 @@ fn standalone(path: &Path, overlay: &HashMap<PathBuf, String>, msg: String) -> A
         root: 0,
         diagnostics,
         ide: None,
+        ts_compat: vec![],
     }
 }
 

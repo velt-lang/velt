@@ -5,7 +5,6 @@
 // Stops after VELT_TODO_SECONDS seconds if that variable is set.
 import { serve, Request, Response } from "velt:http";
 import { writeFile, readFile, exists } from "velt:fs";
-import { env } from "velt:process";
 
 struct Todo {
   id: i64;
@@ -88,7 +87,7 @@ async function main() {
     return await handle(req, s2.clone());
   });
   console.log(`todo api on http://127.0.0.1:${server.port}`);
-  const seconds = parseInt(env("VELT_TODO_SECONDS") ?? "0", 10);
+  const seconds = parseInt(process.env.VELT_TODO_SECONDS ?? "0", 10);
   await sleep(seconds > 0.0 ? (seconds * 1000.0) as i64 : 1000000000);
   server.close();
 }

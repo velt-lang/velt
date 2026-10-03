@@ -9,7 +9,8 @@
 //! - [`concat`]: `"a" + n` → a template literal;
 //! - [`exports`]: `export default` → a named export;
 //! - [`promise`]: a floating promise (a promise-typed expression statement, a compiler error) →
-//!   `await` it or `spawn` it.
+//!   `await` it or `spawn` it;
+//! - the TypeScript-compatibility findings' own fixes ([`crate::ts_compat::fixes`]).
 //!
 //! A fix that applies to several places of the document also comes as "fix all in file"
 //! ([`fix_all_like`]), and every preferred fix of the document as one `source.fixAll` action
@@ -59,6 +60,7 @@ pub fn fixes(analysis: &Analysis, lo: u32, hi: u32) -> Vec<Fix> {
         }));
     }
     out.extend(promise::fixes(analysis, lo, hi));
+    out.extend(crate::ts_compat::fixes(analysis, lo, hi));
     out
 }
 

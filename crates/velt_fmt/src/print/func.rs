@@ -27,6 +27,12 @@ impl<'a> Printer<'a> {
         let params = self.params(&sig.params, params_end);
         let ret = self.return_type(sig.ret.as_ref());
         let throws = self.throws_clause(sig.throws.as_ref());
+        // `function* name` / `*name` for generators.
+        let keyword = match (sig.is_generator, keyword) {
+            (false, k) => k.to_string(),
+            (true, "") => "*".to_string(),
+            (true, k) => format!("{}* ", k.trim_end()),
+        };
         group(cat![
             keyword,
             sig.name.name.clone(),
@@ -88,7 +94,7 @@ impl<'a> Printer<'a> {
         delimited("(", list, ")", false)
     }
 
-    /// `<T, U extends A & B>`, or nothing.
+    /// `<T, U extends A & B, E = never>`, or nothing.
     pub(super) fn generic_params(&mut self, generics: &[GenericParam]) -> Doc {
         if generics.is_empty() {
             return nil();
@@ -96,11 +102,16 @@ impl<'a> Printer<'a> {
         let docs = generics
             .iter()
             .map(|g| {
-                if g.bounds.is_empty() {
-                    return text(g.name.name.clone());
+                let head = if g.bounds.is_empty() {
+                    text(g.name.name.clone())
+                } else {
+                    let bounds = g.bounds.iter().map(|b| self.ty_no_union(b)).collect();
+                    cat![g.name.name.clone(), " extends ", join(&text(" & "), bounds)]
+                };
+                match &g.default {
+                    Some(d) => cat![head, " = ", self.ty(d)],
+                    None => head,
                 }
-                let bounds = g.bounds.iter().map(|b| self.ty_no_union(b)).collect();
-                cat![g.name.name.clone(), " extends ", join(&text(" & "), bounds)]
             })
             .collect();
         cat!["<", join(&text(", "), docs), ">"]

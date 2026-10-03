@@ -1,0 +1,15 @@
+type_param_defaults.vlt:5:9: error: type parameter `T` has a circular default
+  = note: its default needs the defaults of its own declaration again: write the type arguments out in the default
+type_param_defaults.vlt:7:13: error: type parameter `T` has a circular default
+  = note: its default needs the defaults of its own declaration again: write the type arguments out in the default
+type_param_defaults.vlt:11:13: error: the default of type parameter `X` refers to `Y`, which is declared after it
+  = note: a default may only use the type parameters declared before it (as in TypeScript)
+type_param_defaults.vlt:15:13: error: cannot find type `Nope` in this scope
+type_param_defaults.vlt:17:9: error: type parameter `T` has a circular default
+  = note: its default needs the defaults of its own declaration again: write the type arguments out in the default
+type_param_defaults.vlt:19:9: error: type parameter `U` has a circular default
+  = note: its default needs the defaults of its own declaration again: write the type arguments out in the default
+type_param_defaults.vlt:9:14: error: the default of type parameter `T` refers to itself
+  = note: a default may only use the type parameters declared before it (as in TypeScript)
+type_param_defaults.vlt:21:9: error: type parameter `T` has a circular default
+  = note: its default needs the defaults of its own declaration again: write the type arguments out in the default

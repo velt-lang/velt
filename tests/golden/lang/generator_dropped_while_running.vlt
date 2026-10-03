@@ -1,0 +1,82 @@
+// check: no leaks
+// A generator body that drops the last reference to its own generator while it runs: the
+// `next()` call keeps its receiver alive until it returns, so the body finishes its step on a
+// live generator; the generator is then closed (its `finally` runs, as for any dropped
+// generator; JS never runs it) and freed. Run under the checking allocator.
+class Holder {
+  g: Generator<i64> | null = null;
+  it: Iterator<i64> | null = null;
+}
+
+function* other(): Generator<i64> {
+  yield 100;
+}
+
+// Replaces the field holding it, while the caller runs `s.g?.next()`.
+function* viaField(s: Holder, n: i64): Generator<i64> {
+  try {
+    let k = n * 2;
+    yield 1;
+    s.g = other();
+    k += 1;
+    console.log("field replaced while running", k);
+    yield k;
+  } finally {
+    console.log("viaField: finally");
+  }
+}
+
+// The same through an interface value.
+function* viaIface(s: Holder): Generator<i64> {
+  try {
+    yield 1;
+    s.it = other();
+    console.log("interface value replaced while running");
+    yield 2;
+  } finally {
+    console.log("viaIface: finally");
+  }
+}
+
+// Clears a variable a closure assigns, while the caller runs `g?.next()` on it.
+function* viaClosure(clear: () => void, n: i64): Generator<i64> {
+  try {
+    let k = n * 2;
+    yield 1;
+    clear();
+    k += 1;
+    console.log("variable cleared while running", k);
+    yield k;
+  } finally {
+    console.log("viaClosure: finally");
+  }
+}
+
+function orNull<T>(x: T): T | null {
+  return x;
+}
+
+function main() {
+  const s = new Holder();
+  s.g = viaField(s, 20);
+  console.log(s.g?.next());
+  console.log(s.g?.next());
+  console.log(s.g?.next());
+  console.log(s.g?.next());
+  s.g = null;
+
+  s.it = viaIface(s);
+  console.log(s.it?.next());
+  console.log(s.it?.next());
+  console.log(s.it?.next());
+  s.it = null;
+
+  let g: Generator<i64> | null = null;
+  const clear = () => {
+    g = null;
+  };
+  g = orNull(viaClosure(clear, 10));
+  console.log(g?.next());
+  console.log(g?.next());
+  console.log(g?.next());
+}

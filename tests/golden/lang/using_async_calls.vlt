@@ -1,0 +1,80 @@
+// check: no leaks
+// A `using` variable can be the receiver or an argument of an async call awaited where it is
+// made (`await r.read()`, `await r.next()` on a generator), and it is still disposed at the end
+// of its block. An `await using` variable may also be shared with a stored promise: the block
+// awaits its `[Symbol.asyncDispose]()` when it ends, like JS.
+class Res {
+  n: string;
+  closed: bool = false;
+  constructor(n: string) {
+    this.n = n;
+  }
+  async read(): Promise<string> {
+    await sleep(1);
+    return `${this.n} read closed=${this.closed}`;
+  }
+  [Symbol.dispose](): void {
+    console.log(`dispose ${this.n}`);
+    this.closed = true;
+  }
+}
+
+class Conn {
+  n: string;
+  closed: bool = false;
+  constructor(n: string) {
+    this.n = n;
+  }
+  async query(gate: Promise<bool>): Promise<string> {
+    await gate;
+    return `${this.n} query closed=${this.closed}`;
+  }
+  async [Symbol.asyncDispose](): Promise<void> {
+    await sleep(1);
+    this.closed = true;
+    console.log(`async dispose ${this.n}`);
+  }
+}
+
+async function use(r: Res): Promise<string> {
+  await sleep(1);
+  return `use ${r.n}`;
+}
+
+async function* lines(): AsyncGenerator<string> {
+  try {
+    yield "a";
+    yield "b";
+  } finally {
+    console.log("lines closed");
+  }
+}
+
+async function main() {
+  {
+    using r = new Res("A");
+    console.log(await r.read());
+    console.log(await use(r));
+    console.log(await r.read());
+    console.log("leaving block");
+  }
+  {
+    using g = lines();
+    const first = await g.next();
+    console.log(first.done ? "done" : first.value);
+    console.log("leaving block");
+  }
+  let p: Promise<string> | null = null;
+  const gate = Promise.withResolvers<bool>();
+  {
+    await using c = new Conn("B");
+    p = c.query(gate.promise);
+    console.log("leaving block");
+  }
+  console.log("after block");
+  gate.resolve(true);
+  if (p != null) {
+    console.log(await p);
+  }
+  console.log("end");
+}

@@ -61,6 +61,10 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
         }
         fields.push(format!("native: {}", inline_object(parts.into_iter())));
     }
+    if !m.ts_compat.is_empty() {
+        let dirs: Vec<String> = m.ts_compat.iter().map(|d| string_lit(d)).collect();
+        fields.push(format!("tsCompat: [{}]", dirs.join(", ")));
+    }
     let text = format!(
         "{TYPES_IMPORT}\n\nexport const pkg: Package = {};\n",
         multiline_object(fields.into_iter())
@@ -116,6 +120,9 @@ pub(super) fn to_json(m: &Manifest) -> Value {
             "native".into(),
             json!({ "path": native.path, "targets": native.targets, "wasm": native.wasm }),
         );
+    }
+    if !m.ts_compat.is_empty() {
+        out.insert("tsCompat".into(), json!(m.ts_compat));
     }
     Value::Object(out)
 }

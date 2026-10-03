@@ -4,17 +4,15 @@
 //! the case with every fix applied (`VELT_BLESS=1` rewrites them). Every case also passes
 //! `velt check` (crates/veltc/tests/ts_compat.rs), so the rules only ever see valid Velt.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 
+use common::{apply_fixes, cases_dir, imports, lint_source, parse};
 use velt_common::{FileId, Span};
-use velt_syntax::ast;
 use velt_tscompat::{lint, Finding, LintModule};
 
 const ANNOTATION: &str = "//~";
-
-fn cases_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cases")
-}
 
 /// The cases, sorted.
 fn cases() -> Vec<PathBuf> {
@@ -31,55 +29,11 @@ fn cases() -> Vec<PathBuf> {
     files
 }
 
-fn parse(path: &Path, src: &str) -> ast::Module {
-    let (module, diags) = if path.extension().is_some_and(|e| e == "ts") {
-        velt_syntax::parse_ts_file(FileId(0), src)
-    } else {
-        velt_syntax::parse_file(FileId(0), src)
-    };
-    assert!(diags.is_empty(), "{}: {diags:?}", path.display());
-    module
-}
-
-/// The relative imports of `module`, resolved next to `path` like the loader does.
-fn imports(path: &Path, module: &ast::Module) -> Vec<(String, PathBuf)> {
-    let dir = path.parent().expect("a case has a directory");
-    let mut out = vec![];
-    for item in &module.items {
-        let ast::ItemKind::Import(import) = &item.kind else {
-            continue;
-        };
-        let found = ["vlt", "ts", "tsx"]
-            .iter()
-            .map(|ext| dir.join(format!("{}.{ext}", import.from)))
-            .find(|f| f.is_file());
-        if let Some(file) = found {
-            let file = file.canonicalize().expect("canonical import");
-            out.push((import.from.clone(), file));
-        }
-    }
-    out
-}
-
-/// Lint `src` as the only file in scope, with the default JSX provider unless it names one.
-fn lint_source(path: &Path, src: &str) -> Vec<Finding> {
-    let module = parse(path, src);
-    let canonical = path.canonicalize().unwrap_or(path.to_path_buf());
-    let lint_module = LintModule {
-        path: &canonical,
-        src,
-        imports: imports(path, &module),
-        default_jsx_provider: module.jsx_import_source.is_none(),
-        ast: &module,
-    };
-    lint(&[lint_module], &[canonical.as_path()])
-}
-
 /// `(line, codes)` for every line with findings (1-based lines).
 fn by_line(src: &str, findings: &[Finding]) -> Vec<(usize, Vec<String>)> {
     let mut lines: Vec<(usize, Vec<String>)> = vec![];
     for f in findings {
-        let line = src[..f.span.lo as usize].matches('\n').count() + 1;
+        let line = common::line_of(src, f.span.lo);
         match lines.last_mut() {
             Some((l, codes)) if *l == line => codes.push(f.code.to_string()),
             _ => lines.push((line, vec![f.code.to_string()])),
@@ -102,17 +56,6 @@ fn expected(src: &str) -> Vec<(usize, Vec<String>)> {
             Some((line, codes.split_whitespace().map(String::from).collect()))
         })
         .collect()
-}
-
-/// `src` with every fix applied (fixes never overlap in the cases).
-fn apply_fixes(src: &str, findings: &[Finding]) -> String {
-    let mut fixes: Vec<_> = findings.iter().filter_map(|f| f.fix.as_ref()).collect();
-    fixes.sort_by_key(|f| std::cmp::Reverse(f.span.lo));
-    let mut out = src.to_string();
-    for fix in fixes {
-        out.replace_range(fix.span.lo as usize..fix.span.hi as usize, &fix.replacement);
-    }
-    out
 }
 
 fn check_fixed(path: &Path, src: &str, findings: &[Finding]) -> Result<(), String> {
@@ -181,9 +124,52 @@ fn declare_function_is_reported() {
 
 #[test]
 fn jsx_with_a_named_provider_is_not_reported() {
-    let src = "// @jsxImportSource some-provider\n\
+    let src = "/** @jsxImportSource some-provider */\n\
                export function A(): JSX.Element { return <a />; }\n";
     assert!(lint_source(Path::new("named.tsx"), src).is_empty());
+}
+
+/// The fix of `jsx-pragma-comment` keeps the provider: Velt reads the block comment as it read
+/// the line comment.
+#[test]
+fn a_fixed_jsx_pragma_names_the_same_provider() {
+    let case = cases_dir().join("jsx_pragma_comment.tsx");
+    let src = std::fs::read_to_string(&case).expect("read case");
+    let fixed = std::fs::read_to_string(case.with_extension("fixed")).expect("read fixed");
+    let (before, after) = (parse(&case, &src), parse(&case, &fixed));
+    assert_eq!(before.jsx_import_source.as_deref(), Some("./_jsx_pragma"));
+    assert_eq!(before.jsx_import_source, after.jsx_import_source);
+    assert!(lint_source(&case, &fixed).is_empty());
+}
+
+/// Velt reads a pragma only for a module with JSX, from the comments before the first token, so
+/// the rule reports nothing elsewhere; a line comment with more than the pragma has no fix.
+#[test]
+fn only_a_pragma_velt_reads_is_reported() {
+    let codes = |src: &str| -> Vec<&str> {
+        lint_source(Path::new("p.tsx"), src)
+            .iter()
+            .map(|f| f.code)
+            .collect()
+    };
+    assert!(codes("// @jsxImportSource x\nexport const a = 1;\n").is_empty());
+    assert!(codes("/* @jsxImportSource x */\nexport const a = <b />;\n").is_empty());
+    let late = "export const a = <b />;\n// @jsxImportSource x\n";
+    assert_eq!(codes(late), ["jsx-provider"]);
+    let src = "// see the docs; @jsxImportSource x\nexport const a = <b />;\n";
+    let findings = lint_source(Path::new("p.tsx"), src);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(
+        (findings[0].code, findings[0].fix.is_none()),
+        ("jsx-pragma-comment", true)
+    );
+    let crlf = "// @jsxImportSource x\r\nexport const a = <b />;\r\n";
+    let fix = lint_source(Path::new("p.tsx"), crlf)[0]
+        .fix
+        .clone()
+        .expect("a fix");
+    assert_eq!((fix.span.lo, fix.span.hi), (0, 21));
+    assert_eq!(fix.replacement, "/** @jsxImportSource x */");
 }
 
 #[test]
