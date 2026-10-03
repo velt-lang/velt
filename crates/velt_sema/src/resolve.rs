@@ -212,6 +212,9 @@ impl Ctx<'_> {
             "Promise" if args.len() == 2 => 2,
             "Promise" => 1,
             "Result" => return Some(self.removed_result(t)),
+            n if crate::utility_types::OPERATORS.contains(&n) => {
+                return Some(self.resolve_utility(t, name, args, env))
+            }
             _ => return None,
         };
         let args: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, env)).collect();
@@ -273,7 +276,10 @@ impl Ctx<'_> {
         if Some(d) == self.prelude_adt("Record") && !self.check_record_key(args[0], t.span, None) {
             return self.ty.error;
         }
-        if is_iface {
+        if let Some(&object) = self.field_only.get(&d) {
+            // A field-only interface is an object type (`collect::field_only`).
+            self.ty.intern(TyKind::Adt(object, args))
+        } else if is_iface {
             self.ty.intern(TyKind::Dyn(d, args))
         } else {
             self.ty.intern(TyKind::Adt(d, args))

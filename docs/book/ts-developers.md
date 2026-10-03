@@ -128,17 +128,24 @@ contents.
 - **Object types are exact**: an object literal can't have extra fields, and you can't add a
   property later. Use a `Map` for dynamic keys. *Why*: every object has a fixed layout, so a
   field access is one load.
-- **Interfaces are nominal**: a class implements an interface by declaring `implements`. An
-  object literal does not satisfy an interface. Object types (`type P = { x: f64 }`) stay
-  structural.
+- **Interfaces with methods are nominal**: a class implements one by declaring `implements`,
+  and an object literal does not satisfy one. An **interface with only fields** is an object
+  type, like `type User = { … }`, so model interfaces work as in TypeScript: literals satisfy
+  them, `JSON.parse<User>` reads them, and as a bound (`<T extends HasId>`) any type with the
+  fields fits. Unlike TypeScript, a class instance is not a `User` value (it is shared by
+  reference; build a `User` from its fields), and an interface that refers to itself through a
+  field (`next?: Node`) needs an array or a class (#376).
 - Interfaces may have **default method bodies**. `extend` adds methods to any type, including
   `string`, arrays and your unions.
 - `as` converts numbers only; there are no type assertions. Narrow with `typeof`, `instanceof`,
   `==` or a discriminant instead.
 - Enums are numeric or string enums; tagged data is a discriminated union (payload enums and
   `match` don't exist).
-- Not available: `keyof`, mapped and conditional types, template literal types, utility types
-  (`Partial`, `Pick`, …), index signatures, declaration merging, `namespace`.
+- `Partial`, `Required`, `Readonly`, `Pick` and `Omit` work on concrete object types (not yet on
+  a type parameter, #350). `Required` also strips `null` from `a: T | null` fields, since
+  `a?: T` *is* `T | null`, and `Pick`/`Omit` reject a key that isn't a field.
+- Not available: `keyof`, mapped and conditional types, template literal types, the other
+  utility types (`Record` aside), index signatures, declaration merging, `namespace`.
 
 ## Classes
 
@@ -234,7 +241,7 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | `==` coerces | `==` is `===` (objects by identity, `deepEqual` for contents); both sides have the same type | — |
 | objects are shared references | the same: arrays, maps, class instances, object types and closures are references, freed when the last reference goes | — |
 | garbage collector | deterministic freeing, no pauses; `[Symbol.dispose]()`, `using`, `await using` | `weak` references (stage 3) |
-| structural typing everywhere | object types structural but exact; interfaces nominal | — |
+| structural typing everywhere | object types and interfaces with only fields structural but exact; interfaces with methods nominal | — |
 | `any`, `unknown`, type assertions | none; `as` converts numbers; `JsonValue` for dynamic data | — |
 | `catch (e: unknown)` | `e` is the exact union of what the `try` can throw | — |
 | `Promise<T>` rejects with anything | `Promise<T, E>` carries its rejection type | — |

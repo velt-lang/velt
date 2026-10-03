@@ -91,11 +91,13 @@ Decisions and their rationale, including what is still planned:
   dictionary (implemented).
 - [`unknown` for dynamic JSON](design/unknown.md): narrowing JSON values the TypeScript way
   (proposed; open questions).
+- [JavaScript string semantics](design/strings.md): UTF-16 code-unit lengths and positions over
+  WTF-8 storage with a cached UTF-16 view (decided, issue #377).
 - [Native code in packages](design/native-packages.md): a `native/` Rust crate in a package, prebuilt
   per-target binaries and the runtime function table.
 - [Data models shared with TypeScript](design/shared-models.md): field-only interfaces as object
   types, `readonly` fields in object types, `Partial`/`Required`/`Readonly`/`Pick`/`Omit`
-  (decided, issue #326).
+  (implemented, issue #326).
 - [A package manifest written in Velt](design/package-manifest.md): `package.vlt`, data-only and
   typed, replacing `velt.toml` (implemented, issue #128).
 

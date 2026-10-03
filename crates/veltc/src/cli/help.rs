@@ -304,6 +304,28 @@ pub const COMMANDS: &[CommandHelp] = &[
         ],
     },
     CommandHelp {
+        name: "login",
+        summary: "Store your token for a registry server",
+        usage: &["login <registry-url>"],
+        about: "Reads the token (from `velt registry user add` on the server) from stdin and \
+                stores it in $VELT_HOME/credentials.json, readable only by you. It is sent only \
+                to that registry, and never over plain http:// to another machine. \
+                $VELT_REGISTRY_TOKEN overrides it (for CI).",
+        options: &[],
+        examples: &[
+            ("velt login https://registry.example.com", "paste the token when asked"),
+            ("echo $TOKEN | velt login https://registry.example.com", "in a script"),
+        ],
+    },
+    CommandHelp {
+        name: "logout",
+        summary: "Forget your token for a registry server",
+        usage: &["logout <registry-url>"],
+        about: "Removes the registry's token from $VELT_HOME/credentials.json.",
+        options: &[],
+        examples: &[("velt logout https://registry.example.com", "remove its token")],
+    },
+    CommandHelp {
         name: "yank",
         summary: "Withdraw a published version (or bring it back)",
         usage: &["yank <pkg>@<version> [--undo]"],
@@ -372,7 +394,8 @@ pub const COMMANDS: &[CommandHelp] = &[
         about: "A registry with users needs a user's token for every write (publishing, yanking, \
                 owners), and only a package's owners may change it; without users anyone who \
                 can reach the server may publish. `registry user add` and `token` print the \
-                user's new token once; the user sets it as $VELT_REGISTRY_TOKEN. Removing the \
+                user's new token once; the user stores it with `velt login <url>` (or sets \
+                $VELT_REGISTRY_TOKEN in CI). Removing the \
                 last user needs --open. `registry owner` assigns owners directly (for packages \
                 that have none). The server speaks plain HTTP: beyond localhost, put it behind a \
                 TLS reverse proxy.",
@@ -439,7 +462,7 @@ const ENVIRONMENT: &[(&str, &str)] = &[
     ),
     (
         "VELT_REGISTRY_TOKEN",
-        "your registry user's token, for publish, yank and owner against a registry server",
+        "a registry token for every registry server, overriding `velt login` (for CI)",
     ),
     (
         "VELT_CA_FILE",

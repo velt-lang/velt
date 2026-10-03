@@ -2326,6 +2326,7 @@ dependencies = [
  "velt_fmt",
  "velt_http",
  "velt_syntax",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

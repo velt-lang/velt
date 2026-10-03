@@ -1,0 +1,22 @@
+// Field-only interfaces: a class instance is not one (copying would lose later writes), a type
+// without the fields doesn't satisfy one as a bound, and readonly fields can't be assigned.
+interface User { readonly id: number; name: string }
+interface HasId { id: number }
+class Admin implements User {
+  id: number = 1;
+  name: string = "a";
+}
+type Other = { key: string };
+
+function idOf<T extends HasId>(x: T): number {
+  return x.id;
+}
+
+function main() {
+  const a = new Admin();
+  const u: User = a;
+  const o: Other = { key: "k" };
+  let w: User = { id: 1, name: "w" };
+  w.id = 2;
+  console.log(u.name, idOf(o), w.id);
+}

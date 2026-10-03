@@ -96,14 +96,14 @@ registry: "https://registry.example.com",
   archive; `PUT` the same path with the archive and `X-Velt-Checksum: sha256:…`.
 - Users (additive): `<dir>/.auth/users.json` maps user names to the `sha256:` of their tokens.
   While the file exists (even listing no users), every write without `Authorization: Bearer <a
-  user's token>` (scheme case-insensitive) is 401; clients send `$VELT_REGISTRY_TOKEN`, only to
-  an `https://` registry or an `http://` one on a loopback host (`localhost`, `127.0.0.0/8`,
-  `[::1]`), and fail otherwise. Only a registry without the file is open: every write is allowed.
-  The registry's files are replaced atomically (temporary file, synced, then renamed); on Unix
-  `.auth/` is mode 0700. Server writes and the administrator's `velt registry user|owner` commands
-  hold an advisory lock on `<dir>/.lock`. Removing a user removes it from every `owners.json`.
-  Package and user names are never Windows device names (`con`, `prn`, `aux`, `nul`, `com0`–`com9`,
-  `lpt0`–`lpt9`).
+  user's token>` (scheme case-insensitive) is 401; clients send the token `velt login` stored
+  for that registry, or `$VELT_REGISTRY_TOKEN` (`cli.md`), only to an `https://` registry or an
+  `http://` one on a loopback host (`localhost`, `127.0.0.0/8`, `[::1]`), and fail otherwise.
+  Only a registry without the file is open: every write is allowed. The registry's files are
+  replaced atomically (temporary file, synced, then renamed); on Unix `.auth/` is mode 0700.
+  Server writes and the administrator's `velt registry user|owner` commands hold an advisory lock
+  on `<dir>/.lock`. Removing a user removes it from every `owners.json`. Package and user names
+  are never Windows device names (`con`, `prn`, `aux`, `nul`, `com0`–`com9`, `lpt0`–`lpt9`).
 - Owners (additive): `<dir>/<name>/owners.json` (`{ "owners": ["alice"] }`). The first user to publish
   a new package owns it (recorded before the version is stored, and taken back if storing fails).
   Writes to a package by a user who doesn't own it are 403, also when an existing package has no

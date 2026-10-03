@@ -14,6 +14,22 @@ pub fn is_url(s: &str) -> bool {
     s.starts_with("http://") || s.starts_with("https://")
 }
 
+/// `$VELT_HOME`, default `~/.velt`: the cache, the default local registry and the credentials.
+pub fn velt_home() -> Result<PathBuf, String> {
+    let var = |name: &str| {
+        std::env::var_os(name)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    };
+    match var("VELT_HOME") {
+        Some(h) => Ok(h),
+        None => var("HOME")
+            .or_else(|| var("USERPROFILE"))
+            .map(|h| h.join(".velt"))
+            .ok_or_else(|| "cannot find the home directory; set VELT_HOME".into()),
+    }
+}
+
 /// Registry and cache directories.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Locations {
@@ -42,14 +58,7 @@ impl Locations {
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from)
         };
-        let home = match var("VELT_HOME") {
-            Some(h) => h,
-            None => var("HOME")
-                .or_else(|| var("USERPROFILE"))
-                .map(|h| h.join(".velt"))
-                .ok_or("cannot find the home directory; set VELT_HOME")?,
-        };
-        let mut loc = Locations::under(&home);
+        let mut loc = Locations::under(&velt_home()?);
         if let Some(reg) = var("VELT_REGISTRY") {
             let text = reg.to_string_lossy();
             if is_url(&text) {

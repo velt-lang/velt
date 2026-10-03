@@ -370,13 +370,27 @@ impl FnCx<'_, '_> {
                         .iface(b.iface)
                         .map(|i| i.name.clone())
                         .unwrap_or_default();
-                    self.cx.error(
-                        Diagnostic::error(
-                            format!("the type `{tn}` does not implement `{bn}`"),
-                            span,
-                        )
-                        .with_note(format!("required by `{name} extends {bn}` of {}", c.what)),
-                    );
+                    let mut d = Diagnostic::error(
+                        format!("the type `{tn}` does not implement `{bn}`"),
+                        span,
+                    )
+                    .with_note(format!("required by `{name} extends {bn}` of {}", c.what));
+                    if let Some(i) = self
+                        .cx
+                        .iface(b.iface)
+                        .filter(|_| self.cx.field_only.contains_key(&b.iface))
+                    {
+                        let fields: Vec<String> = i
+                            .fields
+                            .iter()
+                            .map(|f| format!("{}: {}", f.name, self.cx.display(f.ty)))
+                            .collect();
+                        d = d.with_note(format!(
+                            "`{bn}` has only fields: a type satisfies it by having them ({})",
+                            fields.join(", ")
+                        ));
+                    }
+                    self.cx.error(d);
                 }
             }
             out.push(t);

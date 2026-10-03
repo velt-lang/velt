@@ -67,7 +67,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - `registry user add|remove|token <name> [--dir <d>] [--open]` (additive): the users of a registry
   directory (`<dir>/.auth/users.json`, token hashes only). `add` and `token` print the new token
   on stdout, once. A registry with users accepts writes only with a user's token
-  (`Authorization: Bearer $VELT_REGISTRY_TOKEN`); without the users file it is open. `remove` of
+  (`Authorization: Bearer <token>`, see `login`); without the users file it is open. `remove` of
   the last user deletes the file (opening the registry) only with `--open`. `remove` also drops
   the user from every package's owners, and reports those packages, warning about any left
   without an owner.
@@ -83,6 +83,15 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   (the newest pre-release not yanked if there is no stable one).
 - `owner list|add|remove <pkg> [<user>]` (additive): a package's owners on a registry server
   (`list` prints one per line on stdout); an error for a local registry.
+- `login <registry-url>` / `logout <registry-url>` (additive): `login` reads one line from stdin
+  (prompting on stderr when stdin is a terminal) and stores it as the token of that registry in
+  `$VELT_HOME/credentials.json`: `{"registries": {"<url>": {"token": "…"}}}`, keys with the scheme
+  and host lowercased and no trailing `/`, written atomically (temporary file, synced, renamed),
+  mode 0600 on Unix, an owner-only protected DACL on Windows; the terminal doesn't echo the
+  token. `logout` removes the entry. Writes to a registry server (`publish`, `yank`, `owner
+  add|remove`) send `$VELT_REGISTRY_TOKEN` if set, else the token stored for exactly that
+  registry, else none. A token is never sent (nor stored) for a plain `http://` URL whose host is
+  not loopback (a host part with `@`, `?`, `#` or `\` is never loopback); that is an error.
 - `search <text> [--json]` (additive): `name  version  description` lines on stdout (columns
   aligned; the description cut to the terminal's width with `…`, not cut when stdout is not a
   terminal) for the packages of the package's registry (or `$VELT_REGISTRY`) that match the text
