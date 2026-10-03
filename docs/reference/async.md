@@ -91,8 +91,7 @@ stays on the task that started it. A promise that goes to another task (`spawn(p
 `spawn(g(p))`, a channel), and a task's own result awaited through its join handle, deliver
 the value there as a transferred one: moved if the task that produced it no longer references
 it (a promise it started still may), else a copy made where it was produced, so two tasks never
-use one object (on single-threaded WebAssembly, where tasks share the one thread, it is the same
-object).
+use one object (also on single-threaded WebAssembly, where tasks share the one thread).
 
 Tasks exchange values through channels ([`velt:channel`](../std/channel.md)): typed,
 bounded or unbounded queues where `send` waits while a bounded channel is full.

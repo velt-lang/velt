@@ -14,9 +14,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
-/// Goldens that cannot run on WebAssembly: the runtime has no sockets, and on its one thread a
-/// promise's result reaches another task without a copy (`velt_rt_fut_transfer` is a no-op).
-const UNSUPPORTED: &[&str] = &["tcp_echo", "http_server", "spawn_promise_result_copied"];
+/// Goldens that cannot run on WebAssembly: the runtime has no sockets.
+const UNSUPPORTED: &[&str] = &["tcp_echo", "http_server"];
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
 
