@@ -67,9 +67,10 @@ at integer speed. The rules:
   `Math.sqrt(16)`, `const f: f64 = 1`. Next to an integer of another type, or where one is
   expected, it adapts: `let i = 0; i < xs.length` and `s.slice(0, s.length - 1)` compile as in
   JS. A declared type other than `usize` wins; otherwise both sides become `i64`, so
-  `let i = -1; i < xs.length` is `true`. A declared integer never converts implicitly: write
-  `x as f64`, and different declared integer types don't mix (`let n: i32 = 1; let m: u8 = 2;
-  n < m` is an error).
+  `let i = -1; i < xs.length` is `true`. Compound assignments adapt the same way, converting the
+  value to the target's type: `let total = 0; total += s.length`. A declared integer never
+  converts implicitly: write `x as f64`, and different declared integer types don't mix
+  (`let n: i32 = 1; let m: u8 = 2; n < m` is an error).
 - **A float index** (`xs[i]` with `i: number`, `xs[Math.floor(n / 2)]`, `xs[parseInt(s)]`) must
   be a whole number at run time; anything else panics like an index out of bounds (JS reads
   `undefined`). Indexing with a quotient directly, `xs[n / 2]`, stays an error: write

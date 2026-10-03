@@ -129,6 +129,22 @@ impl FnCx<'_, '_> {
         (self.int_as(l, target), self.int_as(r, target))
     }
 
+    /// The right operand `v` of `place op= v`, adapted like `place = place op v` would be (#421):
+    /// an inferred integer next to a float place converts to it, and two integer types adapt
+    /// when either side is inferred (`let total = 0; total += s.length`). The place keeps its
+    /// type, so the operand converts to it.
+    pub(crate) fn compound_operand(&mut self, place: &hir::Expr, v: hir::Expr) -> hir::Expr {
+        let (ty, lty) = (&self.cx.ty, place.ty);
+        if ty.is_float(lty) && self.is_inferred_int(&v) {
+            return self.int_to_float(v, lty);
+        }
+        let ints = ty.is_int(lty) && ty.is_int(v.ty) && lty != v.ty;
+        if ints && (self.is_inferred_int(&v) || self.is_inferred_int(place)) {
+            return self.int_as(v, lty);
+        }
+        v
+    }
+
     /// The integer `h` converted to integer type `t` (keeping its origin).
     pub(crate) fn int_as(&mut self, h: hir::Expr, t: TyId) -> hir::Expr {
         if h.ty == t {
