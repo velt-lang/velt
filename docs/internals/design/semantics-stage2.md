@@ -153,7 +153,9 @@ copied, so the task's assignments stay in the task. A promise is marked
 (`velt_rt_fut_transfer`): its result is transferred by the task that produces it as it finishes
 (#160); a lazy one is started first, so its inputs stay on this task. A value settled on a
 promise from another task is transferred by a promise that task drives, at its next step, after
-the settling statement released its own reference (std/prelude/promise.vlt, #263).
+the settling statement released its own reference (std/prelude/promise.vlt, #263); a value
+whose type cannot reach a counted object (`Intrinsic::NeedsTransfer`, a constant) settles at
+once, so plain replies cost no extra step.
 
 A deep copy of a class with its own `clone()` calls it when a field-by-field copy would
 duplicate a resource (a `[Symbol.dispose]` hook of its own or of a part, or a promise), so a

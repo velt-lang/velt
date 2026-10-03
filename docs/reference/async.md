@@ -216,7 +216,10 @@ async function main() {
 - A value settled on the promise's own task is the same object the awaiter gets (like JS); one
   settled from another task is transferred like a `spawn` argument, once the settling task has
   finished its current step: moved when that task no longer references it (a value made for the
-  call, `resolve(new Result(…))`), copied when it still does. (On single-threaded WebAssembly
+  call, `resolve(new Result(…))`), copied when it still does. Such a settlement lands when
+  the settling task next yields (an `await` that waits, or its end), so the awaiter wakes then. A
+  value that cannot reach an object (a number, a string, a struct of them) has nothing to
+  transfer and settles at once. (On single-threaded WebAssembly
   there is only one thread, so it is shared there too.) A promise passed on to a spawned task
   and awaited there delivers a copy when the settling task still uses the value.
 - The executor must be an arrow-function literal (``the executor of `new Promise` must be an

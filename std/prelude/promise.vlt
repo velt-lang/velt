@@ -113,8 +113,9 @@ class AbandonGuard<T, E> {
 // returned and moved to other tasks; both hold the guard. A value settled on the promise's own
 // task is shared with the awaiter, like JS. One settled from another task crosses threads, so it
 // is transferred like a `spawn` argument (moved if nothing else references it, copied if it is
-// still shared): after the settling statement has finished with it (`settleLater`), so a value
-// made just for the call moves (#263).
+// still shared): after the settling statement has finished with it (`fulfillLater`), so a value
+// made just for the call moves (#263). A value that cannot reach a counted object (a number, a
+// string) has nothing to transfer and settles at once, so the reply costs no extra step.
 type Settlers<T, E> = { resolve: (value: T) => void; reject: (reason: E) => void };
 
 function settlers<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlers<T, E> {
@@ -125,7 +126,7 @@ function settlers<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlers<T, E> 
   const guardReject = guard.clone();
   const resolve = (value: T) => {
     const here = velt_rt_task_id();
-    if (here == home || here == 0) {
+    if (here == home || here == 0 || !__intrinsic_needs_transfer(value)) {
       const v = here == home ? value : __intrinsic_transfer(value);
       guard.with((g) => forResolve.with((s) => s.settle({ status: "fulfilled", value: v })));
     } else {
@@ -134,7 +135,7 @@ function settlers<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlers<T, E> 
   };
   const reject = (reason: E) => {
     const here = velt_rt_task_id();
-    if (here == home || here == 0) {
+    if (here == home || here == 0 || !__intrinsic_needs_transfer(reason)) {
       const r = here == home ? reason : __intrinsic_transfer(reason);
       guardReject.with((g) => forReject.with((s) => s.settle({ status: "rejected", reason: r })));
     } else {

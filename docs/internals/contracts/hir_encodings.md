@@ -294,6 +294,8 @@ Maintainer-owned, like hir.rs.
   `Intrinsic::Transfer(value)` (std only, value owned, result owned, same type): the value made
   safe for another thread like a `spawn` argument — moved where nothing else references it,
   deep-copied where it is still shared (std/prelude/promise.vlt settles promises with it).
+  `Intrinsic::NeedsTransfer(value)` (std only, value borrowed and not read): a constant `bool`,
+  whether `Transfer` of a value of that type has anything to do (it can reach a counted object).
 - Lowering's representation (counted objects, boxed arrays/objects, stabilized borrows) is its
   own business (docs/internals/design/semantics-stage2.md §3); it may turn a move out of a part of a
   counted value into a share.

@@ -55,6 +55,10 @@ pub enum Intrinsic {
     /// made safe for another task (moved where this task held the only reference, deep-copied
     /// where it is still shared; velt_vir transfer.rs), like a `spawn` argument
     Transfer,
+    /// std only (std/prelude/promise.vlt): `__intrinsic_needs_transfer<T>(value: borrow T) ->
+    /// bool`, a constant: can a `T` reach a counted object, so that `Transfer` has work to do
+    /// (the value itself is not read)?
+    NeedsTransfer,
     /// f64 math: `Math.sqrt/floor/ceil/round/trunc/abs` (round = JS: half toward +inf)
     Sqrt,
     Floor,
