@@ -17,7 +17,10 @@ hidden classes and no runtime shape checks.
   runs (those of its class and of the classes between it and the next constructor up).
   Initializers may construct their own class or classes whose initializers construct it back
   (`next: Node | null = more() ? new Node() : null`); a `new` in such a cycle throws what every
-  class in the cycle's initializers throws.
+  class in the cycle's initializers throws. Before its initializer runs (for example in an
+  overridden method that a base constructor calls) a field reads as zero or empty (`0`, `false`,
+  `""`, an empty array); reading a field that holds an object there (a class instance, a `Map`) is
+  unsound today ([#349](https://github.com/velt-lang/velt/issues/349)).
   A field declared from an integer literal (`count = 0`) holds a JS number, like
   `let count = 0` ([Numbers](types.md#numbers)).
 - **Parameter properties**: `constructor(private readonly name: string, public age: i64) {}`
