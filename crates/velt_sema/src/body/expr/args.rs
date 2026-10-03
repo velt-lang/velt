@@ -12,7 +12,7 @@ use velt_syntax::ast;
 use super::ops::untyped;
 use crate::body::{FnCx, Want};
 use crate::defs::{Bound, ParamSig};
-use crate::hir::{self, PassMode, TyId, TyKind};
+use crate::hir::{self, ExprKind as H, PassMode, TyId, TyKind};
 
 /// A callable signature; `Param(i)` in its types are the callee's type parameters ("slots").
 pub(crate) struct Callable {
@@ -22,6 +22,9 @@ pub(crate) struct Callable {
     pub ret: TyId,
     pub slot_names: Vec<String>,
     pub bounds: Vec<Vec<Bound>>,
+    /// A `std/` function called from user code: a float argument for an integer parameter is
+    /// a JS number and converts like JS's `ToIntegerOrInfinity` (`xs.slice(0, xs.length / 2)`).
+    pub js_numbers: bool,
 }
 
 /// Checked arguments, the instantiated result type and the inferred type arguments.
@@ -106,6 +109,13 @@ impl FnCx<'_, '_> {
         let mut hargs = vec![];
         for (h, p) in checked.into_iter().zip(&c.params) {
             let target = self.cx.ty.subst(p.ty, &type_args);
+            let h = if c.js_numbers && self.cx.ty.is_int(target) && self.cx.ty.is_float(h.ty) {
+                // A saturating cast: truncates, NaN gives 0, ±Infinity the type's bounds.
+                let span = h.span;
+                self.mk(H::Cast(Box::new(h)), target, span)
+            } else {
+                h
+            };
             let mut h = self.coerce(h, target);
             if p.mode == PassMode::BorrowMut {
                 self.use_mutably(&mut h, "modify");

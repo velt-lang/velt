@@ -351,6 +351,11 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let usize_ = self.cx.ty.usize;
         let mut i = self.expr(index, Some(usize_), Want::Borrow);
+        // A float index is a JS number (`xs[i]` with `i: number`), except a quotient: `xs[n / 2]`
+        // is almost always a forgotten `Math.trunc`, so it stays an error below.
+        if self.cx.ty.is_float(i.ty) && self.float_division_note(&i).is_none() {
+            i = self.float_index(i);
+        }
         if self.cx.ty.is_int(i.ty) && i.ty != usize_ {
             let is = i.span;
             i = self.mk(H::Cast(Box::new(i)), usize_, is);

@@ -261,6 +261,7 @@ impl FnCx<'_, '_> {
             false => BindCtx::Elem { mutable },
         };
         let binding = self.pattern(pattern, elem, ctx);
+        self.note_inferred_bindings(&binding, &it);
         self.enter_loop(label, false);
         let b = self.block(body);
         let label = self.exit_loop().hir_label();

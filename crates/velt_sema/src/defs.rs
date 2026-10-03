@@ -204,6 +204,9 @@ pub(crate) struct FieldInfo {
     pub default_throws: Vec<ThrowSrc>,
     /// `private`: the declaring type (inherited copies keep the base class).
     pub private_to: Option<DefId>,
+    /// Declared without a type from an integer literal (`count = 0;`): reads are JS numbers
+    /// (`body::expr::numbers`).
+    pub inferred_int: bool,
 }
 
 pub(crate) struct AdtInfo<'m> {

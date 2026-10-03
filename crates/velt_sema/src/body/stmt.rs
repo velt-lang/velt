@@ -246,6 +246,7 @@ impl FnCx<'_, '_> {
             place,
         };
         let pat = self.pattern(&v.pattern, init.ty, ctx);
+        self.note_inferred_bindings(&pat, &init);
         Self::push(out, S::LetPat { pat, init }, span);
     }
 

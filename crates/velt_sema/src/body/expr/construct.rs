@@ -68,6 +68,7 @@ impl FnCx<'_, '_> {
             ret: self_ty,
             slot_names: names.names,
             bounds: names.bounds,
+            js_numbers: false,
         };
         let ck = self.check_call(&c, slots, args, self.hint(exp), span);
         if Some(d) == self.cx.prelude_adt("Record") && self.owner != Some(d) {

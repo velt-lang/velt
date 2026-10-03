@@ -81,6 +81,12 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_float(exp) && self.is_inferred_int(&h) {
             return Ok(self.int_to_float(h, exp));
         }
+        // A JS number held as an integer adapts to the integer type expected (`s.slice(0,
+        // s.length - 1)`, where `slice` takes `i64` and the length is a `usize`).
+        let inferred = self.int_origin(&h) == super::numbers::IntOrigin::Inferred;
+        if self.cx.ty.is_int(exp) && self.cx.ty.is_int(h.ty) && inferred {
+            return Ok(self.int_as(h, exp));
+        }
         Err(h)
     }
 

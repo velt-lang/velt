@@ -129,3 +129,13 @@ export function __toInt32(x: f64): i64 {
   }
   return m as i64;
 }
+
+// `xs[i]` with a float `i` (a JS number; the compiler inserts the call, `sema` `numbers.rs`): a
+// whole number indexes as usual. Anything else would read `undefined` in JS; here it panics like
+// an index out of bounds.
+export function __floatIndex(x: f64): usize {
+  if (x >= 0.0 && __intrinsic_trunc(x) == x && x < 18446744073709551616.0) {
+    return x as usize;
+  }
+  panic(`index out of bounds: the index is ${x}`);
+}
