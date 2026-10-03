@@ -1,0 +1,89 @@
+// check: no leaks
+// An async generator's errors are typed: `AsyncGenerator<T, E>` (inferred from the body when
+// not written, awaited calls included) rejects `next()` with `E`, and a `for await` over it
+// rethrows it, before or after the body's first `await`. A generator that threw is finished.
+class Oops extends Error {}
+
+class TooBig extends Error {
+  n: i64;
+
+  constructor(n: i64) {
+    super(`too big: ${n}`);
+    this.n = n;
+  }
+}
+
+async function check(n: i64): Promise<i64> throws TooBig {
+  await sleep(1);
+  if (n > 2) {
+    throw new TooBig(n);
+  }
+  return n;
+}
+
+async function* failing(after: i64): AsyncGenerator<i64, Oops> {
+  for (let i = 0; i < 10; i++) {
+    if (i == after) {
+      throw new Oops(`failed at ${i}`);
+    }
+    yield i;
+    await sleep(1);
+  }
+}
+
+async function* early(): AsyncGenerator<i64, Oops> {
+  throw new Oops("before any await");
+}
+
+// `E` is not written: it is inferred from the awaited call (`TooBig`), which `total` declares.
+async function* checked(): AsyncGenerator<i64> {
+  for (let i = 0; i < 5; i++) {
+    yield await check(i);
+  }
+}
+
+async function total(): Promise<i64> throws TooBig {
+  let s = 0;
+  for await (const x of checked()) {
+    s += x;
+  }
+  return s;
+}
+
+async function main() {
+  try {
+    for await (const x of failing(2)) {
+      console.log("failing", x);
+    }
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+  try {
+    for await (const x of early()) {
+      console.log("never", x);
+    }
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+  const g = failing(1);
+  try {
+    for await (const x of g) {
+      console.log("stored", x);
+    }
+  } catch (e) {
+    console.log("caught stored", e.message);
+  }
+  const after = await g.next();
+  console.log("after the error, done:", after.done);
+  const h = failing(0);
+  try {
+    await h.next();
+  } catch (e) {
+    console.log("next() rejected:", e.message);
+  }
+  try {
+    console.log(await total());
+  } catch (e) {
+    console.log("total failed at", e.n);
+  }
+}

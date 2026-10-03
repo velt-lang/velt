@@ -73,7 +73,7 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelif
 
 ```
 velt check [<file.vlt>] [--json] [--locked] [-v]
-velt check --ts-compat <file|dir>... [--json] [--locked] [-v]
+velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]
 ```
 
 Parses and type-checks a file with every file it imports, or the whole current package, and prints
@@ -84,8 +84,9 @@ It exits with 0 when there are no errors (warnings are allowed) and with 1 when 
   including exported functions nothing calls. `velt build` and `velt run` still require `main`.
 - In a package, `velt check` without a file checks the whole package, like `tsc` checks a
   project: every `.vlt`, `.ts` and `.tsx` module under `src/` and `tests/` (recursively,
-  skipping `target/`, `node_modules/`, hidden and symlinked directories; `.d.ts` files are not
-  modules), including `src/lib.vlt` next to `src/main.vlt`, modules nothing imports, and test
+  skipping `target/`, `node_modules/`, hidden and symlinked directories, and nested packages:
+  a directory with its own `package.vlt` is that package's, so check it there; `.d.ts` files are
+  not modules), including `src/lib.vlt` next to `src/main.vlt`, modules nothing imports, and test
   files. The entry (`package.entry`, default `src/main.vlt`) must define a valid `main`; every
   other module is checked as a library module. A library package (no configured entry and no
   `src/main.vlt`) checks `src/lib.vlt` and the rest the same way. All modules are checked
@@ -107,7 +108,8 @@ A file in the common subset of TypeScript and Velt compiles with both `tsc` and 
 behaves the same under both, so a client and a Velt server can share models, validation and
 components. `velt check --ts-compat` checks exactly the files you pass (for a directory, its
 `.vlt`, `.ts` and `.tsx` files, found as for a package), then reports what in them `tsc` would
-reject or run differently:
+reject or run differently. Without paths, it lints the folders the package's `tsCompat` lists
+in [package.vlt](manifest.md#tscompat):
 
 ```text
 $ velt check --ts-compat src/models
@@ -117,6 +119,15 @@ src/models/user.ts:3:14: error: `f64` is not a TypeScript type
   = note: ts-compat(velt-number-type)
 ```
 
+- `velt check --ts-compat` with no paths, inside a package, lints every `.vlt`, `.ts` and
+  `.tsx` file in its `tsCompat` folders, named from the current directory. Outside a package,
+  or in one without `tsCompat`, it fails and says to list the folders or name the paths; so does
+  a listed folder that doesn't exist, or folders without any source file. Explicit paths ignore
+  `tsCompat`.
+- Plain `velt check` (without `--ts-compat`) never lints, not even the `tsCompat` folders:
+  the lint is opt-in, so a package check stays the compiler's verdict and CI decides where the
+  TypeScript rules apply. The editor shows the findings live
+  ([editors](editors.md#code-shared-with-typescript)).
 - The files are checked first, together, as library modules; a file with errors of its own
   reports them and isn't linted. They must all be in one package (or none in a package): lint
   one package per run. Two files with the same module path (`dup.vlt` and `dup.ts`) are an
@@ -124,8 +135,8 @@ src/models/user.ts:3:14: error: `f64` is not a TypeScript type
 - Every finding says what TypeScript does, why Velt differs and what to write, and ends with a
   note naming its rule, `ts-compat(<code>)`. With `--json`, each finding also carries its `code`
   and, when the replacement is mechanical, a `fix`: `{"location", "replacement", "title"}`.
-- A relative import must stay among the files passed: `tsc` compiles every file a shared file
-  imports.
+- A relative import must stay among the files passed (or in the `tsCompat` folders): `tsc`
+  compiles every file a shared file imports.
 - It exits with 1 when there is an error, from the check or from the lint.
 - The rules and the subset are listed in
   [the TSX design](../internals/design/tsx.md#the-common-subset). `velt build` never runs the

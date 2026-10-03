@@ -57,8 +57,9 @@ impl<'a> Parser<'a> {
     /// Modifiers are only modifiers when another name follows, so a member may be named `static`.
     fn parse_modifiers(&mut self) -> Modifiers {
         let mut m = Modifiers::default();
-        // `async [Symbol.asyncDispose]()`: a symbol key also follows a modifier.
-        while Self::is_name(self.nth(1)) || self.nth(1) == Tok::LBracket {
+        // `async [Symbol.asyncDispose]()`: a symbol key also follows a modifier, and so does
+        // the `*` of a generator method (`static *items()`).
+        while Self::is_name(self.nth(1)) || matches!(self.nth(1), Tok::LBracket | Tok::Star) {
             let flag = match self.cur_kw() {
                 Some(Kw::Readonly) => &mut m.readonly,
                 Some(Kw::Static) => &mut m.is_static,
@@ -100,15 +101,23 @@ impl<'a> Parser<'a> {
             let (ctor, fields) = self.parse_constructor(lo, &mods)?;
             return Ok(Member::Constructor(ctor, mods.ctor_visibility(), fields));
         }
+        let star = self.at(Tok::Star).then(|| self.cur_span());
+        if star.is_some() {
+            self.bump();
+        }
         let name = self.parse_member_name()?;
         self.reject_protected(&mods, &name);
         if !self.at_method_start() {
+            if let Some(s) = star {
+                self.error("`*` marks a generator method: expected `(`", s);
+            }
             return Ok(Member::Field(self.parse_field_rest(lo, name, &mods)?));
         }
         if mods.readonly {
             self.error("`readonly` is not allowed on methods", name.span);
         }
-        let sig = self.parse_sig_rest(lo, name, mods.is_async)?;
+        let mut sig = self.parse_sig_rest(lo, name, mods.is_async)?;
+        sig.is_generator = star.is_some();
         self.check_accessor(&sig, &mods);
         let body = self.parse_block()?;
         Ok(Member::Method(Method {
@@ -157,6 +166,9 @@ impl<'a> Parser<'a> {
         }
         if mods.is_static || sig.is_async {
             self.error(format!("a {what} cannot be `static` or `async`"), span);
+        }
+        if sig.is_generator {
+            self.error(format!("a {what} cannot be a generator"), span);
         }
     }
 
@@ -252,6 +264,7 @@ impl<'a> Parser<'a> {
             ret: None,
             throws,
             is_async: false,
+            is_generator: false,
             span: self.span_from(lo),
         };
         let mut body = self.parse_block()?;
@@ -264,6 +277,14 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_interface_member(&mut self, decl: &mut InterfaceDecl) -> PResult<()> {
         let lo = self.cur_lo();
         let mods = self.parse_modifiers();
+        if self.at(Tok::Star) {
+            let span = self.cur_span();
+            self.error(
+                "interface methods cannot be generators: declare the method's return type (`Generator<T>`), and write `*name()` in the implementing class",
+                span,
+            );
+            self.bump();
+        }
         let name = self.parse_member_name()?;
         self.reject_protected(&mods, &name);
         if !self.at_method_start() {

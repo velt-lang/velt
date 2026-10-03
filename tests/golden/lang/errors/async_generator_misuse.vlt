@@ -1,0 +1,84 @@
+// Misused async generators and `for await`: `for await` outside async code, a sync `for...of`
+// over an async generator, result types of the wrong kind, a missing result type, `return`
+// with a value, `yield` in a `finally` block, a bad `[Symbol.asyncIterator]()`, iterating a
+// number, an error type the consumer does not allow, and `new` / `extends AsyncGenerator`.
+async function* nums(): AsyncGenerator<i64> {
+  yield 1;
+}
+
+function notAsync(): void {
+  for await (const x of nums()) {
+    console.log(x);
+  }
+}
+
+function* syncGen(): Generator<i64> {
+  for await (const x of nums()) {
+    yield x;
+  }
+}
+
+async function syncLoop(): Promise<void> {
+  for (const x of nums()) {
+    console.log(x);
+  }
+}
+
+async function* wrongKind(): Generator<i64> {
+  yield 1;
+}
+
+function* wrongKind2(): AsyncGenerator<i64> {
+  yield 1;
+}
+
+async function* noType() {
+  yield 1;
+}
+
+async function* withValue(): AsyncGenerator<i64> {
+  return 5;
+}
+
+async function* yieldInFinally(): AsyncGenerator<i64> {
+  try {
+    yield 1;
+  } finally {
+    yield 2;
+  }
+}
+
+class Bad {
+  [Symbol.asyncIterator](): i64[] {
+    return [1];
+  }
+}
+
+class Sub extends AsyncGenerator<i64> {}
+
+class Read extends Error {}
+class Other extends Error {}
+
+async function* reads(): AsyncGenerator<string, Read> {
+  throw new Read("disk");
+}
+
+async function consume(): Promise<void> throws Other {
+  for await (const s of reads()) {
+    console.log(s);
+  }
+}
+
+async function main() {
+  for await (const x of 5) {
+    console.log(x);
+  }
+  for await (const x of new Bad()) {
+    console.log(x);
+  }
+  const rec: Record<string, i64> = { a: 1 };
+  for await (const x of rec) {
+    console.log(x);
+  }
+  const a = new AsyncGenerator<i64>();
+}

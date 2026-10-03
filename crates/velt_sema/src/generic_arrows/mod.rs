@@ -142,6 +142,7 @@ fn arrow_function(v: &ast::VarDecl) -> Option<ast::FnDecl> {
         ret: ret.clone(),
         throws: throws.clone(),
         is_async: *is_async,
+        is_generator: false,
         span: v.span,
     };
     Some(ast::FnDecl { sig, body })

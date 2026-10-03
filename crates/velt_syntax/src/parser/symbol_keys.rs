@@ -1,7 +1,8 @@
-//! Computed member keys of well-known symbols: `[Symbol.dispose]` and `[Symbol.asyncDispose]`
-//! as method names (`[Symbol.dispose]() {}`) and in member access (`x[Symbol.dispose]()`).
-//! They become an [`Ident`] named [`SYMBOL_DISPOSE`] / [`SYMBOL_ASYNC_DISPOSE`], so later
-//! stages treat them like any other member name.
+//! Computed member keys of well-known symbols: `[Symbol.dispose]`, `[Symbol.asyncDispose]`,
+//! `[Symbol.iterator]` and `[Symbol.asyncIterator]` as method names (`[Symbol.dispose]() {}`)
+//! and in member access (`x[Symbol.dispose]()`). They become an [`Ident`] named
+//! [`SYMBOL_DISPOSE`], [`SYMBOL_ASYNC_DISPOSE`], [`SYMBOL_ITERATOR`] or
+//! [`SYMBOL_ASYNC_ITERATOR`], so later stages treat them like any other member name.
 
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
@@ -17,7 +18,8 @@ impl<'a> Parser<'a> {
             && self.nth(4) == Tok::RBracket
     }
 
-    /// `[Symbol.dispose]` / `[Symbol.asyncDispose]` (the caller checked [`Self::at_symbol_key`]).
+    /// `[Symbol.dispose]`, `[Symbol.asyncDispose]`, `[Symbol.iterator]` or
+    /// `[Symbol.asyncIterator]` (the caller checked [`Self::at_symbol_key`]).
     pub(super) fn parse_symbol_key(&mut self) -> PResult<Ident> {
         let lo = self.cur_lo();
         self.bump(); // [
@@ -29,10 +31,12 @@ impl<'a> Parser<'a> {
         let name = match key.name.as_str() {
             "dispose" => SYMBOL_DISPOSE,
             "asyncDispose" => SYMBOL_ASYNC_DISPOSE,
+            "iterator" => SYMBOL_ITERATOR,
+            "asyncIterator" => SYMBOL_ASYNC_ITERATOR,
             other => {
                 self.error(
                     format!(
-                        "`Symbol.{other}` is not supported: the only symbol keys are `[Symbol.dispose]` and `[Symbol.asyncDispose]`"
+                        "`Symbol.{other}` is not supported: the only symbol keys are `[Symbol.dispose]`, `[Symbol.asyncDispose]`, `[Symbol.iterator]` and `[Symbol.asyncIterator]`"
                     ),
                     span,
                 );

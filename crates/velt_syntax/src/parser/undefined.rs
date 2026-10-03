@@ -70,6 +70,31 @@ mod tests {
     }
 
     #[test]
+    fn undefined_as_a_protocol_types_return_type_is_left_to_sema() {
+        let src = "function* g(): Generator<number, undefined, undefined> {}\nconst x: Box<undefined> = 1;";
+        let found = messages(src);
+        assert_eq!(found.len(), 1, "{found:?}");
+    }
+
+    #[test]
+    fn a_finished_result_with_value_undefined_says_to_drop_it() {
+        let found = messages("function f() { return { done: true, value: undefined }; }");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found[0].1[0].ends_with("write `{ done: true }`"),
+            "{found:?}"
+        );
+        // Elsewhere, `value: undefined` is `null`.
+        let found = messages("function f() { return { done: false, value: undefined }; }");
+        assert_eq!(found[0].1, [super::USE_NULL]);
+    }
+
+    #[test]
+    fn yield_may_be_a_branch_of_a_conditional() {
+        assert!(messages("function* g(c: bool) { c ? yield 1 : yield 2; }").is_empty());
+    }
+
+    #[test]
     fn undefined_as_a_property_name_is_fine() {
         assert!(messages("function f() { g(o.undefined); }").is_empty());
     }

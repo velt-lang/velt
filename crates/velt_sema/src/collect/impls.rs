@@ -210,12 +210,13 @@ fn check_method_sig(
     iface_args: &[TyId],
     iname: &str,
 ) -> Option<TyId> {
-    let (ps, span, is_getter) = {
+    let (ps, span, is_getter, is_generator) = {
         let f = cx.fn_info(def);
         (
             f.params.iter().map(|p| p.ty).collect::<Vec<_>>(),
             f.name_span,
             f.is_getter,
+            f.is_generator,
         )
     };
     let iface_args = own_generics_match(cx, def, owner_args.len(), m, iface_args, iname)?;
@@ -229,10 +230,35 @@ fn check_method_sig(
     let want_ret = cx.ty.subst(m.ret, iface_args);
     let name = &m.name;
     let message = format!("method `{name}` has a different signature than required by `{iname}`");
-    let at = (span, message.clone());
-    let ret_ok = super::ret_infer::impl_ret(cx, (def, owner_args), want_ret, at);
+    let ret_ok = if is_generator {
+        // A generator's signature keeps its result with `E = never` and a written `E` as its
+        // `throws` (collect/generator_sig.rs): compare the result as written. A generator's
+        // result is always written, never inferred.
+        let e = cx.fn_info(def).declared_throws.and_then(|t| t.ty);
+        let ret = cx.fn_info(def).ret;
+        let ret = cx.with_generator_error(ret, e.unwrap_or(cx.ty.never));
+        cx.ty.subst(ret, owner_args) == want_ret
+    } else {
+        super::ret_infer::impl_ret(cx, (def, owner_args), want_ret, (span, message.clone()))
+    };
     if ps != want_ps || !ret_ok {
-        cx.err(message, span);
+        let mut d = Diagnostic::error(message, span);
+        if is_generator && ps == want_ps {
+            let want = cx.display(want_ret);
+            d = d.with_note(format!("declare the generator's result as `{want}`: its error type is part of the result type"));
+        } else if name == "return" && ps == want_ps && matches!(iname, "Iterator" | "AsyncIterator")
+        {
+            // `return(): void`: an iterator's early exit returns a finished result, as in TS.
+            let t = iface_args.first().map_or("T".into(), |t| cx.display(*t));
+            let want = match iname {
+                "Iterator" => format!("return(): IteratorResult<{t}>"),
+                _ => format!("async return(): Promise<IteratorResult<{t}>>"),
+            };
+            d = d.with_note(format!(
+                "`return()` returns a finished result, as in TypeScript: declare it `{want}` and end it with `return {{ done: true }};`"
+            ));
+        }
+        cx.error(d);
     } else if is_getter != m.is_getter {
         let what = if m.is_getter { "a getter" } else { "a method" };
         cx.err(

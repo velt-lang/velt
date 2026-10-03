@@ -64,6 +64,16 @@ pub(crate) struct Ctx<'m> {
     /// Every declared type's fields are resolved (`collect::shapes`); before that, a utility
     /// type (`crate::utility_types`) may only read the fields of types already shaped.
     pub shapes_done: bool,
+    /// Checking type aliases nothing uses (`resolve::check_unused_aliases`): a utility type on
+    /// one of the alias's own type parameters is fine there (it is resolved at each use).
+    pub checking_unused_aliases: bool,
+    /// Type definitions whose shape (`collect::shapes`) is resolved, and those being resolved
+    /// now: a utility type in a field type shapes the type it reads first, whatever the
+    /// declaration order.
+    pub shaped: HashSet<DefId>,
+    pub shaping: Vec<DefId>,
+    /// Classes whose fields are laid out base-first (`collect::shapes::layout_fields`).
+    pub laid_out: HashSet<DefId>,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: HashMap<Vec<TyId>, DefId>,
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
@@ -117,6 +127,11 @@ pub(crate) struct Ctx<'m> {
     pub ret_checks: Vec<crate::defs::RetCheck>,
     /// Uses of functions whose return types are being inferred (`body::recursion`).
     pub rec: crate::body::recursion::RecState,
+    /// Resolved type-parameter defaults (`crate::type_defaults`).
+    pub type_defaults: crate::type_defaults::TypeDefaults,
+    /// Second arguments of protocol types written before base classes were known
+    /// (`crate::ts_protocol`).
+    pub deferred_ts_returns: Vec<crate::ts_protocol::TsReturnCheck>,
     pub diags: Diagnostics,
 }
 
@@ -146,6 +161,10 @@ impl<'m> Ctx<'m> {
             field_only: HashMap::new(),
             field_only_of: HashMap::new(),
             shapes_done: false,
+            checking_unused_aliases: false,
+            shaped: HashSet::new(),
+            shaping: vec![],
+            laid_out: HashSet::new(),
             unions: HashMap::new(),
             alias_names: HashMap::new(),
             generic_overrides: vec![],
@@ -169,6 +188,8 @@ impl<'m> Ctx<'m> {
             checking: vec![],
             ret_checks: vec![],
             rec: Default::default(),
+            type_defaults: Default::default(),
+            deferred_ts_returns: vec![],
             diags: vec![],
         }
     }

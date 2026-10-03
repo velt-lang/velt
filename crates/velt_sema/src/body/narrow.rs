@@ -76,6 +76,16 @@ impl FnCx<'_, '_> {
                 }
             }
             ast::ExprKind::InstanceOf { expr, ty } => self.instanceof_facts(expr, ty),
+            // `if (r.done)` on a union discriminated by a `bool` literal field.
+            ast::ExprKind::Member {
+                optional: false, ..
+            } if self.bool_discriminant(cond) => {
+                let t = ast::SignedLit {
+                    lit: ast::Lit::Bool(true),
+                    negative: false,
+                };
+                self.discriminant_facts(cond, &t).unwrap_or_default()
+            }
             ast::ExprKind::Ident(_)
             | ast::ExprKind::Member {
                 optional: false, ..
@@ -171,6 +181,24 @@ impl FnCx<'_, '_> {
             t.push(Fact::NonNull(l));
         }
         Some((t, vec![Fact::Members(l, no)]))
+    }
+
+    /// Is `e` (`x.done`) a discriminant of a union local whose values are `bool` literals?
+    fn bool_discriminant(&mut self, e: &ast::Expr) -> bool {
+        let ast::ExprKind::Member { object, prop, .. } = &e.kind else {
+            return false;
+        };
+        let Some(l) = self.named_local(object) else {
+            return false;
+        };
+        let ty = self.local_ty(l);
+        let u = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+        self.cx
+            .discriminant_values(u, &prop.name)
+            .is_some_and(|vs| {
+                vs.iter()
+                    .all(|v| matches!(v, crate::hir::LitValue::Bool(_)))
+            })
     }
 
     /// Facts of `typeof x === tag`.

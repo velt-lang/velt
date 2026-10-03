@@ -13,13 +13,14 @@
 //! cargo's output under `packages/sqlite/target/`. Without cargo it fails, unless
 //! `VELT_SKIP_NATIVE_E2E=1`.
 
+mod no_window;
 #[allow(dead_code)]
 mod reload_support;
 mod test_dir;
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, Output, Stdio};
 
 use reload_support::{get, Dev, Mark};
 
@@ -30,7 +31,7 @@ fn repo() -> PathBuf {
 }
 
 fn velt(dir: &Path, home: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_velt"))
+    crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(args)
         .current_dir(dir)
         .env("VELT_HOME", home)
@@ -134,7 +135,11 @@ async function main() {{
 #[test]
 fn sqlite_package_with_native_code() {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    if Command::new(&cargo).arg("--version").output().is_err() {
+    if crate::no_window::command(&cargo)
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         // Cargo builds the library under test; skipping must be explicit, never silent.
         assert!(
             std::env::var_os("VELT_SKIP_NATIVE_E2E").is_some(),
@@ -155,7 +160,7 @@ fn sqlite_package_with_native_code() {
         } else {
             &["--release"]
         };
-        let status = Command::new(&cargo)
+        let status = crate::no_window::command(&cargo)
             .args(["build", "-q", "-p", "velt_rt_shared"])
             .args(profile)
             .status()
@@ -167,7 +172,7 @@ fn sqlite_package_with_native_code() {
 
     // The author's machine: build the library from the repository's package (incremental).
     let source = repo().join("packages/sqlite");
-    let built = Command::new(env!("CARGO_BIN_EXE_velt"))
+    let built = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["native", "build"])
         .current_dir(&source)
         .env("VELT_CARGO", &cargo)
@@ -178,7 +183,7 @@ fn sqlite_package_with_native_code() {
     assert!(artifacts.join(&host).join("native.json").is_file());
 
     // A registry server.
-    let served = Command::new(env!("CARGO_BIN_EXE_velt"))
+    let served = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["registry", "serve", "--port", "0", "--dir"])
         .arg(tmp.path().join("served"))
         .stdout(Stdio::null())
@@ -254,7 +259,7 @@ fn sqlite_package_with_native_code() {
     if !cfg!(windows) {
         std::fs::rename(home.join("cache"), home.join("cache.moved")).unwrap();
         let out = ok(
-            Command::new(&exe).output().unwrap(),
+            crate::no_window::command(&exe).output().unwrap(),
             "the release executable",
         );
         assert_eq!(String::from_utf8_lossy(&out.stdout), EXPECTED);

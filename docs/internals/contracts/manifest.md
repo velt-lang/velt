@@ -7,7 +7,7 @@ compiling or running anything (design: [package-manifest.md](../design/package-m
 import type { Package } from "velt:package";
 
 export const pkg: Package = {
-  name: "hello",                // [a-z][a-z0-9_-]*, not std, pthread, sem, shm or posix
+  name: "hello",                // [a-z][a-z0-9]* words joined by single - or _; not std, rt…, sig…, native…
   version: "0.1.0",             // semver, required
   entry: "src/main.vlt",        // optional, the default (relative to package.vlt, inside the package)
   dependencies: {
@@ -23,6 +23,7 @@ export const pkg: Package = {
     path: "native",             // the crate's directory, one name in the package root (default)
     targets: ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"],  // published prebuilt
   },
+  tsCompat: ["src/models"],     // optional: folders kept TypeScript-compatible (additive)
 };
 ```
 
@@ -72,7 +73,7 @@ talk to hosts the checkout names); `$VELT_REGISTRY` is always asked.
   Targets must stay inside the package (no `..`, not absolute). Each package's aliases apply to
   its own modules only (`vpm::PackageGraph::path_alias`).
 - `entry` is a `/`-separated path inside the package (not empty, not absolute, no `..`).
-- `description` (additive, #184): one line of at most 200 characters (Unicode scalar values), no
+- `description` (additive, #184): one line of at most 300 characters (Unicode scalar values), no
   control characters, no leading or trailing whitespace, not empty. `keywords`: at most 10
   distinct entries, each `[a-z0-9][a-z0-9-]{0,31}`, order kept, not empty. Both optional; an empty
   string or array is an error saying to remove the field. `to_vlt` writes them after `version`,
@@ -109,8 +110,8 @@ registry: "https://registry.example.com",
   Writes to a package by a user who doesn't own it are 403, also when an existing package has no
   owners (on a server with users): an administrator assigns them with
   `velt registry owner add`. `GET <url>/api/v1/<name>/owners` → one owner per line; `PUT`/`DELETE
-  <url>/api/v1/<name>/owners/<user>` add/remove one (400 for a name or user that isn't
-  `[a-z][a-z0-9_-]*`, 404 for an unknown user or a user who isn't an owner, 409 for the last
+  <url>/api/v1/<name>/owners/<user>` add/remove one (400 for an invalid package name, or a user
+  name that isn't `[a-z][a-z0-9_-]*`, 404 for an unknown user or a user who isn't an owner, 409 for the last
   owner, 400 on a server without users).
 - Yank (additive): index entries gain `yanked = true` (absent when false). `PUT`/`DELETE
   <url>/api/v1/<name>/<version>/yank` set/clear it (owners). Resolution never selects a yanked
@@ -144,12 +145,32 @@ registry: "https://registry.example.com",
 jsx: { importSource: "sigx" },  // or "velt:jsx" (the default), an "@alias" from paths, or "./ui"
 ```
 - The JSX runtime of the package's modules ([jsx.md](jsx.md) "Choosing the provider"): a module
-  containing JSX imports `<importSource>/jsx-runtime`. A `// @jsxImportSource x` comment in a file
-  wins; without either the source is `velt:jsx`.
+  containing JSX imports `<importSource>/jsx-runtime`. A `/** @jsxImportSource x */` comment in a
+  file (or `// @jsxImportSource x`, which `tsc` ignores) wins; without either the source is `velt:jsx`.
 - The value is a module specifier: a dependency (`"sigx"`), `"velt:x"`, a `paths` alias, or a
   path starting with `./` / `../`, which is relative to the package root (not to the importing
   file, unlike a pragma). Each package's `jsx` applies to its own modules only
   (`vpm::PackageGraph::jsx_import_source`).
+
+## TypeScript-compatible folders (additive)
+```ts ignore
+tsCompat: ["src/components", "src/models"],
+```
+- `vpm::Manifest::ts_compat` (`Vec<String>`, in the order written; empty when absent): folders
+  whose modules `velt check --ts-compat` without paths and the language server lint
+  ([cli.md](cli.md), docs/internals/design/tsx.md). A folder's modules are its source files as
+  `vpm::sources::walks_into` walks it (no `target/`, `node_modules/`, hidden, symlinked or
+  nested package directories); `vpm::sources::in_folder` decides membership the same way for one
+  file.
+- The reader's errors, at the value: not an array; an empty array ("remove the field
+  instead"); an entry that is not a string; an entry that is not a `/`-separated relative path
+  of non-empty parts other than `.` and `..` without `\` or `:` (so no leading or trailing
+  `/`); an entry equal to, inside or containing an earlier one, compared ignoring case (an
+  overlap on a case-insensitive file system is one on every OS).
+- The reader doesn't look at the disk. `vpm::manifest::read::missing_ts_compat_dirs(file, src,
+  root)` returns a warning, at its string, for each entry that is not a directory under `root`
+  (the language server shows them in `package.vlt`); `velt check --ts-compat` fails on one.
+- `to_vlt` writes `tsCompat` last; `velt manifest --json` prints it when present.
 
 ## Native libraries (additive)
 Contract: [native_abi.md](native_abi.md).

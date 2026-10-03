@@ -19,8 +19,8 @@
 
 Types are required on function parameters, and on return types other than `void` (a missing
 return type means `void`). Everything else is inferred. `type Name = …` declares an alias; an
-alias cannot refer to itself. There is no `any` or `unknown`: dynamic JSON is `JsonValue`
-([`velt:json`](../std/json.md)).
+alias cannot refer to itself, and it is checked even where nothing uses it. There is no `any`
+or `unknown`: dynamic JSON is `JsonValue` ([`velt:json`](../std/json.md)).
 
 ## Booleans
 
@@ -105,8 +105,10 @@ A `string` is an immutable value, like in JS: assign it, pass it, return it, sto
 it, take it out of a field, an array element, a `for...of` element or `Map.get`. The source stays
 usable and no copy method is needed.
 
-- `+` concatenates two strings; `s += x` appends (in place when `s` holds the only reference to
-  its text; other copies of `s` never change).
+- `+` concatenates two strings; `s += x` appends to a variable or field in place when `s` holds
+  the only reference to its text, growing it geometrically, so building a string in a loop costs
+  time linear in its length. `s = s + x` and `` s = `${s}${x}` `` append the same way. Other
+  copies of `s` never change.
 - **No implicit conversion**: `"Total: " + 5` and `"a" + true` are compile errors. Build text
   with a template literal (`` `Total: ${n}` ``), which formats any value the way `console.log`
   does.
@@ -339,9 +341,12 @@ for (const s of shapes) {
   (else by its field names); an impossible discriminant is an error
   (``"square"` is not a valid `kind` for `Shape` ``).
 - `x.kind === "circle"` / `!==` and `switch (x.kind)` narrow a local `x`; comparing with an
-  impossible literal is an error.
+  impossible literal is an error. A `bool` discriminant is also a condition:
+  `if (r.done)` / `if (!r.done)` narrow `r` of `{ value: T; done: false } | { done: true }`.
 - A field every member has (like `kind`) can be read without narrowing; other fields need
-  narrowing (``no field `r` on type `Shape` ``). Fields cannot be assigned through the union.
+  narrowing (``no field `r` on type `Shape` ``), except `value` on an `IteratorResult<T>`, which
+  reads as `T | null` ([Iterables](control-flow.md#iterables)). Fields cannot be assigned through
+  the union.
 - Recursive discriminated unions need a nominal member (a class or struct:
   `class Node { kind: "node"; kids: Tree[] }`), because an alias cannot refer to itself.
 - Payload enums and `match` do not exist; both are errors with a hint to use a discriminated
@@ -373,12 +378,14 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   `Partial<T>` (every field optional), `Required<T>` (every nullable field non-null),
   `Readonly<T>` (every field `readonly`), `Pick<T, K>` (only the fields named in `K`) and
   `Omit<T, K>` (every other field). `K` is a string literal type or a union of them
-  (`"id" | "email"`); a name that is not a field is an error in both `Pick` and `Omit`. The
-  results are ordinary object types: `Pick<User, "name">` *is* `{ name: string }`.
-  Differences from TypeScript: `Required` also removes `null` from fields written `a: T | null`
-  (in Velt `a?: T` is `T | null`); an operator on a type parameter (`Partial<T>` in a generic
-  function) is not supported yet; and a field type can only apply one to a type declared before
-  it.
+  (`"id" | "email"`). In `Pick` a name that is not a field is an error; in `Omit` it is a
+  warning, as TypeScript accepts it (so `type WithoutChildren<P> = Omit<P, "children">` works
+  on types without `children`). The results are ordinary object types: `Pick<User, "name">`
+  *is* `{ name: string }`, and declaration order doesn't matter. Differences from TypeScript:
+  `Required` also removes `null` from fields written `a: T | null` (in Velt `a?: T` is
+  `T | null`, #418); an operator on a type parameter (`Partial<T>` in a generic function) is
+  not supported yet (#350); and a type can't apply one to itself in its own fields
+  (`interface Node { patches: Partial<Node>[] }`).
 
 ```ts
 interface User {

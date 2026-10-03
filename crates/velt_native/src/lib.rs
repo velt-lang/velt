@@ -7,12 +7,12 @@
 //! velt_native::package!(greet);
 //!
 //! #[export]
-//! fn greet_hello(name: &str) -> String {
+//! fn velt_greet__hello(name: &str) -> String {
 //!     format!("hello, {name}")
 //! }
 //!
 //! #[export(blocking)]                       // `declare async function`: runs on the blocking pool
-//! fn greet_slow(n: u64) -> Result<u64, Error> {
+//! fn velt_greet__slow(n: u64) -> Result<u64, Error> {
 //!     Ok(n * 2)
 //! }
 //! ```
@@ -20,8 +20,8 @@
 //! The Velt side declares exactly these signatures:
 //!
 //! ```ts
-//! declare function greet_hello(name: string): string;
-//! declare async function greet_slow(n: u64): Promise<IoResult<u64>>;
+//! declare function velt_greet__hello(name: string): string;
+//! declare async function velt_greet__slow(n: u64): Promise<IoResult<u64>>;
 //! ```
 //!
 //! This crate contains no runtime code: everything it does goes through the function table
@@ -315,7 +315,7 @@ pub trait Param<'a>: Sized {
 /// static mut KEPT: Option<S> = None;
 ///
 /// #[velt_native::export]
-/// fn p_keep(s: S) -> u64 {
+/// fn velt_p__keep(s: S) -> u64 {
 ///     unsafe { KEPT = Some(s) };
 ///     0
 /// }
@@ -325,7 +325,7 @@ pub trait Param<'a>: Sized {
 ///
 /// ```
 /// #[velt_native::export]
-/// fn p_len(s: &str) -> u64 {
+/// fn velt_p__len(s: &str) -> u64 {
 ///     s.len() as u64
 /// }
 /// ```

@@ -1,13 +1,12 @@
 // `provide` / `inject` for the test providers: a value a parent component provides is seen by
 // the components rendered after it (process environment variables stand in for the render
 // context a real provider keeps, since Velt modules hold no mutable state).
-
-import { env, setEnv } from "velt:process";
+import { setEnv } from "velt:process";
 
 export function provide(key: string, value: string) {
   setEnv(`VELT_JSX_TEST_CONTEXT_${key}`, value);
 }
 
 export function inject(key: string): string {
-  return env(`VELT_JSX_TEST_CONTEXT_${key}`) ?? "(nothing provided)";
+  return process.env[`VELT_JSX_TEST_CONTEXT_${key}`] ?? "(nothing provided)";
 }

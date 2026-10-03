@@ -54,7 +54,7 @@ impl FnCx<'_, '_> {
         mut r: hir::Expr,
         span: Span,
     ) -> hir::Expr {
-        let recv = self.receiver(l, None, PassMode::Borrow);
+        let recv = self.receiver(l, None, PassMode::Borrow, false);
         set_place_mode(&mut r, UseMode::Borrow);
         let (i64_, bool_) = (self.cx.ty.i64, self.cx.ty.bool_);
         let callee = Callee::ParamMethod {

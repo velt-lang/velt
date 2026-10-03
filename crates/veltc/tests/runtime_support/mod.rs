@@ -8,13 +8,12 @@
 //! build lock in every test process.
 
 use std::path::Path;
-use std::process::Command;
 
 pub fn build_native_runtime(root: &Path) {
     if std::env::var_os("VELT_RT_PREBUILT").is_some_and(|v| v == "1") {
         return;
     }
-    let st = Command::new(env!("CARGO"))
+    let st = crate::no_window::command(env!("CARGO"))
         .args(["build", "-p", "velt_rt"])
         .current_dir(root)
         .status()

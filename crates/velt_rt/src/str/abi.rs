@@ -25,6 +25,21 @@ pub unsafe extern "C" fn velt_rt_str_concat(
     write_out(out, s);
 }
 
+/// `s += t` on the owned string `*s`, whose old value is dead after the assignment: appended in
+/// place when `*s` is inline with room or the only reference to its heap buffer, which grows
+/// geometrically; a shared or static `*s` is copied once into a buffer of its own. So a loop of
+/// appends costs O(total length). The one runtime path for every append the compiler lowers in
+/// place, so a per-string header has a single place to be kept up to date.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_str_append(s: *mut VeltStr, t: *const VeltStr) {
+    if std::ptr::eq(s, t) || (*s).holds_bytes_of(&*t) {
+        // `t` reads the bytes `*s` is about to grow (and maybe move): copy them out first.
+        (*s).push_with(|v| v.extend_from_slice((*t).as_bytes()));
+        return;
+    }
+    (*s).push_bytes((*t).as_bytes());
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_str_from_i64(v: i64, out: *mut VeltStr) {
     let mut b = itoa::Buffer::new();
@@ -144,6 +159,51 @@ mod tests {
             velt_rt_str_drop(&mut copy);
             velt_rt_str_drop(&mut h);
         }
+    }
+
+    #[test]
+    fn appends_grow_in_place() {
+        let piece = VeltStr::from_static(b"<div class=\"lvl\">leaf</div>");
+        let mut s = VeltStr::empty();
+        let (mut grows, mut cap) = (0, 0);
+        for _ in 0..10_000 {
+            unsafe { velt_rt_str_append(&mut s, &piece) };
+            if s.w2 != cap {
+                (grows, cap) = (grows + 1, s.w2);
+            }
+        }
+        assert_eq!(s.len(), 10_000 * piece.len());
+        assert!(grows < 20, "{grows} regrowths for 10000 appends");
+        // A shared buffer is copied once; the other copy keeps its text.
+        let mut other = unsafe { s.share() };
+        unsafe { velt_rt_str_append(&mut s, &piece) };
+        assert_ne!(data(&s), data(&other));
+        assert_eq!(other.len(), 10_000 * piece.len());
+        assert_eq!(s.len(), 10_001 * piece.len());
+        unsafe {
+            other.release();
+            s.release();
+        }
+    }
+
+    #[test]
+    fn appending_an_uncounted_view_of_itself() {
+        // A full buffer that must grow (and may move) while the appended text points into it.
+        let mut s = VeltStr::from_bytes(LONG.as_bytes());
+        let view = VeltStr {
+            w0: s.w0,
+            w1: s.w1,
+            w2: s.w2,
+        };
+        unsafe { velt_rt_str_append(&mut s, &view) };
+        assert_eq!(text(&s), format!("{LONG}{LONG}"));
+        let sp: *mut VeltStr = &mut s;
+        unsafe { velt_rt_str_append(sp, sp) };
+        assert_eq!(text(&s), LONG.repeat(4));
+        let tail = unsafe { VeltStr::borrowed(s.ptr().add(LONG.len()), LONG.len()) };
+        unsafe { velt_rt_str_append(&mut s, &tail) };
+        assert_eq!(text(&s), LONG.repeat(5));
+        unsafe { s.release() };
     }
 
     #[test]

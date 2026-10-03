@@ -251,6 +251,34 @@ fn type_parameter_defaults_are_reported() {
 }
 
 #[test]
+fn type_declarations_take_type_parameter_defaults() {
+    let m = parse_ok(
+        "interface I<T, E = never> { x: T; }
+         class C<T = i64> {}
+         type A<T, U = T[]> = U;",
+    );
+    let defaults =
+        |gs: &[GenericParam]| -> Vec<bool> { gs.iter().map(|g| g.default.is_some()).collect() };
+    let ItemKind::Interface(i) = &m.items[0].kind else {
+        panic!("interface")
+    };
+    assert_eq!(defaults(&i.generics), [false, true]);
+    let ItemKind::Class(c) = &m.items[1].kind else {
+        panic!("class")
+    };
+    assert_eq!(defaults(&c.generics), [true]);
+    let ItemKind::TypeAlias(a) = &m.items[2].kind else {
+        panic!("alias")
+    };
+    assert_eq!(defaults(&a.generics), [false, true]);
+    let errs = errors("interface J<T = i64, U> {}");
+    assert_eq!(
+        errs,
+        vec!["type parameter `U` needs a default: it follows one that has a default"]
+    );
+}
+
+#[test]
 fn elements_named_like_type_parameters_stay_jsx() {
     assert_eq!(init("<T>text</T>"), r#"<T>["text"]"#);
     assert_eq!(init("<T>(hello)</T>"), r#"<T>["(hello)"]"#);

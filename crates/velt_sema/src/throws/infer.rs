@@ -25,8 +25,8 @@ pub(crate) fn infer_all(cx: &mut Ctx) {
     }
     for g in &groups.list {
         if let Some(b) = &g.bound {
-            let t = cx.canon_error(b.decl.ty);
             for &m in &g.members {
+                let t = super::groups::member_bound(cx, b, m);
                 cx.fn_info_mut(m).throws = t;
             }
         }
@@ -109,6 +109,12 @@ fn src_final_in(cx: &mut Ctx, s: &ThrowSrc, visited: &mut InitsSeen) -> Option<T
             return acc;
         }
         ThrowSrc::Call(g, targs, _) => (cx.try_fn(*g).and_then(|f| f.throws), targs.clone()),
+        ThrowSrc::Slot {
+            iface, slot, args, ..
+        } if super::slot_clause(cx, *iface, *slot).is_some() => {
+            let t = super::slot_clause(cx, *iface, *slot).flatten();
+            (t, args.clone())
+        }
         ThrowSrc::Slot {
             iface, slot, args, ..
         } => {

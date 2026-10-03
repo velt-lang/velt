@@ -48,6 +48,6 @@ function main() {
   for (let y = 0; y < size; y++) {
     renderRow(y, size, bitmap);
   }
-  stdout.writeString(`P4\n${size} ${size}\n`);
+  process.stdout.write(`P4\n${size} ${size}\n`);
   stdout.write(bitmap);
 }

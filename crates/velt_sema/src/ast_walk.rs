@@ -54,6 +54,8 @@ pub(crate) fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
             }
         }
         E::Jsx(element) => jsx_exprs(element, f),
+        E::Yield { arg: Some(a), .. } => f(a),
+        E::Yield { arg: None, .. } => {}
     }
 }
 
@@ -134,6 +136,8 @@ pub(crate) fn children_mut(e: &mut ast::Expr, f: &mut dyn FnMut(&mut ast::Expr))
                 }
             }
         }
+        E::Yield { arg: Some(a), .. } => f(a),
+        E::Yield { arg: None, .. } => {}
         E::Jsx(element) => jsx_exprs_mut(element, f),
     }
 }

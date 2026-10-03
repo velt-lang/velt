@@ -169,6 +169,6 @@ function main() {
       bitmap.push(last as u8);
     }
   }
-  stdout.writeString(`P4\n${size} ${size}\n`);
+  process.stdout.write(`P4\n${size} ${size}\n`);
   stdout.write(bitmap);
 }

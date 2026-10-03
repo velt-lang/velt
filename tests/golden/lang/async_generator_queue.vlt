@@ -1,0 +1,151 @@
+// check: no leaks
+// `next()` and `return()` calls on an async generator object are queued, like JS: a call made
+// while another one is running waits for its turn, each promise settles with its own step in
+// call order, and a call whose promise nobody awaits (a `Promise.race` loser, a timed-out call)
+// still takes its turn. The steps are ordered by awaits, and every generator ends by running to
+// its end or by `return()`, so the output matches Node.
+import { timeout } from "velt:task";
+import { channel, ChannelClosed } from "velt:channel";
+
+class R {
+  n: string;
+  constructor(n: string) {
+    this.n = n;
+  }
+  [Symbol.dispose](): void {
+    console.log(`dispose ${this.n}`);
+  }
+}
+
+async function* agen(tag: string, n: i64): AsyncGenerator<string> {
+  try {
+    for (let i = 0; i < n; i++) {
+      await sleep(5 - i);
+      yield `${tag}:${i}`;
+    }
+  } finally {
+    console.log(`fin ${tag}`);
+  }
+}
+
+async function slow(tag: string): Promise<string> {
+  using r = new R(`slow-${tag}`);
+  await sleep(10);
+  return `${tag}-slow`;
+}
+
+async function* held(tag: string): AsyncGenerator<string> {
+  using r = new R(tag);
+  try {
+    const s = await slow(tag);
+    yield `${tag}-held:${s}`;
+    yield "two";
+  } finally {
+    console.log(`fin ${tag}`);
+  }
+}
+
+// Two pending calls awaited in reverse order; a race of two calls; a call pending during
+// `return()`.
+async function overlapping() {
+  const g = agen("E", 4);
+  const p1 = g.next();
+  const p2 = g.next();
+  const b = await p2;
+  if (!b.done) {
+    console.log(`b ${b.value}`);
+  }
+  const a = await p1;
+  if (!a.done) {
+    console.log(`a ${a.value}`);
+  }
+  const w = await Promise.race([g.next(), g.next()]);
+  if (!w.done) {
+    console.log(`race ${w.value}`);
+  }
+  const p3 = g.next();
+  await g.return();
+  console.log("returned");
+  const c = await p3;
+  console.log(c.done ? "p3 done" : "p3 value");
+  const d = await g.next();
+  console.log(d.done ? "done" : "value");
+}
+
+async function* gated(tag: string, gate: Promise<bool>): AsyncGenerator<string> {
+  try {
+    await gate;
+    yield `${tag}:0`;
+    yield `${tag}:1`;
+  } finally {
+    console.log(`fin ${tag}`);
+  }
+}
+
+// A timed-out call keeps its turn: its value is dropped and the next call gets the next one.
+async function timedOut() {
+  const gate = Promise.withResolvers<bool>();
+  const g = gated("T", gate.promise);
+  try {
+    const r = await timeout(g.next(), 1);
+    console.log(r.done ? "done" : r.value);
+  } catch (e) {
+    console.log("timed out");
+  }
+  gate.resolve(true);
+  const x = await g.next();
+  if (!x.done) {
+    console.log(`x ${x.value}`);
+  }
+  await g.return();
+}
+
+// The same through a std async iterator (an `AsyncIterator<T>` interface value).
+async function channelIterator() throws ChannelClosed {
+  const ch = channel<i64>(4);
+  const it = ch[Symbol.asyncIterator]();
+  try {
+    const r = await timeout(it.next(), 1);
+    console.log(r.done);
+  } catch (e) {
+    console.log("timed out");
+  }
+  await ch.send(1);
+  await ch.send(2);
+  ch.close();
+  const x = await it.next();
+  if (!x.done) {
+    console.log(`x ${x.value}`);
+  }
+}
+
+// `return()` (and `await using`'s close) waits for a pending `next()`, then runs the `finally`
+// blocks and disposals.
+async function closeWhilePending() {
+  {
+    const g = held("RET");
+    const pr = g.next();
+    await g.return();
+    console.log("returned");
+    const r = await pr;
+    console.log(r.done ? "done" : r.value);
+  }
+  let q: Promise<IteratorResult<string>> | null = null;
+  {
+    await using g = held("AU");
+    q = g.next();
+    console.log("leaving await using block");
+  }
+  if (q != null) {
+    const r = await q;
+    console.log(r.done ? "done" : r.value);
+  }
+}
+
+async function main() throws ChannelClosed {
+  await overlapping();
+  await timedOut();
+  await channelIterator();
+  await closeWhilePending();
+  console.log("end");
+}

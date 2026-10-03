@@ -40,6 +40,10 @@ mod defaults;
 mod driver;
 pub(crate) mod expr;
 mod field_narrow;
+mod for_await;
+mod for_iter;
+mod generators;
+pub(crate) use generators::GenCopy;
 mod locals;
 mod loops;
 pub(crate) mod narrow;
@@ -54,7 +58,7 @@ mod using;
 
 use std::collections::HashMap;
 
-use velt_common::Span;
+use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::defs::{Bound, FnKind, ThrowSrc};
@@ -157,8 +161,23 @@ pub(crate) struct Frame {
     pub escaping: bool,
     /// Body of an `async` function / arrow: `await` is allowed.
     pub is_async: bool,
+    /// Body of a generator: the type of the values it yields (`yield` is allowed).
+    pub yield_ty: Option<TyId>,
+    /// Nesting depth of the `finally` blocks being checked (`yield` is not allowed in them).
+    pub finally_depth: u32,
+    /// In a generator's `finally` block: the loop stack's length when it was entered (a
+    /// `break`/`continue` there cannot target a loop outside it).
+    pub finally_loops: Option<usize>,
+    /// Spans (`lo`, `hi`) of the `yield`s about to be checked whose value is unused: those
+    /// that are, or end, an expression statement (`generators.rs`, `stmt_yields`).
+    pub stmt_yields: std::collections::HashSet<(u32, u32)>,
     /// See `FnInfo::soft_moves`.
     pub soft_moves: Vec<Span>,
+    /// `using` variables passed to an async call (receiver or argument), not yet soft moves:
+    /// only a directly awaited call may share one (`expr::tasks`, `using_share`).
+    pub using_shares: Vec<(Span, LocalId)>,
+    /// The `using` locals declared `await using`.
+    pub await_using: std::collections::HashSet<LocalId>,
     /// Locals holding inferred integers (`expr::numbers`).
     pub inferred_ints: std::collections::HashSet<LocalId>,
     /// `const f = (…) => …`: the closure each such local holds, whose parameter defaults a
@@ -200,7 +219,13 @@ impl Frame {
             captures: vec![],
             escaping: false,
             is_async: false,
+            yield_ty: None,
+            finally_depth: 0,
+            finally_loops: None,
+            stmt_yields: Default::default(),
             soft_moves: vec![],
+            using_shares: vec![],
+            await_using: Default::default(),
             inferred_ints: Default::default(),
             closure_consts: Default::default(),
             tries: vec![],
@@ -337,6 +362,13 @@ impl<'a, 'm> FnCx<'a, 'm> {
         };
         if is_continue && self.f.loops[i].is_switch {
             self.cx.err("`continue` cannot target a `switch`", span);
+            return None;
+        }
+        if self.f.finally_loops.is_some_and(|n| i < n) {
+            self.cx.error(
+                Diagnostic::error(format!("`{what}` cannot leave a `finally` block in a generator"), span)
+                    .with_note("TypeScript allows this; Velt doesn't because the `finally` block also runs when the generator is closed early (`return()`, or dropping it), where the generator must finish; write the loop inside the `finally` block, or move the `finally` code out of the loop"),
+            );
             return None;
         }
         Some(i)

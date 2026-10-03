@@ -1,0 +1,2 @@
+Uncaught A: thrown before the await at 
+panic_uncaught_finally_await.vlt:14:5

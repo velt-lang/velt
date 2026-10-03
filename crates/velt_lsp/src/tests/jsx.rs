@@ -172,7 +172,12 @@ fn the_ast_fallback_sees_names_inside_elements() {
         (path.clone(), text.to_string()),
         (dir.join("jsx_ui/jsx-runtime.vlt"), RUNTIME.to_string()),
     ]);
-    let analysis = crate::analysis::analyze(&super::loader::TestLoader, &path, &overlay);
+    let analysis = crate::analysis::analyze(
+        &super::loader::TestLoader,
+        &path,
+        &overlay,
+        &mut Default::default(),
+    );
     let card = text.find("<Card").unwrap() as u32 + 2;
     let info = scope::at_offset(&analysis, card);
     assert!(

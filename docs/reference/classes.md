@@ -120,6 +120,11 @@ hidden classes and no runtime shape checks.
   ([Async](async.md#promises)), which then deep-copies whatever the returned object still
   shares with the original. A class that owns no resource is deep-copied field by field
   wherever it is nested; its `clone()` runs only when called (`x.clone()` on it).
+- **Symbol method names**: `[Symbol.iterator]()` and `[Symbol.asyncIterator]()` (the
+  [iteration protocol](control-flow.md#iterables)), `[Symbol.dispose]()` and
+  `[Symbol.asyncDispose]()` ([resource cleanup](memory.md#resource-cleanup-using-and-symboldispose))
+  name methods as in TypeScript and are called as `x[Symbol.iterator]()`. Other symbols do not
+  exist.
 - Async methods take `this` by value: the promise owns it.
 - An overridden method returning a promise reports its errors through the promise: when the
   base method or any override can fail, all of them must be `async`
@@ -298,9 +303,13 @@ console.log(p.len(), q.len());  // 4 4
   the same fields and stays the same object. `class C implements User` checks that the class
   has the fields, but a class instance is not a `User` (it is shared by reference; build one
   from its fields). As a bound, `<T extends HasId>` is satisfied by any type with the fields
-  (a struct, class or object type, not generic). An interface that refers to itself through a
-  field (`next?: Node`) has infinite size, as a struct does; through an array
-  (`children: Node[]`) it is fine.
+  (a struct, class or object type, not generic). An interface may refer to itself through a
+  field (`next?: Node`, `parent?: Category`, or a union such as `left: Tree`): such an object is
+  stored behind a pointer, like a class instance, so its size is finite. Like JavaScript,
+  `JSON.stringify` of an object that contains itself (`n.next = n`) fails: it panics with
+  "converting circular structure to JSON"; `console.log` prints one like Node,
+  `<ref *1> { value: 1, next: [Circular *1] }`. A struct that contains itself is still an error
+  (``recursive type `S` has infinite size``): structs are stored inline.
 - Used as a **generic bound** (`<T extends Named>`), an interface is resolved at compile time
   (direct calls). Used as a **value type** (`Named[]` holding different classes), it is a fat
   pointer (data plus vtable), like Rust's `dyn`.
@@ -373,7 +382,12 @@ Classes, structs, interfaces and functions take type parameters (`class Stack<T>
 `interface Box<T>`, `function f<T extends Comparable<T>>`). Every instantiation is compiled
 separately (monomorphization): no boxing, and bounds resolve to direct calls. Bounds are
 interfaces (an interface with only fields is satisfied by any type with its fields), not object
-types. There are no default type arguments.
+types. Classes, structs, interfaces and type aliases may give type parameters **defaults**
+(`interface Iterator<T, E = never>`), used when a type leaves the argument out (`Iterator<i64>`
+is `Iterator<i64, never>`) and when nothing infers it in a `new` (`new D(1)` of
+`class D<T = i64>` is a `D<i64>`); functions and methods cannot. As in TypeScript, a default
+may use only the parameters declared before it, and must not need its own declaration's
+defaults again (``type parameter `T` has a circular default`` for `class S<T = S>`).
 
 ```ts
 class Stack<T> {

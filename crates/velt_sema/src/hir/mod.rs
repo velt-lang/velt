@@ -257,6 +257,10 @@ pub struct FnDef {
     pub params: Vec<Param>,
     pub ret: TyId,
     pub is_async: bool,
+    /// `function*` / `*name()` (hir_encodings.md "Generators"): `ret` is the declared result
+    /// (`Generator<T, E>`, `Iterator<T, E>` or `Iterable<T, E>`, with `E` = `throws` or `never`);
+    /// the body yields `T` (`Intrinsic::Yield`) and its `return`s carry no value.
+    pub is_generator: bool,
     /// For methods: the `this` type (first param is `this`).
     pub self_ty: Option<TyId>,
     /// For closures: captured variables become the leading params, in this order.
@@ -374,6 +378,10 @@ pub struct InterfaceMethodDef {
     /// holds such a method): its implementations reject the promise, so a call through the slot
     /// never throws (hir_encodings.md "Errors").
     pub promise: bool,
+    /// What a call through the slot throws, in terms of the interface's type params (`E` of
+    /// `next(): IteratorResult<T> throws E`): substituted with the `Dyn`'s type args. `None`
+    /// for a promise slot or one that cannot throw.
+    pub throws: Option<TyId>,
 }
 
 #[derive(Clone, Debug)]

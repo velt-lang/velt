@@ -105,6 +105,7 @@ impl FnCx<'_, '_> {
             bounds,
             js_numbers: false,
             rest: false,
+            defaults: vec![],
         };
         let ck = self.check_call(&c, slots, args, exp.filter(|_| own > 0), span);
         let mode = if s.method.mut_this {
@@ -112,7 +113,7 @@ impl FnCx<'_, '_> {
         } else {
             PassMode::Borrow
         };
-        let recv = self.receiver(recv, None, mode);
+        let recv = self.receiver(recv, None, mode, false);
         let mut all = vec![recv];
         all.extend(ck.args);
         let src = ThrowSrc::Slot {

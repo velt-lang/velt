@@ -24,7 +24,8 @@ pub unsafe extern "C" fn velt_rt_strbuf_new(cap: u64, out: *mut VeltStrBuf) {
     out.write(VeltStr::with_capacity(cap as usize));
 }
 
-/// Append the bytes of `s` (the caller keeps ownership of `s`; `s` may be the builder itself).
+/// Append the bytes of `s` (the caller keeps ownership of `s`; `s` may be the builder itself or
+/// lie in its buffer: `push_bytes` copies such text out before the buffer can move).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_str(buf: *mut VeltStrBuf, s: *const VeltStr) {
     if std::ptr::eq(buf, s) {
@@ -223,6 +224,11 @@ mod tests {
         unsafe { velt_rt_strbuf_push_i64(&mut s, 7) };
         let sp: *mut VeltStr = &mut s;
         unsafe { velt_rt_strbuf_push_str(sp, sp) };
+        // An uncounted view into the builder's own full buffer, which must grow (and may move).
+        let mut h = VeltStr::from_bytes(&[b'h'; 40]);
+        let view = unsafe { VeltStr::borrowed(h.as_bytes().as_ptr().add(30), 10) };
+        unsafe { velt_rt_strbuf_push_str(&mut h, &view) };
+        assert_eq!(finish(h), "h".repeat(50));
         assert_eq!(finish(s), "abc7abc7");
         let mut d = new_buf(64);
         unsafe {
@@ -230,5 +236,90 @@ mod tests {
             velt_rt_strbuf_drop(&mut d);
         }
         assert!(d.is_static() && d.is_empty());
+    }
+}
+
+/// Objects being printed (`console.log`), innermost last.
+struct Printing {
+    /// (address, where its text starts in the builder, its `<ref *N>` number once something
+    /// refers back to it, else 0).
+    stack: Vec<(usize, usize, u32)>,
+    /// `<ref *N>` numbers given out for the value being printed.
+    refs: u32,
+}
+
+thread_local! {
+    static PRINTING: std::cell::RefCell<Printing> =
+        const { std::cell::RefCell::new(Printing { stack: Vec::new(), refs: 0 }) };
+}
+
+/// Start printing the object at `p` (a class instance or a recursive object): 1, or, if it is
+/// already being printed (the graph has a cycle), append `[Circular *N]` as node does and
+/// return 0 (the caller skips the object).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_strbuf_inspect_enter(buf: *mut VeltStrBuf, p: *const u8) -> u8 {
+    PRINTING.with(|s| {
+        let Printing { stack, refs } = &mut *s.borrow_mut();
+        if let Some(entry) = stack.iter_mut().find(|e| e.0 == p as usize) {
+            if entry.2 == 0 {
+                *refs += 1;
+                entry.2 = *refs;
+            }
+            (*buf).push_bytes(format!("[Circular *{}]", entry.2).as_bytes());
+            return 0;
+        }
+        stack.push((p as usize, (*buf).len(), 0));
+        1
+    })
+}
+
+/// Done printing the innermost object started with `velt_rt_strbuf_inspect_enter`: if
+/// something inside referred back to it, its text gets node's `<ref *N> ` prefix.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_strbuf_inspect_leave(buf: *mut VeltStrBuf) {
+    let done = PRINTING.with(|s| {
+        let Printing { stack, refs } = &mut *s.borrow_mut();
+        let done = stack.pop();
+        if stack.is_empty() {
+            *refs = 0;
+        }
+        done
+    });
+    if let Some((_, start, n)) = done.filter(|d| d.2 != 0) {
+        (*buf).insert_bytes(start, format!("<ref *{n}> ").as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod inspect_cycle_tests {
+    use super::*;
+
+    unsafe fn text(b: &VeltStrBuf) -> String {
+        String::from_utf8(b.as_bytes().to_vec()).unwrap()
+    }
+
+    #[test]
+    fn a_reference_back_prints_circular_and_marks_the_target() {
+        unsafe {
+            let mut b = VeltStr::with_capacity(0);
+            let (outer, inner) = (1u8, 2u8);
+            b.push_bytes(b"x: ");
+            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &outer), 1);
+            b.push_bytes(b"A { b: ");
+            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &inner), 1);
+            b.push_bytes(b"B { a: ");
+            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &outer), 0);
+            b.push_bytes(b" }");
+            velt_rt_strbuf_inspect_leave(&mut b);
+            b.push_bytes(b" }");
+            velt_rt_strbuf_inspect_leave(&mut b);
+            assert_eq!(text(&b), "x: <ref *1> A { b: B { a: [Circular *1] } }");
+            // Numbering starts over for the next value printed.
+            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &inner), 1);
+            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &inner), 0);
+            velt_rt_strbuf_inspect_leave(&mut b);
+            assert!(text(&b).ends_with("<ref *1> [Circular *1]"));
+            b.release();
+        }
     }
 }

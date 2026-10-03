@@ -28,7 +28,16 @@ impl FnCx<'_, '_> {
         }
         match name {
             "panic" => self.simple_intrinsic(Intrinsic::Panic, "`panic`", args, exp, span),
-            "shared" => self.simple_intrinsic(Intrinsic::SharedNew, "`shared`", args, exp, span),
+            "shared" => {
+                let e = self.simple_intrinsic(Intrinsic::SharedNew, "`shared`", args, exp, span);
+                if let H::Call { args: a, .. } = &e.kind {
+                    if let [x] = a.as_slice() {
+                        let (t, at) = (x.ty, x.span);
+                        self.no_generator_copy(t, crate::body::GenCopy::Shared, at);
+                    }
+                }
+                e
+            }
             "spawn" => self.spawn_call(args, exp, span),
             "attempt" => self.attempt_call(args, span),
             "sleep" => self.simple_intrinsic(Intrinsic::Sleep, "`sleep`", args, exp, span),
@@ -105,6 +114,12 @@ impl FnCx<'_, '_> {
         let ck = self.check_call(&c, slots, args, exp, span);
         if i == Intrinsic::JsonParse {
             self.json_parse_throws(span);
+        }
+        if i == Intrinsic::GeneratorResume {
+            // Resuming throws what the generator's body throws (its `E`).
+            if let Some(&e) = ck.type_args.get(1) {
+                self.throw_src(crate::defs::ThrowSrc::Direct(e, span));
+            }
         }
         self.intrinsic(i, ck.args, ck.ret, span)
     }
@@ -221,6 +236,7 @@ impl FnCx<'_, '_> {
             bounds: vec![vec![]; n],
             js_numbers: false,
             rest: false,
+            defaults: vec![],
         };
         let ck = self.check_call(&c, vec![None; n], args, self.hint(exp), span);
         let kind = H::Variant {
@@ -264,7 +280,10 @@ impl FnCx<'_, '_> {
                 crate::body::places::set_place_mode(&mut recv, m);
             }
         }
-        if i == Intrinsic::Clone && matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..)) {
+        if i == Intrinsic::Clone && self.cx.holds_generator(recv.ty) {
+            let t = recv.ty;
+            self.no_generator_copy(t, crate::body::GenCopy::Clone, prop.span);
+        } else if i == Intrinsic::Clone && matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..)) {
             self.cx.error(
                 Diagnostic::error("a promise cannot be copied", prop.span).with_note(
                     "it runs once and has one owner; pass the promise itself on, or await it and copy the result",

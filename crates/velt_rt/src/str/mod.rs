@@ -226,6 +226,16 @@ impl VeltStr {
         }
     }
 
+    /// Do the bytes of `other` lie in `self`'s heap buffer (a share of it, or an uncounted view:
+    /// a static-form sub-range or a bitwise copy)?
+    pub(crate) fn holds_bytes_of(&self, other: &VeltStr) -> bool {
+        if !self.is_heap() || other.is_inline() {
+            return false;
+        }
+        let (start, p) = (self.w0 as usize, other.w0 as usize);
+        p >= start && p < start + self.w2 as usize
+    }
+
     /// Give up this reference (frees the buffer with the last one) and leave `self` empty.
     ///
     /// # Safety
@@ -287,6 +297,12 @@ impl VeltStr {
         }
         let need = self.len() + bytes.len();
         if self.is_heap() && heap::is_unique(self.ptr()) {
+            let start = self.ptr() as usize;
+            if (start..start + self.w2 as usize).contains(&(bytes.as_ptr() as usize)) {
+                // The text lies in the buffer that is about to move: copy it out first.
+                let copy = bytes.to_vec();
+                return self.push_slow(&copy);
+            }
             let cap = grown(self.w2 as usize, need);
             self.w0 = heap::grow(self.ptr(), self.w2 as usize, cap) as usize as u64;
             self.w2 = cap as u64;
@@ -311,6 +327,24 @@ impl VeltStr {
         debug_assert!(self.is_heap() && len + bytes.len() <= self.w2 as usize);
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr().add(len), bytes.len());
         self.w1 = (len + bytes.len()) as u64;
+    }
+
+    /// Insert `bytes` at byte offset `at` (rare: `console.log`'s `<ref *N>` prefix), moving
+    /// the text to a new buffer.
+    ///
+    /// # Safety
+    /// `self` must be valid, `at` at most its length and on a character boundary; `bytes` must
+    /// not point into `self`.
+    pub unsafe fn insert_bytes(&mut self, at: usize, bytes: &[u8]) {
+        let old = self.as_bytes();
+        let mut text = Vec::with_capacity(old.len() + bytes.len());
+        text.extend_from_slice(&old[..at]);
+        text.extend_from_slice(bytes);
+        text.extend_from_slice(&old[at..]);
+        let mut s = VeltStr::with_capacity(text.len());
+        s.push_bytes(&text);
+        self.release();
+        *self = s;
     }
 
     /// Run `f` on a byte vector that is appended to `self` (formatting helpers write into a Vec).

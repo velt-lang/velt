@@ -1,0 +1,80 @@
+// An object type that contains itself through a field (#376): lowering stores it behind a
+// pointer, so `next?: Node` works like in TypeScript, with literals, JSON and mutation.
+
+interface Node {
+  value: number;
+  next?: Node;
+}
+
+interface Category {
+  name: string;
+  parent?: Category;
+}
+
+interface List<T> {
+  head: T;
+  tail?: List<T>;
+}
+
+interface Leaf {
+  kind: "leaf";
+  value: number;
+}
+
+interface Branch {
+  kind: "branch";
+  left: Tree;
+  right: Tree;
+}
+
+type Tree = Leaf | Branch;
+
+function sum(n: Node | null): number {
+  let total: number = 0;
+  let cur = n;
+  while (cur != null) {
+    total += cur.value;
+    cur = cur.next;
+  }
+  return total;
+}
+
+function path(c: Category): string {
+  return c.parent == null ? c.name : `${path(c.parent)}/${c.name}`;
+}
+
+function depth(t: Tree): number {
+  switch (t.kind) {
+    case "leaf":
+      return 1;
+    case "branch":
+      return 1 + Math.max(depth(t.left), depth(t.right));
+  }
+}
+
+function main() {
+  const list: Node = { value: 1, next: { value: 2, next: { value: 3 } } };
+  console.log(sum(list), list.next?.next?.value ?? 0);
+
+  const shoes: Category = { name: "shoes", parent: { name: "clothes", parent: { name: "shop" } } };
+  console.log(path(shoes), JSON.stringify(shoes));
+  const back = JSON.parse<Node>("{\"value\":5,\"next\":{\"value\":6}}");
+  console.log(sum(back));
+
+  const words: List<string> = { head: "a", tail: { head: "b" } };
+  console.log(words.tail?.head ?? "-");
+
+  const t: Tree = {
+    kind: "branch",
+    left: { kind: "leaf", value: 1 },
+    right: { kind: "branch", left: { kind: "leaf", value: 2 }, right: { kind: "leaf", value: 3 } },
+  };
+  console.log(depth(t));
+
+  // One object reached twice is not a cycle.
+  let n: Node = { value: 10 };
+  const shared: Node = { value: 20 };
+  n.next = shared;
+  shared.value = 21;
+  console.log(sum(n), n.next == shared, JSON.stringify({ a: shared, b: n }));
+}

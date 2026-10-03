@@ -1,7 +1,9 @@
 //! Prelude types the compiler knows by name: `Mutex<T>` (the lock-word struct behind
 //! `new Mutex(x)` / `.with`), `JsonError` (thrown by `JSON.parse`), the dynamic JSON value
 //! (`json::JsonValue`), `Map` (not JSON-serializable), the shared-state receiver shapes, and the
-//! `Comparable<T>` interface behind ordering operators on generic params.
+//! `Comparable<T>` interface behind ordering operators on generic params, the `Iterator<T, E>`
+//! interface behind `for...of` over iterables, and the `Generator<T, E>` / `AsyncGenerator<T, E>`
+//! classes generators create.
 
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
@@ -19,11 +21,167 @@ impl Ctx<'_> {
         }
     }
 
+    /// An interface exported by the prelude under `name` (`Iterator`, `Iterable`).
+    pub fn prelude_iface(&self, name: &str) -> Option<DefId> {
+        match self.prelude.get(name) {
+            Some(Item::Def(d)) if self.iface(*d).is_some() => Some(*d),
+            _ => None,
+        }
+    }
+
     /// An ADT exported by the prelude under `name`.
     pub fn prelude_adt(&self, name: &str) -> Option<DefId> {
         match self.prelude.get(name) {
             Some(Item::Def(d)) if self.adt(*d).is_some() => Some(*d),
             _ => None,
+        }
+    }
+
+    /// Is `t` the prelude's `IteratorResult<T>`, `{ value: T; done: false } | { done: true }`
+    /// (or an object union of that shape)? Its `value` can be read without narrowing
+    /// (`body/expr/discriminated.rs`).
+    pub fn is_iterator_result(&mut self, t: TyId) -> bool {
+        let Some(ms) = self.union_members(t) else {
+            return false;
+        };
+        let mut shapes: Vec<(usize, bool)> = vec![];
+        for m in ms {
+            let n = match self.ty.kind(m) {
+                TyKind::Adt(d, _) => self.adt(*d).map(|a| a.fields.len()),
+                _ => None,
+            };
+            let done = self.field_of(m, "done").map(|(_, f)| self.lit_value(f));
+            match (n, done) {
+                (Some(n), Some(Some(hir::LitValue::Bool(b)))) => shapes.push((n, b)),
+                _ => return false,
+            }
+        }
+        shapes.sort();
+        shapes == [(1, true), (2, false)]
+    }
+
+    /// The methods of std/channel's `Channel<T>` that hand their value to another task (`send`,
+    /// `trySend`), by def: a user type of the same name, or another std type's `send`, is no
+    /// channel.
+    pub fn channel_sends(&self) -> Vec<DefId> {
+        let module = self
+            .modules
+            .iter()
+            .position(|m| m.is_std && m.path == "std/channel");
+        let channel = match module.and_then(|m| self.scopes[m].items.get("Channel")) {
+            Some(Item::Def(d)) => *d,
+            _ => return vec![],
+        };
+        let Some(a) = self.adt(channel) else {
+            return vec![];
+        };
+        ["send", "trySend"]
+            .iter()
+            .filter_map(|n| a.methods.get(*n).map(|m| m.def))
+            .collect()
+    }
+
+    /// The prelude's `Generator<T, E>` class: what calling a generator creates.
+    pub fn generator_class(&self) -> Option<DefId> {
+        self.prelude_adt("Generator")
+    }
+
+    /// The prelude's `AsyncGenerator<T, E>` class: what calling an async generator creates.
+    pub fn async_generator_class(&self) -> Option<DefId> {
+        self.prelude_adt("AsyncGenerator")
+    }
+
+    /// Is `d` the prelude's `Generator` or `AsyncGenerator` class?
+    pub fn is_generator_class(&self, d: DefId) -> bool {
+        Some(d) == self.generator_class() || Some(d) == self.async_generator_class()
+    }
+
+    /// `(def, [T, E])` when `t` is a type a generator may be declared to return:
+    /// `Generator<T, E>`, `Iterator<T, E>` or `Iterable<T, E>`, or for an async generator
+    /// `AsyncGenerator<T, E>`, `AsyncIterator<T, E>` or `AsyncIterable<T, E>`.
+    pub fn generator_result(&self, t: TyId) -> Option<(DefId, Vec<TyId>)> {
+        self.generator_result_kind(t).map(|(d, args, _)| (d, args))
+    }
+
+    /// [`generator_result`](Self::generator_result), and whether it is an async one.
+    pub fn generator_result_kind(&self, t: TyId) -> Option<(DefId, Vec<TyId>, bool)> {
+        let iface = |name: &str, d: &DefId| Some(*d) == self.prelude_iface(name);
+        match self.ty.kind(t) {
+            TyKind::Adt(d, args) if Some(*d) == self.generator_class() => {
+                Some((*d, args.clone(), false))
+            }
+            TyKind::Adt(d, args) if Some(*d) == self.async_generator_class() => {
+                Some((*d, args.clone(), true))
+            }
+            TyKind::Dyn(d, args) if iface("Iterator", d) || iface("Iterable", d) => {
+                Some((*d, args.clone(), false))
+            }
+            TyKind::Dyn(d, args) if iface("AsyncIterator", d) || iface("AsyncIterable", d) => {
+                Some((*d, args.clone(), true))
+            }
+            _ => None,
+        }
+    }
+
+    /// Does a value of type `t` hold a generator object (`Generator`, `AsyncGenerator`; in a
+    /// field, element or payload)? Its suspended state cannot be copied, so such values cannot
+    /// be cloned or passed to another task. Interface values are not looked into.
+    pub fn holds_generator(&mut self, t: TyId) -> bool {
+        self.holds_generator_in(t, &mut std::collections::HashSet::new())
+    }
+
+    fn holds_generator_in(&mut self, t: TyId, seen: &mut std::collections::HashSet<TyId>) -> bool {
+        if !seen.insert(t) {
+            return false;
+        }
+        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
+            TyKind::Adt(d, _) if self.is_generator_class(d) => return true,
+            TyKind::Shared(_) | TyKind::FnPtr { .. } | TyKind::Dyn(..) => return false,
+            TyKind::Adt(d, args) => {
+                let tys: Vec<TyId> = match &self.info[d.0 as usize] {
+                    DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                    DefInfo::Enum(e) => e
+                        .variants
+                        .iter()
+                        .flat_map(|v| v.payload.iter().copied())
+                        .collect(),
+                    _ => vec![],
+                };
+                tys.into_iter().map(|f| self.ty.subst(f, &args)).collect()
+            }
+            k => crate::types::children(&k),
+        };
+        parts.into_iter().any(|p| self.holds_generator_in(p, seen))
+    }
+
+    /// Generator result type `t` with `e` as its error type argument.
+    pub fn with_generator_error(&mut self, t: TyId, e: TyId) -> TyId {
+        let Some((d, mut args)) = self.generator_result(t) else {
+            return t;
+        };
+        if args.len() != 2 {
+            return t;
+        }
+        args[1] = e;
+        match self.ty.kind(t) {
+            TyKind::Dyn(..) => self.ty.intern(TyKind::Dyn(d, args)),
+            _ => self.ty.intern(TyKind::Adt(d, args)),
+        }
+    }
+
+    /// `Generator<t, e>`.
+    pub fn generator_ty(&mut self, t: TyId, e: TyId) -> TyId {
+        match self.generator_class() {
+            Some(d) => self.ty.intern(TyKind::Adt(d, vec![t, e])),
+            None => self.ty.error,
+        }
+    }
+
+    /// `AsyncGenerator<t, e>`.
+    pub fn async_generator_ty(&mut self, t: TyId, e: TyId) -> TyId {
+        match self.async_generator_class() {
+            Some(d) => self.ty.intern(TyKind::Adt(d, vec![t, e])),
+            None => self.ty.error,
         }
     }
 

@@ -1,0 +1,41 @@
+// check: no leaks
+// A closure forwarding a borrowed callback to a callee that returns a promise may be called
+// after the caller returned (#167): it owns a copy of what it forwards, through an interface
+// method whose async implementation calls it after an `await`, and through a function value.
+// Awaited at once, the call keeps the borrow.
+interface H {
+  handle(n: i64, next: (n: i64) => i64): Promise<i64>;
+}
+
+class Later implements H {
+  async handle(n: i64, next: (n: i64) => i64): Promise<i64> {
+    await sleep(5);
+    return next(n);
+  }
+}
+
+function start(h: H, cb: (n: i64) => i64): Promise<i64> {
+  const pad = "a padding string long enough to live on the heap";
+  return h.handle(1, (n) => cb(n + (pad.length as i64)));
+}
+
+function run2(run: (f: (n: i64) => i64) => Promise<i64>, cb: (n: i64) => i64): Promise<i64> {
+  return run((n) => cb(n + 1));
+}
+
+async function viaValue(f: (n: i64) => i64): Promise<i64> {
+  await sleep(5);
+  return f(10);
+}
+
+async function awaited(h: H, cb: (n: i64) => i64): Promise<i64> {
+  return await h.handle(2, (n) => cb(n * 3));
+}
+
+async function main() {
+  const p = start(new Later(), (n) => n + 1);
+  console.log(await p);
+  const q = run2(viaValue, (n) => n * 2);
+  console.log(await q);
+  console.log(await awaited(new Later(), (n) => n + 100));
+}

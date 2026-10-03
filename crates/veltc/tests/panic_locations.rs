@@ -3,8 +3,8 @@
 //! release mode, plus release with the LLVM backend when clang is installed.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
+mod no_window;
 mod runtime_support;
 
 fn root() -> PathBuf {
@@ -42,6 +42,21 @@ const CASES: &[(&str, i32, &str)] = &[
         "Uncaught ParseError: bad digit: x at tests/golden/lang/panic_uncaught.vlt:13:3",
     ),
     (
+        "panic_uncaught_async",
+        1,
+        "Uncaught ParseError: bad digit: x at tests/golden/lang/panic_uncaught_async.vlt:10:3",
+    ),
+    (
+        "panic_uncaught_spawned",
+        1,
+        "Uncaught Overheated: over 150 at tests/golden/lang/panic_uncaught_spawned.vlt:8:5",
+    ),
+    (
+        "panic_uncaught_finally_await",
+        1,
+        "Uncaught A: thrown before the await at tests/golden/lang/panic_uncaught_finally_await.vlt:14:5",
+    ),
+    (
         "panic_uncaught_std",
         1,
         "Uncaught IoError: ENOENT: no such file or directory, lstat 'velt-missing-file-b' at tests/golden/lang/panic_uncaught_std.vlt:7:3",
@@ -62,7 +77,7 @@ fn panics_report_their_source_location() {
         let file = format!("tests/golden/lang/{name}.vlt");
         for mode in &modes {
             let out = root.join("target/golden-work-panics").join(mode.join("_"));
-            let o = Command::new(env!("CARGO_BIN_EXE_velt"))
+            let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
                 .arg("build")
                 .args(*mode)
                 .arg(&file)
@@ -77,7 +92,9 @@ fn panics_report_their_source_location() {
             } else {
                 out.join(name)
             };
-            let r = Command::new(&exe).output().expect("run program");
+            let r = crate::no_window::command(&exe)
+                .output()
+                .expect("run program");
             let stderr = String::from_utf8_lossy(&r.stderr).replace("\r\n", "\n");
             let code = r.status.code().unwrap_or(-1);
             if code != *want_code || !stderr.lines().any(|l| l == *want) {

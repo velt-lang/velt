@@ -51,7 +51,8 @@ impl<'a> Printer<'a> {
                 pattern,
                 iter,
                 body,
-            } => self.for_of(*kind, pattern, iter, body),
+                is_await,
+            } => self.for_of(*kind, pattern, iter, body, *is_await),
             StmtKind::Break(label) => jump("break", label.as_ref().map(|l| l.name.as_str())),
             StmtKind::Continue(label) => jump("continue", label.as_ref().map(|l| l.name.as_str())),
             StmtKind::Block(b) => match self.desugared_for(b) {

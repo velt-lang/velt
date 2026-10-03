@@ -54,22 +54,16 @@ impl super::Cx<'_> {
         join
     }
 
-    /// Error type of interface method `slot`: every implementation (and the default) shares it
-    /// (sema's dispatch groups), and it mentions no type parameters. A promise slot never
-    /// throws: its implementations reject the promise instead.
-    fn slot_throws(&mut self, iface: DefId, slot: u32) -> Option<TyId> {
+    /// Error type of a call through interface method `slot` of `iface<args>`: sema's
+    /// `InterfaceMethodDef::throws` (in the interface's type params) with the `Dyn`'s args. A
+    /// promise slot never throws: its implementations reject the promise instead.
+    fn slot_throws(&mut self, iface: DefId, slot: u32, args: &[TyId]) -> Option<TyId> {
         let hir::Def::Interface(idef) = self.hir.def(iface) else {
             ice("interface call on a non-interface")
         };
-        let m = &idef.methods[slot as usize];
-        if m.promise {
-            return None;
-        }
-        let first_impl = self.impls_of(iface).first().copied();
-        let method = m
-            .default
-            .or_else(|| first_impl.map(|i| self.hir.impls[i as usize].methods[slot as usize]))?;
-        self.error_ty(self.fn_def(method).throws)
+        let t = idef.methods[slot as usize].throws?;
+        let t = self.subst(t, args);
+        self.error_ty(Some(t))
     }
 }
 
@@ -139,9 +133,9 @@ impl FnLower<'_, '_> {
             .unwrap_or_else(|| ice("interface call without receiver"));
         let dty = self.sub(recv.ty);
         let (modes, throws) = match self.cx.kind(dty) {
-            TyKind::Dyn(iface, _) => (
+            TyKind::Dyn(iface, args) => (
                 self.cx.dyn_modes(iface, slot),
-                self.cx.slot_throws(iface, slot),
+                self.cx.slot_throws(iface, slot, &args),
             ),
             _ => ice("interface call on a non-interface receiver"),
         };

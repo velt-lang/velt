@@ -40,7 +40,7 @@ impl Interp<'_> {
     pub(super) fn rt_strbuf(&mut self, sym: &str, a: &[u64]) -> Option<u64> {
         match sym {
             "velt_rt_strbuf_new" => self.write_bytes(a[1], &[0; 24]),
-            "velt_rt_strbuf_push_str" => {
+            "velt_rt_strbuf_push_str" | "velt_rt_str_append" => {
                 let s = self.str_bytes(a[1]);
                 self.buf_push(a[0], &s);
             }
@@ -99,6 +99,10 @@ impl Interp<'_> {
                 self.write_bytes(a[0], &[0; 24]);
             }
             "velt_rt_str_eq" => return Some((self.str_bytes(a[0]) == self.str_bytes(a[1])) as u64),
+            // Cycle tracking for printing (velt_rt's strbuf.rs): the programs run here print
+            // no cyclic graphs, so every object is printed.
+            "velt_rt_strbuf_inspect_enter" => return Some(1),
+            "velt_rt_strbuf_inspect_leave" => {}
             _ => return None,
         }
         Some(0)

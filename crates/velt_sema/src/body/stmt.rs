@@ -169,6 +169,7 @@ impl FnCx<'_, '_> {
                 self.expr_stmt(inner)
             }
             _ => {
+                self.stmt_yields(e);
                 let h = self.expr(e, None, Want::Borrow);
                 self.check_floating(e, &h);
                 h
@@ -328,6 +329,9 @@ impl FnCx<'_, '_> {
             }
         }
         let local = self.declare_local(name, ty, kind);
+        if v.kind == ast::VarKind::AwaitUsing {
+            self.f.await_using.insert(local);
+        }
         if let (None, Some(h)) = (ann, &init) {
             self.note_inferred_local(local, h);
         }
@@ -351,6 +355,16 @@ impl FnCx<'_, '_> {
                 )
                 .with_note("a derived class's constructor calls `super(...)` on every path"),
             );
+        }
+        if let (Some(e), Some(_)) = (e, self.f.yield_ty) {
+            self.cx.error(
+                Diagnostic::error("a generator cannot return a value", e.span).with_note(
+                    "TypeScript allows this (the value becomes the `value` of the result with `done: true`); Velt doesn't because a finished `IteratorResult` carries no value; write `yield value;` before `return;` to produce a last value",
+                ),
+            );
+            self.expr(e, None, Want::Move);
+            Self::push(out, S::Return(None), span);
+            return;
         }
         let Some(ret) = self.f.ret else {
             let h = self.infer_return(e, span);

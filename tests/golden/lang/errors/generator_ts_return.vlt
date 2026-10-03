@@ -1,0 +1,47 @@
+// TypeScript's `TReturn` in a protocol type: a second type argument that is no error type can
+// only be TypeScript's return type (Velt's second argument is the error type), and a third
+// argument makes the second one `TReturn`. Errors are located at the annotation, never in the
+// prelude; `void` as an error type is reported where it is written. `return(): void` does not
+// implement `Iterator.return()`.
+class User {
+  name: string = "";
+}
+
+class Boom extends Error {}
+
+function* a(): Generator<number, string> {
+  yield 1;
+}
+
+function* b(): Generator<number, string, unknown> {
+  yield 2;
+}
+
+function* c(): Iterator<number, User> {
+  yield 3;
+}
+
+class It implements Iterator<number, User[]> {
+  next(): IteratorResult<number> {
+    return { done: true };
+  }
+}
+
+async function* d(): AsyncGenerator<number, Boom | User> {
+  yield 4;
+}
+
+// The early exit returns a finished result, as in TypeScript (not `void`).
+class OldStyle implements Iterator<i64> {
+  next(): IteratorResult<i64> {
+    return { done: true };
+  }
+
+  return(): void {}
+}
+
+function f(): void throws void {}
+
+function g(p: Promise<i64, void>) {}
+
+function main(): void {}

@@ -77,6 +77,8 @@ pub(crate) fn fn_placeholder<'m>(
         local_kinds: vec![],
         owner: None,
         is_async: false,
+        is_generator: false,
+        is_async_gen: false,
         soft_moves: vec![],
         is_private: false,
         is_getter: false,
@@ -166,6 +168,7 @@ pub(super) fn new_def<'m>(
                 module: m,
                 decl: a,
                 expanding: false,
+                used: false,
             });
             return Some((&a.name, Item::Alias(id)));
         }

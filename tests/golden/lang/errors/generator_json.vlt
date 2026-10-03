@@ -1,0 +1,12 @@
+// `JSON.stringify` of a generator (Node writes `{}`): a generator is no data, and the error says
+// so instead of naming its internal state.
+function* nums(): Generator<i64> {
+  yield 1;
+}
+
+async function* later(): AsyncGenerator<i64> {
+  yield 1;
+}
+
+console.log(JSON.stringify(nums()));
+console.log(JSON.stringify([later()]));

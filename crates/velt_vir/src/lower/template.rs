@@ -14,7 +14,7 @@ use crate::vir::{Operand, Place, Ty, STR_AGG};
 const STR: Ty = Ty::Agg(STR_AGG);
 
 /// One flattened part of a concatenation chain.
-enum Part<'e> {
+pub(super) enum Part<'e> {
     /// Static text (a string literal).
     Text(&'e str),
     /// `ToString(e)` of a non-string value.
@@ -24,7 +24,7 @@ enum Part<'e> {
 }
 
 /// Append the parts of `e` (a `StrConcat` tree or a leaf) in evaluation order.
-fn flatten<'e>(e: &'e hir::Expr, out: &mut Vec<Part<'e>>) {
+pub(super) fn flatten<'e>(e: &'e hir::Expr, out: &mut Vec<Part<'e>>) {
     match &e.kind {
         hir::ExprKind::Call {
             callee: hir::Callee::Intrinsic(Intrinsic::StrConcat),
@@ -57,22 +57,32 @@ impl FnLower<'_, '_> {
             let pb = self.operand_addr(vb, STR);
             return self.concat(pa, pb, ty);
         }
-        let cap = self.estimate_all(&parts);
+        self.build_parts(&parts, ty)
+    }
+
+    /// Evaluate `parts` in order into one fresh builder: an owned string of type `ty`.
+    pub(super) fn build_parts(&mut self, parts: &[Part], ty: TyId) -> Operand {
+        let cap = self.estimate_all(parts);
         let (buf, bp) = self.new_strbuf(cap);
         // Owned from the start: a part that throws or returns early frees the partial text.
         self.own_temp(buf, ty);
+        self.push_parts(&bp, parts);
+        Operand::Copy(Place::local(buf))
+    }
+
+    /// Evaluate `parts` in order, appending each to the string at address `bp`.
+    pub(super) fn push_parts(&mut self, bp: &Operand, parts: &[Part]) {
         for p in parts {
             match p {
-                Part::Text(s) => self.push_text(&bp, s),
-                Part::Format(e) => self.push_formatted(&bp, e),
+                Part::Text(s) => self.push_text(bp, s),
+                Part::Format(e) => self.push_formatted(bp, e),
                 Part::Str(e) => {
                     let v = self.expr(e);
                     let a = self.operand_addr(v, STR);
-                    self.push_str(&bp, a);
+                    self.push_str(bp, a);
                 }
             }
         }
-        Operand::Copy(Place::local(buf))
     }
 
     /// Expected byte length of the result, for the builder's initial capacity: exact for the

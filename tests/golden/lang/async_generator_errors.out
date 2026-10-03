@@ -1,0 +1,9 @@
+failing 0
+failing 1
+caught failed at 2
+caught before any await
+stored 0
+caught stored failed at 1
+after the error, done: true
+next() rejected: failed at 0
+total failed at 3

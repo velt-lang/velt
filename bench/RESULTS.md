@@ -37,7 +37,9 @@ M2 programs (the Rust and Node versions are the same algorithm, written idiomati
   capturing arrows, then 20M calls of a stored (escaping) closure. Rust materializes every
   `map` / `filter` into a `Vec` like JS does, and stores the closure as `Box<dyn Fn>`.
 - **strings**: 1M template-literal lines, `join("\n")`, then a `charCodeAt` scan of the 24 MB
-  result. Rust uses `format!`, `join` and a byte loop.
+  result; then 100k `s += "…"` appends and 100k `` t = `${t}…${i}…` `` appends. Rust uses
+  `format!`, `join`, a byte loop, `push_str` and `write!`. (The table's row predates the
+  appends, which add a few milliseconds to the Velt columns now that they append in place.)
 - **shapes**: 1M shapes in a discriminated union (`{ kind: "circle"; r } | ...`), 40 passes of
   `switch (s.kind)` plus a `s.kind === "empty"` test. Rust uses an enum and `match`, Node plain
   objects and `switch`.
@@ -977,3 +979,60 @@ runs, best of 21, CPU ms): parse_value 313 → 315, navigate 170 → 174, edit 1
 unchanged (within ±2%). Deleting 80k keys from the middle of a 160k-key object, each followed
 by two `at` calls: 9.9 s → 0.04 s (each `at` rebuilt a table of the live positions in O(n);
 it now costs O(log n)).
+
+## Generators (`bench/iter`, #62 phase 2, 2026-10-03)
+
+`bench/iter/run.sh` (`run.ps1`): 20 × 30M values summed modulo a prime (a loop-carried
+dependency the vectorizer leaves alone), LLVM release, best of interleaved runs, Apple M4 shared
+with other builds (identical programs vary by up to ±10% between rounds). Node runs once.
+
+| program | Velt (ms) | vs hand_loop | Node (ms) |
+|---|---|---|---|
+| hand_loop: `while` loop | 1172 | 1.00 | 2649 |
+| gen_loop: `for...of` over `range(n)`, a `function*` | 1233 | 1.05 | 77980 |
+| iterable_class: iterator class (`next()` called directly) | 1147 | 0.98 | 17341 |
+| gen_value: `range(n)` passed as `Iterable<i64>` | 2997 | 2.56 | 74180 |
+
+- gen_loop's hot loop is the hand loop's seven instructions per value (rotated): the generator's
+  state lives in the loop's frame, its resume function is inlined, and the state's dispatch is
+  jump-threaded away; nothing is allocated. Where the hand loop vectorizes (a filtered plain
+  sum), the generator loop stays scalar: the `yield` is an exit from the producer's loop.
+- gen_value allocates the generator object once per loop; each value costs an interface call of
+  `next()`, a table call of the resume function and an `IteratorResult` value.
+- Array `for...of` is untouched: bench/classes, shapes and nbody lower to identical VIR before
+  and after this change, hashmap differs only in the source paths of panic messages; their
+  times are unchanged within noise.
+
+## Async generators (`bench/iter`, #62 phase 3, 2026-10-03)
+
+`bench/iter/run.sh 7` adds an async pair: 20 × 3M values, each from an async call that
+completes at once (`await step(i)`), summed like the rest; compared with the async hand loop.
+Same machine and caveats as above (this run's sync rows: hand_loop 456 ms, gen_loop 454,
+iterable_class 455, gen_value 1125 — the machine was quieter than in the phase-2 run).
+
+| program | Velt (ms) | vs async_hand | Node (ms) |
+|---|---|---|---|
+| async_hand: `while` loop in an async function | 49 | 1.00 | 1876 |
+| async_gen: `for await` over `values(n)`, an `async function*` | 118 | 2.41 | 7043 |
+
+- Nothing is allocated in either: the async generator's state is part of `main`'s state and is
+  polled by a direct call per value.
+- The difference (about 1.2 ns per value) is the generator's state living in the caller's
+  state memory rather than registers: each step stores and reloads its tag and counter and
+  tests the poll result. Real work per value (an actual suspension or I/O) dwarfs it.
+
+## Channels as async iterables (#62 phase 4, 2026-10-03)
+
+`for await (const v of ch)` against the `await ch.receive()` loop it replaces, same build (LLVM
+release, interleaved, best of 21, Apple M4 shared with other builds, `VELT_THREADS=1`):
+
+| program | `receive()` loop (ms) | `for await` (ms) |
+|---|---|---|
+| bench/async channel_pipeline (4 producers, 1M values, capacity 1024) | 44.6 | 46.8 |
+| drain: 10 × 1M values queued, then received in one task | 432.6 | 428.6 |
+
+- Nothing is allocated per value: the channel's `[Symbol.asyncIterator]` is an async generator
+  method, so the loop embeds its state and calls the same runtime receive. The pipeline's
+  ~2 ns per value is the generator step (section "Async generators" above).
+- Every bench/async and bench/iter program compiles to a byte-identical object file before and
+  after this phase (it changes std sources and sema only), so their timings are unchanged.

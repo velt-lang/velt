@@ -25,7 +25,7 @@ export class ChannelClosed extends Error {
 
 // A channel of `T` values. `channel<T>()` is unbounded; `channel<T>(capacity)` holds at most
 // `capacity` values (at least 1).
-export struct Channel<T> {
+export struct Channel<T> implements AsyncIterable<T> {
   private handle: u64;
 
   // Queues `value`, waiting while a bounded channel is full. Throws `ChannelClosed` (and drops
@@ -51,6 +51,18 @@ export struct Channel<T> {
   // The oldest value if one is queued, else `null` (never waits).
   tryReceive(): T | null {
     return __intrinsic_chan_try_receive<T>(this.handle);
+  }
+
+  // `for await (const v of ch)`: receives until the channel is closed and drained. Leaving the
+  // loop early does not close the channel (other tasks may receive from it).
+  async *[Symbol.asyncIterator](): AsyncIterator<T> {
+    while (true) {
+      const v = await __intrinsic_chan_receive<T>(this.handle);
+      if (v == null) {
+        return;
+      }
+      yield v;
+    }
   }
 
   // Closes the channel (closing twice does nothing). Pending and later sends throw

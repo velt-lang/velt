@@ -1,0 +1,16 @@
+generator_copy.vlt:61:15: error: a generator cannot be copied
+its suspended state (locals, `finally` blocks still to run) has one owner: pass the generator itself on, or collect its values into an array and copy that
+generator_copy.vlt:62:35: error: a generator (`Generator<i64, never>`) cannot be passed to another task
+values passed to a spawned task (or sent on a channel) are copied for the receiving thread, and a generator's suspended state cannot be: create the generator inside the task, or iterate it here and pass its values
+generator_copy.vlt:63:40: error: a generator (`AsyncGenerator<i64, never>`) cannot be passed to another task
+values passed to a spawned task (or sent on a channel) are copied for the receiving thread, and a generator's suspended state cannot be: create the generator inside the task, or iterate it here and pass its values
+generator_copy.vlt:64:20: error: `Holder`, which holds a generator, cannot be passed to another task
+values passed to a spawned task (or sent on a channel) are copied for the receiving thread, and a generator's suspended state cannot be: create the generator inside the task, or iterate it here and pass its values
+generator_copy.vlt:67:21: error: an async closure cannot capture the generator `h`
+an async closure copies what it captures when it runs (it may run as a task on another thread), and a generator's suspended state cannot be copied: create the generator inside the closure, or pass it to an async function
+generator_copy.vlt:73:9: error: a generator (`Generator<i64, never>`) cannot be passed to another task
+values passed to a spawned task (or sent on a channel) are copied for the receiving thread, and a generator's suspended state cannot be: create the generator inside the task, or iterate it here and pass its values
+generator_copy.vlt:74:31: error: a generator (`Generator<i64, never>`) cannot be passed to another task
+values passed to a spawned task (or sent on a channel) are copied for the receiving thread, and a generator's suspended state cannot be: create the generator inside the task, or iterate it here and pass its values
+generator_copy.vlt:75:36: error: a generator (`AsyncGenerator<i64, never>`) cannot be passed to another task
+values passed to a spawned task (or sent on a channel) are copied for the receiving thread, and a generator's suspended state cannot be: create the generator inside the task, or iterate it here and pass its values

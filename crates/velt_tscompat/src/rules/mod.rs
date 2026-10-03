@@ -5,11 +5,13 @@
 //!   types (`number-suffix`);
 //! - [`exprs`]: `number-suffix`, `int-cast`, named object literals (`struct`);
 //! - [`decls`]: `struct`, `extend`, `throws`, `interface-body`, `declare-fn`;
-//! - [`imports`]: `velt-import`, `outside-import`, `jsx-provider`.
+//! - [`imports`]: `velt-import`, `outside-import`, `jsx-provider`;
+//! - [`jsx_pragma`]: a `@jsxImportSource` pragma in a line comment (`jsx-pragma-comment`).
 
 mod decls;
 mod exprs;
 mod imports;
+mod jsx_pragma;
 mod types;
 
 use std::collections::HashSet;
@@ -40,6 +42,7 @@ pub(crate) fn lint_module(module: &LintModule, scope: &[&Path]) -> Vec<Finding> 
         }
     }
     imports::check(module, scope, &mut cx);
+    jsx_pragma::check(module, &mut cx);
     cx.findings
 }
 
@@ -61,6 +64,10 @@ impl Cx<'_> {
     /// Report an error (every syntax rule is one: `tsc` rejects the code or JavaScript runs it
     /// differently).
     fn error(&mut self, code: &'static str, span: Span, message: String, notes: &[&str]) {
+        debug_assert!(
+            crate::RULES.contains(&code),
+            "ICE: `{code}` is not in RULES"
+        );
         self.findings.push(Finding {
             code,
             severity: Severity::Error,

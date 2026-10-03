@@ -146,9 +146,10 @@ console.log("after");
 **`using x = …;`** (TypeScript 5.2) declares a `const` that is disposed at the end of the
 enclosing block: in reverse declaration order, and also on `return`, `break`, `continue` and
 `throw`. The value's type must have `[Symbol.dispose]()`; a `null` value is skipped. A `using`
-variable stays put until then: passing it to a function that borrows it is fine, but moving it
-away (returning it, storing it, an explicit `x[Symbol.dispose]()`) is an error; declare it with
-`const` for that. `using` is only allowed inside blocks.
+variable stays put until then: passing it to a function that borrows it is fine, and so is
+an async call awaited where it is made (`await x.read()`), but moving it away (returning it,
+storing it, a stored or returned promise of an async call on it, `spawn`, an explicit
+`x[Symbol.dispose]()`) is an error; declare it with `const` for that. `using` is only allowed inside blocks.
 
 ```ts
 class Lock {

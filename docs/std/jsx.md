@@ -46,7 +46,7 @@ Rendering rules:
   string, so rendering it is a copy. Static markup is precompiled to constant strings, with
   dynamic text and attributes folded in through template literals (`jsxTemplate`, `jsxEscape`,
   `jsxAttr`); `velt:jsx/generic/jsx-runtime` is the same provider without that mode
-  (`// @jsxImportSource velt:jsx/generic`).
+  (`/** @jsxImportSource velt:jsx/generic */`).
 
 ```tsx
 import { renderToStream, Element } from "velt:jsx";

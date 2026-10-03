@@ -4,8 +4,7 @@
 //! `union_lookahead_stays_linear` counts the bytes it walks). A plain skip here would rescan
 //! every subtree once per enclosing level.
 
-use std::process::Command;
-
+mod no_window;
 mod test_dir;
 
 #[test]
@@ -22,7 +21,7 @@ fn union_lookahead_uses_the_remembering_skip() {
          }\n",
     )
     .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_velt"))
+    let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["build", "main.vlt", "--emit", "vir"])
         .current_dir(dir.path())
         .output()

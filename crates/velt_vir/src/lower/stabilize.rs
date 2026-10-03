@@ -5,7 +5,9 @@
 //! Such borrows are kept alive for the statement: a counted value is shared into a temporary;
 //! anything else is read through containers that are retained ([`FnLower::retained_hop`]).
 //! Every borrow examined here is recorded (`Cx::note_projection`), so a container that becomes
-//! counted makes the values borrowed through it counted too.
+//! counted makes the values borrowed through it counted too. A variable held in a shared cell
+//! (a closure assigns it) is like a counted container: the value borrowed from it is counted
+//! and shared for the statement, so a closure the callee runs cannot free it.
 
 use velt_sema::hir::{self, TyId};
 
@@ -18,7 +20,7 @@ impl FnLower<'_, '_> {
     pub(super) fn stable_borrow(&mut self, a: &hir::Expr) -> Operand {
         let ty = self.sub(a.ty);
         let by_value = self.cx.ty(ty).is_scalar() && self.cx.share_kind(ty) == ShareKind::Plain;
-        if by_value || !self.through_counted(a, ty) {
+        if by_value || !(self.through_counted(a, ty) || self.in_shared_cell(a)) {
             return self.borrowed_arg(a);
         }
         if self.cx.counted(ty) {
@@ -47,6 +49,29 @@ impl FnLower<'_, '_> {
         self.cx.note_projection(bty, value);
         let inner = self.through_counted(base, value);
         inner || self.cx.counted(bty)
+    }
+
+    /// Is the place `e` rooted in a variable held in a shared cell, which a closure the callee
+    /// runs may reassign? Its value's type is then counted (recorded as shared), so the borrow
+    /// can share what it reaches from the variable.
+    pub(super) fn in_shared_cell(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Local(l, _) => {
+                let info = &self.info[l.0 as usize];
+                if !info.in_cell {
+                    return false;
+                }
+                let ty = info.ty;
+                self.cx.note_share(ty);
+                true
+            }
+            K::Field { base, .. } | K::Index { base, .. } => self.in_shared_cell(base),
+            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } => {
+                self.in_shared_cell(base)
+            }
+            _ => false,
+        }
     }
 
     /// Is the value of `e` (a place) counted itself or a part of a counted value? Moving out of

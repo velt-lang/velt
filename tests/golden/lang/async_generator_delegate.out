@@ -1,0 +1,18 @@
+walk 1
+walk 2
+walk 3
+outer start
+outer a
+outer b
+inner closed
+outer s1
+outer s2
+outer x
+outer y
+outer p1
+outer p2
+outer end
+outer start
+outer a
+inner closed
+end

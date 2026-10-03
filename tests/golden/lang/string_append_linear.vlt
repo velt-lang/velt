@@ -1,0 +1,40 @@
+// check: heap strings at most 64
+// check: no leaks
+// Appending to a string variable or field in a loop is amortized O(1) per append: the text goes
+// onto the end of the old value's buffer, which grows geometrically. Copying the string on every
+// append (quadratic) would allocate one heap string per iteration.
+
+class Html {
+  out: string = "";
+
+  leaf() {
+    this.out += "<div class=\"lvl\">leaf</div>";
+  }
+
+  item(i: number) {
+    this.out = `${this.out}<li data-i="${i}">item ${i}</li>`;
+  }
+}
+
+function main() {
+  const n = 20000;
+  let html = "";
+  for (let i = 0; i < n; i++) {
+    html += "<div class=\"lvl\">leaf</div>";
+  }
+  let plus = "";
+  for (let i = 0; i < n; i++) {
+    plus = plus + "<span>" + `${i}` + "</span>";
+  }
+  let tpl = "";
+  for (let i = 0; i < n; i++) {
+    tpl = `${tpl}<p>${i}</p>`;
+  }
+  const page = new Html();
+  for (let i = 0; i < n; i++) {
+    page.leaf();
+    page.item(i);
+  }
+  console.log(html.length, plus.length, tpl.length, page.out.length);
+  console.log(tpl.slice(tpl.length - 22), page.out.slice(0, 50));
+}

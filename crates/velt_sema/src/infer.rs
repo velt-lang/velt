@@ -52,10 +52,10 @@ impl Ctx<'_> {
                 None => false,
             },
             (TyKind::Dyn(d, ps), TyKind::Dyn(d2, as_)) if d == d2 => {
-                self.match_all(&ps, &as_, slots)
+                self.match_iface_args(&ps, &as_, slots)
             }
             (TyKind::Dyn(d, ps), _) => match self.impl_args(actual, d) {
-                Some(as_) => self.match_all(&ps, &as_, slots),
+                Some(as_) => self.match_iface_args(&ps, &as_, slots),
                 None => false,
             },
             (TyKind::Array(p), TyKind::Array(a))
@@ -158,6 +158,19 @@ impl Ctx<'_> {
         Some(self.match_ty(*param, t, slots))
     }
 
+    /// Interface arguments: an argument may be an error type (`E` of `Iterable<T, E>`), so
+    /// `never` binds a parameter there, as in [`Self::match_error`].
+    fn match_iface_args(&mut self, ps: &[TyId], as_: &[TyId], slots: &mut [Option<TyId>]) -> bool {
+        if ps.len() != as_.len() {
+            return false;
+        }
+        let mut ok = true;
+        for (p, a) in ps.iter().zip(as_) {
+            ok &= self.match_error(*p, *a, slots);
+        }
+        ok
+    }
+
     fn match_all(&mut self, ps: &[TyId], as_: &[TyId], slots: &mut [Option<TyId>]) -> bool {
         if ps.len() != as_.len() {
             return false;
@@ -212,6 +225,21 @@ impl Ctx<'_> {
         let imp = &self.impls[i as usize];
         let (pat, n, iargs) = (imp.ty, imp.generics as usize, imp.iface_args.clone());
         let mut slots = vec![None; n];
+        // `impl C<T, E>` binds its params to the type's own args, `never` included (`match_ty`
+        // lets `never` match anything without binding: `Generator<i64, never>`).
+        if let (TyKind::Adt(d, ps), TyKind::Adt(d2, as_)) =
+            (self.ty.kind(pat).clone(), self.ty.kind(t).clone())
+        {
+            if d == d2 && ps.len() == as_.len() {
+                for (p, a) in ps.iter().zip(&as_) {
+                    if let TyKind::Param(i) = self.ty.kind(*p) {
+                        if let Some(s @ None) = slots.get_mut(*i as usize) {
+                            *s = Some(*a);
+                        }
+                    }
+                }
+            }
+        }
         if !(self.match_ty(pat, t, &mut slots) && self.ty.subst_known(pat, &slots) == t) {
             return None;
         }

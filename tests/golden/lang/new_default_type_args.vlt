@@ -1,0 +1,39 @@
+// `new C<A>(...)` fills the type parameters it leaves out with their defaults, like a type
+// annotation `C<A>` does (`class Box2<T, E = never>`: `new Box2<i64>(1)` is a `Box2<i64, never>`).
+class Missing extends Error {}
+
+class Box2<T, E = never> {
+  value: T;
+
+  constructor(value: T) {
+    this.value = value;
+  }
+
+  get(): T throws E {
+    return this.value;
+  }
+}
+
+class Pair<A, B = A> {
+  a: A;
+  b: B;
+
+  constructor(a: A, b: B) {
+    this.a = a;
+    this.b = b;
+  }
+}
+
+function main() {
+  const b = new Box2<i64>(41);
+  const annotated: Box2<i64> = b;
+  console.log(annotated.get() + 1);
+  const t = new Box2<string, Missing>("typed");
+  try {
+    console.log(t.get());
+  } catch (e) {
+    console.log("missing", e.message);
+  }
+  const p = new Pair<string>("x", "y");
+  console.log(p.a + p.b);
+}

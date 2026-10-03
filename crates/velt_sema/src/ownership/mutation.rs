@@ -55,7 +55,12 @@ pub(super) fn apply(
     }
     changed |= captures(cx, d, f, ev);
     let info = cx.fn_info(d);
-    let (kind, fixed, is_async) = (info.kind, info.fixed_modes, info.is_async);
+    // Async functions and generators keep their params (owned): nothing to infer.
+    let (kind, fixed, is_async) = (
+        info.kind,
+        info.fixed_modes,
+        info.is_async || info.is_generator,
+    );
     let has_this = info.this.is_some();
     if has_this && ev.mutated.contains(&f.params[0].local) {
         let t = cx.fn_info_mut(d).this.as_mut().expect("ICE: this");

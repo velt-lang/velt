@@ -196,10 +196,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         for (k, c) in f.captures.iter().enumerate() {
             let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
             let slot = proj(&base, Proj::Field(ENV_HEADER + k as u32));
+            let cell = f.body.locals[c.inner.0 as usize].boxed;
             let vir = (self.cx.ty(ty) != Ty::Unit).then(|| {
                 let name = f.body.locals[c.inner.0 as usize].name.clone();
                 let l = self.new_local(Ty::Ptr, Some(name));
-                let cell = f.body.locals[c.inner.0 as usize].boxed;
                 let ptr = match c.mode {
                     PassMode::Borrow | PassMode::BorrowMut => Rvalue::Use(Operand::Copy(slot)),
                     _ if cell => Rvalue::Use(Operand::Copy(slot)),
@@ -208,7 +208,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 self.assign(Place::local(l), ptr);
                 l
             });
-            info[c.inner.0 as usize] = Some(LInfo::new(vir, ty, true, false, LState::Init));
+            let mut li = LInfo::new(vir, ty, true, false, LState::Init);
+            li.in_cell = cell;
+            info[c.inner.0 as usize] = Some(li);
         }
     }
 

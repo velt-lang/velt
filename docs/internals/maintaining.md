@@ -79,9 +79,11 @@ review.
   macOS when the change touches OS-specific code (`crates/xtask/src/os.rs`). Enable it with `gh pr merge <n>
   --auto` once the review is approved.
 - Before queueing, strip any generated footer from the description: it becomes the commit message.
-- A nightly workflow runs the whole gate with PostgreSQL and Redis, and the Cranelift memory stress
-  run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and Windows;
-  fix failures first. Run one part alone with `gh workflow run nightly -f only=stress` (or `gate`).
+- A nightly workflow runs the whole gate with PostgreSQL and Redis, the Cranelift memory stress
+  run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and Windows,
+  and the `tsc` oracle for `velt check --ts-compat` (`crates/velt_tscompat/tests/oracle.rs`
+  against the `typescript` pinned in `tests/tscompat-oracle`); fix failures first. Run one part
+  alone with `gh workflow run nightly -f only=stress` (or `gate`, `oracle`).
 - Each push to `main` (the `main` jobs in `ci.yml`) runs the whole gate on Windows and macOS,
   which covers the changes the queue checked on Linux only, and opens or updates the issue
   "main fails on <OS>" when that fails; fix it first. The same jobs refresh the build cache on
