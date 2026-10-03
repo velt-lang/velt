@@ -50,6 +50,8 @@ impl Future for Child {
     type Output = usize;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<usize> {
+        #[cfg(test)]
+        tests::CHILD_POLLS.with(|n| n.set(n.get() + 1));
         if !has_budget_remaining() {
             // Polling now could only return a spurious Pending (see the module doc).
             cx.waker().wake_by_ref();
@@ -282,18 +284,24 @@ mod tests {
         rt.block_on(async { tokio::spawn(fut).await.expect("root task") });
     }
 
-    /// Limit for a 100k-child join: linear takes well under 100 ms in release, quadratic seconds.
-    fn limit() -> Duration {
-        Duration::from_millis(if cfg!(debug_assertions) { 1500 } else { 1000 })
+    thread_local! {
+        /// Polls of join children on this thread: a join that re-polled every pending child
+        /// on each wake-up would poll about n² / 128 times instead of about n.
+        pub(super) static CHILD_POLLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     }
 
     fn check_join(n: i64, child: fn(i64) -> *mut VeltFut) {
         run_in_task(async move {
-            let t = Instant::now();
+            let before = CHILD_POLLS.with(std::cell::Cell::get);
             let results = join((0..n).map(child).collect()).await;
-            let elapsed = t.elapsed();
+            let polls = CHILD_POLLS.with(std::cell::Cell::get) - before;
             assert!(results.iter().copied().eq((0..n).map(|i| i * 3)));
-            assert!(elapsed < limit(), "join of {n} children took {elapsed:?}");
+            // Each child is polled once to start and once per wake-up, plus the polls skipped
+            // for want of budget: a small multiple of n. Counted, not timed.
+            assert!(
+                polls < 4 * n as usize,
+                "join of {n} children polled them {polls} times"
+            );
         });
     }
 

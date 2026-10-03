@@ -215,7 +215,7 @@ pub unsafe extern "C" fn velt_rt_signal_any(signals: *const VeltArray<u64>) -> H
 mod tests {
     use super::*;
     use crate::task::{raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, PENDING, READY};
-    use std::task::{Context, Waker};
+    use std::task::{Context, Poll, Waker};
 
     fn poll(f: *mut VeltFut) -> u32 {
         let mut cx = Context::from_waker(Waker::noop());
@@ -261,8 +261,18 @@ mod tests {
                 let hs = VeltArray::from_vec(vec![t.bits()]);
                 let any = velt_rt_signal_any(&hs);
                 velt_rt_signal_free(t);
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                assert!(velt_rt_signal_aborted(any), "the timeout source fired");
+                // Wait for the derived signal itself: it aborts only if it kept the freed timeout
+                // source alive. The limit only turns a hang (a source dropped too early) into a
+                // failure; it is not a timing window.
+                let wait = velt_rt_signal_wait(any);
+                let done = std::future::poll_fn(|cx| match velt_rt_fut_poll(wait, raw_cx(cx)) {
+                    READY => Poll::Ready(()),
+                    _ => Poll::Pending,
+                });
+                let waited = tokio::time::timeout(Duration::from_secs(60), done).await;
+                velt_rt_fut_drop(wait);
+                assert!(waited.is_ok(), "the timeout source never fired");
+                assert!(velt_rt_signal_aborted(any));
                 assert_eq!(h_reason(any), "late");
                 assert_eq!(velt_rt_signal_timeout_ms(any), 5);
                 velt_rt_signal_free(any);
