@@ -28,8 +28,10 @@ impl Rng {
     }
 }
 
-/// Byte offsets where whitespace may be inserted, with whether a newline is allowed there.
-fn insertion_points(src: &str) -> Vec<(usize, bool)> {
+/// Byte offsets where whitespace may be inserted, with whether a newline is allowed there and
+/// where the surrounding whitespace run starts (one run gets at most one inserted newline: two
+/// would make a blank line, which the formatter keeps).
+fn insertion_points(src: &str) -> Vec<(usize, bool, usize)> {
     let bytes = src.as_bytes();
     let mut code = vec![false; bytes.len() + 1];
     let mut comment_start = vec![false; bytes.len() + 1];
@@ -48,7 +50,7 @@ fn insertion_points(src: &str) -> Vec<(usize, bool)> {
         let run_lo = src[..i].trim_end_matches(char::is_whitespace).len();
         let run_hi = i + (src[i..].len() - src[i..].trim_start_matches(char::is_whitespace).len());
         let newline_ok = !src[run_lo..run_hi].contains('\n');
-        out.push((i, newline_ok));
+        out.push((i, newline_ok, run_lo));
     }
     out
 }
@@ -248,19 +250,25 @@ fn perturb(src: &str, rng: &mut Rng) -> String {
     let points = insertion_points(src);
     let mut out = String::with_capacity(src.len() * 2);
     let mut last = 0;
-    for (at, newline_ok) in points {
+    // The run that already got its newline.
+    let mut broken_run = None;
+    for (at, newline_ok, run) in points {
         if rng.below(3) != 0 {
             continue;
         }
         out.push_str(&src[last..at]);
         last = at;
         for _ in 0..=rng.below(3) {
-            let choices: &[char] = if newline_ok {
+            let choices: &[char] = if newline_ok && broken_run != Some(run) {
                 &[' ', '\t', '\n']
             } else {
                 &[' ', '\t']
             };
-            out.push(choices[rng.below(choices.len() as u64) as usize]);
+            let c = choices[rng.below(choices.len() as u64) as usize];
+            if c == '\n' {
+                broken_run = Some(run);
+            }
+            out.push(c);
         }
     }
     out.push_str(&src[last..]);
@@ -301,7 +309,7 @@ fn jsx_text_and_attribute_strings_are_not_perturbed() {
     let src = "const a = <p t='x, y'>Hello, world ( {f(b, c)} </p>;\nconst g = <T,>(x: T) => x;\n";
     let points: Vec<usize> = insertion_points(src)
         .into_iter()
-        .map(|(at, _)| at)
+        .map(|(at, _, _)| at)
         .collect();
     let after = |needle: &str| src.find(needle).unwrap() + needle.len();
     assert!(!points.contains(&after("x,")), "{points:?}");
