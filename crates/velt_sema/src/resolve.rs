@@ -273,7 +273,10 @@ impl Ctx<'_> {
         if Some(d) == self.prelude_adt("Record") && !self.check_record_key(args[0], t.span, None) {
             return self.ty.error;
         }
-        if is_iface {
+        if let Some(&object) = self.field_only.get(&d) {
+            // A field-only interface is an object type (`collect::field_only`).
+            self.ty.intern(TyKind::Adt(object, args))
+        } else if is_iface {
             self.ty.intern(TyKind::Dyn(d, args))
         } else {
             self.ty.intern(TyKind::Adt(d, args))

@@ -156,8 +156,18 @@ console.log(p.len(), q.len());  // 4 4
 - An interface lists the methods, getters, setters and fields an implementing type must have,
   and may give methods **default bodies** (mixins). `class C implements I, J` takes any number;
   `interface B extends A, C` inherits everything.
-- Interfaces are nominal: a type implements an interface only by declaring `implements` (or
-  through an [`extend`](#extend) block); an object literal does not satisfy one.
+- An interface with **methods** (or getters or setters, own or inherited) is nominal: a type
+  implements it only by declaring `implements` (or through an [`extend`](#extend) block); an
+  object literal does not satisfy one.
+- An interface with **only fields** (at least one, no methods, extending only such interfaces)
+  describes data: it is an object type, like `type User = { … }`, so object literals satisfy
+  it, field reads are loads and it has a JSON form. It converts to and from object types with
+  the same fields and stays the same object. `class C implements User` checks that the class
+  has the fields, but a class instance is not a `User` (it is shared by reference; build one
+  from its fields). As a bound, `<T extends HasId>` is satisfied by any type with the fields
+  (a struct, class or object type, not generic). An interface that refers to itself through a
+  field (`next?: Node`) has infinite size, as a struct does; through an array
+  (`children: Node[]`) it is fine.
 - Used as a **generic bound** (`<T extends Named>`), an interface is resolved at compile time
   (direct calls). Used as a **value type** (`Named[]` holding different classes), it is a fat
   pointer (data plus vtable), like Rust's `dyn`.
@@ -203,12 +213,32 @@ for (const p of pets) {
 console.log(loudest(new Dog()));
 ```
 
+```ts
+interface User {                          // only fields: an object type
+  readonly id: i64;
+  name: string;
+  email?: string;
+}
+
+interface HasId {
+  id: i64;
+}
+
+function idOf<T extends HasId>(x: T): i64 { // any type with an `id: i64` field
+  return x.id;
+}
+
+const u: User = { id: 1, name: "ann" };   // an object literal satisfies it
+console.log(JSON.stringify(u), idOf(u));
+```
+
 ## Generics
 
 Classes, structs, interfaces and functions take type parameters (`class Stack<T>`,
 `interface Box<T>`, `function f<T extends Comparable<T>>`). Every instantiation is compiled
 separately (monomorphization): no boxing, and bounds resolve to direct calls. Bounds are
-interfaces, not object types. There are no default type arguments.
+interfaces (an interface with only fields is satisfied by any type with its fields), not object
+types. There are no default type arguments.
 
 ```ts
 class Stack<T> {

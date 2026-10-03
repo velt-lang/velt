@@ -205,7 +205,38 @@ impl FnCx<'_, '_> {
         if let TyKind::Dyn(..) = self.cx.ty.kind(expected) {
             d = d.with_note(format!("`{f}` does not declare `implements {e}`"));
         }
+        if let Some(note) = self.class_to_data_note(expected, found) {
+            d = d.with_note(format!("`{e}` has only fields, so it is a data type, like `type {e} = {{ … }}`: a class instance is shared by reference and is not one"))
+                .with_note(note);
+        }
         self.cx.error(d);
+    }
+
+    /// For a class instance where a field-only interface's object type is expected: how to build
+    /// one from the instance (copying is explicit, so later writes to the instance are not
+    /// silently lost).
+    fn class_to_data_note(&mut self, expected: TyId, found: &hir::Expr) -> Option<String> {
+        let TyKind::Adt(d, _) = self.cx.ty.kind(expected).clone() else {
+            return None;
+        };
+        self.cx.field_only_of.get(&d)?;
+        self.cx.class_of(found.ty)?;
+        let src = match &found.kind {
+            H::Local(l, _) => self.f.locals[l.0 as usize].name.clone(),
+            _ => "x".into(),
+        };
+        let fields: Vec<String> = self
+            .cx
+            .adt(d)?
+            .fields
+            .iter()
+            .map(|f| format!("{0}: {src}.{0}", f.name))
+            .collect();
+        let e = self.cx.display(expected);
+        Some(format!(
+            "build one from it: `{{ {} }}`, or give `{e}` a method to make it an interface classes implement",
+            fields.join(", ")
+        ))
     }
 
     /// Is `found` acceptable where `expected` is required (without conversion)?

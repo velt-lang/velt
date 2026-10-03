@@ -13,7 +13,7 @@ use crate::hir::{
 };
 
 /// The getter of field `index` (type `ty`) of class/struct `d` (self type `self_ty`).
-pub(super) fn field_getter(cx: &mut Ctx, d: DefId, self_ty: TyId, index: usize, ty: TyId) -> DefId {
+pub(crate) fn field_getter(cx: &mut Ctx, d: DefId, self_ty: TyId, index: usize, ty: TyId) -> DefId {
     let a = cx.adt(d).expect("ICE: adt");
     let (qual, n, span, module) = (a.qual_name.clone(), a.generics.clone(), a.span, a.module);
     let fname = a.fields[index].name.clone();

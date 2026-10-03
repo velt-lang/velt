@@ -1,5 +1,8 @@
-//! `readonly` fields in object types (docs/internals/design/shared-models.md) are a check, not a
-//! layout. `{ readonly id: number }` and `{ id: number }` are different types while bodies are
+//! Object types that are one type for lowering (docs/internals/design/shared-models.md):
+//! `readonly` fields in object types are a check, not a layout, and a field-only interface's
+//! object type is the anonymous object type of its fields.
+//!
+//! `readonly` fields are a check, not a layout. `{ readonly id: number }` and `{ id: number }` are different types while bodies are
 //! checked (an assignment through the first is an error), and a value converts between them with
 //! an `Upcast` that keeps its identity. Before the program goes to lowering, every object type
 //! with readonly fields is replaced by its twin without them ([`Ctx::readonly_twins`]), so lowering
@@ -28,7 +31,7 @@ pub(crate) fn erase(cx: &mut Ctx) {
         .iter()
         .map(|(ro, plain)| {
             let a = matches!(&defs[ro.0 as usize], Some(Def::Adt(a)) if a.assigned);
-            (*plain, a)
+            (plain.0, a)
         })
         .collect();
     for (plain, a) in assigned {
@@ -92,9 +95,9 @@ pub(crate) fn erase(cx: &mut Ctx) {
 }
 
 /// `t` with every readonly object type replaced by its twin, at any depth.
-fn erase_ty(
+pub(crate) fn erase_ty(
     ty: &mut Types,
-    twins: &HashMap<DefId, DefId>,
+    twins: &HashMap<DefId, (DefId, Option<Vec<TyId>>)>,
     cache: &mut HashMap<TyId, TyId>,
     t: TyId,
 ) -> TyId {
@@ -106,8 +109,21 @@ fn erase_ty(
     let k = ty.kind(t).clone();
     let nk = match k {
         TyKind::Adt(d, args) => {
-            let args = args.iter().map(|a| sub(ty, cache, *a)).collect();
-            TyKind::Adt(twins.get(&d).copied().unwrap_or(d), args)
+            let args: Vec<TyId> = args.iter().map(|a| sub(ty, cache, *a)).collect();
+            match twins.get(&d) {
+                None => TyKind::Adt(d, args),
+                Some((twin, None)) => TyKind::Adt(*twin, args),
+                Some((twin, Some(template))) => {
+                    let args = template
+                        .iter()
+                        .map(|p| {
+                            let p = ty.subst(*p, &args);
+                            sub(ty, cache, p)
+                        })
+                        .collect();
+                    TyKind::Adt(*twin, args)
+                }
+            }
         }
         TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| sub(ty, cache, *a)).collect()),
         TyKind::Array(x) => TyKind::Array(sub(ty, cache, x)),

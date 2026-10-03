@@ -36,7 +36,7 @@ pub(super) fn resolve_shapes(cx: &mut Ctx, items: &ItemDefs) {
 }
 
 /// Structs and enums are stored inline, so one cannot contain itself by value.
-fn check_finite(cx: &mut Ctx, d: DefId) {
+pub(super) fn check_finite(cx: &mut Ctx, d: DefId) {
     let (name, span, n) = match &cx.info[d.0 as usize] {
         DefInfo::Adt(a) if a.kind != AdtKind::Class => (a.name.clone(), a.span, a.generics.len()),
         DefInfo::Enum(e) => (e.name.clone(), e.span, e.generics.len()),
@@ -107,6 +107,11 @@ pub(crate) fn iface_bound(cx: &mut Ctx, t: &ast::TypeExpr, env: &TyEnv) -> Optio
     match cx.ty.kind(ty) {
         TyKind::Dyn(iface, args) => Some(Bound {
             iface: *iface,
+            args: args.clone(),
+        }),
+        // A field-only interface written as a type is its object type; here it is the bound.
+        TyKind::Adt(d, args) if cx.field_only_of.contains_key(d) => Some(Bound {
+            iface: cx.field_only_of[d],
             args: args.clone(),
         }),
         TyKind::Error => None,

@@ -1,8 +1,8 @@
 # Design: data models shared with TypeScript
 
 Status: decided (issue #326, "Blockers for shared models"; answers #61). The maintainer's
-decisions are in [Decisions](#decisions). Step 1 (`readonly` fields in object types) is
-implemented; steps 2 and 3 are not yet.
+decisions are in [Decisions](#decisions). Steps 1 (`readonly` fields in object types) and 2
+(field-only interfaces) are implemented; step 3 (utility types) is not yet.
 
 ## Problem
 
@@ -34,15 +34,28 @@ decision.)
 
 ### 1. A field-only interface is an object type
 
-An interface is **field-only** when it declares only fields (no methods, getters, setters or
-computed members) and every interface it extends is field-only. A field-only interface is the
-same type as the object type with its fields:
+An interface is **field-only** when it declares at least one field (own or inherited), no
+methods, getters, setters or computed members, and every interface it extends is field-only. An
+empty interface stays nominal. A field-only interface is an object type with its fields:
 
 ```ts ignore
 interface User { readonly id: number; name: string; email?: string }
-// is exactly
+// behaves like
 type User = { readonly id: number; name: string; email?: string };
 ```
+
+It is a **named** object type (its own definition, shown as `User` in messages), not the
+anonymous `{ … }` type itself: anonymous object types are interned by structure and can't refer
+to themselves, while `interface Tree { children: Tree[] }` must. It converts to and from object
+types with the same fields, and stays the same object: like `readonly` views, it is replaced by
+the anonymous object type of its fields before lowering (`velt_sema::readonly`), and the
+conversion is an `Upcast`. Two limits:
+
+- **Recursion through a direct field** (`next?: Node`) has infinite size, as for a struct: an
+  error, tracked in #376. Recursion through an array (`children: Node[]`) works.
+- **A generic interface's instance** (`Pair<string, number>`) does not convert to the object
+  type it spells out (`{ first: string; second: number }`): after erasure they are different
+  definitions. The same holds for generic type aliases today; the error says so.
 
 - **Fields** come in declaration order, inherited ones first (`interface B extends A` puts `A`'s
   fields first). Generic field-only interfaces are generic object types
@@ -70,10 +83,12 @@ error: an `Admin` instance is not a `User` value
 
 **Generic bounds.** `function byId<T extends HasId>(xs: T[], id: number)` with
 `interface HasId { id: number }` is a common pattern. A field-only interface stays valid as a
-bound, and is satisfied **structurally**: any type with fields of those names and types (object
-types, classes, structs) satisfies it, and `x.id` on a `T` compiles to a direct field read when
-`T` is instantiated (generic code is monomorphized). This replaces today's getter dispatch for
-field-only bounds.
+bound, and is satisfied **structurally**: any non-generic type with public fields of those
+names and types (object types, classes, structs) satisfies it. Sema synthesizes the getter impl
+for that type when the bound is first checked, the same impl a class gets from `implements`, so
+lowering is unchanged (and monomorphization inlines the getter into a field read). A class that
+declares `implements` keeps its impl as before, generic types and generic field-only interfaces
+are satisfied only through `implements`.
 
 **Migration.** No field-only interface exists in std, the tests, examples or docs today, so
 nothing in the repository changes meaning. User code that converted class instances to a
@@ -169,6 +184,9 @@ Each step updates `docs/reference/classes.md`, `docs/reference/types.md` and
 2. **A key that is not a field is an error in both `Pick` and `Omit`,** stricter than
    TypeScript's `Omit`, to catch typos.
 3. **Utility types on a type parameter come later,** with `keyof`, in their own design: #350.
+4. **A field-only interface is a named object type** (so it can be recursive through arrays and
+   messages name it), converting to and from object types of the same layout.
+5. **Recursion through a direct field stays an error for now:** automatic boxing is #376.
 
 ## Open questions
 
