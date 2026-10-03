@@ -4,7 +4,7 @@
 |---|---|
 | `i8 i16 i32 i64 isize`, `u8 u16 u32 u64 usize` | fixed-width integers |
 | `f32 f64`; `number` | floats; `number` is `f64` |
-| `bool` | `true` / `false` |
+| `boolean`, `bool` | `true` / `false`; one type with two names ([Booleans](#booleans)) |
 | `string` | immutable UTF-8 text, a value ([Strings](#strings)) |
 | `void`, `never` | no value; no possible value ([`switch`](control-flow.md#switch)) |
 | `T[]` | growable array |
@@ -21,6 +21,23 @@ Types are required on function parameters, and on return types other than `void`
 return type means `void`). Everything else is inferred. `type Name = …` declares an alias; an
 alias cannot refer to itself. There is no `any` or `unknown`: dynamic JSON is `JsonValue`
 ([`velt:json`](../std/json.md)).
+
+## Booleans
+
+`boolean` and `bool` are the same type, and either name can be used anywhere a type is written:
+annotations, generic arguments, unions and function types. `boolean` is TypeScript's name, so
+code that is shared with TypeScript uses it; `bool` is the shorter name Velt code has used.
+Diagnostics, hover and inlay hints print `boolean`; `velt fmt` keeps the name you wrote.
+
+```ts
+function isEven(n: i64): boolean {
+  return n % 2 == 0;
+}
+
+const check: (n: i64) => bool = isEven;
+const flags: (boolean | null)[] = [check(2), null];
+console.log(flags);               // [ true, null ]
+```
 
 ## Numbers
 

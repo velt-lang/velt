@@ -50,7 +50,7 @@ impl Ty {
         match self {
             Ty::Int => "i64".into(),
             Ty::Float => "f64".into(),
-            Ty::Bool => "bool".into(),
+            Ty::Bool => "boolean".into(),
             Ty::Str => "string".into(),
             Ty::IntArr => "i64[]".into(),
             Ty::StrArr => "string[]".into(),

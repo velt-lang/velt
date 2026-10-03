@@ -51,6 +51,13 @@ const half = len as f64 / 2.0;    // 1.5
 console.log(half, 300 as u8);     // 1.5 44 (integers wrap)
 ```
 
+## Booleans
+
+`boolean` works as in TypeScript. Velt also accepts the shorter `bool` for the same type, so
+`(x: bool) => boolean` and `boolean[]` mix freely. Write `boolean` in code that `tsc` must also
+accept; compiler messages and editors print `boolean` either way
+([Booleans](../reference/types.md#booleans)).
+
 ## Strings
 
 - **No implicit conversion**: `"Total: " + 5` and `"a" + true` are compile errors; use a

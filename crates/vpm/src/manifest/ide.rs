@@ -72,7 +72,7 @@ pub fn completions(src: &str, offset: u32) -> Vec<Completion> {
             match field.kind {
                 Kind::Bool if !cursor.quoted => ["false", "true"]
                     .iter()
-                    .map(|v| value_completion(v, v.to_string(), "bool", field.doc, &cursor))
+                    .map(|v| value_completion(v, v.to_string(), "boolean", field.doc, &cursor))
                     .collect(),
                 _ => vec![],
             }
