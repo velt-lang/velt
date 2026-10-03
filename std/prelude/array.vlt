@@ -2,7 +2,8 @@
 //
 // Conventions (see std/README.md):
 // - Callbacks are non-escaping function params; elements are passed to them as borrows, so
-//   iterating never copies non-Copy elements. A callback may throw: the method throws what its
+//   iterating never copies non-Copy elements. Like JS, they also get the element's index (a
+//   callback may take fewer parameters: `xs.map((x) => …)`). A callback may throw: the method throws what its
 //   callback throws (`E`, inferred per call; `never` when the callback cannot throw).
 // - Methods that return elements *out of* the array (`find`, `filter`, `slice`, `concat`) return
 //   the elements themselves, like JS: objects are shared (another reference to the same object,
@@ -12,42 +13,42 @@
 // - Sorting (`sort()`, `sort(cmp)`) lives in sort.vlt. `clone()` (a deep copy) is compiler-provided.
 
 extend<T> Array<T> {
-  forEach<E>(f: (x: T) => void throws E) throws E {
+  forEach<E>(f: (x: T, i: i64) => void throws E) throws E {
     for (let i: usize = 0; i < this.length; i++) {
-      f(this[i]);
+      f(this[i], i as i64);
     }
   }
 
-  map<U, E>(f: (x: T) => U throws E): U[] throws E {
+  map<U, E>(f: (x: T, i: i64) => U throws E): U[] throws E {
     const out: U[] = __intrinsic_array_with_capacity(this.length);
     for (let i: usize = 0; i < this.length; i++) {
-      out.push(f(this[i]));
+      out.push(f(this[i], i as i64));
     }
     return out;
   }
 
-  filter<E>(keep: (x: T) => bool throws E): T[] throws E {
+  filter<E>(keep: (x: T, i: i64) => bool throws E): T[] throws E {
     const out: T[] = [];
     for (let i: usize = 0; i < this.length; i++) {
-      if (keep(this[i])) {
+      if (keep(this[i], i as i64)) {
         out.push(__intrinsic_share(this[i]));
       }
     }
     return out;
   }
 
-  reduce<A, E>(f: (acc: A, x: T) => A throws E, init: A): A throws E {
+  reduce<A, E>(f: (acc: A, x: T, i: i64) => A throws E, init: A): A throws E {
     let acc = init;
     for (let i: usize = 0; i < this.length; i++) {
-      acc = f(acc, this[i]);
+      acc = f(acc, this[i], i as i64);
     }
     return acc;
   }
 
   // First element matching `pred` (see header), or null.
-  find<E>(pred: (x: T) => bool throws E): T | null throws E {
+  find<E>(pred: (x: T, i: i64) => bool throws E): T | null throws E {
     for (let i: usize = 0; i < this.length; i++) {
-      if (pred(this[i])) {
+      if (pred(this[i], i as i64)) {
         return __intrinsic_share(this[i]);
       }
     }
@@ -55,9 +56,9 @@ extend<T> Array<T> {
   }
 
   // Index of the first element matching `pred`, or -1.
-  findIndex<E>(pred: (x: T) => bool throws E): i64 throws E {
+  findIndex<E>(pred: (x: T, i: i64) => bool throws E): i64 throws E {
     for (let i: usize = 0; i < this.length; i++) {
-      if (pred(this[i])) {
+      if (pred(this[i], i as i64)) {
         return i as i64;
       }
     }
@@ -65,17 +66,17 @@ extend<T> Array<T> {
   }
 
   // Last element matching `pred` (see header), or null.
-  findLast<E>(pred: (x: T) => bool throws E): T | null throws E {
+  findLast<E>(pred: (x: T, i: i64) => bool throws E): T | null throws E {
     const i = this.findLastIndex(pred);
     return i < 0 ? null : __intrinsic_share(this[i as usize]);
   }
 
   // Index of the last element matching `pred`, or -1.
-  findLastIndex<E>(pred: (x: T) => bool throws E): i64 throws E {
+  findLastIndex<E>(pred: (x: T, i: i64) => bool throws E): i64 throws E {
     let i = this.length;
     while (i > 0) {
       i--;
-      if (pred(this[i])) {
+      if (pred(this[i], i as i64)) {
         return i as i64;
       }
     }
@@ -103,18 +104,18 @@ extend<T> Array<T> {
     }
   }
 
-  some<E>(pred: (x: T) => bool throws E): bool throws E {
+  some<E>(pred: (x: T, i: i64) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.length; i++) {
-      if (pred(this[i])) {
+      if (pred(this[i], i as i64)) {
         return true;
       }
     }
     return false;
   }
 
-  every<E>(pred: (x: T) => bool throws E): bool throws E {
+  every<E>(pred: (x: T, i: i64) => bool throws E): bool throws E {
     for (let i: usize = 0; i < this.length; i++) {
-      if (!pred(this[i])) {
+      if (!pred(this[i], i as i64)) {
         return false;
       }
     }

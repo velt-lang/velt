@@ -208,6 +208,9 @@ pub(crate) struct FnCx<'a, 'm> {
     pub outer: Vec<Frame>,
     /// The span of a `new Promise` that is the operand of the `await` being checked.
     pub direct_await: Option<Span>,
+    /// The arrow being checked is an argument of a `std/` function called from user code: its
+    /// unannotated integer parameters (an index, a `reduce` accumulator) are JS numbers.
+    pub std_callback: bool,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -223,6 +226,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             f: frame,
             outer: vec![],
             direct_await: None,
+            std_callback: false,
         }
     }
 

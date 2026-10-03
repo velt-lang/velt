@@ -1,0 +1,23 @@
+// Array callbacks get the element's index, like JS; a callback may take fewer parameters, and
+// a named function with fewer parameters is called with the leading arguments only.
+function double(x: number): number {
+  return x * 2;
+}
+
+const xs = [10, 20, 30];
+xs.forEach((x, i) => {
+  console.log(i, x, i / 2);
+});
+console.log(xs.map((x, i) => x * i));
+console.log(xs.map((x) => x + 1));
+console.log(xs.filter((_, i) => i % 2 == 0));
+console.log(xs.reduce((acc, x, i) => acc + x * i, 0));
+console.log(xs.reduce((acc, x) => acc + x, 0) / 4);
+console.log(
+  xs.findIndex((x, i) => i > 0 && x > 15),
+  xs.some((x, i) => i == 2),
+  xs.every((x, i) => x > i),
+);
+console.log(xs.find((x, i) => i == 1), xs.findLast((x, i) => i < 2));
+const ys = [1.5, 2.5];
+console.log(ys.map(double));

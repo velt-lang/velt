@@ -16,6 +16,7 @@ mod construct;
 mod discriminated;
 mod dispose_call;
 mod errors;
+mod fn_arity;
 mod iface_call;
 mod intrinsics;
 pub(crate) mod jsx;

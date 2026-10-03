@@ -163,9 +163,13 @@ impl FnCx<'_, '_> {
             let known: Vec<Option<TyId>> =
                 slots.iter().zip(context).map(|(s, c)| s.or(*c)).collect();
             let expected = self.cx.ty.subst_known(p.ty, &known);
-            let h = match as_arrow(&args[i]) {
+            let adapter = self.fewer_params_adapter(&args[i], expected);
+            let h = match adapter.as_ref().or(as_arrow(&args[i])) {
                 Some(a) if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) => {
-                    self.arrow_arg(a, expected, p.mode == PassMode::Owned)
+                    self.std_callback = c.js_numbers;
+                    let h = self.arrow_arg(a, expected, p.mode == PassMode::Owned);
+                    self.std_callback = false;
+                    h
                 }
                 _ => self.expr(&args[i], Some(expected), want_of(p.mode)),
             };

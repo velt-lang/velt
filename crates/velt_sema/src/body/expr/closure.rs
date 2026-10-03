@@ -92,7 +92,15 @@ impl FnCx<'_, '_> {
             Some(t) => Some(self.resolve(t)),
             None => exp_throws,
         };
-        let ptys = self.closure_param_types(params, exp_params.as_deref());
+        let mut ptys = self.closure_param_types(params, exp_params.as_deref());
+        // Like TS, an arrow may take fewer parameters than the function type it is passed as
+        // (`xs.map((x) => …)` where `map` passes `(x, i)`): the rest are unnamed and unused.
+        let extra: Vec<TyId> = exp_params
+            .as_deref()
+            .filter(|ps| ps.len() > params.len() && ptys.len() == params.len())
+            .map_or(vec![], |ps| ps[params.len()..].to_vec());
+        ptys.extend(&extra);
+        let std_callback = std::mem::take(&mut self.std_callback);
         let ret_ty = match ret {
             Some(t) => Some(self.closure_ret_annotation(t, is_async)),
             None => exp_ret
@@ -116,6 +124,18 @@ impl FnCx<'_, '_> {
         let mut declared = vec![];
         for (p, ty) in params.iter().zip(&ptys) {
             let l = self.declare_local_mut(&p.name, *ty, LocalKind::Param, false);
+            if std_callback && p.ty.is_none() && self.cx.ty.is_int(*ty) {
+                self.f.inferred_ints.insert(l);
+            }
+            declared.push(l);
+        }
+        for (k, ty) in extra.iter().enumerate() {
+            // Not a valid identifier, so the body cannot name it.
+            let name = ast::Ident {
+                name: format!("#unused{k}"),
+                span: Span::new(span.file, span.lo, span.lo),
+            };
+            let l = self.declare_local_mut(&name, *ty, LocalKind::Param, false);
             declared.push(l);
         }
         let block = self.closure_body(body, span);
