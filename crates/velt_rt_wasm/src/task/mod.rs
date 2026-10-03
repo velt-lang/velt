@@ -118,5 +118,6 @@ pub extern "C" fn velt_rt_yield_now_fut() -> *mut VeltFut {
 #[no_mangle]
 pub extern "C" fn velt_rt_sleep(ms: i64) -> *mut VeltFut {
     let deadline = crate::platform::monotonic_ms() + ms.max(0) as f64;
-    leaf::new_leaf(move |cx: &mut Context<'_>| executor::poll_timer(deadline, cx))
+    let seq = executor::timer_seq();
+    leaf::new_leaf(move |cx: &mut Context<'_>| executor::poll_timer(deadline, seq, cx))
 }
