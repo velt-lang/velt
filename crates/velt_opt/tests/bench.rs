@@ -7,7 +7,6 @@ mod common;
 mod corpus;
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use common::builder::count_calls;
 use common::validate::assert_valid;
@@ -66,7 +65,7 @@ fn main() {
 
 fn rustc() -> Option<String> {
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
-    let ok = Command::new(&rustc)
+    let ok = command(&rustc)
         .arg("--version")
         .output()
         .ok()?
@@ -86,7 +85,7 @@ fn build_and_run(rustc: &str, dir: &Path, tag: &str, program: &Program) -> (i32,
         optimize: true,
     };
     std::fs::write(&obj, emit_object(program, &opts).expect("codegen")).expect("write object");
-    let out = Command::new(rustc)
+    let out = command(rustc)
         .args(["--edition", "2021", "-O", "--crate-name", "harness"])
         .arg(&harness)
         .arg("-o")
@@ -99,7 +98,7 @@ fn build_and_run(rustc: &str, dir: &Path, tag: &str, program: &Program) -> (i32,
         "link failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let run = Command::new(&exe).output().expect("run benchmark");
+    let run = command(&exe).output().expect("run benchmark");
     let text = String::from_utf8_lossy(&run.stdout).to_string();
     let mut parts = text
         .split_whitespace()
@@ -126,4 +125,28 @@ fn hot_loop_timing() {
         "hot loop, {ITERATIONS} iterations: unoptimized VIR {t_base} µs, optimized VIR {t_opt} µs ({:.2}x)",
         t_base as f64 / t_opt.max(1) as f64
     );
+}
+
+/// `Command::new(program)` for a test's child process. On Windows, when this test process has no
+/// console (a CI agent, a background shell), the child gets a hidden console instead of opening a
+/// window of its own. In a terminal it shares the terminal's console as before, so Ctrl+C still
+/// reaches it.
+fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    let cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    let cmd = {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = cmd;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetConsoleWindow() -> *mut std::ffi::c_void;
+        }
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // SAFETY: takes no arguments; returns this process's console window or null.
+        if unsafe { GetConsoleWindow() }.is_null() {
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        cmd
+    };
+    cmd
 }
