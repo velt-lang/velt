@@ -219,7 +219,7 @@ fn hover_on_a_dependency() {
     let text = hover(&dep, Some(&sqlite()), Some("0.1.0"));
     assert_eq!(
         text,
-        "**sqlite**  \nnewest: 0.2.5 (`^0.1` does not include it)  \nlocked: 0.1.0 (`velt.lock`)"
+        "**sqlite**  \nnewest: 0.2.5 (`^0.1` does not include it)  \nlocked: 0.1.0 (`velt.lock.json`)"
     );
     assert_eq!(hover(&dep, None, None), "**sqlite**  \nnot in the registry");
 }
@@ -235,7 +235,7 @@ fn newer_means_newer_than_every_match() {
 
 #[test]
 fn a_locked_yanked_version_still_matches() {
-    // 0.4.0 is yanked, but velt.lock pins it: resolution keeps it, so no error.
+    // 0.4.0 is yanked, but velt.lock.json pins it: resolution keeps it, so no error.
     assert_eq!(check("=0.4.0", Some(&sqlite()), Some("0.4.0")), None);
     assert_eq!(
         check("=0.4.0", Some(&sqlite()), None),

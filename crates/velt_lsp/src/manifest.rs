@@ -27,8 +27,8 @@ pub fn is_manifest(path: &Path) -> bool {
         .is_some_and(|n| n == vpm::manifest::MANIFEST_FILE)
 }
 
-/// The diagnostics for manifest `text` (in directory `dir`, for its `velt.lock`): the reader's,
-/// then the registry's for the dependencies whose data has arrived.
+/// The diagnostics for manifest `text` (in directory `dir`, for its `velt.lock.json`): the
+/// reader's, then the registry's for the dependencies whose data has arrived.
 pub fn diagnostics(
     text: &str,
     data: &RegistryData,
@@ -151,7 +151,7 @@ fn item(index: &LineIndex, c: ide::Completion) -> CompletionItem {
     }
 }
 
-/// Hover at byte `offset` of manifest `text` (in directory `dir`, for its `velt.lock`): a
+/// Hover at byte `offset` of manifest `text` (in directory `dir`, for its `velt.lock.json`): a
 /// field's documentation, or what the registry says about a dependency.
 pub fn hover(text: &str, offset: u32, data: &RegistryData, dir: Option<&Path>) -> Option<Hover> {
     let (markdown, range) = match reg::dependency_at(text, offset) {

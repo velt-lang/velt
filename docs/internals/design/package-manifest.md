@@ -210,7 +210,7 @@ So the language server treats `package.vlt` as a **document kind of its own**:
      the whole entry (`sqlite: "^0.3.1"`).
 
    Offline or unreachable registries make these features quiet, never errors. Requirements are
-   checked against the versions that are not yanked plus the one `velt.lock` pins, like
+   checked against the versions that are not yanked plus the one `velt.lock.json` pins, like
    resolution does. The pure parts
    (where the cursor is, what the data means) are `vpm::manifest::ide::registry`; the language
    server's `registry` module fetches and caches, and re-checks an open manifest while fetches

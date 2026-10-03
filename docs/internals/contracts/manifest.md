@@ -33,7 +33,7 @@ does not analyze a file named `package.vlt` as a program: its diagnostics are th
 completion and hover come from the schema (`vpm::manifest::ide`). With the package's registry
 (`$VELT_REGISTRY` when it is a URL, else `registry`, else the local one, as `velt install` picks
 it) it also completes versions and package names, explains dependencies and checks requirements
-against the versions that are not yanked plus the one `velt.lock` pins
+against the versions that are not yanked plus the one `velt.lock.json` pins
 (`vpm::manifest::ide::registry`). The data is fetched in the background (at most four fetches at
 once, kept five minutes); completion waits up to 400 ms for data on its way, and an unreachable
 registry adds nothing.
