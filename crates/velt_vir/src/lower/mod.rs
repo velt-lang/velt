@@ -288,8 +288,9 @@ struct LInfo {
     /// instead of being recorded in `moved_fields`: set when the static record would be wrong
     /// on some path (drop flags, a field move in a conditional region).
     zero_parts: bool,
-    /// The local is a shared cell owned by this function (cells.rs): `vir` holds the cell
-    /// pointer; dropping the local releases the cell.
+    /// The local is a shared cell (cells.rs): `vir` holds the cell pointer. When the local is
+    /// `droppable` this function owns a reference, and dropping the local releases it (a
+    /// captured cell's reference belongs to the closure environment).
     cell: bool,
     /// The value lives in a shared cell (this function's or a captured one): a closure may
     /// replace it while a call borrows it (stabilize.rs).

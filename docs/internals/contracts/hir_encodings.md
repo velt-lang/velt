@@ -154,7 +154,9 @@ Maintainer-owned, like hir.rs.
 - A generator function expression (`function* (...) { ... }`, also `async function*`) is a
   closure (`ExprKind::Closure`) whose `FnDef` has `is_generator` (and `is_async`) and
   `captures`, all by value (`Owned` / `Copy`): calling the closure value creates the generator,
-  whose state takes its own copy of the captures. Its function type's result is `ret` with the
+  whose state holds another reference to each capture (a share, not a copy: generators stay on
+  their thread), and the cell itself for a `LocalDef::boxed` capture (a variable assigned after
+  the capture, by either side). Its function type's result is `ret` with the
   final `E` and it does not throw.
 
 ## Async generators

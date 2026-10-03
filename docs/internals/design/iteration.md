@@ -647,9 +647,17 @@ puts the final `E` into the `FnDef`'s result as for declarations. Lowering neede
 a closure call runs the closure's code, which for a generator `FnDef` builds the generator
 object from the env's captures (`ctor_state`, shared with async closures).
 
-- Each generator takes its own copy of the captures when it is created (as an async closure's
-  state does), so changing a captured variable is an error, naming `shared(...)` (JS shares the
-  variable). The expression's own name is not in scope in its body (a function value cannot
+- Captures work as for any escaping closure under semantics stage 2: each generator's state
+  holds another reference to the captured objects (`take_capture` shares them where an async
+  closure deep-copies, since a generator never leaves its thread), and a variable assigned after
+  the capture — by the enclosing function or by a generator (`moves` `generator_writes`: each
+  generator has its own state, so any assignment needs the cell) — lives in a shared cell whose
+  pointer the state holds and releases (`declare_cell_capture`). An async generator expression
+  shares likewise. A variable that cannot live in a cell (also captured by an async closure, or
+  holding a promise) and that a generator assigns is an error naming `shared(...)`. Like a sync
+  closure's captures, a generator closure's are not copied per call where the closure is
+  reachable from several threads (an HTTP handler's environment); only resources without
+  `clone()` are checked there. The expression's own name is not in scope in its body (a function value cannot
   refer to itself); a use says so. Type parameters and rest parameters are errors.
 - At module level, `const g = function* (...) { ... };` is lifted to the generator function `g`
   (`generic_arrows.rs`, next to generic arrow constants), since module constants must be
@@ -671,8 +679,8 @@ closest workable form is a literal whose *one* member is the iterator method: se
 - Object literals: other members next to the iterator method, `this` in it (TS: the object),
   and any other method are errors with the fix (variables, a class implementing `Iterable<T>`,
   or a property holding an arrow). The value is an `__IterableObject<T, E>`, not an object type.
-- Generator expressions: no assignment to captures, no recursion through the name, no type
-  parameters or rest parameters (above).
+- Generator expressions: no recursion through the name, no type parameters or rest parameters
+  (above).
 - Spread: array sources are evaluated before the other elements (unchanged); an iterable source
   is iterated where it stands.
 - Destructuring an iterable that has fewer values than the pattern panics like a short array

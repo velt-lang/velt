@@ -9,19 +9,19 @@ iterable_consume_errors.vlt:29:30: error: a generator function expression cannot
 TypeScript allows this; Velt doesn't because a function value has one type; write a generic `function*` declaration and call it
 iterable_consume_errors.vlt:32:27: error: a generator function expression cannot have a rest parameter
 TypeScript allows this; Velt doesn't because calls through a function value pass each argument as written; take an array parameter (`xs: T[]`), or declare a `function*`
-iterable_consume_errors.vlt:37:5: error: a generator function expression cannot change `total`, a variable of the enclosing function
-TypeScript allows this; Velt doesn't because each generator the function creates works on its own copy of the variables it uses, so the change would not be seen outside; share the value with `shared`: `const total = shared(...)` and `total.add(n)` / `total.set(v)`, or pass it in as a parameter
-iterable_consume_errors.vlt:42:14: error: `walk` cannot be used inside the generator function expression it names
+iterable_consume_errors.vlt:43:14: error: `walk` cannot be used inside the generator function expression it names
 TypeScript allows this (the name of a function expression is in scope in its body); Velt doesn't because a function value cannot refer to itself; declare the generator with `function* name(...)` and refer to that
-iterable_consume_errors.vlt:46:19: error: a generator must declare its return type
+iterable_consume_errors.vlt:47:19: error: a generator must declare its return type
 TypeScript allows this (it infers `Generator<T, void, unknown>`); Velt doesn't because the type of the values a generator yields is part of its signature, which is not inferred from its body; write `Generator<T>`, where `T` is the type of the values it yields
-iterable_consume_errors.vlt:49:17: error: an object literal with a `[Symbol.iterator]()` method cannot have other members
+iterable_consume_errors.vlt:50:17: error: an object literal with a `[Symbol.iterator]()` method cannot have other members
 TypeScript allows this; Velt doesn't because the iterable object holds only the method, which cannot reach the other members (`this` is not the object); use variables instead of the other members, or declare a class that `implements Iterable<T>` with fields
-iterable_consume_errors.vlt:56:5: error: methods in object literals are not supported
+iterable_consume_errors.vlt:57:5: error: methods in object literals are not supported
 TypeScript allows this; Velt doesn't because an object literal is plain data: its type has fields only (an iterable object literal, `{ *[Symbol.iterator]() { ... } }`, is the exception); write a property holding an arrow function (`name: (x: T): R => ...`), or declare a class
-iterable_consume_errors.vlt:61:26: error: the `[Symbol.iterator]()` method of an object literal must return `Iterator<T>`
+iterable_consume_errors.vlt:62:26: error: the `[Symbol.iterator]()` method of an object literal must return `Iterator<T>`
 declare its result as `Iterator<T>` (an iterator class is returned as one), or make it a generator: `*[Symbol.iterator](): Generator<T>`
-iterable_consume_errors.vlt:66:12: error: `async *` does not match the method's key
+iterable_consume_errors.vlt:67:12: error: `async *` does not match the method's key
 write `*[Symbol.iterator]()`, or `async *[Symbol.asyncIterator]()` for an async iterable
 iterable_consume_errors.vlt:15:16: error: `this` cannot be used in the `[Symbol.iterator]()` method of an object literal
 TypeScript allows this (`this` is the object); Velt doesn't because the object holds only the method, as a function that sees the variables around it; use those variables, or declare a class that `implements Iterable<T>` and reads its fields
+iterable_consume_errors.vlt:37:20: error: a generator function expression cannot change `total` here
+TypeScript allows this; Velt doesn't because `total` is also captured by an async closure (or holds a promise), so it cannot be shared with the generators; share the value with `shared`: `const total = shared(...)` and `total.add(n)` / `total.set(v)`, or pass it in as a parameter

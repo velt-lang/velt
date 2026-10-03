@@ -1,8 +1,7 @@
 // check: no leaks
 // Generator function expressions (#424): `function* (...) { ... }` and `async function*` as
-// values, optionally named. Each call creates a new generator with its own copy of the
-// variables the function uses. At module level, `const g = function* ...` is a generator
-// function.
+// values, optionally named. Each call creates a new generator that sees the variables the
+// function uses, as in JS. At module level, `const g = function* ...` is a generator function.
 class Empty extends Error {}
 
 const evens = function* (limit: i64): Generator<i64> {

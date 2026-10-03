@@ -177,10 +177,10 @@ function main() {
   `function` expressions: write an [arrow function](#arrow-functions-and-function-types), which
   TS code can do too.
 - At module level, `const g = function* (…) { … };` is the generator function `g`.
-- Elsewhere it is a closure that may use the variables around it: each generator it creates
-  takes its own copy of them when it is created (like an async closure), so changing one of
-  them in the body is an error (share the value with `shared(…)`, or pass it as a parameter).
-  The name of a named expression is not in scope in its body (TS allows recursion through it):
+- Elsewhere it is a closure that uses the variables around it as JS does: its generators see
+  the objects it captured (`xs.push(3)` after creating a generator shows up in it), a variable
+  assigned after the expression (by the function or by a generator) is one variable that all
+  of them see, and the body may assign it (`count++`). The name of a named expression is not in scope in its body (TS allows recursion through it):
   declare a `function*` to recurse. Type parameters and rest parameters are errors there too;
   declare a `function*`.
 - The return type is required, as for any generator.

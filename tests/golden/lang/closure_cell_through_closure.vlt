@@ -1,0 +1,26 @@
+// check: no leaks
+// A closure created inside another closure captures a variable that lives in a shared cell
+// (assigned after the capture): the inner closure holds the cell too, so it sees the latest
+// value (used to fail VIR verification).
+type F = () => i64;
+type S = () => string;
+
+function main() {
+  let k = 1;
+  const make = (): F => {
+    const g = (): i64 => k;
+    return g;
+  };
+  k = 5;
+  const f = make();
+  console.log(f());
+  k = 6;
+  console.log(f());
+  let label = "a";
+  const later = (): S => {
+    return (): string => label + "!";
+  };
+  const show = later();
+  label = "b";
+  console.log(show());
+}

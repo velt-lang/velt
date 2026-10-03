@@ -6,14 +6,15 @@
 //! A generator expression is a closure (`closure.rs`) whose call creates a generator, like a
 //! call of a `function*` declaration (hir_encodings.md "Generators"): its `FnDef` has
 //! `is_generator` (and `is_async` for an async generator) and captures. It always escapes —
-//! the generator outlives the call that creates it — so it captures by value, and each call's
-//! generator takes its own copy of the captures. The value's type is `(params) => R`, where `R`
+//! the generator outlives the call that creates it — so it captures by value like any escaping
+//! closure: each generator shares the captured objects, and a variable assigned after the
+//! capture (or by a generator, `crate::moves`) lives in a shared cell that the generators hold
+//! (velt_vir async_fn/ctor.rs `take_capture`). The value's type is `(params) => R`, where `R`
 //! is the declared result with the body's error type as `E` (`Generator<T, E>`); the call
 //! itself never throws. Its parameters are owned, like a generator function's.
 //!
-//! Not supported: changing a captured variable (each generator works on its copy, where JS
-//! shares the variable), the expression's name inside its body (recursion), type parameters
-//! and rest parameters.
+//! Not supported: the expression's name inside its body (recursion), type parameters and rest
+//! parameters.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -114,7 +115,6 @@ impl FnCx<'_, '_> {
         let parent = self.outer.pop().expect("ICE: closure frame");
         self.finish_using_shares();
         let frame = std::mem::replace(&mut self.f, parent);
-        self.no_mutated_gen_captures(&frame);
         self.no_captured_generators(&frame);
         let captures = self.capture_modes(&frame, span);
         let clause = sig
@@ -147,23 +147,6 @@ impl FnCx<'_, '_> {
         let aparams: Vec<ast::ArrowParam> = sig.params.iter().map(arrow_param).collect();
         crate::body::defaults::arrow_defaults(self.cx, self.module, def, &aparams);
         self.mk(H::Closure(def), fn_ty, span)
-    }
-
-    /// Each generator works on its own copy of the captures: changing one is an error.
-    fn no_mutated_gen_captures(&mut self, frame: &Frame) {
-        for c in &frame.captures {
-            let Some(at) = c.mutated_at else { continue };
-            let name = frame.locals[c.inner.0 as usize].name.clone();
-            self.cx.error(
-                Diagnostic::error(
-                    format!("a generator function expression cannot change `{name}`, a variable of the enclosing function"),
-                    at,
-                )
-                .with_note(format!(
-                    "TypeScript allows this; Velt doesn't because each generator the function creates works on its own copy of the variables it uses, so the change would not be seen outside; share the value with `shared`: `const {name} = shared(...)` and `{name}.add(n)` / `{name}.set(v)`, or pass it in as a parameter"
-                )),
-            );
-        }
     }
 }
 

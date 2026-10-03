@@ -1,7 +1,7 @@
 // What #424's iterable consumers and syntax still reject, each with the fix: spreading or
 // collecting something that is not iterable, values of the wrong type, function expressions
-// that are not generators, generator expressions that change a captured variable or name
-// themselves, and object literals whose methods are not one iterator method.
+// that are not generators, generator expressions that change a variable an async closure also
+// captures or that name themselves, and object literals whose methods are not one iterator method.
 function* numbers(): Generator<i64> {
   yield 1;
 }
@@ -33,6 +33,7 @@ function main() {
     yield* xs;
   };
   let total = 0;
+  const report = async (): Promise<i64> => total;
   const counting = function* (): Generator<i64> {
     total += 1;
     yield total;
