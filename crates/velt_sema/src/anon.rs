@@ -25,18 +25,21 @@ impl Ctx<'_> {
         self.ty.intern(TyKind::Adt(d, args))
     }
 
-    /// Whether `a` and `b` are anonymous object types that are one type for lowering
-    /// (`crate::readonly`): the same fields, differing at most in `readonly`. A value converts
-    /// from one to the other and stays the same object. Equal fields alone are not enough: a
-    /// generic alias's instance (`Box<number>`) and the concrete type (`{ v: number }`) are
-    /// different definitions after erasure, so converting between them would be a type
-    /// mismatch in lowering.
+    /// Whether `a` and `b` are object types (anonymous ones, or field-only interfaces') that are
+    /// one type for lowering (`crate::readonly`): the same fields, differing at most in
+    /// `readonly` or in being a field-only interface. A value converts from one to the other and
+    /// stays the same object. Equal fields alone are not enough: a generic type's instance
+    /// (`Box<number>`) and the object type it spells out (`{ v: number }`) are different
+    /// definitions after erasure, so converting between them would be a type mismatch in
+    /// lowering.
     pub fn same_layout(&mut self, a: TyId, b: TyId) -> bool {
-        let anon = |cx: &Self, t: TyId| match cx.ty.kind(t) {
-            TyKind::Adt(d, _) => cx.adt(*d).is_some_and(|x| x.kind == AdtKind::Anon),
+        let object = |cx: &Self, t: TyId| match cx.ty.kind(t) {
+            TyKind::Adt(d, _) => cx
+                .adt(*d)
+                .is_some_and(|x| x.kind == AdtKind::Anon || cx.field_only_of.contains_key(d)),
             _ => false,
         };
-        if a == b || !anon(self, a) || !anon(self, b) || self.readonly_twins.is_empty() {
+        if a == b || !object(self, a) || !object(self, b) || self.readonly_twins.is_empty() {
             return false;
         }
         let twins = self.readonly_twins.clone();
@@ -103,7 +106,7 @@ impl Ctx<'_> {
                 .map(|(n, t, _)| (n.clone(), *t, false))
                 .collect();
             let (twin, _) = self.anon_def_with(&plain, module);
-            self.readonly_twins.insert(d, twin);
+            self.readonly_twins.insert(d, (twin, None));
         }
         (d, params)
     }

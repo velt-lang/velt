@@ -52,8 +52,15 @@ pub(crate) struct Ctx<'m> {
     /// Anonymous object types by shape.
     /// Anonymous object defs by shape: field names, types and `readonly` flags, in order.
     pub anon: HashMap<Vec<(String, TyId, bool)>, DefId>,
-    /// Anonymous object defs with `readonly` fields → their twin without (`crate::readonly`).
-    pub readonly_twins: HashMap<DefId, DefId>,
+    /// Object type defs replaced before lowering (`crate::readonly`): anonymous ones with
+    /// `readonly` fields → their twin without, and field-only interfaces' object types → the
+    /// anonymous object type of their fields. With a template, the twin's type arguments are
+    /// the template's types with the original arguments substituted (a param order change).
+    pub readonly_twins: HashMap<DefId, (DefId, Option<Vec<TyId>>)>,
+    /// Field-only interface → its object type's def (`collect::field_only`).
+    pub field_only: HashMap<DefId, DefId>,
+    /// The reverse of `field_only`.
+    pub field_only_of: HashMap<DefId, DefId>,
     /// Union enums by canonical member list (`crate::unions`).
     pub unions: HashMap<Vec<TyId>, DefId>,
     /// Names of type aliases for structural types (`type Shape = A | B`), for messages.
@@ -119,6 +126,8 @@ impl<'m> Ctx<'m> {
             impl_index: Default::default(),
             anon: HashMap::new(),
             readonly_twins: HashMap::new(),
+            field_only: HashMap::new(),
+            field_only_of: HashMap::new(),
             unions: HashMap::new(),
             alias_names: HashMap::new(),
             generic_overrides: vec![],

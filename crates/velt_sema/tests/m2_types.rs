@@ -494,19 +494,38 @@ fn printing_rejects_nested_function_values() {
 
 #[test]
 fn interface_fields_through_values_and_generics() {
+    // An interface with a method: interface values dispatch, generics call the impl's getter.
     let p = ok_src(
-        "interface Aged { age: i64; }
-         class P implements Aged { age: i64 = 3; }
+        "interface Aged { age: i64; older(): i64; }
+         class P implements Aged { age: i64 = 3; older(): i64 { return this.age + 1; } }
          function viaDyn(a: Aged): i64 { return a.age; }
          function viaGeneric<T extends Aged>(a: T): i64 { return a.age; }
          function main() { console.log(viaDyn(new P()), viaGeneric(new P())); }",
     );
     assert!(calls(func(&p, "viaDyn"))
         .iter()
-        .any(|(c, _)| matches!(c, Callee::Dyn { slot: 0 })));
+        .any(|(c, _)| matches!(c, Callee::Dyn { slot: 1 })));
     assert!(calls(func(&p, "viaGeneric"))
         .iter()
-        .any(|(c, _)| matches!(c, Callee::ParamMethod { slot: 0, .. })));
+        .any(|(c, _)| matches!(c, Callee::ParamMethod { slot: 1, .. })));
+    // With only fields it is an object type: a class instance is not one, but it satisfies the
+    // interface as a bound (structurally, through the same getter).
+    let r = err_src(
+        "interface Aged { age: i64; }
+         class P implements Aged { age: i64 = 3; }
+         function viaValue(a: Aged): i64 { return a.age; }
+         function main() { console.log(viaValue(new P())); }",
+    );
+    assert!(
+        r.contains("`Aged` has only fields, so it is a data type"),
+        "{r}"
+    );
+    ok_src(
+        "interface Aged { age: i64; }
+         class P { age: i64 = 3; }
+         function viaGeneric<T extends Aged>(a: T): i64 { return a.age; }
+         function main() { console.log(viaGeneric(new P()), viaGeneric({ age: 4 })); }",
+    );
     let r = err_src(
         "interface Aged { age: i64; } function f<T extends Aged>(a: T) { a.age = 1; } function main() {}",
     );
