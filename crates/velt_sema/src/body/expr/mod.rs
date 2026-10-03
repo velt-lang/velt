@@ -2,6 +2,7 @@
 //! One submodule per concern.
 
 mod access;
+mod accessor_rmw;
 mod args;
 mod array_ctor;
 mod assign;
