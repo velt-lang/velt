@@ -1,0 +1,10 @@
+using_async_call.vlt:32:9: error: `r` is declared with `using`: an async call that keeps it must be awaited here
+`r` is disposed at the end of its block, and a stored or returned promise could still be using it then: await the call here (`await ...`), or declare `r` with `const` to keep it as long as the promise needs it
+using_async_call.vlt:39:14: error: `r` is declared with `using`: an async call that keeps it must be awaited here
+`r` is disposed at the end of its block, and a stored or returned promise could still be using it then: await the call here (`await ...`), or declare `r` with `const` to keep it as long as the promise needs it
+using_async_call.vlt:55:13: error: `g` is declared with `using`: an async call that keeps it must be awaited here
+`g` is disposed at the end of its block, and a stored or returned promise could still be using it then: await the call here (`await ...`), or declare `g` with `const` to keep it as long as the promise needs it
+using_async_call.vlt:45:29: error: cannot move `r` out of its `using` declaration
+`r` is disposed at the end of its block; pass it to a function that borrows it, or declare it with `const` to hand it over
+using_async_call.vlt:49:33: error: cannot move `r` out of its `using` declaration
+`r` is disposed at the end of its block; pass it to a function that borrows it, or declare it with `const` to hand it over

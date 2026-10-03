@@ -1,0 +1,48 @@
+// check: no leaks
+// Many overlapping calls on one async generator: each finished call wakes only the next one in
+// line, and the values arrive in call order. A `return()` queued behind a `next()` passes the
+// turn on like `next()`, so the calls after it run (and report `done`).
+async function* count(n: i64): AsyncGenerator<i64> {
+  try {
+    for (let i = 0; i < n; i++) {
+      await yieldNow();
+      yield i;
+    }
+  } finally {
+    console.log("count: finally");
+  }
+}
+
+async function main() {
+  const c = count(3000);
+  const ps: Promise<IteratorResult<i64>>[] = [];
+  for (let i = 0; i < 3001; i++) {
+    ps.push(c.next());
+  }
+  ps.reverse();
+  let sum = 0;
+  let last = -1;
+  let ordered = true;
+  let done = 0;
+  while (ps.length > 0) {
+    const r = await ps.pop()!;
+    if (r.done) {
+      done += 1;
+    } else {
+      sum += r.value;
+      ordered = ordered && r.value == last + 1;
+      last = r.value;
+    }
+  }
+  console.log(sum, ordered, done);
+
+  const g = count(5);
+  const a = g.next();
+  const b = g.next();
+  const r = g.return();
+  const d = g.next();
+  console.log(await a, await b);
+  await r;
+  console.log("returned");
+  console.log(await d, await g.next());
+}

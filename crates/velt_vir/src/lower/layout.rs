@@ -35,6 +35,8 @@ pub(super) struct Layouts {
     array: Option<AggId>,
     closure: Option<AggId>,
     dyn_value: Option<AggId>,
+    /// Tables of generator instances (async_fn/gen_object.rs).
+    pub(super) gen_tables: HashMap<(DefId, Vec<TyId>), crate::vir::StaticId>,
     /// State of the `Promise.all` wrapper future (async_fn/tasks.rs).
     pub(super) all_wrap: Option<AggId>,
     /// State of the settling `Promise.all` wrapper per child result type (all_settle.rs).

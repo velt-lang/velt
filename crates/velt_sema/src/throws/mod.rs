@@ -140,9 +140,12 @@ fn def_now(cx: &mut Ctx, d: DefId, visited: &mut Visited) -> Option<TyId> {
     if let Some(decl) = f.declared_throws {
         return decl.ty;
     }
-    match cx.throw_groups().group_of(d) {
-        Some(g) => group_now(cx, g, visited),
-        None => own_now(cx, d, visited),
+    let Some(g) = cx.throw_groups().group_of(d) else {
+        return own_now(cx, d, visited);
+    };
+    match cx.throw_groups().list[g].bound.clone() {
+        Some(b) => groups::member_bound(cx, &b, d),
+        None => group_now(cx, g, visited),
     }
 }
 
@@ -172,9 +175,59 @@ fn group_now(cx: &mut Ctx, g: usize, visited: &mut Visited) -> Option<TyId> {
     acc
 }
 
+/// What a call through slot `slot` of `iface` throws, in the interface's terms.
 fn slot_now(cx: &mut Ctx, iface: DefId, slot: u32, visited: &mut Visited) -> Option<TyId> {
+    if let Some(t) = slot_clause(cx, iface, slot) {
+        return t;
+    }
+    if let Some(t) = foreign_bound_slot(cx, iface, slot) {
+        return t.ok().flatten();
+    }
     let g = cx.throw_groups().slot_group(iface, slot)?;
     group_now(cx, g, visited)
+}
+
+/// A slot without a `throws` clause whose dispatch group is bounded by a clause in another
+/// interface's type parameters (`class C implements Iterator<i64, E>, Pull` where
+/// `Pull.next()` declares none): that clause means nothing in `iface`'s terms (`iface` does not
+/// extend the other interface, or it would have inherited the clause), and each member's error
+/// is fixed by it. A call through the slot throws what `iface`'s implementations throw when
+/// they agree on one type; `Err` with them when they do not (finalize.rs reports it). `None`:
+/// not such a slot.
+#[allow(clippy::type_complexity)]
+pub(crate) fn foreign_bound_slot(
+    cx: &mut Ctx,
+    iface: DefId,
+    slot: u32,
+) -> Option<Result<Option<TyId>, Vec<(DefId, Option<TyId>)>>> {
+    let g = cx.throw_groups().slot_group(iface, slot)?;
+    let b = cx.throw_groups().list[g].bound.clone()?;
+    if b.iface == Some(iface) || !b.decl.ty.is_some_and(|t| cx.mentions_params(t)) {
+        return None;
+    }
+    let mut members: Vec<DefId> = cx
+        .impls
+        .iter()
+        .filter(|imp| imp.iface == iface)
+        .filter_map(|imp| imp.methods.get(slot as usize).copied())
+        .collect();
+    members.extend(cx.iface(iface)?.methods.get(slot as usize)?.default);
+    let errors: Vec<(DefId, Option<TyId>)> = members
+        .into_iter()
+        .map(|m| (m, throws_now(cx, m, &[])))
+        .collect();
+    let first = errors.first().and_then(|e| e.1);
+    let agree = errors
+        .iter()
+        .all(|e| e.1 == first && !e.1.is_some_and(|t| cx.mentions_params(t)));
+    Some(if agree { Ok(first) } else { Err(errors) })
+}
+
+/// The `throws` clause of interface method `slot` of `iface` (in the interface's terms, also
+/// for an inherited method), when written: what a call through the slot throws.
+pub(crate) fn slot_clause(cx: &Ctx, iface: DefId, slot: u32) -> Option<Option<TyId>> {
+    let m = cx.iface(iface)?.methods.get(slot as usize)?;
+    m.throws.map(|t| t.ty)
 }
 
 impl Ctx<'_> {

@@ -1,0 +1,115 @@
+// check: no leaks
+// `for...of` over user iterables: a class implementing `Iterable<T>` through a separate iterator
+// class, iterated twice, nested, through an `Iterable<T, E>` value in a generic function, and
+// through a class whose `[Symbol.iterator]()` returns its concrete iterator class. Destructuring
+// and `let` bindings work as over arrays.
+class RangeIter implements Iterator<i64> {
+  i: i64;
+  end: i64;
+
+  constructor(start: i64, end: i64) {
+    this.i = start;
+    this.end = end;
+  }
+
+  next(): IteratorResult<i64> {
+    if (this.i >= this.end) {
+      return { done: true };
+    }
+    const v = this.i;
+    this.i += 1;
+    return { value: v, done: false };
+  }
+}
+
+class Range implements Iterable<i64> {
+  start: i64;
+  end: i64;
+
+  constructor(start: i64, end: i64) {
+    this.start = start;
+    this.end = end;
+  }
+
+  [Symbol.iterator](): Iterator<i64> {
+    return new RangeIter(this.start, this.end);
+  }
+}
+
+class Pair {
+  key: string;
+  count: i64;
+
+  constructor(key: string, count: i64) {
+    this.key = key;
+    this.count = count;
+  }
+}
+
+class PairIter implements Iterator<[string, Pair]> {
+  items: Pair[];
+  i: usize = 0;
+
+  constructor(items: Pair[]) {
+    this.items = items;
+  }
+
+  next(): IteratorResult<[string, Pair]> {
+    if (this.i >= this.items.length) {
+      return { done: true };
+    }
+    const p = this.items[this.i];
+    this.i += 1;
+    return { value: [p.key.toUpperCase(), p], done: false };
+  }
+}
+
+// Not declared `implements Iterable`: `for...of` only needs the method.
+class Inventory {
+  items: Pair[] = [];
+
+  add(key: string, count: i64) {
+    this.items.push(new Pair(key, count));
+  }
+
+  [Symbol.iterator](): PairIter {
+    return new PairIter(this.items);
+  }
+}
+
+function sum<E>(xs: Iterable<i64, E>): i64 throws E {
+  let total = 0;
+  for (const x of xs) {
+    total += x;
+  }
+  return total;
+}
+
+function main() {
+  const r = new Range(1, 4);
+  for (const x of r) {
+    console.log("first", x);
+  }
+  for (const x of r) {
+    console.log("second", x * 10);
+  }
+  for (const a of new Range(0, 2)) {
+    for (const b of r) {
+      console.log("nested", a, b);
+    }
+  }
+  console.log("sum", sum(r), sum(new Range(0, 0)));
+  const inv = new Inventory();
+  inv.add("apple", 3);
+  inv.add("pear", 5);
+  const names: string[] = [];
+  for (const [name, pair] of inv) {
+    names.push(name);
+    pair.count += 1;
+  }
+  for (let [name, pair] of inv) {
+    name += "!";
+    console.log(name, pair.count);
+  }
+  console.log(names);
+}

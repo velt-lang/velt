@@ -1,0 +1,16 @@
+generator_ts_return.vlt:24:38: error: the second type argument of `Iterator` is the error type it throws, and `User[]` is not an error type
+TypeScript allows this (`Iterator<T, TReturn>`, which takes the return type second); Velt doesn't because a finished `IteratorResult` carries no value and `next()` takes no argument, so `Iterator<T, E>` takes the error type `E` second; write `Iterator<f64>`, or `Iterator<f64, E>` with the error class `E` it throws
+generator_ts_return.vlt:12:34: error: the second type argument of `Generator` is the error type it throws, and `string` is not an error type
+TypeScript allows this (`Generator<T, TReturn>`, which takes the return type second); Velt doesn't because a finished `IteratorResult` carries no value and `next()` takes no argument, so `Generator<T, E>` takes the error type `E` second; write `Generator<f64>`, or `Generator<f64, E>` with the error class `E` it throws
+generator_ts_return.vlt:16:34: error: `Generator` takes no return type: `string` is TypeScript's `TReturn`
+TypeScript allows this (`Generator<T, TReturn, TNext>`); Velt doesn't because a finished `IteratorResult` carries no value and `next()` takes no argument, so `Generator<T, E>` takes the error type `E` second; write `Generator<f64>`, or `Generator<f64, E>` with the error class `E` it throws
+generator_ts_return.vlt:20:33: error: the second type argument of `Iterator` is the error type it throws, and `User` is not an error type
+TypeScript allows this (`Iterator<T, TReturn>`, which takes the return type second); Velt doesn't because a finished `IteratorResult` carries no value and `next()` takes no argument, so `Iterator<T, E>` takes the error type `E` second; write `Iterator<f64>`, or `Iterator<f64, E>` with the error class `E` it throws
+generator_ts_return.vlt:30:45: error: the second type argument of `AsyncGenerator` is the error type it throws, and `User | Boom` is not an error type
+TypeScript allows this (`AsyncGenerator<T, TReturn>`, which takes the return type second); Velt doesn't because a finished `IteratorResult` carries no value and `next()` takes no argument, so `AsyncGenerator<T, E>` takes the error type `E` second; write `AsyncGenerator<f64>`, or `AsyncGenerator<f64, E>` with the error class `E` it throws
+generator_ts_return.vlt:43:27: error: `void` is not an error type
+leave the error type out: `throws` and `Promise<T>` without one mean nothing is thrown
+generator_ts_return.vlt:45:28: error: `void` is not an error type
+leave the error type out: `throws` and `Promise<T>` without one mean nothing is thrown
+generator_ts_return.vlt:40:3: error: method `return` has a different signature than required by `Iterator`
+`return()` returns a finished result, as in TypeScript: declare it `return(): IteratorResult<i64>` and end it with `return { done: true };`

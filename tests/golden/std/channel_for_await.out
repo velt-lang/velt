@@ -1,0 +1,13 @@
+job 0 45
+job 1 45
+job 2 45
+job 3 45
+job 4 45
+drained, closed: true
+sum 18675
+first alpha
+first beta
+closed: false left: 2
+next: gamma
+rest: [ 'delta' ]
+done

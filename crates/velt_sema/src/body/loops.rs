@@ -1,10 +1,13 @@
 //! Loops: `while` (with null narrowing), `do...while`, C-style `for` (desugared) and
 //! `for...of` over arrays (elements borrowed, or copied when Copy; a temporary array of
 //! non-Copy elements is consumed instead: `ForOf { consume: true }` with owned bindings).
+//! `for...of` over an iterable (`[Symbol.iterator]()`) is desugared in `for_iter.rs`, and
+//! `for await` in `for_await.rs`.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use super::for_iter::ForOfParts;
 use super::pattern::BindCtx;
 use super::{FnCx, LoopCx, Want};
 use crate::hir::{self, ExprKind as H, StmtKind as S, TyId};
@@ -116,7 +119,25 @@ impl FnCx<'_, '_> {
                 pattern,
                 iter,
                 body,
-            } => self.for_of(*kind, pattern, iter, body, label, span, out),
+                is_await,
+            } => {
+                let parts = ForOfParts {
+                    kind: *kind,
+                    pattern,
+                    body,
+                    label,
+                    iter_span: iter.span,
+                    span,
+                    await_each: *is_await,
+                };
+                match is_await {
+                    true => self.for_await(iter, parts, out),
+                    false => {
+                        let it = self.for_of_source(iter);
+                        self.for_of(it, parts, out)
+                    }
+                }
+            }
             _ => unreachable!("ICE: loop_stmt on non-loop"),
         }
     }
@@ -223,42 +244,45 @@ impl FnCx<'_, '_> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)] // mirrors the parts of `for (kind pat of iter) body`
-    fn for_of(
+    /// The checked source of a `for...of` or `for await`: a record is an error (it is not
+    /// iterable in JS either; the message names `Object.keys`/`Object.entries`).
+    pub(super) fn for_of_source(&mut self, iter: &ast::Expr) -> hir::Expr {
+        let it = self.expr(iter, None, Want::Borrow);
+        if self.record_args(it.ty).is_none() {
+            return it;
+        }
+        self.record_not_iterable(it.ty, iter);
+        self.error_expr(iter.span)
+    }
+
+    /// `for (kind pattern of it) body` over the checked source `it`: an iterable
+    /// (`for_iter.rs`), else an array (a `Map` or `entries()` class through `entries()`).
+    pub(super) fn for_of(
         &mut self,
-        kind: ast::VarKind,
-        pattern: &ast::Pattern,
-        iter: &ast::Expr,
-        body: &ast::Block,
-        label: Option<&ast::Ident>,
-        span: Span,
+        mut it: hir::Expr,
+        p: ForOfParts<'_>,
         out: &mut Vec<hir::Stmt>,
     ) {
-        let mut it = self.expr(iter, None, Want::Borrow);
-        if self.record_args(it.ty).is_some() {
-            self.record_not_iterable(it.ty, iter);
-            it = self.error_expr(iter.span);
-        } else if self.cx.class_of(it.ty).is_some() {
-            it = self.entries_of(it, iter.span);
+        if self.is_iterable(it.ty) {
+            return self.for_of_iterable(it, p, out);
+        }
+        if self.cx.class_of(it.ty).is_some() && self.method_exists(it.ty, "entries") {
+            it = self.entries_of(it, p.iter_span);
         }
         if it.ty == self.cx.ty.str_ {
-            it = self.chars_of(it, iter.span);
+            it = self.chars_of(it, p.iter_span);
         }
         let elem = match self.cx.ty.array_elem(it.ty) {
             Some(e) => e,
             None if self.cx.ty.is_bottom(it.ty) => self.cx.ty.error,
             None => {
-                let tn = self.cx.display(it.ty);
-                self.cx.error(
-                    Diagnostic::error(format!("cannot iterate over a value of type `{tn}`"), iter.span)
-                        .with_note("`for...of` works on arrays (`T[]`) and on classes with an `entries()` method"),
-                );
+                self.not_iterable(it.ty, p.iter_span, p.await_each);
                 self.cx.ty.error
             }
         };
         let consume = self.consumes(&it, elem);
-        self.push_scope_until(span.hi);
-        let mutable = kind == ast::VarKind::Let;
+        self.push_scope_until(p.span.hi);
+        let mutable = p.kind == ast::VarKind::Let;
         let ctx = match consume {
             true => BindCtx::Let {
                 mutable,
@@ -266,10 +290,10 @@ impl FnCx<'_, '_> {
             },
             false => BindCtx::Elem { mutable },
         };
-        let binding = self.pattern(pattern, elem, ctx);
+        let binding = self.pattern(p.pattern, elem, ctx);
         self.note_inferred_bindings(&binding, &it);
-        self.enter_loop(label, false);
-        let b = self.block(body);
+        self.enter_loop(p.label, false);
+        let b = self.block(p.body);
         let label = self.exit_loop().hir_label();
         self.pop_scope();
         let f = S::ForOf {
@@ -279,7 +303,30 @@ impl FnCx<'_, '_> {
             body: b,
             consume,
         };
-        Self::push(out, f, span);
+        Self::push(out, f, p.span);
+    }
+
+    fn not_iterable(&mut self, t: TyId, span: Span, is_await: bool) {
+        let tn = self.cx.display(t);
+        let mut d = Diagnostic::error(format!("cannot iterate over a value of type `{tn}`"), span);
+        d = match is_await {
+            false => d.with_note("`for...of` works on arrays (`T[]`), on `Map`s and classes with an `entries()` method, and on iterables: values with a `[Symbol.iterator]()` method (`implements Iterable<T>`)"),
+            true => d.with_note("`for await` works on async iterables: values with a `[Symbol.asyncIterator]()` method (`implements AsyncIterable<T>`, async generators), and on what `for...of` takes (arrays, iterables), awaiting promise elements"),
+        };
+        if !is_await && self.method_exists(t, ast::SYMBOL_ASYNC_ITERATOR) {
+            d = d.with_note(format!(
+                "`{tn}` is an async iterable: iterate it with `for await (const x of ...)` in an async function"
+            ));
+        } else if self.method_exists(t, "next") {
+            let key = match is_await {
+                true => "[Symbol.asyncIterator]",
+                false => "[Symbol.iterator]",
+            };
+            d = d.with_note(format!(
+                "`{tn}` looks like an iterator: iterate the iterable that creates it, or give it a `{key}()` method"
+            ));
+        }
+        self.cx.error(d);
     }
 
     /// Does `for...of` over the checked `iter` with element type `elem` consume it? When the
@@ -287,7 +334,10 @@ impl FnCx<'_, '_> {
     /// its elements are not Copy, the loop consumes it like Rust's `into_iter()`: each element
     /// is bound owned, so the body may move it (`out.push(x)`).
     fn consumes(&mut self, iter: &hir::Expr, elem: TyId) -> bool {
-        !super::places::is_place(iter) && !self.cx.ty.is_bottom(elem) && !self.cx.is_copy(elem)
+        // A variable moved into the loop (`for await` over an array of promises) is consumed too.
+        let owned =
+            !super::places::is_place(iter) || matches!(iter.kind, H::Local(_, hir::UseMode::Move));
+        owned && !self.cx.ty.is_bottom(elem) && !self.cx.is_copy(elem)
     }
 
     /// `for (const c of s)` over a string iterates its characters, `s.split("")`, as in JS.

@@ -1,0 +1,60 @@
+// check: no leaks
+// `yield p` in an async generator awaits the promise `p` and yields its value, as in JS; a
+// rejection is thrown at the `yield` (catchable in the body) and joins the generator's errors.
+class PageError extends Error {}
+
+async function fetchPage(i: i64): Promise<string> throws PageError {
+  await sleep(1);
+  if (i == 3) {
+    throw new PageError(`page ${i} failed`);
+  }
+  return `page ${i}`;
+}
+
+async function* pages(n: i64): AsyncGenerator<string> {
+  for (let i = 1; i <= n; i++) {
+    yield fetchPage(i);
+  }
+}
+
+async function* safePages(n: i64): AsyncGenerator<string> {
+  for (let i = 1; i <= n; i++) {
+    try {
+      yield fetchPage(i);
+    } catch (e) {
+      yield `skipped: ${e.message}`;
+    }
+  }
+}
+
+async function later(v: i64): Promise<i64> {
+  await sleep(1);
+  return v;
+}
+
+// A promise made before the `yield` and one made by it.
+async function* mixed(): AsyncGenerator<i64> {
+  const p = later(2);
+  yield 1;
+  yield p;
+  yield later(3);
+}
+
+async function main() {
+  try {
+    for await (const p of pages(4)) {
+      console.log(p);
+    }
+  } catch (e) {
+    console.log(`caught: ${e.message}`);
+  }
+  for await (const p of safePages(4)) {
+    console.log(p);
+  }
+  for await (const x of mixed()) {
+    console.log(x);
+  }
+  const g = safePages(1);
+  console.log(await g.next());
+  console.log((await g.next()).done);
+}

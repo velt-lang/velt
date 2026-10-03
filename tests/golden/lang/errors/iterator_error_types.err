@@ -1,0 +1,9 @@
+iterator_error_types.vlt:28:9: error: mismatched types
+  = note: expected Iterator<i64, Read>, found Iterator<i64, never>
+  = note: `Iterator<i64, never>` does not declare `implements Iterator<i64, Read>`
+iterator_error_types.vlt:29:9: error: mismatched types
+  = note: expected Iterator<i64, Read>, found Iterator<i64, never>
+  = note: `Iterator<i64, never>` does not declare `implements Iterator<i64, Read>`
+iterator_error_types.vlt:30:9: error: mismatched types
+  = note: expected Iterator<i64, Read>, found Count
+  = note: `Count` does not declare `implements Iterator<i64, Read>`

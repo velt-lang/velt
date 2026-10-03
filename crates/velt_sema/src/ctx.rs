@@ -113,6 +113,11 @@ pub(crate) struct Ctx<'m> {
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
     pub shared_memo: HashMap<TyId, bool>,
+    /// Resolved type-parameter defaults (`crate::type_defaults`).
+    pub type_defaults: crate::type_defaults::TypeDefaults,
+    /// Second arguments of protocol types written before base classes were known
+    /// (`crate::ts_protocol`).
+    pub deferred_ts_returns: Vec<crate::ts_protocol::TsReturnCheck>,
     pub diags: Diagnostics,
 }
 
@@ -163,6 +168,8 @@ impl<'m> Ctx<'m> {
             jsx_adapters: vec![],
             ide: None,
             shared_memo: HashMap::new(),
+            type_defaults: Default::default(),
+            deferred_ts_returns: vec![],
             diags: vec![],
         }
     }

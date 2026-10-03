@@ -1,0 +1,44 @@
+// The same values from a hand-written iterator class (`implements Iterator<i64>`), iterated
+// directly by `for...of` (its `next()` called statically). Compare with gen_loop.vlt.
+class RangeIter implements Iterator<i64> {
+  i: i64 = 0;
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+
+  next(): IteratorResult<i64> {
+    if (this.i < this.n) {
+      const v = this.i;
+      this.i++;
+      return { done: false, value: v };
+    }
+    return { done: true };
+  }
+}
+
+class Range {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+
+  [Symbol.iterator](): RangeIter {
+    return new RangeIter(this.n);
+  }
+}
+
+function main(): void {
+  let sum = 0;
+  for (let round = 0; round < 20; round++) {
+    for (const x of new Range(30000000)) {
+      sum += x;
+      if (sum >= 1000000007) {
+        sum -= 1000000007;
+      }
+    }
+  }
+  console.log(sum);
+}

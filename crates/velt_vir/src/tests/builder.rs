@@ -165,6 +165,7 @@ impl FB {
             params: self.params,
             ret: self.ret,
             is_async: false,
+            is_generator: false,
             throws: self.throws,
             self_ty: self.self_ty,
             captures: self.captures,

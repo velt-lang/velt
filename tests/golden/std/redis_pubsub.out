@@ -9,3 +9,5 @@ room.2 b (pattern room.*)
 loop: alerts last (pattern -)
 loop ended after 1 message(s)
 next after close: null
+for await: alerts again (pattern -)
+for await ended after 1 message(s)
