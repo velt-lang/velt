@@ -1,0 +1,4 @@
+// A JSX provider of its own for the `jsx-pragma-comment` case: `velt:jsx` under another name.
+// The `tsc` oracle gives it a TypeScript stand-in (tests/oracle.rs).
+
+export * from "velt:jsx/jsx-runtime";

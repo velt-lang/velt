@@ -63,7 +63,8 @@ fn every_rule_fixture_passes_velt_check() {
 }
 
 /// A fix must keep the code valid Velt: each `<case>.fixed` passes `velt check` under its
-/// case's extension, next to the helpers (`_*` files) the cases import.
+/// case's extension, next to the helpers (`_*` files, and `_*` directories of JSX providers) the
+/// cases import.
 #[test]
 fn every_fixed_case_passes_velt_check() {
     let cases = Path::new(env!("CARGO_MANIFEST_DIR")).join("../velt_tscompat/tests/cases");
@@ -77,7 +78,7 @@ fn every_fixed_case_passes_velt_check() {
         p.file_name()
             .is_some_and(|n| n.to_string_lossy().starts_with('_'))
     }) {
-        std::fs::copy(helper, dir.join(helper.file_name().unwrap())).unwrap();
+        copy_tree(helper, &dir.join(helper.file_name().unwrap()));
     }
     let mut fixed: Vec<&PathBuf> = entries
         .iter()
@@ -95,6 +96,18 @@ fn every_fixed_case_passes_velt_check() {
         std::fs::copy(file, &target).unwrap();
         let o = velt(dir, &["check", target.to_str().unwrap()]);
         assert!(o.status.success(), "{}:\n{}", file.display(), stderr(&o));
+    }
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    if from.is_dir() {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let path = entry.unwrap().path();
+            copy_tree(&path, &to.join(path.file_name().unwrap()));
+        }
+    } else {
+        std::fs::copy(from, to).unwrap();
     }
 }
 
@@ -279,6 +292,40 @@ fn jsx_on_the_default_provider_is_reported() {
     let report = json(&velt(dir, &["check", "--ts-compat", "badge.tsx", "--json"]));
     assert_eq!(codes(&report), ["jsx-provider"]);
     assert_eq!(report["diagnostics"][0]["location"]["line"], 2);
+}
+
+/// `tsc` ignores a pragma in a line comment; the fix writes it as a block comment, which Velt
+/// reads the same way: the file keeps its provider (with `velt:jsx` it would get `jsx-provider`).
+#[test]
+fn a_line_comment_pragma_is_fixed_to_a_block_comment_with_the_same_provider() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    write(
+        dir,
+        "ui/jsx-runtime.vlt",
+        "export * from \"velt:jsx/jsx-runtime\";\n",
+    );
+    let body =
+        "export function Badge(p: { n: string }): JSX.Element {\n  return <b>{p.n}</b>;\n}\n";
+    write(
+        dir,
+        "line.tsx",
+        &format!("// @jsxImportSource ./ui\n{body}"),
+    );
+    write(
+        dir,
+        "block.tsx",
+        &format!("/** @jsxImportSource ./ui */\n{body}"),
+    );
+    let report = json(&velt(dir, &["check", "--ts-compat", "line.tsx", "--json"]));
+    assert_eq!(codes(&report), ["jsx-pragma-comment"]);
+    let fix = &report["diagnostics"][0]["fix"];
+    assert_eq!(
+        fix["replacement"], "/** @jsxImportSource ./ui */",
+        "{report}"
+    );
+    let o = velt(dir, &["check", "--ts-compat", "block.tsx"]);
+    assert!(o.status.success(), "{}", stderr(&o));
 }
 
 fn manifest(name: &str) -> String {

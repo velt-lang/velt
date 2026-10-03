@@ -66,3 +66,14 @@ pub fn lint_source(path: &Path, src: &str) -> Vec<Finding> {
 pub fn line_of(src: &str, at: u32) -> usize {
     src[..at as usize].matches('\n').count() + 1
 }
+
+/// `src` with every fix of `findings` applied (fixes never overlap in the cases and samples).
+pub fn apply_fixes(src: &str, findings: &[Finding]) -> String {
+    let mut fixes: Vec<_> = findings.iter().filter_map(|f| f.fix.as_ref()).collect();
+    fixes.sort_by_key(|f| std::cmp::Reverse(f.span.lo));
+    let mut out = src.to_string();
+    for fix in fixes {
+        out.replace_range(fix.span.lo as usize..fix.span.hi as usize, &fix.replacement);
+    }
+    out
+}

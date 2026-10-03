@@ -144,8 +144,8 @@ registry: "https://registry.example.com",
 jsx: { importSource: "sigx" },  // or "velt:jsx" (the default), an "@alias" from paths, or "./ui"
 ```
 - The JSX runtime of the package's modules ([jsx.md](jsx.md) "Choosing the provider"): a module
-  containing JSX imports `<importSource>/jsx-runtime`. A `// @jsxImportSource x` comment in a file
-  wins; without either the source is `velt:jsx`.
+  containing JSX imports `<importSource>/jsx-runtime`. A `/** @jsxImportSource x */` comment in a
+  file (or `// @jsxImportSource x`, which `tsc` ignores) wins; without either the source is `velt:jsx`.
 - The value is a module specifier: a dependency (`"sigx"`), `"velt:x"`, a `paths` alias, or a
   path starting with `./` / `../`, which is relative to the package root (not to the importing
   file, unlike a pragma). Each package's `jsx` applies to its own modules only
