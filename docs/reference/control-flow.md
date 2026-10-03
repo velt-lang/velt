@@ -10,8 +10,8 @@
 
 ## `for...of`
 
-- `for...of` iterates arrays, maps (`[key, value]` pairs), and classes with an `entries()`
-  method.
+- `for...of` iterates arrays, maps (`[key, value]` pairs), strings (their characters, as in
+  JS), and classes with an `entries()` method.
 - The loop variable is each element itself (objects are references): you can call its methods
   (including modifying ones), assign its fields, and store it elsewhere, which shares the
   element. Index the array to replace an element.
