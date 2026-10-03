@@ -89,6 +89,21 @@ impl FnLower<'_, '_> {
     }
 
     fn let_stmt(&mut self, local: LocalId, init: Option<&hir::Expr>) {
+        if let Some(
+            e @ hir::Expr {
+                kind:
+                    hir::ExprKind::Call {
+                        callee: hir::Callee::Intrinsic(hir::Intrinsic::GeneratorEmbed),
+                        ..
+                    },
+                ..
+            },
+        ) = init
+        {
+            if self.let_generator(local, e) {
+                return self.own_let(local, init);
+            }
+        }
         let cell = self.info[local.0 as usize].cell;
         if cell && !self.dead() {
             self.new_cell(local);
@@ -107,6 +122,11 @@ impl FnLower<'_, '_> {
             }
             self.pop_scope();
         }
+        self.own_let(local, init);
+    }
+
+    /// After `let local = init`: the scope owns the value (when it needs dropping).
+    fn own_let(&mut self, local: LocalId, init: Option<&hir::Expr>) {
         if self.info[local.0 as usize].droppable && !self.dead() {
             match init {
                 Some(_) => self.mark_init(local),

@@ -36,6 +36,10 @@ typedef struct VeltFut {                             // every runtime-owned futu
   into tasks); it must not contain pointers into itself until it has been polled. After the first
   poll it never moves.
 - `cx` is the Rust `&mut Context`; generated code only passes it on.
+- Generators (`function*`) reuse this state-machine shape without the runtime: their poll
+  function is called with a null `cx` and returns 0 (done), 1 (a value is in the result slot)
+  or 2 (the slot holds the `Err`), and `$drop` closes a suspended generator (it runs `finally`
+  blocks). Nothing of this crosses the runtime ABI (velt_vir `async_fn/generator.rs`).
 
 **Awaiting** (inside a poll function):
 - *Compiled child, fast path (no allocation):* the child state is a field of the parent state.

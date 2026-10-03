@@ -42,6 +42,24 @@ impl<'c, 'h> FnLower<'c, 'h> {
         def: DefId,
         targs: &[TyId],
     ) -> Function {
+        let (mut lw, params, info, s, _) = Self::ctor_state(cx, def, targs, false);
+        let form = lw.value_future(def, targs, &info, s, false);
+        let fut = lw.box_future(form);
+        lw.terminate(Terminator::Return(fut));
+        let sym = lw.cx.instance_symbol(&lw.cx.fn_def(def).name, targs);
+        lw.finish(sym, params, Ty::Ptr)
+    }
+
+    /// A constructor of `def<targs>`'s state machine (async function or generator) with the
+    /// ordinary calling convention: its VIR params, the layout, a local holding the initial
+    /// state built from the arguments, and (with `out`) the trailing out-pointer param, which
+    /// the caller adds to the params.
+    pub(in crate::lower) fn ctor_state(
+        cx: &'c mut Cx<'h>,
+        def: DefId,
+        targs: &[TyId],
+        out: bool,
+    ) -> (Self, Vec<Ty>, AsyncInfo, Local, Option<Local>) {
         let f = cx.fn_def(def);
         let info = cx
             .async_info(def, targs)
@@ -74,6 +92,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             });
             incoming.push(l.map(|l| (l, vt, ty, p.mode)));
         }
+        let out = out.then(|| lw.new_local(Ty::Ptr, Some("ret.out".into())));
         let mut vals = vec![];
         for (p, inc) in f.params.iter().zip(incoming) {
             vals.push(match (caps.get(&p.local), inc, env) {
@@ -86,11 +105,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let s = lw.temp(Ty::Agg(info.state));
         lw.init_state(&info, &Place::local(s), vals);
-        let form = lw.value_future(def, targs, &info, s, false);
-        let fut = lw.box_future(form);
-        lw.terminate(Terminator::Return(fut));
-        let sym = lw.cx.instance_symbol(&f.name, targs);
-        lw.finish(sym, params, Ty::Ptr)
+        (lw, params, info, s, out)
     }
 
     /// Capture `k` of async closure `def`, taken from the environment for the state.

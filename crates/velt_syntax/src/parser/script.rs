@@ -75,6 +75,7 @@ impl Parser<'_> {
             ret: None,
             throws: None,
             is_async,
+            is_generator: false,
             span,
         };
         rest.push(Item {

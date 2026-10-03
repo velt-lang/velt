@@ -229,6 +229,12 @@ impl FnCx<'_, '_> {
             return self.cx.ty.fn_ptr(params, ret);
         }
         let never = self.cx.ty.never;
+        if self.is_generator_fn(d) {
+            // Calling a generator only creates it: its errors are the result's `E`.
+            let e = crate::throws::throws_now(self.cx, d, &[]).unwrap_or(never);
+            let ret = self.cx.with_generator_error(ret, e);
+            return self.cx.ty.fn_ptr(params, ret);
+        }
         let throws = crate::throws::throws_now(self.cx, d, &[]).unwrap_or(never);
         self.cx.ty.intern(TyKind::FnPtr {
             params,
@@ -265,12 +271,17 @@ impl FnCx<'_, '_> {
             let (w, t) = (s.cx.canon_error(Some(w)), s.cx.canon_error(Some(throws)));
             s.cx.error_outside(w, t).is_none()
         };
-        let is_async = self.cx.fn_info(d).is_async;
+        let is_generator = self.is_generator_fn(d);
+        let is_async = self.cx.fn_info(d).is_async || is_generator;
         let throws = match wanted {
             Some(w) if !is_async && fits(self, w) => w,
             _ => throws,
         };
-        let observed = if is_async {
+        let observed = if is_generator {
+            self.cx
+                .generator_result(ret)
+                .and_then(|(_, a)| a.get(1).copied())
+        } else if is_async {
             self.cx.ty.promise_error(ret)
         } else {
             Some(throws)

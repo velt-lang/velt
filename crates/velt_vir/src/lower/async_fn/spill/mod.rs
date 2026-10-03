@@ -105,7 +105,7 @@ fn suspending_blocks(f: &Function) -> HashMap<i128, usize> {
         {
             let is_tag = p.local == Local(0)
                 && p.proj == [Proj::Deref(Ty::Agg(PLACEHOLDER)), Proj::Field(0)];
-            if is_tag && *k != DONE {
+            if is_tag && *k != DONE && *k != super::generator::GEN_RUNNING {
                 out.insert(*k, b);
             }
         }

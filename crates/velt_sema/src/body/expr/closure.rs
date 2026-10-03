@@ -384,6 +384,7 @@ impl FnCx<'_, '_> {
             params,
             ret: body_ret,
             is_async,
+            is_generator: false,
             self_ty: None,
             captures,
             body: hir::Body { locals, block },

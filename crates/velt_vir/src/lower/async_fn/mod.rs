@@ -26,6 +26,8 @@ mod all;
 mod all_settle;
 mod channel;
 mod ctor;
+mod gen_object;
+mod generator;
 mod handler;
 mod kept;
 mod spill;
@@ -38,6 +40,7 @@ mod widen;
 
 use std::collections::HashMap;
 
+pub(super) use generator::GenLocal;
 use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId, TyKind};
 
 use super::flags::FlagScan;
@@ -71,6 +74,9 @@ pub(super) struct AsyncCx {
     /// Entry dispatch: (tag, block).
     cases: Vec<(i128, BlockId)>,
     next_tag: i128,
+    /// The resume function of a generator (generator.rs): `yield`s suspend, results are
+    /// `GEN_DONE` / `GEN_YIELDED` / `GEN_THREW`.
+    generator: bool,
 }
 
 impl Cx<'_> {
@@ -98,6 +104,10 @@ impl Cx<'_> {
     /// Result type and thrown type of a *call* of `f`: an async function's call yields
     /// `Promise<T, E>` and never throws (its errors surface at `await`). Unsubstituted.
     pub(super) fn call_sig(&mut self, f: &FnDef) -> (TyId, Option<TyId>) {
+        if f.is_generator {
+            // The call creates the generator; its errors come out of `next()`.
+            return (f.ret, None);
+        }
         if f.is_async {
             let r = self.async_result(f);
             let never = self.intern(TyKind::Never);
@@ -160,9 +170,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
     fn lower_poll_body(&mut self, f: &FnDef, shared: Option<Vec<PassMode>>) -> Vec<Option<Local>> {
         let state = self.new_local(Ty::Ptr, Some("state".into()));
         let cx = self.new_local(Ty::Ptr, Some("cx".into()));
-        let result = self.cx.async_result(f);
-        self.ret_ty = Some(self.sub(result));
         let targs = self.targs.clone();
+        let result = match f.is_generator {
+            true => self.cx.gen_args(f, &targs).0,
+            false => self.cx.async_result(f),
+        };
+        self.ret_ty = Some(self.sub(result));
         self.throws = self.cx.fn_throws(f, &targs);
         self.out_ptr = Some(state);
         let start = self.new_block();
@@ -172,8 +185,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             cx,
             cases: vec![(0, start)],
             next_tag: 1,
+            generator: f.is_generator,
         });
         self.switch_to(start);
+        if f.is_generator {
+            self.set_tag(generator::GEN_RUNNING);
+        }
         let scan = FlagScan::run(self.cx.hir, &f.body);
         self.ref_bindings = scan.ref_bindings.iter().copied().collect();
         let inputs = self.declare_async_locals(f, shared);
@@ -251,10 +268,24 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.assign(p, Rvalue::Use(cint(tag, Ty::U32)));
     }
 
-    /// Terminator of a completed body: the result is stored, report READY.
+    /// Terminator of a completed body: the result is stored, report READY (a generator: DONE).
     pub(super) fn finish_poll(&mut self) {
         self.set_tag(DONE);
-        self.terminate(Terminator::Return(cint(1, Ty::U32)));
+        let ready = if self.in_generator() {
+            generator::GEN_DONE
+        } else {
+            1
+        };
+        self.terminate(Terminator::Return(cint(ready, Ty::U32)));
+    }
+
+    /// Terminator of a body that threw (`Err` stored): READY, or a generator's THREW.
+    pub(in crate::lower) fn finish_poll_err(&mut self) {
+        if !self.in_generator() {
+            return self.finish_poll();
+        }
+        self.set_tag(DONE);
+        self.terminate(Terminator::Return(cint(generator::GEN_THREW, Ty::U32)));
     }
 
     /// Cancellation before the first poll: drop the owned inputs (their drop flags, if any,
@@ -272,6 +303,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 self.drop_glue(place, ty);
             }
         }
+        // Finished: a generator closed before it started is done (`next()` after `return()`).
+        self.set_tag(DONE);
         self.terminate(Terminator::Return(cint(0, Ty::U32)));
         self.switch_to(saved);
         self.actx().cases.push((DROP_BIT, d));
@@ -282,6 +315,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.switch_to(BlockId(0));
         let tp = self.tag_place();
         let tag = self.rvalue_temp(Ty::U32, Rvalue::Use(Operand::Copy(tp)));
+        if self.in_generator() {
+            self.running_case();
+            self.switch_to(BlockId(0));
+        }
         let other = self.new_block();
         let cases = std::mem::take(&mut self.actx().cases);
         self.terminate(Terminator::Switch {

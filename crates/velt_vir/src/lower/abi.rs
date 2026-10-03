@@ -97,6 +97,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::WidenDrop(from, to) => Self::build_widen_drop(cx, *from, *to),
             Work::HandlerInit(def, targs) => Self::build_handler_init(cx, *def, targs),
             Work::Unclaimed(t) => Self::build_unclaimed(cx, *t),
+            Work::GenNew(def, targs) => Self::build_gen_new(cx, *def, targs),
+            Work::GenFree(def, targs) => Self::build_gen_free(cx, *def, targs),
         }
     }
 
@@ -137,6 +139,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         };
         if f.is_async {
             return Self::build_async_new(cx, def, targs);
+        }
+        if f.is_generator {
+            return Self::build_gen_fn(cx, def, targs);
         }
         let mut lw = FnLower::bare(cx, targs.to_vec());
         lw.enter_span(f.span);
@@ -292,7 +297,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         for s in &f.body.block.stmts {
             self.stmt(s);
         }
-        let returns_value = !self.returns_unit();
+        // A generator's body yields its values and returns nothing.
+        let returns_value = !self.returns_unit() && !self.in_generator();
         if let Some(v) = &f.body.block.value {
             // A trailing value expression of a function body is its return value.
             self.push_scope(ScopeKind::Temps);
@@ -386,6 +392,7 @@ impl LInfo {
             moved_fields: vec![],
             zero_parts: false,
             cell: false,
+            gen: None,
         }
     }
 }

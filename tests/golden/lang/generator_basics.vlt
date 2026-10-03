@@ -1,0 +1,128 @@
+// check: no leaks
+// Generators (`function*`): calling one only creates it; the body runs up to each `yield` as
+// `next()` asks for values, then reports `done` forever. `for...of` over a direct call keeps
+// the generator's state in the loop (no allocation); a generator value is an object.
+function* lazy(tag: string): Generator<string> {
+  console.log(`start ${tag}`);
+  yield `${tag}-a`;
+  console.log(`middle ${tag}`);
+  yield `${tag}-b`;
+  console.log(`end ${tag}`);
+}
+
+function* range(from: i64, to: i64): Generator<i64> {
+  for (let i = from; i < to; i++) {
+    yield i;
+  }
+}
+
+function* fibonacci(): Generator<i64> {
+  let a = 0;
+  let b = 1;
+  while (true) {
+    yield a;
+    const next = a + b;
+    a = b;
+    b = next;
+  }
+}
+
+function* repeat<T>(value: T, times: i64): Generator<T> {
+  for (let i = 0; i < times; i++) {
+    yield value;
+  }
+}
+
+// Declared as the protocol interfaces: the caller sees an `Iterable` / `Iterator`.
+function* letters(word: string): Iterable<string> {
+  for (const c of word.split("")) {
+    yield c;
+  }
+}
+
+function* countdown(n: i64): Iterator<i64> {
+  while (n > 0) {
+    yield n;
+    n--;
+  }
+}
+
+function* empty(): Generator<string> {
+  console.log("empty runs");
+}
+
+function total(src: Iterable<i64>): i64 {
+  let sum = 0;
+  for (const x of src) {
+    sum += x;
+  }
+  return sum;
+}
+
+function main(): void {
+  const g = lazy("x");
+  console.log("created");
+  for (const s of g) {
+    console.log(s);
+  }
+  for (const s of lazy("y")) {
+    console.log(`loop ${s}`);
+  }
+
+  let sum = 0;
+  for (const i of range(1, 5)) {
+    sum += i;
+  }
+  console.log(`sum ${sum}`);
+
+  const fibs: i64[] = [];
+  for (const f of fibonacci()) {
+    if (f > 100) {
+      break;
+    }
+    fibs.push(f);
+  }
+  console.log(fibs.join(", "));
+
+  // `next()` by hand: done forever after the end.
+  const r = range(0, 2);
+  let res = r.next();
+  while (!res.done) {
+    console.log(`next ${res.value}`);
+    res = r.next();
+  }
+  console.log(r.next().done, r.next().done);
+
+  for (const w of repeat("hi", 3)) {
+    console.log(w);
+  }
+  for (const c of letters("abc")) {
+    console.log(c);
+  }
+  const it = countdown(3);
+  let step = it.next();
+  while (!step.done) {
+    console.log(`countdown ${step.value}`);
+    step = it.next();
+  }
+
+  console.log(total(range(1, 11)));
+  const make = range;
+  console.log(total(make(0, 4)));
+  for (const s of empty()) {
+    console.log(s);
+  }
+
+  // Labelled `continue` and `break` across the loop.
+  outer: for (const i of range(0, 3)) {
+    for (const j of range(0, 3)) {
+      if (j == 1) {
+        continue outer;
+      }
+      if (i == 2) {
+        break outer;
+      }
+      console.log(`pair ${i} ${j}`);
+    }
+  }
+}

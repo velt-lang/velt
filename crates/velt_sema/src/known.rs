@@ -1,8 +1,8 @@
 //! Prelude types the compiler knows by name: `Mutex<T>` (the lock-word struct behind
 //! `new Mutex(x)` / `.with`), `JsonError` (thrown by `JSON.parse`), the dynamic JSON value
 //! (`json::JsonValue`), `Map` (not JSON-serializable), the shared-state receiver shapes, and the
-//! `Comparable<T>` interface behind ordering operators on generic params, and the `Iterator<T, E>`
-//! interface behind `for...of` over iterables.
+//! `Comparable<T>` interface behind ordering operators on generic params, the `Iterator<T, E>`
+//! interface behind `for...of` over iterables, and the `Generator<T, E>` class generators create.
 
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
@@ -33,6 +33,49 @@ impl Ctx<'_> {
         match self.prelude.get(name) {
             Some(Item::Def(d)) if self.adt(*d).is_some() => Some(*d),
             _ => None,
+        }
+    }
+
+    /// The prelude's `Generator<T, E>` class: what calling a generator creates.
+    pub fn generator_class(&self) -> Option<DefId> {
+        self.prelude_adt("Generator")
+    }
+
+    /// `(def, [T, E])` when `t` is a type a generator may be declared to return:
+    /// `Generator<T, E>`, `Iterator<T, E>` or `Iterable<T, E>`.
+    pub fn generator_result(&self, t: TyId) -> Option<(DefId, Vec<TyId>)> {
+        match self.ty.kind(t) {
+            TyKind::Adt(d, args) if Some(*d) == self.generator_class() => Some((*d, args.clone())),
+            TyKind::Dyn(d, args)
+                if Some(*d) == self.prelude_iface("Iterator")
+                    || Some(*d) == self.prelude_iface("Iterable") =>
+            {
+                Some((*d, args.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Generator result type `t` with `e` as its error type argument.
+    pub fn with_generator_error(&mut self, t: TyId, e: TyId) -> TyId {
+        let Some((d, mut args)) = self.generator_result(t) else {
+            return t;
+        };
+        if args.len() != 2 {
+            return t;
+        }
+        args[1] = e;
+        match self.ty.kind(t) {
+            TyKind::Dyn(..) => self.ty.intern(TyKind::Dyn(d, args)),
+            _ => self.ty.intern(TyKind::Adt(d, args)),
+        }
+    }
+
+    /// `Generator<t, e>`.
+    pub fn generator_ty(&mut self, t: TyId, e: TyId) -> TyId {
+        match self.generator_class() {
+            Some(d) => self.ty.intern(TyKind::Adt(d, vec![t, e])),
+            None => self.ty.error,
         }
     }
 

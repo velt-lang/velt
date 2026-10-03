@@ -309,6 +309,13 @@ pub fn sx(e: &Expr) -> String {
         ExprKind::StructLit { name, props: ps } => format!("{} {{{}}}", ty(name), props(ps)),
         ExprKind::Spread(e) => format!("...{}", sx(e)),
         ExprKind::Await(e) => format!("(await {})", sx(e)),
+        ExprKind::Yield { arg, delegate } => {
+            let kw = if *delegate { "yield*" } else { "yield" };
+            match arg {
+                Some(a) => format!("({kw} {})", sx(a)),
+                None => format!("({kw})"),
+            }
+        }
         ExprKind::Cast { expr, ty: t } => format!("(as {} {})", sx(expr), ty(t)),
         ExprKind::InstanceOf { expr, ty: t } => format!("(instanceof {} {})", sx(expr), ty(t)),
         ExprKind::Paren(e) => format!("(paren {})", sx(e)),

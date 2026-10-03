@@ -1,0 +1,4 @@
+generator_syntax.vlt:3:19: error: a `declare function` cannot be a generator
+generator_syntax.vlt:6:3: error: interface methods cannot be generators: declare the method's return type (`Generator<T>`), and write `*name()` in the implementing class
+generator_syntax.vlt:10:17: error: `yield` cannot be an operand here: it binds like an assignment, so wrap it in parentheses (`(yield x)`)
+generator_syntax.vlt:14:9: error: `yield` is a reserved word and cannot be used as a name (as in TypeScript): choose another name

@@ -23,8 +23,20 @@ pub(crate) fn build_defs(cx: &mut Ctx) {
             if cx.try_fn(d).is_some_and(|f| !f.is_async) && cx.throw_groups().in_promise_group(d) {
                 throws = None;
             }
+            // A generator's declared result carries its final error type as `E`.
+            let gen_ret = match &cx.defs[i] {
+                Some(Def::Fn(f)) if f.is_generator => Some(f.ret),
+                _ => None,
+            };
+            let gen_ret = gen_ret.map(|r| {
+                let e = throws.unwrap_or(cx.ty.never);
+                cx.with_generator_error(r, e)
+            });
             if let Some(Def::Fn(f)) = &mut cx.defs[i] {
                 f.throws = throws;
+                if let Some(r) = gen_ret {
+                    f.ret = r;
+                }
             }
             continue;
         }

@@ -1,0 +1,45 @@
+// check: no leaks
+// A `for...of` over a generator inside an async function: the generator's state lives in the
+// async function's state across its awaits (no allocation), and leaving the loop closes it.
+function* chunks(items: string[], size: i64): Generator<string[]> {
+  let cur: string[] = [];
+  try {
+    for (const it of items) {
+      cur.push(it);
+      if (cur.length as i64 == size) {
+        yield cur;
+        cur = [];
+      }
+    }
+    if (cur.length > 0) {
+      yield cur;
+    }
+  } finally {
+    console.log("chunks closed");
+  }
+}
+
+async function upload(batch: string[]): Promise<i64> {
+  await sleep(1);
+  return batch.length as i64;
+}
+
+async function run(items: string[], stopAfter: i64): Promise<i64> {
+  let sent = 0;
+  let batches = 0;
+  for (const b of chunks(items, 2)) {
+    sent += await upload(b);
+    batches++;
+    console.log(`batch ${batches}: ${b.join(",")}`);
+    if (batches == stopAfter) {
+      break;
+    }
+  }
+  return sent;
+}
+
+async function main(): Promise<void> {
+  const items = ["a", "b", "c", "d", "e"];
+  console.log(`sent ${await run(items, 10)}`);
+  console.log(`sent ${await run(items, 1)}`);
+}

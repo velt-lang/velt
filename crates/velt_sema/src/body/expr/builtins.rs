@@ -106,6 +106,12 @@ impl FnCx<'_, '_> {
         if i == Intrinsic::JsonParse {
             self.json_parse_throws(span);
         }
+        if i == Intrinsic::GeneratorResume {
+            // Resuming throws what the generator's body throws (its `E`).
+            if let Some(&e) = ck.type_args.get(1) {
+                self.throw_src(crate::defs::ThrowSrc::Direct(e, span));
+            }
+        }
         self.intrinsic(i, ck.args, ck.ret, span)
     }
 

@@ -27,6 +27,12 @@ impl<'a> Printer<'a> {
         let params = self.params(&sig.params, params_end);
         let ret = self.return_type(sig.ret.as_ref());
         let throws = self.throws_clause(sig.throws.as_ref());
+        // `function* name` / `*name` for generators.
+        let keyword = match (sig.is_generator, keyword) {
+            (false, k) => k.to_string(),
+            (true, "") => "*".to_string(),
+            (true, k) => format!("{}* ", k.trim_end()),
+        };
         group(cat![
             keyword,
             sig.name.name.clone(),

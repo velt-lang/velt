@@ -104,6 +104,13 @@ impl<'a> Printer<'a> {
             ExprKind::StructLit { name, props } => self.struct_lit(name, props, e.span.hi),
             ExprKind::Spread(inner) => cat!["...", self.expr(inner)],
             ExprKind::Await(inner) => cat!["await ", self.expr(inner)],
+            ExprKind::Yield { arg, delegate } => {
+                let kw = if *delegate { "yield*" } else { "yield" };
+                match arg {
+                    Some(a) => cat![kw, " ", self.expr(a)],
+                    None => text(kw),
+                }
+            }
             ExprKind::Cast { expr, ty } => {
                 let inner = self.expr(expr);
                 cat![inner, " as ", self.ty_cast(ty)]

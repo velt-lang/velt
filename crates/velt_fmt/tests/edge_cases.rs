@@ -49,6 +49,15 @@ async function f(r: R) {
 }
 
 #[test]
+fn generators() {
+    holds(
+        "function*   gen(): Generator<i64> { yield 1; yield; yield*  other(); const x = (yield 2); }
+export function *ex(): Generator<i64> {}
+class C { *items(): Generator<i64> { yield this.x; } static  *make(): Generator<i64> {} *[Symbol.iterator](): Iterator<i64> {} }",
+    );
+}
+
+#[test]
 fn iteration_protocol() {
     holds(
         "interface It<T, E   = never> { next(): IteratorResult<T> throws E; }

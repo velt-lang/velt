@@ -40,6 +40,7 @@ mod driver;
 pub(crate) mod expr;
 mod field_narrow;
 mod for_iter;
+mod generators;
 mod locals;
 mod loops;
 pub(crate) mod narrow;
@@ -151,6 +152,10 @@ pub(crate) struct Frame {
     pub escaping: bool,
     /// Body of an `async` function / arrow: `await` is allowed.
     pub is_async: bool,
+    /// Body of a generator: the type of the values it yields (`yield` is allowed).
+    pub yield_ty: Option<TyId>,
+    /// Nesting depth of the `finally` blocks being checked (`yield` is not allowed in them).
+    pub finally_depth: u32,
     /// See `FnInfo::soft_moves`.
     pub soft_moves: Vec<Span>,
     /// Locals holding inferred integers (`expr::numbers`).
@@ -183,6 +188,8 @@ impl Frame {
             captures: vec![],
             escaping: false,
             is_async: false,
+            yield_ty: None,
+            finally_depth: 0,
             soft_moves: vec![],
             inferred_ints: Default::default(),
             closure_consts: Default::default(),

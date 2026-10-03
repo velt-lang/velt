@@ -210,6 +210,21 @@ impl Ctx<'_> {
         let imp = &self.impls[i as usize];
         let (pat, n, iargs) = (imp.ty, imp.generics as usize, imp.iface_args.clone());
         let mut slots = vec![None; n];
+        // `impl C<T, E>` binds its params to the type's own args, `never` included (`match_ty`
+        // lets `never` match anything without binding: `Generator<i64, never>`).
+        if let (TyKind::Adt(d, ps), TyKind::Adt(d2, as_)) =
+            (self.ty.kind(pat).clone(), self.ty.kind(t).clone())
+        {
+            if d == d2 && ps.len() == as_.len() {
+                for (p, a) in ps.iter().zip(&as_) {
+                    if let TyKind::Param(i) = self.ty.kind(*p) {
+                        if let Some(s @ None) = slots.get_mut(*i as usize) {
+                            *s = Some(*a);
+                        }
+                    }
+                }
+            }
+        }
         if !(self.match_ty(pat, t, &mut slots) && self.ty.subst_known(pat, &slots) == t) {
             return None;
         }

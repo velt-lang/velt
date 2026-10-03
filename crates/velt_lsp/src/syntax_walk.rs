@@ -194,6 +194,8 @@ fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
             args.iter().for_each(f);
         }
         E::New { args, .. } => args.iter().for_each(f),
+        E::Yield { arg: Some(a), .. } => f(a),
+        E::Yield { arg: None, .. } => {}
         E::Index { object, index, .. } => {
             f(object);
             f(index);
