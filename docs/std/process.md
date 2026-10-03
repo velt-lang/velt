@@ -1,7 +1,9 @@
 # velt:process
 
 `import { args, env } from "velt:process"`. Command-line arguments, environment variables, the
-working directory and exit.
+working directory and exit. Node's `process.stdout.write(s)`, `process.stderr.write(s)` and
+`process.env.NAME` (`string | null`) need no import: they are on the builtin `process`
+([builtins](../reference/builtins.md)).
 
 - `argv()`: every argument, starting with the program path. `args()`: the arguments without the
   program path.

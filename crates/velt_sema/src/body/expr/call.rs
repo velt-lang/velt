@@ -224,6 +224,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.namespace_call(object, prop, type_args, args, exp, span) {
             return h;
         }
+        if let Some(h) = self.process_write_call(object, prop, args, exp, span) {
+            return h;
+        }
         if let Some(h) = self.array_fill_new(object, prop, args, exp, span) {
             return h;
         }
