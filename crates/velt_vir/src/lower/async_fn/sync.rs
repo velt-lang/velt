@@ -9,6 +9,9 @@
 //!   value is checked for function values other threads could not call (`leave_lock`,
 //!   glue/many.rs). The value is passed by pointer — also a scalar one
 //!   when `f` is a closure literal (`Cx::by_ref_params`), so `(v) => { v += 1 }` updates it.
+//!   A promise made under the lock would run after it is released: sema rejects those made
+//!   from the value (velt_sema ownership/locked, which also transfers what the callback
+//!   stores across the lock).
 
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
@@ -128,13 +131,13 @@ impl FnLower<'_, '_> {
             Ty::Ptr,
             Rvalue::Use(Operand::Copy(proj(&fp, Proj::Field(1)))),
         );
+        let ret = self.sub(ty);
         self.call_rt(Rt::MutexLock, vec![lock.clone()], None);
         let (arg, pt) = match self.cx.ty(vty) {
             Ty::Agg(_) => (self.addr(value.clone()), Ty::Ptr),
             _ if by_ref => (self.addr(value.clone()), Ty::Ptr),
             s => (Operand::Copy(value.clone()), s),
         };
-        let ret = self.sub(ty);
         let abi = self.cx.ret_abi(ret, None);
         let mut params = vec![Ty::Ptr, pt];
         if abi.out.is_some() {

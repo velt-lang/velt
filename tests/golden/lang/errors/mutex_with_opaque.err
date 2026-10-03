@@ -1,0 +1,8 @@
+mutex_with_opaque.vlt:33:10
+mutex_with_opaque.vlt:37:10
+mutex_with_opaque.vlt:44:12
+mutex_with_opaque.vlt:48:10
+error: the function passed to `with` comes from an object's field, so what it does with the locked `State` cannot be checked
+error: the function passed to `with` comes from an array element, so what it does with the locked `State` cannot be checked
+error: the function passed to `with` comes from a variable that is not bound only to closures or named functions (a `Map` value, a parameter of a closure or method, …), so what it does with the locked `State` cannot be checked
+pass a closure written here (`m.with((v) => { … })`) or a named function, whose body is checked

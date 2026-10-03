@@ -242,7 +242,7 @@ impl FnLower<'_, '_> {
         let why = self.uncopyable_why(ty);
         let name = self.cx.type_name(ty);
         self.panic_msg(&format!(
-            "cannot copy a `{name}` for another thread (`spawn`, a channel, `shared(...)` or `Mutex.with`'s result): other references to it are still in use, and {why}"
+            "cannot copy a `{name}` for another thread (`spawn`, a channel, `shared(...)` or across a `Mutex.with` lock): other references to it are still in use, and {why}"
         ));
     }
 
