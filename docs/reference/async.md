@@ -34,6 +34,13 @@ Promises behave like JavaScript's, at Rust's cost:
   the promise (objects) or copied (numbers, strings), otherwise moved, because the promise may
   outlive the caller's frame. A promise has one owner: using a promise variable after handing
   it on is ``use of moved value``, and an explicit `p.clone()` is ``a promise cannot be copied``.
+  In a collection, a promise is replaced in place (`arr[i] = p`) and taken out with `pop()` or
+  `splice(i, 1)`, or awaited with the others by `Promise.all(arr)`. TypeScript lets several
+  places hold the same promise; Velt doesn't, so reading a promise element (`arr[i]`) and the
+  methods that copy values out (`m.get(k)`, `m.values()`, `arr.at(i)`, `arr.slice()`, …) are
+  compile-time errors for promises and for values that copy one (a struct with a promise
+  field); a class instance holding a promise is shared, so reading it out works. Shared
+  promises, which would make these reads work as in TypeScript, are planned (#212).
 - Values handed to `spawn` (and captured by an HTTP handler, sent over a channel, or settled on
   a promise from another task) go to another thread. What the program no longer references
   anywhere else moves as it is; an object it still shares is deep-copied for the task (like a

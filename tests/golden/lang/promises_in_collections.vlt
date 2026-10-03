@@ -1,0 +1,45 @@
+// check: no leaks
+// Promises in collections: replaced in place, added with `push`, taken out with `pop()` or
+// `splice`, awaited together with
+// `Promise.all`, counted or removed in a `Map`
+// without being read; a class instance holding a promise is shared, so reading it out of an
+// array or a `Map` works. Copying a promise is an error (lang/errors/promise_out_of_array,
+// promise_out_of_map).
+async function work(n: i64): Promise<string> {
+  return `done ${n}`;
+}
+
+class Job {
+  name: string;
+  run: Promise<string>;
+  constructor(name: string, run: Promise<string>) {
+    this.name = name;
+    this.run = run;
+  }
+}
+
+async function main() {
+  const arr: Promise<string>[] = [work(1), work(2)];
+  arr[0] = work(4);
+  const last = arr.pop();
+  if (last != null) {
+    console.log(await last);
+  }
+  arr.push(work(8));
+  const taken = arr.splice(0, 1);
+  console.log(taken.length, await Promise.all(taken));
+  console.log(arr.length, await Promise.all(arr));
+  const m = new Map<string, Promise<string>>();
+  m.set("a", work(5));
+  console.log(m.has("a"), m.size, m.delete("a"));
+
+  const jobs: Job[] = [new Job("first", work(6))];
+  const j = jobs[0];
+  console.log(j.name, jobs[0].name);
+  const byName = new Map<string, Job>();
+  byName.set("b", new Job("second", work(7)));
+  const b = byName.get("b");
+  if (b != null) {
+    console.log(b.name);
+  }
+}

@@ -34,6 +34,21 @@ impl FnCx<'_, '_> {
             None => self.expr(e, None, Want::Borrow),
         };
         let ty = ann.unwrap_or(h.ty);
+        // A promise bound by reference to an element or a field would be awaited (moved out of
+        // the array or object) later, or shared with the place.
+        if self.binds_promise(ty) {
+            match h.kind {
+                H::Index { .. } => {
+                    self.promise_out_of_array(ty, e.span);
+                    h = self.error_expr(e.span);
+                }
+                H::Field { .. } => {
+                    self.promise_out_of_object(ty, e.span);
+                    h = self.error_expr(e.span);
+                }
+                _ => {}
+            }
+        }
         let pinned = is_place(&h)
             && !self.cx.is_copy(ty)
             && !self.cx.is_string_value(ty)

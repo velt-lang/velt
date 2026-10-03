@@ -113,6 +113,9 @@ impl FnCx<'_, '_> {
                     (0, err)
                 }
             };
+            if self.binds_promise(fty) && self.cx.class_of(ty).is_some() {
+                self.promise_out_of_object(fty, sub.span);
+            }
             let sp = self.pattern(sub, fty, ctx);
             out.push((idx, sp));
         }
@@ -145,6 +148,9 @@ impl FnCx<'_, '_> {
                 P::Tuple(pats)
             }
             TyKind::Array(e) => {
+                if !elems.is_empty() {
+                    self.reject_promise_destructuring(e, span);
+                }
                 let pats = elems.iter().map(|p| self.pattern(p, e, ctx)).collect();
                 let rest = rest.map(|r| {
                     if !self.cx.is_copy(e) && !self.cx.is_shared_value(e) {

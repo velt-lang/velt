@@ -388,12 +388,17 @@ impl<'m> Ctx<'m> {
         if let Some(&b) = self.shared_memo.get(&t) {
             return b;
         }
-        let b = !self.is_copy(t) && !self.holds_promise(t, 0);
+        let b = !self.is_copy(t) && !self.holds_promise(t);
         self.shared_memo.insert(t, b);
         b
     }
 
-    fn holds_promise(&mut self, t: TyId, depth: u32) -> bool {
+    /// Does a value of type `t` hold a promise (which has one owner and can't be copied)?
+    pub fn holds_promise(&mut self, t: TyId) -> bool {
+        self.holds_promise_depth(t, 0)
+    }
+
+    fn holds_promise_depth(&mut self, t: TyId, depth: u32) -> bool {
         if depth > 8 {
             return false;
         }
@@ -411,7 +416,9 @@ impl<'m> Ctx<'m> {
             }
             _ => vec![],
         };
-        parts.into_iter().any(|p| self.holds_promise(p, depth + 1))
+        parts
+            .into_iter()
+            .any(|p| self.holds_promise_depth(p, depth + 1))
     }
 
     /// Ownership: can values of this type be duplicated bitwise?

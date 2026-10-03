@@ -1,0 +1,43 @@
+// A promise has one owner and can't be copied (TypeScript allows these; shared promises are
+// #212), so reading one out of an array is an error on every path that would copy it: moving or
+// binding an element, methods and generic functions that copy elements (found per
+// instantiation), spreading and destructuring. `pop()`, `splice` and `Promise.all`
+// take them out (lang/promises_in_collections).
+async function work(n: i64): Promise<string> {
+  return `done ${n}`;
+}
+
+class Job {
+  run: Promise<string>;
+  constructor(run: Promise<string>) {
+    this.run = run;
+  }
+}
+
+struct Task {
+  name: string;
+  run: Promise<string>;
+}
+
+function first<T>(xs: T[]): T | null {
+  return xs.at(0);
+}
+
+async function main() {
+  const arr: Promise<string>[] = [work(1), work(2)];
+  const w: Promise<string> = arr[0];
+  const moved = await arr[1];
+  const later = arr.slice(1);
+  const at = arr.at(0);
+  const copy = [...arr];
+  const [a, b] = arr;
+  const f = first(arr);
+  const nested: Promise<string>[][] = [[work(3)]];
+  const flat = nested.flat();
+  const filled = new Array<Promise<string>>(2).fill(work(4));
+  const tasks: Task[] = [Task { name: "t", run: work(5) }];
+  const t = tasks.at(0);
+  const jobs: Job[] = [new Job(work(6))];
+  const ran = await jobs[0].run;
+  console.log(arr.length, tasks[0].name);
+}
