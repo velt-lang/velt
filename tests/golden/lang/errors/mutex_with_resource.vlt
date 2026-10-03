@@ -1,0 +1,34 @@
+// A part of a Mutex's value that owns a resource without clone() cannot leave the lock as a
+// copy (#398): not given to a promise that runs after the lock is released, and not stored
+// into something the callback captured.
+class Conn {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+class Pool {
+  conn: Conn = new Conn(1);
+  n: i64 = 3;
+}
+
+async function read(p: Pool): Promise<i64> {
+  await yieldNow();
+  return p.conn.id + p.n;
+}
+
+async function main() {
+  const m = shared(new Mutex<Pool>(new Pool()));
+  const x = m.with((v) => read(v));
+  const out: Conn[] = [];
+  m.with((v) => {
+    out.push(v.conn);
+  });
+  console.log(await x, out.length);
+}

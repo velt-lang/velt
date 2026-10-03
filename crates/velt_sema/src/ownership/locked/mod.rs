@@ -199,7 +199,9 @@ fn check_callback(
     }
     for m in made {
         let span = match &m {
-            promises::Made::Here(span, _) | promises::Made::ByCall(span, _) => *span,
+            promises::Made::Here(span, _)
+            | promises::Made::ByCall(span, _)
+            | promises::Made::Resource(span, _) => *span,
         };
         if !reported.insert(span) {
             continue;
@@ -222,6 +224,15 @@ fn promise_error(cx: &mut Ctx, m: promises::Made) {
                 "this `{t}` uses the locked value, and would run after `with` releases the lock"
             );
             (msg, span)
+        }
+        promises::Made::Resource(span, ty) => {
+            let (t, why) = (cx.display(ty), cx.uncopyable_why(ty));
+            let part = cx.uncopyable_part(ty).unwrap_or(ty);
+            let pn = cx.display(part);
+            let msg = format!("the promise made here runs after `with` releases the lock, so it would need its own copy of this `{t}`, but {why}");
+            let note = format!("give `{pn}` a `clone()` method that duplicates the resource, take what the promise needs out of the value (`m.with((v) => v.x)`) and start it after `with`, or keep the resource shared: `shared(new Mutex(…))`");
+            cx.error(Diagnostic::error(msg, span).with_note(note));
+            return;
         }
         promises::Made::ByCall(span, name) => (
             format!("`{name}` starts a promise with the locked value, which would run after `with` releases the lock"),

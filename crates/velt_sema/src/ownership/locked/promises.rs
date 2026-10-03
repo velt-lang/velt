@@ -5,7 +5,8 @@
 //! (`super::summary`). The promise runs after the lock is released, so it would use the value
 //! without the lock. When the promise only reads what it is given from the value (a function
 //! that does not modify those parameters: `save(v.name)`, `read(v)`), it gets a copy instead,
-//! like a spawned call; otherwise it is an error. Calling a function value kept in the value is
+//! like a spawned call (an error when the copy would need to duplicate a resource without
+//! `clone()`); otherwise it is an error. Calling a function value kept in the value is
 //! allowed
 //! (`m.with((f) => f())`): an async closure copies what it captured per call. `spawn`
 //! transfers what it is given, so a spawned call is allowed too.
@@ -27,6 +28,8 @@ use crate::visit::{self, VisitMut};
 pub(super) enum Made {
     /// A promise-making expression and its type.
     Here(Span, TyId),
+    /// A promise that would need a copy of an argument owning a resource without `clone()`.
+    Resource(Span, TyId),
     /// A call of a function that makes one and leaves it running.
     ByCall(Span, String),
 }
@@ -118,6 +121,11 @@ impl Promises<'_, '_, '_, '_> {
         };
         if modified {
             return false;
+        }
+        // A copy of a resource without `clone()` cannot be made.
+        if let Some(&i) = used.iter().find(|&&i| self.cx.owns_uncopyable(args[i].ty)) {
+            self.found.push(Made::Resource(args[i].span, args[i].ty));
+            return true;
         }
         if self.copy {
             for &i in used {
