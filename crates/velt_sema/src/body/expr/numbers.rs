@@ -72,7 +72,7 @@ impl FnCx<'_, '_> {
             H::Cast(inner) if inner.span == h.span && self.cx.ty.is_int(inner.ty) => {
                 self.int_origin(inner)
             }
-            _ if self.from_std_api(h) => IntOrigin::Inferred,
+            _ if self.is_std_api_value(h) => IntOrigin::Inferred,
             H::Field { base, index, .. } if self.is_inferred_field(base.ty, *index) => {
                 IntOrigin::Inferred
             }
@@ -82,7 +82,7 @@ impl FnCx<'_, '_> {
 
     /// An integer the standard library hands to user code: a length, or the result of a `std/`
     /// function or method (`indexOf`, a `size` getter).
-    pub(crate) fn from_std_api(&self, h: &hir::Expr) -> bool {
+    pub(crate) fn is_std_api_value(&self, h: &hir::Expr) -> bool {
         if self.cx.scopes[self.module].is_std {
             return false;
         }
@@ -153,7 +153,7 @@ impl FnCx<'_, '_> {
     /// Integer bindings destructured from a standard library result (`for (const [i, x] of
     /// xs.entries())`) are JS numbers, like the result itself.
     pub(crate) fn note_inferred_bindings(&mut self, p: &hir::Pat, src: &hir::Expr) {
-        if !self.from_std_api(src) {
+        if !self.is_std_api_value(src) {
             return;
         }
         let mut stack = vec![p];
