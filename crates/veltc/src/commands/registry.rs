@@ -56,8 +56,21 @@ pub fn user_command(action: UserAction, name: &str, dir: Option<&PathBuf>) -> Re
         UserAction::Add => velt_registry::auth::add_user(&root, name)?,
         UserAction::Token => velt_registry::auth::rotate_token(&root, name)?,
         UserAction::Remove { open } => {
-            velt_registry::auth::remove_user(&root, name, open)?;
+            let removed = velt_registry::auth::remove_user(&root, name, open)?;
             style::status("Removed", &format!("user `{name}`"));
+            if !removed.owned.is_empty() {
+                style::status(
+                    "Removed",
+                    &format!("`{name}` as an owner of {}", removed.owned.join(", ")),
+                );
+            }
+            if !removed.unowned.is_empty() {
+                style::warning(&format!(
+                    "{} now {} no owner: assign one with `velt registry owner add <package> <user>`",
+                    removed.unowned.join(", "),
+                    if removed.unowned.len() == 1 { "has" } else { "have" }
+                ));
+            }
             return Ok(());
         }
     };

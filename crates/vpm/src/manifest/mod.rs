@@ -276,6 +276,9 @@ fn check_name(name: &str) -> Result<(), String> {
     if RESERVED_NAMES.contains(&name) {
         return Err(reserved(name));
     }
+    if is_windows_device_name(name) {
+        return Err(device_name(name));
+    }
     if is_valid_package_name(name) {
         Ok(())
     } else {
@@ -304,6 +307,9 @@ fn check_import_source(source: &str) -> Result<(), String> {
 fn check_dependency_name(name: &str) -> Result<(), String> {
     if RESERVED_NAMES.contains(&name) {
         return Err(reserved(name));
+    }
+    if is_windows_device_name(name) {
+        return Err(device_name(name));
     }
     if is_valid_package_name(name) {
         Ok(())
@@ -363,10 +369,12 @@ fn check_native_wasm(wasm: bool) -> Result<(), String> {
     }
 }
 
-/// Whether `name` is a valid package name: `[a-z][a-z0-9_-]*`.
+/// Whether `name` is a valid package name: `[a-z][a-z0-9_-]*`, not reserved and not a Windows
+/// device name (a package is a directory named after it).
 pub fn is_valid_package_name(name: &str) -> bool {
     let mut chars = name.chars();
     !RESERVED_NAMES.contains(&name)
+        && !is_windows_device_name(name)
         && matches!(chars.next(), Some('a'..='z'))
         && chars.all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-' | '_'))
 }
@@ -374,6 +382,22 @@ pub fn is_valid_package_name(name: &str) -> bool {
 /// Names no package may have: a package's modules are named after it (`std/x`), and `std` is the
 /// standard library's namespace.
 pub const RESERVED_NAMES: &[&str] = &["std"];
+
+/// Whether `name` is a device name on Windows (`con`, `prn`, `aux`, `nul`, `com0`–`com9`,
+/// `lpt0`–`lpt9`, in any case): a file or directory of that name can't be created there, so a
+/// package or registry user may not have it.
+pub fn is_windows_device_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    match lower.as_bytes() {
+        b"con" | b"prn" | b"aux" | b"nul" => true,
+        [b'c', b'o', b'm', d] | [b'l', b'p', b't', d] => d.is_ascii_digit(),
+        _ => false,
+    }
+}
+
+fn device_name(name: &str) -> String {
+    format!("the package name `{name}` is a device name on Windows (`con`, `nul`, `com1`, …)")
+}
 
 fn reserved(name: &str) -> String {
     format!("the package name `{name}` is reserved for the standard library")

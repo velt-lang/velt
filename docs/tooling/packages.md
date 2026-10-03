@@ -41,7 +41,11 @@ import { slugify } from "textkit";
   directly.
 - `velt registry serve` speaks plain HTTP, so tokens and packages cross the network unencrypted.
   Beyond localhost, put it behind a reverse proxy that terminates TLS (Caddy, nginx) and give
-  clients the `https://` URL.
+  clients the `https://` URL. `velt` sends `VELT_REGISTRY_TOKEN` only to an `https://` registry
+  or to `http://localhost` (`127.0.0.1`, `[::1]`), and refuses a write to any other `http://`
+  registry while the variable is set.
+- A request may take 10 minutes in all. `velt` gives up on a server that stays silent for 60
+  seconds, or that it can't connect to within 10 seconds.
 - Package archives contain `package.vlt`, `src/**` and the sources of a `native` crate. Their checksum is the content hash that
   `velt.lock.json` records, and every download is verified against it before it enters the cache.
 
@@ -61,7 +65,9 @@ velt yank textkit@1.2.0                          # withdraw a broken version
 ```
 
 `velt registry user token alice` replaces a lost or leaked token, and `velt registry user remove`
-deletes a user; removing the last one opens the registry again and needs `--open`. The server
+deletes a user; removing the last one opens the registry again and needs `--open`. A removed
+user is also dropped from the owners of every package, so adding a user of the same name later
+gives back nothing; the command names the packages left without an owner. The server
 stores only a hash of each token. A yanked version stays downloadable, so a project whose
 `velt.lock.json` pins it keeps building (with a warning), but `velt add`, `velt update` and new
 requirements never pick it; `velt yank <pkg>@<version> --undo` brings it back.
@@ -72,6 +78,16 @@ administrator, who has the registry directory, assigns one:
 ```sh
 velt registry owner add textkit alice --dir ./registry
 ```
+
+`velt registry user` and `velt registry owner` change the registry directory directly, and may run
+while the server is up: they take the same lock (`<dir>/.lock`) as the server's writes. Run them
+as the OS user the server runs as. The users file, `.auth/users.json`, is created with the
+default permissions (0644 under a usual umask) inside `.auth/`, which is 0700 on Unix so other
+users can't read the token hashes. A users file written by another OS user may be unreadable to
+the server, which then answers every write with 500 until the file's owner is fixed.
+
+Package and user names can't be Windows device names (`con`, `nul`, `aux`, `com1`, …), since a
+package is stored in a directory named after it.
 
 The HTTP protocol: `GET <url>/api/v1/<name>/index` returns the package's `index.json`;
 `GET <url>/api/v1/<name>/<version>` returns an archive; `PUT` to the same path uploads one, with

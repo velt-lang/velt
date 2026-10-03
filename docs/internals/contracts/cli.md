@@ -67,7 +67,9 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   directory (`<dir>/.auth/users.json`, token hashes only). `add` and `token` print the new token
   on stdout, once. A registry with users accepts writes only with a user's token
   (`Authorization: Bearer $VELT_REGISTRY_TOKEN`); without the users file it is open. `remove` of
-  the last user deletes the file (opening the registry) only with `--open`.
+  the last user deletes the file (opening the registry) only with `--open`. `remove` also drops
+  the user from every package's owners, and reports those packages, warning about any left
+  without an owner.
 - `registry owner add|remove <pkg> <user> [--dir <d>]` (additive): an administrator's change of
   a package's owners, made in the registry directory without a token (may remove the last owner).
 - `registry serve` exits 1 without serving when `$VELT_REGISTRY_TOKEN` is set and the registry is
@@ -80,7 +82,9 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - `owner list|add|remove <pkg> [<user>]` (additive): a package's owners on a registry server
   (`list` prints one per line on stdout); an error for a local registry.
 - `search <text>` (additive): `name version` lines on stdout for the packages of the package's
-  registry (or `$VELT_REGISTRY`) whose name contains the text, newest version not yanked.
+  registry (or `$VELT_REGISTRY`) whose name contains the text, each with the version `add` picks:
+  the newest stable version not yanked (the newest pre-release not yanked if it has no stable
+  one).
 - `check` (additive): parse + sema of a file or the current package (same
   input resolution as `build`, package dependencies installed), every diagnostic the front end
   reports (all files' syntax errors; if there are none, all type errors), no lowering, codegen or
