@@ -1,6 +1,7 @@
 // A promise that changes the value a `with` callback is given would run after the lock is
 // released, without it (#398): returned, stored or dropped, made here or by a function the
-// callback calls. So would one returned by a function value whose body is not visible, and a
+// callback calls. So would one returned by a function value whose body is not visible (also
+// through a generic helper, reported where its result type is known), and a
 // function value whose body is not visible may not be given both sides of the lock. A call
 // that stores a part of the value outside and also changes the value cannot pass a copy.
 class Inner {
@@ -37,6 +38,10 @@ class Hooks {
   put: (o: Outer, xs: Inner[]) => void = (o: Outer, xs: Inner[]) => {};
 }
 
+function first<T>(m: shared<Mutex<Outer>>, fs: ((o: Outer) => T)[]): T {
+  return m.with(fs[0]);
+}
+
 function apply(m: shared<Mutex<Outer>>, g: (o: Outer) => void) {
   m.with((v) => {
     g(v);
@@ -66,7 +71,9 @@ async function main() {
   apply(m, (o: Outer) => {
     const p = bump(o);
   });
+  const d = first(m, [(o: Outer) => o.n]);
+  const e = await first(m, [bump]);
   const hooks = new Hooks();
   m.with((v) => hooks.put(v, out));
-  console.log(a, b, c);
+  console.log(a, b, c, d, e);
 }

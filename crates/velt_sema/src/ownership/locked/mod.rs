@@ -23,6 +23,7 @@
 //! deliberately (std/prelude/promise.vlt `takeSettlement`).
 
 mod callbacks;
+mod opaque;
 mod promises;
 mod regions;
 mod stores;
@@ -41,18 +42,19 @@ use crate::visit::{self, VisitMut};
 pub(crate) fn check_locked(cx: &mut Ctx) {
     let mut res = values::Resolver::default();
     let found = callbacks::find(cx, &mut res);
-    let mut reported = HashSet::new();
-    for cb in &found.opaque {
-        if reported.insert(cb.span) {
-            opaque_callback(cx, cb);
-        }
+    opaque::check_results(cx, &found.opaque);
+    let mut callbacks = found.callbacks;
+    for (_, cb) in &found.opaque {
+        let like = opaque::closures_like(cx, cb.ty);
+        callbacks.extend(like.into_iter().map(|c| (c, false)));
     }
-    if found.callbacks.is_empty() {
+    if callbacks.is_empty() {
         return;
     }
     let summaries = summary::Summaries::compute(cx);
     let mut done = HashSet::new();
-    for (c, direct) in found.callbacks {
+    let mut reported = HashSet::new();
+    for (c, direct) in callbacks {
         if !done.insert(c) {
             continue;
         }
@@ -63,31 +65,11 @@ pub(crate) fn check_locked(cx: &mut Ctx) {
             }
             continue;
         }
-        check_callback(cx, &summaries, &mut res, c);
+        check_callback(cx, &summaries, &mut res, c, &mut reported);
     }
 }
 
-/// A callback whose body is not visible: a result holding a promise may have been made from
-/// the locked value it was given. (A result type that still depends on a type parameter is
-/// not checked: a known gap.)
-fn opaque_callback(cx: &mut Ctx, cb: &Expr) {
-    let TyKind::FnPtr { ret, .. } = cx.ty.kind(cb.ty).clone() else {
-        return;
-    };
-    if cx.mentions_params(ret) || !cx.holds_promise(ret) {
-        return;
-    }
-    let r = cx.display(ret);
-    cx.error(
-        Diagnostic::error(
-            format!("the function passed to `with` returns `{r}`, which would run after the lock is released"),
-            cb.span,
-        )
-        .with_note(AWAIT_OUTSIDE),
-    );
-}
-
-const AWAIT_OUTSIDE: &str = "`with` holds the lock only while the function runs, and a promise made there keeps running without it; take what you need out of the value (`const x = m.with((v) => v.x)` gives a copy), await outside `with`, and store the result with another `with`";
+pub(super) const AWAIT_OUTSIDE: &str = "`with` holds the lock only while the function runs, and a promise made there keeps running without it; take what you need out of the value (`const x = m.with((v) => v.x)` gives a copy), await outside `with`, and store the result with another `with`";
 
 fn async_callback_error(cx: &mut Ctx, c: DefId) {
     let span = cx.fn_info(c).span;
@@ -178,7 +160,14 @@ impl VisitMut for FnValues<'_, '_> {
 
 /// Report the promises callback `c` makes from the locked value and transfer what it stores
 /// across the lock (module docs).
-fn check_callback(cx: &mut Ctx, s: &summary::Summaries, res: &mut values::Resolver, c: DefId) {
+/// `reported`: spans already reported (a closure may be checked with several callbacks).
+fn check_callback(
+    cx: &mut Ctx,
+    s: &summary::Summaries,
+    res: &mut values::Resolver,
+    c: DefId,
+    reported: &mut HashSet<Span>,
+) {
     let (mut bodies, resolved) = take_bodies(cx, res, c);
     let mut r = regions::Regions::new(c, &mut bodies);
     r.resolved = resolved;
@@ -209,9 +198,18 @@ fn check_callback(cx: &mut Ctx, s: &summary::Summaries, res: &mut values::Resolv
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
     }
     for m in made {
+        let span = match &m {
+            promises::Made::Here(span, _) | promises::Made::ByCall(span, _) => *span,
+        };
+        if !reported.insert(span) {
+            continue;
+        }
         promise_error(cx, m);
     }
     for u in unfixable {
+        if !reported.insert(u.span) {
+            continue;
+        }
         unfixable_error(cx, u);
     }
 }

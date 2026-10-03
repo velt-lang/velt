@@ -18,8 +18,8 @@ use crate::visit::{self, VisitMut};
 pub(super) struct Found {
     /// Closures `with` calls, and whether the literal is `with`'s argument itself.
     pub(super) callbacks: Vec<(DefId, bool)>,
-    /// Opaque callbacks: the argument expressions.
-    pub(super) opaque: Vec<Expr>,
+    /// Opaque callbacks: the function passing them, and the argument expressions.
+    pub(super) opaque: Vec<(DefId, Expr)>,
     /// `(function, parameter index)` of parameters passed to `with` as the callback.
     params: HashSet<(DefId, usize)>,
 }
@@ -84,7 +84,7 @@ fn resolve(
     }
     match res.expr(cx, d, cb) {
         Some(cs) => found.callbacks.extend(cs.into_iter().map(|c| (c, direct))),
-        None => found.opaque.push(cb.clone()),
+        None => found.opaque.push((d, cb.clone())),
     }
 }
 

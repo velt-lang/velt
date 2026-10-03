@@ -1,0 +1,61 @@
+// check: no leaks
+// `with` callbacks reached through an object's field or an array element (#398): every closure
+// that could be one (the same parameter types) is checked like a callback, so a part of the
+// value it stores outside comes out as a copy. 8 tasks keep changing the copies.
+class Inner {
+  n: i64 = 0;
+  tags: string[] = [];
+}
+
+class Outer {
+  inner: Inner = new Inner();
+  count: i64 = 0;
+}
+
+class Hooks {
+  cb: (v: Outer) => void;
+
+  constructor(cb: (v: Outer) => void) {
+    this.cb = cb;
+  }
+}
+
+async function worker(m: shared<Mutex<Outer>>): Promise<i64> {
+  let seen: i64 = 0;
+  for (let k = 0; k < 1000; k++) {
+    const out: Inner[] = [];
+    const h = new Hooks((v: Outer) => {
+      v.count += 1;
+      out.push(v.inner);
+    });
+    m.with(h.cb);
+    const cbs = [
+      (v: Outer) => {
+        out.push(v.inner);
+      },
+    ];
+    m.with(cbs[0]);
+    for (const x of out) {
+      x.n += 1;
+      x.tags.push("x");
+    }
+    seen += out.length == 2 ? 1 : 0;
+    await yieldNow();
+  }
+  return seen;
+}
+
+async function main() {
+  const m = shared(new Mutex<Outer>(new Outer()));
+  const ts: Promise<i64>[] = [];
+  for (let i = 0; i < 8; i++) {
+    ts.push(spawn(worker(m.clone())));
+  }
+  const r = await Promise.all(ts);
+  console.log(
+    r[0],
+    m.with((v) => v.count),
+    m.with((v) => v.inner.n),
+    m.with((v) => v.inner.tags.length),
+  );
+}

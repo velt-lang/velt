@@ -249,7 +249,9 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
     callback calls with the value (`step(v)`, a helper's parameter) gets the value itself, so
     its changes land in it: the closures it may be are checked like the callback. One whose
     body cannot be found (a field, an array element) may not be given both the value and
-    something outside the lock.
+    something outside the lock. A callback itself found only through a field or an array
+    element (`m.with(hooks.cb)`) may be any closure with its parameter types, so each of those
+    is checked as a callback.
   - A promise made from the value runs after the lock is released. One that only reads what it
     is given gets a copy, like a spawned call (`m.with((v) => save(v.name))`,
     `m.with((v) => read(v))`: `read` sees the value as it was). One that changes it is an
@@ -257,7 +259,8 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
     (`m.with((v) => bump(v))`: "this `Promise<…>` uses the locked value, and would run after
     `with` releases the lock"): take what the work needs out of the value, await outside
     `with`, and store the result with another `with`. A function value whose body is not
-    visible (not a closure written where it is passed) may not return a promise.
+    visible may not return a promise either; through a generic helper
+    (`function run<T>(m, fs: ((s: S) => T)[]): T`) that is reported where `T` is a promise.
   - A function value stored in the value must not have captured a resource without `clone()`
     (the program stops when the lock is released).
 

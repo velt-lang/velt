@@ -245,14 +245,12 @@ value's captures, an interface value's implementor) panics (glue/clone.rs). Stri
   the new task with its arguments as they were passed, not transferred (a gap: the caller must
   not use them afterwards).
 - `Mutex.with` callbacks and `attempt(f)` are not stabilized like ordinary calls.
-- `Mutex.with` (#398): sema sees the callbacks it can resolve (literals, locals bound only to
-  closures, closures a function returns, closures passed to a parameter that reaches `with`);
-  a function value of unknown body that stores a part of the value into state it captured
-  shares it, and one whose result type depends on a type parameter may return a promise.
-  Calls through virtual and interface methods and function values are assumed to store any
-  argument into any argument they modify. A resource without `clone()` stored into the value
-  from a captured variable stays shared with the variable (it cannot be copied, and a
-  callback cannot move what it captured even though `with` calls it once).
+- `Mutex.with` (#398): a callback, or a function value it calls, that sema cannot resolve to
+  closures (ownership/locked/values.rs) is treated as any closure with its parameter types;
+  calls through virtual and interface methods are assumed to store any argument into any
+  argument they modify; summaries cover direct calls only. A resource without `clone()`
+  stored into the value from a captured variable stays shared with the variable (it cannot
+  be copied, and a callback cannot move what it captured even though `with` calls it once).
 - `Map` (and `Set`) keys of struct, object-literal and tuple type compare by content
   (`__intrinsic_eq` with the structural hash), not by identity as in JS; class instances
   compare by identity.
