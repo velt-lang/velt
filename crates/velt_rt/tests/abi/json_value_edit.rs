@@ -6,7 +6,6 @@ use crate::json::value_abi::*;
 use crate::json::value_edit::*;
 use crate::str::{velt_rt_str_drop, VeltStr};
 use std::mem::MaybeUninit;
-use std::time::{Duration, Instant};
 
 fn object(n: usize) -> ValueHandle {
     let mut obj = velt_rt_json_value_new_object();
@@ -90,39 +89,61 @@ fn deleting_many_keys_keeps_order_and_lookups() {
 
 #[test]
 fn deleting_from_the_end_stays_linear() {
-    // Removing the last member moves nothing, so `8 * n` deletions must take about 8 times as
-    // long as `n`, not 64 times (as when every delete rebuilt the key index). The wide gap
-    // leaves room for cache effects (the larger object outgrows the caches) and a loaded
-    // machine; best of five interleaved runs, so a busy machine slows both sizes.
-    let time = |n: usize| {
-        let mut obj = object(n);
-        let keys: Vec<VeltStr> = (0..n)
-            .rev()
-            .map(|i| VeltStr::from_vec(format!("k{i}").into_bytes()))
-            .collect();
-        let start = Instant::now();
-        for k in &keys {
-            assert_eq!(unsafe { velt_rt_json_value_delete(&mut obj, k) }, 1);
-        }
-        let t = start.elapsed();
-        assert_eq!(unsafe { velt_rt_json_value_len(obj) }, 0);
-        unsafe { velt_rt_json_value_free(obj) };
-        for mut k in keys {
-            unsafe { velt_rt_str_drop(&mut k) };
-        }
-        t
-    };
+    // Removing the last member moves nothing: `8 * n` deletions take about 8 times the work of
+    // `n`, not 64 times. Counted (entries searched and moved, index slots adjusted, indexes
+    // built, nodes copied on write), not timed, so a busy machine cannot make it flaky.
     let n = 5_000;
-    let (mut t_small, mut t_large) = (Duration::MAX, Duration::MAX);
-    for _ in 0..5 {
-        t_small = t_small.min(time(n));
-        t_large = t_large.min(time(8 * n));
-    }
+    let (small, large) = (
+        delete_work(n, Order::FromTheEnd),
+        delete_work(8 * n, Order::FromTheEnd),
+    );
     assert!(
-        t_large < t_small * 32,
-        "deleting {n} keys took {t_small:?}, {} took {t_large:?}: not linear",
+        large < small * 9,
+        "deleting {n} keys took {small} steps, {} took {large}: not linear",
         8 * n
     );
+    // The count sees the moves: from the front, every delete moves all the members after it.
+    let n = 1_000;
+    let front = delete_work(n, Order::FromTheFront);
+    assert!(
+        front > n * n / 4,
+        "deleting {n} keys from the front counted {front} steps"
+    );
+    // It sees copies on write too: deleting from a shared object copies its members once.
+    let mut obj = object(n);
+    let shared = unsafe { velt_rt_json_value_clone(obj) };
+    let before = crate::json::value::edit_work();
+    assert_eq!(delete(&mut obj, "k0"), 1);
+    let copied = crate::json::value::edit_work() - before;
+    assert!(
+        copied >= n,
+        "a delete from a shared object counted {copied} steps"
+    );
+    for h in [obj, shared] {
+        unsafe { velt_rt_json_value_free(h) };
+    }
+}
+
+enum Order {
+    FromTheEnd,
+    FromTheFront,
+}
+
+/// The steps deleting every member of an `n`-member object one by one takes.
+fn delete_work(n: usize, order: Order) -> usize {
+    let mut obj = object(n);
+    let keys: Vec<usize> = match order {
+        Order::FromTheEnd => (0..n).rev().collect(),
+        Order::FromTheFront => (0..n).collect(),
+    };
+    let before = crate::json::value::edit_work();
+    for i in keys {
+        assert_eq!(delete(&mut obj, &format!("k{i}")), 1);
+    }
+    let work = crate::json::value::edit_work() - before;
+    assert_eq!(unsafe { velt_rt_json_value_len(obj) }, 0);
+    unsafe { velt_rt_json_value_free(obj) };
+    work
 }
 
 #[test]

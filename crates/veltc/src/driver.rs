@@ -144,7 +144,8 @@ impl Session {
         self.timings.push((stage, start.elapsed()));
     }
 
-    fn record_details(&mut self, stage: &'static str, steps: &[(&'static str, Duration)]) {
+    /// Record the breakdown `steps` of `stage` (printed under it with `--timings`).
+    pub fn record_details(&mut self, stage: &'static str, steps: &[(&'static str, Duration)]) {
         let steps = steps.iter().map(|&(step, d)| (stage, step, d));
         self.details.extend(steps);
     }
@@ -359,7 +360,8 @@ fn build_on_current_thread(
 }
 
 /// `$VELT_CODEGEN_UNITS`: how many codegen units the LLVM backend splits a program into, at most
-/// the core count (unset or not a positive number: one).
+/// the core count (unset or not a positive number: `None`, the backend picks the count from the
+/// program's size).
 fn codegen_units() -> Option<usize> {
     let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
     std::env::var("VELT_CODEGEN_UNITS")

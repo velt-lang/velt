@@ -23,6 +23,8 @@ pub struct Completion {
     /// What it inserts; LSP snippet syntax (`$1`) when `snippet` is set.
     pub text: String,
     pub snippet: bool,
+    /// Sorts the completions (editors otherwise sort by label).
+    pub sort: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,7 +55,7 @@ pub fn completions(src: &str, offset: u32) -> Vec<Completion> {
             let taken: Vec<&str> = written
                 .keys
                 .iter()
-                .filter(|(_, lo)| Some(*lo) != cursor.token)
+                .filter(|(_, r)| Some(r.start) != cursor.token)
                 .map(|(k, _)| k.as_str())
                 .collect();
             fields
@@ -127,6 +129,7 @@ fn field_completion(f: &Field, cursor: &Cursor) -> Completion {
         (format!("{}: {value}", f.key), true)
     };
     Completion {
+        sort: f.key.to_string(),
         label: f.key.to_string(),
         kind: CompletionKind::Field,
         detail: f.ty.to_string(),
@@ -139,6 +142,7 @@ fn field_completion(f: &Field, cursor: &Cursor) -> Completion {
 
 fn value_completion(label: &str, text: String, ty: &str, doc: &str, c: &Cursor) -> Completion {
     Completion {
+        sort: label.to_string(),
         label: label.to_string(),
         kind: CompletionKind::Value,
         detail: ty.to_string(),
@@ -268,8 +272,10 @@ struct Frame {
     object: bool,
     /// Keys from the manifest object down to this container (`"*"` for an array element).
     path: Vec<String>,
-    /// For objects: the keys written, with their start offsets.
-    keys: Vec<(String, u32)>,
+    /// For objects: the keys written, with their ranges.
+    keys: Vec<(String, Range<u32>)>,
+    /// For objects: the string values written, by key, with the range of their contents.
+    values: Vec<(String, String, Range<u32>)>,
     /// For arrays: the string elements written.
     strings: Vec<String>,
 }
@@ -334,6 +340,7 @@ fn scan(src: &str, offset: u32) -> Scan {
                 object: true,
                 path: vec![],
                 keys: vec![],
+                values: vec![],
                 strings: vec![],
             });
             stack.push((0, State::Key, None));
@@ -358,7 +365,7 @@ fn scan(src: &str, offset: u32) -> Scan {
                     let path = scan.frames[frame].path.clone();
                     scan.hovered = Some((path, k.clone(), t.lo..t.hi));
                 }
-                scan.frames[frame].keys.push((k.clone(), t.lo));
+                scan.frames[frame].keys.push((k.clone(), t.lo..t.hi));
                 stack[top].2 = Some(k.clone());
                 set(&mut stack, State::AfterKey);
             }
@@ -375,6 +382,7 @@ fn scan(src: &str, offset: u32) -> Scan {
                     object: t.tok == Tok::LBrace,
                     path,
                     keys: vec![],
+                    values: vec![],
                     strings: vec![],
                 });
                 let state = if t.tok == Tok::LBrace {
@@ -385,8 +393,15 @@ fn scan(src: &str, offset: u32) -> Scan {
                 stack.push((scan.frames.len() - 1, state, None));
             }
             (tok, State::Value) => {
-                if let (false, Tok::Str { text, .. }) = (object, tok) {
-                    scan.frames[frame].strings.push(text.clone());
+                if let Tok::Str { text, closed } = tok {
+                    let inner = t.lo + 1..if *closed { t.hi - 1 } else { t.hi };
+                    match (object, pending) {
+                        (false, _) => scan.frames[frame].strings.push(text.clone()),
+                        (true, Some(key)) => {
+                            scan.frames[frame].values.push((key, text.clone(), inner))
+                        }
+                        (true, None) => {}
+                    }
                 }
                 set(&mut stack, State::AfterValue);
             }
@@ -446,6 +461,8 @@ fn gap_cursor(scan: &mut Scan, frame: usize, state: State, pending: &Option<Stri
         token: None,
     });
 }
+
+pub mod registry;
 
 #[cfg(test)]
 mod tests;

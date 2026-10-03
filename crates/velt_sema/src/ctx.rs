@@ -101,7 +101,7 @@ impl<'m> Ctx<'m> {
             scopes: modules
                 .iter()
                 .map(|m| ModuleScope {
-                    is_std: m.path.starts_with("std/"),
+                    is_std: m.is_std,
                     ..Default::default()
                 })
                 .collect(),

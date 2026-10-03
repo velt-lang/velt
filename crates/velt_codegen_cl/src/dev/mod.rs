@@ -29,6 +29,7 @@ mod trampoline;
 mod version;
 
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use cranelift_jit::JITModule;
 use velt_vir::vir;
@@ -58,6 +59,8 @@ pub struct DevSession {
     handler_states: HashMap<String, (u64, u64)>,
     running: Option<Facts>,
     swaps: u32,
+    /// Register each version's line tables with debuggers (`debug_info::jit`).
+    debug_info: bool,
 }
 
 /// A program loaded by [`DevSession::load`]; valid as long as its session lives.
@@ -93,13 +96,30 @@ impl DevSession {
             handler_states: HashMap::new(),
             running: None,
             swaps: 0,
+            debug_info: true,
         }
+    }
+
+    /// Whether later versions describe their code to debuggers (on by default; macOS and
+    /// Linux). Off saves building an in-memory ELF image with DWARF line tables per version.
+    pub fn set_debug_info(&mut self, on: bool) {
+        self.debug_info = on;
     }
 
     /// Compile all of `program` for the host and make it the running version. The program must
     /// define `velt_main`. Compiled without Cranelift optimizations (fast compiles for the dev
     /// loop).
     pub fn load(&mut self, program: &vir::Program) -> Result<JitProgram, String> {
+        self.load_timed(program, &mut vec![])
+    }
+
+    /// [`DevSession::load`], appending the time of its steps (`compile`, `finalize`, `unwind`,
+    /// `debug info`) to `timings` (for `velt dev --timings`).
+    pub fn load_timed(
+        &mut self,
+        program: &vir::Program,
+        timings: &mut Vec<(&'static str, Duration)>,
+    ) -> Result<JitProgram, String> {
         verify(program)?;
         let main_index = program
             .funcs
@@ -107,7 +127,7 @@ impl DevSession {
             .position(|f| f.symbol == "velt_main")
             .ok_or("codegen: the program has no `velt_main`")?;
         let all: HashSet<&str> = program.funcs.iter().map(|f| f.symbol.as_str()).collect();
-        let code = self.install(program, &all, true)?;
+        let code = self.install(program, &all, true, timings)?;
         self.running = Some(Facts::of(program));
         let main = code[main_index].ok_or("ICE: `velt_main` was not compiled")?;
         Ok(JitProgram { main })
@@ -116,6 +136,16 @@ impl DevSession {
     /// Bring the running program up to `program`: swap in its changed functions, or report why
     /// it needs a restart (the running code is then left as it is).
     pub fn reload(&mut self, program: &vir::Program) -> Result<Reload, String> {
+        self.reload_timed(program, &mut vec![])
+    }
+
+    /// [`DevSession::reload`], appending the time of the steps of a swap to `timings` (as
+    /// [`DevSession::load_timed`]; nothing when no code is compiled).
+    pub fn reload_timed(
+        &mut self,
+        program: &vir::Program,
+        timings: &mut Vec<(&'static str, Duration)>,
+    ) -> Result<Reload, String> {
         verify(program)?;
         let Some(running) = &self.running else {
             return Err("ICE: reload before load".into());
@@ -131,7 +161,7 @@ impl DevSession {
                 // Nothing compiled (e.g. only comments changed): no new module either.
                 if !keys.is_empty() {
                     let define: HashSet<&str> = keys.iter().map(String::as_str).collect();
-                    self.install(program, &define, false)?;
+                    self.install(program, &define, false, timings)?;
                     self.swaps += 1;
                 }
                 self.running = Some(facts);
@@ -168,10 +198,18 @@ impl DevSession {
         program: &vir::Program,
         define: &HashSet<&str>,
         first: bool,
+        timings: &mut Vec<(&'static str, Duration)>,
     ) -> Result<Vec<Option<usize>>, String> {
         let (names, new_slots) = self.names(program, define);
         let imports = self.imports(program, &names)?;
-        let version = version::compile(program, &names, &imports, &self.runtime, first)?;
+        let inputs = version::Inputs {
+            names: &names,
+            imports: &imports,
+            runtime: &self.runtime,
+            first,
+            debug_info: self.debug_info,
+        };
+        let version = version::compile(program, &inputs, timings)?;
         for (i, func) in program.funcs.iter().enumerate() {
             let Some(code) = version.code[i] else {
                 continue;

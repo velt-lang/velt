@@ -383,6 +383,24 @@ fn spans_cover_the_source() {
         panic!()
     };
     assert_eq!(at(*span), "{y}");
+    // The closing tag's name, with its own span.
+    let closing = el.closing_name.as_ref().expect("closing name");
+    assert_eq!(at(closing.span()), "p");
+    assert_eq!(closing.span().lo as usize, src.find("</p>").unwrap() + 2);
+    // Self-closing elements and fragments have none.
+    let m = parse_ok(
+        "const a = <br />;
+const b = <>x</>;",
+    );
+    for item in &m.items {
+        let ItemKind::Var(v) = &item.kind else {
+            panic!()
+        };
+        let ExprKind::Jsx(el) = &v.init.as_ref().unwrap().kind else {
+            panic!()
+        };
+        assert!(el.closing_name.is_none());
+    }
 }
 
 #[test]

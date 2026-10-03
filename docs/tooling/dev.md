@@ -1,7 +1,7 @@
 # `velt dev`: hot reload
 
 ```
-velt dev [<file.vlt>] [--exe] [--locked] [-v] [-- <program args>...]
+velt dev [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]
 ```
 
 `velt dev` runs your program like `velt run`, then keeps it up to date while you edit. Save a
@@ -75,6 +75,9 @@ release `velt`, other builds running on the machine):
 
 The time includes a 30 ms settle delay after the last write.
 
+`-v` prints how long each build stage took; `--timings` also splits the JIT stage into compiling,
+finalizing, registering unwind information and building the debug-info image.
+
 ## Limits
 
 - Code that is already running keeps running the old version: a future in flight (by design),
@@ -89,7 +92,7 @@ The time includes a 30 ms settle delay after the last write.
 - After 200 hot swaps the host restarts to reclaim the memory of old code.
 - JIT code has line-level debug information for GDB and LLDB on Linux; macOS is untested (LLDB
   needs `plugin.jit-loader.gdb.enable on`) ([Debugging](debugging.md#velt-dev-and-the-debugger)).
-  On Windows, use `--exe` or a normal build to debug.
+  `VELT_DEV_DEBUG_INFO=0` turns it off. On Windows, use `--exe` or a normal build to debug.
 - JIT code registers its unwind information on Windows x64, macOS and Linux, so debuggers and
   backtraces walk through it; on Windows arm64 it does not yet. On musl (Alpine) the JIT host
   is unavailable, so use `--exe`. Hot swap is tested end to end on Windows x64 and

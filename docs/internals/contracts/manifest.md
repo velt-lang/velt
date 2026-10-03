@@ -30,7 +30,13 @@ export const pkg: Package = {
 resolves). The reader below is the definition of a valid manifest; its fields are one table,
 `vpm::manifest::schema`, which a test checks against `std/package.vlt`. The language server
 does not analyze a file named `package.vlt` as a program: its diagnostics are the reader's, and
-completion and hover come from the schema (`vpm::manifest::ide`).
+completion and hover come from the schema (`vpm::manifest::ide`). With the package's registry
+(`$VELT_REGISTRY` when it is a URL, else `registry`, else the local one, as `velt install` picks
+it) it also completes versions and package names, explains dependencies and checks requirements
+against the versions that are not yanked plus the one `velt.lock` pins
+(`vpm::manifest::ide::registry`). The data is fetched in the background (at most four fetches at
+once, kept five minutes); completion waits up to 400 ms for data on its way, and an unreachable
+registry adds nothing.
 
 ## The data-only subset (`vpm::manifest::read`)
 - At most one import, `import type { … } from "velt:package"` naming at least one type; then

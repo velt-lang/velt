@@ -689,7 +689,8 @@ command and the codegen stage:
 Translating `main` itself dropped from 9.8 s to 0.09 s (long_main_2000); what remains is
 Cranelift's own compile (register allocation is mildly super-linear: 0.18 s at 2000, 1.7 s at
 8000) and the ≈ 56 000 other functions. `bench/compile/stress.sh` (`stress.ps1`) builds
-long_main_16000 and fails above 2 GB (1206 MB here).
+long_main_16000 and fails above 2 GB (1206 MB here); the nightly workflow runs it on Linux and
+Windows.
 
 ### Release builds: codegen units and the optimization level (#43)
 
@@ -798,7 +799,7 @@ clang time; `VELT_LLVM_OPT` selects another level). Splitting is opt-in (`VELT_C
 because split programs can run up to 15 % slower: forced units cost up to a third on small
 n-body-like programs, where the hot loop calls across the split, and recursive drop glue across
 units costs binary-trees 13–15 % in a program split by size. #192 tracks what splitting by default
-needs.
+needs (since then: "Codegen units placement" below, which splits large programs by default).
 
 ### n-body with clang 22 (FINDINGS 8.9)
 
@@ -815,6 +816,88 @@ N = 50 000 000, CPU seconds, best of 5:
 
 clang 22 compiles the same IR to code as fast as clang 18 (within noise) on x86_64: the newer
 LLVM does not close the gap here.
+
+## Codegen units placement (#190, #192, 2026-10-02)
+
+Codegen units used to be contiguous runs of functions in program order. Now (#192) placement
+follows the reference graph: its strongly connected components (iterative Tarjan) are walked
+callers first; a component of up to 2 000 statements joins the group of its first referrer while
+that group stays under half a unit's share; groups are ordered depth first (each after the group
+of its first referrer) and cut into units of similar weight. Functions shared between units are
+also declared `hidden` (`dso_local` for exported ones) in the units that call them (#190), so
+cross-unit calls and addresses are direct, never through the PLT or GOT.
+
+`bench/compile/split_runtime.sh` (new) builds composites: the units_1000 program of
+`bench/compile/run.sh` (called once from `main`, so it is compiled) plus one benchmark, about
+328 000 VIR statements and 62 000 lines each, at the reduced sizes of the codegen round above.
+It checks that both builds print the same output, then times interleaved rounds alternating
+which build runs first. CPU seconds (user + system), best of 9 rounds, `--release` (LLVM),
+Apple M4 (10 cores), macOS, Apple clang 21. The machine is shared with other agents' builds:
+the first runs, at load averages of 30–50, varied by up to ±10 % and are not shown; the runs
+below were at load averages of 2–5. "change" is 4 units against 1 unit, "2nd run" a full
+second run of the same comparison; "4 units, contiguous" is the earlier placement (with the
+`hidden` declarations of #190); "8 units" the change against 1 unit of two more runs with 8
+units.
+
+| program | 1 unit | 4 units | change | 2nd run | 4 units, contiguous | placement vs contiguous | 8 units (two runs) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| classes | 0.107 | 0.107 | −0.0 % | +0.3 % | 0.106 | −0.2 % | +0.4 %, −0.1 % |
+| closures | 0.186 | 0.188 | +0.7 % | +0.5 % | 0.184 | +0.8 % | +1.8 %, −0.9 % |
+| fib | 0.019 | 0.018 | −1.4 % | +0.5 % | 0.019 | −1.2 % | +7.6 %, +5.1 % |
+| floats | 0.037 | 0.037 | +0.8 % | +0.2 % | 0.037 | −0.2 % | +0.5 %, +0.6 % |
+| hashmap | 0.072 | 0.072 | +0.1 % | −0.2 % | 0.077 | −7.0 % | −0.0 %, −0.2 % |
+| loops | 0.149 | 0.149 | +0.2 % | +0.1 % | 0.148 | −0.0 % | +0.2 %, −0.0 % |
+| nbody | 0.108 | 0.108 | +0.1 % | +0.0 % | 0.175 | −38.6 % | +0.1 %, +0.0 % |
+| shapes | 0.032 | 0.033 | +1.4 % | +0.7 % | 0.032 | +0.1 % | +0.0 %, +0.1 % |
+| sort | 0.048 | 0.047 | −0.2 % | +0.4 % | 0.047 | −0.4 % | +0.6 %, +0.3 % |
+| strings | 0.049 | 0.050 | +1.3 % | +1.6 % | 0.049 | +1.8 % | −0.7 %, −0.8 % |
+| binary-trees | 0.368 | 0.362 | −1.5 % | −2.3 % | 0.371 | −2.4 % | +6.0 %, +5.4 % |
+| binary-trees arena | 0.157 | 0.143 | −8.7 % | −8.8 % | 0.142 | +0.0 % | −9.5 %, −9.0 % |
+| fannkuch-redux | 0.134 | 0.134 | +0.1 % | +0.1 % | 0.133 | −0.4 % | +0.2 %, −0.2 % |
+| fasta | 0.444 | 0.447 | +0.5 % | −0.4 % | 0.440 | +0.8 % | −0.2 %, +0.2 % |
+| k-nucleotide | 0.318 | 0.315 | −1.0 % | +0.3 % | 0.320 | −0.7 % | −0.6 %, −0.6 % |
+| mandelbrot | 0.542 | 0.542 | −0.1 % | +0.0 % | 0.540 | −0.0 % | −0.1 %, −0.1 % |
+| mandelbrot opt | 0.136 | 0.137 | +0.1 % | +0.1 % | 0.136 | −0.0 % | +0.2 %, +0.1 % |
+| n-body | 0.321 | 0.322 | +0.2 % | +0.2 % | 0.364 | −12.0 % | −0.1 %, +0.0 % |
+| n-body opt | 0.364 | 0.364 | +0.1 % | +0.1 % | 0.410 | −11.4 % | +0.2 %, −0.1 % |
+| pidigits | 0.065 | 0.065 | +0.3 % | +0.5 % | 0.065 | −0.2 % | +0.2 %, +0.3 % |
+| pidigits limbs | 0.300 | 0.301 | +0.1 % | +0.1 % | 0.300 | +0.1 % | −0.0 %, −0.0 % |
+| regex-redux | 0.054 | 0.054 | −0.7 % | +0.0 % | 0.053 | +0.4 % | +0.6 %, +0.9 % |
+| reverse-complement | 0.022 | 0.023 | +0.6 % | +1.1 % | 0.023 | −0.2 % | +0.4 %, +0.4 % |
+| spectral-norm | 0.205 | 0.205 | +0.0 % | +0.0 % | 0.192 | +6.6 % | +0.2 %, +0.1 % |
+
+- In 4 units every composite runs within ±3 % of one unit in both runs, except binary-trees
+  arena, which is 9 % *faster* split (also in 8 units). binary-trees' recursive drop glue now
+  stays in one unit (`drop TreeNode` → `objdrop TreeNode` → `drop Option<TreeNode>`); on this
+  machine the contiguous split cost it only 2 % (13–15 % on the Linux VM of the codegen round).
+- Against the contiguous split: nbody −39 %, n-body −12 %, n-body opt −11 %, hashmap −7 %: their
+  hot loops no longer call across units. spectral-norm +7 % is the contiguous split being faster
+  than one unit; the placed split equals one unit.
+- With a first threshold of 500 statements, k-nucleotide ran 12 % slower in 4 units (in two
+  runs): `frequencies` (525 statements once `velt_opt` inlines `Map.upsert` into it) started a
+  group of its own, placed after the whole units_1000 code, so its hot calls to `Map.lookup`
+  (57 statements, too large to import) crossed units. The threshold is now 2 000, and groups
+  are ordered after their caller's group.
+- In 8 units, fib and binary-trees run 5–8 % slower in both runs although their hot functions
+  are in the same unit as in 4: fib's machine code is byte for byte the same, at another address
+  (code alignment). The default therefore stops at 4 units.
+
+Codegen stage of 4-unit builds (`VELT_CODEGEN_UNITS=4`, seconds, best of 2): the placement is
+not slower to compile than the contiguous split.
+
+| program | contiguous | placed |
+|---|---:|---:|
+| units_1000 | 3.41 | 2.69 |
+| chain_1000 | 3.62 | 2.82 |
+| long_main_4000 | 7.86 | 7.80 |
+
+Composites in one unit take 8.5 s of codegen, 2.6 s in 4 units and 2.0 s in 8.
+
+Decision: release builds of large programs are split by default. The unit count depends on the
+program's size only (so objects do not depend on the machine): one unit below 32 000 VIR
+statements (every benchmark program is one unit; the largest, `bench/sort.vlt`, has about
+4 000), else one per 16 000, at most 4; clang runs at most one process per core.
+`VELT_CODEGEN_UNITS=N` overrides the count, `=1` turns splitting off.
 
 ## Parse time: lexing on demand (#136, 2026-10-02)
 
@@ -834,3 +917,23 @@ Wall times on that machine vary by about ±4% between identical runs, so instruc
 (callgrind, WSL, 20k lines no JSX / 10k lines JSX / std and examples, whole test process) are the
 sharper comparison: no JSX 353.7M → 388.3M → 352.4M, JSX 80.8M → 91.4M → 83.1M, std and examples
 88.5M → 96.0M → 88.6M.
+
+## `velt dev` debug-info cost (#191, 2026-10-02)
+
+Each JIT version registers an in-memory ELF image with DWARF line tables for debuggers (GDB JIT
+interface). The first version holds every function, std included. Release `velt dev --host
+--timings` on an Apple M4 (10 cores, macOS 26) shared with other builds; with and without
+`VELT_DEV_DEBUG_INFO=0`, 15 interleaved runs each, best (median in brackets), ms. Peak RSS from
+`/usr/bin/time -l`. log-pipeline is `examples/apps/log-pipeline` running `src/main.vlt -- gen
+x.log --lines 10`. units_1000 is the 1000-unit program of `bench/compile/run.sh`.
+
+| program | functions (image) | `debug info` step | `jit` stage, on / off | time to first run, on / off | peak RSS, on / off |
+|---|---|---|---|---|---|
+| log-pipeline | 306 (81 KB) | 0.6 (0.7) | 48.5 / 46.6 | 74 (95) / 78 (95) | 28.2 / 27.7 MB |
+| units_1000 | 22,385 (2.9 MB) | 15.7 (24.7) | 855 / 865 | 1241 (1727) / 1134 (2223) | 224.6 / 205.6 MB |
+
+The image takes under 2% of the time to the first run, well inside the noise between runs, and
+less than 50 ms. Its memory is a peak of 9% on the large program (gimli's tables and the
+image), 2% on log-pipeline. Neither crosses the thresholds set in #191 (5% or 50 ms of startup,
+10% of peak RSS), so the image is still built on the startup path. `VELT_DEV_DEBUG_INFO=0`
+turns it off.

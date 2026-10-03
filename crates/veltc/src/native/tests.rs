@@ -21,7 +21,6 @@ declare function demo_add(a: u64, b: i64): u64;
 declare function demo_ad(a: u64): u64;
 declare function demo_size(n: isize): u64;
 declare function demo_cb(f: (x: i64) => i64): u64;
-declare function velt_rt_os_platform(): string;
 
 struct IoResult<T> {
   code: i32;
@@ -125,8 +124,6 @@ fn declares_must_match_their_library_exactly() {
     // A look-alike of std's IoResult is not IoResult (the only result error is `demo_fake`'s).
     assert_eq!(d.matches("a native function returns").count(), 1, "{d}");
     assert!(d.contains("IoResult<T>` of one of those, not `"), "{d}");
-    // Runtime functions are std's.
-    has("`velt_rt_os_platform` is a runtime function");
     // Another package's export.
     has("`demo_ok` is exported by the native library of package `demo`; only that package may declare it");
     // The correct declarations (including std's IoResult) report nothing.

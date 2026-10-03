@@ -80,6 +80,23 @@ impl Ctx<'_> {
         }
     }
 
+    /// How many name references are recorded so far (a mark for [`Ctx::rec_mirror`]).
+    pub fn rec_mark(&self) -> usize {
+        self.ide.as_ref().map_or(0, |r| r.refs.len())
+    }
+
+    /// Whatever was recorded at `from` since `mark` is named at `to` too (a closing tag's name
+    /// denotes what its opening tag's does).
+    pub fn rec_mirror(&mut self, mark: usize, from: Span, to: Span) {
+        if let Some(r) = &mut self.ide {
+            let recent = r.refs.get(mark..).unwrap_or_default();
+            if let Some((_, t)) = recent.iter().rev().find(|(s, _)| *s == from) {
+                let t = t.clone();
+                r.refs.push((to, t));
+            }
+        }
+    }
+
     pub fn rec_item(&mut self, span: Span, item: Option<Item>) {
         if let Some(item) = item {
             self.rec_ref(span, Target::of_item(item));

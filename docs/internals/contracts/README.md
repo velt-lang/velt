@@ -9,7 +9,7 @@ helper), and explain it in your final report.
 |---|---|---|
 | Spans & diagnostics | `crates/velt_common/src/lib.rs` | everyone |
 | AST | `crates/velt_syntax/src/ast.rs` + `parse_file` | frontend → sema |
-| HIR | `crates/velt_sema/src/hir.rs` + `hir_encodings.md` + `check`, `SourceModule` | sema → IR |
+| HIR | `crates/velt_sema/src/hir.rs` + `hir_encodings.md` + `check`, `SourceModule` (`is_std`: loaded from the std root; drivers set it, sema never derives it from the path) | sema → IR |
 | VIR | `crates/velt_vir/src/vir.rs` + `lower`, `verify` | IR → codegen |
 | Codegen API | `crates/velt_codegen_cl/src/lib.rs` (`emit_object`, `host_triple`) | codegen → driver |
 | Link API | `crates/velt_link/src/lib.rs` (`link`, `find_runtime_lib`) | tooling → driver |

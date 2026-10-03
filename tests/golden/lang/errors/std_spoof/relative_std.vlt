@@ -1,0 +1,7 @@
+// A user module can't pass as the standard library through a `./std/` directory: its module
+// path would be `std/evil`, which is reserved.
+import { grow } from "./std/evil";
+
+function main() {
+  console.log(grow(1).length);
+}

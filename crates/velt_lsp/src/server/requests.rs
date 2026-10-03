@@ -46,7 +46,7 @@ pub fn capabilities() -> ServerCapabilities {
         definition_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
-            trigger_characters: Some(vec![".".into(), "<".into()]),
+            trigger_characters: Some(vec![".".into(), "<".into(), "\"".into()]),
             ..Default::default()
         }),
         references_provider: Some(OneOf::Left(true)),
@@ -129,7 +129,12 @@ impl Server<'_> {
                 let pos = &p.text_document_position_params;
                 if let Some(text) = self.manifest_text(&pos.text_document.uri) {
                     let at = LineIndex::new(text).offset(pos.position);
-                    return Ok(json(manifest::hover(text, at)));
+                    let dir = self
+                        .docs
+                        .get(&pos.text_document.uri)
+                        .and_then(|d| d.path.parent().map(std::path::Path::to_path_buf));
+                    let hover = manifest::hover(text, at, &self.registry, dir.as_deref());
+                    return Ok(json(hover));
                 }
                 let hover = self
                     .analysis(&pos.text_document.uri)
@@ -139,20 +144,22 @@ impl Server<'_> {
             Completion::METHOD => {
                 let p: lsp_types::CompletionParams = parse(params)?;
                 let pos = &p.text_document_position;
-                // `<` triggers completion for JSX tags only, not after every comparison.
-                let jsx_only = p
+                let trigger = p
                     .context
                     .as_ref()
-                    .and_then(|c| c.trigger_character.as_deref())
-                    == Some("<");
+                    .and_then(|c| c.trigger_character.as_deref());
+                // `<` triggers completion for JSX tags only, not after every comparison, and `"`
+                // for manifest versions only.
+                let jsx_only = trigger == Some("<");
                 if let Some(text) = self.manifest_text(&pos.text_document.uri) {
+                    if jsx_only {
+                        return Ok(json(Some(Vec::<lsp_types::CompletionItem>::new())));
+                    }
                     let at = LineIndex::new(text).offset(pos.position);
-                    let items = if jsx_only {
-                        vec![]
-                    } else {
-                        manifest::completion(text, at)
-                    };
-                    return Ok(json(Some(items)));
+                    return Ok(json(manifest::completion(text, at, &self.registry)));
+                }
+                if trigger == Some("\"") {
+                    return Ok(json(Some(Vec::<lsp_types::CompletionItem>::new())));
                 }
                 let items = self
                     .analysis(&pos.text_document.uri)
