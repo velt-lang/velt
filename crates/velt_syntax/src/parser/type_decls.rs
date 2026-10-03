@@ -32,7 +32,7 @@ impl<'a> Parser<'a> {
     /// `struct|class Name<T> [extends Base<T>] [implements A, B] { members }`
     pub(super) fn parse_type_decl(&mut self, is_class: bool) -> PResult<TypeDecl> {
         self.bump(); // struct / class
-        let name = self.parse_ident()?;
+        let name = self.parse_binding_ident()?;
         let generics = self.parse_generic_params()?;
         let extends = self.parse_class_extends(is_class)?;
         let mut implements = Vec::new();
@@ -165,7 +165,7 @@ impl<'a> Parser<'a> {
     /// `enum Name { A, B = 5, C }` / `enum Dir { Up = "UP", Down = "DOWN" }`
     pub(super) fn parse_enum(&mut self) -> PResult<EnumDecl> {
         self.bump(); // enum
-        let name = self.parse_ident()?;
+        let name = self.parse_binding_ident()?;
         if self.at(Tok::Lt) {
             let span = self.cur_span();
             self.error("enums cannot be generic", span);

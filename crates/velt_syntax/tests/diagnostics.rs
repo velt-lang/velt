@@ -183,3 +183,44 @@ fn top_level_statements_become_main() {
     assert_eq!(main.sig.name.span.lo, main.sig.name.span.hi);
     assert_eq!(main.body.stmts.len(), 3);
 }
+
+/// Strict mode: no declaration may be named `arguments` or `eval` (#265); uses, members,
+/// properties and re-exported names are fine.
+#[test]
+fn arguments_and_eval_cannot_be_declared() {
+    let bad = [
+        "function arguments() {}",
+        "async function eval() {}",
+        "class eval {}",
+        "enum arguments { A }",
+        "function f(eval: i64) {}",
+        "function f() { const arguments = 1; }",
+        "function f() { let [a, ...eval] = xs; }",
+        "function f() { const { eval } = o; }",
+        "function f() { const { a: arguments } = o; }",
+        "function f() { const g = (arguments: i64) => 1; }",
+        "function f() { const g = eval => 1; }",
+        "function f() { try {} catch (eval) {} }",
+        "function f() { for (const arguments of xs) {} }",
+        "import { eval } from \"./m\";",
+        "import { a as arguments } from \"./m\";",
+        "import * as eval from \"./m\";",
+    ];
+    for src in bad {
+        let e = errors(src);
+        assert!(
+            e.len() == 1 && e[0].contains("in strict mode"),
+            "{src}: {e:?}"
+        );
+    }
+    let ok = [
+        "function f() { o.eval(arguments_); }",
+        "function f() { const o = { eval: 1, arguments: 2 }; }",
+        "class C { eval(): void {} arguments: i64 = 0; }",
+        "import { eval as e } from \"./m\";",
+        "export { e as eval } from \"./m\";",
+    ];
+    for src in ok {
+        assert!(errors(src).is_empty(), "{src}: {:?}", errors(src));
+    }
+}
