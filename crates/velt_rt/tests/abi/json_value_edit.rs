@@ -238,6 +238,45 @@ fn emptying_from_the_front_by_position_does_linear_work() {
 }
 
 #[test]
+fn positions_between_middle_deletes_do_linear_work() {
+    // Delete from the middle of the object, reading a position after each delete: every read
+    // must not rebuild the positions of all members (n reads of an n-member object would cost
+    // n^2), and inserts between them must not either. Counted, so `4 * n` must cost about 4
+    // times the work of `n`.
+    let spent = |n: usize| {
+        let mut obj = object(2 * n);
+        let before = work();
+        for i in n / 2..n / 2 + n {
+            assert_eq!(delete(&mut obj, &format!("k{i}")), 1);
+            assert_eq!(key_at(obj, 0).as_deref(), Some("k0"));
+            let len = unsafe { velt_rt_json_value_len(obj) };
+            assert_eq!(at_number(obj, len - 1), Some((2 * n - 1) as f64));
+            if i % 3 == 0 {
+                let v = velt_rt_json_value_new_number(i as f64);
+                let key = format!("new{i}");
+                assert_eq!(
+                    unsafe { velt_rt_json_value_set(&mut obj, &borrow(&key), v) },
+                    1
+                );
+                unsafe { velt_rt_json_value_free(v) };
+                let len = unsafe { velt_rt_json_value_len(obj) };
+                assert_eq!(key_at(obj, len - 1), Some(key.clone()));
+                assert_eq!(delete(&mut obj, &key), 1);
+            }
+        }
+        let spent = work() - before;
+        assert_eq!(unsafe { velt_rt_json_value_len(obj) }, n as u64);
+        unsafe { velt_rt_json_value_free(obj) };
+        spent
+    };
+    let (small, large) = (spent(2_000), spent(8_000));
+    assert!(
+        large < small * 6,
+        "2000 middle deletes cost {small} work, 8000 cost {large}: not linear"
+    );
+}
+
+#[test]
 fn interleaved_edits_match_a_model() {
     // Random set / delete / at / keyAt against a plain vector of (key, value) in order.
     let mut obj = velt_rt_json_value_new_object();
