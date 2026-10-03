@@ -110,6 +110,7 @@ pub(super) fn synth_method(
         .collect(),
         ret,
         is_async: false,
+        is_generator: false,
         self_ty: Some(self_ty),
         captures: vec![],
         body,

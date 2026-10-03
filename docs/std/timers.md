@@ -14,6 +14,9 @@ it throws is uncaught (catch inside the task).
   - `stop()`, `stopper(): TickerStop`: `TickerStop.stop()` works from another task. A stop
     wakes a pending `tick()` at once, which resolves to false; the sleep it was in is
     cancelled, so a long period never delays shutdown.
+  - A `Ticker` is an `AsyncIterable<i64>`: `for await (const n of ticker)` waits for each tick
+    like `tick()` and gets its number (1, 2, … counted per loop) until the ticker is stopped.
+    Leaving the loop early does not stop the ticker.
 
 ```ts
 import { setTimeout, Ticker } from "velt:timers";
@@ -28,9 +31,9 @@ async function main() {
   cancelled.clear();
   const ticker = new Ticker(5);
   let ticks = 0;
-  while (await ticker.tick()) {
-    ticks++;
-    if (ticks == 3) {
+  for await (const n of ticker) {
+    ticks = n;
+    if (n == 3) {
       ticker.stop();
     }
   }

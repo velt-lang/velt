@@ -16,7 +16,9 @@ impl FnCx<'_, '_> {
     /// `obj.prop` on a union value whose (possible) members all have field `prop`: a match on
     /// the member reading the field; its type is the union of the fields' types (a literal
     /// field reads as its constant, a non-Copy field as a copy — `.clone()`; narrow the value to
-    /// borrow it instead). `Err(obj)` when a member has no such field.
+    /// borrow it instead). `Err(obj)` when a member has no such field, except for `value` on an
+    /// `IteratorResult<T>`, which reads as `T | null` (`null` when done), as TypeScript code
+    /// expects (`g().next().value`).
     pub(super) fn union_field(
         &mut self,
         obj: hir::Expr,
@@ -32,12 +34,22 @@ impl FnCx<'_, '_> {
             .narrowed_variants(&obj)
             .unwrap_or_else(|| (0..members.len() as u32).collect());
         let mut fields = vec![];
+        let mut without = vec![];
         for &v in &live {
             let m = members[v as usize];
             match self.cx.field_of(m, &prop.name) {
                 Some((i, fty)) => fields.push((v, m, i, fty)),
-                None => return Err(obj),
+                None => without.push((v, m)),
             }
+        }
+        // `r.value` on an `IteratorResult<T>`: `T | null`, `null` when done (TypeScript's is
+        // `undefined` there).
+        let value_or_null = !without.is_empty()
+            && prop.name == "value"
+            && fields.iter().all(|f| f.3 != self.cx.ty.unit)
+            && self.cx.is_iterator_result(obj.ty);
+        if !without.is_empty() && !value_or_null {
+            return Err(obj);
         }
         let owns = fields.iter().any(|f| self.cx.owns_resource(f.3));
         if want == Want::BorrowMut || owns {
@@ -53,9 +65,25 @@ impl FnCx<'_, '_> {
             return Ok(self.error_expr(span));
         }
         let ftys: Vec<TyId> = fields.iter().map(|f| f.3).collect();
-        let ty = self.cx.union_of(&ftys, false, span);
+        let ty = self.cx.union_of(&ftys, value_or_null, span);
         let consume = !is_place(&obj);
         let mut arms = vec![];
+        for (v, m) in without {
+            let wild = self.pat(P::Wildcard, m, span);
+            arms.push(hir::Arm {
+                pat: self.pat(
+                    P::Variant {
+                        def,
+                        variant: v,
+                        args: vec![wild],
+                    },
+                    obj.ty,
+                    span,
+                ),
+                guard: None,
+                body: self.mk(H::Lit(hir::Lit::Null), ty, span),
+            });
+        }
         for (v, m, i, fty) in fields {
             let (sub, body) = self.member_field(m, i, fty, consume, span);
             let body = self.coerce(body, ty);

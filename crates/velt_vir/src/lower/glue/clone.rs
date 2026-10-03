@@ -194,6 +194,13 @@ impl FnLower<'_, '_> {
     }
 
     pub(super) fn obj_clone_body(&mut self, obj: vir::Local, ty: TyId) {
+        if self.cx.is_generator_obj(ty) {
+            // Its state (suspended locals, `finally` blocks to run) cannot be duplicated.
+            self.panic_msg(
+                "a generator cannot be copied (`clone()`, or a value passed to a spawned task)",
+            );
+            return;
+        }
         if let Some(m) = self.cx.own_clone(ty) {
             // The class duplicates what it owns itself (a resource handle, #122).
             let this = Operand::Copy(Place::local(obj));

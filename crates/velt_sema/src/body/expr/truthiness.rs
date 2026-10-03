@@ -61,7 +61,8 @@ impl FnCx<'_, '_> {
         if t == ty.bool_ || ty.is_bottom(t) {
             return Truth::Bool;
         }
-        if self.cx.lit_value(t).is_some() && self.cx.widened(t) == self.cx.ty.bool_ {
+        // `true`, or a union of `bool` literals (`r.done` of `{ done: false; .. } | { done: true }`).
+        if self.cx.has_literal_member(t) && self.cx.widened(t) == self.cx.ty.bool_ {
             return Truth::Bool;
         }
         match self.cx.ty.opt_payload(t) {

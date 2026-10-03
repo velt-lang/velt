@@ -52,6 +52,7 @@ pub(crate) enum Kw {
     Instanceof,
     Void,
     While,
+    Yield,
 }
 
 impl Kw {
@@ -105,6 +106,7 @@ impl Kw {
             "instanceof" => Instanceof,
             "void" => Void,
             "while" => While,
+            "yield" => Yield,
             _ => return None,
         })
     }

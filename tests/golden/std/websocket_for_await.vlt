@@ -1,0 +1,49 @@
+// check: no leaks
+// velt:websocket as an async iterable: the server session iterates the messages with
+// `for await` until the client closes; the client reads replies with `for await` and leaves
+// the loop early, which keeps the connection open for `receive`.
+import { serve, Request, Response } from "velt:http";
+import { channel, Channel } from "velt:channel";
+import { WebSocket, isWebSocketRequest, upgradeWebSocket, connectWebSocket } from "velt:websocket";
+
+async function session(ws: WebSocket, done: Channel<i64>): Promise<void> {
+  let n = 0;
+  for await (const m of ws) {
+    n++;
+    await ws.send(`${n}: ${m.text.toUpperCase()}`);
+  }
+  await ws.close();
+  await done.send(n);
+}
+
+async function handle(req: Request, done: Channel<i64>): Promise<Response> {
+  if (isWebSocketRequest(req)) {
+    const up = upgradeWebSocket(req);
+    spawn(session(up.socket, done));
+    return up.response;
+  }
+  return Response.text("not a websocket");
+}
+
+async function main() {
+  const done = channel<i64>();
+  const server = await serve(
+    { port: 0 },
+    async (req: Request): Promise<Response> => await handle(req, done),
+  );
+  const ws = await connectWebSocket(`ws://127.0.0.1:${server.port}/ws`);
+  for (const w of ["one", "two", "three"]) {
+    await ws.send(w);
+  }
+  for await (const reply of ws) {
+    console.log("reply", reply.text);
+    if (reply.text.startsWith("2:")) {
+      break;
+    }
+  }
+  console.log("then", (await ws.receive())?.text ?? "none");
+  await ws.close(1000, "bye");
+  console.log("server saw", await done.receive());
+  await server.shutdown();
+  done.close();
+}

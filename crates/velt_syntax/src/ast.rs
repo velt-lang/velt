@@ -22,6 +22,12 @@ pub const SYMBOL_DISPOSE: &str = "[Symbol.dispose]";
 /// Member name of the computed key `[Symbol.asyncDispose]` (see [`SYMBOL_DISPOSE`]).
 pub const SYMBOL_ASYNC_DISPOSE: &str = "[Symbol.asyncDispose]";
 
+/// Member name of the computed key `[Symbol.iterator]` (see [`SYMBOL_DISPOSE`]).
+pub const SYMBOL_ITERATOR: &str = "[Symbol.iterator]";
+
+/// Member name of the computed key `[Symbol.asyncIterator]` (see [`SYMBOL_DISPOSE`]).
+pub const SYMBOL_ASYNC_ITERATOR: &str = "[Symbol.asyncIterator]";
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ident {
     pub name: String,
@@ -96,6 +102,8 @@ pub struct GenericParam {
     pub name: Ident,
     /// `T extends A & B`
     pub bounds: Vec<TypeExpr>,
+    /// `T = Default` (classes, structs, interfaces and type aliases only).
+    pub default: Option<TypeExpr>,
 }
 
 #[derive(Clone, Debug)]
@@ -123,6 +131,8 @@ pub struct FnSig {
     /// `throws A | B` after the return type; `None`: the thrown types are inferred.
     pub throws: Option<TypeExpr>,
     pub is_async: bool,
+    /// `function*` / `*name()`: a generator (`yield` is allowed in its body).
+    pub is_generator: bool,
     pub span: Span,
 }
 
@@ -362,12 +372,13 @@ pub enum StmtKind {
         update: Option<Expr>,
         body: Block,
     },
-    /// `for (const x of xs) body`
+    /// `for (const x of xs) body`, or `for await (const x of xs) body` (`is_await`).
     ForOf {
         kind: VarKind,
         pattern: Pattern,
         iter: Expr,
         body: Block,
+        is_await: bool,
     },
     Break(Option<Ident>),
     Continue(Option<Ident>),
@@ -582,6 +593,11 @@ pub enum ExprKind {
     /// `...expr` inside array literals / call args.
     Spread(Box<Expr>),
     Await(Box<Expr>),
+    /// `yield expr`, bare `yield` (`arg: None`) or `yield* iterable` (`delegate`).
+    Yield {
+        arg: Option<Box<Expr>>,
+        delegate: bool,
+    },
     /// `expr as T`
     Cast {
         expr: Box<Expr>,

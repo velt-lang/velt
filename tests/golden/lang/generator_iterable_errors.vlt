@@ -1,0 +1,127 @@
+// check: no leaks
+// Generator methods implementing `Iterable<T, E>` / `AsyncIterable<T, E>` with an error type:
+// each class keeps its own `E`, calls through the interface see the value's `E`.
+class Oops extends Error {
+  constructor(m: string) {
+    super(m);
+  }
+}
+
+class Bad extends Error {
+  constructor(m: string) {
+    super(m);
+  }
+}
+
+class Upto implements Iterable<i64, Oops> {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+
+  *[Symbol.iterator](): Iterator<i64, Oops> {
+    for (let i = 0; i < this.n; i++) {
+      if (i == 3) {
+        throw new Oops(`upto stopped at ${i}`);
+      }
+      yield i;
+    }
+  }
+}
+
+class Words implements Iterable<string, Bad> {
+  *[Symbol.iterator](): Iterator<string, Bad> {
+    yield "a";
+    yield "b";
+  }
+}
+
+class Ticks implements AsyncIterable<i64, Oops> {
+  async *[Symbol.asyncIterator](): AsyncIterator<i64, Oops> {
+    for (let i = 1; i <= 3; i++) {
+      await sleep(1);
+      if (i == 3) {
+        throw new Oops("ticks failed");
+      }
+      yield i * 10;
+    }
+  }
+}
+
+class Plain implements AsyncIterable<string> {
+  async *[Symbol.asyncIterator](): AsyncIterator<string> {
+    yield "x";
+    yield "y";
+  }
+}
+
+// A hand-written iterator in the same interface slot as `Upto`'s generator method.
+class Twice implements Iterator<i64, Oops> {
+  n: i64 = 0;
+
+  next(): IteratorResult<i64> throws Oops {
+    this.n++;
+    if (this.n > 2) {
+      throw new Oops("twice ran out");
+    }
+    return { value: this.n * 10, done: false };
+  }
+}
+
+class Tens implements Iterable<i64, Oops> {
+  [Symbol.iterator](): Iterator<i64, Oops> {
+    return new Twice();
+  }
+}
+
+function sum(src: Iterable<i64, Oops>): i64 throws Oops {
+  let t = 0;
+  for (const v of src) {
+    t += v;
+  }
+  return t;
+}
+
+async function all(src: AsyncIterable<i64, Oops>): Promise<i64[], Oops> {
+  const out: i64[] = [];
+  for await (const v of src) {
+    out.push(v);
+  }
+  return out;
+}
+
+async function main() {
+  for (const v of new Upto(2)) {
+    console.log("upto", v);
+  }
+  try {
+    console.log(sum(new Upto(10)));
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+  try {
+    console.log(sum(new Tens()));
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+  for (const w of new Words()) {
+    console.log("word", w);
+  }
+  try {
+    for await (const v of new Ticks()) {
+      console.log("tick", v);
+    }
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+  try {
+    console.log(await all(new Ticks()));
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+  const p: AsyncIterable<string> = new Plain();
+  for await (const s of p) {
+    console.log("plain", s);
+  }
+}

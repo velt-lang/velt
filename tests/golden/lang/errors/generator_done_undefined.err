@@ -1,0 +1,2 @@
+generator_done_undefined.vlt:5:33: error: `undefined` is not part of Velt
+TypeScript allows this; Velt doesn't because it has no `undefined`, and a finished `IteratorResult` has no `value`; write `{ done: true }`

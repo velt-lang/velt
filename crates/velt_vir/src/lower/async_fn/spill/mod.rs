@@ -20,7 +20,7 @@ use std::collections::HashMap;
 
 use flow::Bits;
 
-use super::{DONE, DROP_BIT, PLACEHOLDER};
+use super::{CLOSE_BIT, DONE, DROP_BIT, PLACEHOLDER};
 use crate::lower::{ice, Cx};
 use crate::vir::{
     AggId, AggLayout, Const, Function, Local, Operand, Place, Proj, Rvalue, Stmt, Terminator, Ty,
@@ -63,7 +63,7 @@ fn suspension_edges(f: &Function, inputs: &[Local]) -> Edges {
     let pend = suspending_blocks(f);
     let (mut extra, mut seeds) = (vec![], vec![]);
     for &(tag, blk) in cases {
-        let k = tag & !DROP_BIT;
+        let k = tag & !(DROP_BIT | CLOSE_BIT);
         let to = blk.0 as usize;
         if k == 0 {
             seeds.push((to, ins.clone()));
@@ -105,7 +105,7 @@ fn suspending_blocks(f: &Function) -> HashMap<i128, usize> {
         {
             let is_tag = p.local == Local(0)
                 && p.proj == [Proj::Deref(Ty::Agg(PLACEHOLDER)), Proj::Field(0)];
-            if is_tag && *k != DONE {
+            if is_tag && *k != DONE && *k != super::generator::GEN_RUNNING {
                 out.insert(*k, b);
             }
         }

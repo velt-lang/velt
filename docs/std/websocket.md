@@ -11,7 +11,9 @@ upgrade, or opened as a client to `ws://` / `wss://` URLs.
 - `connectWebSocket(url, opts: WsConnectOptions { ca? } = {}): Promise<WebSocket>`.
 - `WebSocket` (a handle): `send(text)`, `sendBytes(data: u8[])`, `receive(): Promise<WsMessage
   | null>` (null once the peer closed), `close(code = 1000, reason = "")` (sends a close frame
-  and releases the handle; always call it).
+  and releases the handle; always call it). A `WebSocket` is an `AsyncIterable<WsMessage,
+  IoError>`: `for await (const m of ws)` receives messages until the peer closes; leaving the
+  loop early leaves the connection open.
 - `WsMessage { isBinary; text; data: u8[] }`.
 
 ```ts
@@ -19,10 +21,8 @@ import { serve, Request, Response } from "velt:http";
 import { WebSocket, isWebSocketRequest, upgradeWebSocket, connectWebSocket } from "velt:websocket";
 
 async function echo(ws: WebSocket): Promise<void> {
-  let m = await ws.receive();
-  while (m != null) {
+  for await (const m of ws) {
     await ws.send(m.text);
-    m = await ws.receive();
   }
   await ws.close();
 }
@@ -44,5 +44,5 @@ async function main() {
 }
 ```
 
-Notes: messages are pulled with `receive` (no callbacks, so hot reload needs nothing special);
+Notes: messages are pulled with `receive` or `for await` (no callbacks, so hot reload needs nothing special);
 pings are answered automatically; WebSockets over HTTP/2 (RFC 8441) are not supported.

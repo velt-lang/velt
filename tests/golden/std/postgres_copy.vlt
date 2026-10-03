@@ -1,6 +1,7 @@
 // requires-env: VELT_TEST_PG_URL
 // std/postgres COPY streaming: copyFrom writes rows in chunks (split anywhere), copyTo reads
-// them back as they arrive; abort() cancels a copy, a bad row fails end() and a transaction.
+// them back as they arrive (with read() and with for await); abort() cancels a copy, a bad row
+// fails end() and a transaction.
 import { uuidv4 } from "velt:uuid";
 import { connect } from "velt:postgres";
 
@@ -34,6 +35,14 @@ async function main() {
   }
   const lines = text.split("\n");
   console.log("lines:", lines.length - 1, "|", lines[0], "|", lines[1], "|", lines[999]);
+
+  // A reader is also an async iterable of its chunks.
+  const r2 = await db.copyTo(`COPY (SELECT * FROM ${t} ORDER BY id) TO STDOUT (FORMAT csv)`);
+  let again = "";
+  for await (const chunk of r2) {
+    again += chunk;
+  }
+  console.log("for await:", again == text);
 
   // Aborted: nothing is copied, and the connection stays usable.
   const a = await db.copyFrom(`COPY ${t} (id, name, score) FROM STDIN (FORMAT csv)`);

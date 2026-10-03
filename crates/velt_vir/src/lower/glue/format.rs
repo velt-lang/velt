@@ -316,6 +316,16 @@ impl FnLower<'_, '_> {
     }
 
     pub(super) fn obj_format_body(&mut self, buf: Operand, obj: vir::Local, ty: TyId) {
+        if let Some(is_async) = self.cx.generator_obj_kind(ty) {
+            // As Node prints a generator object.
+            let text = match is_async {
+                true => "Object [AsyncGenerator] {}",
+                false => "Object [Generator] {}",
+            };
+            self.push_text(&buf, text);
+            self.terminate(Terminator::Return(unit()));
+            return;
+        }
         let p = Operand::Copy(Place::local(obj));
         self.format_once(&buf, p, |lw| {
             if !lw.format_map(&buf, &Place::local(obj), ty)

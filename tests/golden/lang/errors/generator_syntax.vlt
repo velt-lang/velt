@@ -1,0 +1,15 @@
+// Generator syntax errors: `yield` is reserved (as in TypeScript), binds like an assignment,
+// and interface methods and `declare function`s cannot be generators.
+declare function* external(): Generator<i64>;
+
+interface Source {
+  *items(): Generator<i64>;
+}
+
+function* sum(): Generator<i64> {
+  const a = 1 + yield 2;
+}
+
+function main(): void {
+  const yield = 1;
+}

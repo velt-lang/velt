@@ -1,0 +1,75 @@
+// check: no leaks
+// TypeScript iteration idioms that work as in Node: `next().value` without narrowing (`T |
+// null`, `null` once done), `return()` returning a finished result, an iterator class whose
+// `return()` returns `{ done: true }`, `yield` as both branches of a conditional, and printing a
+// generator object.
+function* nums(): Generator<i64> {
+  yield 7;
+  yield 8;
+}
+
+function* pick(flag: boolean): Generator<string> {
+  flag ? yield "yes" : yield "no";
+  yield "end";
+}
+
+class Countdown implements Iterator<i64> {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+
+  next(): IteratorResult<i64> {
+    if (this.n == 0) {
+      return { done: true };
+    }
+    this.n -= 1;
+    return { value: this.n + 1, done: false };
+  }
+
+  return(): IteratorResult<i64> {
+    console.log(`stopped at ${this.n}`);
+    return { done: true };
+  }
+}
+
+class From implements Iterable<i64> {
+  start: i64;
+
+  constructor(start: i64) {
+    this.start = start;
+  }
+
+  [Symbol.iterator](): Iterator<i64> {
+    return new Countdown(this.start);
+  }
+}
+
+async function* later(): AsyncGenerator<i64> {
+  yield 1;
+}
+
+console.log(nums().next().value);
+const g = nums();
+console.log(g.next().value, g.next().value, g.next().value == null);
+const h = nums();
+console.log(h.next().value);
+const r = h.return();
+console.log(r.done, h.next().done);
+console.log(h);
+for (const n of new From(5)) {
+  if (n == 4) {
+    break;
+  }
+  console.log(n);
+}
+for (const s of pick(true)) {
+  console.log(s);
+}
+for (const s of pick(false)) {
+  console.log(s);
+}
+const a = later();
+console.log(a);
+console.log((await a.return()).done, (await a.next()).done);

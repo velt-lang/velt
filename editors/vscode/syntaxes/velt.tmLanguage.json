@@ -153,7 +153,7 @@
       "patterns": [
         {
           "name": "keyword.control.flow.velt",
-          "match": "(?<![\\w$.])(if|else|while|do|for|of|in|break|continue|return|throw|try|catch|finally|switch|case|default|await)(?![\\w$])"
+          "match": "(?<![\\w$.])(if|else|while|do|for|of|in|break|continue|return|throw|try|catch|finally|switch|case|default|await|yield)(?![\\w$])"
         },
         {
           "name": "keyword.control.import.velt",

@@ -1,0 +1,4 @@
+iterator_impls_disagree.vlt:11:3: error: the implementations of `Pull.next` throw different errors
+`Lines.next` throws `Read`
+`Empty.next` throws nothing
+  = note: `Pull.next` declares no `throws`, and these methods also implement a method whose `throws` clause fixes their error type, so a call through `Pull.next` has no single error type: make them throw the same type, or give the method its own name

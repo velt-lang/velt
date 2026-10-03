@@ -97,6 +97,7 @@ fn as_function(item: &ast::Item) -> Option<ast::Item> {
         ret: Some(ret.clone()),
         throws: throws.clone(),
         is_async: *is_async,
+        is_generator: false,
         span: v.span,
     };
     Some(ast::Item {

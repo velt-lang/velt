@@ -176,7 +176,7 @@ impl FnLower<'_, '_> {
     pub(super) fn fn_ref(&mut self, def: DefId, targs: &[TyId], ty: TyId) -> Operand {
         let targs: Vec<TyId> = targs.iter().map(|&t| self.sub(t)).collect();
         let f = self.cx.fn_def(def);
-        let own = (!f.is_async)
+        let own = (!f.is_async && !f.is_generator)
             .then(|| self.cx.fn_throws(f, &targs))
             .flatten();
         let wanted = match self.kind(ty) {

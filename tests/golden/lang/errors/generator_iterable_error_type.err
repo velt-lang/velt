@@ -1,0 +1,4 @@
+generator_iterable_error_type.vlt:10:10: error: method `[Symbol.asyncIterator]` has a different signature than required by `AsyncIterable`
+declare the generator's result as `AsyncIterator<i64, Oops>`: its error type is part of the result type
+generator_iterable_error_type.vlt:16:4: error: method `[Symbol.iterator]` has a different signature than required by `Iterable`
+declare the generator's result as `Iterator<i64, Oops>`: its error type is part of the result type

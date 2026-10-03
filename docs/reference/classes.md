@@ -115,6 +115,11 @@ hidden classes and no runtime shape checks.
   ([Async](async.md#promises)), which then deep-copies whatever the returned object still
   shares with the original. A class that owns no resource is deep-copied field by field
   wherever it is nested; its `clone()` runs only when called (`x.clone()` on it).
+- **Symbol method names**: `[Symbol.iterator]()` and `[Symbol.asyncIterator]()` (the
+  [iteration protocol](control-flow.md#iterables)), `[Symbol.dispose]()` and
+  `[Symbol.asyncDispose]()` ([resource cleanup](memory.md#resource-cleanup-using-and-symboldispose))
+  name methods as in TypeScript and are called as `x[Symbol.iterator]()`. Other symbols do not
+  exist.
 - Async methods take `this` by value: the promise owns it.
 - An overridden method returning a promise reports its errors through the promise: when the
   base method or any override can fail, all of them must be `async`
@@ -312,7 +317,12 @@ Classes, structs, interfaces and functions take type parameters (`class Stack<T>
 `interface Box<T>`, `function f<T extends Comparable<T>>`). Every instantiation is compiled
 separately (monomorphization): no boxing, and bounds resolve to direct calls. Bounds are
 interfaces (an interface with only fields is satisfied by any type with its fields), not object
-types. There are no default type arguments.
+types. Classes, structs, interfaces and type aliases may give type parameters **defaults**
+(`interface Iterator<T, E = never>`), used when a type leaves the argument out (`Iterator<i64>`
+is `Iterator<i64, never>`) and when nothing infers it in a `new` (`new D(1)` of
+`class D<T = i64>` is a `D<i64>`); functions and methods cannot. As in TypeScript, a default
+may use only the parameters declared before it, and must not need its own declaration's
+defaults again (``type parameter `T` has a circular default`` for `class S<T = S>`).
 
 ```ts
 class Stack<T> {

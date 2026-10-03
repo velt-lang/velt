@@ -17,7 +17,7 @@
 // are pulled with `receive` (null once the peer has closed); pings are answered automatically.
 // Only HTTP/1.1 upgrades are supported (HTTP/2 clients fall back to HTTP/1.1 for WebSockets).
 
-import { IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
+import { IoError, IoResult, IoStatus, unwrapIo, checkIo } from "velt:io";
 import { Request, Response } from "velt:http";
 
 // The runtime's `VeltWsMessage`: kind 0 = closed, 1 = text, 2 = binary.
@@ -56,7 +56,7 @@ export class WsMessage {
 }
 
 // An open WebSocket connection (a Copy handle; see the module header).
-export struct WebSocket {
+export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
   private handle: u64;
 
   // Sends a text message.
@@ -76,6 +76,18 @@ export struct WebSocket {
       return null;
     }
     return new WsMessage(m.kind == 2, m.text, m.data);
+  }
+
+  // `for await (const m of ws)`: the messages until the peer has closed the connection.
+  // Leaving the loop early leaves the connection open.
+  async *[Symbol.asyncIterator](): AsyncIterator<WsMessage, IoError> {
+    while (true) {
+      const m = unwrapIo(await velt_rt_ws_receive(this.handle));
+      if (m.kind == 0) {
+        return;
+      }
+      yield new WsMessage(m.kind == 2, m.text, m.data);
+    }
   }
 
   // Sends a close frame (`code` 1000 = normal closure) and releases the handle. Closing a

@@ -1,0 +1,62 @@
+// check: no leaks
+// TypeScript's `Generator<T, TReturn, TNext>` spellings: a `void` / `undefined` / `unknown` /
+// `any` second argument and any third argument are TS's return and `next()` types, which Velt
+// generators don't have; they mean `Generator<T>` (also for `Iterator`, `Iterable` and the async
+// types). A second argument that is an error class is the error type, as in Velt.
+function* a(): Generator<number, void> {
+  yield 1;
+}
+
+function* b(): Generator<number, undefined, unknown> {
+  yield 2;
+}
+
+function* c(): Iterator<number, any> {
+  yield 3;
+}
+
+class Boom extends Error {}
+
+function* d(): Generator<number, Boom> {
+  yield 4;
+  throw new Boom("d failed");
+}
+
+async function* e(): AsyncGenerator<number, void, unknown> {
+  yield 5;
+}
+
+function* f(): Iterable<number, void, undefined> {
+  yield 6;
+}
+
+type G = Generator<number, void>;
+
+function* h(): G {
+  yield 7;
+}
+
+const it: Iterator<number, void> = c();
+for (const x of a()) {
+  console.log(x);
+}
+for (const x of b()) {
+  console.log(x);
+}
+console.log(it.next());
+try {
+  for (const x of d()) {
+    console.log(x);
+  }
+} catch (err) {
+  console.log(err.message);
+}
+for await (const x of e()) {
+  console.log(x);
+}
+for (const x of f()) {
+  console.log(x);
+}
+for (const x of h()) {
+  console.log(x);
+}

@@ -1,0 +1,17 @@
+// The baseline of the iteration benchmarks: a hand-written loop over 0..N, with a body that
+// keeps a running sum modulo a prime (a cheap loop-carried dependency the vectorizer leaves
+// alone, so every variant runs one value at a time).
+function main(): void {
+  let sum = 0;
+  for (let round = 0; round < 20; round++) {
+    let i = 0;
+    while (i < 30000000) {
+      sum += i;
+      if (sum >= 1000000007) {
+        sum -= 1000000007;
+      }
+      i++;
+    }
+  }
+  console.log(sum);
+}
