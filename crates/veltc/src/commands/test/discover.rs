@@ -21,13 +21,19 @@ pub fn find_test_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     if !path.is_dir() {
         return Err(format!("`{}` does not exist", path.display()));
     }
+    files_with_suffix(path, TEST_SUFFIX)
+}
+
+/// Files under `dir` whose names end in `suffix` (recursively, skipping `target/` and hidden
+/// directories), sorted.
+pub fn files_with_suffix(dir: &Path, suffix: &str) -> Result<Vec<PathBuf>, String> {
     let mut out = vec![];
-    collect(path, &mut out)?;
+    collect(dir, suffix, &mut out)?;
     out.sort();
     Ok(out)
 }
 
-fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+fn collect(dir: &Path, suffix: &str, out: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries =
         std::fs::read_dir(dir).map_err(|e| format!("cannot read `{}`: {e}", dir.display()))?;
     for entry in entries.flatten() {
@@ -35,9 +41,9 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
         let name = entry.file_name().to_string_lossy().into_owned();
         if path.is_dir() {
             if name != "target" && !name.starts_with('.') {
-                collect(&path, out)?;
+                collect(&path, suffix, out)?;
             }
-        } else if name.ends_with(TEST_SUFFIX) {
+        } else if name.ends_with(suffix) {
             out.push(path);
         }
     }

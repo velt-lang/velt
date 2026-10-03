@@ -88,13 +88,18 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   by name, keywords or description (ranking in manifest.md "Search"), each with the version `add`
   picks: the newest stable version not yanked (the newest pre-release not yanked if it has no
   stable one). `--json` prints the registry's answer (`{"packages": [...]}`) instead.
-- `check` (additive): parse + sema of a file or the current package (same
-  input resolution as `build`, except that a package with no configured entry and no
-  `src/main.vlt` checks `src/lib.vlt`; package dependencies installed), every diagnostic the front end
-  reports (all files' syntax errors; if there are none, all type errors), no lowering, codegen or
-  link. The root module need not define `main` (a library module; every function body is still
-  checked); a `main` that is there is validated as for `build`, which, like `run`, still
-  requires one. Exit 0 without errors (warnings allowed), 1 with errors, 101 on an internal error.
+- `check` (additive): parse + sema, no lowering, codegen or link. Input resolution: with a file,
+  that file and its imports (the file's package, if any, supplies dependencies); the root module
+  need not define `main` (a library module; every function body is still checked), a `main` that
+  is there is validated as for `build`, which, like `run`, still requires one. Without a file, in
+  a package: every `.vlt` module under `src/` and `tests/` (recursively, skipping `target/` and
+  hidden directories; no other directory), loaded together in one front-end run with the
+  package's root module: the entry (`package.entry`, default `src/main.vlt`), which must define
+  a valid `main`, or, when there is no configured entry and no `src/main.vlt`, `src/lib.vlt` as a
+  library module. Every other module is a library module. A configured entry that is missing is
+  an error naming it (as for `build`). Package dependencies are installed. Every diagnostic the
+  front end reports appears once, even for a module several roots import (all files' syntax
+  errors; if there are none, all type errors). Exit 0 without errors (warnings allowed), 1 with errors, 101 on an internal error.
   Diagnostics go to stderr as for `build`; `--json` prints instead one JSON document on stdout:
   `{"diagnostics": [{"severity": "error"|"warning"|"note", "message", "location", "labels":
   [{"location", "message"}], "notes": [string]}], "errors": n, "warnings": n}` where a

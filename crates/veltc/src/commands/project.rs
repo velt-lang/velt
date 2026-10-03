@@ -64,20 +64,29 @@ impl Project {
         if entry.is_file() {
             return Ok(entry);
         }
-        let mut msg = format!(
-            "package `{}` has no `{}` to build",
-            self.manifest.package.name, self.manifest.package.entry
-        );
-        if self.root.join(vpm::manifest::LIB_ENTRY).is_file() {
-            msg.push_str(" (it is a library: import it from another package instead)");
-        }
-        Err(msg)
+        Err(missing_entry_message(&self.root, &self.manifest))
     }
 
     /// `<root>/target/velt`, where package builds put their outputs.
     pub fn target_dir(&self) -> PathBuf {
         self.root.join("target").join("velt")
     }
+}
+
+/// Why the package at `root` has nothing to build: it names the missing entry, and says the
+/// package is a library only when the entry is the default (`src/main.vlt`) and `src/lib.vlt`
+/// exists (a custom entry that is missing is a mistake in package.vlt, not a library).
+fn missing_entry_message(root: &Path, manifest: &Manifest) -> String {
+    let entry = &manifest.package.entry;
+    let mut msg = format!(
+        "package `{}` has no `{entry}` to build",
+        manifest.package.name
+    );
+    let library = root.join(vpm::manifest::LIB_ENTRY).is_file();
+    if entry == vpm::manifest::DEFAULT_ENTRY && library {
+        msg.push_str(" (it is a library: import it from another package instead)");
+    }
+    msg
 }
 
 /// The error for a package command run outside any package: what is missing, and the two ways
@@ -186,6 +195,27 @@ mod tests {
         );
         let err = check_input_file(&dir.join("zzz.vlt")).unwrap_err();
         assert!(err.ends_with("does not exist"), "{err}");
+    }
+
+    #[test]
+    fn missing_entry_says_library_only_for_the_default_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest = |entry: &str| {
+            let src = format!(
+                "export const pkg: Package = {{ name: \"util\", version: \"0.1.0\", entry: \"{entry}\" }};"
+            );
+            Manifest::parse(&src).unwrap()
+        };
+        let default = manifest(vpm::manifest::DEFAULT_ENTRY);
+        let custom = manifest("src/app.vlt");
+        let msg = missing_entry_message(tmp.path(), &default);
+        assert_eq!(msg, "package `util` has no `src/main.vlt` to build");
+        std::fs::create_dir(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join(vpm::manifest::LIB_ENTRY), "").unwrap();
+        let msg = missing_entry_message(tmp.path(), &default);
+        assert!(msg.ends_with("(it is a library: import it from another package instead)"));
+        let msg = missing_entry_message(tmp.path(), &custom);
+        assert_eq!(msg, "package `util` has no `src/app.vlt` to build");
     }
 
     #[test]

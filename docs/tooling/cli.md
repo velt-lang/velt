@@ -73,14 +73,22 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelif
 velt check [<file.vlt>] [--json] [--locked] [-v]
 ```
 
-Parses and type-checks a file or the current package, with every file it imports, and prints
+Parses and type-checks a file with every file it imports, or the whole current package, and prints
 the diagnostics like `velt build`, but builds nothing, so it answers in tens of milliseconds.
 It exits with 0 when there are no errors (warnings are allowed) and with 1 when there are.
 
 - A **library module** needs no `main`: `velt check lib.vlt` checks every function in it,
   including exported functions nothing calls. `velt build` and `velt run` still require `main`.
-- In a package, `velt check` checks the package's entry (default `src/main.vlt`), or
-  `src/lib.vlt` in a library package.
+- In a package, `velt check` without a file checks the whole package, like `tsc` checks a
+  project: every `.vlt` module under `src/` and `tests/` (recursively, skipping `target/` and
+  hidden directories), including `src/lib.vlt` next to `src/main.vlt`, modules nothing imports,
+  and test files. The entry (`package.entry`, default `src/main.vlt`) must define a valid
+  `main`; every other module is checked as a library module. A library package (no configured
+  entry and no `src/main.vlt`) checks `src/lib.vlt` and the rest the same way. All modules are
+  checked together, so a module several of them import is checked, and its errors reported,
+  once. Other directories (`examples/`, `bench/`, scripts next to `package.vlt`) usually hold
+  programs of their own: check them with `velt check <file>`.
+- `velt check <file>` checks that file and the files it imports, and nothing else.
 - `--json` prints one JSON document on stdout instead, for editors and other tools:
   `{"diagnostics": [...], "errors": n, "warnings": n}`, each diagnostic with its `severity`,
   `message`, `location` (`file`, 1-based `line`/`column`, `endLine`/`endColumn`), further

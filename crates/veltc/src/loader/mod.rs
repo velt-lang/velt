@@ -1,7 +1,8 @@
 //! Module loading: root file → every module the program needs, parsed, as [`SourceModule`]s for sema.
 //!
 //! Order of the result: the prelude (`std/prelude/*.vlt`, canonical `"std/prelude/<name>"`), then
-//! the root (`"main"`), then imported modules in breadth-first discovery order. Specifiers resolve as
+//! the root (`"main"`), then imported modules in breadth-first discovery order, then any extra
+//! roots ([`load_with_roots`]) not loaded yet, each followed by what it imports. Specifiers resolve as
 //! - `"./x"`, `"../x"` → `x.vlt` or the folder module `x/index.vlt` relative to the importing
 //!   file ([`spec`]);
 //! - `"std/x"` → `<std root>/x.vlt` or `<std root>/x/index.vlt` ([`std_root`]);
@@ -66,6 +67,21 @@ pub fn load_program(
     opts: LoadOptions,
     diags: &mut Diagnostics,
 ) -> Result<Loaded, String> {
+    load_with_roots(sm, root, &[], opts, diags)
+}
+
+/// [`load_program`] plus `extra_roots`: further files loaded as if the root imported them
+/// (`velt check` in a package loads every module under `src/` and `tests/`), so modules they
+/// share with the root and with each other are loaded once. Their canonical paths are relative
+/// to the root's directory, like the root's own relative imports. An extra root that cannot be
+/// read, or whose module path is taken or reserved, is reported in `diags`.
+pub fn load_with_roots(
+    sm: &mut SourceMap,
+    root: &Path,
+    extra_roots: &[PathBuf],
+    opts: LoadOptions,
+    diags: &mut Diagnostics,
+) -> Result<Loaded, String> {
     let overlay = opts
         .overlay
         .map(|o| o.iter().map(|(p, s)| (file_key(p), s.clone())).collect())
@@ -92,10 +108,13 @@ pub fn load_program(
             .map_err(|e| format!("cannot read `{}`: {e}", root.display()))?,
     };
     let dir = root.parent().unwrap_or(Path::new("")).to_path_buf();
-    let root_index = loader.add(root, file_key(root), src, "main".into(), Origin::Root(dir));
+    let origin = Origin::Root(dir);
+    let root_index = loader.add(root, file_key(root), src, "main".into(), origin.clone());
     let mut queue: VecDeque<usize> = (0..loader.modules.len()).collect();
-    while let Some(index) = queue.pop_front() {
-        loader.resolve_imports(index, &mut queue);
+    loader.resolve_all(&mut queue);
+    for file in extra_roots {
+        loader.add_extra_root(file, &origin, &mut queue);
+        loader.resolve_all(&mut queue);
     }
     Ok(Loaded {
         modules: loader.modules,
@@ -174,6 +193,44 @@ impl Loader<'_, '_> {
         });
         self.origins.push((path.to_path_buf(), origin));
         index
+    }
+
+    /// Resolve the imports of every queued module, and of the modules that loads.
+    fn resolve_all(&mut self, queue: &mut VecDeque<usize>) {
+        while let Some(index) = queue.pop_front() {
+            self.resolve_imports(index, queue);
+        }
+    }
+
+    /// Load `file` as an extra root with `origin` (the root's), unless it is already loaded.
+    fn add_extra_root(&mut self, file: &Path, origin: &Origin, queue: &mut VecDeque<usize>) {
+        let key = file_key(file);
+        if self.by_file.contains_key(&key) {
+            return;
+        }
+        let shown = file.display();
+        let canonical = origin.canonical(file);
+        let taken = self.modules.iter().any(|m| m.path == canonical);
+        let problem = if is_std_path(&canonical) {
+            Some(format!("module `{shown}` would have the module path `{canonical}`, which is reserved for the standard library (rename its `std` directory)"))
+        } else if taken {
+            Some(format!("module `{shown}` has the same module path `{canonical}` as another module (rename the file)"))
+        } else {
+            None
+        };
+        if let Some(msg) = problem {
+            self.error(msg, vec![], Span::DUMMY);
+            return;
+        }
+        match self.read(file) {
+            Ok(src) => {
+                let index = self.add(file, key, src, canonical, origin.clone());
+                queue.push_back(index);
+            }
+            Err(e) => {
+                self.error(format!("cannot read `{shown}`: {e}"), vec![], Span::DUMMY);
+            }
+        }
     }
 
     /// Resolve every import of module `index`, loading new modules (queued for their own imports).
