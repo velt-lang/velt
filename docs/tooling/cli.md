@@ -87,7 +87,9 @@ It exits with 0 when there are no errors (warnings are allowed) and with 1 when 
   files. The entry (`package.entry`, default `src/main.vlt`) must define a valid `main`; every
   other module is checked as a library module. A library package (no configured entry and no
   `src/main.vlt`) checks `src/lib.vlt` and the rest the same way. All modules are checked
-  together, so a module several of them import is checked, and its errors reported, once. Other
+  together, so a module several of them import is checked, and its errors reported, once. Two
+  files in one directory whose names differ only in the extension (`src/dup.vlt` and
+  `src/dup.ts`) are an error: an import can't tell them apart. Other
   directories (`examples/`, `bench/`, scripts next to `package.vlt`) usually hold programs of
   their own: check them with `velt check <file>`.
 - `velt check <file>` checks that file and the files it imports, and nothing else.

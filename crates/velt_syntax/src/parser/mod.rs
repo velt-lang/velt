@@ -2,8 +2,8 @@
 //! token/diagnostic primitives; grammar lives in the submodules:
 //! `items`/`type_decls`/`members` (declarations), `imports` (imports and re-exports), `stmt`,
 //! `expr` (operators), `postfix` (calls, members), `primary` (atoms), `jsx`, `arrow`, `for_loop`,
-//! `types`, `patterns`, `undefined` (the rejected `undefined`), and `recovery` (error
-//! synchronization).
+//! `types`, `patterns`, `undefined` (the rejected `undefined`), `type_assertion` (the rejected
+//! `<T>x` of `.ts` files), and `recovery` (error synchronization).
 
 mod arrow;
 mod expr;
@@ -22,6 +22,7 @@ mod recovery;
 mod stmt;
 mod switch;
 mod symbol_keys;
+mod type_assertion;
 mod type_decls;
 mod types;
 mod undefined;
@@ -68,6 +69,9 @@ pub(crate) struct Parser<'a> {
     speculating: u32,
     /// Matching parentheses, found on demand (`paren_match`).
     paren_matches: ParenMatches,
+    /// A plain `.ts` file: `<T>x` there is TypeScript's type assertion, not JSX
+    /// (`type_assertion`).
+    pub(crate) plain_ts: bool,
 }
 
 /// Parser position for backtracking (speculative parsing).
@@ -95,6 +99,7 @@ impl<'a> Parser<'a> {
             hit_depth_limit: false,
             speculating: 0,
             paren_matches: ParenMatches::default(),
+            plain_ts: false,
         }
     }
 

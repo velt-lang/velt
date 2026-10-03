@@ -44,16 +44,12 @@ fn two_candidates_for_one_import_are_ambiguous() {
     assert_eq!(paths(&l), ["main"]);
     let msgs = messages(&diags);
     assert_eq!(msgs.len(), 2, "{msgs:?}");
-    assert!(
-        msgs[0].starts_with("module `./a` is ambiguous: it could be `")
-            && msgs[0].contains("a.vlt`, `")
-            && msgs[0].contains("a.ts` or `")
-            && msgs[0].ends_with("a.tsx`"),
-        "{msgs:?}"
-    );
-    assert!(
-        msgs[1].contains("index.vlt` or `") && msgs[1].ends_with("index.tsx`"),
-        "{msgs:?}"
+    assert_eq!(
+        msgs,
+        [
+            "module `./a` is ambiguous: it could be `a.vlt`, `a.ts` or `a.tsx`",
+            "module `./b` is ambiguous: it could be `b/index.vlt` or `b/index.tsx`",
+        ]
     );
     let rendered = diags[0].render(&sm);
     assert!(rendered.contains("main.vlt:1:19"), "{rendered}");
@@ -163,4 +159,48 @@ fn canonical_paths_drop_every_source_extension() {
     assert_eq!(root.canonical(Path::new("/p/ui/card.tsx")), "ui/card");
     assert_eq!(root.canonical(Path::new("/p/shapes/index.tsx")), "shapes");
     assert_eq!(root.canonical(Path::new("/p/a.test.ts")), "a.test");
+}
+
+#[test]
+fn declaration_files_are_not_modules() {
+    let t = Tree::new();
+    t.write("app/types.d.ts", "export interface Point { x: number }\n");
+    let root = t.write(
+        "app/main.vlt",
+        "import \"./types.d\";\nimport \"./types.d.ts\";\n",
+    );
+    let (l, diags, _) = load(&root, LoadOptions::default());
+    assert_eq!(paths(&l), ["main"]);
+    assert_eq!(
+        messages(&diags),
+        [
+            "cannot find module `./types.d`",
+            "declaration files (`.d.ts`) are not modules",
+        ]
+    );
+    let tried: Vec<&str> = diags[0].notes.iter().map(String::as_str).collect();
+    assert_eq!(
+        tried,
+        [
+            "tried `types.d.vlt`",
+            "tried `types.d.tsx`",
+            "tried `types.d/index.vlt`",
+            "tried `types.d/index.ts`",
+            "tried `types.d/index.tsx`",
+        ]
+    );
+    assert!(diags[1].notes[0].contains("`.ts`"), "{:?}", diags[1].notes);
+}
+
+#[test]
+fn type_assertions_are_reported_in_ts_files_only() {
+    let t = Tree::new();
+    t.write("app/cast.ts", "export const n = <number>x;\n");
+    let root = t.write("app/main.vlt", "import \"./cast\";\n");
+    let (_, diags, sm) = load(&root, LoadOptions::default());
+    assert_eq!(
+        messages(&diags),
+        ["type assertions `<T>x` are not supported"]
+    );
+    assert!(diags[0].render(&sm).contains("cast.ts:1:18"));
 }

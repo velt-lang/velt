@@ -1,6 +1,6 @@
-//! `velt test [file|dir]`: find `*.test.vlt` / `*.test.ts` / `*.test.tsx` files ([`discover`]), compile a generated harness per
-//! file ([`harness`]) and run it, printing `ok <name>` / `FAILED <name>` and a summary.
-//! Exit code 1 if any test failed or did not build.
+//! `velt test [file|dir]`: find `*.test.vlt` / `*.test.ts` / `*.test.tsx` files ([`discover`]),
+//! compile a generated harness per file ([`harness`]) and run it, printing `ok <name>` / `FAILED
+//! <name>` and a summary. Exit code 1 if any test failed or did not build.
 
 pub(crate) mod discover;
 mod harness;

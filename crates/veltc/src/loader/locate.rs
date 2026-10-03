@@ -106,6 +106,15 @@ pub fn target(
     packages: Option<&dyn PackageResolver>,
 ) -> Result<Target, LocateError> {
     match module {
+        ModuleRef::Relative { file } if file.to_str().is_some_and(|f| f.ends_with(".d.ts")) => {
+            let note = "Velt has no declaration files: write the declarations in a `.ts` (or \
+                        `.vlt`) module and import that"
+                .to_string();
+            Err((
+                "declaration files (`.d.ts`) are not modules".to_string(),
+                vec![note],
+            ))
+        }
         ModuleRef::Relative { file } => Ok(Target {
             candidates: relative_files(file),
             canonical: None,
@@ -161,7 +170,7 @@ fn module_files(dir: &Path, rel: &str) -> Vec<Vec<PathBuf>> {
 /// - with `.js` or `.jsx`, the TypeScript file it is compiled to, as TypeScript resolves it
 ///   (`./x.js` → `x.ts` or `x.tsx`, `./x.jsx` → `x.tsx`);
 /// - otherwise `x.vlt`, `x.ts` or `x.tsx`, then the folder module `x/index.vlt`, `x/index.ts`
-///   or `x/index.tsx`.
+///   or `x/index.tsx` (never a declaration file: `./types.d` does not name `types.d.ts`).
 fn relative_files(file: PathBuf) -> Vec<Vec<PathBuf>> {
     let Some(name) = file.to_str() else {
         return vec![vec![file]];
@@ -181,7 +190,10 @@ fn relative_files(file: PathBuf) -> Vec<Vec<PathBuf>> {
     let with_extensions = |base: &str| {
         vpm::sources::SOURCE_EXTENSIONS
             .iter()
-            .map(|ext| PathBuf::from(format!("{base}.{ext}")))
+            .map(|ext| format!("{base}.{ext}"))
+            // `./types.d` must not name `types.d.ts`, a declaration file.
+            .filter(|f| vpm::sources::is_source_name(f))
+            .map(PathBuf::from)
             .collect()
     };
     let index = file.join("index");

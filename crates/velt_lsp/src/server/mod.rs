@@ -83,9 +83,9 @@ struct Server<'a> {
 /// Id of the request registering the file watcher.
 const WATCH_REQUEST: &str = "velt-watch";
 
-/// Ask the client to report changes of source files (`.vlt`, `.ts`, `.tsx`) if it can (dynamic registration of
-/// `workspace/didChangeWatchedFiles`). The index relies on the events once the client answers
-/// the request successfully.
+/// Ask the client to report changes of source files (`.vlt`, `.ts`, `.tsx`) if it can (dynamic
+/// registration of `workspace/didChangeWatchedFiles`). The index relies on the events once the
+/// client answers the request successfully.
 fn watch_files(connection: &Connection, init: &serde_json::Value) {
     let supported = init["capabilities"]["workspace"]["didChangeWatchedFiles"]
         ["dynamicRegistration"]

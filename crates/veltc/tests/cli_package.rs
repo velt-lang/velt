@@ -545,13 +545,35 @@ fn ts_and_tsx_modules_in_a_package() {
         "app/tests/model.test.ts",
         "import { greet } from \"../src/model\";\n\nexport function test_greet() {\n  assertEq(greet(\"a\"), \"Hello, a!\");\n}\n",
     );
+    // `velt test` runs `model.test.ts` and `model.test.vlt` side by side.
+    s.write(
+        "app/tests/model.test.vlt",
+        "export function test_vlt() {\n  assertEq(1, 1);\n}\n",
+    );
     let o = s.velt("app", &["test"]);
     let stdout = String::from_utf8_lossy(&o.stdout);
     assert!(
-        o.status.success() && stdout.contains("ok test_greet"),
+        o.status.success() && stdout.contains("ok test_greet") && stdout.contains("ok test_vlt"),
         "{stdout}"
     );
     s.ok("app", &["fmt", "--check"]);
+    // Whole-package `velt check` reports files with the same module path, whatever imports them.
+    s.write("app/src/dup.vlt", "export function d() {}\n");
+    s.write("app/src/dup.ts", "export function d() {}\n");
+    let err = s.fail("app", &["check"]);
+    for msg in [
+        "`src/dup.ts` and `src/dup.vlt` have the same module path",
+        "`tests/model.test.ts` and `tests/model.test.vlt` have the same module path",
+    ] {
+        assert!(err.contains(msg), "missing `{msg}` in:\n{err}");
+    }
+    let out = s.velt("app", &["check", "--json"]);
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json["errors"], 2, "{json}");
+    for file in ["src/dup.ts", "tests/model.test.vlt"] {
+        std::fs::remove_file(s.dir.join("app").join(file)).unwrap();
+    }
+    s.ok("app", &["check"]);
 
     // Whole-package `velt check` reports a `.ts` module nothing imports.
     s.write("app/src/extra.ts", BAD);

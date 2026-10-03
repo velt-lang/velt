@@ -2,6 +2,7 @@
 //! module of the current package, for fast feedback while editing and for tools (`--json`).
 //! Nothing is lowered, compiled or linked.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -21,8 +22,14 @@ const PACKAGE_DIRS: [&str; 2] = ["src", "tests"];
 /// `velt check`: exit 0 when there are no errors, 1 when there are, 101 on an internal error.
 pub fn check_command(args: &CheckArgs) -> ExitCode {
     let mut sess = Session::new();
-    let result =
-        resolve(args).and_then(|(opts, scope)| driver::check_with(&mut sess, &opts, &scope));
+    let result = resolve(args).and_then(|(opts, scope, same_path)| {
+        let checked = driver::check_with(&mut sess, &opts, &scope);
+        report_same_path(&mut sess, &same_path, &opts.input);
+        match checked {
+            Ok(()) if !same_path.is_empty() => Err(BuildError::Diagnostics),
+            other => other,
+        }
+    });
     if args.verbose {
         eprint!("{}", sess.render_timings());
     }
@@ -43,12 +50,15 @@ pub fn check_command(args: &CheckArgs) -> ExitCode {
 }
 
 /// The file (inside its package, if any) and its imports, or the current package's modules,
-/// resolved like `velt build` (package dependencies are installed if needed).
-fn resolve(args: &CheckArgs) -> Result<(driver::BuildOptions, CheckScope), BuildError> {
-    let (input, scope) = match &args.input {
+/// resolved like `velt build` (package dependencies are installed if needed); plus, for a
+/// package, its [`same_path_groups`].
+fn resolve(
+    args: &CheckArgs,
+) -> Result<(driver::BuildOptions, CheckScope, Vec<Vec<PathBuf>>), BuildError> {
+    let (input, scope, same_path) = match &args.input {
         Some(file) => {
             super::project::check_input_file(file).map_err(BuildError::Failed)?;
-            (file.clone(), CheckScope::default())
+            (file.clone(), CheckScope::default(), vec![])
         }
         None => package_scope().map_err(BuildError::Failed)?,
     };
@@ -60,12 +70,12 @@ fn resolve(args: &CheckArgs) -> Result<(driver::BuildOptions, CheckScope), Build
         ..Default::default()
     };
     let opts = super::build::build_options(&build).map_err(BuildError::Failed)?;
-    Ok((opts, scope))
+    Ok((opts, scope, same_path))
 }
 
 /// The whole current package, like `tsc` checks a project: its root module (see
 /// [`package_root_module`]) plus every other module under [`PACKAGE_DIRS`] as a library module.
-fn package_scope() -> Result<(PathBuf, CheckScope), String> {
+fn package_scope() -> Result<(PathBuf, CheckScope, Vec<Vec<PathBuf>>), String> {
     let root = Project::current_root()?;
     let (input, require_main) = package_root_module(&root)?;
     let mut extra_roots = vec![];
@@ -76,12 +86,54 @@ fn package_scope() -> Result<(PathBuf, CheckScope), String> {
     {
         extra_roots.extend(discover::source_files(dir)?);
     }
+    let same_path = same_path_groups(&extra_roots);
     extra_roots.retain(|f| *f != input);
     let scope = CheckScope {
         require_main,
         extra_roots,
     };
-    Ok((input, scope))
+    Ok((input, scope, same_path))
+}
+
+/// The files among `files` that share a directory and a module path (`dup.vlt` and `dup.ts`),
+/// in groups of two or more: an import of `./dup` is ambiguous, and they cannot both be the
+/// module `dup`.
+fn same_path_groups(files: &[PathBuf]) -> Vec<Vec<PathBuf>> {
+    let mut groups: BTreeMap<(PathBuf, String), Vec<PathBuf>> = BTreeMap::new();
+    for file in files {
+        let name = file.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if let Some(stem) = vpm::sources::strip_source_extension(name) {
+            let dir = file.parent().unwrap_or(Path::new("")).to_path_buf();
+            groups
+                .entry((dir, stem.to_string()))
+                .or_default()
+                .push(file.clone());
+        }
+    }
+    groups.into_values().filter(|g| g.len() > 1).collect()
+}
+
+/// One error per [`same_path_groups`] group, located in its first file and naming every file
+/// relative to the package root (the directory of `input`'s package).
+fn report_same_path(sess: &mut Session, groups: &[Vec<PathBuf>], input: &Path) {
+    let root = vpm::manifest::find_package_root(input.parent().unwrap_or(Path::new("")));
+    let shown = |f: &Path| match &root {
+        Some(r) => vpm::relpath::relative(&vpm::relpath::absolute(f), r),
+        None => f.display().to_string(),
+    };
+    for group in groups {
+        let mut names: Vec<String> = group.iter().map(|f| format!("`{}`", shown(f))).collect();
+        let last = names.pop().unwrap_or_default();
+        let msg = format!(
+            "{} and {last} have the same module path: an import cannot tell them apart",
+            names.join(", ")
+        );
+        let src = std::fs::read_to_string(&group[0]).unwrap_or_default();
+        let span = Span::new(sess.sm.add(&group[0], src), 0, 0);
+        let note = "rename or remove all but one of them";
+        sess.diagnostics
+            .push(Diagnostic::error(msg, span).with_note(note));
+    }
 }
 
 /// The root module of the package at `root` and whether it must define `main`: its runnable

@@ -1,9 +1,9 @@
-//! The symbols of the source files (`.vlt`, `.ts`, `.tsx`) under the workspace folders, for workspace symbol queries:
-//! each file is parsed once and its symbols kept with its modification time. When the client
-//! reports file changes (`workspace/didChangeWatchedFiles`, registered at startup when the
-//! client supports it), the index follows the events and a query reads nothing from disk;
-//! otherwise each query lists the folders again and reparses only the files whose modification
-//! time changed.
+//! The symbols of the source files (`.vlt`, `.ts`, `.tsx`) under the workspace folders, for
+//! workspace symbol queries: each file is parsed once and its symbols kept with its modification
+//! time. When the client reports file changes (`workspace/didChangeWatchedFiles`, registered at
+//! startup when the client supports it), the index follows the events and a query reads nothing
+//! from disk; otherwise each query lists the folders again and reparses only the files whose
+//! modification time changed.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};

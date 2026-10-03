@@ -99,7 +99,9 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   no configured entry and no `src/main.vlt`, `src/lib.vlt` as a library module. Every other
   module is a library module; one whose module path is taken or reserved (`src/std/x.vlt`, a
   `src/util.vlt` next to a dependency `util`) gets a name no import can write instead of an
-  error (`build` does not load it). A configured entry that is missing is an error naming it (as
+  error (`build` does not load it). Files in one directory whose names differ only in the
+  source extension (`src/dup.vlt`, `src/dup.ts`) are an error per group, located in the first
+  file and naming all of them relative to the package root. A configured entry that is missing is an error naming it (as
   for `build`). Package dependencies are installed. Every diagnostic the front end reports
   appears once, even for a module several roots import (all files' syntax errors; if there are
   none, all type errors). Exit 0 without errors (warnings allowed), 1 with errors, 101 on an
@@ -223,8 +225,10 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `target/velt-native/<triple>/` (the host's is (re)built), and fails if one is missing;
   `--native-only` adds bundles for targets not yet published to the published version.
 - `fmt` formats in place (no paths: the package's `package.vlt` and the `.vlt`/`.ts`/`.tsx`
-  files of `src/`, or all `.vlt` under cwd outside a package; a directory path: its
-  `.vlt`/`.ts`/`.tsx` files, not `.d.ts`; skips `target/`, `node_modules/`, hidden dirs). `--check` writes nothing, lists unformatted files, exit 1 if any. Unparsable files → exit 1.
+  files of `src/`, or all `.vlt` under cwd outside a package; a directory path: its `.vlt`
+  files, plus `.ts`/`.tsx` (not `.d.ts`) under a package's `src/` and `tests/`; skips
+  `target/`, `node_modules/`, hidden dirs). `--check` writes nothing, lists unformatted files,
+  exit 1 if any. Unparsable files → exit 1.
 - Imports: `velt:x` → `<std root>/x.vlt` or `x/index.vlt`; `./x`, `../x` → relative `x.vlt`,
   `x.ts` or `x.tsx`, else folder module `x/index.vlt`, `x/index.ts` or `x/index.tsx` (two
   existing files among one of these triples: an error at the specifier naming them); `./x.vlt`,

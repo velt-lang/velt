@@ -78,7 +78,8 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
 }
 
 /// A Velt source module's file name: `.vlt`, `.ts` or `.tsx`, but not a `.d.ts` declaration
-/// file (the rules of `vpm::sources`, which this crate does not depend on).
+/// file. A copy of `vpm::sources::is_source_name` (crates/vpm/src/sources.rs), which this crate
+/// does not depend on: keep the two in step.
 fn is_source_name(name: &str) -> bool {
     [".vlt", ".ts", ".tsx"]
         .iter()

@@ -19,8 +19,8 @@ pub fn is_test_file(name: &str) -> bool {
     vpm::sources::strip_source_extension(name).is_some_and(|stem| stem.ends_with(".test"))
 }
 
-/// Test files under `path` (recursively, skipping `target/`, `node_modules/`, hidden and
-/// symlinked directories), sorted. An explicitly named file is used even without the `.test` suffix.
+/// Test files under `path` (recursively, skipping `target/`, `node_modules/`, hidden and symlinked
+/// directories), sorted. An explicitly named file is used even without the `.test` suffix.
 pub fn find_test_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     if path.is_file() {
         return Ok(vec![path.to_path_buf()]);

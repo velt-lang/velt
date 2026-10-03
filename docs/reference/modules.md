@@ -57,11 +57,19 @@ program may mix them freely, and `velt run app.ts` works like `velt run app.vlt`
 - JSX is allowed in `.tsx` and `.vlt` files. In a `.ts` file it is an error, as in TypeScript;
   rename the file to `.tsx`. The [JSX provider](../internals/contracts/jsx.md#choosing-the-provider) is chosen the same way for every file:
   the `// @jsxImportSource` comment, else the package's `jsx.importSource`, else `velt:jsx`.
-- Two files whose paths differ only in the extension have the same module path, so a program
-  can't load both (`velt check` in a package reports it).
-- Declaration files (`.d.ts`) are not modules: Velt never loads them.
-- Standard library modules and the modules of dependencies (`"pkg"`, `"pkg/sub"`) are `.vlt`
-  files, named without an extension.
+- Two files in one directory whose names differ only in the extension (`dup.vlt` and
+  `dup.ts`) have the same module path: an import without an extension can't tell them apart,
+  and one program can't load both. `velt check` in a package reports every such pair under
+  `src/` and `tests/` as an error, whether or not anything imports them.
+- Declaration files (`.d.ts`) are not modules: Velt never loads them. `"./types.d"` does not
+  find `types.d.ts`, and `"./types.d.ts"` is an error.
+- TypeScript's older type assertion `<T>x` is an error in a `.ts` file (in `.tsx` and `.vlt`
+  files `<T>` starts JSX, as in a `.tsx` file): narrow with `typeof` or `instanceof`, or
+  annotate the variable's type.
+- For now, the rest of a package stays `.vlt`: standard library modules and the modules of
+  dependencies (`"pkg"`, `"pkg/sub"` → `src/lib.vlt`, `src/sub.vlt`, `src/sub/index.vlt`) are
+  `.vlt` files named without an extension, and a package's default entry is `src/main.vlt`
+  (`src/lib.vlt` for a library); an `entry` in `package.vlt` may name a `.ts` file.
 
 `velt check` in a package, `velt test` (`*.test.ts`, `*.test.tsx`), `velt fmt`, `velt doc`
 and the language server take `.ts` and `.tsx` files along with `.vlt` ones

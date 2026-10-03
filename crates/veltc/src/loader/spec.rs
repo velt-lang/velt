@@ -40,6 +40,7 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
         return Err("standard library modules are imported as `velt:x` (`velt:fs`)".into());
     }
     if let Some(rel) = spec.strip_prefix("velt:") {
+        extension_check(spec)?;
         if !is_std_subpath(rel) {
             return Err(format!("invalid standard library module `{spec}`"));
         }
@@ -69,14 +70,7 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
             "invalid package name `{name}` in module specifier `{spec}`"
         ));
     }
-    if let Some(ext) = vpm::sources::SOURCE_EXTENSIONS
-        .iter()
-        .find(|ext| spec.ends_with(&format!(".{ext}")))
-    {
-        return Err(format!(
-            "module specifier `{spec}` should not include the `.{ext}` extension (only relative imports may name one)"
-        ));
-    }
+    extension_check(spec)?;
     if sub.as_deref().is_some_and(|s| !is_clean_subpath(s)) {
         return Err(format!("invalid module path in specifier `{spec}`"));
     }
@@ -84,6 +78,20 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
         name: name.to_string(),
         sub,
     })
+}
+
+/// Standard library and package specifiers name modules without an extension (`velt:fs`, not
+/// `velt:fs.vlt`); only relative imports may name one.
+fn extension_check(spec: &str) -> Result<(), String> {
+    match vpm::sources::SOURCE_EXTENSIONS
+        .iter()
+        .find(|ext| spec.ends_with(&format!(".{ext}")))
+    {
+        Some(ext) => Err(format!(
+            "module specifier `{spec}` should not include the `.{ext}` extension (only relative imports may name one)"
+        )),
+        None => Ok(()),
+    }
 }
 
 /// A standard library module path: `/`-separated segments of `[a-z0-9_-]`. Nothing else may
@@ -216,5 +224,10 @@ mod tests {
                 "`{bad}` should be rejected"
             );
         }
+        let err = resolve_spec("velt:fs.vlt", dir).unwrap_err();
+        assert!(
+            err.contains("should not include the `.vlt` extension"),
+            "{err}"
+        );
     }
 }

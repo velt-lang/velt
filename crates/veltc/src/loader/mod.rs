@@ -189,7 +189,12 @@ impl Loader<'_, '_> {
         origin: Origin,
     ) -> usize {
         let file = self.sm.add(path, src);
-        let (ast, parse_diags) = velt_syntax::parse_file(file, &self.sm.get(file).src);
+        let src = &self.sm.get(file).src;
+        let (ast, parse_diags) = if vpm::sources::is_plain_ts(path) {
+            velt_syntax::parse_ts_file(file, src)
+        } else {
+            velt_syntax::parse_file(file, src)
+        };
         self.diags.extend(parse_diags);
         let index = self.modules.len();
         self.by_file.insert(key, index);
@@ -338,6 +343,7 @@ impl Loader<'_, '_> {
         let dir = importer.parent().unwrap_or(Path::new(""));
         let alias = self.path_alias(&importer, spec);
         let aliased = alias.is_some();
+        let show = |f: &Path| shown_path(f, dir, aliased || spec.starts_with('.'));
         let module = match alias {
             Some(file) => ModuleRef::Relative { file },
             None => match resolve_spec(spec, dir) {
@@ -363,7 +369,7 @@ impl Loader<'_, '_> {
             Some([file]) => (*file).clone(),
             Some(files) => {
                 let mut names: Vec<String> =
-                    files.iter().map(|f| format!("`{}`", f.display())).collect();
+                    files.iter().map(|f| format!("`{}`", show(f))).collect();
                 let last = names.pop().unwrap_or_default();
                 let msg = format!(
                     "module `{spec}` is ambiguous: it could be {} or {last}",
@@ -377,7 +383,7 @@ impl Loader<'_, '_> {
                     .candidates
                     .iter()
                     .flatten()
-                    .map(|f| format!("tried `{}`", f.display()))
+                    .map(|f| format!("tried `{}`", show(f)))
                     .collect();
                 return self.error(format!("cannot find module `{spec}`"), notes, span);
             }
@@ -492,6 +498,16 @@ fn shown_in_package(file: &Path) -> String {
 /// Identity of a file for deduplication (canonical path when it exists).
 fn file_key(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| vpm::relpath::absolute(path))
+}
+
+/// How a message names `file`, a candidate for an import in directory `dir`: relative to `dir`
+/// for relative (and path alias) imports (`dup.ts`, `../lib/x.vlt`), the full path otherwise.
+fn shown_path(file: &Path, dir: &Path, relative: bool) -> String {
+    if relative {
+        vpm::relpath::relative(file, dir)
+    } else {
+        file.display().to_string()
+    }
 }
 
 #[cfg(test)]
