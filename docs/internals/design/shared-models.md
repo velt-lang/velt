@@ -1,7 +1,8 @@
 # Design: data models shared with TypeScript
 
 Status: decided (issue #326, "Blockers for shared models"; answers #61). The maintainer's
-decisions are in [Decisions](#decisions). Nothing here is implemented yet.
+decisions are in [Decisions](#decisions). Step 1 (`readonly` fields in object types) is
+implemented; steps 2 and 3 are not yet.
 
 ## Problem
 
