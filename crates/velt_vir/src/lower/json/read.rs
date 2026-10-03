@@ -182,7 +182,7 @@ impl FnLower<'_, '_> {
         }
     }
 
-    pub(super) fn rt_u8(&mut self, r: Rt, args: Vec<Operand>) -> Operand {
+    pub(in crate::lower) fn rt_u8(&mut self, r: Rt, args: Vec<Operand>) -> Operand {
         let d = self.temp(Ty::U8);
         self.call_rt(r, args, Some(Place::local(d)));
         self.rvalue_temp(

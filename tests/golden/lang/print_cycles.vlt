@@ -1,0 +1,42 @@
+// console.log of an object graph that refers back to itself prints like node: the object
+// referred to gets `<ref *1>` and the reference `[Circular *1]` (#445). Before, it recursed
+// until the stack overflowed.
+
+class C {
+  value: number = 1;
+  next: C | null = null;
+}
+
+class Tree {
+  name: string;
+  parent: Tree | null = null;
+  children: Tree[] = [];
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+interface Node {
+  value: number;
+  next?: Node;
+}
+
+function main() {
+  const c = new C();
+  c.next = c;
+  console.log(c);
+  const root = new Tree("root");
+  const kid = new Tree("kid");
+  kid.parent = root;
+  root.children.push(kid);
+  console.log(root);
+  console.log(`tree: ${kid}`);
+  let n: Node = { value: 1 };
+  n.next = { value: 2, next: n };
+  console.log(n);
+  console.log([c, c]);
+  const plain = new C();
+  console.log(plain);
+  const pair = [plain, plain];
+  console.log(pair);
+}

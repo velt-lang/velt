@@ -24,7 +24,6 @@ mod common;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use common::{apply_fixes, cases_dir, line_of, lint_any, lint_source, parse};
 use velt_tscompat::{Finding, RULES};
@@ -252,7 +251,7 @@ fn tsc_agrees_with_the_lint() {
 
 /// `Err(why)` when Node or the pinned `typescript` is missing.
 fn node_ready(oracle: &Path) -> Result<(), String> {
-    match Command::new("node").arg("--version").output() {
+    match command("node").arg("--version").output() {
         Ok(o) if o.status.success() => {}
         _ => return Err("`node` is not on PATH".into()),
     }
@@ -387,7 +386,7 @@ fn stem(path: &Path) -> String {
 
 /// Runs `diagnostics.mjs` on the project.
 fn run_tsc(oracle: &Path, project: &Path) -> Vec<Diag> {
-    let out = Command::new("node")
+    let out = command("node")
         .arg(oracle.join("diagnostics.mjs"))
         .arg(project.join("tsconfig.json"))
         .output()
@@ -527,4 +526,28 @@ fn check_rejected(file: &Checked, diags: &[&Diag], failures: &mut Vec<String>) {
         }
     }
     eprintln!("{}: tsc rejects lines {}", file.name, proved.join(", "));
+}
+
+/// `Command::new(program)` for a test's child process. On Windows, when this test process has no
+/// console (a CI agent, a background shell), the child gets a hidden console instead of opening a
+/// window of its own. In a terminal it shares the terminal's console as before, so Ctrl+C still
+/// reaches it.
+fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    let cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    let cmd = {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = cmd;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetConsoleWindow() -> *mut std::ffi::c_void;
+        }
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // SAFETY: takes no arguments; returns this process's console window or null.
+        if unsafe { GetConsoleWindow() }.is_null() {
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        cmd
+    };
+    cmd
 }
