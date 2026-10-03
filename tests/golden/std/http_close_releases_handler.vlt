@@ -25,13 +25,10 @@ async function get(url: string): Promise<string> {
 async function main() {
   const store = shared(new Mutex<Store>(new Store("store")));
   const started = channel<bool>();
-  // The handler captures its own handle: capturing `started`, which `main` uses afterwards, keeps
-  // the handler's captures (the store too) alive until `main` returns.
-  const reached = started;
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
     if (req.path == "/slow") {
       try {
-        await reached.send(true);
+        await started.send(true);
       } catch (e) {
         console.log("cannot report the request");
       }

@@ -100,7 +100,9 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   only calls it.
 - A closure stored in a variable, field or array, or returned, is **escaping** and captures by
   value: objects are shared with it (the closure and the enclosing code see the same object),
-  numbers and strings are copied. A variable that the closure or the enclosing code assigns
+  numbers and strings are copied. A captured object the enclosing code does not use again moves
+  into the closure, so it is released (and disposed) when the closure is, even if other captures
+  are still used afterwards. A variable that the closure or the enclosing code assigns
   while the other still uses it (`let count = 0; const inc = () => { count++; }; inc();
   console.log(count)`) lives in a shared, reference-counted cell, so both see every change, as
   in JS; a closure that is the only remaining user (a `makeCounter` returning `() => ++n`) keeps

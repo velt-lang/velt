@@ -47,9 +47,10 @@ struct Moves<'a> {
     report: bool,
     errors: Vec<Diagnostic>,
     loops: Vec<LoopFlow>,
-    /// Soft moves of this function (`FnInfo::soft_moves`) and those whose place is used again.
+    /// Soft moves of this function (`FnInfo::soft_moves`) and those whose place is used again
+    /// (with the local used again: a closure's soft move is one per captured variable).
     soft: HashSet<Span>,
-    reused: HashSet<Span>,
+    reused: HashSet<(Span, LocalId)>,
     /// Per escaping closure: the enclosing variables it captures by value and assigns.
     writers: &'a HashMap<DefId, HashSet<LocalId>>,
     /// Per local: may it live in a shared cell (not a promise, no async closure captures it)?
@@ -63,9 +64,9 @@ struct Moves<'a> {
 /// What the move dataflow found besides errors.
 #[derive(Default)]
 pub(crate) struct Outcome {
-    /// Per function: the soft moves whose place is used again (they become shares,
-    /// `crate::ownership::soft`).
-    pub reused: HashMap<DefId, HashSet<Span>>,
+    /// Per function: the soft moves whose place is used again, with the local used again (they
+    /// become shares, `crate::ownership::soft`; for a closure, only the captures of that local).
+    pub reused: HashMap<DefId, HashSet<(Span, LocalId)>>,
     /// Per function: the variables that need a shared cell (`crate::ownership::cells`).
     pub boxed: HashMap<DefId, HashSet<LocalId>>,
 }
@@ -250,7 +251,7 @@ impl Moves<'_> {
             if self.report {
                 match hard {
                     None if !sites.is_empty() => {
-                        self.reused.extend(sites.iter().map(|(at, _)| *at));
+                        self.reused.extend(sites.iter().map(|(at, _)| (*at, l)));
                     }
                     _ => {
                         let d = self.moved_error(i, hard.copied(), span);

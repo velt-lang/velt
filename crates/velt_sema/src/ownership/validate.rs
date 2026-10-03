@@ -67,8 +67,9 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
                 }
             }
             if let (E::Closure(c), true) = (&e.kind, soft.contains(&e.span)) {
-                if v.shared_captures_pinned(*c) {
-                    copied_captures.push(*c);
+                let pinned = v.shared_captures_pinned(*c);
+                if !pinned.is_empty() {
+                    copied_captures.push((*c, pinned));
                 }
             }
             v.check(e, &mut errors)
@@ -76,8 +77,8 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         cx.diags.extend(errors);
         f.body.block = block;
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
-        for c in copied_captures {
-            super::shares::share_captures(cx, c);
+        for (c, pinned) in copied_captures {
+            super::shares::share_captures(cx, c, &pinned);
         }
     }
     fn_values(cx);
@@ -208,15 +209,18 @@ impl Validator<'_, '_, '_> {
         }
     }
 
-    /// Does closure `c` capture by value a shared variable it may not move (then its shared
-    /// captures become shares)?
-    fn shared_captures_pinned(&self, c: DefId) -> bool {
+    /// The shared variables closure `c` captures by value but may not move (those captures
+    /// become shares).
+    fn shared_captures_pinned(&self, c: DefId) -> Vec<LocalId> {
         let shared = self.shared.get(&c).cloned().unwrap_or_default();
-        shared.into_iter().any(|outer| {
-            let mut invalid = vec![];
-            self.root(outer, None, Span::default(), &mut invalid);
-            !invalid.is_empty()
-        })
+        shared
+            .into_iter()
+            .filter(|&outer| {
+                let mut invalid = vec![];
+                self.root(outer, None, Span::default(), &mut invalid);
+                !invalid.is_empty()
+            })
+            .collect()
     }
 
     /// Is the place `e` rooted at a captured variable?
