@@ -351,7 +351,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.switch_to(d);
         for p in &f.params {
             let info = &self.info[p.local.0 as usize];
-            if info.droppable {
+            if info.cell {
+                // A capture held in a shared cell (a generator closure's variable assigned
+                // after the capture): release the state's reference to the cell, as the
+                // started paths do, not the value inside it.
+                self.release_cell(p.local);
+            } else if info.droppable {
                 let ty = info.ty;
                 let place = self.local_place(p.local);
                 self.drop_glue(place, ty);
