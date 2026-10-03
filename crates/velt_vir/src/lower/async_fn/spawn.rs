@@ -73,7 +73,7 @@ impl FnLower<'_, '_> {
             let st = self.locals[s.0 as usize].ty;
             let (size, align) = self.cx.size_align(st);
             let a = self.addr(Place::local(s));
-            let args = vec![
+            let mut args = vec![
                 cfunc(poll),
                 cfunc(drop),
                 a,
@@ -82,6 +82,12 @@ impl FnLower<'_, '_> {
                 if detached { wrapped_size } else { rsize },
                 result_drop,
             ];
+            // The result reaches the joining task: the task transfers it as it finishes, while
+            // promises it started (which may still use the result's objects) are on its thread.
+            if !detached && self.cx.holds_counted(slot) {
+                args.push(cfunc(self.cx.func(Work::Glue(Glue::Transfer, slot))));
+                return self.rt_value(Rt::SpawnTransfer, args, ty);
+            }
             return self.rt_value(Rt::Spawn, args, ty);
         }
         let fut = match self.kind(p.ty) {

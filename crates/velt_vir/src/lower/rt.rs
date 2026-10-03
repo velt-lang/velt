@@ -63,6 +63,7 @@ pub(super) enum Rt {
     ChanTryReceive,
     BlockOn,
     Spawn,
+    SpawnTransfer,
     SpawnFut,
     PerfNow,
     DateNow,
@@ -183,6 +184,11 @@ impl Rt {
             Rt::Spawn => f(
                 "velt_rt_spawn",
                 vec![Ptr, Ptr, Ptr, U64, U64, U64, Ptr],
+                Ptr,
+            ),
+            Rt::SpawnTransfer => f(
+                "velt_rt_spawn_transfer",
+                vec![Ptr, Ptr, Ptr, U64, U64, U64, Ptr, Ptr],
                 Ptr,
             ),
             Rt::SpawnFut => f("velt_rt_spawn_fut", vec![Ptr, U64, Ptr], Ptr),

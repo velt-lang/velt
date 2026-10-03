@@ -141,7 +141,8 @@ impl Interp<'_> {
             "velt_rt_all" | "velt_rt_all_with_drop" => self.rt_all(a, false),
             "velt_rt_all_or_reject" => self.rt_all(a, true),
             "velt_rt_block_on" => return Some(self.block_on(a[0], a[1]).map(|_| 0)),
-            "velt_rt_spawn" => {
+            // Single-threaded: the result needs no transfer.
+            "velt_rt_spawn" | "velt_rt_spawn_transfer" => {
                 let (poll, drop) = (self.func_id(a[0]), self.func_id(a[1]));
                 let kind = Fut::Boxed {
                     poll,
