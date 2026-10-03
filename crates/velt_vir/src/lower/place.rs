@@ -148,22 +148,30 @@ impl FnLower<'_, '_> {
         }
     }
 
-    pub(super) fn unwrap_some(&mut self, inner: &hir::Expr, mode: UseMode) -> Operand {
+    /// The payload (of type `ty`) of the option `inner`. When `ty` is the option type itself
+    /// (a generic `U | null` at a nullable `U`, `TyTable::intern`), that is the value itself.
+    pub(super) fn unwrap_some(&mut self, inner: &hir::Expr, mode: UseMode, ty: TyId) -> Operand {
         let oty = self.sub(inner.ty);
-        if mode == UseMode::Move && self.through_counted(inner, oty) {
-            let v = self.unwrap_some(inner, UseMode::Borrow);
+        let pty = if self.sub(ty) == oty {
+            oty
+        } else {
             let TyKind::Option(pty) = self.cx.kind(oty) else {
                 ice("unwrap of a non-option")
             };
+            pty
+        };
+        if mode == UseMode::Move && self.through_counted(inner, oty) {
+            let v = self.unwrap_some(inner, UseMode::Borrow, ty);
             let s = self.share_value(v, pty);
             return self.own_value(s, pty);
         }
         let v = self.expr(inner);
         let p = self.place_of(v, oty);
         self.check_narrowed_field(inner, &p, oty);
-        let payload = self.some_payload(&p, oty);
-        let TyKind::Option(pty) = self.cx.kind(oty) else {
-            ice("unwrap of a non-option")
+        let payload = if pty == oty {
+            p.clone()
+        } else {
+            self.some_payload(&p, oty)
         };
         self.move_payload(inner, &p, &payload, pty, mode)
             .unwrap_or(Operand::Copy(payload))
@@ -304,7 +312,11 @@ impl FnLower<'_, '_> {
                 let oty = self.sub(inner.ty);
                 let p = self.place_expr_with(inner, pre);
                 self.check_narrowed_field(inner, &p, oty);
-                self.some_payload(&p, oty)
+                if self.sub(e.ty) == oty {
+                    p
+                } else {
+                    self.some_payload(&p, oty)
+                }
             }
             K::UnwrapVariant { expr, variant, .. } => {
                 let ety = self.sub(expr.ty);

@@ -105,10 +105,7 @@ impl FnLower<'_, '_> {
             PatKind::Some(p) => {
                 let some = self.option_is_some(place, ty);
                 self.cond_jump(some, fail);
-                let TyKind::Option(inner) = self.cx.kind(ty) else {
-                    ice("Some pattern")
-                };
-                let payload = self.some_payload(place, ty);
+                let (payload, inner) = self.some_part(p, place, ty);
                 self.test_pat(p, &payload, inner, fail);
             }
         }
@@ -232,10 +229,7 @@ impl FnLower<'_, '_> {
                 }
             }
             PatKind::Some(p) => {
-                let TyKind::Option(inner) = self.cx.kind(ty) else {
-                    ice("Some pattern")
-                };
-                let payload = self.some_payload(place, ty);
+                let (payload, inner) = self.some_part(p, place, ty);
                 self.bind_pat(p, &payload, inner, register);
             }
             PatKind::Or(alts) => {
@@ -320,10 +314,7 @@ impl FnLower<'_, '_> {
                 }
             }
             PatKind::Some(p) => {
-                let TyKind::Option(inner) = self.cx.kind(ty) else {
-                    ice("Some pattern")
-                };
-                let payload = self.some_payload(&place, ty);
+                let (payload, inner) = self.some_part(p, &place, ty);
                 self.drop_rest(payload, inner, p);
             }
             PatKind::Array { elems, .. } => self.drop_rest_array(place, ty, elems),
@@ -377,5 +368,20 @@ fn binds_anything(p: &Pat) -> bool {
         PatKind::Array { elems, rest } => rest.is_some() || elems.iter().any(binds_anything),
         PatKind::Some(q) => binds_anything(q),
         PatKind::Wildcard | PatKind::Lit(_) | PatKind::None => false,
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// The payload place and type a `Some(p)` pattern matches in the option at `place` (of
+    /// type `ty`). When `p`'s type is the option itself (a generic `U | null` at a nullable `U`,
+    /// `TyTable::intern`), that is the whole value.
+    fn some_part(&mut self, p: &Pat, place: &Place, ty: TyId) -> (Place, TyId) {
+        if self.sub(p.ty) == ty {
+            return (place.clone(), ty);
+        }
+        let TyKind::Option(inner) = self.cx.kind(ty) else {
+            ice("Some pattern")
+        };
+        (self.some_payload(place, ty), inner)
     }
 }

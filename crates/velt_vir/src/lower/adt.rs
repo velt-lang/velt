@@ -156,6 +156,10 @@ impl FnLower<'_, '_> {
     pub(super) fn wrap_some(&mut self, inner: &hir::Expr, ty: TyId) -> Operand {
         let ty = self.sub(ty);
         let v = self.consume(inner);
+        // A generic `U` into `U | null` at a nullable `U`: the value already is the option.
+        if self.sub(inner.ty) == ty {
+            return v;
+        }
         match self.cx.ty(ty) {
             Ty::Ptr => self.own_value(v, ty),
             Ty::Bool => Operand::Const(Const::Bool(true), Ty::Bool),

@@ -1,0 +1,29 @@
+// An instance of a generic object alias is the object type it spells out (#350, deciding the
+// question #390 left open). #362 made this a compiler crash (VIR verification failed) and #390
+// a type error; both forms are now one type, and so are their readonly variants and generic
+// field-only interfaces' instances.
+type Box<T> = { v: T };
+type RoBox<T> = { readonly v: T };
+interface Pair<A, B> { first: A; second: B }
+
+function ro<T>(x: T): RoBox<T> {
+  return { v: x };
+}
+
+function main() {
+  const b: Box<number> = { v: 1 };
+  const c: { v: number } = b;
+  console.log(c.v);
+  const d: Box<number> = c;
+  d.v = 2;
+  console.log(b.v);
+  const r: { readonly v: number } = ro(3);
+  const rs: RoBox<number>[] = [r, ro(4)];
+  console.log(rs[1].v);
+  // A generic field-only interface's instance is the object type it spells out, too.
+  const p: Pair<string, number> = { first: "a", second: 2 };
+  const o: { first: string; second: number } = p;
+  const q: Pair<string, number> = o;
+  o.second = 5;
+  console.log(q.first, p.second);
+}

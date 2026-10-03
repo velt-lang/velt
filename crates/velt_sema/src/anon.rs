@@ -145,9 +145,12 @@ impl Ctx<'_> {
         }
         let twins = self.readonly_twins.clone();
         let mut cache = HashMap::new();
-        crate::readonly::erase_ty(&mut self.ty, &twins, &mut cache, a)
-            == crate::readonly::erase_ty(&mut self.ty, &twins, &mut cache, b)
-
+        // Erasure turns a generic field-only interface's instance (`Pair<string, number>`) into
+        // its generic anonymous twin applied to the arguments; canonical, that is the object type
+        // it spells out.
+        let ea = crate::readonly::erase_ty(&mut self.ty, &twins, &mut cache, a);
+        let eb = crate::readonly::erase_ty(&mut self.ty, &twins, &mut cache, b);
+        self.canon(ea) == self.canon(eb)
     }
 
     /// Are `a` and `b` anonymous defs with the same field names, in order?
@@ -285,4 +288,21 @@ impl Ctx<'_> {
         self.adt_mut(d).fields = fields;
         d
     }
+}
+
+/// `hir::Program::anon_shapes`: every concrete anonymous def lowering sees, by its (erased)
+/// fields. Defs replaced by a twin before lowering (`crate::readonly`) are left out: lowering
+/// never sees them, and a shape must not resolve to one of them.
+pub(crate) fn concrete_shapes(cx: &Ctx) -> HashMap<Vec<(String, TyId)>, DefId> {
+    let mut out = HashMap::new();
+    for (i, d) in cx.defs.iter().enumerate() {
+        let id = DefId(i as u32);
+        if let Some(crate::hir::Def::Adt(a)) = d {
+            if a.kind == AdtKind::Anon && a.generics == 0 && !cx.readonly_twins.contains_key(&id) {
+                let key = a.fields.iter().map(|f| (f.name.clone(), f.ty)).collect();
+                out.entry(key).or_insert(id);
+            }
+        }
+    }
+    out
 }

@@ -99,25 +99,9 @@ impl<'h> Cx<'h> {
         out
     }
 
-    /// Sema's anonymous def with exactly these (concrete) fields, if it made one.
-    fn concrete_anon(&mut self, key: &[(String, TyId)]) -> Option<DefId> {
-        if self.anon.concrete.is_none() {
-            let mut m = HashMap::new();
-            for (i, d) in self.hir.defs.iter().enumerate() {
-                if let hir::Def::Adt(a) = d {
-                    if a.kind == AdtKind::Anon && a.generics == 0 {
-                        let k: Vec<(String, TyId)> =
-                            a.fields.iter().map(|f| (f.name.clone(), f.ty)).collect();
-                        m.entry(k).or_insert(DefId(i as u32));
-                    }
-                }
-            }
-            self.anon.concrete = Some(m);
-        }
-        self.anon
-            .concrete
-            .as_ref()
-            .and_then(|m| m.get(key).copied())
+    /// Sema's anonymous def with exactly these (concrete) fields, if lowering sees one.
+    fn concrete_anon(&self, key: &[(String, TyId)]) -> Option<DefId> {
+        self.hir.anon_shapes.get(key).copied()
     }
 
     /// [`subst`](Self::subst) without canonicalizing.
@@ -395,6 +379,4 @@ pub(super) struct AnonShapes {
     memo: HashMap<TyId, TyId>,
     /// The type of each shape that sema has no concrete def for.
     reps: HashMap<Vec<(String, TyId)>, TyId>,
-    /// Sema's concrete anonymous defs by shape, built on first use.
-    concrete: Option<HashMap<Vec<(String, TyId)>, DefId>>,
 }
