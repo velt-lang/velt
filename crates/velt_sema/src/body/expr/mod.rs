@@ -15,6 +15,7 @@ mod coerce;
 mod construct;
 mod discriminated;
 mod dispose_call;
+mod division;
 mod errors;
 mod fn_arity;
 mod iface_call;
