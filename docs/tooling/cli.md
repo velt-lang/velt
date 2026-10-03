@@ -10,6 +10,7 @@ prints every command's options and examples.
 | `velt init` | turn the current directory into a package |
 | `velt build` | compile a file or the current package |
 | `velt run` | build and run a file or the current package |
+| `velt check [--json]` | type-check a file or the current package without building it ([`velt check`](#velt-check)) |
 | `velt dev` | run, then hot-swap or restart on every change ([`velt dev`](dev.md)) |
 | `velt test` | run the tests ([Testing](../book/testing.md)) |
 | `velt fmt` | format `.vlt` files ([Formatter](fmt.md)) |
@@ -65,6 +66,26 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelif
 - `-v` prints per-stage timings; `--timings` adds each optimizer pass and code generation step.
 - `run` exits with the program's exit code and passes arguments after `--` to the program.
   Compile errors exit with 1 and run nothing.
+
+## `velt check`
+
+```
+velt check [<file.vlt>] [--json] [--locked] [-v]
+```
+
+Parses and type-checks a file or the current package, with every file it imports, and prints
+the diagnostics like `velt build`, but builds nothing, so it answers in tens of milliseconds.
+It exits with 0 when there are no errors (warnings are allowed) and with 1 when there are.
+
+- A **library module** needs no `main`: `velt check lib.vlt` checks every function in it,
+  including exported functions nothing calls. `velt build` and `velt run` still require `main`.
+- In a package, `velt check` checks the package's entry (default `src/main.vlt`), or
+  `src/lib.vlt` in a library package.
+- `--json` prints one JSON document on stdout instead, for editors and other tools:
+  `{"diagnostics": [...], "errors": n, "warnings": n}`, each diagnostic with its `severity`,
+  `message`, `location` (`file`, 1-based `line`/`column`, `endLine`/`endColumn`), further
+  `labels` and `notes`.
+- `-v` prints per-stage timings.
 
 ## `velt new` and `velt init`
 

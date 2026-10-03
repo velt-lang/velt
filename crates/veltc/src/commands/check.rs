@@ -1,11 +1,13 @@
 //! `velt check`: the front end only (load, parse, sema) on a file or the current package, for
 //! fast feedback while editing and for tools (`--json`). Nothing is lowered, compiled or linked.
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use serde_json::{json, Value};
 use velt_common::{Diagnostic, Severity, SourceMap, Span};
 
+use super::project::Project;
 use crate::cli::{BuildArgs, CheckArgs, Emit};
 use crate::driver::{self, BuildError, Session};
 
@@ -32,20 +34,53 @@ pub fn check_command(args: &CheckArgs) -> ExitCode {
     }
 }
 
-/// The file (inside its package, if any) or the current package's entry, resolved like
+/// The file (inside its package, if any) or the current package's root module, resolved like
 /// `velt build` (package dependencies are installed if needed).
 fn resolve(args: &CheckArgs) -> Result<driver::BuildOptions, BuildError> {
-    if let Some(file) = &args.input {
-        super::project::check_input_file(file).map_err(BuildError::Failed)?;
-    }
+    let input = match &args.input {
+        Some(file) => {
+            super::project::check_input_file(file).map_err(BuildError::Failed)?;
+            file.clone()
+        }
+        None => package_root_module().map_err(BuildError::Failed)?,
+    };
     let build = BuildArgs {
-        input: args.input.clone(),
+        input: Some(input),
         locked: args.locked,
         // No backend is resolved for IR output: checking needs neither clang nor a linker.
         emit: Emit::Vir,
         ..Default::default()
     };
     super::build::build_options(&build).map_err(BuildError::Failed)
+}
+
+/// The module `velt check` checks in the current package: its runnable entry (`package.entry`,
+/// default `src/main.vlt`), or `src/lib.vlt` for a library package (one without a configured
+/// entry and without `src/main.vlt`). A configured entry that is missing is an error, as for
+/// `velt build`.
+fn package_root_module() -> Result<PathBuf, String> {
+    let root = Project::current_root()?;
+    let manifest = vpm::Manifest::from_dir(&root)?;
+    let entry = root.join(&manifest.package.entry);
+    let lib = root.join(vpm::manifest::LIB_ENTRY);
+    let default_entry = manifest.package.entry == vpm::manifest::DEFAULT_ENTRY;
+    if entry.is_file() {
+        Ok(entry)
+    } else if !default_entry {
+        Err(format!(
+            "package `{}` has no `{}` to check",
+            manifest.package.name, manifest.package.entry
+        ))
+    } else if lib.is_file() {
+        Ok(lib)
+    } else {
+        Err(format!(
+            "package `{}` has neither `{}` nor `{}` to check",
+            manifest.package.name,
+            manifest.package.entry,
+            vpm::manifest::LIB_ENTRY
+        ))
+    }
 }
 
 /// `{"diagnostics": [...], "errors": n, "warnings": n}`; a non-source failure (unreadable root,

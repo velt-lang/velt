@@ -24,7 +24,7 @@ helper), and explain it in your final report.
 velt build main.vlt
   └─ driver (veltc): load main.vlt, follow imports, SourceMap
       ├─ velt_syntax::parse_file       per file      → ast::Module
-      ├─ velt_sema::check              whole program → hir::Program
+      ├─ velt_sema::check              whole program → hir::Program (check_with: library roots)
       ├─ velt_vir::lower_with (+ verify)              → vir::Program (with source locations)
       ├─ velt_codegen_cl::emit_object                 → main.o / main.obj
       └─ velt_link::link  (+ velt_rt staticlib)       → executable
