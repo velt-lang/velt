@@ -311,7 +311,40 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   (`u.tags.push(x)` is fine). A value converts between a type and the same type without
   `readonly`, in both directions, and stays the same object.
 - **Spread**: `{ ...a, b: 1 }` builds a merged object at compile time (later keys win);
-  `[x, ...xs]` builds a new array. Spread arguments, `f(...xs)`, are not supported.
+  `[x, ...xs]` builds a new array, converting each element to the expected element type
+  (`const ns: Named[] = [...cs]`). Spread arguments, `f(...xs)`, are not supported.
+- **Wider element types**: an array, object type or generic class converts to the same type
+  with wider elements (`C[]` to `Named[]` for a class `C implements Named`, `i64[]` to
+  `(i64 | null)[]`, `Box<C>` to `Box<Named>`) only when the value is **fresh**: a call result,
+  a `new` expression or a literal. The conversion builds a new value with each element
+  converted. TypeScript also converts an existing array, which is unsound: storing a `Named`
+  that is not a `C` through the `Named[]` would put it into the `C[]`. Velt reports that and
+  suggests a copy, `[...cs]` or `cs.map((x): Named => x)`. A generic class converts only when
+  it has no base class, no subclasses and no `[Symbol.dispose]()`; the new object shares the
+  old one's field values.
+
+  ```ts
+  interface Named {
+    name(): string;
+  }
+
+  class C implements Named {
+    name(): string {
+      return "c";
+    }
+  }
+
+  function make(): C[] {
+    return [new C()];
+  }
+
+  function main() {
+    const ns: Named[] = make(); // a fresh C[]: converted
+    const cs = make();
+    const copy: Named[] = [...cs]; // `const ns2: Named[] = cs;` is an error
+    console.log(ns.length, copy.length); // 1 1
+  }
+  ```
 - **Destructuring**: `const [a, b] = pair;`, `const [head, ...rest] = xs;`,
   `const { a, b } = obj;`, and `for (const [k, v] of map)`. Defaults inside patterns and
   parameter patterns are not supported. Array destructuring checks the length like indexing: a

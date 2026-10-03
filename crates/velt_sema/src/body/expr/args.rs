@@ -10,6 +10,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::ops::untyped;
+use super::widen_fresh::is_fresh;
 use crate::body::{FnCx, Want};
 use crate::defs::{Bound, ParamSig};
 use crate::hir::{self, PassMode, TyId, TyKind};
@@ -97,6 +98,7 @@ impl FnCx<'_, '_> {
         }
         let checked = self.args_in_rounds(c, &mut slots, &context, args);
         if let Some(e) = exp {
+            self.prefer_context(c, &mut slots, &context, &checked, e);
             self.cx.match_ty(c.ret, e, &mut slots);
         }
         // An argument that is already an error (reported) leaves its slots unknown: no second
@@ -165,6 +167,43 @@ impl FnCx<'_, '_> {
         out.into_iter()
             .map(|h| h.expect("ICE: arg checked"))
             .collect()
+    }
+
+    /// Slots the arguments fixed to a type narrower than the expected result's take the expected
+    /// type when the result would not convert otherwise and every argument converts to it:
+    /// `const ns: Named[] = wrap(new C())` instantiates `T = Named` (#268).
+    fn prefer_context(
+        &mut self,
+        c: &Callable,
+        slots: &mut [Option<TyId>],
+        context: &[Option<TyId>],
+        args: &[hir::Expr],
+        exp: TyId,
+    ) {
+        let ret = self.cx.ty.subst_known(c.ret, slots);
+        if self.converts_to(ret, exp) {
+            return;
+        }
+        let mut wider = slots.to_vec();
+        for (k, (s, ctx)) in slots.iter().zip(context).enumerate() {
+            let (Some(at), Some(ct)) = (*s, *ctx) else {
+                continue;
+            };
+            let unbounded = c.bounds.get(k).is_none_or(|b| b.is_empty());
+            if at != ct && unbounded && !self.cx.ty.has_error(ct) && self.converts_to(at, ct) {
+                wider[k] = Some(ct);
+            }
+        }
+        if wider == slots {
+            return;
+        }
+        for (h, p) in args.iter().zip(&c.params) {
+            let target = self.cx.ty.subst_known(p.ty, &wider);
+            if !self.converts_to(h.ty, target) && !(is_fresh(h) && self.widens(h.ty, target)) {
+                return;
+            }
+        }
+        slots.copy_from_slice(&wider);
     }
 
     /// An untyped number argument (`0` in `xs.reduce((a, x) => a + x, 0)`) whose parameter is

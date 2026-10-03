@@ -7,8 +7,9 @@
 //!   class instance or a projected place is copied from (Copy fields) or cloned (the others);
 //!   any other value is bound to a temporary first. Fields private to another type are skipped.
 //! - **Array spread** `[a, ...xs, b]` →
-//!   `{ let out = with_capacity(len); out.push(a); for (e of xs) out.push(e.clone()); ...; out }`
-//!   (Copy elements are copied instead of cloned).
+//!   `{ let out = with_capacity(len); out.push(a); for (e of xs) out.push(<share of e>); ...; out }`
+//!   (Copy elements are copied), each element converted to the literal's element type
+//!   (`const ns: Named[] = [...cs]` makes interface values of the `C`s).
 //!
 //! Spread sources are evaluated before the other elements of the literal.
 
@@ -253,7 +254,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let mut lets = vec![];
-        let mut sources: Vec<Option<hir::Expr>> = vec![];
+        let mut sources: Vec<Option<(hir::Expr, TyId)>> = vec![];
         let mut elem = exp_elem;
         for e in elems {
             let ast::ExprKind::Spread(inner) = &e.kind else {
@@ -279,7 +280,7 @@ impl FnCx<'_, '_> {
                 self.temp("<spread>", h, &mut lets)
             };
             set_place_mode(&mut src, UseMode::Borrow);
-            sources.push(Some(src));
+            sources.push(Some((src, et)));
         }
         let Some(elem) = elem else {
             return self.error_expr(span);
@@ -297,7 +298,7 @@ impl FnCx<'_, '_> {
         });
         for (e, src) in elems.iter().zip(sources) {
             let stmt = match (src, &e.kind) {
-                (Some(src), _) => self.push_all(out_l, arr_ty, src, elem, e.span),
+                (Some((src, et)), _) => self.push_all(out_l, arr_ty, src, (et, elem), e.span),
                 (None, ast::ExprKind::Spread(_)) => continue,
                 (None, _) => {
                     let v = self.expr_coerce(e, elem, Want::Move);
@@ -314,7 +315,7 @@ impl FnCx<'_, '_> {
     fn spread_capacity(
         &mut self,
         elems: &[ast::Expr],
-        sources: &[Option<hir::Expr>],
+        sources: &[Option<(hir::Expr, TyId)>],
         span: Span,
     ) -> hir::Expr {
         let usize_ = self.cx.ty.usize;
@@ -323,7 +324,7 @@ impl FnCx<'_, '_> {
             .filter(|e| !matches!(e.kind, ast::ExprKind::Spread(_)))
             .count();
         let mut cap = self.mk(H::Lit(hir::Lit::Int(plain as u128)), usize_, span);
-        for src in sources.iter().flatten() {
+        for (src, _) in sources.iter().flatten() {
             let len = self.intrinsic(Intrinsic::ArrayLen, vec![src.clone()], usize_, span);
             let kind = H::Binary {
                 op: BinOp::Add,
@@ -346,15 +347,17 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `for (const e of src) out.push(e / e.clone());`
+    /// `for (const e of src) out.push(e / share of e);`, each element converted from the
+    /// source's element type to the literal's (`(from, to)` in `elems`).
     fn push_all(
         &mut self,
         out: hir::LocalId,
         arr_ty: TyId,
         src: hir::Expr,
-        elem: TyId,
+        elems: (TyId, TyId),
         span: Span,
     ) -> hir::Stmt {
+        let (elem, to) = elems;
         let copy = self.cx.is_copy(elem);
         let mode = if copy { UseMode::Copy } else { UseMode::Borrow };
         let e = self.new_local("<elem>", elem, false, span, LocalKind::Elem);
@@ -364,6 +367,7 @@ impl FnCx<'_, '_> {
         } else {
             self.intrinsic(Intrinsic::Share, vec![read], elem, span)
         };
+        let value = self.coerce(value, to);
         let push = self.push_stmt(out, arr_ty, value);
         let binding = Pat {
             kind: PatKind::Binding(e, mode),

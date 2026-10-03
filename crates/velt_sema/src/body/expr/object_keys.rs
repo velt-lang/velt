@@ -134,7 +134,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The subclasses of class type `t`, deepest first (`None`: not a class, or no subclasses).
-    fn class_subclasses(&self, t: TyId) -> Option<Vec<DefId>> {
+    pub(super) fn class_subclasses(&self, t: TyId) -> Option<Vec<DefId>> {
         let (d, _) = self.cx.class_of(t)?;
         let mut subs: Vec<(usize, DefId)> = (0..self.cx.info.len() as u32)
             .map(DefId)

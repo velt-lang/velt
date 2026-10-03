@@ -84,7 +84,11 @@ inferred or given explicitly (`f<f64>(2)`). Bounds are interfaces
 Type arguments are inferred from the arguments first and, as in TypeScript, from the expected
 type of the call (an annotated variable, a return statement, a typed parameter) second. The
 expected type types the arguments of type parameters it fixes, before an untyped number
-literal falls back to `i64`; where an argument's own type disagrees, the argument decides:
+literal falls back to `i64`; where an argument's own type disagrees, the argument decides,
+unless the result would then not convert to the expected type: a type parameter the arguments
+fixed to a type that converts to the expected one takes the expected one, and the arguments
+convert to it (`const ns: Named[] = wrap(new C())` calls `wrap<Named>`;
+`const ps: (i64 | null)[] = pair(1, 2)` calls `pair<i64 | null>`):
 
 ```ts
 import { Set } from "velt:collections/set";

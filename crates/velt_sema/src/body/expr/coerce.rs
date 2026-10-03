@@ -4,7 +4,8 @@
 //! → `string`, subclass → base class (`Upcast`), concrete type → interface value (`ToDyn`,
 //! moves the value), inferred integer → float (`expr::numbers`), `never` → anything, and
 //! `Promise<T, E1>` → `Promise<T, E2>` when `E2` allows every error of `E1` (`never` included:
-//! `Promise<T>` → `Promise<T, E>`; `Intrinsic::PromiseWiden`).
+//! `Promise<T>` → `Promise<T, E>`; `Intrinsic::PromiseWiden`), `T | null` → `U | null` when `T`
+//! converts to `U`, and a fresh array or object to a wider one (`widen_fresh`).
 
 use velt_common::Diagnostic;
 
@@ -42,8 +43,10 @@ impl FnCx<'_, '_> {
             return Ok(self.mk(call, exp, span));
         }
         if let Some(inner) = self.cx.ty.opt_payload(exp) {
-            if self.cx.ty.opt_payload(h.ty).is_some() && self.cx.union_def(inner).is_some() {
-                return self.option_to_union(h, exp);
+            if self.cx.ty.opt_payload(h.ty).is_some()
+                && (self.cx.union_def(inner).is_some() || !self.cx.same_layout(h.ty, exp))
+            {
+                return self.option_to_option(h, exp);
             }
             if self.cx.ty.opt_payload(h.ty).is_none() {
                 let span = h.span;
@@ -73,7 +76,7 @@ impl FnCx<'_, '_> {
             return Ok(self.string_enum_to_str(h));
         }
         if self.cx.class_of(exp).is_some() && self.cx.class_of(h.ty).is_some() {
-            return self.upcast(h, exp);
+            return self.upcast(h, exp).or_else(|h| self.widen_fresh(h, exp));
         }
         if self.cx.same_layout(h.ty, exp) {
             // Object types that differ only in `readonly`: the same object, seen through the
@@ -87,7 +90,7 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_float(exp) && self.is_inferred_int(&h) {
             return Ok(self.int_to_float(h, exp));
         }
-        Err(h)
+        self.widen_fresh(h, exp)
     }
 
     /// Types equal up to `Error` components (an expected type with unknown parts).
@@ -185,6 +188,9 @@ impl FnCx<'_, '_> {
     }
 
     pub fn report_mismatch(&mut self, expected: TyId, found: &hir::Expr) {
+        if self.shared_widening_error(expected, found) {
+            return;
+        }
         let e = self.cx.display(expected);
         let f = self.cx.display(found.ty);
         let mut d = Diagnostic::error("mismatched types", found.span)

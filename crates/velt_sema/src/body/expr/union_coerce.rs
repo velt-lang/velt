@@ -166,9 +166,9 @@ impl FnCx<'_, '_> {
         (bind, self.mk(H::Local(b, mode), m, span))
     }
 
-    /// `T | null` → `U | null` for a union `U` that `T` converts to:
-    /// `match (h) { Some(v) => Some(<v as U>), null => null }`.
-    pub(super) fn option_to_union(
+    /// `T | null` → `U | null` for a type `U` that `T` converts to (a union, an interface, a
+    /// base class, ...): `match (h) { Some(v) => Some(<v as U>), null => null }`.
+    pub(super) fn option_to_option(
         &mut self,
         h: hir::Expr,
         exp: TyId,
