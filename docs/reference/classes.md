@@ -315,7 +315,8 @@ separately (monomorphization): no boxing, and bounds resolve to direct calls. Bo
 interfaces (an interface with only fields is satisfied by any type with its fields), not object
 types. Classes, structs, interfaces and type aliases may give type parameters **defaults**
 (`interface Iterator<T, E = never>`), used when a type leaves the argument out (`Iterator<i64>`
-is `Iterator<i64, never>`); functions and methods cannot. As in TypeScript, a default
+is `Iterator<i64, never>`) and when nothing infers it in a `new` (`new D(1)` of
+`class D<T = i64>` is a `D<i64>`); functions and methods cannot. As in TypeScript, a default
 may use only the parameters declared before it, and must not need its own declaration's
 defaults again (``type parameter `T` has a circular default`` for `class S<T = S>`).
 

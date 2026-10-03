@@ -109,6 +109,7 @@ impl FnCx<'_, '_> {
             bounds: f.generics.bounds.clone(),
             js_numbers,
             rest,
+            defaults: vec![],
         };
         if async_call {
             c.ret = self.async_call_ret(d, c.ret);
@@ -222,6 +223,7 @@ impl FnCx<'_, '_> {
             bounds: vec![],
             js_numbers: false,
             rest: false,
+            defaults: vec![],
         };
         let ck = self.check_call(&c, vec![], args, None, span);
         if throws != self.cx.ty.never {

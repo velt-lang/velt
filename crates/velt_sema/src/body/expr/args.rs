@@ -28,6 +28,9 @@ pub(crate) struct Callable {
     /// The last parameter is a rest parameter (`...xs: T[]`): the remaining arguments, spreads
     /// included, become one array literal.
     pub rest: bool,
+    /// Per slot, its default (`new D(1)` of `class D<T = i64>`: in terms of the slots before
+    /// it), used when nothing infers the slot, as in TS; empty when there are none.
+    pub defaults: Vec<Option<TyId>>,
 }
 
 /// Checked arguments, the instantiated result type and the inferred type arguments.
@@ -119,6 +122,7 @@ impl FnCx<'_, '_> {
         // An argument that is already an error (reported) leaves its slots unknown: no second
         // error about inferring them.
         let quiet = checked.iter().any(|h| h.ty == self.cx.ty.error);
+        self.default_slots(c, &mut slots);
         let type_args = self.solve_slots(c, &slots, quiet, span);
         let mut hargs = vec![];
         for (h, p) in checked.into_iter().zip(&c.params) {
@@ -215,6 +219,7 @@ impl FnCx<'_, '_> {
             bounds: c.bounds.clone(),
             js_numbers: c.js_numbers,
             rest: false,
+            defaults: c.defaults.clone(),
         };
         let mut ck = self.check_call(&packed, slots, args, exp, span);
         if ck.args.is_empty() {
@@ -396,6 +401,22 @@ impl FnCx<'_, '_> {
             out.push(t);
         }
         out
+    }
+
+    /// Slots nothing inferred take their defaults (while the slots before them are known).
+    fn default_slots(&mut self, c: &Callable, slots: &mut [Option<TyId>]) {
+        for k in 0..slots.len() {
+            let Some(Some(d)) = c.defaults.get(k) else {
+                continue;
+            };
+            if slots[k].is_some() {
+                continue;
+            }
+            let Some(before) = slots[..k].iter().copied().collect::<Option<Vec<TyId>>>() else {
+                break;
+            };
+            slots[k] = Some(self.cx.ty.subst(*d, &before));
+        }
     }
 
     /// One error naming every type parameter of `c` that no argument or expected type fixed.

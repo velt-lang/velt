@@ -92,6 +92,23 @@ impl Ctx<'_> {
         args
     }
 
+    /// The defaults of class `d`'s type parameters (in terms of the ones before each), for
+    /// slots a `new` leaves to inference.
+    pub(crate) fn adt_param_defaults(&mut self, d: DefId) -> Vec<Option<TyId>> {
+        let decl = match &self.info[d.0 as usize] {
+            DefInfo::Adt(a) => a.decl.map(|x| (a.module, &x.generics[..])),
+            _ => None,
+        };
+        let Some((module, gs)) = decl else {
+            return vec![];
+        };
+        if gs.iter().all(|g| g.default.is_none()) {
+            return vec![];
+        }
+        self.param_defaults(DefaultsOf::Def(d), module, gs)
+            .unwrap_or_default()
+    }
+
     /// The defaults of `gs` (module docs); `None` while they are being resolved (a circular
     /// default, reported here).
     fn param_defaults(

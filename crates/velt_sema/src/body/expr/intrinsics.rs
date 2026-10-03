@@ -110,6 +110,7 @@ impl FnCx<'_, '_> {
             slot_names,
             js_numbers: false,
             rest: false,
+            defaults: vec![],
         }
     }
 

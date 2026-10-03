@@ -236,6 +236,7 @@ impl FnCx<'_, '_> {
             bounds: vec![vec![]; n],
             js_numbers: false,
             rest: false,
+            defaults: vec![],
         };
         let ck = self.check_call(&c, vec![None; n], args, self.hint(exp), span);
         let kind = H::Variant {
