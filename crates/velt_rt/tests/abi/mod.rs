@@ -18,3 +18,6 @@ mod net;
 mod perf;
 mod strings;
 mod text_perf;
+mod utf16_model;
+mod utf16_props;
+mod utf16_table;
