@@ -36,8 +36,9 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
   such as `push` are not marked), which you can style.
 - **Quick fixes** for compiler errors: remove `mut`, replace `undefined` with `null`, turn
   `"a" + n` into a template literal, turn `if (count)` into `if (count !== 0)` (or `!== ""`,
-  `!== null`, `!== 0.0`, by type), replace `export default` with a named export, and add `await`
-  or `spawn(...)` to a floating promise. A fix that applies in several places is also offered as
+  `!== null`, `!== 0.0`, by type), replace `export default` with a named export, add `await`
+  or `spawn(...)` to a floating promise, and add `async` to a method whose promise must carry
+  its errors. A fix that applies in several places is also offered as
   "Fix all in file", and **Fix all** (`source.fixAll`, e.g. on save) applies every preferred
   fix of the file.
 

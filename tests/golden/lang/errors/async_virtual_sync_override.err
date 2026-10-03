@@ -1,0 +1,3 @@
+async_virtual_sync_override.vlt:5:3: error: `Source.read` must be `async`: `Source.read` and its overrides return a promise that rejects with `Error`
+async_virtual_sync_override.vlt:23:12: error: `Idle.run` must be `async`: `Machine.run` and its overrides return a promise that rejects with `Error`
+  = note: mark it `async run(...)`

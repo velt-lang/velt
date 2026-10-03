@@ -5,9 +5,9 @@
 //!
 //! A group's error type is the interface method's (or the base method's) `throws` clause when
 //! written — the implementations may throw only what it allows — else the union of what the
-//! members throw (inferred). For an interface method returning a promise it is what the promises
-//! reject with (implemented by async methods), as for async functions. Group error types cannot
-//! mention type parameters (every member would see them differently).
+//! members throw (inferred). For an interface method or a base class method returning a promise
+//! it is what the promises reject with (implemented by async methods), as for async functions.
+//! Group error types cannot mention type parameters (every member would see them differently).
 
 use std::collections::HashMap;
 
@@ -36,10 +36,13 @@ pub(crate) struct GroupBound {
 pub(crate) struct Group {
     pub members: Vec<DefId>,
     pub bound: Option<GroupBound>,
-    /// It holds an interface method returning a promise: its error type is what the promises
-    /// reject with, and calling an entry never throws (async members; a synchronous member may
-    /// only forward to an async one).
+    /// It holds an interface method or a vtable slot returning a promise: its error type is
+    /// what the promises reject with, and calling an entry never throws (async members; a
+    /// synchronous member may only forward to an async one).
     pub promise: bool,
+    /// The base class method whose vtable slot made this a promise group, when no interface
+    /// method did (for messages).
+    pub promise_base: Option<DefId>,
 }
 
 /// Every dispatch group of the program.
@@ -111,7 +114,7 @@ pub(crate) fn build(cx: &mut Ctx) -> Groups {
     };
     let mut bounds: Vec<(Node, GroupBound)> = vec![];
     link_interfaces(cx, &mut uf, &mut bounds);
-    link_vtables(cx, &mut uf, &mut bounds);
+    let promise_roots = link_vtables(cx, &mut uf, &mut bounds);
     let mut groups = Groups::default();
     let mut by_root: HashMap<usize, usize> = HashMap::new();
     for i in 0..uf.nodes.len() {
@@ -135,6 +138,13 @@ pub(crate) fn build(cx: &mut Ctx) -> Groups {
                     groups.list[g].promise = true;
                 }
             }
+        }
+    }
+    for root in promise_roots {
+        let g = &mut groups.list[groups.of[&root]];
+        if !g.promise {
+            g.promise = true;
+            g.promise_base = Some(root);
         }
     }
     for (n, b) in bounds {
@@ -208,7 +218,14 @@ fn link_interfaces(cx: &mut Ctx, uf: &mut UnionFind, bounds: &mut Vec<(Node, Gro
     }
 }
 
-fn link_vtables(cx: &mut Ctx, uf: &mut UnionFind, bounds: &mut Vec<(Node, GroupBound)>) {
+/// Link every vtable slot's base method with its overrides; returns the base methods (slots a
+/// class introduces) that return a promise.
+fn link_vtables(
+    cx: &mut Ctx,
+    uf: &mut UnionFind,
+    bounds: &mut Vec<(Node, GroupBound)>,
+) -> Vec<DefId> {
+    let mut promise_roots = vec![];
     for i in 0..cx.info.len() {
         let DefInfo::Adt(a) = &cx.info[i] else {
             continue;
@@ -228,8 +245,13 @@ fn link_vtables(cx: &mut Ctx, uf: &mut UnionFind, bounds: &mut Vec<(Node, GroupB
                         let owner = cx.fn_info(m).name.clone();
                         bounds.push((Node::Def(m), GroupBound { decl, owner }));
                     }
+                    let ret = cx.try_fn(m).map(|f| f.ret);
+                    if ret.is_some_and(|t| cx.ty.promise_payload(t).is_some()) {
+                        promise_roots.push(m);
+                    }
                 }
             }
         }
     }
+    promise_roots
 }

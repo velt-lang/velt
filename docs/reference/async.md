@@ -112,7 +112,9 @@ can reject with: `Promise<T, E>` (a `Promise<T>` never rejects).
   promise (`load(id: string): Promise<User> throws NotFound`, or `Promise<User, NotFound>`):
   calling it through the interface returns a `Promise<User, NotFound>`, and its
   implementations are `async` methods (a synchronous one may return a promise only when the
-  method's promise cannot reject). A default body of such a method can be `async` too:
+  method's promise cannot reject). The same holds for a class method returning a promise that
+  a subclass overrides: the base method and every override are `async` when any of them can
+  fail. A default body of such an interface method can be `async` too:
 
 ```ts
 class NotFound extends Error {}

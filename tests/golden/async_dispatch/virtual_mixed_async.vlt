@@ -1,0 +1,75 @@
+// check: no leaks
+// A method returning a promise that is synchronous in one class and `async` in another, called
+// through the base class (#259): the promise carries the errors of every override, so the
+// synchronous ones are those that cannot fail. Both directions, and a three-level hierarchy.
+class Jammed extends Error {}
+
+class Source {
+  name: string = "a source name long enough to live on the heap";
+
+  read(n: i64): Promise<string> {
+    return new Promise<string>((resolve, reject) => resolve(`source ${n}`));
+  }
+}
+
+class SlowSource extends Source {
+  override async read(n: i64): Promise<string> {
+    await sleep(1);
+    return `slow ${this.name.length} ${n}`;
+  }
+}
+
+class CachedSource extends SlowSource {
+  override read(n: i64): Promise<string> {
+    return new Promise<string>((resolve, reject) => resolve(`cached ${n}`));
+  }
+}
+
+class Machine {
+  runs: i64 = 0;
+
+  async run(n: i64): Promise<i64> {
+    this.runs += n;
+    return this.runs;
+  }
+}
+
+class Idle extends Machine {
+  override run(n: i64): Promise<i64> {
+    return new Promise<i64>((resolve, reject) => resolve(-n));
+  }
+}
+
+class Press {
+  async press(n: i64): Promise<i64> throws Jammed {
+    if (n > 2) {
+      throw new Jammed("jammed");
+    }
+    return n;
+  }
+}
+
+class GentlePress extends Press {
+  override async press(n: i64): Promise<i64> throws Jammed {
+    return n * 10;
+  }
+}
+
+async function main() {
+  const sources: Source[] = [new Source(), new SlowSource(), new CachedSource()];
+  for (const s of sources) {
+    console.log(await s.read(3));
+  }
+  const machines: Machine[] = [new Machine(), new Idle(), new Machine()];
+  for (const m of machines) {
+    console.log(await m.run(4));
+  }
+  const presses: Press[] = [new Press(), new GentlePress()];
+  for (const p of presses) {
+    try {
+      console.log(await p.press(3));
+    } catch (e) {
+      console.log(`rejected: ${e.message}`);
+    }
+  }
+}

@@ -4,7 +4,7 @@
 
 use velt_common::{Diagnostic, Span};
 
-use super::groups::Groups;
+use super::groups::{Group, Groups};
 use super::infer::{member_final, own_final, src_final};
 use super::ThrowCheck;
 use crate::ctx::Ctx;
@@ -35,7 +35,7 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
             None => generic_group(cx, &g.members),
         }
         if g.promise {
-            sync_promise_members(cx, &g.members);
+            sync_promise_members(cx, g);
         }
     }
     let checks = std::mem::take(&mut cx.throw_checks);
@@ -46,8 +46,9 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
 
 /// A promise group's errors are what its promises reject with: a written synchronous member
 /// would throw them instead (forwarders synthesized for async methods are fine).
-fn sync_promise_members(cx: &mut Ctx, members: &[DefId]) {
-    for &m in members {
+fn sync_promise_members(cx: &mut Ctx, g: &Group) {
+    let base = g.promise_base.map(|b| short_name(&cx.fn_info(b).name));
+    for &m in &g.members {
         let f = cx.fn_info(m);
         if f.is_async || f.source.is_none() {
             continue;
@@ -56,13 +57,20 @@ fn sync_promise_members(cx: &mut Ctx, members: &[DefId]) {
         let (name, at) = (short_name(&f.name), f.name_span);
         let method = name.rsplit('.').next().unwrap_or(&name).to_string();
         let en = cx.display(e);
+        let (why, how) = match &base {
+            None => (
+                "it implements an interface method whose promise rejects with".to_string(),
+                "a method returning a promise from an interface reports its errors through the promise, which only an `async` method does",
+            ),
+            Some(b) => (
+                format!("`{b}` and its overrides return a promise that rejects with"),
+                "an overridable method returning a promise reports its errors through the promise, which only an `async` method does",
+            ),
+        };
         cx.error(
-            Diagnostic::error(
-                format!("`{name}` must be `async`: it implements an interface method whose promise rejects with `{en}`"),
-                at,
-            )
-            .with_note("a method returning a promise from an interface reports its errors through the promise, which only an `async` method does")
-            .with_note(format!("mark it `async {method}(...)`")),
+            Diagnostic::error(format!("`{name}` must be `async`: {why} `{en}`"), at)
+                .with_note(how)
+                .with_note(format!("mark it `async {method}(...)`")),
         );
     }
 }

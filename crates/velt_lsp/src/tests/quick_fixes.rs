@@ -135,6 +135,54 @@ fn replaces_void_zero_and_an_undefined_type_with_null() {
 }
 
 #[test]
+fn makes_a_promise_returning_override_async() {
+    let text = "class Machine {
+  async run(): Promise<i64> {
+    throw new Error(\"jammed\");
+  }
+}
+
+class Idle extends Machine {
+  override run(): Promise<i64> {
+    return new Promise<i64>((resolve, reject) => resolve(0));
+  }
+}
+
+async function main() {
+  const m: Machine = new Idle();
+  try {
+    console.log(await m.run());
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+";
+    let (mut client, doc, diags) = open("fix_async.vlt", text);
+    let offered = actions(
+        &mut client,
+        &doc,
+        text,
+        "run(): Promise<i64> {
+    return",
+        &diags,
+    );
+    let fixed = apply(text, find(&offered, "Add `async`"), &doc);
+    assert!(
+        fixed.contains("override async run(): Promise<i64>"),
+        "{fixed}"
+    );
+    // The body may need adapting to `async`; the rule itself is satisfied.
+    let errors = errors_after(&mut client, &doc, &fixed);
+    assert!(
+        !errors
+            .iter()
+            .any(|e| e["message"].as_str().unwrap().contains("must be `async`")),
+        "{errors:?}"
+    );
+    client.shutdown();
+}
+
+#[test]
 fn converts_string_concatenation_to_a_template_literal() {
     let text = "function main() {\n  const n = 3;\n  const s = 1 + n + \"a`\" + n + \"!\";\n  console.log(s);\n}\n";
     let (mut client, doc, diags) = open("fix_concat.vlt", text);
