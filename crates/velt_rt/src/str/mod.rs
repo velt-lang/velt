@@ -462,6 +462,18 @@ impl VeltStr {
         self.push_with_summary(f, |_| None);
     }
 
+    /// [`Self::push_with`] for text `f` writes as ASCII (escaped JSON of an ASCII string).
+    ///
+    /// # Safety
+    /// `self` must be valid, and `f` must write only ASCII.
+    pub unsafe fn push_with_ascii(&mut self, f: impl FnOnce(&mut Vec<u8>)) {
+        let mut scratch = SCRATCH.with(|s| std::mem::take(&mut *s.borrow_mut()));
+        scratch.clear();
+        f(&mut scratch);
+        self.push_ascii(&scratch);
+        SCRATCH.with(|s| *s.borrow_mut() = scratch);
+    }
+
     /// [`Self::push_with`] for a writer whose output's summary follows from what it wrote (its
     /// length): `summary` gives it, or `None` to have it counted.
     ///

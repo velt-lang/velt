@@ -41,6 +41,47 @@ impl VeltStr {
         invariants::check_whole(self);
     }
 
+    /// [`Self::push_wtf8`] of ASCII text (literal chunks, numbers, keywords, escaped JSON): the
+    /// common builder path. Its summary is known, nothing can join, and the counts are updated
+    /// before the copy, so nothing stays live across it.
+    ///
+    /// # Safety
+    /// `self` must be valid and `bytes` ASCII; `bytes` may lie in `self`'s own heap buffer as for
+    /// [`Self::push_wtf8`].
+    #[inline(always)]
+    pub unsafe fn push_ascii(&mut self, bytes: &[u8]) {
+        let n = bytes.len();
+        debug_assert!(bytes.is_ascii());
+        let tag = self.tag();
+        if tag & INLINE == 0 {
+            let len = self.w1 as u32 as usize;
+            if self.w2 != 0 && len + n <= self.w2 as usize && heap::is_unique(self.ptr()) {
+                let dst = self.ptr().add(len);
+                // One byte and one unit per character.
+                self.w1 += n as u64 * 0x1_0000_0001;
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, n);
+                return;
+            }
+        } else if tag & NON_ASCII == 0 {
+            let len = (tag & INLINE_LEN) as usize;
+            if len + n <= INLINE_MAX {
+                let p = self as *mut VeltStr as *mut u8;
+                *p.add(INLINE_MAX) = INLINE | (len + n) as u8;
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), p.add(len), n);
+                return;
+            }
+        }
+        self.push_ascii_slow(bytes);
+    }
+
+    /// [`Self::push_ascii`] when the text doesn't fit in place (out of line, so the fast path
+    /// saves no registers).
+    #[cold]
+    #[inline(never)]
+    unsafe fn push_ascii_slow(&mut self, bytes: &[u8]) {
+        self.push_wtf8(bytes, Some(Summary::ascii(bytes.len())));
+    }
+
     /// [`Self::push_wtf8`] of a piece with lone surrogates, which may join the end of `self`.
     #[cold]
     #[inline(never)]

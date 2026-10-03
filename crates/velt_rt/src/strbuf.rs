@@ -63,7 +63,7 @@ unsafe fn push_counted(buf: *mut VeltStrBuf, text: &[u8]) {
 /// Append ASCII text (numbers, keywords): its summary is known, so nothing is counted.
 #[inline(always)]
 unsafe fn push_ascii(buf: *mut VeltStrBuf, text: &[u8]) {
-    (*buf).push_wtf8(text, Some(Summary::ascii(text.len())));
+    (*buf).push_ascii(text);
 }
 
 /// Append a decimal `i64`.
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_json_str(buf: *mut VeltStrBuf, s: *
     // (into ASCII), so the output has the input's units plus one per added byte.
     let write = |b: &mut Vec<u8>| push_json_string(b, (*s).as_bytes());
     if (*s).is_ascii() {
-        return (*buf).push_with_summary(write, |out| Some(Summary::ascii(out)));
+        return (*buf).push_with_ascii(write);
     }
     let (len, sum) = ((*s).len(), (*s).summary());
     (*buf).push_with_summary(write, |out| {
