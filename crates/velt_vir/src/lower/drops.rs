@@ -172,17 +172,22 @@ impl FnLower<'_, '_> {
         let info = &self.info[id.0 as usize];
         let (ty, flag, state) = (info.ty, info.flag, info.state);
         let moved = info.moved_fields.clone();
+        let gen = info.gen.clone();
         let place = self.local_place(id);
+        let drop_whole = |lw: &mut Self, place: Place| match &gen {
+            Some(g) => lw.drop_gen_local(place, g),
+            None => lw.drop_glue(place, ty),
+        };
         if let Some(flag) = flag {
             let drop_bb = self.new_block();
             let join = self.new_block();
             self.branch(Operand::Copy(Place::local(flag)), drop_bb, join);
             self.switch_to(drop_bb);
-            self.drop_glue(place, ty);
+            drop_whole(self, place);
             self.goto(join);
             self.switch_to(join);
-        } else if state == LState::Init && moved.is_empty() {
-            self.drop_glue(place, ty);
+        } else if state == LState::Init && (moved.is_empty() || gen.is_some()) {
+            drop_whole(self, place);
         } else if state == LState::Init {
             self.drop_fields_except(place, ty, &moved);
         }
@@ -289,6 +294,9 @@ impl FnLower<'_, '_> {
 
     /// Free the object `ptr` of class `ty` (its fields already dropped).
     pub(super) fn object_free(&mut self, ptr: Operand, ty: TyId) {
+        if self.cx.is_generator_obj(ty) {
+            return self.gen_object_free(ptr);
+        }
         let oa = Ty::Agg(self.cx.obj_agg(ty));
         if self.cx.counted(ty) {
             self.counted_free(ptr, oa);

@@ -67,6 +67,66 @@ function nest<T>(x: T, n: i64): i64 {
 Recurse with a fixed type instead: a non-generic helper, or a `JsonValue` for data whose
 shape is only known at run time.
 
+## Generators
+
+```ts
+function* range(from: i64, to: i64): Generator<i64> {
+  for (let i = from; i < to; i++) {
+    yield i;
+  }
+}
+
+function* evens(limit: i64): Generator<i64> {
+  for (const i of range(0, limit)) {
+    if (i % 2 == 0) {
+      yield i;
+    }
+  }
+}
+
+for (const i of evens(7)) {
+  console.log(i);                          // 0 2 4 6
+}
+const g = range(1, 3);                     // nothing has run yet
+console.log(g.next(), g.next().done, g.next().done);   // { done: false, value: 1 } false true
+```
+
+- `function* name(…): Generator<T>` is a **generator**, and so is a method written `*name()`,
+  `static *name()` or `*[Symbol.iterator]()`. Calling one creates a `Generator<T, E>`
+  ([prelude](../std/prelude.md#iteration)) without running the body. Each `next()` runs the
+  body up to its next `yield v` and returns `{ done: false, value: v }`; when the body ends it
+  returns `{ done: true }`, and keeps doing so. A `Generator<T, E>` is an `Iterator<T, E>` and
+  an `Iterable<T, E>` (its `[Symbol.iterator]()` returns itself), so `for...of` takes it
+  ([Iterables](control-flow.md#iterables)).
+- The return type is required: `Generator<T>`, `Iterator<T>` or `Iterable<T>`, where `T` is the
+  type of the yielded values; a call has that type, with the generator's error type as `E`.
+  `return;` ends the generator; there is no `TReturn`, so `return value` is an error. A bare
+  `yield` is allowed in a `Generator<void>` only.
+- `yield* src` yields every value of `src`: another generator, an array, or any iterable
+  `for...of` takes.
+- **Errors**: `E` is what the body throws, inferred like a function's `throws` (or written:
+  `Generator<T, E>`, or `throws E` after the return type). `next()` throws it, and so does
+  `for...of` over the generator; creating the generator never throws. A generator that threw is
+  done.
+- **Closing**: `return()` (which `for...of` calls when it is left early), the end of a `using`
+  block (`using g = gen();`), and dropping the generator all close a generator suspended at a
+  `yield`: its `finally` blocks run and its `using` values are disposed, as if the `yield` were
+  a `return`. A generator that never started or already finished has nothing to clean up.
+  Because closing runs `finally` blocks where the generator can neither pause nor report an
+  error, a `finally` block in a generator cannot `yield` or throw (TS allows both).
+- A generator keeps its arguments (they are owned, as for an async function) and its locals
+  between `yield`s. A generator method sees `this` as it is when the body runs, not when the
+  method was called, as in JS. Resuming a generator from inside its own body panics
+  (`generator is already running`; JS throws a `TypeError`).
+- Not supported: `next(value)` (TS's `TNext`), `throw()`, `await` in a generator, and async
+  generators (`async function*`, **Planned**). Arrow functions cannot be generators (as in TS).
+- **Cost**: `for (const x of gen(a))` with a direct call (or over a class whose
+  `[Symbol.iterator]` is a generator method) keeps the generator's state in the loop: no
+  allocation, no `IteratorResult` objects, and the body is resumed by a direct call that the
+  optimizer can inline; such a loop runs as fast as the equivalent hand-written loop. A
+  generator used as a value is one heap object; each `next()` then returns a small
+  `IteratorResult` value.
+
 ## Parameters
 
 ```ts

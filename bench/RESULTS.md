@@ -977,3 +977,26 @@ runs, best of 21, CPU ms): parse_value 313 → 315, navigate 170 → 174, edit 1
 unchanged (within ±2%). Deleting 80k keys from the middle of a 160k-key object, each followed
 by two `at` calls: 9.9 s → 0.04 s (each `at` rebuilt a table of the live positions in O(n);
 it now costs O(log n)).
+
+## Generators (`bench/iter`, #62 phase 2, 2026-10-03)
+
+`bench/iter/run.sh` (`run.ps1`): 20 × 30M values summed modulo a prime (a loop-carried
+dependency the vectorizer leaves alone), LLVM release, best of interleaved runs, Apple M4 shared
+with other builds (identical programs vary by up to ±10% between rounds). Node runs once.
+
+| program | Velt (ms) | vs hand_loop | Node (ms) |
+|---|---|---|---|
+| hand_loop: `while` loop | 1172 | 1.00 | 2649 |
+| gen_loop: `for...of` over `range(n)`, a `function*` | 1233 | 1.05 | 77980 |
+| iterable_class: iterator class (`next()` called directly) | 1147 | 0.98 | 17341 |
+| gen_value: `range(n)` passed as `Iterable<i64>` | 2997 | 2.56 | 74180 |
+
+- gen_loop's hot loop is the hand loop's seven instructions per value (rotated): the generator's
+  state lives in the loop's frame, its resume function is inlined, and the state's dispatch is
+  jump-threaded away; nothing is allocated. Where the hand loop vectorizes (a filtered plain
+  sum), the generator loop stays scalar: the `yield` is an exit from the producer's loop.
+- gen_value allocates the generator object once per loop; each value costs an interface call of
+  `next()`, a table call of the resume function and an `IteratorResult` value.
+- Array `for...of` is untouched: bench/classes, shapes and nbody lower to identical VIR before
+  and after this change, hashmap differs only in the source paths of panic messages; their
+  times are unchanged within noise.

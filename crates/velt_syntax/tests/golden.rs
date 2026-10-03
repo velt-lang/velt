@@ -32,6 +32,7 @@ fn golden_m1_files_parse() {
                 | "modules_export_default.vlt"
                 | "undefined_removed.vlt"
                 | "strict_mode_names.vlt"
+                | "generator_syntax.vlt"
         ) {
             continue;
         }

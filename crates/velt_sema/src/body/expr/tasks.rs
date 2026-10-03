@@ -22,7 +22,12 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        if !self.f.is_async {
+        if !self.f.is_async && self.f.yield_ty.is_some() {
+            self.cx.error(
+                Diagnostic::error("`await` is not allowed in a generator", span)
+                    .with_note("a generator (`function*`) runs synchronously, one `next()` at a time: await the promise before calling the generator, or yield the promise for the caller to await"),
+            );
+        } else if !self.f.is_async {
             self.cx.error(
                 Diagnostic::error("`await` is only allowed inside async functions", span)
                     .with_note("mark the enclosing function or arrow `async`"),
@@ -157,7 +162,8 @@ impl FnCx<'_, '_> {
     /// `Promise<T, E>`, built from what `d` was known to throw; checked after inference).
     pub(super) fn call_throws(&mut self, d: DefId, targs: &[TyId], ret: TyId, span: Span) {
         let f = self.cx.fn_info(d);
-        if f.kind == FnKind::Extern {
+        if f.kind == FnKind::Extern || f.is_generator {
+            // A generator's errors come out of `next()`, not out of the call creating it.
             return;
         }
         if !self.rejects_through_promise(d) {
@@ -201,7 +207,7 @@ impl FnCx<'_, '_> {
     /// `FnInfo::soft_moves` (an async call copies an argument that is still needed afterwards).
     pub(super) fn note_async_args(&mut self, def: DefId, args: &[hir::Expr]) {
         let f = self.cx.fn_info(def);
-        if !f.is_async || f.kind == FnKind::Extern {
+        if !(f.is_async || f.is_generator) || f.kind == FnKind::Extern {
             return;
         }
         let modes: Vec<PassMode> = f.params.iter().map(|p| p.mode).collect();

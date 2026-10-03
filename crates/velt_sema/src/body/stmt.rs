@@ -354,6 +354,16 @@ impl FnCx<'_, '_> {
                 .with_note("a derived class's constructor calls `super(...)` on every path"),
             );
         }
+        if let (Some(e), Some(_)) = (e, self.f.yield_ty) {
+            self.cx.error(
+                Diagnostic::error("a generator cannot return a value", e.span).with_note(
+                    "`return;` ends the generator; to produce a last value, `yield` it before returning",
+                ),
+            );
+            self.expr(e, None, Want::Move);
+            Self::push(out, S::Return(None), span);
+            return;
+        }
         match (e, self.f.ret) {
             (None, ret) => {
                 let ret = ret.unwrap_or(self.cx.ty.unit);

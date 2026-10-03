@@ -51,9 +51,13 @@ interface Iterable<T, E = never> {
   and an error thrown by `next()` itself do not call it.
 - An iterator is not itself iterable: iterate the iterable that creates it (as in TS, where
   `for...of` needs `[Symbol.iterator]()`).
+- A [generator](functions.md#generators) (`function*`) is the short way to write an iterable:
+  `for (const x of gen(a))` over a direct call needs no iterator object at all, and a class
+  whose `[Symbol.iterator]` is a generator method (`*[Symbol.iterator]()`) is iterable without
+  an iterator class. Leaving the loop early closes the generator (its `finally` blocks run).
 - `AsyncIterator<T, E>` (`next(): Promise<IteratorResult<T>, E>`) and `AsyncIterable<T, E>`
   (`[Symbol.asyncIterator]()`) are declared too; `for await` over them is **Planned**, as are
-  generators (`function*`).
+  async generators (`async function*`).
 
 ```ts
 class Countdown implements Iterator<i64> {

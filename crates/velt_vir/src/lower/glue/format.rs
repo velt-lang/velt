@@ -309,6 +309,12 @@ impl FnLower<'_, '_> {
     }
 
     pub(super) fn obj_format_body(&mut self, buf: Operand, obj: vir::Local, ty: TyId) {
+        if self.cx.is_generator_obj(ty) {
+            // As Node prints a generator object.
+            self.push_text(&buf, "Object [Generator] {}");
+            self.terminate(Terminator::Return(unit()));
+            return;
+        }
         if !self.format_map(&buf, &Place::local(obj), ty)
             && !self.format_record(&buf, &Place::local(obj), ty)
         {

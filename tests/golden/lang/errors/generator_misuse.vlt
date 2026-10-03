@@ -1,0 +1,74 @@
+// Misused generators: the result type, `return` with a value, `yield` outside a generator or in
+// a `finally` block, a throwing `finally`, `await`, async generators, and `new Generator`.
+function* noRet() {
+  yield 1;
+}
+
+function* badRet(): i64[] {
+  yield 1;
+}
+
+function* returnsValue(): Generator<i64> {
+  yield 1;
+  return 5;
+}
+
+function notGen(): void {
+  yield 1;
+}
+
+function* wrongType(): Generator<string> {
+  yield 1;
+}
+
+function* bare(): Generator<i64> {
+  yield;
+}
+
+function* awaits(): Generator<i64> {
+  await sleep(1);
+  yield 1;
+}
+
+function* inFinally(): Generator<i64> {
+  try {
+    yield 1;
+  } finally {
+    yield 2;
+  }
+}
+
+class Boom extends Error {}
+
+function mayThrow(): void throws Boom {
+  throw new Boom("x");
+}
+
+function* throwingFinally(): Generator<i64> {
+  try {
+    yield 1;
+  } finally {
+    mayThrow();
+  }
+}
+
+function* arrowYield(): Generator<i64> {
+  const f = (): void => {
+    yield 1;
+  };
+  f();
+}
+
+async function* later(): Generator<i64> {
+  yield 1;
+}
+
+class Svc {
+  async *items(): Generator<i64> {
+    yield 1;
+  }
+}
+
+function main(): void {
+  const g = new Generator<i64, never>();
+}

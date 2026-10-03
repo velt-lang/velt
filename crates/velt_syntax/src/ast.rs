@@ -131,6 +131,8 @@ pub struct FnSig {
     /// `throws A | B` after the return type; `None`: the thrown types are inferred.
     pub throws: Option<TypeExpr>,
     pub is_async: bool,
+    /// `function*` / `*name()`: a generator (`yield` is allowed in its body).
+    pub is_generator: bool,
     pub span: Span,
 }
 
@@ -590,6 +592,11 @@ pub enum ExprKind {
     /// `...expr` inside array literals / call args.
     Spread(Box<Expr>),
     Await(Box<Expr>),
+    /// `yield expr`, bare `yield` (`arg: None`) or `yield* iterable` (`delegate`).
+    Yield {
+        arg: Option<Box<Expr>>,
+        delegate: bool,
+    },
     /// `expr as T`
     Cast {
         expr: Box<Expr>,

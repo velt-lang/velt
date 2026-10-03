@@ -32,6 +32,14 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         };
+        if Some(d) == self.cx.generator_class() && !self.cx.scopes[self.module].is_std {
+            self.cx.error(
+                Diagnostic::error("generators cannot be created with `new`", span)
+                    .with_note("write a generator function (`function* f(): Generator<T> { ... }`) and call it"),
+            );
+            self.check_args_loose(args);
+            return self.error_expr(span);
+        }
         let n = slots.len();
         let self_ty = crate::collect::self_type(self.cx, d, n);
         let ctor = self.cx.adt(d).and_then(|a| a.ctor);

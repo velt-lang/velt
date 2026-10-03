@@ -35,6 +35,9 @@ impl<'a> Parser<'a> {
 
     /// Assignment level: arrows, `a = b`, compound assignment (right associative).
     pub(super) fn parse_assign(&mut self) -> PResult<Expr> {
+        if self.at_kw(Kw::Yield) {
+            return self.parse_yield();
+        }
         // Checking first keeps the common case, where no arrow can start, from copying the
         // large result of an arrow attempt on every expression.
         if self.may_start_arrow() {
@@ -63,6 +66,31 @@ impl<'a> Parser<'a> {
             },
             span,
         ))
+    }
+
+    /// `yield`, `yield expr` or `yield* expr` (assignment precedence, like JS). The operand is
+    /// absent when the next token cannot start one (`yield;`, `f(yield)`).
+    fn parse_yield(&mut self) -> PResult<Expr> {
+        let lo = self.cur_lo();
+        self.bump(); // yield
+        let delegate = self.eat(Tok::Star);
+        let ends = matches!(
+            self.peek(),
+            Tok::Semi
+                | Tok::RParen
+                | Tok::RBracket
+                | Tok::RBrace
+                | Tok::Comma
+                | Tok::Colon
+                | Tok::Eof
+        );
+        let arg = if ends && !delegate {
+            None
+        } else {
+            Some(Box::new(self.guarded(|p| p.parse_assign())?))
+        };
+        let span = self.span_from(lo);
+        Ok(self.mk_expr(ExprKind::Yield { arg, delegate }, span))
     }
 
     /// Is there a run of `n` directly adjacent `>` tokens at the cursor, followed by an adjacent `=`?
@@ -227,6 +255,14 @@ impl<'a> Parser<'a> {
             Tok::Kw(Kw::Await) => {
                 self.bump();
                 ExprKind::Await(Box::new(self.parse_unary()?))
+            }
+            Tok::Kw(Kw::Yield) => {
+                let span = self.cur_span();
+                self.error(
+                    "`yield` cannot be an operand here: it binds like an assignment, so wrap it in parentheses (`(yield x)`)",
+                    span,
+                );
+                return self.parse_yield();
             }
             _ => return self.parse_postfix(),
         };

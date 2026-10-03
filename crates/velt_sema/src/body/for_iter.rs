@@ -26,13 +26,28 @@
 //! a labelled `break`/`continue` to an outer statement, a thrown error) calls `return()` once,
 //! and normal completion (`done`) or an error thrown by `next()` does not, as in JS. A
 //! `continue` of this loop goes on with `next()`. The hidden names cannot be written in source.
+//!
+//! A direct generator call (`for (x of gen(a))`, or a class whose `[Symbol.iterator]` is a
+//! generator method) skips the protocol: the generator stays in a hidden local whose state
+//! lowering embeds in the frame (hir_encodings.md "Generators"):
+//!
+//! ```text
+//! {
+//!   let <generator> = GeneratorEmbed(gen(a));
+//!   label: while (GeneratorResume(<generator>)) {   // throws E
+//!     const pattern = GeneratorValue(<generator>);
+//!     { body }
+//!   }
+//! }                                                 // dropping it closes the generator
+//! ```
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast::{self, SYMBOL_ITERATOR};
 
 use super::pattern::BindCtx;
 use super::{FnCx, LocalKind};
-use crate::hir::{self, StmtKind as S, TyId, TyKind};
+use crate::defs::ThrowSrc;
+use crate::hir::{self, Callee, ExprKind as H, Intrinsic, StmtKind as S, TyId, TyKind, UseMode};
 
 /// The source pieces of one `for...of` statement.
 pub(super) struct ForOfParts<'a> {
@@ -59,10 +74,16 @@ impl FnCx<'_, '_> {
         out: &mut Vec<hir::Stmt>,
     ) {
         let span = p.span;
+        if self.is_generator_call(&src) {
+            return self.for_of_generator(src, p, out);
+        }
         let call = self.method_call_hir(src, SYMBOL_ITERATOR, p.iter_span);
         let Some(call) = call.filter(|c| self.is_iterator(c.ty, p.iter_span)) else {
             return self.check_body_only(&p);
         };
+        if self.is_generator_call(&call) {
+            return self.for_of_generator(call, p, out);
+        }
         self.push_scope_until(span.hi);
         let names = Hidden::new(span);
         let it = ast::Ident {
@@ -87,6 +108,98 @@ impl FnCx<'_, '_> {
             span,
         };
         Self::push(out, S::Block(block), span);
+    }
+
+    /// A direct call of a generator function or method (`gen(a)`, `obj.items()`, or a
+    /// `*[Symbol.iterator]()` method called by the loop).
+    fn is_generator_call(&self, e: &hir::Expr) -> bool {
+        matches!(&e.kind, H::Call { callee: Callee::Def(d, _), .. } if self.is_generator_fn(*d))
+    }
+
+    /// `for (kind pattern of call) body` over a direct generator call (module docs): the
+    /// generator lives in a hidden local whose state lowering keeps inline (no heap object, no
+    /// `IteratorResult`); leaving the loop drops the local, which closes the generator.
+    fn for_of_generator(&mut self, call: hir::Expr, p: ForOfParts<'_>, out: &mut Vec<hir::Stmt>) {
+        let span = p.span;
+        let Some((_, args)) = self.cx.generator_result(call.ty) else {
+            return self.check_body_only(&p);
+        };
+        let (t, e) = (args[0], args[1]);
+        let gen_ty = self.cx.generator_ty(t, e);
+        self.push_scope_until(span.hi);
+        let names = Hidden::new(span);
+        let g = ast::Ident {
+            name: names.generator.clone(),
+            span: p.iter_span,
+        };
+        let local = self.declare_local_mut(&g, gen_ty, LocalKind::Let, true);
+        let init = self.intrinsic_hir(Intrinsic::GeneratorEmbed, vec![call], gen_ty, p.iter_span);
+        let mut stmts = vec![hir::Stmt {
+            kind: S::Let {
+                local,
+                init: Some(init),
+            },
+            span: p.iter_span,
+        }];
+        let use_g = |fx: &Self| fx.mk(H::Local(local, UseMode::BorrowMut), gen_ty, names.at);
+        let bool_ = self.cx.ty.bool_;
+        let resume = self.intrinsic_hir(
+            Intrinsic::GeneratorResume,
+            vec![use_g(self)],
+            bool_,
+            names.at,
+        );
+        if e != self.cx.ty.never {
+            self.throw_src(ThrowSrc::Direct(e, p.iter_span));
+        }
+        let value = self.intrinsic_hir(Intrinsic::GeneratorValue, vec![use_g(self)], t, names.at);
+        self.push_scope_until(span.hi);
+        let mutable = p.kind == ast::VarKind::Let;
+        let ctx = BindCtx::Let {
+            mutable,
+            place: false,
+        };
+        let pat = self.pattern(p.pattern, t, ctx);
+        self.enter_loop(p.label, false);
+        let b = self.block(p.body);
+        let label = self.exit_loop().hir_label();
+        self.pop_scope();
+        let body = hir::Block {
+            stmts: vec![
+                hir::Stmt {
+                    kind: S::LetPat { pat, init: value },
+                    span: names.at,
+                },
+                hir::Stmt {
+                    kind: S::Block(b),
+                    span: p.body.span,
+                },
+            ],
+            value: None,
+            span,
+        };
+        let lp = S::While {
+            label,
+            cond: resume,
+            body,
+            step: None,
+        };
+        stmts.push(hir::Stmt { kind: lp, span });
+        self.pop_scope();
+        let block = hir::Block {
+            stmts,
+            value: None,
+            span,
+        };
+        Self::push(out, S::Block(block), span);
+    }
+
+    fn intrinsic_hir(&self, i: Intrinsic, args: Vec<hir::Expr>, ty: TyId, span: Span) -> hir::Expr {
+        let kind = H::Call {
+            callee: Callee::Intrinsic(i),
+            args,
+        };
+        self.mk(kind, ty, span)
     }
 
     /// After an error: check the body (for its own diagnostics) with the binding untyped.
@@ -137,6 +250,7 @@ impl FnCx<'_, '_> {
 /// The hidden locals of one desugared loop (unique per statement: named by its offset).
 struct Hidden {
     iterator: String,
+    generator: String,
     open: String,
     result: String,
     /// The `for` statement: the span of synthesized blocks (their scopes end with it).
@@ -151,6 +265,7 @@ impl Hidden {
         let at = span.lo;
         Hidden {
             iterator: format!("<iterator@{at}>"),
+            generator: format!("<generator@{at}>"),
             open: format!("<open@{at}>"),
             result: format!("<result@{at}>"),
             span,

@@ -70,6 +70,8 @@ impl<'a> Walker<'a> {
             | ast::ExprKind::Spread(expr)
             | ast::ExprKind::Await(expr)
             | ast::ExprKind::Paren(expr) => self.expr(expr),
+            ast::ExprKind::Yield { arg: Some(a), .. } => self.expr(a),
+            ast::ExprKind::Yield { arg: None, .. } => {}
             ast::ExprKind::Update { target, .. } => self.expr(target),
             ast::ExprKind::Binary { lhs, rhs, .. } => {
                 self.expr(lhs);

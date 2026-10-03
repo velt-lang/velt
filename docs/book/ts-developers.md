@@ -173,6 +173,11 @@ contents.
 - Parameter types are required; the return type is inferred only as `void` when omitted.
 - Generics are compiled per instantiation (monomorphized), so generic code is as fast as
   hand-written code. Bounds are interfaces.
+- Generators (`function*`, `*name()` methods, `yield`, `yield*`) work as in JS, lazily, with
+  their return type written (`Generator<T>`, `Iterable<T>` or `Iterator<T>`). A `for...of` over
+  a generator call allocates nothing and runs like a hand-written loop. There is no `return
+  value`, `next(value)` or `throw()`, and a `finally` block in a generator cannot `yield` or
+  throw ([Generators](../reference/functions.md#generators)).
 
 ## Errors
 
@@ -225,7 +230,7 @@ reference count. Reference cycles are not freed (**planned**: `weak` references)
 ## Not supported
 
 `var`, `eval`, prototypes, `delete` (other than on a `Record`), `for...in`, `with`, getters on object literals,
-decorators, generators (`function*`, `yield`; planned), `for await` (planned), `Symbol` (other
+decorators, async generators (`async function*`; planned), `for await` (planned), `Symbol` (other
 than `Symbol.dispose`, `Symbol.asyncDispose`, `Symbol.iterator` and `Symbol.asyncIterator` as
 method names), `BigInt` literals (use [`velt:bigint`](../std/bigint.md)), Unicode
 identifiers. `x!` is checked (a `null` panics) where TypeScript trusts it, and `as const` keeps
@@ -263,7 +268,8 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | `process.argv` | `args()` from `velt:process`: the arguments after the program, like `process.argv.slice(2)` | — |
 | `a.localeCompare(b, locale, options)` (the host's locale by default) | `a.localeCompare(b)`: the CLDR root collation, like `new Intl.Collator("und").compare(a, b)`; no locales | — |
 | `export default` | named exports only | — |
-| `for...of` over any `Iterable`; `IteratorResult` has `value: undefined` when done | the same protocol (`[Symbol.iterator]()`, `next()`, `return()` on early exit); a done result has no `value`; `Iterator<T, E>` carries the error type `next()` throws | generators (`function*`), `for await` |
+| `for...of` over any `Iterable`; `IteratorResult` has `value: undefined` when done | the same protocol (`[Symbol.iterator]()`, `next()`, `return()` on early exit); a done result has no `value`; `Iterator<T, E>` carries the error type `next()` throws | `for await` |
+| generators: `function*`, `yield`, `yield*`, `Generator<T, TReturn, TNext>` | the same, lazy, `Generator<T, E>` (`E`: what the body throws); no `return value`, `next(value)` or `throw()`; a `for...of` over a call allocates nothing | async generators |
 | string length in UTF-16 units | length and offsets in UTF-8 bytes | — |
 | (no equivalent) | `extend` adds members to any type | module-scoped extensions, retroactive `implements` |
 | JSX | server-side rendering through a `jsxImportSource` provider ([`velt:jsx`](../std/jsx.md)) | no client-side DOM; see [TSX](../internals/design/tsx.md) for what is planned |

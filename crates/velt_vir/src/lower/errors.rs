@@ -42,7 +42,11 @@ impl FnLower<'_, '_> {
         let err = self.widen_error(err, from, to);
         self.write_err(err);
         self.emit_drops_from(0);
-        self.exit_return(unit());
+        if self.asyncx.is_some() && !self.dead() {
+            self.finish_poll_err();
+        } else {
+            self.exit_return(unit());
+        }
     }
 
     /// Write `Err(err)` through the out-pointer (`ret_ty` is the declared or implied Result).

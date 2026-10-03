@@ -1,7 +1,8 @@
 # Design: iteration, generators and `for await`
 
-Status: accepted (issue #62), implemented in four phases. **Phase 1 (the protocol and `for...of`
-over user iterables) is built**; phases 2–4 below are the plan and are updated as they land.
+Status: accepted (issue #62), implemented in four phases. **Phases 1 (the protocol and
+`for...of` over user iterables) and 2 (sync generators) are built**; phases 3–4 below are the
+plan and are updated as they land.
 
 ## Problem
 
@@ -116,9 +117,8 @@ checking it:
   clause), `try`/`finally` lowering, and ownership — the iterator is a local the block owns and
   drops at its end, and each `value` is moved out of the result into the binding.
 - The hidden names cannot be written in source (`<`), and are unique per statement.
-- **Phase 2 hook**: `for_of_iterable` receives the checked `src`; a fast path for a direct
-  generator call (`for (const x of gen(args))`) goes before the `[Symbol.iterator]()` call and
-  emits a dedicated loop over the embedded generator state instead of the protocol.
+- A direct generator call (`for (const x of gen(args))`, or a generator `[Symbol.iterator]()`
+  method) takes the embedded path of section 3 instead of the protocol.
 
 **Cost.** One `[Symbol.iterator]()` call per loop; per element, one `next()` call (direct for a
 concrete iterator class, through the vtable for an `Iterator<T>` value), a tag test on the
@@ -138,9 +138,9 @@ heap box). Array and map loops are untouched.
 | a loop over `Iterable<T, Read>` in a function `throws Other` | `` `f` throws `Read`, which its `throws` clause does not allow `` at the loop |
 | `next()` throwing in `implements Iterator<i64>` | `` `C.next` throws `Read`, but `Iterator.next` does not allow it ``, noting "`E` is a type argument of `Iterator`: implement `Iterator` with `Read` as `E`" |
 
-## 3. Generators (phase 2, planned)
+## 3. Generators (built, phase 2)
 
-```ts planned
+```ts
 function* range(n: i64): Generator<i64> {
   for (let i = 0; i < n; i++) {
     yield i;
@@ -148,22 +148,88 @@ function* range(n: i64): Generator<i64> {
 }
 ```
 
-- `function*` returns `Generator<T, E>`, which is `Iterable<T, E>` and `Iterator<T, E>`; `E` is
-  inferred from the body like any `throws`. `yield` is only allowed in generators; `yield*`
-  delegates to another iterable.
-- Lowering reuses the async state-machine transform (`velt_vir/src/lower/async_fn/`): every
-  `yield` is a suspension point, live locals are spilled into the state with the same liveness
-  and drop-at-suspension code; the state has a value slot that `yield` writes, and
-  `resume(state) -> { YIELDED, DONE }`.
-- **Early exit**: `return()` on a generator suspended at a `yield` resumes it as if the `yield`
-  were a `return`: `finally` blocks run and `using` resources are disposed. Dropping a suspended
-  generator does the same (it is the state's `$drop`, as async cancellation is today), so
-  `using it = gen()` and dropped generators never leak.
-- **Performance target**: `for (const x of gen(args))` embeds the generator state in the caller's
-  frame (as `await f()` does): no allocation for the generator or per item; the loop calls the
-  resume function directly and reads the value slot, never building an `IteratorResult`. A
-  generator stored or passed as an `Iterable<T>` is boxed once. A `bench/` entry compares it with
-  a hand-written loop (target: within a few percent).
+- `function*` (and `*name()`, `static *name()`, `*[Symbol.iterator]()` methods) is a generator.
+  Its declared result is `Generator<T, E>`, `Iterator<T, E>` or `Iterable<T, E>` (required); a
+  written `E` is a `throws` clause, else `E` is inferred from the body like any `throws`, and a
+  call has the declared type with that `E` (sema `collect/generator_sig.rs`,
+  `body/generators.rs`; checked after inference like an async call's promise type). The call
+  only creates the generator and never throws. `yield` is only allowed in generators (and not
+  in an arrow inside one); `await` is not allowed in them; `return value` is an error (no
+  `TReturn`); a bare `yield` needs `Generator<void>`.
+- `Generator<T, E>` is a prelude **class** (`std/prelude/iter.vlt`) implementing
+  `Iterator<T, E>` and `Iterable<T, E>`: `next()`, `return()`, `[Symbol.iterator]()` (returns
+  `this` as an `Iterator<T, E>`) and `[Symbol.dispose]()` (closes it, so `using g = gen()`
+  works and dropping it closes it). Its methods use the std-only intrinsics
+  `__intrinsic_generator_resume` (throws `E`), `_value` and `_return`. `new Generator` and
+  `extends Generator` are errors.
+- `yield* src` is `for (const <yield@N> of src) { yield <yield@N>; }`: any iterable, and a
+  direct generator call takes the embedded path below. Closing the outer generator while it is
+  inside the loop leaves the loop early, which closes the inner iterator (`return()`, or the
+  embedded state's close).
+
+### Lowering (velt_vir `async_fn/generator.rs`, `async_fn/gen_object.rs`)
+
+- A generator instance compiles like an async function: its poll function, built by the same
+  code (`poll_fn` with `AsyncCx::generator`), is the **resume** function `f$poll(state, null)`
+  — the `cx` parameter is kept so the liveness, spilling, frame-slot promotion (velt_opt
+  `frame_slots`) and drop machinery apply unchanged — returning `0` DONE, `1` YIELDED (the value
+  in the result region at offset 0: the `Ok` payload of `Result<T, E>` when the body throws,
+  else `T`) or `2` THREW (the region holds `Err(e)`). Each `yield` stores the value, sets the
+  tag to its suspension `k` and returns 1.
+- **Closing** is the state's `$drop` (`Work::AsyncDrop`, unchanged: it sets `DROP_BIT` and calls
+  the resume function). For a generator the dispatch case `DROP_BIT | k` of a `yield` runs what
+  `return;` at that `yield` runs — every scope's drops *and `finally` blocks* — where async
+  cancellation runs drops only. Before the first resume it drops the arguments; after the end
+  it does nothing. Both leave the tag DONE, so `next()` after `return()` is done.
+- Because closing runs `finally` blocks where the generator cannot pause or report an error,
+  sema rejects `yield` in a `finally` block and a `finally` block that may throw.
+- While the body runs the tag is RUNNING; resuming then (the body reaching its own generator)
+  panics with `generator is already running` (JS throws a `TypeError`). The store is dead in
+  an inlined loop and disappears.
+- A **generator object** is one heap block `[table: ptr][state]` (the class's one field is the
+  table pointer; states are at most 8-aligned): the static per-instance table holds resume,
+  close and free functions. `Work::GenNew` builds it (counted like any object of the class when
+  `Generator<T, E>` is shared), `Work::Fn` returns it or, for a declared `Iterator` / `Iterable`
+  result, its interface value; the class's drop runs `[Symbol.dispose]` (close), then frees the
+  block through the table (`object_free`). `console.log(g)` prints `Object [Generator] {}`
+  like Node; a deep copy of one (`clone()`, a spawned task's copy) panics (sema already rejects
+  `clone()` on types with `[Symbol.dispose]`).
+- **Embedded loops**: `for (const x of gen(a))` with a direct call (sema emits `GeneratorEmbed`,
+  hir_encodings.md "Generators") builds the state in a frame local (spilled into the enclosing
+  state when the loop is in an async function or a generator, like an embedded awaited child),
+  calls the resume function directly each step and reads the value slot; the local's drop
+  closes it. A generator iterating a direct call of itself (recursion, `yield* walk(t.left)`)
+  cannot embed its own state, so that call becomes a generator object.
+
+### Cost
+
+`bench/iter` (`bench/iter/run.sh`): 20 × 30M values summed modulo a prime, LLVM release, best
+of 7 interleaved runs (Apple M4, shared with other builds: identical programs vary by up to
+±10% between rounds):
+
+| program | ms | vs hand loop |
+|---|---|---|
+| hand_loop (while loop) | 1172 | 1.00 |
+| gen_loop (`for...of` over `range(n)`) | 1233 | 1.05 |
+| iterable_class (iterator class) | 1147 | 0.98 |
+| gen_value (`Iterable<i64>` parameter) | 2997 | 2.56 |
+
+The embedded loop compiles to the hand loop's instructions (the same seven per value, rotated):
+the resume function is inlined, the state is promoted to registers and the dispatch switch is
+jump-threaded away; the difference in the table is noise. A loop the vectorizer can
+handle as a hand loop (a filter into a plain sum) stays scalar as a generator, since the `yield`
+is an exit from the producer's loop. A generator value costs an interface call and a table call
+per step.
+
+### Deviations from the accepted text
+
+- `Generator<T, E>` is a class, not an interface: its `[Symbol.iterator]()` returns
+  `Iterator<T, E>` (Velt has no covariant returns), and a generator value is the class's object.
+- `resume` is the async poll function with a null `cx` (not a separate signature), and THREW is a
+  third result.
+- A `finally` block in a generator cannot `yield` or throw (TS allows both; see above).
+- `for...of` over a generator *value* goes through the protocol (`[Symbol.iterator]()`, then
+  `next()` through the interface); only direct calls are embedded.
 
 ## 4. Async generators and `for await` (phase 3, planned)
 

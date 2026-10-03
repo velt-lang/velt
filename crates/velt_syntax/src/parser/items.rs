@@ -128,6 +128,9 @@ impl<'a> Parser<'a> {
         self.bump(); // declare
         let is_async = self.eat_kw(Kw::Async);
         let sig = self.parse_fn_sig(lo, is_async)?;
+        if sig.is_generator {
+            self.error("a `declare function` cannot be a generator", sig.name.span);
+        }
         self.expect_semi()?;
         Ok(sig)
     }
@@ -139,10 +142,14 @@ impl<'a> Parser<'a> {
         Ok(FnDecl { sig, body })
     }
 
+    /// `function name(...)` or `function* name(...)` (a generator).
     fn parse_fn_sig(&mut self, lo: u32, is_async: bool) -> PResult<FnSig> {
         self.expect_kw(Kw::Function, "function")?;
+        let is_generator = self.eat(Tok::Star);
         let name = self.parse_binding_ident()?;
-        self.parse_sig_rest(lo, name, is_async)
+        let mut sig = self.parse_sig_rest(lo, name, is_async)?;
+        sig.is_generator = is_generator;
+        Ok(sig)
     }
 
     /// After the function/method name: generics, parameters, optional return type and
@@ -168,6 +175,7 @@ impl<'a> Parser<'a> {
             ret,
             throws,
             is_async,
+            is_generator: false,
             span: self.span_from(lo),
         })
     }

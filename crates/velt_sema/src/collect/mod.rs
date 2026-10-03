@@ -23,6 +23,7 @@ mod declare;
 mod exports;
 mod field_only;
 mod forwarders;
+mod generator_sig;
 pub(crate) mod getters;
 mod iface_extends;
 mod impls;

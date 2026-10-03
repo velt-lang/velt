@@ -119,9 +119,34 @@ Maintainer-owned, like hir.rs.
   iteration.md) has no HIR form of its own: sema emits a `Block` with `let <iterator@N> =
   src[Symbol.iterator]()`, a `<open@N>` flag and a `Try { finally }` around a `While` that calls
   `next()`, binds `value` and runs the body; the `finally` calls `return()` when the body was
-  left early. `StmtKind::ForOf` stays the array loop. Locals named `<…>` are compiler-made.
+  left early (a direct generator call has its own form, "Generators"). `StmtKind::ForOf` stays
+  the array loop. Locals named `<…>` are compiler-made.
 - Exclusive access (docs/reference/memory.md) is checked by sema; lowering relies on it for VIR
   parameter attributes (vir.rs invariant 9, `noalias` etc.).
+
+## Generators
+(docs/reference/functions.md "Generators", docs/internals/design/iteration.md §3)
+- `FnDef::is_generator`: a `function*` / `*name()`. `FnDef::ret` is its declared result —
+  `Generator<T, E>` (the prelude class `std/prelude/iter::Generator`), `Iterator<T, E>` or
+  `Iterable<T, E>` — with `E` = `FnDef::throws` (or `never`); `T` is the yield type. A call of
+  it (`Callee::Def`, also through `FnRef` values and vtables) has type `ret`, never throws, and
+  only creates the generator; lowering builds a `Generator` object and, for an interface
+  `ret`, the interface value of it. Params are `Owned` or `Copy` (methods: `this` too), as for
+  async functions.
+- In the body: `Call { Intrinsic(Yield), [v] }` (`v: T` owned, type `Unit`) is `yield v`;
+  `Return(None)` ends the generator (no `Return(Some)` occurs); `yield* src` has no form of its
+  own (a `Block` expression holding the desugared `for...of` that yields each value). No
+  `finally` block of a generator contains a `Yield` or can throw (sema).
+- The `Generator` class's methods (prelude) use `Intrinsic::GeneratorResume` (`bool`, throws
+  `E`), `GeneratorValue` (`T`, moved out; only after a resume returned true) and
+  `GeneratorReturn` (close), each taking the `Generator<T, E>` operand `BorrowMut`.
+- `for...of` over a direct generator call (`gen(a)`, or the generator `[Symbol.iterator]()`
+  method it would call) is `Block { Let <generator@N> = Call { Intrinsic(GeneratorEmbed),
+  [call] } : Generator<T, E>; While { cond: GeneratorResume(<generator@N>), body: [LetPat
+  pattern = GeneratorValue(<generator@N>), Block(body)] } }`: lowering keeps the generator's
+  state in that local (the local is only an operand of the generator intrinsics and is
+  dropped at the block's end, which closes it). A `GeneratorEmbed` it cannot embed (a
+  generator iterating a direct call of itself) is the call's `Generator` object.
 
 ## Mutation inference (no `mut` in the language)
 - Pass modes are inferred (docs/reference/memory.md): `BorrowMut` = the callee may

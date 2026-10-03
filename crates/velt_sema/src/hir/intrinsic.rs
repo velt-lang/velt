@@ -138,4 +138,24 @@ pub enum Intrinsic {
     /// `attempt(f)`: call `f: () => T throws E` (borrowed) and return its result or error as a
     /// value, of type `T | E` (or `E | null` when `T` is `void`); hir_encodings.md "Errors".
     Attempt,
+
+    // Generators (hir_encodings.md "Generators")
+    /// Compiler-internal: `yield v` in a generator body (`v: T` owned, the generator's yield
+    /// type) → unit. Suspends the generator with `v` in its value slot.
+    Yield,
+    /// std only: `__intrinsic_generator_resume<T, E>(g: Generator<T, E> (modified)): bool`,
+    /// throws `E` — run the generator to its next `yield` (true: a value is in the slot) or to
+    /// its end (false; also every later call). An error thrown by the body is thrown here.
+    GeneratorResume,
+    /// std only: `__intrinsic_generator_value<T, E>(g: Generator<T, E> (modified)): T` — move
+    /// the value of the last `yield` out of the slot (once, after `GeneratorResume` returned true).
+    GeneratorValue,
+    /// std only: `__intrinsic_generator_return<T, E>(g: Generator<T, E> (modified))` — close
+    /// the generator: a suspended body runs its `finally` blocks and disposes its `using`
+    /// values as if the `yield` were a `return`; then it is done.
+    GeneratorReturn,
+    /// Compiler-internal: `(call: owned) -> Generator<T, E>`, the initializer of the hidden
+    /// local of a `for...of` over a direct generator call (`for (x of gen(a))`): lowering keeps
+    /// the generator's state inline in that local instead of a heap object.
+    GeneratorEmbed,
 }
