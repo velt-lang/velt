@@ -55,21 +55,31 @@ fn resolve(args: &CheckArgs) -> Result<driver::BuildOptions, BuildError> {
 }
 
 /// The module `velt check` checks in the current package: its runnable entry (`package.entry`,
-/// default `src/main.vlt`), or `src/lib.vlt` for a library package without one.
+/// default `src/main.vlt`), or `src/lib.vlt` for a library package (one without a configured
+/// entry and without `src/main.vlt`). A configured entry that is missing is an error, as for
+/// `velt build`.
 fn package_root_module() -> Result<PathBuf, String> {
     let root = Project::current_root()?;
     let manifest = vpm::Manifest::from_dir(&root)?;
     let entry = root.join(&manifest.package.entry);
     let lib = root.join(vpm::manifest::LIB_ENTRY);
-    match (entry.is_file(), lib.is_file()) {
-        (true, _) => Ok(entry),
-        (false, true) => Ok(lib),
-        (false, false) => Err(format!(
+    let default_entry = manifest.package.entry == vpm::manifest::DEFAULT_ENTRY;
+    if entry.is_file() {
+        Ok(entry)
+    } else if !default_entry {
+        Err(format!(
+            "package `{}` has no `{}` to check",
+            manifest.package.name, manifest.package.entry
+        ))
+    } else if lib.is_file() {
+        Ok(lib)
+    } else {
+        Err(format!(
             "package `{}` has neither `{}` nor `{}` to check",
             manifest.package.name,
             manifest.package.entry,
             vpm::manifest::LIB_ENTRY
-        )),
+        ))
     }
 }
 

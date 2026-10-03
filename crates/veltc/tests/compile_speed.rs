@@ -109,6 +109,16 @@ fn check_accepts_library_modules_without_main() {
     assert!(out.contains(r#""line":5"#), "{out}");
     assert!(!out.contains("`main` function not found"), "{out}");
 
+    // In a library, `main` may name something other than a function.
+    for (file, src) in [
+        ("type_main.vlt", "export type main = i64;\n"),
+        ("const_main.vlt", "export const main: i64 = 1;\n"),
+    ] {
+        std::fs::write(dir.join(file), src).unwrap();
+        let o = velt(dir, &["check", file], &[]);
+        assert!(o.status.success(), "{file}: {}", text(&o.stderr));
+    }
+
     // Building or running a library is still an error.
     for cmd in ["build", "run"] {
         let o = velt(dir, &[cmd, "lib.vlt"], &[]);

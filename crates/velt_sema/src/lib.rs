@@ -188,7 +188,9 @@ fn check_main(
 ) -> Option<hir::DefId> {
     let file_start = Span::new(root_mod.file, root_mod.ast.span.lo, root_mod.ast.span.lo);
     let main = cx.scopes[root].items.get("main").copied();
-    if main.is_none() && !require_main {
+    // A library module may use the name `main` for anything; only a `main` function is checked.
+    let is_fn = |id: hir::DefId| matches!(cx.info[id.0 as usize], DefInfo::Fn(_));
+    if !require_main && !matches!(main, Some(Item::Def(id)) if is_fn(id)) {
         return None;
     }
     let Some(Item::Def(id)) = main else {

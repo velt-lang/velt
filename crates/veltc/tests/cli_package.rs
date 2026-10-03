@@ -157,6 +157,20 @@ fn check_in_a_library_package_checks_src_lib() {
         err.contains("has neither `src/main.vlt` nor `src/lib.vlt`"),
         "{err}"
     );
+    // A configured entry that is missing is an error, even when `src/lib.vlt` exists.
+    s.write(
+        "util/src/lib.vlt",
+        "export function f(): i64 {\n  return 1;\n}\n",
+    );
+    let manifest = std::fs::read_to_string(s.dir.join("util/package.vlt")).unwrap();
+    let manifest = manifest.replacen(
+        "version: \"0.1.0\"",
+        "version: \"0.1.0\", entry: \"src/app.vlt\"",
+        1,
+    );
+    s.write("util/package.vlt", &manifest);
+    let err = s.fail("util", &["check"]);
+    assert!(err.contains("has no `src/app.vlt` to check"), "{err}");
 }
 
 #[test]

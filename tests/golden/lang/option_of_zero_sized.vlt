@@ -1,3 +1,4 @@
+// check: no leaks
 // An option of a type with no value (`never`, `void`, a literal type) had no layout: `pop()` on
 // an array instantiated with `never` crashed the compiler with "zero-sized field in aggregate
 // option". Such an option is now just its present flag.
