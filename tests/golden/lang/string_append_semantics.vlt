@@ -22,6 +22,10 @@ class Doc {
   page: Page = new Page();
 }
 
+function apply(f: () => string): string {
+  return f();
+}
+
 function label(n: number): string {
   return `<h${n}>`;
 }
@@ -119,4 +123,41 @@ async function main() {
   add("c1");
   add("c2");
   console.log(xs.join(","), captured);
+  // A closure passed to a call changes the target: JS reads the target first.
+  let v = "v";
+  const bumpV = (): string => {
+    v += "?";
+    return "x";
+  };
+  v += apply(bumpV);
+  v = v + apply(bumpV);
+  console.log(v);
+
+  // `s += s` on a string that owns its buffer, which must grow.
+  let h = "";
+  for (let i = 0; i < 4; i++) {
+    h += "0123456789";
+  }
+  h += h;
+  h = h + h;
+  console.log(h.length, h.slice(35, 45));
+
+  // A copy of the target on the right-hand side keeps the old value.
+  let r = "ab";
+  const copyR = r;
+  r = r + "-" + copyR;
+  r = `${r}|${copyR}`;
+  console.log(r, copyR);
+
+  // A throwing part leaves a field unchanged.
+  try {
+    p.out += fails();
+  } catch (err) {
+    console.log("caught", err.message, p.out.length);
+  }
+  try {
+    p.out = `${p.out}<b>${fails()}`;
+  } catch (err) {
+    console.log("caught", err.message, p.out.length);
+  }
 }

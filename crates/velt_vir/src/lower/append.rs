@@ -70,9 +70,17 @@ impl FnLower<'_, '_> {
             return None;
         }
         let target = self.append_target(place)?;
+        let cx = &*self.cx;
+        // A function value passed to a call may be a closure that captures the target.
+        let is_fn = |t: TyId| {
+            matches!(
+                cx.kind(t),
+                TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Param(_)
+            )
+        };
         let alone = rest.iter().all(|p| match p {
             Part::Text(_) => true,
-            Part::Str(e) | Part::Format(e) => leaves_alone(e, &target),
+            Part::Str(e) | Part::Format(e) => leaves_alone(e, &target, &is_fn),
         });
         Some(match alone {
             true => self.append_now(place, rest, ty),
@@ -95,6 +103,11 @@ impl FnLower<'_, '_> {
                 })
             }
             hir::ExprKind::Field { base, index, .. } => {
+                // Only paths of fields rooted at a variable: evaluating them again (after the
+                // appended text) has no effect of its own.
+                if !is_field_path(base) {
+                    return None;
+                }
                 if let hir::ExprKind::Local(id, _) = &base.kind {
                     if self.info[id.0 as usize].moved_fields.contains(index) {
                         return None;
@@ -203,30 +216,30 @@ fn same_place(read: &hir::Expr, place: &hir::Expr) -> bool {
 
 /// Can evaluating `e` neither read nor change the target? Conservative: plain reads, operators
 /// and string formatting, plus direct calls when the target is a local no callee can reach.
-fn leaves_alone(e: &hir::Expr, t: &Target) -> bool {
+fn leaves_alone(e: &hir::Expr, t: &Target, is_fn: &dyn Fn(TyId) -> bool) -> bool {
     use hir::ExprKind as K;
-    let all = |es: &[hir::Expr]| es.iter().all(|e| leaves_alone(e, t));
+    let all = |es: &[hir::Expr]| es.iter().all(|e| leaves_alone(e, t, is_fn));
+    let alone = |e: &hir::Expr| leaves_alone(e, t, is_fn);
     match &e.kind {
         K::Lit(_) => true,
         K::Local(id, _) => !is_local(t.place, *id),
         K::Field { base, index, .. } => {
             let same_field = matches!(&t.place.kind, K::Field { index: i, .. } if i == index);
-            !same_field && leaves_alone(base, t)
+            !same_field && alone(base)
         }
-        K::Index { base, index, .. } => leaves_alone(base, t) && leaves_alone(index, t),
-        K::Unary { expr, .. } | K::Cast(expr) | K::Upcast(expr) => leaves_alone(expr, t),
-        K::Binary { lhs, rhs, .. } => leaves_alone(lhs, t) && leaves_alone(rhs, t),
-        K::If { cond, then, els } => {
-            leaves_alone(cond, t) && leaves_alone(then, t) && leaves_alone(els, t)
-        }
+        K::Index { base, index, .. } => alone(base) && alone(index),
+        K::Unary { expr, .. } | K::Cast(expr) | K::Upcast(expr) => alone(expr),
+        K::Binary { lhs, rhs, .. } => alone(lhs) && alone(rhs),
+        K::If { cond, then, els } => alone(cond) && alone(then) && alone(els),
         K::Call {
             callee: Callee::Intrinsic(Intrinsic::ToString | Intrinsic::StrConcat | Intrinsic::Share),
             args,
         } => all(args),
+        // A closure passed along may capture the target without boxing it.
         K::Call {
             callee: Callee::Def(..),
             args,
-        } => t.calls_ok && all(args),
+        } => t.calls_ok && all(args) && !args.iter().any(|a| is_fn(a.ty)),
         _ => false,
     }
 }
@@ -254,6 +267,15 @@ fn infallible(e: &hir::Expr) -> bool {
             callee: Callee::Intrinsic(Intrinsic::ToString | Intrinsic::Share),
             args,
         } => args.iter().all(infallible),
+        _ => false,
+    }
+}
+
+/// A variable, or a path of fields rooted at one.
+fn is_field_path(e: &hir::Expr) -> bool {
+    match &e.kind {
+        hir::ExprKind::Local(..) => true,
+        hir::ExprKind::Field { base, .. } => is_field_path(base),
         _ => false,
     }
 }

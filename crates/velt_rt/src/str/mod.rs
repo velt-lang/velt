@@ -297,6 +297,12 @@ impl VeltStr {
         }
         let need = self.len() + bytes.len();
         if self.is_heap() && heap::is_unique(self.ptr()) {
+            let start = self.ptr() as usize;
+            if (start..start + self.w2 as usize).contains(&(bytes.as_ptr() as usize)) {
+                // The text lies in the buffer that is about to move: copy it out first.
+                let copy = bytes.to_vec();
+                return self.push_slow(&copy);
+            }
             let cap = grown(self.w2 as usize, need);
             self.w0 = heap::grow(self.ptr(), self.w2 as usize, cap) as usize as u64;
             self.w2 = cap as u64;
