@@ -329,6 +329,24 @@ impl VeltStr {
         self.w1 = (len + bytes.len()) as u64;
     }
 
+    /// Insert `bytes` at byte offset `at` (rare: `console.log`'s `<ref *N>` prefix), moving
+    /// the text to a new buffer.
+    ///
+    /// # Safety
+    /// `self` must be valid, `at` at most its length and on a character boundary; `bytes` must
+    /// not point into `self`.
+    pub unsafe fn insert_bytes(&mut self, at: usize, bytes: &[u8]) {
+        let old = self.as_bytes();
+        let mut text = Vec::with_capacity(old.len() + bytes.len());
+        text.extend_from_slice(&old[..at]);
+        text.extend_from_slice(bytes);
+        text.extend_from_slice(&old[at..]);
+        let mut s = VeltStr::with_capacity(text.len());
+        s.push_bytes(&text);
+        self.release();
+        *self = s;
+    }
+
     /// Run `f` on a byte vector that is appended to `self` (formatting helpers write into a Vec).
     ///
     /// # Safety

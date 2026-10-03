@@ -239,7 +239,8 @@ console.log(p.len(), q.len());  // 4 4
   field (`next?: Node`, `parent?: Category`, or a union such as `left: Tree`): such an object is
   stored behind a pointer, like a class instance, so its size is finite. Like JavaScript,
   `JSON.stringify` of an object that contains itself (`n.next = n`) fails: it panics with
-  "converting circular structure to JSON". A struct that contains itself is still an error
+  "converting circular structure to JSON"; `console.log` prints one like Node,
+  `<ref *1> { value: 1, next: [Circular *1] }`. A struct that contains itself is still an error
   (``recursive type `S` has infinite size``): structs are stored inline.
 - Used as a **generic bound** (`<T extends Named>`), an interface is resolved at compile time
   (direct calls). Used as a **value type** (`Named[]` holding different classes), it is a fat
