@@ -102,7 +102,7 @@ impl Interp<'_> {
             // Cycle tracking for printing (velt_rt's strbuf.rs): the programs run here print
             // no cyclic graphs, so every object is printed.
             "velt_rt_strbuf_inspect_enter" => return Some(1),
-            "velt_rt_strbuf_inspect_leave" => {}
+            "velt_rt_strbuf_inspect_begin" | "velt_rt_strbuf_inspect_leave" => {}
             _ => return None,
         }
         Some(0)
