@@ -11,19 +11,17 @@ js_array_and_promise_idioms.vlt:20:9: error: variable `zeros` cannot have type `
 js_array_and_promise_idioms.vlt:22:9: error: variable `shuffled` cannot have type `void`
 js_array_and_promise_idioms.vlt:23:36: error: no method named `then` found for type `Promise<i64>`
   = note: promises take no callbacks: `await` the promise, inside `try`/`catch`/`finally` to handle its error
-js_array_and_promise_idioms.vlt:24:16: error: `process.argv` is not supported
-  = note: use `args()` from `velt:process`: the arguments after the program, like Node's `process.argv.slice(2)`
-js_array_and_promise_idioms.vlt:25:15: error: `process.stdout` is not a value: use its members
+js_array_and_promise_idioms.vlt:24:15: error: `process.stdout` is not a value: use its members
   = note: call `process.stdout.write(s)`; for bytes, `import { stdout } from "velt:process"`
-js_array_and_promise_idioms.vlt:26:29: error: `process.env` is not a value: use its members
+js_array_and_promise_idioms.vlt:25:29: error: `process.env` is not a value: use its members
   = note: read a variable with `process.env.NAME` or `process.env[name]` (`string | null`); set one with `setEnv(name, value)` of `velt:process`; list them all with `envAll()` of `velt:process` (a `Record<string, string>`)
-js_array_and_promise_idioms.vlt:27:3: error: cannot assign to `process.env`
+js_array_and_promise_idioms.vlt:26:3: error: cannot assign to `process.env`
   = note: use `setEnv(name, value)` from `velt:process` (not synchronized with reads on other threads: set variables at startup)
-js_array_and_promise_idioms.vlt:28:10: error: cannot `delete` from `process.env`
+js_array_and_promise_idioms.vlt:27:10: error: cannot `delete` from `process.env`
   = note: use `removeEnv(name)` from `velt:process`
-js_array_and_promise_idioms.vlt:29:16: error: `process.exit` can only be called
-js_array_and_promise_idioms.vlt:30:17: error: `process.memoryUsage` can only be called
-js_array_and_promise_idioms.vlt:31:15: error: `process.pid` is not supported
-  = note: the builtin `process` has `process.env.NAME`, `process.stdout.write(s)`, `process.exit(code)` and `process.memoryUsage()`; `args()` and `cwd()` are in `velt:process`
-js_array_and_promise_idioms.vlt:32:18: error: `process.stdout` has no method `end`
+js_array_and_promise_idioms.vlt:28:16: error: `process.exit` can only be called
+js_array_and_promise_idioms.vlt:29:17: error: `process.memoryUsage` can only be called
+js_array_and_promise_idioms.vlt:30:15: error: `process.pid` is not supported
+  = note: the builtin `process` has `process.env.NAME`, `process.stdout.write(s)`, `process.argv`, `process.exit(code)` and `process.memoryUsage()`; `cwd()` is in `velt:process`
+js_array_and_promise_idioms.vlt:31:18: error: `process.stdout` has no method `end`
   = note: use `write(s)`, or `velt:process` for byte writes
