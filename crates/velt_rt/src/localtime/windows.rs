@@ -1,5 +1,6 @@
-//! The local UTC offset on Windows: the system time zone (`GetDynamicTimeZoneInformation`,
-//! read once per process, as the C library caches `TZ` on Unix) applied to the instant with
+//! The local UTC offset on Windows: `TZ` when it names UTC or a fixed offset (`tz_env`), else the
+//! system time zone (`GetDynamicTimeZoneInformation`; either is read once per process, as the C
+//! library caches `TZ` on Unix) applied to the instant with
 //! `SystemTimeToTzSpecificLocalTimeEx`, which uses the zone's dynamic per-year DST rules. The
 //! offset is the difference between the local and the UTC wall-clock time.
 //!
@@ -7,6 +8,8 @@
 //! bindings crate: four functions and three plain structs.
 
 use std::sync::OnceLock;
+
+use super::tz_env;
 
 /// `SYSTEMTIME`.
 #[repr(C)]
@@ -63,15 +66,27 @@ const TIME_ZONE_ID_INVALID: u32 = u32::MAX;
 /// Seconds from 1601-01-01 (the `FILETIME` epoch) to 1970-01-01.
 const EPOCH_DIFF_SECS: i64 = 11_644_473_600;
 
-/// The process's time zone, or `None` if Windows cannot report one (then local time is UTC).
-fn zone() -> Option<&'static DynamicTimeZoneInformation> {
-    static ZONE: OnceLock<Option<DynamicTimeZoneInformation>> = OnceLock::new();
+/// The time zone local time uses: `TZ` when it names UTC or a fixed offset, else the system's.
+enum Zone {
+    /// Seconds east of UTC.
+    Fixed(i32),
+    System(Box<DynamicTimeZoneInformation>),
+}
+
+/// The process's time zone (read once, as the C library caches `TZ` on Unix), or `None` if
+/// Windows cannot report one (then local time is UTC).
+fn zone() -> Option<&'static Zone> {
+    static ZONE: OnceLock<Option<Zone>> = OnceLock::new();
     ZONE.get_or_init(|| {
+        let tz = std::env::var("TZ").ok();
+        if let Some(offset) = tz.as_deref().and_then(tz_env::fixed_offset) {
+            return Some(Zone::Fixed(offset));
+        }
         // SAFETY: the struct is plain data; all-zero is a valid value to be overwritten.
         let mut info: DynamicTimeZoneInformation = unsafe { std::mem::zeroed() };
         // SAFETY: `info` is valid for writes.
         let id = unsafe { GetDynamicTimeZoneInformation(&mut info) };
-        (id != TIME_ZONE_ID_INVALID).then_some(info)
+        (id != TIME_ZONE_ID_INVALID).then(|| Zone::System(Box::new(info)))
     })
     .as_ref()
 }
@@ -93,7 +108,11 @@ fn ticks(ft: FileTime) -> i64 {
 /// Offset in seconds at `unix_secs`; outside `SYSTEMTIME`'s range (before 1601, after 30827)
 /// the zone's standard offset.
 pub(super) fn offset_seconds(unix_secs: i64) -> i32 {
-    zone().map_or(0, |zone| offset_in(zone, unix_secs))
+    match zone() {
+        Some(Zone::Fixed(offset)) => *offset,
+        Some(Zone::System(info)) => offset_in(info, unix_secs),
+        None => 0,
+    }
 }
 
 /// Offset in seconds of `zone` at `unix_secs`.

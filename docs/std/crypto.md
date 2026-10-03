@@ -8,7 +8,9 @@ randomness and constant-time comparison. The hashes are pure Velt (SHA-256 runs 
 - `sha1(data)` (20 bytes), `sha1Hex(s)`: SHA-1 is for legacy protocols only.
 - `hmacSha256(key, data)`, `hmacSha1(key, data)`.
 - `randomBytes(n: usize): u8[]`.
-- `randomInt(min, max): i64`: uniform in `[min, max)`; throws `CryptoError` if `max <= min`.
+- `randomInt(min, max): i64`: uniform in `[min, max)`. Like Node, it throws `CryptoError` (with
+  Node's message) when `min` or `max` is not a safe integer, `max <= min`, or `max - min` is 2^48 or
+  more.
 - `timingSafeEqual(a, b): bool`.
 
 ```ts

@@ -78,8 +78,9 @@ function randomness() {
   }
   console.log("randomInt in range:", inRange, "all values seen:", seen.every((s) => s));
   console.log(randomInt(7, 8));
-  const wide = randomInt(-9223372036854775807 - 1, 9223372036854775807);
-  console.log(wide >= -9223372036854775807 - 1);
+  // The widest range Node allows: 2^48 - 1.
+  const wide = randomInt(-140737488355328, 140737488355327);
+  console.log(wide >= -140737488355328 && wide < 140737488355327);
   try {
     console.log(randomInt(5, 5));
   } catch (e) {

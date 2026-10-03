@@ -1,0 +1,27 @@
+// randomInt checks its bounds like Node's crypto.randomInt and throws Node's messages: safe
+// integers only, max > min, max - min < 2^48, received numbers beyond 2^32 written with `_`.
+import { randomInt, CryptoError } from "velt:crypto";
+
+function attempt(min: i64, max: i64) {
+  try {
+    const v = randomInt(min, max);
+    console.log(min, max, "ok", v >= min && v < max);
+  } catch (e) {
+    console.log(min, max, "->", e.message);
+  }
+}
+
+function main() {
+  attempt(3, 3);
+  attempt(5, 1);
+  attempt(1000000000000, 1000000000000);
+  attempt(0, 281474976710656);
+  attempt(0, 281474976710655);
+  attempt(-9007199254740992, 0);
+  attempt(9007199254740992, 9007199254740994);
+  attempt(0, -5000000000);
+  attempt(-5000000000, -6000000000);
+  attempt(0, 9007199254740992);
+  attempt(0, -4294967296);
+  attempt(0, -4294967297);
+}
