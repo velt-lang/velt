@@ -1,0 +1,68 @@
+// `Object.keys` accepts any object, as in TypeScript, and returns a `string[]`: an object
+// literal's keys whatever its value types, a class instance's fields (private ones too; not
+// static fields or methods), a struct's fields and a record's keys, in declaration order.
+enum Res {
+  Cpu = "cpu",
+  Mem = "mem",
+}
+
+class A {
+  x = 1;
+  private y = 2;
+  static readonly z = 3;
+  m(): i64 {
+    return this.y;
+  }
+}
+
+class Base {
+  a = 1;
+}
+
+class Sub extends Base {
+  b = "s";
+  c: bool;
+  constructor(c: bool) {
+    super();
+    this.c = c;
+  }
+}
+
+struct Point {
+  x: f64;
+  y: f64;
+  label?: string;
+}
+
+type Shape = { kind: string; r: f64 };
+
+function make(): A {
+  console.log("make");
+  return new A();
+}
+
+function main() {
+  console.log(Object.keys({ a: 1, b: "x", c: [true] }));
+  console.log(Object.keys({}));
+  const a = new A();
+  console.log(Object.keys(a), a.m());
+  console.log(Object.keys(make()).length);
+  console.log(Object.keys(new Sub(true)));
+  const p: Point = { x: 1.0, y: 2.0 };
+  const q: Point = { x: 1.0, y: 2.0, label: "q" };
+  console.log(Object.keys(p), Object.keys(q));
+  const s: Shape = { kind: "circle", r: 1.5 };
+  for (const k of Object.keys(s)) {
+    console.log(k);
+  }
+  const open: Record<string, i64> = { k: 1, j: 2 };
+  open["i"] = 3;
+  delete open["k"];
+  const closed: Record<"cpu" | "mem", i64> = { mem: 1, cpu: 2 };
+  const byEnum = JSON.parse<Record<Res, i64>>(`{"mem":1,"cpu":2}`);
+  console.log(Object.keys(open), Object.keys(closed), Object.keys(byEnum));
+  const empty: Record<string, i64> = {};
+  const names: string[] = Object.keys(empty);
+  console.log(names, names.length);
+  console.log(Object.values({ x: "p", y: "q" }), Object.entries({ a: 1.5, b: 2 }));
+}

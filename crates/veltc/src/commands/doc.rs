@@ -16,8 +16,9 @@ pub fn doc_command(args: &DocArgs) -> Result<(), String> {
     }
     let out = args.output.clone().unwrap_or(default_out);
     let index = velt_doc::write_api_docs(&title, &intro, &inputs, &out)?;
+    let plural = if inputs.len() == 1 { "" } else { "s" };
     eprintln!(
-        "velt doc: {} modules → {}",
+        "velt doc: {} module{plural} → {}",
         inputs.len(),
         vpm::relpath::absolute(&index).display()
     );

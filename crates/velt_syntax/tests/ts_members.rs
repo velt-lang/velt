@@ -59,3 +59,47 @@ fn constructor_parameter_properties_declare_fields() {
     };
     assert!(matches!(e.kind, ExprKind::Call { .. }));
 }
+
+#[test]
+fn constructor_visibility() {
+    let vis = |src: &str| class(&parse_ok(src)).ctor_visibility;
+    assert_eq!(vis("class A { constructor() {} }"), CtorVisibility::Public);
+    assert_eq!(
+        vis("class A { public constructor() {} }"),
+        CtorVisibility::Public
+    );
+    assert_eq!(
+        vis("class A { protected constructor() {} }"),
+        CtorVisibility::Protected
+    );
+    assert_eq!(vis("class A {}"), CtorVisibility::Public);
+    // Parameter properties still declare fields.
+    let m = parse_ok("class A { private constructor(private readonly x: i64) {} }");
+    let c = class(&m);
+    assert_eq!(c.ctor_visibility, CtorVisibility::Private);
+    assert_eq!(c.fields.len(), 1);
+    assert!(c.fields[0].is_private && c.fields[0].readonly);
+}
+
+#[test]
+fn constructor_modifiers_and_protected_members_are_rejected() {
+    let e = errors("class A { static constructor() {} }");
+    assert!(
+        e.iter()
+            .any(|m| m.contains("a constructor can only be `public`, `protected` or `private`")),
+        "{e:?}"
+    );
+    let e = errors("class A { private protected constructor() {} }");
+    assert!(!e.is_empty());
+    for src in [
+        "class A { protected x: i64 = 0; }",
+        "class A { protected f() {} }",
+    ] {
+        let e = errors(src);
+        assert!(
+            e.iter()
+                .any(|m| m.contains("Velt has no `protected` members")),
+            "{src}: {e:?}"
+        );
+    }
+}

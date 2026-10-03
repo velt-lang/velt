@@ -33,6 +33,31 @@ class Account {
 const text = JSON.stringify(new Account());
 ```
 
+- **Private and protected constructors:** `JSON.parse<T>` (and `v.as<T>()`) cannot decode a
+  class whose constructor is `private` or `protected`, wherever it appears in `T` (a field, an
+  array element, a union member, a `Map` or `Record` value): decoding fills the fields without
+  running a constructor, so it would bypass the class's factories and their checks. Decode a
+  plain object type and call the factory instead. `JSON.stringify` writes such a class as
+  usual, and `Value` (whose constructor is private too) decodes: the runtime makes it.
+
+```ts
+class Money {
+  private constructor(readonly cents: i64) {}
+
+  static of(cents: i64): Money {
+    if (cents < 0) throw new Error("negative amount");
+    return new Money(cents);
+  }
+}
+
+type MoneyJson = { cents: i64 };
+
+const text = JSON.stringify(Money.of(250)); // {"cents":250}
+// JSON.parse<Money>(text) is an error: `JSON.parse` cannot create a `Money`: its constructor is private
+const m = Money.of(JSON.parse<MoneyJson>(text).cents);
+console.log(text, m.cents); // {"cents":250} 250
+```
+
 - Unions decode when `JSON.parse` can tell the members apart from the JSON value:
   - by its kind: `string | i64 | bool | null`, an array, or an object;
   - literal and enum members by value, before a plain member of the same kind (`"auto" | f64`);
@@ -79,6 +104,9 @@ const text = JSON.stringify(new Account());
   UTF-16 unit.
 - Syntax errors read the same from `JSON.parse<T>` and `JSON.parseValue`:
   `invalid JSON at $.items[2]: unexpected character '}' (byte 41)`.
+  In every message, a path of more than 20 segments keeps its first and last 10 with `…` between
+  (`expected string at $.kids[0].kids[0].kids[0].kids[0].kids[0]…[0].kids[0].kids[0].kids[0].kids[0].name`);
+  the byte offset still points at the exact place.
 - `JSON.parse<T>` treats an absent key and an explicit `null` alike: a `T | null` field
   (including `a?: T`) may be missing and is then `null`; every other field is required.
   `JSON.stringify` omits a `null` optional class field (`a?: T`) and writes other `null`s.
@@ -89,21 +117,32 @@ const text = JSON.stringify(new Account());
   - type tests: `isNull isBool isNumber isString isArray isObject`
   - conversions: `asNumber(): f64 | null`, `asBool()`, `asString()`
   - building: `JsonValue.object()`, `JsonValue.array()`, `JsonValue.of(x)` (a string, number,
-    `bool` or `null`; `new JsonValue()` is `null`), `JsonValue.from(x)` (the JSON form of any
+    `bool` or `null`), `JsonValue.from(x)` (the JSON form of any
     value `JSON.stringify` accepts, at any depth), `JsonValue.parse(text, options?)` (same as
     `JSON.parseValue`)
   - editing: `set(key, v)` (an existing key keeps its position), `delete(key)`, `push(v)`,
     `setAt(i, v)`; each returns `false` when the value is not an object / array (or `i` is out
-    of range)
+    of range). `delete` costs O(1) amortized wherever the key is; `get` and `len` stay O(1)
+    after it, and so does `at` on an object emptied from either end. After deletes in the
+    middle of a large object (more than 16 members), `at` on it costs O(log n): the first such
+    `at` takes O(n) to index the remaining members, and later edits keep that index up to date
+    in O(log n) each, until the object is compacted
   - `as<T>(options?)`: decode into a `T`, like `JSON.parse<T>`
   - `stringify()` (keys in insertion order); `clone()` is O(1)
+  - `console.log(v)` prints the value the way node prints the parsed object
+    (`{ a: 1, b: [ 2, 'x' ], c: null }`; a string prints raw as a `console.log` argument and
+    quoted inside other values), on one line at any depth like Velt's other values
+  - a template string prints a `JsonValue` exactly as `console.log` does, not as JSON:
+    `` `v = ${v}` `` is `v = { a: 1, b: [ 2, 'x' ], c: null }`, and a JSON string `"hi"`
+    shows as `hi`. Call `stringify()` for the JSON text (`{"a":1,"b":[2,"x"],"c":null}`)
 
   A `JsonValue` has value semantics: an edit never shows through a clone, through the value it
   was `set` into, or through a child handle from `get`/`at`. The runtime copies a node another
   handle shares before changing it (copy-on-write, one node at a time). To change a nested
-  value, edit the child and `set` it back. There is no `v[k] = x` syntax: use `set`. A class
-  cannot `extends` `JsonValue` (only the runtime makes its values); hold one in a field
-  instead.
+  value, edit the child and `set` it back. There is no `v[k] = x` syntax: use `set`. Only the
+  runtime makes `JsonValue`s: the constructor is private, so `new JsonValue(…)` is an error
+  (use the static methods above; a JSON `null` is made only with `JsonValue.of(null)`), and a
+  class cannot `extends` `JsonValue` (hold one in a field instead).
 
 ```ts
 import { Value } from "velt:json";
@@ -121,5 +160,6 @@ function main() {
   if (tags != null) {
     console.log(tags.len(), tags.at(1)?.asString(), v.get("n")?.asNumber(), v.keys());
   }
+  console.log(v); // { tags: [ 'a', 'b' ], n: 1.5 }
 }
 ```

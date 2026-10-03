@@ -1,5 +1,5 @@
 //! Robustness: no panics on truncated/garbage input, bounded nesting depth, linear-time
-//! ternary disambiguation, and parse speed. Parse cost growth is in `parse_linearity.rs`.
+//! ternary disambiguation, and parse speed. Parse cost growth is counted in `src/linear_tests.rs`.
 
 mod common;
 
@@ -251,8 +251,8 @@ fn nested_ternaries_are_not_exponential() {
     assert!(start.elapsed().as_secs() < 5);
 }
 
-/// Linearity itself is measured in `parse_linearity.rs`; this checks the input it uses parses
-/// and that pathological JSX and generic arrow attempts still finish.
+/// Linearity itself is checked by counting work, in `src/linear_tests.rs`; this checks the input
+/// it uses parses and that pathological JSX and generic arrow attempts still finish.
 #[test]
 fn jsx_decided_by_the_parser_finishes() {
     let (m, d) = parse(&common::JSX_UNIT.repeat(100));

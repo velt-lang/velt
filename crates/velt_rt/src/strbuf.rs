@@ -10,7 +10,8 @@
 
 use crate::fmt;
 use crate::json::escape::push_json_string;
-use crate::json::value::{stringify_into, Value};
+use crate::json::text::{inspect_into, stringify_into};
+use crate::json::value::Value;
 use crate::str::VeltStr;
 
 /// Identical to `VeltStr` (size 24, align 8).
@@ -110,6 +111,21 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_key(buf: *mut VeltStrBuf, s
 pub unsafe extern "C" fn velt_rt_strbuf_push_json_value(buf: *mut VeltStrBuf, h: *const Value) {
     match h.as_ref() {
         Some(v) => (*buf).push_with(|b| stringify_into(b, v)),
+        None => (*buf).push_bytes(b"null"),
+    }
+}
+
+/// Append what `console.log` prints for a `json.Value` handle: node's `util.inspect` of the
+/// parsed value (`{ a: 1, b: [ 2, 'x' ] }`); a string is raw when `top != 0` (a `console.log`
+/// argument) and quoted otherwise. A null handle appends `null`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_json(
+    buf: *mut VeltStrBuf,
+    h: *const Value,
+    top: u8,
+) {
+    match h.as_ref() {
+        Some(v) => (*buf).push_with(|b| inspect_into(b, v, top != 0)),
         None => (*buf).push_bytes(b"null"),
     }
 }

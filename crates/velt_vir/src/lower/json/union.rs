@@ -6,16 +6,14 @@
 //!   `reader_mark` and read again for the number member), else the number member; `true` /
 //!   `false`: bool literals, else the `bool` member; `[`: the array or tuple member;
 //! - `{`: the only object member, or else the member named by the discriminant field (`kind`,
-//!   found anywhere in the object) or by the first key that only one member requires. The
-//!   decoder looks ahead for that key, goes back to the `{` and decodes the chosen member. It
-//!   skips the other values with `skip_lookahead`, which remembers where they end, so a union
-//!   nested in them finds its own key without scanning its subtree again (linear overall).
+//!   found anywhere in the object) or by the first key that only one member requires
+//!   (union_object.rs: a lookahead that stays linear overall).
 //!
 //! Anything else fails with the members' kinds: `expected one of string, number at $.x`.
 
 use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
-use super::{json_quote, Seg, STR, TOKEN_FALSE, TOKEN_NUMBER, TOKEN_STRING, TOKEN_TRUE};
+use super::{STR, TOKEN_FALSE, TOKEN_NUMBER, TOKEN_STRING, TOKEN_TRUE};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, ice, FnLower};
@@ -116,14 +114,35 @@ impl FnLower<'_, '_> {
         let n = self.cx.enum_def(d).variants.len() as u32;
         let members: Vec<TyId> = (0..n).map(|k| self.cx.variant_tys(ty, k)[0]).collect();
         let shapes: Vec<Shape> = members.iter().map(|m| self.union_shape(*m)).collect();
-        let pick =
-            |want: Shape| -> Vec<u32> { (0..n).filter(|&k| shapes[k as usize] == want).collect() };
         let expected = self.union_expected(&members, &shapes);
-        let ro = Operand::Copy(Place::local(r));
         let (done, bad) = (self.new_block(), self.new_block());
+        let blocks = self.union_peek(r, bad);
+        let cx = UnionCx {
+            r,
+            place,
+            ctx,
+            ty,
+            members: &members,
+            expected: &expected,
+            done,
+            bad,
+            fail,
+        };
+        self.union_by_kind(&cx, &shapes, &blocks);
+        // Another kind of value: skip it so a malformed one reports its syntax error.
+        self.switch_to(bad);
+        self.rt_u8(Rt::JsonSkipValue, vec![Operand::Copy(Place::local(r))]);
+        self.json_fail(ctx, &expected, fail);
+        self.switch_to(done);
+    }
+
+    /// Peek at the next token and switch on its kind: to the blocks returned for a string, a
+    /// number, a bool, an array and an object, or to `bad`.
+    fn union_peek(&mut self, r: Local, bad: BlockId) -> Vec<BlockId> {
         let blocks: Vec<BlockId> = (0..5).map(|_| self.new_block()).collect();
         let tok = self.temp(Ty::U32);
-        self.call_rt(Rt::JsonPeek, vec![ro.clone()], Some(Place::local(tok)));
+        let ro = Operand::Copy(Place::local(r));
+        self.call_rt(Rt::JsonPeek, vec![ro], Some(Place::local(tok)));
         self.terminate(Terminator::Switch {
             value: Operand::Copy(Place::local(tok)),
             cases: vec![
@@ -136,58 +155,45 @@ impl FnLower<'_, '_> {
             ],
             default: bad,
         });
-        let cx = UnionCx {
-            r,
-            place,
-            ctx,
-            ty,
-            members: &members,
-            expected: &expected,
-            done,
-            bad,
-            fail,
-        };
+        blocks
+    }
 
+    /// The decoder for each kind of token (`blocks`, from [`Self::union_peek`]): the members
+    /// of that kind, by `shapes`.
+    fn union_by_kind(&mut self, cx: &UnionCx<'_>, shapes: &[Shape], blocks: &[BlockId]) {
         self.switch_to(blocks[0]);
-        let lits: Vec<Lit> = pick(Shape::StrLits)
-            .into_iter()
-            .flat_map(|k| self.union_lits(k, members[k as usize]))
-            .collect();
-        self.union_string(&cx, &lits, pick(Shape::Str).first().copied());
+        let lits = self.shape_lits(cx, shapes, Shape::StrLits);
+        self.union_string(cx, &lits, first_of(shapes, Shape::Str));
 
         self.switch_to(blocks[1]);
-        let lits: Vec<Lit> = pick(Shape::NumLits)
-            .into_iter()
-            .flat_map(|k| self.union_lits(k, members[k as usize]))
-            .collect();
-        self.union_number(&cx, &lits, pick(Shape::Num).first().copied());
+        let lits = self.shape_lits(cx, shapes, Shape::NumLits);
+        self.union_number(cx, &lits, first_of(shapes, Shape::Num));
 
         self.switch_to(blocks[2]);
-        let lits: Vec<Lit> = pick(Shape::BoolLits)
-            .into_iter()
-            .flat_map(|k| self.union_lits(k, members[k as usize]))
-            .collect();
-        self.union_bool(&cx, &lits, pick(Shape::Bool).first().copied());
+        let lits = self.shape_lits(cx, shapes, Shape::BoolLits);
+        self.union_bool(cx, &lits, first_of(shapes, Shape::Bool));
 
         self.switch_to(blocks[3]);
-        match pick(Shape::Array).first() {
-            Some(&k) => self.union_member(&cx, k),
-            None => self.goto(bad),
+        match first_of(shapes, Shape::Array) {
+            Some(k) => self.union_member(cx, k),
+            None => self.goto(cx.bad),
         }
 
         self.switch_to(blocks[4]);
-        let objects = pick(Shape::Object);
+        let objects = members_of(shapes, Shape::Object);
         match objects.as_slice() {
-            [] => self.goto(bad),
-            [k] => self.union_member(&cx, *k),
-            _ => self.union_object(&cx, &objects),
+            [] => self.goto(cx.bad),
+            [k] => self.union_member(cx, *k),
+            _ => self.union_object(cx, &objects),
         }
+    }
 
-        // Another kind of value: skip it so a malformed one reports its syntax error.
-        self.switch_to(bad);
-        self.rt_u8(Rt::JsonSkipValue, vec![ro]);
-        self.json_fail(ctx, &expected, fail);
-        self.switch_to(done);
+    /// The literals of the members of shape `want`.
+    fn shape_lits(&mut self, cx: &UnionCx<'_>, shapes: &[Shape], want: Shape) -> Vec<Lit> {
+        members_of(shapes, want)
+            .into_iter()
+            .flat_map(|k| self.union_lits(k, cx.members[k as usize]))
+            .collect()
     }
 
     /// `expected` text: the members' kinds and literal values.
@@ -235,7 +241,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Decode member `k` with its own decoder, then continue at `done`.
-    fn union_member(&mut self, cx: &UnionCx<'_>, k: u32) {
+    pub(super) fn union_member(&mut self, cx: &UnionCx<'_>, k: u32) {
         let m = cx.members[k as usize];
         let view = self.cx.view(cx.ty, k);
         let vp = proj(cx.place, Proj::Cast(view));
@@ -408,221 +414,31 @@ impl FnLower<'_, '_> {
             None => self.json_fail(cx.ctx, cx.expected, cx.fail),
         }
     }
+}
 
-    /// The literal value of field `name` in object type `t`, if it has one.
-    fn field_literal(&mut self, t: TyId, name: &str) -> Option<LitValue> {
-        let TyKind::Adt(d, _) = self.cx.kind(t) else {
-            return None;
-        };
-        let i = self
-            .cx
-            .adt_def(d)
-            .fields
-            .iter()
-            .position(|f| f.name == name)?;
-        let ft = self.cx.adt_field_tys(t)[i];
-        match self.cx.kind(ft) {
-            TyKind::Literal(l) => Some(l),
-            _ => None,
-        }
-    }
+/// The members of shape `want`.
+fn members_of(shapes: &[Shape], want: Shape) -> Vec<u32> {
+    (0..shapes.len() as u32)
+        .filter(|&k| shapes[k as usize] == want)
+        .collect()
+}
 
-    /// `(name, required)` of each field of object type `t`.
-    fn object_field_names(&mut self, t: TyId) -> Vec<(String, bool)> {
-        let TyKind::Adt(d, _) = self.cx.kind(t) else {
-            return vec![];
-        };
-        let names: Vec<String> = self
-            .cx
-            .adt_def(d)
-            .fields
-            .iter()
-            .map(|f| f.name.clone())
-            .collect();
-        let tys = self.cx.adt_field_tys(t);
-        names
-            .into_iter()
-            .zip(tys)
-            .map(|(n, ft)| (n, !matches!(self.cx.kind(ft), TyKind::Option(_))))
-            .collect()
-    }
-
-    /// Several object members: find the one named by the discriminant field, or else by a key
-    /// only it requires (sema's `object_discriminant` / `required_keys`, in the same order).
-    fn union_object(&mut self, cx: &UnionCx<'_>, objects: &[u32]) {
-        let tys: Vec<TyId> = objects.iter().map(|&k| cx.members[k as usize]).collect();
-        let fields: Vec<Vec<(String, bool)>> =
-            tys.iter().map(|t| self.object_field_names(*t)).collect();
-        // The discriminant: a field with a literal type in every member, values distinct.
-        let disc = fields[0].iter().map(|(n, _)| n.clone()).find(|name| {
-            let mut seen = vec![];
-            for &t in &tys {
-                match self.field_literal(t, name) {
-                    Some(v) if !seen.contains(&v) => seen.push(v),
-                    _ => return false,
-                }
-            }
-            true
-        });
-        // Otherwise one key per member that only it has (required there).
-        let keys: Vec<String> = match &disc {
-            Some(_) => vec![],
-            None => fields
-                .iter()
-                .enumerate()
-                .map(|(i, fs)| {
-                    fs.iter()
-                        .find(|(n, req)| {
-                            *req && fields
-                                .iter()
-                                .enumerate()
-                                .all(|(j, o)| j == i || o.iter().all(|(on, _)| on != n))
-                        })
-                        .map(|(n, _)| n.clone())
-                        .unwrap_or_else(|| ice("JSON union members without distinguishing keys"))
-                })
-                .collect(),
-        };
-        let ro = Operand::Copy(Place::local(cx.r));
-        let mark = self.temp(Ty::U64);
-        self.call_rt(Rt::JsonMark, vec![ro.clone()], Some(Place::local(mark)));
-        self.json_expect(
-            Rt::JsonObjectStart,
-            vec![ro.clone()],
-            cx.ctx,
-            "object",
-            cx.fail,
-        );
-        // `which` is the position in `objects` of the chosen member.
-        let which = self.temp(Ty::U32);
-        let key = self.temp(STR);
-        let ka = self.addr(Place::local(key));
-        let (head, body, end, broken, found) = (
-            self.new_block(),
-            self.new_block(),
-            self.new_block(),
-            self.new_block(),
-            self.new_block(),
-        );
-        self.goto(head);
-        self.switch_to(head);
-        let step = self.temp(Ty::U8);
-        self.call_rt(
-            Rt::JsonNextKey,
-            vec![ro.clone(), ka.clone()],
-            Some(Place::local(step)),
-        );
-        self.terminate(Terminator::Switch {
-            value: Operand::Copy(Place::local(step)),
-            cases: vec![(1, body), (0, end)],
-            default: broken,
-        });
-        self.switch_to(broken);
-        self.json_fail(cx.ctx, "object", cx.fail);
-
-        self.switch_to(body);
-        match &disc {
-            Some(name) => {
-                let l = self.str_lit(name);
-                let la = self.operand_addr(l, STR);
-                let eq = self.rt_u8(Rt::StrEq, vec![ka.clone(), la]);
-                let (hit, other) = (self.new_block(), self.new_block());
-                self.branch(eq, hit, other);
-                self.switch_to(hit);
-                self.call_rt(Rt::StrDrop, vec![ka.clone()], None);
-                let alts: Vec<LitValue> = tys
-                    .iter()
-                    .map(|t| {
-                        self.field_literal(*t, name)
-                            .unwrap_or_else(|| ice("discriminant"))
-                    })
-                    .collect();
-                let tag_fail = self.new_block();
-                let idx = self.json_match_choice(cx.r, cx.ctx, &alts, tag_fail);
-                self.assign(
-                    Place::local(which),
-                    Rvalue::Use(Operand::Copy(Place::local(idx))),
-                );
-                self.goto(found);
-                self.switch_to(tag_fail);
-                self.json_prepend(cx.ctx, Seg::Field(name));
-                self.goto(cx.fail);
-                self.switch_to(other);
-            }
-            None => {
-                for (i, k) in keys.iter().enumerate() {
-                    let l = self.str_lit(k);
-                    let la = self.operand_addr(l, STR);
-                    let eq = self.rt_u8(Rt::StrEq, vec![ka.clone(), la]);
-                    let (hit, miss) = (self.new_block(), self.new_block());
-                    self.branch(eq, hit, miss);
-                    self.switch_to(hit);
-                    self.call_rt(Rt::StrDrop, vec![ka.clone()], None);
-                    self.assign(Place::local(which), Rvalue::Use(cint(i as i128, Ty::U32)));
-                    self.goto(found);
-                    self.switch_to(miss);
-                }
-            }
-        }
-        // Not the key we look for: skip its value (remembering where its objects end, so the
-        // lookahead of a union nested in it does not scan it again).
-        let ok = self.rt_u8(Rt::JsonSkipLookahead, vec![ro.clone()]);
-        let (next, skip_bad) = (self.new_block(), self.new_block());
-        self.branch(ok, next, skip_bad);
-        self.switch_to(skip_bad);
-        self.json_prepend(cx.ctx, Seg::Key(ka.clone()));
-        self.call_rt(Rt::StrDrop, vec![ka.clone()], None);
-        self.json_fail(cx.ctx, "value", cx.fail);
-        self.switch_to(next);
-        self.call_rt(Rt::StrDrop, vec![ka], None);
-        self.goto(head);
-
-        // The object ended without the key.
-        self.switch_to(end);
-        let missing = match &disc {
-            Some(name) => format!("field {}", json_quote(name)),
-            None => {
-                let list: Vec<String> = keys.iter().map(|k| json_quote(k)).collect();
-                format!("object with one of the fields {}", list.join(", "))
-            }
-        };
-        self.json_fail(cx.ctx, &missing, cx.fail);
-
-        // Back to the `{`, then decode the chosen member.
-        self.switch_to(found);
-        self.call_rt(
-            Rt::JsonReset,
-            vec![ro, Operand::Copy(Place::local(mark))],
-            None,
-        );
-        let blocks: Vec<BlockId> = objects.iter().map(|_| self.new_block()).collect();
-        self.terminate(Terminator::Switch {
-            value: Operand::Copy(Place::local(which)),
-            cases: blocks
-                .iter()
-                .enumerate()
-                .map(|(i, b)| (i as i128, *b))
-                .collect(),
-            default: cx.bad,
-        });
-        for (&k, b) in objects.iter().zip(blocks) {
-            self.switch_to(b);
-            self.union_member(cx, k);
-        }
-    }
+/// The first member of shape `want`.
+fn first_of(shapes: &[Shape], want: Shape) -> Option<u32> {
+    members_of(shapes, want).first().copied()
 }
 
 /// What every part of a union decoder needs.
-struct UnionCx<'a> {
-    r: Local,
-    place: &'a Place,
-    ctx: Local,
-    ty: TyId,
-    members: &'a [TyId],
-    expected: &'a str,
+pub(super) struct UnionCx<'a> {
+    pub(super) r: Local,
+    pub(super) place: &'a Place,
+    pub(super) ctx: Local,
+    pub(super) ty: TyId,
+    pub(super) members: &'a [TyId],
+    pub(super) expected: &'a str,
     /// Decoded: continue here.
-    done: BlockId,
+    pub(super) done: BlockId,
     /// A kind of value no member takes.
-    bad: BlockId,
-    fail: BlockId,
+    pub(super) bad: BlockId,
+    pub(super) fail: BlockId,
 }

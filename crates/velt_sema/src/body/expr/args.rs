@@ -229,6 +229,9 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> Vec<TyId> {
         let mut out = vec![];
+        if !quiet {
+            self.report_uninferred(c, slots, span);
+        }
         for (k, s) in slots.iter().enumerate() {
             let name = c
                 .slot_names
@@ -236,19 +239,6 @@ impl FnCx<'_, '_> {
                 .cloned()
                 .unwrap_or_else(|| format!("T{k}"));
             let Some(t) = *s else {
-                if quiet {
-                    out.push(self.cx.ty.error);
-                    continue;
-                }
-                self.cx.error(
-                    Diagnostic::error(
-                        format!("cannot infer type parameter `{name}` of {}", c.what),
-                        span,
-                    )
-                    .with_note(
-                        "add explicit type arguments, e.g. `f<i64>(...)`, or annotate the result",
-                    ),
-                );
                 out.push(self.cx.ty.error);
                 continue;
             };
@@ -282,6 +272,27 @@ impl FnCx<'_, '_> {
             out.push(t);
         }
         out
+    }
+
+    /// One error naming every type parameter of `c` that no argument or expected type fixed.
+    fn report_uninferred(&mut self, c: &Callable, slots: &[Option<TyId>], span: Span) {
+        let names: Vec<String> = (0..slots.len())
+            .filter(|k| slots[*k].is_none())
+            .map(|k| {
+                let n = c.slot_names.get(k).cloned();
+                format!("`{}`", n.unwrap_or_else(|| format!("T{k}")))
+            })
+            .collect();
+        let list = match names.as_slice() {
+            [] => return,
+            [one] => format!("type parameter {one}"),
+            [init @ .., last] => format!("type parameters {} and {last}", init.join(", ")),
+        };
+        self.cx.error(
+            Diagnostic::error(format!("cannot infer {list} of {}", c.what), span).with_note(
+                "add explicit type arguments, e.g. `f<i64>(...)`, or annotate the result",
+            ),
+        );
     }
 
     /// An arrow function passed directly as an argument: non-escaping, unless the parameter

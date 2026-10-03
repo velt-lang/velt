@@ -46,6 +46,7 @@ impl<'a> Parser<'a> {
             implements,
             fields: vec![],
             constructor: None,
+            ctor_visibility: CtorVisibility::Public,
             methods: vec![],
         };
         self.parse_members(|p| {
@@ -88,11 +89,12 @@ impl<'a> Parser<'a> {
         match member {
             Member::Field(f) => decl.fields.push(f),
             Member::Method(m) => decl.methods.push(m),
-            Member::Constructor(c, fields) => {
+            Member::Constructor(c, visibility, fields) => {
                 if decl.constructor.is_some() {
                     self.error("duplicate constructor", c.sig.name.span);
                 }
                 decl.constructor = Some(c);
+                decl.ctor_visibility = visibility;
                 decl.fields.extend(fields);
             }
         }
@@ -145,7 +147,7 @@ impl<'a> Parser<'a> {
                     return Ok(());
                 }
                 Member::Field(f) => f.span,
-                Member::Constructor(c, _) => c.sig.name.span,
+                Member::Constructor(c, _, _) => c.sig.name.span,
             };
             p.error("`extend` blocks can only add methods", span);
             Ok(())

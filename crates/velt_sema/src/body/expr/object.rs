@@ -198,7 +198,7 @@ impl FnCx<'_, '_> {
                         format!("expected an instance of class `{cn}`, found an object literal"),
                         span,
                     )
-                    .with_note(format!("create it with `new {cn}(...)`")),
+                    .with_note(self.cx.creation_note(d)),
                 );
                 return self.error_expr(span);
             }
@@ -280,10 +280,9 @@ impl FnCx<'_, '_> {
             return None;
         };
         if a.kind == AdtKind::Class {
-            self.cx.error(
-                Diagnostic::error(format!("`{name}` is a class"), t.span)
-                    .with_note(format!("create instances with `new {name}(...)`")),
-            );
+            let note = self.cx.creation_note(d);
+            self.cx
+                .error(Diagnostic::error(format!("`{name}` is a class"), t.span).with_note(note));
             return None;
         }
         let n = a.generics.len();

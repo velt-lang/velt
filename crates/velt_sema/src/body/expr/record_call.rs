@@ -102,6 +102,31 @@ impl FnCx<'_, '_> {
         rest: &[ast::Expr],
         span: Span,
     ) -> hir::Expr {
+        self.record_call_keyed_with(obj, method, key, rest, None, span)
+    }
+
+    /// `obj.__set(key, value)` with an already checked `value`.
+    pub(super) fn record_set_checked(
+        &mut self,
+        obj: hir::Expr,
+        key: RecordKey<'_>,
+        value: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        self.record_call_keyed_with(obj, "__set", key, &[], Some(value), span)
+    }
+
+    /// [`Self::record_call_keyed`], with the parameter after the key given as a `checked`
+    /// expression instead of in `rest`.
+    fn record_call_keyed_with(
+        &mut self,
+        obj: hir::Expr,
+        method: &str,
+        key: RecordKey<'_>,
+        rest: &[ast::Expr],
+        checked: Option<hir::Expr>,
+        span: Span,
+    ) -> hir::Expr {
         let (def, slots, recv_ty, vslot) = match self.resolve_method(obj.ty, method) {
             Some(Resolved::Def {
                 def,
@@ -114,6 +139,7 @@ impl FnCx<'_, '_> {
         };
         let mut c = self.fn_callable(def, format!("method `{method}`"));
         let kp = c.params.remove(0);
+        let vp = checked.as_ref().map(|_| c.params.remove(0));
         let kty = self.cx.ty.subst_known(kp.ty, &slots);
         let key = self.record_key_arg(kty, &key, want_of(kp.mode));
         let ck = self.check_call(&c, slots, rest, None, span);
@@ -121,6 +147,10 @@ impl FnCx<'_, '_> {
         let key = self.coerce(key, kty);
         let recv = self.receiver(obj, recv_ty, self.this_mode(def));
         let mut args = vec![recv, key];
+        if let (Some(v), Some(vp)) = (checked, vp) {
+            let vty = self.cx.ty.subst(vp.ty, &ck.type_args);
+            args.push(self.coerce(v, vty));
+        }
         args.extend(ck.args);
         self.call_throws(def, &ck.type_args, ck.ret, span);
         let callee = match vslot {

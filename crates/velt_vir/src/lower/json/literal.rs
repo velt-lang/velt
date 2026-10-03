@@ -146,18 +146,12 @@ impl FnLower<'_, '_> {
     ) -> Local {
         let expected = choice_text(alts);
         let idx = self.temp(Ty::U32);
-        let ro = Operand::Copy(Place::local(r));
         let (done, bad) = (self.new_block(), self.new_block());
-        let by_kind = |want: fn(&LitValue) -> bool| -> Vec<(u32, LitValue)> {
-            alts.iter()
-                .enumerate()
-                .filter(|(_, l)| want(l))
-                .map(|(i, l)| (i as u32, l.clone()))
-                .collect()
-        };
-        let strs = by_kind(|l| matches!(l, LitValue::Str(_)));
-        let nums = by_kind(|l| matches!(l, LitValue::Int(..) | LitValue::Float(..)));
-        let bools = by_kind(|l| matches!(l, LitValue::Bool(_)));
+        let strs = by_kind(alts, |l| matches!(l, LitValue::Str(_)));
+        let nums = by_kind(alts, |l| {
+            matches!(l, LitValue::Int(..) | LitValue::Float(..))
+        });
+        let bools = by_kind(alts, |l| matches!(l, LitValue::Bool(_)));
         let (sb, nb, bb) = (self.new_block(), self.new_block(), self.new_block());
         let mut cases = vec![];
         if !strs.is_empty() {
@@ -170,6 +164,7 @@ impl FnLower<'_, '_> {
             cases.push((TOKEN_TRUE as i128, bb));
             cases.push((TOKEN_FALSE as i128, bb));
         }
+        let ro = Operand::Copy(Place::local(r));
         let tok = self.temp(Ty::U32);
         self.call_rt(Rt::JsonPeek, vec![ro.clone()], Some(Place::local(tok)));
         self.terminate(Terminator::Switch {
@@ -177,105 +172,144 @@ impl FnLower<'_, '_> {
             cases,
             default: bad,
         });
-
-        // Strings: compare the decoded text with each string alternative.
-        self.switch_to(sb);
-        if strs.is_empty() {
-            self.goto(bad);
-        } else {
-            let s = self.temp(STR);
-            let sa = self.addr(Place::local(s));
-            self.json_expect(
-                Rt::JsonReadString,
-                vec![ro.clone(), sa.clone()],
-                ctx,
-                &expected,
-                fail,
-            );
-            for (i, l) in &strs {
-                let LitValue::Str(text) = l else {
-                    unreachable!("ICE: non-string literal among the string alternatives")
-                };
-                let lit = self.str_lit(text);
-                let la = self.operand_addr(lit, STR);
-                let eq = self.rt_u8(Rt::StrEq, vec![sa.clone(), la]);
-                let (hit, miss) = (self.new_block(), self.new_block());
-                self.branch(eq, hit, miss);
-                self.switch_to(hit);
-                self.call_rt(Rt::StrDrop, vec![sa.clone()], None);
-                self.assign(Place::local(idx), Rvalue::Use(cint(*i as i128, Ty::U32)));
-                self.goto(done);
-                self.switch_to(miss);
+        let cx = ChoiceCx {
+            r,
+            ctx,
+            idx,
+            expected: &expected,
+            done,
+            fail,
+        };
+        for (block, alts, kind) in [
+            (sb, &strs, Scalar::Str),
+            (nb, &nums, Scalar::Num),
+            (bb, &bools, Scalar::Bool),
+        ] {
+            self.switch_to(block);
+            match kind {
+                _ if alts.is_empty() => self.goto(bad),
+                Scalar::Str => self.match_str_choices(&cx, alts),
+                Scalar::Num => self.match_num_choices(&cx, alts),
+                Scalar::Bool => self.match_bool_choices(&cx, alts),
             }
-            self.call_rt(Rt::StrDrop, vec![sa], None);
-            self.json_fail(ctx, &expected, fail);
         }
-
-        // Numbers: compare as f64 (literal and enum values are exact there).
-        self.switch_to(nb);
-        if nums.is_empty() {
-            self.goto(bad);
-        } else {
-            let f = self.temp(Ty::F64);
-            let fa = self.addr(Place::local(f));
-            self.json_expect(Rt::JsonReadF64, vec![ro.clone(), fa], ctx, &expected, fail);
-            for (i, l) in &nums {
-                let v = match l {
-                    LitValue::Int(_, n) => *n as f64,
-                    LitValue::Float(_, bits) => f64::from_bits(*bits),
-                    _ => unreachable!("ICE: non-number literal among the number alternatives"),
-                };
-                let c = Operand::Const(Const::Float(v), Ty::F64);
-                let eq = self.rvalue_temp(
-                    Ty::Bool,
-                    Rvalue::Binary(BinOp::Eq, Operand::Copy(Place::local(f)), c),
-                );
-                let (hit, miss) = (self.new_block(), self.new_block());
-                self.branch(eq, hit, miss);
-                self.switch_to(hit);
-                self.assign(Place::local(idx), Rvalue::Use(cint(*i as i128, Ty::U32)));
-                self.goto(done);
-                self.switch_to(miss);
-            }
-            self.json_fail(ctx, &expected, fail);
-        }
-
-        // Bools.
-        self.switch_to(bb);
-        if bools.is_empty() {
-            self.goto(bad);
-        } else {
-            let b = self.temp(Ty::U8);
-            let ba = self.addr(Place::local(b));
-            self.json_expect(Rt::JsonReadBool, vec![ro.clone(), ba], ctx, &expected, fail);
-            for (i, l) in &bools {
-                let LitValue::Bool(want) = l else {
-                    unreachable!("ICE: non-bool literal among the bool alternatives")
-                };
-                let eq = self.rvalue_temp(
-                    Ty::Bool,
-                    Rvalue::Binary(
-                        BinOp::Eq,
-                        Operand::Copy(Place::local(b)),
-                        cint(*want as i128, Ty::U8),
-                    ),
-                );
-                let (hit, miss) = (self.new_block(), self.new_block());
-                self.branch(eq, hit, miss);
-                self.switch_to(hit);
-                self.assign(Place::local(idx), Rvalue::Use(cint(*i as i128, Ty::U32)));
-                self.goto(done);
-                self.switch_to(miss);
-            }
-            self.json_fail(ctx, &expected, fail);
-        }
-
         // Another kind of value: skip it so a malformed one reports its syntax error.
         self.switch_to(bad);
         self.rt_u8(Rt::JsonSkipValue, vec![ro]);
         self.json_fail(ctx, &expected, fail);
-
         self.switch_to(done);
         idx
     }
+
+    /// Strings: compare the decoded text with each string alternative.
+    fn match_str_choices(&mut self, cx: &ChoiceCx<'_>, strs: &[(u32, LitValue)]) {
+        let s = self.temp(STR);
+        let sa = self.addr(Place::local(s));
+        let ro = Operand::Copy(Place::local(cx.r));
+        self.json_expect(
+            Rt::JsonReadString,
+            vec![ro, sa.clone()],
+            cx.ctx,
+            cx.expected,
+            cx.fail,
+        );
+        for (i, l) in strs {
+            let LitValue::Str(text) = l else {
+                unreachable!("ICE: non-string literal among the string alternatives")
+            };
+            let lit = self.str_lit(text);
+            let la = self.operand_addr(lit, STR);
+            let eq = self.rt_u8(Rt::StrEq, vec![sa.clone(), la]);
+            self.choice_hit(cx, eq, *i, Some(&sa));
+        }
+        self.call_rt(Rt::StrDrop, vec![sa], None);
+        self.json_fail(cx.ctx, cx.expected, cx.fail);
+    }
+
+    /// Numbers: compare as f64 (literal and enum values are exact there).
+    fn match_num_choices(&mut self, cx: &ChoiceCx<'_>, nums: &[(u32, LitValue)]) {
+        let f = self.temp(Ty::F64);
+        let fa = self.addr(Place::local(f));
+        let ro = Operand::Copy(Place::local(cx.r));
+        self.json_expect(Rt::JsonReadF64, vec![ro, fa], cx.ctx, cx.expected, cx.fail);
+        for (i, l) in nums {
+            let v = match l {
+                LitValue::Int(_, n) => *n as f64,
+                LitValue::Float(_, bits) => f64::from_bits(*bits),
+                _ => unreachable!("ICE: non-number literal among the number alternatives"),
+            };
+            let c = Operand::Const(Const::Float(v), Ty::F64);
+            let eq = self.rvalue_temp(
+                Ty::Bool,
+                Rvalue::Binary(BinOp::Eq, Operand::Copy(Place::local(f)), c),
+            );
+            self.choice_hit(cx, eq, *i, None);
+        }
+        self.json_fail(cx.ctx, cx.expected, cx.fail);
+    }
+
+    /// Bools.
+    fn match_bool_choices(&mut self, cx: &ChoiceCx<'_>, bools: &[(u32, LitValue)]) {
+        let b = self.temp(Ty::U8);
+        let ba = self.addr(Place::local(b));
+        let ro = Operand::Copy(Place::local(cx.r));
+        self.json_expect(Rt::JsonReadBool, vec![ro, ba], cx.ctx, cx.expected, cx.fail);
+        for (i, l) in bools {
+            let LitValue::Bool(want) = l else {
+                unreachable!("ICE: non-bool literal among the bool alternatives")
+            };
+            let eq = self.rvalue_temp(
+                Ty::Bool,
+                Rvalue::Binary(
+                    BinOp::Eq,
+                    Operand::Copy(Place::local(b)),
+                    cint(*want as i128, Ty::U8),
+                ),
+            );
+            self.choice_hit(cx, eq, *i, None);
+        }
+        self.json_fail(cx.ctx, cx.expected, cx.fail);
+    }
+
+    /// If `eq`, alternative `i` matched: drop the decoded string `drop` (if any), store `i`
+    /// and continue at `done`; otherwise go on with the next comparison.
+    fn choice_hit(&mut self, cx: &ChoiceCx<'_>, eq: Operand, i: u32, drop: Option<&Operand>) {
+        let (hit, miss) = (self.new_block(), self.new_block());
+        self.branch(eq, hit, miss);
+        self.switch_to(hit);
+        if let Some(sa) = drop {
+            self.call_rt(Rt::StrDrop, vec![sa.clone()], None);
+        }
+        self.assign(Place::local(cx.idx), Rvalue::Use(cint(i as i128, Ty::U32)));
+        self.goto(cx.done);
+        self.switch_to(miss);
+    }
+}
+
+/// What the comparisons of [`FnLower::json_match_choice`] need.
+struct ChoiceCx<'a> {
+    r: Local,
+    ctx: Local,
+    /// The matching alternative's index goes here.
+    idx: Local,
+    expected: &'a str,
+    /// Matched: continue here.
+    done: BlockId,
+    fail: BlockId,
+}
+
+/// The kinds of token a choice can be read from.
+enum Scalar {
+    Str,
+    Num,
+    Bool,
+}
+
+/// The alternatives `want` accepts, with their indexes.
+fn by_kind(alts: &[LitValue], want: fn(&LitValue) -> bool) -> Vec<(u32, LitValue)> {
+    alts.iter()
+        .enumerate()
+        .filter(|(_, l)| want(l))
+        .map(|(i, l)| (i as u32, l.clone()))
+        .collect()
 }

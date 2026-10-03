@@ -34,6 +34,14 @@ fn generic_calls_vs_comparisons() {
     check("i < 10 && j > 0", "(&& (< i 10) (> j 0))");
     check("a < 1 > b", "(> (< a 1) b)");
     check("a < \"x\" | b", "(| (< a \"x\") b)");
+    // A negative number is a literal type too (TS): `g<-1>(5)`, but `a < -1` compares.
+    check("g<-1>(5)", "(call g<-1> [5])");
+    check("g<-1 | 2, -0.5>()", "(call g<(-1 | 2), -0.5> [])");
+    check("a < -1", "(< a (- 1))");
+    check("a<-1", "(< a (- 1))");
+    check("i < -1 && j > 0", "(&& (< i (- 1)) (> j 0))");
+    check("a < -1 > b", "(> (< a (- 1)) b)");
+    check("a < -b > (c)", "(> (< a (- b)) (paren c))");
 }
 
 #[test]
