@@ -223,7 +223,7 @@ pub enum Finding {
 }
 
 /// Check requirement `req` against `index` (`None`: the package is not in the registry).
-/// `locked` is the version `velt.lock` pins, which counts even when it is yanked (resolution
+/// `locked` is the version `velt.lock.json` pins, which counts even when it is yanked (resolution
 /// keeps it, too).
 pub fn check(req: &str, index: Option<&Index>, locked: Option<&str>) -> Option<Finding> {
     let Some(index) = index else {
@@ -250,7 +250,7 @@ pub fn check(req: &str, index: Option<&Index>, locked: Option<&str>) -> Option<F
 /// The registry diagnostics of manifest text `src`. `lookup(name)` is the package's index:
 /// `Some(None)` when the registry has no such package, `None` when it is not known (yet, or the
 /// registry is unreachable), which leaves the dependency alone. `locked(name)` is the version
-/// `velt.lock` pins. `registry` names the registry in messages.
+/// `velt.lock.json` pins. `registry` names the registry in messages.
 pub fn diagnostics(
     src: &str,
     registry: &str,
@@ -379,7 +379,7 @@ pub fn hover(entry: &DependencyEntry, index: Option<&Index>, locked: Option<&str
         }
     }
     if let Some(locked) = locked {
-        lines.push(format!("locked: {locked} (`velt.lock`)"));
+        lines.push(format!("locked: {locked} (`velt.lock.json`)"));
     }
     lines.join("  \n")
 }

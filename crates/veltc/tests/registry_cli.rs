@@ -114,9 +114,9 @@ fn share_a_package_through_the_registry_server() {
         "{}",
         String::from_utf8_lossy(&added.stderr)
     );
-    let lock = std::fs::read_to_string(app.join("velt.lock")).expect("lock");
+    let lock = std::fs::read_to_string(app.join("velt.lock.json")).expect("lock");
     assert!(
-        lock.contains("name = \"greet\"") && lock.contains("sha256:"),
+        lock.contains("\"name\": \"greet\"") && lock.contains("sha256:"),
         "{lock}"
     );
 
@@ -132,7 +132,7 @@ fn share_a_package_through_the_registry_server() {
     let installed = velt(&app, &home_b, &["install", "--locked"]);
     assert!(installed.status.success(), "{}", text(&installed));
     assert!(
-        text(&installed).contains("warning: `greet` 0.1.0 is yanked (pinned by velt.lock)"),
+        text(&installed).contains("warning: `greet` 0.1.0 is yanked (pinned by velt.lock.json)"),
         "{}",
         text(&installed)
     );

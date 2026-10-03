@@ -128,11 +128,13 @@ still has one stops with an error that prints the equivalent `package.vlt`. Save
 Package versions published with a `velt.toml` can't be installed any more; installing one says
 so. Their authors publish a new version with a `package.vlt`.
 
-## `velt.lock`
+## `velt.lock.json`
 
-`velt install` writes `velt.lock`, which pins the exact version and content hash of every
-dependency: `version = 1` and one `[[package]]` entry per package with `name`, `version`,
-`source` (`"registry"` or `"path+<relative path>"`), `checksum` and `dependencies`, and for a
-package with native code a `[package.native]` table with the checksum of its prebuilt library
-for every published target. Commit it for applications. `--locked` on `build`, `run`, `test` and
-`install` fails instead of changing it. It is generated, so it stays TOML.
+`velt install` writes `velt.lock.json`, which pins the exact version and content hash of every
+dependency. It is generated JSON, pretty-printed with a stable key order so diffs stay readable:
+`"version": 1` and a `"packages"` array with one entry per package (`name`, `version`, `source`:
+`"registry"` or `"path+<relative path>"`, `checksum`, `dependencies`, and for a package with
+native code a `"native"` object with the checksum of its prebuilt library for every published
+target). Commit it for applications. `--locked` on `build`, `run`, `test` and `install` fails
+instead of changing it. A package that still has the former `velt.lock` (TOML) gets an error:
+delete it and run `velt install`.

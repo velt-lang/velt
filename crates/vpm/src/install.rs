@@ -1,6 +1,6 @@
 //! `velt install` (and the implicit install before a package build): resolve, verify against and
-//! update `velt.lock`, fetch registry packages into the cache, provide the native library of every
-//! package with native code for the build target, and produce the [`PackageGraph`].
+//! update `velt.lock.json`, fetch registry packages into the cache, provide the native library of
+//! every package with native code for the build target, and produce the [`PackageGraph`].
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -18,7 +18,7 @@ use crate::resolve::{resolve, Resolution, Source};
 /// How to treat the existing lockfile, and what to install for.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct InstallOptions {
-    /// Fail instead of changing `velt.lock` (CI mode).
+    /// Fail instead of changing `velt.lock.json` (CI mode).
     pub locked: bool,
     /// Ignore locked versions and pick the newest compatible ones (`velt update`).
     pub update: bool,
@@ -34,18 +34,20 @@ pub struct Installed {
     pub graph: PackageGraph,
     /// The lockfile now on disk.
     pub lockfile: Lockfile,
-    /// Whether `velt.lock` was created or changed.
+    /// Whether `velt.lock.json` was created or changed.
     pub lock_changed: bool,
-    /// Installed registry versions that are yanked (pinned by `velt.lock`); callers warn.
+    /// Installed registry versions that are yanked (pinned by `velt.lock.json`); callers warn.
     pub yanked: Vec<(String, semver::Version)>,
 }
 
 impl Installed {
-    /// One `<name> <version> is yanked (pinned by velt.lock)` line per yanked version.
+    /// One `<name> <version> is yanked (pinned by velt.lock.json)` line per yanked version.
     pub fn yank_warnings(&self) -> Vec<String> {
         self.yanked
             .iter()
-            .map(|(name, version)| format!("`{name}` {version} is yanked (pinned by velt.lock)"))
+            .map(|(name, version)| {
+                format!("`{name}` {version} is yanked (pinned by velt.lock.json)")
+            })
             .collect()
     }
 }

@@ -1,11 +1,11 @@
-//! Native bundles as files: listing, the content checksum `velt.lock` pins, and the archive form
-//! exchanged with a registry. Unpacking verifies the checksum before anything is written, so an
-//! unverified library is never on disk where the compiler would load or link it.
+//! Native bundles as files: listing, the content checksum `velt.lock.json` pins, and the archive
+//! form exchanged with a registry. Unpacking verifies the checksum before anything is written, so
+//! an unverified library is never on disk where the compiler would load or link it.
 
 use std::path::Path;
 
 use crate::archive;
-use crate::native::{library_files, NativeMeta, META_FILE};
+use crate::native::{library_files, NativeMeta, LEGACY_META_FILE, META_FILE};
 
 /// Whether `path` (relative, `/`-separated) may be part of a bundle.
 fn allowed(path: &str) -> bool {
@@ -19,6 +19,14 @@ fn allowed(path: &str) -> bool {
 /// The bundle's files relative to `dir`, sorted.
 pub fn list_files(dir: &Path) -> Result<Vec<String>, String> {
     if !dir.join(META_FILE).is_file() {
+        let old = dir.join(LEGACY_META_FILE);
+        if old.is_file() {
+            return Err(crate::json_file::legacy_error(
+                &old,
+                META_FILE,
+                "rebuild the bundle with `velt native build`",
+            ));
+        }
         return Err(format!(
             "`{}` is not a native bundle (no {META_FILE})",
             dir.display()
@@ -75,7 +83,15 @@ pub fn unpack_verified(
     dest: &Path,
     what: &str,
 ) -> Result<(), String> {
-    let entries = archive::entries_with(bytes, allowed)?;
+    let entries = archive::entries_with(bytes, allowed).map_err(|e| {
+        if e.contains(&format!("`{LEGACY_META_FILE}`")) {
+            format!(
+                "the {target} native library of `{name}` {version} from {what} was built by an older velt (it has a `{LEGACY_META_FILE}`; the metadata is now `{META_FILE}`): its author must publish it again"
+            )
+        } else {
+            e
+        }
+    })?;
     let actual = archive::checksum_of(entries.clone())?;
     if actual != expected {
         return Err(format!(
@@ -179,7 +195,7 @@ mod tests {
         };
         std::fs::create_dir_all(dir.join("shared")).unwrap();
         std::fs::create_dir_all(dir.join("static")).unwrap();
-        std::fs::write(dir.join(META_FILE), meta.to_toml()).unwrap();
+        std::fs::write(dir.join(META_FILE), meta.to_json()).unwrap();
         std::fs::write(dir.join("shared/libvelt_native_p.so"), b"ELF").unwrap();
         std::fs::write(dir.join("static/p.o"), b"obj").unwrap();
     }
@@ -219,6 +235,26 @@ mod tests {
             e.contains("not of `p 1.0.0` for aarch64-apple-darwin"),
             "{e}"
         );
+    }
+
+    #[test]
+    fn a_bundle_with_the_former_native_toml_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let b = tmp.path().join("b");
+        sample(&b, "1.0.0");
+        std::fs::rename(b.join(META_FILE), b.join(LEGACY_META_FILE)).unwrap();
+        let e = list_files(&b).unwrap_err();
+        assert!(e.contains("(the file is now `native.json`)"), "{e}");
+        assert!(e.contains("velt native build"), "{e}");
+
+        let files = [LEGACY_META_FILE.to_string(), "static/p.o".to_string()];
+        let bytes = archive::pack_files(&b, &files).unwrap();
+        let id = ("p", "1.0.0", "x86_64-unknown-linux-gnu");
+        let out = tmp.path().join("out");
+        let e = unpack_verified(&bytes, "sha256:00", id, &out, "test").unwrap_err();
+        assert!(e.contains("built by an older velt"), "{e}");
+        assert!(e.contains("now `native.json`"), "{e}");
+        assert!(!out.exists());
     }
 
     #[test]
@@ -288,10 +324,10 @@ mod tests {
             assert!(e.contains("(the library of package `p`)"), "{shared}: {e}");
         }
 
-        // A malicious native.toml inside a correctly checksummed archive is refused on unpack.
+        // A malicious native.json inside a correctly checksummed archive is refused on unpack.
         let mut evil = good.clone();
         evil.shared = "/usr/lib/libc.so.6".into();
-        std::fs::write(b.join(META_FILE), evil.to_toml()).unwrap();
+        std::fs::write(b.join(META_FILE), evil.to_json()).unwrap();
         let sum = checksum(&b).unwrap();
         let out = tmp.path().join("out");
         let e = unpack_verified(&pack(&b).unwrap(), &sum, id, &out, "t").unwrap_err();

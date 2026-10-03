@@ -45,8 +45,7 @@ pub fn read(root: &Path, name: &str) -> Result<Vec<String>, String> {
 }
 
 fn write(root: &Path, name: &str, owners: Vec<String>) -> Result<(), String> {
-    let text = crate::to_json(&Owners { owners });
-    crate::write_atomic(&path(root, name), &text)
+    vpm::json_file::write(&path(root, name), &Owners { owners })
 }
 
 /// `Ok` when `caller` may change package `name`, else the 403 (500) to answer.

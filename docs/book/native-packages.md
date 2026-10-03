@@ -132,6 +132,6 @@ velt add greet
 ```
 
 `velt add` downloads the library for your machine, checks it against the checksum recorded in
-`velt.lock` (which pins the library of every published target), and lists the packages that run
+`velt.lock.json` (which pins the library of every published target), and lists the packages that run
 native code. Then `velt run`, `velt build --release` (a self-contained executable) and `velt dev`
 (the library is loaded into the running program; Velt edits still hot-swap) work as usual.

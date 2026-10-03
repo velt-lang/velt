@@ -142,7 +142,7 @@ fn native_bundle(dir: &Path, content: &str) -> std::path::PathBuf {
         static_obj: None,
         exports: Default::default(),
     };
-    std::fs::write(b.join("native.toml"), meta.to_toml()).unwrap();
+    std::fs::write(b.join("native.json"), meta.to_json()).unwrap();
     b
 }
 
@@ -204,6 +204,75 @@ fn native_libraries_over_http() {
         400
     );
     server.stop();
+}
+
+#[test]
+fn a_registry_written_by_an_older_velt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("server");
+    std::fs::create_dir_all(root.join("old")).unwrap();
+    std::fs::write(root.join("old/index.toml"), "[[version]]\n").unwrap();
+    // `velt registry serve` refuses the directory...
+    let e = check_dir(&root).unwrap_err();
+    assert!(e.contains("1 package(s) (old)"), "{e}");
+    assert!(e.contains("`index.toml` and no `index.json`"), "{e}");
+    // ...and a server started anyway names the problem instead of "no package", without the
+    // registry's absolute path.
+    let (server, _) = start(&root, None);
+    let url = format!("http://{}", server.addr());
+    let r = call("GET", &url, "old/index", "");
+    assert_eq!(r.status, 500);
+    let text = r.body_text();
+    assert!(
+        text.contains("is no longer read (the file is now `index.json`)"),
+        "{text}"
+    );
+    assert!(!text.contains(&root.display().to_string()), "{text}");
+    assert_eq!(call("GET", &url, "new/index", "").status, 404);
+    server.stop();
+    std::fs::write(root.join("old/index.json"), "{\"versions\": []}\n").unwrap();
+    check_dir(&root).unwrap();
+}
+
+/// A stub server answering every request with `content_type` and `body`.
+fn stub(content_type: &'static str, body: &'static str) -> Server {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let handler: velt_http::Handler =
+        std::sync::Arc::new(move |_| Response::bytes(200, content_type, body.as_bytes().to_vec()));
+    Server::start(listener, handler, MAX_ARCHIVE).unwrap()
+}
+
+#[test]
+fn an_older_server_is_recognized_by_its_content_type() {
+    let tmp = tempfile::tempdir().unwrap();
+    let read = |server: &Server| {
+        let loc = client(
+            &tmp.path().join("home"),
+            &format!("http://{}", server.addr()),
+        );
+        vpm::registry::read_index(&loc, "lib")
+    };
+    let old = stub(
+        "application/toml; charset=utf-8",
+        "[[version]]\nversion = \"1.0.0\"\n",
+    );
+    let e = read(&old).unwrap_err();
+    assert!(e.contains("an older `velt registry serve`"), "{e}");
+    old.stop();
+    // Anything else that isn't JSON (a proxy's page, an empty body) is an invalid index.
+    for (content_type, body) in [
+        ("text/html", "<html>login</html>"),
+        ("application/json", ""),
+    ] {
+        let other = stub(content_type, body);
+        let e = read(&other).unwrap_err();
+        assert!(e.contains("invalid registry index"), "{e}");
+        assert!(!e.contains("older"), "{e}");
+        other.stop();
+    }
+    let json = stub("application/json", "{\"versions\": []}");
+    assert!(read(&json).unwrap().unwrap().versions.is_empty());
+    json.stop();
 }
 
 /// A request to the server at `url` as the user with `token` (`""`: no token).

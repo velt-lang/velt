@@ -66,8 +66,7 @@ fn save(root: &Path, users: &Users) -> Result<(), String> {
                 .map_err(|e| format!("cannot restrict `{}`: {e}", dir.display()))?;
         }
     }
-    let text = crate::to_json(users);
-    crate::write_atomic(&path, &text)
+    vpm::json_file::write(&path, users)
 }
 
 fn hash(token: &str) -> String {

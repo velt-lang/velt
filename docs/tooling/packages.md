@@ -1,15 +1,15 @@
 # Packages and registries
 
 The package manager is built into `velt`. A package is a directory with a
-[`package.vlt`](manifest.md); dependencies come from a registry or a local path, and `velt.lock`
+[`package.vlt`](manifest.md); dependencies come from a registry or a local path, and `velt.lock.json`
 pins them.
 
 | Command | What it does |
 |---|---|
 | `velt add <pkg>[@<req>]` | add a registry dependency to `package.vlt` (latest version without a requirement) and install it; comments in `package.vlt` are kept |
 | `velt add <pkg> --path <dir>` | add a local package |
-| `velt install [--locked]` | resolve and fetch dependencies, write `velt.lock`; `--locked` fails if the lock would change |
-| `velt update` | resolve again, ignoring `velt.lock` |
+| `velt install [--locked]` | resolve and fetch dependencies, write `velt.lock.json`; `--locked` fails if the lock would change |
+| `velt update` | resolve again, ignoring `velt.lock.json` |
 | `velt publish` | publish the current package to its registry (with its prebuilt native libraries) |
 | `velt native build [--target <t>]` | build the package's native library (package authors; needs Rust) |
 | `velt manifest [--json]` | check `package.vlt`, or print it as JSON for other tools |
@@ -22,7 +22,7 @@ velt new textkit --template lib     # a library with doc comments and tests
 cd textkit && velt test && velt publish
 
 cd ../app
-velt add textkit                    # the latest version, into package.vlt and velt.lock
+velt add textkit                    # the latest version, into package.vlt and velt.lock.json
 ```
 
 ```ts ignore
@@ -43,7 +43,7 @@ import { slugify } from "textkit";
   Beyond localhost, put it behind a reverse proxy that terminates TLS (Caddy, nginx) and give
   clients the `https://` URL.
 - Package archives contain `package.vlt`, `src/**` and the sources of a `native` crate. Their checksum is the content hash that
-  `velt.lock` records, and every download is verified against it before it enters the cache.
+  `velt.lock.json` records, and every download is verified against it before it enters the cache.
 
 ### Users, owners and yanking
 
@@ -63,7 +63,7 @@ velt yank textkit@1.2.0                          # withdraw a broken version
 `velt registry user token alice` replaces a lost or leaked token, and `velt registry user remove`
 deletes a user; removing the last one opens the registry again and needs `--open`. The server
 stores only a hash of each token. A yanked version stays downloadable, so a project whose
-`velt.lock` pins it keeps building (with a warning), but `velt add`, `velt update` and new
+`velt.lock.json` pins it keeps building (with a warning), but `velt add`, `velt update` and new
 requirements never pick it; `velt yank <pkg>@<version> --undo` brings it back.
 
 A package published while the server was open has no owners, and nobody may change it until an
@@ -73,7 +73,7 @@ administrator, who has the registry directory, assigns one:
 velt registry owner add textkit alice --dir ./registry
 ```
 
-The HTTP protocol: `GET <url>/api/v1/<name>/index` returns the package's `index.toml`;
+The HTTP protocol: `GET <url>/api/v1/<name>/index` returns the package's `index.json`;
 `GET <url>/api/v1/<name>/<version>` returns an archive; `PUT` to the same path uploads one, with
 an `X-Velt-Checksum: sha256:…` header. `GET <url>/api/v1/search?q=<text>` searches, and the
 owner and yank endpoints are listed in [the contract](../internals/contracts/manifest.md).
@@ -83,7 +83,7 @@ owner and yank endpoints are listed in [the contract](../internals/contracts/man
 A package can include a Rust crate whose library its Velt code calls: database drivers, codecs,
 bindings to C libraries. **Using** such a package needs only `velt`: the author publishes a
 prebuilt library for each target, `velt add`/`velt install` download the one for your machine,
-verify it against the checksum in `velt.lock`, and say which packages run native code:
+verify it against the checksum in `velt.lock.json`, and say which packages run native code:
 
 ```text
      Adding `sqlite` 0.1.0

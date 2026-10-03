@@ -157,8 +157,10 @@ As today, the original text is restored if the install fails.
 
 **What stays.**
 
-- These stay TOML: `velt.lock`, the registry's `index.toml`, and the `native.toml` inside a
-  native bundle. They are generated, nobody edits them, and they are protocol, not manifests.
+- The generated files are not manifests: `velt.lock`, the registry's index and a native bundle's
+  metadata are generated, nobody edits them, and they are protocol. They first stayed TOML;
+  #188 made them JSON (`velt.lock.json`, `index.json`, `native.json`), like the registry's own
+  data files and HTTP API.
 - Build or dev scripts, if they are ever added, are separate explicit files and never run on
   install.
 
@@ -208,7 +210,7 @@ So the language server treats `package.vlt` as a **document kind of its own**:
      the whole entry (`sqlite: "^0.3.1"`).
 
    Offline or unreachable registries make these features quiet, never errors. Requirements are
-   checked against the versions that are not yanked plus the one `velt.lock` pins, like
+   checked against the versions that are not yanked plus the one `velt.lock.json` pins, like
    resolution does. The pure parts
    (where the cursor is, what the data means) are `vpm::manifest::ide::registry`; the language
    server's `registry` module fetches and caches, and re-checks an open manifest while fetches
@@ -245,7 +247,8 @@ the manifest written in the same language as the code.
   - `find_package_root` looks for `package.vlt`.
   - `scaffold::manifest_text` writes `package.vlt` text.
   - `edit.rs` splices instead of using `toml_edit`, which is dropped. `toml` stays for the lock
-    file, the index and `native.toml`.
+    file, the index and `native.toml` (until #188 made those JSON; now only the `velt.toml`
+    migration converter uses it).
   - The archive whitelist (`archive.rs`) and the content hash (`contents.rs`) cover
     `package.vlt`.
 - `velt_registry`: unchanged apart from going through the new reader. It rejects an archive
@@ -339,7 +342,8 @@ From the maintainer review on issue #128:
 2. **The migration fix-it only prints the new file.** There is no `velt migrate` command.
 3. **`velt manifest --json` exists**, added in step 2. It answers the third-party tools row of
    the comparison.
-4. **`velt.lock`, `index.toml` and `native.toml` stay TOML.**
+4. **`velt.lock`, `index.toml` and `native.toml` stay TOML.** (Later revised by #188: they are
+   JSON.)
 5. **Scoped package names (`@scope/name`) are a separate issue.**
 6. **`Record<K, V>` (#17) is a prerequisite** for `std/package.vlt` and the sync test, not for
    the reader.

@@ -47,7 +47,7 @@ const BACKEND: (&str, &str) = (
     "--backend <name>",
     "cranelift | llvm (default: llvm for --release when clang is found)",
 );
-const LOCKED: (&str, &str) = ("--locked", "fail if velt.lock would change");
+const LOCKED: (&str, &str) = ("--locked", "fail if velt.lock.json would change");
 const VERBOSE: (&str, &str) = ("-v, --verbose", "print per-stage timings to stderr");
 const TIMINGS: (&str, &str) = (
     "--timings",
@@ -151,7 +151,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         summary: "Run, then rebuild and restart on every change",
         usage: &["dev [<file.vlt>] [--exe] [--locked] [-v] [--timings] [-- <program args>...]"],
         about: "Runs the program like `velt run`, then rebuilds and restarts it whenever a file \
-                it imports (or package.vlt/velt.lock) changes; a failed build leaves the old \
+                it imports (or package.vlt/velt.lock.json) changes; a failed build leaves the old \
                 version running. The program runs JIT-compiled inside `velt`, and listening \
                 sockets stay open across restarts.",
         options: &[
@@ -221,15 +221,15 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "install",
-        summary: "Resolve and fetch dependencies, write velt.lock",
+        summary: "Resolve and fetch dependencies, write velt.lock.json",
         usage: &["install [--locked]"],
         about: "",
         options: &[LOCKED],
-        examples: &[("velt install --locked", "install exactly what velt.lock says")],
+        examples: &[("velt install --locked", "install exactly what velt.lock.json says")],
     },
     CommandHelp {
         name: "update",
-        summary: "Re-resolve dependencies ignoring velt.lock",
+        summary: "Re-resolve dependencies ignoring velt.lock.json",
         usage: &["update"],
         about: "",
         options: &[],
@@ -291,7 +291,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         summary: "Withdraw a published version (or bring it back)",
         usage: &["yank <pkg>@<version> [--undo]"],
         about: "A yanked version is never chosen for a new dependency, but projects whose \
-                velt.lock pins it keep installing it. Only the package's owners may yank.",
+                velt.lock.json pins it keep installing it. Only the package's owners may yank.",
         options: &[("--undo", "unyank the version")],
         examples: &[
             ("velt yank json@1.2.0", "withdraw json 1.2.0"),

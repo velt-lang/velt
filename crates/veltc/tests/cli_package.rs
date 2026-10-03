@@ -76,15 +76,15 @@ fn new_publish_add_install() {
     set_version(&s, "mylib", "1.2.0");
     s.ok("mylib/src", &["publish"]); // found by searching upward
     assert!(s.fail("mylib", &["publish"]).contains("already published"));
-    assert!(s.dir.join("home/registry/mylib/index.toml").is_file());
+    assert!(s.dir.join("home/registry/mylib/index.json").is_file());
 
     s.ok("", &["new", "app"]);
     s.ok("app", &["add", "mylib@^1.0"]);
     let manifest = s.read("app/package.vlt");
     assert!(manifest.contains("mylib: \"^1.0\""), "{manifest}");
-    let lock = s.read("app/velt.lock");
+    let lock = s.read("app/velt.lock.json");
     assert!(
-        lock.contains("name = \"mylib\"") && lock.contains("version = \"1.2.0\""),
+        lock.contains("\"name\": \"mylib\"") && lock.contains("\"version\": \"1.2.0\""),
         "{lock}"
     );
     assert!(s.dir.join("home/cache/mylib-1.2.0/src/lib.vlt").is_file());
@@ -117,8 +117,8 @@ fn add_without_version_uses_latest_and_path_deps_work() {
         .read("app/package.vlt")
         .contains("local: { path: \"../local\" }"));
     assert!(s
-        .read("app/velt.lock")
-        .contains("source = \"path+../local\""));
+        .read("app/velt.lock.json")
+        .contains("\"source\": \"path+../local\""));
 }
 
 #[test]
