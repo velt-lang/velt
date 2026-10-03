@@ -1,0 +1,37 @@
+// check: no leaks
+// A spawned task reads what it captured after an `await` (#142): a Map, a Record, a class
+// instance, an array and a closure, each with heap contents, still intact once the task resumes,
+// and still usable by `main` afterwards.
+class Point {
+  label: string = "a point label long enough to live on the heap";
+  x: i64;
+  y: i64;
+
+  constructor(x: i64, y: i64) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+async function main() {
+  const m = new Map<string, i64>();
+  m.set("a", 1);
+  m.set("a key long enough to live on the heap", 2);
+  const r: Record<string, string> = { greeting: "hello, a record value on the heap" };
+  const p = new Point(3, 4);
+  const xs = ["one", "two", "a third element long enough to live on the heap"];
+  const suffix = "!";
+  const shout = (s: string): string => `${s.toUpperCase()}${suffix}`;
+  const t = spawn(async () => {
+    await sleep(1);
+    console.log(m);
+    console.log(r["greeting"]);
+    console.log(`${p.label} ${p.x},${p.y}`);
+    console.log(xs.join(" | "));
+    console.log(shout("after await"));
+    await sleep(1);
+    console.log(m.get("a"), xs.length, p.x + p.y, shout("again"));
+  });
+  await t;
+  console.log(m.size, r["greeting"]?.length, p.y, xs[2].length, shout("main"));
+}
