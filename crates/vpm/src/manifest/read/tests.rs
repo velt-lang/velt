@@ -446,3 +446,53 @@ fn native_values_have_the_right_kind() {
         assert_eq!(covered, text, "{fields}");
     }
 }
+
+#[test]
+fn description_and_keywords() {
+    let m = read(&with(
+        "description: \"Fast JSON for Velt\", keywords: [\"json\", \"parser\", \"x86-64\"]",
+    ));
+    assert_eq!(m.package.description.as_deref(), Some("Fast JSON for Velt"));
+    assert_eq!(m.package.keywords, ["json", "parser", "x86-64"]);
+    // Round trip through the writer, which puts them after `version`.
+    let text = m.to_vlt();
+    assert!(text.contains("version: \"1.0.0\",\n  description: \"Fast JSON for Velt\",\n  keywords: [\"json\", \"parser\", \"x86-64\"],"), "{text}");
+    assert_eq!(read(&text), m);
+    let json = m.to_json();
+    assert_eq!(json["description"], "Fast JSON for Velt");
+    assert_eq!(json["keywords"][1], "parser");
+
+    let long = "x".repeat(201);
+    let cases = [
+        ("description: \"\"", "`description` is empty; remove the field instead", "\"\""),
+        (&*format!("description: \"{long}\""), "`description` has 201 characters; at most 200 fit on one line", &*format!("\"{long}\"")),
+        ("description: \"a\\nb\"", "`description` must be one line (no line breaks, tabs or other control characters)", "\"a\\nb\""),
+        ("description: \" a\"", "`description` starts or ends with whitespace", "\" a\""),
+        ("keywords: []", "`keywords` is empty; remove the field instead", "[]"),
+        ("keywords: [\"Json\"]", "keyword `Json` must be lowercase letters, digits and `-`, starting with a letter or digit (at most 32 characters)", "\"Json\""),
+        ("keywords: [\"-x\"]", "keyword `-x` must be lowercase letters, digits and `-`, starting with a letter or digit (at most 32 characters)", "\"-x\""),
+        ("keywords: [\"a\", \"a\"]", "duplicate keyword `a`", "\"a\""),
+        ("keywords: \"json\"", "`keywords` must be an array, not a string", "\"json\""),
+    ];
+    for (fields, message, text) in cases {
+        let (got, covered) = error(&with(fields));
+        assert_eq!(got, message, "{fields}");
+        assert_eq!(covered, text, "{fields}");
+    }
+    let eleven: Vec<String> = (0..11).map(|i| format!("\"k{i}\"")).collect();
+    let (got, _) = error(&with(&format!("keywords: [{}]", eleven.join(", "))));
+    assert_eq!(got, "`keywords` has 11 entries; at most 10 are allowed");
+    let thirty_three = "k".repeat(33);
+    let (got, _) = error(&with(&format!("keywords: [\"{thirty_three}\"]")));
+    assert!(
+        got.starts_with(&format!("keyword `{thirty_three}` must be")),
+        "{got}"
+    );
+    // Characters that reorder or hide text (here a right-to-left override, a line separator).
+    for c in ["\u{202E}", "\u{2028}", "\u{200B}"] {
+        let (got, _) = error(&with(&format!("description: \"a{c}b\"")));
+        assert!(got.contains("contains the invisible character U+"), "{got}");
+    }
+    // 200 characters that are not ASCII are fine: characters, not bytes, count.
+    read(&with(&format!("description: \"{}\"", "é".repeat(200))));
+}

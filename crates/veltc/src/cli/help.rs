@@ -281,11 +281,15 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "search",
         summary: "Find packages in the registry",
-        usage: &["search <text>"],
-        about: "Lists the packages whose name contains the text, with their newest version that \
-                is not yanked, from the package's registry (or $VELT_REGISTRY).",
-        options: &[],
-        examples: &[("velt search json", "packages with `json` in their name")],
+        usage: &["search <text> [--json]"],
+        about: "Lists the packages matching every word of the text in their name, keywords or \
+                description (name matches first), with their newest version that is not yanked \
+                and its description, from the package's registry (or $VELT_REGISTRY).",
+        options: &[("--json", "the registry's answer as JSON on stdout")],
+        examples: &[
+            ("velt search json", "packages about JSON"),
+            ("velt search json parser --json", "for scripts"),
+        ],
     },
     CommandHelp {
         name: "yank",

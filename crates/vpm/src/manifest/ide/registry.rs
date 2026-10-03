@@ -77,7 +77,8 @@ pub fn top_level_string(src: &str, key: &str) -> Option<String> {
 pub enum Ask {
     /// The versions of a package: the cursor is on a dependency's requirement.
     Versions { name: String },
-    /// Packages whose name contains `query`: the cursor is on a new key in `dependencies`.
+    /// Packages whose name contains `query` (a search, kept to name matches): the cursor is on a
+    /// new key in `dependencies`.
     Names { query: String, taken: Vec<String> },
 }
 
@@ -181,11 +182,13 @@ pub fn version_completions(c: &RegistryCursor, index: &Index) -> Vec<Completion>
 /// Package-name completions for `c` (an [`Ask::Names`]) from search `hits`. Outside quotes a
 /// completion writes the whole entry: `name: "^<version>"`.
 pub fn name_completions(c: &RegistryCursor, hits: &[Hit]) -> Vec<Completion> {
-    let Ask::Names { taken, .. } = &c.ask else {
+    let Ask::Names { taken, query } = &c.ask else {
         return vec![];
     };
+    let query = query.trim().to_lowercase();
+    // The search also matches keywords and descriptions; a name being typed wants names.
     hits.iter()
-        .filter(|h| !taken.contains(&h.name))
+        .filter(|h| !taken.contains(&h.name) && h.name.contains(&query))
         .enumerate()
         .map(|(i, h)| {
             let key = crate::manifest::write::key(&h.name);
@@ -200,7 +203,10 @@ pub fn name_completions(c: &RegistryCursor, hits: &[Hit]) -> Vec<Completion> {
                 label: h.name.clone(),
                 kind: CompletionKind::Value,
                 detail: format!("latest {}", h.version),
-                doc: format!("Package `{}`, newest version {}.", h.name, h.version),
+                doc: match &h.description {
+                    Some(d) => format!("{d}\n\n`{}` {}", h.name, h.version),
+                    None => format!("Package `{}`, newest version {}.", h.name, h.version),
+                },
                 replace: c.replace.clone(),
                 text,
                 snippet,

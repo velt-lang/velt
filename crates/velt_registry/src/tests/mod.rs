@@ -311,7 +311,12 @@ fn owners_yank_and_search() {
 
     // alice publishes `json` and owns it; bob can't publish it.
     let lib = tmp.path().join("json");
-    package(&lib, "json", "1.0.0", "");
+    package(
+        &lib,
+        "json",
+        "1.0.0",
+        "description: \"JSON for Velt\", keywords: [\"parser\"]",
+    );
     let publish = |token: &str| upload(&url, &lib, token);
     assert_eq!(publish(&alice).status, 201);
     assert_eq!(call("GET", &url, "json/owners", "").body_text(), "alice\n");
@@ -346,19 +351,30 @@ fn owners_yank_and_search() {
             .collect::<Vec<_>>(),
         [("1.0.0", false), ("1.1.0", true)]
     );
+    // The server takes the description and keywords from the uploaded package.vlt, per
+    // version; search shows the newest version's (1.1.0 is yanked, so 1.0.0's).
+    assert_eq!(
+        index.versions[0].description.as_deref(),
+        Some("JSON for Velt")
+    );
+    assert_eq!(index.versions[1].description, None);
     let hits = vpm::search::search(&loc, "JS").unwrap();
     assert_eq!(
         hits,
         [vpm::search::Hit {
             name: "json".into(),
-            version: "1.0.0".into()
+            version: "1.0.0".into(),
+            description: Some("JSON for Velt".into()),
+            keywords: vec!["parser".into()],
         }]
     );
+    assert_eq!(vpm::search::search(&loc, "parser").unwrap().len(), 1);
     assert!(vpm::search::search(&loc, "http").unwrap().is_empty());
     assert_eq!(call("DELETE", &url, "json/1.1.0/yank", &bob).status, 200);
+    let hit = &vpm::search::search(&loc, "json").unwrap()[0];
     assert_eq!(
-        vpm::search::search(&loc, "json").unwrap()[0].version,
-        "1.1.0"
+        (hit.version.as_str(), hit.description.as_deref()),
+        ("1.1.0", None)
     );
     server.stop();
 }
