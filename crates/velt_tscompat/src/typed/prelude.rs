@@ -16,15 +16,19 @@ pub(crate) type VeltOnly = (&'static str, &'static str);
 #[cfg(test)]
 pub(crate) const TS_GLOBALS: &[&str] = &[
     "AggregateError",
+    "ArrayIterator",
     "AsyncGenerator",
     "AsyncIterable",
+    "AsyncIterableIterator",
     "AsyncIterator",
     "Date",
     "Error",
     "Generator",
     "Infinity",
     "Iterable",
+    "IterableIterator",
     "Iterator",
+    "IteratorObject",
     "IteratorResult",
     "JSON",
     "Map",
@@ -35,6 +39,7 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     // TypeScript's `Record<K, V>` is a type: as one it means the same.
     "Record",
     "String",
+    "StringIterator",
     "isFinite",
     "isNaN",
     "parseFloat",
@@ -185,6 +190,8 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
     ("AsyncIterator", &["next", "return"]),
     ("Generator", &["next", "return"]),
     ("Iterator", &["next", "return"]),
+    ("ArrayIterator", &["next"]),
+    ("StringIterator", &["next"]),
     (
         "Date",
         &[
