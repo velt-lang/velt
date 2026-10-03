@@ -80,6 +80,11 @@ pub(super) struct Head {
     next: AtomicPtr<VeltFut>,
     /// Waker of the owner while it waits for a started node.
     pub awaiter: AtomicWaker,
+    /// Transfers the result in place for another task (a `ResultDropFn`-shaped glue; null:
+    /// the result stays on the task that produced it). Set by the owner when the promise
+    /// crosses to another task (`velt_rt_fut_transfer`), run by the driving task as the state
+    /// finishes, so the copy is made where the result's objects live.
+    transfer: AtomicPtr<()>,
 }
 
 const HEAD: usize = std::mem::size_of::<Head>();
@@ -136,6 +141,7 @@ pub(super) unsafe fn alloc_node(
         set: std::ptr::null(),
         next: AtomicPtr::new(std::ptr::null_mut()),
         awaiter: AtomicWaker::new(),
+        transfer: AtomicPtr::new(std::ptr::null_mut()),
     });
     let f = base.add(HEAD) as *mut VeltFut;
     f.write(VeltFut {
@@ -190,9 +196,40 @@ unsafe extern "C" fn lazy_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     }
     let r = (h.poll)(state(f), cx);
     if r == READY {
+        run_transfer(f);
         h.owner.set(OWNER_DONE);
     }
     r
+}
+
+/// Apply node `f`'s result transfer, if it has one (on the task that finished it).
+unsafe fn run_transfer(f: *mut VeltFut) {
+    let t = head(f).transfer.load(Ordering::Acquire);
+    if !t.is_null() {
+        // SAFETY: only ever stored from a `ResultDropFn` (`set_transfer`).
+        let t = std::mem::transmute::<*mut (), ResultDropFn>(t);
+        t(state(f));
+    }
+}
+
+/// The owner of node `f` hands it to another task: its result is transferred with `t` as the
+/// state finishes. A started node that already finished is transferred now: its owner is the
+/// task that drives it (a node whose owner is another task already had its transfer set when
+/// it crossed, so it was transferred as it finished). No-op for any other future.
+pub(super) unsafe fn set_transfer(f: *mut VeltFut, t: ResultDropFn) {
+    let lazy = is_lazy(f);
+    if !lazy && !is_started(f) {
+        return;
+    }
+    let h = head(f);
+    let prev = h.transfer.swap(t as *mut (), Ordering::AcqRel);
+    let done = match lazy {
+        true => h.owner.get() & OWNER_DONE != 0,
+        false => h.flags.load(Ordering::Acquire) & DONE != 0,
+    };
+    if done && prev.is_null() {
+        t(state(f));
+    }
 }
 
 unsafe extern "C" fn lazy_drop(f: *mut VeltFut) {
@@ -252,6 +289,7 @@ pub(super) unsafe fn count_set(f: *mut VeltFut) {
 /// Started node `f` finished during its first poll: nobody can await it yet. A waker that fired
 /// meanwhile may still be on its way into the set's queue, so then the set is kept alive.
 pub(super) unsafe fn finish_first(f: *mut VeltFut) {
+    run_transfer(f);
     if head(f).flags.fetch_or(DONE, Ordering::AcqRel) & QUEUED != 0 {
         count_set(f);
     }
@@ -260,6 +298,7 @@ pub(super) unsafe fn finish_first(f: *mut VeltFut) {
 /// The state of started node `f` finished: publish it to the owner (returning the waker of an
 /// owner waiting for it), or drop the result if the owner is gone.
 pub(super) unsafe fn finish(f: *mut VeltFut) -> Option<Waker> {
+    run_transfer(f);
     let h = head(f);
     let prev = h.flags.fetch_or(DONE, Ordering::AcqRel);
     if prev & DETACHED != 0 {

@@ -138,19 +138,21 @@ within the copy).
 
 ## 6. Threads (transfer.rs)
 Counts are not atomic, so no counted object may be reachable from two threads. Values cross
-threads at `spawn(f(args))` (owned arguments; for a call through a function value, vtable
-or interface, every argument and the receiver), captures of a spawned async closure, the HTTP
-handler environment, channel sends and a value settled on a promise from another task. Such a
-value is **transferred** in place by the transfer
-glue (glue/transfer.rs): a counted object whose count is 1 is the sender's alone and stays, with
-its parts transferred in turn; one that is still shared is deep-copied for the task (structured
-clone at a worker boundary) and the sender's reference released; values whose type cannot
-reach a counted object move untouched. Class objects in a hierarchy and interface values
+threads at `spawn(f(args))` (owned arguments; for a call through a function value, vtable or
+interface, every argument and the receiver), captures of a spawned async closure, the HTTP
+handler environment, channel sends, a value settled on a promise from another task, and the
+result of a promise that goes to another task. Such a value is **transferred** in place by the
+transfer glue (glue/transfer.rs): a counted object whose count is 1 is the sender's alone and
+stays, with its parts transferred in turn; one that is still shared is deep-copied for the task
+(structured clone at a worker boundary) and the sender's reference released; values whose type
+cannot reach a counted object move untouched. Class objects in a hierarchy and interface values
 transfer through a vtable slot, closures through their environment's transfer entry (the env
 header's third word): a shared env is cloned first, and a captured variable's cell that the
-creator still shares is copied, so the task's assignments stay in the task. A value settled on
-a promise from another task is transferred by a promise that task drives, at its next step,
-after the settling statement released its own reference (std/prelude/promise.vlt, #263).
+creator still shares is copied, so the task's assignments stay in the task. A promise is marked
+(`velt_rt_fut_transfer`): its result is transferred by the task that produces it as it finishes
+(#160); a lazy one is started first, so its inputs stay on this task. A value settled on a
+promise from another task is transferred by a promise that task drives, at its next step, after
+the settling statement released its own reference (std/prelude/promise.vlt, #263).
 
 A deep copy of a class with its own `clone()` calls it, so a resource is duplicated by its
 type (#122). A resource without one cannot be copied: sema rejects a `spawn` argument or
@@ -207,7 +209,10 @@ concurrently (#8, #208). Strings keep their atomic counts (stage 1); `shared<T>`
   block end; an explicit `x[Symbol.dispose]()` of a shared object releases that reference only.
 - Threads: deep copies at `spawn`/handler boundaries do not preserve aliasing inside the copied
   graph. (A stored promise handed to `spawn` already runs on its creator's task and stays there,
-  [Async — tasks](../../reference/async.md#tasks), so it crosses no thread.)
+  [Async — tasks](../../reference/async.md#tasks); only its result crosses, transferred.) A
+  promise created outside any task (synchronous `main`) is lazy, and spawning it runs it on
+  the new task with its arguments as they were passed, not transferred (a gap: the caller must
+  not use them afterwards).
 - `Mutex.with` callbacks and `attempt(f)` are not stabilized like ordinary calls.
 - `Map` (and `Set`) keys of struct, object-literal and tuple type compare by content
   (`__intrinsic_eq` with the structural hash), not by identity as in JS; class instances

@@ -41,6 +41,11 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
     let _ = drive(f, &st, &mut Context::from_waker(&w));
 }
 
+/// The owner hands promise `f` to another task: on the one thread there is nothing to transfer
+/// (rt_abi_async.md §1).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fut_transfer(_f: *mut VeltFut, _transfer: ResultDropFn) {}
+
 /// The owner gives up promise `f` without cancelling it: a lazy one becomes a started promise
 /// whose task runs at the executor's next turn (not now: the owner's continuation comes first,
 /// like JS's rejection handler), a started one keeps running, and either way its outcome is

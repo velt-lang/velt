@@ -6,13 +6,15 @@
 //!
 //! Class objects in a hierarchy with a vtable and interface values transfer through their
 //! vtable (`SLOT_TRANSFER`), closures through their environment's transfer entry
-//! (`build_env_transfer`).
+//! (`build_env_transfer`), and a promise asks the runtime to transfer its result on the task
+//! that produces it (`velt_rt_fut_transfer`, #160).
 
 use velt_sema::hir::{DefId, PassMode, TyId, TyKind};
 
 use super::{Glue, SLOT_TRANSFER};
 use crate::lower::closure::closure_name;
 use crate::lower::operand::proj;
+use crate::lower::rt::Rt;
 use crate::lower::{cfunc, cint, unit, Cx, FnLower, Work};
 use crate::vir::{self, BinOp, Function, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -42,6 +44,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
             TyKind::Option(e) => self.transfer_option(place, ty, e),
             TyKind::Array(e) => self.transfer_elems(place, e),
+            TyKind::Promise(..) => self.transfer_promise(place, ty),
             TyKind::FnPtr { .. } | TyKind::Closure(_) => self.transfer_closure(place),
             TyKind::Dyn(..) => {
                 let data = proj(place, Proj::Field(0));
@@ -223,6 +226,27 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let p = lw.elem_place(arr, k, e);
             lw.transfer_in_place(p, e);
         });
+    }
+
+    /// A promise: the runtime transfers its result where it is produced (a started promise
+    /// finishes on the task that started it), before anyone on another task can see it. A
+    /// lazy one (a `Promise.all` kept as a value) is started first, so this task drives it and
+    /// the inputs it reads stay here.
+    fn transfer_promise(&mut self, place: &Place, ty: TyId) {
+        let slot = self.cx.promise_slot(ty);
+        if !self.cx.holds_counted(slot) {
+            return;
+        }
+        let f = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place.clone())));
+        let done = self.new_block();
+        let nn = self.non_null(f.clone());
+        self.when(nn, done);
+        let unclaimed = self.unclaimed_drop_fn(ty);
+        self.call_rt(Rt::FutStart, vec![f.clone(), unclaimed], None);
+        let g = cfunc(self.cx.func(Work::Glue(Glue::Transfer, slot)));
+        self.call_rt(Rt::FutTransfer, vec![f, g], None);
+        self.goto(done);
+        self.switch_to(done);
     }
 
     /// `{ code, env }`: a heap env goes through its transfer entry; a null env (no captures)

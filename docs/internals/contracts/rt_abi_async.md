@@ -54,6 +54,7 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_fut_drop` | `(VeltFut* f)` | cancel if pending, free; never drops the result slot |
 | `velt_rt_fut_box` | `(PollFn, DropFn, const void* state, u64 size, u64 align) -> VeltFut*` | moves a compiled initial state into a heap future (for `Promise<T>` values that are stored, put in arrays, returned); result at +16 = state offset 0. `align ≤ 16`. Lazy until polled or started (§1.1). |
 | `velt_rt_fut_start` | `(VeltFut* f, void (*result_drop)(void* slot))` | start a boxed promise now (§1.1); no-op for any other future, or outside a task. `result_drop` disposes of an unclaimed result (null if nothing to do); for a promise that can reject it reports an `Err` like an unhandled rejection. |
+| `velt_rt_fut_transfer` | `(VeltFut* f, void (*transfer)(void* slot))` | the owner hands `f` to another task: `transfer` (compiled transfer glue, in place) runs on the result slot on the task that produces the result, as it finishes (at once if a started promise already finished); a race passes it to its children; no-op for join handles and runtime leaves, and on single-threaded WebAssembly. |
 | `velt_rt_yield_now` | `(void* cx)` | `await yieldNow()` inline: call it, then `return 0`; resumes after other ready tasks. No allocation. |
 | `velt_rt_yield_now_fut` | `() -> VeltFut*` | `yieldNow()` as a value; result: none |
 | `velt_rt_sleep` | `(i64 ms) -> VeltFut*` | `sleep(ms)`; negative = 0; result: none |

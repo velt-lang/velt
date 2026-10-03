@@ -123,6 +123,8 @@ impl Interp<'_> {
             }
             "velt_rt_fut_start" => return Some(self.fut_start(a[0], a[1])),
             "velt_rt_fut_detach" => return Some(self.fut_detach(a[0], a[1]).map(|_| 0)),
+            // One thread: a result never crosses to another one.
+            "velt_rt_fut_transfer" => 0,
             "velt_rt_futs_handled" => return Some(self.futs_handled(a[0], a[1], a[2]).map(|_| 0)),
             "velt_rt_race" => self.rt_race(a, None),
             "velt_rt_race_ok" => self.rt_race(a, Some(a[3])),

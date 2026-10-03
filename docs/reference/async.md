@@ -74,7 +74,11 @@ as uncaught.
 
 `spawn(p)` returns a `Promise<T>` join handle. `spawn(f())`, or `spawn(async () => { … })`, runs
 `f` as a task of its own on any core, and a spawned task runs even if nobody awaits it. A
-promise that already started stays on the task that started it.
+promise that already started (`const p = f(); spawn(p)`) stays on the task that started it. A
+promise that goes to another task (`spawn(p)`, `spawn(g(p))`, a channel) delivers its value
+there as a transferred one: moved if the task that produced it no longer references it, else a
+copy made where it was produced, so two tasks never use one object (on single-threaded
+WebAssembly, where tasks share the one thread, it is the same object).
 
 Tasks exchange values through channels ([`velt:channel`](../std/channel.md)): typed,
 bounded or unbounded queues where `send` waits while a bounded channel is full.
@@ -202,8 +206,7 @@ async function main() {
   finished its current step: moved when that task no longer references it (a value made for the
   call, `resolve(new Result(…))`), copied when it still does. (On single-threaded WebAssembly
   there is only one thread, so it is shared there too.) A promise passed on to a spawned task
-  and awaited there is not copied yet, as for any promise (#160): don't keep using the value
-  on the settling task then.
+  and awaited there delivers a copy when the settling task still uses the value.
 - The executor must be an arrow-function literal (``the executor of `new Promise` must be an
   arrow function``); it runs at once and is released before the promise waits.
 - A promise whose `resolve` and `reject` are all dropped without settling never settles, like

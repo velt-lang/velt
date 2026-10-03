@@ -240,6 +240,21 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
     }
 }
 
+/// The owner hands promise `f` to another task (`spawn`, a channel, a settled promise): its
+/// result is transferred with `transfer` (in place, compiled transfer glue) on the task that
+/// produces it, so the other task never sees an object the producing task still references
+/// (#160). A started or lazy promise node keeps the function for when its state finishes; a
+/// race passes it on to its children (the winner's result is theirs); anything else (a join
+/// handle, whose task already had its inputs transferred, or a runtime leaf) produces nothing
+/// to transfer.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: ResultDropFn) {
+    if crate::task::race::pass_transfer(f, transfer) {
+        return;
+    }
+    node::set_transfer(f, transfer);
+}
+
 /// The owner gives up promise `f` without cancelling it (the pending siblings of an early
 /// `Promise.all` rejection). A lazy compiled future, which its owner may have polled already,
 /// joins the current task's started promises without being polled now: it is queued, so it runs

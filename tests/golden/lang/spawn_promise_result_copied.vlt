@@ -1,0 +1,73 @@
+// check: no leaks
+// A promise handed to a spawned task delivers a copy there when its value is still used by the
+// task that produced it (#160): both tasks keep counting on their own object, so a shared one
+// would show up as a wrong count. So for a started async call, a `new Promise` settled on its
+// own task, `Promise.all` and `Promise.race` of started promises, and `spawn(p)` itself.
+class Obj {
+  n: i64 = 0;
+}
+
+class Gate {
+  open: bool = false;
+}
+
+async function inc(p: Promise<Obj>): Promise<i64> {
+  const v = await p;
+  for (let i = 0; i < 200000; i++) {
+    v.n += 1;
+  }
+  return v.n;
+}
+
+async function incAll(p: Promise<Obj[]>): Promise<i64> {
+  const vs = await p;
+  for (let i = 0; i < 200000; i++) {
+    vs[0].n += 1;
+  }
+  return vs[0].n;
+}
+
+async function give(o: Obj, g: Gate): Promise<Obj> {
+  while (!g.open) {
+    await sleep(1);
+  }
+  return o;
+}
+
+async function count(o: Obj): Promise<i64> {
+  for (let i = 0; i < 200000; i++) {
+    o.n += 1;
+  }
+  return o.n;
+}
+
+async function main() {
+  const o = new Obj();
+  const g = new Gate();
+  const p = give(o, g);
+  const t = spawn(inc(p));
+  g.open = true;
+  await sleep(5);
+  console.log("main starts at", o.n);
+  console.log("main", await count(o), "task", await t);
+
+  const q = new Obj();
+  const settled = new Promise<Obj>((resolve) => resolve(q));
+  const u = spawn(inc(settled));
+  console.log("main", await count(q), "task", await u);
+
+  const a = new Obj();
+  const all = Promise.all([give(a, g), give(a, g)]);
+  const v = spawn(incAll(all));
+  console.log("main", await count(a), "task", await v);
+
+  const b = new Obj();
+  const race = Promise.race([give(b, g), give(b, g)]);
+  const w = spawn(inc(race));
+  console.log("main", await count(b), "task", await w);
+
+  const c = new Obj();
+  const joined = spawn(give(c, g));
+  const x = spawn(inc(joined));
+  console.log("main", await count(c), "task", await x);
+}

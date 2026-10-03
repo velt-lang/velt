@@ -59,7 +59,7 @@ impl FnLower<'_, '_> {
 
     /// `(slot: ptr)` disposing of the unclaimed result of a started promise of type `t`, or null
     /// when there is nothing to do.
-    pub(super) fn unclaimed_drop_fn(&mut self, t: TyId) -> Operand {
+    pub(in crate::lower) fn unclaimed_drop_fn(&mut self, t: TyId) -> Operand {
         if self.cx.promise_error(t).is_some() {
             return cfunc(self.cx.func(Work::Unclaimed(t)));
         }

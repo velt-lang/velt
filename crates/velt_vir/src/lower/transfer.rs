@@ -1,11 +1,12 @@
 //! Thread transfer (semantics stage 2, docs/design/semantics-stage2.md §6). Counts are not
 //! atomic, so a counted object must never be reachable from two threads. A value entering
-//! another task (a `spawn` argument or capture, a channel send, the HTTP handler environment) is
-//! *transferred*, in place, by the transfer glue (glue/transfer.rs): what the sender holds the
-//! only reference to moves as it is (count 1, checked at run time), and only what is still
-//! shared is deep-copied for the task — like JS's structured clone at a worker boundary — and
-//! the sender's reference released. So a uniquely owned disposable crosses without a copy, and
-//! its `[Symbol.dispose]()` runs once (#122).
+//! another task (a `spawn` argument or capture, a channel send, the HTTP handler environment, a
+//! value settled on a promise from another task, a promise's result) is *transferred*, in
+//! place, by the transfer glue (glue/transfer.rs): what the sender holds the only reference to
+//! moves as it is (count 1, checked at run time), and only what is still shared is deep-copied
+//! for the task — like JS's structured clone at a worker boundary — and the sender's reference
+//! released. So a uniquely owned disposable crosses without a copy, and
+//! its `[Symbol.dispose]()` runs once (#122, #263).
 //!
 //! A deep copy of a value owning a `[Symbol.dispose]` resource calls the type's own `clone()`
 //! (glue/clone.rs); one that has no `clone()` cannot be copied: sema rejects the visible cases
@@ -26,8 +27,8 @@ use super::{Cx, FnLower, Glue, Work};
 use crate::vir::{self, Operand, Place, Ty};
 
 impl Cx<'_> {
-    /// Can a value of `t` reach a counted object (itself, or any part stored in it)? Only such
-    /// values have anything to transfer.
+    /// Can a value of `t` reach a counted object (itself, or any part stored in it), or a
+    /// promise whose result can? Only such values have anything to transfer.
     pub(super) fn holds_counted(&mut self, t: TyId) -> bool {
         self.holds_counted_in(t, &mut HashSet::new())
     }
@@ -45,6 +46,8 @@ impl Cx<'_> {
             // Its env is counted (the transfer glue moves a unique one).
             TyKind::Closure(_) | TyKind::FnPtr { .. } => return true,
             TyKind::Array(e) | TyKind::Shared(e) => vec![e],
+            // Its result reaches the awaiter on another task (`velt_rt_fut_transfer`, #160).
+            TyKind::Promise(r, e) => vec![r, e],
             TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
             _ => self.part_types(t),
         };

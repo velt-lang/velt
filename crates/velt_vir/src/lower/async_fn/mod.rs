@@ -28,6 +28,7 @@ mod channel;
 mod ctor;
 mod handler;
 mod kept;
+mod spawn;
 mod spill;
 mod start;
 mod suspend;

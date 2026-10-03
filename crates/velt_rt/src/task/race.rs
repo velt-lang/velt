@@ -118,6 +118,21 @@ unsafe fn new_race(
     f
 }
 
+/// If `f` is a race, mark each of its children to transfer its result with `transfer`
+/// (`velt_rt_fut_transfer`): the winner's result is a child's. Whether `f` was one.
+pub(super) unsafe fn pass_transfer(f: *mut VeltFut, transfer: ResultDropFn) -> bool {
+    let race = race_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32;
+    if !std::ptr::fn_addr_eq((*f).poll, race) {
+        return false;
+    }
+    if let Some(children) = tail(f).children.as_ref() {
+        for c in children.iter() {
+            crate::task::local::velt_rt_fut_transfer(c.fut.0, transfer);
+        }
+    }
+    true
+}
+
 /// `Promise.race(array)`: takes ownership of the `n` futures in `futs` (not of the pointer array)
 /// and returns a future whose result slot (offset 16) receives the `result_size`-byte result of
 /// the first child to finish. The other children are dropped then (see the module docs).
