@@ -16,6 +16,7 @@
 use velt_sema::hir::{self, DefId, PassMode, TyId};
 
 use super::super::flags::FlagScan;
+use crate::lower::closure::ENV_HEADER;
 use crate::lower::operand::proj;
 use crate::lower::{cfunc, cint, ice, unit, Cx, FnLower, Work};
 use crate::vir::{Function, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
@@ -151,7 +152,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let targs = self.targs.clone();
         let ea = self.cx.env_agg(def, &targs);
         let base = proj(&Place::local(env), Proj::Deref(Ty::Agg(ea)));
-        let slot = proj(&base, Proj::Field(2 + k as u32));
+        let slot = proj(&base, Proj::Field(ENV_HEADER + k as u32));
         Some(match (mode, vt) {
             (PassMode::Borrow, Ty::Agg(_)) => self.addr(slot),
             (PassMode::Owned, _) => self.clone_value(Operand::Copy(slot), ty),

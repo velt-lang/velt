@@ -1,0 +1,32 @@
+// A generic function is checked as a function value at its type arguments (#224): `keep<T>`
+// keeps its argument, so at `T = Promise<i64>` it would take a second reference to a promise
+// (one owner). Inside a generic function the argument type still depends on a type parameter,
+// which may be a promise.
+
+function keep<T>(x: T): T[] {
+  return [x];
+}
+
+class Box<T> {
+  constructor(public v: T) {}
+}
+
+function boxIt<T>(b: Box<T>): Box<T>[] {
+  return [b];
+}
+
+function outer<U>(u: Box<U>): i64 {
+  const g: (b: Box<U>) => Box<U>[] = boxIt;
+  return g(u).length as i64;
+}
+
+async function val(): Promise<i64> {
+  return 5;
+}
+
+async function main() {
+  const g: (p: Promise<i64>) => Promise<i64>[] = keep;
+  const p = val();
+  console.log(g(p).length);
+  console.log(outer(new Box(val())));
+}

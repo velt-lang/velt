@@ -136,8 +136,8 @@ like the socket handles (§3.2): a channel leaves the table once it is closed an
 later use of a copy sees a closed, empty channel. The runtime never sees a `T`, only its bytes:
 every call passes the item size (align <= 16). `receive` results are a `T | null` in the
 compiler's layout: `payload` is the offset of the value after the `bool` present flag, or 0 when
-`T` is pointer-like and null is the zero pointer. `send`, `receive` and `tryReceive` are reached
-through the std-only intrinsics `__intrinsic_chan_{send,receive,try_receive}<T>` (lowering knows
+`T` is pointer-like and null is the zero pointer. `send`, `trySend`, `receive` and `tryReceive` are reached
+through the std-only intrinsics `__intrinsic_chan_{send,try_send,receive,try_receive}<T>` (lowering knows
 `T`'s size, layout and drop glue; it transfers the value first, like a `spawn` argument: a value the
 sender still shares is deep-copied). No code pointers are stored, except the `item_drop` a pending
 `send` future owns (§13.5).
@@ -149,6 +149,7 @@ sender still shares is deep-copied). No code pointers are stored, except the `it
 | `velt_rt_chan_closed` | `(u64 ch) -> bool` | |
 | `velt_rt_chan_len` | `(u64 ch) -> u64` | queued items |
 | `velt_rt_chan_send` | `(u64 ch, const void* src, u64 size, void (*item_drop)(void*)) -> VeltFut*` | moves the item's bytes (and ownership) into the future at the call; `bool` result: queued (after waiting for space), or false when closed. An item not queued is dropped with `item_drop` (null: nothing to drop) |
+| `velt_rt_chan_try_send` | `(u64 ch, const void* src, u64 size, void (*item_drop)(void*)) -> bool` | moves the item's bytes into the channel if it has room now; false when full or closed, and the item is dropped with `item_drop` |
 | `velt_rt_chan_receive` | `(u64 ch, u64 size, u64 payload, u64 slot_size) -> VeltFut*` | result: a `slot_size`-byte `T \| null` (see above), null once closed and drained |
 | `velt_rt_chan_try_receive` | `(u64 ch, void* dst, u64 size, u64 payload)` | writes the oldest item, or null, as a `T \| null` at `dst` |
 
@@ -384,6 +385,8 @@ body setters and `resp_json` drop the body and add no `content-type`.
 | `velt_rt_perf_now` | `() -> f64` | `performance.now()`: ms since process start, monotonic |
 | `velt_rt_date_now` | `() -> i64` | `Date.now()`: ms since the Unix epoch |
 | `velt_rt_exit` | see rt_abi.md | |
+| `velt_rt_memory_rss` | `() -> i64` | `process.memoryUsage().rss`: resident set size in bytes from the OS (`/proc/self/statm`, `task_info`, `GetProcessMemoryInfo`); 0 if unknown. wasm: the linear memory size |
+| `velt_rt_memory_heap` | `() -> i64` | `heapUsed`: mimalloc's committed heap bytes (Windows: the process's private committed bytes); without mimalloc, the RSS. wasm: the linear memory size |
 
 ## 9. Shared state and helpers (sync)
 
@@ -880,6 +883,13 @@ typedef struct { uint32_t kind; uint32_t pad; VeltStr text; VeltBytes data; } Ve
 |---|---|---|
 | `velt_rt_html_escape` | `(const VeltStr* s, VeltStr* out)` | owned copy of `s` with `& < > " '` → `&amp; &lt; &gt; &quot; &#39;`, in one pass (output sized once); other bytes unchanged |
 
+Stable hash (`velt:hash`, additive):
+
+| Symbol | Signature | Notes |
+|---|---|---|
+| `velt_rt_fnv1a64_str` | `(const VeltStr* s) -> u64` | `velt:hash`: 64-bit FNV-1a of the bytes; stable forever (std contract) |
+| `velt_rt_fnv1a64_bytes` | `(const VeltBytes* data) -> u64` | the same over a `u8[]` |
+
 ### 14.11 SQLite (`velt:sqlite`; stream db, additive)
 
 `crates/velt_rt/src/sqlite/` over `rusqlite` (SQLite compiled in: `bundled`; also
@@ -1035,8 +1045,9 @@ lists). Not available on WebAssembly (no `velt_rt_pg_*` symbols in `libvelt_rt_w
 `VeltHandler.env` is null or a closure environment box whose first word is its drop function
 (`void drop(void* env)`, may be null), as closure lowering lays it out. Once a server is closed
 and its last connection and request have finished, the runtime calls that function once, so
-the handler's captures are dropped (their `dispose()` hooks run). Before this, `env` was never
-freed. Every in-flight request keeps the server's handler state alive, so no request can see a
+the handler's captures are dropped (their `dispose()` hooks run). A `serve` that fails (the
+address does not bind, the TLS certificate or key does not parse) calls it too, since no server
+will. Before this, `env` was never freed. Every in-flight request keeps the server's handler state alive, so no request can see a
 released environment; under `velt dev`, environments of replaced handlers (§13.5) are still
 never freed.
 

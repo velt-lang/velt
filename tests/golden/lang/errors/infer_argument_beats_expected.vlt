@@ -1,0 +1,9 @@
+// An argument that fixes a type parameter wins over the expected type (#223), as in TS.
+function id<T>(x: T): T {
+  return x;
+}
+
+function main() {
+  const k: i32 = 5;
+  const z: i64 = id(k);
+}

@@ -286,7 +286,8 @@ pub unsafe extern "C" fn velt_rt_http_serve(
 }
 
 /// `serve({ tls: { cert, key } }, handler)`: like `velt_rt_http_serve`, over TLS (PEM
-/// certificate chain and private key; ALPN h2 + http/1.1). Bad PEM fails with `EINVAL`.
+/// certificate chain and private key; ALPN h2 + http/1.1). Bad PEM fails with `EINVAL` (the
+/// handler's environment is released then, as on any failed `serve`).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_http_serve_tls(
     addr: *const VeltStr,
@@ -296,9 +297,14 @@ pub unsafe extern "C" fn velt_rt_http_serve_tls(
 ) -> *mut VeltFut {
     match crate::tls::server_config((*cert_pem).as_bytes(), (*key_pem).as_bytes()) {
         Ok(config) => start(text_arg(addr), *handler, Some(TlsAcceptor::from(config))),
-        Err(msg) => new_leaf(async move {
-            IoResult::<Handle<ServerObj>>::err(VeltErr::new(code::INVALID_INPUT, &msg))
-        }),
+        Err(msg) => {
+            // No server will own the handler: release its environment (captures' drop hooks
+            // run) as a failed bind does when its `Shared` is dropped.
+            super::handler::release_env((*handler).env);
+            new_leaf(async move {
+                IoResult::<Handle<ServerObj>>::err(VeltErr::new(code::INVALID_INPUT, &msg))
+            })
+        }
     }
 }
 

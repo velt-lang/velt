@@ -368,7 +368,7 @@ fn term_places_mut(t: &mut Terminator, f: &mut impl FnMut(&mut Place)) {
 }
 
 /// The zero value of a scalar type (initial value of a field local).
-fn zero(ty: Ty) -> Operand {
+pub(crate) fn zero(ty: Ty) -> Operand {
     let c = match ty {
         Ty::F32 | Ty::F64 => Const::Float(0.0),
         Ty::Bool => Const::Bool(false),

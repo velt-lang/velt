@@ -1,0 +1,45 @@
+// check: no leaks
+// `trySend` queues a value only if the channel has room now: false (and the value dropped) when a
+// bounded channel is full or the channel is closed. It is synchronous, so it works inside
+// `Mutex.with`, where `await` is not allowed.
+import { channel, Channel } from "velt:channel";
+
+class Job {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+async function main() {
+  const bounded = channel<Job>(2);
+  console.log(bounded.trySend(new Job("a")), bounded.trySend(new Job("b")));
+  console.log("full:", bounded.trySend(new Job("c")), bounded.length);
+  console.log("got:", bounded.tryReceive()?.name);
+  const kept = new Job("d");
+  console.log("room again:", bounded.trySend(kept), kept.name);
+  bounded.close();
+  console.log("closed:", bounded.trySend(new Job("e")));
+  while (true) {
+    const j = await bounded.receive();
+    if (j == null) {
+      break;
+    }
+    console.log("drained:", j.name);
+  }
+
+  const mailboxes = shared(new Mutex<Channel<i64>[]>([channel<i64>(), channel<i64>()]));
+  const routed = mailboxes.with((boxes) => boxes[1].trySend(42));
+  console.log("routed:", routed);
+  const inbox = mailboxes.with((boxes) => boxes[1]);
+  const consumer = spawn(async () => {
+    console.log("received:", await inbox.receive());
+  });
+  await consumer;
+  mailboxes.with((boxes) => {
+    for (const b of boxes) {
+      b.close();
+    }
+  });
+}

@@ -34,10 +34,36 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
             }
             None => generic_group(cx, &g.members),
         }
+        if g.promise {
+            sync_promise_members(cx, &g.members);
+        }
     }
     let checks = std::mem::take(&mut cx.throw_checks);
     for c in checks {
         observed(cx, &c);
+    }
+}
+
+/// A promise group's errors are what its promises reject with: a written synchronous member
+/// would throw them instead (forwarders synthesized for async methods are fine).
+fn sync_promise_members(cx: &mut Ctx, members: &[DefId]) {
+    for &m in members {
+        let f = cx.fn_info(m);
+        if f.is_async || f.source.is_none() {
+            continue;
+        }
+        let Some(e) = f.throws else { continue };
+        let (name, at) = (short_name(&f.name), f.name_span);
+        let method = name.rsplit('.').next().unwrap_or(&name).to_string();
+        let en = cx.display(e);
+        cx.error(
+            Diagnostic::error(
+                format!("`{name}` must be `async`: it implements an interface method whose promise rejects with `{en}`"),
+                at,
+            )
+            .with_note("a method returning a promise from an interface reports its errors through the promise, which only an `async` method does")
+            .with_note(format!("mark it `async {method}(...)`")),
+        );
     }
 }
 
@@ -178,6 +204,25 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
         return;
     }
     let fs = fin.map_or("nothing".to_string(), |t| format!("`{}`", cx.display(t)));
+    // A call through an interface value: its error type is the interface method's.
+    let slot = c.srcs.iter().find_map(|s| match s {
+        ThrowSrc::Slot { iface, slot, .. } => {
+            let i = cx.iface(*iface)?;
+            let m = i.methods.get(*slot as usize)?;
+            Some((i.name.clone(), m.name.clone()))
+        }
+        _ => None,
+    });
+    let note = match slot {
+        Some((i, m)) => {
+            let e = fin.map_or("E".to_string(), |t| cx.display(t));
+            format!("add a `throws` clause to interface method `{i}.{m}` (`{m}(): T throws {e};`)")
+        }
+        None => {
+            "add a `throws` clause to the functions in the recursion (`function f(): T throws E`)"
+                .into()
+        }
+    };
     cx.error(
         Diagnostic::error(
             format!(
@@ -185,9 +230,7 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
             ),
             c.span,
         )
-        .with_note(
-            "add a `throws` clause to the functions in the recursion (`function f(): T throws E`)",
-        ),
+        .with_note(note),
     );
 }
 

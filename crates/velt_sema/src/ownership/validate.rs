@@ -11,7 +11,8 @@ use crate::body::LocalKind;
 use crate::ctx::Ctx;
 use crate::defs::BodyState;
 use crate::hir::{
-    Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalDef, LocalId, PassMode, UseMode,
+    Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalDef, LocalId, PassMode, TyId,
+    UseMode,
 };
 use crate::visit;
 
@@ -302,20 +303,46 @@ fn array_move(span: Span) -> Diagnostic {
     .with_note("elements stay owned by the array; `xs[i].clone()` makes an owned copy")
 }
 
-/// Function values borrow their arguments: a function with owned params can't be one.
+/// Function values borrow their arguments; the value's thunk takes another reference to the
+/// ones a function owns (#224), which a value holding a promise (one owner) cannot give. A
+/// generic function is checked at its type arguments; a parameter type that still mentions a
+/// type parameter (a value taken inside a generic function) may hold a promise, so it is
+/// rejected.
 fn fn_values(cx: &mut Ctx) {
     let values = cx.fn_values.clone();
-    for (d, span) in values {
-        let f = cx.fn_info(d);
-        if let Some(p) = f.params.iter().find(|p| p.mode == PassMode::Owned) {
-            let (fname, pname) = (f.name.clone(), p.name.clone());
-            cx.error(
-                Diagnostic::error(
-                    format!("function `{fname}` takes ownership of `{pname}`, so it cannot be used as a function value"),
-                    span,
-                )
-                .with_note("function values borrow their arguments; wrap it in a closure that clones"),
-            );
+    for (d, args, span) in values {
+        let params: Vec<(String, TyId)> = cx
+            .fn_info(d)
+            .params
+            .iter()
+            .filter(|p| p.mode == PassMode::Owned)
+            .map(|p| (p.name.clone(), p.ty))
+            .collect();
+        let mut found = None;
+        for (pname, t) in params {
+            let t = cx.ty.subst(t, &args);
+            if cx.mentions_params(t) {
+                found = Some((
+                    pname,
+                    "its type depends on a type parameter, which may be a promise",
+                ));
+                break;
+            }
+            if !cx.is_copy(t) && !cx.is_shared_value(t) {
+                found = Some((pname, "a promise has one owner"));
+                break;
+            }
         }
+        let Some((pname, why)) = found else {
+            continue;
+        };
+        let fname = cx.fn_info(d).name.clone();
+        cx.error(
+            Diagnostic::error(
+                format!("function `{fname}` takes ownership of `{pname}`, so it cannot be used as a function value"),
+                span,
+            )
+            .with_note(format!("function values borrow their arguments, and {why}; call the function directly")),
+        );
     }
 }

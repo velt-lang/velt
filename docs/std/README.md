@@ -46,7 +46,7 @@ sources.
 | Collections | [collections/set](collections/set.md) · [collections/deque](collections/deque.md) · [collections/priority_queue](collections/priority_queue.md) · [collections/sorted_map](collections/sorted_map.md) · [arena](arena.md) |
 | Numbers and time | [math](math.md) · [bigint](bigint.md) · [random](random.md) · [datetime](datetime.md) · [timers](timers.md) |
 | Concurrency | [channel](channel.md) · [task](task.md) (cancellation, timeouts, task scopes) |
-| Security | [crypto](crypto.md) · [uuid](uuid.md) |
+| Security and hashing | [crypto](crypto.md) · [uuid](uuid.md) · [hash](hash.md) (stable, non-cryptographic) |
 | Text | [regex](regex.md) |
 | Programs and the system | [process](process.md) · [cli](cli.md) · [child_process](child_process.md) · [os](os.md) |
 | Packages | [package](package.md) (the type of `package.vlt`) |
@@ -73,12 +73,13 @@ what Velt can't do on its own:
 | `velt:random` | a per-thread wyrand generator |
 | `velt:datetime` | only the local UTC offset; calendar math, parsing and formatting are pure Velt |
 | `velt:html` | `escapeHtml` is one runtime pass |
+| `velt:hash` | FNV-1a over a string's or array's bytes, without a copy |
 | `velt:sqlite` | embedded SQLite (rusqlite); transactions and row decoding are Velt |
 | `velt:postgres` | tokio-postgres connections, pool, statement cache, TLS and `COPY`; transactions and row decoding are Velt |
 | `velt:redis` | a RESP2 client over tokio and rustls: multiplexed connections, pipelines, pub/sub |
 
 Pure Velt: `velt:path`, `velt:math`, `velt:collections/*`, `velt:arena`, `velt:encoding`,
-`velt:url`, `velt:csv`, `velt:cli`, `velt:timers` (built on `sleep` and `spawn`), `velt:json`
+`velt:url`, `velt:csv`, `velt:cli`, `velt:timers` (built on `sleep`, `spawn` and `velt:task` signals), `velt:json`
 and `velt:io`; `velt:jsx` too (escaping through `velt:html`). The runtime ABI is documented in
 [the internals](../internals/contracts/rt_abi_async.md).
 

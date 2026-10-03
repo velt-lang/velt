@@ -25,6 +25,27 @@ separately, so there is no boxing and bounds resolve to direct calls. Type argum
 inferred or given explicitly (`f<f64>(2)`). Bounds are interfaces
 ([Generics](classes.md#generics)).
 
+Type arguments are inferred from the arguments first and, as in TypeScript, from the expected
+type of the call (an annotated variable, a return statement, a typed parameter) second. The
+expected type types the arguments of type parameters it fixes, before an untyped number
+literal falls back to `i64`; where an argument's own type disagrees, the argument decides:
+
+```ts
+import { Set } from "velt:collections/set";
+
+function id<T>(x: T): T {
+  return x;
+}
+
+function main() {
+  const y: i32 = id(1); // T = i32
+  const z: f64 = id(2); // T = f64
+  const s: Set<u8> = new Set([1, 2]); // T = u8
+  const c: Map<string, u16> = new Map([["a", 1]]);
+  console.log(y, z, s.size, c.get("a"));
+}
+```
+
 ## Parameters
 
 Parameters behave like `let` locals: reassigning one never affects the caller. Objects are
@@ -50,7 +71,11 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   ```
 
 - **Function types** `(x: T) => U` accept closures and named functions alike. One that may
-  throw says so: `(x: T) => U throws E` ([Errors](errors.md#dynamic-calls)).
+  throw says so: `(x: T) => U throws E` ([Errors](errors.md#dynamic-calls)). Calling a named
+  function through a value behaves like calling it directly: an object it keeps or modifies is
+  the caller's object. A function whose parameter takes ownership of a promise (one owner)
+  cannot be a value, and neither can a generic function that keeps a parameter whose type is a
+  promise at the value's type arguments or still depends on a type parameter.
 
 ## Captures
 

@@ -1,0 +1,24 @@
+// check: no leaks
+// JSON of a Map or Record whose `string[]` values are shared with a local: sharing an array
+// boxes every array of that type, the map's own key array (`string[]`) included, and writing
+// the map must read the keys through the box.
+type Doc = { tags: Map<string, string[]> };
+
+function main() {
+  const a: string[] = ["x"];
+  const m = new Map<string, string[]>();
+  m.set("k", a);
+  a.push("y");
+  console.log(m.get("k"), a, JSON.stringify(m));
+
+  const text = JSON.stringify(m);
+  const back = JSON.parse<Map<string, string[]>>(text);
+  console.log(back.get("k"), back.size);
+
+  const d = JSON.parse<Doc>('{"tags":{"p":["q"],"r":[]}}');
+  console.log(JSON.stringify(d));
+
+  const r: Record<string, string[]> = {};
+  r["s"] = a;
+  console.log(JSON.stringify(r));
+}

@@ -1,0 +1,10 @@
+42
+3
+true
+42
+bad: invalid JSON at $: unexpected character 'x' (byte 0)
+skip: invalid JSON at $: unexpected character 'y' (byte 0)
+3.5
+7 true 0.25
+3
+caught: no point

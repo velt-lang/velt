@@ -1,0 +1,64 @@
+// Type arguments are inferred from the expected type of a call (#223), as in TypeScript: an
+// annotated binding, a return statement, a typed parameter and a class field initializer type
+// the arguments before untyped number literals default to `i64`.
+import { Set } from "velt:collections/set";
+
+function id<T>(x: T): T {
+  return x;
+}
+
+function pair<A, B>(a: A, b: B): [A, B] {
+  return [a, b];
+}
+
+function first<T>(xs: T[]): T | null {
+  return xs.length > 0 ? xs[0] : null;
+}
+
+class Cell<T> {
+  value: T;
+  constructor(value: T) {
+    this.value = value;
+  }
+}
+
+class Holder {
+  ids: Set<u32> = new Set([7, 8, 9]);
+}
+
+function small(): u8 {
+  return id(200);
+}
+
+function sizes(): Map<string, u16> {
+  return new Map([
+    ["a", 1],
+    ["b", 65535],
+  ]);
+}
+
+function half(c: Cell<f32>): f32 {
+  return c.value / 2;
+}
+
+function widen(x: f64): f64 {
+  return x;
+}
+
+function main() {
+  const s: Set<i32> = new Set([1, 2, 2]);
+  const m: Map<string, u16> = new Map([["a", 1]]);
+  const y: i32 = id(1);
+  const f: f64 = id(2);
+  const p: [u8, f64] = pair(1, 2);
+  const c: Cell<i16> = new Cell(-3);
+  const xs: i32[] = id([1, 2]);
+  const head: u8 | null = first([250, 1]);
+  console.log(s.size, m.get("a"), y, f / 4, p[0], p[1] / 4, c.value, xs);
+  console.log(head, small(), sizes().get("b"), half(new Cell(3)), widen(id(5)) / 2);
+  console.log(new Holder().ids.has(8));
+  // The arguments win over the expected type when they fix the type parameter themselves.
+  const k: i64 = 1 << 40;
+  const big: i64 | null = id(k);
+  console.log(big);
+}

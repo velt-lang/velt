@@ -14,7 +14,7 @@ const COUNT: i128 = 8;
 
 impl FnLower<'_, '_> {
     /// The count word of the (non-null) counted object `p`.
-    fn count_place(&mut self, p: Operand) -> Place {
+    pub(super) fn count_place(&mut self, p: Operand) -> Place {
         let c = self.rvalue_temp(
             Ty::Ptr,
             Rvalue::Binary(BinOp::PtrAdd, p, cint(-COUNT, Ty::I64)),

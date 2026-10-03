@@ -105,8 +105,9 @@ impl Drop for Shared {
     }
 }
 
-/// Runs a closure environment's drop function (its first word), if it has one.
-unsafe fn release_env(env: *mut c_void) {
+/// Runs a closure environment's drop function (its first word), if it has one. Also used by a
+/// `serve` that fails before the server exists: the runtime owns the environment either way.
+pub(super) unsafe fn release_env(env: *mut c_void) {
     if env.is_null() {
         return;
     }

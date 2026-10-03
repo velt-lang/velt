@@ -109,15 +109,13 @@ class AbandonGuard<T, E> {
   }
 }
 
-// Run the executor with its `resolve` and `reject`: heap closures (stored in variables) over
-// the slot, so the executor may keep them, and both hold the guard. A function of its own, so
-// that once it returns only what the executor kept still references the guard. A value settled
-// on the promise's own task is shared with the awaiter, like JS; one settled from another task
-// is copied (counted objects never cross tasks, like `spawn` arguments).
-function runExecutor<T, E>(
-  executor: (resolve: (value: T) => void, reject: (reason: E) => void) => void throws E,
-  slot: shared<Mutex<PromiseSlot<T, E>>>,
-) {
+// A promise's `resolve` and `reject`: heap closures over its slot, so they may be stored,
+// returned and moved to other tasks; both hold the guard. A value settled on the promise's own
+// task is shared with the awaiter, like JS; one settled from another task is copied (counted
+// objects never cross tasks, like `spawn` arguments).
+type Settlers<T, E> = { resolve: (value: T) => void; reject: (reason: E) => void };
+
+function settlers<T, E>(slot: shared<Mutex<PromiseSlot<T, E>>>): Settlers<T, E> {
   const home = velt_rt_task_id();
   const guard = shared(new Mutex<AbandonGuard<T, E>>(new AbandonGuard<T, E>(slot.clone())));
   const forResolve = slot.clone();
@@ -131,8 +129,18 @@ function runExecutor<T, E>(
     const r = velt_rt_task_id() == home ? reason : reason.clone();
     guardReject.with((g) => forReject.with((s) => s.settle({ status: "rejected", reason: r })));
   };
+  return { resolve: resolve, reject: reject };
+}
+
+// Run the executor with its `resolve` and `reject`. A function of its own, so that once it
+// returns only what the executor kept still references the guard.
+function runExecutor<T, E>(
+  executor: (resolve: (value: T) => void, reject: (reason: E) => void) => void throws E,
+  slot: shared<Mutex<PromiseSlot<T, E>>>,
+) {
+  const s = settlers<T, E>(slot.clone());
   try {
-    executor(resolve, reject);
+    executor(s.resolve, s.reject);
   } catch (e) {
     slot.with((s) => s.settle({ status: "rejected", reason: e }));
   }
@@ -190,4 +198,22 @@ export function promiseNewResolveOnly<T>(
   direct: bool = false,
 ): Promise<T> {
   return promiseNew<T, never>((resolve, reject) => executor(resolve), site, direct);
+}
+
+// What `Promise.withResolvers<T, E>()` returns (ES2024): a pending promise and the functions
+// that settle it.
+export type PromiseWithResolvers<T, E> = {
+  promise: Promise<T, E>;
+  resolve: (value: T) => void;
+  reject: (reason: E) => void;
+};
+
+// `Promise.withResolvers<T, E>()`: the compiler compiles it to a call of `promiseWithResolvers`.
+// `resolve` and `reject` behave like a `new Promise` executor's: they may be stored, sent over
+// a channel or moved into a spawned task and called there, and the first settlement wins. A
+// promise whose `resolve` and `reject` are all dropped without settling never settles.
+export function promiseWithResolvers<T, E>(): PromiseWithResolvers<T, E> {
+  const slot = shared(new Mutex<PromiseSlot<T, E>>(new PromiseSlot<T, E>()));
+  const s = settlers<T, E>(slot.clone());
+  return { promise: settlement<T, E>(slot, "", false), resolve: s.resolve, reject: s.reject };
 }

@@ -1,3 +1,4 @@
+// check: no leaks
 // `renderToStream` into a std/http `Response.stream` body: the markup before a pending async
 // component is flushed before the component finishes loading (a raw TCP client sees the page
 // head first), and the streamed body is byte-identical to `renderToString` of the same tree.
@@ -87,5 +88,5 @@ async function main() {
   const expected = await renderToString(page(1, false));
   console.log(body);
   console.log(`same as renderToString: ${body == expected}`);
-  server.close();
+  await server.shutdown();
 }

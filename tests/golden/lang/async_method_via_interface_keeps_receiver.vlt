@@ -1,0 +1,88 @@
+// check: no leaks
+// #194: an async method owns its `this` (it moves into the future). Called through an interface
+// value or a base-class reference (a vtable entry, which borrows the receiver), it used to take
+// the caller's reference, so the object was freed when the first call ended.
+interface Act {
+  invoke(n: i64): Promise<string>;
+}
+
+class Live implements Act {
+  label: string = "a label long enough to live on the heap";
+
+  async invoke(n: i64): Promise<string> {
+    return `${this.label} ${n}`;
+  }
+}
+
+struct Rec implements Act {
+  label: string;
+
+  async invoke(n: i64): Promise<string> {
+    return `struct ${this.label} ${n}`;
+  }
+}
+
+class Base {
+  name: string = "a name long enough to live on the heap";
+
+  async hello(): Promise<string> {
+    return `base ${this.name}`;
+  }
+}
+
+class Derived extends Base {
+  override async hello(): Promise<string> {
+    return `derived ${this.name}`;
+  }
+}
+
+class Holder {
+  act: Act;
+
+  constructor(act: Act) {
+    this.act = act;
+  }
+}
+
+async function twice<T extends Act>(t: T): Promise<void> {
+  console.log(await t.invoke(1));
+  console.log(await t.invoke(2));
+}
+
+async function main() {
+  const a: Act = new Live();
+  console.log(await a.invoke(1));
+  console.log(await a.invoke(2));
+  const b = a;
+  console.log(await b.invoke(3));
+  const p = a.invoke(4);
+  console.log(await p);
+
+  const h = new Holder(new Live());
+  for (let i = 0; i < 2; i++) {
+    console.log(await h.act.invoke(i));
+  }
+
+  const m = new Map<string, Act>();
+  m.set("k", new Live());
+  for (let i = 0; i < 2; i++) {
+    const v = m.get("k");
+    if (v != null) {
+      console.log(await v.invoke(i));
+    }
+  }
+
+  const xs: Act[] = [Rec { label: "in an array" }, new Live()];
+  for (let i = 0; i < 4; i++) {
+    console.log(await xs[i % 2].invoke(i));
+  }
+
+  await twice(new Live());
+
+  const bases: Base[] = [new Base(), new Derived()];
+  for (let i = 0; i < 2; i++) {
+    for (const x of bases) {
+      console.log(await x.hello());
+    }
+  }
+}

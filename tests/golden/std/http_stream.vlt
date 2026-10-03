@@ -1,3 +1,4 @@
+// check: no leaks
 // A streamed response (`Response.stream`): the producer keeps writing after the handler
 // returned, with awaited sleeps between flushes; the client gets the headers that were set
 // before returning, no content-length (chunked transfer), and every chunk in order. A producer
@@ -43,5 +44,5 @@ async function main() {
   } catch (e) {
     console.log("broken stream: cut off");
   }
-  server.close();
+  await server.shutdown();
 }

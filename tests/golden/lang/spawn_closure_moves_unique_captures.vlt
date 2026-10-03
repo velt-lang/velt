@@ -1,0 +1,35 @@
+// check: no leaks
+// A closure handed to a spawned task moves to it when no closure in the program can reach a
+// shared (counted) object: what it captures is unique, so it is not copied, and a captured
+// value's [Symbol.dispose]() runs once, when the task drops the closure (#217, #234).
+class Store {
+  name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  [Symbol.dispose]() {
+    console.log(`released ${this.name}`);
+  }
+}
+
+async function run(f: () => string): Promise<string> {
+  await sleep(1);
+  return f();
+}
+
+async function keep(f: () => string): Promise<string> {
+  const g = f;
+  await sleep(1);
+  return g();
+}
+
+async function main() {
+  const a = new Store("a");
+  console.log(await spawn(run(() => a.name)));
+  const b = new Store("b");
+  const fb = (): string => `${b.name}!`;
+  console.log(await spawn(keep(fb)));
+  console.log("done");
+}

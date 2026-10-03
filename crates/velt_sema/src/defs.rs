@@ -102,6 +102,25 @@ impl ThrowSrc {
             ThrowSrc::Direct(_, s) | ThrowSrc::Call(_, _, s) | ThrowSrc::Slot { span: s, .. } => *s,
         }
     }
+
+    /// This source used at `span` (a field default evaluated by a `new` or a struct literal),
+    /// with its types mapped by `f` (from the owner's generic context into the use).
+    pub fn used_at(&self, span: Span, mut f: impl FnMut(TyId) -> TyId) -> ThrowSrc {
+        match self {
+            ThrowSrc::Direct(t, _) => ThrowSrc::Direct(f(*t), span),
+            ThrowSrc::Call(d, args, _) => {
+                ThrowSrc::Call(*d, args.iter().map(|&t| f(t)).collect(), span)
+            }
+            ThrowSrc::Slot {
+                iface, slot, args, ..
+            } => ThrowSrc::Slot {
+                iface: *iface,
+                slot: *slot,
+                args: args.iter().map(|&t| f(t)).collect(),
+                span,
+            },
+        }
+    }
 }
 
 /// A written (or context-fixed) `throws` of a function: its bodies may throw only what `ty`
@@ -180,6 +199,9 @@ pub(crate) struct FieldInfo {
     /// Has an initializer (`= e`, or optional → `null`).
     pub has_default: bool,
     pub default: Option<hir::Expr>,
+    /// What evaluating `default` may throw, in the owner's generic context: a `new` or a struct
+    /// literal that uses the default throws it too.
+    pub default_throws: Vec<ThrowSrc>,
     /// `private`: the declaring type (inherited copies keep the base class).
     pub private_to: Option<DefId>,
 }

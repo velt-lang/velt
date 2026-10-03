@@ -8,9 +8,10 @@
 
 mod common;
 
-use std::time::{Duration, Instant};
+use std::sync::{Mutex, MutexGuard};
 
 use common::hir_walk::func;
+use common::process_work;
 use common::programs::{load_src, ok_src, repo_root, Loaded};
 use velt_sema::hir::PassMode;
 
@@ -38,52 +39,60 @@ fn generated_program(n: usize, chain: usize) -> String {
     out + "}\n"
 }
 
-/// One `check` time (parsing excluded).
-fn sema_time(loaded: &Loaded) -> Duration {
-    let t = Instant::now();
-    let (program, diags) = loaded.check();
-    let elapsed = t.elapsed();
-    assert!(program.is_some(), "{}", loaded.render(&diags));
-    elapsed
+/// The tests of this file run one at a time: `sema_cost` reads the process's CPU clock, which
+/// would count another test's work too.
+fn serial() -> MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Sema time per unit (above an empty program's) must not grow by more than `slack`× from
-/// `sizes[0]` to each larger size. Sizes are timed interleaved, best of `ROUNDS` each, so a load
-/// spike on a shared machine hits every size alike instead of one of them.
+/// The CPU work of one `check` (parsing excluded), in [`process_work`] units: CPU time, not
+/// wall-clock time, which on a loaded machine mostly measures waiting for a core.
+fn sema_cost(loaded: &Loaded) -> u64 {
+    let start = process_work::now();
+    let (program, diags) = loaded.check();
+    let cost = process_work::now() - start;
+    assert!(program.is_some(), "{}", loaded.render(&diags));
+    cost
+}
+
+/// Sema cost per unit (above an empty program's) must not grow by more than `slack`× from
+/// `sizes[0]` to each larger size. Sizes are measured interleaved, best of `ROUNDS` each, so
+/// what load still shows in CPU time (cache and frequency effects of other processes) hits every
+/// size alike instead of one of them.
 fn assert_linear(sizes: &[usize], chain: impl Fn(usize) -> usize, slack: f64) {
     const ROUNDS: usize = 7;
+    // Before loading: parsing the programs is work on the process's clock too.
+    let _serial = serial();
     let mut programs = vec![load_src("function main() {}")];
     programs.extend(
         sizes
             .iter()
             .map(|&n| load_src(&generated_program(n, chain(n)))),
     );
-    let mut best = vec![Duration::MAX; programs.len()];
+    let mut best = vec![u64::MAX; programs.len()];
     for _ in 0..ROUNDS {
         for (b, p) in best.iter_mut().zip(&programs) {
-            *b = (*b).min(sema_time(p));
+            *b = (*b).min(sema_cost(p));
         }
     }
-    let empty = best[0].as_secs_f64();
+    let empty = best[0] as f64;
+    eprintln!("empty program: cost {empty}");
     let per_unit: Vec<f64> = sizes
         .iter()
         .zip(&best[1..])
-        .map(|(&n, t)| {
-            eprintln!(
-                "N = {n:>5} (chains of {:>5}): {:>9.1} ms",
-                chain(n),
-                t.as_secs_f64() * 1e3
-            );
-            (t.as_secs_f64() - empty).max(0.0) / n as f64
+        .map(|(&n, &c)| {
+            eprintln!("N = {n:>5} (chains of {:>5}): cost {c:>12}", chain(n));
+            (c as f64 - empty).max(0.0) / n as f64
         })
         .collect();
     for (n, u) in sizes.iter().zip(&per_unit).skip(1) {
         assert!(
             *u < slack * per_unit[0],
-            "sema time per unit grew from {:.3} ms (N = {}) to {:.3} ms (N = {n})",
-            per_unit[0] * 1e3,
+            "sema cost per unit grew from {:.0} (N = {}) to {:.0} (N = {n})",
+            per_unit[0],
             sizes[0],
-            u * 1e3,
+            u,
         );
     }
 }
@@ -92,10 +101,12 @@ fn assert_linear(sizes: &[usize], chain: impl Fn(usize) -> usize, slack: f64) {
 #[test]
 fn sema_time_grows_linearly() {
     // 8× the units: quadratic growth would be 8× per unit; 4× leaves room for cache effects.
-    assert_linear(&[50, 400], |_| 8, 4.0);
+    // At least 100 units: the empty program's cost, subtracted from each, varies by about the
+    // cost of 50 units between runs on a loaded machine.
+    assert_linear(&[100, 800], |_| 8, 4.0);
     // One chain through the whole program: modification inference must not take a round over
     // every body per call level.
-    assert_linear(&[50, 400], |n| n, 4.0);
+    assert_linear(&[100, 800], |n| n, 4.0);
 }
 
 #[test]
@@ -109,6 +120,7 @@ fn sema_time_grows_linearly_large() {
 /// rounds, one call level each).
 #[test]
 fn modification_propagates_up_a_long_call_chain() {
+    let _serial = serial();
     let mut src = String::from("function g0(xs: i64[]) {\n  xs.push(1);\n}\n");
     for i in 1..1500 {
         src += &format!("function g{i}(xs: i64[]) {{\n  g{}(xs);\n}}\n", i - 1);

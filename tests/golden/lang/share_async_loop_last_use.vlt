@@ -1,0 +1,88 @@
+// check: no leaks
+// A shared object passed to an async call as its last use in a loop body (#195): every
+// iteration's call gets its own reference, so the object outlives the loop. Variants: a
+// function, a method, a closure and a function value as the callee; `for`, `while` and
+// `for...of` loops; the object reached through a field, a Map value and an array element.
+class Box {
+  name: string = "a string long enough to live on the heap";
+}
+
+class Holder {
+  box: Box = new Box();
+}
+
+class Svc {
+  async use(b: Box): Promise<void> {}
+}
+
+async function use(b: Box): Promise<void> {}
+
+async function useLen(b: Box): Promise<usize> {
+  await sleep(1);
+  return b.name.length;
+}
+
+async function main() {
+  const b = new Box();
+  const alias = b;
+  for (let i = 0; i < 3; i++) {
+    console.log(`fn ${i}: ${b.name.length}`);
+    await use(b);
+  }
+  const svc = new Svc();
+  for (let i = 0; i < 3; i++) {
+    console.log(`method ${i}: ${b.name.length}`);
+    await svc.use(b);
+  }
+  const f = async (x: Box): Promise<void> => {};
+  for (let i = 0; i < 3; i++) {
+    console.log(`closure ${i}: ${b.name.length}`);
+    await f(b);
+  }
+  const g: (x: Box) => Promise<void> = async (x: Box): Promise<void> => await use(x);
+  for (let i = 0; i < 3; i++) {
+    console.log(`fn value ${i}: ${b.name.length}`);
+    await g(b);
+  }
+  let n = 0;
+  while (n < 3) {
+    console.log(`while ${n}: ${b.name.length}`);
+    await use(b);
+    n++;
+  }
+  for (const i of [1, 2, 3]) {
+    console.log(`for-of ${i}: ${b.name.length}`);
+    await use(b);
+  }
+  for (let i = 0; i < 3; i++) {
+    console.log(`len ${i}: ${await useLen(b)}`);
+  }
+  const h = new Holder();
+  const hb = h.box;
+  for (let i = 0; i < 3; i++) {
+    console.log(`field ${i}: ${h.box.name.length}`);
+    await use(h.box);
+  }
+  const m = new Map<string, Box>();
+  m.set("k", b);
+  for (let i = 0; i < 3; i++) {
+    const v = m.get("k") ?? new Box();
+    console.log(`map ${i}: ${v.name.length}`);
+    await use(v);
+  }
+  const arr = [b, alias];
+  for (let i = 0; i < 3; i++) {
+    console.log(`array ${i}: ${arr[0].name.length}`);
+    await use(arr[0]);
+  }
+  for (const x of arr) {
+    console.log(`array of: ${x.name.length}`);
+    await use(x);
+  }
+  const tasks: Promise<usize>[] = [];
+  for (let i = 0; i < 3; i++) {
+    tasks.push(spawn(useLen(b)));
+  }
+  console.log(`spawned ${await Promise.all(tasks)}`);
+  console.log(`end: ${b.name.length} ${alias.name.length} ${hb.name.length} ${arr.length}`);
+}

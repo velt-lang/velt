@@ -18,7 +18,7 @@ impl FnLower<'_, '_> {
         let u = self.sub(ty);
         let Some(err) = self.cx.error_ty(Some(throws)) else {
             // Instantiated with an error type that is empty: `f` cannot fail.
-            let v = self.call_indirect(f, &[], ret);
+            let v = self.call_indirect(f, &[], ret, false);
             let v = self.take_owned_or_scalar(v);
             return self.attempt_value(v, ret, u, false);
         };

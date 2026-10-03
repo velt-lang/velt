@@ -1,0 +1,121 @@
+// check: no leaks
+// A named function that keeps or modifies an object parameter can be a function value (#224):
+// the value passes the caller's object (`g(s)` behaves like `f(s)`); a task spawned through it gets
+// its own copy.
+class S {
+  n: i64 = 0;
+  name: string = "a name long enough to live on the heap";
+}
+
+class Keeper {
+  kept: S[] = [];
+}
+
+async function f(s: S): Promise<void> {
+  await sleep(1);
+  s.n += 1;
+}
+
+async function bump(s: S, by: i64, tag: string): Promise<i64> {
+  await sleep(1);
+  s.n += by;
+  return s.n + (tag.length as i64);
+}
+
+function keep(s: S): Keeper {
+  s.n += 100;
+  const k = new Keeper();
+  k.kept.push(s);
+  return k;
+}
+
+function wrap<T>(x: T): T[] {
+  return [x];
+}
+
+struct P {
+  label: string;
+}
+
+function nest(xs: i64[]): i64[][] {
+  return [xs];
+}
+
+function pair(p: P, m: Map<string, i64>): [P, Map<string, i64>] {
+  return [p, m];
+}
+
+class Holder {
+  g: (s: S) => Promise<void> = f;
+}
+
+async function twice(h: (s: S) => Promise<void>, s: S): Promise<void> {
+  await h(s);
+  await h(s);
+}
+
+async function main() {
+  const g: (s: S) => Promise<void> = f;
+  const s = new S();
+  await g(s);
+  console.log(s.n);
+
+  // In a field, a Map, an array, passed on; a temporary argument.
+  const h = new Holder();
+  await h.g(s);
+  const m = new Map<string, (s: S) => Promise<void>>();
+  m.set("f", f);
+  const mf = m.get("f");
+  if (mf != null) {
+    await mf(s);
+  }
+  const fs: ((s: S) => Promise<void>)[] = [f, f];
+  for (const e of fs) {
+    await e(s);
+  }
+  await twice(f, s);
+  await g(new S());
+  console.log(s.n);
+
+  // More parameters; the last use of the argument.
+  const b: (s: S, by: i64, tag: string) => Promise<i64> = bump;
+  console.log(await b(s, 10, "tag"), s.n);
+  const t = new S();
+  console.log(await b(t, 1, "x"));
+
+  // A synchronous function that keeps its argument.
+  const k: (s: S) => Keeper = keep;
+  const keeper = k(s);
+  console.log(s.n, keeper.kept.length, keeper.kept[0].n);
+  s.n += 1;
+  console.log(keeper.kept[0].n);
+
+  // A generic function.
+  const fr: (x: S) => S[] = wrap;
+  const xs = fr(s);
+  console.log(xs[0] == s);
+
+  // Arrays, structs and maps are kept by reference too.
+  const nf: (xs: i64[]) => i64[][] = nest;
+  const arr = [1, 2];
+  const nested = nf(arr);
+  arr.push(3);
+  console.log(nested[0].length);
+  const pf: (p: P, m: Map<string, i64>) => [P, Map<string, i64>] = pair;
+  const p = P { label: "a struct label long enough to live on the heap" };
+  const m2 = new Map<string, i64>();
+  const kept = pf(p, m2);
+  m2.set("a", 1);
+  console.log(kept[1].size, kept[0] == p);
+
+  // Spawned through the value: the task gets its own copy.
+  const tasks: Promise<i64>[] = [];
+  for (let i = 0; i < 30; i++) {
+    tasks.push(spawn(b(s, 1, "")));
+  }
+  let sum = 0;
+  for (const r of await Promise.all(tasks)) {
+    sum += r;
+  }
+  console.log(sum, s.n);
+}

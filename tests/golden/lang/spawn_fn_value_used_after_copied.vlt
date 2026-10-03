@@ -1,0 +1,24 @@
+// check: no leaks
+// A closure still used after it is handed to a spawned task is copied for the task with what
+// it captures, even though it captures only a unique object: the task and the caller must not
+// share its environment (PR #257 review). `fb` runs once in the task (on its copy) and twice
+// here, so this prints 1 1 2 whatever order the threads run in.
+class Box {
+  n: i64 = 0;
+}
+
+async function keep(f: () => i64): Promise<i64> {
+  await sleep(1);
+  return f();
+}
+
+async function main() {
+  const b = new Box();
+  const fb = (): i64 => {
+    b.n += 1;
+    return b.n;
+  };
+  const t = spawn(keep(fb));
+  const here = fb();
+  console.log(await t, here, fb());
+}

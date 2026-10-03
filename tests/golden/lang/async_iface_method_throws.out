@@ -1,0 +1,25 @@
+caught negative a tag long enough to live on the heap
+ok 0 a tag long enough to live on the heap
+ok 1 a tag long enough to live on the heap
+ok 0 a tag long enough to live on the heap
+ok 1 a tag long enough to live on the heap
+ok 2 a tag long enough to live on the heap
+ok 1 a tag long enough to live on the heap
+stored negative a tag long enough to live on the heap
+ok 3 a tag long enough to live on the heap
+spelled negative a tag long enough to live on the heap
+generic negative a tag long enough to live on the heap
+2
+all negative a tag long enough to live on the heap
+E zero
+0
+1
+F one
+2
+20
+sub 1
+caught sub negative
+ok 1 a tag long enough to live on the heap
+caught negative a tag long enough to live on the heap
+2
+3

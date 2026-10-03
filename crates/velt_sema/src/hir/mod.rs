@@ -365,6 +365,10 @@ pub struct InterfaceMethodDef {
     /// `Def::Fn` of the default body; its `self_ty` is `TyKind::Param(generics)` (an implicit
     /// extra type param standing for the implementor).
     pub default: Option<DefId>,
+    /// The method returns a promise that carries its errors (sema's dispatch group of the slot
+    /// holds such a method): its implementations reject the promise, so a call through the slot
+    /// never throws (hir_encodings.md "Errors").
+    pub promise: bool,
 }
 
 #[derive(Clone, Debug)]

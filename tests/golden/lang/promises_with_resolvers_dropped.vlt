@@ -1,0 +1,17 @@
+// A `Promise.withResolvers` promise whose `resolve` and `reject` are all dropped without
+// settling never settles, like in JS: it loses a `Promise.race`. A pending promise keeps the
+// process alive (#147), so this program exits explicitly.
+async function fast(): Promise<string> {
+  await sleep(5);
+  return "fast";
+}
+
+function abandoned(): Promise<string> {
+  const r = Promise.withResolvers<string>();
+  return r.promise;
+}
+
+async function main() {
+  console.log("race:", await Promise.race([abandoned(), fast()]));
+  process.exit(0);
+}

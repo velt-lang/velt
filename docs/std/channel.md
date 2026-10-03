@@ -9,6 +9,10 @@ through one channel.
 - `Channel<T>`:
   - `send(value: T): Promise<void>` queues the value. It throws `ChannelClosed` if the channel
     is closed, also while waiting; the value is dropped then.
+  - `trySend(value: T): bool` queues the value if the channel has room now, without waiting.
+    It returns false if a bounded channel is full or the channel is closed; the value is
+    dropped then. Being synchronous, it can be called where `await` can't, such as inside a
+    `Mutex`'s `with` callback (an unbounded channel is never full).
   - `receive(): Promise<T | null>` returns the oldest value, waiting for one. It returns `null`
     once the channel is closed and empty.
   - `tryReceive(): T | null` returns the oldest value if one is queued, without waiting.

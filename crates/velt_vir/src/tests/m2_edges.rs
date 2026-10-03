@@ -100,6 +100,7 @@ fn classes_as_interface_values_and_owned_virtual_args() {
             methods: vec![InterfaceMethodDef {
                 name: "show".into(),
                 default: Some(show_d),
+                promise: false,
             }],
             span: SP,
         }),
@@ -182,6 +183,7 @@ fn generic_impl_and_structured_hash_print() {
             methods: vec![InterfaceMethodDef {
                 name: "size".into(),
                 default: None,
+                promise: false,
             }],
             span: SP,
         }),

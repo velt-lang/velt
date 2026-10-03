@@ -16,6 +16,9 @@ compiler knows exactly what each function and each `try` block can throw.
 - A written clause bounds the body
   (``` `load` throws `Timeout`, which its `throws` clause does not allow ```; a subclass is
   allowed by its base class) and is the function's error type even when the body throws less.
+- Field initializers may throw: `new C(…)` (and a struct literal that leaves the field out)
+  evaluates them, so it throws what they throw, including inherited ones, besides what the
+  constructor throws.
 - Methods, constructors (`constructor(x: T) throws E`), arrows (`(x: T): R throws E => …`) and
   async functions (`async function f(): Promise<T> throws E`, see [Async](async.md#errors))
   take a `throws` clause; `declare function` cannot.
@@ -43,7 +46,8 @@ cannot throw.
 - Interface methods and overridden methods share one error type per method: the interface's (or
   base method's) `throws` clause bounds every implementation
   (``` `Db.get` throws `Forbidden`, but `Store.get` does not allow it ```); without one it is the
-  union of what the implementations throw.
+  union of what the implementations throw. For an interface method returning a promise it is
+  what the promise rejects with ([Async](async.md#errors)).
 - **Higher-order functions** propagate their callback's errors by being generic over them:
   `function run<E>(f: () => i64 throws E): i64 throws E`. The prelude's array methods
   (`forEach`, `map`, `filter`, `reduce`, `find`, `findIndex`, `some`, `every`), `Map` methods
@@ -74,7 +78,8 @@ nothing; `null` means success).
 
 A closure created inside a recursive function that it calls, and a `catch` or promise whose
 error type depends on a function still being checked through recursion, may need a `throws`
-clause (``` the error type of this function is not known yet ```). Error types of interface and
+clause (``` the error type of this function is not known yet ```); when the recursion goes
+through an interface value, the `throws` clause goes on the interface method. Error types of interface and
 overridden methods cannot depend on type parameters.
 
 ## Example

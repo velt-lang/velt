@@ -380,6 +380,12 @@ pub fn golden_files() -> Vec<PathBuf> {
     out
 }
 
+/// Three items whose JSX elements and generic arrows the parser, not the lexer, decides: every
+/// element is re-lexed once where the parser finds it.
+pub const JSX_UNIT: &str =
+    "const a = <ul class=\"x\">{xs.map((i) => <li key={i}>it's {i}</li>)}</ul>;\n\
+                            const id = <T>(x: T): T => x;\nconst u = v.as<User>();\n";
+
 /// Source exercising every construct of the AST surface; must parse without diagnostics.
 pub const KITCHEN_SINK: &str = r#"
 import { readFile, writeFile as wf } from "velt:fs";

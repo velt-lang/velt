@@ -46,7 +46,18 @@ pub(crate) fn infer_modes(cx: &mut Ctx) {
     while let Some(d) = work.next_body() {
         visits += 1;
         if visits > cap {
-            debug_assert!(false, "ICE: ownership inference does not settle");
+            // Reported in every build: bodies not visited again keep modes that are too weak,
+            // which would surface as confusing errors in unrelated code.
+            let info = cx.fn_info(d);
+            let e = Diagnostic::error(
+                format!(
+                    "ICE: ownership inference does not settle (still changing `{}`)",
+                    info.name
+                ),
+                info.name_span,
+            )
+            .with_note("this is a compiler bug; please report it with this program");
+            errors.push((position[&d], e));
             break;
         }
         let before = cx.diags.len();
@@ -221,28 +232,15 @@ impl Flip<'_> {
         any
     }
 
+    /// Move the matched place. Reports a change only when its mode really changes (an array
+    /// element `xs[i]` included), or the fixpoint never settles; a module constant (no mode)
+    /// is left alone.
     fn consume(&mut self, scrutinee: &mut Expr) {
-        if is_place(scrutinee) && !place_moved(scrutinee) {
+        if current_mode(scrutinee).is_some_and(|m| m != UseMode::Move) {
             set_place_mode(scrutinee, UseMode::Move);
             self.changed = true;
         }
     }
-}
-
-fn place_moved(e: &Expr) -> bool {
-    matches!(
-        e.kind,
-        E::Local(_, UseMode::Move)
-            | E::Field {
-                mode: UseMode::Move,
-                ..
-            }
-            | E::UnwrapSome(_, UseMode::Move)
-            | E::UnwrapVariant {
-                mode: UseMode::Move,
-                ..
-            }
-    )
 }
 
 struct PatFn<'a>(&'a mut dyn FnMut(&mut Pat));

@@ -73,7 +73,7 @@ instances (compared by identity), and structs, object types and tuples (compared
 
 | Member | Notes |
 |---|---|
-| `new Map<K, V>()`, `size`, `clear()` | |
+| `new Map<K, V>()`, `new Map(entries: [K, V][])`, `size`, `clear()` | `new Map(entries)` leaves `entries` as it is and shares their keys and values, like JS |
 | `set(k, v)`, `get(k): V \| null`, `has(k)`, `delete(k): bool` | `get` returns the stored value itself, as in JS |
 | `upsert(k, init, (v) => v + 1)` | insert `init` or replace the value with the callback's result, in one lookup |
 | `update(k, (v) => { … }): bool` | modify the stored value in place; `false` when `k` is absent |
@@ -124,7 +124,8 @@ nest 128 levels deep unless `options.maxDepth` says otherwise.
 ## Async and concurrency
 
 `sleep(ms)`, `yieldNow()`, `spawn(p)`, `Promise.all`, `Promise.race`, `Promise.allSettled`
-(with `PromiseSettledResult<T, E>`), `Promise.any`, `shared(x)`, `Mutex<T>`,
+(with `PromiseSettledResult<T, E>`), `Promise.any`, `Promise.withResolvers` (with
+`PromiseWithResolvers<T, E>`), `shared(x)`, `Mutex<T>`,
 `performance.now()` and `Date.now()` ([Async](../reference/async.md)).
 
 ```ts

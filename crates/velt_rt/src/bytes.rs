@@ -34,6 +34,8 @@ impl VeltBytes {
             };
         }
         let mut v = std::mem::ManuallyDrop::new(v);
+        // Generated code frees the buffer like one of its own blocks (leak counters).
+        crate::str::stats::block_alloc();
         VeltBytes {
             ptr: v.as_mut_ptr(),
             len: v.len() as u64,
@@ -47,6 +49,8 @@ impl VeltBytes {
     /// `self` must describe a valid buffer per the layout contract.
     pub unsafe fn take_vec(&mut self) -> Vec<u8> {
         let v = if self.cap > 0 {
+            // The buffer leaves compiled code's blocks (leak counters).
+            crate::str::stats::block_free();
             Vec::from_raw_parts(self.ptr, self.len as usize, self.cap as usize)
         } else {
             self.as_bytes().to_vec()

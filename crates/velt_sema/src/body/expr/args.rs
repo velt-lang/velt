@@ -86,7 +86,16 @@ impl FnCx<'_, '_> {
                 type_args,
             };
         }
-        let checked = self.args_in_rounds(c, &mut slots, args);
+        // The expected result type is a lower-priority inference source, as in TS: it types
+        // the arguments of slots no argument has fixed yet (`const y: i32 = id(1)` checks `1`
+        // as an `i32`), but the arguments' own types decide the slots. Error types are not
+        // inferred from it (the `Promise<T>` an `await` expects may reject with anything).
+        let mut context = slots.clone();
+        if let Some(e) = exp {
+            let e = self.cx.ty.without_error_types(e);
+            self.cx.match_ty(c.ret, e, &mut context);
+        }
+        let checked = self.args_in_rounds(c, &mut slots, &context, args);
         if let Some(e) = exp {
             self.cx.match_ty(c.ret, e, &mut slots);
         }
@@ -115,11 +124,13 @@ impl FnCx<'_, '_> {
     }
 
     /// Check `args` (typed ones first, then context-typed literals, then arrows), binding
-    /// type parameters from each; results in parameter order.
+    /// type parameters from each; results in parameter order. A slot still unknown when an
+    /// argument is checked takes its type from `context` (inferred from the expected result).
     fn args_in_rounds(
         &mut self,
         c: &Callable,
         slots: &mut [Option<TyId>],
+        context: &[Option<TyId>],
         args: &[ast::Expr],
     ) -> Vec<hir::Expr> {
         let round = |e: &ast::Expr| match (deferred(e), as_arrow(e).is_some()) {
@@ -134,8 +145,11 @@ impl FnCx<'_, '_> {
             let p = &c.params[i];
             if untyped(&args[i]) {
                 self.number_slot_from_callback(c, p.ty, slots);
+                self.number_slot_from_context(p.ty, slots, context);
             }
-            let expected = self.cx.ty.subst_known(p.ty, slots);
+            let known: Vec<Option<TyId>> =
+                slots.iter().zip(context).map(|(s, c)| s.or(*c)).collect();
+            let expected = self.cx.ty.subst_known(p.ty, &known);
             let h = match as_arrow(&args[i]) {
                 Some(a) if matches!(self.cx.ty.kind(expected), TyKind::FnPtr { .. }) => {
                     self.arrow_arg(a, expected, p.mode == PassMode::Owned)
@@ -178,6 +192,26 @@ impl FnCx<'_, '_> {
             if let Some(n) = known {
                 slots[s as usize] = Some(n);
                 return;
+            }
+        }
+    }
+
+    /// An untyped number argument whose parameter is a still unknown slot `S` that the expected
+    /// result fixes to a number type: `S` is that type (`const x: f64 = id(2)` passes `2.0`)
+    /// instead of the literal's default.
+    fn number_slot_from_context(
+        &self,
+        pty: TyId,
+        slots: &mut [Option<TyId>],
+        context: &[Option<TyId>],
+    ) {
+        let TyKind::Param(s) = *self.cx.ty.kind(pty) else {
+            return;
+        };
+        let s = s as usize;
+        if let (Some(None), Some(Some(t))) = (slots.get(s), context.get(s)) {
+            if self.cx.ty.is_numeric(*t) {
+                slots[s] = Some(*t);
             }
         }
     }

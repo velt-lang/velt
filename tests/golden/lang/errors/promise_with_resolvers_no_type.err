@@ -1,0 +1,2 @@
+promise_with_resolvers_no_type.vlt:3:13
+error: cannot infer the type of `Promise.withResolvers`

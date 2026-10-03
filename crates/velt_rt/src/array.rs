@@ -31,6 +31,8 @@ impl<T: Copy> VeltArray<T> {
             };
         }
         let mut v = std::mem::ManuallyDrop::new(v);
+        // Generated code frees the buffer like one of its own blocks (leak counters).
+        crate::str::stats::block_alloc();
         VeltArray {
             ptr: v.as_mut_ptr(),
             len: v.len() as u64,

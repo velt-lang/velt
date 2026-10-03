@@ -1,0 +1,26 @@
+// What a field initializer throws is thrown by `new` and so must be allowed where it is used.
+import { Value } from "velt:json";
+
+class Oops extends Error {}
+
+class Slot {
+  v: Value = JSON.parseValue("1");
+}
+
+struct Port {
+  n: i64 = JSON.parse<i64>("80");
+}
+
+function f(): Slot throws Oops {
+  return new Slot();
+}
+
+function g(): Port throws Oops {
+  return {};
+}
+
+function main() {
+  const mk: () => Slot = () => new Slot();
+  const p: Port = { n: 1 };
+  console.log(f().v.stringify(), g().n, mk().v.stringify(), p.n);
+}
