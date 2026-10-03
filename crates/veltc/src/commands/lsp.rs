@@ -251,4 +251,108 @@ mod tests {
         notify(&conn, "exit", Value::Null);
         server.join().unwrap().unwrap();
     }
+
+    const GENERATORS: &str = "function* count(limit: i64): Generator<i64> {
+  for (let i = 0; i < limit; i++) {
+    yield i * 2;
+  }
+}
+
+async function* pages(n: i64): AsyncGenerator<string> {
+  yield `page ${n}`;
+}
+
+async function main() {
+  for await (const page of pages(2)) {
+    console.log(page);
+  }
+  for (const c of count(3)) {
+    console.log(c);
+  }
+}
+";
+
+    /// (line, character) of `needle` (+`delta`) in `text`.
+    fn position(text: &str, needle: &str, delta: usize) -> Value {
+        let offset = text.find(needle).expect("needle in text") + delta;
+        let before = &text[..offset];
+        let line = before.matches('\n').count();
+        let character = before.len() - before.rfind('\n').map_or(0, |i| i + 1);
+        json!({ "line": line, "character": character })
+    }
+
+    /// Hover and go to definition on `yield` operands, generator parameters and `for await`
+    /// bindings, with the std prelude's `Generator` / `AsyncGenerator`.
+    #[test]
+    fn hover_and_definition_in_generators() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main.vlt");
+        std::fs::write(&main, GENERATORS).unwrap();
+        let main_uri = lsp_types::Url::from_file_path(&main).unwrap();
+        let (server_conn, conn) = Connection::memory();
+        let server =
+            std::thread::spawn(move || velt_lsp::serve(server_conn, &CliLoader::default()));
+        request(&conn, 1, "initialize", json!({ "capabilities": {} }));
+        notify(&conn, "initialized", json!({}));
+        let doc =
+            json!({ "uri": main_uri, "languageId": "velt", "version": 1, "text": GENERATORS });
+        notify(
+            &conn,
+            "textDocument/didOpen",
+            json!({ "textDocument": doc }),
+        );
+        let diags = loop {
+            if let Message::Notification(n) = recv(&conn) {
+                if n.method == "textDocument/publishDiagnostics" {
+                    break n.params;
+                }
+            }
+        };
+        assert_eq!(diags["diagnostics"], json!([]));
+        let mut id = 1;
+        let mut ask = |method: &str, needle: &str, delta: usize| {
+            id += 1;
+            let at = json!({
+                "textDocument": { "uri": main_uri },
+                "position": position(GENERATORS, needle, delta),
+            });
+            request(&conn, id, method, at)
+        };
+        let cases = [
+            ("limit; i++", "(parameter) limit: i64", Some((0, 16))),
+            ("i * 2", "let i: i64", Some((1, 11))),
+            ("* 2", "i64", None),
+            ("n}`", "(parameter) n: i64", Some((6, 22))),
+            ("page);", "const page: string", Some((11, 19))),
+            ("c);", "const c: i64", Some((14, 13))),
+            (
+                "pages(2)",
+                "function pages(n: i64): AsyncGenerator<string, never>",
+                Some((6, 16)),
+            ),
+        ];
+        for (needle, hover, def) in cases {
+            let h = ask("textDocument/hover", needle, 0);
+            assert_eq!(
+                h["contents"]["value"],
+                json!(format!("```velt\n{hover}\n```")),
+                "hover at `{needle}`"
+            );
+            let d = ask("textDocument/definition", needle, 0);
+            let want = def.map_or(
+                Value::Null,
+                |(line, character)| json!({ "line": line, "character": character }),
+            );
+            let got = if d.is_null() {
+                d
+            } else {
+                d["range"]["start"].clone()
+            };
+            assert_eq!(got, want, "definition of `{needle}`");
+        }
+        id += 1;
+        request(&conn, id, "shutdown", Value::Null);
+        notify(&conn, "exit", Value::Null);
+        server.join().unwrap().unwrap();
+    }
 }
