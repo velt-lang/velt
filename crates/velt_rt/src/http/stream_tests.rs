@@ -139,8 +139,8 @@ fn the_abi_opens_writes_and_releases_writers() {
     unsafe {
         let r = velt_rt_http_resp_new(201);
         let w = velt_rt_http_resp_stream_open(r);
-        let content_type = r.obj().headers().get(CONTENT_TYPE).unwrap();
-        assert_eq!(content_type, "text/plain; charset=utf-8");
+        let content_type = super::response::with(r, |r| r.headers()[CONTENT_TYPE].clone());
+        assert_eq!(content_type.unwrap(), "text/plain; charset=utf-8");
         let text = VeltStr::from_bytes(b"hi");
         assert_eq!(velt_rt_http_resp_stream_write(w, &text), 1);
         velt_rt_http_resp_stream_abort(w);

@@ -21,7 +21,9 @@ hidden classes and no runtime shape checks.
 - **Dispatch**: a method that is never overridden is called directly (and can be inlined). Only
   overridden methods go through a vtable, and only where the static type is a base class.
 - **Members**: `private` (usable only inside the declaring type's body, including closures
-  there, but not in subclasses: ``` `x` is private ```), `public` (the default), `readonly`
+  there, but not in subclasses: ``` `x` is private ```; the standard library's own modules may
+  use the private members of its types, which is how std types build each other's handles),
+  `public` (the default), `readonly`
   fields (assignable only in the constructor), `static` methods, and
   `static readonly NAME: T = const;` constants (`Account.LIMIT`, `Math.PI`). Mutable statics
   and `protected` don't exist.

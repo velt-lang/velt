@@ -204,8 +204,7 @@ function signalNumber(name: string): i32 {
 export struct ChildProcess {
   // The OS process id.
   pid: i64;
-  handle: u64;
-  private runtime: RuntimeHandle = RuntimeHandle {};
+  private handle: u64;
 
   // Writes to stdin (spawned with `stdin: "pipe"`); resolves once everything is written.
   async write(data: string): Promise<void> {
@@ -267,8 +266,3 @@ export function spawn(program: string, args: string[] = [], opts: SpawnOptions =
   const handle = unwrapIo(velt_rt_child_spawn(spec));
   return ChildProcess { pid: velt_rt_child_pid(handle) as i64, handle: handle };
 }
-
-// A field of this type makes a type opaque: a type with a private field has no JSON form,
-// so untrusted JSON can't produce the runtime handle it holds, and `JSON.stringify` doesn't
-// write it. It takes no space.
-struct RuntimeHandle {}
