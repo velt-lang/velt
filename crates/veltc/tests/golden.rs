@@ -364,7 +364,7 @@ fn run_parallel(velt: &str, files: &[(PathBuf, String)], work: &Path) -> Vec<Vec
 /// A golden that needs an external service declares it on one of its first lines:
 /// `// requires-env: VELT_TEST_PG_URL` (several names separated by spaces). The golden is skipped
 /// (and listed as skipped) when any of them is unset or empty; otherwise the program sees them
-/// through `std/process` `env(...)`. Returns the first missing name.
+/// through `process.env.NAME`. Returns the first missing name.
 fn missing_required_env(file: &Path) -> Option<String> {
     let src = std::fs::read_to_string(file).ok()?;
     for line in src.lines().take(10) {
