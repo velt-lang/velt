@@ -1,5 +1,7 @@
 // Partial, Required, Readonly, Pick and Omit build object types from a concrete object type
 // (docs/internals/design/shared-models.md, step 3). The results are ordinary object types.
+// Declaration order doesn't matter, and Omit accepts a key that isn't a field (a warning), as
+// TypeScript does, so a generic alias can omit a field some of its arguments don't have.
 
 interface Base {
   readonly id: number;
@@ -25,6 +27,29 @@ type AccountView = Readonly<Account>;
 type Key = "name";
 type NameOnly = Pick<User, Key>;
 
+// Field types that apply an operator to types declared further down.
+interface Form {
+  draft: Partial<Later>;
+  head: Pick<Derived, "a" | "b">;
+}
+
+type WithoutChildren<P> = Omit<P, "children">;
+type Props = { label: string; children: string[] };
+type ItemProps = WithoutChildren<Props>;
+type BareProps = WithoutChildren<{ label: string; size: number }>;
+
+interface Later {
+  a: number;
+}
+
+class Derived extends Root {
+  b: string = "b";
+}
+
+class Root {
+  a: number = 1;
+}
+
 function apply(u: User, p: Patch): User {
   return { id: u.id, name: p.name ?? u.name, email: p.email ?? u.email };
 }
@@ -49,4 +74,9 @@ function main() {
 
   const fromJson = JSON.parse<Patch>("{\"name\":\"gus\"}");
   console.log(fromJson.name ?? "-", fromJson.email ?? "-");
+
+  const form: Form = { draft: {}, head: { a: 4, b: "h" } };
+  const item: ItemProps = { label: "item" };
+  const bare: BareProps = { label: "bare", size: 2 };
+  console.log(form.draft.a ?? 0, form.head.b, item.label, bare.size);
 }

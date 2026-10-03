@@ -352,12 +352,14 @@ Enums are not generic and have no payloads; use a discriminated union for tagged
   `Partial<T>` (every field optional), `Required<T>` (every nullable field non-null),
   `Readonly<T>` (every field `readonly`), `Pick<T, K>` (only the fields named in `K`) and
   `Omit<T, K>` (every other field). `K` is a string literal type or a union of them
-  (`"id" | "email"`); a name that is not a field is an error in both `Pick` and `Omit`. The
-  results are ordinary object types: `Pick<User, "name">` *is* `{ name: string }`.
-  Differences from TypeScript: `Required` also removes `null` from fields written `a: T | null`
-  (in Velt `a?: T` is `T | null`); an operator on a type parameter (`Partial<T>` in a generic
-  function) is not supported yet; and a field type can only apply one to a type declared before
-  it.
+  (`"id" | "email"`). In `Pick` a name that is not a field is an error; in `Omit` it is a
+  warning, as TypeScript accepts it (so `type WithoutChildren<P> = Omit<P, "children">` works
+  on types without `children`). The results are ordinary object types: `Pick<User, "name">`
+  *is* `{ name: string }`, and declaration order doesn't matter. Differences from TypeScript:
+  `Required` also removes `null` from fields written `a: T | null` (in Velt `a?: T` is
+  `T | null`, #418); an operator on a type parameter (`Partial<T>` in a generic function) is
+  not supported yet (#350); and a type can't apply one to itself in its own fields
+  (`interface Node { patches: Partial<Node>[] }`).
 
 ```ts
 interface User {

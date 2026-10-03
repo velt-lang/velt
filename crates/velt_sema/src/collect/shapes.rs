@@ -14,25 +14,77 @@ pub(super) fn resolve_shapes(cx: &mut Ctx, items: &ItemDefs) {
     let mut defs: Vec<DefId> = items.clone();
     defs.sort();
     for &d in &defs {
-        match &cx.info[d.0 as usize] {
-            DefInfo::Iface(_) => iface_shape(cx, d),
-            DefInfo::Adt(_) => adt_shape(cx, d),
-            DefInfo::Enum(_) => enum_shape(cx, d),
-            _ => {}
-        }
+        shape(cx, d);
     }
     let classes: Vec<DefId> = defs
         .iter()
         .copied()
         .filter(|d| cx.adt(*d).is_some())
         .collect();
-    let mut done = vec![false; cx.info.len()];
     for d in classes {
-        layout_fields(cx, d, &mut done, &mut vec![]);
+        layout_fields(cx, d, &mut vec![]);
     }
     for d in defs {
         check_finite(cx, d);
     }
+}
+
+/// Resolve `d`'s shape, unless it already is (or is being resolved).
+fn shape(cx: &mut Ctx, d: DefId) {
+    if cx.shaped.contains(&d) || cx.shaping.contains(&d) {
+        return;
+    }
+    let declared = match &cx.info[d.0 as usize] {
+        DefInfo::Iface(i) => i.decl.is_some(),
+        DefInfo::Adt(a) => a.decl.is_some(),
+        DefInfo::Enum(e) => e.decl.is_some(),
+        _ => false,
+    };
+    if !declared {
+        return;
+    }
+    cx.shaping.push(d);
+    match &cx.info[d.0 as usize] {
+        DefInfo::Iface(_) => iface_shape(cx, d),
+        DefInfo::Adt(_) => adt_shape(cx, d),
+        DefInfo::Enum(_) => enum_shape(cx, d),
+        _ => {}
+    }
+    cx.shaping.pop();
+    cx.shaped.insert(d);
+}
+
+/// While shapes are resolved: make object type `d`'s fields known now (for a utility type in a
+/// field type), shaping it, the interfaces it extends and its base classes first. `Err` names
+/// a type whose fields are needed while they are being resolved (a cycle through utility
+/// types).
+pub(crate) fn ensure_fields(cx: &mut Ctx, d: DefId) -> Result<(), DefId> {
+    if cx.shapes_done || cx.shaped.contains(&d) && cx.laid_out.contains(&d) {
+        return Ok(());
+    }
+    if cx.shaping.contains(&d) {
+        return Err(d);
+    }
+    if let Some(&iface) = cx.field_only_of.get(&d) {
+        return ensure_fields(cx, iface);
+    }
+    shape(cx, d);
+    if let Some(i) = cx.iface(d) {
+        let parents: Vec<DefId> = i.parents.iter().map(|p| p.iface).collect();
+        for p in parents {
+            ensure_fields(cx, p)?;
+        }
+        return Ok(());
+    }
+    if let Some(base) = cx.adt(d).and_then(|a| a.base) {
+        if let Some((bd, _)) = cx.class_of(base) {
+            ensure_fields(cx, bd)?;
+        }
+    }
+    if cx.adt(d).is_some() {
+        layout_fields(cx, d, &mut vec![]);
+    }
+    Ok(())
 }
 
 /// Structs and enums are stored inline, so one cannot contain itself by value.
@@ -367,12 +419,12 @@ fn const_int(e: &ast::Expr) -> Option<i64> {
 }
 
 /// Prefix a class's fields with its base class's (substituted) fields, base classes first.
-fn layout_fields(cx: &mut Ctx, d: DefId, done: &mut Vec<bool>, stack: &mut Vec<DefId>) {
-    if done[d.0 as usize] {
+fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
+    if cx.laid_out.contains(&d) {
         return;
     }
     let Some(base) = cx.adt(d).and_then(|a| a.base) else {
-        done[d.0 as usize] = true;
+        cx.laid_out.insert(d);
         return;
     };
     let (bd, bargs) = cx.class_of(base).expect("ICE: base is a class");
@@ -380,11 +432,11 @@ fn layout_fields(cx: &mut Ctx, d: DefId, done: &mut Vec<bool>, stack: &mut Vec<D
         let span = cx.adt(d).map_or(Span::DUMMY, |a| a.span);
         cx.err("class inheritance cycle", span);
         cx.adt_mut(d).base = None;
-        done[d.0 as usize] = true;
+        cx.laid_out.insert(d);
         return;
     }
     stack.push(d);
-    layout_fields(cx, bd, done, stack);
+    layout_fields(cx, bd, stack);
     stack.pop();
     let inherited: Vec<FieldInfo> = cx.adt(bd).map(|b| b.fields.clone()).unwrap_or_default();
     let mut all = vec![];
@@ -407,7 +459,7 @@ fn layout_fields(cx: &mut Ctx, d: DefId, done: &mut Vec<bool>, stack: &mut Vec<D
     let a = cx.adt_mut(d);
     a.fields = all;
     a.own_fields_start = start;
-    done[d.0 as usize] = true;
+    cx.laid_out.insert(d);
 }
 
 /// Type of a type definition applied to its own generic params (`Stack<T>` inside `Stack`).
