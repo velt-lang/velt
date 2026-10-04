@@ -90,7 +90,7 @@ pub(super) fn soft_args(cx: &mut Ctx, d: DefId, f: &mut FnDef) {
             let Some(mut a) = args.get(skip + k) else {
                 continue;
             };
-            while let E::WrapSome(x) | E::Upcast(x) = &a.kind {
+            while let E::WrapSome(x) | E::Upcast(x) | E::Downcast(x) = &a.kind {
                 a = x;
             }
             if is_place(a) && super::soft::is_moved_place(a) {

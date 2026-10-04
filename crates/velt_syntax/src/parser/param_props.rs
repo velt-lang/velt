@@ -1,7 +1,7 @@
 //! Constructor parameter properties (TS): `constructor(private readonly mass: f64) {}` declares
 //! the field `mass` and assigns the parameter to it. Desugared here into an ordinary field
-//! plus `this.mass = mass;` at the start of the constructor body (after a leading
-//! `super(...)` call, which must come first).
+//! plus `this.mass = mass;` at the start of the constructor body, or right after its
+//! top-level `super(...)` call (sema requires that call to come first in such a class).
 
 use super::{PResult, Parser};
 use crate::ast::*;

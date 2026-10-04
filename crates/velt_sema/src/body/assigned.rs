@@ -65,7 +65,8 @@ fn assigned_in_block<'a>(b: &'a ast::Block, out: &mut HashSet<&'a str>) {
     b.stmts.iter().for_each(|s| assigned_in_stmt(s, out));
 }
 
-fn assigned_in_expr<'a>(e: &'a ast::Expr, out: &mut HashSet<&'a str>) {
+/// Names `e` assigns (also inside closures it creates).
+pub(crate) fn assigned_in_expr<'a>(e: &'a ast::Expr, out: &mut HashSet<&'a str>) {
     match &e.kind {
         ast::ExprKind::Assign { target, .. } | ast::ExprKind::Update { target, .. } => {
             if let ast::ExprKind::Ident(id) = &target.kind {

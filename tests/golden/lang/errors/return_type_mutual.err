@@ -1,0 +1,4 @@
+error: function `isEven` needs a return type annotation
+note: its return type is inferred from its `return` expressions, which use it again: `isEven` → `isOdd` → `isEven`
+error: method `Countdown.count` needs a return type annotation
+note: write the return type: `count(n: i64): …`

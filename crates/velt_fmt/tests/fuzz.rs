@@ -209,8 +209,8 @@ fn jsx_tag_byte(
 }
 
 /// Does a `<` at `i` start a JSX element? Approximates the parser, which starts one where an
-/// expression starts and a name or `>` follows, unless it is a generic arrow (`<T,`, `<T extends`;
-/// the fuzz inputs have no other generic arrows).
+/// expression starts and a name or `>` follows, unless it is a generic arrow (`<T,`, `<T extends`,
+/// or `<T>(` with `=>` later on the line, as `velt fmt` prints them).
 fn jsx_may_start(bytes: &[u8], i: usize) -> bool {
     let next = bytes.get(i + 1).copied().unwrap_or(0);
     if !(next.is_ascii_alphabetic() || matches!(next, b'_' | b'$' | b'>')) {
@@ -227,8 +227,11 @@ fn jsx_may_start(bytes: &[u8], i: usize) -> bool {
     let rest = std::str::from_utf8(&bytes[i + 1..]).unwrap_or("");
     let after_name = rest.trim_start_matches(|c: char| c.is_ascii_alphanumeric() || c == '_');
     let after_name = after_name.trim_start();
+    let line = after_name.split('\n').next().unwrap_or("");
     let generic = after_name.len() < rest.len()
-        && (after_name.starts_with(',') || after_name.starts_with("extends "));
+        && (after_name.starts_with(',')
+            || after_name.starts_with("extends ")
+            || (after_name.starts_with(">(") && line.contains("=>")));
     operand_expected && !generic
 }
 

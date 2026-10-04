@@ -89,7 +89,9 @@ impl FnCx<'_, '_> {
                     pinned |= self.cx.class_of(base.ty).is_some();
                     cur = base;
                 }
-                H::UnwrapSome(base, _) | H::UnwrapVariant { expr: base, .. } => cur = base,
+                H::UnwrapSome(base, _)
+                | H::UnwrapVariant { expr: base, .. }
+                | H::Downcast(base) => cur = base,
                 _ => return false,
             }
         }

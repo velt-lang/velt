@@ -8,12 +8,14 @@ Maintainer-owned, like hir.rs.
 - Class instances are heap-allocated and referenced by a pointer; `Option<Class>` uses null.
   `new C(args)` is `ExprKind::New`: lowering allocates and calls the constructor (a `Def::Fn`
   whose first param is `this` with `PassMode::BorrowMut`). `super(args)` in a constructor is a
-  `Call` of the base constructor with `Upcast(this)`. Field defaults (`FieldDef::default`) run
+  root-level statement of its body: a `Call` of the base constructor with `Upcast(this)`, or
+  `Lit(Unit)` when no ancestor has a constructor. Field defaults (`FieldDef::default`) run
   in JavaScript's order: a constructor evaluates those of its class's fields that its base
-  constructor's class does not have, right after the `super(args)` call (on entry when no
-  ancestor has a constructor); `new` evaluates the rest (those of the classes below the one
-  declaring the constructor, or all of them without one) after the constructor returns.
-  Sema's throw sets follow the same split.
+  constructor's class does not have, right after the `super(args)` call (when no ancestor has
+  a constructor: after the `Lit(Unit)` statement in a derived class, on entry in a base
+  class); `new` evaluates the rest (those of the classes below the one declaring the
+  constructor, or all of them without one) after the constructor returns. Sema's throw sets
+  follow the same split.
 - Virtual dispatch only for methods overridden somewhere: `Callee::Virtual { slot }` indexes
   `AdtDef::vtable` of the receiver's dynamic class; all other method calls are `Callee::Def`.
 - Interface values (`Shape[]`) are `TyKind::Dyn`: fat pointer (data, vtable). `ExprKind::ToDyn`
@@ -214,6 +216,18 @@ Maintainer-owned, like hir.rs.
   `Callee::ParamMethod::method_type_args` carries their arguments; lowering appends them to
   the implementing method's owner type args (`Program::impls` entry, a generic `Def::Fn`).
   Sema never emits `Callee::Dyn` for them; interface vtables leave their slots empty.
+- `x instanceof C` where `x` is a base class of `C`, an interface value, or a union member of
+  such a type: a `Match` whose arm pattern is `PatKind::InstanceOf(C)` (inside `Some` /
+  `Variant` patterns as for any member test). It matches when the dynamic class is `C` or a
+  subclass of `C` (type arguments are not compared). Lowering numbers all classes in a
+  pre-order walk of the hierarchy, so `C` and its subclasses have the ids `lo..=hi`, and every
+  vtable's first word (slot -7) holds the class id of its concrete type: 0 for non-classes;
+  in an interface table of a class whose objects carry a vtable pointer, `u64::MAX` (read
+  the object's own table, which may be a subclass's).
+- A local (or a path of `readonly` fields) narrowed by such a test reads as
+  `ExprKind::Downcast(read)` typed as `C<args>`. It is a place like its operand (same use
+  mode, no projection of its own); on a class it is the same pointer, on an interface value
+  the data pointer. Nothing is checked at run time.
 - Generic class methods never get a vtable slot (an `override` of one is recorded by sema only);
   calls are `Callee::Def` on the static class. Sema rejects calls through a class that has a
   subclass overriding the generic method.

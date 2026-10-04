@@ -30,6 +30,12 @@ pub(super) struct Boxing {
     /// Types of values borrowed in place inside a counted object: a pointer to one may have
     /// other owners, so params of these types are never `noalias`.
     interior: HashSet<TyId>,
+    /// Interface types whose values are compared by identity: an object type converted to one
+    /// is counted, so the interface value points at the object itself (`make_dyn`).
+    identity_dyns: HashSet<TyId>,
+    /// The program compares function values: every evaluation of a closure without captures
+    /// gets an environment of its own as its identity (closure.rs).
+    fn_identity: bool,
     /// Object types that contain themselves by value (`interface Node { next?: Node }`, #376):
     /// every instance is a counted box, so the field holds a pointer and the size is finite.
     recursive: HashSet<DefId>,
@@ -108,6 +114,8 @@ pub(super) struct Facts {
     identity: HashSet<TyId>,
     /// Types of values transferred to another thread as a whole (transfers.rs).
     transfers: HashSet<TyId>,
+    /// Function values are compared (or hashed) somewhere.
+    fn_compared: bool,
     /// A share was lowered as a placeholder because its type was not counted yet: the output
     /// of this pass must not be used.
     pub(super) unmet: bool,
@@ -122,6 +130,25 @@ impl Cx<'_> {
     /// Record that values of the object type `t` are compared by identity.
     pub(super) fn note_identity(&mut self, t: TyId) {
         self.facts.identity.insert(t);
+    }
+
+    /// Record that function values are compared by identity.
+    pub(super) fn note_fn_identity(&mut self) {
+        self.facts.fn_compared = true;
+    }
+
+    /// Do closures need an identity of their own (see [`Boxing::fn_identity`])?
+    pub(super) fn fn_identity(&self) -> bool {
+        self.boxing.fn_identity
+    }
+
+    /// The interface value type `dyn_ty` is compared by identity, and its implementor `t` is an
+    /// object type that a conversion would copy: record that `t` must be counted.
+    pub(super) fn note_dyn_identity(&mut self, dyn_ty: TyId, t: TyId) {
+        if self.boxing.identity_dyns.contains(&dyn_ty) && self.copied_object(t) {
+            self.facts.identity.insert(t);
+            self.facts.shares.insert(t);
+        }
     }
 
     /// Record a borrow of a `value`-typed place reached through a `container`-typed value.
@@ -164,6 +191,12 @@ impl Cx<'_> {
     /// The counted types implied by this pass's facts (a superset of the current ones).
     pub(super) fn close_boxing(&mut self) -> Boxing {
         let mut next = self.boxing.clone();
+        next.fn_identity |= self.facts.fn_compared;
+        let dyns = self.facts.identity.iter().copied();
+        let dyns: Vec<TyId> = dyns
+            .filter(|t| matches!(self.kind(*t), TyKind::Dyn(..)))
+            .collect();
+        next.identity_dyns.extend(dyns);
         let mut work: Vec<TyId> = self.facts.shares.iter().copied().collect();
         let mut seen = HashSet::new();
         loop {
@@ -193,7 +226,7 @@ impl Cx<'_> {
     fn close_share(&mut self, t: TyId, next: &mut Boxing, work: &mut Vec<TyId>) {
         // An object type copied when shared would lose its identity: compared by identity, a
         // shared one is one counted object.
-        if self.facts.identity.contains(&t) && self.is_object(t) && !self.is_class(t) {
+        if self.facts.identity.contains(&t) && self.copied_object(t) {
             next.boxes.insert(t);
             return;
         }

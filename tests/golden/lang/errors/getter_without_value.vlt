@@ -1,0 +1,13 @@
+// A getter without a type returns the type of its `return` (#75); one without a value is an
+// error, as in TypeScript ("A 'get' accessor must return a value").
+class Box {
+  n = 1;
+
+  get size() {
+    console.log(this.n);
+  }
+}
+
+function main() {
+  console.log(new Box().size);
+}

@@ -1,6 +1,7 @@
 //! JSX elements and fragments: `<div class="a" {...p}>text {x}<br /></div>`, `<>…</>`,
-//! member (`ui.Card`) and namespaced (`svg:rect`) names, attribute values (string, `{expr}`,
-//! element), children (text, `{expr}`, `{}` / `{/* comment */}`, `{...spread}`, elements).
+//! member (`ui.Card`) and namespaced (`svg:rect`) names, type arguments (`<List<number> …>`),
+//! attribute values (string, `{expr}`, element), children (text, `{expr}`, `{}` /
+//! `{/* comment */}`, `{...spread}`, elements).
 //!
 //! The parser decides where an element starts: at a `<` where it expects an expression (after
 //! ruling out a generic arrow `<T>(x: T) => x`, see `arrow`), it has the lexer re-lex from that
@@ -39,6 +40,7 @@ impl Parser<'_> {
             let (children, _) = self.jsx_children(None, open_span, false)?;
             return Ok(JsxElement {
                 name: None,
+                type_args: vec![],
                 attrs: vec![],
                 children,
                 closing_name: None,
@@ -46,6 +48,18 @@ impl Parser<'_> {
             });
         }
         let name = self.jsx_name()?;
+        let type_args = if self.at(Tok::Lt) {
+            let lo = self.cur_lo();
+            let args = self.parse_type_args()?;
+            if args.is_empty() {
+                // TypeScript's TS1099; an empty list would read as no type arguments.
+                let span = self.span_from(lo);
+                self.error("Type argument list cannot be empty.", span);
+            }
+            args
+        } else {
+            vec![]
+        };
         let mut attrs = Vec::new();
         while !matches!(self.peek(), Tok::JsxGt | Tok::JsxSlashGt | Tok::Eof) {
             attrs.push(self.jsx_attr()?);
@@ -56,11 +70,13 @@ impl Parser<'_> {
             self.expect(Tok::JsxGt)?;
             let name_span = name.span();
             // `<T>(x: T => x`: a broken generic arrow ends up here.
-            let arrow_like = attrs.is_empty() && matches!(name, JsxName::Ident(_));
+            let arrow_like =
+                attrs.is_empty() && type_args.is_empty() && matches!(name, JsxName::Ident(_));
             self.jsx_children(Some(&name), name_span, arrow_like)?
         };
         Ok(JsxElement {
             name: Some(name),
+            type_args,
             attrs,
             children,
             closing_name,
@@ -241,6 +257,9 @@ impl Parser<'_> {
         } else {
             Some(self.jsx_name()?)
         };
+        if let (Some(close), true) = (&closing, self.at(Tok::Lt)) {
+            self.closing_type_args(close)?;
+        }
         self.expect(Tok::JsxGt)?;
         let span = closing
             .as_ref()
@@ -260,5 +279,20 @@ impl Parser<'_> {
             }
         }
         Ok(closing)
+    }
+
+    /// `</List<T>>`: reported (type arguments go on the opening tag) and skipped.
+    fn closing_type_args(&mut self, close: &JsxName) -> PResult<()> {
+        let lo = self.cur_lo();
+        self.parse_type_args()?;
+        if self.speculating == 0 {
+            let d = Diagnostic::error("a closing tag takes no type arguments", self.span_from(lo))
+                .with_note(format!(
+                    "they go on the opening tag only; close it with `</{}>`",
+                    close.to_source()
+                ));
+            self.diags.push(d);
+        }
+        Ok(())
     }
 }

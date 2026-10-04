@@ -4,13 +4,15 @@
 
 use velt_common::Span;
 
-use super::{Expr, Ident};
+use super::{Expr, Ident, TypeExpr};
 
 /// `<name attrs>children</name>`, `<name attrs />`, or a fragment `<>children</>`.
 #[derive(Clone, Debug)]
 pub struct JsxElement {
     /// `None` for a fragment.
     pub name: Option<JsxName>,
+    /// Explicit type arguments of the opening tag (`<List<number> …>`); usually empty.
+    pub type_args: Vec<TypeExpr>,
     pub attrs: Vec<JsxAttr>,
     /// Empty for a self-closing element.
     pub children: Vec<JsxChild>,
