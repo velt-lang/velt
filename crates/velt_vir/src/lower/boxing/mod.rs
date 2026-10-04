@@ -9,6 +9,7 @@
 //! representation everywhere.
 
 mod kinds;
+mod transfers;
 
 use std::collections::HashSet;
 
@@ -38,6 +39,10 @@ pub(super) struct Boxing {
     /// Object types that contain themselves by value (`interface Node { next?: Node }`, #376):
     /// every instance is a counted box, so the field holds a pointer and the size is finite.
     recursive: HashSet<DefId>,
+    /// Counted types a transfer to another thread can copy (transfers.rs).
+    transferred: HashSet<TyId>,
+    /// A transferred value reaches a function or interface value: any counted type.
+    transfer_any: bool,
 }
 
 impl Boxing {
@@ -107,6 +112,8 @@ pub(super) struct Facts {
     projections: HashSet<(TyId, TyId)>,
     /// Object types compared by identity (`==`, same.rs).
     identity: HashSet<TyId>,
+    /// Types of values transferred to another thread as a whole (transfers.rs).
+    transfers: HashSet<TyId>,
     /// Function values are compared (or hashed) somewhere.
     fn_compared: bool,
     /// A share was lowered as a placeholder because its type was not counted yet: the output
@@ -209,6 +216,7 @@ impl Cx<'_> {
                 }
             }
             if work.is_empty() {
+                self.close_transfers(&mut next);
                 return next;
             }
         }

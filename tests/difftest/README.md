@@ -63,9 +63,7 @@ The TypeScript twin is the `.vlt` source plus:
 
 1. a call of `main()`; a numeric return becomes `process.exitCode`;
 2. a `panic(msg)` shim when the program calls Velt's `panic` builtin (`panic: msg` on stderr, exit 101);
-3. `util.inspect.defaultOptions.breakLength = Infinity`: Velt prints containers on one line, Node
-   wraps them past 72 columns.
-4. `import … from "velt:<module>"` loads `shims/std/<module>.ts`, the module's Node twin: the same
+3. `import … from "velt:<module>"` loads `shims/std/<module>.ts`, the module's Node twin: the same
    API on Node's own implementation where there is one (`URL`/`URLSearchParams` (ada), `RegExp`
    (V8), `Buffer`/`TextDecoder`, `node:crypto`, `Date`), and small independent implementations
    written from the std docs where Node has none (CSV, `DateTime.format`, month arithmetic,
@@ -89,9 +87,10 @@ Differences between the languages that a program must avoid (the generator does 
   with `| 0`.
 - **Floats.** `console.log(-0.0)` prints `-0` in Node and `0` in Velt (documented): print floats
   through a template (`${x}`) or `JSON.stringify`. `Math.hypot` isn't correctly rounded in V8.
-- **Printing containers.** Node groups arrays of more than 6 elements into columns (not
-  switchable): print `xs.slice(0, 6)`, `JSON.stringify(xs)` or `join`. Keep nesting shallow
-  (Node shows `[Object]` past depth 2).
+- **Printing containers.** Velt breaks long values across lines and prints arrays of more
+  than 6 short elements in columns, as Node's `util.inspect` does, so both print with Node's
+  defaults. Keep nesting shallow (Node shows `[Object]` past depth 2) and arrays under 100
+  elements (Node elides the rest).
 - **Strings.** Any text: lengths and positions count UTF-16 code units in both (#377 phase 2b),
   and a lone surrogate (half of a pair cut by `slice` or `padStart`) prints as U+FFFD at the top
   level and as `\udxxx` inside containers in both. `charCodeAt` out of range is `-1` in Velt

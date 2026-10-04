@@ -263,7 +263,7 @@ impl FnCx<'_, '_> {
         for i in order {
             let p = &c.params[i];
             if untyped(&args[i]) {
-                self.number_slot_from_callback(c, p.ty, slots);
+                self.number_slot_from_callback(c, p.ty, slots, has_float_lit(&args[i]));
                 self.number_slot_from_context(p.ty, slots, context);
             }
             let known: Vec<Option<TyId>> =
@@ -345,8 +345,16 @@ impl FnCx<'_, '_> {
     /// An untyped number argument (`0` in `xs.reduce((a, x) => a + x, 0)`) whose parameter is
     /// a still unknown slot `S`: when a callback parameter also has `S` next to a known number
     /// type, `S` is that type (`usize` for a `usize[]`), which is what TS's single `number`
-    /// gives; otherwise the literal's default type decides as usual.
-    fn number_slot_from_callback(&mut self, c: &Callable, pty: TyId, slots: &mut [Option<TyId>]) {
+    /// gives; otherwise the literal's default type decides as usual. A `float` literal (`0.0`)
+    /// only takes a float type: `shapes.reduce((acc, s) => acc + area(s), 0.0)` must not take
+    /// the callback's `i: i64` index for the accumulator.
+    fn number_slot_from_callback(
+        &mut self,
+        c: &Callable,
+        pty: TyId,
+        slots: &mut [Option<TyId>],
+        float: bool,
+    ) {
         let TyKind::Param(s) = *self.cx.ty.kind(pty) else {
             return;
         };
@@ -364,9 +372,9 @@ impl FnCx<'_, '_> {
                 .iter()
                 .map(|t| self.cx.ty.subst_known(*t, slots))
                 .collect();
-            let known = known
-                .into_iter()
-                .find(|t| *t != pty && self.cx.ty.is_numeric(*t));
+            let known = known.into_iter().find(|t| {
+                *t != pty && self.cx.ty.is_numeric(*t) && (!float || self.cx.ty.is_float(*t))
+            });
             if let Some(n) = known {
                 slots[s as usize] = Some(n);
                 return;
@@ -535,5 +543,15 @@ impl FnCx<'_, '_> {
             ),
             span,
         );
+    }
+}
+
+/// Does the untyped number expression `e` contain a float literal (`0.0`, `-(1 + 0.5)`)?
+fn has_float_lit(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Lit(ast::Lit::Float { .. }) => true,
+        ast::ExprKind::Unary { expr, .. } | ast::ExprKind::Paren(expr) => has_float_lit(expr),
+        ast::ExprKind::Binary { lhs, rhs, .. } => has_float_lit(lhs) || has_float_lit(rhs),
+        _ => false,
     }
 }
