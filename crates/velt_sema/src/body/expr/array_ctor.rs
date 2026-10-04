@@ -3,6 +3,8 @@
 //! `__arrayFromLength` (one allocation each). A bare `new Array<T>(n)` would hold `n` holes
 //! (`undefined`), which Velt has no value for, so it asks for `.fill(v)`; likewise the element
 //! argument of `Array.from`'s callback is always `undefined` and must go unused.
+//! `Array.from(iterable[, (v, i) => ...])` over anything `for...of` takes is a loop pushing
+//! each value (`body/consume.rs`).
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -59,8 +61,23 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let (Some(n), Some(f)) = (args.first().and_then(length_of), args.get(1)) else {
+            if let (1 | 2, Some(src)) = (args.len(), args.first()) {
+                if length_of(src).is_none() {
+                    if let Some(h) = self.array_from_iterable(src, args.get(1), span) {
+                        return h;
+                    }
+                    self.cx.error(
+                        velt_common::Diagnostic::error(
+                            "`Array.from` takes an iterable or `{ length: n }`",
+                            src.span,
+                        )
+                        .with_note("pass an array, a string, a `Map`, a generator or a value with a `[Symbol.iterator]()` method, or write `Array.from({ length: n }, (_, i) => ...)`"),
+                    );
+                    return self.error_expr(span);
+                }
+            }
             self.cx.err(
-                "`Array.from` supports `Array.from({ length: n }, (_, i) => ...)`",
+                "`Array.from` supports `Array.from(iterable[, (value, i) => ...])` and `Array.from({ length: n }, (_, i) => ...)`",
                 span,
             );
             self.check_args_loose(args);

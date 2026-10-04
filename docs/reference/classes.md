@@ -103,9 +103,12 @@ hidden classes and no runtime shape checks.
   `static readonly NAME: T = const;` constants (`Account.LIMIT`, `Math.PI`). Mutable statics
   and `protected` members don't exist (only a constructor can be `protected`).
 - **Getters and setters**: `get size(): T { … }` is read as a property (`x.size`) and cannot be
-  called or assigned; `set size(v: T) { … }` runs on `x.size = v`; with both, `x.size += 1` and
-  `x.size++` use both. Implementations and overrides of a getter or setter must be accessors
-  too. Getters cannot be `static` or `async`.
+  called or assigned; `set size(v: T) { … }` runs on `x.size = v`; with both, `x.size += 1`,
+  `x.size++` and `x.size ??= v` (also `||=`, `&&=`) use both, as in JS: `x` is evaluated once,
+  then the getter runs, then the right-hand side, then the setter (which `??=`, `||=` and `&&=`
+  skip when the old value decides). A getter may change its object (a signal recording who
+  read it). `x.size ??= v` cannot be used as a value. Implementations and overrides of a
+  getter or setter must be accessors too. Getters cannot be `static` or `async`.
 - Instances are references, as in JS ([Memory model](memory.md#values-and-references)):
   `const b = a` refers to the same object. `x.clone()` makes an independent deep copy of any
   class, struct or union (like `structuredClone`), except values owning a `[Symbol.dispose]`
@@ -367,7 +370,12 @@ builtins included, at zero cost (the calls are direct):
 - `private` is not allowed in `extend`, and an extension cannot add fields (the layout is
   fixed).
 - A type becomes `Comparable` by defining `compareTo` in an `extend` block
-  ([Comparable](#comparable)).
+  ([Comparable](#comparable)), and `Iterable<T, E>` by defining `[Symbol.iterator]()`
+  returning an `Iterator<T, E>`, or as a generator method (`*[Symbol.iterator](): Generator<T,
+  E>`); `[Symbol.asyncIterator]()` makes it an `AsyncIterable<T, E>`
+  ([Iterables](control-flow.md#iterables)). A generator method there that throws must write
+  its error type in its result (`Generator<T, E>`): the interface's type is fixed before
+  bodies are checked.
 - Scope today: an extension applies wherever its module is loaded; `extend` blocks cannot be
   exported.
 - **Planned** ([TypeScript alignment §4](../internals/design/ts-alignment.md#4-extend--full-power-zero-cost-module-scoped)):

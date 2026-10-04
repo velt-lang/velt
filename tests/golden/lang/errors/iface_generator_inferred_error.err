@@ -1,0 +1,4 @@
+iface_generator_inferred_error.vlt:9:5: error: this generator throws `Bad`, which its result type does not declare
+the error type of an interface's iterator is part of its type, which is fixed before bodies are checked; declare it in the result: `Iterator<i64, Bad>` (and as the error type of the `Iterable` it implements), or catch the error in the generator
+iface_generator_inferred_error.vlt:18:5: error: this generator throws `Bad`, which its result type does not declare
+the error type of an interface's iterator is part of its type, which is fixed before bodies are checked; declare it in the result: `Generator<i64, Bad>` (and as the error type of the `Iterable` it implements), or catch the error in the generator

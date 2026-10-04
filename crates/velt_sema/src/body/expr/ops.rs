@@ -274,27 +274,15 @@ impl FnCx<'_, '_> {
         )
     }
 
-    /// `l == r` of two checked values of the same type (a `switch` case compared by value).
-    pub(crate) fn eq_values(&mut self, l: hir::Expr, r: hir::Expr, span: Span) -> hir::Expr {
-        let Some(t) = self.check_operands(ast::BinaryOp::Eq, l.ty, &r, span) else {
-            return self.error_expr(span);
-        };
-        if !self.primitive_eq(t) {
-            return self.structural_eq(l, r, false, span);
-        }
-        let kind = H::Binary {
-            op: BinOp::Eq,
-            lhs: Box::new(l),
-            rhs: Box::new(r),
-        };
-        self.mk(kind, self.cx.ty.bool_, span)
-    }
-
     /// `a === b` where one side is `T | null` and the other a `T` (#264): the `T` side
     /// converts to `T | null` (as at any typed position), so the comparison is the one two
     /// `T | null` values get: identity for classes, by value for primitives, `false` for `null`
     /// against a value. Operands that do not convert are left for the mismatch report.
-    fn nullable_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+    pub(crate) fn nullable_operands(
+        &mut self,
+        l: hir::Expr,
+        r: hir::Expr,
+    ) -> (hir::Expr, hir::Expr) {
         let t = &self.cx.ty;
         let nullable = |x: TyId| t.opt_payload(x).is_some();
         if nullable(l.ty) == nullable(r.ty) || t.is_bottom(l.ty) || t.is_bottom(r.ty) {
@@ -311,13 +299,19 @@ impl FnCx<'_, '_> {
         }
     }
 
-    fn primitive_eq(&self, t: TyId) -> bool {
+    pub(crate) fn primitive_eq(&self, t: TyId) -> bool {
         let ty = &self.cx.ty;
         ty.is_numeric(t) || t == ty.bool_ || t == ty.str_ || t == ty.never
     }
 
     /// `a == b` on non-primitive types → `Intrinsic::Same(a, b)` (both borrowed).
-    fn structural_eq(&mut self, l: hir::Expr, r: hir::Expr, negate: bool, span: Span) -> hir::Expr {
+    pub(crate) fn structural_eq(
+        &mut self,
+        l: hir::Expr,
+        r: hir::Expr,
+        negate: bool,
+        span: Span,
+    ) -> hir::Expr {
         let b = self.cx.ty.bool_;
         let eq = self.intrinsic(Intrinsic::Same, vec![l, r], b, span);
         if !negate {

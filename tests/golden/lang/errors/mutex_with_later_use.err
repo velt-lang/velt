@@ -1,0 +1,5 @@
+mutex_with_later_use.vlt:19:3
+mutex_with_later_use.vlt:27:5
+error: `extra` is still used after `with` stored it in the locked value, which got a copy
+error: `looped` is still used after `with` stored it in the locked value, which got a copy
+or store `extra.clone()` to make the copy explicit

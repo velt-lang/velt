@@ -1,0 +1,10 @@
+// Node's `process.argv`: `[runtime, script, ...args]`. Under `velt run` the script is the source
+// file (with a built program it is the executable again, crates/veltc/tests/process_argv.rs), so
+// ported CLI code such as `process.argv.slice(2)` works unchanged.
+function main() {
+  const argv = process.argv;
+  console.log(argv.length, argv.slice(2));
+  console.log(argv[0].length > 0, argv[1].includes("process_argv"));
+  const [, script, ...rest] = process.argv;
+  console.log(script == argv[1], rest);
+}

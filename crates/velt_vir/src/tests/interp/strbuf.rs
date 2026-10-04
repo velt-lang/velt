@@ -45,10 +45,12 @@ impl Interp<'_> {
                 self.buf_push(a[0], &s);
             }
             "velt_rt_strbuf_push_bytes" => {
-                let s = if a[2] == 0 {
+                // The low half of the length argument is the byte count.
+                let len = a[2] & 0xffff_ffff;
+                let s = if len == 0 {
                     vec![]
                 } else {
-                    self.read_bytes(a[1], a[2] as usize)
+                    self.read_bytes(a[1], len as usize)
                 };
                 self.buf_push(a[0], &s);
             }

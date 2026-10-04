@@ -505,6 +505,10 @@ pub enum ObjectProp {
     Shorthand(Ident),
     /// `{ ...other }`
     Spread(Expr),
+    /// `{ name(params) { body } }`, `*[Symbol.iterator]() { ... }`: a method (its name in
+    /// `sig.name`; generators and `async` as on class methods). Sema allows only
+    /// `[Symbol.iterator]` / `[Symbol.asyncIterator]`, as the only member of the literal.
+    Method(Box<FnDecl>),
 }
 
 #[derive(Clone, Debug)]
@@ -581,6 +585,10 @@ pub enum ExprKind {
         body: ArrowBody,
         is_async: bool,
     },
+    /// `function* name(params): R { body }` (`async function*` too): a function expression.
+    /// The name is optional (empty when left out). Only generators are allowed (sema); other
+    /// functions are written as arrows.
+    Function(Box<FnDecl>),
     /// `[a, b, ...c]` (spread elements are `Spread`).
     Array(Vec<Expr>),
     /// `{ a: 1, b }` — anonymous struct literal, or struct literal when typed by context.

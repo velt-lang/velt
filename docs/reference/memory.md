@@ -20,7 +20,9 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   compiler infers ownership: a value with a single owner is moved, with no reference count and
   the same code as Rust, and only types whose values the program actually shares get a
   reference count (a word in front of the object; arrays and object types that are shared are
-  then stored behind a pointer). Freeing is deterministic.
+  then stored behind a pointer). Freeing is deterministic. An array type iterated through an
+  `Iterable<T>` (a value or a bound: `sum(xs)` with `sum(xs: Iterable<i64>)`) counts as shared
+  for the whole program, since its iterator holds the array; nothing else about it changes.
 - **Calls borrow**: passing an object to a function lends it, so `log(user); save(user);` costs
   nothing. The compiler infers per parameter whether the callee reads it, modifies it, or keeps
   it. A parameter the body stores or returns takes ownership: a caller that does not use its
@@ -28,7 +30,10 @@ explanation, see [Memory without a garbage collector](../book/memory.md).
   instance (a getter's `return this.ctl.sig`) shares the field and only borrows the instance.
 - A **promise** has one owner: `await` a stored promise once; using a promise variable after
   handing it on is ``use of moved value `p` ``.
-- Reference cycles (`a.next = b; b.next = a`) are never freed. **Planned**
+- Reference cycles (`a.next = b; b.next = a`) are never freed, and that includes an object
+  holding a closure that captured it (`this.onChange = () => this.render()` in a constructor
+  or method: the closure refers to the object, the object to the closure); replace the field
+  (`this.onChange = () => {}`) when the object is done to free both. **Planned**
   ([semantics — cycles](../internals/design/semantics.md#reference-cycles--without-a-collector)):
   `weak` references and a compile-time warning for reference cycles.
 

@@ -1,8 +1,9 @@
 //! Live `velt check --ts-compat` findings for documents in a package's `tsCompat` folders
 //! (docs/internals/design/tsx.md "Sharing components with the client").
 //!
-//! The lint reuses the document's analysis: the loaded modules and the checker's diagnostics
-//! ([`velt_tscompat::lint_program`]), so nothing is parsed or checked twice, and only the
+//! The lint reuses the document's analysis: the loaded modules, the checker's diagnostics and
+//! its IDE analysis, which the rules on types ask ([`velt_tscompat::lint_program`]), so nothing
+//! is parsed or checked twice, and only the
 //! document is linted. Like the command, it leaves a document with errors of its own alone (the
 //! rules only see valid Velt), and the files in scope are the loaded ones the command would find
 //! under the folders ([`vpm::sources::in_folder`]: not under `node_modules/`, `target/`, hidden
@@ -46,6 +47,7 @@ pub fn findings(
         &analysis.modules,
         &analysis.sm,
         &analysis.diagnostics,
+        analysis.ide.as_ref(),
         &in_folders,
         &|f| f == file,
     )

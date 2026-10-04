@@ -1,0 +1,28 @@
+// Accessors of a struct (a value) updated through an element read with side effects: the
+// element is updated in place, its index evaluated once.
+struct P {
+  x: i64;
+}
+
+extend P {
+  get double(): i64 {
+    return this.x * 2;
+  }
+  set double(v: i64) {
+    this.x = v / 2;
+  }
+}
+
+function idx(i: i64): i64 {
+  console.log("idx");
+  return i;
+}
+
+function main() {
+  const ps = [P { x: 1 }, P { x: 5 }];
+  ps[idx(1)].double += 2;
+  ps[0].double++;
+  let p = P { x: 3 };
+  p.double += 4;
+  console.log(ps[0].x, ps[1].x, p.x);
+}

@@ -28,16 +28,18 @@ use crate::defs::{BodyState, DefInfo, FnKind, ParamSig};
 use crate::hir::{self, Def, DefId, ExprKind as H, LocalId, PassMode, StmtKind as S, TyId};
 
 /// A checked closure, before its locals are renumbered (captures first).
-struct Checked {
-    def: DefId,
-    frame: Frame,
-    block: hir::Block,
-    declared: Vec<LocalId>,
-    ptys: Vec<TyId>,
-    ret: TyId,
-    captures: Vec<hir::Capture>,
-    is_async: bool,
-    span: Span,
+pub(super) struct Checked {
+    pub def: DefId,
+    pub frame: Frame,
+    pub block: hir::Block,
+    pub declared: Vec<LocalId>,
+    pub ptys: Vec<TyId>,
+    pub ret: TyId,
+    pub captures: Vec<hir::Capture>,
+    pub is_async: bool,
+    /// A generator function expression (`gen_closure.rs`): `Some(is_async)`.
+    pub generator: Option<bool>,
+    pub span: Span,
 }
 
 /// New local order: captures, then declared params, then the rest.
@@ -188,6 +190,7 @@ impl FnCx<'_, '_> {
             ret,
             captures,
             is_async,
+            generator: None,
             span,
         });
         crate::body::defaults::arrow_defaults(self.cx, self.module, def, params);
@@ -214,7 +217,7 @@ impl FnCx<'_, '_> {
     /// Async closures run as tasks, possibly on another thread and after the enclosing function
     /// has moved on: mutating a captured variable would be a data race (or lost), so it is an
     /// error; shared state goes through `shared` (docs/reference/async.md).
-    fn no_mutated_captures(&mut self, frame: &Frame) {
+    pub(super) fn no_mutated_captures(&mut self, frame: &Frame) {
         for c in &frame.captures {
             let Some(at) = c.mutated_at else { continue };
             let name = frame.locals[c.inner.0 as usize].name.clone();
@@ -231,7 +234,7 @@ impl FnCx<'_, '_> {
     }
 
     /// An async closure copies its captures when it runs: none may hold a generator.
-    fn no_captured_generators(&mut self, frame: &Frame) {
+    pub(super) fn no_captured_generators(&mut self, frame: &Frame) {
         for c in &frame.captures {
             let l = &frame.locals[c.inner.0 as usize];
             let (ty, name, at) = (l.ty, l.name.clone(), l.span);
@@ -239,7 +242,7 @@ impl FnCx<'_, '_> {
         }
     }
 
-    fn alloc_closure(&mut self, span: Span) -> DefId {
+    pub(super) fn alloc_closure(&mut self, span: Span) -> DefId {
         let n = self
             .cx
             .closure_counts
@@ -295,7 +298,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Final capture modes; the enclosing function must allow what the closure does.
-    fn capture_modes(&mut self, frame: &Frame, span: Span) -> Vec<hir::Capture> {
+    pub(super) fn capture_modes(&mut self, frame: &Frame, span: Span) -> Vec<hir::Capture> {
         let escaping = frame.escaping;
         let mut out = vec![];
         for c in &frame.captures {
@@ -333,7 +336,7 @@ impl FnCx<'_, '_> {
         self.require_mutable(place, "mutate");
     }
 
-    fn finish_closure(&mut self, c: Checked) {
+    pub(super) fn finish_closure(&mut self, c: Checked) {
         let Checked {
             def,
             frame,
@@ -343,6 +346,7 @@ impl FnCx<'_, '_> {
             ret,
             mut captures,
             is_async,
+            generator,
             span,
         } = c;
         let order = local_order(&frame, &captures, &declared);
@@ -373,12 +377,15 @@ impl FnCx<'_, '_> {
                 mode: c.mode,
             })
             .collect();
-        let sigs =
-            self.declared_params(&frame, &declared, &ptys, &map, &mut params, is_async, span);
+        // A generator keeps its arguments until it is done: they are owned, like an async one's.
+        let owned = is_async || generator.is_some();
+        let sigs = self.declared_params(&frame, &declared, &ptys, &map, &mut params, owned, span);
         let info = self.cx.fn_info_mut(def);
         info.params = sigs;
         info.ret = ret;
         info.is_async = is_async;
+        info.is_generator = generator.is_some();
+        info.is_async_gen = generator == Some(true);
         info.local_kinds = kinds;
         info.throw_srcs = frame.uncaught;
         info.soft_moves = frame.soft_moves;
@@ -394,8 +401,8 @@ impl FnCx<'_, '_> {
             generics: info.generics.len() as u32,
             params,
             ret: body_ret,
-            is_async,
-            is_generator: false,
+            is_async: is_async || generator == Some(true),
+            is_generator: generator.is_some(),
             self_ty: None,
             captures,
             body: hir::Body { locals, block },

@@ -56,7 +56,8 @@ keep integer speed. Every integer value is either **declared** or **inferred**:
   wrote no integer type for those, so they are JS numbers (inside `std/` they stay declared).
 
 Both are stored as integers (inferred ones as `i64`), so loop counters, indexes and counts run
-at integer speed. The rules:
+at integer speed; a local declared from a length (`let n = xs.length`) is an `i64` like any
+other inferred one, so `n -= 5` can go below zero. The rules:
 
 - **`/` yields `f64` unless both operands are declared integers**: `const a = 7; a / 2` is
   `3.5`, `7 / 2` is `3.5`, `xs.length / 2` is `1.5` for three elements, and
@@ -67,9 +68,10 @@ at integer speed. The rules:
   `Math.sqrt(16)`, `const f: f64 = 1`. Next to an integer of another type, or where one is
   expected, it adapts: `let i = 0; i < xs.length` and `s.slice(0, s.length - 1)` compile as in
   JS. A declared type other than `usize` wins; otherwise both sides become `i64`, so
-  `let i = -1; i < xs.length` is `true`. A declared integer never converts implicitly: write
-  `x as f64`, and different declared integer types don't mix (`let n: i32 = 1; let m: u8 = 2;
-  n < m` is an error).
+  `let i = -1; i < xs.length` is `true`. Compound assignments adapt the same way, converting the
+  value to the target's type: `let total = 0; total += s.length`. A declared integer never
+  converts implicitly: write `x as f64`, and different declared integer types don't mix
+  (`let n: i32 = 1; let m: u8 = 2; n < m` is an error).
 - **A float index** (`xs[i]` with `i: number`, `xs[Math.floor(n / 2)]`, `xs[parseInt(s)]`) must
   be a whole number at run time; anything else panics like an index out of bounds (JS reads
   `undefined`). Indexing with a quotient directly, `xs[n / 2]`, stays an error: write
@@ -122,10 +124,12 @@ usable and no copy method is needed.
   charCodeAt`, plus `String.fromCharCode`, `parseInt`, `parseFloat` and `Number(s)`
   ([prelude](../std/prelude.md#strings)).
 - `<` and `>` compare bytewise; `==` compares content.
-- Cost model: strings of up to 23 bytes are stored inline (no heap allocation); longer ones live
-  in a reference-counted immutable buffer. A copy is 24 bytes plus, for a heap string, one count
-  increment, and the compiler moves instead of copying at a last use. `s.clone()` compiles and
-  is just a copy.
+- Cost model: strings of up to 23 bytes (22 when they are not ASCII) are stored inline (no heap
+  allocation); longer ones live in a reference-counted immutable buffer. A copy is 24 bytes
+  plus, for a heap string, one count increment, and the compiler moves instead of copying at a
+  last use. `s.clone()` compiles and is just a copy.
+- A string holds less than 2 GiB of text (more than JS engines allow). Making a longer one stops
+  the program with `string too long` (`repeat` panics with JS's `RangeError` message instead).
 
 ```ts
 function label(name: string, count: i64): string {
@@ -386,10 +390,17 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
 
 - **Spread**: `{ ...a, b: 1 }` builds a merged object at compile time (later keys win);
   `[x, ...xs]` builds a new array (integer elements spread into a `number[]` convert). Spread
-  arguments, `f(...xs)`, fill a rest parameter ([Functions](functions.md)).
+  arguments, `f(...xs)`, fill a rest parameter ([Functions](functions.md)). Whatever `for...of`
+  takes can be spread into an array or a rest parameter too: `[..."héllo"]` (characters),
+  `[...map]` (entries), `[...gen()]`, `Math.max(...set)`
+  ([Consuming an iterable](control-flow.md#consuming-an-iterable)).
 - **Destructuring**: `const [a, b] = pair;`, `const [head, ...rest] = xs;`,
   `const { a, b } = obj;`, and `for (const [k, v] of map)`. Array destructuring checks the
   length like indexing: a shorter array panics with the same `index out of bounds` message.
+  A string, a map or an iterable is destructured like in JS (`const [first, ...rest] = "abc"`):
+  `const [a, b] = gen()` takes two values and closes the iterator; one that has fewer values
+  panics like a short array, unless the pattern gives defaults. Nested patterns work too
+  (`const [[a, b], [c]] = [gen(), gen()]`).
 - **Defaults** in `const` and `let` patterns: `const { host = "localhost", port = 80 } = opts;`
   takes the default when the field is `null`, and `const [first = 0] = xs;` when the array is
   too short (where JS reads `undefined`). Defaults in `for...of` patterns and parameter patterns
@@ -401,14 +412,19 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   numbers, strings and `Comparable` elements, and `sort(cmp)` (stable, any element type, like
   JS's `Array.prototype.sort(compareFn)`). Callbacks get the element and its index, like JS
   (`xs.map((x, i) => …)`), and may take fewer parameters. The full list is in the
-  [prelude](../std/prelude.md#arrays).
+  [prelude](../std/prelude.md#arrays). Arrays, strings and maps are
+  [`Iterable`](control-flow.md#iterables): they convert to `Iterable<T>` values, and
+  `xs[Symbol.iterator]()` returns an `Iterator<T>`.
 - `new Array<T>(n).fill(v)` and `Array.from({ length: n }, (_, i) => f(i))` build an array of
   `n` elements in one allocation. A bare `new Array<T>(n)` is an error: arrays have no holes.
+  `Array.from(src)` and `Array.from(src, (v, i) => …)` copy (and map) anything `for...of` takes:
+  an array, a string's characters, a map's entries, a generator, any iterable.
 - **Tuples** `[A, B]`: `t[0]`, destructuring, printed like arrays. `Promise.all` over tuples of
   different types is not supported.
 - **`Map<K, V>`**: `new Map<K, V>()`, `new Map(entries)` from an array of `[key, value]` tuples
   (`new Map([["a", 1], ["b", 2]])`: as in JS, the array stays as it is, the map shares its keys
-  and values, and a repeated key keeps its first position and its last value), `set`,
+  and values, and a repeated key keeps its first position and its last value) or from any
+  iterable of them (`new Map(pairs())`), `set`,
   `get(k): V | null` (the stored value itself, as in JS), `has`, `delete`, `size`, `keys()`,
   `values()`, `entries()`, `for (const [k, v] of m)`, plus single-lookup updates: `upsert(k, init, (v) => v + 1)`,
   `update(k, (v) => { v.push(x); }): bool` (the callback gets the stored value itself) and
@@ -470,3 +486,35 @@ console.log(moved, first, rest, [3, 1, 2].map((x) => x * 2).filter((x) => x > 2)
 const ports = new Map([["http", 80], ["https", 443]]); // Map<string, i64>
 console.log(ports.get("https")); // 443
 ```
+
+### Iterable object literals
+
+An object literal whose one member is a `[Symbol.iterator]()` method is an `Iterable<T>`:
+`for...of`, spread, destructuring, `Array.from` and `Iterable<T>` parameters take it, and each
+of them calls the method again.
+
+```ts
+function range(from: i64, to: i64): Iterable<i64> {
+  return {
+    *[Symbol.iterator](): Generator<i64> {
+      for (let v = from; v <= to; v++) {
+        yield v;
+      }
+    },
+  };
+}
+
+console.log([...range(1, 3)]); // [ 1, 2, 3 ]
+```
+
+- The method is a generator (`*[Symbol.iterator](): Generator<T>`), or returns an iterator
+  (`[Symbol.iterator](): Iterator<T> { return new Countdown(3); }`); `async
+  *[Symbol.asyncIterator](): AsyncGenerator<T>` makes an `AsyncIterable<T>` for
+  [`for await`](control-flow.md#for-await). The method uses the variables around it, as a
+  [generator function expression](functions.md#generator-function-expressions) does.
+- Object literals are plain data in Velt, so this is their only method. The literal can have no
+  other members, and `this` in the method is an error (in TS it is the object): use variables,
+  or declare a class that `implements Iterable<T>` and reads its fields. Other methods in object
+  literals are errors too: write a property holding an arrow function.
+- The value is an instance of the prelude class `__IterableObject<T, E>` (async:
+  `__AsyncIterableObject<T, E>`), which holds the method; annotate it as `Iterable<T>`.

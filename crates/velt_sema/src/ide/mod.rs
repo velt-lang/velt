@@ -2,7 +2,8 @@
 //! [`crate::check`] — every body, even after errors, and without requiring `main` — while
 //! recording side tables ([`record`]) of what each name denotes, the type of each expression and
 //! where each local is visible. The resulting [`Analysis`] owns everything it needs, so the
-//! queries (definition, type, scope, members, references) are plain lookups.
+//! queries (definition, type, scope, members, references) are plain lookups. Tools that reason
+//! about types (lints) use the structured type query of [`types`] ([`Analysis::type_of`]).
 
 mod defref;
 mod display;
@@ -10,8 +11,10 @@ mod effects;
 mod members;
 pub(crate) mod record;
 mod snapshot;
+mod types;
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use velt_common::{Diagnostic, Diagnostics, FileId, Span};
 
@@ -20,6 +23,7 @@ use crate::SourceModule;
 
 pub use defref::{DefKind, DefRef};
 pub use effects::Mutation;
+pub use types::{FieldView, LiteralKind, NamedKind, NamedType, TypeRef, TypeView};
 
 /// The intrinsic tags of a JSX runtime: `(tag, field definition, attribute type)`, shared by the
 /// files using that runtime.
@@ -52,6 +56,10 @@ pub struct Analysis {
     effects: HashMap<Span, effects::Effects>,
     names: display::Names,
     members: members::Members,
+    /// Exact span → first index in `types`, built on the first [`Analysis::type_of`].
+    type_index: OnceLock<HashMap<Span, usize>>,
+    /// Exact span → first index in `refs`, built on the first [`Analysis::def_of`].
+    ref_index: OnceLock<HashMap<Span, usize>>,
 }
 
 /// Check `modules` for an editor: like [`crate::check`], but errors never stop other items from
@@ -112,6 +120,20 @@ impl Analysis {
     /// The definition the name at `offset` of `file` denotes (a use or the declaration itself).
     pub fn def_at(&self, file: FileId, offset: u32) -> Option<DefRef> {
         innermost(self.refs.iter(), file, offset).cloned()
+    }
+
+    /// The definition the name whose span is exactly `span` denotes (a use or the declaration
+    /// itself); `None` when no name with that span was recorded. Where several were, the first
+    /// recorded wins, as with [`Analysis::def_at`].
+    pub fn def_of(&self, span: Span) -> Option<DefRef> {
+        let index = self.ref_index.get_or_init(|| {
+            let mut index = HashMap::with_capacity(self.refs.len());
+            for (i, (s, _)) in self.refs.iter().enumerate() {
+                index.entry(*s).or_insert(i);
+            }
+            index
+        });
+        self.refs.get(*index.get(&span)?).map(|(_, d)| d.clone())
     }
 
     /// The type of the innermost expression (or declared local) at `offset`, as source would

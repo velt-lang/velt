@@ -1,0 +1,2 @@
+numbers_unsigned_compound.vlt:6:8: error: mismatched types
+expected usize, found i64

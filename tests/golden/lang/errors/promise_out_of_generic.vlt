@@ -1,0 +1,80 @@
+// Copies of promises that generic code makes without an explicit read: a closure sharing what
+// it captured, a generic function used as a value, a method reached through an interface value,
+// an override reached through its base class (a subclass instance used as the base, or a base
+// method calling it on `this`), and binding a promise field of a class instance by reference or by destructuring (TypeScript
+// allows these; shared promises are #212).
+async function work(n: i64): Promise<string> {
+  return `done ${n}`;
+}
+
+function peek<T>(x: T): bool {
+  return true;
+}
+
+function hold<T>(x: T): T {
+  const g = () => peek(x);
+  g();
+  return x;
+}
+
+function first<T>(xs: T[]): T | null {
+  return xs.at(0);
+}
+
+interface Getter<T> {
+  get(): T;
+}
+
+class Box<T> implements Getter<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+  get(): T {
+    return this.v;
+  }
+}
+
+class Job {
+  run: Promise<string>;
+  constructor(run: Promise<string>) {
+    this.run = run;
+  }
+}
+
+class Cell<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+  has(): bool {
+    return this.peek() != null;
+  }
+  peek(): T | null {
+    return null;
+  }
+}
+
+class LoudCell<T> extends Cell<T> {
+  constructor(v: T) {
+    super(v);
+  }
+  override peek(): T | null {
+    return this.v;
+  }
+}
+
+async function main() {
+  const held = hold(work(1));
+  const arr: Promise<string>[] = [work(2)];
+  const pick: (xs: Promise<string>[]) => Promise<string> | null = first;
+  const picked = pick(arr);
+  const g: Getter<Promise<string>> = new Box(work(3));
+  const j = new Job(work(4));
+  const r = j.run;
+  const { run } = j;
+  const c: Cell<Promise<string>> = new LoudCell(work(5));
+  const l = new LoudCell(work(6));
+  console.log(l.has());
+  console.log(arr.length);
+}

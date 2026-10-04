@@ -1,0 +1,69 @@
+// check: no leaks
+// Closures that store between their parameter and what they captured behave like in
+// JavaScript when no lock is involved, whatever `with` calls elsewhere (#398): only a callback
+// `with` runs is checked, and its stores across the lock are copies. A named function is a
+// callback like a closure.
+class Inner {
+  n: i64 = 0;
+}
+
+class State {
+  inner: Inner = new Inner();
+  items: Inner[] = [];
+  n: i64 = 0;
+}
+
+class Bus {
+  handlers: ((s: State) => void)[] = [];
+
+  on(h: (s: State) => void) {
+    this.handlers.push(h);
+  }
+
+  emit(s: State) {
+    for (const h of this.handlers) {
+      h(s);
+    }
+  }
+}
+
+function bump(s: State) {
+  s.n += 1;
+}
+
+function run(m: shared<Mutex<State>>, f: (s: State) => void) {
+  m.with(f);
+}
+
+function main() {
+  // No lock: identity as in JavaScript.
+  const registry: Inner[] = [];
+  const remember = (s: State) => {
+    registry.push(s.inner);
+  };
+  const st = new State();
+  remember(st);
+  st.inner.n = 42;
+  console.log(registry[0].n, registry[0] === st.inner);
+  const bus = new Bus();
+  const item = new Inner();
+  bus.on((s: State) => {
+    s.items.push(item);
+  });
+  bus.emit(st);
+  item.n = 5;
+  console.log(st.items[0].n, st.items[0] === item);
+
+  // Under a lock: named functions and closures written where they are passed.
+  const m = shared(new Mutex<State>(new State()));
+  m.with(bump);
+  run(m, bump);
+  const step: (s: State) => void = bump;
+  m.with(step);
+  const kept: Inner[] = [];
+  m.with((v) => {
+    kept.push(v.inner);
+  });
+  kept[0].n += 100;
+  console.log(m.with((v) => v.n), m.with((v) => v.inner.n));
+}

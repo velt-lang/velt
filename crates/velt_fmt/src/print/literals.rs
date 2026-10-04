@@ -50,6 +50,7 @@ impl<'a> Printer<'a> {
             }
             ObjectProp::Shorthand(key) => self.prop_key(key),
             ObjectProp::Spread(value) => cat!["...", self.expr(value)],
+            ObjectProp::Method(f) => self.fn_decl(f, ""),
         }
     }
 
@@ -74,6 +75,7 @@ fn prop_range(prop: &ObjectProp) -> (u32, u32) {
         ObjectProp::KeyValue(key, value) => (key.span.lo, value.span.hi),
         ObjectProp::Shorthand(key) => (key.span.lo, key.span.hi),
         ObjectProp::Spread(value) => (value.span.lo, value.span.hi),
+        ObjectProp::Method(f) => (f.sig.span.lo, f.body.span.hi),
     }
 }
 

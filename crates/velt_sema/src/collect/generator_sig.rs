@@ -53,6 +53,21 @@ pub(super) fn generator_sig(
     (cx.with_generator_error(ret, never), throws)
 }
 
+/// `[T, E]` of the declared result `ret` of a generator function expression
+/// (`body/expr/gen_closure.rs`), and whether `E` is written; a bad result is reported.
+pub(crate) fn expr_result_args(
+    cx: &mut Ctx,
+    ret: TyId,
+    sig: &ast::FnSig,
+) -> Option<(TyId, TyId, bool)> {
+    let Some(args) = generator_args(cx, ret, sig.is_async) else {
+        report_bad_result(cx, ret, sig);
+        return None;
+    };
+    let written = written_error(sig) || args[1] != cx.ty.never;
+    Some((args[0], args[1], written))
+}
+
 /// `[T, E]` of a generator result type (`Generator`, `Iterator` or `Iterable`; for an async
 /// generator `AsyncGenerator`, `AsyncIterator` or `AsyncIterable`).
 fn generator_args(cx: &Ctx, ret: TyId, is_async: bool) -> Option<Vec<TyId>> {

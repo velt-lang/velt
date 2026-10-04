@@ -1,0 +1,33 @@
+// A function kept in a Mutex's value that captured objects is a part of the value with them;
+// a promise its call makes runs after the lock is released and may use what it captured
+// (#398). An async closure is fine there: each call gets its own copy of what it captured.
+class Box {
+  n: i64 = 0;
+}
+
+async function bump(b: Box): Promise<i64> {
+  await yieldNow();
+  b.n += 1;
+  return b.n;
+}
+
+class State {
+  box: Box = new Box();
+  go: () => Promise<i64>;
+
+  constructor() {
+    const b = this.box;
+    this.go = () => bump(b);
+  }
+}
+
+async function main() {
+  const b = new Box();
+  const m = shared(new Mutex<() => Promise<i64>>(() => bump(b)));
+  const a = await m.with((f) => f());
+  const s = shared(new Mutex<State>(new State()));
+  s.with((v) => {
+    const p = v.go();
+  });
+  console.log(a);
+}

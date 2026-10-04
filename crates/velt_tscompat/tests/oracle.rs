@@ -16,16 +16,17 @@
 //!
 //! Without Node or `tests/tscompat-oracle/node_modules` the `tsc` part is skipped with a
 //! message (the pull request gate has no Node packages); `VELT_TSC_ORACLE=1` (the nightly run)
-//! makes that a failure. Whether behaviour samples also differ under Node, and their fixes
-//! don't, is for `tests/difftest` once the typed rules have samples.
+//! makes that a failure. That behaviour samples print differently under Node and `velt run`,
+//! and their fixes print the same, is checked through the `velt` binary
+//! (crates/veltc/tests/ts_compat.rs, `behaviour_samples_differ_under_node_and_their_fixes_agree`,
+//! which runs only with `VELT_TSC_ORACLE` set).
 
 mod common;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use common::{apply_fixes, cases_dir, line_of, lint_module, lint_source, parse};
+use common::{apply_fixes, cases_dir, line_of, lint_any, lint_source, parse};
 use velt_tscompat::{Finding, RULES};
 
 /// What the oracle proves about a rule.
@@ -66,6 +67,21 @@ const CLAIMS: &[(&str, Claim)] = &[
     ),
     ("declare-fn", Claim::Behaviour),
     ("jsx-pragma-comment", Claim::Behaviour),
+    ("int-division", Claim::Behaviour),
+    ("strict-null-eq", Claim::Behaviour),
+    ("object-in-template", Claim::Behaviour),
+    ("nullable-in-template", Claim::Behaviour),
+    ("default-sort", Claim::Behaviour),
+    ("json-map", Claim::Behaviour),
+    ("string-offsets", Claim::Behaviour),
+    ("unsigned-arith", Claim::Behaviour),
+    ("null-default", Claim::Behaviour),
+    ("map-iter-as-array", Claim::Rejected),
+    ("velt-global", Claim::Rejected),
+    ("velt-member", Claim::Rejected),
+    ("null-into-optional", Claim::Rejected),
+    ("undefined-into-null", Claim::Rejected),
+    ("catch-unknown", Claim::Rejected),
 ];
 
 /// Behaviour samples `tsc` accepts because it ignores the construct: `(code, TS error, why)`.
@@ -81,12 +97,7 @@ const IGNORED: &[(&str, &str, &str)] = &[(
 /// Lines where `tsc` rejects code the lint passes, each a rule still to write: `(file in the
 /// project, line, why)`. The oracle fails when one of them compiles, so the entry goes when the
 /// rule comes.
-const KNOWN_GAPS: &[(&str, usize, &str)] = &[(
-    "defaults.fixed.ts",
-    8,
-    "a destructuring default replaces `null` in Velt but only `undefined` in JavaScript, so \
-     `tsc` keeps `x: number | null` (and Node computes with `null`); a typed rule (#13 step 2)",
-)];
+const KNOWN_GAPS: &[(&str, usize, &str)] = &[];
 
 fn claim(code: &str) -> &'static Claim {
     &CLAIMS
@@ -152,7 +163,7 @@ fn every_rule_has_a_claim_and_its_sample() {
 fn every_sample_reports_only_its_rule() {
     for (code, path) in samples("rejected").into_iter().chain(samples("behaviour")) {
         let src = std::fs::read_to_string(&path).expect("read sample");
-        let codes: Vec<&str> = lint_source(&path, &src).iter().map(|f| f.code).collect();
+        let codes: Vec<&str> = lint_any(&path, &src).iter().map(|f| f.code).collect();
         assert!(!codes.is_empty(), "{}: no findings", path.display());
         assert!(
             codes.iter().all(|c| *c == code),
@@ -241,7 +252,7 @@ fn tsc_agrees_with_the_lint() {
 
 /// `Err(why)` when Node or the pinned `typescript` is missing.
 fn node_ready(oracle: &Path) -> Result<(), String> {
-    match Command::new("node").arg("--version").output() {
+    match command("node").arg("--version").output() {
         Ok(o) if o.status.success() => {}
         _ => return Err("`node` is not on PATH".into()),
     }
@@ -340,7 +351,7 @@ fn write_ignored_fixes(
             .iter()
             .find(|c| stem(&c.lint_as) == entry.0)
             .unwrap_or_else(|| panic!("`{}` in IGNORED has no behaviour sample", entry.0));
-        let src = apply_fixes(&sample.src, &lint_source(&sample.lint_as, &sample.src));
+        let src = apply_fixes(&sample.src, &lint_any(&sample.lint_as, &sample.src));
         assert_ne!(src, sample.src, "{}: the lint has no fix", sample.name);
         let ext = sample.lint_as.extension().unwrap().to_string_lossy();
         let name = format!("behaviour/{}.fixed.{ext}", entry.0);
@@ -376,7 +387,7 @@ fn stem(path: &Path) -> String {
 
 /// Runs `diagnostics.mjs` on the project.
 fn run_tsc(oracle: &Path, project: &Path) -> Vec<Diag> {
-    let out = Command::new("node")
+    let out = command("node")
         .arg(oracle.join("diagnostics.mjs"))
         .arg(project.join("tsconfig.json"))
         .output()
@@ -410,7 +421,7 @@ struct Decl<'f> {
 /// the lint reports too, and a declaration with a rule `tsc` rejects has an error.
 fn check_case(file: &Checked, diags: &[&Diag], failures: &mut Vec<String>) {
     let module = parse(&file.lint_as, &file.src);
-    let findings = lint_module(&file.lint_as, &file.src, &module);
+    let findings = lint_source(&file.lint_as, &file.src);
     let mut decls: Vec<Decl> = module
         .items
         .iter()
@@ -491,7 +502,7 @@ fn known_gap(d: &Diag) -> Option<&'static str> {
 
 /// Every line of a rejected sample with a finding has a `tsc` error.
 fn check_rejected(file: &Checked, diags: &[&Diag], failures: &mut Vec<String>) {
-    let findings = lint_source(&file.lint_as, &file.src);
+    let findings = lint_any(&file.lint_as, &file.src);
     let mut lines: Vec<(usize, &str)> = findings
         .iter()
         .map(|f| (line_of(&file.src, f.span.lo), f.code))
@@ -516,4 +527,28 @@ fn check_rejected(file: &Checked, diags: &[&Diag], failures: &mut Vec<String>) {
         }
     }
     eprintln!("{}: tsc rejects lines {}", file.name, proved.join(", "));
+}
+
+/// `Command::new(program)` for a test's child process. On Windows, when this test process has no
+/// console (a CI agent, a background shell), the child gets a hidden console instead of opening a
+/// window of its own. In a terminal it shares the terminal's console as before, so Ctrl+C still
+/// reaches it.
+fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    let cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    let cmd = {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = cmd;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetConsoleWindow() -> *mut std::ffi::c_void;
+        }
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // SAFETY: takes no arguments; returns this process's console window or null.
+        if unsafe { GetConsoleWindow() }.is_null() {
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        cmd
+    };
+    cmd
 }

@@ -80,4 +80,13 @@ function continueSwitch(n: i64) {
   }
 }
 
+// A case value of another type is reported once (#337).
+function wrongValueType(s: string, n: i64): i64 {
+  switch (s) {
+    case n:
+      return 1;
+  }
+  return 0;
+}
+
 function main() {}

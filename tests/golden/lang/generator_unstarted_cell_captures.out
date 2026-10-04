@@ -1,0 +1,4 @@
+box 4
+started [ 10 ] n 10
+async 6
+unstarted is still a generator: object

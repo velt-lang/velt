@@ -280,7 +280,10 @@ export class TaskScope<E> {
     // Only plain values and shared cells go to the child (its own signal reference), so
     // `scope.spawn(work(scope.signal))` doesn't hand the task anything reachable from `scope`.
     const sig = velt_rt_signal_retain(this.sigH);
-    return spawn(scopeChild<T, E>(this.g, sig, this.errors, this.cancelOnError, p));
+    // The scope fails with the child's error, so a handle nobody awaits drops it quietly.
+    return __intrinsic_spawn_handled(
+      scopeChild<T, E>(this.g, sig, this.errors, this.cancelOnError, p),
+    );
   }
 
   // Aborts the scope's signal.

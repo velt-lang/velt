@@ -1,0 +1,14 @@
+promise_out_of_generic.vlt:74:13: error: cannot read a `Promise<string>` field out of an object
+  = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212): await the promise before storing it in the object, or keep it outside the object (in an array, taken out with `pop()`)
+promise_out_of_generic.vlt:75:11: error: cannot read a `Promise<string>` field out of an object
+  = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212): await the promise before storing it in the object, or keep it outside the object (in an array, taken out with `pop()`)
+promise_out_of_generic.vlt:68:16: error: `hold` would copy a `Promise<string>`
+  = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212): take promises out with `pop()` or `splice(i, 1)`, or await them together with `Promise.all(arr)`
+promise_out_of_generic.vlt:70:67: error: `first` would copy a `Promise<string>`
+  = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212): take promises out with `pop()` or `splice(i, 1)`, or await them together with `Promise.all(arr)`
+promise_out_of_generic.vlt:72:38: error: `get` would copy a `Promise<string>`
+  = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212): take promises out with `pop()` or `splice(i, 1)`, or await them together with `Promise.all(arr)`
+promise_out_of_generic.vlt:76:36: error: `peek` would copy a `Promise<string>`
+  = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212): take promises out with `pop()` or `splice(i, 1)`, or await them together with `Promise.all(arr)`
+promise_out_of_generic.vlt:78:15: error: `peek` would copy a `Promise<string>`
+  = note: TypeScript allows this, but a Velt promise has one owner (`await` takes its result) and can't be copied or shared (shared promises are planned: #212): take promises out with `pop()` or `splice(i, 1)`, or await them together with `Promise.all(arr)`

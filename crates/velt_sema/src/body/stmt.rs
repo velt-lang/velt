@@ -259,14 +259,22 @@ impl FnCx<'_, '_> {
             Some(t) => self.expr_coerce(e, t, Want::Borrow),
             None => self.expr(e, None, Want::Borrow),
         };
+        // `const [a, b] = gen()`: the values the pattern needs, as an array.
+        let init = self.destructured(&v.pattern, init);
         let place = super::places::is_place(&init);
         let ctx = BindCtx::Let {
             mutable: v.kind == ast::VarKind::Let,
             place,
         };
-        let pat = self.pattern(&v.pattern, init.ty, ctx);
+        // `const [[a, b]] = [gen()]`: the inner pattern takes its iterable apart afterwards.
+        let split = self.split_nested(&v.pattern, init.ty);
+        let pattern = split.as_ref().map_or(&v.pattern, |(p, _)| p);
+        let pat = self.pattern(pattern, init.ty, ctx);
         self.note_inferred_bindings(&pat, &init);
         Self::push(out, S::LetPat { pat, init }, span);
+        if let Some((_, nested)) = split {
+            self.nested_decls(v.kind, nested, out);
+        }
     }
 
     fn simple_decl(
@@ -292,7 +300,10 @@ impl FnCx<'_, '_> {
             Err(Some(h)) => Some(h),
             Err(None) => v.init.as_ref().map(|e| match ann {
                 Some(t) => self.expr_coerce(e, t, Want::Move),
-                None => self.expr(e, None, Want::Move),
+                None => {
+                    let h = self.expr(e, None, Want::Move);
+                    self.inferred_local_init(h)
+                }
             }),
         };
         let ty = match (ann, &init) {

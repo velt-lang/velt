@@ -2,6 +2,7 @@
 //! One submodule per concern.
 
 mod access;
+mod accessor_rmw;
 mod args;
 mod array_ctor;
 mod assign;
@@ -15,8 +16,10 @@ mod coerce;
 mod construct;
 mod discriminated;
 mod dispose_call;
+mod division;
 mod errors;
 mod fn_arity;
+mod gen_closure;
 mod iface_call;
 mod intrinsics;
 pub(crate) mod jsx;
@@ -31,10 +34,12 @@ mod namespaces;
 mod numbers;
 mod object;
 mod object_keys;
+mod object_method;
 mod ops;
 mod ordering;
 mod process;
 mod promise_new;
+mod promise_reads;
 mod record;
 mod record_call;
 mod record_compound;
@@ -126,6 +131,7 @@ impl FnCx<'_, '_> {
                 optional,
             } => self.index_expr(object, index, *optional, want, span),
             A::Arrow { .. } => self.closure(e, exp, true),
+            A::Function(d) => self.function_expr(d, exp, span),
             A::Array(elems) => self.array_lit(elems, exp, span),
             A::Object(props) => self.object_lit(props, exp, span),
             A::StructLit { name, props } => self.struct_lit(name, props, exp, span),

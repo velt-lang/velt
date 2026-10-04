@@ -193,6 +193,19 @@ fn docs_run_the_documentation_tests() {
     assert!(p.needs_build());
 }
 
+/// The benchmarks compile whenever they, the compiler or the standard library change (#429).
+#[test]
+fn benchmarks_are_compiled_when_they_the_compiler_or_std_change() {
+    let p = plan(&["bench/db/velt/postgres.vlt"]);
+    assert_eq!(p.packages, set(&["velt_sema"]));
+    assert_eq!(p.veltc, Veltc::Some(set(&["bench_programs"])));
+    assert_eq!(p.goldens, Goldens::None);
+    assert!(p.filterset().unwrap().contains("binary(bench_programs)"));
+    // Every veltc test binary, `bench_programs` among them, runs for these.
+    assert_eq!(plan(&["std/postgres.vlt"]).veltc, Veltc::All);
+    assert_eq!(plan(&["crates/velt_sema/src/check.rs"]).veltc, Veltc::All);
+}
+
 #[test]
 fn the_tsc_oracle_runs_the_lint_tests() {
     let p = plan(&["tests/tscompat-oracle/rejected/struct.ts"]);

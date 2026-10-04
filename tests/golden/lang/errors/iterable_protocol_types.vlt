@@ -1,0 +1,31 @@
+// TypeScript forms around the builtin iterables that Velt rejects: a `TReturn` in
+// `IteratorResult<T, TReturn>` or `IterableIterator<T, TReturn>` (a finished result carries no
+// value), an array of the wrong element type, a value that is not iterable, and an
+// `IterableIterator<T>` value where its parent `Iterator<T>` is expected.
+function* numbers(): IterableIterator<number, string> {
+  yield 1;
+}
+
+function sum(xs: Iterable<number>): number {
+  let s = 0.0;
+  for (const x of xs) {
+    s += x;
+  }
+  return s;
+}
+
+function step(it: Iterator<number>): number {
+  const r = it.next();
+  return r.done ? -1.0 : r.value;
+}
+
+function* plain(): IterableIterator<number> {
+  yield 2;
+}
+
+const r: IteratorResult<number, string> = { done: true };
+const words = ["a", "b"];
+console.log(sum(words));
+console.log(sum(5));
+const it: IterableIterator<number> = plain();
+console.log(step(it));

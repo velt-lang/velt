@@ -12,7 +12,7 @@ use crate::fmt;
 use crate::json::escape::push_json_string;
 use crate::json::text::{inspect_into, stringify_into};
 use crate::json::value::Value;
-use crate::str::VeltStr;
+use crate::str::{Summary, VeltStr};
 
 /// Identical to `VeltStr` (size 24, align 8).
 pub type VeltStrBuf = VeltStr;
@@ -25,72 +25,108 @@ pub unsafe extern "C" fn velt_rt_strbuf_new(cap: u64, out: *mut VeltStrBuf) {
 }
 
 /// Append the bytes of `s` (the caller keeps ownership of `s`; `s` may be the builder itself or
-/// lie in its buffer: `push_bytes` copies such text out before the buffer can move).
+/// lie in its buffer: `push_wtf8` copies such text out before the buffer can move).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_str(buf: *mut VeltStrBuf, s: *const VeltStr) {
     if std::ptr::eq(buf, s) {
         // Copy out first: growing the builder may move the bytes being read.
-        (*buf).push_with(|v| v.extend_from_slice((*s).as_bytes()));
+        let sum = (*s).summary();
+        (*buf).push_with_summary(|v| v.extend_from_slice((*s).as_bytes()), |_| Some(sum));
         return;
     }
-    (*buf).push_bytes((*s).as_bytes());
+    (*buf).push_str(&*s);
 }
 
-/// Append `len` bytes at `ptr` (must be UTF-8 as a whole once the builder is finished).
+/// Append the bytes at `ptr` (canonical WTF-8: generated code pushes literal text). The low half
+/// of `len` is the byte count; the high half may be the UTF-16 unit count, as in a string's `w1`:
+/// equal to the byte count, the text is ASCII and needs no scan; 0 means unknown.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_bytes(buf: *mut VeltStrBuf, ptr: *const u8, len: u64) {
-    if len == 0 {
+    let (bytes, units) = (len as u32 as usize, (len >> 32) as usize);
+    if bytes == 0 {
         return;
     }
-    (*buf).push_bytes(std::slice::from_raw_parts(ptr, len as usize));
+    let text = std::slice::from_raw_parts(ptr, bytes);
+    if units == bytes {
+        push_ascii(buf, text);
+    } else {
+        push_counted(buf, text);
+    }
+}
+
+/// Append text whose summary is unknown (counted; out of line, off the hot ASCII paths).
+#[inline(never)]
+unsafe fn push_counted(buf: *mut VeltStrBuf, text: &[u8]) {
+    (*buf).push_wtf8(text, None);
+}
+
+/// Append ASCII text (numbers, keywords): its summary is known, so nothing is counted.
+#[inline(always)]
+unsafe fn push_ascii(buf: *mut VeltStrBuf, text: &[u8]) {
+    (*buf).push_ascii(text);
 }
 
 /// Append a decimal `i64`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_i64(buf: *mut VeltStrBuf, v: i64) {
     let mut b = itoa::Buffer::new();
-    (*buf).push_bytes(b.format(v).as_bytes());
+    push_ascii(buf, b.format(v).as_bytes());
 }
 
 /// Append a decimal `u64`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_u64(buf: *mut VeltStrBuf, v: u64) {
     let mut b = itoa::Buffer::new();
-    (*buf).push_bytes(b.format(v).as_bytes());
+    push_ascii(buf, b.format(v).as_bytes());
 }
 
 /// Append an `f64` formatted like JS `String(v)`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_f64(buf: *mut VeltStrBuf, v: f64) {
-    (*buf).push_with(|b| fmt::push_f64(b, v));
+    (*buf).push_with_summary(|b| fmt::push_f64(b, v), |n| Some(Summary::ascii(n)));
 }
 
 /// Append an `f64` the way `JSON.stringify` does: JS formatting, `null` for NaN/±Infinity.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_json_f64(buf: *mut VeltStrBuf, v: f64) {
     if !v.is_finite() {
-        return (*buf).push_bytes(b"null");
+        return push_ascii(buf, b"null");
     }
-    (*buf).push_with(|b| fmt::push_f64(b, v));
+    (*buf).push_with_summary(|b| fmt::push_f64(b, v), |n| Some(Summary::ascii(n)));
 }
 
 /// Append `true` / `false`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_bool(buf: *mut VeltStrBuf, v: u8) {
-    (*buf).push_bytes(if v != 0 { b"true" } else { b"false" });
+    push_ascii(buf, if v != 0 { b"true" } else { b"false" });
 }
 
 /// Append one byte (ASCII punctuation in generated glue: `{`, `,`, `:`, `"`…).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_byte(buf: *mut VeltStrBuf, byte: u8) {
-    (*buf).push_bytes(&[byte]);
+    if byte.is_ascii() {
+        push_ascii(buf, &[byte]);
+    } else {
+        push_counted(buf, &[byte]);
+    }
 }
 
 /// Append `s` as a JSON string literal: quoted and escaped exactly like `JSON.stringify(s)`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_json_str(buf: *mut VeltStrBuf, s: *const VeltStr) {
-    // Escaped into scratch space first, so `s` may be the builder itself.
-    (*buf).push_with(|b| push_json_string(b, (*s).as_bytes()));
+    // Escaped into scratch space first, so `s` may be the builder itself. Only ASCII is escaped
+    // (into ASCII), so the output has the input's units plus one per added byte.
+    let write = |b: &mut Vec<u8>| push_json_string(b, (*s).as_bytes());
+    if (*s).is_ascii() {
+        return (*buf).push_with_ascii(write);
+    }
+    let (len, sum) = ((*s).len(), (*s).summary());
+    (*buf).push_with_summary(write, |out| {
+        Some(Summary {
+            units: sum.units + (out - len),
+            lone: sum.lone,
+        })
+    });
 }
 
 /// Append `s` as a string inside a container prints in `console.log` (node's `util.inspect`
@@ -112,7 +148,7 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_key(buf: *mut VeltStrBuf, s
 pub unsafe extern "C" fn velt_rt_strbuf_push_json_value(buf: *mut VeltStrBuf, h: *const Value) {
     match h.as_ref() {
         Some(v) => (*buf).push_with(|b| stringify_into(b, v)),
-        None => (*buf).push_bytes(b"null"),
+        None => push_ascii(buf, b"null"),
     }
 }
 
@@ -127,7 +163,7 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_json(
 ) {
     match h.as_ref() {
         Some(v) => (*buf).push_with(|b| inspect_into(b, v, top != 0)),
-        None => (*buf).push_bytes(b"null"),
+        None => push_ascii(buf, b"null"),
     }
 }
 
@@ -287,7 +323,7 @@ pub unsafe extern "C" fn velt_rt_strbuf_inspect_enter(buf: *mut VeltStrBuf, p: *
                     n
                 }
             };
-            (*buf).push_bytes(format!("[Circular *{n}]").as_bytes());
+            (*buf).push_wtf8(format!("[Circular *{n}]").as_bytes(), None);
             return 0;
         }
         stack.push((addr, (*buf).len(), 0));
@@ -323,15 +359,15 @@ mod inspect_cycle_tests {
             let mut b = VeltStr::with_capacity(0);
             let (outer, inner) = (1u8, 2u8);
             velt_rt_strbuf_inspect_begin();
-            b.push_bytes(b"x: ");
+            b.push_wtf8(b"x: ", None);
             assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &outer), 1);
-            b.push_bytes(b"A { b: ");
+            b.push_wtf8(b"A { b: ", None);
             assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &inner), 1);
-            b.push_bytes(b"B { a: ");
+            b.push_wtf8(b"B { a: ", None);
             assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &outer), 0);
-            b.push_bytes(b" }");
+            b.push_wtf8(b" }", None);
             velt_rt_strbuf_inspect_leave(&mut b);
-            b.push_bytes(b" }");
+            b.push_wtf8(b" }", None);
             velt_rt_strbuf_inspect_leave(&mut b);
             assert_eq!(text(&b), "x: <ref *1> A { b: B { a: [Circular *1] } }");
             // Numbering starts over for the next value printed.
@@ -349,9 +385,9 @@ mod inspect_cycle_tests {
     fn siblings_keep_one_numbering() {
         unsafe fn cyclic(b: &mut VeltStrBuf, p: &u8) {
             assert_eq!(velt_rt_strbuf_inspect_enter(b, p), 1);
-            b.push_bytes(b"C { next: ");
+            b.push_wtf8(b"C { next: ", None);
             assert_eq!(velt_rt_strbuf_inspect_enter(b, p), 0);
-            b.push_bytes(b" }");
+            b.push_wtf8(b" }", None);
             velt_rt_strbuf_inspect_leave(b);
         }
         unsafe {
@@ -360,7 +396,7 @@ mod inspect_cycle_tests {
             velt_rt_strbuf_inspect_begin();
             for p in [&c, &d, &c] {
                 cyclic(&mut b, p);
-                b.push_bytes(b", ");
+                b.push_wtf8(b", ", None);
             }
             assert_eq!(
                 text(&b),

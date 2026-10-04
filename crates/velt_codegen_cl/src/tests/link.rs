@@ -3,7 +3,6 @@
 //! Skipped (with a note) when `rustc` cannot be run.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use super::programs;
 use crate::{emit_object, host_triple, CodegenOptions};
@@ -14,7 +13,8 @@ use std::io::Write;
 extern "C" { fn velt_main() -> i32; }
 unsafe fn bytes<'a>(s: *const VeltStr) -> &'a [u8] {
     let s = &*s;
-    if s.len == 0 { &[] } else { std::slice::from_raw_parts(s.ptr, s.len as usize) }
+    let len = s.len as u32 as usize; // the low half; the high half is the UTF-16 length
+    if len == 0 { &[] } else { std::slice::from_raw_parts(s.ptr, len) }
 }
 fn out(b: &[u8]) { std::io::stdout().write_all(b).unwrap(); }
 #[no_mangle] pub extern "C" fn velt_rt_write_str(_s: u32, v: *const VeltStr) { out(unsafe { bytes(v) }) }
@@ -61,7 +61,7 @@ fn main() {
 
 fn rustc() -> Option<String> {
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
-    Command::new(&rustc)
+    command(&rustc)
         .arg("--version")
         .output()
         .ok()
@@ -96,7 +96,7 @@ fn build_and_run(
     )
     .unwrap();
     std::fs::write(&obj, bytes).unwrap();
-    let mut cmd = Command::new(rustc);
+    let mut cmd = command(rustc);
     // `--target`: the test may run as another arch than `rustc` (x86_64 under Rosetta).
     cmd.args(["--edition", "2021", "-O", "-g", "--crate-name", "harness"])
         .args(["--target", &host_triple()])
@@ -119,7 +119,7 @@ fn build_and_run(
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr)
     );
-    let r = Command::new(&exe).output().unwrap();
+    let r = command(&exe).output().unwrap();
     (
         r.status.code().unwrap_or(-1),
         String::from_utf8(r.stdout).unwrap(),
@@ -141,4 +141,28 @@ fn link_and_run_host_objects() {
         }
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `Command::new(program)` for a test's child process. On Windows, when this test process has no
+/// console (a CI agent, a background shell), the child gets a hidden console instead of opening a
+/// window of its own. In a terminal it shares the terminal's console as before, so Ctrl+C still
+/// reaches it.
+fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    let cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    let cmd = {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = cmd;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetConsoleWindow() -> *mut std::ffi::c_void;
+        }
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // SAFETY: takes no arguments; returns this process's console window or null.
+        if unsafe { GetConsoleWindow() }.is_null() {
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        cmd
+    };
+    cmd
 }

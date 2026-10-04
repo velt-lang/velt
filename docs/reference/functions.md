@@ -98,8 +98,9 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
   returns `{ done: true }`, and keeps doing so (`next().value` is then `null`). A `Generator<T, E>` is an `Iterator<T, E>` and
   an `Iterable<T, E>` (its `[Symbol.iterator]()` returns itself), so `for...of` takes it
   ([Iterables](control-flow.md#iterables)).
-- The return type is required: `Generator<T>`, `Iterator<T>` or `Iterable<T>`, where `T` is the
-  type of the yielded values; a call has that type, with the generator's error type as `E`.
+- The return type is required: `Generator<T>`, `Iterator<T>`, `Iterable<T>`,
+  `IterableIterator<T>` or `IteratorObject<T>`, where `T` is the type of the yielded values; a
+  call has that type, with the generator's error type as `E`.
   `return;` ends the generator; there is no `TReturn`, so `return value` is an error. A bare
   `yield` is allowed in a `Generator<void>` only, and a `yield` has no value (`const x = yield
   1` is an error: there is no `next(value)`), so it is a statement of its own (also as a
@@ -147,7 +148,45 @@ console.log(g.next(), g.next().value, g.next().done);  // { value: 1, done: fals
   allocation, no `IteratorResult` objects, and the body is resumed by a direct call that the
   optimizer can inline; such a loop runs as fast as the equivalent hand-written loop. A
   generator used as a value is one heap object; each `next()` then returns a small
-  `IteratorResult` value.
+  `IteratorResult` value. Spreading a direct call (`[...gen(a)]`) and destructuring one
+  (`const [x, y] = gen(a)`) use the same loop: only the resulting array is allocated.
+
+### Generator function expressions
+
+```ts
+const evens = function* (limit: i64): Generator<i64> {
+  for (let i = 0; i < limit; i += 2) {
+    yield i;
+  }
+};
+
+function main() {
+  const step = 10;
+  const tens = function* (n: i64): Generator<i64> {
+    for (let i = 0; i < n; i++) {
+      yield i * step;
+    }
+  };
+  console.log([...evens(5)], [...tens(3)]);  // [ 0, 2, 4 ] [ 0, 10, 20 ]
+}
+```
+
+- `function* (…): Generator<T> { … }` and `async function* (…): AsyncGenerator<T> { … }` are
+  generator function values, optionally named (`function* walk(…)`); their type is `(…) =>
+  Generator<T, E>` with the body's error type as `E` (a call never throws). Velt has no other
+  `function` expressions: write an [arrow function](#arrow-functions-and-function-types), which
+  TS code can do too.
+- At module level, `const g = function* (…) { … };` is the generator function `g`.
+- Elsewhere it is a closure that uses the variables around it as JS does: its generators see
+  the objects it captured (`xs.push(3)` after creating a generator shows up in it), a variable
+  assigned after the expression (by the function or by a generator) is one variable that all
+  of them see, and the body may assign it (`count++`). The name of a named expression is not in scope in its body (TS allows recursion through it):
+  declare a `function*` to recurse. Type parameters and rest parameters are errors there too;
+  declare a `function*`.
+- The return type is required, as for any generator, unless the expression is written where
+  a function type is expected (`return function* () { … }` in a function returning `() =>
+  Generator<string>`, or `const g: Gen = function* () { … }`): then it is that type's result,
+  as for an arrow.
 
 ## Async generators
 
@@ -173,8 +212,8 @@ async function main() {
   `Promise<IteratorResult<T>, E>` that runs the body to its next `yield`, awaiting what it
   awaits on the way. It is an `AsyncIterator<T, E>` and an `AsyncIterable<T, E>`, so
   [`for await`](control-flow.md#for-await) takes it.
-- The return type is required: `AsyncGenerator<T>`, `AsyncIterator<T>` or `AsyncIterable<T>`
-  (a sync result type on an `async function*`, or an async one on a `function*`, is an error
+- The return type is required: `AsyncGenerator<T>`, `AsyncIterator<T>`, `AsyncIterable<T>`
+  or `AsyncIterableIterator<T>` (a sync result type on an `async function*`, or an async one on a `function*`, is an error
   naming the fix).
 - `yield* src` delegates to an async iterable (another async generator) and, as in JS, to a
   sync one (a generator, an array).

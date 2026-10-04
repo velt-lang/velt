@@ -1,0 +1,53 @@
+// A `with` callback the compiler cannot trace to its body — an object's field, an array
+// element, a `Map` value, the result of a generic factory — could keep a part of the locked
+// value or store an outside object into it (#398): an error that says where it came from. A
+// closure written where it is passed, or a named function, is checked instead.
+class Inner {
+  n: i64 = 0;
+}
+
+class State {
+  inner: Inner = new Inner();
+}
+
+class Hooks {
+  cb: (s: State) => void;
+
+  constructor(cb: (s: State) => void) {
+    this.cb = cb;
+  }
+}
+
+function stasher<T>(out: T[]): (v: T) => void {
+  return (v: T) => {
+    out.push(v);
+  };
+}
+
+function main() {
+  const m = shared(new Mutex<State>(new State()));
+  const out: Inner[] = [];
+  const h = new Hooks((s: State) => {
+    out.push(s.inner);
+  });
+  m.with(h.cb);
+  const cbs = [(s: State) => {
+    out.push(s.inner);
+  }];
+  m.with(cbs[0]);
+  const byName = new Map<string, (s: State) => void>();
+  byName.set("a", (s: State) => {
+    out.push(s.inner);
+  });
+  const cb = byName.get("a");
+  if (cb != null) {
+    m.with(cb);
+  }
+  const states: State[] = [];
+  const g = { cb: stasher<State>(states) };
+  m.with(g.cb);
+  const counts = shared(new Mutex<i64>(0));
+  const inc = [(n: i64) => {}];
+  counts.with(inc[0]);
+  console.log(out.length, states.length);
+}

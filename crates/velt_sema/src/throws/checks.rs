@@ -41,6 +41,35 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
     for c in checks {
         observed(cx, &c);
     }
+    for (d, what) in std::mem::take(&mut cx.iface_generators) {
+        iface_generator(cx, d, &what);
+    }
+}
+
+/// Generator method `d` implements interface method `what` with an inferred error type: the
+/// interface fixed its iterator's `E` as `never` (the result as written), so the body must not
+/// throw.
+fn iface_generator(cx: &mut Ctx, d: DefId, what: &str) {
+    let own = own_final(cx, d);
+    let Some(m) = cx.error_outside(None, own) else {
+        return;
+    };
+    let (name_span, ret) = (cx.fn_info(d).name_span, cx.fn_info(d).ret);
+    let at = site_of(cx, d, m);
+    let en = cx.display(m);
+    let want = cx.with_generator_error(ret, m);
+    let wn = cx.display(want);
+    let iface = what.split('.').next().unwrap_or(what);
+    cx.error(
+        Diagnostic::error(
+            format!("this generator throws `{en}`, which its result type does not declare"),
+            at,
+        )
+        .with_label(name_span, format!("implements `{what}` here"))
+        .with_note(format!(
+            "the error type of an interface's iterator is part of its type, which is fixed before bodies are checked; declare it in the result: `{wn}` (and as the error type of the `{iface}` it implements), or catch the error in the generator"
+        )),
+    );
 }
 
 /// Where in `d`'s body the error `m` comes from.
@@ -192,7 +221,9 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
     if ok {
         return;
     }
-    let fs = fin.map_or("nothing".to_string(), |t| format!("`{}`", cx.display(t)));
+    let fs = fin.map_or("nothing".to_string(), |t| {
+        format!("`{}`", shown_errors(cx, t))
+    });
     // A call through an interface value: its error type is the interface method's.
     let slot = c.srcs.iter().find_map(|s| match s {
         ThrowSrc::Slot { iface, slot, .. } => {
@@ -204,7 +235,7 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
     });
     let note = match slot {
         Some((i, m)) => {
-            let e = fin.map_or("E".to_string(), |t| cx.display(t));
+            let e = fin.map_or("E".to_string(), |t| shown_errors(cx, t));
             format!("add a `throws` clause to interface method `{i}.{m}` (`{m}(): T throws {e};`)")
         }
         None => {
@@ -221,6 +252,23 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
         )
         .with_note(note),
     );
+}
+
+/// How many members of an error union a message shows.
+const SHOWN_ERRORS: usize = 8;
+
+/// An error type for a message: a long union (growing generic initializers can produce
+/// dozens of members, each longer than the last) shows its first members and a count.
+fn shown_errors(cx: &mut Ctx, t: TyId) -> String {
+    let Some(ms) = cx.union_members(t).filter(|ms| ms.len() > SHOWN_ERRORS) else {
+        return cx.display(t);
+    };
+    let shown: Vec<String> = ms[..SHOWN_ERRORS].iter().map(|m| cx.display(*m)).collect();
+    format!(
+        "{} | … ({} more)",
+        shown.join(" | "),
+        ms.len() - SHOWN_ERRORS
+    )
 }
 
 /// `a.b::C.m` → `C.m`.

@@ -1,0 +1,18 @@
+iterable_protocol_types.vlt:5:47: error: the second type argument of `IterableIterator` is the error type it throws, and `string` is not an error type
+  = note: TypeScript allows this (`IterableIterator<T, TReturn>`, which takes the return type second); Velt doesn't because a finished `IteratorResult` carries no value and `next()` takes no argument, so `IterableIterator<T, E>` takes the error type `E` second; write `IterableIterator<f64>`, or `IterableIterator<f64, E>` with the error class `E` it throws
+
+iterable_protocol_types.vlt:26:33: error: `IteratorResult` takes no return type: `string` is TypeScript's `TReturn`
+  = note: TypeScript allows this (`IteratorResult<T, TReturn>`, whose finished result carries a `string` value); Velt doesn't because generators and iterators return no value: a finished result is `{ done: true }`; write `IteratorResult<f64>`, and deliver a final value some other way (yield it, or store it where the caller can read it)
+
+iterable_protocol_types.vlt:28:17: error: mismatched types
+  = note: expected Iterable<f64, never>, found string[]
+  = note: `string[]` does not declare `implements Iterable<f64, never>`
+  = note: `string[]` is an `Iterable<string, never>`, not an `Iterable<f64, never>`
+
+iterable_protocol_types.vlt:29:17: error: mismatched types
+  = note: expected Iterable<f64, never>, found i64
+  = note: `i64` does not declare `implements Iterable<f64, never>`
+
+iterable_protocol_types.vlt:31:18: error: mismatched types
+  = note: expected Iterator<f64, never>, found IterableIterator<f64, never>
+  = note: `IterableIterator<f64, never>` extends `Iterator<f64, never>`, but an interface value does not convert to the interfaces it extends yet; `x[Symbol.iterator]()` gives its `Iterator`

@@ -34,7 +34,8 @@ void velt_rt_panic(const VeltStr*);
 void velt_rt_exit(int32_t);
 int64_t velt_rt_pow_i64(int64_t, int64_t);
 double velt_rt_pow_f64(double, double);
-#define LIT(s) { (uint8_t*)(s), sizeof(s) - 1, 0 }
+// An ASCII literal: `w1` packs the UTF-16 length (high half) and the byte length (low half).
+#define LIT(s) { (uint8_t*)(s), ((uint64_t)(sizeof(s) - 1) << 32) | (sizeof(s) - 1), 0 }
 typedef struct VeltFut { uint32_t (*poll)(struct VeltFut*, void*); void (*drop)(struct VeltFut*); } VeltFut;
 typedef uint32_t (*PollFn)(void*, void*);
 typedef void (*DropFn)(void*);
@@ -212,7 +213,7 @@ const NATIVE_LIBS: &[&str] = &[
 #[cfg(not(target_env = "msvc"))]
 fn build(name: &str, body: &str) -> Option<PathBuf> {
     let cc = std::env::var("CC").unwrap_or_else(|_| "cc".into());
-    if Command::new(&cc).arg("--version").output().is_err() {
+    if command(&cc).arg("--version").output().is_err() {
         return None;
     }
     let dir = work_dir(name);
@@ -227,10 +228,10 @@ fn build(name: &str, body: &str) -> Option<PathBuf> {
         "aarch64" if cfg!(target_os = "macos") => &["-arch", "arm64"],
         _ => &[],
     };
-    let mut c = Command::new(&cc);
+    let mut c = command(&cc);
     c.args(arch).args(["-c", "-O1", "-o"]).arg(&obj).arg(&src);
     run_ok(c, "cc -c");
-    let mut l = Command::new(&cc);
+    let mut l = command(&cc);
     l.args(arch)
         .arg("-o")
         .arg(&exe)
@@ -263,7 +264,7 @@ fn build(name: &str, body: &str) -> Option<PathBuf> {
 }
 
 fn run(exe: &Path) -> Output {
-    Command::new(exe).output().unwrap()
+    command(exe).output().unwrap()
 }
 
 fn text(b: &[u8]) -> String {
@@ -409,7 +410,7 @@ fn piped_output_is_flushed_when_workers_idle() {
         return;
     };
     let mut child = KillOnDrop(
-        Command::new(&exe)
+        command(&exe)
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap(),
@@ -514,7 +515,7 @@ fn concurrent_tasks_never_interleave_within_a_line() {
     };
     for _ in 0..3 {
         let start = std::time::Instant::now();
-        let mut child = Command::new(&exe)
+        let mut child = command(&exe)
             .env("VELT_THREADS", "8")
             .stdout(std::process::Stdio::piped())
             .spawn()
@@ -606,4 +607,28 @@ fn wait_with_cpu_time(mut child: std::process::Child) -> (std::process::ExitStat
         status,
         Duration::from_nanos((ticks(t[2]) + ticks(t[3])) * 100),
     )
+}
+
+/// `Command::new(program)` for a test's child process. On Windows, when this test process has no
+/// console (a CI agent, a background shell), the child gets a hidden console instead of opening a
+/// window of its own. In a terminal it shares the terminal's console as before, so Ctrl+C still
+/// reaches it.
+fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    let cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    let cmd = {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = cmd;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetConsoleWindow() -> *mut std::ffi::c_void;
+        }
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // SAFETY: takes no arguments; returns this process's console window or null.
+        if unsafe { GetConsoleWindow() }.is_null() {
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        cmd
+    };
+    cmd
 }

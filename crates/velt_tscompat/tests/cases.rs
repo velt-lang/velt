@@ -8,7 +8,7 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use common::{apply_fixes, cases_dir, imports, lint_source, parse};
+use common::{apply_fixes, cases_dir, imports, lint_source, lint_syntax, parse};
 use velt_common::{FileId, Span};
 use velt_tscompat::{lint, Finding, LintModule};
 
@@ -116,7 +116,7 @@ fn every_finding_explains_itself() {
 #[test]
 fn declare_function_is_reported() {
     let src = "declare function add(a: number, b: number): number;\n";
-    let findings = lint_source(Path::new("declare.vlt"), src);
+    let findings = lint_syntax(Path::new("declare.vlt"), src);
     let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
     assert_eq!(codes, ["declare-fn"]);
     assert_eq!(findings[0].span, Span::new(FileId(0), 0, 7));
@@ -126,7 +126,7 @@ fn declare_function_is_reported() {
 fn jsx_with_a_named_provider_is_not_reported() {
     let src = "/** @jsxImportSource some-provider */\n\
                export function A(): JSX.Element { return <a />; }\n";
-    assert!(lint_source(Path::new("named.tsx"), src).is_empty());
+    assert!(lint_syntax(Path::new("named.tsx"), src).is_empty());
 }
 
 /// The fix of `jsx-pragma-comment` keeps the provider: Velt reads the block comment as it read
@@ -147,7 +147,7 @@ fn a_fixed_jsx_pragma_names_the_same_provider() {
 #[test]
 fn only_a_pragma_velt_reads_is_reported() {
     let codes = |src: &str| -> Vec<&str> {
-        lint_source(Path::new("p.tsx"), src)
+        lint_syntax(Path::new("p.tsx"), src)
             .iter()
             .map(|f| f.code)
             .collect()
@@ -157,14 +157,14 @@ fn only_a_pragma_velt_reads_is_reported() {
     let late = "export const a = <b />;\n// @jsxImportSource x\n";
     assert_eq!(codes(late), ["jsx-provider"]);
     let src = "// see the docs; @jsxImportSource x\nexport const a = <b />;\n";
-    let findings = lint_source(Path::new("p.tsx"), src);
+    let findings = lint_syntax(Path::new("p.tsx"), src);
     assert_eq!(findings.len(), 1);
     assert_eq!(
         (findings[0].code, findings[0].fix.is_none()),
         ("jsx-pragma-comment", true)
     );
     let crlf = "// @jsxImportSource x\r\nexport const a = <b />;\r\n";
-    let fix = lint_source(Path::new("p.tsx"), crlf)[0]
+    let fix = lint_syntax(Path::new("p.tsx"), crlf)[0]
         .fix
         .clone()
         .expect("a fix");
@@ -199,7 +199,10 @@ fn imports_of_linted_files_are_inside() {
             ast: &helper_module,
         },
     ];
-    assert_eq!(lint(&modules, &[case.as_path(), helper.as_path()]), vec![]);
+    assert_eq!(
+        lint(&modules, &[case.as_path(), helper.as_path()], None),
+        vec![]
+    );
 }
 
 /// Defaults in `for…of` and `catch` patterns parse but `velt check` rejects them today, so they
@@ -210,7 +213,7 @@ fn defaults_in_for_of_and_catch_patterns_are_linted() {
                \x20 for (const { x = 1.5f64 } of ps) {}\n\
                \x20 try {} catch ({ message = 2.5f64 }) {}\n\
                }\n";
-    let codes: Vec<&str> = lint_source(Path::new("patterns.vlt"), src)
+    let codes: Vec<&str> = lint_syntax(Path::new("patterns.vlt"), src)
         .iter()
         .map(|f| f.code)
         .collect();

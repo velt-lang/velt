@@ -7,7 +7,7 @@
 // ownership of the element; `values()` and the algebra results hold clones; `forEach` borrows.
 
 // An insertion-ordered set of unique values.
-export class Set<T> {
+export class Set<T> implements Iterable<T> {
   private items: Map<T, bool> = new Map<T, bool>();
 
   // A set holding each distinct element of `values` (like JS `new Set(values)`), in
@@ -60,6 +60,11 @@ export class Set<T> {
   // Clones of the elements in insertion order (`for (const x of s.values())`).
   values(): T[] {
     return this.items.keys();
+  }
+
+  // An iterator over the elements when it is made (`values()`), in insertion order.
+  [Symbol.iterator](): Iterator<T> {
+    return new ArrayIterator<T>(this.values());
   }
 
   // Visits the elements in insertion order, borrowing them.

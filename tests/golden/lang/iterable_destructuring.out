@@ -1,0 +1,31 @@
+two of five:
+  yield 0
+  yield 1
+  finally after 5
+after: 0 1
+all of two:
+  yield 0
+  yield 1
+  finally after 2
+after: 0 1
+rest:
+  yield 0
+  yield 1
+  yield 2
+  yield 3
+  finally after 4
+after: 0 [ 1, 2, 3 ]
+hole:
+  return() with 2 left
+after: c2
+defaults:
+after: c1 C0 none
+nested:
+after: one 1 two 2
+for...of heads:
+  return() with 1 left
+row: c2 c1
+  return() with 0 left
+row: c1 c0
+array row: c1! [ 'c0' ]
+array row: c2! [ 'c1', 'c0' ]

@@ -16,7 +16,8 @@
 //!    generated for) and [`void_fields`] (no `void` fields).
 //! 5. [`moves`]: flow-sensitive use-after-move / use-before-init analysis over the HIR; soft moves
 //!    (async-call arguments, strings) used again become clones (`ownership::clone_reused`); then exclusive
-//!    access per call (`ownership::check_exclusive`).
+//!    access per call (`ownership::check_exclusive`), thread boundaries, and what `Mutex.with`
+//!    callbacks let past the lock (`ownership::check_locked`).
 //! 6. `main` validation, [`finalize`] into a `hir::Program`.
 //!
 //! [`ide::check_for_ide`] runs steps 1–5 with side tables recorded for editors instead.
@@ -45,6 +46,7 @@ mod known;
 mod literals;
 mod moves;
 mod ownership;
+mod promise_copies;
 mod readonly;
 mod record_keys;
 mod resolve;
@@ -193,7 +195,9 @@ fn analyze(cx: &mut ctx::Ctx) {
     ownership::box_cells(cx, &moved.boxed);
     ownership::check_exclusive(cx);
     ownership::check_boundaries(cx);
+    ownership::check_locked(cx);
     ownership::check_many_threads(cx);
+    promise_copies::check(cx);
 }
 
 /// Top-level statements run only in the root file: the parser turned an imported module's into

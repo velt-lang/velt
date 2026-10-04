@@ -1,0 +1,54 @@
+// check: no leaks
+// A local of a literal type used as a `case` value acts like the literal (as in TypeScript): it
+// narrows the value and counts toward exhaustiveness, on a union, a discriminant and `typeof`.
+
+type Shape = { kind: "circle"; r: number } | { kind: "square"; side: number };
+
+function g(p: "x" | "y", y: "y"): string {
+  switch (p) {
+    case y:
+      return "y";
+    default: {
+      const q: "x" = p;
+      return q;
+    }
+  }
+}
+
+function h(p: "x" | "y"): string {
+  const x: "x" = "x";
+  const y: "y" = "y";
+  switch (p) {
+    case x:
+      return "is x";
+    case y:
+      return "is y";
+  }
+}
+
+function area(s: Shape): number {
+  const circle: "circle" = "circle";
+  switch (s.kind) {
+    case circle:
+      return s.r * s.r * 3;
+    default:
+      return s.side * s.side;
+  }
+}
+
+function tag(v: string | number): string {
+  const num: "number" = "number";
+  switch (typeof v) {
+    case num:
+      return "a number";
+    default:
+      return v;
+  }
+}
+
+function main() {
+  console.log(g("x", "y"), g("y", "y"));
+  console.log(h("x"), h("y"));
+  console.log(area({ kind: "circle", r: 2 }), area({ kind: "square", side: 3 }));
+  console.log(tag(1), tag("s"));
+}

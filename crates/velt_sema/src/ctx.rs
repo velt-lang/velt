@@ -99,6 +99,10 @@ pub(crate) struct Ctx<'m> {
     pub groups: Option<crate::throws::Groups>,
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
+    /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) whose
+    /// error type is inferred: it must turn out `never`, since the interface's iterator type
+    /// is fixed before bodies are checked (throws/checks.rs).
+    pub iface_generators: Vec<(crate::hir::DefId, String)>,
     /// Items declared inside blocks, visible by name within their block.
     pub nested: Vec<crate::collect::NestedItem>,
     /// For each nested definition: names bound in its enclosing functions (for the
@@ -162,6 +166,7 @@ impl<'m> Ctx<'m> {
             fn_values: vec![],
             groups: None,
             throw_checks: vec![],
+            iface_generators: vec![],
             nested: vec![],
             nested_locals: HashMap::new(),
             jsx_providers: HashMap::new(),
@@ -399,12 +404,17 @@ impl<'m> Ctx<'m> {
         if let Some(&b) = self.shared_memo.get(&t) {
             return b;
         }
-        let b = !self.is_copy(t) && !self.holds_promise(t, 0);
+        let b = !self.is_copy(t) && !self.holds_promise_in(t, 0);
         self.shared_memo.insert(t, b);
         b
     }
 
-    fn holds_promise(&mut self, t: TyId, depth: u32) -> bool {
+    /// Does a value of `t` hold a promise (itself, or in a part)?
+    pub(crate) fn holds_promise(&mut self, t: TyId) -> bool {
+        self.holds_promise_in(t, 0)
+    }
+
+    fn holds_promise_in(&mut self, t: TyId, depth: u32) -> bool {
         if depth > 8 {
             return false;
         }
@@ -422,7 +432,9 @@ impl<'m> Ctx<'m> {
             }
             _ => vec![],
         };
-        parts.into_iter().any(|p| self.holds_promise(p, depth + 1))
+        parts
+            .into_iter()
+            .any(|p| self.holds_promise_in(p, depth + 1))
     }
 
     /// Ownership: can values of this type be duplicated bitwise?

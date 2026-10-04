@@ -132,6 +132,7 @@ fn huggable(e: &Expr) -> bool {
             ArrowBody::Block(_) => true,
             ArrowBody::Expr(e) => super::jsx::is_jsx_layout(e),
         },
+        ExprKind::Function(_) => true,
         _ => false,
     }
 }

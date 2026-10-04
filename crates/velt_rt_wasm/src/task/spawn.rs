@@ -41,6 +41,15 @@ unsafe extern "C" fn join_drop(f: *mut VeltFut) {
     drop(Box::from_raw(f as *mut JoinHandle));
 }
 
+/// A combinator handles join handle `f` (anything else is left alone): its unclaimed result is
+/// dropped with `quiet` (null: nothing to drop), not reported as an unhandled rejection.
+pub(crate) unsafe fn mark_join_handled(f: *mut VeltFut, quiet: Option<ResultDropFn>) {
+    let poll = join_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32;
+    if std::ptr::fn_addr_eq((*f).poll.0, poll) {
+        (*(f as *mut JoinHandle)).join.borrow_mut().result_drop = quiet;
+    }
+}
+
 fn checked_size(result_size: u64) -> usize {
     if result_size as usize > MAX_RESULT {
         crate::panic::fatal("spawn: task result larger than 256 bytes");

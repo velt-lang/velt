@@ -112,8 +112,10 @@ jobs:
 
   # The lint's claims against a pinned TypeScript (crates/velt_tscompat/tests/oracle.rs): the
   # rule fixtures compile with `tsc` where the lint passes them, and each rule's sample is
-  # rejected (or, for a behaviour rule, accepted). The pull request gate skips the `tsc` part,
-  # which needs the Node packages; VELT_TSC_ORACLE=1 makes a missing `tsc` fail here.
+  # rejected (or, for a behaviour rule, accepted). Behaviour samples then run under `velt run`
+  # and Node, which must print differently, and the same once the lint's fixes are applied
+  # (crates/veltc/tests/ts_compat_node). The pull request gate skips the parts that need the
+  # Node packages or a Node that strips types; VELT_TSC_ORACLE=1 makes them fail here.
   tsc-oracle:
     if: inputs.only != 'gate' && inputs.only != 'stress'
     runs-on: ubuntu-latest
@@ -123,8 +125,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
+      # Node runs the behaviour samples with their types stripped (22.7 or newer).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - name: npm ci (the pinned typescript)
         working-directory: tests/tscompat-oracle
         run: npm ci --no-audit --no-fund
       - name: oracle
         run: cargo test -p velt_tscompat --test oracle -- --nocapture
+      - name: behaviour samples under Node
+        run: cargo test -p veltc --test ts_compat behaviour_samples -- --nocapture
