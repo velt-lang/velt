@@ -189,8 +189,19 @@ pub(super) unsafe fn release(data: *mut u8, cap: usize, header: bool) {
     }
     stats::free();
     if header {
-        // The last reference: nobody reads the table any more.
-        super::crumbs::free(crumbs(data).load(Ordering::Acquire));
+        return free_with_header(data, cap);
     }
-    alloc::dealloc(data.sub(prefix(header)), layout(cap, header));
+    alloc::dealloc(data.sub(COUNT), layout(cap, false));
+}
+
+/// Free a non-ASCII buffer and its breadcrumb table: out of line, so dropping a string (inlined
+/// into `velt_rt_str_drop` and generated code's drops) keeps a short register-light fast path.
+///
+/// # Safety
+/// As for [`release`], for the last reference to a buffer with a header.
+#[inline(never)]
+unsafe fn free_with_header(data: *mut u8, cap: usize) {
+    // The last reference: nobody reads the table any more.
+    super::crumbs::free(crumbs(data).load(Ordering::Acquire));
+    alloc::dealloc(data.sub(HEADER), layout(cap, true));
 }

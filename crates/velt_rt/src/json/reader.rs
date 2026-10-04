@@ -413,15 +413,29 @@ impl Reader {
         match tok {
             // SAFETY: the source outlives the reader (reader_new's contract); the static form
             // is never freed.
-            StrTok::Borrowed(start, end) if self.lone_free => unsafe {
-                VeltStr::borrowed_text(self.sc.src[start..].as_ptr(), end - start, self.sc.units)
-            },
-            // SAFETY: as above; a range between two quotes of canonical WTF-8 is canonical.
+            // A static string keeps no lone count, so the source's lone surrogates (if any) need
+            // no bookkeeping here; a range between two quotes of canonical WTF-8 is canonical.
             StrTok::Borrowed(start, end) => unsafe {
                 VeltStr::borrowed_units(self.sc.src[start..].as_ptr(), end - start, self.sc.units)
             },
-            StrTok::Owned(v) => self.decoded(&v),
+            StrTok::Owned(v) => self.decoded_escaped(&v),
         }
+    }
+
+    /// [`Self::decoded`] of a string that had escapes, out of line: it is the rarer case, and
+    /// inlined it would cost the borrowed fast path registers.
+    #[inline(never)]
+    fn decoded_escaped(&self, v: &[u8]) -> VeltStr {
+        self.decoded(v)
+    }
+
+    /// [`Self::decoded`] of a source with lone surrogates (out of line: rare): its raw lone
+    /// surrogates are counted (escapes decode to code points, a lone surrogate escape still to
+    /// U+FFFD before #377 phase 2b, so nothing joins).
+    #[cold]
+    #[inline(never)]
+    fn decoded_wtf8(&self, v: &[u8]) -> VeltStr {
+        VeltStr::from_wtf8_units(v, self.sc.units)
     }
 
     /// A string token as an owned `VeltStr`.
@@ -438,9 +452,7 @@ impl Reader {
     #[inline]
     fn decoded(&self, v: &[u8]) -> VeltStr {
         if !self.lone_free {
-            // Raw lone surrogates of the source (escapes decode to code points, a lone
-            // surrogate escape still to U+FFFD before #377 phase 2b, so nothing joins).
-            return VeltStr::from_wtf8_units(v, self.sc.units);
+            return self.decoded_wtf8(v);
         }
         // SAFETY: the source has no lone surrogates, so it is UTF-8 (`scan.rs`): raw contents
         // are a slice of it between two quotes, and decoding turns every escape into a scalar
