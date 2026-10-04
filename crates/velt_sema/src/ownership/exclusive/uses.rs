@@ -103,6 +103,8 @@ impl Collector<'_, '_> {
             | E::UnwrapVariant {
                 expr: base, mode, ..
             } => self.place_of(base).map(|(p, _)| (p, *mode)),
+            // The same object, seen as a subclass.
+            E::Downcast(base) => self.place_of(base),
             _ => None,
         }
     }
@@ -135,7 +137,7 @@ impl Collector<'_, '_> {
             return self.index_operands(e, nested);
         }
         match &mut e.kind {
-            E::Upcast(x) | E::WrapSome(x) | E::ToDyn { expr: x, .. } => {
+            E::Upcast(x) | E::Downcast(x) | E::WrapSome(x) | E::ToDyn { expr: x, .. } => {
                 self.direct(x, direct, nested)
             }
             E::If { cond, then, els } => {
@@ -153,7 +155,8 @@ impl Collector<'_, '_> {
         match &mut e.kind {
             E::Field { base, .. }
             | E::UnwrapSome(base, _)
-            | E::UnwrapVariant { expr: base, .. } => self.index_operands(base, nested),
+            | E::UnwrapVariant { expr: base, .. }
+            | E::Downcast(base) => self.index_operands(base, nested),
             E::Index { base, index, .. } => {
                 self.nested(index, nested);
                 self.index_operands(base, nested);
@@ -236,7 +239,8 @@ impl Nested<'_, '_, '_> {
         if let E::Field { base, .. }
         | E::Index { base, .. }
         | E::UnwrapSome(base, _)
-        | E::UnwrapVariant { expr: base, .. } = &e.kind
+        | E::UnwrapVariant { expr: base, .. }
+        | E::Downcast(base) = &e.kind
         {
             self.skip.insert(&**base as *const Expr);
         }

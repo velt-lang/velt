@@ -7,4 +7,7 @@ sort(cmp) stable: 24/24 ok
 [ 'Alpha', 'alpha', 'bravo', 'charlie', 'delta', 'Echo' ]
 [Alpha,alpha,bravo,charlie,delta,Echo] [AlphaalphabravocharliedeltaEcho] [--x--]
 [solo] [] [é·ü]
-[ 9, 6, 5, 5, 4, 2, 1, 1 ]
+[
+  9, 6, 5, 5,
+  4, 2, 1, 1
+]

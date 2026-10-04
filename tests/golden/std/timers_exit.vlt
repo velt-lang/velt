@@ -1,0 +1,12 @@
+// `process.exit` ends the process at once, also while a ref'd timer is pending (an hour long
+// here, so the program would not end if the timer kept it alive), like Node.
+async function stop(): Promise<void> {
+  console.log("exiting with 3");
+  process.exit(3);
+}
+
+async function main() {
+  setTimeout(async () => console.log("never printed"), 3600000);
+  setTimeout(() => stop(), 10);
+  console.log("main returns");
+}

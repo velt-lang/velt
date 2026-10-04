@@ -1,0 +1,23 @@
+// Assigning the local a narrowed `readonly` field path starts from drops the narrowing: the
+// path now names a field of another object (#56). TypeScript reports the same read (TS2339).
+class Base {
+  b = 1;
+}
+
+class Sub extends Base {
+  s: string = "sub";
+}
+
+class Holder {
+  constructor(readonly ro: Base) {}
+}
+
+function main() {
+  let n = new Holder(new Sub());
+  const other = new Holder(new Base());
+  if (n.ro instanceof Sub) {
+    console.log(n.ro.s);
+    n = other;
+    console.log(n.ro.s);
+  }
+}

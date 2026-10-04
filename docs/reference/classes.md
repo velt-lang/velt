@@ -56,13 +56,17 @@ hidden classes and no runtime shape checks.
   running a constructor; `JSON.stringify` writes it as usual
   ([`velt:json`](../std/json.md)).
 - **Single inheritance**: `class B extends A`. The base's fields are a prefix of the subclass
-  layout, so upcasts are free. Redefining a base method requires `override`; `super.m()` calls
-  the base version. There are no abstract classes.
-- **`super(…)`**: the constructor of a class whose base has a constructor calls `super(…)`, as
-  in TypeScript. Statements may come before it as long as they don't use `this` or `super.x`
+  layout, so upcasts are free. A subclass without a constructor of its own inherits its
+  base's. Redefining a base method requires `override`; `super.m()` calls the base version.
+  There are no abstract classes.
+- **`super(…)`**: the constructor of a subclass calls `super(…)`, as in TypeScript, also when
+  the base class has no constructor (`super();`). Statements may come before it as long as they
+  don't use `this` or `super.x`
   (``'super' must be called before accessing 'this' in the constructor of a derived class``) or
   `return`; they run first, then the call's arguments, the base constructor, this class's field
-  initializers and parameter properties, and the rest of the body:
+  initializers and parameter properties, and the rest of the body. This holds also when the
+  class has initialized fields or parameter properties, which are set right after `super(…)`
+  returns, as in JavaScript (TypeScript 4.6+):
 
   ```ts
   class Shape {
@@ -83,9 +87,9 @@ hidden classes and no runtime shape checks.
   ```
 
   The call itself is a statement of the constructor's body, made once: not inside a block, `if`,
-  `try`, `switch`, loop or closure, and not part of an expression. TypeScript requires this too
-  once a class has initialized fields, parameter properties or private fields (TS2401), and
-  otherwise allows a nested call. Velt requires it always: the field initializers run right
+  `try`, `switch`, loop or closure, and not part of an expression. TypeScript allows a nested
+  call (it reports TS2401 only for targets before ES2022 or with `useDefineForClassFields:
+  false`). Velt requires a statement of the body always: the field initializers run right
   after the call and every field must be initialized, so the call has to run exactly once on
   every path. This is the one place Velt is stricter than TypeScript here. When a constructor
   throws (before `super(…)`, in the base constructor or in a field initializer), `new` frees the
@@ -108,7 +112,9 @@ hidden classes and no runtime shape checks.
   then the getter runs, then the right-hand side, then the setter (which `??=`, `||=` and `&&=`
   skip when the old value decides). A getter may change its object (a signal recording who
   read it). `x.size ??= v` cannot be used as a value. Implementations and overrides of a
-  getter or setter must be accessors too. Getters cannot be `static` or `async`.
+  getter or setter must be accessors too. Getters cannot be `static` or `async`. A getter's
+  type may be inferred from its `return` like a method's
+  ([Return types](functions.md#return-types)); an interface getter writes it.
 - Instances are references, as in JS ([Memory model](memory.md#values-and-references)):
   `const b = a` refers to the same object. `x.clone()` makes an independent deep copy of any
   class, struct or union (like `structuredClone`), except values owning a `[Symbol.dispose]`
@@ -200,6 +206,64 @@ console.log(new Square(2.0).name);                                              
 // new Celsius(5.0) and new Shape("x") are errors here; so is `class Kelvin extends Celsius`.
 ```
 
+### `instanceof` downcasts
+
+`x instanceof C` on a value of a base class of `C` tests the object's actual class: it is true
+for a `C` and for instances of `C`'s subclasses. Where it holds, `x` reads as a `C`, with the
+same narrowing rules as for unions (`if`/`else`, early returns, `&&`, `||`, `!`, ternaries,
+until `x` is reassigned). The same works on an interface value (a `Shape` holding a `Circle`),
+on `C | null` (true means not `null`) and on a union member whose class is a base of `C`, so
+`catch (e)` chains can tell error subclasses apart. A path of `readonly` fields
+(`node.left instanceof Num`) narrows too; a mutable field could change before it is read, so
+copy it into a local first. The test reads the class id in the object's vtable: one load and
+one comparison, whatever the depth of the hierarchy.
+
+- The narrowed type keeps the type arguments: a `Box<i64>` tested for
+  `class Labeled<T> extends Box<T>` is a `Labeled<i64>`. A generic class whose type arguments
+  do not follow from the tested type is an error.
+- A test that can never be true is an error, as in a union: `a instanceof Rock` on an
+  `Animal` when `Rock` does not extend `Animal`, or on an interface value when neither the
+  class nor its subclasses implement the interface. (TypeScript accepts these; in Velt classes
+  are nominal, so the answer is known.)
+
+```ts
+class AppError extends Error {}
+
+class NotFound extends AppError {
+  constructor(readonly id: string) {
+    super(`no item ${id}`);
+  }
+}
+
+class Timeout extends AppError {
+  constructor(readonly ms: i64) {
+    super(`timed out after ${ms}ms`);
+  }
+}
+
+function fetchItem(id: string): string throws AppError {
+  if (id == "") {
+    throw new Timeout(30);
+  }
+  throw new NotFound(id);
+}
+
+function describe(id: string): string {
+  try {
+    return fetchItem(id);
+  } catch (e) {                   // e: AppError
+    if (e instanceof NotFound) {
+      return `missing ${e.id}`;
+    } else if (e instanceof Timeout) {
+      return `timeout after ${e.ms}ms`;
+    }
+    return e.message;
+  }
+}
+
+console.log(describe("a"), "/", describe("")); // missing a / timeout after 30ms
+```
+
 ## Structs
 
 `struct` declares an object type with the same members as a class (methods, getters,
@@ -254,8 +318,10 @@ console.log(p.len(), q.len());  // 4 4
   (direct calls). Used as a **value type** (`Named[]` holding different classes), it is a fat
   pointer (data plus vtable), like Rust's `dyn`.
 - **Generic methods** (`apply<U>(f: (x: i64) => U): U[]`) are dispatched statically only: call
-  them on a concrete class or on a `T extends I` generic, not on an interface value. Generic
-  interface methods cannot have default bodies yet.
+  them on a concrete class or on a `T extends I` generic, not on an interface value
+  (``generic method `apply` cannot be called on an interface value``): make the calling
+  function generic over the receiver (`<T extends Mapper>(m: T)` instead of `(m: Mapper)`), or
+  call a method that is not generic. Generic interface methods cannot have default bodies yet.
 - A default body can be `async` (`async load(): Promise<T> { … }`), with the rules of an async
   class method ([Async](async.md#errors)). A method without a body cannot be: like in TypeScript,
   it declares a `Promise` result, and implementations may be `async`.

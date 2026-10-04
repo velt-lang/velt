@@ -1,0 +1,4 @@
+widen_aliased_call.vlt:35:22: error: cannot use the `C[]` that `Store.items` returns as `Named[]`
+  = note: convert a copy instead: `(…).map((x): Named => x)` (a new `Named[]`)
+widen_aliased_call.vlt:36:22: error: cannot use the `C[]` that `Store.all` returns as `Named[]`
+widen_aliased_call.vlt:37:22: error: cannot use the `C[]` that `Store.remember` returns as `Named[]`

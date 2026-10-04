@@ -19,7 +19,7 @@ pub(super) fn has_moves(p: &Pat) -> bool {
         PatKind::Adt { fields } => fields.iter().any(|(_, q)| has_moves(q)),
         PatKind::Array { elems, .. } => elems.iter().any(has_moves),
         PatKind::Some(q) => has_moves(q),
-        PatKind::Wildcard | PatKind::Lit(_) | PatKind::None => false,
+        PatKind::Wildcard | PatKind::Lit(_) | PatKind::None | PatKind::InstanceOf(_) => false,
     }
 }
 
@@ -96,6 +96,10 @@ impl FnLower<'_, '_> {
                 }
             }
             PatKind::Or(alts) => self.test_or(alts, place, ty, fail),
+            PatKind::InstanceOf(class) => {
+                let ok = self.instance_test(place, ty, *class);
+                self.cond_jump(ok, fail);
+            }
             PatKind::None => {
                 let some = self.option_is_some(place, ty);
                 let next = self.new_block();
@@ -243,7 +247,7 @@ impl FnLower<'_, '_> {
                     ice("bindings inside or-patterns are not supported");
                 }
             }
-            PatKind::Wildcard | PatKind::Lit(_) | PatKind::None => {}
+            PatKind::Wildcard | PatKind::Lit(_) | PatKind::None | PatKind::InstanceOf(_) => {}
         }
     }
 
@@ -376,6 +380,6 @@ fn binds_anything(p: &Pat) -> bool {
         PatKind::Adt { fields } => fields.iter().any(|(_, q)| binds_anything(q)),
         PatKind::Array { elems, rest } => rest.is_some() || elems.iter().any(binds_anything),
         PatKind::Some(q) => binds_anything(q),
-        PatKind::Wildcard | PatKind::Lit(_) | PatKind::None => false,
+        PatKind::Wildcard | PatKind::Lit(_) | PatKind::None | PatKind::InstanceOf(_) => false,
     }
 }

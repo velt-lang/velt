@@ -102,13 +102,31 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         };
         let elem = self.cx.ty.array_elem(arr).unwrap_or(self.cx.ty.error);
-        let mut hs = vec![];
-        for c in kids {
-            let h = self.child_value(p, c, elem);
-            hs.push(self.jsx_coerce(h, elem, &what));
-        }
+        let hs: Vec<hir::Expr> = kids.iter().map(|c| self.child_value(p, c, elem)).collect();
+        let (elem, arr) = match self.inferred_child_type(elem, &hs) {
+            Some(t) => (t, self.cx.ty.array(t)),
+            None => (elem, arr),
+        };
+        let hs = hs
+            .into_iter()
+            .map(|h| self.jsx_coerce(h, elem, &what))
+            .collect();
         let h = self.mk(H::ArrayLit(hs), arr, span);
         self.jsx_coerce(h, fty, &what)
+    }
+
+    /// The element type of several children where the declared one mentions a type parameter
+    /// not inferred yet (`children: T[]`): the type of the first typed child (widened from a
+    /// literal type), which the others must convert to.
+    fn inferred_child_type(&mut self, elem: TyId, hs: &[hir::Expr]) -> Option<TyId> {
+        if !self.cx.ty.has_error(elem) {
+            return None;
+        }
+        let first = hs
+            .iter()
+            .map(|h| h.ty)
+            .find(|t| !self.cx.ty.is_bottom(*t) && !self.cx.ty.has_error(*t))?;
+        Some(self.cx.widened(first))
     }
 
     /// The array type `t` is or contains (`T[]`, `T[] | null`, a union with an array member).

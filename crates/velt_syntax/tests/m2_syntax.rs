@@ -102,7 +102,9 @@ fn getters() {
     assert_eq!(c.fields[0].name.name, "get");
     assert!(c.methods[2].is_getter && c.methods[2].is_private);
     assert!(errors("class C { get x(a: i64): i64 { return a; } }")[0].contains("parameters"));
-    assert!(errors("class C { get x() {} }")[0].contains("return type"));
+    // The type of a getter without one is inferred from its body (sema).
+    assert!(c.methods[0].decl.sig.ret.is_some());
+    parse_ok("class C { get x() { return 1; } }");
     assert!(errors("class C { static get x(): i64 { return 1; } }")[0].contains("`static`"));
     let i = parse_ok("interface I { get area(): f64; }");
     let ItemKind::Interface(d) = &i.items[0].kind else {

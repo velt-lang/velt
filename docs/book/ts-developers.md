@@ -155,6 +155,10 @@ contents.
   classes and no `protected` members (`private` is private to the declaring class); a
   constructor can be `private` or `protected`, with TypeScript's rules.
 - `static readonly` constants exist; mutable statics don't.
+- Constructors follow TypeScript's `super(...)` rules: a derived constructor calls it exactly
+  once (also when the base has no constructor), and statements before it cannot use `this`.
+  As in TypeScript 4.6+, such statements are allowed also when the class has initialized fields
+  or parameter properties; those are set right after `super(...)` returns.
 - Field initializers and constructors run in JavaScript's order (base initializers, base
   constructor, derived initializers, derived constructor), and parameter properties come first
   in the field order, as `tsc --target es2022` emits them.
@@ -171,7 +175,12 @@ contents.
 - No overloads. Optional and default parameters work, on arrows too; rest parameters
   (`...xs: T[]`) take spread arguments (`f(...xs)`) at their position. Callbacks may take fewer
   parameters than they are passed (`xs.map((x) => …)` gets `(x, i)`).
-- Parameter types are required; the return type is inferred only as `void` when omitted.
+- Parameter types are required. As in TypeScript, an omitted return type is inferred from the
+  `return` expressions (a union when they differ, `Promise<T>` for `async`, `void` without a
+  value). As in TypeScript, a function whose `return` expressions depend on the function
+  itself needs an annotation; uses elsewhere in the body don't. A `return;` next
+  to `return value;` is an error rather than `T | undefined`: return `null` with a `T | null`
+  type.
 - Generics are compiled per instantiation (monomorphized), so generic code is as fast as
   hand-written code. Bounds are interfaces.
 - Generators (`function*`, `*name()` methods, `yield`, `yield*`) work as in JS, lazily, with
@@ -212,8 +221,10 @@ surprise ([Error handling](errors.md)).
 - Promises have no `then`, `catch` or `finally`: `await` them, inside `try`/`catch`/`finally`
   to handle their errors. *Why*: one way to sequence async code, and errors stay typed.
 - `new Promise((resolve, reject) => …)` and `Promise.withResolvers()` work as in JS; `resolve`
-  and `reject` may be kept and called later from any task. No global `setTimeout` (use
-  `sleep(ms)` or [`velt:timers`](../std/timers.md)).
+  and `reject` may be kept and called later from any task. `setTimeout`, `setInterval` and
+  their `clear` functions are globals; the callback returns the promise to run
+  (`setTimeout(() => save(doc), 100)` or `async () => { … }`), and a pending timer keeps the
+  process alive unless it is `unref()`ed, as in Node ([`velt:timers`](../std/timers.md)). To wait, `await sleep(ms)`.
 - A promise has one owner (for now; shared promises are planned in #212). `const q = p` moves
   it, so using `p` afterwards is an error, and a promise can't be copied out of a collection:
   `arr[i]` moved or bound (`const p = arr[0]`), `[...arr]`, `const [a, b] = arr`, `m.get(k)`,
@@ -257,7 +268,7 @@ method names), `BigInt` literals (use [`velt:bigint`](../std/bigint.md)), Unicod
 identifiers. `x!` is checked (a `null` panics) where TypeScript trusts it, and `as const` keeps
 the value as it is. `Date` follows JS (months 0-11, local-time getters); its `toString()` has no
 time zone name and its `toLocale…` methods always format as `en-US`. JSX is supported for
-server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `children` yet.
+server-side rendering ([`velt:jsx`](../std/jsx.md)).
 
 ## Quick reference
 

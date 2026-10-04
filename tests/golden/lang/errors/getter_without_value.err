@@ -1,0 +1,2 @@
+getter_without_value.vlt:6:7
+error: a getter must return a value

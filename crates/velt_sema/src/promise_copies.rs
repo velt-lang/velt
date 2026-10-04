@@ -7,9 +7,10 @@
 //!
 //! After all bodies and the ownership passes (which add shares), each function's facts are
 //! collected: the types its `Share` / `Clone` intrinsics copy, and its calls of generic
-//! functions. A fixed point over the call graph (like the record-key check) gives each function
-//! the generic types it copies, substituted at every call; a call that makes one of them a
-//! promise-holding type is reported there.
+//! functions. A fixed point over the call graph (like the record-key check, revisiting only the
+//! functions whose callees' copies grew) gives each function the generic types it copies,
+//! substituted at every call; a call that makes one of them a promise-holding type is reported
+//! there.
 
 use std::collections::{HashMap, HashSet};
 
@@ -17,7 +18,7 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::dispatch::{instantiate, Dispatch};
+use crate::dispatch::{add_work, instantiate, Dispatch, Pass, Rounds};
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, StmtKind, TyId, TyKind};
 use crate::types::collect_params;
 use crate::visit::{self, VisitMut};
@@ -139,58 +140,79 @@ pub(crate) fn check(cx: &mut Ctx) {
             }
         }
     }
+    let reads = facts.iter().enumerate().flat_map(|(i, (_, fx))| {
+        let calls = fx.calls.iter().chain(&fx.dyn_calls).map(|(d, _, _)| *d);
+        calls
+            .chain(fx.closures.iter().copied())
+            .map(move |d| (i, d))
+    });
+    let mut rounds = Rounds::new(facts.len(), reads);
+    let mut work = dispatch.work;
     // The generic types each function copies (types that mention its type parameters).
     let mut needs: HashMap<DefId, Vec<Copy>> = HashMap::new();
     // Concrete promise-holding copies found at calls: (caller, call span) -> (copied type, callee).
     let mut found: Vec<(DefId, Span, TyId, DefId)> = vec![];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for (f, fx) in &facts {
-            let mut reqs: Vec<(Copy, Option<(Span, DefId)>)> =
-                fx.copies.iter().map(|c| (*c, None)).collect();
-            for (d, targs, span) in &fx.calls {
-                for (t, deep) in needs.get(d).cloned().unwrap_or_default() {
-                    reqs.push(((cx.ty.subst(t, targs), deep), Some((*span, *d))));
+    let mut found_at: HashSet<(DefId, Span)> = HashSet::new();
+    while let Some(i) = rounds.pop() {
+        let (f, fx) = &facts[i];
+        work += (fx.copies.len() + fx.calls.len() + fx.dyn_calls.len() + fx.closures.len()) as u64;
+        let mut grew = false;
+        for ((t, deep), at) in requirements(cx, fx, &needs) {
+            if is_generic(cx, t) {
+                let n = needs.entry(*f).or_default();
+                if !n.contains(&(t, deep)) {
+                    n.push((t, deep));
+                    grew = true;
                 }
-            }
-            for (m, args, span) in &fx.dyn_calls {
-                for (t, deep) in needs.get(m).cloned().unwrap_or_default() {
-                    if let Some(t) = instantiate(cx, t, args) {
-                        reqs.push(((t, deep), Some((*span, *m))));
-                    }
-                }
-            }
-            for c in &fx.closures {
-                for copy in needs.get(c).cloned().unwrap_or_default() {
-                    reqs.push((copy, None));
-                }
-            }
-            for ((t, deep), at) in reqs {
-                if is_generic(cx, t) {
-                    let n = needs.entry(*f).or_default();
-                    if !n.contains(&(t, deep)) {
-                        n.push((t, deep));
-                        changed = true;
-                    }
-                } else if let Some((span, callee)) = at {
-                    if copies_promise(cx, t, deep, &mut vec![])
-                        && !found.iter().any(|(g, s, _, _)| *g == *f && *s == span)
-                    {
-                        found.push((*f, span, t, callee));
-                    }
+            } else if let Some((span, callee)) = at {
+                if copies_promise(cx, t, deep, &mut vec![]) && found_at.insert((*f, span)) {
+                    found.push((*f, span, t, callee));
                 }
             }
         }
+        if grew {
+            rounds.changed(*f);
+        }
     }
+    add_work(Pass::PromiseCopies, work);
     found.sort_by_key(|(_, s, _, _)| (s.file, s.lo));
     for (f, span, t, callee) in found {
+        // `facts` is in definition order.
         let iterating = facts
-            .iter()
-            .find(|(g, _)| *g == f)
-            .is_some_and(|(_, fx)| fx.loops.contains(&span));
+            .binary_search_by_key(&f, |(g, _)| *g)
+            .is_ok_and(|i| facts[i].1.loops.contains(&span));
         report(cx, span, t, callee, iterating);
     }
+}
+
+/// The types function `fx` copies: its own copies, and those of the generic functions it calls
+/// (substituted, with the call), the methods it calls dynamically (instantiated) and the
+/// closures it creates.
+fn requirements(
+    cx: &mut Ctx,
+    fx: &Facts,
+    needs: &HashMap<DefId, Vec<Copy>>,
+) -> Vec<(Copy, Option<(Span, DefId)>)> {
+    let mut reqs: Vec<(Copy, Option<(Span, DefId)>)> =
+        fx.copies.iter().map(|c| (*c, None)).collect();
+    for (d, targs, span) in &fx.calls {
+        for (t, deep) in needs.get(d).into_iter().flatten() {
+            reqs.push(((cx.ty.subst(*t, targs), *deep), Some((*span, *d))));
+        }
+    }
+    for (m, args, span) in &fx.dyn_calls {
+        for (t, deep) in needs.get(m).into_iter().flatten() {
+            if let Some(t) = instantiate(cx, *t, args) {
+                reqs.push(((t, *deep), Some((*span, *m))));
+            }
+        }
+    }
+    for c in &fx.closures {
+        for copy in needs.get(c).into_iter().flatten() {
+            reqs.push((*copy, None));
+        }
+    }
+    reqs
 }
 
 /// `[]` (a defaulted `entries` argument): holds nothing to copy.

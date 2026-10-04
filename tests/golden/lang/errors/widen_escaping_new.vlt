@@ -1,0 +1,32 @@
+// `new` gives a fresh value only when its constructor keeps `this` to itself (#268). This
+// `Box` registers itself in `all`, so `all[0]` and `b` are one object: TypeScript prints
+// "K K" after `b.v = new K()`. Converting a copy would leave `all[0]` holding the `C`, so both
+// widenings are errors.
+interface Named {
+  name(): string;
+}
+
+class C implements Named {
+  name(): string {
+    return "C";
+  }
+}
+
+class Box<T> {
+  v: T;
+  constructor(v: T, all: Box<T>[]) {
+    this.v = v;
+    all.push(this);
+  }
+}
+
+function make(all: Box<C>[]): Box<C> {
+  return new Box(new C(), all);
+}
+
+function main() {
+  const all: Box<C>[] = [];
+  const b: Box<Named> = make(all);
+  const d: Box<Named> = new Box<C>(new C(), all);
+  console.log(all.length, b.v.name(), d.v.name());
+}

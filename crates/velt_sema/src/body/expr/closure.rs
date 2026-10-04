@@ -77,10 +77,10 @@ impl FnCx<'_, '_> {
         if !type_params.is_empty() {
             self.cx.error(
                 velt_common::Diagnostic::error(
-                    "a generic arrow function must be a module-level constant with typed parameters and a return type",
+                    "a generic arrow function must be the value of a `const` with typed parameters",
                     e.span,
                 )
-                .with_note("a function value has one type; write `const id = <T>(x: T): T => x;` at module level, or a generic `function`"),
+                .with_note("a function value has one type; declare it as `const id = <T>(x: T) => x;` and call it, or write a generic `function`"),
             );
             return self.error_expr(e.span);
         }
@@ -285,12 +285,18 @@ impl FnCx<'_, '_> {
             ast::ArrowBody::Block(b) => {
                 let mut stmts = vec![];
                 self.stmts_into(&b.stmts, &mut stmts);
-                let block = hir::Block {
+                let mut block = hir::Block {
                     stmts,
                     value: None,
                     span: b.span,
                 };
-                let ret = self.f.ret.unwrap_or(self.cx.ty.unit);
+                let ret = match self.f.ret {
+                    Some(r) => r,
+                    None => {
+                        self.finish_inferred_ret(&mut block, "this arrow function")
+                            .0
+                    }
+                };
                 self.check_returns("closure", ret, span, &block);
                 block
             }

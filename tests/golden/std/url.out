@@ -87,7 +87,13 @@ true false true
 x y z   %zz
 b=two+words&a=1&c=x+y+z&novalue=&%E2%82%AC=%25zz&a=4
 [ 'a', 'b', 'c', 'novalue', '€' ] [ 'only', 'two words', 'x y z', '', '%zz' ]
-[ [ 'a', 'only' ], [ 'b', 'two words' ], [ 'c', 'x y z' ], [ 'novalue', '' ], [ '€', '%zz' ] ]
+[
+  [ 'a', 'only' ],
+  [ 'b', 'two words' ],
+  [ 'c', 'x y z' ],
+  [ 'novalue', '' ],
+  [ '€', '%zz' ]
+]
 ["��","�x","�","���z","��"]
 k=a%26b%3Dc%2Fd%7E*%27%28%29%21%C3%A9 1
 ?x=1&y=2 x=9&y=2&z=a+b
