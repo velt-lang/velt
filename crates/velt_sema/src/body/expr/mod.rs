@@ -39,6 +39,7 @@ mod ops;
 mod ordering;
 mod process;
 mod promise_new;
+mod promise_reads;
 mod record;
 mod record_call;
 mod record_compound;

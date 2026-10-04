@@ -46,6 +46,7 @@ mod known;
 mod literals;
 mod moves;
 mod ownership;
+mod promise_copies;
 mod readonly;
 mod record_keys;
 mod resolve;
@@ -196,6 +197,7 @@ fn analyze(cx: &mut ctx::Ctx) {
     ownership::check_boundaries(cx);
     ownership::check_locked(cx);
     ownership::check_many_threads(cx);
+    promise_copies::check(cx);
 }
 
 /// Top-level statements run only in the root file: the parser turned an imported module's into

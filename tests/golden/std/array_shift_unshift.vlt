@@ -1,0 +1,56 @@
+// Array.prototype.shift() and unshift() (#387), compared with node.
+
+class Point {
+  x: number;
+  constructor(x: number) {
+    this.x = x;
+  }
+}
+
+function main() {
+  const xs = [1, 2, 3];
+  const first = xs.shift();
+  console.log(first, xs);
+  const n = xs.unshift(7, 8);
+  console.log(n, xs);
+  console.log(xs.unshift(), xs.length);
+  xs.unshift(9);
+  console.log(xs);
+  while (xs.length > 0) {
+    console.log(xs.shift());
+  }
+  console.log(xs.shift() == null, xs.length);
+
+  const words: string[] = [];
+  words.unshift("b");
+  words.unshift("a");
+  words.push("c");
+  console.log(words);
+  const a = words.shift();
+  console.log(a ?? "none", words);
+  const more = ["x", "y"];
+  words.unshift(...more);
+  console.log(words, more);
+
+  const points = [new Point(1), new Point(2)];
+  const p = points.shift();
+  if (p != null) {
+    points.unshift(p, new Point(3));
+  }
+  console.log(points);
+  const q = points[0];
+  q.x = 10;
+  console.log(points[0].x, points.length);
+
+  const queue: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    queue.unshift(i);
+  }
+  let sum: number = 0;
+  let next = queue.shift();
+  while (next != null) {
+    sum = sum * 10 + next;
+    next = queue.shift();
+  }
+  console.log(sum, queue);
+}

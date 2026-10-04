@@ -214,6 +214,14 @@ surprise ([Error handling](errors.md)).
 - `new Promise((resolve, reject) => …)` and `Promise.withResolvers()` work as in JS; `resolve`
   and `reject` may be kept and called later from any task. No global `setTimeout` (use
   `sleep(ms)` or [`velt:timers`](../std/timers.md)).
+- A promise has one owner (for now; shared promises are planned in #212). `const q = p` moves
+  it, so using `p` afterwards is an error, and a promise can't be copied out of a collection:
+  `arr[i]` moved or bound (`const p = arr[0]`), `[...arr]`, `const [a, b] = arr`, `m.get(k)`,
+  `Object.values(r)` and generic code that copies its elements report an error that says
+  TypeScript allows it and names the alternative. Take promises out with `pop()` or
+  `splice(i, 1)`, await them together with `Promise.all(arr)`, or store the awaited results.
+  Replacing one in place (`arr[i] = p`) works, and so does reading a class instance that holds
+  one (`m.get(k)` of a `Map<string, Job>`). Printing a promise is not supported yet (#413).
 - Std streams are async iterables: `for await` over a [channel](../std/channel.md), a file's
   `lines()`, standard input's `lines()`, a WebSocket, a Redis subscriber or a `Ticker`. Unlike
   a Node stream, whose iterator destroys the stream when the loop is left early, leaving the
@@ -265,6 +273,7 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | structural typing everywhere | object types and interfaces with only fields structural but exact; interfaces with methods nominal | — |
 | `any`, `unknown`, type assertions | none; `as` converts numbers; `JsonValue` for dynamic data | — |
 | `catch (e: unknown)` | `e` is the exact union of what the `try` can throw | — |
+| `const p = promises[0]`, `m.get(k)` on promises (several holders of one promise) | a promise has one owner: `pop()`, `splice`, `Promise.all(arr)`; shared promises are planned (#212) | `promises.pop()` |
 | `Promise<T>` rejects with anything | `Promise<T, E>` carries its rejection type | — |
 | floating promises lose errors | a floating promise is a compile error | — |
 | an unhandled rejection prints the source line and a stack, and is reported when no handler is attached by the end of the turn | prints `Uncaught <Type>: <message> at file:line:col` and exits with code 1, reported only once nothing can await the promise any more: `const h = spawn(f()); await sleep(100); await h;` handles `h`'s rejection | — |

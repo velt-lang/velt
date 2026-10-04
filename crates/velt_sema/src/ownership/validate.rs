@@ -224,9 +224,19 @@ impl Validator<'_, '_, '_> {
         let mut cur = base;
         loop {
             if self.cx.class_of(cur.ty).is_some() {
+                let promise = matches!(self.cx.ty.kind(e.ty), crate::hir::TyKind::Promise(..));
+                let note = if promise {
+                    format!(
+                        "{}: await the promise before storing it in the object, or keep it \
+                         outside the object (in an array, taken out with `pop()`)",
+                        crate::promise_copies::WHY
+                    )
+                } else {
+                    "use `.clone()` to copy the field's value".to_string()
+                };
                 return errors.push(
                     Diagnostic::error("cannot move a field out of a class instance", e.span)
-                        .with_note("use `.clone()` to copy the field's value"),
+                        .with_note(note),
                 );
             }
             match &cur.kind {

@@ -2,7 +2,7 @@
 // Prints `RESULT <workload> <ops> <checksum> <ms>` per workload; the time covers only the timed
 // loop. `quick` as the first argument runs 1/20 of the sizes. Keys live under a per-run prefix
 // and are deleted at the end (never FLUSHALL).
-import { connect, RedisClient } from "velt:redis";
+import { connect, RedisClient, RedisError } from "velt:redis";
 import { args } from "velt:process";
 import { uuidv4 } from "velt:uuid";
 
@@ -87,7 +87,7 @@ async function getWorker(c: RedisClient, p: string, t: i64, n: i64, keys: i64): 
 // TASKS concurrent tasks issuing GETs over the one multiplexed client.
 async function concurrentGet(c: RedisClient, p: string, n: i64, keys: i64) {
   const t0 = performance.now();
-  const tasks: Promise<i64>[] = [];
+  const tasks: Promise<i64, RedisError>[] = [];
   for (let t: i64 = 0; t < TASKS; t++) {
     tasks.push(spawn(getWorker(c, p, t, n, keys)));
   }
