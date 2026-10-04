@@ -167,7 +167,7 @@ pub unsafe extern "C" fn velt_rt_http_resp_stream_write(
 ) -> u8 {
     WRITERS
         .get(w)
-        .is_some_and(|obj| obj.write((*text).as_bytes())) as u8
+        .is_some_and(|obj| obj.write((*text).text_lossy().as_bytes())) as u8
 }
 
 /// `w.writeBytes(data)`: like `velt_rt_http_resp_stream_write` for a `u8[]`.

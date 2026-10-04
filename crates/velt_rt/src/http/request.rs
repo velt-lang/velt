@@ -98,7 +98,7 @@ pub unsafe extern "C" fn velt_rt_http_req_header(
     name: *const VeltStr,
     out: *mut VeltStr,
 ) -> u8 {
-    let name = String::from_utf8_lossy((*name).as_bytes());
+    let name = (*name).text_lossy();
     match obj(req).parts.headers.get(name.as_ref()) {
         Some(v) => {
             out.write(owned_str(&String::from_utf8_lossy(v.as_bytes())));

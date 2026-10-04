@@ -207,13 +207,18 @@ unsafe fn with_writer(
     })
 }
 
-/// `write(data)` (string or bytes, copied) → `IoResult<()>`.
+/// `write(data)` (a string, copied) → `IoResult<()>`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_writer_write(
     w: WriterHandle,
     data: *const VeltStr,
 ) -> *mut VeltFut {
-    let data = data_arg(data);
+    write_data(w, data_arg(data))
+}
+
+/// # Safety
+/// As for [`with_writer`].
+unsafe fn write_data(w: WriterHandle, data: Vec<u8>) -> *mut VeltFut {
     with_writer(w, move |f| f.as_mut().ok_or_else(closed)?.write_all(&data))
 }
 
@@ -224,7 +229,7 @@ pub unsafe extern "C" fn velt_rt_fs_writer_write_bytes(
     w: WriterHandle,
     data: *const VeltBytes,
 ) -> *mut VeltFut {
-    velt_rt_fs_writer_write(w, data as *const VeltStr)
+    write_data(w, (*data).as_bytes().to_vec())
 }
 
 /// `flush()` → `IoResult<()>`: buffered data reaches the OS.

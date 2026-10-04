@@ -48,7 +48,7 @@ pub unsafe extern "C" fn velt_rt_redis_connect(
     ca: *const VeltStr,
 ) -> *mut VeltFut {
     let url = text_arg(url);
-    let ca = (*ca).as_bytes().to_vec();
+    let ca = (*ca).text_lossy().as_bytes().to_vec();
     new_leaf(async move {
         let r = match url::parse(&url) {
             Ok(target) => Conn::open(Endpoint { target, ca }).await,
@@ -100,7 +100,11 @@ pub unsafe extern "C" fn velt_rt_redis_command(
 }
 
 /// Encode `args` split into commands of `counts[i]` arguments each.
-fn encode_pipeline(args: &[&[u8]], counts: &[u64], out: &mut Vec<u8>) -> Result<(), RedisErr> {
+fn encode_pipeline<A: AsRef<[u8]>>(
+    args: &[A],
+    counts: &[u64],
+    out: &mut Vec<u8>,
+) -> Result<(), RedisErr> {
     let mut at = 0usize;
     for &n in counts {
         let n = n as usize;

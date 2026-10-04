@@ -29,15 +29,15 @@ pub struct VeltStat {
 /// # Safety
 /// `s` must point to a valid `VeltStr`.
 pub unsafe fn path_arg(s: *const VeltStr) -> PathBuf {
-    PathBuf::from(String::from_utf8_lossy((*s).as_bytes()).into_owned())
+    PathBuf::from((*s).text_lossy().into_owned())
 }
 
-/// Owned copy of a string argument's bytes.
+/// Owned UTF-8 copy of a string argument (one U+FFFD per lone surrogate, #377).
 ///
 /// # Safety
 /// `s` must point to a valid `VeltStr`.
 pub unsafe fn data_arg(s: *const VeltStr) -> Vec<u8> {
-    (*s).as_bytes().to_vec()
+    (*s).to_string_lossy().into_bytes()
 }
 
 fn unit(r: io::Result<()>) -> IoResult<()> {

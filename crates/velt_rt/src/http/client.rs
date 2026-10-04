@@ -94,7 +94,7 @@ unsafe fn build_request(
     let data = if body.is_null() {
         Bytes::new()
     } else {
-        Bytes::copy_from_slice((*body).as_bytes())
+        Bytes::copy_from_slice((*body).text_lossy().as_bytes())
     };
     let mut req = Request::new(Full::new(data));
     *req.method_mut() = method;
@@ -103,8 +103,8 @@ unsafe fn build_request(
         let (n, v) = (&*headers.add(2 * i), &*headers.add(2 * i + 1));
         let name =
             HeaderName::from_bytes(n.as_bytes()).map_err(|_| invalid("invalid header name"))?;
-        let value =
-            HeaderValue::from_bytes(v.as_bytes()).map_err(|_| invalid("invalid header value"))?;
+        let value = HeaderValue::from_bytes(v.text_lossy().as_bytes())
+            .map_err(|_| invalid("invalid header value"))?;
         req.headers_mut().append(name, value);
     }
     Ok(req)
@@ -171,7 +171,14 @@ pub unsafe extern "C" fn velt_rt_http_fetch_ca(
     body: *const VeltStr,
     ca: *const VeltStr,
 ) -> *mut VeltFut {
-    fetch(method, url, headers, n_headers, body, (*ca).as_bytes())
+    fetch(
+        method,
+        url,
+        headers,
+        n_headers,
+        body,
+        (*ca).text_lossy().as_bytes(),
+    )
 }
 
 /// Response status code.
@@ -187,7 +194,7 @@ pub unsafe extern "C" fn velt_rt_http_fetch_resp_header(
     name: *const VeltStr,
     out: *mut VeltStr,
 ) -> u8 {
-    let name = String::from_utf8_lossy((*name).as_bytes());
+    let name = (*name).text_lossy();
     match obj(r)
         .headers
         .get(name.as_ref())

@@ -58,9 +58,11 @@ unsafe fn count<'a>(data: *mut u8) -> &'a AtomicU64 {
     &*(data.sub(COUNT) as *const AtomicU64)
 }
 
-/// The `lone` field of a non-ASCII buffer.
-unsafe fn lone_field(data: *mut u8) -> *mut u64 {
-    data.sub(16) as *mut u64
+/// The `lone` field of a non-ASCII buffer. Atomic (relaxed: a plain load or store) because a
+/// count left unknown is filled in when somebody first needs it, possibly on a shared buffer
+/// (every thread computes the same number).
+unsafe fn lone_field<'a>(data: *mut u8) -> &'a AtomicU64 {
+    &*(data.sub(16) as *const AtomicU64)
 }
 
 /// The `crumbs` field of a non-ASCII buffer.
@@ -84,7 +86,7 @@ pub(super) fn alloc(cap: usize, header: bool) -> *mut u8 {
         let data = base.add(prefix(header));
         if header {
             (base as *mut AtomicPtr<u8>).write(AtomicPtr::new(std::ptr::null_mut()));
-            lone_field(data).write(0);
+            (data.sub(16) as *mut AtomicU64).write(AtomicU64::new(0));
         }
         (data.sub(COUNT) as *mut AtomicU64).write(AtomicU64::new(1));
         data
@@ -121,7 +123,7 @@ pub(super) unsafe fn add_header(data: *mut u8, cap: usize, len: usize, new_cap: 
     let data = base.add(HEADER);
     std::ptr::copy(base.add(COUNT), data, len);
     (base as *mut AtomicPtr<u8>).write(AtomicPtr::new(std::ptr::null_mut()));
-    lone_field(data).write(0);
+    (data.sub(16) as *mut AtomicU64).write(AtomicU64::new(0));
     (data.sub(COUNT) as *mut AtomicU64).write(AtomicU64::new(1));
     data
 }
@@ -148,7 +150,7 @@ pub(super) unsafe fn retain(data: *mut u8) {
 /// # Safety
 /// `data` must be a live buffer from [`alloc`] with a header.
 pub(super) unsafe fn lone(data: *mut u8) -> usize {
-    lone_field(data).read() as usize
+    lone_field(data).load(Ordering::Relaxed) as usize
 }
 
 /// Set the lone-surrogate count of a non-ASCII buffer the caller holds the only reference to.
@@ -156,7 +158,16 @@ pub(super) unsafe fn lone(data: *mut u8) -> usize {
 /// # Safety
 /// `data` must be a live buffer from [`alloc`] with a header and count 1.
 pub(super) unsafe fn set_lone(data: *mut u8, n: usize) {
-    lone_field(data).write(n as u64);
+    lone_field(data).store(n as u64, Ordering::Relaxed);
+}
+
+/// Record the counted lone surrogates of a non-ASCII buffer whose count was unknown. The buffer
+/// may be shared: every reader counts the same immutable text, so racing stores agree.
+///
+/// # Safety
+/// `data` must be a live buffer from [`alloc`] with a header, and `n` its text's count.
+pub(super) unsafe fn resolve_lone(data: *mut u8, n: usize) {
+    lone_field(data).store(n as u64, Ordering::Relaxed);
 }
 
 /// Drop a reference; frees the buffer (of `cap` bytes) with the last one.

@@ -9,7 +9,7 @@
 //! immutable values: other copies never see the append).
 
 use crate::fmt;
-use crate::json::escape::push_json_string;
+use crate::json::escape::{push_json_string, push_json_string_counted};
 use crate::json::text::{inspect_into, stringify_into};
 use crate::json::value::Value;
 use crate::str::{Summary, VeltStr};
@@ -114,19 +114,24 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_byte(buf: *mut VeltStrBuf, byte: u8
 /// Append `s` as a JSON string literal: quoted and escaped exactly like `JSON.stringify(s)`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_json_str(buf: *mut VeltStrBuf, s: *const VeltStr) {
-    // Escaped into scratch space first, so `s` may be the builder itself. Only ASCII is escaped
-    // (into ASCII), so the output has the input's units plus one per added byte.
-    let write = |b: &mut Vec<u8>| push_json_string(b, (*s).as_bytes());
+    // Escaped into scratch space first, so `s` may be the builder itself.
     if (*s).is_ascii() {
-        return (*buf).push_with_ascii(write);
+        return (*buf).push_with_ascii(|b| push_json_string(b, (*s).as_bytes()));
     }
-    let (len, sum) = ((*s).len(), (*s).summary());
-    (*buf).push_with_summary(write, |out| {
-        Some(Summary {
-            units: sum.units + (out - len),
-            lone: sum.lone,
-        })
-    });
+    // Only ASCII is escaped (into ASCII: one unit per byte added) and lone surrogates (3 bytes
+    // and 1 unit each become a 6-byte escape: 3 bytes but 5 units more), so the output has the
+    // input's units plus one per added byte plus two per lone surrogate, and none of them.
+    let (len, units) = ((*s).len(), (*s).units());
+    let lone = std::cell::Cell::new(0);
+    (*buf).push_with_summary(
+        |b| lone.set(push_json_string_counted(b, (*s).as_bytes())),
+        |out| {
+            Some(Summary {
+                units: units + (out - len) + 2 * lone.get(),
+                lone: 0,
+            })
+        },
+    );
 }
 
 /// Append `s` as a string inside a container prints in `console.log` (node's `util.inspect`

@@ -46,6 +46,8 @@ pub enum ReadError {
 pub struct Reader {
     /// Borrows the caller's string for the reader's lifetime (ABI contract, not checked).
     sc: Scanner<'static>,
+    /// The source has no lone surrogates (its string said so), so neither has any token.
+    lone_free: bool,
     /// The last consumed token was `{` or `[` (so no comma is expected before the next item).
     after_open: bool,
     error: Option<ReadError>,
@@ -70,15 +72,23 @@ pub const FLAG_REJECT_UNKNOWN: u32 = 1;
 const MARK_DEPTH_BITS: u32 = 21;
 
 impl Reader {
-    /// Reader over `src`, which must outlive it.
+    /// Reader over `src` (canonical WTF-8), which must outlive it.
     pub fn new(src: &'static [u8]) -> Reader {
         Reader::with_options(src, 0, 0)
     }
 
     /// Reader with `FLAG_*` options and a maximum nesting depth (0: no limit).
     pub fn with_options(src: &'static [u8], flags: u32, max_depth: u32) -> Reader {
+        let lone_free = crate::str::wtf8::count_lone(src) == 0;
+        Reader::with_source(src, lone_free, flags, max_depth)
+    }
+
+    /// [`Self::with_options`] when the caller knows whether `src` has lone surrogates (from its
+    /// string, without a scan).
+    pub fn with_source(src: &'static [u8], lone_free: bool, flags: u32, max_depth: u32) -> Reader {
         Reader {
             sc: Scanner::new(src),
+            lone_free,
             after_open: false,
             error: None,
             reject_unknown: flags & FLAG_REJECT_UNKNOWN != 0,
@@ -403,8 +413,12 @@ impl Reader {
         match tok {
             // SAFETY: the source outlives the reader (reader_new's contract); the static form
             // is never freed.
-            StrTok::Borrowed(start, end) => unsafe {
+            StrTok::Borrowed(start, end) if self.lone_free => unsafe {
                 VeltStr::borrowed_text(self.sc.src[start..].as_ptr(), end - start, self.sc.units)
+            },
+            // SAFETY: as above; a range between two quotes of canonical WTF-8 is canonical.
+            StrTok::Borrowed(start, end) => unsafe {
+                VeltStr::borrowed_units(self.sc.src[start..].as_ptr(), end - start, self.sc.units)
             },
             StrTok::Owned(v) => self.decoded(&v),
         }
@@ -423,9 +437,14 @@ impl Reader {
     /// `VeltStr`.
     #[inline]
     fn decoded(&self, v: &[u8]) -> VeltStr {
-        // SAFETY: the scanner reads its source as UTF-8 (`scan.rs`): raw contents are a slice of
-        // it between two quotes, and decoding turns every escape into a scalar value (a lone
-        // surrogate escape becomes U+FFFD), so the text is UTF-8.
+        if !self.lone_free {
+            // Raw lone surrogates of the source (escapes decode to code points, a lone
+            // surrogate escape still to U+FFFD before #377 phase 2b, so nothing joins).
+            return VeltStr::from_wtf8_units(v, self.sc.units);
+        }
+        // SAFETY: the source has no lone surrogates, so it is UTF-8 (`scan.rs`): raw contents
+        // are a slice of it between two quotes, and decoding turns every escape into a scalar
+        // value (a lone surrogate escape becomes U+FFFD), so the text is UTF-8.
         let text = unsafe { std::str::from_utf8_unchecked(v) };
         VeltStr::from_text_counted(text, self.sc.units)
     }

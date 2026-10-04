@@ -369,3 +369,154 @@ fn join_lengths_past_the_limit_are_refused() {
     assert!(unsafe { VeltStr::join_sums(&parts, &sep) }.is_none());
     assert!(unsafe { VeltStr::join_sums(&parts[..2], &sep) }.is_some());
 }
+
+/// A result string of an out-pointer function.
+fn out(f: impl FnOnce(*mut VeltStr)) -> Owned {
+    let mut o = std::mem::MaybeUninit::<VeltStr>::uninit();
+    f(o.as_mut_ptr());
+    Owned(unsafe { o.assume_init() })
+}
+
+/// `text` with `\u{D83D}`-style placeholders: `H` is the lone high surrogate U+D83D, `L` the lone
+/// low U+DE00, as WTF-8.
+fn w(text: &str) -> Vec<u8> {
+    let mut v = Vec::new();
+    for c in text.chars() {
+        match c {
+            'H' => v.extend(enc3(HI)),
+            'L' => v.extend(enc3(LO)),
+            c => v.extend(c.to_string().as_bytes()),
+        }
+    }
+    v
+}
+
+#[test]
+fn well_formedness_in_every_form() {
+    let long_lone = w("a string longer than the inline form: H!");
+    let long_ok = "a string longer than the inline form: 😀!".as_bytes();
+    let leak = |b: &[u8]| -> &'static [u8] { Box::leak(b.to_vec().into_boxed_slice()) };
+    for (text, ok) in [(&long_lone[..], false), (long_ok, true)] {
+        let forms = [
+            Owned(VeltStr::from_static(leak(text))),
+            Owned(VeltStr::from_bytes(text)),
+            Owned(VeltStr::from_bytes(&text[..text.len().min(20)])),
+        ];
+        for s in &forms {
+            let short_ok = ok || !bytes(&s.0).windows(2).any(|p| p == [0xED, 0xA0]);
+            assert_eq!(unsafe { s.0.is_well_formed() }, short_ok, "{:?}", s.0);
+            match unsafe { s.0.text() } {
+                Ok(t) => assert_eq!(t.as_bytes(), bytes(&s.0)),
+                Err(e) => assert_eq!(e.as_bytes(), bytes(&s.0)),
+            }
+        }
+    }
+    // A heap buffer that absorbed text of a static string doesn't know its count until it is
+    // needed; then it records it.
+    let mut s = Owned(VeltStr::from_bytes(&[b'x'; 30]));
+    let lit = VeltStr::from_static(leak(&w("éH")));
+    unsafe { s.0.push_str(&lit) };
+    assert_eq!(unsafe { heap::lone(s.0.ptr()) }, wtf8::LONE_UNKNOWN);
+    assert!(!unsafe { s.0.is_well_formed() });
+    assert_eq!(unsafe { heap::lone(s.0.ptr()) }, 1);
+    // An inline string flagged as maybe holding lone surrogates, which it doesn't, is scanned.
+    let mut i = Owned(VeltStr::from_bytes(b"ab"));
+    unsafe { i.0.push_str(&VeltStr::from_static("é".as_bytes())) };
+    assert!(i.0.tag() & INLINE_LONE != 0 && unsafe { i.0.is_well_formed() });
+}
+
+#[test]
+fn lossy_text_has_one_replacement_per_lone_surrogate() {
+    for (input, want) in [
+        (w("aHb"), "a\u{FFFD}b"),
+        (w("LH"), "\u{FFFD}\u{FFFD}"),
+        (w("H😀L"), "\u{FFFD}😀\u{FFFD}"),
+        (w("한"), "한"),
+    ] {
+        let s = Owned(VeltStr::from_bytes(&input));
+        let lossy = unsafe { s.0.text_lossy() };
+        assert_eq!(lossy, want);
+        // The same length: `Buffer.byteLength(s)` is the output's length.
+        assert_eq!(lossy.len(), s.0.len());
+        let mut v = b"> ".to_vec();
+        unsafe { s.0.extend_utf8(&mut v) };
+        assert_eq!(v, [b"> ", want.as_bytes()].concat());
+        assert_eq!(wtf8::to_utf8_lossy(&input), want);
+    }
+    let ok = Owned(VeltStr::from_bytes(
+        "😀 well-formed, so borrowed".as_bytes(),
+    ));
+    assert!(matches!(
+        unsafe { ok.0.text_lossy() },
+        std::borrow::Cow::Borrowed(_)
+    ));
+}
+
+#[test]
+fn producers_join_halves_at_their_seams() {
+    use crate::str_ops::replace::*;
+    use crate::str_ops::slice::*;
+    let s = |t: &str| VeltStr::from_bytes(&w(t));
+    let pair = "😀";
+    // replace / replaceAll: the text before a match against the replacement, and the
+    // replacement against the text after it.
+    let r = out(|o| unsafe { velt_rt_str_replace(&s("aH-b"), &s("-"), &s("Lx"), o) });
+    assert_eq!(bytes(&r.0), format!("a{pair}xb").as_bytes());
+    let r = out(|o| unsafe { velt_rt_str_replace_all(&s("H-H-"), &s("-"), &s("L"), o) });
+    assert_eq!(bytes(&r.0), format!("{pair}{pair}").as_bytes());
+    let r = out(|o| unsafe { velt_rt_str_replace(&s("x-L"), &s("-"), &s("H"), o) });
+    assert_eq!(bytes(&r.0), format!("x{pair}").as_bytes());
+    // `$&`, `` $` `` and `$'` pieces join too.
+    let r = out(|o| unsafe { velt_rt_str_replace(&s("H-L"), &s("-"), &s("$'$`"), o) });
+    assert_eq!(bytes(&r.0), format!("{pair}{pair}").as_bytes());
+    // An empty pattern matches at every code point boundary.
+    let r = out(|o| unsafe { velt_rt_str_replace_all(&s("LH"), &s(""), &s("-"), o) });
+    assert_eq!(bytes(&r.0), w("-L-H-"));
+    // repeat: the end of one copy against the start of the next.
+    let r = out(|o| unsafe {
+        velt_rt_str_repeat(&s("LxH"), 3, o);
+    });
+    assert_eq!(bytes(&r.0), w(&format!("Lx{pair}x{pair}xH")));
+    // padStart / padEnd: fill against fill and fill against the string.
+    let r = out(|o| unsafe { velt_rt_str_pad_start(&s("Lz"), 16, &s("LH"), o) });
+    assert_eq!(bytes(&r.0), w(&format!("L{pair}{pair}z")));
+    let r = out(|o| unsafe { velt_rt_str_pad_end(&s("zH"), 16, &s("LH"), o) });
+    assert_eq!(bytes(&r.0), w(&format!("z{pair}{pair}H")));
+}
+
+#[test]
+fn ill_formed_text_through_the_string_methods() {
+    use crate::str_ops::case::*;
+    use crate::str_ops::search::*;
+    use crate::str_ops::split::*;
+    let s = |t: &str| VeltStr::from_bytes(&w(t));
+    // Case mapping keeps lone surrogates; final sigma sees one as the end of a word.
+    let r = out(|o| unsafe { velt_rt_str_to_upper(&s("aHßL"), o) });
+    assert_eq!(bytes(&r.0), w("AHSSL"));
+    // node: "ΑΣ\uD83DΣ".toLowerCase() is "ας\ud83dσ".
+    let r = out(|o| unsafe { velt_rt_str_to_lower(&s("ΑΣHΣ"), o) });
+    assert_eq!(bytes(&r.0), w("αςHσ"));
+    // Trimming stops at a lone surrogate.
+    let r = out(|o| unsafe { velt_rt_str_trim(&s(" \u{3000}H \u{FEFF}"), o) });
+    assert_eq!(bytes(&r.0), w("H"));
+    // Byte search on WTF-8.
+    unsafe {
+        assert_eq!(velt_rt_str_index_of(&s("aHbH"), &s("H"), 2), 5);
+        assert_eq!(velt_rt_str_last_index_of(&s("aHbH"), &s("H"), i64::MAX), 5);
+        assert_eq!(velt_rt_str_includes(&s("aHb"), &s("Hb")), 1);
+        assert_eq!(
+            velt_rt_str_includes(&VeltStr::from_static("😀".as_bytes()), &s("L")),
+            0
+        );
+    }
+    // split("") gives a lone surrogate as one piece.
+    let mut a = std::mem::MaybeUninit::uninit();
+    unsafe { velt_rt_str_split(&s("aHb"), &VeltStr::empty(), a.as_mut_ptr()) };
+    let mut a = unsafe { a.assume_init() };
+    let pieces: Vec<Vec<u8>> = (0..a.len as usize)
+        .map(|i| bytes(unsafe { &*a.ptr.add(i) }).to_vec())
+        .collect();
+    assert_eq!(pieces, [w("a"), w("H"), w("b")]);
+    unsafe { crate::str_array::velt_rt_str_array_drop(&mut a) };
+}
+
