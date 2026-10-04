@@ -2,7 +2,7 @@
 //! with optional explicit type arguments (`f<T>(x)`), indexing, `++`/`--`, and postfix `?` (try)
 //! versus the ternary `?`.
 
-use super::{Fail, PResult, Parser};
+use super::{Fail, PResult, Parser, Ternary};
 use crate::ast::*;
 use crate::lexer::{Kw, Tok};
 
@@ -167,9 +167,6 @@ impl<'a> Parser<'a> {
             )
     }
 
-    /// Decides whether the `?` at the cursor starts a ternary (vs. postfix try): it is a ternary
-    /// iff an expression and then `:` follow. Decisions are cached per token so nested ternaries
-    /// stay linear.
     /// Postfix `e?` no longer exists (errors propagate by themselves): report it, skip the `?`.
     fn reject_question_operator(&mut self) {
         let span = self.cur_span();
@@ -183,12 +180,15 @@ impl<'a> Parser<'a> {
         self.bump();
     }
 
+    /// Decides whether the `?` at the cursor starts a ternary (vs. the removed postfix `?`): it
+    /// is a ternary iff an expression and then `:` follow. Decisions are cached per token, with
+    /// where that expression ends, so nested ternaries stay linear (`parse_cond`).
     fn question_is_ternary(&mut self) -> bool {
         if !Self::can_start_expr(self.nth(1)) {
             return false;
         }
-        if let Some(&cached) = self.ternary_cache.get(&self.pos) {
-            return cached;
+        if let Some(cached) = self.ternary_cache.get(&self.pos) {
+            return cached.is_ternary;
         }
         let key = self.pos;
         let snap = self.snapshot();
@@ -196,6 +196,7 @@ impl<'a> Parser<'a> {
         self.speculating += 1;
         self.bump();
         let is_ternary = self.parse_assign().is_ok() && self.at(Tok::Colon);
+        let then_end = (self.pos, self.prev_hi);
         self.speculating -= 1;
         let too_deep = self.hit_depth_limit;
         self.hit_depth_limit = saved_flag || too_deep;
@@ -205,7 +206,12 @@ impl<'a> Parser<'a> {
             // the nesting error instead of a confusing follow-up error.
             return true;
         }
-        self.ternary_cache.insert(key, is_ternary);
+        let decision = Ternary {
+            is_ternary,
+            then_end,
+            relexes: self.relexes,
+        };
+        self.ternary_cache.insert(key, decision);
         is_ternary
     }
 

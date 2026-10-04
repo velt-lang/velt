@@ -1,11 +1,33 @@
 <ref *1> C { value: 1, next: [Circular *1] }
-<ref *1> Tree { name: 'root', parent: null, children: [ Tree { name: 'kid', parent: [Circular *1], children: [] } ] }
-tree: <ref *1> Tree { name: 'kid', parent: Tree { name: 'root', parent: null, children: [ [Circular *1] ] }, children: [] }
+<ref *1> Tree {
+  name: 'root',
+  parent: null,
+  children: [ Tree { name: 'kid', parent: [Circular *1], children: [] } ]
+}
+tree: <ref *1> Tree {
+  name: 'kid',
+  parent: Tree { name: 'root', parent: null, children: [ [Circular *1] ] },
+  children: []
+}
 <ref *1> { value: 1, next: { value: 2, next: [Circular *1] } }
-[ <ref *1> C { value: 1, next: [Circular *1] }, <ref *1> C { value: 1, next: [Circular *1] } ]
+[
+  <ref *1> C { value: 1, next: [Circular *1] },
+  <ref *1> C { value: 1, next: [Circular *1] }
+]
 C { value: 1, next: null }
 [ C { value: 1, next: null }, C { value: 1, next: null } ]
-[ <ref *1> C { value: 1, next: [Circular *1] }, <ref *2> C { value: 1, next: [Circular *2] } ]
-{ a: <ref *1> C { value: 1, next: [Circular *1] }, b: <ref *2> C { value: 1, next: [Circular *2] } }
+[
+  <ref *1> C { value: 1, next: [Circular *1] },
+  <ref *2> C { value: 1, next: [Circular *2] }
+]
+{
+  a: <ref *1> C { value: 1, next: [Circular *1] },
+  b: <ref *2> C { value: 1, next: [Circular *2] }
+}
 <ref *1> C { value: 1, next: [Circular *1] } <ref *1> C { value: 1, next: [Circular *1] }
-[ C { value: 1, next: <ref *1> C { value: 1, next: [Circular *1] } }, <ref *1> C { value: 1, next: [Circular *1] }, <ref *2> C { value: 1, next: [Circular *2] }, C { value: 1, next: <ref *1> C { value: 1, next: [Circular *1] } } ]
+[
+  C { value: 1, next: <ref *1> C { value: 1, next: [Circular *1] } },
+  <ref *1> C { value: 1, next: [Circular *1] },
+  <ref *2> C { value: 1, next: [Circular *2] },
+  C { value: 1, next: <ref *1> C { value: 1, next: [Circular *1] } }
+]
