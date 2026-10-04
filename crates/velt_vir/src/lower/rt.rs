@@ -85,6 +85,8 @@ pub(super) enum Rt {
     StrbufInspectBegin,
     StrbufInspectEnter,
     StrbufInspectLeave,
+    StrbufInspectCircular,
+    StrbufInspectMore,
     StrbufLen,
     StrbufInspectLayout,
     JsonEnter,
@@ -229,6 +231,8 @@ impl Rt {
             Rt::StrbufInspectBegin => f("velt_rt_strbuf_inspect_begin", vec![], Unit),
             Rt::StrbufInspectEnter => f("velt_rt_strbuf_inspect_enter", vec![Ptr, Ptr], U8),
             Rt::StrbufInspectLeave => f("velt_rt_strbuf_inspect_leave", vec![Ptr], Unit),
+            Rt::StrbufInspectCircular => f("velt_rt_strbuf_inspect_circular", vec![Ptr, Ptr], U8),
+            Rt::StrbufInspectMore => f("velt_rt_strbuf_inspect_more", vec![Ptr, U64], Unit),
             Rt::StrbufLen => f("velt_rt_strbuf_len", vec![Ptr], U64),
             Rt::StrbufInspectLayout => f("velt_rt_strbuf_inspect_layout", vec![Ptr, U64], Unit),
             Rt::JsonEnter => f("velt_rt_json_enter", vec![Ptr], U8),
@@ -241,9 +245,11 @@ impl Rt {
             Rt::StrbufPushInspectStr => f("velt_rt_strbuf_push_inspect_str", vec![Ptr, Ptr], Unit),
             Rt::StrbufPushInspectKey => f("velt_rt_strbuf_push_inspect_key", vec![Ptr, Ptr], Unit),
             Rt::StrbufPushJsonValue => f("velt_rt_strbuf_push_json_value", vec![Ptr, Ptr], Unit),
-            Rt::StrbufPushInspectJson => {
-                f("velt_rt_strbuf_push_inspect_json", vec![Ptr, Ptr, U8], Unit)
-            }
+            Rt::StrbufPushInspectJson => f(
+                "velt_rt_strbuf_push_inspect_json",
+                vec![Ptr, Ptr, U8, U32],
+                Unit,
+            ),
             Rt::StrbufFinish => f("velt_rt_strbuf_finish", vec![Ptr, Ptr], Unit),
             Rt::StrbufDrop => f("velt_rt_strbuf_drop", vec![Ptr], Unit),
             Rt::JsonReaderNewWith => f("velt_rt_json_reader_new_with", vec![Ptr, U32, U32], Ptr),

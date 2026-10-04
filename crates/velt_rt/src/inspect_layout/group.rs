@@ -23,8 +23,15 @@ pub(super) struct Columns {
 
 impl Columns {
     /// Plan the columns for the entries at `ranges` of `text` (an array at indentation
-    /// `indent`); false when grouping does not pay off.
-    pub(super) fn plan(&mut self, text: &[u8], ranges: &[Range<usize>], indent: usize) -> bool {
+    /// `indent`), of `entries` in all (one more when `... n more items` follows them, which
+    /// node counts only in its average); false when grouping does not pay off.
+    pub(super) fn plan(
+        &mut self,
+        text: &[u8],
+        ranges: &[Range<usize>],
+        entries: usize,
+        indent: usize,
+    ) -> bool {
         self.data_len.clear();
         self.data_len
             .extend(ranges.iter().map(|r| width(&text[r.clone()])));
@@ -37,7 +44,7 @@ impl Columns {
             return false;
         }
         let n = ranges.len();
-        let average_bias = (actual_max as f64 - total_length as f64 / n as f64).sqrt();
+        let average_bias = (actual_max as f64 - total_length as f64 / entries as f64).sqrt();
         let biased_max = (actual_max as f64 - 3.0 - average_bias).max(1.0);
         self.count = js_round((2.5 * biased_max * n as f64).sqrt() / biased_max)
             .min((BREAK_LENGTH.saturating_sub(indent) / actual_max) as f64)
