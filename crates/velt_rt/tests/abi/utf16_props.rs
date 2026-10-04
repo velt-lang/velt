@@ -29,7 +29,7 @@ use crate::strbuf::{velt_rt_strbuf_new, velt_rt_strbuf_push_str};
 use std::mem::MaybeUninit;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Alphabet {
+pub(super) enum Alphabet {
     /// Printable ASCII and a few controls.
     Ascii,
     /// Two- and three-byte code points, including U+E000–U+FFFF (where byte order and code-unit
@@ -41,7 +41,7 @@ enum Alphabet {
     Lone,
 }
 
-const ALL_ALPHABETS: &[Alphabet] = &[
+pub(super) const ALL_ALPHABETS: &[Alphabet] = &[
     Alphabet::Ascii,
     Alphabet::Bmp,
     Alphabet::Astral,
@@ -57,7 +57,7 @@ const RUNTIME_ALPHABETS: &[Alphabet] = &[Alphabet::Ascii];
 const LENGTHS: &[usize] = &[0, 1, 2, 3, 21, 22, 23, 24, 63, 64, 65, 127, 128, 129];
 
 /// xorshift64*: small, deterministic and good enough to pick test inputs.
-struct Rng(u64);
+pub(super) struct Rng(pub(super) u64);
 
 impl Rng {
     fn next(&mut self) -> u64 {
@@ -67,7 +67,7 @@ impl Rng {
         self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 
-    fn below(&mut self, n: usize) -> usize {
+    pub(super) fn below(&mut self, n: usize) -> usize {
         (self.next() % n as u64) as usize
     }
 
@@ -75,7 +75,7 @@ impl Rng {
         &xs[self.below(xs.len())]
     }
 
-    fn chance(&mut self, percent: u64) -> bool {
+    pub(super) fn chance(&mut self, percent: u64) -> bool {
         self.next() % 100 < percent
     }
 }
@@ -107,7 +107,7 @@ fn push_any(rng: &mut Rng, alphabets: &[Alphabet], s: &mut Vec<u16>) {
 }
 
 /// A random string over `alphabets`: usually mostly the first one, sometimes an even mix.
-fn gen_string(rng: &mut Rng, alphabets: &[Alphabet]) -> Vec<u16> {
+pub(super) fn gen_string(rng: &mut Rng, alphabets: &[Alphabet]) -> Vec<u16> {
     let len = if rng.chance(70) {
         *rng.pick(LENGTHS)
     } else {
@@ -158,7 +158,7 @@ fn gen_pos(rng: &mut Rng, len: usize) -> i64 {
 }
 
 /// A runtime string that is dropped at the end of its scope.
-struct Rt(VeltStr);
+pub(super) struct Rt(pub(super) VeltStr);
 
 impl Drop for Rt {
     fn drop(&mut self) {
@@ -167,7 +167,7 @@ impl Drop for Rt {
 }
 
 /// The model string `s` as a runtime string, in a random form.
-fn to_rt(rng: &mut Rng, s: &[u16]) -> Rt {
+pub(super) fn to_rt(rng: &mut Rng, s: &[u16]) -> Rt {
     let bytes = wtf8_encode(s);
     let r = Rt(match rng.below(3) {
         // A literal or a borrowed sub-range (static form). Leaked: tests only.
@@ -187,7 +187,7 @@ fn to_rt(rng: &mut Rng, s: &[u16]) -> Rt {
 
 /// The code units of a runtime string; panics unless its bytes are canonical WTF-8, the unit
 /// count stored in the value is their number and the string knows whether it is well-formed.
-fn units(s: &VeltStr) -> Vec<u16> {
+pub(super) fn units(s: &VeltStr) -> Vec<u16> {
     let bytes = unsafe { s.as_bytes() };
     if let Err(e) = wtf8::check_canonical(bytes) {
         panic!("{s:?} is not canonical WTF-8: {e}");
@@ -468,7 +468,7 @@ fn mutate(rng: &mut Rng, s: &[u16], alphabets: &[Alphabet]) -> Vec<u16> {
     t
 }
 
-fn run(
+pub(super) fn run(
     name: &str,
     alphabets: &[Alphabet],
     default_cases: u64,
