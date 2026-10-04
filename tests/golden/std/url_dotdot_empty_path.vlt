@@ -1,0 +1,37 @@
+// Regression (#359, difftest fuzz --std seed 84): a `..` segment with nothing left to remove
+// leaves a non-special URL's path empty, as Node has it; a special URL keeps `/`.
+import { URL } from "velt:url";
+
+function show(u: URL) {
+  console.log(u.href, JSON.stringify(u.pathname));
+}
+
+function main() {
+  show(new URL("?q", "foo://h:65535/%2E%2e#"));
+  const absolute = [
+    "foo://h/..",
+    "foo://h/a/..",
+    "foo://h/a/../..",
+    "foo://h/./..",
+    "foo://h/../",
+    "foo://h/..?q",
+    "foo://h/..#f",
+    "foo://h//..",
+    "foo://h/a/b/..",
+    "foo:/..",
+    "foo:/a/..",
+    "http://h/..",
+    "http://h/a/../..",
+    "file:///..",
+  ];
+  for (const s of absolute) {
+    show(new URL(s));
+  }
+  show(new URL("..", "foo://h/a"));
+  show(new URL("..", "foo://h/a/b"));
+  for (const p of ["..", "/a/.."]) {
+    const u = new URL("foo://h/x/y");
+    u.pathname = p;
+    show(u);
+  }
+}
