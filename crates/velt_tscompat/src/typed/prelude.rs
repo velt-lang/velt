@@ -264,8 +264,8 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
     (
         "Math",
         &[
-            "E", "PI", "abs", "ceil", "floor", "hypot", "max", "min", "pow", "random", "round",
-            "sign", "sqrt", "trunc",
+            "E", "PI", "abs", "ceil", "clz32", "floor", "hypot", "imul", "max", "min", "pow",
+            "random", "round", "sign", "sqrt", "trunc",
         ],
     ),
     (
