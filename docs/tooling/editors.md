@@ -26,12 +26,16 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
     with their signatures, minus the names already listed (`import type { … }`: types only);
   - inside the quotes after `from` (or `import("…")`), completion offers module specifiers: the
     standard library's modules (`velt:fs`, `velt:collections/set`, with a line about each),
-    files and folders next to the file for `./` and `../` (without the extension, as imports
-    name them), and the package's dependencies;
+    files and folders next to the file for `./` and `../`, and the package's dependencies.
+    Typing `"` or `/` there opens the list. Files are named as imports name them: without the
+    extension, unless two files share a name (`./dup.ts` next to `./dup.vlt`);
   - **auto-import**: typing a name that isn't imported yet offers the exports of std modules,
-    of the dependencies and of the package's other files that start with what you typed,
-    marked with the module (`readFile  velt:fs`). Accepting one adds it to the file's
-    `import { … } from` that module, or adds that import after the other imports.
+    of the dependencies and of the package's other files (unsaved changes of open files
+    included) that start with what you typed, marked with the module (`readFile  velt:fs`).
+    Accepting one adds it to the file's `import { … } from` that module (in order, if its names
+    are sorted), or adds that import after the other imports. A file is named so that the
+    import loads it: with its extension when another file shares its name, and a folder module
+    as `./shapes/index` when a file `shapes.vlt` would win over the folder.
 - **JSX**: go to definition, hover, references and rename on tags, opening and closing
   (`<Card` and `</Card>` → `function Card`), and on attributes (the attribute's or prop's
   declaration and type).

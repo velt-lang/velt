@@ -24,6 +24,8 @@ struct Indexed {
     symbols: Vec<WorkspaceSymbol>,
     /// What it exports (for auto-import).
     exports: Vec<Export>,
+    /// The root of the package it belongs to.
+    package: Option<PathBuf>,
 }
 
 /// The index of the workspace folders' files.
@@ -51,14 +53,22 @@ impl DiskIndex {
         }
     }
 
-    /// The exports of the indexed files under `roots` below `dir`.
-    pub fn exports(&mut self, roots: &[PathBuf], dir: &Path) -> Vec<(&Path, &[Export])> {
+    /// The exports of the indexed files the document at `doc` may import by a relative path:
+    /// those of its package (not of a package nested in it), or, outside a package, those of its
+    /// workspace folder outside packages.
+    pub fn exports(&mut self, roots: &[PathBuf], doc: &Path) -> Vec<(&Path, &[Export])> {
         if !self.scanned || !self.watched {
             self.rescan(roots);
         }
+        let package = doc.parent().and_then(vpm::manifest::find_package_root);
+        let root = roots.iter().find(|r| doc.starts_with(r));
         self.files
             .iter()
-            .filter(|(path, file)| path.starts_with(dir) && !file.exports.is_empty())
+            .filter(|(path, file)| {
+                !file.exports.is_empty()
+                    && file.package == package
+                    && (package.is_some() || root.is_some_and(|r| path.starts_with(r)))
+            })
             .map(|(path, file)| (path.as_path(), file.exports.as_slice()))
             .collect()
     }
@@ -136,11 +146,13 @@ fn modified(path: &Path) -> Option<SystemTime> {
 
 /// Parse the file at `path` (nothing if it cannot be read) for its symbols and exports.
 fn index_file(path: &Path, modified: Option<SystemTime>) -> Indexed {
+    let package = path.parent().and_then(vpm::manifest::find_package_root);
     let Some((sm, file, ast)) = exports::parse_file(path) else {
         return Indexed {
             modified,
             symbols: vec![],
             exports: vec![],
+            package,
         };
     };
     let symbols = file_symbols(&SourceFile {
@@ -152,5 +164,6 @@ fn index_file(path: &Path, modified: Option<SystemTime>) -> Indexed {
         modified,
         symbols,
         exports: exports::of_parsed(sm, file, ast).own,
+        package,
     }
 }

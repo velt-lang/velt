@@ -89,6 +89,15 @@ pub trait ProgramLoader: Send + Sync {
         let _ = from;
         vec![]
     }
+
+    /// The file that the specifier `spec`, imported by the file at `from`, names, exactly as
+    /// [`ProgramLoader::load`] would resolve it; `None` when that import would fail (invalid, not
+    /// found, ambiguous) or the loader cannot tell. The import help reads modules outside the
+    /// program through this, and checks the specifiers it writes. The default resolves nothing.
+    fn resolve_module(&self, spec: &str, from: &Path) -> Option<PathBuf> {
+        let _ = (spec, from);
+        None
+    }
 }
 
 /// A module an import specifier can name ([`ProgramLoader::module_index`]).

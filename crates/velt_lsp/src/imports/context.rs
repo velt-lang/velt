@@ -1,8 +1,8 @@
 //! Where in an import the cursor is, read from the text (the statement being typed usually does
 //! not parse): inside the braces of `import { … } from "<spec>"`, or inside a module specifier
-//! string (`from "…"`, `import("…")`, `import "…"`).
+//! string (`from "…"`, `import("…")`, `import "…"`). Comments and other strings are skipped.
 
-use crate::text_scan::is_ident_byte;
+use crate::text_scan::{in_code, is_ident_byte};
 
 /// An import position.
 #[derive(Debug, PartialEq, Eq)]
@@ -48,11 +48,15 @@ fn specifier(text: &str, offset: usize) -> Option<ImportContext> {
     if !opens {
         return None;
     }
+    // The quote opens a string that the cursor is in (not one in a comment or another string).
+    if !in_code(text, line_start + quote_at) || in_code(text, offset) {
+        return None;
+    }
     let lo = line_start + quote_at + 1;
     let rest = &text[offset..];
     let len = rest
         .bytes()
-        .position(|b| b == quote || b == b'\n' || b == b'"' || b == b'\'')
+        .position(|b| matches!(b, b'"' | b'\'' | b'\n' | b'\r') || b == quote)
         .unwrap_or(rest.len());
     Some(ImportContext::Specifier {
         typed: text[lo..offset].to_string(),
@@ -72,6 +76,9 @@ fn names(text: &str, offset: usize, word_start: usize) -> Option<ImportContext> 
         return None;
     }
     let open = i - 1;
+    if !in_code(text, open) {
+        return None;
+    }
     let (keyword, before) = last_word(&text[..open]);
     let types_only = keyword == "type" && last_word(before).0 == "import";
     if !(types_only || keyword == "import" || keyword == "export") {
@@ -188,6 +195,8 @@ mod tests {
             names("./m", &["größe"], false)
         );
         assert_eq!(context("function f() { a, | }"), None);
+        assert_eq!(context("// import { a, | } from \"velt:fs\""), None);
+        assert_eq!(context("/* import { | } from \"velt:fs\" */"), None);
         assert_eq!(context("import { a, |"), None);
         assert_eq!(context("const x = { a: 1, | } from"), None);
     }
@@ -211,6 +220,16 @@ mod tests {
             Some(ImportContext::Specifier { typed, .. }) if typed.is_empty()
         ));
         assert_eq!(context("const s = \"from |\";"), None);
+        assert_eq!(
+            context("import x from \"./a|\r\nconst y = 1;"),
+            Some(ImportContext::Specifier {
+                typed: "./a".into(),
+                lo: 15,
+                hi: 18
+            })
+        );
+        assert_eq!(context("// import x from \"./a|\""), None);
+        assert_eq!(context("const s = \"x\" + ` from \"|`"), None);
         assert_eq!(context("console.log(\"|\")"), None);
         assert!(matches!(
             context("import x from \"😀|"),

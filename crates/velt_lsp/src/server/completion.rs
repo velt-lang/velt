@@ -1,14 +1,16 @@
 //! The completion request: import help first (inside `import { … }` and module specifiers), then
 //! the names and members at the cursor, extended by auto-import where a name is being typed.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use lsp_types::{CompletionList, CompletionResponse, TextDocumentPositionParams};
+use lsp_types::{CompletionList, CompletionResponse, TextDocumentPositionParams, Url};
 
 use super::Server;
+use crate::analysis::Analysis;
 use crate::completion;
-use crate::imports::exports::Export;
+use crate::documents::Documents;
+use crate::imports::exports::{self, Export};
 use crate::line_index::LineIndex;
 
 /// Words after which the word being typed declares a name (no auto-import there).
@@ -57,11 +59,10 @@ impl Server<'_> {
             return Some(CompletionResponse::Array(found.items));
         };
         let in_scope: HashSet<String> = found.items.iter().map(|i| i.label.clone()).collect();
-        let dir = package_dir(&self.roots, &doc);
-        let package = match &dir {
-            Some(dir) => self.disk_symbols.exports(&self.roots, dir),
-            None => vec![],
-        };
+        let open = open_exports(&self.analyses, &self.docs, uri, &doc);
+        let mut package = self.disk_symbols.exports(&self.roots, &doc);
+        package.retain(|(path, _)| !open.iter().any(|(p, _)| p == path));
+        package.extend(open.iter().map(|(p, e)| (p.as_path(), e.as_slice())));
         let (auto, capped) =
             self.imports
                 .auto_imports(analysis, self.loader, &doc, &package, prefix, &in_scope);
@@ -90,11 +91,10 @@ impl Server<'_> {
             return vec![];
         }
         let doc = doc.path.clone();
-        let dir = package_dir(&self.roots, &doc);
-        let package: Vec<(&Path, &[Export])> = match &dir {
-            Some(dir) => self.disk_symbols.exports(&self.roots, dir),
-            None => vec![],
-        };
+        let open = open_exports(&self.analyses, &self.docs, uri, &doc);
+        let mut package: Vec<(&Path, &[Export])> = self.disk_symbols.exports(&self.roots, &doc);
+        package.retain(|(path, _)| !open.iter().any(|(p, _)| p == path));
+        package.extend(open.iter().map(|(p, e)| (p.as_path(), e.as_slice())));
         self.imports
             .fixes(analysis, self.loader, &doc, &package, (lo, hi))
     }
@@ -111,10 +111,28 @@ fn declares(before: &str) -> bool {
     trimmed.len() < before.len() && DECLARING.contains(&word)
 }
 
-/// The folder whose files the document may import from by auto-import: its package's root,
-/// else the workspace folder containing it.
-fn package_dir(roots: &[PathBuf], doc: &Path) -> Option<PathBuf> {
-    let dir = doc.parent()?;
-    vpm::manifest::find_package_root(dir)
-        .or_else(|| roots.iter().find(|r| doc.starts_with(r)).cloned())
+/// The exports of the other open documents of `doc`'s package (outside a package: of the other
+/// open documents outside packages), from their latest analysis: unsaved edits count.
+fn open_exports(
+    analyses: &HashMap<Url, Analysis>,
+    docs: &Documents,
+    uri: &Url,
+    doc: &Path,
+) -> Vec<(PathBuf, Vec<Export>)> {
+    let package = doc.parent().and_then(vpm::manifest::find_package_root);
+    analyses
+        .iter()
+        .filter(|(other, _)| *other != uri)
+        .filter_map(|(other, analysis)| {
+            let path = &docs.get(other)?.path;
+            let same = path.parent().and_then(vpm::manifest::find_package_root) == package;
+            same.then(|| {
+                let exports = crate::index::module_items(analysis, analysis.root, true)
+                    .iter()
+                    .map(|d| exports::of_decl(analysis, d))
+                    .collect();
+                (path.clone(), exports)
+            })
+        })
+        .collect()
 }

@@ -25,6 +25,10 @@ impl ProgramLoader for TestLoader {
     ) -> Result<LoadedProgram, String> {
         load(root, overlay, sm, diags, None)
     }
+
+    fn resolve_module(&self, spec: &str, from: &Path) -> Option<PathBuf> {
+        resolve(spec, from, None)
+    }
 }
 
 /// [`TestLoader`] plus `velt:x` imports from the std root it holds.
@@ -44,6 +48,20 @@ impl ProgramLoader for StdLoader {
     fn module_index(&self, _from: &Path) -> Vec<crate::ModuleEntry> {
         crate::std_module_entries(&self.0)
     }
+
+    fn resolve_module(&self, spec: &str, from: &Path) -> Option<PathBuf> {
+        resolve(spec, from, Some(&self.0))
+    }
+}
+
+/// The file `spec` names from `from`, as [`load`] resolves it, if it exists.
+fn resolve(spec: &str, from: &Path, std_root: Option<&Path>) -> Option<PathBuf> {
+    let file = if let Some(rel) = spec.strip_prefix("./") {
+        from.parent()?.join(format!("{rel}.vlt"))
+    } else {
+        std_root?.join(format!("{}.vlt", spec.strip_prefix("velt:")?))
+    };
+    file.is_file().then_some(file)
 }
 
 fn load(

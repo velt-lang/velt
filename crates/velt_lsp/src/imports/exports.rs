@@ -1,12 +1,12 @@
 //! The exports of modules that are not (or not yet) part of the document's program, read by
 //! parsing alone: their names, kinds and signatures, for completion inside `import { … }` and
 //! auto-import. Re-exports (`export { a } from "…"`, `export * from "…"`) are followed through
-//! `velt:` and relative specifiers. Parsed files are cached by modification time.
+//! the loader's resolution. Parsed files are cached by modification time.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use lsp_types::CompletionItemKind;
 use velt_common::{FileId, SourceMap};
@@ -16,9 +16,6 @@ use velt_syntax::ast;
 use crate::analysis::Analysis;
 use crate::index::{self, Decl};
 use crate::{completion, signature};
-
-/// How deep re-exports are followed (guards against cycles).
-const MAX_REEXPORT_DEPTH: usize = 8;
 
 /// One exported name.
 #[derive(Clone, Debug)]
@@ -132,49 +129,101 @@ pub fn declares_type(item: &ast::Item) -> bool {
     )
 }
 
-/// Parsed files by path, with their modification time.
+/// How long a parsed file is trusted before its modification time is looked at again (changes
+/// the editor's file watcher reports are taken at once, through [`ExportCache::forget`]).
+const RECHECK: Duration = Duration::from_secs(2);
+
+/// One parsed file.
+struct Parsed {
+    modified: Option<SystemTime>,
+    checked: Instant,
+    exports: Arc<ModuleExports>,
+}
+
+/// Resolves a specifier of a file to the file it names (the loader's
+/// [`crate::ProgramLoader::resolve_module`]).
+pub type Resolve<'a> = &'a dyn Fn(&str, &Path) -> Option<PathBuf>;
+
+/// Parsed files by path, and the modules' exports with re-exports followed.
 #[derive(Default)]
 pub struct ExportCache {
-    files: HashMap<PathBuf, (Option<SystemTime>, Arc<ModuleExports>)>,
+    files: HashMap<PathBuf, Parsed>,
+    resolved: HashMap<PathBuf, (Instant, Arc<Vec<Export>>)>,
 }
 
 impl ExportCache {
+    /// The file at `path` changed on disk: read it again when it is next needed.
+    pub fn forget(&mut self, path: &Path) {
+        self.files.remove(path);
+        // Any module may re-export it.
+        self.resolved.clear();
+    }
+
     /// The exports of the file at `path` (empty if it cannot be read), parsed again only when it
     /// changed on disk.
     fn file(&mut self, path: &Path) -> Arc<ModuleExports> {
-        let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
-        if let Some((when, exports)) = self.files.get(path) {
-            if when.is_some() && *when == modified {
-                return exports.clone();
+        if let Some(parsed) = self.files.get_mut(path) {
+            if parsed.checked.elapsed() < RECHECK {
+                return parsed.exports.clone();
+            }
+            let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+            if modified.is_some() && modified == parsed.modified {
+                parsed.checked = Instant::now();
+                return parsed.exports.clone();
             }
         }
+        let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
         let exports = Arc::new(
             parse_file(path)
                 .map(|(sm, file, ast)| of_parsed(sm, file, ast))
                 .unwrap_or_default(),
         );
-        self.files
-            .insert(path.to_path_buf(), (modified, exports.clone()));
+        let parsed = Parsed {
+            modified,
+            checked: Instant::now(),
+            exports: exports.clone(),
+        };
+        self.files.insert(path.to_path_buf(), parsed);
         exports
     }
 
-    /// Everything the module at `path` exports, re-exports followed (`velt:` specifiers resolve
-    /// below `std_root`).
-    pub fn exports(&mut self, path: &Path, std_root: Option<&Path>) -> Vec<Export> {
-        self.exports_at(path, std_root, 0)
+    /// Everything the module at `path` exports, re-exports followed through `resolve`.
+    pub fn exports(&mut self, path: &Path, resolve: Resolve) -> Arc<Vec<Export>> {
+        if let Some((checked, exports)) = self.resolved.get(path) {
+            if checked.elapsed() < RECHECK {
+                return exports.clone();
+            }
+        }
+        let exports = self.collect(path, resolve, &mut HashMap::new(), &mut HashSet::new());
+        self.resolved
+            .insert(path.to_path_buf(), (Instant::now(), exports.clone()));
+        exports
     }
 
-    fn exports_at(&mut self, path: &Path, std_root: Option<&Path>, depth: usize) -> Vec<Export> {
+    /// The exports of `path`; `done` holds the modules resolved in this lookup (a module two
+    /// re-exports reach is read once), `open` those being resolved (a cycle ends there).
+    fn collect(
+        &mut self,
+        path: &Path,
+        resolve: Resolve,
+        done: &mut HashMap<PathBuf, Arc<Vec<Export>>>,
+        open: &mut HashSet<PathBuf>,
+    ) -> Arc<Vec<Export>> {
+        if let Some(found) = done.get(path) {
+            return found.clone();
+        }
+        if !open.insert(path.to_path_buf()) {
+            return Arc::default();
+        }
         let module = self.file(path);
         let mut out = module.own.clone();
-        if depth >= MAX_REEXPORT_DEPTH {
-            return out;
-        }
         for re in &module.reexports {
-            let target = resolve(&re.spec, path, std_root);
-            let found = target.map_or_else(Vec::new, |t| self.exports_at(&t, std_root, depth + 1));
+            let found = match resolve(&re.spec, path) {
+                Some(target) => self.collect(&target, resolve, done, open),
+                None => Arc::default(),
+            };
             if re.all {
-                out.extend(found);
+                out.extend(found.iter().cloned());
                 continue;
             }
             for (original, exported) in &re.names {
@@ -192,47 +241,46 @@ impl ExportCache {
                 out.push(export);
             }
         }
+        let out = Arc::new(out);
+        open.remove(path);
+        done.insert(path.to_path_buf(), out.clone());
         out
     }
 }
 
-/// The file a `velt:` or relative specifier of the file `importer` names, if it exists.
-pub fn resolve(spec: &str, importer: &Path, std_root: Option<&Path>) -> Option<PathBuf> {
-    if let Some(rel) = spec.strip_prefix("velt:") {
-        let root = std_root?;
-        if rel
-            .split('/')
-            .any(|s| s.is_empty() || s == "." || s == "..")
-        {
-            return None;
-        }
-        return [
-            root.join(format!("{rel}.vlt")),
-            root.join(rel).join("index.vlt"),
-        ]
-        .into_iter()
-        .find(|p| p.is_file());
-    }
-    if spec.starts_with("./") || spec.starts_with("../") {
-        let base = vpm::relpath::normalize(&importer.parent()?.join(spec));
-        return relative_candidates(&base).into_iter().find(|p| p.is_file());
-    }
-    None
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// The files a relative specifier naming `base` may be: `base` itself when it has a source
-/// extension, else `base.vlt`, `base.ts`, `base.tsx`, then the folder module `base/index.*`.
-fn relative_candidates(base: &Path) -> Vec<PathBuf> {
-    let Some(name) = base.to_str() else {
-        return vec![];
-    };
-    if vpm::sources::is_source_name(name) {
-        return vec![base.to_path_buf()];
+    /// Re-export cycles end, and a module two re-exports reach counts once per path.
+    #[test]
+    fn re_exports_follow_cycles_and_diamonds_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let files = [
+            (
+                "a.vlt",
+                "export * from \"./b\";\nexport * from \"./c\";\nexport const A: i64 = 1;\n",
+            ),
+            ("b.vlt", "export * from \"./d\";\nexport * from \"./a\";\n"),
+            ("c.vlt", "export { D as E } from \"./d\";\n"),
+            ("d.vlt", "export const D: i64 = 1;\n"),
+        ];
+        for (name, text) in files {
+            std::fs::write(dir.join(name), text).unwrap();
+        }
+        let resolve = |spec: &str, from: &Path| {
+            let file = from
+                .parent()?
+                .join(format!("{}.vlt", spec.strip_prefix("./")?));
+            file.is_file().then_some(file)
+        };
+        let mut cache = ExportCache::default();
+        let names: Vec<String> = cache
+            .exports(&dir.join("a.vlt"), &resolve)
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+        assert_eq!(names, ["A", "D", "E"]);
     }
-    let index = base.join("index");
-    let index = index.to_str().unwrap_or(name);
-    vpm::sources::source_files(name)
-        .into_iter()
-        .chain(vpm::sources::source_files(index))
-        .collect()
 }

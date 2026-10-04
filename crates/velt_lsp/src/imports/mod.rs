@@ -45,9 +45,19 @@ type StdExports = Arc<Vec<(String, Vec<Export>)>>;
 
 /// A module the document could import a name from.
 struct Candidate {
-    /// The specifier the document imports it by.
-    spec: String,
+    source: Source,
+    /// Lower first: the package's files, dependencies, std.
+    rank: u8,
     export: Export,
+}
+
+/// Where a [`Candidate`] comes from.
+#[derive(Clone)]
+enum Source {
+    /// A module with this specifier (std, a dependency).
+    Module(String),
+    /// A file of the package.
+    File(PathBuf),
 }
 
 /// The import help's caches (one per server).
@@ -59,6 +69,11 @@ pub struct ImportHelp {
 }
 
 impl ImportHelp {
+    /// The file at `path` changed on disk (the editor's file watcher says so).
+    pub fn forget(&mut self, path: &Path) {
+        self.exports.forget(path);
+    }
+
     /// Completion inside an import of the document at `doc` (byte `offset`, the word at the
     /// cursor starting at `word_start`); `None` when the cursor is not in one.
     pub fn complete(
@@ -108,13 +123,10 @@ impl ImportHelp {
                 .map(|d| exports::of_decl(analysis, d))
                 .collect();
         }
-        let entries = loader.module_index(doc);
-        let std_root = auto::std_root(&entries);
-        let path = entries
-            .iter()
-            .find(|e| e.spec == spec)
-            .map(|e| e.path.clone())
-            .or_else(|| exports::resolve(spec, doc, std_root.as_deref()));
-        path.map_or_else(Vec::new, |p| self.exports.exports(&p, std_root.as_deref()))
+        let resolve = |spec: &str, from: &Path| loader.resolve_module(spec, from);
+        match loader.resolve_module(spec, doc) {
+            Some(path) => self.exports.exports(&path, &resolve).to_vec(),
+            None => vec![],
+        }
     }
 }

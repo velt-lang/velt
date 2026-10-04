@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use velt_common::{Diagnostics, SourceMap};
 use velt_lsp::{LoadedProgram, ModuleEntry, ProgramLoader};
@@ -23,11 +23,20 @@ pub fn lsp_command() -> Result<(), String> {
 /// dependencies needs no server restart).
 #[derive(Default)]
 pub struct CliLoader {
-    /// Package root → the manifest it was installed from and its graph (`None`: not installable,
-    /// package imports fail).
-    graphs: Mutex<HashMap<PathBuf, (ManifestStamp, Option<PackageGraph>)>>,
+    /// Package root → what was installed for it.
+    packages: Mutex<HashMap<PathBuf, Installed>>,
     /// The std root's public modules, listed once.
     std_modules: Mutex<Option<(PathBuf, Vec<ModuleEntry>)>>,
+}
+
+/// A package as installed from one state of its manifest.
+struct Installed {
+    /// The manifest it was installed from.
+    stamp: ManifestStamp,
+    /// Its graph (`None`: not installable, package imports fail).
+    graph: Option<Arc<PackageGraph>>,
+    /// The modules of its dependencies, listed on first use.
+    dependency_modules: Option<Arc<Vec<ModuleEntry>>>,
 }
 
 /// When `package.vlt` was last written, and its size: what tells a saved change apart.
@@ -39,26 +48,47 @@ fn manifest_stamp(root: &Path) -> ManifestStamp {
 }
 
 impl CliLoader {
-    fn graph(&self, file: &Path) -> Option<PackageGraph> {
+    /// `f` of the installed package containing `file` (installed again when its manifest
+    /// changed); `None` outside a package.
+    fn with_package<T>(&self, file: &Path, f: impl FnOnce(&mut Installed) -> T) -> Option<T> {
         let root = vpm::manifest::find_package_root(file.parent()?)?;
         let stamp = manifest_stamp(&root);
-        let mut graphs = self.graphs.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((installed_from, graph)) = graphs.get(&root) {
-            if *installed_from == stamp {
-                return graph.clone();
-            }
+        let mut packages = self.packages.lock().unwrap_or_else(|e| e.into_inner());
+        let fresh = packages.get(&root).is_some_and(|p| p.stamp == stamp);
+        if !fresh {
+            let opts = InstallOptions {
+                locked: false,
+                update: false,
+                target: Some(velt_codegen_cl::host_triple()),
+            };
+            let graph = super::project::Project::open(&root, opts)
+                .map_err(|e| eprintln!("velt-lsp: cannot install `{}`: {e}", root.display()))
+                .ok()
+                .map(|p| Arc::new(p.graph));
+            let installed = Installed {
+                stamp,
+                graph,
+                dependency_modules: None,
+            };
+            packages.insert(root.clone(), installed);
         }
-        let opts = InstallOptions {
-            locked: false,
-            update: false,
-            target: Some(velt_codegen_cl::host_triple()),
-        };
-        let graph = super::project::Project::open(&root, opts)
-            .map_err(|e| eprintln!("velt-lsp: cannot install `{}`: {e}", root.display()))
-            .ok()
-            .map(|p| p.graph);
-        graphs.insert(root, (stamp, graph.clone()));
-        graph
+        packages.get_mut(&root).map(f)
+    }
+
+    fn graph(&self, file: &Path) -> Option<Arc<PackageGraph>> {
+        self.with_package(file, |p| p.graph.clone()).flatten()
+    }
+
+    /// The modules of the dependencies of the package containing `file`, as package specifiers
+    /// resolve them (listed once per installed manifest).
+    fn dependency_modules(&self, file: &Path) -> Arc<Vec<ModuleEntry>> {
+        let listed = self.with_package(file, |p| {
+            let graph = p.graph.clone();
+            p.dependency_modules
+                .get_or_insert_with(|| Arc::new(list_dependencies(graph.as_deref(), file)))
+                .clone()
+        });
+        listed.unwrap_or_default()
     }
 
     /// The public modules of the std root (listed on first use), as `velt:` specifiers resolve
@@ -98,7 +128,7 @@ impl ProgramLoader for CliLoader {
         let graph = self.graph(root);
         let opts = LoadOptions {
             std_root: loader::std_root(),
-            packages: graph.as_ref().map(|g| g as &dyn loader::PackageResolver),
+            packages: graph.as_deref().map(|g| g as &dyn loader::PackageResolver),
             root_source: None,
             overlay: Some(overlay),
         };
@@ -111,25 +141,41 @@ impl ProgramLoader for CliLoader {
 
     fn module_index(&self, from: &Path) -> Vec<ModuleEntry> {
         let mut out = self.std_modules();
-        let graph = self.graph(from);
-        let Some(package) = graph.as_ref().and_then(|g| g.package_of(from)) else {
-            return out;
-        };
-        let dir = from.parent().unwrap_or(Path::new(""));
-        for (name, root) in &package.dependencies {
-            out.extend(
-                velt_lsp::package_module_entries(name, root)
-                    .into_iter()
-                    .filter(|e| {
-                        matches!(
-                            loader::resolve_spec(&e.spec, dir),
-                            Ok(loader::ModuleRef::Package { .. })
-                        )
-                    }),
-            );
-        }
+        out.extend(self.dependency_modules(from).iter().cloned());
         out
     }
+
+    fn resolve_module(&self, spec: &str, from: &Path) -> Option<PathBuf> {
+        // Only bare specifiers (dependencies, `paths` aliases) need the package graph, which a
+        // std file (the std root has a `package.vlt` module) must not install.
+        let bare =
+            !spec.starts_with("./") && !spec.starts_with("../") && !spec.starts_with("velt:");
+        let graph = if bare { self.graph(from) } else { None };
+        let packages = graph.as_deref().map(|g| g as &dyn loader::PackageResolver);
+        loader::resolve_module(spec, from, loader::std_root().as_deref(), packages)
+    }
+}
+
+/// The modules of the dependencies of the package containing `file`, in `graph`.
+fn list_dependencies(graph: Option<&PackageGraph>, file: &Path) -> Vec<ModuleEntry> {
+    let Some(package) = graph.and_then(|g| g.package_of(file)) else {
+        return vec![];
+    };
+    let dir = file.parent().unwrap_or(Path::new(""));
+    let mut out = vec![];
+    for (name, root) in &package.dependencies {
+        out.extend(
+            velt_lsp::package_module_entries(name, root)
+                .into_iter()
+                .filter(|e| {
+                    matches!(
+                        loader::resolve_spec(&e.spec, dir),
+                        Ok(loader::ModuleRef::Package { .. })
+                    )
+                }),
+        );
+    }
+    out
 }
 
 #[cfg(test)]

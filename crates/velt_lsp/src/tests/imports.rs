@@ -235,6 +235,121 @@ fn auto_import_adds_an_import_to_a_file_without_imports() {
         with_import(text, helper, &doc),
         "import { helper } from \"./util\";\n\nfunction main() {\n  hel\n}\n"
     );
+    // An open file's unsaved exports count.
+    let util = Url::from_file_path(fx.app.join("util.vlt")).unwrap();
+    client.open(
+        &util,
+        &format!("{UTIL}\nexport function freshly(): i64 {{\n  return 2;\n}}\n"),
+    );
+    client.diagnostics(&util);
+    let text = "function main() {\n  fresh\n}\n";
+    client.change(&doc, 3, text);
+    client.diagnostics(&doc);
+    let items = complete(&mut client, &doc, text, "fresh\n", 5, None);
+    assert_eq!(
+        item(&items, "freshly")["labelDetails"]["description"],
+        json!("./util")
+    );
+    client.shutdown();
+}
+
+/// Auto-import names the file it offers: the extension stays when two files share a stem, a
+/// folder module hidden by a file of its name keeps `/index`, a module above is `../index`, and
+/// files of a nested package are not offered.
+#[test]
+fn auto_import_specifiers_name_the_chosen_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().canonicalize().unwrap().join("pkg");
+    let manifest = "export const pkg: Package = { name: \"app\", version: \"0.1.0\" };\n";
+    let files = [
+        ("package.vlt", manifest),
+        ("src/feature/main.vlt", ""),
+        ("src/dup.vlt", "export const dupVlt: i64 = 1;\n"),
+        ("src/dup.ts", "export const dupTs: number = 1;\n"),
+        ("src/shapes.vlt", "export const shapeFile: i64 = 1;\n"),
+        (
+            "src/shapes/index.vlt",
+            "export const shapeFolder: i64 = 1;\n",
+        ),
+        ("src/index.vlt", "export const indexThing: i64 = 1;\n"),
+        ("src/nested/package.vlt", manifest),
+        (
+            "src/nested/src/inner.vlt",
+            "export const innerThing: i64 = 1;\n",
+        ),
+    ];
+    for (rel, text) in files {
+        let path = pkg.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    let init = json!({ "capabilities": {}, "rootUri": Url::from_file_path(&pkg).unwrap() });
+    let mut client = Client::start_on(init, StdLoader(pkg.join("no-std")));
+    let doc = Url::from_file_path(pkg.join("src/feature/main.vlt")).unwrap();
+    let mut from = |prefix: &str| {
+        let text = format!("function main() {{\n  {prefix}\n}}\n");
+        client.open(&doc, &text);
+        client.diagnostics(&doc);
+        let items = complete(&mut client, &doc, &text, "\n}", 0, None);
+        items
+            .iter()
+            .map(|i| {
+                let label = i["label"].as_str().unwrap().to_string();
+                (
+                    label,
+                    i["labelDetails"]["description"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string(),
+                )
+            })
+            .filter(|(_, from)| !from.is_empty())
+            .collect::<Vec<_>>()
+    };
+    let pairs = |list: &[(&str, &str)]| -> Vec<(String, String)> {
+        list.iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect()
+    };
+    assert_eq!(
+        from("dup"),
+        pairs(&[("dupTs", "../dup.ts"), ("dupVlt", "../dup.vlt")])
+    );
+    assert_eq!(
+        from("shape"),
+        pairs(&[
+            ("shapeFile", "../shapes"),
+            ("shapeFolder", "../shapes/index")
+        ])
+    );
+    assert_eq!(from("index"), pairs(&[("indexThing", "../index")]));
+    assert_eq!(from("inner"), pairs(&[]));
+    client.shutdown();
+}
+
+/// In a file with CRLF line endings, new lines are CRLF, and a specifier's range ends before
+/// the `\r`.
+#[test]
+fn crlf_documents_keep_their_line_endings() {
+    let fx = fixture();
+    let text = "import { readFile } from \"velt:fs\";\r\n\r\nfunction main() {\r\n  setO\r\n}\r\n";
+    let (mut client, doc, _) = open(&fx, text);
+    let items = complete(&mut client, &doc, text, "setO\r", 4, None);
+    assert_eq!(
+        with_import(text, item(&items, "setOf"), &doc),
+        text.replace(
+            "\"velt:fs\";\r\n",
+            "\"velt:fs\";\r\nimport { setOf } from \"velt:collections/set\";\r\n"
+        )
+    );
+    let text = "import { helper } from \"./u\r\n";
+    client.change(&doc, 2, text);
+    client.diagnostics(&doc);
+    let items = complete(&mut client, &doc, text, "./u", 3, None);
+    assert_eq!(
+        item(&items, "./util")["textEdit"]["range"],
+        json!({ "start": { "line": 0, "character": 24 }, "end": { "line": 0, "character": 27 } })
+    );
     client.shutdown();
 }
 
@@ -253,6 +368,15 @@ fn auto_import_extends_an_existing_import() {
     let read: Vec<&Value> = items.iter().filter(|i| i["label"] == "readFile").collect();
     assert_eq!(read.len(), 1);
     assert!(read[0]["additionalTextEdits"].is_null(), "{read:?}");
+    // Into a sorted list, in order.
+    let text = "import { IoError, writeFile } from \"velt:fs\";\n\nfunction main() {\n  readF\n}\n";
+    client.change(&doc, 2, text);
+    client.diagnostics(&doc);
+    let items = complete(&mut client, &doc, text, "readF\n", 5, None);
+    assert_eq!(
+        with_import(text, item(&items, "readFile"), &doc),
+        text.replace("IoError, writeFile", "IoError, readFile, writeFile")
+    );
     client.shutdown();
 }
 

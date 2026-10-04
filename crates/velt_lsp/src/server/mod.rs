@@ -218,6 +218,7 @@ impl Server<'_> {
                     let path = documents::uri_to_path(&change.uri);
                     let deleted = change.typ == FileChangeType::DELETED;
                     self.disk_symbols.changed(&self.roots, &path, deleted);
+                    self.imports.forget(&path);
                     let created = change.typ == FileChangeType::CREATED;
                     packages_changed |= affects_packages(&path, created, deleted);
                 }

@@ -29,14 +29,34 @@ pub fn scan(text: &str, end: usize) -> Vec<Token> {
         pos: 0,
         braces: vec![],
         out: vec![],
+        probe: None,
+        probed: false,
     };
     s.run();
     s.out
 }
 
+/// Whether byte `offset` of `text` is code: not inside a comment, a string literal or the text of
+/// a template literal (a position just past a literal's closing quote is code again).
+pub fn in_code(text: &str, offset: usize) -> bool {
+    let mut s = Scanner {
+        bytes: text.as_bytes(),
+        pos: 0,
+        braces: vec![],
+        out: vec![],
+        probe: Some(offset),
+        probed: false,
+    };
+    s.run();
+    !s.probed
+}
+
 struct Scanner<'a> {
     bytes: &'a [u8],
     pos: usize,
+    /// For [`in_code`]: the offset asked about, and whether a comment or literal covers it.
+    probe: Option<usize>,
+    probed: bool,
     /// Open `{`: `true` for a template substitution `${`, whose `}` resumes the template text.
     braces: Vec<bool>,
     out: Vec<Token>,
@@ -49,17 +69,31 @@ impl Scanner<'_> {
 
     fn run(&mut self) {
         while self.pos < self.bytes.len() {
+            if self.probe.is_some_and(|p| self.pos >= p) {
+                return;
+            }
             let c = self.peek(0);
+            let lo = self.pos;
             match c {
-                b'/' if self.peek(1) == b'/' => self.skip_until(b"\n"),
+                b'/' if self.peek(1) == b'/' => {
+                    self.skip_until(b"\n");
+                    let terminated = self.bytes[self.pos - 1] == b'\n';
+                    self.covers(lo, !terminated);
+                }
                 b'/' if self.peek(1) == b'*' => {
                     self.pos += 2;
                     self.skip_until(b"*/");
+                    self.covers(lo, false);
                 }
-                b'"' | b'\'' => self.string(c),
+                b'"' | b'\'' => {
+                    self.string(c);
+                    let closed = self.pos > lo + 1 && self.bytes[self.pos - 1] == c;
+                    self.covers(lo, !closed);
+                }
                 b'`' => {
                     self.pos += 1;
                     self.template_text();
+                    self.covers(lo, false);
                 }
                 b'0'..=b'9' => self.skip_while(|b| is_ident_byte(b) || b == b'.'),
                 _ if is_ident_start(c) => {
@@ -75,12 +109,24 @@ impl Scanner<'_> {
                     if self.braces.pop() == Some(true) {
                         self.pos += 1;
                         self.template_text();
+                        self.covers(lo, false);
                     } else {
                         self.punct(c);
                     }
                 }
                 _ if c.is_ascii_punctuation() => self.punct(c),
                 _ => self.pos += 1,
+            }
+        }
+    }
+
+    /// For [`in_code`]: whether the comment or literal text just skipped (from `lo`) covers the
+    /// probed offset; `open_end`: it runs to the end of its line or the text (an unterminated
+    /// literal, a line comment), which the offset there is still inside.
+    fn covers(&mut self, lo: usize, open_end: bool) {
+        if let Some(p) = self.probe {
+            if lo < p && (p < self.pos || (open_end && p == self.pos)) {
+                self.probed = true;
             }
         }
     }
@@ -180,6 +226,23 @@ mod tests {
     fn scans_template_substitutions_as_code() {
         let text = "`x ${ y + { z: 1 }.z } w ${v}` u";
         assert_eq!(idents(text), ["y", "z", "z", "v", "u"]);
+    }
+
+    #[test]
+    fn tells_code_from_comments_and_literals() {
+        let text = "a // b\nc /* d */ \"e\" `f ${g}` 'h";
+        let at = |needle: &str| in_code(text, text.find(needle).unwrap());
+        assert!(at("a"));
+        assert!(!at("b"));
+        assert!(at("c"));
+        assert!(!at("d"));
+        assert!(!at("e"));
+        assert!(at(" `"));
+        assert!(!at("f"));
+        assert!(at("g"));
+        assert!(!at("h"));
+        assert!(!in_code(text, text.len()));
+        assert!(!in_code("x // y", 6));
     }
 
     #[test]

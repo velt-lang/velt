@@ -8,9 +8,10 @@ use std::sync::Arc;
 
 use lsp_types::{CompletionItem, CompletionItemLabelDetails, TextEdit};
 
-use super::exports::Export;
+use super::exports::{Export, Resolve};
 use super::{
-    edit, Candidate, FileExports, ImportHelp, StdExports, MAX_AUTO_IMPORTS, MAX_IMPORT_FIXES,
+    edit, specifiers, Candidate, FileExports, ImportHelp, Source, StdExports, MAX_AUTO_IMPORTS,
+    MAX_IMPORT_FIXES,
 };
 use crate::analysis::Analysis;
 use crate::code_actions::Fix;
@@ -30,27 +31,34 @@ impl ImportHelp {
         prefix: &str,
         in_scope: &HashSet<String>,
     ) -> (Vec<CompletionItem>, bool) {
-        let prefix = prefix.to_lowercase();
+        let lower = prefix.to_lowercase();
         let wanted =
-            |e: &Export| e.name.to_lowercase().starts_with(&prefix) && !in_scope.contains(&e.name);
+            |e: &Export| e.name.to_lowercase().starts_with(&lower) && !in_scope.contains(&e.name);
         let mut found = self.candidates(loader, doc, package, &wanted);
+        // Best first, then cut: names starting with exactly what was typed, shorter names, the
+        // package's own modules before dependencies before std.
+        found.sort_by_cached_key(|c| {
+            let name = &c.export.name;
+            (!name.starts_with(prefix), name.len(), c.rank, name.clone())
+        });
         let capped = found.len() > MAX_AUTO_IMPORTS;
         found.truncate(MAX_AUTO_IMPORTS);
         let index = LineIndex::new(analysis.text());
         let items = found
             .into_iter()
-            .map(|c| {
+            .filter_map(|c| {
+                let spec = c.spec(loader, doc)?;
                 let (span, text) =
-                    edit::import_edit(analysis, &c.spec, &c.export.name, c.export.is_type);
-                CompletionItem {
+                    edit::import_edit(analysis, &spec, &c.export.name, c.export.is_type);
+                Some(CompletionItem {
                     label: c.export.name.clone(),
                     kind: Some(c.export.kind),
                     label_details: Some(CompletionItemLabelDetails {
                         detail: None,
-                        description: Some(c.spec.clone()),
+                        description: Some(spec.clone()),
                     }),
                     detail: Some(if c.export.detail.is_empty() {
-                        format!("import {{ {} }} from \"{}\"", c.export.name, c.spec)
+                        format!("import {{ {} }} from \"{spec}\"", c.export.name)
                     } else {
                         c.export.detail.clone()
                     }),
@@ -61,7 +69,7 @@ impl ImportHelp {
                         text,
                     )]),
                     ..Default::default()
-                }
+                })
             })
             .collect();
         (items, capped)
@@ -90,11 +98,16 @@ impl ImportHelp {
             };
             let wanted = |e: &Export| e.name == name && (!wants_type || e.is_type);
             let mut found = self.candidates(loader, doc, package, &wanted);
+            found.sort_by_key(|c| c.rank);
             found.truncate(MAX_IMPORT_FIXES);
-            let preferred = found.len() == 1;
-            out.extend(found.into_iter().map(|c| Fix {
-                title: format!("Import `{name}` from `{}`", c.spec),
-                edits: vec![edit::import_edit(analysis, &c.spec, name, c.export.is_type)],
+            let specs: Vec<(String, bool)> = found
+                .iter()
+                .filter_map(|c| Some((c.spec(loader, doc)?, c.export.is_type)))
+                .collect();
+            let preferred = specs.len() == 1;
+            out.extend(specs.into_iter().map(|(spec, is_type)| Fix {
+                title: format!("Import `{name}` from `{spec}`"),
+                edits: vec![edit::import_edit(analysis, &spec, name, is_type)],
                 diagnostic: Some(d.clone()),
                 preferred,
             }));
@@ -103,7 +116,7 @@ impl ImportHelp {
     }
 
     /// The exports `wanted` takes, from the std modules, the dependencies and the package's
-    /// files (in that order, each sorted by name), once per name and module.
+    /// files, once per name and module.
     fn candidates(
         &mut self,
         loader: &dyn ProgramLoader,
@@ -112,61 +125,86 @@ impl ImportHelp {
         wanted: &dyn Fn(&Export) -> bool,
     ) -> Vec<Candidate> {
         let entries = loader.module_index(doc);
-        let std_root = std_root(&entries);
+        let resolve = |spec: &str, from: &Path| loader.resolve_module(spec, from);
         let mut out = vec![];
-        let take = |spec: &str, exports: &[Export], out: &mut Vec<Candidate>| {
+        let take = |source: Source, rank: u8, exports: &[Export], out: &mut Vec<Candidate>| {
             let mut seen = HashSet::new();
-            let mut found: Vec<Candidate> = exports
-                .iter()
-                .filter(|e| wanted(e) && seen.insert(e.name.clone()))
-                .map(|e| Candidate {
-                    spec: spec.to_string(),
-                    export: e.clone(),
-                })
-                .collect();
-            found.sort_by(|a, b| a.export.name.cmp(&b.export.name));
-            out.extend(found);
+            out.extend(
+                exports
+                    .iter()
+                    .filter(|e| wanted(e) && seen.insert(e.name.clone()))
+                    .map(|e| Candidate {
+                        source: source.clone(),
+                        rank,
+                        export: e.clone(),
+                    }),
+            );
         };
-        for (spec, exports) in self.std_exports(&entries, std_root.as_deref()).iter() {
-            take(spec, exports, &mut out);
-        }
-        for entry in entries.iter().filter(|e| e.kind == ModuleKind::Dependency) {
-            let exports = self.exports.exports(&entry.path, std_root.as_deref());
-            take(&entry.spec, &exports, &mut out);
-        }
         for (path, exports) in package {
             if *path != doc {
-                if let Some(spec) = relative_spec(doc, path) {
-                    take(&spec, exports, &mut out);
-                }
+                take(Source::File(path.to_path_buf()), 0, exports, &mut out);
             }
+        }
+        for entry in entries.iter().filter(|e| e.kind == ModuleKind::Dependency) {
+            let exports = self.exports.exports(&entry.path, &resolve);
+            take(Source::Module(entry.spec.clone()), 1, &exports, &mut out);
+        }
+        for (spec, exports) in self.std_exports(&entries, &resolve).iter() {
+            take(Source::Module(spec.clone()), 2, exports, &mut out);
         }
         out
     }
 
     /// The exports of the std modules among `entries`, parsed once per std root.
-    fn std_exports(&mut self, entries: &[ModuleEntry], std_root: Option<&Path>) -> StdExports {
-        let Some(root) = std_root else {
+    fn std_exports(&mut self, entries: &[ModuleEntry], resolve: Resolve) -> StdExports {
+        let Some(root) = std_root(entries) else {
             return Arc::default();
         };
         if let Some((cached_root, exports)) = &self.std {
-            if cached_root == root {
+            if *cached_root == root {
                 return exports.clone();
             }
         }
         let exports: Vec<(String, Vec<Export>)> = entries
             .iter()
             .filter(|e| e.kind == ModuleKind::Std)
-            .map(|e| (e.spec.clone(), self.exports.exports(&e.path, Some(root))))
+            .map(|e| {
+                (
+                    e.spec.clone(),
+                    self.exports.exports(&e.path, resolve).to_vec(),
+                )
+            })
             .collect();
         let exports = Arc::new(exports);
-        self.std = Some((root.to_path_buf(), exports.clone()));
+        self.std = Some((root, exports.clone()));
         exports
     }
 }
 
+impl Candidate {
+    /// The specifier the document at `doc` imports this candidate's module by; `None` for a file
+    /// that specifier would not load.
+    fn spec(&self, loader: &dyn ProgramLoader, doc: &Path) -> Option<String> {
+        match &self.source {
+            Source::Module(spec) => Some(spec.clone()),
+            Source::File(file) => {
+                let spec = specifiers::relative_spec(doc, file)?;
+                // The loader has the last word where it can tell.
+                match loader.resolve_module(&spec, doc) {
+                    Some(found) if !same_file(&found, file) => None,
+                    _ => Some(spec),
+                }
+            }
+        }
+    }
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    a == b || std::fs::canonicalize(a).ok() == std::fs::canonicalize(b).ok()
+}
+
 /// The std root the std entries' files are in (`velt:fs` → `<root>/fs.vlt`).
-pub(super) fn std_root(entries: &[ModuleEntry]) -> Option<PathBuf> {
+fn std_root(entries: &[ModuleEntry]) -> Option<PathBuf> {
     let entry = entries.iter().find(|e| e.kind == ModuleKind::Std)?;
     let rel = entry.spec.strip_prefix("velt:")?;
     let mut levels = rel.split('/').count();
@@ -178,20 +216,6 @@ pub(super) fn std_root(entries: &[ModuleEntry]) -> Option<PathBuf> {
         root = root.parent()?;
     }
     Some(root.to_path_buf())
-}
-
-/// The relative specifier the document at `doc` imports the file at `file` by (`./util`,
-/// `../lib/math`, `./shapes` for `shapes/index.vlt`).
-fn relative_spec(doc: &Path, file: &Path) -> Option<String> {
-    let rel = vpm::relpath::relative(file, doc.parent()?);
-    let rel = rel.replace('\\', "/");
-    let module = vpm::sources::strip_source_extension(&rel)?;
-    let module = module.strip_suffix("/index").unwrap_or(module);
-    Some(if module.starts_with("../") {
-        module.to_string()
-    } else {
-        format!("./{module}")
-    })
 }
 
 /// Whether a "cannot find `x`" error is in the document's byte range `lo..hi`.

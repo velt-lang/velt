@@ -3,7 +3,6 @@
 //! folders next to the document for `./` and `../`, named as the loader resolves them (no
 //! extension unless two files share a name).
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use lsp_types::{CompletionItem, CompletionItemKind, CompletionTextEdit, TextEdit};
@@ -76,7 +75,11 @@ fn relative(doc: &Path, typed: &str) -> Vec<(String, bool, String)> {
     if prefix == "./" {
         out.push(("../".to_string(), true, String::new()));
     }
-    let mut files = vec![];
+    let names: Vec<&str> = paths
+        .iter()
+        .filter(|p| !p.is_dir())
+        .filter_map(|p| p.file_name()?.to_str())
+        .collect();
     for path in &paths {
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
@@ -86,18 +89,109 @@ fn relative(doc: &Path, typed: &str) -> Vec<(String, bool, String)> {
                 out.push((format!("{prefix}{name}/"), true, String::new()));
             }
         } else if vpm::sources::walk_keeps(name) && path != doc {
-            files.push(name);
+            let spelled = file_spelling(name, &names);
+            out.push((format!("{prefix}{spelled}"), false, name.to_string()));
         }
     }
-    let mut stems: HashMap<&str, usize> = HashMap::new();
-    for name in &files {
-        let stem = vpm::sources::strip_source_extension(name).unwrap_or(name);
-        *stems.entry(stem).or_default() += 1;
-    }
-    for name in files {
-        let stem = vpm::sources::strip_source_extension(name).unwrap_or(name);
-        let spelled = if stems[stem] > 1 { name } else { stem };
-        out.push((format!("{prefix}{spelled}"), false, name.to_string()));
-    }
     out
+}
+
+/// How an import names the source file `name` among the files `siblings` of its folder: without
+/// its extension, unless another source file shares its stem (`./foo` would be ambiguous).
+fn file_spelling<'a>(name: &'a str, siblings: &[&str]) -> &'a str {
+    let Some(stem) = vpm::sources::strip_source_extension(name) else {
+        return name;
+    };
+    let shared = siblings
+        .iter()
+        .any(|s| *s != name && vpm::sources::strip_source_extension(s) == Some(stem));
+    if shared {
+        name
+    } else {
+        stem
+    }
+}
+
+/// The relative specifier that names the source file `file` from the document at `doc`, as the
+/// loader resolves relative imports: the extension stays when another file shares the stem; a
+/// folder module (`shapes/index.vlt`) is named by its folder (`./shapes`) unless a file module of
+/// that name would win over it or the folder has no name to spell (`../index`).
+pub fn relative_spec(doc: &Path, file: &Path) -> Option<String> {
+    let doc_dir = doc.parent()?;
+    let dir = file.parent()?;
+    let name = file.file_name()?.to_str()?;
+    let read = std::fs::read_dir(dir).ok()?;
+    let siblings: Vec<String> = read
+        .filter_map(Result::ok)
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    let siblings: Vec<&str> = siblings.iter().map(String::as_str).collect();
+    let spelled = file_spelling(name, &siblings);
+    let rel_dir = vpm::relpath::relative(dir, doc_dir);
+    if spelled == "index" {
+        if let Some(folder) = folder_spec(dir, &rel_dir) {
+            return Some(folder);
+        }
+    }
+    Some(match rel_dir.as_str() {
+        "." => format!("./{spelled}"),
+        _ if rel_dir.starts_with("..") => format!("{rel_dir}/{spelled}"),
+        _ => format!("./{rel_dir}/{spelled}"),
+    })
+}
+
+/// The specifier naming the folder `dir` (`rel_dir` from the document's folder) as a folder
+/// module, unless it has no name there (`.`, `..`) or a file module of its name hides it.
+fn folder_spec(dir: &Path, rel_dir: &str) -> Option<String> {
+    let last = rel_dir.rsplit('/').next()?;
+    if last == "." || last == ".." {
+        return None;
+    }
+    let folder = dir.file_name()?.to_str()?;
+    let parent = dir.parent()?;
+    let hidden = vpm::sources::source_files(folder)
+        .iter()
+        .any(|f| parent.join(f).is_file());
+    if hidden {
+        return None;
+    }
+    Some(if rel_dir.starts_with("..") {
+        rel_dir.to_string()
+    } else {
+        format!("./{rel_dir}")
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relative_specs_name_the_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for f in [
+            "app/main.vlt",
+            "app/util.vlt",
+            "app/dup.vlt",
+            "app/dup.ts",
+            "app/shapes/index.vlt",
+            "app/hidden.vlt",
+            "app/hidden/index.vlt",
+            "index.vlt",
+            "lib/math.ts",
+        ] {
+            let p = root.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "").unwrap();
+        }
+        let doc = root.join("app/main.vlt");
+        let spec = |f: &str| relative_spec(&doc, &root.join(f)).unwrap();
+        assert_eq!(spec("app/util.vlt"), "./util");
+        assert_eq!(spec("app/dup.ts"), "./dup.ts");
+        assert_eq!(spec("app/shapes/index.vlt"), "./shapes");
+        assert_eq!(spec("app/hidden/index.vlt"), "./hidden/index");
+        assert_eq!(spec("index.vlt"), "../index");
+        assert_eq!(spec("lib/math.ts"), "../lib/math");
+    }
 }
