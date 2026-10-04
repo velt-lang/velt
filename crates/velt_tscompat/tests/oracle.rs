@@ -529,26 +529,6 @@ fn check_rejected(file: &Checked, diags: &[&Diag], failures: &mut Vec<String>) {
     eprintln!("{}: tsc rejects lines {}", file.name, proved.join(", "));
 }
 
-/// `Command::new(program)` for a test's child process. On Windows, when this test process has no
-/// console (a CI agent, a background shell), the child gets a hidden console instead of opening a
-/// window of its own. In a terminal it shares the terminal's console as before, so Ctrl+C still
-/// reaches it.
-fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
-    let cmd = std::process::Command::new(program);
-    #[cfg(windows)]
-    let cmd = {
-        use std::os::windows::process::CommandExt;
-        let mut cmd = cmd;
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn GetConsoleWindow() -> *mut std::ffi::c_void;
-        }
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        // SAFETY: takes no arguments; returns this process's console window or null.
-        if unsafe { GetConsoleWindow() }.is_null() {
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        cmd
-    };
-    cmd
-}
+#[path = "../../../tests/common/command.rs"]
+mod command;
+use command::command;

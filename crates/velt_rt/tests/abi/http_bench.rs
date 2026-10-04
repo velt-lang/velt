@@ -9,6 +9,7 @@
 //! axum hello-world, see bench/http/). Set `VELT_THREADS` to size the server's workers.
 //! `BENCH_OHA=1` additionally runs `oha` (on PATH) with the same connections and duration.
 
+use super::command::command;
 use super::fake::{arg, block_on_fut, ok};
 use crate::http::request::*;
 use crate::http::response::*;
@@ -253,28 +254,4 @@ fn http_response_cost() {
     let boxed_all = t.elapsed().as_nanos() as f64 / (threads as f64 * (n / 10) as f64);
     eprintln!("boxed response build+take: {boxed_all:.0} ns/response ({threads} threads at once)");
     eprintln!("response build+take: {one:.0} ns (1 thread), {all:.0} ns/response ({threads} threads at once)");
-}
-
-/// `Command::new(program)` for a test's child process. On Windows, when this test process has no
-/// console (a CI agent, a background shell), the child gets a hidden console instead of opening a
-/// window of its own. In a terminal it shares the terminal's console as before, so Ctrl+C still
-/// reaches it.
-fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
-    let cmd = std::process::Command::new(program);
-    #[cfg(windows)]
-    let cmd = {
-        use std::os::windows::process::CommandExt;
-        let mut cmd = cmd;
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn GetConsoleWindow() -> *mut std::ffi::c_void;
-        }
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        // SAFETY: takes no arguments; returns this process's console window or null.
-        if unsafe { GetConsoleWindow() }.is_null() {
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        cmd
-    };
-    cmd
 }
