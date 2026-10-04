@@ -574,6 +574,50 @@ fn breadcrumbs_built_by_two_threads_at_once() {
     }
 }
 
+/// A string two threads read at once without a retain (as a field of a `shared` object passed by
+/// pointer to a runtime call): its count stays 1 throughout.
+struct Unretained<'a>(&'a VeltStr);
+
+// SAFETY: test only; the two threads only read the string (translations take `&self`).
+unsafe impl Sync for Unretained<'_> {}
+
+#[test]
+fn breadcrumbs_of_a_count_one_string_read_by_two_threads() {
+    // Regression (#377 phase 2a review): building or extending the table in place because the
+    // count was 1 raced with the other reader. Run with VELT_RT_DEBUG_ALLOC=1 too: a table freed
+    // or reallocated under a reader then reads poison.
+    let piece = "aé😀日".repeat(40);
+    for _ in 0..30 {
+        let mut s = Owned(VeltStr::with_capacity(64));
+        let mut text = String::new();
+        // Each round grows the string, so the readers extend the table (in place while it has
+        // room, by a published copy when it doesn't), all while the count is 1.
+        for _ in 0..4 {
+            unsafe { s.0.push_wtf8(piece.as_bytes(), None) };
+            text.push_str(&piece);
+            let want = positions(&text);
+            let shared = Unretained(&s.0);
+            let barrier = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                for t in 0..2 {
+                    let (want, shared, barrier) = (&want, &shared, &barrier);
+                    scope.spawn(move || {
+                        barrier.wait();
+                        for k in 0..want.len() {
+                            let u = if t == 0 { k } else { want.len() - 1 - k };
+                            assert_eq!(unsafe { shared.0.unit_to_byte(u) }, want[u], "unit {u}");
+                            if !want[u].low_half {
+                                assert_eq!(unsafe { shared.0.byte_to_unit(want[u].byte) }, u);
+                            }
+                        }
+                    });
+                }
+            });
+            assert!(unsafe { heap::is_unique(s.0.ptr()) });
+        }
+    }
+}
+
 #[test]
 fn breadcrumbs_follow_appends_and_are_freed_with_the_buffer() {
     // Run with VELT_RT_DEBUG_ALLOC=1 to have the allocator check the tables' frees too.
