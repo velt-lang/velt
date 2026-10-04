@@ -39,4 +39,14 @@ function main() {
   console.log(plain);
   const pair = [plain, plain];
   console.log(pair);
+  // One numbering per console.log argument, shared by the elements of an array or object
+  // (#456); the next argument starts over.
+  const d = new C();
+  d.next = d;
+  console.log([c, d]);
+  console.log({ a: c, b: d });
+  console.log(c, d);
+  const e = new C();
+  e.next = c;
+  console.log([e, c, d, e]);
 }

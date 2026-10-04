@@ -62,7 +62,14 @@ impl FnLower<'_, '_> {
                     }
                 });
             }
-            _ => self.format_nested(buf, place, ty),
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Unit | TyKind::Never => {
+                self.format_nested(buf, place, ty)
+            }
+            _ => {
+                // Node numbers the `<ref *N>` of cycles once per top-level value.
+                self.call_rt(Rt::StrbufInspectBegin, vec![], None);
+                self.format_nested(buf, place, ty)
+            }
         }
     }
 
