@@ -1,0 +1,32 @@
+// Immutable small value objects: `new Vec2` per arithmetic operation, the usual TypeScript
+// style for vectors and points.
+class Vec2 {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  add(o: Vec2): Vec2 {
+    return new Vec2(this.x + o.x, this.y + o.y);
+  }
+  scale(k: number): Vec2 {
+    return new Vec2(this.x * k, this.y * k);
+  }
+  len(): number {
+    return Math.sqrt(this.x * this.x + this.y * this.y);
+  }
+}
+
+function main() {
+  let p = new Vec2(0, 0);
+  const v = new Vec2(0.5, 0.25);
+  let total = 0.0;
+  for (let i = 0; i < 20000000; i++) {
+    p = p.add(v.scale(0.001));
+    if (p.x > 10) p = new Vec2(0, p.y);
+    if (p.y > 10) p = new Vec2(p.x, 0);
+    total += p.len();
+  }
+  console.log(total.toFixed(3));
+}

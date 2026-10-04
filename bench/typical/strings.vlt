@@ -1,0 +1,37 @@
+// String-heavy TypeScript: building CSV lines, splitting, parsing, joining, searching.
+function main() {
+  const lines: string[] = [];
+  for (let i = 0; i < 200000; i++) {
+    lines.push(`${i},user${i % 1000},${(i * 37) % 10007},${i % 2 === 0 ? "yes" : "no"}`);
+  }
+  const csv = lines.join("\n");
+  let sum = 0.0;
+  let yes = 0;
+  let nameLen = 0;
+  for (let round = 0; round < 5; round++) {
+    const rows = csv.split("\n");
+    for (const row of rows) {
+      const cols = row.split(",");
+      sum += parseInt(cols[2]);
+      if (cols[3] === "yes") yes++;
+      nameLen += cols[1].toUpperCase().length;
+    }
+  }
+  let found = 0;
+  for (let i = 0; i < 2000; i++) {
+    if (csv.includes(`user${i}x`)) found++;
+    if (csv.indexOf(`,${i},`) >= 0) found++;
+  }
+  let out = "";
+  for (let i = 0; i < 100000; i++) {
+    out += `${i % 10}`;
+  }
+  const words = "the quick brown fox jumps over the lazy dog".split(" ");
+  let replaced = 0;
+  for (let i = 0; i < 200000; i++) {
+    const w = words[i % words.length];
+    const t = w.replace("o", "0").trim();
+    replaced += t.length + (t.startsWith("t") ? 1 : 0);
+  }
+  console.log(csv.length, sum, yes, nameLen, found, out.length, replaced);
+}

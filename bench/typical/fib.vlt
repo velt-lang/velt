@@ -1,0 +1,8 @@
+// Recursion on `number` the way TypeScript code writes it.
+function fib(n: number): number {
+  return n < 2 ? n : fib(n - 1) + fib(n - 2);
+}
+
+function main() {
+  console.log(fib(35));
+}
