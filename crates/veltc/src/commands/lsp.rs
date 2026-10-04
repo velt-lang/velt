@@ -75,6 +75,15 @@ impl CliLoader {
         packages.get_mut(&root).map(f)
     }
 
+    /// An already installed graph with a package containing `file` (none is installed).
+    fn installed_graph(&self, file: &Path) -> Option<Arc<PackageGraph>> {
+        let packages = self.packages.lock().unwrap_or_else(|e| e.into_inner());
+        packages
+            .values()
+            .filter_map(|p| p.graph.clone())
+            .find(|g| g.package_of(file).is_some())
+    }
+
     fn graph(&self, file: &Path) -> Option<Arc<PackageGraph>> {
         self.with_package(file, |p| p.graph.clone()).flatten()
     }
@@ -146,13 +155,23 @@ impl ProgramLoader for CliLoader {
     }
 
     fn resolve_module(&self, spec: &str, from: &Path) -> Option<PathBuf> {
-        // Only bare specifiers (dependencies, `paths` aliases) need the package graph, which a
-        // std file (the std root has a `package.vlt` module) must not install.
+        // Only bare specifiers (dependencies, `paths` aliases) need a package graph: the one
+        // already installed for a document that contains `from` (its own package or one of its
+        // dependencies), as `load` resolves a dependency's imports. Nothing is installed here: a
+        // dependency is never installed as a project of its own.
         let bare =
             !spec.starts_with("./") && !spec.starts_with("../") && !spec.starts_with("velt:");
-        let graph = if bare { self.graph(from) } else { None };
+        let graph = if bare {
+            self.installed_graph(from)
+        } else {
+            None
+        };
         let packages = graph.as_deref().map(|g| g as &dyn loader::PackageResolver);
         loader::resolve_module(spec, from, loader::std_root().as_deref(), packages)
+    }
+
+    fn resolves_modules(&self) -> bool {
+        true
     }
 }
 
@@ -349,6 +368,69 @@ mod tests {
         request(&conn, 99, "shutdown", Value::Null);
         notify(&conn, "exit", Value::Null);
         server.join().unwrap().unwrap();
+    }
+
+    /// Auto-import follows a dependency's re-export of another package (`export * from "dep2"`)
+    /// through the document's installed graph: dep2's names are offered, and the dependency is
+    /// never installed as a project of its own (no lock file appears in it, and the loader
+    /// installed the document's package only).
+    #[test]
+    fn re_exports_of_dependencies_resolve_without_installing_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let (app, dep, dep2) = (root.join("app"), root.join("dep"), root.join("dep2"));
+        for (pkg, name) in [(&app, "app"), (&dep, "dep"), (&dep2, "dep2")] {
+            std::fs::create_dir_all(pkg.join("src")).unwrap();
+            let manifest =
+                format!("export const pkg: Package = {{ name: \"{name}\", version: \"0.1.0\" }};");
+            std::fs::write(pkg.join(vpm::manifest::MANIFEST_FILE), manifest).unwrap();
+        }
+        std::fs::write(dep.join("src/lib.vlt"), "export * from \"dep2\";\n").unwrap();
+        let lib2 = "export function fromDepTwo(): i64 {\n  return 2;\n}\n";
+        std::fs::write(dep2.join("src/lib.vlt"), lib2).unwrap();
+        let path_dep = |path: &str| vpm::edit::DependencySpec {
+            version: None,
+            path: Some(path.into()),
+        };
+        vpm::edit::add_dependency(&app, "dep", &path_dep("../dep")).unwrap();
+        vpm::edit::add_dependency(&dep, "dep2", &path_dep("../dep2")).unwrap();
+        let main = app.join("src/main.vlt");
+        let text = "function main() {\n  fromDep\n}\n";
+        std::fs::write(&main, text).unwrap();
+        let main_uri = lsp_types::Url::from_file_path(&main).unwrap();
+
+        let (server_conn, conn) = Connection::memory();
+        let loader = Arc::new(CliLoader::default());
+        let serving = loader.clone();
+        let server = std::thread::spawn(move || velt_lsp::serve(server_conn, &*serving));
+        request(&conn, 1, "initialize", json!({ "capabilities": {} }));
+        notify(&conn, "initialized", json!({}));
+        let doc = json!({ "uri": main_uri, "languageId": "velt", "version": 1, "text": text });
+        notify(
+            &conn,
+            "textDocument/didOpen",
+            json!({ "textDocument": doc }),
+        );
+        let at = json!({ "textDocument": { "uri": main_uri }, "position": { "line": 1, "character": 9 } });
+        let items = request(&conn, 2, "textDocument/completion", at);
+        let items = items.get("items").cloned().unwrap_or(items);
+        let offered = items.as_array().unwrap().iter().any(|i| {
+            i["label"] == json!("fromDepTwo") && i["labelDetails"]["description"] == json!("dep")
+        });
+        assert!(offered, "{items:#}");
+        for pkg in [&dep, &dep2] {
+            assert!(
+                !pkg.join(vpm::lockfile::LOCK_FILE).exists(),
+                "{}",
+                pkg.display()
+            );
+        }
+        request(&conn, 3, "shutdown", Value::Null);
+        notify(&conn, "exit", Value::Null);
+        server.join().unwrap().unwrap();
+        // Only the document's package was installed.
+        let installed: Vec<PathBuf> = loader.packages.lock().unwrap().keys().cloned().collect();
+        assert_eq!(installed, [app]);
     }
 
     /// The real loader behind the server: unsaved buffers win over the disk, and imports of

@@ -191,8 +191,8 @@ impl Candidate {
                 let spec = specifiers::relative_spec(doc, file)?;
                 // The loader has the last word where it can tell.
                 match loader.resolve_module(&spec, doc) {
-                    Some(found) if !same_file(&found, file) => None,
-                    _ => Some(spec),
+                    Some(found) => same_file(&found, file).then_some(spec),
+                    None => (!loader.resolves_modules()).then_some(spec),
                 }
             }
         }

@@ -86,8 +86,7 @@ impl Scanner<'_> {
                     self.covers(lo, false);
                 }
                 b'"' | b'\'' => {
-                    self.string(c);
-                    let closed = self.pos > lo + 1 && self.bytes[self.pos - 1] == c;
+                    let closed = self.string(c);
                     self.covers(lo, !closed);
                 }
                 b'`' => {
@@ -159,20 +158,22 @@ impl Scanner<'_> {
         self.pos = (self.pos + end.len()).min(self.bytes.len());
     }
 
-    fn string(&mut self, quote: u8) {
+    /// Skip a string literal; whether its closing quote was found.
+    fn string(&mut self, quote: u8) -> bool {
         self.pos += 1;
         while self.pos < self.bytes.len() {
             match self.bytes[self.pos] {
-                b'\\' => self.pos += 2,
-                b'\n' => return,
+                b'\\' => self.pos = (self.pos + 2).min(self.bytes.len()),
+                b'\n' => return false,
                 c => {
                     self.pos += 1;
                     if c == quote {
-                        return;
+                        return true;
                     }
                 }
             }
         }
+        false
     }
 
     /// Template text up to the closing backquote, or up to a `${` (which opens a substitution).
@@ -243,6 +244,8 @@ mod tests {
         assert!(!at("h"));
         assert!(!in_code(text, text.len()));
         assert!(!in_code("x // y", 6));
+        // An escaped quote does not close the string.
+        assert!(!in_code("\"a\\\"", 4));
     }
 
     #[test]

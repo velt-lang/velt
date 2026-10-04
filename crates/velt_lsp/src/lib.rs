@@ -92,11 +92,19 @@ pub trait ProgramLoader: Send + Sync {
 
     /// The file that the specifier `spec`, imported by the file at `from`, names, exactly as
     /// [`ProgramLoader::load`] would resolve it; `None` when that import would fail (invalid, not
-    /// found, ambiguous) or the loader cannot tell. The import help reads modules outside the
-    /// program through this, and checks the specifiers it writes. The default resolves nothing.
+    /// found, ambiguous) or, for a loader that does not [resolve
+    /// modules](ProgramLoader::resolves_modules), when it cannot tell. The import help reads
+    /// modules outside the program through this, and checks the specifiers it writes. The
+    /// default resolves nothing.
     fn resolve_module(&self, spec: &str, from: &Path) -> Option<PathBuf> {
         let _ = (spec, from);
         None
+    }
+
+    /// Whether [`ProgramLoader::resolve_module`] answers for every specifier, so that `None`
+    /// means the import would fail (the import help then leaves out what would not load).
+    fn resolves_modules(&self) -> bool {
+        false
     }
 }
 

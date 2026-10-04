@@ -123,10 +123,15 @@ fn after_header(text: &str) -> usize {
         let end = if line.starts_with("//") {
             line_end(text, at)
         } else if line.starts_with("/*") {
-            match rest.find("*/") {
-                Some(close) => line_end(text, at + close + 2),
-                None => return 0,
+            let Some(close) = rest.find("*/") else {
+                return 0;
+            };
+            let end = line_end(text, at + close + 2);
+            // Code after the block on its line: not a header.
+            if !text[at + close + 2..end].trim().is_empty() {
+                return 0;
             }
+            end
         } else {
             break;
         };
@@ -155,6 +160,7 @@ mod tests {
         assert_eq!(after_header("/** Doc. */\nfunction f() {}"), 0);
         assert_eq!(after_header("code"), 0);
         assert_eq!(after_header("/* open"), 0);
+        assert_eq!(after_header("/* c */ code;\n\nmore"), 0);
     }
 
     #[test]

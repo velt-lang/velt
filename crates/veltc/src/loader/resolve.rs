@@ -7,10 +7,10 @@
 use std::path::{Path, PathBuf};
 
 use super::case::DirNames;
-use super::file_key;
 use super::locate::{self, Origin, PackageResolver};
 use super::pick::{first_existing, on_disk_exactly};
 use super::spec::{resolve_spec, ModuleRef};
+use super::{file_key, is_std_path};
 
 /// The file that `spec`, imported by the file `importer`, names; `None` when the import would
 /// fail (invalid, not found, ambiguous, outside the std root, a std file named by path).
@@ -31,7 +31,11 @@ pub fn resolve_module(
         },
         None => resolve_spec(spec, dir).ok()?,
     };
-    let origin = Origin::Root(dir.to_path_buf());
+    let in_std = std_root.is_some_and(|std| file_key(importer).starts_with(file_key(std)));
+    let origin = match std_root {
+        Some(std) if in_std => Origin::Std(std.to_path_buf()),
+        _ => Origin::Root(dir.to_path_buf()),
+    };
     let target = locate::target(module, importer, &origin, std_root, packages).ok()?;
     let names = DirNames::default();
     let (_, files) = first_existing(&target, |f| on_disk_exactly(&names, f, &target.base))?;
@@ -39,6 +43,14 @@ pub fn resolve_module(
         return None;
     };
     let file = (*file).clone();
+    // A user module whose module path would be `std/…` is reserved for the standard library.
+    let canonical = target
+        .canonical
+        .clone()
+        .unwrap_or_else(|| target.origin.canonical(&file));
+    if !matches!(target.origin, Origin::Std(_)) && is_std_path(&canonical) {
+        return None;
+    }
     if let Some(std) = std_root {
         let inside = file_key(&file).starts_with(file_key(std));
         if inside != matches!(target.origin, Origin::Std(_)) {
@@ -65,6 +77,9 @@ mod tests {
         let std = root.join("std");
         for f in [
             "std/fs.vlt",
+            "std/net.vlt",
+            "std/net/bytes.vlt",
+            "app/std/x.vlt",
             "std/collections/set.vlt",
             "app/util.vlt",
             "app/dup.vlt",
@@ -84,6 +99,12 @@ mod tests {
         assert_eq!(resolve("./util"), Some(root.join("app/util.vlt")));
         assert_eq!(resolve("./shapes"), Some(root.join("app/shapes/index.vlt")));
         assert_eq!(resolve("./dup.ts"), Some(root.join("app/dup.ts")));
+        // From a std file, relative imports stay in std.
+        let net = std.join("net.vlt");
+        assert_eq!(
+            resolve_module("./net/bytes", &net, Some(&std), None),
+            Some(std.join("net/bytes.vlt"))
+        );
         // Ambiguous, wrong case, missing, or escaping the std root: nothing.
         for spec in [
             "./dup",
@@ -95,6 +116,7 @@ mod tests {
             "velt:fs\\..\\..\\secret",
             ".\\util",
             "../std/fs",
+            "./std/x",
             "json",
         ] {
             assert_eq!(resolve(spec), None, "{spec}");
