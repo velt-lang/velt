@@ -116,17 +116,11 @@ pub unsafe extern "C" fn velt_rt_str_drop(s: *mut VeltStr) {
 }
 
 /// `a < b` and friends, and `sort()` without a comparator: -1 / 0 / 1 in UTF-16 code-unit order
-/// (#377 phase 2b). Two ASCII strings compare their bytes (`memcmp`); otherwise byte order, which
-/// is code point order, is corrected where the two disagree ([`super::cmp_utf16`]).
+/// (#377 phase 2b): byte order, which is code point order, corrected where the two disagree
+/// ([`super::cmp_utf16`], one extra test of the first differing bytes otherwise).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_str_cmp(a: *const VeltStr, b: *const VeltStr) -> i32 {
-    let (a, b) = (&*a, &*b);
-    let order = if a.is_ascii() && b.is_ascii() {
-        a.as_bytes().cmp(b.as_bytes())
-    } else {
-        super::cmp_utf16(a.as_bytes(), b.as_bytes())
-    };
-    match order {
+    match super::cmp_utf16((*a).as_bytes(), (*b).as_bytes()) {
         Ordering::Less => -1,
         Ordering::Equal => 0,
         Ordering::Greater => 1,

@@ -438,38 +438,64 @@ impl VeltStr {
 /// below every unit. In canonical form a lone high surrogate is never followed by a low one, so
 /// that one extra comparison decides.
 /// `velt_rt_str_cmp` (`<`, `sort()`) uses it for every pair of strings that are not both ASCII.
+#[inline]
 pub fn cmp_utf16(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
     let n = a.len().min(b.len());
     let Some(i) = mismatch(&a[..n], &b[..n]) else {
         return a.len().cmp(&b.len());
     };
-    if a[i] < 0x80 && b[i] < 0x80 {
-        return a[i].cmp(&b[i]);
+    // SAFETY: `i < n`, within both.
+    let (x, y) = unsafe { (*a.get_unchecked(i), *b.get_unchecked(i)) };
+    // Byte order is code-unit order unless the first difference is between the lead byte of a
+    // supplementary character (F0..F4) and that of a character at U+E000 or above or a surrogate
+    // (ED..EF): a difference in a continuation byte means equal leads, so equal lengths.
+    if x.max(y) < 0xF0 || x.min(y) < 0xED {
+        return x.cmp(&y);
     }
-    let mut k = i;
-    while k > 0 && wtf8::is_continuation(a[k]) {
-        k -= 1;
-    }
-    let (ca, la) = wtf8::decode_at(a, k);
-    let (cb, lb) = wtf8::decode_at(b, k);
-    first_unit(ca)
-        .cmp(&first_unit(cb))
-        .then_with(|| second_unit(a, k, ca, la).cmp(&second_unit(b, k, cb, lb)))
+    cmp_at_leads(a, b, i)
 }
 
-/// The first byte where `a` and `b` (of equal length) differ, a word at a time.
+/// [`cmp_utf16`] when the strings first differ in lead bytes at `i` that may order differently
+/// by code units (out of line: rare).
+#[cold]
+#[inline(never)]
+fn cmp_at_leads(a: &[u8], b: &[u8], i: usize) -> std::cmp::Ordering {
+    let (ca, la) = wtf8::decode_at(a, i);
+    let (cb, lb) = wtf8::decode_at(b, i);
+    first_unit(ca)
+        .cmp(&first_unit(cb))
+        .then_with(|| second_unit(a, i, ca, la).cmp(&second_unit(b, i, cb, lb)))
+}
+
+/// The first byte where `a` and `b` (of equal length) differ, a word at a time (the last word
+/// overlapping the one before when the length is not a multiple of 8).
 #[inline]
 fn mismatch(a: &[u8], b: &[u8]) -> Option<usize> {
+    let n = a.len();
+    // SAFETY (both reads): every word read lies within `0..n`, the length of both slices.
+    let word = |at: usize| unsafe {
+        (
+            a.as_ptr().add(at).cast::<u64>().read_unaligned(),
+            b.as_ptr().add(at).cast::<u64>().read_unaligned(),
+        )
+    };
+    let differ = |at: usize, (x, y): (u64, u64)| {
+        (x != y).then(|| at + (u64::from_le(x ^ y).trailing_zeros() / 8) as usize)
+    };
+    if n < 8 {
+        return (0..n).find(|&j| a[j] != b[j]);
+    }
     let mut i = 0;
-    while i + 8 <= a.len() {
-        let x = u64::from_le_bytes(a[i..i + 8].try_into().unwrap_or([0; 8]));
-        let y = u64::from_le_bytes(b[i..i + 8].try_into().unwrap_or([0; 8]));
-        if x != y {
-            return Some(i + ((x ^ y).trailing_zeros() / 8) as usize);
+    while i + 8 <= n {
+        if let Some(k) = differ(i, word(i)) {
+            return Some(k);
         }
         i += 8;
     }
-    (i..a.len()).find(|&j| a[j] != b[j])
+    if i < n {
+        return differ(n - 8, word(n - 8));
+    }
+    None
 }
 
 /// The first UTF-16 unit of a code point (or lone surrogate).
