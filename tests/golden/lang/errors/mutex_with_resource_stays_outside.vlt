@@ -1,0 +1,40 @@
+// An object owning a resource without `clone()` that a `with` callback stores into the locked
+// value cannot be copied, so the value gets the object itself (#458). It must not stay usable
+// outside the lock: storing it from a field or an element (which keeps it) is an error, and
+// so is using a variable after the callback stored it.
+class Conn {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+class Pool {
+  conn: Conn = new Conn(0);
+}
+
+class Holder {
+  conn: Conn = new Conn(7);
+}
+
+function main() {
+  const m = shared(new Mutex<Pool>(new Pool()));
+  const h = new Holder();
+  m.with((v) => {
+    v.conn = h.conn;
+  });
+  const conns = [new Conn(8)];
+  m.with((v) => {
+    v.conn = conns[0];
+  });
+  const conn = new Conn(9);
+  m.with((v) => {
+    v.conn = conn;
+  });
+  console.log(h.conn.id, conn.id);
+}

@@ -1,0 +1,46 @@
+// check: no leaks
+// An object owning a resource without `clone()` moves into a Mutex's value when the callback
+// stores a variable that is not used afterwards, or one it creates (#458): the value holds
+// the only reference, and the tasks change it through the lock.
+class Conn {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    this.id = -1;
+  }
+}
+
+class Pool {
+  conn: Conn = new Conn(0);
+  spare: Conn = new Conn(1);
+}
+
+async function main() {
+  const m = shared(new Mutex<Pool>(new Pool()));
+  const conn = new Conn(100);
+  m.with((v) => {
+    v.conn = conn;
+  });
+  m.with((v) => {
+    v.spare = new Conn(200);
+  });
+  const tasks: Promise<void>[] = [];
+  for (let i = 0; i < 4; i++) {
+    tasks.push(
+      spawn(async () => {
+        for (let k = 0; k < 250; k++) {
+          m.with((v) => {
+            v.conn.id += 1;
+            v.spare.id += 2;
+          });
+        }
+      }),
+    );
+  }
+  await Promise.all(tasks);
+  console.log(m.with((v) => v.conn.id + v.spare.id));
+}

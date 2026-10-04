@@ -33,7 +33,7 @@ pub(super) fn visit(
     def: DefId,
     f: &mut FnDef,
     rewrite: bool,
-) -> (Vec<Unfixable>, Vec<(LocalId, Span)>) {
+) -> (Vec<Unfixable>, Vec<(LocalId, Span, bool)>) {
     let mut w = Stores {
         cx,
         r,
@@ -62,6 +62,9 @@ pub(super) enum Cross {
     Opaque,
     /// The part owns a resource without `clone()`.
     Resource,
+    /// An outside object of this type owning a resource without `clone()`, stored into the
+    /// value from a field or an element (it stays there too).
+    ResourceInPlace(crate::hir::TyId),
 }
 
 struct Stores<'a, 'r, 's, 'm> {
@@ -71,9 +74,9 @@ struct Stores<'a, 'r, 's, 'm> {
     def: DefId,
     rewrite: bool,
     unfixable: Vec<Unfixable>,
-    /// Captured variables (in the function making the callback) stored into the value as
-    /// copies, with where.
-    inward: Vec<(LocalId, Span)>,
+    /// Captured variables (in the function making the callback) stored into the value, with
+    /// where, and whether as themselves (a resource without `clone()`) rather than as copies.
+    inward: Vec<(LocalId, Span, bool)>,
 }
 
 impl Stores<'_, '_, '_, '_> {
@@ -195,37 +198,28 @@ impl Stores<'_, '_, '_, '_> {
     fn transfer_owned(&mut self, e: &mut Expr, dest: u8) -> Result<(), Cross> {
         let borrowed = is_place(e) && outer_mode(e) != Some(UseMode::Move);
         if self.transferable(e, dest)? && !borrowed {
-            self.note_inward(e, dest);
+            self.note_inward(e, dest, false);
             wrap(e, Intrinsic::Transfer);
         }
         Ok(())
     }
 
-    /// An outside variable the callback captured, stored into the value as a copy: a later use
-    /// of the variable would not see the value's copy (reported by `super::later`).
-    fn note_inward(&mut self, e: &Expr, dest: u8) {
+    /// An outside variable the callback captured, stored into the value as a copy (or, `itself`,
+    /// as the same object): a later use of the variable would not see the value's copy, or
+    /// would share it with other threads (reported by `super::later`).
+    fn note_inward(&mut self, e: &Expr, dest: u8, itself: bool) {
         if dest & IN == 0 {
             return;
         }
-        let mut x = e;
         // An explicit `.clone()` is a fresh object: nothing to report.
-        while let E::Call {
-            callee: Callee::Intrinsic(Intrinsic::Share),
-            args,
-        } = &x.kind
-        {
-            match args.as_slice() {
-                [a] => x = a,
-                _ => return,
-            }
-        }
+        let x = unshared(e);
         // A struct of plain fields (a handle) behaves the same as its copy here.
         let identity = self.cx.class_of(x.ty).is_some()
             || matches!(self.cx.ty.kind(x.ty), TyKind::Array(_))
             || holds_shared(self.cx, x.ty);
         let outer = place_root(x).and_then(|l| self.r.captured_var(self.def, l));
         if let (Some(outer), true) = (outer, identity) {
-            self.inward.push((outer, e.span));
+            self.inward.push((outer, e.span, itself));
         }
     }
 
@@ -237,7 +231,7 @@ impl Stores<'_, '_, '_, '_> {
             return Ok(());
         }
         if outer_mode(e) != Some(UseMode::BorrowMut) {
-            self.note_inward(e, dest);
+            self.note_inward(e, dest, false);
         }
         match outer_mode(e) {
             Some(UseMode::Borrow) if is_place(e) => {
@@ -259,7 +253,9 @@ impl Stores<'_, '_, '_, '_> {
     /// shared, and making one there is an error, `super::promises`). A resource without
     /// `clone()` cannot be copied: stored out of the value that is an error, and stored into
     /// it, it stays shared (a callback cannot move a variable it captured; the design notes'
-    /// known gaps).
+    /// known gaps). So it must not stay usable outside: a later use of the variable is an
+    /// error (`super::later`), and so is a store from a field or an element, which stays
+    /// where it is (#458).
     fn transferable(&mut self, e: &Expr, dest: u8) -> Result<bool, Cross> {
         if !self.cx.is_shared_value(e.ty) || self.cx.is_string_value(e.ty) {
             return Ok(false);
@@ -267,11 +263,31 @@ impl Stores<'_, '_, '_, '_> {
         if !self.cx.owns_uncopyable(e.ty) {
             return Ok(true);
         }
-        match dest & IN != 0 {
-            true => Ok(false),
-            false => Err(Cross::Resource),
+        if dest & IN == 0 {
+            return Err(Cross::Resource);
+        }
+        let x = unshared(e);
+        if is_place(x) && !matches!(x.kind, E::Local(..)) {
+            return Err(Cross::ResourceInPlace(e.ty));
+        }
+        self.note_inward(e, dest, true);
+        Ok(false)
+    }
+}
+
+/// `e` without the shares around it.
+fn unshared(mut e: &Expr) -> &Expr {
+    while let E::Call {
+        callee: Callee::Intrinsic(Intrinsic::Share),
+        args,
+    } = &e.kind
+    {
+        match args.as_slice() {
+            [a] => e = a,
+            _ => break,
         }
     }
+    e
 }
 
 /// Is `e` a function value (not a closure literal, whose body is checked where it is)?

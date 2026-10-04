@@ -1,0 +1,5 @@
+mutex_with_resource_stays_outside.vlt:29:14: error: this stores a `Conn` into the locked value, but it also stays where it is, and `Conn` owns a resource without `clone()`, so it cannot be copied
+mutex_with_resource_stays_outside.vlt:33:14: error: this stores a `Conn` into the locked value, but it also stays where it is
+mutex_with_resource_stays_outside.vlt:39:29: error: `conn` is still used after `with` stored it in the locked value
+stored here as itself: `Conn` owns a resource and has no `clone()`, so it cannot be copied
+give `Conn` a `clone()` method that duplicates the resource, or move it into the value
