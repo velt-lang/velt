@@ -152,10 +152,15 @@ fn debug_metadata_follows_source_locations() {
     ] {
         assert!(ir.contains(needle), "missing `{needle}` in\n{ir}");
     }
-    // Every instruction line inside a function carries a location.
-    let body_lines = ir
-        .lines()
-        .filter(|l| l.starts_with("  ") && !l.trim_end().ends_with(':'));
+    // Every instruction line inside a function compiled from VIR carries a location (the
+    // backend's own helpers, such as `velt.frem.f64`, have no source and no debug info).
+    let mut in_helper = false;
+    let body_lines = ir.lines().filter(|l| {
+        if l.starts_with("define ") {
+            in_helper = l.contains("@\"velt.");
+        }
+        !in_helper && l.starts_with("  ") && !l.trim_end().ends_with(':')
+    });
     for line in body_lines {
         assert!(line.contains("!dbg"), "no location on `{line}`");
     }
