@@ -8,8 +8,9 @@
 //! alphabets; the model checks below already run on all of them. Every runtime string the checks
 //! touch must also carry its model length as its unit count and be canonical WTF-8 (phase 1), on
 //! every alphabet, lone surrogates included (phase 2a); the operations whose result doesn't depend
-//! on positions (concatenation, builders, `repeat`, equality, hashing) already agree with the model
-//! on every alphabet.
+//! on positions (concatenation, builders, `repeat`, equality, hashing), the position translation
+//! of phase 2b ([`VeltStr::unit_to_byte`], [`VeltStr::byte_to_unit`]) and the code-unit order
+//! ([`cmp_utf16`]) already agree with the model on every alphabet.
 //!
 //! `VELT_UTF16_SEED` replays a failing run (the failure message prints the seed);
 //! `VELT_UTF16_CASES` changes the number of operations.
@@ -17,7 +18,7 @@
 use super::utf16_model::{self as model, show, wtf8_decode, wtf8_encode};
 use crate::hash::velt_rt_str_hash;
 use crate::str::{
-    velt_rt_str_cmp, velt_rt_str_concat, velt_rt_str_drop, wtf8, VeltStr,
+    cmp_utf16, velt_rt_str_cmp, velt_rt_str_concat, velt_rt_str_drop, wtf8, BytePos, VeltStr,
 };
 use crate::str_array::{velt_rt_str_array_drop, VeltStrArray};
 use crate::str_ops::replace::*;
@@ -594,6 +595,87 @@ fn json_stringify(s: &[u16]) -> Vec<u16> {
     }
     out.push(b'"' as u16);
     out
+}
+
+/// The byte position of unit `u` in the model string `s` (see [`BytePos`]).
+fn model_byte_pos(s: &[u16], u: usize) -> BytePos {
+    let inside = u > 0 && u < s.len() && model::is_high(s[u - 1]) && model::is_low(s[u]);
+    let start = if inside { u - 1 } else { u };
+    BytePos {
+        byte: wtf8_encode(&s[..start]).len(),
+        low_half: inside,
+    }
+}
+
+#[test]
+fn position_translation_matches_the_model() {
+    run("position translation", ALL_ALPHABETS, 3_000, |rng| {
+        let s = gen_string(rng, ALL_ALPHABETS);
+        let r = to_rt(rng, &s);
+        // Sometimes shared, so a table is published for other readers (compare-and-swap).
+        let other = rng.chance(30).then(|| Rt(unsafe { r.0.share() }));
+        for u in 0..=s.len() + 1 {
+            let want = model_byte_pos(&s, u.min(s.len()));
+            let got = unsafe { r.0.unit_to_byte(u) };
+            if got != want {
+                return Err(format!("{} unit {u}: {got:?}, model {want:?}", show(&s)));
+            }
+            if !want.low_half {
+                let back = unsafe { r.0.byte_to_unit(want.byte) };
+                if back != u.min(s.len()) {
+                    return Err(format!("{} byte {}: unit {back}", show(&s), want.byte));
+                }
+            }
+        }
+        drop(other);
+        Ok(())
+    });
+}
+
+#[test]
+fn appended_strings_extend_their_breadcrumbs() {
+    run("breadcrumbs after appends", ALL_ALPHABETS, 300, |rng| {
+        let mut s: Vec<u16> = Vec::new();
+        let mut r = Rt(VeltStr::empty());
+        for _ in 0..1 + rng.below(6) {
+            let piece = gen_string(rng, ALL_ALPHABETS);
+            let rp = to_rt(rng, &piece);
+            unsafe { crate::str::velt_rt_str_append(&mut r.0, &rp.0) };
+            s.extend_from_slice(&piece);
+            // Shared between appends now and then: the next append copies, and a translation
+            // of the shared value publishes a longer table.
+            let keep = rng.chance(20).then(|| Rt(unsafe { r.0.share() }));
+            for _ in 0..8 {
+                let u = rng.below(s.len() + 1);
+                let got = unsafe { r.0.unit_to_byte(u) };
+                if got != model_byte_pos(&s, u) {
+                    return Err(format!("{} unit {u}: {got:?}", show(&s)));
+                }
+            }
+            drop(keep);
+        }
+        units(&r.0);
+        Ok(())
+    });
+}
+
+#[test]
+fn utf16_order_matches_the_model() {
+    run("code-unit order", ALL_ALPHABETS, 300_000, |rng| {
+        let s = gen_string(rng, ALL_ALPHABETS);
+        let t = if rng.chance(50) {
+            gen_string(rng, ALL_ALPHABETS)
+        } else {
+            mutate(rng, &s, ALL_ALPHABETS)
+        };
+        let (a, b) = (wtf8_encode(&s), wtf8_encode(&t));
+        let got = cmp_utf16(&a, &b) as i32;
+        let want = model::cmp(&s, &t);
+        if got != want {
+            return Err(format!("{} vs {}: {got}, model {want}", show(&s), show(&t)));
+        }
+        Ok(())
+    });
 }
 
 #[test]

@@ -3,8 +3,8 @@
 //!
 //! - ASCII strings: `[count: AtomicU64][cap bytes]`.
 //! - Non-ASCII strings: `[crumbs: AtomicPtr<u8>][lone: u64][count: AtomicU64][cap bytes]`.
-//!   `crumbs` will point at the breadcrumb table (#377 phase 2; always null for now) and `lone`
-//!   counts the lone surrogates. Which layout a buffer has follows from the string value
+//!   `crumbs` points at the breadcrumb table (`crumbs.rs`; null until a position in a long
+//!   string is first translated) and `lone` counts the lone surrogates. Which layout a buffer has follows from the string value
 //!   (`units != bytes`), so release, grow and free take it as `header`.
 //!
 //! Counting is atomic because any string may be shared with another thread. The common case
@@ -65,9 +65,12 @@ unsafe fn lone_field<'a>(data: *mut u8) -> &'a AtomicU64 {
     &*(data.sub(16) as *const AtomicU64)
 }
 
-/// The `crumbs` field of a non-ASCII buffer.
-#[cfg(debug_assertions)]
-unsafe fn crumbs<'a>(data: *mut u8) -> &'a AtomicPtr<u8> {
+/// The `crumbs` field of a non-ASCII buffer (`crumbs.rs` builds, publishes and frees the
+/// table).
+///
+/// # Safety
+/// `data` must be a live buffer from [`alloc`] with a header.
+pub(super) unsafe fn crumbs<'a>(data: *mut u8) -> &'a AtomicPtr<u8> {
     &*(data.sub(HEADER) as *const AtomicPtr<u8>)
 }
 
@@ -185,10 +188,9 @@ pub(super) unsafe fn release(data: *mut u8, cap: usize, header: bool) {
         fence(Ordering::Acquire);
     }
     stats::free();
-    #[cfg(debug_assertions)]
-    assert!(
-        !header || crumbs(data).load(Ordering::Relaxed).is_null(),
-        "ICE: string breadcrumbs are not built before #377 phase 2"
-    );
+    if header {
+        // The last reference: nobody reads the table any more.
+        super::crumbs::free(crumbs(data).load(Ordering::Acquire));
+    }
     alloc::dealloc(data.sub(prefix(header)), layout(cap, header));
 }

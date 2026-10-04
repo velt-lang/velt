@@ -21,6 +21,7 @@
 //! reach another thread (spawned tasks, HTTP handlers, `shared`), see rt_abi.md for the cost.
 
 mod abi;
+mod crumbs;
 mod heap;
 mod invariants;
 mod join;
@@ -31,6 +32,7 @@ mod tests;
 pub mod wtf8;
 
 pub use abi::*;
+pub use crumbs::{cmp_utf16, BytePos};
 pub use wtf8::{Summary, Wtf8};
 
 #[cfg(not(target_endian = "little"))]
