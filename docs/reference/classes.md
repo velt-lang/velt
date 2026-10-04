@@ -430,7 +430,7 @@ console.log(s.area(), "velt".initial, [1, 2, 3].count(), Point.at(1.0, 2.0).y);
 ## Comparable
 
 The prelude declares `interface Comparable<T> { compareTo(other: T): i64; }` and implements it
-for every number type, `string` (bytewise) and `bool`. With `T extends Comparable<T>`, the
+for every number type, `string` (UTF-16 code-unit order, as `<`) and `bool`. With `T extends Comparable<T>`, the
 operators `<`, `<=`, `>` and `>=` work on `T` (static dispatch after monomorphization), and
 `sort()` orders Comparable elements (floats put `NaN` last). User types implement it with
 `implements Comparable<X>` or an `extend` block, and then `<`, `<=`, `>` and `>=` work on their

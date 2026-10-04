@@ -25,8 +25,9 @@ sources.
 - **I/O errors** are `IoError { code, message }` from [`velt:io`](io.md). `code` is a
   Node-style name: `"ENOENT"`, `"EACCES"`, `"ECONNREFUSED"`, `"EOF"`, … A failed file-system
   call has Node's message: `ENOENT: no such file or directory, open 'data.txt'`.
-- **Strings** are UTF-8, and string positions (`slice`, `indexOf`, regex match offsets) are
-  **byte offsets**.
+- **Strings** are sequences of UTF-16 code units, as in JS: lengths and positions (`slice`,
+  `indexOf`, regex match offsets, CSV and CLI column widths) count code units. Their text is
+  stored and written as UTF-8; `Buffer.byteLength(s)` is that size.
 - **Async functions return promises that start at once**, like JS (a direct `await` costs
   nothing). A promise that is neither awaited nor spawned is a compile error. `*Sync` variants
   block the calling thread.

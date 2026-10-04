@@ -1,15 +1,17 @@
 # Design: JavaScript string semantics (UTF-16 code units)
 
 Status: decided (issue #377, from #326), revised after the design review on #377. The decisions
-are listed at the end. Phase 1 (the representation) is implemented: every string carries its
-UTF-16 unit count (`w1` = units|bytes, the inline non-ASCII form, the header on non-ASCII heap
-buffers, `push_wtf8`), with no visible change. Phase 2a (the boundaries) is implemented: lone
-surrogates are handled correctly everywhere (`text()` as `Result<&str, Wtf8>`, one U+FFFD per lone
-surrogate at every output, `inspect` and `JSON.stringify` escapes, the native `Cow`, seams that
-join in every producer, breadcrumbs and the position translation, the code-unit order as a
-function), with no visible change for well-formed text, the only text Velt code can make yet.
-Every length and position still counts **bytes** until phase 2b
-([types](../../reference/types.md#strings), [rt_abi.md "Strings"](../contracts/rt_abi.md)).
+are listed at the end. Phases 1 (the representation), 2a (the boundaries) and 2b (the visible
+switch) are implemented: every string carries its UTF-16 unit count (`w1` = units|bytes, the
+inline non-ASCII form, the header on non-ASCII heap buffers, `push_wtf8`); lone surrogates are
+handled at every boundary; and `length`, every position (`slice`, `indexOf` & co., `charCodeAt`,
+`padStart`, `split("")`, regex offsets) and the order of `<` and `sort()` follow JavaScript's
+code units, with the half-pair cases, lone surrogates from `String.fromCharCode` and `JSON.parse`
+escapes, and `Buffer.byteLength` ([types](../../reference/types.md#strings),
+[rt_abi.md "Strings"](../contracts/rt_abi.md)). Left: strength reduction and `for...of` as a
+decode loop (phase 3), the new APIs including literal escapes for lone surrogates (phase 4),
+and the regex minimum (phase 5). Phase 2b remembers positions per thread instead of in a
+per-local cursor slot; see "Sequential indexing".
 
 ## Problem
 
@@ -209,11 +211,19 @@ no wrong results (the rule in the first version of this note had 16,835, plain `
 **Sequential indexing.** Breadcrumbs alone are 15–50× slower than Node on a
 `for (i < s.length) s.charCodeAt(i)` loop over non-ASCII text (measured in the review). So:
 
-- **A per-local cursor slot in the lowering** (phase 2): each string local that is indexed gets a
-  `(unit index, byte offset)` cursor, reset on every assignment to the local. An index near the
-  cursor steps from it; a one-unit step is the fast path. The cursor format has a half-unit bit
-  for a position inside a pair. A cursor in the string header would bounce the reference count's
-  cache line between cores scanning one shared string, so it lives with the local.
+- **A cursor** (phase 2): a translation near the last one steps from it; a one-unit step is the
+  fast path. The cursor format has a half-unit bit for a position inside a pair. A cursor in the
+  string header would bounce the reference count's cache line between cores scanning one shared
+  string. The first plan put it in a per-local slot of the lowering, reset on every assignment;
+  but `charCodeAt` is a prelude method inlined after lowering, so the lowering never sees the
+  caller's local. Phase 2b keeps the cursor **with the thread** instead (`str/recent.rs`): the
+  runtime remembers each thread's last two translations of long non-ASCII heap strings (the
+  ones with breadcrumbs) by buffer address and `w1`, and freeing or growing such a buffer bumps
+  a global epoch that forgets them all, so a new string at the same address is never taken for
+  the old one. Every position-taking operation benefits (`slice(i, i + 1)` and `indexOf(x, pos)`
+  loops too), and nothing is shared between cores but the epoch, written only when an indexed
+  string dies. A per-local slot can still come with strength reduction (phase 3), which
+  rewrites the loop in the caller anyway.
 - **Strength reduction** (phase 3): `for (i < s.length) … s.charCodeAt(i) / s[i]` becomes a walk
   that advances one unit per step.
 
@@ -397,11 +407,16 @@ One PR each:
      scan; 2b decides whether indexed long literals move to the heap form). `String.fromCharCode`
      of a surrogate and a lone `\uD83D` escape in `JSON.parse` still give U+FFFD, so Velt code
      can't make a lone surrogate yet.
-   - 2b, the visible switch: code-unit `length` and positions (through the translation), the
-     ordering rule in `velt_rt_str_cmp`/`<`/`sort`, the half-pair paths, lone surrogates from
-     `fromCharCode`, `JSON.parse` escapes and slicing, the per-local cursor, the std migration
-     (`csv`, `url`, `cli`), `Buffer.byteLength`, `RUNTIME_ALPHABETS` = all alphabets, and
-     difftest over non-ASCII text.
+   - 2b (done), the visible switch: code-unit `length` and positions (through the translation),
+     the ordering rule in `velt_rt_str_cmp`/`<`/`sort`, the half-pair paths, lone surrogates
+     from `fromCharCode`, `JSON.parse` escapes and slicing, the cursor (per thread, see
+     "Sequential indexing"), the std migration (`csv`, `url`, `cli`, `uuid`, `regex`),
+     `Buffer.byteLength`, `for...of` and spread by code points, `RUNTIME_ALPHABETS` = all
+     alphabets, and difftest over non-ASCII text. Long non-ASCII literals stay static: no
+     benchmark indexes one, a translation of a static string is a scan bounded by the literal's
+     size, and the heap form in writable data would need a VIR contract change and writable
+     data in both backends; borrowed views (`split` pieces of a literal, JSON keys) are not
+     copied for breadcrumbs either, for the same reason.
 3. Strength reduction of index loops, and `for...of` as a decode loop.
 4. New APIs: `s[i]`, `at`, `charAt`, `codePointAt`, `String.fromCodePoint`, variadic
    `fromCharCode`, `isWellFormed`/`toWellFormed`, position arguments for

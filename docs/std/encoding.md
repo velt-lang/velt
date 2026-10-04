@@ -8,8 +8,9 @@ Base64 (RFC 4648 standard and URL-safe alphabets), lowercase hex, and UTF-8. Dec
 - `base64UrlEncode(data)` (unpadded), `base64UrlDecode(s)`.
 - `base64EncodeString(s)`, `base64DecodeString(s)`: Base64 of the UTF-8 bytes of a string.
 - `hexEncode(data)`, `hexDecode(s)`: `hexDecode` accepts either case.
-- `utf8Encode(s): u8[]`, `utf8Decode(data)` (strict), `utf8DecodeLossy(data)` (invalid
-  sequences become U+FFFD), `utf8Valid(data): bool`.
+- `utf8Encode(s): u8[]` (a lone surrogate becomes U+FFFD; the length is
+  `Buffer.byteLength(s)`, not `s.length`, which counts UTF-16 code units), `utf8Decode(data)`
+  (strict), `utf8DecodeLossy(data)` (invalid sequences become U+FFFD), `utf8Valid(data): bool`.
 
 ```ts
 import { base64Encode, base64DecodeString, hexEncode, hexDecode, utf8Encode, utf8Decode } from "velt:encoding";
