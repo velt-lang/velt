@@ -310,6 +310,15 @@ pub unsafe extern "C" fn velt_rt_fut_detach(f: *mut VeltFut, quiet_drop: Option<
     crate::task::velt_rt_fut_drop(f);
 }
 
+/// What `console.log` shows of promise `f`, which its owner holds: 1 when its result is in the
+/// result slot (+16; a `Result` tag first for a promise that can reject), 0 while it is pending.
+/// Nothing is polled, claimed or moved. A future that only runs when it is awaited (a runtime
+/// leaf, a join handle, a combinator, a promise created outside a task) reads as pending.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
+    node::peek(f) as u8
+}
+
 /// The `n` futures in `futs` are handled by a combinator (`Promise.race`, `any`, `all`): a
 /// started promise among them that is dropped unfinished and rejects later is not reported as an
 /// unhandled rejection, like in JS; `quiet_drop` disposes of its result slot (null if nothing to

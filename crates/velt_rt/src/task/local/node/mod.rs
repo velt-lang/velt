@@ -326,6 +326,21 @@ pub(super) unsafe fn mark_handled(f: *mut VeltFut, quiet_drop: Option<ResultDrop
         .store(drop_fn_ptr(quiet_drop), Ordering::Release);
 }
 
+/// Is the result of node `f` in its slot, for its owner to look at without claiming it
+/// (`velt_rt_fut_peek`)? A started node that finished, or a lazy one its owner polled to the
+/// end; false for any other future.
+pub(super) unsafe fn peek(f: *mut VeltFut) -> bool {
+    if is_lazy(f) {
+        return head(f).owner.get() & OWNER_DONE != 0;
+    }
+    if !is_started(f) {
+        return false;
+    }
+    let h = head(f);
+    // Acquire: the result was written before `DONE` was published (`finish`, `finish_first`).
+    h.flags.load(Ordering::Acquire) & DONE != 0 && h.owner.get() & OWNER_DELIVERED == 0
+}
+
 /// Is `f` a started node (`velt_rt_fut_start` succeeded on it)?
 unsafe fn is_started(f: *mut VeltFut) -> bool {
     std::ptr::fn_addr_eq(
