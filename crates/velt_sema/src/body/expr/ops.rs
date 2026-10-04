@@ -144,8 +144,11 @@ impl FnCx<'_, '_> {
             ast::UnaryOp::BitNot => {
                 let int_exp = exp.filter(|t| self.cx.ty.is_int(*t));
                 let inner = self.expr(operand, int_exp, Want::Borrow);
-                // `~f` on a float converts it like JS's ToInt32 first (`numbers.rs`).
-                let inner = self.as_int32(inner);
+                // `~x` on a number is JS's: ToInt32, then a 32-bit not (`int32.rs`).
+                let inner = match self.js_bitnot(inner, int_exp, span) {
+                    Ok(h) => return h,
+                    Err(inner) => inner,
+                };
                 if !self.cx.ty.is_int(inner.ty) && !self.cx.ty.is_bottom(inner.ty) {
                     return self.unary_error("~", inner.ty, span);
                 }
@@ -238,6 +241,11 @@ impl FnCx<'_, '_> {
             (self.widen_value(l), self.widen_value(r))
         } else {
             (l, r)
+        };
+        // Bitwise operators on numbers: JS's 32-bit semantics (`int32.rs`).
+        let (l, r) = match self.js_bitwise(op, l, r, hint, span) {
+            Ok(h) => return h,
+            Err(operands) => operands,
         };
         let (l, r) = self.mix_numbers(l, r);
         let (l, r) = self.mix_ints(l, r);

@@ -35,6 +35,21 @@ impl Ctx<'_> {
         }
     }
 
+    /// A function of the prelude named `name`, exported or not: the helpers and runtime
+    /// functions the compiler calls itself (`body/expr/int32.rs`).
+    pub fn prelude_fn(&self, name: &str) -> Option<DefId> {
+        let found = match self.prelude.get(name) {
+            Some(it) => Some(*it),
+            None => (0..self.modules.len())
+                .filter(|&m| self.scopes[m].is_std && self.modules[m].path.starts_with("std/prelude/"))
+                .find_map(|m| self.scopes[m].items.get(name).copied()),
+        };
+        match found {
+            Some(Item::Def(d)) if self.try_fn(d).is_some() => Some(d),
+            _ => None,
+        }
+    }
+
     /// An ADT exported by the prelude under `name`.
     pub fn prelude_adt(&self, name: &str) -> Option<DefId> {
         match self.prelude.get(name) {

@@ -20,6 +20,9 @@
 //! - `noalias`: once the rounds are done, scalar fields behind `noalias` params (modified arrays
 //!   and structs) are kept in locals (loaded once, stored back around calls that receive the
 //!   param), followed by one scalar cleanup round.
+//! - `numrep`: after the rounds, `f64`/`i64` locals that only ever hold 32-bit integers (the
+//!   results of `x | 0` and friends) become `i32` locals, and ToInt32 of a sum of two of them
+//!   becomes a 32-bit add (design #525, step 1).
 //! - `divisions`: after the rounds, signed divisions / remainders by constants whose dividend
 //!   is provably non-negative or a multiple of the divisor become shifts, masks or unsigned ops.
 //! - `frame_slots`: at the same point, scalar fields of an async frame that a poll function
@@ -46,6 +49,7 @@ mod frame_slots;
 mod inline;
 mod locals;
 mod noalias;
+mod numrep;
 mod scc;
 mod simplify_cfg;
 mod srclocs;
@@ -98,6 +102,10 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 }
             }
             for func in &mut program.funcs {
+                if t.time("numrep", || numrep::run(&program.externs, func)) {
+                    t.time("copyprop", || copyprop::run(func));
+                    t.time("dce", || dce::run(&program.aggs, func));
+                }
                 t.time("divisions", || divisions::run(func));
             }
             promote_memory(program, t);

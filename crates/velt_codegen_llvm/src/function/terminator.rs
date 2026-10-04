@@ -150,12 +150,23 @@ impl Emitter<'_> {
     }
 
     /// `@llvm.<op>.f64` when `callee` is a runtime math function with an exact intrinsic
-    /// equivalent (declaring the intrinsic).
+    /// equivalent (declaring the intrinsic), or the module's inline helper for it
+    /// (`runtime::inline_helper`, defining the helper).
     fn math_intrinsic(&mut self, callee: &Callee, params: &[Ty], ret: Ty) -> Option<String> {
         let Callee::Extern(id) = callee else {
             return None;
         };
-        let name = runtime::math_intrinsic(&self.program.externs.get(id.0 as usize)?.symbol)?;
+        let symbol = &self.program.externs.get(id.0 as usize)?.symbol;
+        if let Some((name, definitions, want_params, want_ret)) = runtime::inline_helper(symbol) {
+            if params != want_params || ret != want_ret {
+                return None;
+            }
+            for d in definitions {
+                self.intrinsics.need(d.to_string());
+            }
+            return Some(name.to_string());
+        }
+        let name = runtime::math_intrinsic(symbol)?;
         if params != [Ty::F64] || ret != Ty::F64 {
             return None;
         }

@@ -384,6 +384,19 @@ impl FnCx<'_, '_> {
             return self.mk(kind, unit, span);
         }
         let v = self.expr(value, Some(lty), Want::Borrow);
+        // `x |= v` and the other bitwise assignments on numbers: `x = x | v` (`int32.rs`).
+        let v = match self.js_bitwise_operands(op, &place, v) {
+            Ok(v) => {
+                let cur = self.place_read(&place, Want::Borrow);
+                let value = self.js_bitwise_assign(op, &place, cur, v, span);
+                let kind = H::Assign {
+                    place: Box::new(place),
+                    value: Box::new(value),
+                };
+                return self.mk(kind, unit, span);
+            }
+            Err(v) => v,
+        };
         let v = self.compound_operand(&place, v);
         if self.check_operands(op, lty, &v, span).is_none() {
             return self.error_expr(span);

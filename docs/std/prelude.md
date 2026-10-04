@@ -39,7 +39,9 @@ return `f64`, `NaN` on failure), `Number(s)`.
 - `x.toFixed(digits = 0)` on `f64`, rounded like JS.
 - `Math`: `PI`, `E`, `sqrt floor ceil round trunc abs sign pow`, `max`, `min` and `hypot` (any
   number of values, spreads included: `Math.max(...xs)`), and `random()` (uniform in `[0, 1)`,
-  not for secrets). On integer operands, `Math.trunc(a / b)` is integer division.
+  not for secrets). On integer operands, `Math.trunc(a / b)` is integer division. `imul` (the
+  32-bit wrapping product, one multiply instruction) and `clz32` (leading zero bits) take the low
+  32 bits of their operands like JS.
 - Every number type implements `Comparable` ([Comparable](../reference/classes.md#comparable)).
 
 ## Arrays

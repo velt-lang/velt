@@ -21,6 +21,7 @@ mod errors;
 mod fn_arity;
 mod gen_closure;
 mod iface_call;
+mod int32;
 mod intrinsics;
 pub(crate) mod jsx;
 mod lit;
