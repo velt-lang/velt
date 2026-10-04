@@ -110,7 +110,8 @@ function jsxAsyncComponent<P, E>(component: (props: P) => Promise<Element, E>, p
 - **Component props:** attributes form an object literal checked against `P` (missing required
   fields and unknown fields are errors); spreads merge like object spread. A function without
   parameters is a component with props `{}`; a generic component's type arguments are written
-  on the opening tag (`<List<number> items={xs} />`; the closing tag takes none) or inferred from
+  on the opening tag (`<List<number> items={xs} />`, `ast::JsxElement::type_args`, empty only
+  when none are written: `<List<>>` is a syntax error; the closing tag takes none) or inferred from
   its props like TS: typed values and children first, then arrow functions (children last when
   one of them is an arrow function). Children go into the
   children field: one child → the child itself, several → an array, each checked against the

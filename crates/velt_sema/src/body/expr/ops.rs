@@ -229,7 +229,8 @@ impl FnCx<'_, '_> {
             None => self.operands(lhs, rhs, hint, Want::Borrow),
         };
         let (l, r) = if matches!(op, B::Eq | B::NotEq) {
-            self.nullable_operands(l, r)
+            let (l, r) = self.nullable_operands(l, r);
+            self.identity_operands(l, r)
         } else {
             (l, r)
         };
@@ -296,6 +297,29 @@ impl FnCx<'_, '_> {
             let to = r.ty;
             let l = self.try_coerce(l, to).unwrap_or_else(|l| l);
             (l, r)
+        }
+    }
+
+    /// `a === b` between an interface value and a class or struct value (or a base and a
+    /// subclass value) whose types overlap, as TypeScript allows (#365): the side that converts to the other's type
+    /// does (an interface value points at the object itself), so the two compare by identity.
+    fn identity_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+        let object = |s: &Self, t: TyId| {
+            let t = s.cx.ty.opt_payload(t).unwrap_or(t);
+            s.cx.union_def(t).is_none()
+                && matches!(s.cx.ty.kind(t), TyKind::Adt(..) | TyKind::Dyn(..))
+        };
+        if l.ty == r.ty || !object(self, l.ty) || !object(self, r.ty) {
+            return (l, r);
+        }
+        let to = l.ty;
+        match self.try_coerce(r, to) {
+            Ok(r) => (l, r),
+            Err(r) => {
+                let to = r.ty;
+                let l = self.try_coerce(l, to).unwrap_or_else(|l| l);
+                (l, r)
+            }
         }
     }
 

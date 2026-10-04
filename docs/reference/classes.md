@@ -87,9 +87,9 @@ hidden classes and no runtime shape checks.
   ```
 
   The call itself is a statement of the constructor's body, made once: not inside a block, `if`,
-  `try`, `switch`, loop or closure, and not part of an expression. TypeScript requires this too
-  once a class has initialized fields, parameter properties or private fields (TS2401), and
-  otherwise allows a nested call. Velt requires it always: the field initializers run right
+  `try`, `switch`, loop or closure, and not part of an expression. TypeScript allows a nested
+  call (it reports TS2401 only for targets before ES2022 or with `useDefineForClassFields:
+  false`). Velt requires a statement of the body always: the field initializers run right
   after the call and every field must be initialized, so the call has to run exactly once on
   every path. This is the one place Velt is stricter than TypeScript here. When a constructor
   throws (before `super(…)`, in the base constructor or in a field initializer), `new` frees the

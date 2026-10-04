@@ -265,6 +265,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The arrow being checked is an argument of a `std/` function called from user code: its
     /// unannotated integer parameters (an index, a `reduce` accumulator) are JS numbers.
     pub std_callback: bool,
+    /// Checking an expression outside any body (a field initializer, a parameter default, a
+    /// module-level constant): it has no frame to hold temporary locals (`driver::detached`).
+    pub detached: bool,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -282,6 +285,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             outer: vec![],
             direct_await: None,
             std_callback: false,
+            detached: false,
         }
     }
 

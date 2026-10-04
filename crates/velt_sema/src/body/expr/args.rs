@@ -305,7 +305,10 @@ impl FnCx<'_, '_> {
                 continue;
             };
             let unbounded = c.bounds.get(k).is_none_or(|b| b.is_empty());
-            if at != ct && unbounded && !self.cx.ty.has_error(ct) && self.converts_to(at, ct) {
+            // An integer slot may become a float one: the arguments are checked below.
+            let converts =
+                self.converts_to(at, ct) || (self.cx.ty.is_int(at) && self.float_core(ct));
+            if at != ct && unbounded && !self.cx.ty.has_error(ct) && converts {
                 wider[k] = Some(ct);
             }
         }
@@ -314,11 +317,22 @@ impl FnCx<'_, '_> {
         }
         for (h, p) in args.iter().zip(&c.params) {
             let target = self.cx.ty.subst_known(p.ty, &wider);
-            if !self.converts_to(h.ty, target) && !(is_fresh(h) && self.widens(h.ty, target)) {
+            let number = self.is_inferred_int(h) && self.float_core(target);
+            if !self.converts_to(h.ty, target)
+                && !number
+                && !(is_fresh(h) && self.widens(h.ty, target))
+            {
                 return;
             }
         }
         slots.copy_from_slice(&wider);
+    }
+
+    /// Is `t` a float type, or one with `null` (`(number | null)[]` expected from `wrap(1)`: a
+    /// JS number argument converts)?
+    fn float_core(&self, t: TyId) -> bool {
+        let t = self.cx.ty.opt_payload(t).unwrap_or(t);
+        self.cx.ty.is_float(t)
     }
 
     /// An untyped number argument (`0` in `xs.reduce((a, x) => a + x, 0)`) whose parameter is

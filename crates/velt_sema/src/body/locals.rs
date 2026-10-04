@@ -329,9 +329,10 @@ impl FnCx<'_, '_> {
     pub fn unnarrow(&mut self, l: LocalId) {
         let fields = self.field_tokens_of(l);
         for s in &mut self.f.scopes {
+            // A field path of `l` names a field of the old object: its facts go too.
             s.narrowed.retain(|x| *x != l && !fields.contains(x));
-            s.members.retain(|(x, _)| *x != l);
-            s.classes.retain(|(x, _)| *x != l);
+            s.members.retain(|(x, _)| *x != l && !fields.contains(x));
+            s.classes.retain(|(x, _)| *x != l && !fields.contains(x));
         }
     }
 

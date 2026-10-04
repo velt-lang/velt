@@ -74,6 +74,11 @@ fn type_arguments_on_tags() {
         errors("const a = <List<i64>></List<i64>>;"),
         ["a closing tag takes no type arguments"]
     );
+    // An empty list is TypeScript's TS1099, not "no type arguments".
+    assert_eq!(
+        errors("const a = <List<> />;"),
+        ["Type argument list cannot be empty."]
+    );
 }
 
 #[test]

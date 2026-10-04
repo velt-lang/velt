@@ -61,6 +61,7 @@ pub(super) fn override_ret(
     (have, want): (TyId, TyId),
     (span, message): (Span, String),
 ) -> bool {
+    cx.overridden.insert(base);
     if cx.fn_info(m).ret_source == RetSource::Body {
         cx.fn_info_mut(m).ret_source = RetSource::Base(base, args.to_vec());
         return true;

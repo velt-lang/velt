@@ -11,3 +11,4 @@ jsx_generic_arrow_local.vlt:17:21: error: a generic arrow function must be the v
 jsx_generic_arrow_local.vlt:18:40: error: `k` cannot be captured by a generic arrow function
   = note: a local generic arrow function is a generic function nested in this one: it cannot use the local variables of enclosing functions
   = note: pass `k` as a parameter, or drop the type parameters to make it a closure
+jsx_generic_arrow_local.vlt:24:41: error: `this` cannot be used in a generic arrow function

@@ -64,6 +64,22 @@ async function later(): Promise<C[]> {
   return make();
 }
 
+// Fresh too: a local built here and returned, a recursive function, std's `filter`.
+function built(n: number): C[] {
+  const out: C[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push(new C(`#${i}`));
+  }
+  return out;
+}
+
+function countdown(n: number): C[] {
+  if (n === 0) {
+    return built(1);
+  }
+  return countdown(n - 1);
+}
+
 async function main() {
   // The expected type instantiates the type parameter.
   const ns: Named[] = wrap(new C("w"));
@@ -85,6 +101,10 @@ async function main() {
   console.log(opt, boxed.value.name(), n?.name());
   const awaited: Named[] = await later();
   console.log(names(awaited));
+  const local: Named[] = built(2);
+  const recursive: Named[] = countdown(3);
+  const kept: Named[] = make().filter((c) => c.n === "b");
+  console.log(names(local), names(recursive), names(kept));
 
   // A copy of an existing array: the elements are the same objects.
   const cs = make();

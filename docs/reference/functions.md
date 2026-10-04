@@ -36,6 +36,10 @@ expressions (exported ones too):
   (`return fail()`);
 - `Promise<T>` for an `async` function, `T` from its returns.
 
+Integers inferred this way are JavaScript numbers, as in TypeScript: `(await half())/2` and
+a narrowed `T | null` result divide like `number`s, and a method returning integers that a
+subclass overrides returns `number` (`f64`), so an override may return `2.5`.
+
 ```ts
 function describe(n: i64) {
   if (n > 0) {
@@ -370,7 +374,7 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   (`const id = <T>(x: T) => x` returns `T`; an `async` one returns `Promise<T>`). At module
   level it is an ordinary generic function; in a function body it is a generic function nested
   there, so each call instantiates it, and like any [nested function](#declarations) it cannot
-  use the local variables around it. A function value has one type, so using one as a value needs
+  use the local variables around it (nor `this` in a method). A function value has one type, so using one as a value needs
   a function type to instantiate it at (`const f: (x: i64) => i64 = id;`), and a generic arrow
   anywhere else (an argument, a `let`) is an error:
 

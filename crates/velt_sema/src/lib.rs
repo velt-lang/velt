@@ -37,6 +37,7 @@ mod discriminants;
 mod dispatch;
 mod finalize;
 mod flow;
+mod fresh_returns;
 mod generic_arrows;
 pub mod ide;
 mod infer;
@@ -180,6 +181,7 @@ fn check_on_current_thread(
 fn analyze(cx: &mut ctx::Ctx) {
     collect::collect(cx);
     body::check_bodies(cx);
+    fresh_returns::check(cx);
     // Growing generic recursion has infinitely many instantiations: the passes below propagate
     // requirements per instantiation and would never finish.
     if instantiation_cycles::check(cx) {

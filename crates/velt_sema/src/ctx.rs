@@ -127,6 +127,11 @@ pub(crate) struct Ctx<'m> {
     pub ret_checks: Vec<crate::defs::RetCheck>,
     /// Uses of functions whose return types are being inferred (`body::recursion`).
     pub rec: crate::body::recursion::RecState,
+    /// Methods some subclass overrides (`collect::ret_infer`): a result inferred from JS-number
+    /// integers is a `number` (`f64`) there, which an override may return a fraction in.
+    pub overridden: HashSet<DefId>,
+    /// Widened call results whose callees must return fresh values (`crate::fresh_returns`).
+    pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
     pub type_defaults: crate::type_defaults::TypeDefaults,
     /// Second arguments of protocol types written before base classes were known
@@ -188,6 +193,8 @@ impl<'m> Ctx<'m> {
             checking: vec![],
             ret_checks: vec![],
             rec: Default::default(),
+            overridden: HashSet::new(),
+            fresh_checks: vec![],
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],
             diags: vec![],

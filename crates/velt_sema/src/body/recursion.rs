@@ -59,6 +59,7 @@ pub(crate) fn placeholder(cx: &mut Ctx, d: DefId, at: Span) {
 pub(crate) struct Mark {
     diags: usize,
     throw_checks: usize,
+    fresh_checks: usize,
     jsx_adapters: usize,
     fn_values: usize,
     fn_defs: usize,
@@ -68,10 +69,12 @@ pub(crate) struct Mark {
 }
 
 impl Mark {
+    /// The diagnostics and pending state as they are now.
     pub(crate) fn new(cx: &Ctx) -> Self {
         Mark {
             diags: cx.diags.len(),
             throw_checks: cx.throw_checks.len(),
+            fresh_checks: cx.fresh_checks.len(),
             jsx_adapters: cx.jsx_adapters.len(),
             fn_values: cx.fn_values.len(),
             fn_defs: cx.fn_defs.len(),
@@ -91,6 +94,7 @@ impl Mark {
     fn rollback(&self, cx: &mut Ctx) {
         cx.diags.truncate(self.diags);
         cx.throw_checks.truncate(self.throw_checks);
+        cx.fresh_checks.truncate(self.fresh_checks);
         cx.jsx_adapters.truncate(self.jsx_adapters);
         cx.fn_values.truncate(self.fn_values);
         cx.fn_defs.truncate(self.fn_defs);
@@ -215,6 +219,7 @@ fn annotated_signature(cx: &Ctx, d: DefId) -> String {
     }
 }
 
+/// Function `d`'s name without its module path (`Countdown.count`).
 pub(crate) fn short_name(cx: &Ctx, d: DefId) -> String {
     let name = &cx.fn_info(d).name;
     name.rsplit("::").next().unwrap_or(name).to_string()

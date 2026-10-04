@@ -18,6 +18,7 @@ use crate::SourceModule;
 
 /// The modules with their generic arrow constants rewritten into functions.
 pub(crate) struct Lifted {
+    /// Every module, with its generic arrow constants rewritten.
     pub modules: Vec<SourceModule>,
     /// Name spans of the functions made from local (non-module-level) generic arrows.
     pub local_fns: HashSet<Span>,

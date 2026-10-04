@@ -256,7 +256,7 @@ method names), `BigInt` literals (use [`velt:bigint`](../std/bigint.md)), Unicod
 identifiers. `x!` is checked (a `null` panics) where TypeScript trusts it, and `as const` keeps
 the value as it is. `Date` follows JS (months 0-11, local-time getters); its `toString()` has no
 time zone name and its `toLocale…` methods always format as `en-US`. JSX is supported for
-server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `children` yet.
+server-side rendering ([`velt:jsx`](../std/jsx.md)).
 
 ## Quick reference
 

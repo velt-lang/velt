@@ -17,8 +17,9 @@
 | `(x: T) => U` | function values: closures and named functions ([Functions](functions.md)) |
 | `Promise<T>`, `shared<T>`, `Mutex<T>` | async results and thread-safe shared values ([Async](async.md)) |
 
-Types are required on function parameters, and on return types other than `void` (a missing
-return type means `void`). Everything else is inferred. `type Name = …` declares an alias; an
+Types are required on function parameters. A missing return type is inferred from the
+function's `return`s ([Return types](functions.md#return-types)), and everything else is
+inferred too. `type Name = …` declares an alias; an
 alias cannot refer to itself, and it is checked even where nothing uses it. There is no `any`
 or `unknown`: dynamic JSON is `JsonValue` ([`velt:json`](../std/json.md)).
 
@@ -141,9 +142,10 @@ console.log(label("tea", 3), "a,b".split(","), "  x ".trim().padStart(3, "*"));
 
 ## Equality and comparison
 
-- `==` and `===` are the same operator, as are `!=` and `!==`: there is no coercion, and both
-  operands must have the same type (`1 == "1"` is a compile error; an `i64` compared with an
-  `i32` needs a cast).
+- `==` and `===` are the same operator, as are `!=` and `!==`: there is no coercion, and the
+  operands' types must overlap, as in TypeScript (`1 == "1"` is a compile error; an `i64`
+  compared with an `i32` needs a cast). An interface value compares with a value of a class or
+  struct that implements it, and a base class value with a subclass value.
 - Numbers, bools and strings compare by value. Objects (class instances, arrays, maps,
   structs, object literals, interface and function values) compare by **identity**, like JS:
   `[1] == [1]` is `false`, and `a == b` is `true` when `b` refers to the same object as `a`.
@@ -413,9 +415,13 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   arguments, `f(...xs)`, fill a rest parameter ([Functions](functions.md)).
 - **Wider element types**: an array, object type or generic class converts to the same type
   with wider elements (`C[]` to `Named[]` for a class `C implements Named`, `i64[]` to
-  `(i64 | null)[]`, `Box<C>` to `Box<Named>`) only when the value is **fresh**: a call result,
-  a `new` expression or a literal. The conversion builds a new value with each element
-  converted. TypeScript also converts an existing array, which is unsound: storing a `Named`
+  `(i64 | null)[]`, `Box<C>` to `Box<Named>`) only when the value is **fresh**: a literal, a
+  `new` expression, or the result of a call of a function that returns a new value on every
+  path (a literal, `new`, such a call, or a local it builds and returns without storing or
+  passing it anywhere, as `map` and `filter` do). The conversion builds a new value with each
+  element converted. A call that may return a value something else still holds (a getter
+  returning a field) is an error with the same fix as below, and so is a conversion in a field
+  initializer or a default value for now. TypeScript also converts an existing array, which is unsound: storing a `Named`
   that is not a `C` through the `Named[]` would put it into the `C[]`. Velt reports that and
   suggests a copy, `[...cs]` or `cs.map((x): Named => x)`. A generic class converts only when
   it has no base class, no subclasses and no `[Symbol.dispose]()`; the new object shares the

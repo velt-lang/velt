@@ -14,19 +14,15 @@
 use velt_common::Diagnostic;
 
 use crate::body::{FnCx, LocalKind};
+use crate::fresh_returns::{fresh_callees, FreshCheck};
 use crate::hir::{
-    self, AdtKind, Callee, ExprKind as H, Intrinsic, Pat, PatKind, StmtKind as S, TyId, TyKind,
-    UseMode,
+    self, AdtKind, ExprKind as H, Intrinsic, Pat, PatKind, StmtKind as S, TyId, TyKind, UseMode,
 };
 
-/// Is `h` a value nothing else references yet (a call result, `new`, a literal)?
+/// Is `h` a value nothing else references yet (a call result, `new`, a literal)? A call's
+/// callee is checked once every body is (`crate::fresh_returns`).
 pub(crate) fn is_fresh(h: &hir::Expr) -> bool {
-    match &h.kind {
-        H::Call { callee, .. } => !matches!(callee, Callee::Intrinsic(Intrinsic::Share)),
-        H::New { .. } | H::ArrayLit(_) | H::AdtLit { .. } | H::Await(_) => true,
-        H::Block(b) => b.value.as_deref().is_some_and(is_fresh),
-        _ => false,
-    }
+    fresh_callees(h).is_some()
 }
 
 impl FnCx<'_, '_> {
@@ -123,7 +119,41 @@ impl FnCx<'_, '_> {
         if !is_fresh(&h) || !self.widens(h.ty, exp) {
             return Err(h);
         }
+        if self.detached {
+            return Ok(self.detached_widening_error(&h, exp));
+        }
+        let callees = fresh_callees(&h).unwrap_or_default();
+        if !callees.is_empty() {
+            let (span, from) = (h.span, h.ty);
+            self.cx.fresh_checks.push(FreshCheck {
+                callees,
+                span,
+                from,
+                to: exp,
+            });
+        }
         Ok(self.widen_owned(h, exp))
+    }
+
+    /// A fresh value widened where no body holds the conversion's temporaries (a field
+    /// initializer or a default value): reported with the conversion to write instead.
+    fn detached_widening_error(&mut self, h: &hir::Expr, exp: TyId) -> hir::Expr {
+        let (e, f) = (self.cx.display(exp), self.cx.display(h.ty));
+        let d = Diagnostic::error(
+            format!("a `{f}` cannot be converted to `{e}` in a field initializer or a default value"),
+            h.span,
+        )
+        .with_note("TypeScript allows this; Velt converts such a value by building a new one, which it does only inside a function body for now");
+        let fix = match self.cx.ty.array_elem(exp) {
+            Some(el) => format!(
+                "convert the elements instead: `(…).map((x): {} => x)`",
+                self.cx.display(el)
+            ),
+            None => "create the value in the constructor or the function body instead".into(),
+        };
+        let d = d.with_note(fix);
+        self.cx.error(d);
+        self.error_expr(h.span)
     }
 
     /// The owned value `h` (fresh, or an element moved out of one) converted to `exp`.

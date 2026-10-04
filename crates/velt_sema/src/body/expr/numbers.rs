@@ -56,6 +56,9 @@ impl FnCx<'_, '_> {
         match &h.kind {
             H::Lit(hir::Lit::Int(_)) => IntOrigin::Literal,
             H::Local(l, _) if self.f.inferred_ints.contains(l) => IntOrigin::Inferred,
+            // A narrowed `T | null` local, a user function's awaited result: as the value.
+            H::UnwrapSome(inner, _) if matches!(inner.kind, H::Local(..)) => self.int_origin(inner),
+            H::Await(inner) if !self.is_std_api_value(inner) => self.int_origin(inner),
             H::Unary {
                 op: UnOp::Neg | UnOp::BitNot,
                 expr,
@@ -180,9 +183,14 @@ impl FnCx<'_, '_> {
         init
     }
 
-    /// `let x = init` without a type: `x` is an inferred integer when `init` is one.
+    /// `let x = init` without a type: `x` is an inferred integer when `init` is one (or a
+    /// `T | null` of one: its narrowed reads are).
     pub(crate) fn note_inferred_local(&mut self, local: hir::LocalId, init: &hir::Expr) {
-        if self.is_inferred_int(init) {
+        let core = self.cx.ty.opt_payload(init.ty);
+        let nullable_std = core.is_some() && self.is_std_api_value(init);
+        let core = core.unwrap_or(init.ty);
+        if self.cx.ty.is_int(core) && !nullable_std && self.int_origin(init) != IntOrigin::Declared
+        {
             self.f.inferred_ints.insert(local);
         }
     }

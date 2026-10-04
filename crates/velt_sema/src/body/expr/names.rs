@@ -23,6 +23,11 @@ impl FnCx<'_, '_> {
         }
         let payload = self.cx.ty.opt_payload(ty).filter(|_| self.is_narrowed(l));
         let member = self.narrowed_member(l, payload.unwrap_or(ty), payload.is_some());
+        if member.is_none() {
+            if let Some(e) = self.union_narrowed_to_class(l, ty, payload, want, span) {
+                return e;
+            }
+        }
         if payload.is_none() && member.is_none() {
             let mode = self.use_mode(ty, want);
             let e = self.mk(H::Local(l, mode), ty, span);
@@ -51,6 +56,33 @@ impl FnCx<'_, '_> {
             e = self.mk(kind, m, span);
         }
         self.downcast_narrowed(l, e)
+    }
+
+    /// A union local `l` (of type `ty`, `T | null` narrowed to `payload`) that `instanceof`
+    /// narrowed to a class every member it can still hold is, or is a base of: read as that
+    /// class (`catch (e)` on `Error | MyErr`, then `e instanceof MyErr`).
+    fn union_narrowed_to_class(
+        &mut self,
+        l: LocalId,
+        ty: TyId,
+        payload: Option<TyId>,
+        want: Want,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let target = self.narrowed_class(l)?;
+        let u = payload.unwrap_or(ty);
+        self.cx.union_def(u)?;
+        if payload.is_none() && self.cx.ty.opt_payload(ty).is_some() {
+            return None;
+        }
+        let mode = self.use_mode(ty, want);
+        let mut e = self.mk(H::Local(l, mode), ty, span);
+        if let Some(p) = payload {
+            let base = self.mk(H::Local(l, UseMode::Borrow), ty, span);
+            let inner = self.use_mode(p, want);
+            e = self.mk(H::UnwrapSome(Box::new(base), inner), p, span);
+        }
+        self.union_downcast(e, target).ok()
     }
 
     /// The read `e` of local `l` as the subclass `l` is narrowed to by `instanceof`, when `e`
@@ -108,6 +140,14 @@ impl FnCx<'_, '_> {
             Some(l) => {
                 self.rec_local(span, l);
                 self.local_expr(l, want, span)
+            }
+            None if self.generic_arrow => {
+                self.cx.error(
+                    Diagnostic::error("`this` cannot be used in a generic arrow function", span)
+                        .with_note("a local generic arrow function is a generic function nested in this one: it cannot use `this` or the local variables of enclosing functions")
+                        .with_note("pass the value it needs as a parameter, or drop the type parameters to make it a closure"),
+                );
+                self.error_expr(span)
             }
             None => {
                 self.cx.err(

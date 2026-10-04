@@ -425,14 +425,14 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// The place an argument passes (under re-wrapping: `Some`, an upcast, a union member), and
+/// The place an argument passes (under re-wrapping: `Some`, an up- or downcast, a union member), and
 /// the interface value coercion it went through, if any.
 fn arg_place(a: &hir::Expr) -> (&hir::Expr, Option<&hir::Expr>) {
     let mut place = a;
     let mut coerced = None;
     loop {
         place = match &place.kind {
-            H::WrapSome(x) | H::Upcast(x) => x,
+            H::WrapSome(x) | H::Upcast(x) | H::Downcast(x) => x,
             H::ToDyn { expr, .. } => {
                 coerced = Some(&**expr);
                 expr

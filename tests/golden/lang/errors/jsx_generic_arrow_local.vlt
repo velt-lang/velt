@@ -17,3 +17,11 @@ function main() {
   console.log(apply(<T,>(x: T): T => x));
   const capturing = <T,>(x: T): i64 => k;
 }
+
+class Holder {
+  n: i64 = 1;
+  get(): i64 {
+    const withThis = <T,>(x: T): i64 => this.n;
+    return withThis(0);
+  }
+}

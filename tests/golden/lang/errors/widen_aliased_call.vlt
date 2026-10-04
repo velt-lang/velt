@@ -1,0 +1,39 @@
+// A call result widens to a wider element type only when the callee returns a new value
+// (#268): a getter or method returning a field, or a function that also stores what it
+// returns, gives a value other code still references, and Velt would convert a copy.
+interface Named {
+  name(): string;
+}
+
+class C implements Named {
+  name(): string {
+    return "c";
+  }
+}
+
+class Store {
+  private cs: C[] = [new C()];
+  kept: C[][] = [];
+
+  get items(): C[] {
+    return this.cs;
+  }
+
+  all(): C[] {
+    return this.cs;
+  }
+
+  remember(): C[] {
+    const xs = [new C()];
+    this.kept.push(xs);
+    return xs;
+  }
+}
+
+function main() {
+  const s = new Store();
+  const a: Named[] = s.items;
+  const b: Named[] = s.all();
+  const c: Named[] = s.remember();
+  console.log(a.length, b.length, c.length);
+}

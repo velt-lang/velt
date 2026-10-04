@@ -49,7 +49,14 @@ impl Parser<'_> {
         }
         let name = self.jsx_name()?;
         let type_args = if self.at(Tok::Lt) {
-            self.parse_type_args()?
+            let lo = self.cur_lo();
+            let args = self.parse_type_args()?;
+            if args.is_empty() {
+                // TypeScript's TS1099; an empty list would read as no type arguments.
+                let span = self.span_from(lo);
+                self.error("Type argument list cannot be empty.", span);
+            }
+            args
         } else {
             vec![]
         };

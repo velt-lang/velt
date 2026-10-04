@@ -38,7 +38,9 @@ pub(super) fn detached<'a, 'm>(
     generics: &[String],
 ) -> FnCx<'a, 'm> {
     let env = TyEnv::new(module, generics);
-    FnCx::new(cx, module, env, Frame::new(FnKind::Free, None))
+    let mut fcx = FnCx::new(cx, module, env, Frame::new(FnKind::Free, None));
+    fcx.detached = true;
+    fcx
 }
 
 /// Check the own field defaults of type `d` (once), recording what each may throw.
@@ -312,7 +314,13 @@ impl FnCx<'_, '_> {
     fn inferred_fn_ret(&mut self, def: DefId, block: &mut hir::Block) -> hir::TyId {
         let short = self.fn_name.rsplit("::").next().unwrap_or(&self.fn_name);
         let who = format!("`{short}`");
-        let (ret, inferred_int) = self.finish_inferred_ret(block, &who);
+        let (mut ret, mut inferred_int) = self.finish_inferred_ret(block, &who);
+        if inferred_int && self.cx.overridden.contains(&def) {
+            // `legs() { return 4; }` overridden by `legs() { return 2.5; }`: both are a
+            // TypeScript `number`, which a subclass may return a fraction in.
+            ret = self.returns_as(block, self.cx.ty.f64);
+            inferred_int = false;
+        }
         let sig = if self.f.is_async {
             self.cx.ty.promise(ret)
         } else {

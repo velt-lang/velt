@@ -149,8 +149,10 @@ impl FnCx<'_, '_> {
     ) -> (TyId, bool) {
         let r = std::mem::take(&mut self.f.returns);
         let ty = self.common_ret(&r, block);
-        let ints = r.values.iter().filter(|v| v.ty == ty);
-        let inferred_int = self.cx.ty.is_int(ty) && ints.clone().count() > 0;
+        // `T | null` of JS-number integers (`return 5;` and `return null;`) is one too.
+        let core = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+        let ints = r.values.iter().filter(|v| v.ty == core);
+        let inferred_int = self.cx.ty.is_int(core) && ints.clone().count() > 0;
         let inferred_int = inferred_int && ints.clone().all(|v| v.inferred_int);
         self.f.ret = Some(ty);
         let (unit, error) = (self.cx.ty.unit, self.cx.ty.error);
@@ -186,7 +188,9 @@ impl FnCx<'_, '_> {
                 return unit;
             }
             tys.retain(|t| *t != unit);
+            // Reported once; the result is unknown, so nothing else is reported about it.
             self.void_returns(r, &tys);
+            return error;
         }
         let span = r.nulls.first().or(r.values.first().map(|v| &v.span));
         let span = span.copied().unwrap_or(block.span);
@@ -198,9 +202,12 @@ impl FnCx<'_, '_> {
         self.cx.union_of(&members, true, span)
     }
 
-    /// A `void` value returned next to other values (`return log(x)` and `return 1`).
+    /// A `void` value returned next to other values (`return log(x)` and `return 1`, or
+    /// `return null` when `others` is empty).
     fn void_returns(&mut self, r: &Returns, others: &[TyId]) {
-        let other = self.cx.display(others[0]);
+        let other = others
+            .first()
+            .map_or_else(|| "null".to_string(), |t| self.cx.display(*t));
         let unit = self.cx.ty.unit;
         for v in r.values.iter().filter(|v| v.ty == unit) {
             self.cx.error(
@@ -271,6 +278,15 @@ impl FnCx<'_, '_> {
                 "Velt has no `undefined`: write `return null;` and the return type `{nullable}`"
             )),
         );
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// Converts every `return` value of `block` to `to`, the function's result; returns `to`.
+    pub(super) fn returns_as(&mut self, block: &mut hir::Block, to: TyId) -> TyId {
+        self.f.ret = Some(to);
+        visit::block(block, &mut CoerceReturns { fcx: self, to });
+        to
     }
 }
 

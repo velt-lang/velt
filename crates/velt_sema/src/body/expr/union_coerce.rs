@@ -90,6 +90,24 @@ impl FnCx<'_, '_> {
         self.map_members(h, exp, &mut |s, value| s.try_coerce(value, exp).ok())
     }
 
+    /// Union value `h`, narrowed by `instanceof` to subclass `target` of every member it can
+    /// still hold (`Error | MyErr` tested for `MyErr`), as a `target`: each member is it or
+    /// downcast to it.
+    pub(crate) fn union_downcast(
+        &mut self,
+        h: hir::Expr,
+        target: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        self.map_members(h, target, &mut |s, value| {
+            if value.ty == target {
+                return Some(value);
+            }
+            let span = value.span;
+            s.downcast_applies(value.ty, target)
+                .then(|| s.mk(H::Downcast(Box::new(value)), target, span))
+        })
+    }
+
     /// `match (h) { V(m) => f(m), ... }` over the variants union value `h` can hold (narrowing
     /// included); `Err(h)` when `f` rejects a member. Literal members are matched without a
     /// binding and passed as their constant.
