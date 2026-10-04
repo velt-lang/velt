@@ -8,8 +8,8 @@
 //! ones to every caller (and from a closure to its enclosing function) like the JSON check, and
 //! to every function that mentions a class type whose methods are dispatched dynamically
 //! ([`crate::dispatch`]), revisiting only the functions whose callees' keys grew
-//! ([`crate::dispatch::Rounds`]), and reports the concrete ones that are not keys. Lowering never sees a
-//! record with another key.
+//! ([`crate::dispatch::Rounds`]), and reports the concrete ones that are not keys. Lowering never
+//! sees a record with another key.
 
 use std::collections::{HashMap, HashSet};
 
