@@ -1,0 +1,52 @@
+// check: no leaks
+// A local closure that changes a captured array shares it with the enclosing function (#460,
+// #208): the array stays usable after the calls, in plain and async functions, for numbers,
+// strings and objects, and next to a `with` callback that calls the closure.
+class Job {
+  n: i64 = 0;
+}
+
+function numbers(): i64 {
+  const pending: i64[] = [];
+  const add = (x: i64) => {
+    pending.push(x);
+  };
+  add(1);
+  add(2);
+  return pending.length;
+}
+
+async function names(): Promise<string> {
+  const seen: string[] = [];
+  const note = (s: string) => {
+    seen.push(s);
+  };
+  note("a");
+  await yieldNow();
+  note("b");
+  return seen.join(",");
+}
+
+async function main() {
+  const pending: i64[] = [];
+  const add = (x: i64) => {
+    pending.push(x);
+  };
+  add(1);
+  console.log(pending.length);
+  console.log(numbers());
+  const jobs: Job[] = [];
+  const queue = (j: Job) => {
+    jobs.push(j);
+  };
+  queue(new Job());
+  jobs[0].n = 5;
+  console.log(jobs.length, jobs[0].n);
+  const m = shared(new Mutex<i64[]>([4, 5]));
+  m.with((v) => {
+    add(v.length);
+  });
+  add(3);
+  console.log(pending.join(","));
+  console.log(await names());
+}

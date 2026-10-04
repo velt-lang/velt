@@ -106,8 +106,9 @@ pub fn init_clock() {
     ORIGIN.get_or_init(Instant::now);
 }
 
+/// A string argument as UTF-8 for the OS (one U+FFFD per lone surrogate).
 unsafe fn text<'a>(s: *const VeltStr) -> std::borrow::Cow<'a, str> {
-    String::from_utf8_lossy((*s).as_bytes())
+    (*s).text_lossy()
 }
 
 /// `argv()` of `velt:process`: all arguments including the program path, as owned UTF-8

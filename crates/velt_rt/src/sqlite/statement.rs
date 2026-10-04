@@ -50,8 +50,9 @@ pub unsafe extern "C" fn velt_rt_sqlite_prepare(
     sql: *const VeltStr,
     out: *mut IoResult<StmtHandle>,
 ) {
-    // Velt strings are UTF-8 by construction.
-    let sql = std::str::from_utf8_unchecked(bytes(sql)).trim();
+    // SQL text with a lone surrogate gets U+FFFD in its place (#377).
+    let sql = (*sql).text_lossy();
+    let sql = sql.trim();
     let r = super::connection::obj(db).and_then(|o| {
         o.with(|c| c.prepare_cached(sql).map(drop).map_err(DbError::from))
             .map(|()| StmtObj {
@@ -127,7 +128,7 @@ pub unsafe extern "C" fn velt_rt_sqlite_note_error(
     message: *const VeltStr,
 ) {
     if let Some(s) = stmt.get() {
-        let message = String::from_utf8_lossy(bytes(message)).into_owned();
+        let message = (*message).to_string_lossy();
         s.db.note_error(DbError::new(code, message));
     }
 }

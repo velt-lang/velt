@@ -122,7 +122,7 @@ pub unsafe extern "C" fn velt_rt_pg_copy_write(
     w: CopyInHandle,
     data: *const VeltStr,
 ) -> *mut VeltFut {
-    write(w, Bytes::copy_from_slice((*data).as_bytes()))
+    write(w, Bytes::copy_from_slice((*data).text_lossy().as_bytes()))
 }
 
 /// `writer.writeBytes(bytes)`: the same operation bound with a `u8[]` parameter.

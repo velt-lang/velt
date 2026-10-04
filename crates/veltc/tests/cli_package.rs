@@ -599,3 +599,39 @@ fn ts_and_tsx_modules_in_a_package() {
     let err = s.fail("app", &["check"]);
     assert!(err.contains("extra.ts:2:"), "{err}");
 }
+
+#[test]
+fn a_package_written_in_typescript_needs_no_entry() {
+    let s = sandbox();
+    s.ok("", &["new", "textkit", "--lib"]);
+    std::fs::remove_file(s.dir.join("textkit/src/lib.vlt")).unwrap();
+    std::fs::remove_dir_all(s.dir.join("textkit/tests")).unwrap();
+    s.write("textkit/src/lib.ts", "export { shout } from \"./shout\";\n");
+    s.write(
+        "textkit/src/shout.ts",
+        "export function shout(s: string): string {\n  return `${s}!`;\n}\n",
+    );
+    s.ok("textkit", &["check"]);
+    s.ok("", &["new", "app"]);
+    s.ok("app", &["add", "textkit", "--path", "../textkit"]);
+    std::fs::remove_file(s.dir.join("app/src/main.vlt")).unwrap();
+    s.write(
+        "app/src/main.ts",
+        "import { shout } from \"textkit\";\nimport { shout as again } from \"textkit/shout\";\n\nfunction main() {\n  console.log(again(shout(\"hi\")));\n}\n",
+    );
+    s.ok("app", &["check"]);
+    let o = s.velt("app", &["run"]);
+    assert_eq!(
+        String::from_utf8_lossy(&o.stdout),
+        "hi!!\n",
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    // Two default entries are ambiguous, as two candidates of an import are.
+    s.write("app/src/main.vlt", "function main() {}\n");
+    let err = s.fail("app", &["run"]);
+    assert!(
+        err.contains("more than one `src/main` module: `src/main.vlt`, `src/main.ts`"),
+        "{err}"
+    );
+}

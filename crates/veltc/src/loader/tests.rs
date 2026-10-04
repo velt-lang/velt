@@ -154,7 +154,7 @@ fn std_import_without_std_root() {
     assert!(diags[0].notes[0].contains("VELT_STD"));
 }
 
-struct MapResolver(BTreeMap<String, PathBuf>);
+pub(super) struct MapResolver(pub(super) BTreeMap<String, PathBuf>);
 
 impl PackageResolver for MapResolver {
     fn dependency_root(&self, _importer: &Path, name: &str) -> Result<PathBuf, String> {

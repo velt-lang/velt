@@ -9,7 +9,7 @@
 //! [`in_folder`] answers the same question for one file, so the language server's idea of the
 //! files under a `tsCompat` folder is the CLI's.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::manifest::{LEGACY_MANIFEST_FILE, MANIFEST_FILE};
 
@@ -94,9 +94,64 @@ pub fn is_plain_ts(path: &Path) -> bool {
     path.extension().is_some_and(|e| e == "ts")
 }
 
+/// The files a module path `base` (no extension) may name, in [`SOURCE_EXTENSIONS`] order:
+/// `base.vlt`, `base.ts`, `base.tsx` (`types.d` names none of them as `types.d.ts`: a
+/// declaration file is not a module).
+pub fn source_files(base: &str) -> Vec<PathBuf> {
+    SOURCE_EXTENSIONS
+        .iter()
+        .map(|ext| format!("{base}.{ext}"))
+        .filter(|f| is_source_name(f))
+        .map(PathBuf::from)
+        .collect()
+}
+
+/// The file of a package's default module `rel` (`src/main.vlt` or `src/lib.vlt`), below `root`:
+/// that file, or the same name with `.ts` or `.tsx`, so a package written in TypeScript needs no
+/// `entry`. `Ok(None)` when none exists, an error naming them when more than one does (as for an
+/// ambiguous import).
+pub fn default_module(root: &Path, rel: &str) -> Result<Option<PathBuf>, String> {
+    let base = rel.strip_suffix(".vlt").unwrap_or(rel);
+    let found: Vec<PathBuf> = source_files(base)
+        .into_iter()
+        .filter(|f| root.join(f).is_file())
+        .collect();
+    match found.as_slice() {
+        [] => Ok(None),
+        [one] => Ok(Some(root.join(one))),
+        many => {
+            let names: Vec<String> = many.iter().map(|f| format!("`{}`", f.display())).collect();
+            Err(format!(
+                "the package has more than one `{base}` module: {} (rename or remove all but one of them)",
+                names.join(", ")
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_modules_may_be_typescript() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir(root.join("src")).unwrap();
+        assert_eq!(default_module(root, "src/lib.vlt"), Ok(None));
+        std::fs::write(root.join("src/lib.ts"), "").unwrap();
+        assert_eq!(
+            default_module(root, "src/lib.vlt"),
+            Ok(Some(root.join("src/lib.ts")))
+        );
+        std::fs::write(root.join("src/lib.vlt"), "").unwrap();
+        let err = default_module(root, "src/lib.vlt").unwrap_err();
+        assert!(err.contains("`src/lib.vlt`, `src/lib.ts`"), "{err}");
+        assert_eq!(
+            source_files("types.d"),
+            [PathBuf::from("types.d.vlt"), PathBuf::from("types.d.tsx")]
+        );
+    }
 
     #[test]
     fn source_names() {

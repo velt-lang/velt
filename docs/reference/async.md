@@ -268,10 +268,16 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
     its changes land in it: the closures it may be are checked like the callback. One whose
     body cannot be found (a field, an array element) may not be given both the value and
     something outside the lock. The callback itself is a closure written where it is passed, a
-    named function (`m.with(update)`), or a variable or helper parameter bound to those; one
-    found only through a field, an array element or a `Map` value (`m.with(hooks.cb)`) cannot
-    be checked, and is an error when the value can hold objects ("the function passed to
-    `with` comes from an object's field …").
+    named function (`m.with(update)`), or a variable or helper parameter bound to those, and
+    is checked as above. One found only through a field, an array element, a `Map` value or a
+    generic factory (`this.m.with(this.reducer)`, `for (const op of ops) m.with(op)`) may be
+    any closure or function taking the value's type (a generic one through each of its
+    instantiations), except the closures written as `with`'s argument: each of them is
+    checked, without being changed. When the value is an object value and one of them would
+    store across the lock or make a promise from the value, the call is an error naming that
+    function ("the function passed to `with` comes from an object's field, and may be a
+    closure that stores a part of the locked `State` outside it …"); otherwise the call is
+    accepted as written.
   - A promise made from the value runs after the lock is released. One that only reads what it
     is given gets a copy, like a spawned call (`m.with((v) => save(v.name))`,
     `m.with((v) => read(v))`: `read` sees the value as it was; a copy of a resource without

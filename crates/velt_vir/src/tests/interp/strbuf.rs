@@ -105,6 +105,9 @@ impl Interp<'_> {
             // no cyclic graphs, so every object is printed.
             "velt_rt_strbuf_inspect_enter" => return Some(1),
             "velt_rt_strbuf_inspect_begin" | "velt_rt_strbuf_inspect_leave" => {}
+            // Line breaking (velt_rt's inspect_layout): the programs run here print short values.
+            "velt_rt_strbuf_len" => return Some(self.str_bytes(a[0]).len() as u64),
+            "velt_rt_strbuf_inspect_layout" => {}
             _ => return None,
         }
         Some(0)

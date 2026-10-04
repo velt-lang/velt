@@ -16,5 +16,5 @@ error: the function passed to `with` returns `Promise<i64>`, which would run aft
 error: this call may store a part of the locked value outside it, and also changes that argument
 error: this call passes the locked value to a function whose body is not visible here, together with something outside the lock
 error: the function passed to `with` (through `first`) returns `Promise<i64>`, which would run after the lock is released
-error: the function passed to `with` (through `first`) comes from an array element, so what it does with the locked `Outer` cannot be checked
+error: the function passed to `with` (through `first`) comes from an array element, and may be `fire`, which makes a promise from the locked `Outer`
 await outside `with`, and store the result with another `with`

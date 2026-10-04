@@ -119,7 +119,7 @@ impl ClientObj {
 
 /// Owned text of a string argument (copied: the operation outlives the call).
 pub(super) unsafe fn text(s: *const VeltStr) -> String {
-    String::from_utf8_lossy((*s).as_bytes()).into_owned()
+    (*s).text_lossy().into_owned()
 }
 
 /// Owned bytes of a string argument.

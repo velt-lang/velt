@@ -177,7 +177,7 @@ pub fn count_lone(bytes: &[u8]) -> usize {
 fn count_lone_scan(bytes: &[u8]) -> usize {
     bytes
         .windows(2)
-        .filter(|w| w[0] == 0xED && w[1] >= 0xA0)
+        .filter(|w| w[0] == 0xED && is_surrogate_second(w[1]))
         .count()
 }
 
@@ -221,6 +221,188 @@ pub fn join_pair(hi: &[u8], lo: &[u8]) -> [u8; 4] {
         0x80 | ((cp >> 6) & 0x3F) as u8,
         0x80 | (cp & 0x3F) as u8,
     ]
+}
+
+/// Is `b` a lone surrogate's second byte after an `ED` lead (`A0..BF`)? Together with the lead
+/// byte, the only way a lone surrogate starts.
+#[inline]
+fn is_surrogate_second(b: u8) -> bool {
+    b >= 0xA0
+}
+
+/// The UTF-8 of U+FFFD, which replaces a lone surrogate on output: 3 bytes, as the surrogate.
+pub const REPLACEMENT: [u8; 3] = [0xEF, 0xBF, 0xBD];
+
+/// Replace every lone surrogate in `bytes` (canonical WTF-8) with U+FFFD, in place: one U+FFFD
+/// per lone surrogate, so the length stays the same and the result is UTF-8.
+pub fn replace_lone_in_place(bytes: &mut [u8]) {
+    let mut from = 0;
+    while let Some(i) = memchr::memchr(0xED, &bytes[from..]) {
+        let i = from + i;
+        if bytes.get(i + 1).copied().is_some_and(is_surrogate_second) {
+            bytes[i..i + 3].copy_from_slice(&REPLACEMENT);
+            from = i + 3;
+        } else {
+            from = i + 1;
+        }
+    }
+}
+
+/// `bytes` (canonical WTF-8) as UTF-8, each lone surrogate replaced by one U+FFFD (Rust's
+/// `String::from_utf8_lossy` would give three): borrowed when there is none.
+pub fn to_utf8_lossy(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+    if count_lone(bytes) == 0 {
+        // SAFETY: canonical WTF-8 without lone surrogates is UTF-8.
+        Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(bytes) })
+    } else {
+        let mut v = bytes.to_vec();
+        replace_lone_in_place(&mut v);
+        // SAFETY: the lone surrogates were the only sequences UTF-8 does not allow.
+        Cow::Owned(unsafe { String::from_utf8_unchecked(v) })
+    }
+}
+
+/// Append `piece` (canonical WTF-8) to `out` (canonical WTF-8), joining a high surrogate ending
+/// `out` with a low one starting `piece` into the pair's 4-byte code point, so `out` stays
+/// canonical. For producers that assemble a result in a `Vec` before making it a string.
+#[inline]
+pub fn push_joining(out: &mut Vec<u8>, piece: &[u8]) {
+    if starts_with_low(piece) && ends_with_high(out) {
+        let at = out.len() - 3;
+        let pair = join_pair(&out[at..], &piece[..3]);
+        out.truncate(at);
+        out.extend_from_slice(&pair);
+        out.extend_from_slice(&piece[3..]);
+    } else {
+        out.extend_from_slice(piece);
+    }
+}
+
+/// The code point (or lone surrogate) that starts at byte `i` of canonical WTF-8 and its length
+/// in bytes. `i` must be a code point boundary below `bytes.len()`.
+#[inline]
+pub fn decode_at(bytes: &[u8], i: usize) -> (u32, usize) {
+    let b = bytes[i];
+    let cont = |k: usize| (bytes[i + k] & 0x3F) as u32;
+    match b {
+        0x00..=0x7F => (b as u32, 1),
+        0x80..=0xDF => (((b as u32 & 0x1F) << 6) | cont(1), 2),
+        0xE0..=0xEF => (((b as u32 & 0x0F) << 12) | (cont(1) << 6) | cont(2), 3),
+        _ => (
+            ((b as u32 & 0x07) << 18) | (cont(1) << 12) | (cont(2) << 6) | cont(3),
+            4,
+        ),
+    }
+}
+
+/// The start of the code point that ends at byte `end` of canonical WTF-8 (`end > 0`, a
+/// boundary).
+#[inline]
+pub fn start_before(bytes: &[u8], end: usize) -> usize {
+    let mut i = end - 1;
+    while i > 0 && is_continuation(bytes[i]) {
+        i -= 1;
+    }
+    i
+}
+
+/// Is `b` a continuation byte (`10xxxxxx`), i.e. not at a code point boundary?
+#[inline]
+pub fn is_continuation(b: u8) -> bool {
+    (b as i8) < -0x40
+}
+
+/// The byte offsets of the code points of `bytes` (canonical WTF-8; a lone surrogate is one).
+pub fn boundaries(bytes: &[u8]) -> impl Iterator<Item = usize> + '_ {
+    bytes
+        .iter()
+        .enumerate()
+        .filter(|(_, &b)| !is_continuation(b))
+        .map(|(i, _)| i)
+}
+
+/// The WTF-8 of the code unit or code point `cp` (a surrogate becomes its 3-byte form) into
+/// `buf`; returns the bytes written.
+pub fn encode(cp: u32, buf: &mut [u8; 4]) -> &[u8] {
+    match cp {
+        0..=0x7F => {
+            buf[0] = cp as u8;
+            &buf[..1]
+        }
+        0x80..=0x7FF => {
+            buf[0] = 0xC0 | (cp >> 6) as u8;
+            buf[1] = 0x80 | (cp & 0x3F) as u8;
+            &buf[..2]
+        }
+        0x800..=0xFFFF => {
+            buf[0] = 0xE0 | (cp >> 12) as u8;
+            buf[1] = 0x80 | ((cp >> 6) & 0x3F) as u8;
+            buf[2] = 0x80 | (cp & 0x3F) as u8;
+            &buf[..3]
+        }
+        _ => {
+            buf[0] = 0xF0 | (cp >> 18) as u8;
+            buf[1] = 0x80 | ((cp >> 12) & 0x3F) as u8;
+            buf[2] = 0x80 | ((cp >> 6) & 0x3F) as u8;
+            buf[3] = 0x80 | (cp & 0x3F) as u8;
+            &buf[..4]
+        }
+    }
+}
+
+/// Map the well-formed runs of `bytes` (canonical WTF-8) with `f`, which appends each run's
+/// result to the output; the lone surrogates between the runs are copied as they are. `f` must
+/// not produce surrogates, and gives non-empty output for a non-empty run (so two lone
+/// surrogates never meet as the halves of a pair).
+pub fn map_runs(bytes: &[u8], mut f: impl FnMut(&str, &mut Vec<u8>)) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut run = 0;
+    let mut from = 0;
+    // SAFETY (both runs): text between lone surrogates of canonical WTF-8 is UTF-8.
+    while let Some(i) = memchr::memchr(0xED, &bytes[from..]) {
+        let i = from + i;
+        if bytes.get(i + 1).copied().is_some_and(is_surrogate_second) {
+            f(
+                unsafe { std::str::from_utf8_unchecked(&bytes[run..i]) },
+                &mut out,
+            );
+            out.extend_from_slice(&bytes[i..i + 3]);
+            run = i + 3;
+        }
+        from = i + 1;
+    }
+    f(
+        unsafe { std::str::from_utf8_unchecked(&bytes[run..]) },
+        &mut out,
+    );
+    out
+}
+
+/// Text that is not well-formed UTF-16: canonical WTF-8 with at least one lone surrogate, what
+/// `VeltStr::text` gives when it can't give a `&str`. Code that needs a `&str` converts it with
+/// [`Wtf8::to_utf8_lossy`]; code that can work on the bytes (search, slice, split) does so.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Wtf8<'a>(&'a [u8]);
+
+impl<'a> Wtf8<'a> {
+    /// The WTF-8 bytes.
+    pub fn as_bytes(self) -> &'a [u8] {
+        self.0
+    }
+
+    /// The text as UTF-8, each lone surrogate replaced by one U+FFFD (the same length).
+    pub fn to_utf8_lossy(self) -> String {
+        let mut v = self.0.to_vec();
+        replace_lone_in_place(&mut v);
+        // SAFETY: the lone surrogates were the only sequences UTF-8 does not allow.
+        unsafe { String::from_utf8_unchecked(v) }
+    }
+
+    /// Wrap bytes known to be canonical WTF-8 with lone surrogates.
+    pub(super) fn new(bytes: &'a [u8]) -> Wtf8<'a> {
+        Wtf8(bytes)
+    }
 }
 
 /// Why `bytes` is not canonical WTF-8, if it isn't: an invalid sequence, or a high surrogate

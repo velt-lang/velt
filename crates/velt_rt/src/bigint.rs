@@ -112,7 +112,7 @@ fn float_to_bigint(v: f64) -> BigInt {
 /// Parses `s` (optional sign, digits of `radix` 2..=36, `_` not allowed); 0 if invalid.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_bigint_parse(s: *const VeltStr, radix: i64) -> u64 {
-    let text = String::from_utf8_lossy((*s).as_bytes());
+    let text = (*s).text_lossy();
     let text = text.trim();
     let valid_radix = (2..=36).contains(&radix);
     let unsigned = text.strip_prefix(['-', '+']).unwrap_or(text);

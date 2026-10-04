@@ -1,0 +1,100 @@
+[ 1, 2, 3, 4, 5, 6 ]
+[
+  1, 2, 3, 4,
+  5, 6, 7
+]
+[
+  -100, 819, 738, 657, 576, 495,
+   414, 333, 252, 171,  90,   9,
+   -72, 847, 766, 685, 604, 523,
+   442, 361, 280, 199, 118,  37,
+   -44, 875, 794, 713, 632, 551
+]
+[
+  1.5, -2.25,  3,  4,
+    5,     6,  7,  8,
+    9,    10, 11, 12
+]
+[
+  'apple', 'fig',
+  'kiwi',  'plum',
+  'pear',  'lime',
+  'date',  'nut'
+]
+[
+  'a',
+  'b',
+  'c',
+  'd',
+  'e',
+  'f',
+  'a much longer string than all the others'
+]
+[
+  '日本語', '中文',
+  '한국어', 'abc',
+  'défini', 'x',
+  'y',      'z'
+]
+{
+  name: 'velt',
+  version: '0.1.0',
+  tags: [ 'compiler', 'typescript' ],
+  nested: { deep: true, level: 2 }
+}
+label: {
+  name: 'velt',
+  version: '0.1.0',
+  tags: [ 'compiler', 'typescript' ],
+  nested: { deep: true, level: 2 }
+} after
+{ short: [ 1, 2 ], ok: true }
+Map(3) {
+  'origin' => Point { x: 0, y: 0 },
+  'far away' => Point { x: 123456.789, y: -98765.4321 },
+  'third' => Point { x: 1, y: 2 }
+}
+[
+  Point { x: 0, y: 0 },
+  Point { x: 1000, y: -2000 },
+  Point { x: 2000, y: -4000 },
+  Point { x: 3000, y: -6000 }
+]
+{
+  text: 'first line\n' +
+    'second line that is quite a bit longer than the first one\n' +
+    'third line'
+}
+[
+  "it's\na quote on the first line, and a long second line that goes on and on"
+]
+{
+  long: 'a single long line without any line break, which node never splits at all'
+}
+<ref *1> Tree {
+  name: 'root',
+  parent: null,
+  children: [
+    Tree { name: 'kid', parent: [Circular *1], children: [] },
+    Tree {
+      name: 'second child with a long name',
+      parent: null,
+      children: []
+    }
+  ]
+}
+[
+  [ 0, 0, 0 ],
+  [ 1, 10, 100 ],
+  [ 2, 20, 200 ],
+  [ 3, 30, 300 ],
+  [ 4, 40, 400 ],
+  [ 5, 50, 500 ],
+  [ 6, 60, 600 ]
+]
+[
+  Point { x: 0, y: 0 },
+  Point { x: 1000, y: -2000 },
+  Point { x: 2000, y: -4000 },
+  Point { x: 3000, y: -6000 }
+]

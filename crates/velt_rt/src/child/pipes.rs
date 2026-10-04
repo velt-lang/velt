@@ -101,7 +101,7 @@ pub unsafe extern "C" fn velt_rt_child_read_string(
 /// `write(data)` to stdin (a string, copied) → `IoResult<()>` once written.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_child_write(c: ChildHandle, data: *const VeltStr) -> *mut VeltFut {
-    let data = (*data).as_bytes().to_vec();
+    let data = (*data).to_string_lossy().into_bytes();
     CHILDREN.op::<()>(c, |obj| {
         new_leaf(async move {
             let mut guard = obj.stdin.lock().await;
