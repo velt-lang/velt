@@ -4,7 +4,7 @@
 //! Features: diagnostics (parse + imports + sema, debounced, per open document), formatting
 //! (`velt_fmt`), document symbols, go to definition, hover, completion (JSX tags and attributes
 //! included), find references, rename, quick fixes (code actions), inlay hints, signature help,
-//! semantic tokens, document highlight and workspace symbols. Documents in a package's
+//! doc comments in hover, completion and signature help ([`docs`]), semantic tokens, document highlight and workspace symbols. Documents in a package's
 //! `tsCompat` folders also get the TypeScript-compatibility lint's findings and fixes
 //! ([`ts_compat`]).
 //! Program loading is injected through [`ProgramLoader`] (the CLI's loader lives in `veltc`, which
@@ -21,6 +21,7 @@ mod completion;
 mod definition;
 mod diagnostics;
 mod disk_index;
+mod docs;
 mod documents;
 mod highlight;
 mod hover;

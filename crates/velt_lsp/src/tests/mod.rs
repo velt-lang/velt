@@ -3,6 +3,7 @@
 
 mod assists;
 mod client;
+mod doc_comments;
 mod effects;
 mod jsx;
 mod jsx_more;

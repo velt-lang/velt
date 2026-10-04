@@ -14,17 +14,26 @@ LSP client; the repository ships a Visual Studio Code extension in `editors/vsco
   date from the editor's file change events, or by checking modification times when the editor
   does not send them).
 - **Hover**: declaration signatures, including inferred `throws` types, and the inferred type of
-  locals and expressions.
+  locals and expressions. Below the signature comes the declaration's doc comment (a `/** … */`
+  block or `///` lines right above it; see [doc comments](../reference/lexical.md)), rendered
+  as Markdown: the description, then `@param`, `@returns`, `@throws`, `@example`, `@deprecated`
+  and `@see`. Hovering a parameter shows its `@param` text. This works for your own code,
+  imports and the standard library.
 - **Completion**: locals, module items, imports, prelude items, keywords, and members after `.`
   (also while the file doesn't parse). In JSX: tag names after `<` (the elements of the JSX
   runtime's `JSX.IntrinsicElements` and the components in scope) and attribute names inside an
   opening tag (the element's attributes or the component's props, minus those already written).
   After `</` the element still open there comes first. Tags are offered once the file contains
-  JSX that parses, which is when its JSX runtime loads.
+  JSX that parses, which is when its JSX runtime loads. The editor shows the doc comment of the
+  selected item (JSX tags and attributes included), and items documented `@deprecated` are
+  struck through.
 - **JSX**: go to definition, hover, references and rename on tags, opening and closing
   (`<Card` and `</Card>` → `function Card`), and on attributes (the attribute's or prop's
   declaration and type).
-- **Signature help** while typing call arguments.
+- **Signature help** while typing call arguments, with the function's description, return value
+  and exceptions from its doc comment, and each parameter's `@param` text.
+- **Deprecation**: uses of a definition documented `@deprecated` get a hint with the reason, and
+  editors show them struck through.
 - **Inlay hints**: inferred types of `const` / `let` / `for...of` bindings and parameter names at
   call sites. On declarations, what inference decided ([memory model](../reference/memory.md#mutation-is-inferred),
   [errors](../reference/errors.md)): `throws E` after a function without a `throws` clause that

@@ -30,6 +30,8 @@ pub struct Analysis {
     pub ide: Option<ide::Analysis>,
     /// The TypeScript-compatibility findings in the document (none outside `tsCompat` folders).
     pub ts_compat: Vec<velt_tscompat::Finding>,
+    /// Doc comment lookups ([`crate::docs`]), filled on demand.
+    pub docs: crate::docs::Cache,
 }
 
 impl Analysis {
@@ -91,6 +93,7 @@ pub fn analyze(
         diagnostics,
         ide: None,
         ts_compat: vec![],
+        docs: Default::default(),
     };
     run_sema(&mut analysis);
     let linted = catch_unwind(AssertUnwindSafe(|| {
@@ -147,6 +150,7 @@ fn standalone(path: &Path, overlay: &HashMap<PathBuf, String>, msg: String) -> A
         diagnostics,
         ide: None,
         ts_compat: vec![],
+        docs: Default::default(),
     }
 }
 

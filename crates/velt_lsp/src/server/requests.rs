@@ -7,16 +7,16 @@ use lsp_server::{ErrorCode, Request, Response};
 use lsp_types::request::{
     CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest, Formatting,
     GotoDefinition, HoverRequest, InlayHintRequest, References, Rename, Request as LspRequest,
-    SemanticTokensFullDeltaRequest, SemanticTokensFullRequest, SemanticTokensRangeRequest,
-    SignatureHelpRequest, WorkspaceSymbolRequest,
+    ResolveCompletionItem, SemanticTokensFullDeltaRequest, SemanticTokensFullRequest,
+    SemanticTokensRangeRequest, SignatureHelpRequest, WorkspaceSymbolRequest,
 };
 use lsp_types::{
-    CodeActionKind, CodeActionOptions, CodeActionProviderCapability, CompletionOptions,
-    GotoDefinitionResponse, HoverProviderCapability, Location, OneOf, SemanticTokensFullOptions,
-    SemanticTokensOptions, SemanticTokensServerCapabilities, ServerCapabilities,
-    SignatureHelpOptions, TextDocumentPositionParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
-    WorkspaceEdit,
+    CodeActionKind, CodeActionOptions, CodeActionProviderCapability, CompletionItem,
+    CompletionOptions, Documentation, GotoDefinitionResponse, HoverProviderCapability, Location,
+    MarkupContent, MarkupKind, OneOf, SemanticTokensFullOptions, SemanticTokensOptions,
+    SemanticTokensServerCapabilities, ServerCapabilities, SignatureHelpOptions,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkspaceEdit,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -47,6 +47,7 @@ pub fn capabilities() -> ServerCapabilities {
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
             trigger_characters: Some(vec![".".into(), "<".into(), "\"".into()]),
+            resolve_provider: Some(true),
             ..Default::default()
         }),
         references_provider: Some(OneOf::Left(true)),
@@ -161,10 +162,16 @@ impl Server<'_> {
                 if trigger == Some("\"") {
                     return Ok(json(Some(Vec::<lsp_types::CompletionItem>::new())));
                 }
+                let uri = &pos.text_document.uri;
                 let items = self
-                    .analysis(&pos.text_document.uri)
-                    .map(|a| completion::complete(a, offset(a, pos), jsx_only));
+                    .analysis(uri)
+                    .map(|a| completion::complete(a, offset(a, pos), jsx_only))
+                    .map(|items| with_document(items, uri));
                 Ok(json(items))
+            }
+            ResolveCompletionItem::METHOD => {
+                let item: lsp_types::CompletionItem = parse(params)?;
+                Ok(json(self.resolve_completion(item)))
             }
             References::METHOD => {
                 let p: lsp_types::ReferenceParams = parse(params)?;
@@ -226,6 +233,27 @@ impl Server<'_> {
             }
             _ => Err(RequestError::MethodNotFound),
         }
+    }
+
+    /// `completionItem/resolve`: the doc comment of the item's definition (see
+    /// [`crate::docs::attach`] and [`with_document`]).
+    fn resolve_completion(&mut self, mut item: CompletionItem) -> CompletionItem {
+        let Some(data) = item.data.as_ref() else {
+            return item;
+        };
+        let Some(uri) = data["uri"].as_str().and_then(|u| Url::parse(u).ok()) else {
+            return item;
+        };
+        let doc = self
+            .analysis(&uri)
+            .and_then(|a| crate::docs::resolve(a, data));
+        if let Some(value) = doc {
+            item.documentation = Some(Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value,
+            }));
+        }
+        item
     }
 
     /// The editor location of `span` (in any loaded file).
@@ -301,6 +329,17 @@ impl Server<'_> {
         let loc = self.location(analysis, span)?;
         Some(GotoDefinitionResponse::Scalar(loc))
     }
+}
+
+/// Completion items whose definition is documented carry the document's URI too, so that
+/// `completionItem/resolve` knows which analysis to ask.
+fn with_document(mut items: Vec<CompletionItem>, uri: &Url) -> Vec<CompletionItem> {
+    for item in &mut items {
+        if let Some(Value::Object(data)) = item.data.as_mut() {
+            data.insert("uri".into(), Value::String(uri.to_string()));
+        }
+    }
+    items
 }
 
 fn offset(analysis: &crate::analysis::Analysis, pos: &TextDocumentPositionParams) -> u32 {

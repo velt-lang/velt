@@ -252,6 +252,41 @@ mod tests {
         server.join().unwrap().unwrap();
     }
 
+    /// Hover on a standard-library function shows its doc comment.
+    #[test]
+    fn hover_shows_std_doc_comments() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main.vlt");
+        let text = "import { normalize } from \"velt:path\";\nfunction main() {\n  console.log(normalize(\"a//b\"));\n}\n";
+        std::fs::write(&main, text).unwrap();
+        let main_uri = lsp_types::Url::from_file_path(&main).unwrap();
+        let (server_conn, conn) = Connection::memory();
+        let server =
+            std::thread::spawn(move || velt_lsp::serve(server_conn, &CliLoader::default()));
+        request(&conn, 1, "initialize", json!({ "capabilities": {} }));
+        notify(&conn, "initialized", json!({}));
+        let doc = json!({ "uri": main_uri, "languageId": "velt", "version": 1, "text": text });
+        notify(
+            &conn,
+            "textDocument/didOpen",
+            json!({ "textDocument": doc }),
+        );
+        let at = json!({
+            "textDocument": { "uri": main_uri },
+            "position": position(text, "normalize(\"", 0),
+        });
+        let hover = request(&conn, 2, "textDocument/hover", at);
+        let value = hover["contents"]["value"].as_str().unwrap();
+        assert!(
+            value.starts_with("```velt\nfunction normalize(p: string): string\n```\n\n---\n\n")
+                && value.contains("Resolves \".\" and \"..\" segments"),
+            "{value}"
+        );
+        request(&conn, 3, "shutdown", Value::Null);
+        notify(&conn, "exit", Value::Null);
+        server.join().unwrap().unwrap();
+    }
+
     const GENERATORS: &str = "function* count(limit: i64): Generator<i64> {
   for (let i = 0; i < limit; i++) {
     yield i * 2;
