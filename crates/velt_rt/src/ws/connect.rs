@@ -65,7 +65,7 @@ pub unsafe extern "C" fn velt_rt_ws_connect(
     ca: *const VeltStr,
 ) -> *mut VeltFut {
     let url = text_arg(url);
-    let ca = (*ca).as_bytes().to_vec();
+    let ca = (*ca).text_lossy().as_bytes().to_vec();
     new_leaf(async move {
         match open(url, ca).await {
             Ok(ws) => IoResult::ok(super::SOCKETS.insert(WsObj::open(ws))),

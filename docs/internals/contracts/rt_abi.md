@@ -109,14 +109,19 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   HTTP, stdin, child output, databases, `u8[]` decoding, native `str_new`, OS arguments,
   environment, paths and directory entries) is decoded as UTF-8, where a surrogate's encoding
   (`ED A0..BF xx`) is invalid: strict decoding refuses it, lossy decoding replaces it (WHATWG:
-  one U+FFFD per invalid byte), and nothing from outside ever makes a lone surrogate.
+  one U+FFFD per maximal invalid subsequence, so a surrogate's three bytes give three U+FFFD),
+  and nothing from outside ever makes a lone surrogate. On Windows the OS strings (arguments,
+  environment, paths, directory entries) are UTF-16: they decode with one U+FFFD per unpaired
+  surrogate.
 - **Breadcrumbs** (`crumbs`, #377): for translating a code-unit index to a byte offset and back
   in a non-ASCII heap string of more than 64 units, the runtime builds on first use a table of
   `u32` byte offsets, one per 64th unit (top bit: that unit is the low half of the 4-byte
   sequence at the offset), publishes it in the header with a compare-and-swap and frees it with
-  the buffer. A unique buffer that is appended to keeps its table (the prefix never changes) and
-  extends it when needed; a shared one publishes a longer copy and keeps the old table alive
-  until the buffer is freed. ASCII strings translate in O(1), other strings (short, inline,
+  the buffer. A buffer that is appended to keeps its table (the prefix never changes), and a
+  translation extends it when needed without trusting the count (a count-1 string may be read by
+  two threads at once without a retain): entries are atomics written before the table's length
+  covers them, and a table without room is replaced by a published copy twice its size, the old
+  one kept alive until the buffer is freed. ASCII strings translate in O(1), other strings (short, inline,
   static) by a scan. Phase 2b's code-unit positions use it; nothing does yet.
 - `VELT_RC_STATS=1` with a **debug** runtime prints `rc stats: retain=… release=… alloc=… free=…`
   to stderr at exit (retain = increments, release = decrements of shared buffers, alloc/free =
