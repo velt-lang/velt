@@ -25,6 +25,7 @@ mod crumbs;
 mod heap;
 mod invariants;
 mod join;
+mod order;
 mod push;
 mod recent;
 pub mod stats;
@@ -33,7 +34,8 @@ mod tests;
 pub mod wtf8;
 
 pub use abi::*;
-pub use crumbs::{cmp_utf16, BytePos};
+pub use crumbs::BytePos;
+pub use order::cmp_utf16;
 pub use wtf8::{Summary, Wtf8};
 
 #[cfg(not(target_endian = "little"))]

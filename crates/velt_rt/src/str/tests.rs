@@ -674,7 +674,7 @@ fn short_and_static_strings_are_scanned() {
 #[test]
 fn utf16_order_examples() {
     use std::cmp::Ordering::*;
-    let c = |a: &[u8], b: &[u8]| crumbs::cmp_utf16(a, b);
+    let c = |a: &[u8], b: &[u8]| cmp_utf16(a, b);
     // U+E000..U+FFFF sort after supplementary characters by code units (node: "～" < "😀" is
     // false), and a lone low surrogate after a supplementary character ("\uDC00" > "\u{10000}").
     assert_eq!(c("～".as_bytes(), "😀".as_bytes()), Greater);
