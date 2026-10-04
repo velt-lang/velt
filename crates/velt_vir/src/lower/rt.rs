@@ -45,6 +45,7 @@ pub(super) enum Rt {
     // M3: futures and tasks (rt_abi_async.md §1, §2, §8, §9)
     FutPoll,
     FutDrop,
+    FutPeek,
     FutBox,
     FutStart,
     FutDetach,
@@ -169,6 +170,7 @@ impl Rt {
         match self {
             Rt::FutPoll => f("velt_rt_fut_poll", vec![Ptr, Ptr], U32),
             Rt::FutDrop => f("velt_rt_fut_drop", vec![Ptr], Unit),
+            Rt::FutPeek => f("velt_rt_fut_peek", vec![Ptr], U8),
             Rt::FutBox => f("velt_rt_fut_box", vec![Ptr, Ptr, Ptr, U64, U64], Ptr),
             Rt::FutStart => f("velt_rt_fut_start", vec![Ptr, Ptr], Unit),
             Rt::FutDetach => f("velt_rt_fut_detach", vec![Ptr, Ptr], Unit),

@@ -120,13 +120,18 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "run",
         summary: "Build and run a file or the current package",
-        usage: &["run [<file.vlt>] [--release] [-g] [--target <triple>] [--backend <name>] [--locked] [-v] [-- <program args>...]"],
-        about: "Exits with the program's exit code. Arguments after `--` go to the program.",
+        usage: &[
+            "run [--release] [-g] [--target <triple>] [--backend <name>] [--locked] [-v] <file.vlt> [<program args>...]",
+            "run [--release] [-g] [--target <triple>] [--backend <name>] [--locked] [-v] [-- <program args>...]",
+        ],
+        about: "Exits with the program's exit code. Arguments after the file (or after `--`) go \
+                to the program; Velt's options come before the file.",
         options: &[RELEASE, DEBUG_INFO, TARGET, BACKEND, LOCKED, VERBOSE],
         examples: &[
             ("velt run", "run the current package"),
             ("velt run hello.vlt", "run one file"),
-            ("velt run -- --port 8080", "pass arguments to the program"),
+            ("velt run server.vlt --port 8080", "pass arguments to the program"),
+            ("velt run -- --port 8080", "pass arguments to the package's program"),
         ],
     },
     CommandHelp {

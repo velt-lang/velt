@@ -105,6 +105,9 @@ is fine (`xs.push(xs.length)`), and distinct fields are disjoint (`f(this.a, thi
 is what lets the compiler assume no aliasing for values with a single owner, like Rust. Two
 variables that refer to the same object (`const ys = xs; append(xs, ys)`) are allowed and work
 as in JS: the type is then reference-counted, and the compiler makes no such assumption for it.
+`m.with(f)` gives `f` the locked value; when `m` is a `shared` handle, that value is not part of
+`m`'s place, so a callback may read what sits next to it (`this.m.with((v) => { v.n +=
+this.step; })`), while one that changes the object holding `m` is still an error.
 
 ```ts error
 function append(a: i64[], b: i64[]) {

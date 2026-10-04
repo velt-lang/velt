@@ -1,0 +1,14 @@
+Promise { 42 }
+42
+Promise { <pending> }
+5
+Promise { <rejected> Oops { code: 7 } }
+caught Oops { code: 7 }
+Promise { 0 }
+0
+Promise { 'hi velt' } Promise { undefined }
+Promise { undefined }
+[ Promise { 2 }, Promise { 4 } ]
+{ first: Promise { 'hi a' } }
+Promise { 3 }
+3

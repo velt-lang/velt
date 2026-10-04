@@ -224,7 +224,13 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, String
     };
     let rest: Vec<OsString> = it.collect();
     let name = sub.to_string_lossy().into_owned();
-    if help::find(&name).is_some() && wants_help(&rest) {
+    // `velt run file.vlt --help` passes `--help` to the program.
+    let own = if name == "run" {
+        build::run_options(&rest)
+    } else {
+        &rest[..]
+    };
+    if help::find(&name).is_some() && wants_help(own) {
         return Ok(Command::Help(Some(name)));
     }
     parse_command(&name, rest).map_err(|e| match help::find(&name) {
@@ -418,11 +424,19 @@ mod tests {
             Command::Help(Some("build".into()))
         );
         assert_eq!(p(&["-h"]).unwrap(), Command::Help(None));
-        // After `--`, `--help` is the program's.
+        // After `--` or the file, `--help` is the program's.
         assert!(matches!(
             p(&["run", "a.vlt", "--", "--help"]).unwrap(),
             Command::Run { .. }
         ));
+        assert!(matches!(
+            p(&["run", "a.vlt", "--help"]).unwrap(),
+            Command::Run { .. }
+        ));
+        assert_eq!(
+            p(&["run", "-h", "a.vlt"]).unwrap(),
+            Command::Help(Some("run".into()))
+        );
         assert!(p(&["help", "biuld"])
             .unwrap_err()
             .contains("did you mean `velt build`?"));
