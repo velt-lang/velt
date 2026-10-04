@@ -145,10 +145,9 @@ impl FnCx<'_, '_> {
                 let int_exp = exp.filter(|t| self.cx.ty.is_int(*t));
                 let inner = self.expr(operand, int_exp, Want::Borrow);
                 // `~x` on a number is JS's: ToInt32, then a 32-bit not (`int32.rs`).
-                let inner = match self.js_bitnot(inner, int_exp, span) {
-                    Ok(h) => return h,
-                    Err(inner) => inner,
-                };
+                if self.js_bitnot_applies(&inner, int_exp) {
+                    return self.js_bitnot(inner, span);
+                }
                 if !self.cx.ty.is_int(inner.ty) && !self.cx.ty.is_bottom(inner.ty) {
                     return self.unary_error("~", inner.ty, span);
                 }
@@ -243,10 +242,9 @@ impl FnCx<'_, '_> {
             (l, r)
         };
         // Bitwise operators on numbers: JS's 32-bit semantics (`int32.rs`).
-        let (l, r) = match self.js_bitwise(op, l, r, hint, span) {
-            Ok(h) => return h,
-            Err(operands) => operands,
-        };
+        if let Some(bop) = self.js_bitwise_applies(op, &l, &r, hint) {
+            return self.js_bitwise(bop, l, r, span);
+        }
         let (l, r) = self.mix_numbers(l, r);
         let (l, r) = self.mix_ints(l, r);
         let (l, r) = self.bitwise_int32(op, l, r);

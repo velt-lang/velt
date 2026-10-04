@@ -56,42 +56,45 @@ impl FnCx<'_, '_> {
         self.cx.ty.is_int(h.ty) && self.int_origin(h) == IntOrigin::Literal
     }
 
-    /// `l op r` with JS semantics when `op` is a bitwise operator and both operands are numbers;
-    /// otherwise the operands back. Two literals where an integer type is expected
-    /// (`const m: u64 = 1 << 40`) stay a constant of that type.
+    /// `l op r` with JS semantics when `op` is a bitwise operator and both operands are numbers
+    /// (`js_bitwise_applies`).
     pub(super) fn js_bitwise(
         &mut self,
-        op: ast::BinaryOp,
+        op: BinOp,
         l: hir::Expr,
         r: hir::Expr,
-        hint: Option<TyId>,
         span: Span,
-    ) -> Result<hir::Expr, (hir::Expr, hir::Expr)> {
-        let Some(bop) = bitwise_op(op) else {
-            return Err((l, r));
-        };
-        let typed_constant = self.is_int_literal(&l)
-            && self.is_int_literal(&r)
-            && hint.is_some_and(|t| self.cx.ty.is_int(t));
-        if typed_constant || !self.js_number(&l) || !self.js_number(&r) {
-            return Err((l, r));
-        }
-        Ok(self.int32_binary(bop, l, r, span))
+    ) -> hir::Expr {
+        self.int32_binary(op, l, r, span)
     }
 
-    /// `~x` with JS semantics when `x` is a number (see `js_bitwise`), else `x` back.
-    pub(super) fn js_bitnot(
-        &mut self,
-        x: hir::Expr,
+    /// The operator `l op r` takes JS's 32-bit semantics: `op` is bitwise and both operands are
+    /// numbers. Two literals where an integer type is expected (`const m: u64 = 1 << 40`) stay a
+    /// constant of that type.
+    pub(super) fn js_bitwise_applies(
+        &self,
+        op: ast::BinaryOp,
+        l: &hir::Expr,
+        r: &hir::Expr,
         hint: Option<TyId>,
-        span: Span,
-    ) -> Result<hir::Expr, hir::Expr> {
-        let typed_constant = self.is_int_literal(&x) && hint.is_some();
-        if typed_constant || !self.js_number(&x) {
-            return Err(x);
-        }
+    ) -> Option<BinOp> {
+        let bop = bitwise_op(op)?;
+        let typed_constant = self.is_int_literal(l)
+            && self.is_int_literal(r)
+            && hint.is_some_and(|t| self.cx.ty.is_int(t));
+        (!typed_constant && self.js_number(l) && self.js_number(r)).then_some(bop)
+    }
+
+    /// `~x` takes JS's 32-bit semantics: `x` is a number (see `js_bitwise_applies`).
+    pub(super) fn js_bitnot_applies(&self, x: &hir::Expr, hint: Option<TyId>) -> bool {
+        let typed_constant = self.is_int_literal(x) && hint.is_some();
+        !typed_constant && self.js_number(x)
+    }
+
+    /// `~x` with JS semantics (`js_bitnot_applies` holds).
+    pub(super) fn js_bitnot(&mut self, x: hir::Expr, span: Span) -> hir::Expr {
         let i32_ = self.cx.ty.i32;
-        let v = self.to_int32(x);
+        let v = self.int32_of(x);
         let not = self.mk(
             H::Unary {
                 op: UnOp::BitNot,
@@ -100,7 +103,7 @@ impl FnCx<'_, '_> {
             i32_,
             span,
         );
-        Ok(self.widen32(not))
+        self.widen32(not)
     }
 
     /// `place op= value` takes JS semantics (`js_bitwise_assign`): `op` is bitwise and both
@@ -184,7 +187,7 @@ impl FnCx<'_, '_> {
                 }
                 return Some(self.error_expr(span));
             }
-            vals.push(self.to_int32(v));
+            vals.push(self.int32_of(v));
         }
         let i32_ = self.cx.ty.i32;
         let r = if arity == 2 {
@@ -212,9 +215,9 @@ impl FnCx<'_, '_> {
         } else {
             self.cx.ty.i32
         };
-        let a = self.to_int32(l);
+        let a = self.int32_of(l);
         let a = self.int_as(a, t);
-        let b = self.to_int32(r);
+        let b = self.int32_of(r);
         let b = self.int_as(b, t);
         let v = self.mk(
             H::Binary {
@@ -236,7 +239,7 @@ impl FnCx<'_, '_> {
     }
 
     /// ToInt32 of the number `h`, as an `i32`.
-    pub(super) fn to_int32(&mut self, h: hir::Expr) -> hir::Expr {
+    pub(super) fn int32_of(&mut self, h: hir::Expr) -> hir::Expr {
         let ty = &self.cx.ty;
         let (f64_, i32_, span) = (ty.f64, ty.i32, h.span);
         if h.ty == f64_ && self.int_plus_float(&h) {

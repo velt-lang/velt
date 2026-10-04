@@ -279,7 +279,7 @@ impl FnCx<'_, '_> {
         if !self.cx.ty.is_float(h.ty) {
             return h;
         }
-        let v = self.to_int32(h);
+        let v = self.int32_of(h);
         self.widen32(v)
     }
 }
