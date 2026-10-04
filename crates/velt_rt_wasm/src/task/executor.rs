@@ -199,6 +199,15 @@ fn end_poll() {
     });
 }
 
+/// Queued task `id` is not one the current turn woke ([`run_now`] leaves it in its place).
+pub fn queued_earlier(id: usize) {
+    with_exec(|e| {
+        if let Some(t) = e.queued.get_mut(&id) {
+            *t = 0;
+        }
+    });
+}
+
 /// From inside the poll of turn `turn`: run the tasks that poll queued (woken by its own code,
 /// like JS microtasks) in queue order, then task `id` if it is queued by then. How a
 /// combinator's loser that is ready to go on runs before the combinator's awaiter (local.rs
