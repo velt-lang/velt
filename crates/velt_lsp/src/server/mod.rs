@@ -6,6 +6,7 @@
 //! Closing a `package.vlt`, a manifest changing on disk and a folder appearing or disappearing
 //! schedule every open document too: they decide which files are in `tsCompat` folders.
 
+mod completion;
 mod features;
 mod requests;
 mod tokens;
@@ -26,6 +27,7 @@ use lsp_types::{FileChangeType, PublishDiagnosticsParams, Url};
 use crate::analysis::{self, Analysis};
 use crate::disk_index::DiskIndex;
 use crate::documents::{self, Documents};
+use crate::imports::ImportHelp;
 use crate::registry::RegistryData;
 use crate::{diagnostics, manifest, ts_compat, workspace_symbols, ProgramLoader};
 
@@ -59,6 +61,7 @@ pub fn run(connection: &Connection, loader: &dyn ProgramLoader) -> Result<(), St
         disk_symbols: DiskIndex::default(),
         registry: RegistryData::default(),
         ts_folders: Default::default(),
+        imports: Default::default(),
     }
     .main_loop()
 }
@@ -83,6 +86,8 @@ struct Server<'a> {
     registry: RegistryData,
     /// The packages' `tsCompat` folders (cleared when folders appear or disappear on disk).
     ts_folders: ts_compat::FolderCache,
+    /// Parsed exports of modules outside the analyzed programs (import completion, auto-import).
+    imports: ImportHelp,
 }
 
 /// Id of the request registering the file watcher.
