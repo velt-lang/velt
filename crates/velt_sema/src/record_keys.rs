@@ -7,7 +7,8 @@
 //! function's types mention (through struct, class and union fields too), propagates the generic
 //! ones to every caller (and from a closure to its enclosing function) like the JSON check, and
 //! to every function that mentions a class type whose methods are dispatched dynamically
-//! ([`crate::dispatch`]), and reports the concrete ones that are not keys. Lowering never sees a
+//! ([`crate::dispatch`]), revisiting only the functions whose callees' keys grew
+//! ([`crate::dispatch::Rounds`]), and reports the concrete ones that are not keys. Lowering never sees a
 //! record with another key.
 
 use std::collections::{HashMap, HashSet};
@@ -16,7 +17,7 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::dispatch::{instantiate, Dispatch};
+use crate::dispatch::{add_work, instantiate, Dispatch, Pass, Rounds};
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, LitValue, TyId, TyKind};
 use crate::types::{children, collect_params};
 use crate::visit;
@@ -98,45 +99,76 @@ struct Uses {
     types: Vec<(TyId, Span)>,
     calls: Vec<(DefId, Vec<TyId>, Span)>,
     closures: Vec<DefId>,
+    /// The methods the class types among `types` dispatch dynamically to, with those types'
+    /// arguments and the span of the type.
+    dyn_calls: Vec<(DefId, Vec<TyId>, Span)>,
+}
+
+impl Uses {
+    /// The defs whose requirements this function's requirements are made of.
+    fn reads(&self) -> impl Iterator<Item = DefId> + '_ {
+        let calls = self.calls.iter().map(|(d, _, _)| *d);
+        let dyn_calls = self.dyn_calls.iter().map(|(d, _, _)| *d);
+        calls.chain(self.closures.iter().copied()).chain(dyn_calls)
+    }
+
+    /// The work of one visit, for [`crate::dispatch::instantiation_work`].
+    fn size(&self) -> u64 {
+        (self.types.len() + self.calls.len() + self.closures.len() + self.dyn_calls.len()) as u64
+    }
 }
 
 /// A key type a function needs to be valid, and the function whose types mention it.
 type Need = (TyId, DefId);
 
 pub(crate) fn check_instantiations(cx: &mut Ctx) {
-    let uses = collect(cx);
+    let mut uses = collect(cx);
     let mut memo: HashMap<TyId, Vec<TyId>> = HashMap::new();
     let mut dispatch = Dispatch::default();
-    let mut needs: HashMap<DefId, Vec<Need>> = HashMap::new();
-    // Concrete keys per (function, key): the span and origin to report a bad one with.
-    let mut concrete: Vec<((DefId, TyId), Span, DefId)> = vec![];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for (f, u) in &uses {
-            let mut reqs = requirements(cx, *f, u, &needs, &mut memo);
-            reqs.extend(dispatched(cx, u, &needs, &mut dispatch));
-            for (k, span, origin) in reqs {
-                if cx.is_generic_key(k) {
-                    let n = needs.entry(*f).or_default();
-                    if !n.contains(&(k, origin)) {
-                        n.push((k, origin));
-                        changed = true;
-                    }
-                } else if !concrete
-                    .iter()
-                    .any(|(fk, _, o)| *fk == (*f, k) && *o == origin)
-                {
-                    concrete.push(((*f, k), span, origin));
-                }
+    for (_, u) in &mut uses {
+        for (t, span) in &u.types {
+            for (m, args) in dispatch.targets(cx, *t) {
+                u.dyn_calls.push((m, args, *span));
             }
         }
     }
+    let reads = uses
+        .iter()
+        .enumerate()
+        .flat_map(|(i, (_, u))| u.reads().map(move |d| (i, d)));
+    let mut rounds = Rounds::new(uses.len(), reads);
+    let mut work = dispatch.work;
+    let mut needs: HashMap<DefId, Vec<Need>> = HashMap::new();
+    // Concrete keys per (function, key): the span and origin to report a bad one with.
+    let mut concrete: Vec<((DefId, TyId), Span, DefId)> = vec![];
+    let mut seen: HashSet<(DefId, TyId, DefId)> = HashSet::new();
+    while let Some(i) = rounds.pop() {
+        let (f, u) = &uses[i];
+        work += u.size();
+        let mut grew = false;
+        for (k, span, origin) in requirements(cx, *f, u, &needs, &mut memo) {
+            if cx.is_generic_key(k) {
+                let n = needs.entry(*f).or_default();
+                if !n.contains(&(k, origin)) {
+                    n.push((k, origin));
+                    grew = true;
+                }
+            } else if seen.insert((*f, k, origin)) {
+                concrete.push(((*f, k), span, origin));
+            }
+        }
+        if grew {
+            rounds.changed(*f);
+        }
+    }
+    add_work(Pass::RecordKeys, work);
     report(cx, &concrete);
 }
 
 /// The key types function `f` needs: those its own types mention, and those of the generic
-/// functions it calls (substituted) and closures it creates, with the span to report them at.
+/// functions it calls (substituted), closures it creates and methods the class types it
+/// mentions dispatch dynamically to (instantiated with those types' arguments), with the span
+/// to report them at.
 fn requirements(
     cx: &mut Ctx,
     f: DefId,
@@ -146,13 +178,13 @@ fn requirements(
 ) -> Vec<(TyId, Span, DefId)> {
     let mut reqs = vec![];
     for (d, targs, span) in &u.calls {
-        for (k, origin) in needs.get(d).cloned().unwrap_or_default() {
-            reqs.push((cx.ty.subst(k, targs), *span, origin));
+        for (k, origin) in needs.get(d).into_iter().flatten() {
+            reqs.push((cx.ty.subst(*k, targs), *span, *origin));
         }
     }
     for c in &u.closures {
-        for (k, origin) in needs.get(c).cloned().unwrap_or_default() {
-            reqs.push((k, cx.def_spans[c.0 as usize], origin));
+        for (k, origin) in needs.get(c).into_iter().flatten() {
+            reqs.push((*k, cx.def_spans[c.0 as usize], *origin));
         }
     }
     for (t, span) in &u.types {
@@ -160,24 +192,10 @@ fn requirements(
             reqs.push((k, *span, f));
         }
     }
-    reqs
-}
-
-/// The key types of the methods that the class types `u` mentions dispatch dynamically to,
-/// instantiated with those types' arguments.
-fn dispatched(
-    cx: &mut Ctx,
-    u: &Uses,
-    needs: &HashMap<DefId, Vec<Need>>,
-    dispatch: &mut Dispatch,
-) -> Vec<(TyId, Span, DefId)> {
-    let mut reqs = vec![];
-    for (t, span) in &u.types {
-        for (m, args) in dispatch.targets(cx, *t) {
-            for (k, origin) in needs.get(&m).cloned().unwrap_or_default() {
-                if let Some(k) = instantiate(cx, k, &args) {
-                    reqs.push((k, *span, origin));
-                }
+    for (m, args, span) in &u.dyn_calls {
+        for (k, origin) in needs.get(m).into_iter().flatten() {
+            if let Some(k) = instantiate(cx, *k, args) {
+                reqs.push((k, *span, *origin));
             }
         }
     }
@@ -186,17 +204,20 @@ fn dispatched(
 
 /// Report each bad key once per function, preferably where a generic function brought it in.
 fn report(cx: &mut Ctx, concrete: &[((DefId, TyId), Span, DefId)]) {
+    // The first entry per (function, key) that a generic function brought in.
+    let mut brought: HashMap<(DefId, TyId), (Span, DefId)> = HashMap::new();
+    for (fk, span, origin) in concrete {
+        if *origin != fk.0 {
+            brought.entry(*fk).or_insert((*span, *origin));
+        }
+    }
     let mut done: HashSet<(DefId, TyId)> = HashSet::new();
     let mut picked = vec![];
     for (fk, span, origin) in concrete {
-        if !done.insert(*fk) {
-            continue;
+        if done.insert(*fk) {
+            let at = brought.get(fk).copied().unwrap_or((*span, *origin));
+            picked.push((*fk, at));
         }
-        let at = concrete
-            .iter()
-            .find(|(g, _, o)| g == fk && *o != fk.0)
-            .map_or((*span, *origin), |(_, s, o)| (*s, *o));
-        picked.push((*fk, at));
     }
     picked.sort_by_key(|(_, (s, _))| (s.file, s.lo));
     for ((f, k), (span, origin)) in picked {
