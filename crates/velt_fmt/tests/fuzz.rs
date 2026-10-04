@@ -9,10 +9,13 @@
 //!
 //! Each file gets its own random sequence, seeded from its path, so adding a corpus file doesn't
 //! change what the other files are tested with, and a failure reproduces on its own.
+//!
+//! When the output differs, the syntax trees tell lost or changed code ("CODE CHANGED") apart
+//! from a layout difference.
 
 mod common;
 
-use common::{corpus, first_difference, parses};
+use common::{ast_shape, corpus, first_difference, parses};
 use velt_fmt::format_source;
 
 /// Deterministic xorshift generator (no external dependency needed).
@@ -304,8 +307,13 @@ fn extra_whitespace_does_not_change_the_output() {
             let noisy = perturb(&src, &mut rng);
             match format_source(&noisy) {
                 Ok(got) if got == expected => {}
+                Ok(got) if ast_shape(&got) != ast_shape(&src) => failures.push(format!(
+                    "{} (round {round}): CODE CHANGED, not only layout: {}",
+                    path.display(),
+                    first_difference(&expected, &got)
+                )),
                 Ok(got) => failures.push(format!(
-                    "{} (round {round}): {}",
+                    "{} (round {round}): layout differs: {}",
                     path.display(),
                     first_difference(&expected, &got)
                 )),
@@ -348,4 +356,17 @@ fn perturbing_never_adds_a_blank_line() {
             "seed {seed}"
         );
     }
+}
+
+/// The perturbed input from #414 (two newlines in one gap made a blank line): the formatter keeps
+/// the blank line and both members. The fuzz failure was a layout difference, not lost code.
+#[test]
+fn a_blank_line_between_members_keeps_both() {
+    let src = "interface User extends\n\t  Base {\n \n name: \t string;\t\n\n email?: string }\n";
+    let got = format_source(src).unwrap();
+    assert_eq!(
+        got,
+        "interface User extends Base {\n  name: string;\n\n  email?: string;\n}\n"
+    );
+    assert_eq!(ast_shape(&got), ast_shape(src));
 }

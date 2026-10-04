@@ -1,0 +1,11 @@
+// With integer types on both sides the fix keeps Velt's result in both languages.
+
+export function pages(items: i64, perPage: i64): i64 { //~ velt-number-type velt-number-type velt-number-type
+  return items / perPage; //~ int-division
+}
+
+export function shrink(n: i64): i64 { //~ velt-number-type velt-number-type
+  let m = n;
+  m /= 2; //~ int-division
+  return m;
+}

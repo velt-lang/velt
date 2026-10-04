@@ -196,6 +196,9 @@ impl FnCx<'_, '_> {
             if let Some(h) = self.process_env_member(object, prop, exp, span) {
                 return h;
             }
+            if let Some(h) = self.process_argv_member(object, prop, exp, span) {
+                return h;
+            }
         }
         if let Some(object) = self.without_namespace(object) {
             return self.member(&object, prop, optional, exp, want, span);
@@ -469,14 +472,11 @@ fn process_note(name: &str) -> String {
                   (`string | null`); set one with `setEnv(name, value)` of `velt:process`; list \
                   them all with `envAll()` of `velt:process` (a `Record<string, string>`)"
             .to_string(),
-        "argv" => "use `args()` from `velt:process`: the arguments after the program, like \
-                   Node's `process.argv.slice(2)`"
-            .to_string(),
         "cwd" | "chdir" => {
             format!("use `import {{ {name} }} from \"velt:process\"`: `{name}` is a function there")
         }
         _ => "the builtin `process` has `process.env.NAME`, `process.stdout.write(s)`, \
-              `process.exit(code)` and `process.memoryUsage()`; `args()` and `cwd()` are in \
+              `process.argv`, `process.exit(code)` and `process.memoryUsage()`; `cwd()` is in \
               `velt:process`"
             .to_string(),
     }

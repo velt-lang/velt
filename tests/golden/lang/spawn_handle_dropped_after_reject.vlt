@@ -1,0 +1,17 @@
+// check: no leaks
+// A spawn handle dropped after its task already rejected reports the rejection when it is
+// dropped (#148).
+class Failed extends Error {}
+
+async function failing(): Promise<i64> {
+  throw new Failed("rejected before the handle was dropped");
+}
+
+async function main() {
+  {
+    const task = spawn(failing());
+    await sleep(50);
+    console.log("dropping the handle");
+  }
+  console.log("unreachable");
+}

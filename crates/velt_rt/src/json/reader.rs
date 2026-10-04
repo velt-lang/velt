@@ -396,15 +396,17 @@ impl Reader {
         }
     }
 
-    /// A string token as a `VeltStr`: borrowed from the source if it had no escapes.
+    /// A string token as a `VeltStr`: borrowed from the source if it had no escapes. `tok` must
+    /// be the string the scanner read last, whose UTF-16 length is the scanner's `units` (so for
+    /// [`Self::owned_str`]).
     pub(crate) fn borrowed_str(&self, tok: StrTok) -> VeltStr {
         match tok {
             // SAFETY: the source outlives the reader (reader_new's contract); the static form
             // is never freed.
             StrTok::Borrowed(start, end) => unsafe {
-                VeltStr::borrowed(self.sc.src[start..].as_ptr(), end - start)
+                VeltStr::borrowed_text(self.sc.src[start..].as_ptr(), end - start, self.sc.units)
             },
-            StrTok::Owned(v) => VeltStr::from_vec(v),
+            StrTok::Owned(v) => self.decoded(&v),
         }
     }
 
@@ -412,8 +414,19 @@ impl Reader {
     pub(crate) fn owned_str(&self, tok: StrTok) -> VeltStr {
         match tok {
             StrTok::Borrowed(start, end) if start == end => VeltStr::empty(),
-            StrTok::Borrowed(start, end) => VeltStr::from_bytes(&self.sc.src[start..end]),
-            StrTok::Owned(v) => VeltStr::from_vec(v),
+            StrTok::Borrowed(start, end) => self.decoded(&self.sc.src[start..end]),
+            StrTok::Owned(v) => self.decoded(&v),
         }
+    }
+
+    /// The contents of the last string token (raw, or decoded because it had escapes) as a
+    /// `VeltStr`.
+    #[inline]
+    fn decoded(&self, v: &[u8]) -> VeltStr {
+        // SAFETY: the scanner reads its source as UTF-8 (`scan.rs`): raw contents are a slice of
+        // it between two quotes, and decoding turns every escape into a scalar value (a lone
+        // surrogate escape becomes U+FFFD), so the text is UTF-8.
+        let text = unsafe { std::str::from_utf8_unchecked(v) };
+        VeltStr::from_text_counted(text, self.sc.units)
     }
 }

@@ -1,0 +1,5 @@
+race: 5
+all: failed after 5 ms
+awaited: failed after 5 ms
+scope: failed after 5 ms
+done

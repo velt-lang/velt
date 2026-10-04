@@ -210,6 +210,31 @@ impl FnCx<'_, '_> {
         r
     }
 
+    /// `x ||= v` / `x &&= v` where `x` is synthesized (an accessor) and of type `t`: reports and
+    /// returns true when `t` is not a condition (a number or string, which JS would test as
+    /// falsy).
+    pub(super) fn reject_logical_assign(&mut self, op: ast::BinaryOp, t: TyId, span: Span) -> bool {
+        if self.truth(t) != Truth::Rejected {
+            return false;
+        }
+        let op = if op == ast::BinaryOp::Or {
+            "||="
+        } else {
+            "&&="
+        };
+        let found = self.cx.display(t);
+        let mut d = Diagnostic::error(
+            format!("`{op}` needs a `boolean` or nullable left side, found `{found}`"),
+            span,
+        );
+        if op == "||=" {
+            d = d.with_note("use `??=` for a default (`x ??= d` replaces only `null`)");
+        }
+        let hint = self.compare_hint(t);
+        self.cx.error(d.with_note(hint));
+        true
+    }
+
     /// `x || d` on a number or string `x`: JS would replace `0` / `""` too.
     fn report_or_default(&mut self, l: &hir::Expr) {
         let found = self.cx.display(l.ty);

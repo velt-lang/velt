@@ -69,8 +69,10 @@ impl Interp<'_> {
         )
     }
 
+    /// The bytes of the string at `a` (static or heap form: `w1` is `units << 32 | len`).
     pub(super) fn str_bytes(&mut self, a: u64) -> Vec<u8> {
-        let (p, len, _) = self.str_header(a);
+        let (p, w1, _) = self.str_header(a);
+        let len = w1 & 0xffff_ffff;
         if len == 0 {
             return vec![];
         }
@@ -86,7 +88,10 @@ impl Interp<'_> {
         let p = self.heap_alloc(bytes.len() as u64);
         self.write_bytes(p, bytes);
         self.write_bytes(out, &p.to_le_bytes());
-        self.write_bytes(out + 8, &(bytes.len() as u64).to_le_bytes());
+        let text = std::str::from_utf8(bytes).expect("interp: string is not UTF-8");
+        let units = text.encode_utf16().count() as u64;
+        let w1 = (units << 32) | bytes.len() as u64;
+        self.write_bytes(out + 8, &w1.to_le_bytes());
         self.write_bytes(out + 16, &(bytes.len().max(1) as u64).to_le_bytes());
     }
 

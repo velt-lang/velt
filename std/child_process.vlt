@@ -42,7 +42,6 @@ declare async function velt_rt_child_read_string(
   which: u32,
   max: u64,
 ): Promise<IoResult<string>>;
-// `data` is `const VeltBytes*`, which a string also satisfies (same layout).
 declare async function velt_rt_child_write(c: u64, data: string): Promise<IoStatus>;
 declare async function velt_rt_child_close_stdin(c: u64): Promise<IoStatus>;
 declare async function velt_rt_child_output(

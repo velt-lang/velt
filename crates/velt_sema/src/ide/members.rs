@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use velt_common::Span;
+use velt_common::{FileId, Span};
 
 use super::defref::{Builder, DefRef};
 use super::display::named_param;
@@ -18,7 +18,7 @@ use crate::hir::{AdtKind, DefId, TyId, TyKind, TyTable};
 
 /// How a member is shown: a value of a type, or a method signature.
 #[derive(Clone)]
-enum Shape {
+pub(super) enum Shape {
     Value(TyId),
     Method(Vec<(String, TyId)>, TyId),
 }
@@ -31,19 +31,42 @@ struct Raw {
     /// Names of the member's own generic params, which follow the owner's.
     own: Vec<String>,
     private_to: Option<DefId>,
+    /// A field declared optional (`name?: T`).
+    optional: bool,
+    /// The type that declares a method (a base class, an interface with a default, or the
+    /// type itself).
+    declared_in: Option<DefId>,
 }
 
-struct Member {
-    name: String,
-    def: DefRef,
-    shape: Shape,
+pub(super) struct Member {
+    pub name: String,
+    pub def: DefRef,
+    pub shape: Shape,
     own: Vec<String>,
     private_to: Option<DefId>,
+    pub optional: bool,
+    pub declared_in: Option<DefId>,
 }
 
-struct TypeMembers {
-    instance: Vec<Member>,
+/// What kind of type definition a [`TypeMembers`] lists, for the type query.
+#[derive(Clone, Debug)]
+pub(super) enum TypeKind {
+    Struct,
+    Class,
+    /// An object type (`{ x: i64 }`).
+    Anon,
+    Interface,
+    Enum,
+    /// A union type (`string | i64`): the payload of each variant.
+    Union(Vec<TyId>),
+}
+
+pub(super) struct TypeMembers {
+    pub instance: Vec<Member>,
     statics: Vec<Member>,
+    pub kind: TypeKind,
+    /// Declared in the standard library.
+    pub is_std: bool,
 }
 
 /// An `extend` block: target pattern over `n` params, its instance methods.
@@ -54,27 +77,54 @@ struct Extension {
 }
 
 pub(super) struct Members {
-    types: HashMap<DefId, TypeMembers>,
+    pub types: HashMap<DefId, TypeMembers>,
     /// Declaration span of each type definition (for `DefRef` → `DefId`).
     by_span: HashMap<Span, DefId>,
     extensions: Vec<Extension>,
 }
 
+/// A type definition's raw members: instance, static, and what it is.
+type RawType = (DefId, Vec<Raw>, Vec<Raw>, TypeKind, bool);
+
 /// Collected raw tables (phase 1, needs `&mut Ctx` for substitution).
 pub(super) struct RawMembers {
-    types: Vec<(DefId, Vec<Raw>, Vec<Raw>)>,
+    types: Vec<RawType>,
     extensions: Vec<(TyId, usize, Vec<Raw>)>,
 }
 
 pub(super) fn collect(cx: &mut Ctx) -> RawMembers {
+    let std_files: Vec<FileId> = cx
+        .modules
+        .iter()
+        .filter(|m| m.is_std)
+        .map(|m| m.file)
+        .collect();
+    let in_std = |m: usize| cx.modules.get(m).is_some_and(|m| m.is_std);
     let mut types = vec![];
     for i in 0..cx.info.len() {
         let d = DefId(i as u32);
-        let entry = match &cx.info[i] {
-            DefInfo::Adt(a) if a.decl.is_some() => (d, adt_instance(cx, d), adt_statics(cx, d)),
-            // Object types (`{ href?: string }`) have fields only.
-            DefInfo::Adt(a) if a.kind == AdtKind::Anon => (d, adt_instance(cx, d), vec![]),
-            DefInfo::Iface(x) if x.decl.is_some() => (d, iface_members(cx, d), vec![]),
+        let (kind, is_std) = match &cx.info[i] {
+            DefInfo::Adt(a) => {
+                let kind = match a.kind {
+                    AdtKind::Anon => TypeKind::Anon,
+                    AdtKind::Struct => TypeKind::Struct,
+                    AdtKind::Class => TypeKind::Class,
+                };
+                (kind, in_std(a.module))
+            }
+            DefInfo::Iface(x) => (TypeKind::Interface, in_std(x.module)),
+            DefInfo::Enum(e) if e.is_union => {
+                let payloads = e.variants.iter().filter_map(|v| v.payload.first());
+                (TypeKind::Union(payloads.copied().collect()), false)
+            }
+            DefInfo::Enum(e) => (TypeKind::Enum, std_files.contains(&e.span.file)),
+            DefInfo::Fn(_) | DefInfo::Global(_) => continue,
+        };
+        let (instance, statics) = match &cx.info[i] {
+            DefInfo::Adt(a) if a.decl.is_some() => (adt_instance(cx, d), adt_statics(cx, d)),
+            // Object types (`{ href?: string }`) and field-only interfaces have fields only.
+            DefInfo::Adt(_) => (adt_instance(cx, d), vec![]),
+            DefInfo::Iface(x) if x.decl.is_some() => (iface_members(cx, d), vec![]),
             DefInfo::Enum(e) if e.decl.is_some() => {
                 let vs = (0..e.variants.len())
                     .map(|k| Raw {
@@ -83,13 +133,15 @@ pub(super) fn collect(cx: &mut Ctx) -> RawMembers {
                         shape: Shape::Value(cx.ty.error),
                         own: vec![],
                         private_to: None,
+                        optional: false,
+                        declared_in: None,
                     })
                     .collect();
-                (d, vec![], vs)
+                (vec![], vs)
             }
-            _ => continue,
+            _ => (vec![], vec![]),
         };
-        types.push(entry);
+        types.push((d, instance, statics, kind, is_std));
     }
     let mut extensions = vec![];
     for e in 0..cx.extensions.len() {
@@ -134,6 +186,8 @@ fn method_raw(cx: &mut Ctx, name: String, def: DefId, owner_args: &[TyId]) -> Ra
         shape,
         own: own_generics(&f, n_owner),
         private_to: f.owner.filter(|_| f.is_private),
+        optional: false,
+        declared_in: f.owner,
     }
 }
 
@@ -155,6 +209,8 @@ fn adt_instance(cx: &mut Ctx, d: DefId) -> Vec<Raw> {
             shape: Shape::Value(f.ty),
             own: vec![],
             private_to: f.private_to,
+            optional: f.optional,
+            declared_in: None,
         })
         .collect();
     let mut out = fields;
@@ -223,6 +279,8 @@ fn adt_statics(cx: &mut Ctx, d: DefId) -> Vec<Raw> {
             shape: Shape::Value(info.ty),
             own: vec![],
             private_to,
+            optional: false,
+            declared_in: None,
         });
     }
     for (name, def) in methods {
@@ -243,6 +301,8 @@ fn iface_members(cx: &mut Ctx, d: DefId) -> Vec<Raw> {
             shape: Shape::Value(f.ty),
             own: vec![],
             private_to: None,
+            optional: f.optional,
+            declared_in: None,
         })
         .collect();
     for (k, m) in i.methods.iter().enumerate() {
@@ -261,6 +321,8 @@ fn iface_members(cx: &mut Ctx, d: DefId) -> Vec<Raw> {
             shape,
             own: vec![],
             private_to: None,
+            optional: false,
+            declared_in: Some(d),
         });
     }
     out
@@ -278,19 +340,28 @@ impl RawMembers {
                         shape: r.shape,
                         own: r.own,
                         private_to: r.private_to,
+                        optional: r.optional,
+                        declared_in: r.declared_in,
                     })
                 })
                 .collect()
         };
         let mut types = HashMap::new();
         let mut by_span = HashMap::new();
-        for (d, inst, stat) in self.types {
-            by_span.insert(b.cx.def_spans[d.0 as usize], d);
+        for (d, inst, stat, kind, is_std) in self.types {
+            // The first definition with a span wins: a field-only interface's struct shares
+            // the interface's.
+            let span = b.cx.def_spans[d.0 as usize];
+            if span != Span::DUMMY {
+                by_span.entry(span).or_insert(d);
+            }
             types.insert(
                 d,
                 TypeMembers {
                     instance: conv(inst),
                     statics: conv(stat),
+                    kind,
+                    is_std,
                 },
             );
         }

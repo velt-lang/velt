@@ -7,7 +7,10 @@
 //!   value still runs its override;
 //! - an **inherited default** `B.m` of interface `B extends A`, calling `A`'s default `m` (see
 //!   [`iface_extends`](super::iface_extends)) — so every interface's defaults take exactly its
-//!   own generics plus `Self`.
+//!   own generics plus `Self`;
+//! - an **iterator adapter** `X.<dyn [Symbol.iterator]>` of an `extend X` block whose
+//!   `*[Symbol.iterator](): Generator<T, E>` makes `X` iterable (see
+//!   [`iterable`](super::iterable)): it returns the generator as an `Iterator<T, E>` value.
 
 use velt_common::Span;
 
@@ -23,11 +26,20 @@ pub(super) enum Target {
     Default(DefId, Vec<TyId>),
     /// Vtable slot of the receiver's class.
     Slot(u32),
+    /// Generator method `def` with these type args, whose generator (of type `gen`) becomes
+    /// the result interface value through `Program::impls[impl_index]`.
+    Generator {
+        def: DefId,
+        targs: Vec<TyId>,
+        gen: TyId,
+        impl_index: u32,
+    },
 }
 
 /// The type a synthesized method belongs to.
 pub(super) struct Host {
-    pub d: DefId,
+    /// The class / struct / interface (`None`: an `extend` block's target).
+    pub d: Option<DefId>,
     pub generics: Generics,
     pub span: Span,
     pub module: usize,
@@ -38,7 +50,7 @@ impl Host {
     pub fn adt(cx: &Ctx, d: DefId) -> Host {
         let a = cx.adt(d).expect("ICE: adt");
         Host {
-            d,
+            d: Some(d),
             generics: a.generics.clone(),
             span: a.span,
             module: a.module,
@@ -74,11 +86,12 @@ pub(super) fn synth_method(
     info.ret = ret;
     info.fixed_modes = true;
     info.state = BodyState::Done;
-    info.owner = Some(d);
+    info.owner = d;
     info.local_kinds = std::iter::once(crate::body::LocalKind::This)
         .chain(params.iter().map(|_| crate::body::LocalKind::Param))
         .collect();
     let def = cx.alloc_def(span, DefInfo::Fn(Box::new(info)));
+    let mut wrap = None;
     let callee = match target {
         Target::Default(dd, targs) => {
             cx.fn_info_mut(def).throw_srcs = vec![ThrowSrc::Call(dd, targs.clone(), span)];
@@ -86,14 +99,27 @@ pub(super) fn synth_method(
         }
         Target::Slot(slot) => {
             // Vtable entries share one error type (a dispatch group), which has no type params.
-            let entry = cx.adt(d).and_then(|a| a.vtable.get(slot as usize).copied());
+            let entry = d
+                .and_then(|d| cx.adt(d))
+                .and_then(|a| a.vtable.get(slot as usize).copied());
             if let Some(m) = entry {
                 cx.fn_info_mut(def).throw_srcs = vec![ThrowSrc::Call(m, vec![], span)];
             }
             Callee::Virtual { slot }
         }
+        // Creating a generator throws nothing (its errors come out of `next()`).
+        Target::Generator {
+            def: g,
+            targs,
+            gen,
+            impl_index,
+        } => {
+            wrap = Some((gen, impl_index));
+            Callee::Def(g, targs)
+        }
     };
-    let body = forward_body(cx, self_ty, this_mode, &params, ret, callee, span);
+    let call = (callee, wrap);
+    let body = forward_body(cx, self_ty, this_mode, &params, ret, call, span);
     let fndef = hir::FnDef {
         name,
         generics: generics.len() as u32,
@@ -121,14 +147,15 @@ pub(super) fn synth_method(
     def
 }
 
-/// `return callee(this, p1, .., pn);`
+/// `return callee(this, p1, .., pn);` (with `wrap = Some((ty, impl))`, the call has type `ty`
+/// and its result becomes an interface value through `impl`).
 fn forward_body(
     cx: &mut Ctx,
     self_ty: TyId,
     this_mode: PassMode,
     params: &[ParamSig],
     ret: TyId,
-    callee: Callee,
+    (callee, wrap): (Callee, Option<(TyId, u32)>),
     span: Span,
 ) -> hir::Body {
     let local = |name: &str, ty| LocalDef {
@@ -162,11 +189,21 @@ fn forward_body(
             span,
         });
     }
-    let call = hir::Expr {
+    let mut call = hir::Expr {
         kind: H::Call { callee, args },
-        ty: ret,
+        ty: wrap.map_or(ret, |(t, _)| t),
         span,
     };
+    if let Some((_, impl_index)) = wrap {
+        call = hir::Expr {
+            kind: H::ToDyn {
+                expr: Box::new(call),
+                impl_index,
+            },
+            ty: ret,
+            span,
+        };
+    }
     let kind = if ret == cx.ty.unit {
         hir::StmtKind::Expr(call)
     } else {

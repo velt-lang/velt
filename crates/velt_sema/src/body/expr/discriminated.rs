@@ -279,7 +279,7 @@ impl FnCx<'_, '_> {
                 ast::ObjectProp::KeyValue(k, _) | ast::ObjectProp::Shorthand(k) => {
                     Some(k.name.as_str())
                 }
-                ast::ObjectProp::Spread(_) => None,
+                ast::ObjectProp::Spread(_) | ast::ObjectProp::Method(_) => None,
             })
             .collect();
         let exact: Vec<TyId> = cands

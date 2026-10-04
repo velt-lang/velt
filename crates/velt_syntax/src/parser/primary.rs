@@ -1,5 +1,5 @@
-//! Primary (atomic) expressions: literals, identifiers, `this`, `super`, `new`, parenthesized
-//! expressions, array/object/struct literals, template literals and regular expression literals.
+//! Primary (atomic) expressions: literals, identifiers, `this`, `super`, `new`, function
+//! expressions (`function* () {}`), parenthesized expressions, array/object/struct literals, template literals and regular expression literals.
 //! JSX elements are parsed in `jsx`: a `<` directly followed by a name or `>` starts one here.
 
 use super::{Fail, PResult, Parser};
@@ -36,6 +36,11 @@ impl<'a> Parser<'a> {
                 ExprKind::This
             }
             Tok::Kw(Kw::New) => self.parse_new()?,
+            Tok::Kw(Kw::Function) => self.parse_fn_expr(lo, false)?,
+            Tok::Kw(Kw::Async) if self.nth(1) == Tok::Kw(Kw::Function) => {
+                self.bump(); // async
+                self.parse_fn_expr(lo, true)?
+            }
             Tok::Ident if self.at_word("super") => self.parse_super(),
             Tok::Ident if self.at_word("match") && self.is_removed_match() => {
                 self.diags.push(
@@ -203,6 +208,9 @@ impl<'a> Parser<'a> {
         if self.eat(Tok::DotDotDot) {
             return Ok(ObjectProp::Spread(self.parse_assign()?));
         }
+        if let Some(m) = self.try_object_method()? {
+            return Ok(m);
+        }
         let shorthand_ok = self.at_ident_like();
         let key = match self.peek() {
             Tok::Str(idx) => {
@@ -227,6 +235,34 @@ impl<'a> Parser<'a> {
             return Err(Fail);
         }
         Ok(ObjectProp::Shorthand(key))
+    }
+
+    /// A method in an object literal: `[async] [*]name(...) { ... }`, where the name may be a
+    /// symbol key (`*[Symbol.iterator]() { ... }`). `None` (nothing consumed) for a property.
+    fn try_object_method(&mut self) -> PResult<Option<ObjectProp>> {
+        let lo = self.cur_lo();
+        let is_async = self.at_kw(Kw::Async) && matches!(self.nth(1), Tok::Star | Tok::LBracket)
+            || (self.at_kw(Kw::Async) && Self::is_name(self.nth(1)) && self.nth(2) == Tok::LParen);
+        let off = usize::from(is_async);
+        let is_generator = self.nth(off) == Tok::Star;
+        let at_name = |p: &mut Self, k: usize| {
+            (p.nth(k) == Tok::LBracket && p.nth_word(k + 1, "Symbol"))
+                || (Self::is_name(p.nth(k)) && p.nth(k + 1) == Tok::LParen)
+        };
+        if !is_generator && !at_name(self, off) {
+            return Ok(None);
+        }
+        if is_async {
+            self.bump();
+        }
+        if is_generator {
+            self.bump();
+        }
+        let name = self.parse_member_name()?;
+        let mut sig = self.parse_sig_rest(lo, name, is_async)?;
+        sig.is_generator = is_generator;
+        let body = self.parse_block()?;
+        Ok(Some(ObjectProp::Method(Box::new(FnDecl { sig, body }))))
     }
 
     /// `` `a ${x} b` `` — quasis come pre-cooked from the lexer.

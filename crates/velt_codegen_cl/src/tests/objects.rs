@@ -183,7 +183,8 @@ fn rt_abi_calls() {
         s,
         Rvalue::Aggregate(
             STR_AGG,
-            vec![copy_local(w0), int(4, Ty::U64), int(0, Ty::U64)],
+            // `w1` of an ASCII string: units << 32 | len.
+            vec![copy_local(w0), int((4 << 32) | 4, Ty::U64), int(0, Ty::U64)],
         ),
     );
     fb.assign(b0, ps, Rvalue::AddrOf(Place::local(s)));

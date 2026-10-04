@@ -29,7 +29,7 @@ impl FnLower<'_, '_> {
                 callee: hir::Callee::Intrinsic(hir::Intrinsic::Spawn),
                 args,
             } if args.len() == 1 => {
-                self.spawn(&args[0], e.ty, true);
+                self.spawn(&args[0], e.ty, true, false);
             }
             _ => {
                 self.expr(e);

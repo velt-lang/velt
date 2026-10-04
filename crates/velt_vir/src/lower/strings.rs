@@ -1,11 +1,22 @@
 //! Reading strings inline (rt_abi.md "Strings"): `s.length` and `s.charCodeAt(i)` need no
 //! runtime call. A string is `{w0, w1, w2}`; the inline form has the top bit of `w2` set, its
-//! length in bits 56..63 of `w2` and its bytes in the value itself; the static and heap forms
-//! keep `{ptr, len}` in `w0`/`w1`. Both reads are branch-free selects on an all-ones mask.
+//! byte length in bits 56..61 of `w2` and its bytes in the value itself; the static and heap
+//! forms keep `{ptr, units << 32 | len}` in `w0`/`w1`. Both reads are branch-free selects on an
+//! all-ones mask. `length` still counts bytes until #377 phase 2 switches it to code units.
 
 use super::operand::proj;
-use super::{cint, FnLower};
+use super::{cint, ice, FnLower};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty, UnOp, STR_AGG};
+
+/// `w1` of a static string holding `text`: its UTF-16 length in the high half and its byte
+/// length in the low half.
+pub(super) fn str_w1(text: &str) -> u64 {
+    let Ok(len) = i32::try_from(text.len()) else {
+        ice("a string literal of 2 GiB or more")
+    };
+    let units = text.encode_utf16().count() as u64;
+    (units << 32) | len as u64
+}
 
 impl FnLower<'_, '_> {
     fn u64_op(&mut self, op: BinOp, a: Operand, b: Operand) -> Operand {
@@ -20,7 +31,7 @@ impl FnLower<'_, '_> {
         self.u64_op(BinOp::BitOr, a, b)
     }
 
-    /// `(length, inline mask)` of the string at `p`.
+    /// `(byte length, inline mask)` of the string at `p`.
     fn str_len_mask(&mut self, p: &Place) -> (Operand, Operand) {
         let word = |i| Operand::Copy(proj(p, Proj::Field(i)));
         let w1 = self.rvalue_temp(Ty::U64, Rvalue::Use(word(1)));
@@ -32,8 +43,15 @@ impl FnLower<'_, '_> {
         );
         let inline = self.rvalue_temp(Ty::U64, Rvalue::Cast(fill, Ty::U64));
         let top = self.u64_op(BinOp::UShr, w2, cint(56, Ty::U64));
-        let short = self.u64_op(BinOp::BitAnd, top, cint(0x7f, Ty::U64));
-        let len = self.select(inline.clone(), short, w1);
+        let short = self.u64_op(BinOp::BitAnd, top, cint(0x1f, Ty::U64));
+        // The low half of `w1`, sign-extended: strings are shorter than 2 GiB, so this is the byte
+        // length. Zero-extending it (`w1 & 0xffff_ffff`) would tell LLVM the length fits in 32
+        // bits, which lets it vectorize `charCodeAt` scan loops into slower SSE2 code (#377 phase
+        // 1 measured bench/strings 16% slower).
+        let low = self.rvalue_temp(Ty::I32, Rvalue::Cast(w1, Ty::I32));
+        let low = self.rvalue_temp(Ty::I64, Rvalue::Cast(low, Ty::I64));
+        let long = self.rvalue_temp(Ty::U64, Rvalue::Cast(low, Ty::U64));
+        let len = self.select(inline.clone(), short, long);
         (len, inline)
     }
 

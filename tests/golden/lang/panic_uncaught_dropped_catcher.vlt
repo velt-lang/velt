@@ -1,0 +1,23 @@
+// An error escaping `main` keeps its location when a spawn handle is dropped on the way out,
+// even if that handle's task threw (and caught) an error of its own in its last poll (#148).
+class Bad extends Error {}
+
+async function catcher(start: i64): Promise<i64> throws Bad {
+  let n = start;
+  try {
+    throw new Bad("caught inside the task");
+  } catch (e) {
+    n += 1;
+  }
+  if (n < 0) {
+    throw new Bad("never");
+  }
+  return n;
+}
+
+async function main() {
+  const bg = spawn(catcher(1));
+  await sleep(20);
+  console.log("failing");
+  throw new Bad("main failed");
+}

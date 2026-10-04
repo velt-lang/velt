@@ -251,6 +251,13 @@ impl Reader<'_> {
                     );
                     ok = false;
                 }
+                ObjectProp::Method(f) => {
+                    self.error(
+                        "the manifest is data only: methods are not allowed",
+                        f.sig.name.span,
+                    );
+                    ok = false;
+                }
             }
         }
         ok.then_some(out)

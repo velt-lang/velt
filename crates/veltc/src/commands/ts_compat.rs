@@ -1,7 +1,8 @@
 //! `velt check --ts-compat [<file|dir>...]`: check exactly the given files (directories: their
 //! source files; no paths: the package's `tsCompat` folders) in one front-end run, then lint the
 //! ones that passed for the TypeScript/Velt common subset ([`velt_tscompat`]). A file with an
-//! error of its own is reported and not linted, so the rules only ever see valid Velt.
+//! error of its own is reported and not linted, so the rules only ever see valid Velt. The
+//! rules on types run on the checker's IDE analysis of the same modules, made only here.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -48,10 +49,14 @@ pub(super) fn run(
     match driver::check_for_lint(sess, &opts, &scope) {
         Ok((loaded, checked)) => {
             let scope: HashSet<PathBuf> = files.iter().map(|f| canonical(f)).collect();
+            // The typed rules ask the checker's IDE analysis (types, what names refer to),
+            // which the plain check doesn't keep.
+            let analysis = velt_sema::ide::check_for_ide(&loaded.modules, loaded.root);
             let findings = velt_tscompat::lint_program(
                 &loaded.modules,
                 &sess.sm,
                 &sess.diagnostics,
+                Some(&analysis),
                 &|path| scope.contains(path),
                 &|_| true,
             );

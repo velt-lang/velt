@@ -211,7 +211,12 @@ fn check_method_sig(
     // A generator's signature keeps its result with `E = never` and a written `E` as its
     // `throws` (collect/generator_sig.rs): compare the result as written.
     if is_generator {
-        let e = cx.fn_info(def).declared_throws.and_then(|t| t.ty);
+        let declared = cx.fn_info(def).declared_throws;
+        if declared.is_none() {
+            cx.iface_generators
+                .push((def, format!("{iname}.{}", m.name)));
+        }
+        let e = declared.and_then(|t| t.ty);
         ret = cx.with_generator_error(ret, e.unwrap_or(cx.ty.never));
     }
     let Some(iface_args) = own_generics_match(cx, def, owner_args.len(), m, iface_args, iname)
