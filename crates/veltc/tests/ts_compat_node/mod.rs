@@ -104,6 +104,8 @@ fn behaviour_samples_differ_under_node_and_their_fixes_agree() {
     if let Err(why) = node_ready() {
         panic!("VELT_TSC_ORACLE is set but {why}");
     }
+    // `velt run` links the samples against the native runtime.
+    super::runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
     let samples =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/tscompat-oracle/behaviour");
     let mut files: Vec<_> = std::fs::read_dir(&samples)
