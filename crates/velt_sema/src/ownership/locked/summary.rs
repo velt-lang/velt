@@ -289,6 +289,7 @@ pub(super) fn outer_mode(e: &Expr) -> Option<UseMode> {
         | E::Index { mode: m, .. }
         | E::UnwrapSome(_, m)
         | E::UnwrapVariant { mode: m, .. } => Some(*m),
+        E::Downcast(x) => outer_mode(x),
         _ => None,
     }
 }

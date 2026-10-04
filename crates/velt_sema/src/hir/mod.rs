@@ -699,6 +699,12 @@ pub enum ExprKind {
     /// an object type -> one that differs only in `readonly` fields, which are the same type
     /// once the program is finished (docs/internals/design/shared-models.md).
     Upcast(Box<Expr>),
+    /// Base class value -> subclass, or interface value -> class, known to hold an instance of
+    /// that class (`Expr::ty`) because a `PatKind::InstanceOf` test succeeded (flow narrowing);
+    /// nothing is checked at run time. On a class value it is a no-op on the pointer; on an
+    /// interface value it is the data pointer (the object), and a moved interface value hands
+    /// its object over.
+    Downcast(Box<Expr>),
     /// Concrete value -> interface value via `Program::impls[impl_index]`; the value is moved.
     ToDyn {
         expr: Box<Expr>,
@@ -741,4 +747,8 @@ pub enum PatKind {
     None,
     /// Non-null pattern on Option.
     Some(Box<Pat>),
+    /// `instanceof C`: the class object (or the interface value holding one) is an instance of
+    /// class `C` or of one of its subclasses; it tests the dynamic class and binds nothing. Only
+    /// on a class whose subclasses include `C`, or on an interface value.
+    InstanceOf(DefId),
 }

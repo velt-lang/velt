@@ -1,0 +1,48 @@
+// Pending timers keep the process alive after `main` returns, like Node: a timeout scheduled by
+// `main` still fires, and its callback's promise settles before the process ends (here it
+// sleeps and then starts an interval). The interval keeps the process alive until its third
+// run clears it. A cleared timer and an `unref()`ed one (also after `ref()` and `unref()` again)
+// do not keep the process alive: they are an hour long, so if one did, this program would not
+// end. Node prints the same for the equivalent TypeScript (`hasRef()` stays true after a clear
+// there too).
+import { channel, Channel } from "velt:channel";
+
+async function never(what: string): Promise<void> {
+  console.log("never printed:", what);
+}
+
+// The third run clears the interval, which `main`'s timeout sends over `timers`.
+async function tick(runs: shared<i64>, timers: Channel<Timer>): Promise<void> {
+  const n = runs.add(1);
+  console.log("interval run", n);
+  if (n == 3) {
+    const t = await timers.receive();
+    if (t != null) {
+      clearInterval(t);
+    }
+    timers.close();
+  }
+}
+
+async function later(): Promise<void> {
+  console.log("timeout fired after main returned");
+  await sleep(10);
+  console.log("its callback's own timer fired");
+  const runs = shared(0);
+  const timers = channel<Timer>();
+  const counter = runs.clone();
+  const sender = timers.clone();
+  const t = setInterval(() => tick(counter, sender), 1);
+  timers.trySend(t);
+}
+
+async function main() {
+  const cleared = setTimeout(() => never("cleared"), 3600000);
+  clearTimeout(cleared);
+  const unrefd = setTimeout(() => never("unref'd"), 3600000).unref();
+  const toggled = setInterval(() => never("interval"), 3600000).unref().ref();
+  console.log("refs:", cleared.hasRef(), unrefd.hasRef(), toggled.hasRef());
+  toggled.unref();
+  setTimeout(() => later(), 10);
+  console.log("main returns");
+}

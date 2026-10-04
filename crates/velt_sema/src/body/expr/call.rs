@@ -90,8 +90,10 @@ impl FnCx<'_, '_> {
         }
     }
 
-    pub(crate) fn fn_callable(&mut self, d: DefId, what: String) -> Callable {
+    /// The signature of function `d` called at `span` (its result inferred first if needed).
+    pub(crate) fn fn_callable(&mut self, d: DefId, what: String, span: Span) -> Callable {
         crate::body::defaults::param_defaults(self.cx, d);
+        let ret = crate::body::returns::ret_of(self.cx, d, span);
         let async_call = self.rejects_through_promise(d);
         let f = self.cx.fn_info(d);
         let js_numbers = self.cx.scopes[f.module].is_std && !self.cx.scopes[self.module].is_std;
@@ -104,7 +106,7 @@ impl FnCx<'_, '_> {
         let mut c = Callable {
             what,
             params: f.params.clone(),
-            ret: f.ret,
+            ret,
             slot_names: f.generics.names.clone(),
             bounds: f.generics.bounds.clone(),
             js_numbers,
@@ -154,7 +156,7 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        let c = self.fn_callable(d, format!("function `{name}`"));
+        let c = self.fn_callable(d, format!("function `{name}`"), span);
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
         self.explicit_type_args(&mut slots, n, type_args, span);
@@ -359,7 +361,7 @@ impl FnCx<'_, '_> {
             .rec_ref(prop.span, crate::ide::record::Target::Def(m.def));
         let private_to = self.fn_private_to(m.def);
         self.check_private(private_to, &prop.name, prop.span);
-        let c = self.fn_callable(m.def, format!("`{cname}.{}`", prop.name));
+        let c = self.fn_callable(m.def, format!("`{cname}.{}`", prop.name), span);
         let n = c.slot_names.len();
         let own = n - owner_generics;
         let mut slots = vec![None; n];

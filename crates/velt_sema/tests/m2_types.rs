@@ -112,6 +112,11 @@ fn constructor_rules() {
         r.contains("field `a` of class `C` has no default value"),
         "{r}"
     );
+    ok_src(
+        "class A { n: i64; constructor(n: i64) { this.n = n; } }
+         class B extends A { constructor() { console.log(1); super(2); } }
+         function main() {}",
+    );
     let r = err_src(
         "class A { n: i64; constructor(n: i64) { this.n = n; } }
          class B extends A { constructor() { console.log(this.n); super(2); } }
@@ -120,6 +125,13 @@ fn constructor_rules() {
     assert!(
         r.contains("'super' must be called before accessing 'this'"),
         "{r}"
+    );
+    // TypeScript 4.6+: statements may precede `super(...)` also with initialized fields and
+    // parameter properties.
+    ok_src(
+        "class A { n: i64; constructor(n: i64) { this.n = n; } }
+         class B extends A { m: i64 = 0; constructor(readonly k: i64) { console.log(1); super(2); } }
+         function main() {}",
     );
     ok_src(
         "class A { n: i64; constructor(n: i64) { this.n = n; } }
@@ -205,6 +217,22 @@ fn super_method_calls_are_direct() {
 }
 
 // ─────────────────────── switch, enums, discriminated unions ───────────────────────
+
+#[test]
+fn case_values_compare_like_strict_equality() {
+    // A `T | null` case on a `T` discriminant compares (#337), as does the reverse.
+    ok_src(
+        "function f(s: string, t: string | null, u: string | null): i64 {
+           switch (s) { case t: return 1; } switch (u) { case s: return 2; } return 0; }
+         function main() {}",
+    );
+    // A case of another type is reported once.
+    let r = err_src(
+        "function f(s: string, n: i64): i64 { switch (s) { case n: return 1; } return 0; }
+         function main() {}",
+    );
+    assert_eq!(r.matches("mismatched types").count(), 1, "{r}");
+}
 
 #[test]
 fn non_exhaustive_switch_lists_missing_cases() {
@@ -324,6 +352,22 @@ fn generic_equality_uses_the_same_intrinsic() {
     assert!(calls(func(&p, "same"))
         .iter()
         .any(|(c, _)| matches!(c, Callee::Intrinsic(Intrinsic::Same))));
+}
+
+#[test]
+fn interface_and_function_values_compare_by_identity() {
+    // #365: `===` on interface and function values is `Intrinsic::Same` (identity, as in JS).
+    let p = ok_src(
+        "interface N { n(): i64; } class C implements N { n(): i64 { return 1; } }
+         function eqN(a: N, b: N): bool { return a === b; }
+         function eqF(f: () => i64, g: () => i64): bool { return f !== g; }
+         function main() { const c: N = new C(); const f = () => 1; console.log(eqN(c, c), eqF(f, f)); }",
+    );
+    for f in ["eqN", "eqF"] {
+        assert!(calls(func(&p, f))
+            .iter()
+            .any(|(c, _)| matches!(c, Callee::Intrinsic(Intrinsic::Same))));
+    }
 }
 
 #[test]
@@ -658,4 +702,55 @@ function main() { }"#,
         r.contains(r#"{ status: "ok"; value: B } | { status: "failed"; error: A }"#),
         "{r}"
     );
+}
+
+#[test]
+fn super_runs_exactly_once_before_this() {
+    let base = "class A { n: i64; constructor(n: i64) { this.n = n; } }";
+    for (ctor, want) in [
+        (
+            "constructor(c: bool) { if (c) { super(1); } }",
+            "must be a statement of the constructor's body itself",
+        ),
+        (
+            "constructor() { for (const i of [1]) { super(i); } }",
+            "must be a statement of the constructor's body itself",
+        ),
+        (
+            "constructor() { const f = () => super(1); f(); }",
+            "cannot be called inside a closure",
+        ),
+        (
+            "constructor() { super(1); super(2); }",
+            "is called once, as a statement",
+        ),
+        (
+            "constructor() { super(this.n); }",
+            "'super' must be called before accessing 'this'",
+        ),
+        (
+            "constructor() { const k = this.n; super(k); }",
+            "'super' must be called before accessing 'this'",
+        ),
+        (
+            "constructor(c: bool) { if (c) { return; } super(1); }",
+            "cannot `return` before it calls `super(...)`",
+        ),
+        ("constructor() {}", "add `super(n);` as the first statement"),
+    ] {
+        let r = err_src(&format!(
+            "{base} class B extends A {{ {ctor} }} function main() {{}}"
+        ));
+        assert!(r.contains(want), "{ctor}: {r}");
+    }
+    let r = err_src(
+        "class A { n: i64 = 0; } class B extends A { constructor() {} } function main() {}",
+    );
+    assert!(r.contains("add `super();` as the first statement"), "{r}");
+    ok_src(&format!(
+        "{base} class B extends A {{ constructor(n: i64) {{ if (n < 0) {{ throw new Error(\"n\"); }} const m = n * 2; super(m); }} }} function main() {{}}"
+    ));
+    ok_src(&format!(
+        "{base} class B extends A {{ constructor(readonly k: i64) {{ const j = k; super(j); }} }} function main() {{}}"
+    ));
 }

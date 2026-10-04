@@ -108,6 +108,11 @@ pub(crate) struct Ctx<'m> {
     /// For each nested definition: names bound in its enclosing functions (for the
     /// "nested functions cannot capture" error).
     pub nested_locals: HashMap<DefId, Vec<String>>,
+    /// Name spans of the nested functions made from local generic arrows (`generic_arrows`).
+    pub generic_arrow_fns: HashSet<Span>,
+    /// Name spans of every function made from a generic arrow, module-level ones included
+    /// (diagnostics show them as arrows).
+    pub generic_arrow_all: HashSet<Span>,
     /// The JSX runtime of each module that uses JSX, resolved on first use (`None` after its
     /// errors were reported).
     pub jsx_providers: HashMap<usize, Option<std::rc::Rc<crate::body::expr::jsx::Provider>>>,
@@ -117,6 +122,24 @@ pub(crate) struct Ctx<'m> {
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
     pub shared_memo: HashMap<TyId, bool>,
+    /// Set while [`Ctx::match_context`] runs (`crate::infer`).
+    pub matching_context: bool,
+    /// Function bodies being checked, outermost first (a return type inferred from a body that
+    /// is on this stack refers to itself: `body::returns`).
+    pub checking: Vec<DefId>,
+    /// Signature comparisons waiting for inferred result types (`body::returns`).
+    pub ret_checks: Vec<crate::defs::RetCheck>,
+    /// Uses of functions whose return types are being inferred (`body::recursion`).
+    pub rec: crate::body::recursion::RecState,
+    /// Methods some subclass overrides (`collect::ret_infer`): a result inferred from JS-number
+    /// integers is a `number` (`f64`) there, which an override may return a fraction in.
+    pub overridden: HashSet<DefId>,
+    /// The address of a local near the bottom of the checking thread's stack, and how much of
+    /// the stack inferring return types may use above it (`body::returns::ret_of`).
+    pub stack_base: usize,
+    pub stack_budget: usize,
+    /// Widened call results whose callees must return fresh values (`crate::fresh_returns`).
+    pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
     pub type_defaults: crate::type_defaults::TypeDefaults,
     /// Second arguments of protocol types written before base classes were known
@@ -169,10 +192,20 @@ impl<'m> Ctx<'m> {
             iface_generators: vec![],
             nested: vec![],
             nested_locals: HashMap::new(),
+            generic_arrow_fns: HashSet::new(),
+            generic_arrow_all: HashSet::new(),
             jsx_providers: HashMap::new(),
             jsx_adapters: vec![],
             ide: None,
             shared_memo: HashMap::new(),
+            matching_context: false,
+            checking: vec![],
+            ret_checks: vec![],
+            rec: Default::default(),
+            overridden: HashSet::new(),
+            stack_base: crate::stack_address(),
+            stack_budget: crate::SEMA_STACK_BUDGET,
+            fresh_checks: vec![],
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],
             diags: vec![],

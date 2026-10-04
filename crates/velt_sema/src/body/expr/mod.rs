@@ -17,6 +17,7 @@ mod construct;
 mod discriminated;
 mod dispose_call;
 mod division;
+pub(crate) mod downcast;
 mod errors;
 mod fn_arity;
 mod gen_closure;
@@ -53,12 +54,14 @@ mod tasks;
 mod truthiness;
 mod type_tests;
 mod union_coerce;
+mod widen_fresh;
 
 use velt_common::Span;
 use velt_syntax::ast;
 
 use super::{FnCx, Want};
 use crate::hir::{self, TyId};
+pub(crate) use args::deferred;
 
 impl FnCx<'_, '_> {
     /// Check `e` against `exp`, converting (`WrapSome`/`Upcast`/`ToDyn`) or reporting a mismatch.

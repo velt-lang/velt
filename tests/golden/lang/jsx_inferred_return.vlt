@@ -1,0 +1,32 @@
+// @jsxImportSource ./_jsx_test_provider
+
+// A component without a return type returns the type of its `return` expressions (#75), the
+// usual TSX shape: `function Card(p: Props) { return <div>{p.title}</div>; }` is a
+// `JSX.Element` component.
+
+import { render } from "./_jsx_test_provider/render";
+
+type Props = { title: string };
+
+function Card(p: Props) {
+  return <div class="card">{p.title}</div>;
+}
+
+function Page(p: { titles: string[] }) {
+  if (p.titles.length == 0) {
+    return <p>empty</p>;
+  }
+  return (
+    <ul>
+      {p.titles.map((t) => (
+        <Card title={t} />
+      ))}
+    </ul>
+  );
+}
+
+async function main() {
+  console.log(await render(<Card title="Hello" />));
+  console.log(await render(<Page titles={["a", "b"]} />));
+  console.log(await render(<Page titles={[]} />));
+}

@@ -8,7 +8,6 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use lsp_types::{Location, OneOf, SymbolKind, Url, WorkspaceSymbol};
-use velt_common::SourceMap;
 use velt_syntax::ast;
 
 use crate::documents;
@@ -98,31 +97,6 @@ pub fn file_symbols(file: &SourceFile) -> Vec<WorkspaceSymbol> {
             data: None,
         })
         .collect()
-}
-
-/// Every symbol of the source file at `path` on disk (empty if it cannot be read).
-pub fn disk_file_symbols(path: &Path) -> Vec<WorkspaceSymbol> {
-    let Ok(src) = std::fs::read_to_string(path) else {
-        return vec![];
-    };
-    let mut sm = SourceMap::new();
-    let file = sm.add(path, src);
-    let text = &sm.get(file).src;
-    let parsed = std::panic::catch_unwind(|| {
-        if vpm::sources::is_plain_ts(path) {
-            velt_syntax::parse_ts_file(file, text).0
-        } else {
-            velt_syntax::parse_file(file, text).0
-        }
-    });
-    match parsed {
-        Ok(ast) => file_symbols(&SourceFile {
-            path,
-            text,
-            ast: &ast,
-        }),
-        Err(_) => vec![],
-    }
 }
 
 /// `(name, kind, span of the name, container)` of an item and its members.

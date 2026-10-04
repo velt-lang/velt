@@ -88,6 +88,8 @@ struct Executor {
     running: bool,
     /// Started promises that have not finished (`block_on` waits for them, like JS).
     locals: usize,
+    /// Keep-alive references (ref'd timers): `block_on` also waits while any is held.
+    keep_alive: usize,
 }
 
 thread_local! {
@@ -170,6 +172,20 @@ pub fn count_local(started: bool) {
     });
 }
 
+/// `velt_rt_keep_alive_acquire()`: a ref'd timer is pending (std/prelude/timers.vlt); like the
+/// native runtime, the program does not end while it is.
+#[no_mangle]
+pub extern "C" fn velt_rt_keep_alive_acquire() {
+    with_exec(|e| e.keep_alive += 1);
+}
+
+/// `velt_rt_keep_alive_release()`: release a reference taken with
+/// [`velt_rt_keep_alive_acquire`].
+#[no_mangle]
+pub extern "C" fn velt_rt_keep_alive_release() {
+    with_exec(|e| e.keep_alive -= 1);
+}
+
 /// Start `fut` as a task (queued now); on completion its `result_size` result bytes move into
 /// `join` (if any) and the future is freed. Returns the task id.
 pub fn spawn(fut: *mut VeltFut, result_size: usize, join: Option<Rc<RefCell<JoinState>>>) -> usize {
@@ -190,6 +206,29 @@ pub fn spawn(fut: *mut VeltFut, result_size: usize, join: Option<Rc<RefCell<Join
     });
     schedule(id);
     id
+}
+
+/// Tasks that have not finished (or been cancelled).
+#[cfg(test)]
+pub fn live_tasks() -> usize {
+    with_exec(|e| e.tasks.iter().filter(|t| t.is_some()).count())
+}
+
+/// Cancel task `id` (not the one running): its future is dropped and its slot freed. A timer
+/// that still holds its waker wakes nothing, or the slot's next task spuriously.
+pub fn cancel(id: usize) {
+    let task = with_exec(|e| {
+        if e.queued.remove(&id) {
+            e.ready.retain(|&q| q != id);
+        }
+        let task = e.tasks.get_mut(id - 1)?.take()?;
+        e.free.push(id - 1);
+        Some(task)
+    });
+    if let Some(task) = task {
+        // SAFETY: the task's own future, not being polled (see above); it is freed once.
+        unsafe { ((*task.fut).drop.0)(task.fut) };
+    }
 }
 
 /// Poll task `id` once; finish it if it is ready.
@@ -269,15 +308,15 @@ fn wait_for_timers() -> bool {
 }
 
 /// `async main`: drive the compiled root state machine (and every task it spawns) until the
-/// root is ready and every started promise finished. Spawned tasks still running afterwards are
-/// abandoned.
+/// root is ready, every started promise finished and no keep-alive reference (a ref'd timer) is
+/// held. Spawned tasks still running afterwards are abandoned.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     with_exec(|e| e.running = true);
     schedule(ROOT);
     let mut root_done = false;
     loop {
-        if root_done && with_exec(|e| e.locals == 0) {
+        if root_done && with_exec(|e| e.locals == 0 && e.keep_alive == 0) {
             with_exec(|e| e.running = false);
             return;
         }

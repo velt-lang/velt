@@ -303,8 +303,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         self.push_scope(ScopeKind::Block);
         self.ctor_entry_inits();
-        for s in &f.body.block.stmts {
+        let unit_super = self.unit_super_at(f);
+        for (i, s) in f.body.block.stmts.iter().enumerate() {
             self.stmt(s);
+            if unit_super == Some(i) {
+                self.unit_super_inits();
+            }
         }
         // A generator's body yields its values and returns nothing.
         let returns_value = !self.returns_unit() && !self.in_generator();

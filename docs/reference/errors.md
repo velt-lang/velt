@@ -38,8 +38,11 @@ compiler knows exactly what each function and each `try` block can throw.
   sees what they took: an object, array or string passed on before is shared and still usable
   there. A value that can't be shared, such as a promise, is gone once a `return` hands it on,
   and using it in the `finally` is ``use of moved value``.
-- `instanceof` cannot tell apart subclasses of a member (a downcast); make the subclasses
-  members of the union instead.
+- `instanceof` also tells apart the subclasses of a member: a function declared
+  `throws AppError` is caught as an `AppError`, and `if (e instanceof NotFound) … else if (e
+  instanceof Timeout) …` narrows it to each subclass
+  ([downcasts](classes.md#instanceof-downcasts)). Such a chain does not cover every member
+  (an `AppError` may be neither), so code after it still needs a result.
 
 ## Dynamic calls
 

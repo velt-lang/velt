@@ -2,6 +2,9 @@
 // Spawn handles whose rejections are handled stay quiet when they are dropped (#148): the
 // losers of `Promise.race`, the siblings of an early `Promise.all` rejection, a handle awaited
 // in a `try`, and a `taskScope` child nobody awaited (the scope fails with its error).
+// The losers wait for a channel the main task closes only after the combinator settled, so on a
+// loaded machine a loser can't settle first (a 30 ms timer could fire with a 5 ms one).
+import { Channel, channel } from "velt:channel";
 import { TaskScope, taskScope } from "velt:task";
 
 class Failed extends Error {}
@@ -11,20 +14,29 @@ async function failing(ms: i64): Promise<i64> {
   throw new Failed(`failed after ${ms} ms`);
 }
 
+// Fails once `go` is closed.
+async function failingLater(go: Channel<i64>): Promise<i64> {
+  await go.receive();
+  throw new Failed("failed later");
+}
+
 async function value(ms: i64): Promise<i64> {
   await sleep(ms);
   return ms;
 }
 
 async function main() {
-  const racers: Promise<i64, Failed>[] = [spawn(value(5)), spawn(failing(30))];
+  const go = channel<i64>();
+  const racers: Promise<i64, Failed>[] = [spawn(value(5)), spawn(failingLater(go))];
   const winner = await Promise.race(racers);
   console.log(`race: ${winner}`);
   try {
-    await Promise.all([spawn(failing(5)), spawn(failing(30))]);
+    await Promise.all([spawn(failing(5)), spawn(failingLater(go))]);
   } catch (e) {
     console.log(`all: ${e.message}`);
   }
+  // The two losers fail now, after their handles were dropped.
+  go.close();
   const task = spawn(failing(5));
   try {
     await task;
@@ -39,6 +51,8 @@ async function main() {
   } catch (e) {
     console.log(`scope: ${e.message}`);
   }
+  // Time for the losers to fail and be dropped quietly before the process ends (a grace
+  // period, not an ordering: if they are late, there is just nothing to report).
   await sleep(100);
   console.log("done");
 }

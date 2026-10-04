@@ -68,6 +68,10 @@ impl FnCx<'_, '_> {
         let own = s.method.generics.len();
         if own > 0 && !s.on_param {
             let tn = self.cx.display(recv.ty);
+            let iface = self
+                .cx
+                .iface(s.iface)
+                .map_or(tn.clone(), |i| i.name.clone());
             self.cx.error(
                 Diagnostic::error(
                     format!(
@@ -76,7 +80,10 @@ impl FnCx<'_, '_> {
                     ),
                     span,
                 )
-                .with_note("generic interface methods are dispatched statically only: take a generic parameter `<T extends ...>` instead of the interface type"),
+                .with_note("an interface value calls its methods through a table with one entry per method, but a generic method is compiled once for each type argument")
+                .with_note(format!(
+                    "make the calling function generic over the receiver, `<T extends {iface}>(x: T)` instead of `(x: {iface})`, so the call is resolved for each concrete type; or call a method of `{iface}` that is not generic"
+                )),
             );
             self.check_args_loose(args);
             return self.error_expr(span);

@@ -121,6 +121,8 @@ each polled until done, done-flags in the state): no allocation.
 | `velt_rt_spawn` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(f(...))`: copies the initial state into the task (caller gives up ownership of its contents), starts it now. Returns the join handle; its result slot (+16) receives `result_size` bytes (≤ 256; box larger results). Dropping the handle **detaches** (task keeps running); a result the handle never claims (dropped before or after the task finished) is dropped with `result_drop` (null: nothing to drop). |
 | `velt_rt_spawn_transfer` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size, void (*result_drop)(void* slot), void (*result_transfer)(void* slot)) -> VeltFut*` | `velt_rt_spawn` for a result that can reach counted objects: `result_transfer` (compiled transfer glue, in place) runs on the result as the task's state finishes, on the task and inside its local set (so promises the task started, which may still use the result's objects, are on the same thread, and a promise the glue starts joins the set), before the join handle can see it. Null: as `velt_rt_spawn`. |
 | `velt_rt_spawn_detached` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align)` | spawn whose result is unused: no handle, one allocation |
+| `velt_rt_keep_alive_acquire` | `()` | takes a keep-alive reference (§7): a ref'd timer is pending (std/prelude/timers.vlt). Additive. |
+| `velt_rt_keep_alive_release` | `()` | releases one reference taken with `velt_rt_keep_alive_acquire`; the caller keeps them balanced. On WebAssembly, `velt_rt_block_on` returns only once none is held. |
 | `velt_rt_spawn_fut` | `(VeltFut* f, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(p)` where `p` is already a heap future (boxed promise, leaf); takes ownership of `f`; `result_drop` as for `velt_rt_spawn` |
 
 Runtime: created lazily, workers = `VELT_THREADS` (positive integer) or the number of cores.
@@ -170,7 +172,8 @@ sender still shares is deep-copied). No code pointers are stored, except the `it
 Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task.vlt and
 released once, at the cell's last reference; no handle is public. Aborting sets a flag, stores
 the reason and wakes the waiters; it never cancels anything itself. No code pointers are
-stored: `AbortSignal.timeout` is a runtime timer task holding a weak reference. A signal made
+stored: `AbortSignal.timeout` is a runtime timer task holding a weak reference, aborted (freed with
+its timer) when the signal is dropped. A signal made
 by `any` holds strong references to its sources until it is aborted (they hold weak ones back).
 
 | Symbol | Signature | Notes |
@@ -373,7 +376,8 @@ reading freed memory.
 
 A listening server holds a **keep-alive** reference (released by `close`): after `main` returns,
 the program entry waits until no keep-alive references remain — like Node, a listening server
-keeps the process running. (`velt_rt_block_on` itself does not wait.)
+keeps the process running. (`velt_rt_block_on` itself does not wait.) Pending ref'd timers hold
+one too (`velt_rt_keep_alive_acquire`, §2).
 
 `Response.text(b, s)` = `resp_new(s)` + `resp_body_text(r, &b)`; `Response.json(v, s)` = serialize
 `v` (compiler-generated) + `resp_new(s)` + `resp_json`. For a bodiless status (1xx, 204, 304) the

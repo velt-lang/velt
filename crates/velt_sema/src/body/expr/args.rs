@@ -10,6 +10,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::ops::untyped;
+use super::widen_fresh::is_fresh;
 use crate::body::{FnCx, Want};
 use crate::defs::{Bound, ParamSig};
 use crate::hir::{self, ExprKind as H, PassMode, TyId, TyKind};
@@ -49,7 +50,7 @@ pub(crate) fn want_of(mode: PassMode) -> Want {
 }
 
 /// Does this argument take its type from the parameter (checked in the second round)?
-fn deferred(e: &ast::Expr) -> bool {
+pub(crate) fn deferred(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Lit(ast::Lit::Null) | ast::ExprKind::Arrow { .. } => true,
         ast::ExprKind::Array(xs) => xs.is_empty(),
@@ -114,10 +115,11 @@ impl FnCx<'_, '_> {
         let mut context = slots.clone();
         if let Some(e) = exp {
             let e = self.cx.ty.without_error_types(e);
-            self.cx.match_ty(c.ret, e, &mut context);
+            self.cx.match_context(c.ret, e, &mut context);
         }
         let checked = self.args_in_rounds(c, &mut slots, &context, args, collect);
         if let Some(e) = exp {
+            self.prefer_context(c, &mut slots, &context, &checked, e);
             self.cx.match_ty(c.ret, e, &mut slots);
         }
         // An argument that is already an error (reported) leaves its slots unknown: no second
@@ -287,6 +289,57 @@ impl FnCx<'_, '_> {
         out.into_iter()
             .map(|h| h.expect("ICE: arg checked"))
             .collect()
+    }
+
+    /// Slots the arguments fixed to a type narrower than the expected result's take the expected
+    /// type when the result would not convert otherwise and every argument converts to it:
+    /// `const ns: Named[] = wrap(new C())` instantiates `T = Named` (#268).
+    fn prefer_context(
+        &mut self,
+        c: &Callable,
+        slots: &mut [Option<TyId>],
+        context: &[Option<TyId>],
+        args: &[hir::Expr],
+        exp: TyId,
+    ) {
+        let ret = self.cx.ty.subst_known(c.ret, slots);
+        if self.converts_to(ret, exp) {
+            return;
+        }
+        let mut wider = slots.to_vec();
+        for (k, (s, ctx)) in slots.iter().zip(context).enumerate() {
+            let (Some(at), Some(ct)) = (*s, *ctx) else {
+                continue;
+            };
+            let unbounded = c.bounds.get(k).is_none_or(|b| b.is_empty());
+            // An integer slot may become a float one: the arguments are checked below.
+            let converts =
+                self.converts_to(at, ct) || (self.cx.ty.is_int(at) && self.float_core(ct));
+            if at != ct && unbounded && !self.cx.ty.has_error(ct) && converts {
+                wider[k] = Some(ct);
+            }
+        }
+        if wider == slots {
+            return;
+        }
+        for (h, p) in args.iter().zip(&c.params) {
+            let target = self.cx.ty.subst_known(p.ty, &wider);
+            let number = self.is_inferred_int(h) && self.float_core(target);
+            if !self.converts_to(h.ty, target)
+                && !number
+                && !(is_fresh(h) && self.widens(h.ty, target))
+            {
+                return;
+            }
+        }
+        slots.copy_from_slice(&wider);
+    }
+
+    /// Is `t` a float type, or one with `null` (`(number | null)[]` expected from `wrap(1)`: a
+    /// JS number argument converts)?
+    fn float_core(&self, t: TyId) -> bool {
+        let t = self.cx.ty.opt_payload(t).unwrap_or(t);
+        self.cx.ty.is_float(t)
     }
 
     /// An untyped number argument (`0` in `xs.reduce((a, x) => a + x, 0)`) whose parameter is

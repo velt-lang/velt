@@ -7,57 +7,155 @@
 // when created). The callback owns what it captures, so it outlives the frame that scheduled
 // it. The task runs as its own spawned task on the multi-threaded runtime; an error it throws is
 // uncaught (the process exits like on an unhandled rejection), so catch inside it.
+// A pending timer keeps the process alive after `main` returns, like a Node `Timeout` (a handle);
+// `unref()` lets the process exit without it. Spawned tasks and promises are not handles: what
+// keeps them going is what they wait for.
 // Timers are ordinary compiled Velt tasks built on `sleep`: no code pointer is cached anywhere,
 // so `velt dev` hot reload needs no special handling.
 
-// A timer's task writes its state (`PENDING` until it first runs, then `STARTED`); only `clear()`
-// writes the stop flag, so a clear racing a run on another core is never overwritten.
-const PENDING: i64 = 0;
-const STARTED: i64 = 1;
-// The stop flag.
-const RUNNING: i64 = 0;
-const STOPPED: i64 = 1;
+declare function velt_rt_keep_alive_acquire();
+declare function velt_rt_keep_alive_release();
+
+// A timer's state, behind one lock shared by the handle and the task. While the timer is ref'd
+// and has work left (a timeout until its callback's promise settles, an interval until it is
+// cleared and its current run settled), it holds one of the runtime's keep-alive references, so
+// the process outlives `main`, like a ref'd Node `Timeout`. Every change goes through `update`,
+// which takes or releases that reference exactly when the condition changes.
+class TimerState {
+  // The task has started a run (a timeout: its only one).
+  started: bool;
+  // A run's promise has not settled yet.
+  running: bool;
+  // `clear()` stopped the timer.
+  stopped: bool;
+  // The task has ended.
+  finished: bool;
+  // `ref()` (the default) or `unref()`.
+  refd: bool;
+  // This timer holds a keep-alive reference.
+  held: bool;
+
+  constructor() {
+    this.started = false;
+    this.running = false;
+    this.stopped = false;
+    this.finished = false;
+    this.refd = true;
+    this.held = false;
+  }
+
+  // Takes or releases the keep-alive reference to match the state.
+  update() {
+    const busy = !this.finished && (this.running || !this.stopped);
+    const want = this.refd && busy;
+    if (want && !this.held) {
+      velt_rt_keep_alive_acquire();
+    } else if (!want && this.held) {
+      velt_rt_keep_alive_release();
+    }
+    this.held = want;
+  }
+
+  // The task is due to run: true if it should (it was not cleared), and it is now running.
+  begin(): bool {
+    if (this.stopped) {
+      this.finished = true;
+      this.update();
+      return false;
+    }
+    this.started = true;
+    this.running = true;
+    return true;
+  }
+
+  // A run's promise settled; `last`: the task ends with it (a timeout). True if an interval
+  // goes on.
+  end(last: bool): bool {
+    this.running = false;
+    if (last || this.stopped) {
+      this.finished = true;
+    }
+    this.update();
+    return !this.finished;
+  }
+}
 
 // Handle of a pending `setTimeout` / `setImmediate` task or of a `setInterval` schedule.
 export class Timer {
-  private state: shared<i64>;
-  private stop: shared<i64>;
+  private state: shared<Mutex<TimerState>>;
   private repeats: bool;
 
-  // Wraps the task's flags (use `setTimeout` or `setInterval` to create timers).
-  constructor(state: shared<i64>, stop: shared<i64>, repeats: bool) {
+  // Wraps the task's state (use `setTimeout` or `setInterval` to create timers).
+  constructor(state: shared<Mutex<TimerState>>, repeats: bool) {
     this.state = state;
-    this.stop = stop;
     this.repeats = repeats;
   }
 
   // Cancels the task if it has not started yet, and an interval's future runs at any time (a
-  // no-op on a timeout that started, like JS `clearTimeout`). Dropping the handle does not
-  // cancel.
+  // no-op on a timeout that started, like JS `clearTimeout`). A cleared timer no longer keeps
+  // the process alive (an interval's run in progress still does, until its promise settles).
+  // Dropping the handle does not cancel.
   clear() {
-    if (this.repeats || this.state.get() == PENDING) {
-      this.stop.set(STOPPED);
-    }
+    const repeats = this.repeats;
+    this.state.with((s) => {
+      if (repeats || !s.started) {
+        s.stopped = true;
+        s.update();
+      }
+    });
+  }
+
+  // Lets the process exit while this timer is pending, like Node's `timeout.unref()`.
+  // Returns the timer.
+  unref(): Timer {
+    this.state.with((s) => {
+      s.refd = false;
+      s.update();
+    });
+    return this;
+  }
+
+  // Keeps the process alive while this timer is pending again (the default), like Node's
+  // `timeout.ref()`. Returns the timer.
+  ref(): Timer {
+    this.state.with((s) => {
+      s.refd = true;
+      s.update();
+    });
+    return this;
+  }
+
+  // Whether the timer is ref'd (`ref()`, the default) rather than `unref()`'d, like Node's
+  // `timeout.hasRef()`.
+  hasRef(): bool {
+    return this.state.with((s) => s.refd);
   }
 
   // Whether `clear()` cancelled the task before it started (an interval: whether it was
   // cleared).
   get cleared(): bool {
-    return this.stop.get() == STOPPED && (this.repeats || this.state.get() == PENDING);
+    return this.state.with((s) => s.stopped);
   }
 
   // Whether the task has started (an interval: whether it ran at least once).
   get started(): bool {
-    return this.state.get() == STARTED;
+    return this.state.with((s) => s.started);
   }
+}
+
+// A new timer's state; it holds a keep-alive reference from the start, so `main` returning right
+// after `setTimeout` already waits for it.
+function newState(): shared<Mutex<TimerState>> {
+  const state = shared(new Mutex<TimerState>(new TimerState()));
+  state.with((s) => s.update());
+  return state;
 }
 
 // Calls `task` after at least `ms` milliseconds unless the returned timer is cleared first.
 export function setTimeout(task: () => Promise<void>, ms: i64): Timer {
-  const state = shared(PENDING);
-  const stop = shared(RUNNING);
-  spawn(fireOnce(ms, task, state.clone(), stop.clone()));
-  return new Timer(state, stop, false);
+  const state = newState();
+  spawn(fireOnce(ms, task, state.clone()));
+  return new Timer(state, false);
 }
 
 // Cancels `t` if its task has not started (same as `t.clear()`).
@@ -68,10 +166,9 @@ export function clearTimeout(t: Timer) {
 // Calls `task` every `ms` milliseconds (at least 1) until the returned timer is cleared. Each
 // run waits for the previous run's promise, then `ms` more.
 export function setInterval(task: () => Promise<void>, ms: i64): Timer {
-  const state = shared(PENDING);
-  const stop = shared(RUNNING);
-  spawn(fireEvery(ms < 1 ? 1 : ms, task, state.clone(), stop.clone()));
-  return new Timer(state, stop, true);
+  const state = newState();
+  spawn(fireEvery(ms < 1 ? 1 : ms, task, state.clone()));
+  return new Timer(state, true);
 }
 
 // Stops the interval `t` (same as `t.clear()`; also cancels a timeout, like JS).
@@ -82,33 +179,33 @@ export function clearInterval(t: Timer) {
 async function fireOnce(
   ms: i64,
   task: () => Promise<void>,
-  state: shared<i64>,
-  stop: shared<i64>,
+  state: shared<Mutex<TimerState>>,
 ): Promise<void> {
   if (ms > 0) {
     await sleep(ms);
   } else {
     await yieldNow();
   }
-  if (stop.get() == STOPPED) {
+  if (!state.with((s) => s.begin())) {
     return;
   }
-  state.set(STARTED);
   await task();
+  state.with((s) => s.end(true));
 }
 
 async function fireEvery(
   ms: i64,
   task: () => Promise<void>,
-  state: shared<i64>,
-  stop: shared<i64>,
+  state: shared<Mutex<TimerState>>,
 ): Promise<void> {
   while (true) {
     await sleep(ms);
-    if (stop.get() == STOPPED) {
+    if (!state.with((s) => s.begin())) {
       return;
     }
-    state.set(STARTED);
     await task();
+    if (!state.with((s) => s.end(false))) {
+      return;
+    }
   }
 }

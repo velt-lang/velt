@@ -57,7 +57,8 @@ impl Printer<'_> {
             .first()
             .map_or(el.span.hi, |c| child_bounds(c).0);
         let self_closing = el.children.is_empty() && is_self_closing(slice(self.src, el.span));
-        let open = self.jsx_opening(&name, &el.attrs, open_end, self_closing);
+        let tag = cat![name.clone(), self.type_args(&el.type_args)];
+        let open = self.jsx_opening(tag, &el.attrs, open_end, self_closing);
         if self_closing {
             return open;
         }
@@ -115,8 +116,9 @@ impl Printer<'_> {
         })
     }
 
-    /// `<name attrs>` / `<name attrs />`; comments up to `end` stay inside the tag.
-    fn jsx_opening(&mut self, name: &str, attrs: &[JsxAttr], end: u32, self_closing: bool) -> Doc {
+    /// `<name attrs>` / `<name attrs />` (`tag`: the name with its type arguments); comments up
+    /// to `end` stay inside the tag.
+    fn jsx_opening(&mut self, tag: Doc, attrs: &[JsxAttr], end: u32, self_closing: bool) -> Doc {
         let mut docs: Vec<Doc> = attrs
             .iter()
             .map(|a| self.with_leading(attr_lo(a), |p| p.jsx_attr(a)))
@@ -131,7 +133,7 @@ impl Printer<'_> {
         }));
         if docs.is_empty() {
             let tail = if self_closing { " />" } else { ">" };
-            return text(format!("<{name}{tail}"));
+            return cat!["<", tag, tail];
         }
         let tail = if self_closing {
             cat![line(), "/>"]
@@ -140,7 +142,7 @@ impl Printer<'_> {
         };
         group(cat![
             "<",
-            name.to_string(),
+            tag,
             indent(cat![line(), join(&line(), docs)]),
             tail
         ])

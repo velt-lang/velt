@@ -421,6 +421,9 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
         &[
             ("clear", "call `clearTimeout(t)` or `clearInterval(t)`"),
             ("cleared", "keep track of it yourself"),
+            ("hasRef", TIMER_REF),
+            ("ref", TIMER_REF),
+            ("unref", TIMER_REF),
             ("started", "keep track of it yourself"),
         ],
     ),
@@ -443,6 +446,8 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
 
 const JSON_VALUE: &str = "keep dynamic JSON out of code shared with TypeScript";
 const COMPARE: &str = "compare with `<` and `>`, or subtract: `a - b`";
+const TIMER_REF: &str =
+    "keep it out of shared code: it is Node's, and in the browser `setTimeout` returns a number";
 
 /// What to write instead of the Velt-only global `name`, if it is one.
 pub(crate) fn velt_global(name: &str) -> Option<&'static str> {

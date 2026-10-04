@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use velt_common::{Diagnostic, Severity, Span};
 
-use super::case::{respell, Case};
+use super::case::{respell, Case, DirNames};
 use super::locate::Target;
 use super::{file_key, shown_path, Loader};
 
@@ -24,6 +24,22 @@ impl Shown<'_> {
     }
 }
 
+/// The first candidate group of `target` with files that `exists`, with its index.
+pub(super) fn first_existing(
+    target: &Target,
+    exists: impl Fn(&Path) -> bool,
+) -> Option<(usize, Vec<&PathBuf>)> {
+    target.candidates.iter().enumerate().find_map(|(i, group)| {
+        let existing: Vec<&PathBuf> = group.iter().filter(|f| exists(f)).collect();
+        (!existing.is_empty()).then_some((i, existing))
+    })
+}
+
+/// Whether `file` is on disk under exactly this name (the part below `base`, case included).
+pub(super) fn on_disk_exactly(dir_names: &DirNames, file: &Path, base: &Path) -> bool {
+    file.is_file() && !matches!(dir_names.case_of(file, base), Case::Differs(_))
+}
+
 impl Loader<'_, '_> {
     /// The file `spec` names among `target`'s candidates, or `None` after reporting why there is
     /// none.
@@ -34,13 +50,7 @@ impl Loader<'_, '_> {
         target: &Target,
         shown: &Shown,
     ) -> Option<PathBuf> {
-        let found = target.candidates.iter().enumerate().find_map(|(i, group)| {
-            let existing: Vec<&PathBuf> = group
-                .iter()
-                .filter(|f| self.exists_exactly(f, &target.base))
-                .collect();
-            (!existing.is_empty()).then_some((i, existing))
-        });
+        let found = first_existing(target, |f| self.exists_exactly(f, &target.base));
         match found {
             Some((group, files)) if files.len() == 1 => {
                 let file = files[0].clone();
@@ -72,7 +82,7 @@ impl Loader<'_, '_> {
     /// disk or in the overlay.
     fn exists_exactly(&self, file: &Path, base: &Path) -> bool {
         if file.is_file() {
-            return !matches!(self.dir_names.case_of(file, base), Case::Differs(_));
+            return on_disk_exactly(&self.dir_names, file, base);
         }
         // A file only in the overlay: its key is the path as the editor spells it.
         !self.overlay.is_empty() && self.overlay.contains_key(&file_key(file))
