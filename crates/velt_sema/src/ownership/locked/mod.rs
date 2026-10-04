@@ -202,7 +202,7 @@ impl VisitMut for FnValues<'_, '_> {
 struct Crossings {
     made: Vec<promises::Made>,
     unfixable: Vec<stores::Unfixable>,
-    inward: Vec<(crate::hir::LocalId, Span)>,
+    inward: Vec<(crate::hir::LocalId, Span, bool)>,
 }
 
 /// Run the checks of callback `c` on its `bodies` (`take_bodies`), rewriting them.
