@@ -338,19 +338,19 @@ fn resource_results(
     out
 }
 
-/// Report a variable used after the callback `c` stored it into the value as a copy
-/// (`later`).
+/// Report a variable used after the callback `c` stored it into the value as a copy, or as
+/// itself (a resource without `clone()`, `later`).
 fn later_uses(
     cx: &mut Ctx,
     res: &mut values::Resolver,
     c: DefId,
-    inward: Vec<(crate::hir::LocalId, Span)>,
+    inward: Vec<(crate::hir::LocalId, Span, bool)>,
     reported: &mut HashSet<Span>,
 ) {
     let Some(f) = res.parent(cx, c) else { return };
     let at = cx.fn_info(c).span;
     let mut seen = HashSet::new();
-    for (l, stored) in inward {
+    for (l, stored, itself) in inward {
         if !seen.insert(l) {
             continue;
         }
@@ -360,10 +360,17 @@ fn later_uses(
         if !reported.insert(use_at) {
             continue;
         }
-        let name = match &cx.defs[f.0 as usize] {
-            Some(Def::Fn(body)) => body.body.locals[l.0 as usize].name.clone(),
+        let (name, ty) = match &cx.defs[f.0 as usize] {
+            Some(Def::Fn(body)) => {
+                let local = &body.body.locals[l.0 as usize];
+                (local.name.clone(), local.ty)
+            }
             _ => continue,
         };
+        if itself {
+            resource_used_later(cx, &name, ty, use_at, stored);
+            continue;
+        }
         cx.error(
             Diagnostic::error(
                 format!("`{name}` is still used after `with` stored it in the locked value, which got a copy"),
@@ -373,6 +380,21 @@ fn later_uses(
             .with_note(format!("changes to `{name}` from here on do not reach the locked value; use it through the lock (`m.with((v) => …)`), or store `{name}.clone()` to make the copy explicit")),
         );
     }
+}
+
+/// `name` (of type `ty`, owning a resource without `clone()`) is used at `use_at` after a
+/// callback stored it into the value as itself, at `stored` (#458).
+fn resource_used_later(cx: &mut Ctx, name: &str, ty: crate::hir::TyId, use_at: Span, stored: Span) {
+    let part = cx.uncopyable_part(ty).unwrap_or(ty);
+    let pn = cx.display(part);
+    cx.error(
+        Diagnostic::error(
+            format!("`{name}` is still used after `with` stored it in the locked value"),
+            use_at,
+        )
+        .with_label(stored, format!("stored here as itself: `{pn}` owns a resource and has no `clone()`, so it cannot be copied"))
+        .with_note(format!("other threads use it through the lock from here on, so using `{name}` outside it would share it without the lock; use it through the lock (`m.with((v) => …)`), or give `{pn}` a `clone()` method that duplicates the resource and store `{name}.clone()`")),
+    );
 }
 
 fn promise_error(cx: &mut Ctx, m: promises::Made) {
@@ -408,6 +430,14 @@ fn promise_error(cx: &mut Ctx, m: promises::Made) {
 }
 
 fn unfixable_error(cx: &mut Ctx, u: stores::Unfixable) {
+    if let stores::Cross::ResourceInPlace(ty) = u.kind {
+        let part = cx.uncopyable_part(ty).unwrap_or(ty);
+        let (t, pn) = (cx.display(ty), cx.display(part));
+        let msg = format!("this stores a `{t}` into the locked value, but it also stays where it is, and `{pn}` owns a resource without `clone()`, so it cannot be copied");
+        let note = format!("other threads would share it with this place outside the lock; give `{pn}` a `clone()` method that duplicates the resource, or move it into the value: store a variable holding it that is not used afterwards, or create it inside the callback");
+        cx.error(Diagnostic::error(msg, u.span).with_note(note));
+        return;
+    }
     let (msg, note) = match u.kind {
         stores::Cross::Changed { inward } => {
             let what = match inward {
@@ -423,6 +453,7 @@ fn unfixable_error(cx: &mut Ctx, u: stores::Unfixable) {
             "this call passes the locked value to a function whose body is not visible here, together with something outside the lock".to_string(),
             "the function might store a part of one in the other, shared by threads without the lock; call a function or a closure written here (`const f = (s) => ...`), or pass a copy (`x.clone()`)",
         ),
+        stores::Cross::ResourceInPlace(_) => return,
         stores::Cross::Resource => (
             "this would copy an object that owns a resource without `clone()` across the `with` lock".to_string(),
             "a part of the locked value stored outside it, returned from `with`, or kept by a promise made here must be copied; give the resource type a `clone()` method, or use it inside the callback",
