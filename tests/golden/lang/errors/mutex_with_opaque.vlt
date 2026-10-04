@@ -71,4 +71,29 @@ function main() {
   const g = { cb: stasher<Inner>(kept) };
   inners.with(g.cb);
   console.log(kept.length);
+  valueRef();
+}
+
+// A generic function used as a value is instantiated there too: `mk` is `wrap<Cell>`, while
+// the only call of `wrap` is with `i64`.
+class Cell {
+  n: i64 = 0;
+}
+
+function wrap<T>(out: T[]): (v: T) => void {
+  return (v: T) => {
+    out.push(v);
+  };
+}
+
+function valueRef() {
+  const nums: i64[] = [];
+  const other = wrap<i64>(nums);
+  other(1);
+  const kept: Cell[] = [];
+  const mk: (o: Cell[]) => (v: Cell) => void = wrap;
+  const h = { cb: mk(kept) };
+  const m = shared(new Mutex<Cell>(new Cell()));
+  m.with(h.cb);
+  console.log(kept.length);
 }

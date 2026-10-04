@@ -41,8 +41,13 @@ pub(super) struct Candidates<'s> {
     direct: HashSet<DefId>,
     /// The checked candidates (with their instantiations) and what they do.
     checked: HashMap<(DefId, Vec<TyId>), Option<Crossing>>,
-    /// The direct calls of each function: the calling body and the type arguments.
+    /// The direct calls of each function and its uses as a value: the using body and the type
+    /// arguments.
     calls: Option<CallIndex>,
+    /// The functions that may be candidates at all (one parameter, synchronous, …).
+    fns: Option<Vec<DefId>>,
+    /// The result of [`Candidates::offender`] per parameter type.
+    offenders: HashMap<TyId, Option<(DefId, Crossing)>>,
 }
 
 impl<'s> Candidates<'s> {
@@ -52,6 +57,8 @@ impl<'s> Candidates<'s> {
             direct,
             checked: HashMap::new(),
             calls: None,
+            fns: None,
+            offenders: HashMap::new(),
         }
     }
 
@@ -62,25 +69,45 @@ impl<'s> Candidates<'s> {
         res: &mut Resolver,
         param: TyId,
     ) -> Option<Offender> {
-        let fns: Vec<DefId> = cx
-            .fn_defs
-            .iter()
-            .copied()
-            .filter(|d| {
-                let info = cx.fn_info(*d);
-                info.state == BodyState::Done
-                    && matches!(info.kind, FnKind::Closure | FnKind::Free | FnKind::Static)
-                    && !info.is_async
-                    && !info.is_generator
-                    && info.params.len() == 1
-                    && !self.direct.contains(d)
+        if let Some(found) = self.offenders.get(&param) {
+            return found.map(|(def, at)| Offender { def, at });
+        }
+        let direct = &self.direct;
+        let fns = self
+            .fns
+            .get_or_insert_with(|| {
+                cx.fn_defs
+                    .iter()
+                    .copied()
+                    .filter(|d| {
+                        let info = cx.fn_info(*d);
+                        info.state == BodyState::Done
+                            && matches!(info.kind, FnKind::Closure | FnKind::Free | FnKind::Static)
+                            && !info.is_async
+                            && !info.is_generator
+                            && info.params.len() == 1
+                            && !direct.contains(d)
+                    })
+                    .collect()
             })
-            .collect();
-        for d in fns {
+            .clone();
+        let found = self.first_offender(cx, res, &fns, param);
+        self.offenders.insert(param, found);
+        found.map(|(def, at)| Offender { def, at })
+    }
+
+    fn first_offender(
+        &mut self,
+        cx: &mut Ctx,
+        res: &mut Resolver,
+        fns: &[DefId],
+        param: TyId,
+    ) -> Option<(DefId, Crossing)> {
+        for &d in fns {
             let ty = cx.fn_info(d).params[0].ty;
             for targs in self.takes(cx, res, d, ty, param) {
                 if let Some(at) = self.check(cx, res, d, targs) {
-                    return Some(Offender { def: d, at });
+                    return Some((d, at));
                 }
             }
         }
@@ -165,7 +192,13 @@ impl<'s> Candidates<'s> {
             if calls.is_empty() {
                 complete = false;
             }
+            let generics = cx.fn_info(f).generics.len();
             for (caller, targs) in calls {
+                if targs.len() < generics {
+                    // A use whose type arguments are not all known.
+                    complete = false;
+                    continue;
+                }
                 let sub: Vec<TyId> = match &so_far {
                     None => targs,
                     Some(ts) => ts.iter().map(|t| cx.ty.subst(*t, &targs)).collect(),
@@ -200,7 +233,8 @@ fn maker(cx: &mut Ctx, res: &mut Resolver, mut d: DefId) -> DefId {
     d
 }
 
-/// The direct calls of every function of the program.
+/// The direct calls of every function of the program, and its uses as a value (`const f =
+/// wrap;` instantiates `wrap` as a call would).
 fn direct_calls(cx: &mut Ctx) -> CallIndex {
     let fns: Vec<DefId> = cx
         .fn_defs
@@ -213,14 +247,13 @@ fn direct_calls(cx: &mut Ctx) -> CallIndex {
         let Some(Def::Fn(mut body)) = cx.defs[caller.0 as usize].take() else {
             continue;
         };
-        visit::exprs_mut(&mut body.body.block, &mut |e: &mut Expr| {
-            if let E::Call {
+        visit::exprs_mut(&mut body.body.block, &mut |e: &mut Expr| match &e.kind {
+            E::Call {
                 callee: Callee::Def(g, targs),
                 ..
-            } = &e.kind
-            {
-                out.entry(*g).or_default().push((caller, targs.clone()));
             }
+            | E::FnRef(g, targs) => out.entry(*g).or_default().push((caller, targs.clone())),
+            _ => {}
         });
         cx.defs[caller.0 as usize] = Some(Def::Fn(body));
     }

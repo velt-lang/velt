@@ -7,3 +7,5 @@ mutex_with_opaque.vlt:69:13: error: the function passed to `with` comes from an 
 mutex_with_opaque.vlt:72:15: error: the function passed to `with` comes from an object's field, and may be a closure that stores a part of the locked `Inner` outside it
 mutex_with_opaque.vlt:43:10: this closure takes `Inner`, like the function passed
 every closure and function taking `State` is checked
+mutex_with_opaque.vlt:97:10: error: the function passed to `with` comes from an object's field, and may be a closure that stores a part of the locked `Cell` outside it
+mutex_with_opaque.vlt:84:10: this closure takes `Cell`, like the function passed
