@@ -1,0 +1,7 @@
+refs: true false true
+main returns
+timeout fired after main returned
+its callback's own timer fired
+interval run 1
+interval run 2
+interval run 3

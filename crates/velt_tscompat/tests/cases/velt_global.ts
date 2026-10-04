@@ -45,4 +45,5 @@ export function later(): void {
 
 export function cancel(t: Timer): void { //~ velt-global
   t.clear(); //~ velt-member
+  t.unref(); //~ velt-member
 }
