@@ -92,6 +92,9 @@ pub struct Target {
     pub candidates: Vec<Vec<PathBuf>>,
     pub canonical: Option<String>,
     pub origin: Origin,
+    /// The directory below which the specifier spells the path: the names of the candidates'
+    /// components below it must match the files on disk exactly, case included.
+    pub base: PathBuf,
 }
 
 /// Why a module could not be located: message plus notes.
@@ -116,6 +119,7 @@ pub fn target(
             ))
         }
         ModuleRef::Relative { file } => Ok(Target {
+            base: common_ancestor(importer.parent().unwrap_or(Path::new("")), &file),
             candidates: relative_files(file),
             canonical: None,
             origin: from.clone(),
@@ -127,9 +131,10 @@ pub fn target(
                 return Err((format!("cannot find module `velt:{rel}`"), vec![note]));
             };
             Ok(Target {
-                candidates: module_files(root, &rel),
+                candidates: std_files(root, &rel),
                 canonical: Some(format!("std/{rel}")),
                 origin: Origin::Std(root.to_path_buf()),
+                base: root.to_path_buf(),
             })
         }
         ModuleRef::Package { name, sub } => {
@@ -141,28 +146,54 @@ pub fn target(
             };
             let src = root.join(vpm::manifest::SRC_DIR);
             let (candidates, canonical) = match &sub {
-                None => (
-                    vec![vec![root.join(vpm::manifest::LIB_ENTRY)]],
-                    name.clone(),
-                ),
-                Some(s) => (module_files(&src, s), format!("{name}/{s}")),
+                None => (vec![source_files(&src, "lib")], name.clone()),
+                Some(s) => (package_files(&src, s), format!("{name}/{s}")),
             };
             Ok(Target {
                 candidates,
                 canonical: Some(canonical),
+                base: src.clone(),
                 origin: Origin::Package { name, src },
             })
         }
     }
 }
 
-/// `<dir>/<rel>.vlt`, then the folder module `<dir>/<rel>/index.vlt` (standard library and
-/// package modules are `.vlt` files).
-fn module_files(dir: &Path, rel: &str) -> Vec<Vec<PathBuf>> {
+/// `<dir>/<rel>.vlt`, then the folder module `<dir>/<rel>/index.vlt` (standard library modules
+/// are `.vlt` files).
+fn std_files(dir: &Path, rel: &str) -> Vec<Vec<PathBuf>> {
     vec![
         vec![dir.join(format!("{rel}.vlt"))],
         vec![dir.join(rel).join("index.vlt")],
     ]
+}
+
+/// The files of module `rel` of a package (its `src/` is `src`): `rel.vlt`, `rel.ts` or
+/// `rel.tsx`, then the folder module `rel/index.vlt`, `rel/index.ts` or `rel/index.tsx`, as for
+/// a relative import.
+fn package_files(src: &Path, rel: &str) -> Vec<Vec<PathBuf>> {
+    vec![
+        source_files(src, rel),
+        source_files(&src.join(rel), "index"),
+    ]
+}
+
+/// `<dir>/<stem>.vlt`, `<dir>/<stem>.ts` and `<dir>/<stem>.tsx`.
+fn source_files(dir: &Path, stem: &str) -> Vec<PathBuf> {
+    vpm::sources::source_files(stem)
+        .into_iter()
+        .map(|f| dir.join(f))
+        .collect()
+}
+
+/// The longest leading part `a` and `b` have in common, compared component by component (case
+/// included).
+fn common_ancestor(a: &Path, b: &Path) -> PathBuf {
+    a.components()
+        .zip(b.components())
+        .take_while(|(x, y)| x == y)
+        .map(|(x, _)| x)
+        .collect()
 }
 
 /// The files a relative import of `file` (the specifier's path, extension as written) may name:
@@ -187,18 +218,13 @@ fn relative_files(file: PathBuf) -> Vec<Vec<PathBuf>> {
     if let Some(stem) = name.strip_suffix(".jsx") {
         return vec![vec![format!("{stem}.tsx").into()]];
     }
-    let with_extensions = |base: &str| {
-        vpm::sources::SOURCE_EXTENSIONS
-            .iter()
-            .map(|ext| format!("{base}.{ext}"))
-            // `./types.d` must not name `types.d.ts`, a declaration file.
-            .filter(|f| vpm::sources::is_source_name(f))
-            .map(PathBuf::from)
-            .collect()
-    };
+    // `./types.d` does not name `types.d.ts`, a declaration file.
     let index = file.join("index");
     let index = index.to_str().unwrap_or(name);
-    vec![with_extensions(name), with_extensions(index)]
+    vec![
+        vpm::sources::source_files(name),
+        vpm::sources::source_files(index),
+    ]
 }
 
 #[cfg(test)]

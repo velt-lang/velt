@@ -10,9 +10,12 @@
 //! - `"std/x"` → `<std root>/x.vlt` or `<std root>/x/index.vlt` ([`std_root`]);
 //! - a `paths` alias of the importing package (`"@app/*": "src/*"` in `package.vlt`) → the
 //!   aliased file, like a relative import ([`PackageResolver::path_alias`]);
-//! - `"pkg"` / `"pkg/sub"` → `src/lib.vlt` / `src/sub.vlt` (or `src/sub/index.vlt`) of a
-//!   dependency of the importing package, found through a [`PackageResolver`] (vpm's installed
-//!   package graph).
+//! - `"pkg"` / `"pkg/sub"` → `src/lib.vlt` / `src/sub.vlt` (or `src/sub/index.vlt`; `.ts` and
+//!   `.tsx` as for relative imports) of a dependency of the importing package, found through a
+//!   [`PackageResolver`] (vpm's installed package graph).
+//!
+//! The names an import spells must match the files on disk in case, on every OS ([`case`]); a
+//! file module hiding a folder module of another extension gets a warning ([`pick`]).
 //!
 //! Local export lists (`export { a, b };`, an import item with an empty specifier) load nothing.
 //! A module containing JSX also imports its JSX runtime ([`jsx`]); JSX in a `.ts` file is an
@@ -24,8 +27,10 @@
 //! An optional in-memory overlay (the language server's unsaved editor buffers) takes precedence
 //! over the file system for every read, including files that do not exist on disk yet.
 
+mod case;
 mod jsx;
 mod locate;
+mod pick;
 mod spec;
 mod std_root;
 
@@ -102,6 +107,7 @@ pub fn load_with_roots(
         by_file: HashMap::new(),
         std_key: opts.std_root.as_deref().map(file_key),
         extra_phase: false,
+        dir_names: case::DirNames::default(),
     };
     if let Some(std) = &opts.std_root {
         for file in prelude_files(std) {
@@ -145,6 +151,8 @@ struct Loader<'a, 'o> {
     std_key: Option<PathBuf>,
     /// Loading extra roots: a taken or reserved module path gets a fallback instead of an error.
     extra_phase: bool,
+    /// Directory listings, to match file names in case ([`case`]).
+    dir_names: case::DirNames,
 }
 
 impl Loader<'_, '_> {
@@ -158,11 +166,6 @@ impl Loader<'_, '_> {
             Some(src) => Ok(src.clone()),
             None => std::fs::read_to_string(path),
         }
-    }
-
-    /// Whether `path` names a loadable file (on disk or in the overlay).
-    fn exists(&self, path: &Path) -> bool {
-        path.is_file() || self.overlay.contains_key(&file_key(path))
     }
 
     fn load_prelude(&mut self, file: &Path, std: &Path) {
@@ -343,7 +346,6 @@ impl Loader<'_, '_> {
         let dir = importer.parent().unwrap_or(Path::new(""));
         let alias = self.path_alias(&importer, spec);
         let aliased = alias.is_some();
-        let show = |f: &Path| shown_path(f, dir, aliased || spec.starts_with('.'));
         let module = match alias {
             Some(file) => ModuleRef::Relative { file },
             None => match resolve_spec(spec, dir) {
@@ -361,33 +363,11 @@ impl Loader<'_, '_> {
             Ok(t) => t,
             Err((msg, notes)) => return self.error(msg, notes, span),
         };
-        let found = target.candidates.iter().find_map(|group| {
-            let existing: Vec<&PathBuf> = group.iter().filter(|f| self.exists(f)).collect();
-            (!existing.is_empty()).then_some(existing)
-        });
-        let file = match found.as_deref() {
-            Some([file]) => (*file).clone(),
-            Some(files) => {
-                let mut names: Vec<String> =
-                    files.iter().map(|f| format!("`{}`", show(f))).collect();
-                let last = names.pop().unwrap_or_default();
-                let msg = format!(
-                    "module `{spec}` is ambiguous: it could be {} or {last}",
-                    names.join(", ")
-                );
-                let note = "rename or remove all but one of them".to_string();
-                return self.error(msg, vec![note], span);
-            }
-            None => {
-                let notes = target
-                    .candidates
-                    .iter()
-                    .flatten()
-                    .map(|f| format!("tried `{}`", show(f)))
-                    .collect();
-                return self.error(format!("cannot find module `{spec}`"), notes, span);
-            }
+        let shown = pick::Shown {
+            dir,
+            relative: aliased || spec.starts_with('.'),
         };
+        let file = self.pick_file(spec, span, &target, &shown)?;
         let key = file_key(&file);
         if let Err(msg) = self.std_membership(&target.origin, &key, spec) {
             return self.error(msg, vec![], span);
@@ -510,6 +490,8 @@ fn shown_path(file: &Path, dir: &Path, relative: bool) -> String {
     }
 }
 
+#[cfg(test)]
+mod case_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

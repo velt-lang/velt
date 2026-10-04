@@ -40,6 +40,8 @@ pub mod hash;
 pub mod html;
 #[path = "../../velt_rt/src/inspect.rs"]
 pub mod inspect;
+#[path = "../../velt_rt/src/inspect_layout/mod.rs"]
+mod inspect_layout;
 pub mod io;
 pub mod json;
 pub mod localtime;

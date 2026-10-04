@@ -77,24 +77,31 @@ fn plain_code() {
     assert_linear("plain code", 1_000, |n| unit.repeat(n));
 }
 
-/// Conditionals nested in conditionals: each level used to be parsed more than once, which is
-/// exponential in the depth. The cost still grows faster than the depth (about 9 times the work
-/// for 4 times the depth, an open issue), so this only rules out exponential growth: 20 levels
-/// may cost at most 16 times what 5 do, where doubling per level would cost about 30 000 times.
+/// Conditionals nested in conditionals: each level used to be parsed once more by every
+/// enclosing `?`'s lookahead (quadratic in the depth), and before that more than once per level
+/// (exponential). Nested in the consequent, in the alternative, in parentheses, and with JSX
+/// (whose re-lexes make the lookahead parse the branch again).
 #[test]
 fn nested_conditionals() {
-    let make = |n: usize| {
+    let nest = |n: usize, level: &dyn Fn(usize, String) -> String| {
         let mut s = String::from("x");
         for i in 0..n {
-            s = format!("c{i} ? {s} : y{i}");
+            s = level(i, s);
         }
         format!("function f() {{ x = {s}; }}\n")
     };
-    let (small, large) = (work(make(5)), work(make(20)));
-    assert!(
-        large <= small * 16,
-        "nested conditionals: 5 levels cost {small} work, 20 levels {large}: exponential?"
-    );
+    assert_linear("conditionals in consequents", 20, |n| {
+        nest(n, &|i, s| format!("c{i} ? {s} : y{i}"))
+    });
+    assert_linear("conditionals in alternatives", 20, |n| {
+        nest(n, &|i, s| format!("c{i} ? y{i} : {s}"))
+    });
+    assert_linear("parenthesized conditionals", 20, |n| {
+        nest(n, &|i, s| format!("c{i} ? ({s}) : y{i}"))
+    });
+    assert_linear("conditionals with elements", 20, |n| {
+        nest(n, &|i, s| format!("c{i} ? {s} : <i>{{y{i}}}</i>"))
+    });
 }
 
 /// Parentheses nested in types, arrows and expressions, closed and unclosed (a failed

@@ -66,6 +66,8 @@ use velt_syntax::ast;
 use crate::ctx::Item;
 use crate::defs::{DefInfo, FnKind};
 
+pub use dispatch::{instantiation_work, InstantiationWork};
+
 /// One parsed module handed to sema by the driver.
 pub struct SourceModule {
     /// Canonical module path: `"main"` for the root file, `"std/fs"`, `"./util"` resolved to a

@@ -1,0 +1,7 @@
+interval run 1
+interval run 2
+interval run 3
+timeout sent 100
+runs after clearInterval: 3
+cleared: true true true true
+started: true false

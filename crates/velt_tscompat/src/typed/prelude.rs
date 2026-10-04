@@ -44,6 +44,12 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "isNaN",
     "parseFloat",
     "parseInt",
+    // The DOM's timer functions (TypeScript's baseline has the DOM's lib); in shared code the
+    // handle only goes back to `clearTimeout` / `clearInterval` (a number in the browser).
+    "clearInterval",
+    "clearTimeout",
+    "setInterval",
+    "setTimeout",
     // Builtins.
     "console",
     "Promise",
@@ -89,6 +95,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
     (
         "PromiseWithResolvers",
         "keep it out of shared code: it is ES2024, past the baseline",
+    ),
+    (
+        "Timer",
+        "keep the timer handle's type out of shared code: in the browser `setTimeout` returns a number",
     ),
     (
         "assert",
@@ -396,6 +406,14 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
             "umulh",
             "keep 128-bit arithmetic out of code shared with TypeScript",
         )],
+    ),
+    (
+        "Timer",
+        &[
+            ("clear", "call `clearTimeout(t)` or `clearInterval(t)`"),
+            ("cleared", "keep track of it yourself"),
+            ("started", "keep track of it yourself"),
+        ],
     ),
     ("boolean", &[("compareTo", COMPARE)]),
     ("number", &[("compareTo", COMPARE)]),
