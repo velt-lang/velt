@@ -472,14 +472,23 @@ export class URLSearchParams {
   }
 }
 
-// JS `encodeURIComponent`: escapes everything except alphanumerics and `-_.!~*'()`.
+// JS `encodeURIComponent`: escapes everything except alphanumerics and `-_.!~*'()`; throws
+// `UrlError("URI malformed")` on a lone surrogate, as JS throws `URIError`.
 export function encodeURIComponent(s: string): string {
-  return encodeUri(s, false);
+  const out = encodeUri(s, false);
+  if (out == null) {
+    throw new UrlError("URI malformed");
+  }
+  return out;
 }
 
 // JS `encodeURI`: like `encodeURIComponent`, but keeps `;,/?:@&=+$#`.
 export function encodeURI(s: string): string {
-  return encodeUri(s, true);
+  const out = encodeUri(s, true);
+  if (out == null) {
+    throw new UrlError("URI malformed");
+  }
+  return out;
 }
 
 // JS `decodeURIComponent`; throws `UrlError("URI malformed")` on a bad escape or invalid UTF-8.
