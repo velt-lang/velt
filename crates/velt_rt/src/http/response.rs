@@ -85,7 +85,7 @@ pub unsafe extern "C" fn velt_rt_http_resp_header(
 ) -> u8 {
     let (Ok(n), Ok(v)) = (
         HeaderName::from_bytes((*name).as_bytes()),
-        header_value((*value).as_bytes()),
+        header_value((*value).text_lossy().as_bytes()),
     ) else {
         return 0;
     };
@@ -103,7 +103,7 @@ pub unsafe extern "C" fn velt_rt_http_resp_set_header(
 ) -> u8 {
     let (Ok(n), Ok(v)) = (
         HeaderName::from_bytes((*name).as_bytes()),
-        header_value((*value).as_bytes()),
+        header_value((*value).text_lossy().as_bytes()),
     ) else {
         return 0;
     };

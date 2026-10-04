@@ -3,8 +3,8 @@
 //!
 //! - ASCII strings: `[count: AtomicU64][cap bytes]`.
 //! - Non-ASCII strings: `[crumbs: AtomicPtr<u8>][lone: u64][count: AtomicU64][cap bytes]`.
-//!   `crumbs` will point at the breadcrumb table (#377 phase 2; always null for now) and `lone`
-//!   counts the lone surrogates. Which layout a buffer has follows from the string value
+//!   `crumbs` points at the breadcrumb table (`crumbs.rs`; null until a position in a long
+//!   string is first translated) and `lone` counts the lone surrogates. Which layout a buffer has follows from the string value
 //!   (`units != bytes`), so release, grow and free take it as `header`.
 //!
 //! Counting is atomic because any string may be shared with another thread. The common case
@@ -58,14 +58,19 @@ unsafe fn count<'a>(data: *mut u8) -> &'a AtomicU64 {
     &*(data.sub(COUNT) as *const AtomicU64)
 }
 
-/// The `lone` field of a non-ASCII buffer.
-unsafe fn lone_field(data: *mut u8) -> *mut u64 {
-    data.sub(16) as *mut u64
+/// The `lone` field of a non-ASCII buffer. Atomic (relaxed: a plain load or store) because a
+/// count left unknown is filled in when somebody first needs it, possibly on a shared buffer
+/// (every thread computes the same number).
+unsafe fn lone_field<'a>(data: *mut u8) -> &'a AtomicU64 {
+    &*(data.sub(16) as *const AtomicU64)
 }
 
-/// The `crumbs` field of a non-ASCII buffer.
-#[cfg(debug_assertions)]
-unsafe fn crumbs<'a>(data: *mut u8) -> &'a AtomicPtr<u8> {
+/// The `crumbs` field of a non-ASCII buffer (`crumbs.rs` builds, publishes and frees the
+/// table).
+///
+/// # Safety
+/// `data` must be a live buffer from [`alloc`] with a header.
+pub(super) unsafe fn crumbs<'a>(data: *mut u8) -> &'a AtomicPtr<u8> {
     &*(data.sub(HEADER) as *const AtomicPtr<u8>)
 }
 
@@ -84,7 +89,7 @@ pub(super) fn alloc(cap: usize, header: bool) -> *mut u8 {
         let data = base.add(prefix(header));
         if header {
             (base as *mut AtomicPtr<u8>).write(AtomicPtr::new(std::ptr::null_mut()));
-            lone_field(data).write(0);
+            (data.sub(16) as *mut AtomicU64).write(AtomicU64::new(0));
         }
         (data.sub(COUNT) as *mut AtomicU64).write(AtomicU64::new(1));
         data
@@ -121,7 +126,7 @@ pub(super) unsafe fn add_header(data: *mut u8, cap: usize, len: usize, new_cap: 
     let data = base.add(HEADER);
     std::ptr::copy(base.add(COUNT), data, len);
     (base as *mut AtomicPtr<u8>).write(AtomicPtr::new(std::ptr::null_mut()));
-    lone_field(data).write(0);
+    (data.sub(16) as *mut AtomicU64).write(AtomicU64::new(0));
     (data.sub(COUNT) as *mut AtomicU64).write(AtomicU64::new(1));
     data
 }
@@ -148,7 +153,7 @@ pub(super) unsafe fn retain(data: *mut u8) {
 /// # Safety
 /// `data` must be a live buffer from [`alloc`] with a header.
 pub(super) unsafe fn lone(data: *mut u8) -> usize {
-    lone_field(data).read() as usize
+    lone_field(data).load(Ordering::Relaxed) as usize
 }
 
 /// Set the lone-surrogate count of a non-ASCII buffer the caller holds the only reference to.
@@ -156,7 +161,16 @@ pub(super) unsafe fn lone(data: *mut u8) -> usize {
 /// # Safety
 /// `data` must be a live buffer from [`alloc`] with a header and count 1.
 pub(super) unsafe fn set_lone(data: *mut u8, n: usize) {
-    lone_field(data).write(n as u64);
+    lone_field(data).store(n as u64, Ordering::Relaxed);
+}
+
+/// Record the counted lone surrogates of a non-ASCII buffer whose count was unknown. The buffer
+/// may be shared: every reader counts the same immutable text, so racing stores agree.
+///
+/// # Safety
+/// `data` must be a live buffer from [`alloc`] with a header, and `n` its text's count.
+pub(super) unsafe fn resolve_lone(data: *mut u8, n: usize) {
+    lone_field(data).store(n as u64, Ordering::Relaxed);
 }
 
 /// Drop a reference; frees the buffer (of `cap` bytes) with the last one.
@@ -174,10 +188,20 @@ pub(super) unsafe fn release(data: *mut u8, cap: usize, header: bool) {
         fence(Ordering::Acquire);
     }
     stats::free();
-    #[cfg(debug_assertions)]
-    assert!(
-        !header || crumbs(data).load(Ordering::Relaxed).is_null(),
-        "ICE: string breadcrumbs are not built before #377 phase 2"
-    );
-    alloc::dealloc(data.sub(prefix(header)), layout(cap, header));
+    if header {
+        return free_with_header(data, cap);
+    }
+    alloc::dealloc(data.sub(COUNT), layout(cap, false));
+}
+
+/// Free a non-ASCII buffer and its breadcrumb table: out of line, so dropping a string (inlined
+/// into `velt_rt_str_drop` and generated code's drops) keeps a short register-light fast path.
+///
+/// # Safety
+/// As for [`release`], for the last reference to a buffer with a header.
+#[inline(never)]
+unsafe fn free_with_header(data: *mut u8, cap: usize) {
+    // The last reference: nobody reads the table any more.
+    super::crumbs::free(crumbs(data).load(Ordering::Acquire));
+    alloc::dealloc(data.sub(HEADER), layout(cap, true));
 }

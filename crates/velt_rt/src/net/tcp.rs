@@ -37,7 +37,7 @@ static STREAMS: Registry<StreamObj> = Registry::new();
 
 /// Owned text of a string argument (copied: async operations outlive the call).
 pub(crate) unsafe fn text_arg(s: *const VeltStr) -> String {
-    String::from_utf8_lossy((*s).as_bytes()).into_owned()
+    (*s).text_lossy().into_owned()
 }
 
 fn stream_result(r: io::Result<TcpStream>) -> IoResult<StreamHandle> {
@@ -163,10 +163,11 @@ async fn write_all(stream: &TcpStream, mut data: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-/// `write(data)` (a string, copied) → `IoResult<()>` once everything is written.
+/// `write(data)` (a string, copied; one U+FFFD per lone surrogate) → `IoResult<()>` once
+/// everything is written.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_write(s: StreamHandle, data: *const VeltStr) -> *mut VeltFut {
-    write_copy(s, (*data).as_bytes())
+    write_copy(s, (*data).text_lossy().as_bytes())
 }
 
 /// `writeBytes(data)` (a `u8[]`, copied) → `IoResult<()>` once everything is written.

@@ -1,8 +1,11 @@
 //! Strings inside containers the way node's `util.inspect` (`console.log([s])`) shows them:
 //! single quotes, or double quotes when the text contains `'` but no `"`, or backticks when it
 //! contains both (and no backtick); the chosen quote, `\` and control characters are escaped
-//! (`\n`, `\t`, `\b`, `\f`, `\r`, else `\xHH` for C0, DEL and C1 controls). velt_vir's format
-//! glue quotes compile-time strings (literal types, string enums) the same way.
+//! (`\n`, `\t`, `\b`, `\f`, `\r`, else `\xHH` for C0, DEL and C1 controls), and a lone surrogate
+//! as `\udxxx` (#377; a top-level string prints it as U+FFFD instead, like every output).
+//! velt_vir's format glue quotes compile-time strings (literal types, string enums) the same way.
+
+use crate::str::wtf8;
 
 /// An object key as `util.inspect` prints it: bare when it is an identifier of ASCII letters,
 /// digits and `_` not starting with a digit (`a`, `_x1`), else quoted like a string (`'a b'`,
@@ -19,43 +22,80 @@ pub fn push_inspect_key(out: &mut Vec<u8>, s: &[u8]) {
     }
 }
 
-/// Append `s` quoted and escaped to `out`.
+/// Append `s` (canonical WTF-8) quoted and escaped to `out`.
 pub fn push_inspect_string(out: &mut Vec<u8>, s: &[u8]) {
-    let text = String::from_utf8_lossy(s);
-    let quote = pick_quote(&text);
-    out.push(quote as u8);
-    let mut buf = [0u8; 4];
-    for c in text.chars() {
+    let quote = pick_quote(s);
+    out.push(quote);
+    let mut i = 0;
+    while i < s.len() {
+        let (c, n) = wtf8::decode_at(s, i);
         match c {
-            '\n' => out.extend_from_slice(b"\\n"),
-            '\t' => out.extend_from_slice(b"\\t"),
-            '\u{8}' => out.extend_from_slice(b"\\b"),
-            '\u{c}' => out.extend_from_slice(b"\\f"),
-            '\r' => out.extend_from_slice(b"\\r"),
-            '\\' => out.extend_from_slice(b"\\\\"),
-            _ if c == quote => {
+            0x0A => out.extend_from_slice(b"\\n"),
+            0x09 => out.extend_from_slice(b"\\t"),
+            0x08 => out.extend_from_slice(b"\\b"),
+            0x0C => out.extend_from_slice(b"\\f"),
+            0x0D => out.extend_from_slice(b"\\r"),
+            0x5C => out.extend_from_slice(b"\\\\"),
+            _ if c == quote as u32 => {
                 out.push(b'\\');
-                out.push(c as u8);
+                out.push(quote);
             }
-            '\0'..='\u{1f}' | '\u{7f}'..='\u{9f}' => {
-                out.extend_from_slice(format!("\\x{:02X}", c as u32).as_bytes())
+            0x00..=0x1F | 0x7F..=0x9F => out.extend_from_slice(format!("\\x{c:02X}").as_bytes()),
+            0xD800..=0xDFFF => out.extend_from_slice(format!("\\u{c:04x}").as_bytes()),
+            _ => out.extend_from_slice(&s[i..i + n]),
+        }
+        i += n;
+    }
+    out.push(quote);
+}
+
+/// The text of a string quoted by [`push_inspect_string`] (`quoted` includes the quotes).
+pub fn unescape_inspect_string(quoted: &[u8]) -> Vec<u8> {
+    let inner = &quoted[1..quoted.len().saturating_sub(1).max(1)];
+    let mut out = Vec::with_capacity(inner.len());
+    let mut i = 0;
+    while i < inner.len() {
+        let (c, next) = (inner[i], inner.get(i + 1).copied());
+        if c != b'\\' || next.is_none() {
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        i += 2;
+        match next.unwrap_or_default() {
+            b'n' => out.push(b'\n'),
+            b't' => out.push(b'\t'),
+            b'b' => out.push(8),
+            b'f' => out.push(12),
+            b'r' => out.push(b'\r'),
+            b'x' => {
+                let hex = inner
+                    .get(i..i + 2)
+                    .and_then(|h| std::str::from_utf8(h).ok());
+                let code = hex.and_then(|h| u32::from_str_radix(h, 16).ok());
+                if let Some(ch) = code.and_then(char::from_u32) {
+                    let mut buf = [0u8; 4];
+                    out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+                    i += 2;
+                }
             }
-            _ => out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes()),
+            other => out.push(other),
         }
     }
-    out.push(quote as u8);
+    out
 }
 
 /// Node's choice of quote for `text`.
-fn pick_quote(text: &str) -> char {
-    if !text.contains('\'') {
-        '\''
-    } else if !text.contains('"') {
-        '"'
-    } else if !text.contains('`') && !text.contains("${") {
-        '`'
+fn pick_quote(text: &[u8]) -> u8 {
+    let has = |c: u8| text.contains(&c);
+    if !has(b'\'') {
+        b'\''
+    } else if !has(b'"') {
+        b'"'
+    } else if !has(b'`') && !text.windows(2).any(|w| w == b"${") {
+        b'`'
     } else {
-        '\''
+        b'\''
     }
 }
 
@@ -80,10 +120,53 @@ mod tests {
         assert_eq!(q("é"), "'é'");
     }
 
+    #[test]
+    fn lone_surrogates_are_escaped_like_node() {
+        // node -e 'console.log(["\uD83D", "a\uDE00b", "\uD83D\uDE00", "\uD83D\u0001"])'
+        // prints [ '\ud83d', 'a\ude00b', '😀', '\ud83d\x01' ].
+        let enc = |cp: u32| {
+            let mut b = [0; 4];
+            crate::str::wtf8::encode(cp, &mut b).to_vec()
+        };
+        let show = |b: Vec<u8>| {
+            let mut out = vec![];
+            push_inspect_string(&mut out, &b);
+            String::from_utf8(out).unwrap()
+        };
+        assert_eq!(show(enc(0xD83D)), "'\\ud83d'");
+        assert_eq!(
+            show([b"a".to_vec(), enc(0xDE00), b"b".to_vec()].concat()),
+            "'a\\ude00b'"
+        );
+        assert_eq!(show("😀".as_bytes().to_vec()), "'😀'");
+        assert_eq!(show([enc(0xD83D), vec![1]].concat()), "'\\ud83d\\x01'");
+        let mut key = vec![];
+        push_inspect_key(&mut key, &enc(0xD800));
+        assert_eq!(String::from_utf8(key).unwrap(), "'\\ud800'");
+    }
+
     fn key(s: &str) -> String {
         let mut out = vec![];
         push_inspect_key(&mut out, s.as_bytes());
         String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn unescape_reverses_quoting() {
+        let texts = [
+            "plain",
+            "tab\there",
+            "a\nb\n",
+            "single'q",
+            "both'\"q",
+            "all'\"`",
+        ];
+        for s in texts.into_iter().chain(["\u{1}\u{85}é\\x"]) {
+            assert_eq!(
+                super::unescape_inspect_string(q(s).as_bytes()),
+                s.as_bytes()
+            );
+        }
     }
 
     #[test]

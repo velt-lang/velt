@@ -518,10 +518,12 @@ an uncounted copy or a static-form view of it): it is copied out before the buff
 | `velt_rt_strbuf_push_byte` | `(VeltStrBuf* b, u8 c)` | punctuation in generated glue |
 | `velt_rt_strbuf_push_json_str` | `(VeltStrBuf* b, const VeltStr* s)` | quoted + escaped exactly like `JSON.stringify(s)`: `\"` `\\` `\b \f \n \r \t`, other controls < U+0020 as lowercase 6-char `\u00xx`; everything else verbatim |
 | `velt_rt_strbuf_push_json_value` | `(VeltStrBuf* b, const void* v)` | `JSON.stringify(v)` of a `json.Value` field (null handle ⇒ `null`); emitted by the compiler, which passes the handle's address as a pointer (VIR `ptr`), unlike the `u64` handles of §3.2 |
-| `velt_rt_strbuf_push_inspect_json` | `(VeltStrBuf* b, const void* v, u8 top)` | what `console.log` prints for a `json.Value` (node `util.inspect` of the parsed value: `{ a: 1, b: [ 2, 'x' ] }`, `[]`, `{}`, strings quoted like `push_inspect_str`, keys like `push_inspect_key`, one line at any depth); a string is raw when `top != 0`; null handle ⇒ `null`. The handle is passed like `push_json_value`'s (additive) |
+| `velt_rt_strbuf_push_inspect_json` | `(VeltStrBuf* b, const void* v, u8 top)` | what `console.log` prints for a `json.Value` (node `util.inspect` of the parsed value: `{ a: 1, b: [ 2, 'x' ] }`, `[]`, `{}`, strings quoted like `push_inspect_str`, keys like `push_inspect_key`); a string is raw when `top != 0`, and an array or object is then broken across lines like `inspect_layout`; null handle ⇒ `null`. The handle is passed like `push_json_value`'s (additive) |
 | `velt_rt_strbuf_inspect_begin` | `()` | start of a top-level value printed by `console.log`, `${x}` or `String(x)`: the `<ref *N>` numbering of cycles starts over (node numbers per argument), unless an object is being printed (additive) |
 | `velt_rt_strbuf_inspect_enter` | `(VeltStrBuf* b, const void* p) -> u8` | start printing the object at `p` (class instance or recursive object): `1`, or, when `p` is already being printed (a cycle), append `[Circular *N]` and return `0` (the caller skips it); `N` is the object's number for the whole top-level value (additive) |
 | `velt_rt_strbuf_inspect_leave` | `(VeltStrBuf* b)` | done with the innermost entered object; an object with a number gets the `<ref *N> ` prefix at the start of its text (additive) |
+| `velt_rt_strbuf_len` | `(const VeltStrBuf* b) -> u64` | byte length: where the next value's text starts (for `inspect_layout`) |
+| `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines (`breakLength` 80, 2-space indentation, arrays of more than six short entries in columns, long strings split at line breaks); a value of at most 71 bytes with fewer than six commas is left alone without being parsed. Emitted after each top-level `console.log` / `${}` value that can hold containers |
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |
 | `velt_rt_strbuf_drop` | `(VeltStrBuf* b)` | abandon an unfinished builder (exception path); zeroes it |
 
@@ -529,9 +531,14 @@ an uncounted copy or a static-form view of it): it is copied out before the buff
 
 **POC indexing model:** indexes and lengths are **byte offsets** (they agree with `s.length`). An
 offset that falls inside a multi-byte character is moved back to that character's first byte
-(`slice`) so results are always valid UTF-8. Where JS works per UTF-16 code unit (`split("")`,
-`replaceAll("", x)`), these work per Unicode scalar value. For ASCII text everything matches JS
-exactly. "Omitted" JS arguments are passed as the value given in Notes.
+(`slice`) so results are always canonical WTF-8. Where JS works per UTF-16 code unit
+(`split("")`, `replaceAll("", x)`), these work per code point. For ASCII text everything matches
+JS exactly; #377 phase 2b moves positions to code units. A string may hold lone surrogates
+(rt_abi.md "Strings"): searching, slicing, splitting, replacing, padding and repeating work on the
+WTF-8 bytes (a lone surrogate is one 3-byte code point, and the pieces of a built result join a
+high surrogate meeting a low one into the pair); case mapping keeps lone surrogates; number
+parsing and `localeCompare` read each as U+FFFD. "Omitted" JS arguments are passed as the value
+given in Notes.
 
 | Symbol | Signature | Notes |
 |---|---|---|

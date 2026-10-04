@@ -13,7 +13,11 @@ false true
 sum 10
 null null null null true
 b0 b1 b2
-9 9 [ 'f5', 'f4', 'f3', 'f2', 'f1', 'f0', 'b3', 'b4', 'b5' ]
+9 9 [
+  'f5', 'f4', 'f3',
+  'f2', 'f1', 'f0',
+  'b3', 'b4', 'b5'
+]
 f5 b5 f4 b4 null null
 b5 f5 7
 f4,f3,f2,f1,f0,b3,b4
@@ -22,8 +26,14 @@ f4,f3,f2,f1,f0,b3,b4
 [ 1, 2, 3 ]
 deque matches array model: true 211
 null null true
-8 8 -2 [ -2, 1, 3, 3, 5, 7, 8, 9 ]
-[ -2, 1, 3, 3, 5, 7, 8, 9 ]
+8 8 -2 [
+  -2, 1, 3, 3,
+   5, 7, 8, 9
+]
+[
+  -2, 1, 3, 3,
+   5, 7, 8, 9
+]
 9 8 6
 0 null
 Job { name: 'fix outage', priority: 9 }
@@ -41,4 +51,7 @@ true false [ 'apple', 'pear' ]
 apple 10
 pear 3
 0 []
-[ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ] [ [ 3, 'v2' ], [ 4, 'v10' ], [ 5, 'v7' ], [ 6, 'v4' ] ]
+[
+  1, 2, 3, 4,  5,
+  6, 7, 8, 9, 10
+] [ [ 3, 'v2' ], [ 4, 'v10' ], [ 5, 'v7' ], [ 6, 'v4' ] ]

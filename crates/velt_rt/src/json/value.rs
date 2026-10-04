@@ -11,13 +11,17 @@ use super::scan::{number_f64, Scanner, StrTok, SyntaxError};
 use super::walk::{walk_limited, Scalar, Sink};
 use std::sync::Arc;
 
+/// The text of a string value or an object key: canonical WTF-8, as a Velt string's bytes (it
+/// may hold lone surrogates, #377).
+pub type Text = Box<[u8]>;
+
 /// A parsed JSON value.
 #[derive(Debug)]
 pub enum Value {
     Null,
     Bool(bool),
     Number(f64),
-    String(Box<str>),
+    String(Text),
     Array(Vec<Arc<Value>>),
     Object(Object),
 }
@@ -67,19 +71,19 @@ impl Drop for Value {
     }
 }
 
-fn owned_text(src: &[u8], tok: StrTok) -> Box<str> {
-    let bytes = match tok {
-        StrTok::Borrowed(start, end) => src[start..end].to_vec(),
-        StrTok::Owned(v) => v,
-    };
-    // SAFETY: the source is UTF-8 (VeltStr invariant) and escapes decode to UTF-8.
-    unsafe { String::from_utf8_unchecked(bytes) }.into_boxed_str()
+/// A string token's text: a range of the source (a Velt string, canonical WTF-8) or decoded
+/// bytes (escapes decode to code points, never to a half of a pair), so canonical WTF-8.
+fn owned_text(src: &[u8], tok: StrTok) -> Text {
+    match tok {
+        StrTok::Borrowed(start, end) => src[start..end].into(),
+        StrTok::Owned(v) => v.into_boxed_slice(),
+    }
 }
 
 /// A container being built: its members so far and, for objects, the key awaiting its value.
 enum Frame {
     Array(Vec<Arc<Value>>),
-    Object(Object, Option<Box<str>>),
+    Object(Object, Option<Text>),
 }
 
 /// Tree-building sink.
@@ -99,7 +103,7 @@ impl Builder {
                 Frame::Array(items) => p.push_str(&format!("[{}]", items.len())),
                 Frame::Object(_, Some(key)) => {
                     p.push('.');
-                    p.push_str(key);
+                    p.push_str(&crate::str::wtf8::to_utf8_lossy(key));
                 }
                 Frame::Object(_, None) => {}
             }

@@ -51,12 +51,10 @@ pub fn install_hook() {
 /// `panic(msg)` and compiler-emitted checks: flush stdout, print `panic: <msg>`, exit 101.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_panic(msg: *const VeltStr) -> ! {
-    let bytes: &[u8] = if msg.is_null() {
-        b""
-    } else {
-        (*msg).as_bytes()
-    };
-    die(bytes)
+    if msg.is_null() {
+        die(b"")
+    }
+    die((*msg).text_lossy().as_bytes())
 }
 
 /// `process.exit(code)`: flush stdout and stop.

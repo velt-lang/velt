@@ -51,11 +51,10 @@ pub extern "C" fn velt_rt_json_value_new_number(n: f64) -> ValueHandle {
     new(Value::Number(n))
 }
 
-/// A string (copied).
+/// A string (copied, lone surrogates included).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_json_value_new_string(s: *const VeltStr) -> ValueHandle {
-    let text = String::from_utf8_lossy((*s).as_bytes()).into_owned();
-    new(Value::String(text.into_boxed_str()))
+    new(Value::String((*s).as_bytes().into()))
 }
 
 /// An empty array.
@@ -85,8 +84,7 @@ pub unsafe extern "C" fn velt_rt_json_value_set(
     let Some(Value::Object(obj)) = edit(slot) else {
         return 0;
     };
-    let key = String::from_utf8_lossy((*key).as_bytes()).into_owned();
-    obj.insert(key.into_boxed_str(), child);
+    obj.insert((*key).as_bytes().into(), child);
     1
 }
 
@@ -96,13 +94,13 @@ pub unsafe extern "C" fn velt_rt_json_value_delete(
     slot: *mut ValueHandle,
     key: *const VeltStr,
 ) -> u8 {
-    let key = String::from_utf8_lossy((*key).as_bytes());
+    let key = (*key).as_bytes();
     match (*slot).get() {
-        Some(Value::Object(obj)) if obj.get(&key).is_some() => {}
+        Some(Value::Object(obj)) if obj.get(key).is_some() => {}
         _ => return 0,
     }
     match edit(slot) {
-        Some(Value::Object(obj)) => obj.remove(&key) as u8,
+        Some(Value::Object(obj)) => obj.remove(key) as u8,
         _ => 0,
     }
 }

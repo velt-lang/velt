@@ -21,6 +21,7 @@
 //! reach another thread (spawned tasks, HTTP handlers, `shared`), see rt_abi.md for the cost.
 
 mod abi;
+mod crumbs;
 mod heap;
 mod invariants;
 mod join;
@@ -28,10 +29,11 @@ mod push;
 pub mod stats;
 #[cfg(test)]
 mod tests;
-mod wtf8;
+pub mod wtf8;
 
 pub use abi::*;
-pub use wtf8::Summary;
+pub use crumbs::{cmp_utf16, BytePos};
+pub use wtf8::{Summary, Wtf8};
 
 #[cfg(not(target_endian = "little"))]
 compile_error!("the VeltStr inline form assumes a little-endian target");
@@ -84,7 +86,7 @@ const _: () = assert!(std::mem::size_of::<VeltStr>() == 24 && std::mem::align_of
 impl std::fmt::Debug for VeltStr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // SAFETY: a VeltStr handed to Rust code is valid by the ABI contract.
-        let text = String::from_utf8_lossy(unsafe { self.as_bytes() });
+        let text = wtf8::to_utf8_lossy(unsafe { self.as_bytes() });
         let form = if self.is_inline() {
             "inline"
         } else if self.is_heap() {
@@ -168,6 +170,36 @@ impl VeltStr {
         if len > 0 {
             let bytes = std::slice::from_raw_parts(ptr, len);
             invariants::check_piece(bytes, Some(Summary { units, lone: 0 }));
+        }
+        VeltStr::borrowed_counted(ptr, len, units)
+    }
+
+    /// An owned copy of canonical WTF-8 whose UTF-16 length (`units`) the caller counted; its
+    /// lone surrogates are counted.
+    pub fn from_wtf8_units(bytes: &[u8], units: usize) -> VeltStr {
+        VeltStr::owned_counted(
+            bytes,
+            Summary {
+                units,
+                lone: wtf8::count_lone(bytes),
+            },
+        )
+    }
+
+    /// [`Self::borrowed`] for canonical WTF-8 whose UTF-16 length (`units`) the caller counted.
+    ///
+    /// # Safety
+    /// As for [`Self::borrowed`]; `units` must be the bytes' UTF-16 length.
+    pub unsafe fn borrowed_units(ptr: *const u8, len: usize, units: usize) -> VeltStr {
+        if len > 0 {
+            let bytes = std::slice::from_raw_parts(ptr, len);
+            invariants::check_piece(
+                bytes,
+                Some(Summary {
+                    units,
+                    lone: wtf8::LONE_UNKNOWN,
+                }),
+            );
         }
         VeltStr::borrowed_counted(ptr, len, units)
     }
@@ -295,6 +327,91 @@ impl VeltStr {
             heap::lone(self.ptr()) > 0
         } else {
             true
+        }
+    }
+
+    /// Is `self` well-formed UTF-16 (no lone surrogates), so its bytes are UTF-8? ASCII is
+    /// decided by the value alone (one compare), a heap string by its header's count; an inline
+    /// string flagged as possibly holding lone surrogates, a non-ASCII static string and a heap
+    /// count left unknown are counted (a heap buffer then records the count).
+    ///
+    /// # Safety
+    /// `self` must be valid.
+    #[inline]
+    pub unsafe fn is_well_formed(&self) -> bool {
+        let tag = self.tag();
+        if tag & INLINE != 0 {
+            tag & INLINE_LONE == 0 || wtf8::count_lone(self.as_bytes()) == 0
+        } else if (self.w1 >> 32) as u32 == self.w1 as u32 {
+            true
+        } else if self.w2 != 0 {
+            let n = heap::lone(self.ptr());
+            n == 0 || (n == wtf8::LONE_UNKNOWN && self.resolve_lone() == 0)
+        } else {
+            wtf8::count_lone(self.as_bytes()) == 0
+        }
+    }
+
+    /// Count the lone surrogates of a non-ASCII heap string whose header doesn't know them, and
+    /// record the count.
+    #[cold]
+    #[inline(never)]
+    unsafe fn resolve_lone(&self) -> usize {
+        let n = wtf8::count_lone(self.as_bytes());
+        heap::resolve_lone(self.ptr(), n);
+        n
+    }
+
+    /// The text as a `&str` when it is well-formed (zero-copy), else its WTF-8
+    /// ([`Wtf8`]): the caller either works on those bytes or converts them with
+    /// [`Wtf8::to_utf8_lossy`].
+    ///
+    /// # Safety
+    /// `self` must be valid.
+    #[inline]
+    pub unsafe fn text(&self) -> Result<&str, Wtf8<'_>> {
+        let bytes = self.as_bytes();
+        if self.is_well_formed() {
+            Ok(std::str::from_utf8_unchecked(bytes))
+        } else {
+            Err(Wtf8::new(bytes))
+        }
+    }
+
+    /// The text as UTF-8 for a place that needs well-formed text (output, the OS, a library):
+    /// borrowed when well-formed, else a copy with one U+FFFD per lone surrogate (the same
+    /// length, so `Buffer.byteLength(s)` is the output's length).
+    ///
+    /// # Safety
+    /// `self` must be valid.
+    #[inline]
+    pub unsafe fn text_lossy(&self) -> std::borrow::Cow<'_, str> {
+        match self.text() {
+            Ok(t) => std::borrow::Cow::Borrowed(t),
+            Err(w) => std::borrow::Cow::Owned(w.to_utf8_lossy()),
+        }
+    }
+
+    /// [`Self::text_lossy`] as an owned `String`.
+    ///
+    /// # Safety
+    /// `self` must be valid.
+    pub unsafe fn to_string_lossy(&self) -> String {
+        self.text_lossy().into_owned()
+    }
+
+    /// Append the text's UTF-8 to `out` (the output paths): the bytes as they are when
+    /// well-formed, else with one U+FFFD per lone surrogate, converted in `out`.
+    ///
+    /// # Safety
+    /// `self` must be valid.
+    #[inline]
+    pub unsafe fn extend_utf8(&self, out: &mut Vec<u8>) {
+        let bytes = self.as_bytes();
+        let at = out.len();
+        out.extend_from_slice(bytes);
+        if !self.is_well_formed() {
+            wtf8::replace_lone_in_place(&mut out[at..]);
         }
     }
 
@@ -449,6 +566,21 @@ impl VeltStr {
         text.extend_from_slice(&old[..at]);
         text.extend_from_slice(bytes);
         text.extend_from_slice(&old[at..]);
+        let s = VeltStr::from_bytes(&text);
+        self.release();
+        *self = s;
+    }
+
+    /// Replace the text from byte offset `at` to the end with `bytes` (rare: `console.log`'s
+    /// line breaking), moving the text to a new string.
+    ///
+    /// # Safety
+    /// As for [`Self::insert_bytes`].
+    pub unsafe fn replace_tail(&mut self, at: usize, bytes: &[u8]) {
+        let old = self.as_bytes();
+        let mut text = Vec::with_capacity(at + bytes.len());
+        text.extend_from_slice(&old[..at]);
+        text.extend_from_slice(bytes);
         let s = VeltStr::from_bytes(&text);
         self.release();
         *self = s;

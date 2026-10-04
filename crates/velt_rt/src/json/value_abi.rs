@@ -104,10 +104,7 @@ pub unsafe extern "C" fn velt_rt_json_value_get(
     let Some(Value::Object(obj)) = h.get() else {
         return Handle::NULL;
     };
-    let Ok(key) = std::str::from_utf8((*key).as_bytes()) else {
-        return Handle::NULL;
-    };
-    obj.get(key).map_or(Handle::NULL, new_handle)
+    obj.get((*key).as_bytes()).map_or(Handle::NULL, new_handle)
 }
 
 /// `v.at(i)`: new handle to array element `i` (or the `i`-th member value of an object), or null.
@@ -137,7 +134,7 @@ pub unsafe extern "C" fn velt_rt_json_value_key_at(
     };
     match to_index::<usize>(i).and_then(|i| obj.entry_at(i)) {
         Some((key, _)) => {
-            out.write(VeltStr::from_vec(key.as_bytes().to_vec()));
+            out.write(VeltStr::from_bytes(key));
             1
         }
         None => 0,
@@ -175,7 +172,7 @@ pub unsafe extern "C" fn velt_rt_json_value_as_bool(h: ValueHandle) -> u8 {
 pub unsafe extern "C" fn velt_rt_json_value_as_str(h: ValueHandle, out: *mut VeltStr) -> u8 {
     match h.get() {
         Some(Value::String(s)) => {
-            out.write(VeltStr::from_vec(s.as_bytes().to_vec()));
+            out.write(VeltStr::from_bytes(s));
             1
         }
         _ => 0,

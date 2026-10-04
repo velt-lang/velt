@@ -64,9 +64,9 @@ pub unsafe extern "C" fn velt_rt_child_output(
     spec: *const VeltCommand,
     input: *const VeltStr,
 ) -> *mut VeltFut {
-    let input = (*input).as_bytes().to_vec();
+    let input = (*input).to_string_lossy().into_bytes();
     let cmd = command(&*spec, &input);
-    let program = VeltStr::from_vec((*spec).program.as_bytes().to_vec());
+    let program = VeltStr::from_bytes((*spec).program.as_bytes());
     new_leaf(async move {
         let r = run(tokio::process::Command::from(cmd), input).await;
         let r = r.map(to_output).map_err(|e| spawn_error(&program, &e));
@@ -98,7 +98,7 @@ pub unsafe extern "C" fn velt_rt_child_output_sync(
     input: *const VeltStr,
     out: *mut IoResult<VeltOutput>,
 ) {
-    let input = (*input).as_bytes().to_vec();
+    let input = (*input).to_string_lossy().into_bytes();
     let r = run_sync(command(&*spec, &input), input);
     let r = match r {
         Ok(o) => IoResult::ok(to_output(o)),

@@ -1,0 +1,88 @@
+// console.log breaks a value too long for one line like node's util.inspect (#487): one entry
+// per line with 2-space indentation once the one-line form passes 80 columns, arrays of more
+// than six short entries in aligned columns (numbers right-aligned), long strings split at
+// their line breaks, and each argument laid out on its own. Output identical to node's.
+
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+class Tree {
+  name: string;
+  parent: Tree | null = null;
+  children: Tree[] = [];
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+interface Config {
+  name: string;
+  version: string;
+  tags: string[];
+  nested: { deep: boolean; level: number };
+}
+
+function main() {
+  console.log([1, 2, 3, 4, 5, 6]);
+  console.log([1, 2, 3, 4, 5, 6, 7]);
+  const nums: number[] = [];
+  for (let i = 0; i < 30; i++) {
+    nums.push(((i * 7919) % 1000) - 100);
+  }
+  console.log(nums);
+  console.log([1.5, -2.25, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  const words = ["apple", "fig", "kiwi", "plum", "pear", "lime", "date", "nut"];
+  console.log(words);
+  console.log(["a", "b", "c", "d", "e", "f", "a much longer string than all the others"]);
+  console.log(["日本語", "中文", "한국어", "abc", "défini", "x", "y", "z"]);
+
+  const c: Config = {
+    name: "velt",
+    version: "0.1.0",
+    tags: ["compiler", "typescript"],
+    nested: { deep: true, level: 2 },
+  };
+  console.log(c);
+  console.log("label:", c, "after");
+  console.log({ short: [1, 2], ok: true });
+
+  const m = new Map<string, Point>();
+  m.set("origin", new Point(0, 0));
+  m.set("far away", new Point(123456.789, -98765.4321));
+  m.set("third", new Point(1, 2));
+  console.log(m);
+  const points: Point[] = [];
+  for (let i = 0; i < 4; i++) {
+    points.push(new Point(i * 1000, (0 - i) * 2000));
+  }
+  console.log(points);
+
+  console.log({
+    text: "first line\nsecond line that is quite a bit longer than the first one\nthird line",
+  });
+  console.log(["it's\na quote on the first line, and a long second line that goes on and on"]);
+  console.log({
+    long: "a single long line without any line break, which node never splits at all",
+  });
+
+  const root = new Tree("root");
+  const kid = new Tree("kid");
+  kid.parent = root;
+  root.children.push(kid);
+  root.children.push(new Tree("second child with a long name"));
+  console.log(root);
+
+  const grid: number[][] = [];
+  for (let r = 0; r < 7; r++) {
+    grid.push([r, r * 10, r * 100]);
+  }
+  console.log(grid);
+  const maybe: Point[] | null = points;
+  console.log(maybe);
+}

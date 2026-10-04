@@ -11,7 +11,7 @@
 //! vector is compacted, so every delete costs O(1) amortized (plus O(log n) while the tree
 //! exists) and the vector stays at most twice the member count.
 
-use super::value::Value;
+use super::value::{Text, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
@@ -20,8 +20,8 @@ use positions::Positions;
 /// Objects with more keys than this get a hash index for `get` and duplicate-key detection.
 pub const INDEX_THRESHOLD: usize = 16;
 
-/// A member: key and value.
-pub type Entry = (Box<str>, Arc<Value>);
+/// A member: key (WTF-8, `value::Text`) and value.
+pub type Entry = (Text, Arc<Value>);
 
 /// The live members of an object in order (see [`Object::iter`]).
 pub type Entries<'a> = std::iter::Flatten<std::slice::Iter<'a, Option<Entry>>>;
@@ -39,7 +39,7 @@ pub struct Object {
 #[derive(Debug, Clone)]
 struct Index {
     /// Slot of every live key.
-    slots: HashMap<Box<str>, usize>,
+    slots: HashMap<Text, usize>,
     /// Slots before `head` are holes; `slots[head]` is live (or `head == slots.len()`).
     head: usize,
     /// Holes at or after `head` (never the last slot).
@@ -88,7 +88,7 @@ impl Object {
     }
 
     /// The value of `key`.
-    pub fn get(&self, key: &str) -> Option<&Arc<Value>> {
+    pub fn get(&self, key: &[u8]) -> Option<&Arc<Value>> {
         let slot = self.find(key)?;
         self.slots[slot].as_ref().map(|(_, v)| v)
     }
@@ -107,7 +107,7 @@ impl Object {
     }
 
     /// Slot of `key`.
-    fn find(&self, key: &str) -> Option<usize> {
+    fn find(&self, key: &[u8]) -> Option<usize> {
         match &self.index {
             Some(ix) => ix.slots.get(key).copied(),
             None => self
@@ -118,7 +118,7 @@ impl Object {
     }
 
     /// Insert, replacing the value of an existing key in place.
-    pub fn insert(&mut self, key: Box<str>, value: Arc<Value>) {
+    pub fn insert(&mut self, key: Text, value: Arc<Value>) {
         if let Some(slot) = self.find(&key) {
             if let Some((_, v)) = &mut self.slots[slot] {
                 *v = value;
@@ -144,7 +144,7 @@ impl Object {
     }
 
     /// Remove `key`, keeping the order of the others; whether it was there. O(1) amortized.
-    pub fn remove(&mut self, key: &str) -> bool {
+    pub fn remove(&mut self, key: &[u8]) -> bool {
         let Some(slot) = self.find(key) else {
             return false;
         };
@@ -309,7 +309,7 @@ mod positions {
 
         fn slots(live: &[bool]) -> Vec<Option<Entry>> {
             live.iter()
-                .map(|&l| l.then(|| (Box::from("k"), Arc::new(Value::Null))))
+                .map(|&l| l.then(|| (Box::from(&b"k"[..]), Arc::new(Value::Null))))
                 .collect()
         }
 

@@ -1,0 +1,89 @@
+// check: no leaks
+// A `with` callback taken from a field, an array, a `Map` value, a parameter or a generic
+// factory is accepted when no closure or function of its type crosses the lock (#457): each
+// is checked as if `with` called it, and none is changed.
+type Counter = { n: i64; name: string };
+
+class Store {
+  m: shared<Mutex<Counter>> = shared(new Mutex<Counter>({ n: 0, name: "a" }));
+  reducer: (s: Counter) => void = (s) => {
+    s.n += 1;
+  };
+
+  run(): i64 {
+    this.m.with(this.reducer);
+    this.m.with(this.reducer);
+    return this.m.with((s) => s.n);
+  }
+}
+
+class Registry {
+  handlers = new Map<string, (xs: i64[]) => void>();
+
+  on(name: string, h: (xs: i64[]) => void) {
+    this.handlers.set(name, h);
+  }
+
+  fire(m: shared<Mutex<i64[]>>, name: string) {
+    const h = this.handlers.get(name);
+    if (h != null) {
+      m.with(h);
+    }
+  }
+}
+
+function adder<T>(x: T): (xs: T[]) => void {
+  return (xs: T[]) => {
+    xs.push(x);
+  };
+}
+
+function applyAll(m: shared<Mutex<Counter>>, ops: ((s: Counter) => void)[]) {
+  for (const op of ops) {
+    m.with(op);
+  }
+}
+
+function main() {
+  console.log(new Store().run());
+
+  const m = shared(new Mutex<Counter>({ n: 0, name: "ops" }));
+  const ops: ((s: Counter) => void)[] = [
+    (s) => {
+      s.n += 5;
+    },
+    (s) => {
+      s.n *= 2;
+    },
+    (s) => {
+      s.n += 10;
+    },
+  ];
+  for (const op of ops) {
+    m.with(op);
+  }
+  applyAll(m, ops);
+  console.log(m.with((s) => s.n));
+
+  const counts = shared(new Mutex<i64[]>([1, 2]));
+  const add = [(xs: i64[]) => {
+    xs.push(3);
+  }];
+  counts.with(add[0]);
+  console.log(counts.with((xs) => xs.length));
+
+  const reg = new Registry();
+  reg.on("push", (xs: i64[]) => {
+    xs.push(xs.length * 10);
+  });
+  reg.on("pop", (xs: i64[]) => {
+    xs.pop();
+  });
+  reg.fire(counts, "push");
+  reg.fire(counts, "push");
+  reg.fire(counts, "pop");
+  reg.fire(counts, "missing");
+  const four = { f: adder<i64>(4) };
+  counts.with(four.f);
+  console.log(counts.with((xs) => xs.join(",")));
+}

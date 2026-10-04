@@ -24,6 +24,7 @@ use crate::str_array::VeltStrArray;
 use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use futures_util::future::{select, Either};
+use std::borrow::Cow;
 use std::pin::pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{ReadHalf, WriteHalf};
@@ -254,7 +255,7 @@ fn message_result(r: Result<Option<Message>, RedisErr>) -> IoResult<VeltRedisMes
 }
 
 unsafe fn owned_names(names: *const VeltStrArray) -> Vec<Vec<u8>> {
-    str_args(names).into_iter().map(<[u8]>::to_vec).collect()
+    str_args(names).into_iter().map(Cow::into_owned).collect()
 }
 
 /// `subscribe(urlOrClient, names)` → `IoResult<SubHandle>`: a new connection (to the same place

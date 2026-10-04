@@ -54,7 +54,7 @@ impl StdioMode {
 }
 
 unsafe fn text(s: &VeltStr) -> String {
-    String::from_utf8_lossy(s.as_bytes()).into_owned()
+    s.to_string_lossy()
 }
 
 unsafe fn strings(a: &VeltStrArray) -> Vec<String> {

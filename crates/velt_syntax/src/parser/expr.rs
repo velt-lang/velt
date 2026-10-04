@@ -127,10 +127,14 @@ impl<'a> Parser<'a> {
     fn parse_cond(&mut self) -> PResult<Expr> {
         let lo = self.cur_lo();
         let cond = self.parse_binary(0)?;
+        let question = self.pos;
         if !self.eat(Tok::Question) {
             return Ok(cond);
         }
-        let then = self.guarded(|p| p.parse_assign())?;
+        let then = match self.skip_speculated_branch(question) {
+            Some(skipped) => skipped,
+            None => self.guarded(|p| p.parse_assign())?,
+        };
         self.expect(Tok::Colon)?;
         let els = self.guarded(|p| p.parse_assign())?;
         let span = self.span_from(lo);
@@ -142,6 +146,24 @@ impl<'a> Parser<'a> {
             },
             span,
         ))
+    }
+
+    /// In a speculative parse (whose tree is discarded), the branch after the `?` at token
+    /// `question` when the lookahead that decided this is a conditional parsed it already: jumps
+    /// to its end and returns a placeholder. Parsing it again would cost each enclosing lookahead
+    /// the whole nested conditional, quadratic in the depth (`c2 ? c1 ? c0 ? x : y0 : y1 : y2`).
+    fn skip_speculated_branch(&mut self, question: usize) -> Option<Expr> {
+        if self.speculating == 0 {
+            return None;
+        }
+        let decided = *self.ternary_cache.get(&question)?;
+        if !decided.is_ternary || decided.relexes != self.relexes {
+            return None;
+        }
+        let lo = self.cur_lo();
+        (self.pos, self.prev_hi) = decided.then_end;
+        let span = self.span_from(lo);
+        Some(self.mk_expr(ExprKind::Lit(Lit::Null), span))
     }
 
     /// Returns (operator, precedence, number of tokens).

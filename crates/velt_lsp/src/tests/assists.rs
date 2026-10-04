@@ -263,6 +263,16 @@ fn workspace_symbols_search_open_programs_and_folders() {
     )
     .unwrap();
     std::fs::write(dir.join("target/skip.vlt"), "function areaSkipped() {}\n").unwrap();
+    // `.ts` and `.tsx` files are indexed in a package's `src/` and `tests/` only, not in the
+    // TypeScript frontend next to it.
+    std::fs::write(
+        dir.join("package.vlt"),
+        "export const pkg: Package = { name: \"ws\", version: \"0.1.0\" };\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("web/src")).unwrap();
+    std::fs::write(dir.join("web/src/app.ts"), "export function areaWeb() {}\n").unwrap();
+    std::fs::write(dir.join("web/tool.vlt"), "export function areaTool() {}\n").unwrap();
     std::fs::write(dir.join("src/shapes.ts"), "export function areaOfTs() {}\n").unwrap();
     std::fs::write(dir.join("src/card.tsx"), "export function areaCard() {}\n").unwrap();
     std::fs::write(
@@ -295,6 +305,7 @@ fn workspace_symbols_search_open_programs_and_folders() {
             ("areaCard".to_string(), "card.tsx".to_string()),
             ("areaOfSquare".to_string(), "geometry.vlt".to_string()),
             ("areaOfTs".to_string(), "shapes.ts".to_string()),
+            ("areaTool".to_string(), "tool.vlt".to_string()),
         ]
     );
     let members = client.request("workspace/symbol", json!({ "query": "scaled" }));

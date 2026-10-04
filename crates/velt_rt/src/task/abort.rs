@@ -129,7 +129,7 @@ pub unsafe extern "C" fn velt_rt_signal_free(h: Handle<Signal>) {
 /// `h` must be a live signal handle; `reason` a valid string.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_signal_abort(h: Handle<Signal>, reason: *const VeltStr) {
-    let text = String::from_utf8_lossy((*reason).as_bytes()).into_owned();
+    let text = (*reason).text_lossy().into_owned();
     h.obj().abort(&Reason {
         text,
         timeout_ms: None,
@@ -193,7 +193,7 @@ pub unsafe extern "C" fn velt_rt_signal_timeout(ms: i64, reason: *const VeltStr)
     let s = Arc::new(Signal::default());
     let weak = Arc::downgrade(&s);
     let reason = Reason {
-        text: String::from_utf8_lossy((*reason).as_bytes()).into_owned(),
+        text: (*reason).text_lossy().into_owned(),
         timeout_ms: Some(ms),
     };
     let delay = Duration::from_millis(ms.max(0) as u64);
