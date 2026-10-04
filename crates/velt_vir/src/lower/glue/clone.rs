@@ -1,6 +1,8 @@
 //! Clone glue bodies (`x.clone()`, owned copies of borrowed values): a bitwise copy first, then
 //! every part that owns resources is replaced by its own deep copy. A resource-owning class with
-//! a `clone()` of its own (`Cx::own_clone`, transfer.rs) is copied by that method.
+//! a `clone()` of its own (`Cx::own_clone`, transfer.rs) is copied by that method. While a value
+//! is transferred to another thread, a counted object referenced more than once is copied once
+//! (`find_copy`, glue/transfer.rs), so the copy keeps the graph's sharing and cycles.
 
 use velt_sema::hir::{PassMode, TyId, TyKind};
 
@@ -223,8 +225,18 @@ impl FnLower<'_, '_> {
         if self.cx.uncopyable_part(ty) == Some(ty) {
             self.panic_cannot_copy("a", ty);
         }
+        // During a transfer, an object referenced more than once is copied once.
+        let src = Operand::Copy(Place::local(obj));
+        let found = (self.cx.counted(ty) && self.cx.copied_across(ty)).then(|| {
+            self.find_copy(src.clone(), |lw, copy| {
+                lw.terminate(Terminator::Return(copy));
+            })
+        });
         let oa = self.cx.obj_agg(ty);
         let new = self.object_alloc(ty);
+        if let Some(found) = found {
+            self.record_copy(found, src, new.clone());
+        }
         let src = proj(&Place::local(obj), Proj::Deref(Ty::Agg(oa)));
         let np = self.operand_place(new.clone(), Ty::Ptr);
         let dst = proj(&np, Proj::Deref(Ty::Agg(oa)));

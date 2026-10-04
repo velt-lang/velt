@@ -17,6 +17,7 @@
 //! | DynDrop/DynClone/DynFormat | as Obj*, on the data pointer of an interface value |
 //! | DynShare  | `(data: ptr) -> ptr`               | data of another reference (share.rs)     |
 //! | Transfer  | `(p: ptr)`                         | make `*p` safe for another thread, in place (transfer.rs) |
+//! | TransferRoot | `(p: ptr)`                      | Transfer of a whole value: one copy per object reached twice (velt_rt `transfer_map`) |
 //! | ObjTransfer/DynTransfer | `(obj: ptr) -> ptr`  | the same for a class object / interface data (a tagged pointer: check for many threads, many.rs) |
 //! | ManyCheck | `(p: ptr)`                         | panic if `*p` holds a function value that cannot be called from several threads (many.rs) |
 //! | JsonWrite | `(buf: ptr, p: ptr)`               | append `JSON.stringify(*p)` to a builder |
@@ -69,6 +70,7 @@ pub(crate) enum Glue {
     DynFormat,
     DynShare,
     Transfer,
+    TransferRoot,
     ObjTransfer,
     DynTransfer,
     ManyCheck,
@@ -107,6 +109,7 @@ impl Glue {
             Glue::DynFormat => "dynformat",
             Glue::DynShare => "dynshare",
             Glue::Transfer => "transfer",
+            Glue::TransferRoot => "transferroot",
             Glue::ObjTransfer => "objtransfer",
             Glue::DynTransfer => "dyntransfer",
             Glue::ManyCheck => "manycheck",
@@ -120,9 +123,12 @@ impl Glue {
     fn sig(self) -> (Vec<Ty>, Ty) {
         use Ty::*;
         match self {
-            Glue::Drop | Glue::ObjDrop | Glue::DynDrop | Glue::Transfer | Glue::ManyCheck => {
-                (vec![Ptr], Unit)
-            }
+            Glue::Drop
+            | Glue::ObjDrop
+            | Glue::DynDrop
+            | Glue::Transfer
+            | Glue::TransferRoot
+            | Glue::ManyCheck => (vec![Ptr], Unit),
             Glue::Clone | Glue::Share => (vec![Ptr, Ptr], Unit),
             Glue::ObjClone
             | Glue::DynClone
@@ -162,6 +168,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::DynFormat => lw.dyn_format_body(a(0), args[1], ty),
             Glue::DynShare => lw.dyn_share_body(args[0], ty),
             Glue::Transfer => lw.transfer_body(args[0], ty),
+            Glue::TransferRoot => lw.transfer_root_body(args[0], ty),
             Glue::ObjTransfer => lw.obj_transfer_body(args[0], ty),
             Glue::DynTransfer => lw.dyn_transfer_body(args[0], ty),
             Glue::ManyCheck => lw.many_check_body(args[0], ty),

@@ -58,6 +58,7 @@ pub mod strbuf;
 pub mod task;
 pub mod timer;
 pub mod tls;
+pub mod transfer_map;
 pub mod ws;
 
 pub use crate::str::VeltStr;

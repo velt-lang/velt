@@ -1,0 +1,70 @@
+// check: no leaks
+// A value going to another task is copied like a structured clone (#352): an object it reaches
+// more than once is copied once, so `p.x === p.y` still holds in the task, whether the value is
+// still used afterwards (the whole graph is copied) or handed over (only what is still shared
+// is copied). Node's structuredClone prints the same.
+
+import { channel } from "velt:channel";
+
+class Pt {
+  n: number = 0;
+}
+
+class Pair {
+  x: Pt;
+  y: Pt;
+  constructor(p: Pt) {
+    this.x = p;
+    this.y = p;
+  }
+}
+
+interface Bag {
+  items: Pt[];
+  first: Pt;
+}
+
+async function check(p: Pair): Promise<void> {
+  console.log(p.x === p.y);
+  p.x.n = 1;
+  console.log(p.y.n);
+}
+
+async function checkBag(b: Bag): Promise<void> {
+  console.log(b.items[0] === b.items[1], b.items[1] === b.first, b.items[0] === b.items[2]);
+  b.first.n = 7;
+  console.log(b.items.map((p) => p.n));
+}
+
+async function handOver(p: Pair): Promise<number> {
+  p.y.n = 5;
+  return p.x.n;
+}
+
+async function main() {
+  // Still used afterwards: the whole graph is copied, sharing included.
+  const p = new Pair(new Pt());
+  await spawn(check(p));
+  console.log(p.x === p.y, p.x.n);
+
+  // Handed over: the pair moves, and the point it reaches twice is copied once.
+  const shared = new Pt();
+  const q = new Pair(shared);
+  console.log(await spawn(handOver(q)), shared.n);
+
+  // Arrays and object types.
+  const a = new Pt();
+  const bag: Bag = { items: [a, a, new Pt()], first: a };
+  await spawn(checkBag(bag));
+  console.log(bag.items.map((p) => p.n));
+
+  // A channel message.
+  const ch = channel<Pair>(1);
+  await ch.send(new Pair(new Pt()));
+  try {
+    const got = await ch.receive();
+    console.log(got?.x === got?.y);
+  } catch (e) {
+    console.log("closed");
+  }
+}

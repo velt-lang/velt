@@ -1,0 +1,65 @@
+// A cyclic object graph going to another task is copied as a cycle (#351); before, the copy
+// recursed until the stack overflowed. Class objects, a self-reference, recursive object types
+// and a cycle reached from a value that is handed over.
+
+class N {
+  v: number;
+  next: N | null = null;
+  constructor(v: number) {
+    this.v = v;
+  }
+}
+
+interface Link {
+  name: string;
+  next?: Link;
+}
+
+class Holder {
+  head: N;
+  constructor(head: N) {
+    this.head = head;
+  }
+}
+
+async function walk(a: N): Promise<void> {
+  console.log(a.v, a.next?.v, a.next?.next === a);
+  if (a.next !== null) {
+    a.next.v = 20;
+  }
+}
+
+async function selfLoop(c: N): Promise<boolean> {
+  return c.next === c;
+}
+
+async function links(l: Link): Promise<string> {
+  return `${l.name} ${l.next?.name} ${l.next?.next?.name}`;
+}
+
+async function held(h: Holder): Promise<number> {
+  return h.head.next?.next?.v ?? -1;
+}
+
+async function main() {
+  const a = new N(1);
+  const b = new N(2);
+  a.next = b;
+  b.next = a;
+  await spawn(walk(a));
+  console.log(a.next?.v, a.next?.next === a);
+
+  const c = new N(3);
+  c.next = c;
+  console.log(await spawn(selfLoop(c)), c.next === c);
+
+  let l: Link = { name: "x" };
+  l.next = { name: "y", next: l };
+  console.log(await spawn(links(l)));
+
+  const d = new N(4);
+  const e = new N(5);
+  d.next = e;
+  e.next = d;
+  console.log(await spawn(held(new Holder(d))));
+}
