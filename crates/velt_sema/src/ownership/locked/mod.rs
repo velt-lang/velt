@@ -18,11 +18,13 @@
 //!   the outside state keep their identity. A call that stores a part of an argument it also
 //!   modifies (`v.addTo(out)`) cannot copy it, and is an error.
 //!
-//! The callbacks are found by [`callbacks`]. The standard
+//! The callbacks are found by [`callbacks`]; one whose body is not found ([`opaque`]) is
+//! accepted when no function it may be crosses the lock ([`candidates`]). The standard
 //! library's own callbacks keep identity through stores: they move values out of the lock
 //! deliberately (std/prelude/promise.vlt `takeSettlement`).
 
 mod callbacks;
+mod candidates;
 mod kept;
 mod later;
 mod opaque;
@@ -44,12 +46,23 @@ use crate::visit::{self, VisitMut};
 pub(crate) fn check_locked(cx: &mut Ctx) {
     let mut res = values::Resolver::default();
     let found = callbacks::find(cx, &mut res);
-    opaque::check(cx, &found.opaque);
-    let callbacks = found.callbacks;
-    if callbacks.is_empty() && found.named.is_empty() {
+    if found.callbacks.is_empty() && found.named.is_empty() && found.opaque.is_empty() {
         return;
     }
     let summaries = summary::Summaries::compute(cx);
+    // Before the callbacks are rewritten: a candidate is checked as written. Only programs with
+    // an opaque callback pay for the candidates.
+    if !found.opaque.is_empty() {
+        let direct = found
+            .callbacks
+            .iter()
+            .filter(|c| c.1)
+            .map(|c| c.0)
+            .collect();
+        let mut cands = candidates::Candidates::new(&summaries, direct);
+        opaque::check(cx, &mut cands, &mut res, &found.opaque);
+    }
+    let callbacks = found.callbacks;
     let mut seen_named = HashSet::new();
     for &(g, span) in &found.named {
         if seen_named.insert((g, span)) {
@@ -187,18 +200,24 @@ impl VisitMut for FnValues<'_, '_> {
     }
 }
 
-/// Report the promises callback `c` makes from the locked value and transfer what it stores
-/// across the lock (module docs).
-/// `reported`: spans already reported (a closure may be checked with several callbacks).
-fn check_callback(
+/// What a callback does across the lock, found while its bodies are rewritten (transfers and
+/// copies inserted).
+struct Crossings {
+    made: Vec<promises::Made>,
+    unfixable: Vec<stores::Unfixable>,
+    inward: Vec<(crate::hir::LocalId, Span, bool)>,
+}
+
+/// Run the checks of callback `c` on its `bodies` (`take_bodies`), rewriting them.
+fn crossings(
     cx: &mut Ctx,
     s: &summary::Summaries,
-    res: &mut values::Resolver,
     c: DefId,
-    reported: &mut HashSet<Span>,
-) {
-    let (mut bodies, resolved, named) = take_bodies(cx, res, c);
-    let mut r = regions::Regions::new(c, &mut bodies);
+    bodies: &mut [(DefId, FnDef)],
+    resolved: HashSet<Span>,
+    named: HashMap<Span, Vec<DefId>>,
+) -> Crossings {
+    let mut r = regions::Regions::new(c, bodies);
     r.resolved = resolved;
     r.named = named;
     loop {
@@ -230,28 +249,51 @@ fn check_callback(
             inward.extend(i);
         }
     }
+    Crossings {
+        made,
+        unfixable,
+        inward,
+    }
+}
+
+/// Report the promises callback `c` makes from the locked value and transfer what it stores
+/// across the lock (module docs).
+/// `reported`: spans already reported (a closure may be checked with several callbacks).
+fn check_callback(
+    cx: &mut Ctx,
+    s: &summary::Summaries,
+    res: &mut values::Resolver,
+    c: DefId,
+    reported: &mut HashSet<Span>,
+) {
+    let (mut bodies, resolved, named) = take_bodies(cx, res, c);
+    let found = crossings(cx, s, c, &mut bodies, resolved, named);
     for (d, f) in bodies {
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
     }
-    for m in made {
-        let span = match &m {
-            promises::Made::Here(span, _)
-            | promises::Made::ByCall(span, _)
-            | promises::Made::Resource(span, _)
-            | promises::Made::Kept(span) => *span,
-        };
+    for m in found.made {
+        let span = made_span(&m);
         if !reported.insert(span) {
             continue;
         }
         promise_error(cx, m);
     }
-    for u in unfixable {
+    for u in found.unfixable {
         if !reported.insert(u.span) {
             continue;
         }
         unfixable_error(cx, u);
     }
-    later_uses(cx, res, c, inward, reported);
+    later_uses(cx, res, c, found.inward, reported);
+}
+
+fn made_span(m: &promises::Made) -> Span {
+    match m {
+        promises::Made::Here(span, _)
+        | promises::Made::ByCall(span, _)
+        | promises::Made::Resource(span, _)
+        | promises::Made::Kept(span) => *span,
+    }
 }
 
 /// The callback's results that are a part of the value owning a resource without `clone()`:
@@ -299,19 +341,19 @@ fn resource_results(
     out
 }
 
-/// Report a variable used after the callback `c` stored it into the value as a copy
-/// (`later`).
+/// Report a variable used after the callback `c` stored it into the value as a copy, or as
+/// itself (a resource without `clone()`, `later`).
 fn later_uses(
     cx: &mut Ctx,
     res: &mut values::Resolver,
     c: DefId,
-    inward: Vec<(crate::hir::LocalId, Span)>,
+    inward: Vec<(crate::hir::LocalId, Span, bool)>,
     reported: &mut HashSet<Span>,
 ) {
     let Some(f) = res.parent(cx, c) else { return };
     let at = cx.fn_info(c).span;
     let mut seen = HashSet::new();
-    for (l, stored) in inward {
+    for (l, stored, itself) in inward {
         if !seen.insert(l) {
             continue;
         }
@@ -321,10 +363,17 @@ fn later_uses(
         if !reported.insert(use_at) {
             continue;
         }
-        let name = match &cx.defs[f.0 as usize] {
-            Some(Def::Fn(body)) => body.body.locals[l.0 as usize].name.clone(),
+        let (name, ty) = match &cx.defs[f.0 as usize] {
+            Some(Def::Fn(body)) => {
+                let local = &body.body.locals[l.0 as usize];
+                (local.name.clone(), local.ty)
+            }
             _ => continue,
         };
+        if itself {
+            resource_used_later(cx, &name, ty, use_at, stored);
+            continue;
+        }
         cx.error(
             Diagnostic::error(
                 format!("`{name}` is still used after `with` stored it in the locked value, which got a copy"),
@@ -334,6 +383,21 @@ fn later_uses(
             .with_note(format!("changes to `{name}` from here on do not reach the locked value; use it through the lock (`m.with((v) => …)`), or store `{name}.clone()` to make the copy explicit")),
         );
     }
+}
+
+/// `name` (of type `ty`, owning a resource without `clone()`) is used at `use_at` after a
+/// callback stored it into the value as itself, at `stored` (#458).
+fn resource_used_later(cx: &mut Ctx, name: &str, ty: crate::hir::TyId, use_at: Span, stored: Span) {
+    let part = cx.uncopyable_part(ty).unwrap_or(ty);
+    let pn = cx.display(part);
+    cx.error(
+        Diagnostic::error(
+            format!("`{name}` is still used after `with` stored it in the locked value"),
+            use_at,
+        )
+        .with_label(stored, format!("stored here as itself: `{pn}` owns a resource and has no `clone()`, so it cannot be copied"))
+        .with_note(format!("other threads use it through the lock from here on, so using `{name}` outside it would share it without the lock; use it through the lock (`m.with((v) => …)`), or give `{pn}` a `clone()` method that duplicates the resource and store `{name}.clone()`")),
+    );
 }
 
 fn promise_error(cx: &mut Ctx, m: promises::Made) {
@@ -369,6 +433,14 @@ fn promise_error(cx: &mut Ctx, m: promises::Made) {
 }
 
 fn unfixable_error(cx: &mut Ctx, u: stores::Unfixable) {
+    if let stores::Cross::ResourceInPlace(ty) = u.kind {
+        let part = cx.uncopyable_part(ty).unwrap_or(ty);
+        let (t, pn) = (cx.display(ty), cx.display(part));
+        let msg = format!("this stores a `{t}` into the locked value, but it also stays where it is, and `{pn}` owns a resource without `clone()`, so it cannot be copied");
+        let note = format!("other threads would share it with this place outside the lock; give `{pn}` a `clone()` method that duplicates the resource, or move it into the value: store a variable holding it that is not used afterwards, or create it inside the callback");
+        cx.error(Diagnostic::error(msg, u.span).with_note(note));
+        return;
+    }
     let (msg, note) = match u.kind {
         stores::Cross::Changed { inward } => {
             let what = match inward {
@@ -384,6 +456,7 @@ fn unfixable_error(cx: &mut Ctx, u: stores::Unfixable) {
             "this call passes the locked value to a function whose body is not visible here, together with something outside the lock".to_string(),
             "the function might store a part of one in the other, shared by threads without the lock; call a function or a closure written here (`const f = (s) => ...`), or pass a copy (`x.clone()`)",
         ),
+        stores::Cross::ResourceInPlace(_) => return,
         stores::Cross::Resource => (
             "this would copy an object that owns a resource without `clone()` across the `with` lock".to_string(),
             "a part of the locked value stored outside it, returned from `with`, or kept by a promise made here must be copied; give the resource type a `clone()` method, or use it inside the callback",

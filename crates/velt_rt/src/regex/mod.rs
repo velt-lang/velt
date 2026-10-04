@@ -2,9 +2,11 @@
 //! (linear-time matching, no backtracking blowups).
 //!
 //! A compiled regex is an opaque `Arc` handle (`VeltRegex*`), so clones are cheap and a handle
-//! can be shared by concurrent tasks. Matching runs on the bytes of the (always valid UTF-8)
-//! subject, so every offset is a byte offset on a character boundary — the same indexing model
-//! as Velt strings (`slice`, `indexOf`). The `g`/`y` flags are iteration modes that std/regex
+//! can be shared by concurrent tasks. Matching runs on the WTF-8 bytes of the subject, so every
+//! offset is a byte offset on a code point boundary — the same indexing model as Velt strings
+//! (`slice`, `indexOf`). In Unicode mode the engine never matches the bytes of a lone surrogate
+//! (#377: `.` and negated classes accepting them is phase 5), and its empty-match stepping skips
+//! one as a whole 3-byte sequence. The `g`/`y` flags are iteration modes that std/regex
 //! implements; the runtime only needs the others.
 
 mod matches;
@@ -65,8 +67,8 @@ pub unsafe extern "C" fn velt_rt_regex_new(
     flags: *const VeltStr,
     out: *mut IoResult<RegexHandle>,
 ) {
-    let pattern = String::from_utf8_lossy(text(pattern));
-    let flags = String::from_utf8_lossy(text(flags));
+    let pattern = (*pattern).text_lossy();
+    let flags = (*flags).text_lossy();
     let r = match compile(&pattern, &flags) {
         Ok(obj) => IoResult::ok(Handle::from_arc(Arc::new(obj))),
         Err(msg) => IoResult::err(VeltErr::new(code::INVALID_INPUT, &msg)),
@@ -204,8 +206,11 @@ pub unsafe extern "C" fn velt_rt_regex_split(
 /// `RegExp.escape(s)`: `s` with every regex metacharacter escaped.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_regex_escape(s: *const VeltStr, out: *mut VeltStr) {
-    let s = String::from_utf8_lossy(text(s));
-    out.write(VeltStr::from_vec(regex::escape(&s).into_bytes()));
+    // Lone surrogates are no metacharacters: they stay as they are between escaped runs.
+    let escaped = crate::str::wtf8::map_runs(text(s), |run, out| {
+        out.extend_from_slice(regex::escape(run).as_bytes())
+    });
+    out.write(VeltStr::from_vec(escaped));
 }
 
 #[cfg(test)]

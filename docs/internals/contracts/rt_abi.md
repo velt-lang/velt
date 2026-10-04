@@ -21,7 +21,7 @@ package with a native library:
 | `velt_rt_native_api` | `() -> const VeltRtApi*` | the function table handed to `velt_native_init_<pkg>` |
 | `velt_rt_native_check` | `(int32_t rc, const VeltStr* package)` | `rc != 0`: prints that the package's native library failed to start, exits 1 |
 
-## Strings [M1; representation: semantics stage 1; UTF-16 counts: #377 phase 1]
+## Strings [M1; representation: semantics stage 1; UTF-16 counts: #377 phase 1; boundaries: phase 2a]
 Strings are immutable values (docs/internals/design/semantics.md): copying one never copies its bytes.
 ```c
 typedef struct { uint64_t w0, w1, w2; } VeltStr;   // size 24, align 8 (vir::STR_AGG); little-endian
@@ -30,7 +30,7 @@ The bytes are **canonical WTF-8**: UTF-8 that may also hold a lone surrogate as 
 (`ED A0..BF xx`), where a surrogate pair is always stored as its 4-byte code point (so byte
 equality is code-unit equality). Every value also carries its **UTF-16 length** (code units,
 [design/strings.md](../design/strings.md)); a string is ASCII exactly when its unit count equals
-its byte count. `length` and every position still count bytes until #377 phase 2.
+its byte count. `length` and every position still count bytes until #377 phase 2b.
 
 Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 
@@ -54,8 +54,9 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   - non-ASCII strings: `[crumbs: pointer (atomic)][lone: u64][count: u64 (atomic)][cap bytes]`.
     `lone` is the number of lone surrogates in the text, or all ones when unknown (the buffer
     absorbed text from a static string, which has no room to record its count; whoever needs the
-    number counts then); `crumbs` is reserved for the breadcrumb
-    table of #377 phase 2 and is null.
+    number counts then, and records it: the field is accessed atomically, relaxed); `crumbs` is
+    the breadcrumb table (below), null until a position in the string is first translated, and
+    freed with the buffer.
 
   Which layout a buffer has follows from the value (units != len), so retaining needs nothing but
   `ptr`, and release, growth and free derive the header from the value. An inline string has
@@ -89,6 +90,34 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   bytes are canonical WTF-8; the stored unit count is the text's; a non-ASCII heap buffer's
   `lone`, unless unknown, is its number of lone surrogates; an inline string fits its form, and has no lone
   surrogates when its `0x20` bit is clear.
+- **Well-formed text and output** (#377 phase 2a). A string is well-formed (valid UTF-16, so
+  its bytes are UTF-8) exactly when it has no lone surrogates: decided by the value for ASCII,
+  by the header's `lone` for a heap buffer, and by a scan of the bytes for a non-ASCII static
+  string, an inline string with its `0x20` bit set or an unknown `lone`. Inside the runtime,
+  `VeltStr::text()` gives a `&str` (zero-copy) only for well-formed text and the WTF-8 bytes
+  (`Wtf8`) otherwise; operations that search, slice, split or build text work on those bytes,
+  and pieces a result is assembled from join at their seams (`wtf8::push_joining`, or
+  `push_wtf8`). Wherever text leaves the program or needs UTF-8 (stdout and stderr, files,
+  sockets, WebSocket frames, HTTP bodies and headers, child-process arguments, environment and
+  stdin, paths, process environment and working directory, database text and parameters, regex
+  patterns, `TextEncoder`-style `u8[]` copies, panic and error messages, native packages) each
+  lone surrogate becomes **one** U+FFFD (`EF BF BD`, 3 bytes like the surrogate, so the output
+  is as long as the string's bytes); well-formed text is written as it is (a heap string's
+  buffer becomes an HTTP body without a copy). `JSON.stringify` writes a lone surrogate as a
+  lowercase `\udxxx` escape, and `console.log` of a string nested in a container (`inspect`
+  quoting) as `\udxxx`; a top-level string prints U+FFFD. Text from outside (files, sockets,
+  HTTP, stdin, child output, databases, `u8[]` decoding, native `str_new`, OS arguments,
+  environment, paths and directory entries) is decoded as UTF-8, where a surrogate's encoding
+  (`ED A0..BF xx`) is invalid: strict decoding refuses it, lossy decoding replaces it (WHATWG:
+  one U+FFFD per invalid byte), and nothing from outside ever makes a lone surrogate.
+- **Breadcrumbs** (`crumbs`, #377): for translating a code-unit index to a byte offset and back
+  in a non-ASCII heap string of more than 64 units, the runtime builds on first use a table of
+  `u32` byte offsets, one per 64th unit (top bit: that unit is the low half of the 4-byte
+  sequence at the offset), publishes it in the header with a compare-and-swap and frees it with
+  the buffer. A unique buffer that is appended to keeps its table (the prefix never changes) and
+  extends it when needed; a shared one publishes a longer copy and keeps the old table alive
+  until the buffer is freed. ASCII strings translate in O(1), other strings (short, inline,
+  static) by a scan. Phase 2b's code-unit positions use it; nothing does yet.
 - `VELT_RC_STATS=1` with a **debug** runtime prints `rc stats: retain=… release=… alloc=… free=…`
   to stderr at exit (retain = increments, release = decrements of shared buffers, alloc/free =
   heap buffers). Release runtimes compile the counters out; to count optimized code, link a

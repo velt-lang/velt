@@ -1,8 +1,11 @@
-mutex_with_opaque.vlt:33:10
-mutex_with_opaque.vlt:37:10
-mutex_with_opaque.vlt:44:12
-mutex_with_opaque.vlt:48:10
-error: the function passed to `with` comes from an object's field, so what it does with the locked `State` cannot be checked
-error: the function passed to `with` comes from an array element, so what it does with the locked `State` cannot be checked
-error: the function passed to `with` comes from a variable that is not bound only to closures or named functions (a `Map` value, a parameter of a closure or method, …), so what it does with the locked `State` cannot be checked
-pass a closure written here (`m.with((v) => { … })`) or a named function, whose body is checked
+mutex_with_opaque.vlt:24:17: error: the function passed to `with` comes from an object's field, and may be a closure that stores a part of the locked `State` outside it, or an outside object into it
+mutex_with_opaque.vlt:53:28: this closure takes `State`, like the function passed
+mutex_with_opaque.vlt:54:15: crosses the lock here
+mutex_with_opaque.vlt:60:10: error: the function passed to `with` comes from an array element, and may be a closure that stores
+mutex_with_opaque.vlt:65:12: error: the function passed to `with` comes from a variable that is not bound only to closures or named functions (a `Map` value, a parameter of a closure or method, …), and may be a closure that stores
+mutex_with_opaque.vlt:69:13: error: the function passed to `with` comes from an array element, and may be `fire`, which makes a promise from the locked `Job` that would run after the lock is released
+mutex_with_opaque.vlt:72:15: error: the function passed to `with` comes from an object's field, and may be a closure that stores a part of the locked `Inner` outside it
+mutex_with_opaque.vlt:43:10: this closure takes `Inner`, like the function passed
+every closure and function taking `State` is checked
+mutex_with_opaque.vlt:97:10: error: the function passed to `with` comes from an object's field, and may be a closure that stores a part of the locked `Cell` outside it
+mutex_with_opaque.vlt:84:10: this closure takes `Cell`, like the function passed

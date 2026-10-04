@@ -3,8 +3,15 @@
 //!
 //! POC indexing model: indexes and lengths are **byte offsets** (so they agree with `s.length`).
 //! An offset that falls inside a multi-byte character is moved to a character boundary, so every
-//! result stays valid UTF-8. Where JS works per UTF-16 code unit (`split("")`, `replaceAll("")`)
-//! these functions work per Unicode scalar value.
+//! result stays canonical WTF-8. Where JS works per UTF-16 code unit (`split("")`,
+//! `replaceAll("")`) these functions work per code point (#377 phase 2b moves all of this to code
+//! units).
+//!
+//! A string may hold lone surrogates (#377): [`text`] gives a `&str` only for well-formed text.
+//! Searching, slicing, splitting, replacing, padding and repeating work on the WTF-8 bytes
+//! (exact, and the seams of a built result join halves of a pair); case mapping keeps lone
+//! surrogates as they are; number parsing and collation read the text lossily (one U+FFFD per
+//! lone surrogate).
 //!
 //! Sub-strings of a static/borrowed string borrow from it, exactly like `velt_rt_str_clone` keeps
 //! static strings static; a sub-string that is the whole input shares it (one count increment);
@@ -19,15 +26,34 @@ pub mod search;
 pub mod slice;
 pub mod split;
 
-use crate::str::VeltStr;
+use crate::str::{VeltStr, Wtf8};
+use std::borrow::Cow;
 
-/// The text of a `VeltStr`.
+/// The text of a `VeltStr`: a `&str` when it is well-formed, else its WTF-8
+/// (`VeltStr::text`).
 ///
 /// # Safety
-/// `s` must be a valid `VeltStr`; its bytes are UTF-8 by the language invariant (every producer
-/// validates or builds UTF-8), which is what makes the unchecked conversion sound.
-unsafe fn text<'a>(s: *const VeltStr) -> &'a str {
-    std::str::from_utf8_unchecked((*s).as_bytes())
+/// `s` must be a valid `VeltStr`.
+#[inline]
+unsafe fn text<'a>(s: *const VeltStr) -> Result<&'a str, Wtf8<'a>> {
+    (*s).text()
+}
+
+/// The text of a `VeltStr`, each lone surrogate read as U+FFFD (number parsing, collation).
+///
+/// # Safety
+/// `s` must be a valid `VeltStr`.
+unsafe fn text_lossy<'a>(s: *const VeltStr) -> Cow<'a, str> {
+    (*s).text_lossy()
+}
+
+/// The WTF-8 bytes of a `VeltStr`.
+///
+/// # Safety
+/// `s` must be a valid `VeltStr`.
+#[inline]
+unsafe fn bytes<'a>(s: *const VeltStr) -> &'a [u8] {
+    (*s).as_bytes()
 }
 
 /// `s[start..end]` as a result string: borrowed if `s` is static/borrowed, shared if it is all
@@ -57,22 +83,33 @@ pub fn is_js_whitespace(c: char) -> bool {
         )
 }
 
-/// Largest char boundary `<= i` (and `<= s.len()`).
-fn floor_boundary(s: &str, i: usize) -> usize {
+/// Is `i` a code point boundary of the WTF-8 `s` (as `str::is_char_boundary`)?
+#[inline]
+fn is_boundary(s: &[u8], i: usize) -> bool {
+    i == 0 || i >= s.len() || !crate::str::wtf8::is_continuation(s[i])
+}
+
+/// Largest code point boundary `<= i` (and `<= s.len()`).
+fn floor_boundary(s: &[u8], i: usize) -> usize {
     let mut i = i.min(s.len());
-    while !s.is_char_boundary(i) {
+    while !is_boundary(s, i) {
         i -= 1;
     }
     i
 }
 
-/// Smallest char boundary `>= i` (and `<= s.len()`).
-fn ceil_boundary(s: &str, i: usize) -> usize {
+/// Smallest code point boundary `>= i` (and `<= s.len()`).
+fn ceil_boundary(s: &[u8], i: usize) -> usize {
     let mut i = i.min(s.len());
-    while !s.is_char_boundary(i) {
+    while !is_boundary(s, i) {
         i += 1;
     }
     i
+}
+
+/// Is the code point `cp` (a surrogate code point is not) JS whitespace?
+fn is_js_whitespace_cp(cp: u32) -> bool {
+    char::from_u32(cp).is_some_and(is_js_whitespace)
 }
 
 /// JS relative index (`slice`): negative counts from the end; result clamped to `0..=len`.

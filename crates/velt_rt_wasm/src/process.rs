@@ -7,8 +7,9 @@ use crate::result::{IoResult, VeltErr};
 use crate::str::VeltStr;
 use crate::str_array::VeltStrArray;
 
+/// A string argument as UTF-8 for the host (one U+FFFD per lone surrogate).
 unsafe fn text<'a>(s: *const VeltStr) -> std::borrow::Cow<'a, str> {
-    String::from_utf8_lossy((*s).as_bytes())
+    (*s).text_lossy()
 }
 
 /// `process.argv`: all arguments including the program path.

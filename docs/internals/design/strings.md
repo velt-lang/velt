@@ -3,9 +3,13 @@
 Status: decided (issue #377, from #326), revised after the design review on #377. The decisions
 are listed at the end. Phase 1 (the representation) is implemented: every string carries its
 UTF-16 unit count (`w1` = units|bytes, the inline non-ASCII form, the header on non-ASCII heap
-buffers, `push_wtf8`), with no visible change. Every length and position still counts **bytes**
-until phase 2 ([types](../../reference/types.md#strings),
-[rt_abi.md "Strings"](../contracts/rt_abi.md)).
+buffers, `push_wtf8`), with no visible change. Phase 2a (the boundaries) is implemented: lone
+surrogates are handled correctly everywhere (`text()` as `Result<&str, Wtf8>`, one U+FFFD per lone
+surrogate at every output, `inspect` and `JSON.stringify` escapes, the native `Cow`, seams that
+join in every producer, breadcrumbs and the position translation, the code-unit order as a
+function), with no visible change for well-formed text, the only text Velt code can make yet.
+Every length and position still counts **bytes** until phase 2b
+([types](../../reference/types.md#strings), [rt_abi.md "Strings"](../contracts/rt_abi.md)).
 
 ## Problem
 
@@ -377,15 +381,27 @@ One PR each:
    change. Moved to later phases because they only matter once lone surrogates exist (phase 2)
    or can be written (phase 4): `text()` returning `Result<&str, Wtf8>` and the lossy conversion
    at one U+FFFD per surrogate, the AST/HIR `Lit::Str` contract change.
-2. Semantics, with every boundary: code-unit positions, the ordering rule, the half-pair paths,
-   U+FFFD and `inspect` escaping on output, lossy OS input, JSON `\udXXX`, the native `Cow`, the
-   per-local cursor, the std migration (`csv`, `url`, `cli`), `Buffer.byteLength`, and difftest
-   over non-ASCII text. From phase 1: `text()` returning `Result<&str, Wtf8>` with one U+FFFD per
-   lone surrogate; breadcrumbs (the header's `crumbs` field is reserved and null); long
-   non-ASCII literals in the heap form (literals stay static until crumbs need a writable
-   header); and the producers that build a result in a `Vec` before making it a string
-   (`replace`, `repeat`, `padStart`/`padEnd`, JSON decoding) push their pieces through
-   `push_wtf8` so their seams join (they can't meet a lone surrogate before this phase).
+2. Semantics, with every boundary, in two steps:
+   - 2a (done), everything but the visible switch: `text()` returning `Result<&str, Wtf8>`; one
+     `wtf8_to_utf8_lossy` (one U+FFFD per lone surrogate) at every output and lossy site
+     (stdout/stderr, files, sockets, WebSocket frames, HTTP bodies and headers, child processes,
+     paths and the process environment, database text, regex patterns, panics, `u8[]` copies);
+     lossy OS input audited (it never yields a surrogate); `inspect` escaping (`[ '\ud83d' ]`) and
+     JSON `\udxxx`, with exact unit and lone counts for the escaped output; the native SDK's
+     `str_of` as a `Cow`; `json.Value` strings and keys as WTF-8; the producers that build a
+     result in a `Vec` (`replace`/`replaceAll`, regex `replace`, `repeat`,
+     `padStart`/`padEnd`) join halves at their seams (`wtf8::push_joining`); breadcrumbs and the
+     unit↔byte translation (`VeltStr::unit_to_byte`, `byte_to_unit`), and the ordering rule as
+     `cmp_utf16`, both checked against the model on every alphabet but not called by any
+     visible operation. Long non-ASCII literals stay static (a static string translates by a
+     scan; 2b decides whether indexed long literals move to the heap form). `String.fromCharCode`
+     of a surrogate and a lone `\uD83D` escape in `JSON.parse` still give U+FFFD, so Velt code
+     can't make a lone surrogate yet.
+   - 2b, the visible switch: code-unit `length` and positions (through the translation), the
+     ordering rule in `velt_rt_str_cmp`/`<`/`sort`, the half-pair paths, lone surrogates from
+     `fromCharCode`, `JSON.parse` escapes and slicing, the per-local cursor, the std migration
+     (`csv`, `url`, `cli`), `Buffer.byteLength`, `RUNTIME_ALPHABETS` = all alphabets, and
+     difftest over non-ASCII text.
 3. Strength reduction of index loops, and `for...of` as a decode loop.
 4. New APIs: `s[i]`, `at`, `charAt`, `codePointAt`, `String.fromCodePoint`, variadic
    `fromCharCode`, `isWellFormed`/`toWellFormed`, position arguments for

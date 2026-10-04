@@ -61,9 +61,11 @@ pub(crate) struct Parser<'a> {
     /// Parser diagnostics produced so far (the lexer's are collected by `finish`).
     pub(crate) diags: Vec<Diagnostic>,
     depth: u32,
-    /// Cached decision for `?` tokens (by token index): `true` = ternary, `false` = postfix try.
-    /// Ordered so that a re-lex drops the entries from its point on with one `split_off`.
-    ternary_cache: BTreeMap<usize, bool>,
+    /// Cached decision for `?` tokens (by token index). Ordered so that a re-lex drops the
+    /// entries from its point on with one `split_off`.
+    ternary_cache: BTreeMap<usize, Ternary>,
+    /// Number of re-lexes so far: a cached [`Ternary::then_end`] is stale after one.
+    relexes: u32,
     /// Set whenever `MAX_DEPTH` is hit, so speculation can tell "too deep" from "doesn't match".
     hit_depth_limit: bool,
     /// Nesting count of speculative parses. While non-zero, diagnostics are suppressed (a failed
@@ -74,6 +76,20 @@ pub(crate) struct Parser<'a> {
     /// A plain `.ts` file: `<T>x` there is TypeScript's type assertion, not JSX
     /// (`type_assertion`).
     pub(crate) plain_ts: bool,
+}
+
+/// What the lookahead at a `?` found (`question_is_ternary`).
+#[derive(Clone, Copy)]
+struct Ternary {
+    /// An expression and a `:` follow: a conditional, not the removed postfix `?`.
+    is_ternary: bool,
+    /// Token index and `prev_hi` where that expression ended. A speculative parse of the
+    /// conditional jumps there instead of parsing the branch again (`parse_cond`): otherwise each
+    /// enclosing lookahead parses a nested conditional's branch once more, quadratic in the depth.
+    then_end: (usize, u32),
+    /// [`Parser::relexes`] when it was decided: a re-lex since may have changed the tokens up to
+    /// `then_end`.
+    relexes: u32,
 }
 
 /// Parser position for backtracking (speculative parsing).
@@ -98,6 +114,7 @@ impl<'a> Parser<'a> {
             diags: Vec::new(),
             depth: 0,
             ternary_cache: BTreeMap::new(),
+            relexes: 0,
             hit_depth_limit: false,
             speculating: 0,
             paren_matches: ParenMatches::default(),
@@ -139,6 +156,7 @@ impl<'a> Parser<'a> {
     fn relex_jsx(&mut self) {
         let i = self.pos;
         self.lx.relex_jsx(i);
+        self.relexes += 1;
         self.paren_matches.forget_from(i);
         // `split_off` allocates even when nothing moves; usually nothing does.
         if self

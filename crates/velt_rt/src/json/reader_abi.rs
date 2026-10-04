@@ -12,8 +12,7 @@ use crate::str::VeltStr;
 pub unsafe extern "C" fn velt_rt_json_reader_new(src: *const VeltStr) -> *mut Reader {
     // The reader keeps the slice: `src` (and so its bytes, also when stored inline) must stay
     // put until `reader_free`, which generated decoders guarantee.
-    let bytes: &'static [u8] = std::mem::transmute::<&[u8], &'static [u8]>((*src).as_bytes());
-    Box::into_raw(Box::new(Reader::new(bytes)))
+    velt_rt_json_reader_new_with(src, 0, 0)
 }
 
 /// `new Reader(src)` with options: `flags` (1 = fail on object keys the target type does
@@ -25,7 +24,10 @@ pub unsafe extern "C" fn velt_rt_json_reader_new_with(
     max_depth: u32,
 ) -> *mut Reader {
     let bytes: &'static [u8] = std::mem::transmute::<&[u8], &'static [u8]>((*src).as_bytes());
-    Box::into_raw(Box::new(Reader::with_options(bytes, flags, max_depth)))
+    let lone_free = (*src).is_well_formed();
+    Box::into_raw(Box::new(Reader::with_source(
+        bytes, lone_free, flags, max_depth,
+    )))
 }
 
 /// Free the reader (not the source).
@@ -182,8 +184,8 @@ pub unsafe extern "C" fn velt_rt_json_error(
     path: *const VeltStr,
     out: *mut VeltStr,
 ) {
-    let expected = String::from_utf8_lossy((*expected).as_bytes());
-    let path = String::from_utf8_lossy((*path).as_bytes());
+    let expected = (*expected).text_lossy();
+    let path = (*path).text_lossy();
     out.write(VeltStr::from_vec(
         (*r).message(&expected, &path).into_bytes(),
     ));

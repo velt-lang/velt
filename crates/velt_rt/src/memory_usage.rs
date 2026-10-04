@@ -142,14 +142,26 @@ mod tests {
 
     /// Other tests of this binary allocate and free concurrently, so one reading can miss the
     /// growth (another test returned memory meanwhile); one of several attempts must see it.
+    /// The block comes from the system allocator, which maps a block this large fresh: the
+    /// global allocator may hand back pages that other tests just freed and that are still
+    /// resident, so touching them would not grow the RSS.
     #[test]
     fn rss_grows_when_memory_is_touched() {
+        use std::alloc::{GlobalAlloc, Layout, System};
+        let layout = Layout::from_size_align(64 << 20, 4096).unwrap();
         let mut seen = vec![];
         for _ in 0..5 {
             let before = velt_rt_memory_rss();
-            let block = std::hint::black_box(vec![1u8; 64 << 20]);
-            let after = velt_rt_memory_rss();
-            drop(block);
+            // SAFETY: a non-zero layout; every byte is written before the block is freed.
+            let after = unsafe {
+                let block = System.alloc(layout);
+                assert!(!block.is_null());
+                std::ptr::write_bytes(block, 1, layout.size());
+                std::hint::black_box(block);
+                let after = velt_rt_memory_rss();
+                System.dealloc(block, layout);
+                after
+            };
             if after > before {
                 return;
             }
