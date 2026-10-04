@@ -178,7 +178,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Can values of this type be printed / formatted (`console.log`, `${}`)? Everything but
-    /// function values, interface values, `void`, promises and shared values — also nested.
+    /// function values, interface values, `void` and shared values — also nested.
     pub(crate) fn printable(&mut self, t: TyId) -> bool {
         self.printable_depth(t, 0)
     }
@@ -192,8 +192,12 @@ impl FnCx<'_, '_> {
             | TyKind::Closure(_)
             | TyKind::Dyn(..)
             | TyKind::Unit
-            | TyKind::Promise(..)
             | TyKind::Shared(_) => return false,
+            // A promise prints its state and, once settled, its value (`void`: `undefined`).
+            TyKind::Promise(v, e) => [v, e]
+                .into_iter()
+                .filter(|&p| !matches!(self.cx.ty.kind(p), TyKind::Unit))
+                .collect(),
             TyKind::Adt(d, args) => {
                 let tys: Vec<TyId> = match &self.cx.info[d.0 as usize] {
                     crate::defs::DefInfo::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),

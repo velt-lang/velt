@@ -31,6 +31,7 @@ mod drop;
 mod eq;
 mod format;
 mod format_map;
+mod format_promise;
 mod literals;
 mod many;
 mod thunk;
