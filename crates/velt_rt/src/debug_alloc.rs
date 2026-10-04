@@ -94,6 +94,27 @@ fn env_flag_set() -> bool {
     false
 }
 
+/// Is the process exiting with its other threads already gone? On Windows, `ExitProcess`
+/// terminates every other thread wherever it is, then runs the thread-local destructors of the
+/// exiting thread (tokio's park state, ...), which free memory. A worker terminated while it held
+/// the quarantine's lock (likely when freeing a large block: evicting it checks every byte under
+/// the lock) left that lock held forever, and the exit hung (#297). Elsewhere `exit` runs no
+/// destructors after ending other threads.
+#[cfg(windows)]
+fn exit_in_progress() -> bool {
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn RtlDllShutdownInProgress() -> u8;
+    }
+    // SAFETY: a plain query of the loader's state.
+    unsafe { RtlDllShutdownInProgress() != 0 }
+}
+
+#[cfg(not(windows))]
+fn exit_in_progress() -> bool {
+    false
+}
+
 /// Front padding: header plus canaries, a multiple of the alignment.
 fn front(layout: Layout) -> usize {
     layout.align().max(HEADER)
@@ -174,6 +195,11 @@ impl<A: GlobalAlloc> DebugAlloc<A> {
         }
         (user.sub(HEADER) as *mut u64).write_unaligned(FREED);
         fill(user, FREE_FILL, size);
+        // At exit the block is left alone: the quarantine's lock may belong to a thread the OS
+        // has already ended (see `exit_in_progress`), and the memory goes away with the process.
+        if exit_in_progress() {
+            return;
+        }
         self.quarantine(p, size, layout.align());
     }
 
@@ -277,5 +303,72 @@ mod tests {
         assert!(!env_flag_set());
         std::env::remove_var("VELT_RT_DEBUG_ALLOC");
         assert!(!env_flag_set());
+    }
+
+    /// Set in the child process of [`exit_with_the_quarantine_locked_by_another_thread`].
+    #[cfg(windows)]
+    const EXIT_CHILD: &str = "VELT_RT_DEBUG_ALLOC_EXIT_CHILD";
+
+    /// #297: a thread that held the quarantine's lock when the process exited (on Windows the
+    /// OS ends it there) must not keep the exit's thread-local destructors waiting forever.
+    #[cfg(windows)]
+    #[test]
+    fn exit_with_the_quarantine_locked_by_another_thread() {
+        if std::env::var_os(EXIT_CHILD).is_some() {
+            exit_while_another_thread_holds_the_lock();
+        }
+        let exe = std::env::current_exe().expect("test executable");
+        let mut child = crate::abi_tests::http_bench::command(exe)
+            .args([
+                "--exact",
+                "debug_alloc::tests::exit_with_the_quarantine_locked_by_another_thread",
+            ])
+            .env(EXIT_CHILD, "1")
+            .env("VELT_RT_DEBUG_ALLOC", "1")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start the child");
+        // A hang guard, not a time limit: the child exits at once unless the exit deadlocks.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            if let Some(status) = child.try_wait().expect("child status") {
+                assert!(status.success(), "child: {status}");
+                return;
+            }
+            if std::time::Instant::now() > deadline {
+                let _ = child.kill();
+                panic!("the process hung at exit");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// Leaves a block for this thread's thread-local destructors to free, has another thread take
+    /// the quarantine's lock and keep it, and exits the way a program's `main` returning does
+    /// (`ExitProcess`; `std::process::exit` would first free stdout's buffer itself, while the
+    /// other thread still runs).
+    #[cfg(windows)]
+    fn exit_while_another_thread_holds_the_lock() -> ! {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn ExitProcess(code: u32) -> !;
+        }
+        thread_local! {
+            static FREED_AT_EXIT: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+        }
+        assert!(enabled(), "the child runs with VELT_RT_DEBUG_ALLOC=1");
+        FREED_AT_EXIT.with(|v| v.borrow_mut().extend_from_slice(&[1; 64]));
+        let (locked, is_locked) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _held = QUARANTINE.lock();
+            locked.send(()).expect("signal");
+            loop {
+                std::thread::park();
+            }
+        });
+        is_locked.recv().expect("the lock is taken");
+        // SAFETY: ends the process; nothing runs after it but the OS's exit sequence.
+        unsafe { ExitProcess(0) }
     }
 }

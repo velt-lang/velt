@@ -7,7 +7,7 @@ mod core;
 mod fake;
 mod fs;
 mod http;
-mod http_bench;
+pub(crate) mod http_bench;
 mod js_table;
 mod json_reader;
 mod json_union;

@@ -259,7 +259,7 @@ fn http_response_cost() {
 /// console (a CI agent, a background shell), the child gets a hidden console instead of opening a
 /// window of its own. In a terminal it shares the terminal's console as before, so Ctrl+C still
 /// reaches it.
-fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+pub(crate) fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
     let cmd = std::process::Command::new(program);
     #[cfg(windows)]
     let cmd = {
