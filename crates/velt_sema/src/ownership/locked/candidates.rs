@@ -16,6 +16,9 @@ use crate::defs::{BodyState, FnKind};
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, TyId, TyKind};
 use crate::visit;
 
+/// Concrete type arguments of a function, and whether every instantiation was found.
+type Instances = (Vec<Vec<TyId>>, bool);
+
 /// Each function's direct calls: the calling body and the type arguments.
 type CallIndex = HashMap<DefId, Vec<(DefId, Vec<TyId>)>>;
 
@@ -48,6 +51,8 @@ pub(super) struct Candidates<'s> {
     fns: Option<Vec<DefId>>,
     /// The result of [`Candidates::offender`] per parameter type.
     offenders: HashMap<TyId, Option<(DefId, Crossing)>>,
+    /// The result of [`Candidates::instances`] per function making a candidate.
+    instances: HashMap<DefId, Instances>,
 }
 
 impl<'s> Candidates<'s> {
@@ -59,6 +64,7 @@ impl<'s> Candidates<'s> {
             calls: None,
             fns: None,
             offenders: HashMap::new(),
+            instances: HashMap::new(),
         }
     }
 
@@ -174,12 +180,22 @@ impl<'s> Candidates<'s> {
     /// The concrete type arguments the function making `d` gets through its direct calls, and
     /// those of its callers while they still depend on type parameters; false when some
     /// instantiation is not found that way.
-    fn instances(&mut self, cx: &mut Ctx, res: &mut Resolver, d: DefId) -> (Vec<Vec<TyId>>, bool) {
+    fn instances(&mut self, cx: &mut Ctx, res: &mut Resolver, d: DefId) -> Instances {
+        let start = maker(cx, res, d);
+        if let Some(found) = self.instances.get(&start) {
+            return found.clone();
+        }
+        let found = self.find_instances(cx, res, start);
+        self.instances.insert(start, found.clone());
+        found
+    }
+
+    fn find_instances(&mut self, cx: &mut Ctx, res: &mut Resolver, start: DefId) -> Instances {
         let mut out = vec![];
         let mut complete = true;
         let mut seen = HashSet::new();
         // `None`: the maker's own type parameters.
-        let mut work: Vec<(DefId, Option<Vec<TyId>>)> = vec![(maker(cx, res, d), None)];
+        let mut work: Vec<(DefId, Option<Vec<TyId>>)> = vec![(start, None)];
         while let Some((f, so_far)) = work.pop() {
             if seen.len() > MAX_STEPS {
                 // A recursive function instantiating itself with ever larger types.

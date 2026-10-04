@@ -50,15 +50,18 @@ pub(crate) fn check_locked(cx: &mut Ctx) {
         return;
     }
     let summaries = summary::Summaries::compute(cx);
-    // Before the callbacks are rewritten: a candidate is checked as written.
-    let direct = found
-        .callbacks
-        .iter()
-        .filter(|c| c.1)
-        .map(|c| c.0)
-        .collect();
-    let mut cands = candidates::Candidates::new(&summaries, direct);
-    opaque::check(cx, &mut cands, &mut res, &found.opaque);
+    // Before the callbacks are rewritten: a candidate is checked as written. Only programs with
+    // an opaque callback pay for the candidates.
+    if !found.opaque.is_empty() {
+        let direct = found
+            .callbacks
+            .iter()
+            .filter(|c| c.1)
+            .map(|c| c.0)
+            .collect();
+        let mut cands = candidates::Candidates::new(&summaries, direct);
+        opaque::check(cx, &mut cands, &mut res, &found.opaque);
+    }
     let callbacks = found.callbacks;
     let mut seen_named = HashSet::new();
     for &(g, span) in &found.named {
