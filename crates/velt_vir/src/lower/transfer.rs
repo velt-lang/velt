@@ -247,6 +247,20 @@ impl FnLower<'_, '_> {
         Operand::Copy(t)
     }
 
+    /// A deep copy of `v` (type `ty`) that copies an object it reaches twice once, and a cycle
+    /// as a cycle, like a transfer (velt_rt `transfer_map`): an async closure's captures, which
+    /// each call (maybe on another task) gets a copy of.
+    pub(super) fn clone_keeping_identity(&mut self, v: Operand, ty: TyId) -> Operand {
+        if !self.cx.holds_counted(ty) {
+            return self.clone_value(v, ty);
+        }
+        self.cx.note_transfer(ty);
+        self.call_rt(Rt::XferBegin, vec![], None);
+        let copy = self.clone_value(v, ty);
+        self.call_rt(Rt::XferEnd, vec![], None);
+        copy
+    }
+
     /// Panic: a value of `ty` that the program still shares would have to be copied for
     /// another task, but it owns a resource without `clone()` (module docs).
     pub(super) fn panic_uncopyable(&mut self, ty: TyId) {

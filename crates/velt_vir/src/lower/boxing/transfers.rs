@@ -43,6 +43,11 @@ impl Cx<'_> {
                 // A `shared<T>` is not copied; a promise's result is transferred on its own.
                 TyKind::Shared(_) | TyKind::Promise(..) => {}
                 TyKind::Array(e) | TyKind::Option(e) => work.push(e),
+                // A class in a hierarchy may hold a subclass, whose fields are not known here.
+                TyKind::Adt(d, _) if self.is_class(t) && self.has_header(d) => {
+                    next.transfer_any = true;
+                    return;
+                }
                 TyKind::Adt(..) if self.is_class(t) => work.extend(self.adt_field_tys(t)),
                 _ => work.extend(self.part_types(t)),
             }

@@ -128,6 +128,7 @@ impl Interp<'_> {
             // Transfers copy as if each object were reached once (velt_rt's transfer_map is not
             // emulated): `find` answers "no transfer under way", `defer` "release it now".
             "velt_rt_xfer_begin" | "velt_rt_xfer_end" | "velt_rt_xfer_record" => 0,
+            "velt_rt_xfer_suspend" | "velt_rt_xfer_resume" => 0,
             "velt_rt_xfer_find" => 1,
             "velt_rt_xfer_defer" => 0,
             "velt_rt_futs_handled" => return Some(self.futs_handled(a[0], a[1], a[2]).map(|_| 0)),

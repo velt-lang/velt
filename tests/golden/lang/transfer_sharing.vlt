@@ -2,7 +2,9 @@
 // A value going to another task is copied like a structured clone (#352): an object it reaches
 // more than once is copied once, so `p.x === p.y` still holds in the task, whether the value is
 // still used afterwards (the whole graph is copied) or handed over (only what is still shared
-// is copied). Node's structuredClone prints the same.
+// is copied). Node's structuredClone prints the same. Also through a base-class field holding
+// a subclass, through a spawned function value, for an async closure's captures, and with a
+// class's own `clone()` (which runs outside the transfer, so its own copies stay distinct).
 
 import { channel } from "velt:channel";
 
@@ -36,6 +38,60 @@ async function checkBag(b: Bag): Promise<void> {
   console.log(b.items.map((p) => p.n));
 }
 
+class Base {
+  same(): boolean {
+    return false;
+  }
+}
+
+class Derived extends Base {
+  x: Pt;
+  y: Pt;
+  constructor(p: Pt) {
+    super();
+    this.x = p;
+    this.y = p;
+  }
+  override same(): boolean {
+    return this.x === this.y;
+  }
+}
+
+class Holder {
+  b: Base;
+  constructor(b: Base) {
+    this.b = b;
+  }
+}
+
+class Res {
+  p: Pt;
+  copies: string = "";
+  constructor(p: Pt) {
+    this.p = p;
+  }
+  [Symbol.dispose](): void {}
+  clone(): Res {
+    const r = new Res(this.p.clone());
+    const c = this.p.clone();
+    const d = this.p.clone();
+    r.copies = `${c === d}`;
+    return r;
+  }
+}
+
+async function viaBase(h: Holder): Promise<boolean> {
+  return h.b.same();
+}
+
+async function copiesMade(r: Res): Promise<string> {
+  return r.copies;
+}
+
+async function count(b: Bag): Promise<number> {
+  return b.items.length;
+}
+
 async function handOver(p: Pair): Promise<number> {
   p.y.n = 5;
   return p.x.n;
@@ -57,6 +113,29 @@ async function main() {
   const bag: Bag = { items: [a, a, new Pt()], first: a };
   await spawn(checkBag(bag));
   console.log(bag.items.map((p) => p.n));
+
+  // A subclass behind a base-class field.
+  const h = new Holder(new Derived(new Pt()));
+  console.log(await spawn(viaBase(h)), h.b.same());
+
+  // A class's own clone() makes two distinct copies, inside a transfer as anywhere else.
+  const res = new Res(new Pt());
+  console.log(await spawn(copiesMade(res)), res.p.n);
+
+  // A spawned function value: the copy made for the task is not copied again.
+  const f = count;
+  const many: Bag = { items: [], first: new Pt() };
+  for (let i: number = 0; i < 10; i++) {
+    const pt = new Pt();
+    many.items.push(pt);
+    many.items.push(pt);
+  }
+  console.log(await spawn(f(many)), many.items[0] === many.items[1]);
+
+  // An async closure's captures, copied for each call.
+  const pair = new Pair(new Pt());
+  const g = async (): Promise<boolean> => pair.x === pair.y;
+  console.log(await spawn(g()), await g());
 
   // A channel message.
   const ch = channel<Pair>(1);

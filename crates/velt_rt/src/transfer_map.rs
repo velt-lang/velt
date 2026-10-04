@@ -9,8 +9,11 @@
 //! asks `find` before copying a still-shared object. The sender's reference to an object that
 //! was replaced by its copy is released at `end` (`defer`), not at once, so every source in the
 //! map stays alive (its address cannot be reused) and keeps the count that made it a candidate
-//! for sharing until the transfer is done. Outside a transfer every call returns after reading
-//! one thread-local counter.
+//! for sharing until the transfer is done. A copy maps to itself as well, so a graph that was
+//! just copied and is transferred next (a function value's copy for a task) is not copied again.
+//! User code that runs during a transfer (a class's own `clone()`) runs outside it (`suspend` /
+//! `resume`): its own `.clone()` calls copy as they would anywhere else. Outside a transfer every
+//! call returns after reading one thread-local counter.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -57,6 +60,33 @@ thread_local! {
     /// Nested `begin`s: 0 outside a transfer (the fast check).
     static DEPTH: Cell<u32> = const { Cell::new(0) };
     static TRANSFER: RefCell<Transfer> = RefCell::new(Transfer::default());
+    /// Transfers suspended while user code runs, innermost last.
+    static SUSPENDED: RefCell<Vec<Transfer>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Set the transfer under way aside while user code runs (a class's own `clone()`): returns its
+/// depth for `resume`. In between, nothing is looked up or recorded in it, and a transfer the
+/// user code starts has a map of its own.
+#[no_mangle]
+pub extern "C" fn velt_rt_xfer_suspend() -> u32 {
+    let depth = DEPTH.with(|d| d.replace(0));
+    if depth > 0 {
+        let current = TRANSFER.with(|t| std::mem::take(&mut *t.borrow_mut()));
+        SUSPENDED.with(|s| s.borrow_mut().push(current));
+    }
+    depth
+}
+
+/// Continue the transfer set aside by the `suspend` that returned `depth`.
+#[no_mangle]
+pub extern "C" fn velt_rt_xfer_resume(depth: u32) {
+    if depth == 0 {
+        return;
+    }
+    if let Some(saved) = SUSPENDED.with(|s| s.borrow_mut().pop()) {
+        TRANSFER.with(|t| *t.borrow_mut() = saved);
+    }
+    DEPTH.with(|d| d.set(depth));
 }
 
 /// Start transferring a value (nested calls nest).
@@ -117,14 +147,16 @@ pub extern "C" fn velt_rt_xfer_find(object: *const u8) -> *mut u8 {
     })
 }
 
-/// `copy` is the copy of `object` in this transfer.
+/// `copy` is the copy of `object` in this transfer (and stays itself if it is reached again).
 #[no_mangle]
 pub extern "C" fn velt_rt_xfer_record(object: *const u8, copy: *const u8) {
     if DEPTH.with(Cell::get) == 0 {
         return;
     }
     TRANSFER.with(|t| {
-        t.borrow_mut().copies.insert(object as usize, copy as usize);
+        let mut t = t.borrow_mut();
+        t.copies.insert(object as usize, copy as usize);
+        t.copies.insert(copy as usize, copy as usize);
     });
 }
 
@@ -161,7 +193,16 @@ mod tests {
         velt_rt_xfer_record(a, a2);
         velt_rt_xfer_begin();
         assert_eq!(velt_rt_xfer_find(a), a2);
+        assert_eq!(velt_rt_xfer_find(a2), a2, "a copy is not copied again");
         assert!(velt_rt_xfer_find(b).is_null());
+        // User code runs outside the transfer, then it continues where it was.
+        let depth = velt_rt_xfer_suspend();
+        assert_eq!(velt_rt_xfer_find(a) as usize, NO_TRANSFER);
+        velt_rt_xfer_begin();
+        assert!(velt_rt_xfer_find(a).is_null(), "a transfer of its own");
+        unsafe { velt_rt_xfer_end() };
+        velt_rt_xfer_resume(depth);
+        assert_eq!(velt_rt_xfer_find(a), a2);
         assert_eq!(velt_rt_xfer_defer(b, count_drop), 1);
         unsafe { velt_rt_xfer_end() };
         assert_eq!(

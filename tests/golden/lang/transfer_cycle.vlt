@@ -1,6 +1,7 @@
 // A cyclic object graph going to another task is copied as a cycle (#351); before, the copy
-// recursed until the stack overflowed. Class objects, a self-reference, recursive object types
-// and a cycle reached from a value that is handed over.
+// recursed until the stack overflowed. Class objects, a self-reference, recursive object types,
+// a cycle reached from a value that is handed over, through a base-class field holding a
+// subclass, through a spawned function value and captured by an async closure.
 
 class N {
   v: number;
@@ -20,6 +21,38 @@ class Holder {
   constructor(head: N) {
     this.head = head;
   }
+}
+
+class Base {
+  loops(): boolean {
+    return false;
+  }
+}
+
+class Derived extends Base {
+  n: N;
+  constructor(n: N) {
+    super();
+    this.n = n;
+  }
+  override loops(): boolean {
+    return this.n.next?.next === this.n;
+  }
+}
+
+class Shelf {
+  b: Base;
+  constructor(b: Base) {
+    this.b = b;
+  }
+}
+
+async function viaBase(s: Shelf): Promise<boolean> {
+  return s.b.loops();
+}
+
+async function loops(a: N): Promise<boolean> {
+  return a.next?.next === a;
 }
 
 async function walk(a: N): Promise<void> {
@@ -62,4 +95,13 @@ async function main() {
   d.next = e;
   e.next = d;
   console.log(await spawn(held(new Holder(d))));
+
+  const s = new Shelf(new Derived(a));
+  console.log(await spawn(viaBase(s)), s.b.loops());
+
+  const f = loops;
+  console.log(await spawn(f(a)));
+
+  const g = async (): Promise<boolean> => a.next?.next === a;
+  console.log(await spawn(g()), await g());
 }
