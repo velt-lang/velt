@@ -72,6 +72,37 @@ pub(crate) enum BodyState {
     Done,
 }
 
+/// Where a function's result type comes from (docs/reference/functions.md "Return types").
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum RetSource {
+    /// Written, implied (`void` without a `return` that has a value), or already inferred.
+    Known,
+    /// The `return` expressions of the body (`ret` is `Error` until the body is checked).
+    Body,
+    /// An unannotated `override`: the result of the method it overrides, with these type args.
+    Base(DefId, Vec<TyId>),
+}
+
+/// A signature comparison that waits for an inferred result type: after the bodies are
+/// checked, the result of `def` (substituted with `args`) must be `want` (`body::returns`).
+#[derive(Clone)]
+pub(crate) struct RetCheck {
+    pub def: DefId,
+    pub args: Vec<TyId>,
+    pub want: RetWant,
+    pub span: Span,
+    pub message: String,
+}
+
+/// What a [`RetCheck`] compares with.
+#[derive(Clone)]
+pub(crate) enum RetWant {
+    /// A known type (an interface method's result).
+    Ty(TyId),
+    /// The result of another function, substituted (the base method an override overrides).
+    Of(DefId, Vec<TyId>),
+}
+
 /// Where a function's body comes from.
 #[derive(Clone, Copy)]
 pub(crate) enum FnSource<'m> {
@@ -159,6 +190,9 @@ pub(crate) struct FnInfo<'m> {
     pub params: Vec<ParamSig>,
     pub ret: TyId,
     pub ret_span: Option<Span>,
+    pub ret_source: RetSource,
+    /// The result is inferred from integers that behave like JS numbers (`expr::numbers`).
+    pub ret_inferred_int: bool,
     /// Pass modes are part of a dynamically dispatched ABI (vtable / interface / closure /
     /// extern): no ownership inference, moving out of params is an error.
     pub fixed_modes: bool,

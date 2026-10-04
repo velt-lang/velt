@@ -4,6 +4,7 @@
 mod assists;
 mod client;
 mod effects;
+mod imports;
 mod jsx;
 mod jsx_more;
 mod jsx_tags;

@@ -7,12 +7,16 @@
 //! of a narrowed local, tests the tag): a call between the check and the read may change the
 //! field (TS ignores that), and then the read panics instead of reading `null` as an object. Assigning the path (or a prefix of it, or
 //! its root local) drops the narrowing.
+//!
+//! `instanceof` narrows a field path to a subclass only when every field on it is `readonly`
+//! (`node.left instanceof Num`): the read is not checked again, so the object must not change
+//! between the test and the read.
 
 use velt_common::Span;
 use velt_syntax::ast;
 
 use super::{FnCx, LocalKind, Want};
-use crate::hir::{self, ExprKind as H, LocalId};
+use crate::hir::{self, ExprKind as H, LocalId, TyId};
 
 /// A narrowed field path: the root local, the field names, and the token local.
 pub(crate) struct FieldToken {
@@ -57,6 +61,92 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// `h`, the value of `object.prop`, as the subclass an `instanceof` test narrowed it to.
+    pub(crate) fn downcast_field(
+        &mut self,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        h: hir::Expr,
+    ) -> hir::Expr {
+        let token = self
+            .member_path(object, prop)
+            .and_then(|(root, path)| self.find_token(root, &path));
+        match token {
+            Some(t) if self.f.mutable_tests.contains(&t) => {
+                self.f.unnarrowed_reads.push(h.span);
+                h
+            }
+            Some(t) => {
+                self.note_refused_read(t, h.span);
+                self.downcast_narrowed(t, h)
+            }
+            None => h,
+        }
+    }
+
+    /// `e instanceof C` on a field path that cannot be narrowed (not all `readonly`): later reads
+    /// of it get a note when they fail (`unnarrowed_note`).
+    pub(crate) fn note_mutable_test(&mut self, e: &ast::Expr) {
+        if let Some(token) = self.field_token(e) {
+            self.f.mutable_tests.push(token);
+        }
+    }
+
+    /// A note for a failed member access on `recv` (at `span`) if `recv` is a field that an
+    /// `instanceof` test could not narrow.
+    pub(crate) fn unnarrowed_note(&self, span: Span) -> Option<&'static str> {
+        self.f.unnarrowed_reads.contains(&span).then_some(
+            "`instanceof` does not narrow this field: it is not `readonly`, so it could change between the test and this read; copy it into a local and test the local",
+        )
+    }
+
+    /// The token and the type (as narrowed so far) of `e` when it is a path of `readonly` class
+    /// fields of a local (`node.left.right`), and not of a union type.
+    pub(crate) fn readonly_field_path(&mut self, e: &ast::Expr) -> Option<(LocalId, TyId)> {
+        let (root, path) = self.field_path(e)?;
+        let mut t = self.narrowed_local_ty(root);
+        for k in 0..path.len() {
+            let (d, _) = self.cx.class_of(t)?;
+            let a = self.cx.adt(d)?;
+            if !a.fields.iter().any(|f| f.name == path[k] && f.readonly) {
+                return None;
+            }
+            t = self.cx.field_of(t, &path[k])?.1;
+            let narrowed = self.find_token(root, &path[..=k]);
+            if let Some(c) = narrowed.and_then(|tk| self.narrowed_class(tk)) {
+                if self.downcast_applies(t, c) {
+                    t = c;
+                }
+            }
+        }
+        let u = self.cx.ty.opt_payload(t).unwrap_or(t);
+        if self.cx.union_def(u).is_some() {
+            return None;
+        }
+        Some((self.field_token(e)?, t))
+    }
+
+    /// The type local `l` reads as here (null, union member and subclass narrowing applied).
+    fn narrowed_local_ty(&mut self, l: LocalId) -> TyId {
+        let mut t = self.local_ty(l);
+        if let Some(p) = self.cx.ty.opt_payload(t) {
+            if !self.is_narrowed(l) {
+                return t;
+            }
+            t = p;
+        }
+        if let Some(members) = self.cx.union_members(t) {
+            match self.allowed_members(l).as_deref() {
+                Some([v]) => t = members[*v as usize],
+                _ => return t,
+            }
+        }
+        match self.narrowed_class(l) {
+            Some(c) if self.downcast_applies(t, c) => c,
+            _ => t,
+        }
+    }
+
     /// Assigning field path `e` (or its root local) drops the narrowing of it and every path
     /// below it.
     pub(crate) fn unnarrow_fields(&mut self, e: &ast::Expr) {
@@ -79,6 +169,14 @@ impl FnCx<'_, '_> {
     pub(crate) fn field_tokens_of(&self, l: LocalId) -> Vec<LocalId> {
         let tokens = self.f.field_tokens.iter();
         tokens.filter(|t| t.root == l).map(|t| t.token).collect()
+    }
+
+    /// The root local and field names of field token `token`.
+    pub(crate) fn token_path(&self, token: LocalId) -> Option<(LocalId, &[String])> {
+        let mut tokens = self.f.field_tokens.iter();
+        tokens
+            .find(|t| t.token == token)
+            .map(|t| (t.root, t.path.as_slice()))
     }
 
     fn find_token(&self, root: LocalId, path: &[String]) -> Option<LocalId> {

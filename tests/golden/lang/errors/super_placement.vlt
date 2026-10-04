@@ -1,0 +1,119 @@
+// `super(...)` must run exactly once on every path, before `this` is used: as a statement of its
+// own in a derived constructor (not inside `if`, a loop, a ternary or a closure), with arguments
+// that do not use `this` or `super.m()`. Statements before it may not use `this` or return
+// (TypeScript's rules); they may come first also in a class with initialized fields or parameter
+// properties (`super_statements.vlt`).
+class A {
+  x: i64;
+  constructor(x: i64) {
+    this.x = x;
+  }
+  get(): i64 {
+    return this.x;
+  }
+}
+
+class InIf extends A {
+  constructor(c: bool) {
+    if (c) {
+      super(1);
+    }
+  }
+}
+
+class InLoop extends A {
+  constructor(n: i64) {
+    while (n > 0) {
+      super(n);
+    }
+  }
+}
+
+class InClosure extends A {
+  constructor() {
+    const f = () => super(1);
+    f();
+  }
+}
+
+class Twice extends A {
+  constructor() {
+    super(1);
+    super(2);
+  }
+}
+
+class ThisBeforeSuper extends A {
+  constructor() {
+    console.log(this.x);
+    super(1);
+  }
+}
+
+class ReturnBeforeSuper extends A {
+  constructor(c: bool) {
+    if (c) {
+      return;
+    }
+    super(1);
+  }
+}
+
+class UsesThis extends A {
+  y: i64 = 0;
+  constructor() {
+    super(this.y);
+  }
+}
+
+class UsesSuperMethod extends A {
+  constructor() {
+    super(super.get());
+  }
+}
+
+class Ternary extends A {
+  constructor(c: bool) {
+    c ? super(1) : super(2);
+  }
+}
+
+class NotDerived {
+  constructor() {
+    super();
+  }
+}
+
+class Missing extends A {
+  constructor() {}
+}
+
+class NoCtor {
+  n: i64 = 0;
+}
+
+class MissingNoBaseCtor extends NoCtor {
+  constructor() {
+    console.log("no super");
+  }
+}
+
+class Late extends A {
+  constructor(n: i64) {
+    if (n < 0) {
+      throw new Error("negative");
+    }
+    super(n);
+  }
+}
+
+class Fine extends A {
+  constructor(c: bool) {
+    super(c ? 1 : 2);
+    this.x += 1;
+  }
+}
+
+function main() {
+  console.log(new Fine(true).x);
+}

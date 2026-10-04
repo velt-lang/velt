@@ -1,6 +1,6 @@
 //! Completion. In JSX: tags and attributes ([`jsx_completion`]). After `receiver.`: the members
 //! of the receiver's type (`this` → the enclosing class). Elsewhere: locals in scope, the module's items, imported names, prelude items, built-in
-//! globals and keywords. The receiver is read from the text (while typing `x.` the statement usually
+//! globals and keywords, which auto-import extends ([`crate::imports`]). The receiver is read from the text (while typing `x.` the statement usually
 //! does not parse) and looked up among the names sema sees at the cursor; the AST index answers
 //! when sema has no analysis or does not know the name.
 
@@ -39,40 +39,68 @@ const BUILTINS: &[&str] = &[
     "Map",
 ];
 
-/// Completion items at byte `offset` of the document; with `jsx_only` (completion triggered by
-/// `<`), nothing outside JSX.
-pub fn complete(analysis: &Analysis, offset: u32, jsx_only: bool) -> Vec<CompletionItem> {
-    let text = analysis.text();
-    let offset = (offset as usize).min(text.len());
-    let word_start = text[..offset]
+/// What completion offers at a cursor.
+pub struct Completion {
+    /// The items.
+    pub items: Vec<CompletionItem>,
+    /// Where the identifier being typed starts, when the cursor is where a name is expected
+    /// (not after `.`, not in JSX): auto-import may add names that are not imported yet.
+    pub name_start: Option<usize>,
+}
+
+/// Where the identifier ending at byte `offset` of `text` starts (`offset` if there is none).
+pub fn word_start(text: &str, offset: usize) -> usize {
+    text[..offset]
         .char_indices()
         .rev()
         .take_while(|(_, c)| is_ident_char(*c))
         .last()
-        .map_or(offset, |(i, _)| i);
+        .map_or(offset, |(i, _)| i)
+}
+
+/// Completion at byte `offset` of the document; with `jsx_only` (completion triggered by `<`),
+/// nothing outside JSX.
+pub fn complete(analysis: &Analysis, offset: u32, jsx_only: bool) -> Completion {
+    let text = analysis.text();
+    let offset = (offset as usize).min(text.len());
+    let word_start = word_start(text, offset);
     let at = word_start as u32;
     let jsx_start = jsx_completion::word_start(text, offset, word_start);
+    let other = |items| Completion {
+        items,
+        name_start: None,
+    };
     if let Some(ctx) = jsx_completion::context(text, jsx_start) {
         let replace = (jsx_start < word_start).then_some((jsx_start as u32, offset as u32));
-        return jsx_completion::items(analysis, &ctx, jsx_start as u32, replace);
+        return other(jsx_completion::items(
+            analysis,
+            &ctx,
+            jsx_start as u32,
+            replace,
+        ));
     }
     if jsx_only {
-        return vec![];
+        return other(vec![]);
     }
     if let Some(receiver) = receiver_before(&text[..word_start]) {
         if let Some(items) = sema_query::member_items(analysis, receiver, at) {
-            return items;
+            return other(items);
         }
         let info = scope::at_offset(analysis, at);
-        return member_items(analysis, receiver, &info, at);
+        return other(member_items(analysis, receiver, &info, at));
     }
     let mut from_sema = sema_query::scope_items(analysis, at);
-    if from_sema.is_empty() {
+    let items = if from_sema.is_empty() {
         let info = scope::at_offset(analysis, at);
-        return scope_items(analysis, &info);
+        scope_items(analysis, &info)
+    } else {
+        from_sema.extend(namespace_items(analysis));
+        with_builtins(from_sema)
+    };
+    Completion {
+        items,
+        name_start: Some(word_start),
     }
-    from_sema.extend(namespace_items(analysis));
-    with_builtins(from_sema)
 }
 
 /// The document's namespace imports (`import * as ns`), which sema does not list as names.
@@ -211,7 +239,8 @@ fn decl_item(analysis: &Analysis, d: &Decl) -> CompletionItem {
     item(&d.name, kind(d), &signature::decl(analysis, d))
 }
 
-fn kind(d: &Decl) -> CompletionItemKind {
+/// The completion kind of a declaration.
+pub(crate) fn kind(d: &Decl) -> CompletionItemKind {
     match &d.kind {
         DeclKind::Item(item) => match &item.kind {
             ast::ItemKind::Function(_) | ast::ItemKind::ExternFn(_) => CompletionItemKind::FUNCTION,

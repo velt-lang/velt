@@ -1,0 +1,13 @@
+// An error escaping `main` ends the process at once, also while a server is listening (like an
+// uncaught exception in Node): the listening server used to keep the failed program alive.
+import { serve, Request, Response } from "velt:http";
+
+class Failed extends Error {}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return Response.text("never asked");
+  });
+  console.log(`listening: ${server.port > 0}`);
+  throw new Failed("main failed while serving");
+}

@@ -26,6 +26,8 @@ fn place_path(e: &Expr) -> Option<(LocalId, Path)> {
             p.push(VARIANT);
             Some((l, p))
         }
+        // The same object, seen as its subclass.
+        ExprKind::Downcast(base) => place_path(base),
         _ => None,
     }
 }
@@ -58,6 +60,7 @@ fn outer_mode(e: &Expr) -> UseMode {
         | ExprKind::Field { mode: m, .. }
         | ExprKind::UnwrapSome(_, m)
         | ExprKind::UnwrapVariant { mode: m, .. } => m,
+        ExprKind::Downcast(ref x) => outer_mode(x),
         _ => UseMode::Borrow,
     }
 }
@@ -91,7 +94,8 @@ impl Moves<'_> {
             ExprKind::Local(..)
             | ExprKind::Field { .. }
             | ExprKind::UnwrapSome(..)
-            | ExprKind::UnwrapVariant { .. } => self.projection(e, st),
+            | ExprKind::UnwrapVariant { .. }
+            | ExprKind::Downcast(_) => self.projection(e, st),
             ExprKind::Index { base, index, .. } => {
                 if !self.place(base, UseMode::Borrow, st) {
                     self.expr(base, st);
@@ -195,7 +199,8 @@ impl Moves<'_> {
         }
         if let ExprKind::Field { base, .. }
         | ExprKind::UnwrapSome(base, _)
-        | ExprKind::UnwrapVariant { expr: base, .. } = &e.kind
+        | ExprKind::UnwrapVariant { expr: base, .. }
+        | ExprKind::Downcast(base) = &e.kind
         {
             self.expr(base, st);
         }

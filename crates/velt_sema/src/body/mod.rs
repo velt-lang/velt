@@ -34,8 +34,10 @@
 //! - **Ternary** → `ExprKind::If`. Statement `if` without braces is a one-statement block.
 
 mod assigned;
+mod closure_assigned;
 mod const_borrow;
 mod consume;
+mod ctor;
 mod defaults;
 mod driver;
 pub(crate) mod expr;
@@ -51,6 +53,8 @@ mod nested_pattern;
 mod pattern;
 mod pattern_defaults;
 pub(crate) mod places;
+pub(crate) mod recursion;
+pub(crate) mod returns;
 mod stmt;
 pub(crate) mod switch;
 mod using;
@@ -125,6 +129,11 @@ pub(crate) struct Scope {
     pub narrowed: Vec<LocalId>,
     /// Union locals narrowed to some of their variants inside this scope (see `narrow::Fact`).
     pub members: Vec<(LocalId, Vec<u32>)>,
+    /// Class (or interface) locals known by `instanceof` to hold this subclass inside this scope.
+    pub classes: Vec<(LocalId, TyId)>,
+    /// Facts not assumed inside this scope: their locals are assigned by closures
+    /// (`closure_assigned`).
+    pub refused: Vec<(LocalId, closure_assigned::Refused)>,
     /// Source offset where the scope ends (its locals' visibility, for `crate::ide`).
     pub hi: u32,
 }
@@ -150,8 +159,10 @@ pub(crate) struct Frame {
     pub loops: Vec<LoopCx>,
     /// Loops and `switch`es entered so far (numbers synthesized labels).
     pub loop_count: u32,
-    /// Declared/expected return type; `None` while a closure's return type is being inferred.
+    /// Declared/expected return type; `None` while it is inferred from the body's `return`s
+    /// (recorded in `returns`).
     pub ret: Option<TyId>,
+    pub returns: returns::Returns,
     pub captures: Vec<CaptureCx>,
     pub escaping: bool,
     /// Body of an `async` function / arrow: `await` is allowed.
@@ -196,6 +207,13 @@ pub(crate) struct Frame {
     pub field_tokens: Vec<field_narrow::FieldToken>,
     /// `const`s bound by reference (`const_borrow`).
     pub const_refs: std::collections::HashSet<LocalId>,
+    /// Tokens of field paths tested by `instanceof` that are not narrowed (a field on the path
+    /// is not `readonly`), and the reads of them since (`field_narrow`, for error notes).
+    pub mutable_tests: Vec<LocalId>,
+    pub unnarrowed_reads: Vec<Span>,
+    /// Names of the variables that closures created in this function's body assign, with
+    /// where (`closure_assigned`): they are not narrowed.
+    pub closure_assigned: HashMap<String, Span>,
 }
 
 impl Frame {
@@ -208,6 +226,7 @@ impl Frame {
             loops: vec![],
             loop_count: 0,
             ret,
+            returns: Default::default(),
             captures: vec![],
             escaping: false,
             is_async: false,
@@ -229,6 +248,9 @@ impl Frame {
             stmt_depth: 0,
             field_tokens: vec![],
             const_refs: Default::default(),
+            mutable_tests: vec![],
+            unnarrowed_reads: vec![],
+            closure_assigned: HashMap::new(),
         }
     }
 }
@@ -246,6 +268,8 @@ pub(crate) struct FnCx<'a, 'm> {
     pub owner: Option<DefId>,
     /// Locals of the functions enclosing a nested declaration (see `collect::nested`).
     pub enclosing_locals: Vec<String>,
+    /// The body is a local generic arrow function (checked as a nested function).
+    pub generic_arrow: bool,
     pub f: Frame,
     /// Enclosing frames of the closure being checked (innermost last).
     pub outer: Vec<Frame>,
@@ -254,9 +278,14 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The arrow being checked is an argument of a `std/` function called from user code: its
     /// unannotated integer parameters (an index, a `reduce` accumulator) are JS numbers.
     pub std_callback: bool,
+    /// Checking an expression outside any body (a field initializer, a parameter default, a
+    /// module-level constant): it has no frame to hold temporary locals (`driver::detached`).
+    pub detached: bool,
     /// The call about to be checked is `new Map(...)` / `new Set(...)`: an iterable argument
     /// for its array parameter is collected into an array (`consume.rs`).
     pub collect_iterable_args: bool,
+    /// Reads of locals with a refused fact (`closure_assigned`), for notes on errors there.
+    pub refused_reads: Vec<(Span, closure_assigned::Refused)>,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -269,11 +298,14 @@ impl<'a, 'm> FnCx<'a, 'm> {
             fn_name: String::new(),
             owner: None,
             enclosing_locals: vec![],
+            generic_arrow: false,
             f: frame,
             outer: vec![],
             direct_await: None,
             std_callback: false,
+            detached: false,
             collect_iterable_args: false,
+            refused_reads: vec![],
         }
     }
 

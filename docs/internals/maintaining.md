@@ -82,8 +82,12 @@ review.
 - A nightly workflow runs the whole gate with PostgreSQL and Redis, the Cranelift memory stress
   run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and Windows,
   and the `tsc` oracle for `velt check --ts-compat` (`crates/velt_tscompat/tests/oracle.rs`
-  against the `typescript` pinned in `tests/tscompat-oracle`); fix failures first. Run one part
-  alone with `gh workflow run nightly -f only=stress` (or `gate`, `oracle`).
+  against the `typescript` pinned in `tests/tscompat-oracle`), and the benchmark guard
+  (`bench/nightly.sh`: the instructions each benchmark executes, counted with valgrind, against
+  the last run that passed; more than 3% more fails and opens the issue "nightly benchmarks
+  regressed"); fix failures first. An intended slowdown is accepted with `gh workflow run nightly
+  -f only=bench -f bench_baseline=accept`. Run one part alone with `gh workflow run nightly -f
+  only=stress` (or `gate`, `oracle`, `bench`).
 - Each push to `main` (the `main` jobs in `ci.yml`) runs the whole gate on Windows and macOS,
   which covers the changes the queue checked on Linux only, and opens or updates the issue
   "main fails on <OS>" when that fails; fix it first. The same jobs refresh the build cache on

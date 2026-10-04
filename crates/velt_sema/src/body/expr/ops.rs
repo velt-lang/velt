@@ -1,6 +1,6 @@
 //! Unary and binary operators (`!`, `&&` and `||` are in `truthiness`). `==`/`!=` on non-primitive types (objects, enums,
-//! options, generic `T`, ...) is `Intrinsic::Same` (JS `===`: objects by identity; `!=` wraps it
-//! in `Not`).
+//! options, interface and function values, generic `T`, ...) is `Intrinsic::Same` (JS `===`:
+//! objects by identity; `!=` wraps it in `Not`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -231,7 +231,8 @@ impl FnCx<'_, '_> {
             None => self.operands(lhs, rhs, hint, Want::Borrow),
         };
         let (l, r) = if matches!(op, B::Eq | B::NotEq) {
-            self.nullable_operands(l, r)
+            let (l, r) = self.nullable_operands(l, r);
+            self.identity_operands(l, r)
         } else {
             (l, r)
         };
@@ -305,6 +306,29 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// `a === b` between an interface value and a class or struct value (or a base and a
+    /// subclass value) whose types overlap, as TypeScript allows (#365): the side that converts to the other's type
+    /// does (an interface value points at the object itself), so the two compare by identity.
+    fn identity_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+        let object = |s: &Self, t: TyId| {
+            let t = s.cx.ty.opt_payload(t).unwrap_or(t);
+            s.cx.union_def(t).is_none()
+                && matches!(s.cx.ty.kind(t), TyKind::Adt(..) | TyKind::Dyn(..))
+        };
+        if l.ty == r.ty || !object(self, l.ty) || !object(self, r.ty) {
+            return (l, r);
+        }
+        let to = l.ty;
+        match self.try_coerce(r, to) {
+            Ok(r) => (l, r),
+            Err(r) => {
+                let to = r.ty;
+                let l = self.try_coerce(l, to).unwrap_or_else(|l| l);
+                (l, r)
+            }
+        }
+    }
+
     pub(crate) fn primitive_eq(&self, t: TyId) -> bool {
         let ty = &self.cx.ty;
         ty.is_numeric(t) || t == ty.bool_ || t == ty.str_ || t == ty.never
@@ -333,11 +357,11 @@ impl FnCx<'_, '_> {
         )
     }
 
+    /// Can `==` compare values of `t`? Interface and function values compare by identity
+    /// (#365): the object behind an interface value, and the function value itself (each
+    /// evaluation of an arrow is a new one, as in JS).
     fn equatable(&self, t: TyId) -> bool {
-        !matches!(
-            self.cx.ty.kind(t),
-            TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Dyn(..) | TyKind::Unit
-        )
+        !matches!(self.cx.ty.kind(t), TyKind::Unit)
     }
 
     /// Validate `lhs op rhs`; returns the (common) operand type, or None after reporting an error.

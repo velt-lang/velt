@@ -4,10 +4,10 @@
 
 use velt_common::{Diagnostic, Span};
 
-use super::{FnCx, Frame, LocalKind, Want};
+use super::{recursion, FnCx, Frame, LocalKind, Want};
 use crate::ctx::Ctx;
-use crate::defs::{BodyState, DefInfo, FnKind, FnSource};
-use crate::hir::{self, Def, DefId, ExprKind as H, LocalId, StmtKind as S};
+use crate::defs::{BodyState, DefInfo, FnKind, FnSource, RetSource};
+use crate::hir::{self, Def, DefId, ExprKind as H};
 use crate::resolve::TyEnv;
 
 pub(crate) fn check_bodies(cx: &mut Ctx) {
@@ -28,6 +28,7 @@ pub(crate) fn check_bodies(cx: &mut Ctx) {
     for d in fns {
         ensure_body(cx, d);
     }
+    super::returns::check_deferred(cx);
 }
 
 /// A checker for an expression outside any function body (defaults, constants).
@@ -37,7 +38,9 @@ pub(super) fn detached<'a, 'm>(
     generics: &[String],
 ) -> FnCx<'a, 'm> {
     let env = TyEnv::new(module, generics);
-    FnCx::new(cx, module, env, Frame::new(FnKind::Free, None))
+    let mut fcx = FnCx::new(cx, module, env, Frame::new(FnKind::Free, None));
+    fcx.detached = true;
+    fcx
 }
 
 /// Check the own field defaults of type `d` (once), recording what each may throw.
@@ -156,7 +159,8 @@ fn is_const_expr(e: &hir::Expr) -> bool {
     }
 }
 
-/// Check `def`'s body now unless it is already checked or being checked.
+/// Check `def`'s body now unless it is already checked or being checked. A body whose
+/// inferred return type was needed before it was known is checked again (`body::recursion`).
 pub(crate) fn ensure_body(cx: &mut Ctx, def: DefId) {
     let f = cx.fn_info(def);
     if f.state != BodyState::Unchecked {
@@ -166,38 +170,55 @@ pub(crate) fn ensure_body(cx: &mut Ctx, def: DefId) {
         cx.fn_info_mut(def).state = BodyState::Done;
         return;
     };
+    let inferred = f.ret_source == RetSource::Body;
     cx.fn_info_mut(def).state = BodyState::InProgress;
+    let mark = recursion::Mark::new(cx);
+    let mut fndef = check_body(cx, def, src);
+    if recursion::needs_second_pass(cx, def, &mark) {
+        fndef = check_body(cx, def, src);
+    }
+    cx.defs[def.0 as usize] = Some(Def::Fn(fndef));
+    cx.fn_info_mut(def).state = BodyState::Done;
+    recursion::completed(cx, def, inferred);
+}
+
+fn check_body(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
+    cx.checking.push(def);
+    let in_return = std::mem::take(&mut cx.rec.in_return);
     let names = cx.fn_info(def).generics.names.clone();
     let saved = std::mem::replace(&mut cx.display_params, names);
     let fndef = check_fn(cx, def, src);
     cx.display_params = saved;
-    cx.defs[def.0 as usize] = Some(Def::Fn(fndef));
-    cx.fn_info_mut(def).state = BodyState::Done;
+    cx.rec.in_return = in_return;
+    cx.checking.pop();
+    fndef
 }
 
 fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
+    // An unannotated override takes the result of the method it overrides.
+    let declared = match cx.fn_info(def).ret_source {
+        RetSource::Body => None,
+        _ => Some(super::returns::ret_of(cx, def, cx.fn_info(def).name_span)),
+    };
     let f = cx.fn_info(def).clone();
     let env = TyEnv::new(f.module, &f.generics.names);
     // An async body returns the promise's payload, which is also the HIR `ret` (the signature,
-    // `FnInfo::ret`, and the type of a call stay `Promise<T>`).
-    let body_ret = if f.is_async {
-        cx.ty.async_result(f.ret)
-    } else {
-        f.ret
-    };
+    // `FnInfo::ret`, and the type of a call stay `Promise<T>`); `None` while it is inferred.
+    let body_ret = declared.map(|r| if f.is_async { cx.ty.async_result(r) } else { r });
     // A generator's body yields `T` of its declared `Generator<T>` and returns nothing; the HIR
-    // `ret` stays the declared result (hir_encodings.md "Generators").
+    // `ret` stays the declared result (hir_encodings.md "Generators"). Its result is never
+    // inferred (`collect::sigs`).
     let yield_ty = f.is_generator.then(|| {
         cx.generator_result(f.ret)
             .and_then(|(_, a)| a.first().copied())
             .unwrap_or(cx.ty.error)
     });
     let frame_ret = if yield_ty.is_some() {
-        cx.ty.unit
+        Some(cx.ty.unit)
     } else {
         body_ret
     };
-    let mut frame = Frame::new(f.kind, Some(frame_ret));
+    let mut frame = Frame::new(f.kind, frame_ret);
     frame.is_async = f.is_async || f.is_async_gen;
     frame.yield_ty = yield_ty;
     let enclosing_locals = cx
@@ -211,20 +232,31 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         FnSource::Default(_, b) => b,
     };
     frame.scopes[0].hi = body.span.hi;
+    let defaults = match src {
+        FnSource::Decl(d) => d
+            .sig
+            .params
+            .iter()
+            .filter_map(|p| p.default.as_ref())
+            .collect(),
+        FnSource::Default(..) => vec![],
+    };
+    let assigned = super::assigned::assigned_by_closures(&body.stmts, defaults);
+    frame.closure_assigned = super::closure_assigned::owned(assigned);
     let mut fcx = FnCx::new(cx, f.module, env, frame);
     fcx.bounds = f.generics.bounds.clone();
     fcx.fn_name = f.name.clone();
     fcx.owner = f.owner;
     fcx.enclosing_locals = enclosing_locals;
+    fcx.generic_arrow = fcx.cx.generic_arrow_fns.contains(&f.name_span);
     let params = fcx.declare_params(&f);
     let mut stmts = vec![];
-    if f.kind == FnKind::Ctor && fcx.this_base().is_some() {
-        // Until `super(...)`, which a base class with a constructor requires.
-        fcx.f.before_super =
-            fcx.base_ctor(&f).is_some() || body.stmts.iter().any(super::stmt::is_super_call);
+    if let (FnKind::Ctor, FnSource::Decl(d)) = (f.kind, src) {
+        fcx.ctor_begin(&f, d);
     }
+    let diags_before = fcx.cx.diags.len();
     fcx.stmts_into(&body.stmts, &mut stmts);
-    let block = hir::Block {
+    let mut block = hir::Block {
         stmts,
         value: None,
         span: body.span,
@@ -232,9 +264,14 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     if f.kind == FnKind::Ctor {
         fcx.check_ctor(&f, &block);
     }
+    let frame_ret = match frame_ret {
+        Some(r) => r,
+        None => fcx.inferred_fn_ret(def, &mut block),
+    };
     fcx.check_returns(&f.name, frame_ret, f.name_span, &block);
     fcx.rec_frame_scopes();
     fcx.finish_using_shares();
+    fcx.note_refused_facts(diags_before);
     let frame = std::mem::replace(&mut fcx.f, Frame::new(f.kind, None));
     let info = cx.fn_info_mut(def);
     info.local_kinds = frame.kinds;
@@ -244,7 +281,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         name: f.name.clone(),
         generics: f.generics.len() as u32,
         params,
-        ret: body_ret,
+        ret: body_ret.unwrap_or(frame_ret),
         is_async: f.is_async || f.is_async_gen,
         is_generator: f.is_generator,
         self_ty: f.this.as_ref().map(|t| t.ty),
@@ -285,6 +322,30 @@ impl FnCx<'_, '_> {
         params
     }
 
+    /// The result of function `def` inferred from its checked body `block`, recorded as its
+    /// signature (`Promise<T>` for an async function).
+    fn inferred_fn_ret(&mut self, def: DefId, block: &mut hir::Block) -> hir::TyId {
+        let short = self.fn_name.rsplit("::").next().unwrap_or(&self.fn_name);
+        let who = format!("`{short}`");
+        let (mut ret, mut inferred_int) = self.finish_inferred_ret(block, &who);
+        if inferred_int && self.cx.overridden.contains(&def) {
+            // `legs() { return 4; }` overridden by `legs() { return 2.5; }`: both are a
+            // TypeScript `number`, which a subclass may return a fraction in.
+            ret = self.returns_as(block, self.cx.ty.f64);
+            inferred_int = false;
+        }
+        let sig = if self.f.is_async {
+            self.cx.ty.promise(ret)
+        } else {
+            ret
+        };
+        let info = self.cx.fn_info_mut(def);
+        info.ret = sig;
+        info.ret_source = RetSource::Known;
+        info.ret_inferred_int = inferred_int;
+        ret
+    }
+
     /// "must return a value on every path" for non-void functions.
     pub fn check_returns(&mut self, name: &str, ret: hir::TyId, span: Span, block: &hir::Block) {
         if ret != self.cx.ty.unit
@@ -300,92 +361,6 @@ impl FnCx<'_, '_> {
                 )
                 .with_note(format!("expected {rty}, found void")),
             );
-        }
-    }
-
-    /// The constructor of the base class of constructor `f`'s class, if any.
-    fn base_ctor(&mut self, f: &crate::defs::FnInfo) -> Option<DefId> {
-        let a = self.cx.adt(f.owner?)?;
-        let (b, _) = self.cx.class_of(a.base?)?;
-        self.cx.adt(b).and_then(|x| x.ctor)
-    }
-
-    /// Constructor rules: `super(...)` first when the base class has a constructor, and every
-    /// own field without a default assigned on every path. Records what the field initializers
-    /// the constructor runs on entry may throw.
-    fn check_ctor(&mut self, f: &crate::defs::FnInfo, block: &hir::Block) {
-        let Some(owner) = f.owner else { return };
-        let base_ctor = self.base_ctor(f);
-        let a = self.cx.adt(owner).expect("ICE: ctor owner");
-        let needed: Vec<(u32, String)> = a.fields[a.own_fields_start..]
-            .iter()
-            .enumerate()
-            .filter(|(_, fl)| !fl.has_default)
-            .map(|(i, fl)| ((a.own_fields_start + i) as u32, fl.name.clone()))
-            .collect();
-        let class = a.name.clone();
-        if base_ctor.is_none() {
-            // No ancestor has a constructor: this one runs every field initializer on entry
-            // (with one, they run after `super(...)`, which accounts for them).
-            let this_ty = self.this_ty();
-            for s in self.class_default_throws(this_ty, None, f.name_span) {
-                self.throw_src(s);
-            }
-        }
-        if base_ctor.is_some() && !self.f.super_called {
-            self.cx.error(
-                Diagnostic::error(
-                    format!("the constructor of `{class}` must call `super(...)`"),
-                    f.name_span,
-                )
-                .with_note("the base class has a constructor that must run"),
-            );
-        }
-        let this = LocalId(0);
-        let assigned = assigned_fields(block, this);
-        for (idx, name) in needed {
-            if !assigned.contains(&idx) {
-                self.cx.error(
-                    Diagnostic::error(
-                        format!(
-                            "field `{name}` is not initialized by the constructor of `{class}`"
-                        ),
-                        f.name_span,
-                    )
-                    .with_note(format!("assign `this.{name} = ...` on every path")),
-                );
-            }
-        }
-    }
-}
-
-/// Fields of `this` assigned on every path through `b` (conservative).
-fn assigned_fields(b: &hir::Block, this: LocalId) -> Vec<u32> {
-    let mut out = vec![];
-    for s in &b.stmts {
-        match &s.kind {
-            S::Expr(e) => field_assign(e, this, &mut out),
-            S::Block(inner) => out.extend(assigned_fields(inner, this)),
-            S::If {
-                then,
-                els: Some(els),
-                ..
-            } => {
-                let (t, e) = (assigned_fields(then, this), assigned_fields(els, this));
-                out.extend(t.into_iter().filter(|x| e.contains(x)));
-            }
-            _ => {}
-        }
-    }
-    out
-}
-
-fn field_assign(e: &hir::Expr, this: LocalId, out: &mut Vec<u32>) {
-    if let H::Assign { place, .. } = &e.kind {
-        if let H::Field { base, index, .. } = &place.kind {
-            if matches!(base.kind, H::Local(l, _) if l == this) {
-                out.push(*index);
-            }
         }
     }
 }

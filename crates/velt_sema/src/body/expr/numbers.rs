@@ -4,7 +4,8 @@
 //! annotation, a parameter, field or return type, a literal suffix, a cast, an API result such
 //! as `.length`, or a literal typed by such a context) or *inferred* (an integer literal with no
 //! context, a local declared without a type from such a value — `const a = 7`, `let i = 0` —
-//! and arithmetic involving one). Both are stored as integers, so counters and indexes keep
+//! a call of a function whose inferred return type comes from such values, and arithmetic
+//! involving one). Both are stored as integers, so counters and indexes keep
 //! integer speed; inferred ones behave like JS numbers where that is observable:
 //! - `/` is float division unless both operands are declared integers (`a / 2` is `3.5`);
 //! - mixed with a float, or used where a float is expected, they convert to it;
@@ -55,6 +56,9 @@ impl FnCx<'_, '_> {
         match &h.kind {
             H::Lit(hir::Lit::Int(_)) => IntOrigin::Literal,
             H::Local(l, _) if self.f.inferred_ints.contains(l) => IntOrigin::Inferred,
+            // A narrowed `T | null` local, a user function's awaited result: as the value.
+            H::UnwrapSome(inner, _) if matches!(inner.kind, H::Local(..)) => self.int_origin(inner),
+            H::Await(inner) if !self.is_std_api_value(inner) => self.int_origin(inner),
             H::Unary {
                 op: UnOp::Neg | UnOp::BitNot,
                 expr,
@@ -69,6 +73,11 @@ impl FnCx<'_, '_> {
             } if super::int32::INT32_HELPERS.contains(&self.cx.fn_info(*d).name.as_str()) => {
                 IntOrigin::Inferred
             }
+            // A call of a function whose result type is inferred from such integers.
+            H::Call {
+                callee: hir::Callee::Def(d, _),
+                ..
+            } if self.cx.fn_info(*d).ret_inferred_int => IntOrigin::Inferred,
             // A conversion the compiler inserted spans exactly its operand and keeps its origin;
             // a written `x as T` also spans `as T`, and declares.
             H::Cast(inner) if inner.span == h.span && self.cx.ty.is_int(inner.ty) => {
@@ -176,9 +185,14 @@ impl FnCx<'_, '_> {
         init
     }
 
-    /// `let x = init` without a type: `x` is an inferred integer when `init` is one.
+    /// `let x = init` without a type: `x` is an inferred integer when `init` is one (or a
+    /// `T | null` of one: its narrowed reads are).
     pub(crate) fn note_inferred_local(&mut self, local: hir::LocalId, init: &hir::Expr) {
-        if self.is_inferred_int(init) {
+        let core = self.cx.ty.opt_payload(init.ty);
+        let nullable_std = core.is_some() && self.is_std_api_value(init);
+        let core = core.unwrap_or(init.ty);
+        if self.cx.ty.is_int(core) && !nullable_std && self.int_origin(init) != IntOrigin::Declared
+        {
             self.f.inferred_ints.insert(local);
         }
     }

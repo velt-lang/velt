@@ -1,0 +1,112 @@
+// Statements before `super(...)` (TypeScript's rules) and JavaScript's construction order: the
+// arguments first, then the base class; a class's field defaults right after its base class is
+// constructed, also after statements before `super(...)`. Matches Node.
+function log(s: string): number {
+  console.log(s);
+  return 1;
+}
+
+class A {
+  a: number = log("A field");
+  constructor(n: number) {
+    console.log(`A constructor ${n}`);
+  }
+}
+
+class B extends A {
+  b: number = log("B field");
+  constructor() {
+    super(log("B super argument"));
+    console.log("B constructor");
+  }
+}
+
+// No constructor of its own: its field defaults run after the inherited constructor.
+class C extends B {
+  c: number = log("C field");
+}
+
+class Plain {
+  p: number = log("Plain field");
+  constructor(x: number) {
+    console.log(`Plain constructor ${x}`);
+  }
+}
+
+class Counted {
+  id: number = log("Counted field");
+}
+
+// Argument validation before `super()`: a base class without a constructor.
+class Checked extends Counted {
+  value: number;
+  constructor(value: number) {
+    if (value < 0) {
+      throw new Error("negative");
+    }
+    const doubled = value * 2;
+    console.log("before super");
+    super();
+    this.value = doubled;
+  }
+}
+
+class Named {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+    console.log(`Named ${name}`);
+  }
+}
+
+// Computed arguments before `super(...)`.
+class Shouting extends Named {
+  constructor(name: string) {
+    const upper = name.toUpperCase();
+    const marked = `${upper}!`;
+    super(marked);
+  }
+}
+
+// A parameter property: `super(...)` first, the property stored right after it.
+class Tagged extends Named {
+  constructor(name: string, readonly tag: string) {
+    super(name);
+    console.log(`tag ${this.tag}`);
+  }
+}
+
+// Initialized fields, a parameter property and statements before `super(...)` (TypeScript 4.6+):
+// the statements and the arguments run first, then the base class, then this class's fields and
+// parameter properties, then the rest of the body.
+class Mixed extends A {
+  m: number = log("Mixed field");
+  constructor(readonly k: number, n: number) {
+    console.log("Mixed before super");
+    const twice = n * 2;
+    super(log(`Mixed super argument ${twice}`));
+    console.log(`Mixed constructor ${this.k} ${this.m}`);
+  }
+}
+
+function main() {
+  new B();
+  console.log("--");
+  new C();
+  console.log("--");
+  new Plain(log("Plain argument"));
+  console.log("--");
+  const c = new Checked(21);
+  console.log(c.value);
+  try {
+    new Checked(-1);
+  } catch (e) {
+    console.log("caught");
+  }
+  console.log(new Shouting("ada").name);
+  const t = new Tagged("bob", "x");
+  console.log(`${t.name} ${t.tag}`);
+  console.log("--");
+  const m = new Mixed(7, 4);
+  console.log(`${m.k} ${m.m}`);
+}

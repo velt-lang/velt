@@ -1,0 +1,3 @@
+return_type_bare_return.vlt:9:3
+error: `return;` needs a value: `find` returns `i64` on other paths
+note: Velt has no `undefined`: write `return null;` and the return type `i64 | null`

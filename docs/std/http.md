@@ -4,7 +4,8 @@
 hyper: HTTP/1.1 keep-alive, HTTP/2 (h2c prior knowledge, or ALPN over TLS) and HTTPS (rustls).
 Handlers run concurrently on every core. A listening server keeps the process alive after
 `main` returns, like Node, until `server.close()`; dropping the `Server` value does not stop
-it. For a walkthrough, see [Building an HTTP server](../book/http-server.md).
+it. A `main` that fails (an uncaught error, or a nonzero exit code) ends the process at once,
+servers or not. For a walkthrough, see [Building an HTTP server](../book/http-server.md).
 
 - `serve<E>(opts: ServeOptions { port; host?; tls?: TlsOptions { cert; key } }, handler: (req:
   Request) => Promise<Response, E>): Promise<Server>`. The default host is 127.0.0.1. With `tls`

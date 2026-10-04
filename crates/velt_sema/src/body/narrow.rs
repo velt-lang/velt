@@ -2,11 +2,11 @@
 //! - `T | null` locals by null tests (`x != null`, `x == null`) and truthiness (`if (x)`,
 //!   `if (!x) return;`): a narrowed local reads as its payload (`ExprKind::UnwrapSome`);
 //! - union locals by `typeof x === "tag"`, `x instanceof C` and `x == literal`: a local narrowed
-//!   to one member reads as that member (`ExprKind::UnwrapVariant`).
+//!   to one member reads as that member (`ExprKind::UnwrapVariant`);
+//! - base class and interface locals (or such a union member) by `x instanceof C`: the local
+//!   reads as the subclass `C` (`ExprKind::Downcast`).
 //!
 //! `!`, `&&` and `||` combine facts; narrowing lasts until the local is reassigned.
-
-use std::collections::HashSet;
 
 use velt_syntax::ast;
 
@@ -20,6 +20,10 @@ pub(crate) enum Fact {
     NonNull(LocalId),
     /// The union local (or, for `U | null`, its payload when not null) is one of these variants.
     Members(LocalId, Vec<u32>),
+    /// The class or interface local (or the union member it is narrowed to) holds an instance
+    /// of this class type (`instanceof` on a base class or interface value; read through
+    /// `ExprKind::Downcast`).
+    Class(LocalId, TyId),
 }
 
 impl FnCx<'_, '_> {
@@ -41,7 +45,12 @@ impl FnCx<'_, '_> {
                 rhs,
             } => {
                 let (mut t, _) = self.narrowing(lhs);
-                t.extend(self.narrowing(rhs).0);
+                // `n instanceof Add && n.left instanceof Num`: the right side is read as narrowed
+                // by the left one. A variable the right side assigns no longer holds what the
+                // left side tested (`x instanceof D && (x = b) && …`).
+                self.drop_assigned_facts(&mut t, rhs);
+                let rhs_t = self.narrowing_under(&t, rhs).0;
+                t.extend(rhs_t);
                 (t, vec![])
             }
             ast::ExprKind::Binary {
@@ -50,7 +59,9 @@ impl FnCx<'_, '_> {
                 rhs,
             } => {
                 let (_, mut f) = self.narrowing(lhs);
-                f.extend(self.narrowing(rhs).1);
+                self.drop_assigned_facts(&mut f, rhs);
+                let rhs_f = self.narrowing_under(&f, rhs).1;
+                f.extend(rhs_f);
                 (vec![], f)
             }
             ast::ExprKind::Binary {
@@ -83,6 +94,45 @@ impl FnCx<'_, '_> {
             | ast::ExprKind::Assign { op: None, .. } => (self.truthy_facts(cond), vec![]),
             _ => (vec![], vec![]),
         }
+    }
+
+    /// Drops from `facts` those about a variable `e` assigns, or about a field path of one.
+    fn drop_assigned_facts(&mut self, facts: &mut Vec<Fact>, e: &ast::Expr) {
+        let mut names = super::assigned::Assigned::new();
+        super::assigned::assigned_in_expr(e, &mut names);
+        if names.is_empty() {
+            return;
+        }
+        let mut gone = vec![];
+        for name in names.into_keys() {
+            let found = self
+                .f
+                .scopes
+                .iter()
+                .rev()
+                .find_map(|s| s.names.get(name).copied());
+            if let Some(l) = found {
+                gone.push(l);
+                gone.extend(self.field_tokens_of(l));
+            }
+        }
+        facts.retain(|f| {
+            let l = match f {
+                Fact::NonNull(l) | Fact::Members(l, _) | Fact::Class(l, _) => l,
+            };
+            !gone.contains(l)
+        });
+    }
+
+    /// [`narrowing`](Self::narrowing) of `cond` with `facts` assumed.
+    fn narrowing_under(&mut self, facts: &[Fact], cond: &ast::Expr) -> (Vec<Fact>, Vec<Fact>) {
+        self.push_scope();
+        for f in facts {
+            self.narrow(f);
+        }
+        let out = self.narrowing(cond);
+        self.pop_scope();
+        out
     }
 
     /// Facts of a nullable tested for truthiness (`if (user)`): when true, it is not null.
@@ -190,14 +240,47 @@ impl FnCx<'_, '_> {
     }
 
     fn instanceof_facts(&mut self, e: &ast::Expr, ty: &ast::TypeExpr) -> (Vec<Fact>, Vec<Fact>) {
+        use super::expr::downcast::Instance;
         let Some(class) = self.instanceof_class_quiet(ty) else {
             return (vec![], vec![]);
         };
-        let Some((l, nullable, u)) = self.local_with_members(e) else {
+        let found = match self.local_with_members(e) {
+            Some(x) => Some(x),
+            None => self
+                .readonly_field_path(e)
+                .map(|(token, t)| match self.cx.ty.opt_payload(t) {
+                    Some(p) => (token, true, p),
+                    None => (token, false, t),
+                }),
+        };
+        let Some((l, nullable, u)) = found else {
+            self.note_mutable_test(e);
             return (vec![], vec![]);
         };
-        let pred = |cx: &crate::ctx::Ctx, t: TyId| cx.is_instance_of(t, class);
-        self.split_facts(l, nullable, u, &pred, false)
+        let members = self.cx.union_members(u);
+        let parts = members.clone().unwrap_or_else(|| vec![u]);
+        let kinds: Vec<Instance> = parts
+            .iter()
+            .map(|t| self.instance_kind(*t, class).unwrap_or(Instance::No))
+            .collect();
+        let (mut t, mut f) = (vec![], vec![]);
+        if members.is_some() {
+            let all = 0..kinds.len() as u32;
+            let yes = all.clone().filter(|&i| kinds[i as usize] != Instance::No);
+            let no = all.filter(|&i| kinds[i as usize] != Instance::Yes);
+            t.push(Fact::Members(l, yes.collect()));
+            f.push(Fact::Members(l, no.collect()));
+        }
+        if let Some(target) = kinds.iter().find_map(|k| match k {
+            Instance::Maybe(target) => Some(*target),
+            _ => None,
+        }) {
+            t.push(Fact::Class(l, target));
+        }
+        if nullable && kinds.iter().any(|k| *k != Instance::No) {
+            t.push(Fact::NonNull(l));
+        }
+        (t, f)
     }
 
     /// Facts for a test that holds for the members satisfying `pred` (and for `null` iff
@@ -230,9 +313,9 @@ impl FnCx<'_, '_> {
     /// A loop may run its body again after an assignment in it: narrowing of every local the
     /// loop assigns does not hold inside (or after) it.
     pub(crate) fn unnarrow_assigned_in(&mut self, lp: &ast::Stmt) {
-        let mut names = HashSet::new();
+        let mut names = super::assigned::Assigned::new();
         super::assigned::assigned_in_stmt(lp, &mut names);
-        for name in names {
+        for name in names.into_keys() {
             let found = self
                 .f
                 .scopes

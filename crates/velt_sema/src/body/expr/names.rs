@@ -1,5 +1,6 @@
 //! Name expressions: locals (narrowed `T | null` locals read as `UnwrapSome`, union locals
-//! narrowed to one member as `UnwrapVariant`), `this`, module
+//! narrowed to one member as `UnwrapVariant`, locals narrowed to a subclass by `instanceof` as
+//! `Downcast`), `this`, module
 //! constants (`Global`) and named functions used as values (`FnRef`).
 
 use velt_common::{Diagnostic, Span};
@@ -12,6 +13,7 @@ use crate::hir::{self, DefId, ExprKind as H, LocalId, TyId, TyKind, UseMode};
 
 impl FnCx<'_, '_> {
     pub(crate) fn local_expr(&mut self, l: LocalId, want: Want, span: Span) -> hir::Expr {
+        self.note_refused_read(l, span);
         let ty = self.local_ty(l);
         if want != Want::BorrowMut && self.narrowed_to_nothing(l) {
             // No member is left (e.g. in the `default` of an exhaustive `switch`): the read
@@ -22,9 +24,15 @@ impl FnCx<'_, '_> {
         }
         let payload = self.cx.ty.opt_payload(ty).filter(|_| self.is_narrowed(l));
         let member = self.narrowed_member(l, payload.unwrap_or(ty), payload.is_some());
+        if member.is_none() {
+            if let Some(e) = self.union_narrowed_to_class(l, ty, payload, want, span) {
+                return e;
+            }
+        }
         if payload.is_none() && member.is_none() {
             let mode = self.use_mode(ty, want);
-            return self.mk(H::Local(l, mode), ty, span);
+            let e = self.mk(H::Local(l, mode), ty, span);
+            return self.downcast_narrowed(l, e);
         }
         let base_mode = if want == Want::BorrowMut {
             UseMode::BorrowMut
@@ -48,7 +56,56 @@ impl FnCx<'_, '_> {
             };
             e = self.mk(kind, m, span);
         }
-        e
+        self.downcast_narrowed(l, e)
+    }
+
+    /// A union local `l` (of type `ty`, `T | null` narrowed to `payload`) that `instanceof`
+    /// narrowed to a class every member it can still hold is, or is a base of: read as that
+    /// class (`catch (e)` on `Error | MyErr`, then `e instanceof MyErr`).
+    fn union_narrowed_to_class(
+        &mut self,
+        l: LocalId,
+        ty: TyId,
+        payload: Option<TyId>,
+        want: Want,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let target = self.narrowed_class(l)?;
+        let u = payload.unwrap_or(ty);
+        self.cx.union_def(u)?;
+        if payload.is_none() && self.cx.ty.opt_payload(ty).is_some() {
+            return None;
+        }
+        let mode = self.use_mode(ty, want);
+        let mut e = self.mk(H::Local(l, mode), ty, span);
+        if let Some(p) = payload {
+            let base = self.mk(H::Local(l, UseMode::Borrow), ty, span);
+            let inner = self.use_mode(p, want);
+            e = self.mk(H::UnwrapSome(Box::new(base), inner), p, span);
+        }
+        self.union_downcast(e, target).ok()
+    }
+
+    /// The read `e` of local `l` as the subclass `l` is narrowed to by `instanceof`, when `e`
+    /// is of a base class of it or an interface type (not, say, a union of several members).
+    pub(crate) fn downcast_narrowed(&mut self, l: LocalId, e: hir::Expr) -> hir::Expr {
+        let Some(target) = self.narrowed_class(l) else {
+            return e;
+        };
+        if !self.downcast_applies(e.ty, target) {
+            return e;
+        }
+        let span = e.span;
+        self.mk(H::Downcast(Box::new(e)), target, span)
+    }
+
+    /// Does a value of type `from` read as the subclass `to` it is narrowed to (`from` is a
+    /// base class of `to`, or an interface type)?
+    pub(crate) fn downcast_applies(&self, from: TyId, to: TyId) -> bool {
+        match (self.cx.class_of(from), self.cx.class_of(to)) {
+            (Some((f, _)), Some((t, _))) => f != t && self.cx.class_extends(t, f),
+            _ => matches!(self.cx.ty.kind(from), TyKind::Dyn(..)),
+        }
     }
 
     /// Has flow narrowing ruled out every member of union local `l` (and `null`)?
@@ -84,6 +141,14 @@ impl FnCx<'_, '_> {
             Some(l) => {
                 self.rec_local(span, l);
                 self.local_expr(l, want, span)
+            }
+            None if self.generic_arrow => {
+                self.cx.error(
+                    Diagnostic::error("`this` cannot be used in a generic arrow function", span)
+                        .with_note("a local generic arrow function is a generic function nested in this one: it cannot use `this` or the local variables of enclosing functions")
+                        .with_note("pass the value it needs as a parameter, or drop the type parameters to make it a closure"),
+                );
+                self.error_expr(span)
             }
             None => {
                 self.cx.err(
@@ -154,6 +219,17 @@ impl FnCx<'_, '_> {
                 .err(format!("cannot find `{}` in this scope", id.name), id.span);
             return;
         }
+        if self.generic_arrow {
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`{}` cannot be captured by a generic arrow function", id.name),
+                    id.span,
+                )
+                .with_note("a local generic arrow function is a generic function nested in this one: it cannot use the local variables of enclosing functions")
+                .with_note(format!("pass `{}` as a parameter, or drop the type parameters to make it a closure", id.name)),
+            );
+            return;
+        }
         self.cx.error(
             Diagnostic::error(
                 format!("`{}` cannot be captured by a nested function", id.name),
@@ -201,12 +277,12 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
-        let (n, params, ret, is_async) = (
+        let (n, params, is_async) = (
             f.generics.len(),
             f.params.iter().map(|p| p.ty).collect::<Vec<_>>(),
-            f.ret,
             f.is_async,
         );
+        let ret = crate::body::returns::ret_of(self.cx, d, span);
         let fn_ty = self.fn_value_type(d, params, ret, is_async);
         let mut slots = vec![None; n];
         if let Some(e) = self.hint(exp) {

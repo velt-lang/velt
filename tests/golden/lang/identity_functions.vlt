@@ -1,0 +1,91 @@
+// check: no leaks
+// `===` on function values compares identity, as in JS (#365): each evaluation of an arrow is a
+// new function (also one without captures), a named function equals itself, and copies of a
+// function value are the same function, so an emitter's `off(h)` finds the `h` given to `on`.
+// `indexOf`, `includes` and `Map` keys agree with `===`. Output as in Node.
+class Emitter {
+  handlers: (() => void)[] = [];
+  on(h: () => void) {
+    this.handlers.push(h);
+  }
+  off(h: () => void) {
+    const i = this.handlers.indexOf(h);
+    if (i >= 0) {
+      this.handlers.splice(i, 1);
+    }
+  }
+  emit() {
+    for (const h of this.handlers) {
+      h();
+    }
+  }
+}
+
+class Registry {
+  kept: (() => void)[] = [];
+  add(f: () => void): bool {
+    if (this.kept.includes(f)) {
+      return false;
+    }
+    this.kept.push(f);
+    return true;
+  }
+}
+
+function named() {
+  console.log("named");
+}
+
+function make(): () => i64 {
+  return () => 1;
+}
+
+function same<T>(a: T, b: T): bool {
+  return a === b;
+}
+
+async function call(f: () => i64): Promise<i64> {
+  return f();
+}
+
+async function main() {
+  const e = new Emitter();
+  const h = () => console.log("h");
+  const g = () => console.log("g");
+  e.on(h);
+  e.on(g);
+  e.on(named);
+  e.emit();
+  e.off(h);
+  e.off(named);
+  e.off(() => console.log("g"));
+  e.emit();
+  console.log(h === h, h === g, h !== g, named === named);
+
+  // Closures from a loop: one per iteration, with or without captures.
+  const plain: (() => i64)[] = [];
+  const capturing: (() => i64)[] = [];
+  for (let i = 0; i < 3; i++) {
+    plain.push(() => 1);
+    capturing.push(() => i);
+  }
+  console.log(plain[0] === plain[1], plain[1] === plain[1], capturing[0] === capturing[1]);
+  const first = plain[0];
+  console.log(first === plain[0], plain.indexOf(plain[2]), capturing.indexOf(first));
+
+  // A closure passed straight to a call is a new function on every evaluation.
+  const r = new Registry();
+  for (let i = 0; i < 2; i++) {
+    console.log(r.add(() => {}));
+  }
+  const a = make();
+  const b = make();
+  console.log(a === b, a === a, same(a, a), same(a, b), r.kept.length);
+  console.log(await call(a), [h, h].indexOf(h));
+
+  const names = new Map<() => i64, string>();
+  names.set(a, "a");
+  names.set(b, "b");
+  names.set(a, "a2");
+  console.log(names.get(a), names.get(b), names.size, names.has(() => 1));
+}

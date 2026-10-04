@@ -77,10 +77,10 @@ impl FnCx<'_, '_> {
         if !type_params.is_empty() {
             self.cx.error(
                 velt_common::Diagnostic::error(
-                    "a generic arrow function must be a module-level constant with typed parameters and a return type",
+                    "a generic arrow function must be the value of a `const` with typed parameters",
                     e.span,
                 )
-                .with_note("a function value has one type; write `const id = <T>(x: T): T => x;` at module level, or a generic `function`"),
+                .with_note("a function value has one type; declare it as `const id = <T>(x: T) => x;` and call it, or write a generic `function`"),
             );
             return self.error_expr(e.span);
         }
@@ -125,6 +125,7 @@ impl FnCx<'_, '_> {
         let def = self.alloc_closure(span);
         let mut frame = Frame::new(FnKind::Closure, ret_ty);
         frame.scopes[0].hi = span.hi;
+        frame.closure_assigned = closure_assigned_in(params, body);
         // A future owns everything it uses: async closures always capture by value.
         frame.escaping = escaping || is_async;
         frame.is_async = is_async;
@@ -285,12 +286,18 @@ impl FnCx<'_, '_> {
             ast::ArrowBody::Block(b) => {
                 let mut stmts = vec![];
                 self.stmts_into(&b.stmts, &mut stmts);
-                let block = hir::Block {
+                let mut block = hir::Block {
                     stmts,
                     value: None,
                     span: b.span,
                 };
-                let ret = self.f.ret.unwrap_or(self.cx.ty.unit);
+                let ret = match self.f.ret {
+                    Some(r) => r,
+                    None => {
+                        self.finish_inferred_ret(&mut block, "this arrow function")
+                            .0
+                    }
+                };
                 self.check_returns("closure", ret, span, &block);
                 block
             }
@@ -466,4 +473,19 @@ impl FnCx<'_, '_> {
             }
         }
     }
+}
+
+/// The variables that closures created in an arrow function (`params`, `body`) assign.
+fn closure_assigned_in(
+    params: &[ast::ArrowParam],
+    body: &ast::ArrowBody,
+) -> std::collections::HashMap<String, Span> {
+    let defaults = params.iter().filter_map(|p| p.default.as_ref());
+    let assigned = match body {
+        ast::ArrowBody::Block(b) => crate::body::assigned::assigned_by_closures(&b.stmts, defaults),
+        ast::ArrowBody::Expr(e) => {
+            crate::body::assigned::assigned_by_closures(&[], defaults.chain([&**e]))
+        }
+    };
+    crate::body::closure_assigned::owned(assigned)
 }
