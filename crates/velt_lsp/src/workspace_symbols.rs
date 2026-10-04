@@ -1,7 +1,8 @@
 //! Workspace symbols: top-level declarations (and the members of types) whose name fuzzy-matches the
 //! query, from every file of the analyzed programs (open documents and what they import, without
 //! the standard library) and from the source files under the workspace folders (indexed once and
-//! kept up to date by [`crate::disk_index`]).
+//! kept up to date by [`crate::disk_index`]): `.vlt` files anywhere, `.ts` and `.tsx` files in a
+//! package's `src/` and `tests/` (open documents are searched whatever their folder).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -107,7 +108,13 @@ pub fn disk_file_symbols(path: &Path) -> Vec<WorkspaceSymbol> {
     let mut sm = SourceMap::new();
     let file = sm.add(path, src);
     let text = &sm.get(file).src;
-    let parsed = std::panic::catch_unwind(|| velt_syntax::parse_file(file, text).0);
+    let parsed = std::panic::catch_unwind(|| {
+        if vpm::sources::is_plain_ts(path) {
+            velt_syntax::parse_ts_file(file, text).0
+        } else {
+            velt_syntax::parse_file(file, text).0
+        }
+    });
     match parsed {
         Ok(ast) => file_symbols(&SourceFile {
             path,
@@ -181,14 +188,22 @@ fn fuzzy_match(query: &str, name: &str) -> bool {
     query.chars().all(|q| chars.any(|c| c == q))
 }
 
-/// Source files (`.vlt`, `.ts`, `.tsx`) under `dir` (skipping hidden, `target` and
-/// `node_modules` directories).
+/// Source files under the workspace folder `dir` (skipping hidden, `target` and `node_modules`
+/// directories): `.vlt` files anywhere, `.ts` and `.tsx` files only in a package's `src/` and
+/// `tests/`, so the TypeScript frontend of a monorepo is not indexed.
 pub fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    collect(dir, in_package_sources(dir), out);
+}
+
+/// [`collect_files`] below `dir`; `typescript`: whether `dir` is in a package's `src/` or
+/// `tests/`.
+fn collect(dir: &Path, typescript: bool, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     let mut entries: Vec<_> = entries.filter_map(Result::ok).map(|e| e.path()).collect();
     entries.sort();
+    let package_root = is_package_root(dir);
     for path in entries {
         if out.len() >= MAX_DISK_FILES {
             return;
@@ -196,12 +211,47 @@ pub fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if path.is_dir() {
             if !name.starts_with('.') && !SKIPPED_DIRS.contains(&name) {
-                collect_files(&path, out);
+                let sources = if package_root {
+                    PACKAGE_SOURCE_DIRS.contains(&name)
+                } else {
+                    typescript && !is_package_root(&path)
+                };
+                collect(&path, sources, out);
             }
-        } else if vpm::sources::is_source_file(&path) && !is_manifest(&path) {
+        } else if vpm::sources::is_source_file(&path)
+            && !is_manifest(&path)
+            && (typescript || !is_typescript(&path))
+        {
             out.push(path);
         }
     }
+}
+
+/// The directories of a package whose `.ts` and `.tsx` files the index takes.
+const PACKAGE_SOURCE_DIRS: [&str; 2] = ["src", "tests"];
+
+/// Whether the workspace index takes the source file `path` (a `.vlt` file, or a `.ts` or
+/// `.tsx` file in a package's `src/` or `tests/`), as [`collect_files`] decides.
+pub fn indexes(path: &Path) -> bool {
+    !is_typescript(path) || path.parent().is_some_and(in_package_sources)
+}
+
+/// Whether `dir` is in (or is) the `src/` or `tests/` directory of the package it belongs to.
+fn in_package_sources(dir: &Path) -> bool {
+    let Some(root) = vpm::manifest::find_package_root(dir) else {
+        return false;
+    };
+    let rel = dir.strip_prefix(&root).ok();
+    let first = rel.and_then(|r| r.components().next());
+    first.is_some_and(|c| PACKAGE_SOURCE_DIRS.iter().any(|d| c.as_os_str() == *d))
+}
+
+fn is_package_root(dir: &Path) -> bool {
+    dir.join(vpm::manifest::MANIFEST_FILE).is_file()
+}
+
+fn is_typescript(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == "ts" || e == "tsx")
 }
 
 /// Workspace folders from the `initialize` params (`workspaceFolders`, else `rootUri`).
@@ -241,6 +291,53 @@ mod tests {
             OneOf::Left(l) => l.uri.path().ends_with("/src/pkg.vlt"),
             OneOf::Right(_) => false,
         }));
+    }
+
+    #[test]
+    fn typescript_files_are_indexed_in_package_sources_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for f in [
+            "package.vlt",
+            "src/a.ts",
+            "src/ui/b.tsx",
+            "tests/c.test.ts",
+            "script.vlt",
+            "web/src/d.ts",
+            "web/e.vlt",
+            "src/nested/package.vlt",
+            "src/nested/f.ts",
+            "src/nested/src/g.ts",
+        ] {
+            let p = root.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "").unwrap();
+        }
+        let mut found = vec![];
+        collect_files(root, &mut found);
+        let found: Vec<String> = found
+            .iter()
+            .map(|p| vpm::relpath::relative(p, root))
+            .collect();
+        let expected = [
+            "script.vlt",
+            "src/a.ts",
+            "src/nested/src/g.ts",
+            "src/ui/b.tsx",
+            "tests/c.test.ts",
+            "web/e.vlt",
+        ];
+        assert_eq!(found, expected);
+        for f in expected {
+            assert!(indexes(&root.join(f)), "{f}");
+        }
+        for f in ["web/src/d.ts", "src/nested/f.ts", "x.ts"] {
+            assert!(!indexes(&root.join(f)), "{f}");
+        }
+        // A workspace folder opened inside a package's sources.
+        let mut found = vec![];
+        collect_files(&root.join("src/ui"), &mut found);
+        assert_eq!(found.len(), 1);
     }
 
     #[test]

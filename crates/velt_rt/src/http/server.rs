@@ -301,7 +301,10 @@ pub unsafe extern "C" fn velt_rt_http_serve_tls(
     cert_pem: *const VeltStr,
     key_pem: *const VeltStr,
 ) -> *mut VeltFut {
-    match crate::tls::server_config((*cert_pem).as_bytes(), (*key_pem).as_bytes()) {
+    match crate::tls::server_config(
+        (*cert_pem).text_lossy().as_bytes(),
+        (*key_pem).text_lossy().as_bytes(),
+    ) {
         Ok(config) => start(text_arg(addr), *handler, Some(TlsAcceptor::from(config))),
         Err(msg) => {
             // No server will own the handler: release its environment (captures' drop hooks

@@ -120,7 +120,7 @@ async fn send(obj: &WsObj, msg: Message) -> io::Result<()> {
 /// `send(text)` → `IoResult<()>` (text frame; copied).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_ws_send_text(ws: WsHandle, text: *const VeltStr) -> *mut VeltFut {
-    let text = String::from_utf8_lossy((*text).as_bytes()).into_owned();
+    let text = (*text).text_lossy().into_owned();
     SOCKETS.op::<()>(ws, |obj| {
         new_leaf(async move { IoResult::from_io(send(&obj, Message::text(text)).await, |()| ()) })
     })
@@ -181,7 +181,7 @@ pub unsafe extern "C" fn velt_rt_ws_close(
     let Some(obj) = SOCKETS.get(ws) else {
         return new_leaf(async { IoResult::ok(()) });
     };
-    let reason = String::from_utf8_lossy((*reason).as_bytes()).into_owned();
+    let reason = (*reason).text_lossy().into_owned();
     new_leaf(async move {
         let frame = CloseFrame {
             code: CloseCode::from(code as u16),

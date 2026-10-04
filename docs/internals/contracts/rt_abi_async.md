@@ -528,9 +528,14 @@ an uncounted copy or a static-form view of it): it is copied out before the buff
 
 **POC indexing model:** indexes and lengths are **byte offsets** (they agree with `s.length`). An
 offset that falls inside a multi-byte character is moved back to that character's first byte
-(`slice`) so results are always valid UTF-8. Where JS works per UTF-16 code unit (`split("")`,
-`replaceAll("", x)`), these work per Unicode scalar value. For ASCII text everything matches JS
-exactly. "Omitted" JS arguments are passed as the value given in Notes.
+(`slice`) so results are always canonical WTF-8. Where JS works per UTF-16 code unit
+(`split("")`, `replaceAll("", x)`), these work per code point. For ASCII text everything matches
+JS exactly; #377 phase 2b moves positions to code units. A string may hold lone surrogates
+(rt_abi.md "Strings"): searching, slicing, splitting, replacing, padding and repeating work on the
+WTF-8 bytes (a lone surrogate is one 3-byte code point, and the pieces of a built result join a
+high surrogate meeting a low one into the pair); case mapping keeps lone surrogates; number
+parsing and `localeCompare` read each as U+FFFD. "Omitted" JS arguments are passed as the value
+given in Notes.
 
 | Symbol | Signature | Notes |
 |---|---|---|

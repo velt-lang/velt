@@ -3,18 +3,23 @@
 //! with lengths around the inline limit (22, 23 bytes) and the breadcrumb stride (64, 128 units),
 //! and random operations on them.
 //!
-//! The runtime counts UTF-8 bytes until phase 2 of #377, where only ASCII agrees with the model,
-//! so the runtime is checked on [`RUNTIME_ALPHABETS`]. Phase 2 adds the other alphabets; the model
-//! checks below already run on all of them. Every runtime string the checks touch must also carry
-//! its model length as its unit count (phase 1), on every alphabet the runtime can already hold
-//! ([`WELL_FORMED_ALPHABETS`]).
+//! The runtime counts UTF-8 bytes until phase 2b of #377, where only ASCII agrees with the model,
+//! so the runtime's positions are checked on [`RUNTIME_ALPHABETS`]. Phase 2b adds the other
+//! alphabets; the model checks below already run on all of them. Every runtime string the checks
+//! touch must also carry its model length as its unit count and be canonical WTF-8 (phase 1), on
+//! every alphabet, lone surrogates included (phase 2a); the operations whose result doesn't depend
+//! on positions (concatenation, builders, `repeat`, equality, hashing), the position translation
+//! of phase 2b ([`VeltStr::unit_to_byte`], [`VeltStr::byte_to_unit`]) and the code-unit order
+//! ([`cmp_utf16`]) already agree with the model on every alphabet.
 //!
 //! `VELT_UTF16_SEED` replays a failing run (the failure message prints the seed);
 //! `VELT_UTF16_CASES` changes the number of operations.
 
 use super::utf16_model::{self as model, show, wtf8_decode, wtf8_encode};
 use crate::hash::velt_rt_str_hash;
-use crate::str::{velt_rt_str_cmp, velt_rt_str_concat, velt_rt_str_drop, VeltStr};
+use crate::str::{
+    cmp_utf16, velt_rt_str_cmp, velt_rt_str_concat, velt_rt_str_drop, wtf8, BytePos, VeltStr,
+};
 use crate::str_array::{velt_rt_str_array_drop, VeltStrArray};
 use crate::str_ops::replace::*;
 use crate::str_ops::search::*;
@@ -46,9 +51,6 @@ const ALL_ALPHABETS: &[Alphabet] = &[
 /// The alphabets on which the runtime agrees with the model. Phase 2 of #377 makes this
 /// `ALL_ALPHABETS`.
 const RUNTIME_ALPHABETS: &[Alphabet] = &[Alphabet::Ascii];
-
-/// The alphabets the runtime holds before phase 2 of #377 (it can't make lone surrogates yet).
-const WELL_FORMED_ALPHABETS: &[Alphabet] = &[Alphabet::Ascii, Alphabet::Bmp, Alphabet::Astral];
 
 /// Lengths in code units around the inline limit and the breadcrumb stride; other lengths are
 /// random up to 200.
@@ -183,14 +185,29 @@ fn to_rt(rng: &mut Rng, s: &[u16]) -> Rt {
     r
 }
 
-/// The code units of a runtime string; panics unless its bytes are canonical WTF-8 and the unit
-/// count stored in the value is their number.
+/// The code units of a runtime string; panics unless its bytes are canonical WTF-8, the unit
+/// count stored in the value is their number and the string knows whether it is well-formed.
 fn units(s: &VeltStr) -> Vec<u16> {
-    let u = wtf8_decode(unsafe { s.as_bytes() });
+    let bytes = unsafe { s.as_bytes() };
+    if let Err(e) = wtf8::check_canonical(bytes) {
+        panic!("{s:?} is not canonical WTF-8: {e}");
+    }
+    let u = wtf8_decode(bytes);
     assert_eq!(
         s.units(),
         u.len(),
         "stored unit count of {} ({s:?})",
+        show(&u)
+    );
+    let lone = (0..u.len()).any(|i| {
+        let (hi, lo) = (model::is_high(u[i]), model::is_low(u[i]));
+        (hi && !u.get(i + 1).is_some_and(|&n| model::is_low(n)))
+            || (lo && !(i > 0 && model::is_high(u[i - 1])))
+    });
+    assert_eq!(
+        unsafe { s.is_well_formed() },
+        !lone,
+        "well-formedness of {}",
         show(&u)
     );
     u
@@ -476,11 +493,187 @@ fn runtime_matches_model() {
 
 #[test]
 fn every_string_carries_its_unit_count() {
-    run("unit counts", WELL_FORMED_ALPHABETS, 20_000, |rng| {
-        // Off ASCII the results differ from the model until phase 2 (byte positions); what is
-        // checked here is that every input and result decodes to as many units as it stores
-        // (`units` and `to_rt` panic otherwise).
-        let _ = check_one(rng, WELL_FORMED_ALPHABETS);
+    run("unit counts", ALL_ALPHABETS, 20_000, |rng| {
+        // Off ASCII the results differ from the model until phase 2b (byte positions); what is
+        // checked here is that every input and result, also from lone surrogates, is canonical
+        // and decodes to as many units as it stores (`units` and `to_rt` panic otherwise).
+        let _ = check_one(rng, ALL_ALPHABETS);
+        let _ = check_text_ops(rng, ALL_ALPHABETS);
+        Ok(())
+    });
+}
+
+#[test]
+fn concatenation_and_repeat_match_the_model_on_every_alphabet() {
+    run("exact ops", ALL_ALPHABETS, 20_000, |rng| {
+        let s = gen_string(rng, ALL_ALPHABETS);
+        let n = gen_needle(rng, &s, ALL_ALPHABETS);
+        let (rs, rn) = (to_rt(rng, &s), to_rt(rng, &n));
+        let m = format!("{} / {}", show(&s), show(&n));
+        unsafe {
+            let got = out_str(|o| velt_rt_str_concat(&rs.0, &rn.0, o));
+            if got != [s.clone(), n.clone()].concat() {
+                return Err(format!("concat {m}: {}", show(&got)));
+            }
+            let mut buf = MaybeUninit::<VeltStr>::uninit();
+            velt_rt_strbuf_new(rng.below(40) as u64, buf.as_mut_ptr());
+            let mut buf = Rt(buf.assume_init());
+            for p in [&s, &n, &s] {
+                let rp = to_rt(rng, p);
+                velt_rt_strbuf_push_str(&mut buf.0, &rp.0);
+            }
+            if units(&buf.0) != [s.clone(), n.clone(), s.clone()].concat() {
+                return Err(format!("builder {m}"));
+            }
+            let k = rng.below(4) as i64;
+            let mut out = MaybeUninit::<VeltStr>::uninit();
+            velt_rt_str_repeat(&rs.0, k, out.as_mut_ptr());
+            let got = units(&Rt(out.assume_init()).0);
+            if Some(got) != model::repeat(&s, k) {
+                return Err(format!("{}.repeat({k})", show(&s)));
+            }
+        }
+        Ok(())
+    });
+}
+
+/// The operations that build text without positions in the model's sense (case mapping,
+/// trimming, JSON escaping): every result is checked for canonical form by [`units`], and
+/// `JSON.stringify` against a model of it.
+fn check_text_ops(rng: &mut Rng, alphabets: &[Alphabet]) -> Result<(), String> {
+    use crate::str_ops::case::*;
+    use crate::strbuf::velt_rt_strbuf_push_json_str;
+    let s = gen_string(rng, alphabets);
+    let rs = to_rt(rng, &s);
+    unsafe {
+        units(&Rt(out_str_rt(|o| velt_rt_str_to_upper(&rs.0, o))).0);
+        units(&Rt(out_str_rt(|o| velt_rt_str_to_lower(&rs.0, o))).0);
+        units(&Rt(out_str_rt(|o| velt_rt_str_trim(&rs.0, o))).0);
+        let mut buf = MaybeUninit::<VeltStr>::uninit();
+        velt_rt_strbuf_new(rng.below(40) as u64, buf.as_mut_ptr());
+        let mut buf = Rt(buf.assume_init());
+        velt_rt_strbuf_push_json_str(&mut buf.0, &rs.0);
+        let got = units(&buf.0);
+        let want = json_stringify(&s);
+        if got != want {
+            return Err(format!(
+                "JSON.stringify({}): runtime {}, model {}",
+                show(&s),
+                show(&got),
+                show(&want)
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn out_str_rt(f: impl FnOnce(*mut VeltStr)) -> VeltStr {
+    let mut out = MaybeUninit::<VeltStr>::uninit();
+    f(out.as_mut_ptr());
+    unsafe { out.assume_init() }
+}
+
+/// `JSON.stringify(s)` of the model (ES2019 well-formed: lone surrogates as `\udxxx`).
+fn json_stringify(s: &[u16]) -> Vec<u16> {
+    let mut out = vec![b'"' as u16];
+    let push = |out: &mut Vec<u16>, t: &str| out.extend(t.bytes().map(u16::from));
+    for (i, &u) in s.iter().enumerate() {
+        let paired = (model::is_high(u) && s.get(i + 1).is_some_and(|&n| model::is_low(n)))
+            || (model::is_low(u) && i > 0 && model::is_high(s[i - 1]));
+        match u {
+            0x22 => push(&mut out, "\\\""),
+            0x5C => push(&mut out, "\\\\"),
+            0x08 => push(&mut out, "\\b"),
+            0x0C => push(&mut out, "\\f"),
+            0x0A => push(&mut out, "\\n"),
+            0x0D => push(&mut out, "\\r"),
+            0x09 => push(&mut out, "\\t"),
+            0..=0x1F => push(&mut out, &format!("\\u{u:04x}")),
+            0xD800..=0xDFFF if !paired => push(&mut out, &format!("\\u{u:04x}")),
+            _ => out.push(u),
+        }
+    }
+    out.push(b'"' as u16);
+    out
+}
+
+/// The byte position of unit `u` in the model string `s` (see [`BytePos`]).
+fn model_byte_pos(s: &[u16], u: usize) -> BytePos {
+    let inside = u > 0 && u < s.len() && model::is_high(s[u - 1]) && model::is_low(s[u]);
+    let start = if inside { u - 1 } else { u };
+    BytePos {
+        byte: wtf8_encode(&s[..start]).len(),
+        low_half: inside,
+    }
+}
+
+#[test]
+fn position_translation_matches_the_model() {
+    run("position translation", ALL_ALPHABETS, 3_000, |rng| {
+        let s = gen_string(rng, ALL_ALPHABETS);
+        let r = to_rt(rng, &s);
+        // Sometimes shared, so a table is published for other readers (compare-and-swap).
+        let other = rng.chance(30).then(|| Rt(unsafe { r.0.share() }));
+        for u in 0..=s.len() + 1 {
+            let want = model_byte_pos(&s, u.min(s.len()));
+            let got = unsafe { r.0.unit_to_byte(u) };
+            if got != want {
+                return Err(format!("{} unit {u}: {got:?}, model {want:?}", show(&s)));
+            }
+            if !want.low_half {
+                let back = unsafe { r.0.byte_to_unit(want.byte) };
+                if back != u.min(s.len()) {
+                    return Err(format!("{} byte {}: unit {back}", show(&s), want.byte));
+                }
+            }
+        }
+        drop(other);
+        Ok(())
+    });
+}
+
+#[test]
+fn appended_strings_extend_their_breadcrumbs() {
+    run("breadcrumbs after appends", ALL_ALPHABETS, 300, |rng| {
+        let mut s: Vec<u16> = Vec::new();
+        let mut r = Rt(VeltStr::empty());
+        for _ in 0..1 + rng.below(6) {
+            let piece = gen_string(rng, ALL_ALPHABETS);
+            let rp = to_rt(rng, &piece);
+            unsafe { crate::str::velt_rt_str_append(&mut r.0, &rp.0) };
+            s.extend_from_slice(&piece);
+            // Shared between appends now and then: the next append copies, and a translation
+            // of the shared value publishes a longer table.
+            let keep = rng.chance(20).then(|| Rt(unsafe { r.0.share() }));
+            for _ in 0..8 {
+                let u = rng.below(s.len() + 1);
+                let got = unsafe { r.0.unit_to_byte(u) };
+                if got != model_byte_pos(&s, u) {
+                    return Err(format!("{} unit {u}: {got:?}", show(&s)));
+                }
+            }
+            drop(keep);
+        }
+        units(&r.0);
+        Ok(())
+    });
+}
+
+#[test]
+fn utf16_order_matches_the_model() {
+    run("code-unit order", ALL_ALPHABETS, 300_000, |rng| {
+        let s = gen_string(rng, ALL_ALPHABETS);
+        let t = if rng.chance(50) {
+            gen_string(rng, ALL_ALPHABETS)
+        } else {
+            mutate(rng, &s, ALL_ALPHABETS)
+        };
+        let (a, b) = (wtf8_encode(&s), wtf8_encode(&t));
+        let got = cmp_utf16(&a, &b) as i32;
+        let want = model::cmp(&s, &t);
+        if got != want {
+            return Err(format!("{} vs {}: {got}, model {want}", show(&s), show(&t)));
+        }
         Ok(())
     });
 }

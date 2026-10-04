@@ -95,9 +95,9 @@ fn open(path: &str, readonly: bool, create: bool, timeout_ms: u32) -> Result<DbO
     Ok(DbObj::new(conn))
 }
 
-unsafe fn text<'a>(s: *const VeltStr) -> &'a str {
-    // Velt strings are UTF-8 by construction.
-    std::str::from_utf8_unchecked((*s).as_bytes())
+/// A string argument as UTF-8 for SQLite (one U+FFFD per lone surrogate, #377).
+unsafe fn text<'a>(s: *const VeltStr) -> std::borrow::Cow<'a, str> {
+    (*s).text_lossy()
 }
 
 /// The object behind a handle, or the "not open" error for a closed or null handle.
@@ -117,7 +117,7 @@ pub unsafe extern "C" fn velt_rt_sqlite_open(
     timeout_ms: u32,
     out: *mut IoResult<DbHandle>,
 ) {
-    let r = match open(text(path), readonly != 0, create != 0, timeout_ms) {
+    let r = match open(&text(path), readonly != 0, create != 0, timeout_ms) {
         Ok(obj) => IoResult::ok(DATABASES.insert(obj)),
         Err(e) => IoResult::err(e.to_velt()),
     };
@@ -143,7 +143,7 @@ pub unsafe extern "C" fn velt_rt_sqlite_close(db: DbHandle, out: *mut VeltErr) {
 /// Run one or more `;`-separated statements without parameters (schema scripts).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_sqlite_exec(db: DbHandle, sql: *const VeltStr, out: *mut VeltErr) {
-    let r = obj(db).and_then(|o| o.with(|c| Ok(c.execute_batch(text(sql))?)));
+    let r = obj(db).and_then(|o| o.with(|c| Ok(c.execute_batch(&text(sql))?)));
     out.write(r.map_or_else(|e| e.to_velt(), |_| VeltErr::ok()));
 }
 
@@ -175,7 +175,7 @@ pub unsafe extern "C" fn velt_rt_sqlite_pragma(
     source: *const VeltStr,
     out: *mut IoResult<VeltStr>,
 ) {
-    let r = obj(db).and_then(|o| o.with(|c| pragma(c, text(source))));
+    let r = obj(db).and_then(|o| o.with(|c| pragma(c, &text(source))));
     out.write(match r {
         Ok(s) => IoResult::ok(VeltStr::from_vec(s.into_bytes())),
         Err(e) => IoResult::err(e.to_velt()),

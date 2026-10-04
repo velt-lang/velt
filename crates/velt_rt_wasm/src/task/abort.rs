@@ -96,7 +96,7 @@ pub unsafe extern "C" fn velt_rt_signal_free(h: Handle<Signal>) {
 /// `h` must be a live signal handle; `reason` a valid string.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_signal_abort(h: Handle<Signal>, reason: *const VeltStr) {
-    let text = String::from_utf8_lossy((*reason).as_bytes()).into_owned();
+    let text = (*reason).to_string_lossy();
     h.obj().abort(&Reason {
         text,
         timeout_ms: None,
@@ -150,7 +150,7 @@ pub unsafe extern "C" fn velt_rt_signal_timeout(ms: i64, reason: *const VeltStr)
     let s = Rc::new(Signal::default());
     let weak = Rc::downgrade(&s);
     let reason = Reason {
-        text: String::from_utf8_lossy((*reason).as_bytes()).into_owned(),
+        text: (*reason).to_string_lossy(),
         timeout_ms: Some(ms),
     };
     let deadline = crate::platform::monotonic_ms() + ms.max(0) as f64;

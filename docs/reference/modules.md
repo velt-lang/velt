@@ -63,7 +63,13 @@ module; importers get the original declaration, and go-to-definition lands there
 | `"./file"`, `"../dir/file"` | relative to the importing file, without the extension: `file.vlt`, `file.ts` or `file.tsx` ([TypeScript files](#typescript-files-ts-and-tsx)). A folder is a module through its `index` file: `"./shapes"` is `shapes.vlt` (or `.ts`, `.tsx`), else `shapes/index.vlt` (or `.ts`, `.tsx`) |
 | `"velt:x"` | the [standard library](../std/README.md) module `x` (`"velt:fs"`, `"velt:collections/set"`) |
 | an alias from `paths` in `package.vlt` | `"@app/*": "src/*"` makes `"@app/util/strings"` mean `src/util/strings.vlt` (or `.ts`, `.tsx`), resolved like a relative import ([`package.vlt`](../tooling/manifest.md)) |
-| `"pkg"`, `"pkg/sub"` | a dependency from `package.vlt`: its `src/lib.vlt`, or `src/sub.vlt` / `src/sub/index.vlt` ([Packages](../tooling/packages.md)) |
+| `"pkg"`, `"pkg/sub"` | a dependency from `package.vlt`: its `src/lib.vlt`, or `src/sub.vlt` / `src/sub/index.vlt` (or `.ts`, `.tsx`, as for a relative import) ([Packages](../tooling/packages.md)) |
+
+A specifier must spell file and directory names exactly as they are on disk, case included, on
+every OS, as TypeScript's `forceConsistentCasingInFileNames` requires: `"./Util"` does not load
+`util.vlt` on Windows or macOS either, since it would fail on Linux. The error names the file on
+disk and the specifier to write (`import it as "./util"`). Files whose names differ only in case
+(`Util.ts` next to `util.vlt`) are different modules everywhere.
 
 The prelude (strings, arrays, `Map`, `Math`, `JSON`, `Error`, `Comparable`, `Mutex`, `assert`,
 …) is always in scope without an import ([Built-ins](builtins.md)).
@@ -76,7 +82,10 @@ program may mix them freely, and `velt run app.ts` works like `velt run app.vlt`
 
 - `"./util"` tries `util.vlt`, `util.ts` and `util.tsx`, then `util/index.vlt`,
   `util/index.ts` and `util/index.tsx`. When two of the files tried together exist (`util.vlt`
-  and `util.ts`), the import is an error that names them: rename or remove one.
+  and `util.ts`), the import is an error that names them: rename or remove one. A file wins over
+  a folder, as in TypeScript; when the folder's `index` file has another extension (`util.ts`
+  next to `util/index.vlt`), the import gets a warning, since the folder module is easy to
+  mistake for the one loaded.
 - A relative import may name the extension, as TypeScript allows with
   `allowImportingTsExtensions`: `"./util.ts"` (or `.tsx`, `.vlt`) is exactly that file. As in
   TypeScript, `"./util.js"` means `util.ts` or `util.tsx`, and `"./card.jsx"` means `card.tsx`.
@@ -94,10 +103,11 @@ program may mix them freely, and `velt run app.ts` works like `velt run app.vlt`
 - TypeScript's older type assertion `<T>x` is an error in a `.ts` file (in `.tsx` and `.vlt`
   files `<T>` starts JSX, as in a `.tsx` file): narrow with `typeof` or `instanceof`, or
   annotate the variable's type.
-- For now, the rest of a package stays `.vlt`: standard library modules and the modules of
-  dependencies (`"pkg"`, `"pkg/sub"` → `src/lib.vlt`, `src/sub.vlt`, `src/sub/index.vlt`) are
-  `.vlt` files named without an extension, and a package's default entry is `src/main.vlt`
-  (`src/lib.vlt` for a library); an `entry` in `package.vlt` may name a `.ts` file.
+- A package can be written in TypeScript: the modules of a dependency (`"pkg"`, `"pkg/sub"`)
+  are found like relative imports' files (`src/lib.ts`, `src/sub.tsx`, `src/sub/index.ts`, …),
+  and without an `entry` in `package.vlt` a package's default entry is `src/main.vlt`,
+  `src/main.ts` or `src/main.tsx` (`src/lib.*` for a library). Standard library modules are
+  `.vlt` files.
 
 `velt check` in a package, `velt test` (`*.test.ts`, `*.test.tsx`), `velt fmt`, `velt doc`
 and the language server take `.ts` and `.tsx` files along with `.vlt` ones

@@ -29,25 +29,11 @@ mod programs_m4;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Once;
 use std::time::Duration;
 
 use velt_sema::hir;
-
-/// `Command::new(program)`, with `CREATE_NO_WINDOW` on Windows: a test run without a console would
-/// otherwise open a window for every program it starts.
-fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
-    #[allow(unused_mut)]
-    let mut cmd = Command::new(program);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    cmd
-}
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -214,3 +200,7 @@ fn http_server_handles_real_requests() {
     assert_eq!(rest.replace("\r\n", "\n"), "hits 3\n");
     assert_eq!(status.code(), Some(0));
 }
+
+#[path = "../../../tests/common/command.rs"]
+mod command;
+use command::command;

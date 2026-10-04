@@ -13,6 +13,7 @@
 //! Strings without escapes borrow the source; only escaped strings allocate.
 
 use crate::json::scan::{number_f64, number_i64, Scanner, StrTok, SyntaxError};
+use crate::str::wtf8;
 use std::borrow::Cow;
 
 /// One parameter value.
@@ -187,21 +188,20 @@ fn number<'a>(sc: &mut Scanner<'a>) -> Result<DbValue<'a>, String> {
     Ok(DbValue::Float(number_f64(sc.src, tok)))
 }
 
+/// A string parameter as UTF-8 for the database. The source is a Velt string (canonical
+/// WTF-8) and escapes decode to code points, so the text is canonical WTF-8; a lone surrogate
+/// (`JSON.stringify` escapes them, but a hand-written parameter text may hold one) becomes
+/// U+FFFD (#377).
 fn string<'a>(sc: &mut Scanner<'a>) -> Result<Cow<'a, str>, String> {
     let src = sc.src;
-    let bytes: Cow<'a, [u8]> = match sc.string(true).map_err(syntax)? {
-        StrTok::Borrowed(start, end) => Cow::Borrowed(&src[start..end]),
-        StrTok::Owned(v) => Cow::Owned(v),
-    };
-    // The source is a Velt string (UTF-8) and decoded escapes are UTF-8, so this only fails
-    // for input that did not come from `JSON.stringify`.
-    match bytes {
-        Cow::Borrowed(b) => std::str::from_utf8(b).map(Cow::Borrowed),
-        Cow::Owned(v) => String::from_utf8(v)
-            .map(Cow::Owned)
-            .map_err(|e| e.utf8_error()),
-    }
-    .map_err(|_| "parameter string is not valid UTF-8".to_string())
+    Ok(match sc.string(true).map_err(syntax)? {
+        StrTok::Borrowed(start, end) => wtf8::to_utf8_lossy(&src[start..end]),
+        StrTok::Owned(mut v) => {
+            wtf8::replace_lone_in_place(&mut v);
+            // SAFETY: canonical WTF-8 without lone surrogates is UTF-8.
+            Cow::Owned(unsafe { String::from_utf8_unchecked(v) })
+        }
+    })
 }
 
 /// `[0, 255, ...]`: a byte array (blob).

@@ -80,13 +80,15 @@ pub unsafe extern "C" fn velt_rt_bytes_drop(b: *mut VeltBytes) {
     drop((*b).take_vec());
 }
 
-/// Copy a string's bytes into a new owned byte buffer.
+/// Copy a string's UTF-8 into a new owned byte buffer (one U+FFFD per lone surrogate, as
+/// `TextEncoder` does).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_bytes_from_str(s: *const VeltStr, out: *mut VeltBytes) {
-    out.write(VeltBytes::from_vec((*s).as_bytes().to_vec()));
+    out.write(VeltBytes::from_vec((*s).to_string_lossy().into_bytes()));
 }
 
-/// Copy bytes into a new owned string, validating UTF-8 (`INVALID_DATA` on failure).
+/// Copy bytes into a new owned string, validating UTF-8 (`INVALID_DATA` on failure; the
+/// encoding of a surrogate, `ED A0..BF xx`, is invalid UTF-8 too).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_bytes_to_str(b: *const VeltBytes, out: *mut IoResult<VeltStr>) {
     let r = match std::str::from_utf8((*b).as_bytes()) {

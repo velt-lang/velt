@@ -100,7 +100,7 @@ pub unsafe extern "C" fn velt_rt_native_check(rc: i32, package: *const VeltStr) 
     if rc == 0 {
         return;
     }
-    let name = String::from_utf8_lossy((*package).as_bytes()).into_owned();
+    let name = (*package).text_lossy().into_owned();
     crate::io::try_flush_stdout();
     eprintln!("error: the native library of package `{name}` failed to start (code {rc})");
     std::process::exit(1)

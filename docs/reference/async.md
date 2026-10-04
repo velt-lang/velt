@@ -249,9 +249,12 @@ captured variables; the error mentions "spawned task" and `shared`. Share state 
     (`out.push(v.inner)` pushes a copy, `last = v.inner` assigns one), and an outside object it
     stores into the value (`v.items.push(item)` stores a copy; `item` stays outside, so using
     it after the `with` is an error, "`item` is still used after `with` stored it in the
-    locked value": store `item.clone()` to keep using `item`; a resource without `clone()` is
-    stored itself) — also when a function or method the callback
-    calls does the storing (`v.giveTo(out)` gives the method a copy of the value). An object
+    locked value": store `item.clone()` to keep using `item`) — also when a function or
+    method the callback calls does the storing (`v.giveTo(out)` gives the method a copy of the
+    value). A resource without `clone()` cannot be copied, so the value gets the object itself:
+    using the variable afterwards is an error ("`conn` is still used after `with` stored it in
+    the locked value"), and so is storing one from a field or an element, which keeps it too
+    (give the type a `clone()`, or move it into the value). An object
     stored from one place in the value to another, or from one outside object to another, stays
     the same object. A call that stores a part of an argument it also changes cannot be given a
     copy, and is an error ("this call may store a part of the locked value outside it, and also

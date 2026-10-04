@@ -32,13 +32,19 @@ pub(crate) unsafe fn take_bytes(b: *mut VeltBytes) -> Bytes {
     Bytes::from((*b).take_vec())
 }
 
-/// Take a string argument (the caller's value is left empty): a heap string's buffer becomes
-/// the body without copying (the `Bytes` holds the reference); short and static text is copied.
+/// Take a string argument (the caller's value is left empty): a well-formed heap string's
+/// buffer becomes the body without copying (the `Bytes` holds the reference); short and static
+/// text is copied, and text with lone surrogates is converted (one U+FFFD each, #377).
 ///
 /// # Safety
 /// `s` must point to a valid `VeltStr`.
 pub(crate) unsafe fn take_text(s: *mut VeltStr) -> Bytes {
-    let st = std::ptr::replace(s, VeltStr::empty());
+    let mut st = std::ptr::replace(s, VeltStr::empty());
+    if !st.is_well_formed() {
+        let body = Bytes::from(st.to_string_lossy().into_bytes());
+        st.release();
+        return body;
+    }
     if st.is_heap() {
         return Bytes::from_owner(StrOwner(st));
     }

@@ -4,7 +4,7 @@
 //! correctly rounded for any length; other radixes are exact below 2^128 and then continue in
 //! `f64` arithmetic (V8 is also approximate there).
 
-use super::{is_js_whitespace, text};
+use super::{is_js_whitespace, text_lossy};
 use crate::str::VeltStr;
 
 fn trim_start_js(s: &str) -> &str {
@@ -74,7 +74,7 @@ fn power_of_two_value(digits: &[u8], radix: u32) -> f64 {
 /// `parseInt(s, radix)`; pass `radix = 0` when JS omits it.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_parse_int(s: *const VeltStr, radix: i64) -> f64 {
-    parse_int(text(s), radix)
+    parse_int(&text_lossy(s), radix)
 }
 
 fn parse_int(s: &str, radix: i64) -> f64 {
@@ -159,7 +159,7 @@ fn signed_infinity(negative: bool) -> f64 {
 /// `parseFloat(s)`: longest decimal prefix after leading whitespace; NaN if there is none.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_parse_float(s: *const VeltStr) -> f64 {
-    parse_float(text(s))
+    parse_float(&text_lossy(s))
 }
 
 fn parse_float(s: &str) -> f64 {
@@ -178,7 +178,7 @@ fn parse_float(s: &str) -> f64 {
 /// `0x`/`0o`/`0b` prefixes (unsigned only); `Infinity`; otherwise NaN.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_str_to_number(s: *const VeltStr) -> f64 {
-    str_to_number(text(s))
+    str_to_number(&text_lossy(s))
 }
 
 fn str_to_number(s: &str) -> f64 {

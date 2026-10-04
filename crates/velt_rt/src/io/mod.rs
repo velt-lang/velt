@@ -113,9 +113,11 @@ pub unsafe extern "C" fn velt_rt_stdout_write_bytes(b: *const VeltBytes) {
     }
 }
 
+/// Write a string: its bytes as they are when well-formed, else with one U+FFFD per lone
+/// surrogate (#377).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_write_str(stream: u32, s: *const VeltStr) {
-    write_bytes(stream, (*s).as_bytes());
+    emit(stream, |b| (*s).extend_utf8(b));
 }
 
 #[no_mangle]

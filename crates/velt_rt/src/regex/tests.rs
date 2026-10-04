@@ -161,3 +161,42 @@ fn line_separators() {
     assert_eq!(replace(".", "g", "a\u{2028}b", "-"), "-\u{2028}-");
     assert_eq!(replace("^", "gm", "a\nb\u{2029}c", ">"), ">a\n>b\u{2029}c");
 }
+
+#[test]
+fn replacement_joins_halves_of_a_pair_and_matching_skips_lone_surrogates() {
+    // WTF-8 of a lone high (U+D83D) and low (U+DE00) surrogate.
+    let (hi, lo) = ([0xED, 0xA0, 0xBD], [0xED, 0xB8, 0x80]);
+    let wtf = |parts: &[&[u8]]| VeltStr::from_bytes(&parts.concat());
+    let re = new("-", "").expect("valid pattern");
+    let run = |subject: &VeltStr, rep: &str, all: bool| unsafe {
+        let mut out = MaybeUninit::uninit();
+        velt_rt_regex_replace(
+            re,
+            subject,
+            &s(Box::leak(rep.into())),
+            all as u8,
+            out.as_mut_ptr(),
+        );
+        let mut v = out.assume_init();
+        let b = v.as_bytes().to_vec();
+        crate::str::velt_rt_str_drop(&mut v);
+        b
+    };
+    // The text before the match against the text after it, and `$&` pieces.
+    assert_eq!(run(&wtf(&[&hi, b"-", &lo]), "", false), "😀".as_bytes());
+    assert_eq!(
+        run(&wtf(&[&hi, b"-", &lo, b"-"]), "$&", true),
+        [&hi[..], b"-", &lo, b"-"].concat()
+    );
+    // `.` and `[^…]` don't match a lone surrogate yet (#377 phase 5), and an empty match steps
+    // over one as a whole.
+    let dot = new(".", "g").expect("valid pattern");
+    let mut out = MaybeUninit::uninit();
+    unsafe { velt_rt_regex_exec_all(dot, &wtf(&[b"a", &hi, b"b"]), out.as_mut_ptr()) };
+    let found = unsafe { out.assume_init() };
+    assert_eq!(unsafe { found.as_slice() }, [0, 1, 4, 5]);
+    unsafe {
+        velt_rt_regex_free(re);
+        velt_rt_regex_free(dot);
+    }
+}

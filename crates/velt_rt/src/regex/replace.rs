@@ -6,29 +6,31 @@
 //! the search then skips capture tracking.
 
 use super::matches::{each_captures, each_find};
+use crate::str::wtf8::push_joining;
 use regex::bytes::{CaptureLocations, Regex};
 
-/// Replace the first match (or every match with `all`) of `re` in `s`.
+/// Replace the first match (or every match with `all`) of `re` in `s`. Every piece is pushed
+/// with [`push_joining`], so a high surrogate meeting a low one at a seam becomes the pair.
 pub fn replace(re: &Regex, s: &[u8], replacement: &[u8], all: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(s.len());
     let mut last = 0;
     if !replacement.contains(&b'$') {
         each_find(re, s, |start, end| {
-            out.extend_from_slice(&s[last..start]);
-            out.extend_from_slice(replacement);
+            push_joining(&mut out, &s[last..start]);
+            push_joining(&mut out, replacement);
             last = end;
             all
         });
     } else {
         each_captures(re, s, |locs| {
             let (start, end) = locs.get(0).expect("ICE: group 0 always matches");
-            out.extend_from_slice(&s[last..start]);
+            push_joining(&mut out, &s[last..start]);
             expand(re, locs, s, replacement, &mut out);
             last = end;
             all
         });
     }
-    out.extend_from_slice(&s[last..]);
+    push_joining(&mut out, &s[last..]);
     out
 }
 
@@ -56,15 +58,15 @@ fn expand(re: &Regex, locs: &CaptureLocations, s: &[u8], replacement: &[u8], out
                 2
             }
             b'&' => {
-                out.extend_from_slice(&s[start..end]);
+                push_joining(out, &s[start..end]);
                 2
             }
             b'`' => {
-                out.extend_from_slice(&s[..start]);
+                push_joining(out, &s[..start]);
                 2
             }
             b'\'' => {
-                out.extend_from_slice(&s[end..]);
+                push_joining(out, &s[end..]);
                 2
             }
             b'0'..=b'9' => numbered(locs, s, groups, &replacement[i + 1..], out),
@@ -100,7 +102,7 @@ fn numbered(
         _ => return 0,
     };
     if let Some(g) = group(locs, s, n) {
-        out.extend_from_slice(g);
+        push_joining(out, g);
     }
     len + 1
 }
@@ -119,7 +121,7 @@ fn named(re: &Regex, locs: &CaptureLocations, s: &[u8], rest: &[u8], out: &mut V
         .capture_names()
         .position(|n| n.is_some_and(|n| n.as_bytes() == name));
     if let Some(g) = index.and_then(|i| group(locs, s, i)) {
-        out.extend_from_slice(g);
+        push_joining(out, g);
     }
     close + 2
 }

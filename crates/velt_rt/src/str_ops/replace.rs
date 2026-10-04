@@ -4,20 +4,24 @@
 //! match, `` $` `` → the text before it, `$'` → the text after it; any other `$` sequence
 //! (`$1`, `$<name>`) is copied literally because a string pattern has no captures.
 
-use super::{sub_string, text};
+use super::{bytes, sub_string, text};
+use crate::str::wtf8::{self, push_joining};
 use crate::str::VeltStr;
 
-/// Append the replacement for the match at `pos..pos + len` of `s`.
-fn push_substitution(out: &mut Vec<u8>, to: &str, s: &str, pos: usize, len: usize) {
-    if !to.contains('$') {
-        out.extend_from_slice(to.as_bytes());
+/// Append the replacement for the match at `pos..pos + len` of `s` (all WTF-8). Every piece is
+/// pushed with [`push_joining`], so a high surrogate meeting a low one at a seam becomes the
+/// pair (canonical WTF-8).
+fn push_substitution(out: &mut Vec<u8>, to: &[u8], s: &[u8], pos: usize, len: usize) {
+    let Some(first) = memchr::memchr(b'$', to) else {
+        push_joining(out, to);
         return;
-    }
-    let bytes = to.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let expansion = match (bytes[i], bytes.get(i + 1)) {
-            (b'$', Some(b'$')) => Some("$"),
+    };
+    push_joining(out, &to[..first]);
+    let mut i = first;
+    let mut run = first;
+    while i < to.len() {
+        let expansion: Option<&[u8]> = match (to[i], to.get(i + 1)) {
+            (b'$', Some(b'$')) => Some(b"$"),
             (b'$', Some(b'&')) => Some(&s[pos..pos + len]),
             (b'$', Some(b'`')) => Some(&s[..pos]),
             (b'$', Some(b'\'')) => Some(&s[pos + len..]),
@@ -25,20 +29,33 @@ fn push_substitution(out: &mut Vec<u8>, to: &str, s: &str, pos: usize, len: usiz
         };
         match expansion {
             Some(e) => {
-                out.extend_from_slice(e.as_bytes());
+                push_joining(out, &to[run..i]);
+                push_joining(out, e);
                 i += 2;
+                run = i;
             }
-            None => {
-                out.push(bytes[i]);
-                i += 1;
-            }
+            None => i += 1,
         }
+    }
+    push_joining(out, &to[run..]);
+}
+
+/// Positions where `from` matches: every non-overlapping match, or (empty `from`) every code
+/// point boundary including both ends; only the first one unless `all`.
+fn match_positions(s: &[u8], from: &[u8], all: bool) -> Vec<usize> {
+    let limit = if all { usize::MAX } else { 1 };
+    if from.is_empty() {
+        wtf8::boundaries(s)
+            .chain(std::iter::once(s.len()))
+            .take(limit)
+            .collect()
+    } else {
+        memchr::memmem::find_iter(s, from).take(limit).collect()
     }
 }
 
-/// Positions where `from` matches: every non-overlapping match, or (empty `from`) every
-/// character boundary including both ends; only the first one unless `all`.
-fn match_positions(s: &str, from: &str, all: bool) -> Vec<usize> {
+/// [`match_positions`] for well-formed text (the `str` search, as before lone surrogates).
+fn match_positions_str(s: &str, from: &str, all: bool) -> Vec<usize> {
     let limit = if all { usize::MAX } else { 1 };
     if from.is_empty() {
         s.char_indices()
@@ -57,19 +74,22 @@ unsafe fn replace(
     to: *const VeltStr,
     all: bool,
 ) -> VeltStr {
-    let (t, from, to) = (text(s), text(from), text(to));
-    let positions = match_positions(t, from, all);
+    let positions = match (text(s), text(from)) {
+        (Ok(t), Ok(f)) => match_positions_str(t, f, all),
+        _ => match_positions(bytes(s), bytes(from), all),
+    };
+    let (t, from, to) = (bytes(s), bytes(from), bytes(to));
     if positions.is_empty() {
         return sub_string(s, 0, t.len());
     }
     let mut out = Vec::with_capacity(t.len() + positions.len() * to.len());
     let mut copied = 0;
     for pos in positions {
-        out.extend_from_slice(&t.as_bytes()[copied..pos]);
+        push_joining(&mut out, &t[copied..pos]);
         push_substitution(&mut out, to, t, pos, from.len());
         copied = pos + from.len();
     }
-    out.extend_from_slice(&t.as_bytes()[copied..]);
+    push_joining(&mut out, &t[copied..]);
     VeltStr::from_vec(out)
 }
 
