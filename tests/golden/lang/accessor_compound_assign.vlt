@@ -1,0 +1,122 @@
+// check: no leaks
+// Compound assignment, `++`/`--` and `??=` / `||=` / `&&=` on accessors whose getter changes
+// the object (a signal recording a read): the receiver is evaluated once, then the getter runs,
+// then the right-hand side, then the setter, as in JavaScript.
+
+class Signal {
+  private v: number = 0;
+  private subs: number[] = [];
+  get value(): number {
+    this.subs.push(1);
+    console.log("get", this.v);
+    return this.v;
+  }
+  set value(next: number) {
+    console.log("set", next);
+    this.v = next;
+  }
+  get reads(): number {
+    return this.subs.length;
+  }
+
+  bump(): number {
+    this.value++;
+    return (this.value *= 2);
+  }
+}
+
+class Box {
+  private label: string = "a";
+  private maybe: string | null = null;
+  private on: boolean = false;
+  get text(): string {
+    console.log("get text");
+    return this.label;
+  }
+  set text(t: string) {
+    console.log("set text", t);
+    this.label = t;
+  }
+  get name(): string | null {
+    console.log("get name");
+    return this.maybe;
+  }
+  set name(n: string | null) {
+    console.log("set name", n);
+    this.maybe = n;
+  }
+  get flag(): boolean {
+    console.log("get flag");
+    return this.on;
+  }
+  set flag(b: boolean) {
+    console.log("set flag", b);
+    this.on = b;
+  }
+}
+
+class Holder {
+  private s: Signal = new Signal();
+  get inner(): Signal {
+    console.log("get inner");
+    return this.s;
+  }
+}
+
+function pick(s: Signal, tag: string): Signal {
+  console.log("pick", tag);
+  return s;
+}
+
+function rhs(n: number): number {
+  console.log("rhs", n);
+  return n;
+}
+
+function fallback(t: string): string {
+  console.log("fallback", t);
+  return t;
+}
+
+function main() {
+  const s = new Signal();
+  s.value += 1;
+  s.value++;
+  --s.value;
+  s.value -= rhs(1);
+  s.value += s.value + 2;
+  console.log("bump", s.bump());
+
+  // The receiver expression runs once, before the getter; the right-hand side after it.
+  pick(s, "a").value++;
+  pick(s, "b").value *= rhs(3);
+  const all = [s, new Signal()];
+  let i = 0;
+  all[i++].value += 10;
+  console.log("i", i);
+  // A getter on the way to the accessor runs once too.
+  const h = new Holder();
+  h.inner.value++;
+  h.inner.value += rhs(2);
+
+  // As values: postfix gives the old value, prefix and compound the new one.
+  const a = s.value++;
+  const b = ++s.value;
+  const c = (s.value += 3);
+  const d = pick(s, "c").value--;
+  console.log(a, b, c, d, s.reads);
+
+  // Strings, and the logical assignments: the setter runs only when the old value does not
+  // decide the result, and only then is the right-hand side evaluated.
+  const box = new Box();
+  box.text += "b";
+  const t = (box.text += "c");
+  console.log(t);
+  box.name ??= fallback("first");
+  box.name ??= fallback("second");
+  box.flag ||= true;
+  box.flag ||= false;
+  box.flag &&= false;
+  box.flag &&= true;
+  console.log(box.text, box.name, box.flag);
+}

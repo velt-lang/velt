@@ -99,6 +99,10 @@ pub(crate) struct Ctx<'m> {
     pub groups: Option<crate::throws::Groups>,
     /// Error types committed to while checking bodies, re-checked after inference.
     pub throw_checks: Vec<crate::throws::ThrowCheck>,
+    /// Generator methods implementing an interface method (`Iterable.[Symbol.iterator]`) whose
+    /// error type is inferred: it must turn out `never`, since the interface's iterator type
+    /// is fixed before bodies are checked (throws/checks.rs).
+    pub iface_generators: Vec<(crate::hir::DefId, String)>,
     /// Items declared inside blocks, visible by name within their block.
     pub nested: Vec<crate::collect::NestedItem>,
     /// For each nested definition: names bound in its enclosing functions (for the
@@ -181,6 +185,7 @@ impl<'m> Ctx<'m> {
             fn_values: vec![],
             groups: None,
             throw_checks: vec![],
+            iface_generators: vec![],
             nested: vec![],
             nested_locals: HashMap::new(),
             generic_arrow_fns: HashSet::new(),

@@ -217,12 +217,29 @@ impl Names {
                     ArrowBody::Block(b) => self.block(b),
                 }
             }
+            ExprKind::Function(f) => {
+                if !f.sig.name.name.is_empty() {
+                    self.decls.insert(f.sig.name.name.clone());
+                }
+                for p in &f.sig.params {
+                    self.decls.insert(p.name.name.clone());
+                    p.default.iter().for_each(|d| self.expr(d));
+                }
+                self.block(&f.body);
+            }
             ExprKind::Object(props) | ExprKind::StructLit { props, .. } => {
                 for p in props {
                     match p {
                         ObjectProp::KeyValue(_, e) | ObjectProp::Spread(e) => self.expr(e),
                         ObjectProp::Shorthand(id) => {
                             self.uses.insert(id.name.clone());
+                        }
+                        ObjectProp::Method(f) => {
+                            for p in &f.sig.params {
+                                self.decls.insert(p.name.name.clone());
+                                p.default.iter().for_each(|d| self.expr(d));
+                            }
+                            self.block(&f.body);
                         }
                     }
                 }

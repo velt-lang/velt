@@ -9,19 +9,31 @@
 //! - **Array spread** `[a, ...xs, b]` →
 //!   `{ let out = with_capacity(len); out.push(a); for (e of xs) out.push(<share of e>); ...; out }`
 //!   (Copy elements are copied), each element converted to the literal's element type
-//!   (`const ns: Named[] = [...cs]` makes interface values of the `C`s).
+//!   (`const ns: Named[] = [...cs]` makes interface values of the `C`s). A string or a `Map` is
+//!   the array of its characters or entries (bound to a temporary, as above). A source that is an
+//!   iterable (`[...gen()]`) is a `for...of` pushing its values at its position
+//!   (`body/consume.rs`).
 //!
 //! Spread sources are evaluated before the other elements of the literal.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use crate::body::consume::{Consumable, Synth};
 use crate::body::places::{is_place, set_place_mode};
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{
     self, BinOp, DefId, ExprKind as H, Intrinsic, Pat, PatKind, StmtKind as S, TyId, TyKind,
     UseMode,
 };
+
+/// A source of array spread.
+enum Src {
+    /// An array (a place, or a temporary bound first) and its element type.
+    Array(hir::Expr, TyId),
+    /// An iterable, consumed by a `for...of` at its position.
+    Iter(Consumable),
+}
 
 pub(super) fn has_spread(props: &[ast::ObjectProp]) -> bool {
     props
@@ -62,6 +74,7 @@ impl FnCx<'_, '_> {
                 ast::ObjectProp::Shorthand(k) => {
                     vec![(k.name.clone(), Value::Prop(k.clone(), None))]
                 }
+                ast::ObjectProp::Method(_) => vec![],
             };
             for (name, v) in new {
                 if let Value::Prop(k, _) = &v {
@@ -88,7 +101,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `{ stmts; value }` (or just `value` when there are no statements).
-    pub(super) fn with_lets(&mut self, lets: Vec<hir::Stmt>, value: hir::Expr) -> hir::Expr {
+    pub(crate) fn with_lets(&mut self, lets: Vec<hir::Stmt>, value: hir::Expr) -> hir::Expr {
         if lets.is_empty() {
             return value;
         }
@@ -254,25 +267,30 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let mut lets = vec![];
-        let mut sources: Vec<Option<(hir::Expr, TyId)>> = vec![];
+        let mut sources: Vec<Option<Src>> = vec![];
         let mut elem = exp_elem;
         for e in elems {
             let ast::ExprKind::Spread(inner) = &e.kind else {
                 sources.push(None);
                 continue;
             };
-            let h = self.expr(inner, None, Want::Borrow);
-            let Some(et) = self.cx.ty.array_elem(h.ty) else {
-                if !self.cx.ty.is_bottom(h.ty) {
-                    let tn = self.cx.display(h.ty);
-                    self.cx.err(
-                        format!("cannot spread a value of type `{tn}` into an array"),
-                        inner.span,
-                    );
+            let mut h = self.expr(inner, None, Want::Borrow);
+            if self.cx.ty.array_elem(h.ty).is_none() {
+                match self.spread_iterable(h, inner) {
+                    // A string's characters, a `Map`'s entries: spread as that array.
+                    Some(c) if c.is_fresh() => h = c.into_fresh(),
+                    Some(c) => {
+                        elem.get_or_insert(c.elem);
+                        sources.push(Some(Src::Iter(c)));
+                        continue;
+                    }
+                    None => {
+                        sources.push(None);
+                        continue;
+                    }
                 }
-                sources.push(None);
-                continue;
-            };
+            }
+            let et = self.cx.ty.array_elem(h.ty).expect("ICE: spread array");
             elem.get_or_insert(et);
             let mut src = if is_place(&h) {
                 h
@@ -280,41 +298,85 @@ impl FnCx<'_, '_> {
                 self.temp("<spread>", h, &mut lets)
             };
             set_place_mode(&mut src, UseMode::Borrow);
-            sources.push(Some((src, et)));
+            sources.push(Some(Src::Array(src, et)));
         }
         let Some(elem) = elem else {
             return self.error_expr(span);
         };
-        for (e, src) in elems.iter().zip(&sources) {
-            let Some((_, et)) = src else { continue };
-            // Integers spread into a float array are numbers too (`[...[1, 2]]` as `number[]`).
-            // Fresh elements convert like any other value of the literal (#268).
-            let fits = *et == elem
-                || (self.cx.ty.is_int(*et) && self.cx.ty.is_float(elem))
-                || self.converts_to(*et, elem)
-                || self.widens(*et, elem);
-            if !fits && !self.cx.ty.has_error(*et) {
-                let (from, to) = (self.cx.display(*et), self.cx.display(elem));
+        for (e, src) in elems.iter().zip(&mut sources) {
+            let (et, is_array) = match src {
+                Some(Src::Array(_, et)) => (*et, true),
+                Some(Src::Iter(c)) => (c.elem, false),
+                None => continue,
+            };
+            // Integers spread into a float array are numbers too (`[...[1, 2]]` as `number[]`,
+            // `Math.max(...ints())`). An array's elements convert like any other value of the
+            // literal, fresh ones too (#268).
+            let fits = et == elem
+                || (self.cx.ty.is_int(et) && self.cx.ty.is_float(elem))
+                || (is_array && (self.converts_to(et, elem) || self.widens(et, elem)));
+            if !fits && !self.cx.ty.has_error(et) {
+                let (from, to) = (self.cx.display(et), self.cx.display(elem));
                 self.cx.err(
                     format!("cannot spread `{from}` elements into an array of `{to}`"),
                     e.span,
                 );
+                if !is_array {
+                    // Reported: its loop is not built.
+                    *src = None;
+                }
             }
         }
         let arr_ty = self.cx.ty.array(elem);
-        let cap = self.spread_capacity(elems, &sources, span);
+        let srcs: Vec<Option<hir::Expr>> = sources
+            .iter()
+            .map(|s| match s {
+                Some(Src::Array(h, _)) => Some(h.clone()),
+                _ => None,
+            })
+            .collect();
+        let cap = self.spread_capacity(elems, &srcs, span);
         let init = self.intrinsic(Intrinsic::ArrayWithCapacity, vec![cap], arr_ty, span);
-        let out_l = self.new_local("<array>", arr_ty, true, span, LocalKind::Temp);
-        lets.push(hir::Stmt {
-            kind: S::Let {
-                local: out_l,
-                init: Some(init),
-            },
-            span,
+        let iterables = sources.iter().any(|s| matches!(s, Some(Src::Iter(_))));
+        // A spread iterable pushes from synthesized source, which names the array.
+        let syn = iterables.then(|| {
+            self.push_scope_until(span.hi);
+            Synth::new(span, self.f.locals.len())
         });
+        let out_l = match &syn {
+            Some(syn) => self.hidden_local(syn.ident(&syn.array), init, true, &mut lets),
+            None => {
+                let out_l = self.new_local("<array>", arr_ty, true, span, LocalKind::Temp);
+                lets.push(hir::Stmt {
+                    kind: S::Let {
+                        local: out_l,
+                        init: Some(init),
+                    },
+                    span,
+                });
+                out_l
+            }
+        };
         for (e, src) in elems.iter().zip(sources) {
             let stmt = match (src, &e.kind) {
-                (Some((src, et)), _) => self.push_all(out_l, arr_ty, src, (et, elem), e.span),
+                (Some(Src::Array(src, et)), _) => {
+                    self.push_all(out_l, arr_ty, src, (et, elem), e.span)
+                }
+                (Some(Src::Iter(c)), _) => {
+                    let syn = syn.as_ref().expect("ICE: spread names");
+                    let mut v = syn.name(&syn.value);
+                    if c.elem != elem && self.cx.ty.is_float(elem) {
+                        // An integer into a float array: `<value#N> as f64`.
+                        let ty = self.cx.display(elem);
+                        v = syn.expr(ast::ExprKind::Cast {
+                            expr: Box::new(v),
+                            ty: syn.named_type(&ty),
+                        });
+                    }
+                    let push = syn.method(syn.name(&syn.array), "push", vec![v]);
+                    self.consume(c, syn, vec![syn.expr_stmt(push)], &mut lets);
+                    continue;
+                }
                 (None, ast::ExprKind::Spread(_)) => continue,
                 (None, _) => {
                     let v = self.expr_coerce(e, elem, Want::Move);
@@ -323,15 +385,37 @@ impl FnCx<'_, '_> {
             };
             lets.push(stmt);
         }
+        if syn.is_some() {
+            self.pop_scope();
+        }
         let out = self.mk(H::Local(out_l, UseMode::Move), arr_ty, span);
         self.with_lets(lets, out)
+    }
+
+    /// A spread source that is not an array: an iterable (`[...gen()]`), else an error.
+    fn spread_iterable(&mut self, h: hir::Expr, inner: &ast::Expr) -> Option<Consumable> {
+        let ty = h.ty;
+        if self.is_consumable(ty) {
+            return self.consumable(h);
+        }
+        if !self.cx.ty.is_bottom(ty) {
+            let tn = self.cx.display(ty);
+            self.cx.error(
+                Diagnostic::error(
+                    format!("cannot spread a value of type `{tn}` into an array"),
+                    inner.span,
+                )
+                .with_note("what `for...of` iterates can be spread: arrays, strings, `Map`s, generators and iterables (values with a `[Symbol.iterator]()` method)"),
+            );
+        }
+        None
     }
 
     /// `n_plain + xs.length + ...` as a `usize`.
     fn spread_capacity(
         &mut self,
         elems: &[ast::Expr],
-        sources: &[Option<(hir::Expr, TyId)>],
+        sources: &[Option<hir::Expr>],
         span: Span,
     ) -> hir::Expr {
         let usize_ = self.cx.ty.usize;
@@ -340,7 +424,7 @@ impl FnCx<'_, '_> {
             .filter(|e| !matches!(e.kind, ast::ExprKind::Spread(_)))
             .count();
         let mut cap = self.mk(H::Lit(hir::Lit::Int(plain as u128)), usize_, span);
-        for (src, _) in sources.iter().flatten() {
+        for src in sources.iter().flatten() {
             let len = self.intrinsic(Intrinsic::ArrayLen, vec![src.clone()], usize_, span);
             let kind = H::Binary {
                 op: BinOp::Add,
@@ -375,6 +459,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Stmt {
         let copy = self.cx.is_copy(src_elem);
+        self.reject_promise_spread(src_elem, span);
         let mode = if copy { UseMode::Copy } else { UseMode::Borrow };
         let e = self.new_local("<elem>", src_elem, false, span, LocalKind::Elem);
         let read = self.mk(H::Local(e, mode), src_elem, span);

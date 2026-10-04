@@ -79,6 +79,8 @@ pub(super) fn build(mut cx: Ctx) -> Analysis {
         effects,
         names,
         members,
+        type_index: std::sync::OnceLock::new(),
+        ref_index: std::sync::OnceLock::new(),
     }
 }
 

@@ -34,6 +34,13 @@ Promises behave like JavaScript's, at Rust's cost:
   the promise (objects) or copied (numbers, strings), otherwise moved, because the promise may
   outlive the caller's frame. A promise has one owner: using a promise variable after handing
   it on is ``use of moved value``, and an explicit `p.clone()` is ``a promise cannot be copied``.
+  In a collection, a promise is replaced in place (`arr[i] = p`) and taken out with `pop()` or
+  `splice(i, 1)`, or awaited with the others by `Promise.all(arr)`. TypeScript lets several
+  places hold the same promise; Velt doesn't, so reading a promise element (`arr[i]`) and the
+  methods that copy values out (`m.get(k)`, `m.values()`, `arr.at(i)`, `arr.slice()`, …) are
+  compile-time errors for promises and for values that copy one (a struct with a promise
+  field); a class instance holding a promise is shared, so reading it out works. Shared
+  promises, which would make these reads work as in TypeScript, are planned (#212).
 - A `using` variable may be the receiver or an argument of an async call only when the call is
   awaited where it is made (`await r.read()`): it is disposed at the end of its block, which a
   stored or returned promise could outlive (``an async call that keeps it must be awaited
@@ -351,8 +358,11 @@ async function main() {
   `const ps: Promise<string, Timeout>[] = [work(), rejectAfter(50)]`.
 - A promise nobody can await reports its error as uncaught (`Uncaught <Type>: <message>`, exit
   code 1), like an unhandled rejection: a task spawned as a statement (`spawn(f());`, or
-  `spawn(p);` of a stored promise), and a stored promise that rejects after it was dropped
-  unawaited (unless a combinator handled it).
+  `spawn(p);` of a stored promise), a spawned task whose handle was dropped without being
+  awaited (when the task rejects, or when the handle is dropped after it did), and a stored
+  promise that rejects after it was dropped unawaited. A promise or handle handed to a
+  combinator (`Promise.race`, `all`, `any`) is handled, and so is a `scope.spawn` child, whose
+  error fails its `taskScope`.
 
 ## `new Promise`
 

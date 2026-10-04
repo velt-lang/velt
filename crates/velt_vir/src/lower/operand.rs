@@ -3,6 +3,7 @@
 
 use velt_sema::hir::{self, LocalId, TyId, TyKind};
 
+use super::strings::str_w1;
 use super::{cint, ice, unit, FnLower};
 use crate::vir::{Const, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
@@ -118,10 +119,10 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// A string literal: static bytes + a `{ptr as u64, len, cap: 0}` value (never freed).
+    /// A string literal: static bytes + a `{ptr as u64, units << 32 | len, cap: 0}` value (never
+    /// freed).
     pub(super) fn str_lit(&mut self, s: &str) -> Operand {
         let mut bytes = s.as_bytes().to_vec();
-        let len = bytes.len();
         if bytes.is_empty() {
             // Never emit zero-sized data: the pointer must be valid even for "".
             bytes.push(0);
@@ -130,7 +131,7 @@ impl FnLower<'_, '_> {
         let ptr = Operand::Const(Const::Static(sid), Ty::Ptr);
         let fields = vec![
             self.rvalue_temp(Ty::U64, Rvalue::Cast(ptr, Ty::U64)),
-            cint(len as i128, Ty::U64),
+            cint(str_w1(s) as i128, Ty::U64),
             cint(0, Ty::U64),
         ];
         self.rvalue_temp(Ty::Agg(STR_AGG), Rvalue::Aggregate(STR_AGG, fields))

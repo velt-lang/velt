@@ -21,7 +21,9 @@ pub unsafe extern "C" fn velt_rt_str_split(
     } else {
         let mut pieces = Vec::new();
         let mut start = 0;
-        for (i, _) in t.match_indices(sep_text) {
+        // A byte search finds the same matches as a `str` one (UTF-8 is self-synchronizing),
+        // and memchr's is vectorized.
+        for i in memchr::memmem::find_iter(t.as_bytes(), sep_text.as_bytes()) {
             pieces.push(sub_string(s, start, i));
             start = i + sep_text.len();
         }

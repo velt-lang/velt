@@ -36,7 +36,7 @@ impl Drop for Heap {
 /// The same text as a heap string (even when short enough to be stored inline).
 fn heap(s: &str) -> Heap {
     let mut h = VeltStr::with_capacity(64.max(s.len()));
-    unsafe { h.push_bytes(s.as_bytes()) };
+    unsafe { h.push_wtf8(s.as_bytes(), None) };
     assert!(h.is_heap());
     Heap(h)
 }

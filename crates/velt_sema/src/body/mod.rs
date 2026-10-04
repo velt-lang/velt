@@ -35,6 +35,7 @@
 
 mod assigned;
 mod const_borrow;
+mod consume;
 mod ctor;
 mod defaults;
 mod driver;
@@ -47,6 +48,7 @@ pub(crate) use generators::GenCopy;
 mod locals;
 mod loops;
 pub(crate) mod narrow;
+mod nested_pattern;
 mod pattern;
 mod pattern_defaults;
 pub(crate) mod places;
@@ -163,6 +165,8 @@ pub(crate) struct Frame {
     pub is_async: bool,
     /// Body of a generator: the type of the values it yields (`yield` is allowed).
     pub yield_ty: Option<TyId>,
+    /// Body of a named generator function expression: its name (not in scope there).
+    pub fn_expr_name: Option<String>,
     /// Nesting depth of the `finally` blocks being checked (`yield` is not allowed in them).
     pub finally_depth: u32,
     /// In a generator's `finally` block: the loop stack's length when it was entered (a
@@ -220,6 +224,7 @@ impl Frame {
             escaping: false,
             is_async: false,
             yield_ty: None,
+            fn_expr_name: None,
             finally_depth: 0,
             finally_loops: None,
             stmt_yields: Default::default(),
@@ -268,6 +273,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Checking an expression outside any body (a field initializer, a parameter default, a
     /// module-level constant): it has no frame to hold temporary locals (`driver::detached`).
     pub detached: bool,
+    /// The call about to be checked is `new Map(...)` / `new Set(...)`: an iterable argument
+    /// for its array parameter is collected into an array (`consume.rs`).
+    pub collect_iterable_args: bool,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -286,6 +294,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             direct_await: None,
             std_callback: false,
             detached: false,
+            collect_iterable_args: false,
         }
     }
 

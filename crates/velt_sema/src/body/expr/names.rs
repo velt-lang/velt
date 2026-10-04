@@ -210,6 +210,9 @@ impl FnCx<'_, '_> {
         if self.unknown_namespace_member(&id.name, id.span) {
             return;
         }
+        if self.fn_expr_self_ref(&id.name, id.span) {
+            return;
+        }
         if !self.enclosing_locals.contains(&id.name) {
             self.cx
                 .err(format!("cannot find `{}` in this scope", id.name), id.span);

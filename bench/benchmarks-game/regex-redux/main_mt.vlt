@@ -4,7 +4,7 @@
 // sequence (see NOTES.md).
 
 import { readAll } from "velt:stdin";
-import { RegExp } from "velt:regex";
+import { RegExp, RegExpError } from "velt:regex";
 
 async function countMatches(pattern: string, sequence: string): Promise<string> {
   return `${pattern} ${new RegExp(pattern, "g").matches(sequence).length}`;
@@ -46,7 +46,7 @@ async function main() {
 
   // The substitution chain takes longest: start it first.
   const substituted = spawn(substitutedLength(sequence.clone()));
-  const counts: Promise<string>[] = [];
+  const counts: Promise<string, RegExpError>[] = [];
   for (const pattern of variants) {
     counts.push(spawn(countMatches(pattern, sequence.clone())));
   }

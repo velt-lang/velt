@@ -17,10 +17,17 @@ impl FnLower<'_, '_> {
     /// `spawn(p)`: a direct compiled call or async closure literal starts from an inline initial
     /// state (`velt_rt_spawn`); any other promise is a heap future (`velt_rt_spawn_fut`).
     /// `detached`: the join handle is dropped at once (a `spawn(...)` statement), so the task's
-    /// error is reported as uncaught.
-    pub(in crate::lower) fn spawn(&mut self, p: &hir::Expr, ty: TyId, detached: bool) -> Operand {
+    /// error is reported as uncaught. `handled`: the caller handles the task's error itself
+    /// (`Intrinsic::SpawnHandled`), so a dropped handle drops it quietly.
+    pub(in crate::lower) fn spawn(
+        &mut self,
+        p: &hir::Expr,
+        ty: TyId,
+        detached: bool,
+        handled: bool,
+    ) -> Operand {
         if let hir::ExprKind::If { cond, then, els } = &p.kind {
-            return self.spawn_if(cond, [then, els], ty, detached);
+            return self.spawn_if(cond, [then, els], ty, detached, handled);
         }
         let pty = self.sub(ty);
         let slot = self.cx.promise_slot(pty);
@@ -58,12 +65,13 @@ impl FnLower<'_, '_> {
             },
         };
         // Drops the task's result if nobody claims it (its join handle was dropped). A detached
-        // task from an initial state reports its own error (value.rs) and leaves only `T`; a
-        // detached heap future (`spawn(p);` of a stored promise) leaves its slot, whose error is
-        // reported here.
+        // task from an initial state reports its own error (value.rs) and leaves only `T`; any
+        // other task leaves its slot, whose error is reported here like an unhandled rejection,
+        // unless a combinator handled the handle (the runtime then drops it quietly) or the
+        // spawn is `handled`.
         let result_drop = if detached && started.is_some() {
             self.result_drop_fn(res).unwrap_or_else(|| cint(0, Ty::Ptr))
-        } else if detached {
+        } else if !handled {
             self.unclaimed_drop_fn(pty)
         } else {
             self.result_drop_fn(slot)
@@ -125,6 +133,7 @@ impl FnLower<'_, '_> {
         branches: [&hir::Expr; 2],
         ty: TyId,
         detached: bool,
+        handled: bool,
     ) -> Operand {
         let c = self.expr(cond);
         let t = self.vty(ty);
@@ -134,7 +143,7 @@ impl FnLower<'_, '_> {
         for (bb, branch) in [then_bb, else_bb].into_iter().zip(branches) {
             self.switch_to(bb);
             self.push_scope(ScopeKind::Temps);
-            let handle = self.spawn(spawned(branch), ty, detached);
+            let handle = self.spawn(spawned(branch), ty, detached, handled);
             if let Operand::Copy(p) = &handle {
                 self.take_temp(p);
             }

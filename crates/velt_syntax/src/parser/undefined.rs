@@ -74,6 +74,9 @@ mod tests {
         let src = "function* g(): Generator<number, undefined, undefined> {}\nconst x: Box<undefined> = 1;";
         let found = messages(src);
         assert_eq!(found.len(), 1, "{found:?}");
+        // TS's other protocol types (#424) take it too.
+        let src = "function f(r: IteratorResult<number, undefined>, i: IterableIterator<string, undefined>, o: IteratorObject<i64, undefined>, a: AsyncIterableIterator<i64, undefined>) {}";
+        assert!(messages(src).is_empty());
     }
 
     #[test]

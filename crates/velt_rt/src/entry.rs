@@ -18,6 +18,7 @@
 pub fn init() {
     crate::panic::install_hook();
     crate::process::init_clock();
+    crate::process::init_script();
     ignore_sigpipe();
 }
 

@@ -220,7 +220,7 @@ impl<'a> Walker<'a> {
         }
     }
 
-    fn function(&mut self, sig: &'a ast::FnSig, body: Option<&'a ast::Block>) {
+    pub(super) fn function(&mut self, sig: &'a ast::FnSig, body: Option<&'a ast::Block>) {
         self.scoped(|w| {
             for p in &sig.params {
                 w.ty(&p.ty);

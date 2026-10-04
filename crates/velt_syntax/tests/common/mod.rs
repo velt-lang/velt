@@ -142,6 +142,7 @@ pub fn props(ps: &[ObjectProp]) -> String {
             ObjectProp::KeyValue(k, v) => format!("{}: {}", k.name, sx(v)),
             ObjectProp::Shorthand(k) => k.name.clone(),
             ObjectProp::Spread(e) => format!("...{}", sx(e)),
+            ObjectProp::Method(f) => format!("{}()", f.sig.name.name),
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -251,6 +252,14 @@ pub fn sx(e: &Expr) -> String {
             )
         }
         ExprKind::Index { object, index, .. } => format!("([] {} {})", sx(object), sx(index)),
+        ExprKind::Function(f) => format!(
+            "({}function{} {}({}) {{{} stmts}})",
+            if f.sig.is_async { "async " } else { "" },
+            if f.sig.is_generator { "*" } else { "" },
+            f.sig.name.name,
+            f.sig.params.len(),
+            f.body.stmts.len()
+        ),
         ExprKind::Arrow {
             type_params,
             params,

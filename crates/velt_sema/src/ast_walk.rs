@@ -1,13 +1,14 @@
 //! Direct sub-expressions of a surface expression, for passes that scan the AST before
 //! checking (nested declarations) or rewrite it (local generic arrows). Statements inside
-//! block-bodied arrow functions are not expressions and are left to the caller.
+//! block-bodied arrow functions and function expressions are not expressions and are left to
+//! the caller.
 
 use velt_syntax::ast::{self, ExprKind as E, JsxAttr, JsxAttrValue, JsxChild, ObjectProp};
 
 /// Call `f` on every direct sub-expression of `e`.
 pub(crate) fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
     match &e.kind {
-        E::Lit(_) | E::Ident(_) | E::This | E::Super => {}
+        E::Lit(_) | E::Ident(_) | E::This | E::Super | E::Function(_) => {}
         E::Template { exprs, .. } | E::Array(exprs) => exprs.iter().for_each(f),
         E::Unary { expr, .. }
         | E::Update { target: expr, .. }
@@ -49,7 +50,7 @@ pub(crate) fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
             for p in props {
                 match p {
                     ObjectProp::KeyValue(_, v) | ObjectProp::Spread(v) => f(v),
-                    ObjectProp::Shorthand(_) => {}
+                    ObjectProp::Shorthand(_) | ObjectProp::Method(_) => {}
                 }
             }
         }
@@ -87,7 +88,7 @@ fn jsx_exprs<'a>(el: &'a ast::JsxElement, f: &mut dyn FnMut(&'a ast::Expr)) {
 /// Like [`children`], mutably.
 pub(crate) fn children_mut(e: &mut ast::Expr, f: &mut dyn FnMut(&mut ast::Expr)) {
     match &mut e.kind {
-        E::Lit(_) | E::Ident(_) | E::This | E::Super => {}
+        E::Lit(_) | E::Ident(_) | E::This | E::Super | E::Function(_) => {}
         E::Template { exprs, .. } | E::Array(exprs) | E::New { args: exprs, .. } => {
             exprs.iter_mut().for_each(f)
         }
@@ -132,7 +133,7 @@ pub(crate) fn children_mut(e: &mut ast::Expr, f: &mut dyn FnMut(&mut ast::Expr))
             for p in props {
                 match p {
                     ObjectProp::KeyValue(_, v) | ObjectProp::Spread(v) => f(v),
-                    ObjectProp::Shorthand(_) => {}
+                    ObjectProp::Shorthand(_) | ObjectProp::Method(_) => {}
                 }
             }
         }

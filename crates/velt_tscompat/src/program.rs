@@ -6,9 +6,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use velt_common::{Diagnostic, FileId, SourceMap};
-use velt_sema::SourceModule;
+use velt_sema::{ide, SourceModule};
 
-use crate::{Finding, LintModule};
+use crate::{Finding, LintModule, Program};
 
 /// Lint the modules of a loaded program that are in scope (`in_scope` of their canonical path),
 /// that `lint` selects (by file) and that have no error in `diagnostics` (the load's and the
@@ -16,11 +16,14 @@ use crate::{Finding, LintModule};
 /// `in_scope` accepts, linted or not: a relative import of any other file leaves the subset.
 /// `velt check --ts-compat` lints every module in scope; the language server only the open
 /// document, whose imports are still judged against the whole scope. Standard library modules are
-/// never in scope (nor canonicalized).
+/// never in scope (nor canonicalized). `analysis` is the checker's IDE analysis of `modules`
+/// (`velt_sema::ide::check_for_ide`), which the rules on types need; without it only the
+/// syntax rules run.
 pub fn lint_program(
     modules: &[SourceModule],
     sm: &SourceMap,
     diagnostics: &[Diagnostic],
+    analysis: Option<&ide::Analysis>,
     in_scope: &dyn Fn(&Path) -> bool,
     lint: &dyn Fn(FileId) -> bool,
 ) -> Vec<Finding> {
@@ -76,7 +79,12 @@ pub fn lint_program(
         .filter(|(_, s)| **s)
         .map(|(p, _)| p.as_path())
         .collect();
-    crate::lint(&lint_modules, &scope)
+    let program = analysis.map(|analysis| Program {
+        analysis,
+        modules,
+        sm,
+    });
+    crate::lint(&lint_modules, &scope, program.as_ref())
 }
 
 /// `path` with links and `..` resolved, for comparing files named in different ways. A file

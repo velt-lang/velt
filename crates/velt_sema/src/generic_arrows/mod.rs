@@ -5,7 +5,8 @@
 //! function infers it from its body like any other (`collect::ret_infer`). The syntax is rewritten
 //! before collection, so every later pass sees an ordinary generic function. Generic arrows
 //! anywhere else are reported by `body::expr::closure` (a closure value has one type; Velt has
-//! no generic function values).
+//! no generic function values). Likewise a module-level `const g = function* (...) { ... };` is
+//! the generator function `function* g(...) { ... }`.
 
 mod local;
 
@@ -44,7 +45,9 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
         let mut i = match as_function(i) {
             Some(f) => {
                 if let ast::ItemKind::Function(f) = &f.kind {
-                    module_fns.push(f.sig.name.span);
+                    if !f.sig.is_generator {
+                        module_fns.push(f.sig.name.span);
+                    }
                 }
                 f
             }
@@ -83,11 +86,32 @@ fn as_function(item: &ast::Item) -> Option<ast::Item> {
     let ast::ItemKind::Var(v) = &item.kind else {
         return None;
     };
+    let f = generator_function(v).or_else(|| arrow_function(v))?;
     Some(ast::Item {
-        kind: ast::ItemKind::Function(arrow_function(v)?),
+        kind: ast::ItemKind::Function(f),
         exported: item.exported,
         span: item.span,
     })
+}
+
+/// `const g = function* (...): R { ... };` as `function* g(...): R { ... }` (also `async`):
+/// at module level a generator expression is a declaration under the constant's name.
+fn generator_function(v: &ast::VarDecl) -> Option<ast::FnDecl> {
+    let ast::PatternKind::Ident(name) = &v.pattern.kind else {
+        return None;
+    };
+    if v.kind != ast::VarKind::Const || v.ty.is_some() {
+        return None;
+    }
+    let ast::ExprKind::Function(d) = &v.init.as_ref()?.kind else {
+        return None;
+    };
+    if !d.sig.is_generator {
+        return None;
+    }
+    let mut d = (**d).clone();
+    d.sig.name = name.clone();
+    Some(d)
 }
 
 /// The function a generic arrow constant `v` declares, if it is one with typed parameters.

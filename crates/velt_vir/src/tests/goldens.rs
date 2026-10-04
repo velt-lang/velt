@@ -436,7 +436,7 @@ fn#0 internal _V4main() -> unit {
   let _2: ptr
   bb0:
     _0 = cast static#0 as u64
-    _1 = agg#0 { _0, 12_u64, 0_u64 }
+    _1 = agg#0 { _0, 51539607564_u64, 0_u64 }
     _2 = &_1
     call extern#0 velt_rt_write_str(1_u32, _2) -> bb1
   bb1:
@@ -472,7 +472,7 @@ fn snapshot_greet() {
     _3 = &_2
     call extern#3 velt_rt_strbuf_new(24_u64, _3) -> bb1
   bb1:
-    call extern#4 velt_rt_strbuf_push_bytes(_3, static#15, 7_u64) -> bb2
+    call extern#4 velt_rt_strbuf_push_bytes(_3, static#15, 30064771079_u64) -> bb2
   bb2:
     call extern#13 velt_rt_strbuf_push_str(_3, _0) -> bb3
   bb3:

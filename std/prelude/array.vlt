@@ -200,14 +200,41 @@ extend<T> Array<T> {
       // The array is A Y; pushing the items gives A Y I, and the same two reversals of [lo, end)
       // turn Y I into I Y.
       const rest = this.length - lo;
+      // Moved in, not shared: `items` is the call's own array (and may hold promises).
+      const n = items.length;
+      for (let i: usize = 0; i < n; i++) {
+        this.push(__intrinsic_array_remove(items, 0));
+      }
+      reverseRange(this, lo, this.length);
+      reverseRange(this, lo, lo + n);
+      reverseRange(this, lo + n, lo + n + rest);
+    }
+    return out;
+  }
+
+  // Removes and returns the first element, or null when the array is empty (JS: undefined).
+  // O(length): the other elements move down by one, as V8 does for large arrays. A queue that
+  // takes from the front belongs in a `Deque` (velt:collections/deque), which does it in O(1).
+  shift(): T | null {
+    if (this.length == 0) {
+      return null;
+    }
+    return __intrinsic_array_remove(this, 0);
+  }
+
+  // Inserts `items` at the front, in order, and returns the new length, like JS. O(length +
+  // items): the items are pushed, then rotated to the front by three reversals.
+  unshift(...items: T[]): i64 {
+    if (items.length > 0) {
+      const old = this.length;
       for (const x of items) {
         this.push(__intrinsic_share(x));
       }
-      reverseRange(this, lo, this.length);
-      reverseRange(this, lo, lo + items.length);
-      reverseRange(this, lo + items.length, lo + items.length + rest);
+      reverseRange(this, 0, this.length);
+      reverseRange(this, 0, items.length);
+      reverseRange(this, items.length, items.length + old);
     }
-    return out;
+    return this.length as i64;
   }
 
   // Shortens the array to `length` elements, dropping the rest (JS `xs.length = n`); a longer
@@ -298,31 +325,13 @@ extend<T> Array<T> {
   }
 }
 
-// The runtime's string builder (rt_abi_async.md §12). `VeltStrBuf` has the `string` layout,
-// so a `string` local serves as the builder and is the result once built (no finishing copy).
-declare function velt_rt_strbuf_new(cap: u64, out: string);
-declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_str_join(parts: string[], sep: string): string;
 
 extend Array<string> {
-  // Joins with `sep`: one pass sums the lengths, then every piece is copied once into a buffer
+  // Joins with `sep`: the runtime sums the lengths, then copies every piece once into a string
   // of exactly that size.
   join(sep: string = ","): string {
-    const n = this.length;
-    if (n == 0) {
-      return "";
-    }
-    let total = sep.length * (n - 1);
-    for (let i: usize = 0; i < n; i++) {
-      total += this[i].length;
-    }
-    let s = "";
-    velt_rt_strbuf_new(total as u64, s);
-    velt_rt_strbuf_push_str(s, this[0]);
-    for (let i: usize = 1; i < n; i++) {
-      velt_rt_strbuf_push_str(s, sep);
-      velt_rt_strbuf_push_str(s, this[i]);
-    }
-    return s;
+    return velt_rt_str_join(this, sep);
   }
 }
 

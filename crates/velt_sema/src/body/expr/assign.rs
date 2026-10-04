@@ -23,7 +23,7 @@ enum AssignTarget {
 impl FnCx<'_, '_> {
     /// Resolve an assignment target to a writable place or a setter. Reports errors.
     fn assign_target(&mut self, target: &ast::Expr, span: Span) -> Option<AssignTarget> {
-        if self.reject_env_assign(target) {
+        if self.reject_env_assign(target) || self.reject_argv_assign(target) {
             return None;
         }
         let place = match &target.kind {
@@ -206,8 +206,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        let a = self.assign(op, target, value, span);
-        if exp == Some(self.cx.ty.unit) || self.cx.ty.is_bottom(a.ty) {
+        let wanted = exp != Some(self.cx.ty.unit);
+        let (a, valued) = self.assign_as(op, target, value, wanted, span);
+        if valued || !wanted || self.cx.ty.is_bottom(a.ty) {
             return a;
         }
         if !is_plain_path(target) {
@@ -237,60 +238,117 @@ impl FnCx<'_, '_> {
         value: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
+        self.assign_as(op, target, value, false, span).0
+    }
+
+    /// [`Self::assign`]; with `as_value`, a read-modify-write of an accessor also produces the
+    /// assignment's value (returned `true`: the expression is that value).
+    fn assign_as(
+        &mut self,
+        op: Option<ast::BinaryOp>,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        as_value: bool,
+        span: Span,
+    ) -> (hir::Expr, bool) {
         if let Some(op @ (ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)) = op {
-            // `a ??= b` is `a = a ?? b` (likewise `&&=`, `||=`), and the assignment narrows `a`
-            // as usual. That reads the target twice, which is only right when reading it has no
-            // effect (JS evaluates `xs[f()]` once).
-            if !is_pure_place(target) {
-                self.cx.error(
-                    Diagnostic::error(
-                        "`??=`, `||=` and `&&=` are not supported yet on a target that calls a function",
-                        target.span,
-                    )
-                    .with_note("store the index or object in a variable first: `const k = f(); m[k] ??= v;`"),
-                );
-                self.expr(value, None, Want::Borrow);
-                return self.error_expr(span);
+            let checked = self.assign_target(target, span);
+            if let Some(AssignTarget::Setter(obj)) = checked {
+                let e = self.setter_assign(obj, Some(op), target, value, as_value, span);
+                return (e, as_value);
             }
-            // A record key has rules of its own (a key may be missing): the record path handles
-            // every compound form. A target in error is reported once, here.
-            match self.assign_target(target, span) {
-                Some(AssignTarget::Record(obj)) => {
-                    let (object, key) = super::record::record_parts(target);
-                    return self.record_assign(obj, object, key, Some(op), target, value, span);
-                }
-                None => {
-                    self.expr(value, None, Want::Borrow);
-                    return self.error_expr(span);
-                }
-                Some(AssignTarget::Place(_) | AssignTarget::Setter(_)) => {}
-            }
-            let rhs = ast::Expr {
-                id: ast::NodeId(u32::MAX),
-                kind: ast::ExprKind::Binary {
-                    op,
-                    lhs: Box::new(target.clone()),
-                    rhs: Box::new(value.clone()),
-                },
-                span: value.span,
-            };
-            return self.assign(None, target, &rhs, span);
+            (self.logical_assign(op, checked, target, value, span), false)
+        } else {
+            self.plain_or_compound_assign(op, target, value, as_value, span)
         }
-        let unit = self.cx.ty.unit;
-        let place = match self.assign_target(target, span) {
-            Some(AssignTarget::Place(place)) => place,
-            Some(AssignTarget::Setter(obj)) => {
-                return self.setter_assign(obj, op, target, value, span)
-            }
+    }
+
+    /// `a ??= b` on a place or record key (`checked` is the target as resolved).
+    fn logical_assign(
+        &mut self,
+        op: ast::BinaryOp,
+        checked: Option<AssignTarget>,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        // `a ??= b` is `a = a ?? b` (likewise `&&=`, `||=`), and the assignment narrows `a`
+        // as usual. That reads the target twice, which is only right when reading it has no
+        // effect (JS evaluates `xs[f()]` once).
+        if !is_pure_place(target) {
+            self.cx.error(
+                Diagnostic::error(
+                    "`??=`, `||=` and `&&=` are not supported yet on a target that calls a function",
+                    target.span,
+                )
+                .with_note("store the index or object in a variable first: `const k = f(); m[k] ??= v;`"),
+            );
+            self.expr(value, None, Want::Borrow);
+            return self.error_expr(span);
+        }
+        // A record key has rules of its own (a key may be missing): the record path handles
+        // every compound form. A target in error is reported once, here.
+        match checked {
             Some(AssignTarget::Record(obj)) => {
                 let (object, key) = super::record::record_parts(target);
-                return self.record_assign(obj, object, key, op, target, value, span);
+                return self.record_assign(obj, object, key, Some(op), target, value, span);
             }
             None => {
                 self.expr(value, None, Want::Borrow);
                 return self.error_expr(span);
             }
+            Some(AssignTarget::Place(_) | AssignTarget::Setter(_)) => {}
+        }
+        let rhs = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Binary {
+                op,
+                lhs: Box::new(target.clone()),
+                rhs: Box::new(value.clone()),
+            },
+            span: value.span,
         };
+        self.assign(None, target, &rhs, span)
+    }
+
+    /// `target = value` / `target op= value` (`op` not logical).
+    fn plain_or_compound_assign(
+        &mut self,
+        op: Option<ast::BinaryOp>,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        as_value: bool,
+        span: Span,
+    ) -> (hir::Expr, bool) {
+        let e = match self.assign_target(target, span) {
+            Some(AssignTarget::Place(place)) => self.place_assign(place, op, target, value, span),
+            Some(AssignTarget::Setter(obj)) => {
+                let valued = as_value && op.is_some();
+                let e = self.setter_assign(obj, op, target, value, valued, span);
+                return (e, valued);
+            }
+            Some(AssignTarget::Record(obj)) => {
+                let (object, key) = super::record::record_parts(target);
+                self.record_assign(obj, object, key, op, target, value, span)
+            }
+            None => {
+                self.expr(value, None, Want::Borrow);
+                self.error_expr(span)
+            }
+        };
+        (e, false)
+    }
+
+    /// `place = value` / `place op= value` on a writable place.
+    fn place_assign(
+        &mut self,
+        place: hir::Expr,
+        op: Option<ast::BinaryOp>,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let unit = self.cx.ty.unit;
         let lty = place.ty;
         let Some(op) = op else {
             let v = self.expr_coerce(value, lty, Want::Move);
@@ -354,7 +412,7 @@ impl FnCx<'_, '_> {
         let place = match self.assign_target(target, span) {
             Some(AssignTarget::Place(place)) => place,
             Some(AssignTarget::Setter(obj)) => {
-                return self.setter_update(obj, op, target, as_value, span)
+                return self.setter_update(obj, op, prefix, target, as_value, span)
             }
             Some(AssignTarget::Record(obj)) => {
                 return self.record_update(obj, op, target, as_value, span)

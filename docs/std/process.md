@@ -10,13 +10,20 @@ import, as in Node:
   `process.env.NOPE !== null` is `false` in Velt and `true` in Node. Each read asks the
   operating system again, so a check doesn't narrow a second read: read the variable into a
   `const` and test that. On Windows names ignore case, as in Node.
+- `process.argv`: Node's layout, `[runtime, script, ...args]`, so `process.argv.slice(2)` is the
+  arguments. The runtime is the running executable (`velt` under `velt dev`). The script is the
+  source file under `velt run` / `velt dev`, and the executable again for a built program (as
+  for a Node single-executable application). Under WASI the runtime and the script are the
+  module's path; in the browser `process.argv` is `["", ""]`. Each read returns a new array, so
+  changing it in place (`process.argv.push(x)`, `process.argv[2] = s`) is an error: copy it
+  first (`const argv = process.argv`).
 - `process.exit(code: i32)`, `process.memoryUsage()` (below).
 
 `import { args, cwd } from "velt:process"` for the rest: command-line arguments, listing and
 changing variables, the working directory and byte writes.
 
-- `args()`: the arguments after the program path. `argv()`: every argument, starting with the
-  program path.
+- `args()`: the arguments only (`process.argv.slice(2)`). `argv()`: every argument, starting with
+  the program path (C's `argv`).
 - `envAll(): Record<string, string>`: every variable, as a snapshot (Node's `process.env` read as
   an object, so `Object.keys(envAll())` and `Object.entries(envAll())` work as in Node). Names
   are in the order the operating system keeps them, which is Node's order too. On Windows names

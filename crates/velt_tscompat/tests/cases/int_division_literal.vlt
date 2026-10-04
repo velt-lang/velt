@@ -1,0 +1,29 @@
+// Integer literal types divide as integers too. `as number` makes the quotient a fraction, so
+// it is offered only where nothing declares an integer.
+
+export function half(xs: (1 | 3)[]): i64 { //~ velt-number-type
+  return xs[0] / 2; //~ int-division
+}
+
+export function third(xs: (1 | 3)[]): string {
+  const q: i64 = xs[0] / 3; //~ velt-number-type int-division
+  return `${q}`;
+}
+
+function twice(n: i64): i64 { //~ velt-number-type velt-number-type
+  return n * 2;
+}
+
+export function argument(xs: (1 | 3)[]): i64 { //~ velt-number-type
+  return twice(xs[0] / 2) + 1; //~ int-division
+}
+
+export type Page = { index: i64 }; //~ velt-number-type
+
+export function field(xs: (1 | 3)[]): Page {
+  return { index: xs[0] / 2 }; //~ int-division
+}
+
+export function shown(xs: (1 | 3)[]): string {
+  return `${xs[0] / 2}`; //~ int-division
+}

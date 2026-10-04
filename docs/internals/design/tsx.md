@@ -118,9 +118,11 @@ and linted only without errors of its own. TypeScript that Velt rejects is a sep
 (#326).
 
 The lint lives in `crates/velt_tscompat`. Its rules on the syntax tree walk each module with
-`velt_syntax::visit`; the rules on types (marked *Planned* below) need a type query on the
-checked program. Every finding carries a code, a severity, a message (what TypeScript does, why
-Velt differs, what to write) and, when the replacement is mechanical, a fix.
+`velt_syntax::visit`; the rules on types ask the checker's IDE analysis of the same program
+(`velt_sema::ide`: `type_of(span)` with a structured type view, `def_at` for what a name refers
+to; [the contract](../contracts/sema_ide.md#type-query)). Every finding carries a code, a
+severity, a message (what TypeScript does, why Velt differs, what to write) and, when the
+replacement is mechanical, a fix.
 
 Errors where `tsc` rejects the code:
 
@@ -138,11 +140,13 @@ Errors where `tsc` rejects the code:
 | `velt-import` | `velt:*` imports | keep them out of the shared files | |
 | `outside-import` | relative imports of files not being linted | lint them too, or keep the import out | |
 | `jsx-provider` | JSX on the default `velt:jsx` provider | a provider with both runtimes | |
-| `comparable` | `Comparable<T>`, `<` on such a `T` | a comparator parameter | Planned |
-| `velt-global` / `velt-member` | `spawn`, `shared`, `assertEq`, `JSON.parse<T>(…)`, `isEmpty`, `upsert`, `unwrapOr`, … | case by case | Planned |
-| `map-iter-as-array` | `m.keys()` used as an array | `[...m.keys()]` | Planned |
-| `null-into-optional` / `undefined-into-null` | `null` into `x?:`; `Map.get`/`find`/`pop` into `T \| null` | omit it; `?? null` | Planned |
-| `catch-unknown` | `e.x` in `catch (e)` without narrowing | `instanceof` | Planned |
+| `velt-global` | prelude exports and builtins TypeScript doesn't have: `spawn`, `shared`, `attempt`, `assertEq`, `deepEqual`, `JsonValue`, `Comparable`, `process`, … | a hint per name | |
+| `velt-member` | members TypeScript doesn't have: `xs.isEmpty()`, `m.upsert(…)`, `x.unwrapOr(d)`, `a.compareTo(b)`, `x.clone()`, `JSON.parse<T>(…)`, `Promise.withResolvers()` (ES2024), … | a hint per member | |
+| `map-iter-as-array` | `m.keys()`, `values()`, `entries()` used as an array (a member, an index, a declared type, a return value) | `[...m.keys()]` (a fix) | |
+| `null-into-optional` | `null` for an optional parameter or field (`x?: T`), whose TypeScript type is `T \| undefined` | a fix leaves it out | |
+| `undefined-into-null` | a value that is `undefined` in JavaScript (below) where a `T \| null` is declared: an annotated variable, a return value, an argument, a field | `?? null` (a fix) | |
+| `catch-unknown` | `e.x` in `catch (e)` where `instanceof` doesn't narrow `e` | `if (e instanceof C)` | |
+| `comparable` | `<` on a `T extends Comparable<T>` (the type itself is `velt-global`) | a comparator parameter | Planned |
 
 Accepted by `tsc`, but behaves differently:
 
@@ -150,14 +154,15 @@ Accepted by `tsc`, but behaves differently:
 |---|---|---|---|
 | `declare-fn` | `declare function` (a `ReferenceError` in JS) | error | |
 | `jsx-pragma-comment` | `// @jsxImportSource x`: `tsc` reads the pragma only from a block comment and builds with the client's configured provider | error (a fix: `/** @jsxImportSource x */`) | |
-| `int-division` | `/` on integer types (Velt truncates) | error | Planned |
-| `strict-null-eq` | `=== null` on values that are `undefined` in JS | error | Planned |
-| `object-in-template` | `${obj}` / `${xs}` | error | Planned |
-| `default-sort` | `sort()` without a comparator on numbers | error | Planned |
-| `json-map` | `JSON.stringify` of a `Map` | error | Planned |
-| `nullable-in-template` | `${x}` where `x: T \| null` | warning | Planned |
-| `string-offsets` | UTF-8 vs UTF-16 offsets (silent on ASCII literals) | warning | Planned |
-| `unsigned-arith` | `xs.length - 1` | warning | Planned |
+| `int-division` | `/` (and `/=`) whose operands have integer types: Velt truncates | error (a fix: `Math.trunc(a / b)`, or `(a as number) / 2` for integer literal types) | |
+| `strict-null-eq` | `=== null` / `!== null` on values that are `undefined` in JS (below) | error (a fix: `==` / `!=`) | |
+| `object-in-template` | `${x}` of an array, tuple, map, object or class instance without its own `toString()`: Velt prints the contents | error | |
+| `default-sort` | `sort()` / `toSorted()` without a comparator on numbers | error (a fix: `(a, b) => a - b`, not for unsigned elements) | |
+| `json-map` | `JSON.stringify` of a value holding a `Map` (in a field, element or union member) | error | |
+| `null-default` | a destructuring default on a property whose type includes `null` (not optional): Velt applies it to `null`, JS only to `undefined` (#431) | error (a fix: `const x = p.x ?? d`) | |
+| `nullable-in-template` | `${x}` where `x` may be `undefined` in JavaScript (an optional field or parameter, `m.get(k)`, `xs.find(…)`, `a?.b`, a variable holding one); a `T \| null` that is never `undefined` prints `null` in both | warning | |
+| `string-offsets` | `length`, `slice`, `indexOf`, `charCodeAt`, `s[i]`, … on a string: UTF-8 vs UTF-16 offsets (silent on ASCII literals) | warning | |
+| `unsigned-arith` | `-`, `-=`, `--` with an unsigned result (`xs.length - 1` wraps at zero) | warning | |
 | `implicit-dispose` | `[Symbol.dispose]` outside `using` | warning | Planned |
 | `init-order` | derived classes with field initializers (#273) | warning | Planned |
 
@@ -184,6 +189,44 @@ Notes on the rules as built, against the issue's first design:
 - `jsx-pragma-comment` reports the pragma Velt uses: the first one in the comments before the
   first token, in a module with JSX (Velt loads no runtime for one without). Its fix rewrites a
   comment holding only the pragma; a line comment with other text gets the finding without one.
+- Values that are `undefined` in JavaScript where Velt has `null` (for `strict-null-eq` and
+  `undefined-into-null`): an optional field or parameter (`x?: T`), `Map.get`, `find` /
+  `findLast`, `pop` / `shift`, `at` (arrays and strings), anything after `?.`, and a variable
+  initialized with one of these. `process.env` would be one, but `process` itself is
+  `velt-global` (the baseline has no Node types).
+- `int-division` can only meet integer types that `velt-number-type` reports where they are
+  written (or that come from another shared file), and unions of integer literal types
+  (`(1 | 3)[]`, whose elements divide as integers). Its fix keeps Velt's quotient
+  (`Math.trunc(a / b)`) where both operands have integer types; an operand of integer literal
+  types divided by a number literal becomes `(a as number) / 2` (JavaScript's quotient), since
+  Velt rejects `Math.trunc` there (#462). That fix is offered only where the quotient goes
+  nowhere that declares an integer: not as the return value of a function returning one, the
+  initializer of a variable annotated with one, an argument for an integer parameter, an
+  integer field's value, nor in arithmetic or a comparison with any of those or with a declared
+  integer, where a fraction wouldn't fit. There it has no fix.
+- `object-in-template` passes enums, primitives and classes that declare `toString()`
+  themselves: Velt calls a class's own `toString()`, as JavaScript does, but not an inherited
+  one, so a subclass that only inherits it is reported.
+- `velt-global` and `velt-member` look only at names that resolve to the prelude or to a
+  builtin; a function, class or method the program declares is never one. Every prelude export
+  and member is classified as TypeScript-standard or Velt-only
+  (`crates/velt_tscompat/src/typed/prelude.rs`), and a test fails on one that isn't, so a new
+  prelude member is decided on when it is added. Builtins (`spawn`, `attempt`, `console.log`,
+  `xs.push`, `Promise.withResolvers`) are listed by hand. `x.clone()` is reported on any
+  receiver where it is the compiler's own, that is, wherever the type doesn't declare a
+  `clone()` itself.
+- `null-into-optional` covers arguments of functions, methods and constructors the program
+  declares, object literal fields and assignments to fields; its fix removes trailing `null`
+  arguments and `null` properties.
+- `catch-unknown` treats `e` as narrowed inside an `if (e instanceof C)` branch, after
+  `e instanceof C &&` and in the `?` branch of `e instanceof C ? … : …`; not yet after an early
+  exit (`if (!(e instanceof C)) throw e;`).
+- `null-default` skips optional properties (`x?: T`): JavaScript leaves them `undefined`, so the
+  default applies in both. Its fix rewrites the declaration when the destructured value is a
+  variable or a field path, with one `const x = p.x ?? d` per such property.
+- Not built: `comparable`'s `<` on a `T extends Comparable<T>` (the bound's type is
+  `velt-global`), `implicit-dispose` and `init-order`. Nor `JSON.stringify` of an optional field
+  of an object type, which Velt writes as `null` and JavaScript leaves out.
 
 **The oracle.** The claims are checked against the real `tsc` every night
 (`crates/velt_tscompat/tests/oracle.rs`, `gh workflow run nightly -f only=oracle`). It uses a
@@ -194,8 +237,7 @@ file through its API (`diagnostics.mjs`), which lists type errors even in a file
 errors.
 
 - Every rule has a claim: `tsc` rejects it (a sample in `rejected/<code>.ts`), `tsc` accepts it
-  but JavaScript runs it differently (`behaviour/<code>.ts`; `declare-fn` and
-  `jsx-pragma-comment` today), or `tsc` can't
+  but JavaScript runs it differently (`behaviour/<code>.ts`), or `tsc` can't
   decide it, with the reason in the test (`outside-import`: `tsc` follows relative imports
   anywhere, and the rule is about which files the client shares; `jsx-provider`: `tsc` uses the
   provider the client configures, the rule is that `velt:jsx` has no JavaScript runtime). A rule
@@ -210,8 +252,11 @@ errors.
 - Every rule fixture, its `.fixed` snapshot and `clean.ts` go through `tsc` a top-level
   declaration at a time: a declaration the lint passes must compile, and one it reports with a
   rule `tsc` rejects must not.
-- Behaviour samples should also differ under Node while their fixes don't; that runs through
-  `tests/difftest` once the typed rules (step 2) bring samples with a `main`.
+- Each behaviour sample with a `main` prints differently under `velt run` and under Node (its
+  types stripped, `main()` called), and with the lint's fixes applied (from `--json`) prints the
+  same under both (`crates/veltc/tests/ts_compat_node`). It runs only with `VELT_TSC_ORACLE`
+  set, which the nightly job does (Node 24; a Node that can't strip types, older than 22.7, is
+  then a failure); elsewhere, the pull request gate included, it is skipped with a message.
 
 Without Node or the installed packages the `tsc` part is skipped with a message, so the pull
 request gate doesn't need Node; the nightly job sets `VELT_TSC_ORACLE=1`, which makes a missing
@@ -237,8 +282,9 @@ scope are those in the folders, found by one walk (`vpm::sources::walks_into`: n
 `node_modules/`, `target/`, hidden, symlinked or nested package directories), so an import
 leaving them is `outside-import`.
 
-**Planned:** the typed rules (a type query, `ide::type_of(span)`, on the checked program) and
-the oracle's Node runs for behaviour samples.
+The typed rules need the checker's IDE analysis: the language server has it already, and
+`velt check --ts-compat` runs it once more on the loaded program (a few milliseconds per run:
+about 7 ms for one file with the prelude, 24 ms for a hundred files, in a release build).
 
 ## Implementation plan
 

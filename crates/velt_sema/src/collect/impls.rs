@@ -234,7 +234,12 @@ fn check_method_sig(
         // A generator's signature keeps its result with `E = never` and a written `E` as its
         // `throws` (collect/generator_sig.rs): compare the result as written. A generator's
         // result is always written, never inferred.
-        let e = cx.fn_info(def).declared_throws.and_then(|t| t.ty);
+        let declared = cx.fn_info(def).declared_throws;
+        if declared.is_none() {
+            cx.iface_generators
+                .push((def, format!("{iname}.{}", m.name)));
+        }
+        let e = declared.and_then(|t| t.ty);
         let ret = cx.fn_info(def).ret;
         let ret = cx.with_generator_error(ret, e.unwrap_or(cx.ty.never));
         cx.ty.subst(ret, owner_args) == want_ret

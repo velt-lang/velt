@@ -8,7 +8,7 @@ use crate::{Finding, Fix};
 
 /// Velt's integer types: `tsc` rejects them, and code written with them gets integer
 /// arithmetic (`/` truncates), which `number` doesn't have.
-pub(super) const INT_TYPES: &[&str] = &[
+pub(crate) const INT_TYPES: &[&str] = &[
     "i8", "i16", "i32", "i64", "isize", "u8", "u16", "u32", "u64", "usize",
 ];
 

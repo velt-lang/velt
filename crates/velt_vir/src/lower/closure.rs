@@ -209,6 +209,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 l
             });
             let mut li = LInfo::new(vir, ty, true, false, LState::Init);
+            // A captured cell: the env owns the reference, and a closure created here captures
+            // the cell itself (`fill_env`).
+            li.cell = cell && !matches!(c.mode, PassMode::Borrow | PassMode::BorrowMut);
             li.in_cell = cell;
             info[c.inner.0 as usize] = Some(li);
         }

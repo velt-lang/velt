@@ -254,6 +254,10 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.namespace_call(object, prop, type_args, args, exp, span) {
             return h;
         }
+        if self.reject_argv_mutation_call(object, prop) {
+            self.check_args_loose(args);
+            return self.error_expr(span);
+        }
         if let Some(h) = self.process_write_call(object, prop, args, exp, span) {
             return h;
         }

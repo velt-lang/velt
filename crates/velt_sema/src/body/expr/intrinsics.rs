@@ -13,6 +13,7 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
     use Intrinsic as I;
     Some(match name {
         "print" => I::Print,
+        "spawn_handled" => I::SpawnHandled,
         "print_err" => I::PrintErr,
         "to_string" => I::ToString,
         "str_concat" => I::StrConcat,
@@ -87,6 +88,7 @@ impl FnCx<'_, '_> {
             (
                 true,
                 Intrinsic::Spawn
+                | Intrinsic::SpawnHandled
                 | Intrinsic::PromiseAll
                 | Intrinsic::PromiseRace
                 | Intrinsic::PromiseAny
@@ -168,7 +170,7 @@ impl FnCx<'_, '_> {
         let pt = ty.promise_rejecting(t, e);
         let shared = ty.intern(TyKind::Shared(t));
         match i {
-            I::Spawn => (vec![(pt, O)], pt, true),
+            I::Spawn | I::SpawnHandled => (vec![(pt, O)], pt, true),
             I::Sleep => (vec![(i64_, C)], ty.promise(unit), false),
             I::YieldNow => (vec![], ty.promise(unit), false),
             I::PromiseAll => {

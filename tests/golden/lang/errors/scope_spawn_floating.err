@@ -1,0 +1,3 @@
+scope_spawn_floating.vlt:11:5: error: floating promise: this promise is neither awaited nor spawned
+  = note: to wait for it: `await scope.spawn(...)`
+  = note: to let it run: keep its handle (`const task = scope.spawn(...);`) and await it later

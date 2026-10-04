@@ -332,13 +332,17 @@ impl<'a> Parser<'a> {
 
 /// The prelude's iteration protocol types, whose later type arguments may be TypeScript's
 /// `TReturn` / `TNext` (velt_sema `ts_protocol`).
-const PROTOCOL_TYPES: [&str; 6] = [
+const PROTOCOL_TYPES: [&str; 10] = [
     "Generator",
     "AsyncGenerator",
     "Iterator",
     "AsyncIterator",
     "Iterable",
     "AsyncIterable",
+    "IterableIterator",
+    "AsyncIterableIterator",
+    "IteratorObject",
+    "IteratorResult",
 ];
 
 /// `T | null` for the written type of an optional parameter or field (`name?: T`), keeping

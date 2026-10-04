@@ -99,6 +99,7 @@ impl<'a> Printer<'a> {
                 body,
                 *is_async,
             ),
+            ExprKind::Function(f) => self.fn_decl(f, "function "),
             ExprKind::Array(elems) => self.array(elems, e.span.hi),
             ExprKind::Object(props) => self.object(props, e.span.hi),
             ExprKind::StructLit { name, props } => self.struct_lit(name, props, e.span.hi),

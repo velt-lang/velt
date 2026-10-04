@@ -108,7 +108,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         (lw, params, info, s, out)
     }
 
-    /// Capture `k` of async closure `def`, taken from the environment for the state.
+    /// Capture `k` of async or generator closure `def`, taken from the environment for the
+    /// state.
     fn take_capture(&mut self, def: DefId, env: Local, k: usize) -> Option<Operand> {
         let f = self.cx.fn_def(def);
         let c = f.captures[k];
@@ -121,6 +122,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let ea = self.cx.env_agg(def, &targs);
         let base = proj(&Place::local(env), Proj::Deref(Ty::Agg(ea)));
         let slot = proj(&base, Proj::Field(ENV_HEADER + k as u32));
+        if f.body.locals[c.inner.0 as usize].boxed
+            && matches!(c.mode, PassMode::Copy | PassMode::Owned)
+        {
+            // A shared cell (a generator closure's variable that is assigned after the capture,
+            // cells.rs): the state holds one more reference to it and reads through it.
+            let p = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(slot)));
+            self.retain(p.clone());
+            return Some(p);
+        }
         Some(match c.mode {
             PassMode::Borrow | PassMode::BorrowMut => match vt {
                 Ty::Agg(_) => Operand::Copy(slot),
@@ -136,6 +146,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
             // function value works on a copy of the closure made for the task (callee.rs
             // `call_indirect`), whose transfer rejects a resource still referenced here.
             PassMode::Owned if self.cx.uncopyable(ty) => self.share_value(Operand::Copy(slot), ty),
+            // A generator sees the objects the closure captured, as in JS: its state never
+            // leaves this thread (glue/transfer.rs), so the generators of one closure may share
+            // them.
+            PassMode::Owned if f.is_generator => self.share_value(Operand::Copy(slot), ty),
             PassMode::Owned => self.clone_value(Operand::Copy(slot), ty),
         })
     }

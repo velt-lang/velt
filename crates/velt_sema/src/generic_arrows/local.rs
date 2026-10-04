@@ -92,14 +92,19 @@ fn stmt_has(s: &ast::Stmt) -> bool {
 }
 
 fn expr_has(e: &ast::Expr) -> bool {
-    if let ast::ExprKind::Arrow {
-        body: ast::ArrowBody::Block(b),
-        ..
-    } = &e.kind
-    {
-        if block_has(b) {
-            return true;
-        }
+    let nested = match &e.kind {
+        ast::ExprKind::Arrow {
+            body: ast::ArrowBody::Block(b),
+            ..
+        } => block_has(b),
+        ast::ExprKind::Function(d) => fn_has(d),
+        ast::ExprKind::Object(props) => props
+            .iter()
+            .any(|p| matches!(p, ast::ObjectProp::Method(d) if fn_has(d))),
+        _ => false,
+    };
+    if nested {
+        return true;
     }
     let mut found = false;
     children(e, &mut |c| found = found || expr_has(c));
@@ -250,12 +255,20 @@ impl Rewriter {
     }
 
     fn expr(&mut self, e: &mut ast::Expr) {
-        if let ast::ExprKind::Arrow {
-            body: ast::ArrowBody::Block(b),
-            ..
-        } = &mut e.kind
-        {
-            self.block(b);
+        match &mut e.kind {
+            ast::ExprKind::Arrow {
+                body: ast::ArrowBody::Block(b),
+                ..
+            } => self.block(b),
+            ast::ExprKind::Function(d) => self.func(d),
+            ast::ExprKind::Object(props) => {
+                for p in props {
+                    if let ast::ObjectProp::Method(d) = p {
+                        self.func(d);
+                    }
+                }
+            }
+            _ => {}
         }
         children_mut(e, &mut |c| self.expr(c));
     }
