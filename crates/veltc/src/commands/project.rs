@@ -58,11 +58,16 @@ impl Project {
         })
     }
 
-    /// The runnable entry file (`package.entry`, default `src/main.vlt`).
+    /// The runnable entry file (`package.entry`, default `src/main.vlt`, `src/main.ts` or
+    /// `src/main.tsx`).
     pub fn entry(&self) -> Result<PathBuf, String> {
-        let entry = self.root.join(&self.manifest.package.entry);
-        if entry.is_file() {
-            return Ok(entry);
+        let entry = &self.manifest.package.entry;
+        if entry == vpm::manifest::DEFAULT_ENTRY {
+            if let Some(file) = vpm::sources::default_module(&self.root, entry)? {
+                return Ok(file);
+            }
+        } else if self.root.join(entry).is_file() {
+            return Ok(self.root.join(entry));
         }
         Err(missing_entry_message(&self.root, &self.manifest))
     }
@@ -75,14 +80,16 @@ impl Project {
 
 /// Why the package at `root` has nothing to build: it names the missing entry, and says the
 /// package is a library only when the entry is the default (`src/main.vlt`) and `src/lib.vlt`
-/// exists (a custom entry that is missing is a mistake in package.vlt, not a library).
+/// (or `.ts`, `.tsx`) exists (a custom entry that is missing is a mistake in package.vlt, not a
+/// library).
 fn missing_entry_message(root: &Path, manifest: &Manifest) -> String {
     let entry = &manifest.package.entry;
     let mut msg = format!(
         "package `{}` has no `{entry}` to build",
         manifest.package.name
     );
-    let library = root.join(vpm::manifest::LIB_ENTRY).is_file();
+    let library =
+        vpm::sources::default_module(root, vpm::manifest::LIB_ENTRY).is_ok_and(|f| f.is_some());
     if entry == vpm::manifest::DEFAULT_ENTRY && library {
         msg.push_str(" (it is a library: import it from another package instead)");
     }

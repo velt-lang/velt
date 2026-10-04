@@ -57,12 +57,15 @@ file and reports these errors without building anything.
   version.
 - `entry`: the program's root file, a path inside the package (default `"src/main.vlt"`). A
   package with `src/main.vlt` is runnable; a package with `src/lib.vlt` is a library that other
-  packages import. A package can have both.
+  packages import. A package can have both. Without an `entry`, `src/main.ts` or
+  `src/main.tsx` (`src/lib.ts`, `src/lib.tsx`) work like `src/main.vlt` (`src/lib.vlt`); two of
+  them at once are an error.
 
 ## `dependencies`
 
 `import … from "json"` and `"json/sub"` resolve through `dependencies`: the dependency's
-`src/lib.vlt`, or `src/sub.vlt` / `src/sub/index.vlt`. Standard library imports (`"velt:x"`)
+`src/lib.vlt`, or `src/sub.vlt` / `src/sub/index.vlt` (or `.ts`, `.tsx`, tried like a relative
+import's files). Standard library imports (`"velt:x"`)
 and relative imports (`"./x"`) never do. Names that aren't identifiers are quoted
 (`"my-lib": "1.0"`). `velt add` edits this object and keeps your comments. See
 [Packages](packages.md).

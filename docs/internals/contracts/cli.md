@@ -272,9 +272,13 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `./x.ts`, `./x.tsx` → exactly that file; `./x.js` → `x.ts` or `x.tsx`, `./x.jsx` → `x.tsx`
   (TypeScript's resolution). Module paths drop the extension (`x.ts` → `x`). JSX in a `.ts`
   module is an error (jsx.md). Bare names → `paths` aliases of the importing package first
-  (the target resolved like a relative path), then packages via `package.vlt` (`pkg/sub` →
-  `src/sub.vlt` or `src/sub/index.vlt`; a bare specifier with a source extension is an error).
-  Root files may be `.ts` or `.tsx` too. `std/prelude/*.vlt` is loaded implicitly before everything else.
+  (the target resolved like a relative path), then packages via `package.vlt` (`pkg` →
+  `src/lib.vlt`, `.ts` or `.tsx`; `pkg/sub` → `src/sub.*` or `src/sub/index.*` with the same
+  three extensions; a bare specifier with a source extension is an error). The names a
+  specifier spells must match the disk in case on every OS (else an error naming the file on
+  disk and the corrected specifier); a file module that hides a folder module whose `index` has
+  another extension gets a warning. Root files may be `.ts` or `.tsx` too; a package without
+  `entry` uses `src/main.vlt`, `.ts` or `.tsx` (`src/lib.*` for a library). `std/prelude/*.vlt` is loaded implicitly before everything else.
 - Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.velt`), `VELT_REGISTRY`
   (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (linker override), `VELT_CLANG` (clang for the LLVM backend), `VELT_LLVM_OPT` (clang `-O` level of release builds, default 3), `VELT_CODEGEN_UNITS` (codegen units of LLVM release builds; default from the program's size).
   Set by `velt dev` for the program (not for users): `VELT_DEV_SOCKET` (a Unix socket path, or a

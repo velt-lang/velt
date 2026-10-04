@@ -56,17 +56,6 @@ fn two_candidates_for_one_import_are_ambiguous() {
 }
 
 #[test]
-fn a_file_module_wins_over_a_folder_module_of_another_extension() {
-    let t = Tree::new();
-    t.write("app/ui.ts", "export function ui() {}\n");
-    t.write("app/ui/index.vlt", "export function ui() {}\n");
-    let root = t.write("app/main.vlt", "import { ui } from \"./ui\";\n");
-    let (l, diags, sm) = load(&root, LoadOptions::default());
-    assert!(diags.is_empty(), "{:?}", messages(&diags));
-    assert!(sm.get(l.modules[1].file).path.ends_with("ui.ts"));
-}
-
-#[test]
 fn explicit_extensions_name_one_file() {
     let t = Tree::new();
     for f in ["a.vlt", "a.ts", "b.ts", "c.tsx"] {
@@ -99,7 +88,7 @@ fn explicit_extensions_name_one_file() {
 }
 
 #[test]
-fn package_imports_still_name_vlt_modules_without_an_extension() {
+fn package_imports_name_modules_without_an_extension() {
     let resolve = |spec: &str| resolve_spec(spec, Path::new("."));
     for spec in ["json/parse.ts", "json/parse.vlt", "json/x.tsx"] {
         let err = resolve(spec).unwrap_err();
