@@ -1,7 +1,10 @@
 // `process.memoryUsage()`: the resident set size and the heap's committed memory, in bytes. Both
-// are positive. That touching memory shows up in `rss` is checked by the runtime's unit tests;
-// a 64 MiB variant of this program hangs on Windows debug builds (#297).
+// are positive, and both grow when the program fills a 64 MiB array. (On Windows the debug run
+// used to hang at exit here: #297.)
 async function main() {
-  const m = process.memoryUsage();
-  console.log(m.rss > 0, m.heapUsed > 0);
+  const before = process.memoryUsage();
+  console.log(before.rss > 0, before.heapUsed > 0);
+  const big = new Array<u8>(64 * 1024 * 1024).fill(1);
+  const after = process.memoryUsage();
+  console.log(after.rss > before.rss, after.heapUsed > before.heapUsed, big.length);
 }
