@@ -1,5 +1,5 @@
 //! Setters: `x.name = v` calls `set name(v)`; getter/setter pairs share a name; compound
-//! assignment and `++` read through the getter and write through the setter.
+//! assignment and `++` read through the getter, then write through the setter.
 
 mod common;
 
@@ -61,19 +61,55 @@ fn setters_through_interfaces_overrides_and_extend() {
 }
 
 #[test]
-fn setter_errors() {
-    let r = err_src(&format!(
-        "{BOX} function main() {{ const b = new Box(); const x = b.size++; }}"
+fn read_modify_write_evaluates_the_receiver_once() {
+    // The getter, then the setter, on one evaluation of `make()`; as values too.
+    let p = ok_src(&format!(
+        "{BOX} function main() {{ const b = new Box(); make().size += 1; make().size++; const x = b.size++; const y = --b.size; const z = (b.size *= 2); console.log(x, y, z); }}"
     ));
+    let names = called(&p, "main");
+    let count = |n: &str| names.iter().filter(|m| m.as_str() == n).count();
+    assert_eq!(count("make"), 2, "{names:?}");
+    assert_eq!(count("Box.set size"), 5, "{names:?}");
+    assert_eq!(count("Box.size"), 5, "{names:?}");
+}
+
+#[test]
+fn a_getter_in_the_receiver_runs_once() {
+    // `h.inner.size += 1` reads `h.inner` once, then the getter and setter of `size` on it.
+    let p = ok_src(&format!(
+        "{BOX} class H {{ b: Box = new Box(); get inner(): Box {{ return this.b; }} }} function main() {{ const h = new H(); h.inner.size += 1; h.inner.size++; }}"
+    ));
+    let names = called(&p, "main");
+    let count = |n: &str| names.iter().filter(|m| m.as_str() == n).count();
+    assert_eq!(count("H.inner"), 2, "{names:?}");
+    assert_eq!(count("Box.size"), 2, "{names:?}");
+    assert_eq!(count("Box.set size"), 2, "{names:?}");
+}
+
+#[test]
+fn setter_errors() {
+    let r = err_src(
+        "class S { t: string = \"\"; get s(): string { return this.t; } set s(v: string) { this.t = v; } } function main() { const x = new S(); x.s++; }",
+    );
+    assert!(r.contains("cannot apply `++` to type `string`"), "{r}");
+    let r = err_src(
+        "class S { t: string | null = null; get s(): string | null { return this.t; } set s(v: string | null) { this.t = v; } } function main() { const x = new S(); x.s ||= \"d\"; }",
+    );
     assert!(
-        r.contains("`++` on the setter `size` cannot be used as a value"),
+        r.contains("`||=` needs a `boolean` or nullable left side, found `string | null`"),
         "{r}"
     );
-    let r = err_src(&format!("{BOX} function main() {{ make().size += 1; }}"));
+    let r = err_src(
+        "class N { m: i64 | null = null; get n(): i64 | null { return this.m; } set n(v: i64 | null) { this.m = v; } } function main() { const x = new N(); const v = (x.n ??= 1); }",
+    );
     assert!(
-        r.contains(
-            "compound assignment through the setter `size` needs a variable or field receiver"
-        ),
+        r.contains("`??=` on the accessor `n` cannot be used as a value"),
+        "{r}"
+    );
+    let r =
+        err_src("class W { set w(v: i64) {} } function main() { const x = new W(); x.w += 1; }");
+    assert!(
+        r.contains("cannot read `w`: it has a setter but no getter"),
         "{r}"
     );
     // Assigning through a setter modifies the param: it is inferred mutably borrowed.

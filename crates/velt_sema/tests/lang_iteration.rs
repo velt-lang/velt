@@ -117,3 +117,61 @@ fn for_of_reports_what_is_not_iterable() {
         "{r}"
     );
 }
+
+#[test]
+fn builtin_iterables_convert_and_keep_their_loops() {
+    let p = ok_src(
+        "function sum(xs: Iterable<f64>): f64 { let s = 0.0; for (const x of xs) { s += x; } return s; }
+         function first<I extends Iterable<string>>(xs: I): string { for (const x of xs) { return x; } return \"\"; }
+         function arrays(xs: f64[]): f64 { let s = 0.0; for (const x of xs) { s += x; } return s; }
+         function strings(t: string): i64 { let n = 0; for (const _ of t) { n++; } return n; }
+         function maps(m: Map<string, i64>): i64 { let n = 0; for (const [_, v] of m) { n += v; } return n; }
+         function main() {
+           const m = new Map<string, f64>();
+           console.log(sum([1, 2]), sum(m.values()), first(\"ab\"), first([\"c\"]));
+           const it: Iterator<f64> = [1.5][Symbol.iterator]();
+           const chars: Iterable<string> = \"xyz\";
+           const entries: Iterable<[string, f64]> = m;
+           console.log(it.next(), arrays([]), strings(\"\"), maps(new Map<string, i64>()));
+         }",
+    );
+    // `for...of` over an array, a string or a map keeps its `ForOf` loop; over an
+    // `Iterable<T>` value it is the protocol's `while` (inside a block).
+    let for_of = |f: &str| {
+        let f = common::hir_walk::func(&p, f);
+        f.body
+            .block
+            .stmts
+            .iter()
+            .any(|s| matches!(s.kind, velt_sema::hir::StmtKind::ForOf { .. }))
+    };
+    for f in ["arrays", "strings", "maps"] {
+        assert!(for_of(f), "{f}");
+    }
+    assert!(!for_of("sum"));
+}
+
+#[test]
+fn an_extend_block_with_symbol_iterator_makes_an_iterable() {
+    ok_src(&format!(
+        "{RANGE}
+         struct Pair {{ a: i64; b: i64; }}
+         extend Pair {{ [Symbol.iterator](): Iterator<i64> {{ return new RangeIter(this.a + this.b); }} }}
+         function count(xs: Iterable<i64>): i64 {{ let n = 0; for (const _ of xs) {{ n++; }} return n; }}
+         function main() {{ const p: Pair = {{ a: 1, b: 2 }}; console.log(count(p)); }}"
+    ));
+}
+
+#[test]
+fn iterator_result_takes_no_return_type() {
+    ok_src(
+        "function f(r: IteratorResult<i64, void>, s: IteratorResult<string, any>): bool { return r.done && s.done; }
+         function* g(): IterableIterator<i64, unknown> { yield 1; }
+         function main() { const it: IterableIterator<i64> = g(); console.log(f({ done: true }, { done: true }), it.next()); }",
+    );
+    let r = err_src("function f(r: IteratorResult<i64, string>) {}");
+    assert!(
+        r.contains("`IteratorResult` takes no return type: `string` is TypeScript's `TReturn`"),
+        "{r}"
+    );
+}

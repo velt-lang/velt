@@ -31,7 +31,9 @@ impl FnLower<'_, '_> {
             bytes => {
                 let sid = self.cx.static_bytes(bytes.to_vec(), 1);
                 let p = Operand::Const(Const::Static(sid), Ty::Ptr);
-                let args = vec![buf.clone(), p, cint(text.len() as i128, Ty::U64)];
+                // The length argument carries the unit count too (rt_abi_async.md §12.1).
+                let w1 = super::strings::str_w1(text);
+                let args = vec![buf.clone(), p, cint(w1 as i128, Ty::U64)];
                 self.call_rt(Rt::StrbufPushBytes, args, None);
             }
         }

@@ -76,6 +76,7 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> Checked {
+        let collect = std::mem::take(&mut self.collect_iterable_args);
         let packed;
         let args = match self.pack_rest(c, args) {
             Some((p, skip)) if !skip.is_empty() => {
@@ -115,7 +116,7 @@ impl FnCx<'_, '_> {
             let e = self.cx.ty.without_error_types(e);
             self.cx.match_ty(c.ret, e, &mut context);
         }
-        let checked = self.args_in_rounds(c, &mut slots, &context, args);
+        let checked = self.args_in_rounds(c, &mut slots, &context, args, collect);
         if let Some(e) = exp {
             self.cx.match_ty(c.ret, e, &mut slots);
         }
@@ -238,7 +239,8 @@ impl FnCx<'_, '_> {
     }
 
     /// Check `args` (typed ones first, then context-typed literals, then arrows), binding
-    /// type parameters from each; results in parameter order. A slot still unknown when an
+    /// type parameters from each; results in parameter order. With `collect`, an iterable
+    /// passed for an array parameter is collected (`new Set(gen())`). A slot still unknown when an
     /// argument is checked takes its type from `context` (inferred from the expected result).
     fn args_in_rounds(
         &mut self,
@@ -246,6 +248,7 @@ impl FnCx<'_, '_> {
         slots: &mut [Option<TyId>],
         context: &[Option<TyId>],
         args: &[ast::Expr],
+        collect: bool,
     ) -> Vec<hir::Expr> {
         let round = |e: &ast::Expr| match (deferred(e), as_arrow(e).is_some()) {
             (false, _) => 0,
@@ -273,6 +276,10 @@ impl FnCx<'_, '_> {
                     h
                 }
                 _ => self.expr(&args[i], Some(expected), want_of(p.mode)),
+            };
+            let h = match collect {
+                true => self.collected_arg(h, p.ty),
+                false => h,
             };
             self.cx.match_ty(p.ty, h.ty, slots);
             out[i] = Some(h);

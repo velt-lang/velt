@@ -121,6 +121,7 @@ impl FnLower<'_, '_> {
             (I::SharedNew, [a]) => self.shared_new(a, ty),
             (
                 I::Spawn
+                | I::SpawnHandled
                 | I::Sleep
                 | I::YieldNow
                 | I::PromiseAll

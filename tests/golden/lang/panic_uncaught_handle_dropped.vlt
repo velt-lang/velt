@@ -1,0 +1,17 @@
+// An error escaping `main` keeps its location when a spawn handle is dropped on the way out
+// (#148): dropping the handle must not replace the location of the error in flight.
+class Bad extends Error {}
+
+async function quiet(n: i64): Promise<i64> {
+  if (n < 0) {
+    throw new Bad("never");
+  }
+  return n;
+}
+
+async function main() {
+  const bg = spawn(quiet(1));
+  await sleep(20);
+  console.log("failing");
+  throw new Bad("main failed");
+}

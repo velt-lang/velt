@@ -252,6 +252,12 @@ impl Moves<'_> {
                     self.boxed.insert(c.outer);
                 }
             }
+            // Each generator of a generator closure has its own state: a variable it assigns
+            // lives in a cell so that the closure's generators and this function see one value.
+            let by_value = matches!(c.mode, PassMode::Owned | PassMode::Copy);
+            if escaping && by_value && self.generators.contains(&d) && writes(&c) {
+                self.generator_writes(c.outer, span);
+            }
             let soft_share = self.soft.contains(&span) && self.shared[c.outer.0 as usize];
             let (mode, by_closure) = match c.mode {
                 PassMode::Owned => (UseMode::Move, !soft_share),

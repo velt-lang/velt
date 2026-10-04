@@ -35,6 +35,120 @@ export interface AsyncIterable<T, E = never> {
   [Symbol.asyncIterator](): AsyncIterator<T, E>;
 }
 
+// An iterator that is also iterable: its `[Symbol.iterator]()` returns the iterator itself, so
+// a loop can consume it (TS's `IterableIterator<T>`; generators are ones). Velt has no covariant
+// returns, so `[Symbol.iterator]()` returns `Iterator<T, E>`, not `IterableIterator<T, E>`.
+export interface IterableIterator<T, E = never> extends Iterator<T, E>, Iterable<T, E> {}
+
+// TS's `IteratorObject<T>`, the type of the builtin iterators: the same contract as
+// `IterableIterator<T>` (TS adds the iterator helpers, `map`, `filter` and so on, which Velt
+// does not have yet).
+export interface IteratorObject<T, E = never> extends Iterator<T, E>, Iterable<T, E> {}
+
+// An async iterator that is also async iterable (TS's `AsyncIterableIterator<T>`; async
+// generators are ones).
+export interface AsyncIterableIterator<T, E = never> extends AsyncIterator<T, E>, AsyncIterable<T, E> {}
+
+// Interface values don't convert to the interfaces they extend yet; these blocks make the
+// iterable-iterator values `Iterable<T, E>` / `AsyncIterable<T, E>` values (TS allows passing
+// one where an iterable is expected).
+extend<T, E> IterableIterator<T, E> {
+  [Symbol.iterator](): Iterator<T, E> {
+    return this[Symbol.iterator]();
+  }
+}
+
+extend<T, E> IteratorObject<T, E> {
+  [Symbol.iterator](): Iterator<T, E> {
+    return this[Symbol.iterator]();
+  }
+}
+
+extend<T, E> AsyncIterableIterator<T, E> {
+  [Symbol.asyncIterator](): AsyncIterator<T, E> {
+    return this[Symbol.asyncIterator]();
+  }
+}
+
+// Arrays, strings, `Map`s (and `Set`s, std/collections) are iterable: `[Symbol.iterator]()`
+// returns one of the iterators below, and they convert to `Iterable<T>` values (an `extend`
+// block defining `[Symbol.iterator](): Iterator<T, E>` makes its type an `Iterable<T, E>`).
+// `for...of` over them keeps its own loops and does not call these.
+
+extend<T> Array<T> {
+  // A live view, like JS's array iterator: it reads the length at each step, so it sees
+  // elements pushed while it runs.
+  [Symbol.iterator](): Iterator<T> {
+    return new ArrayIterator<T>(this);
+  }
+}
+
+extend<K, V> Map<K, V> {
+  // An iterator over the entries, as `for...of` over the map visits them: the entries when it
+  // is made (`entries()`), in insertion order. JS's map iterator is a live view instead.
+  [Symbol.iterator](): Iterator<[K, V]> {
+    return new ArrayIterator<[K, V]>(this.entries());
+  }
+}
+
+extend string {
+  // The characters (code points), each as a string, like JS.
+  [Symbol.iterator](): Iterator<string> {
+    return new StringIterator(this);
+  }
+}
+
+// The iterator of an array (TS's `ArrayIterator<T>`). It holds the array (another reference
+// to it, not a copy) and reads each element when `next()` reaches it; once it reported `done`
+// it stays done, as in JS.
+export class ArrayIterator<T> implements IterableIterator<T>, IteratorObject<T> {
+  private items: T[];
+  private index: usize = 0;
+  private finished: bool = false;
+
+  constructor(items: T[]) {
+    this.items = items;
+  }
+
+  next(): IteratorResult<T> {
+    if (this.finished || this.index >= this.items.length) {
+      this.finished = true;
+      return { done: true };
+    }
+    const value = __intrinsic_share(this.items[this.index]);
+    this.index++;
+    return { value: value, done: false };
+  }
+
+  [Symbol.iterator](): Iterator<T> {
+    return this;
+  }
+}
+
+// The iterator of a string (TS's `StringIterator<string>`): one character (code point) per
+// step, as a string.
+export class StringIterator implements IterableIterator<string>, IteratorObject<string> {
+  private text: string;
+  private pos: i64 = 0;
+
+  constructor(text: string) {
+    this.text = text;
+  }
+
+  next(): IteratorResult<string> {
+    if (this.pos >= (this.text.length as i64)) {
+      return { done: true };
+    }
+    const c = this.text.charAt(this.pos);
+    this.pos += c.length as i64;
+    return { value: c, done: false };
+  }
+
+  [Symbol.iterator](): Iterator<string> {
+    return this;
+  }
+}
+
 // A generator (`function*`, docs/reference/functions.md "Generators"): what calling one creates.
 // The body runs lazily, one `next()` at a time, up to its next `yield`. `return()` (or dropping
 // the generator, or `using`) closes a generator suspended at a `yield`: its `finally` blocks run
@@ -42,7 +156,7 @@ export interface AsyncIterable<T, E = never> {
 // threw, or was closed, `next()` reports `done` forever. `E` is what the body throws.
 //
 // The compiler creates these objects: the generator's state follows the `state` word.
-export class Generator<T, E = never> implements Iterator<T, E>, Iterable<T, E> {
+export class Generator<T, E = never> implements Iterator<T, E>, Iterable<T, E>, IterableIterator<T, E>, IteratorObject<T, E> {
   private state: u64 = 0;
 
   next(): IteratorResult<T> throws E {
@@ -81,7 +195,7 @@ export class Generator<T, E = never> implements Iterator<T, E>, Iterable<T, E> {
 //
 // The compiler creates these objects: the generator's state follows the class's fields, and the
 // queue fields start at zero.
-export class AsyncGenerator<T, E = never> implements AsyncIterator<T, E>, AsyncIterable<T, E> {
+export class AsyncGenerator<T, E = never> implements AsyncIterator<T, E>, AsyncIterable<T, E>, AsyncIterableIterator<T, E> {
   private state: u64 = 0;
   // The call queue (see `takeTurn`): whether a call is running, the runtime latch the running
   // call opens when it finishes if it started alone, and the latch the last call in line opens
@@ -178,3 +292,22 @@ declare function velt_rt_latch_new(): u64;
 declare function velt_rt_latch_free(latch: u64);
 declare function velt_rt_latch_open(latch: u64);
 declare async function velt_rt_latch_wait(latch: u64): Promise<void>;
+
+// An object literal whose member is a `[Symbol.iterator]()` method (`{ *[Symbol.iterator]() {
+// ... } }`, docs/reference/types.md): the method as a function, called by each loop.
+export class __IterableObject<T, E = never> implements Iterable<T, E> {
+  constructor(private iterator: () => Iterator<T, E>) {}
+
+  [Symbol.iterator](): Iterator<T, E> {
+    return this.iterator();
+  }
+}
+
+// The async twin: `{ async *[Symbol.asyncIterator]() { ... } }`.
+export class __AsyncIterableObject<T, E = never> implements AsyncIterable<T, E> {
+  constructor(private iterator: () => AsyncIterator<T, E>) {}
+
+  [Symbol.asyncIterator](): AsyncIterator<T, E> {
+    return this.iterator();
+  }
+}

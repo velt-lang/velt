@@ -7,15 +7,18 @@
 //! [`Finding`] says what TypeScript does, why Velt differs and what to write instead, with a
 //! [`Fix`] where the replacement is mechanical.
 //!
-//! This step has the rules that need only the syntax tree ([`rules`]); rules that need types
-//! come with a type query on the checked program.
+//! The rules that need only the syntax tree are in [`rules`]; those that need types or what a
+//! name refers to ([`typed`]) ask the checker's IDE analysis ([`velt_sema::ide`]).
 
+mod findings;
 mod program;
 mod rules;
+mod typed;
 
 use std::path::{Path, PathBuf};
 
-use velt_common::Span;
+use velt_common::{SourceMap, Span};
+use velt_sema::{ide, SourceModule};
 use velt_syntax::ast;
 
 pub use program::{canonical, lint_program};
@@ -37,6 +40,21 @@ pub const RULES: &[&str] = &[
     "jsx-provider",
     "jsx-pragma-comment",
     "declare-fn",
+    "int-division",
+    "strict-null-eq",
+    "object-in-template",
+    "nullable-in-template",
+    "default-sort",
+    "json-map",
+    "string-offsets",
+    "unsigned-arith",
+    "map-iter-as-array",
+    "velt-global",
+    "velt-member",
+    "null-into-optional",
+    "undefined-into-null",
+    "catch-unknown",
+    "null-default",
 ];
 
 /// How serious a [`Finding`] is.
@@ -92,13 +110,32 @@ pub struct LintModule<'a> {
     pub default_jsx_provider: bool,
 }
 
+/// The checked program the linted modules belong to, for the typed rules.
+#[derive(Clone, Copy)]
+pub struct Program<'a> {
+    /// The checker's IDE analysis of `modules` (types and what names refer to).
+    pub analysis: &'a ide::Analysis,
+    /// Every loaded module, the standard library's included.
+    pub modules: &'a [SourceModule],
+    /// The modules' sources.
+    pub sm: &'a SourceMap,
+}
+
 /// Lint `modules`. `scope` is every file in scope: the linted ones, plus any the caller skipped
 /// (one that failed `velt check`); a relative import of a file outside it leaves the subset.
-/// Findings are ordered by file and position.
-pub fn lint(modules: &[LintModule], scope: &[&Path]) -> Vec<Finding> {
+/// With `program`, the rules on types run too; without it only the syntax rules do. Findings
+/// are ordered by file and position.
+pub fn lint(modules: &[LintModule], scope: &[&Path], program: Option<&Program>) -> Vec<Finding> {
+    let decls = program.map(typed::Decls::collect);
     let mut findings: Vec<Finding> = modules
         .iter()
-        .flat_map(|m| rules::lint_module(m, scope))
+        .flat_map(|m| {
+            let mut found = rules::lint_module(m, scope);
+            if let (Some(program), Some(decls)) = (program, &decls) {
+                found.extend(typed::lint_module(m, program, decls));
+            }
+            found
+        })
         .collect();
     findings.sort_by_key(|f| (f.span.file, f.span.lo, f.span.hi));
     findings

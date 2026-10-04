@@ -1,0 +1,25 @@
+// check: no leaks
+// Integers spread from an iterable into a `number[]` or a `...xs: number[]` parameter are
+// numbers, as from an array (`Math.max(...ints())`, #424).
+function* ints(): Generator<i64> {
+  yield 3;
+  yield 9;
+  yield 4;
+}
+
+function avg(...xs: number[]): number {
+  let t = 0.0;
+  for (const x of xs) {
+    t += x;
+  }
+  return t / xs.length;
+}
+
+function main() {
+  console.log(Math.max(...ints()), Math.min(...ints()));
+  const fs: number[] = [0.5, ...ints(), 1.5];
+  console.log(fs, avg(...ints()));
+  const m = new Map<string, i64>([["a", 2]]);
+  const vals: number[] = [...m.values()];
+  console.log(vals);
+}

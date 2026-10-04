@@ -76,6 +76,14 @@ fn assigned_in_expr<'a>(e: &'a ast::Expr, out: &mut HashSet<&'a str>) {
             body: ast::ArrowBody::Block(b),
             ..
         } => assigned_in_block(b, out),
+        ast::ExprKind::Function(f) => assigned_in_block(&f.body, out),
+        ast::ExprKind::Object(props) => {
+            for p in props {
+                if let ast::ObjectProp::Method(f) = p {
+                    assigned_in_block(&f.body, out);
+                }
+            }
+        }
         _ => {}
     }
     crate::ast_walk::children(e, &mut |c| assigned_in_expr(c, out));

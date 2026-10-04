@@ -1,7 +1,8 @@
 //! Floating promises: an expression statement whose value is a `Promise<T>` (`fetchUser();`) is a
 //! compile error ("floating promise": its result and errors would be lost). The fixes: `await` it
-//! (inside an async function) or run it in the background with `spawn(...)`; they resolve the
-//! compiler's diagnostic on that statement.
+//! (inside an async function) or run it in the background with `spawn(...)` (not offered for a
+//! call that already started a task, such as `scope.spawn(p)`); they resolve the compiler's
+//! diagnostic on that statement.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast::{self, ExprKind as E};
@@ -33,6 +34,10 @@ pub fn fixes(analysis: &Analysis, lo: u32, hi: u32) -> Vec<Fix> {
                 preferred: true,
             });
         }
+        // `scope.spawn(p)` already started a task: its handle is kept, not spawned again.
+        if is_scope_spawn(analysis, e) {
+            continue;
+        }
         out.push(Fix {
             title: "Run it in the background with `spawn(...)`".into(),
             edits: vec![(e.span, format!("spawn({code})"))],
@@ -53,6 +58,19 @@ fn floating_diagnostic(analysis: &Analysis, span: Span) -> Option<Diagnostic> {
                 && d.labels.first().is_some_and(|l| l.span == span)
         })
         .cloned()
+}
+
+/// A `TaskScope.spawn(p)` call (the receiver's type is the standard library's `TaskScope`).
+fn is_scope_spawn(analysis: &Analysis, e: &ast::Expr) -> bool {
+    let E::Call { callee, .. } = &e.kind else {
+        return false;
+    };
+    let E::Member { object, prop, .. } = &callee.kind else {
+        return false;
+    };
+    prop.name == "spawn"
+        && sema_query::type_at(analysis, object.span.hi)
+            .is_some_and(|t| t == "TaskScope" || t.starts_with("TaskScope<"))
 }
 
 fn is_promise(analysis: &Analysis, e: &ast::Expr) -> bool {

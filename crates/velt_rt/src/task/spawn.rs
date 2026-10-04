@@ -95,8 +95,13 @@ pub struct TaskOutput<const R: usize> {
 impl<const R: usize> Drop for TaskOutput<R> {
     fn drop(&mut self) {
         if let Some(d) = self.result_drop {
+            // An error in it may be reported as an unhandled rejection: where the task threw it.
+            // The dropping thread may be propagating an error of its own: keep its location.
+            let own = ThrowLoc::current();
+            self.loc.restore();
             // SAFETY: an unclaimed result, written by the finished task (16-aligned).
             unsafe { d(self.bytes.0.as_mut_ptr() as *mut u8) }
+            own.restore();
         }
     }
 }
@@ -135,12 +140,18 @@ impl<B: TaskBody, const R: usize> Future for TaskFut<B, R> {
     }
 }
 
-/// Join handle leaf: `{ VeltFut hdr; ResultBytes<R> result /* offset 16 */; JoinHandle }`.
+/// Join handle leaf: `{ VeltFut hdr; ResultBytes<R> result /* offset 16 */; JoinHandle; quiet }`.
 #[repr(C)]
 struct JoinObj<const R: usize> {
     hdr: VeltFut,
     result: ResultBytes<R>,
     handle: JoinHandle<TaskOutput<R>>,
+    /// Set when a combinator handled the handle (`velt_rt_futs_handled`): an unclaimed result
+    /// is dropped with this instead of the task's `result_drop`, which reports an error as an
+    /// unhandled rejection.
+    quiet: Option<Option<ResultDropFn>>,
+    /// The result was moved into `result` (the tokio handle must not be polled again).
+    claimed: bool,
 }
 
 unsafe extern "C" fn join_poll<const R: usize>(f: *mut VeltFut, cx: *mut c_void) -> u32 {
@@ -150,6 +161,7 @@ unsafe extern "C" fn join_poll<const R: usize>(f: *mut VeltFut, cx: *mut c_void)
         Poll::Ready(Ok(mut out)) => {
             out.result_drop = None;
             obj.result = out.bytes;
+            obj.claimed = true;
             // An error in the result is rethrown here: report it where the task threw it.
             out.loc.restore_if_known();
             READY
@@ -161,8 +173,45 @@ unsafe extern "C" fn join_poll<const R: usize>(f: *mut VeltFut, cx: *mut c_void)
 
 unsafe extern "C" fn join_drop<const R: usize>(f: *mut VeltFut) {
     // Dropping the tokio JoinHandle detaches the task (it keeps running, like an unawaited
-    // spawned promise); tokio then drops its output, which disposes of an unclaimed result.
-    drop(Box::from_raw(f as *mut JoinObj<R>));
+    // spawned promise); tokio then drops its output, which disposes of an unclaimed result (and
+    // reports an error in it, unless the handle was handled).
+    let obj = Box::from_raw(f as *mut JoinObj<R>);
+    let (Some(quiet), false) = (obj.quiet, obj.claimed) else {
+        return;
+    };
+    let mut handle = obj.handle;
+    if handle.is_finished() {
+        let waker = std::task::Waker::noop();
+        match Pin::new(&mut handle).poll(&mut Context::from_waker(waker)) {
+            Poll::Ready(Ok(mut out)) => {
+                out.result_drop = quiet;
+                return;
+            }
+            // A panicked or cancelled task left no result; the handle must not be polled again.
+            Poll::Ready(Err(_)) => return,
+            Poll::Pending => {}
+        }
+    }
+    // Still running (or not yet observable here): take its output when it finishes.
+    super::runtime::handle().spawn(async move {
+        if let Ok(mut out) = handle.await {
+            out.result_drop = quiet;
+        }
+    });
+}
+
+/// A combinator handles join handle `f` (anything else is left alone): its unclaimed result is
+/// dropped with `quiet` (null: nothing to drop), not reported as an unhandled rejection.
+pub(crate) unsafe fn mark_join_handled(f: *mut VeltFut, quiet: Option<ResultDropFn>) {
+    unsafe fn mark<const R: usize>(f: *mut VeltFut, quiet: Option<ResultDropFn>) -> bool {
+        let poll = join_poll::<R> as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32;
+        if !std::ptr::fn_addr_eq((*f).poll, poll) {
+            return false;
+        }
+        (*(f as *mut JoinObj<R>)).quiet = Some(quiet);
+        true
+    }
+    let _ = mark::<16>(f, quiet) || mark::<64>(f, quiet) || mark::<256>(f, quiet);
 }
 
 fn spawn_body<B: TaskBody, const R: usize>(
@@ -190,6 +239,8 @@ fn spawn_joinable<B: TaskBody, const R: usize>(
         },
         result: ResultBytes([MaybeUninit::uninit(); R]),
         handle: spawn_body::<B, R>(body, result_size, result_drop),
+        quiet: None,
+        claimed: false,
     });
     Box::into_raw(obj) as *mut VeltFut
 }

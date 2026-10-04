@@ -156,6 +156,7 @@ pub unsafe extern "C" fn velt_rt_futs_handled(
         ) {
             shared(f).borrow_mut().result_drop = quiet_drop;
         }
+        super::spawn::mark_join_handled(f, quiet_drop);
     }
 }
 

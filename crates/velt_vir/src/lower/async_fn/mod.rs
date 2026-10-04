@@ -228,6 +228,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let name = f.body.locals[p.local.0 as usize].name.clone();
             let ty = self.sub(p.ty);
             let by_ref = matches!(mode, PassMode::Borrow | PassMode::BorrowMut);
+            let captured = modes.contains_key(&p.local);
+            if captured && !by_ref && f.body.locals[p.local.0 as usize].boxed {
+                inputs.push(self.declare_cell_capture(&mut info, p.local, ty, name));
+                continue;
+            }
             let (vir, indirect) = match self.cx.ty(ty) {
                 Ty::Unit => (None, false),
                 Ty::Agg(_) if by_ref => (Some(self.new_local(Ty::Ptr, Some(name))), true),
@@ -239,6 +244,24 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         self.declare_body_locals(f, info);
         inputs
+    }
+
+    /// A captured variable that lives in a shared cell (cells.rs): the state holds the cell
+    /// pointer (`ctor.rs` `take_capture`), every access goes through it, and dropping the state
+    /// releases it.
+    fn declare_cell_capture(
+        &mut self,
+        info: &mut [Option<LInfo>],
+        l: hir::LocalId,
+        ty: TyId,
+        name: String,
+    ) -> Option<Local> {
+        let vir = (self.cx.ty(ty) != Ty::Unit).then(|| self.new_local(Ty::Ptr, Some(name)));
+        let mut li = LInfo::new(vir, ty, true, vir.is_some(), LState::Init);
+        li.cell = vir.is_some();
+        li.in_cell = vir.is_some();
+        info[l.0 as usize] = Some(li);
+        vir
     }
 
     /// VIR type of the result region at offset 0 of the state.
@@ -328,7 +351,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.switch_to(d);
         for p in &f.params {
             let info = &self.info[p.local.0 as usize];
-            if info.droppable {
+            if info.cell {
+                // A capture held in a shared cell (a generator closure's variable assigned
+                // after the capture): release the state's reference to the cell, as the
+                // started paths do, not the value inside it.
+                self.release_cell(p.local);
+            } else if info.droppable {
                 let ty = info.ty;
                 let place = self.local_place(p.local);
                 self.drop_glue(place, ty);

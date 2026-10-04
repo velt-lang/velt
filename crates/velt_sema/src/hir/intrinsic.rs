@@ -74,6 +74,9 @@ pub enum Intrinsic {
     // M3 async & concurrency (user-visible builtins; see docs/reference/async.md)
     /// `spawn(p: Promise<T>): Promise<T>` — start now on the runtime, returns a join handle.
     Spawn,
+    /// `__intrinsic_spawn_handled(p)` (standard library only): `spawn(p)` whose rejection the
+    /// caller handles itself (a `taskScope` child): a dropped handle never reports it.
+    SpawnHandled,
     /// `sleep(ms: i64): Promise<void>`
     Sleep,
     /// `yieldNow(): Promise<void>`

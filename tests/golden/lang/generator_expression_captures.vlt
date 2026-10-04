@@ -1,0 +1,149 @@
+// check: no leaks
+// Generator function expressions and iterable object literals see the variables they use as
+// JS does (#424): the generators share the captured objects, and a variable assigned after the
+// capture — by the enclosing function or by a generator — is one variable all of them see.
+class Box {
+  constructor(public v: i64) {}
+}
+
+function counter(): () => Generator<i64> {
+  let count = 0;
+  return function* (): Generator<i64> {
+    while (count < 3) {
+      count++;
+      yield count;
+    }
+  };
+}
+
+function assignedAfter() {
+  let n = 5;
+  const g = function* (): Generator<i64> {
+    yield n;
+  };
+  n = 6;
+  let limit = 2;
+  const obj = {
+    *[Symbol.iterator](): Generator<i64> {
+      for (let i = 0; i < limit; i++) {
+        yield i * n;
+      }
+    },
+  };
+  limit = 4;
+  console.log([...g()], [...obj]);
+  limit = 1;
+  console.log(Array.from(obj));
+}
+
+function sharedObjects() {
+  const xs: i64[] = [1, 2];
+  const b = new Box(1);
+  const f = function* (): Generator<i64> {
+    for (const x of xs) {
+      yield x + b.v;
+    }
+  };
+  const it = f();
+  xs.push(3);
+  b.v = 100;
+  console.log([...it]);
+  const it2 = f();
+  console.log(it2.next().value);
+  xs.push(4);
+  b.v = 1000;
+  console.log([...it2]);
+  const c = new Box(1);
+  const lit = {
+    *[Symbol.iterator](): Generator<i64> {
+      yield c.v;
+    },
+  };
+  c.v = 7;
+  const ys: string[] = ["a"];
+  const h = function* (): Generator<string> {
+    yield* ys;
+  };
+  const hs = h();
+  ys.push("b");
+  console.log([...lit], [...hs], ys.length);
+}
+
+function assignedInside() {
+  let total = 0;
+  const add = function* (xs: i64[]): Generator<i64> {
+    for (const x of xs) {
+      total += x;
+      yield total;
+    }
+  };
+  console.log([...add([1, 2, 3])], total);
+  const c = counter();
+  const a = c();
+  const b = c();
+  console.log(a.next().value, b.next().value, a.next().value, [...b], [...a]);
+  let s = "x";
+  const strs = function* (): Generator<string> {
+    yield s;
+    s = s + "y";
+    yield s;
+  };
+  const it = strs();
+  console.log(it.next().value);
+  s = "q";
+  console.log(it.next().value, s);
+  let arr: i64[] = [1];
+  const ag = function* (): Generator<i64> {
+    yield* arr;
+  };
+  arr = [7, 8];
+  console.log([...ag()]);
+  // An abandoned generator releases its reference to the variable.
+  const unfinished = c();
+  unfinished.next();
+}
+
+function throughClosures() {
+  let k = 1;
+  const make = (): Generator<i64> => {
+    const g = function* (): Generator<i64> {
+      yield k;
+    };
+    return g();
+  };
+  k = 5;
+  console.log([...make()]);
+  let m = 0;
+  const gen = function* (): Generator<i64> {
+    m += 10;
+    yield m;
+  };
+  const inc = (): void => {
+    m++;
+  };
+  inc();
+  console.log([...gen()], m);
+  inc();
+  const it = gen();
+  inc();
+  console.log(it.next().value, m);
+}
+
+async function main() {
+  assignedAfter();
+  sharedObjects();
+  assignedInside();
+  throughClosures();
+  let n = 1;
+  const box = new Box(1);
+  const agen = async function* (): AsyncGenerator<i64> {
+    yield n + box.v;
+    n = 10;
+  };
+  n = 2;
+  box.v = 20;
+  for await (const v of agen()) {
+    console.log(v);
+  }
+  console.log(n);
+}

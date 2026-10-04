@@ -84,6 +84,7 @@ impl FnCx<'_, '_> {
             rest: false,
             defaults: self.cx.adt_param_defaults(d),
         };
+        self.collect_iterable_args = self.takes_iterable(d);
         let ck = self.check_call(&c, slots, args, self.hint(exp), span);
         if Some(d) == self.cx.prelude_adt("Record") && self.owner != Some(d) {
             let rec = self.cx.ty.intern(TyKind::Adt(d, ck.type_args.clone()));
@@ -110,6 +111,17 @@ impl FnCx<'_, '_> {
             args: ck.args,
         };
         self.mk(kind, ck.ret, span)
+    }
+
+    /// Is `d` the prelude's `Map` or std's `Set`, whose constructors also take an iterable
+    /// (`new Set(gen())`, `new Map(pairs())`) as JS's do? Their parameter is an array; an
+    /// iterable argument is collected into one (`consume.rs`).
+    fn takes_iterable(&self, d: DefId) -> bool {
+        Some(d) == self.cx.prelude_adt("Map")
+            || self
+                .cx
+                .adt(d)
+                .is_some_and(|a| a.qual_name == "std/collections/set::Set")
     }
 
     /// What the field initializers of class type `ty` and of its base classes up to (not

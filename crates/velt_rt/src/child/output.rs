@@ -5,7 +5,6 @@
 
 use super::command::{StdioMode, VeltCommand};
 use super::{exit_code, spawn_error};
-use crate::bytes::VeltBytes;
 use crate::result::IoResult;
 use crate::str::VeltStr;
 use crate::task::leaf::new_leaf;
@@ -57,13 +56,13 @@ unsafe fn command(spec: &VeltCommand, input: &[u8]) -> std::process::Command {
     spec.build([stdin, StdioMode::Pipe, StdioMode::Pipe])
 }
 
-/// `exec(cmd, args, opts)` → `IoResult<VeltOutput>` once the child has exited. `input` (string
-/// or bytes, copied; empty = none) is written to its stdin, which is then closed. The spec is
+/// `exec(cmd, args, opts)` → `IoResult<VeltOutput>` once the child has exited. `input` (a
+/// string, copied; empty = none) is written to its stdin, which is then closed. The spec is
 /// read at the call.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_child_output(
     spec: *const VeltCommand,
-    input: *const VeltBytes,
+    input: *const VeltStr,
 ) -> *mut VeltFut {
     let input = (*input).as_bytes().to_vec();
     let cmd = command(&*spec, &input);
@@ -96,7 +95,7 @@ async fn run(mut cmd: tokio::process::Command, input: Vec<u8>) -> std::io::Resul
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_child_output_sync(
     spec: *const VeltCommand,
-    input: *const VeltBytes,
+    input: *const VeltStr,
     out: *mut IoResult<VeltOutput>,
 ) {
     let input = (*input).as_bytes().to_vec();

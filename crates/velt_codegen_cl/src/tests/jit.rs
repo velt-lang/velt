@@ -12,6 +12,8 @@ thread_local! {
     static OUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
+/// The static form of rt `VeltStr`: `len` packs the UTF-16 length (high half) and the byte
+/// length (low half).
 #[repr(C)]
 struct VeltStr {
     ptr: *const u8,
@@ -23,11 +25,11 @@ fn out(s: &[u8]) {
     OUT.with(|o| o.borrow_mut().extend_from_slice(s));
 }
 unsafe fn str_bytes<'a>(s: *const VeltStr) -> &'a [u8] {
-    let s = &*s;
-    if s.len == 0 {
+    let (s, len) = (&*s, (*s).len as u32 as usize);
+    if len == 0 {
         &[]
     } else {
-        std::slice::from_raw_parts(s.ptr, s.len as usize)
+        std::slice::from_raw_parts(s.ptr, len)
     }
 }
 
