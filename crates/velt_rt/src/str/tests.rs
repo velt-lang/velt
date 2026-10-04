@@ -686,3 +686,33 @@ fn utf16_order_examples() {
     assert_eq!(c(b"ab", b"ab"), Equal);
     assert_eq!(c("é".as_bytes(), b"e"), Greater);
 }
+
+#[test]
+fn remembered_positions_never_outlive_their_buffer() {
+    // A string freed and a new one of the same length and unit count, likely at the same
+    // address: the position remembered for the first must not be used for the second (#377
+    // phase 2b, `recent.rs`). Their texts put unit 101 at different bytes.
+    let a_text = format!("{}{}", "é".repeat(100), "x".repeat(100));
+    let b_text = format!("{}{}", "x".repeat(100), "é".repeat(100));
+    for _ in 0..20 {
+        let a = Owned(VeltStr::from_bytes(a_text.as_bytes()));
+        assert_eq!(unsafe { a.0.unit_to_byte(100) }.byte, 200);
+        drop(a);
+        let b = Owned(VeltStr::from_bytes(b_text.as_bytes()));
+        assert_eq!(unsafe { b.0.unit_to_byte(101) }.byte, 102);
+        assert_eq!(unsafe { b.0.byte_to_unit(104) }, 102);
+    }
+    // An in-place append changes `w1`, so the old position is not taken for the new text, and a
+    // grown (moved) buffer forgets it.
+    let mut s = Owned(VeltStr::with_capacity(400));
+    unsafe { s.0.push_wtf8(a_text.as_bytes(), None) };
+    assert_eq!(unsafe { s.0.unit_to_byte(150) }.byte, 250);
+    unsafe { s.0.push_wtf8("😀".repeat(200).as_bytes(), None) };
+    assert_eq!(
+        unsafe { s.0.unit_to_byte(201) },
+        crumbs::BytePos {
+            byte: 300,
+            low_half: true
+        }
+    );
+}

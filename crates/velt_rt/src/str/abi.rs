@@ -40,6 +40,13 @@ pub unsafe extern "C" fn velt_rt_str_append(s: *mut VeltStr, t: *const VeltStr) 
     (*s).push_str(&*t);
 }
 
+/// `Buffer.byteLength(s)`: the length of `s` in UTF-8, which is its stored byte length (a lone
+/// surrogate takes 3 bytes, as the U+FFFD it is written as). O(1).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_str_byte_length(s: *const VeltStr) -> u64 {
+    (*s).len() as u64
+}
+
 /// `parts.join(sep)`: one allocation of the right form (`str/join.rs`).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_str_join(

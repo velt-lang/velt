@@ -10,7 +10,9 @@
 //!   [`STRIDE`]th unit ("breadcrumbs", one `u32` each, 1/16 of the text at most), built by the
 //!   first translation, published in the buffer header's `crumbs` field with a compare-and-swap
 //!   (strings cross threads) and freed with the buffer; then a lookup is one table load plus a
-//!   forward scan of fewer than [`STRIDE`] units.
+//!   forward scan of fewer than [`STRIDE`] units. A translation near the thread's last one of
+//!   the same string steps from it instead (`recent.rs`): a sequential index loop decodes one
+//!   character per step.
 //!
 //! A uniquely owned buffer that is appended to keeps its table: the bytes of the prefix never
 //! change (a join rewrites only the high surrogate that ends the old text into the start of the
@@ -32,10 +34,14 @@
 use std::alloc::{self, Layout};
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
-use super::{heap, wtf8, VeltStr};
+use super::{heap, recent, wtf8, VeltStr};
 
 /// Units between two breadcrumbs, and the longest string translated by a scan alone.
 pub const STRIDE: usize = 64;
+
+/// How far before the last translated unit a translation steps back from it (a loop running
+/// backward), rather than starting from a breadcrumb.
+const BACK_STEPS: usize = 8;
 
 /// The top bit of an entry: the unit the entry stands for is the second half (low surrogate) of
 /// the 4-byte sequence at the entry's offset, whose first half is the unit before. Offsets are
@@ -213,9 +219,9 @@ fn scan_forward(bytes: &[u8], mut byte: usize, mut unit: usize, target: usize) -
     }
 }
 
-/// From the end of the string (`bytes.len()`, `units`) backward to unit `target`.
-fn scan_backward(bytes: &[u8], units: usize, target: usize) -> BytePos {
-    let (mut byte, mut unit) = (bytes.len(), units);
+/// From the code point boundary at `byte`, whose first unit is `unit` (the end of the string:
+/// `bytes.len()` and the unit count), backward to unit `target` (`target <= unit`).
+fn scan_backward(bytes: &[u8], mut byte: usize, mut unit: usize, target: usize) -> BytePos {
     while unit > target {
         let start = wtf8::start_before(bytes, byte);
         let w = seq_units(bytes[start]);
@@ -271,14 +277,34 @@ impl VeltStr {
         }
         let bytes = self.as_bytes();
         if units > STRIDE && self.is_heap() {
-            let k = unit / STRIDE;
-            let (byte, from) = start_of(Table::entry(self.crumbs(k), k), k);
-            return scan_forward(bytes, byte, from, unit);
+            let (ptr, w1) = (self.w0 as usize, self.w1);
+            let pos = match recent::find(ptr, w1) {
+                // Near the last translation: step from it.
+                Some(e) if unit >= e.unit && unit - e.unit <= STRIDE => {
+                    scan_forward(bytes, e.pos.byte, e.unit - e.pos.low_half as usize, unit)
+                }
+                Some(e) if unit < e.unit && e.unit - unit <= BACK_STEPS => {
+                    // From the boundary after the remembered unit's code point.
+                    let (byte, from) = match e.pos.low_half {
+                        true => (e.pos.byte + 4, e.unit + 1),
+                        false => (e.pos.byte, e.unit),
+                    };
+                    scan_backward(bytes, byte, from, unit)
+                }
+                _ => {
+                    let k = unit / STRIDE;
+                    let (byte, from) = start_of(Table::entry(self.crumbs(k), k), k);
+                    scan_forward(bytes, byte, from, unit)
+                }
+            };
+            // Only a string with breadcrumbs is remembered: freeing it then forgets it.
+            recent::remember(ptr, w1, unit, pos);
+            return pos;
         }
         if unit <= units / 2 {
             scan_forward(bytes, 0, 0, unit)
         } else {
-            scan_backward(bytes, units, unit)
+            scan_backward(bytes, bytes.len(), units, unit)
         }
     }
 
@@ -311,13 +337,32 @@ impl VeltStr {
         let bytes = self.as_bytes();
         let units = self.units();
         if units > STRIDE && self.is_heap() {
+            let (ptr, w1) = (self.w0 as usize, self.w1);
+            if let Some(e) = recent::find(ptr, w1) {
+                if byte >= e.pos.byte && byte - e.pos.byte <= 4 * STRIDE {
+                    let first = e.unit - e.pos.low_half as usize;
+                    let unit = first + wtf8::count_units(&bytes[e.pos.byte..byte]);
+                    let pos = BytePos {
+                        byte,
+                        low_half: false,
+                    };
+                    recent::remember(ptr, w1, unit, pos);
+                    return unit;
+                }
+            }
             let entries = Table::entries(self.crumbs(units.div_ceil(STRIDE) - 1));
             // The last entry at or before `byte`; entry 0 is offset 0.
             let k = entries
                 .partition_point(|e| (e.load(Ordering::Relaxed) & !LOW_HALF) as usize <= byte)
                 - 1;
             let (from, unit) = start_of(entries[k].load(Ordering::Relaxed), k);
-            return unit + wtf8::count_units(&bytes[from..byte]);
+            let unit = unit + wtf8::count_units(&bytes[from..byte]);
+            let pos = BytePos {
+                byte,
+                low_half: false,
+            };
+            recent::remember(ptr, w1, unit, pos);
+            return unit;
         }
         if byte <= bytes.len() / 2 {
             wtf8::count_units(&bytes[..byte])

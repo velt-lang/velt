@@ -26,6 +26,7 @@ mod heap;
 mod invariants;
 mod join;
 mod push;
+mod recent;
 pub mod stats;
 #[cfg(test)]
 mod tests;
