@@ -24,10 +24,11 @@
 //!
 //! Filter with `VELT_GOLDEN=<substring>` (several separated by `,`: a file matching any of them
 //! runs). `VELT_GOLDEN_SHARD=<i>/<n>` checks only the i-th of n interleaved shards (1-based), so
-//! CI can spread the goldens over several machines. A program running longer than `VELT_GOLDEN_TIMEOUT`
-//! seconds (default 120) is killed and fails. Builds go to `target/golden-work` (or
-//! `VELT_GOLDEN_WORK`); each program's outputs are deleted after it runs. Programs are checked
-//! on `VELT_GOLDEN_JOBS` worker threads (default: half the cores, at most 8; `1` = sequential);
+//! CI can spread the goldens over several machines. A program running longer than
+//! `VELT_GOLDEN_TIMEOUT` seconds (default 120) is killed, with every process it started, and
+//! fails. Builds go to `target/golden-work` (or `VELT_GOLDEN_WORK`); each program's outputs are
+//! deleted after it runs. Programs are checked on `VELT_GOLDEN_JOBS` worker threads (default:
+//! half the cores, at most 8; `1` = sequential);
 //! `VELT_GOLDEN_MODES=debug` (or `release`) checks one build mode only.
 //! The debug-mode run of each program uses the debug runtime's checking allocator
 //! (`VELT_RT_DEBUG_ALLOC=1`, `crates/velt_rt/src/debug_alloc.rs`): a use after free, double free
@@ -38,6 +39,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod no_window;
+mod process_tree;
 mod runtime_support;
 
 fn root() -> PathBuf {
@@ -422,8 +424,8 @@ fn missing_required_env(file: &Path) -> Option<String> {
     None
 }
 
-/// `velt run` output, killing the program after `VELT_GOLDEN_TIMEOUT` seconds (default 120): a
-/// hanging golden fails instead of stalling the whole run.
+/// `velt run` output, killing it and the program it started after `VELT_GOLDEN_TIMEOUT` seconds
+/// (default 120): a hanging golden fails instead of stalling the whole run or running on.
 fn run_with_timeout(mut cmd: Command) -> std::process::Output {
     use std::io::Read;
     use std::process::Stdio;
@@ -434,13 +436,11 @@ fn run_with_timeout(mut cmd: Command) -> std::process::Output {
             .and_then(|s| s.parse().ok())
             .unwrap_or(120),
     );
-    let mut child = cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    // Drain the pipes on threads so a chatty program cannot block on a full pipe. After a kill
-    // the program `velt run` started may still hold them open: collect with a grace period.
+    let mut tree =
+        process_tree::ProcessTree::spawn(cmd.stdout(Stdio::piped()).stderr(Stdio::piped()))
+            .unwrap();
+    // Drain the pipes on threads so a chatty program cannot block on a full pipe. A process the
+    // program started may still hold them open after it exits: collect with a grace period.
     let drain = |mut r: Box<dyn Read + Send>| {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
@@ -450,18 +450,19 @@ fn run_with_timeout(mut cmd: Command) -> std::process::Output {
         });
         move || rx.recv_timeout(Duration::from_secs(5)).unwrap_or_default()
     };
-    let out = drain(Box::new(child.stdout.take().unwrap()));
-    let err = drain(Box::new(child.stderr.take().unwrap()));
+    let out = drain(Box::new(tree.child().stdout.take().unwrap()));
+    let err = drain(Box::new(tree.child().stderr.take().unwrap()));
     let start = Instant::now();
     let mut timed_out = false;
     let status = loop {
-        if let Some(s) = child.try_wait().unwrap() {
+        if let Some(s) = tree.child().try_wait().unwrap() {
             break s;
         }
         if start.elapsed() > limit {
             timed_out = true;
-            let _ = child.kill();
-            break child.wait().unwrap();
+            // `velt run` and the program it started (and anything that started).
+            tree.kill();
+            break tree.child().wait().unwrap();
         }
         std::thread::sleep(Duration::from_millis(10));
     };
@@ -474,4 +475,48 @@ fn run_with_timeout(mut cmd: Command) -> std::process::Output {
         stdout: out(),
         stderr,
     }
+}
+
+/// A timed-out run kills the program `velt run` started too, not only `velt run` (#475): the
+/// program printed a line, so it is running; once the tree is killed nothing holds the output
+/// pipe open any more, so reading it ends.
+#[test]
+fn killing_a_run_kills_the_program_it_started() {
+    use std::io::{BufRead, BufReader, Read};
+    use std::process::Stdio;
+    let root = root();
+    runtime_support::build_native_runtime(&root);
+    let work = std::env::var_os("VELT_GOLDEN_WORK")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("target/golden-work"))
+        .join(format!("kill-tree-{}", std::process::id()));
+    std::fs::create_dir_all(&work).unwrap();
+    let src = work.join("forever.vlt");
+    std::fs::write(
+        &src,
+        "async function main() {\n  console.log(\"started\");\n  await sleep(600000);\n}\n",
+    )
+    .unwrap();
+    let mut cmd = no_window::command(env!("CARGO_BIN_EXE_velt"));
+    cmd.arg("run").arg(&src).current_dir(&work);
+    let mut tree = process_tree::ProcessTree::spawn(cmd.stdout(Stdio::piped())).unwrap();
+    let mut out = BufReader::new(tree.child().stdout.take().unwrap());
+    let mut line = String::new();
+    out.read_line(&mut line).unwrap();
+    assert_eq!(line.trim(), "started");
+    tree.kill();
+    tree.child().wait().unwrap();
+    // Hang guard: the program would hold the pipe for ten minutes if it survived.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut rest = vec![];
+        let _ = tx.send(out.read_to_end(&mut rest).map(|_| rest));
+    });
+    let rest = rx
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .expect("the program `velt run` started is still running")
+        .unwrap();
+    assert!(rest.is_empty());
+    drop(tree);
+    let _ = std::fs::remove_dir_all(&work);
 }
