@@ -53,6 +53,7 @@ pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
     crate::task::runtime::wait_for_keep_alive();
     crate::io::flush_stdout();
     crate::str::stats::report();
+    crate::io::stats::report();
     code
 }
 
