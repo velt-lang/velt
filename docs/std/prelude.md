@@ -4,6 +4,11 @@ The prelude is the part of the standard library that every module sees without a
 lives in `std/prelude/*.vlt`; some of it (arrays' `push`/`pop`, `length`, `clone`, `spawn`,
 `shared`) is implemented by the compiler.
 
+Every export and public member in `std/prelude` has a doc comment, which `velt doc --std` shows
+under its signature. Where TypeScript has the same function, the text is adapted from the JSDoc
+of TypeScript's `lib.*.d.ts` (Apache-2.0, see `NOTICE`) and edited for Velt's differences; this
+page lists those differences.
+
 ## Strings
 
 `string` is an immutable UTF-8 value ([Types](../reference/types.md#strings)). Positions are

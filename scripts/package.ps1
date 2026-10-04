@@ -1,7 +1,7 @@
 # Build a release Velt toolchain and assemble dist/velt-<version>-<host triple>/ (+ .zip).
 #
 # Layout (see docs/tooling/platforms.md):
-#   bin/velt.exe  lib/velt_rt.lib  lib/velt_rt_shared.dll(.lib)  lib/NATIVE_LIBS.md  std/**  README.md  LICENSE-MIT  LICENSE-APACHE
+#   bin/velt.exe  lib/velt_rt.lib  lib/velt_rt_shared.dll(.lib)  lib/NATIVE_LIBS.md  std/**  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
 #
 # Usage: pwsh scripts/package.ps1 [-StdDir <dir>] [-SkipBuild] [-NoArchive]
 #   -StdDir     std sources to ship (default: <repo>/std)
@@ -68,7 +68,7 @@ Layout: bin/ (the velt CLI), lib/ (runtime library linked into every program),
 std/ (standard library sources). Full guide: docs/tooling/platforms.md in the Velt repository.
 "@ | Set-Content -Encoding utf8 (Join-Path $Out "README.md")
 
-Copy-Item (Join-Path $Repo "LICENSE-MIT"), (Join-Path $Repo "LICENSE-APACHE") $Out
+Copy-Item (Join-Path $Repo "LICENSE-MIT"), (Join-Path $Repo "LICENSE-APACHE"), (Join-Path $Repo "NOTICE") $Out
 
 if (-not $NoArchive) {
     $Zip = Join-Path $Dist "$Name.zip"

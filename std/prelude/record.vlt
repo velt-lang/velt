@@ -7,6 +7,13 @@
 // Entries keep insertion order; JSON reads and writes a record as an object, and `console.log`
 // shows it like one.
 
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
+/**
+ * A dictionary from keys of type `K` to values of type `V`, like TypeScript's `Record<K, V>`:
+ * `K` is `string`, a union of string literal types or a string enum. `r.name` and `r[k]` read
+ * a key, `r[k] = v` sets it, `delete r[k]` removes it; entries keep insertion order.
+ */
 export class Record<K, V> {
   // Field 0: the JSON and formatting glue read it directly.
   private entries: Map<K, V> = new Map();
@@ -70,14 +77,27 @@ export class Record<K, V> {
  * (crates/velt_sema/src/body/expr/object_keys.rs).
  */
 export class Object {
+  /**
+   * Returns the keys of a record as strings (a string enum key as its value), in insertion order.
+   * On other objects it lists their fields.
+   * @param r - The record whose keys to list.
+   */
   static keys<K, V>(r: Record<K, V>): string[] {
     return r.__keyNames();
   }
 
+  /**
+   * Returns an array of the values of a record, in insertion order.
+   * @param r - The record whose values to list.
+   */
   static values<K, V>(r: Record<K, V>): V[] {
     return r.__values();
   }
 
+  /**
+   * Returns an array of the `[key, value]` pairs of a record, in insertion order.
+   * @param r - The record whose entries to list.
+   */
   static entries<K, V>(r: Record<K, V>): [K, V][] {
     return r.__entries();
   }

@@ -12,7 +12,9 @@
 pub(crate) type VeltOnly = (&'static str, &'static str);
 
 /// Prelude exports and builtin globals that TypeScript's baseline has, with the same meaning.
-/// (The lint reports the other half; this half is read by the classification test.)
+/// (The lint reports the other half; this half is read by the classification test, and with
+/// `TS_MEMBERS` by `scripts/gen-prelude-docs.js`, which seeds the prelude's doc comments from
+/// TypeScript's.)
 #[cfg(test)]
 pub(crate) const TS_GLOBALS: &[&str] = &[
     "AggregateError",

@@ -1,5 +1,6 @@
 // Prelude: runtime assertions for tests and invariants. Failures panic (exit code 101).
 
+/** Panics with `msg` (exit code 101) unless `cond` is true. */
 export function assert(cond: bool, msg: string = "assertion failed") {
   if (!cond) {
     panic(msg);

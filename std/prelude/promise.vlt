@@ -8,6 +8,7 @@ export type PromiseSettledResult<T, E> =
 
 /** Thrown by `Promise.any` when no promise fulfills (JS: `AggregateError`). */
 export class AggregateError extends Error {
+  /** An error with the given `message`. */
   constructor(message: string) {
     super(message);
   }

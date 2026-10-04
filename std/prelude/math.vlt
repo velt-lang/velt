@@ -4,18 +4,38 @@
 // x86_64/aarch64). `min`/`max` follow JS exactly: NaN if either operand is NaN, and
 // -0 < +0 (`Math.max(-0, 0)` is +0, `Math.min(0, -0)` is -0).
 
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
+/**
+ * An intrinsic object that provides basic mathematics functionality and constants, on `f64`
+ * values.
+ */
 export class Math {
+  /** Pi. This is the ratio of the circumference of a circle to its diameter. */
   static readonly PI: f64 = 3.141592653589793;
+  /** The mathematical constant e. This is Euler's number, the base of natural logarithms. */
   static readonly E: f64 = 2.718281828459045;
 
+  /**
+   * Returns the square root of a number.
+   * @param x - A numeric expression.
+   */
   static sqrt(x: f64): f64 {
     return __intrinsic_sqrt(x);
   }
 
+  /**
+   * Returns the greatest integer less than or equal to its numeric argument.
+   * @param x - A numeric expression.
+   */
   static floor(x: f64): f64 {
     return __intrinsic_floor(x);
   }
 
+  /**
+   * Returns the smallest integer greater than or equal to its numeric argument.
+   * @param x - A numeric expression.
+   */
   static ceil(x: f64): f64 {
     return __intrinsic_ceil(x);
   }
@@ -25,10 +45,21 @@ export class Math {
     return __intrinsic_round(x);
   }
 
+  /**
+   * Returns the integral part of a numeric expression, `x`, removing any fractional digits.
+   * If `x` is already an integer, the result is `x`.
+   * @param x - A numeric expression.
+   */
   static trunc(x: f64): f64 {
     return __intrinsic_trunc(x);
   }
 
+  /**
+   * Returns the absolute value of a number (the value without regard to whether it is positive or
+   * negative).
+   * For example, the absolute value of -5 is the same as the absolute value of 5.
+   * @param x - A numeric expression for which the absolute value is needed.
+   */
   static abs(x: f64): f64 {
     return __intrinsic_f_abs(x);
   }
@@ -56,6 +87,10 @@ export class Math {
     return m;
   }
 
+  /**
+   * Returns the smaller of a set of supplied numeric expressions: any number of values, like JS
+   * (`Math.min()` is Infinity). NaN if any value is NaN.
+   */
   static min(a: f64 = Infinity, b: f64 = Infinity, ...rest: f64[]): f64 {
     let m = min2(a, b);
     for (const x of rest) {
@@ -72,6 +107,11 @@ export class Math {
     return velt_rt_prng_f64();
   }
 
+  /**
+   * Returns the value of a base expression taken to a specified power.
+   * @param base - The base value of the expression.
+   * @param exponent - The exponent value of the expression.
+   */
   static pow(base: f64, exponent: f64): f64 {
     return base ** exponent;
   }

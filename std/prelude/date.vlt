@@ -8,6 +8,8 @@
 // Differences from JS: `toString()` has no time zone name in parentheses, and the `toLocale…`
 // methods always use the `en-US` format.
 
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
 import { DateParts, partsOf, epochMsOf, monthShort, weekdayShort } from "velt:datetime/civil";
 import { pad, offsetString, isoString, httpString } from "velt:datetime/format";
 import { parseIso, parseHttp } from "velt:datetime/parse";
@@ -18,6 +20,11 @@ declare function velt_rt_local_offset_minutes(epochMs: i64): i32;
 // The largest distance from the epoch a JS date can be (100,000,000 days).
 const MAX_TIME: f64 = 8640000000000000.0;
 
+/**
+ * Enables basic storage and retrieval of dates and times: an instant in milliseconds since
+ * 1970-01-01T00:00:00Z, NaN for an invalid date, with JS's conventions (months 0-11, local-time
+ * and UTC getters and setters). Prefer `velt:datetime`'s `DateTime` in new code.
+ */
 export class Date implements Comparable<Date> {
   private t: f64;
 
@@ -84,42 +91,55 @@ export class Date implements Comparable<Date> {
     return fromFields(true, [year, month, day, hours, minutes, seconds, ms]);
   }
 
+  /** Returns the stored time value in milliseconds since midnight, January 1, 1970 UTC. */
   getTime(): number {
     return this.t;
   }
 
+  /** Returns the stored time value in milliseconds since midnight, January 1, 1970 UTC. */
   valueOf(): number {
     return this.t;
   }
 
+  /**
+   * Orders two dates by their time value (`Comparable`): negative when this one is earlier,
+   * positive when later, 0 when equal or either is invalid.
+   */
   compareTo(other: Date): i64 {
     return this.t < other.t ? -1 : this.t > other.t ? 1 : 0;
   }
 
+  /** Gets the year, using local time. */
   getFullYear(): number {
     return this.field(false, 0);
   }
 
+  /** Gets the month (0 for January to 11 for December), using local time. */
   getMonth(): number {
     return this.field(false, 1);
   }
 
+  /** Gets the day-of-the-month, using local time. */
   getDate(): number {
     return this.field(false, 2);
   }
 
+  /** Gets the hours in a date, using local time. */
   getHours(): number {
     return this.field(false, 3);
   }
 
+  /** Gets the minutes of a Date object, using local time. */
   getMinutes(): number {
     return this.field(false, 4);
   }
 
+  /** Gets the seconds of a Date object, using local time. */
   getSeconds(): number {
     return this.field(false, 5);
   }
 
+  /** Gets the milliseconds of a Date, using local time. */
   getMilliseconds(): number {
     return this.field(false, 6);
   }
@@ -129,34 +149,42 @@ export class Date implements Comparable<Date> {
     return this.field(false, 7);
   }
 
+  /** Gets the year using Universal Coordinated Time (UTC). */
   getUTCFullYear(): number {
     return this.field(true, 0);
   }
 
+  /** Gets the month (0-11) of a Date object using Universal Coordinated Time (UTC). */
   getUTCMonth(): number {
     return this.field(true, 1);
   }
 
+  /** Gets the day-of-the-month, using Universal Coordinated Time (UTC). */
   getUTCDate(): number {
     return this.field(true, 2);
   }
 
+  /** Gets the hours value in a Date object using Universal Coordinated Time (UTC). */
   getUTCHours(): number {
     return this.field(true, 3);
   }
 
+  /** Gets the minutes of a Date object using Universal Coordinated Time (UTC). */
   getUTCMinutes(): number {
     return this.field(true, 4);
   }
 
+  /** Gets the seconds of a Date object using Universal Coordinated Time (UTC). */
   getUTCSeconds(): number {
     return this.field(true, 5);
   }
 
+  /** Gets the milliseconds of a Date object using Universal Coordinated Time (UTC). */
   getUTCMilliseconds(): number {
     return this.field(true, 6);
   }
 
+  /** Gets the day of the week (0 = Sunday) using Universal Coordinated Time (UTC). */
   getUTCDay(): number {
     return this.field(true, 7);
   }
@@ -169,23 +197,57 @@ export class Date implements Comparable<Date> {
     return -(localOffset(this.t as i64) as f64);
   }
 
+  /**
+   * Sets the date and time value in the Date object.
+   * @param t - A numeric value representing the number of elapsed milliseconds since midnight,
+   * January 1, 1970 GMT.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setTime(t: number): number {
     this.t = timeClip(t);
     return this.t;
   }
 
+  /**
+   * Sets the year of the Date object using local time.
+   * @param year - A numeric value for the year.
+   * @param month - A zero-based numeric value for the month (0 for January, 11 for December).
+   * @param day - A numeric value equal to the day of the month.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setFullYear(year: number, month: number | null = null, day: number | null = null): number {
     return this.set(false, [year, month, day, null, null, null, null]);
   }
 
+  /**
+   * Sets the month value in the Date object using local time.
+   * @param month - A numeric value equal to the month. The value for January is 0, and other month
+   * values follow consecutively.
+   * @param day - A numeric value representing the day of the month. If this value is not supplied,
+   * the value from a call to the getDate method is used.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setMonth(month: number, day: number | null = null): number {
     return this.set(false, [null, month, day, null, null, null, null]);
   }
 
+  /**
+   * Sets the numeric day-of-the-month value of the Date object using local time.
+   * @param day - A numeric value equal to the day of the month.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setDate(day: number): number {
     return this.set(false, [null, null, day, null, null, null, null]);
   }
 
+  /**
+   * Sets the hour value in the Date object using local time.
+   * @param hours - A numeric value equal to the hours value.
+   * @param minutes - A numeric value equal to the minutes value.
+   * @param seconds - A numeric value equal to the seconds value.
+   * @param ms - A numeric value equal to the milliseconds value.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setHours(
     hours: number,
     minutes: number | null = null,
@@ -195,30 +257,77 @@ export class Date implements Comparable<Date> {
     return this.set(false, [null, null, null, hours, minutes, seconds, ms]);
   }
 
+  /**
+   * Sets the minutes value in the Date object using local time.
+   * @param minutes - A numeric value equal to the minutes value.
+   * @param seconds - A numeric value equal to the seconds value.
+   * @param ms - A numeric value equal to the milliseconds value.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setMinutes(minutes: number, seconds: number | null = null, ms: number | null = null): number {
     return this.set(false, [null, null, null, null, minutes, seconds, ms]);
   }
 
+  /**
+   * Sets the seconds value in the Date object using local time.
+   * @param seconds - A numeric value equal to the seconds value.
+   * @param ms - A numeric value equal to the milliseconds value.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setSeconds(seconds: number, ms: number | null = null): number {
     return this.set(false, [null, null, null, null, null, seconds, ms]);
   }
 
+  /**
+   * Sets the milliseconds value in the Date object using local time.
+   * @param ms - A numeric value equal to the millisecond value.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setMilliseconds(ms: number): number {
     return this.set(false, [null, null, null, null, null, null, ms]);
   }
 
+  /**
+   * Sets the year value in the Date object using Universal Coordinated Time (UTC).
+   * @param year - A numeric value equal to the year.
+   * @param month - A numeric value equal to the month. The value for January is 0, and other month
+   * values follow consecutively.
+   * @param day - A numeric value equal to the day of the month.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setUTCFullYear(year: number, month: number | null = null, day: number | null = null): number {
     return this.set(true, [year, month, day, null, null, null, null]);
   }
 
+  /**
+   * Sets the month value in the Date object using Universal Coordinated Time (UTC).
+   * @param month - A numeric value equal to the month. The value for January is 0, and other month
+   * values follow consecutively.
+   * @param day - A numeric value representing the day of the month. If it is not supplied, the
+   * value from a call to the getUTCDate method is used.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setUTCMonth(month: number, day: number | null = null): number {
     return this.set(true, [null, month, day, null, null, null, null]);
   }
 
+  /**
+   * Sets the numeric day of the month in the Date object using Universal Coordinated Time (UTC).
+   * @param day - A numeric value equal to the day of the month.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setUTCDate(day: number): number {
     return this.set(true, [null, null, day, null, null, null, null]);
   }
 
+  /**
+   * Sets the hours value in the Date object using Universal Coordinated Time (UTC).
+   * @param hours - A numeric value equal to the hours value.
+   * @param minutes - A numeric value equal to the minutes value.
+   * @param seconds - A numeric value equal to the seconds value.
+   * @param ms - A numeric value equal to the milliseconds value.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setUTCHours(
     hours: number,
     minutes: number | null = null,
@@ -228,14 +337,32 @@ export class Date implements Comparable<Date> {
     return this.set(true, [null, null, null, hours, minutes, seconds, ms]);
   }
 
+  /**
+   * Sets the minutes value in the Date object using Universal Coordinated Time (UTC).
+   * @param minutes - A numeric value equal to the minutes value.
+   * @param seconds - A numeric value equal to the seconds value.
+   * @param ms - A numeric value equal to the milliseconds value.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setUTCMinutes(minutes: number, seconds: number | null = null, ms: number | null = null): number {
     return this.set(true, [null, null, null, null, minutes, seconds, ms]);
   }
 
+  /**
+   * Sets the seconds value in the Date object using Universal Coordinated Time (UTC).
+   * @param seconds - A numeric value equal to the seconds value.
+   * @param ms - A numeric value equal to the milliseconds value.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setUTCSeconds(seconds: number, ms: number | null = null): number {
     return this.set(true, [null, null, null, null, null, seconds, ms]);
   }
 
+  /**
+   * Sets the milliseconds value in the Date object using Universal Coordinated Time (UTC).
+   * @param ms - A numeric value equal to the millisecond value.
+   * @returns the new time value, NaN for an invalid date.
+   */
   setUTCMilliseconds(ms: number): number {
     return this.set(true, [null, null, null, null, null, null, ms]);
   }

@@ -1,9 +1,16 @@
 // Prelude: JS number globals (`NaN`, `Infinity`, `isNaN`, `isFinite`), `toFixed` on f64, and
 // the static members of `Number` (`Number.isInteger`, `Number.MAX_SAFE_INTEGER`, …).
 
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
 declare function velt_rt_f64_to_fixed(x: f64, digits: i64): string;
 
+/**
+ * A value that is not a number (an `f64`). NaN does not equal any value, including itself: test
+ * for it with `isNaN(x)`.
+ */
 export const NaN: f64 = 0.0 / 0.0;
+/** Positive infinity, an `f64` greater than every finite one. `-Infinity` is its negation. */
 export const Infinity: f64 = 1.0 / 0.0;
 
 /** Whether `x` is NaN (JS global `isNaN` on a number). */
@@ -36,12 +43,24 @@ extend f64 {
  * in this class (TypeScript calls the type of `Number` `NumberConstructor` too).
  */
 export class NumberConstructor {
+  /**
+   * A value that is not a number.
+   * In equality comparisons, NaN does not equal any value, including itself. To test whether a
+   * value is equivalent to NaN, use the `Number.isNaN` function.
+   */
   static readonly NaN: f64 = 0.0 / 0.0;
+  /** A value greater than the largest `f64`, shown as `Infinity`. */
   static readonly POSITIVE_INFINITY: f64 = 1.0 / 0.0;
+  /** A value less than the most negative `f64`, shown as `-Infinity`. */
   static readonly NEGATIVE_INFINITY: f64 = -1.0 / 0.0;
   /** 2^53 - 1: the largest integer an f64 holds exactly, and its negation. */
   static readonly MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
+  /**
+   * The value of the smallest integer n such that n and n − 1 are both exactly representable as
+   * an `f64`: −9007199254740991 (−(2^53 − 1)).
+   */
   static readonly MIN_SAFE_INTEGER: f64 = -9007199254740991.0;
+  /** The largest finite `f64`. Equal to approximately 1.79E+308. */
   static readonly MAX_VALUE: f64 = 1.7976931348623157e308;
   /** The smallest positive (subnormal) f64. */
   static readonly MIN_VALUE: f64 = 5e-324;
@@ -53,6 +72,11 @@ export class NumberConstructor {
     return x != x;
   }
 
+  /**
+   * Returns true if passed value is finite: neither NaN nor ±Infinity. The same as the global
+   * `isFinite`.
+   * @param x - A numeric value.
+   */
   static isFinite(x: f64): bool {
     return x - x == 0.0;
   }
@@ -72,6 +96,11 @@ export class NumberConstructor {
     return parseInt(s, radix);
   }
 
+  /**
+   * Converts a string to a floating-point number, like the global `parseFloat`: the longest
+   * decimal prefix, or NaN.
+   * @param s - A string that contains a floating-point number.
+   */
   static parseFloat(s: string): f64 {
     return parseFloat(s);
   }

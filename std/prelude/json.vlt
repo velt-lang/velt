@@ -15,6 +15,8 @@
 // hook. A value that contains a `JsonValue` has no automatic deep `clone()` (sema rejects it: the
 // generated copy could not take a new reference).
 
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
 declare function velt_rt_json_parse_value(src: string, out: JsonHandleSlot, err: string): bool;
 declare function velt_rt_json_parse_value_with(
   src: string,
@@ -59,6 +61,7 @@ struct JsonHandleSlot {
 
 /** Invalid JSON, or JSON that does not match the type asked for. */
 export class JsonError extends Error {
+  /** An error with the given `message`, such as "expected string at $.name". */
   constructor(message: string) {
     super(message);
   }
@@ -91,6 +94,11 @@ function jsonMaxDepth(options: JsonParseOptions | null): i64 {
   return d;
 }
 
+/**
+ * An intrinsic object that provides functions to convert values to and from the JavaScript
+ * Object Notation (JSON) format. `stringify` and `parse` are generated for each type at compile
+ * time.
+ */
 export class JSON {
   /**
    * JS `JSON.stringify`: no whitespace, fields in declaration order, null optional fields omitted.
@@ -252,31 +260,38 @@ export class JsonValue {
     return velt_rt_json_value_len(this.handle) as i64;
   }
 
+  /** Whether this value is JSON `null`. */
   isNull(): bool {
     // The null handle (from the runtime) is JSON null too.
     return velt_rt_json_value_kind(this.handle) <= KIND_NULL;
   }
 
+  /** Whether this value is a boolean. */
   isBool(): bool {
     return velt_rt_json_value_kind(this.handle) == KIND_BOOL;
   }
 
+  /** Whether this value is a number. */
   isNumber(): bool {
     return velt_rt_json_value_kind(this.handle) == KIND_NUMBER;
   }
 
+  /** Whether this value is a string. */
   isString(): bool {
     return velt_rt_json_value_kind(this.handle) == KIND_STRING;
   }
 
+  /** Whether this value is an array. */
   isArray(): bool {
     return velt_rt_json_value_kind(this.handle) == KIND_ARRAY;
   }
 
+  /** Whether this value is an object. */
   isObject(): bool {
     return velt_rt_json_value_kind(this.handle) == KIND_OBJECT;
   }
 
+  /** The value if it is a number, else null. */
   asNumber(): f64 | null {
     if (!this.isNumber()) {
       return null;
@@ -284,6 +299,7 @@ export class JsonValue {
     return velt_rt_json_value_as_f64(this.handle);
   }
 
+  /** The value if it is a boolean, else null. */
   asBool(): bool | null {
     if (!this.isBool()) {
       return null;
@@ -291,6 +307,7 @@ export class JsonValue {
     return velt_rt_json_value_as_bool(this.handle);
   }
 
+  /** The value if it is a string, else null. */
   asString(): string | null {
     let out = "";
     if (velt_rt_json_value_as_str(this.handle, out)) {
