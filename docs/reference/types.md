@@ -140,7 +140,8 @@ usable and no copy method is needed.
   load, and indexing ASCII text reads a byte. Indexing other text translates the position: a
   step from the last position of the same string, so a sequential loop stays linear, or a
   lookup in a table built for long strings plus a scan of at most 63 units (random access to
-  long non-ASCII text is several times slower than in JS engines).
+  long non-ASCII text is several times slower than in JS engines; in a long non-ASCII literal,
+  which has no table, it scans from the closer end).
 - A string holds less than 2 GiB of text (more than JS engines allow). Making a longer one stops
   the program with `string too long` (`repeat` panics with JS's `RangeError` message instead).
 

@@ -112,8 +112,10 @@ units, so **a string is ASCII exactly when `units == bytes`**; no flag bit is ne
 | inline, ASCII (≤ 23 bytes) | byte 23 = `0x80 \| len` | same as the byte length | bit 0x40 of byte 23 clear |
 | inline, non-ASCII (≤ 22 bytes) | byte 23 = `0xC0 \| len` (`0x20`: may hold lone surrogates) | byte 22 | bit 0x40 of byte 23 set |
 
-- The `length` read stays branch-free: two selects over byte 23 and `w1 >> 32`
-  (`velt_vir/src/lower/strings.rs`).
+- The `length` read loads the words, then branches on the form: an inline string selects byte
+  22 or byte 23's length (by the 0x40 bit), any other reads `w1 >> 32`
+  (`velt_vir/src/lower/strings.rs`). A branch, not a second select: select chains cost
+  Cranelift 60% on `bench/strings`' scan loop, and LLVM unswitches the loop per form.
 - A string is limited to 2 GiB of bytes (2³¹ − 1). Node caps strings at 2²⁹ − 24 units
   (`MAX_STRING_LENGTH`), at most about 1.6 GB of WTF-8, so no program that works on Node loses.
   (Phase 1 first allowed 4 GiB; compiled code now reads the byte count sign-extended from the
@@ -122,8 +124,10 @@ units, so **a string is ASCII exactly when `units == bytes`**; no flag bit is ne
   limit (file reads, HTTP bodies, child output, stdin, the builder) report "string too long",
   checked once in `heap::layout`.
 - A **borrowed** non-ASCII view (a `split` piece of a literal, a JSON key pointing into the parsed
-  text) keeps its unit count in `w1`, with no copy. Only a view of 64 units or more that gets
-  indexed is copied, to get breadcrumbs.
+  text) keeps its unit count in `w1`, with no copy, and has no breadcrumbs: translating a
+  position in a long one steps from the thread's last translation of it (see "Sequential
+  indexing"), else scans from the closer end. A JSON key of more than 64 units that is not
+  ASCII is copied instead, so a long non-ASCII view always points at a literal.
 
 **3. A header only on non-ASCII heap buffers.** ASCII buffers keep today's layout,
 `[count][bytes]`. A non-ASCII buffer is `[crumbs: atomic ptr][lone: u64][count][bytes]`. The count
@@ -217,13 +221,18 @@ no wrong results (the rule in the first version of this note had 16,835, plain `
   string. The first plan put it in a per-local slot of the lowering, reset on every assignment;
   but `charCodeAt` is a prelude method inlined after lowering, so the lowering never sees the
   caller's local. Phase 2b keeps the cursor **with the thread** instead (`str/recent.rs`): the
-  runtime remembers each thread's last two translations of long non-ASCII heap strings (the
-  ones with breadcrumbs) by buffer address and `w1`, and freeing or growing such a buffer bumps
-  a global epoch that forgets them all, so a new string at the same address is never taken for
-  the old one. Every position-taking operation benefits (`slice(i, i + 1)` and `indexOf(x, pos)`
-  loops too), and nothing is shared between cores but the epoch, written only when an indexed
-  string dies. A per-local slot can still come with strength reduction (phase 3), which
-  rewrites the loop in the caller anyway.
+  runtime remembers each thread's last two translations of long non-ASCII strings (heap strings,
+  which have breadcrumbs, and static ones, which don't) by address, `w1` and form, and freeing or
+  growing such a heap buffer bumps a global epoch that forgets the heap ones, so a new string
+  at the same address is never taken for the old one. A long non-ASCII static string points at
+  a literal, which is never freed (the JSON reader copies a key that long instead of borrowing
+  it from the parsed text), so its positions never expire, and heap frees never send a loop
+  over a long literal back to an end. In a static string a forward step of any length is taken
+  unless the end is closer, so a forward loop with gaps (a regex `exec` loop) stays linear.
+  Every position-taking operation benefits (`slice(i, i + 1)` and `indexOf(x, pos)` loops too),
+  and nothing is shared between cores but the epoch, written only when an indexed string dies.
+  A per-local slot can still come with strength reduction (phase 3), which rewrites the loop in
+  the caller anyway.
 - **Strength reduction** (phase 3): `for (i < s.length) … s.charCodeAt(i) / s[i]` becomes a walk
   that advances one unit per step.
 

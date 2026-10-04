@@ -339,7 +339,7 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
             ("alloc", "pass bytes in instead"),
             (
                 "byteLength",
-                "count the UTF-8 bytes with `new TextEncoder().encode(s).length`",
+                "keep byte counting out of shared code (`TextEncoder` is planned, #377 phase 4)",
             ),
         ],
     ),

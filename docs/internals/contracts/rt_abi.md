@@ -125,11 +125,15 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   covers them, and a table without room is replaced by a published copy twice its size, the old
   one kept alive until the buffer is freed. ASCII strings translate in O(1), other strings
   (short, inline, static) by a scan. Every code-unit position the runtime takes or returns goes
-  through it. Each thread also remembers its last two translations of strings that have a table
-  (buffer address, `w1`, position); a translation near one steps from it, so sequential index
-  loops decode one character per step. Freeing or growing a buffer that has a table first bumps
-  a global epoch, which forgets every remembered position (a new string at the same address is
-  never taken for the old one).
+  through it. Each thread also remembers its last two translations of non-ASCII strings of more
+  than 64 units, heap (with a table) or static (address, `w1`, form, position); a translation
+  near one steps from it, so sequential index loops decode one character per step (in a static
+  string, any forward step unless the end is closer). Freeing or growing a buffer that has a
+  table first bumps a global epoch, which forgets every remembered position in a heap string (a
+  new string at the same address is never taken for the old one). Positions in static strings
+  never expire: a static non-ASCII string of more than 64 units points at a literal (the JSON
+  reader copies such a key instead of borrowing it, rt_abi_async.md §12.3), and so must any
+  other producer of borrowed views.
 - `VELT_RC_STATS=1` with a **debug** runtime prints `rc stats: retain=… release=… alloc=… free=…`
   to stderr at exit (retain = increments, release = decrements of shared buffers, alloc/free =
   heap buffers). Release runtimes compile the counters out; to count optimized code, link a

@@ -200,3 +200,59 @@ fn replacement_joins_halves_of_a_pair_and_matching_skips_lone_surrogates() {
         velt_rt_regex_free(dot);
     }
 }
+
+/// Every match of `x` in `subject` by an `exec(s, from)` loop, and the code units the loop
+/// scanned to translate positions.
+unsafe fn exec_loop(subject: &VeltStr) -> (Vec<i64>, usize) {
+    let re = new("x", "").expect("valid pattern");
+    let (mut starts, mut from) = (Vec::new(), 0);
+    let before = crate::str::work::total();
+    loop {
+        let mut out = MaybeUninit::<VeltArray<i64>>::uninit();
+        if velt_rt_regex_exec(re, subject, from, out.as_mut_ptr()) == 0 {
+            break;
+        }
+        let a = out.assume_init();
+        starts.push(a.as_slice()[0]);
+        from = a.as_slice()[1] as u64;
+        drop(Vec::from_raw_parts(a.ptr, a.len as usize, a.cap as usize));
+    }
+    let scanned = crate::str::work::total() - before;
+    velt_rt_regex_free(re);
+    (starts, scanned)
+}
+
+#[test]
+fn exec_loops_over_non_ascii_subjects_stay_linear() {
+    // Regression (#377 phase 2b review): each match start was counted from the start of the
+    // subject, so the loop scanned O(n²) units. The work is counted, not timed.
+    let mut text = String::new();
+    let mut want = Vec::new();
+    let mut units = 0;
+    for i in 0..20_000 {
+        if i % 7 == 0 {
+            want.push(units as i64);
+            text.push('x');
+            units += 1;
+        } else {
+            text.push_str("é日");
+            units += 2;
+        }
+    }
+    let heap = VeltStr::from_bytes(text.as_bytes());
+    let leaked: &'static [u8] = Box::leak(text.into_bytes().into_boxed_slice());
+    let lit = VeltStr::from_static(leaked);
+    for (form, subject) in [("heap", &heap), ("static", &lit)] {
+        // SAFETY: valid strings.
+        let scanned = crate::str::work::least_work(|| {
+            let (starts, scanned) = unsafe { exec_loop(subject) };
+            assert_eq!(starts, want);
+            scanned
+        });
+        // About one unit per unit of the subject; the quadratic loop scanned ~10^8.
+        assert!(scanned <= 4 * units, "{form}: {scanned} units scanned");
+    }
+    let mut heap = heap;
+    // SAFETY: the test's own string.
+    unsafe { heap.release() };
+}

@@ -66,8 +66,21 @@ unsafe fn text<'a>(s: *const VeltStr) -> &'a [u8] {
 /// # Safety
 /// `s` must be valid.
 unsafe fn start_byte(s: &VeltStr, from: u64) -> usize {
-    let pos = s.unit_to_byte(usize::try_from(from).unwrap_or(usize::MAX));
-    pos.byte + if pos.low_half { 4 } else { 0 }
+    start_pos(s, from).0
+}
+
+/// [`start_byte`] with the code unit it stands for (`from` clamped to the length, or the unit
+/// after the pair `from` was inside).
+///
+/// # Safety
+/// `s` must be valid.
+unsafe fn start_pos(s: &VeltStr, from: u64) -> (usize, usize) {
+    let unit = usize::try_from(from).unwrap_or(usize::MAX).min(s.units());
+    let pos = s.unit_to_byte(unit);
+    match pos.low_half {
+        true => (pos.byte + 4, unit + 1),
+        false => (pos.byte, unit),
+    }
 }
 
 /// Byte offsets of matches in `s` as code units: offsets inside a match are counted from its
@@ -80,12 +93,9 @@ struct Positions<'a> {
 }
 
 impl<'a> Positions<'a> {
-    fn new(s: &'a VeltStr) -> Positions<'a> {
-        Positions {
-            s,
-            byte: 0,
-            unit: 0,
-        }
+    /// Positions of matches at or after byte `byte` of `s`, which is code unit `unit`.
+    fn new(s: &'a VeltStr, byte: usize, unit: usize) -> Positions<'a> {
+        Positions { s, byte, unit }
     }
 
     /// The code unit of the start of a match at byte `b` (not before the previous match start).
@@ -196,12 +206,15 @@ pub unsafe extern "C" fn velt_rt_regex_exec(
     out: *mut VeltArray<i64>,
 ) -> u8 {
     let st = &*s;
-    let Some(caps) = re.obj().re.captures_at(text(s), start_byte(st, from)) else {
+    // The search start's unit is known: offsets are counted from it, not from the start of the
+    // subject (an `exec(s, from)` loop over a long non-ASCII subject stays linear).
+    let (byte, unit) = start_pos(st, from);
+    let Some(caps) = re.obj().re.captures_at(text(s), byte) else {
         return 0;
     };
     let mut v = Vec::with_capacity(2 * caps.len());
     let groups = caps.iter().map(|g| g.map(|m| (m.start(), m.end())));
-    Positions::new(st).push(groups, &mut v);
+    Positions::new(st, byte, unit).push(groups, &mut v);
     out.write(VeltArray::from_vec(v));
     1
 }
@@ -215,7 +228,7 @@ pub unsafe extern "C" fn velt_rt_regex_exec_all(
     out: *mut VeltArray<i64>,
 ) {
     let re = &re.obj().re;
-    let mut pos = Positions::new(&*s);
+    let mut pos = Positions::new(&*s, 0, 0);
     let mut v = Vec::new();
     if re.captures_len() == 1 {
         matches::each_find(re, text(s), |start, end| {

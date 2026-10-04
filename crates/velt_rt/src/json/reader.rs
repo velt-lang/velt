@@ -10,7 +10,7 @@ use super::error::{mismatch_message, syntax_message, unknown_message};
 use super::scan::{number_f64, number_i64, NumTok, Scanner, StrTok, SyntaxError, TOO_DEEP};
 use super::value::{read_limited, Value};
 use super::walk::{walk_limited, MemoSink, SkipSink};
-use crate::str::VeltStr;
+use crate::str::{VeltStr, STRIDE};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -406,20 +406,34 @@ impl Reader {
         }
     }
 
-    /// A string token as a `VeltStr`: borrowed from the source if it had no escapes. `tok` must
-    /// be the string the scanner read last, whose UTF-16 length is the scanner's `units` (so for
-    /// [`Self::owned_str`]).
+    /// A string token as a `VeltStr`: borrowed from the source if it had no escapes, unless it
+    /// is a non-ASCII string of more than `STRIDE` units. `tok` must be the string the scanner
+    /// read last, whose UTF-16 length is the scanner's `units` (so for [`Self::owned_str`]).
+    ///
+    /// Such a long non-ASCII key is copied because threads remember positions in long static
+    /// strings (`str/recent.rs`), which is sound only for bytes that are never freed: literals.
+    /// A borrowed key short enough, or ASCII, is never remembered, nor is any sub-range of one.
     pub(crate) fn borrowed_str(&self, tok: StrTok) -> VeltStr {
+        let units = self.sc.units;
         match tok {
-            // SAFETY: the source outlives the reader (reader_new's contract); the static form
-            // is never freed.
-            // A static string keeps no lone count, so the source's lone surrogates (if any) need
-            // no bookkeeping here; a range between two quotes of canonical WTF-8 is canonical.
-            StrTok::Borrowed(start, end) => unsafe {
-                VeltStr::borrowed_units(self.sc.src[start..].as_ptr(), end - start, self.sc.units)
+            StrTok::Borrowed(start, end) if units <= STRIDE || units == end - start => unsafe {
+                // SAFETY: the source outlives the reader (reader_new's contract); the static
+                // form is never freed.
+                // A static string keeps no lone count, so the source's lone surrogates (if any)
+                // need no bookkeeping here; a range between two quotes of canonical WTF-8 is
+                // canonical.
+                VeltStr::borrowed_units(self.sc.src[start..].as_ptr(), end - start, units)
             },
+            StrTok::Borrowed(start, end) => self.decoded_long(&self.sc.src[start..end]),
             StrTok::Owned(v) => self.decoded_escaped(&v),
         }
+    }
+
+    /// [`Self::decoded`] of a long non-ASCII key without escapes, out of line: rare.
+    #[cold]
+    #[inline(never)]
+    fn decoded_long(&self, v: &[u8]) -> VeltStr {
+        self.decoded(v)
     }
 
     /// [`Self::decoded`] of a string that had escapes, out of line: it is the rarer case, and

@@ -31,10 +31,12 @@ mod recent;
 pub mod stats;
 #[cfg(test)]
 mod tests;
+pub(crate) mod work;
 pub mod wtf8;
 
 pub use abi::*;
 pub use crumbs::BytePos;
+pub(crate) use crumbs::STRIDE;
 pub use order::cmp_utf16;
 pub use wtf8::{Summary, Wtf8};
 
@@ -122,7 +124,9 @@ impl VeltStr {
     ///
     /// # Safety
     /// The bytes must be canonical WTF-8 and stay valid and unchanged for as long as the string
-    /// (and its copies) live.
+    /// (and its copies) live; if they are not ASCII and hold more than [`STRIDE`] UTF-16 units,
+    /// for the rest of the process (a literal): threads remember positions in such a string
+    /// (`recent.rs`).
     pub unsafe fn borrowed(ptr: *const u8, len: usize) -> VeltStr {
         let bytes = if len == 0 {
             &[][..]
