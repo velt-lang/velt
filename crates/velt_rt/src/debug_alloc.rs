@@ -318,7 +318,7 @@ mod tests {
             exit_while_another_thread_holds_the_lock();
         }
         let exe = std::env::current_exe().expect("test executable");
-        let mut child = crate::abi_tests::http_bench::command(exe)
+        let mut child = crate::abi_tests::command::command(exe)
             .args([
                 "--exact",
                 "debug_alloc::tests::exit_with_the_quarantine_locked_by_another_thread",
