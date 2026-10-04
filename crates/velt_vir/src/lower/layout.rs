@@ -338,6 +338,7 @@ impl Cx<'_> {
         let mut tys = vec![Ty::Ptr, Ty::Ptr, Ty::Ptr];
         for (mode, t) in caps {
             let t = self.subst(t, targs);
+            self.note_capture(t);
             tys.push(match mode {
                 PassMode::Borrow | PassMode::BorrowMut => Ty::Ptr,
                 _ => self.ty(t),
