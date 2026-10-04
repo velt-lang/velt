@@ -1,0 +1,63 @@
+// check: no leaks
+// `===` on interface values compares the identity of the object behind them, as in JS (#365):
+// two interface values of one class instance are equal, of two equal-looking ones not. A struct
+// converted to an interface value keeps its identity too (it is counted once its interface
+// values are compared). `indexOf` and `Map` keys agree with `===`. An interface value compares
+// with a value of a type implementing it, a base class value with a subclass one.
+interface Shape {
+  area(): f64;
+}
+
+class Square implements Shape {
+  side: f64;
+  constructor(side: f64) {
+    this.side = side;
+  }
+  area(): f64 {
+    return this.side * this.side;
+  }
+}
+
+class Big extends Square {}
+
+struct Dot implements Shape {
+  x: f64;
+  area(): f64 {
+    return 0.0;
+  }
+}
+
+function same<T>(a: T, b: T): bool {
+  return a === b;
+}
+
+function main() {
+  const sq = new Square(2.0);
+  const a: Shape = sq;
+  const b: Shape = sq;
+  const c: Shape = new Square(2.0);
+  const d = a;
+  console.log(a === b, a === c, a !== c, d === a, same(a, c));
+  const shapes: Shape[] = [a, c];
+  console.log(shapes.indexOf(c), shapes.includes(b), shapes.indexOf(new Square(2.0)));
+
+  const p: Shape = Dot { x: 1.0 };
+  const q = p;
+  const r: Shape = Dot { x: 1.0 };
+  const kept: Shape[] = [q];
+  console.log(p === q, p === r, kept[0] === p, same(p, r));
+
+  const area = new Map<Shape, string>();
+  area.set(a, "a");
+  area.set(c, "c");
+  area.set(p, "p");
+  console.log(area.get(b), area.get(q), area.has(r), area.size);
+
+  // An interface value and a value of a class (or struct) implementing it compare too, as do a
+  // base class and a subclass value: the same object or not.
+  const big = new Big(3.0);
+  const asSquare: Square = big;
+  const dot = Dot { x: 2.0 };
+  const shown: Shape = dot;
+  console.log(a === sq, sq !== c, asSquare === big, big === sq, shown === dot);
+}

@@ -109,7 +109,11 @@ function jsxAsyncComponent<P, E>(component: (props: P) => Promise<Element, E>, p
   checked the same way; a later attribute overrides a spread field in place.
 - **Component props:** attributes form an object literal checked against `P` (missing required
   fields and unknown fields are errors); spreads merge like object spread. A function without
-  parameters is a component with props `{}`; a generic component's type arguments are inferred from its props (typed values, then arrow functions, then children). Children go into the
+  parameters is a component with props `{}`; a generic component's type arguments are written
+  on the opening tag (`<List<number> items={xs} />`, `ast::JsxElement::type_args`, empty only
+  when none are written: `<List<>>` is a syntax error; the closing tag takes none) or inferred from
+  its props like TS: typed values and children first, then arrow functions (children last when
+  one of them is an arrow function). Children go into the
   children field: one child → the child itself, several → an array, each checked against the
   field's type; children with no children field in `P` are an error.
 - **Children:** text (after JSX whitespace rules and entity decoding) becomes a `string` child;
@@ -165,8 +169,6 @@ provider), and offers `renderToString(el)`, `renderToStream(el, res)` (`std/http
 ## Known compatibility gaps (each is a compile error, never a behavior difference)
 - Props are copied into a component until semantics stage 2; props holding a pending async
   element are rejected until then.
-- Generic components (`<List items={xs} />` with `List<T>`) infer `T` from the props like TS;
-  explicit type arguments on tags (`<List<number> …>`) are not supported yet.
 - Class components, `ref`, and TS's `JSX.LibraryManagedAttributes`/`IntrinsicAttributes` are
   not supported.
 

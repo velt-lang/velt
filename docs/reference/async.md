@@ -30,6 +30,11 @@ Promises behave like JavaScript's, at Rust's cost:
   completion (its result is dropped), and the program waits for it before exiting, like Node
   waits for pending work. A promise created outside async code (for example in a synchronous
   `main`) starts when it is awaited or spawned.
+- After `main` returns, the process also waits for *handles*, as in Node: a listening
+  [server](../std/http.md) and a pending [timer](../std/timers.md) (`setTimeout`,
+  `setInterval`) unless it is `unref()`ed. A spawned task is not a handle: tasks still running
+  when nothing else keeps the process alive end with it. `process.exit()` and an uncaught error
+  end the process at once.
 - An async call owns its arguments: an argument variable used again afterwards is shared with
   the promise (objects) or copied (numbers, strings), otherwise moved, because the promise may
   outlive the caller's frame. A promise has one owner: using a promise variable after handing

@@ -1,0 +1,38 @@
+// A generic arrow function declared with `const` inside a function body is a generic function
+// nested in it: each call instantiates it, as for a local generic `function`.
+// check: no leaks
+
+class Box<T> {
+  constructor(public value: T) {}
+}
+
+function describe(xs: number[], names: string[]): string {
+  const firstOr = <T>(items: T[], fallback: T): T => (items.length > 0 ? items[0] : fallback);
+  const wrap = <T>(v: T): Box<T> => new Box(v);
+  const n = firstOr(xs, -1);
+  const name = firstOr(names, "none");
+  const flag = wrap(true).value;
+  return `${n} ${name} ${flag}`;
+}
+
+function main() {
+  console.log(describe([3, 4], []));
+  console.log(describe([], ["a"]));
+  const pairs = [1, 2].map((n) => {
+    const pair = <A, B>(a: A, b: B): string => `${a}:${b}`;
+    return pair(n, n > 1);
+  });
+  console.log(pairs.join(" "));
+  if (pairs.length > 1) {
+    const twice = <T>(v: T): T[] => {
+      const out: T[] = [];
+      out.push(v);
+      out.push(v);
+      return out;
+    };
+    console.log(twice("x").join(""), twice(5).length);
+  }
+  const id = <T>(x: T): T => x;
+  const asNumber: (x: number) => number = id;
+  console.log(asNumber(7));
+}

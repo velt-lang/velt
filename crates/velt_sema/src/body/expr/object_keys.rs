@@ -12,8 +12,9 @@
 //! - `Object.values(r)` / `Object.entries(r)` keep one value type, so they need a `Record`
 //!   (an object literal is read as one, `record_literal.rs`).
 //!
-//! A class with subclasses is rejected: a value of its type may hold a subclass instance,
-//! whose own fields JS lists too, and sema cannot test the dynamic class.
+//! A value of a class with subclasses may hold a subclass instance, whose own fields JS lists
+//! too: the names are chosen by the dynamic class, testing the subclasses deepest first
+//! (`PatKind::InstanceOf`, a vtable read; `expr::downcast`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -106,9 +107,10 @@ impl FnCx<'_, '_> {
         let (l, mode) = self.option_binding(&obj, obj.ty, "<keys>", false);
         let names = if keys.iter().any(|k| k.optional) {
             self.present_keys(l, &keys, str_array, span)
+        } else if let Some(subs) = self.class_subclasses(obj.ty) {
+            self.dynamic_class_keys(l, obj.ty, &keys, subs, span)
         } else {
-            let lits = keys.iter().map(|k| self.str_lit(&k.name, span)).collect();
-            self.mk(H::ArrayLit(lits), str_array, span)
+            self.name_array(&keys, span)
         };
         // `obj` is evaluated once, as written, then the names follow from its type.
         let pat = self.pat(P::Binding(l, mode), obj.ty, span);
@@ -117,6 +119,81 @@ impl FnCx<'_, '_> {
             guard: None,
             body: names,
         }];
+        let kind = H::Match {
+            scrutinee: Box::new(obj),
+            arms,
+        };
+        self.mk(kind, str_array, span)
+    }
+
+    /// `["a", "b"]`.
+    fn name_array(&mut self, keys: &[Key], span: Span) -> hir::Expr {
+        let lits = keys.iter().map(|k| self.str_lit(&k.name, span)).collect();
+        let str_array = self.cx.ty.array(self.cx.ty.str_);
+        self.mk(H::ArrayLit(lits), str_array, span)
+    }
+
+    /// The subclasses of class type `t`, deepest first (`None`: not a class, or no subclasses).
+    pub(super) fn class_subclasses(&self, t: TyId) -> Option<Vec<DefId>> {
+        let (d, _) = self.cx.class_of(t)?;
+        let mut subs: Vec<(usize, DefId)> = (0..self.cx.info.len() as u32)
+            .map(DefId)
+            .filter(|&s| {
+                s != d
+                    && self.cx.adt(s).is_some_and(|a| a.kind == AdtKind::Class)
+                    && self.cx.class_extends(s, d)
+            })
+            .map(|s| (self.class_depth(s), s))
+            .collect();
+        subs.sort_by(|a, b| b.0.cmp(&a.0).then(a.1 .0.cmp(&b.1 .0)));
+        (!subs.is_empty()).then(|| subs.into_iter().map(|(_, s)| s).collect())
+    }
+
+    /// The number of base classes of class `d`.
+    fn class_depth(&self, d: DefId) -> usize {
+        let mut cur = self.cx.adt(d).and_then(|a| a.base);
+        let mut n = 0;
+        while let Some((b, _)) = cur.and_then(|t| self.cx.class_of(t)) {
+            n += 1;
+            cur = self.cx.adt(b).and_then(|a| a.base);
+        }
+        n
+    }
+
+    /// The field names of the dynamic class of the object bound to `l` (static type `t`, whose
+    /// own names are `keys`): `match (l) { InstanceOf(Sub) => [...], ..., _ => [...] }`.
+    fn dynamic_class_keys(
+        &mut self,
+        l: hir::LocalId,
+        t: TyId,
+        keys: &[Key],
+        subs: Vec<DefId>,
+        span: Span,
+    ) -> hir::Expr {
+        let mut arms = vec![];
+        for s in subs {
+            let names: Vec<Key> = self.cx.adt(s).map_or(vec![], |a| {
+                let fields = a.fields.iter();
+                fields
+                    .map(|f| Key {
+                        name: f.name.clone(),
+                        optional: false,
+                    })
+                    .collect()
+            });
+            arms.push(hir::Arm {
+                pat: self.pat(P::InstanceOf(s), t, span),
+                guard: None,
+                body: self.name_array(&names, span),
+            });
+        }
+        arms.push(hir::Arm {
+            pat: self.pat(P::Wildcard, t, span),
+            guard: None,
+            body: self.name_array(keys, span),
+        });
+        let obj = self.mk(H::Local(l, hir::UseMode::Borrow), t, span);
+        let str_array = self.cx.ty.array(self.cx.ty.str_);
         let kind = H::Match {
             scrutinee: Box::new(obj),
             arms,
@@ -182,54 +259,25 @@ impl FnCx<'_, '_> {
         h
     }
 
-    /// The keys `Object.keys` lists for a value of type `t`, or `None` (reported at `span`):
-    /// `t` is not an object type, struct or class, or is a class with subclasses.
+    /// The keys `Object.keys` lists for a value of type `t` (its own static type's fields), or
+    /// `None` (reported at `span`): `t` is not an object type, struct or class.
     fn object_key_names(&mut self, t: TyId, span: Span) -> Option<Vec<Key>> {
         let d = match self.cx.ty.kind(t) {
             TyKind::Adt(d, _) => Some(*d),
             _ => None,
         };
-        let Some((d, a)) = d.and_then(|d| self.cx.adt(d).map(|a| (d, a))) else {
+        let Some(a) = d.and_then(|d| self.cx.adt(d)) else {
             return self.not_an_object(t, span);
         };
         if a.kind != AdtKind::Anon && self.cx.scopes[a.module].is_std {
             return self.not_an_object(t, span);
         }
         let class = a.kind == AdtKind::Class;
-        let keys = a
-            .fields
-            .iter()
-            .map(|f| Key {
-                name: f.name.clone(),
-                optional: f.optional && !class,
-            })
-            .collect();
-        if class {
-            if let Some(sub) = self.subclass_of(d) {
-                let (tn, sn) = (self.cx.display(t), self.cx.adt(sub).map(|s| s.name.clone()));
-                let sn = sn.unwrap_or_default();
-                self.cx.error(
-                    Diagnostic::error(
-                        format!("`Object.keys` cannot list the fields of `{tn}`: it has subclasses"),
-                        span,
-                    )
-                    .with_note(format!(
-                        "a `{tn}` value may be a `{sn}`, whose own fields would be listed too; call it on a value of a class without subclasses"
-                    )),
-                );
-                return None;
-            }
-        }
-        Some(keys)
-    }
-
-    /// A class that extends class `d` (directly or not), if any.
-    fn subclass_of(&self, d: DefId) -> Option<DefId> {
-        (0..self.cx.info.len() as u32).map(DefId).find(|&s| {
-            s != d
-                && self.cx.adt(s).is_some_and(|a| a.kind == AdtKind::Class)
-                && self.cx.class_extends(s, d)
-        })
+        let keys = a.fields.iter().map(|f| Key {
+            name: f.name.clone(),
+            optional: f.optional && !class,
+        });
+        Some(keys.collect())
     }
 
     /// Reports that `Object.keys` cannot list the keys of a `t`.

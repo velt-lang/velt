@@ -88,6 +88,8 @@ struct Executor {
     running: bool,
     /// Started promises that have not finished (`block_on` waits for them, like JS).
     locals: usize,
+    /// Keep-alive references (ref'd timers): `block_on` also waits while any is held.
+    keep_alive: usize,
 }
 
 thread_local! {
@@ -168,6 +170,20 @@ pub fn count_local(started: bool) {
             e.locals -= 1;
         }
     });
+}
+
+/// `velt_rt_keep_alive_acquire()`: a ref'd timer is pending (std/prelude/timers.vlt); like the
+/// native runtime, the program does not end while it is.
+#[no_mangle]
+pub extern "C" fn velt_rt_keep_alive_acquire() {
+    with_exec(|e| e.keep_alive += 1);
+}
+
+/// `velt_rt_keep_alive_release()`: release a reference taken with
+/// [`velt_rt_keep_alive_acquire`].
+#[no_mangle]
+pub extern "C" fn velt_rt_keep_alive_release() {
+    with_exec(|e| e.keep_alive -= 1);
 }
 
 /// Start `fut` as a task (queued now); on completion its `result_size` result bytes move into
@@ -269,15 +285,15 @@ fn wait_for_timers() -> bool {
 }
 
 /// `async main`: drive the compiled root state machine (and every task it spawns) until the
-/// root is ready and every started promise finished. Spawned tasks still running afterwards are
-/// abandoned.
+/// root is ready, every started promise finished and no keep-alive reference (a ref'd timer) is
+/// held. Spawned tasks still running afterwards are abandoned.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     with_exec(|e| e.running = true);
     schedule(ROOT);
     let mut root_done = false;
     loop {
-        if root_done && with_exec(|e| e.locals == 0) {
+        if root_done && with_exec(|e| e.locals == 0 && e.keep_alive == 0) {
             with_exec(|e| e.running = false);
             return;
         }

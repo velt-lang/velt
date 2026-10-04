@@ -193,7 +193,8 @@ fn local_place(e: &hir::Expr) -> bool {
         K::Field { base, .. }
         | K::Index { base, .. }
         | K::UnwrapSome(base, _)
-        | K::UnwrapVariant { expr: base, .. } => local_place(base),
+        | K::UnwrapVariant { expr: base, .. }
+        | K::Downcast(base) => local_place(base),
         _ => false,
     }
 }

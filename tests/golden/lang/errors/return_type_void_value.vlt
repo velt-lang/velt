@@ -1,0 +1,24 @@
+// A call returning `void` used as a `return` value next to other returns: TypeScript would
+// return `undefined` on that path, which Velt doesn't have (#75). Next to `return null;` too.
+function log(s: string): void {
+  console.log(s);
+}
+
+function orNull(b: boolean) {
+  if (b) {
+    return null;
+  }
+  return log("x");
+}
+
+function orNumber(b: boolean) {
+  if (b) {
+    return 1;
+  }
+  return log("y");
+}
+
+function main() {
+  orNull(true);
+  orNumber(true);
+}

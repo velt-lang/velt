@@ -1,0 +1,2 @@
+widen_escaping_new.vlt:29:25: error: cannot use the `Box<C>` that `make` returns as `Box<Named>`
+widen_escaping_new.vlt:30:25: error: cannot use the `Box<C>` that `new Box` returns as `Box<Named>`

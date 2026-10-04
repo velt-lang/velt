@@ -1,6 +1,7 @@
 //! Structural equality (`Intrinsic::Eq`, `==` on non-scalar types) and hashing
 //! (`Intrinsic::Hash`). Class objects, interface values and function values compare and hash by
-//! identity (JS reference semantics); everything else structurally. The prelude `Map` and
+//! identity (JS reference semantics: an interface value by its data pointer, a function value by
+//! its code and environment); everything else structurally. The prelude `Map` and
 //! `Record` classes are the exception: they compare by content in any key order (Node's
 //! `isDeepStrictEqual`) through `Map.__deepEquals`, and hash their size and keys through
 //! `Map.__deepHash` (std/prelude/map.vlt); a record compares its map. Hashes combine parts
@@ -76,9 +77,7 @@ impl FnLower<'_, '_> {
                 Operand::Const(Const::Bool(true), Ty::Bool)
             }
             TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Dyn(..) => {
-                let f = Proj::Field(0);
-                let (x, y) = (Operand::Copy(proj(a, f.clone())), Operand::Copy(proj(b, f)));
-                self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
+                self.ref_identity(a, b, ty)
             }
             _ if self.key_mode && vt.is_float() => {
                 let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
@@ -111,10 +110,20 @@ impl FnLower<'_, '_> {
                 let a = self.addr(place.clone());
                 self.call_glue(Glue::Hash, ty, vec![a])
             }
-            TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Dyn(..) => {
+            TyKind::Dyn(..) => {
+                self.cx.note_identity(ty);
                 let p = Operand::Copy(proj(place, Proj::Field(0)));
                 let x = self.cast_to(p, Ty::Ptr, Ty::U64);
                 self.fx_combine(cint(0, Ty::U64), x)
+            }
+            TyKind::FnPtr { .. } | TyKind::Closure(_) => {
+                self.cx.note_fn_identity();
+                let code = Operand::Copy(proj(place, Proj::Field(0)));
+                let code = self.cast_to(code, Ty::Ptr, Ty::U64);
+                let h = self.fx_combine(cint(0, Ty::U64), code);
+                let env = Operand::Copy(proj(place, Proj::Field(1)));
+                let env = self.cast_to(env, Ty::Ptr, Ty::U64);
+                self.fx_combine(h, env)
             }
             _ if vt.is_float() => {
                 let x = self.key_float_bits(Operand::Copy(place.clone()), vt);

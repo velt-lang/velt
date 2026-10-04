@@ -69,20 +69,27 @@ pub fn check_for_ide(modules: &[SourceModule], root: usize) -> Analysis {
         let spawned = std::thread::Builder::new()
             .name("velt-sema-ide".into())
             .stack_size(crate::SEMA_STACK_BYTES)
-            .spawn_scoped(s, || check_on_current_thread(modules, root));
+            .spawn_scoped(s, || {
+                check_on_current_thread(modules, root, crate::SEMA_STACK_BUDGET)
+            });
         match spawned {
             Ok(handle) => handle
                 .join()
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(_) => check_on_current_thread(modules, root),
+            Err(_) => check_on_current_thread(modules, root, crate::FALLBACK_STACK_BUDGET),
         }
     })
 }
 
-fn check_on_current_thread(modules: &[SourceModule], root: usize) -> Analysis {
+fn check_on_current_thread(modules: &[SourceModule], root: usize, stack_budget: usize) -> Analysis {
     let lifted = crate::generic_arrows::lift(modules);
-    let modules = lifted.as_deref().unwrap_or(modules);
+    let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
     let mut cx = crate::ctx::Ctx::new(modules, root.min(modules.len().saturating_sub(1)));
+    cx.stack_budget = stack_budget;
+    if let Some(l) = &lifted {
+        cx.generic_arrow_fns = l.local_fns.clone();
+        cx.generic_arrow_all = l.all_fns.clone();
+    }
     cx.ide = Some(Box::default());
     if !modules.is_empty() {
         crate::analyze(&mut cx);

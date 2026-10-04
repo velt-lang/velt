@@ -1,0 +1,11 @@
+// @jsxImportSource ./_jsx_test_provider
+
+// A generic component imported through a namespace (`<ui.Pick<number> …>`).
+
+export function Pick<T>(props: { options: T[]; chosen: T; show: (v: T) => string }): JSX.Element {
+  const shown: string[] = [];
+  for (const o of props.options) {
+    shown.push(o === props.chosen ? `[${props.show(o)}]` : props.show(o));
+  }
+  return <span>{shown.join(" ")}</span>;
+}
