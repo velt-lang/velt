@@ -1,21 +1,42 @@
-// A `with` callback the compiler cannot trace to its body — an object's field, an array
-// element, a `Map` value, the result of a generic factory — could keep a part of the locked
-// value or store an outside object into it (#398): an error that says where it came from. A
-// closure written where it is passed, or a named function, is checked instead.
+// A `with` callback the compiler cannot trace to its body (an object's field, an array element,
+// a `Map` value, the result of a generic factory) may be any closure or function taking the
+// locked value's type. Each of them is checked, unchanged (#457). The call is an error when one
+// of them would keep a part of the value outside the lock, or make a promise from it, and the
+// message names that function.
 class Inner {
   n: i64 = 0;
 }
 
 class State {
+  n: i64 = 0;
   inner: Inner = new Inner();
 }
 
-class Hooks {
-  cb: (s: State) => void;
+class Store {
+  m: shared<Mutex<State>> = shared(new Mutex<State>(new State()));
+  reducer: (s: State) => void;
 
-  constructor(cb: (s: State) => void) {
-    this.cb = cb;
+  constructor(reducer: (s: State) => void) {
+    this.reducer = reducer;
   }
+
+  dispatch() {
+    this.m.with(this.reducer);
+  }
+}
+
+class Job {
+  n: i64 = 0;
+}
+
+async function bump(j: Job): Promise<i64> {
+  await yieldNow();
+  j.n += 1;
+  return j.n;
+}
+
+function fire(j: Job) {
+  const p = bump(j);
 }
 
 function stasher<T>(out: T[]): (v: T) => void {
@@ -25,29 +46,54 @@ function stasher<T>(out: T[]): (v: T) => void {
 }
 
 function main() {
+  const kept: Inner[] = [];
+  const counter = new Store((s: State) => {
+    s.n += 1;
+  });
+  const keeper = new Store((s: State) => {
+    kept.push(s.inner);
+  });
+  counter.dispatch();
+  keeper.dispatch();
   const m = shared(new Mutex<State>(new State()));
-  const out: Inner[] = [];
-  const h = new Hooks((s: State) => {
-    out.push(s.inner);
-  });
-  m.with(h.cb);
-  const cbs = [(s: State) => {
-    out.push(s.inner);
-  }];
-  m.with(cbs[0]);
+  const ops = [counter.reducer];
+  m.with(ops[0]);
   const byName = new Map<string, (s: State) => void>();
-  byName.set("a", (s: State) => {
-    out.push(s.inner);
-  });
-  const cb = byName.get("a");
+  byName.set("count", counter.reducer);
+  const cb = byName.get("count");
   if (cb != null) {
     m.with(cb);
   }
-  const states: State[] = [];
-  const g = { cb: stasher<State>(states) };
-  m.with(g.cb);
-  const counts = shared(new Mutex<i64>(0));
-  const inc = [(n: i64) => {}];
-  counts.with(inc[0]);
-  console.log(out.length, states.length);
+  const jobs = shared(new Mutex<Job>(new Job()));
+  const steps: ((j: Job) => void)[] = [fire];
+  jobs.with(steps[0]);
+  const inners = shared(new Mutex<Inner>(new Inner()));
+  const g = { cb: stasher<Inner>(kept) };
+  inners.with(g.cb);
+  console.log(kept.length);
+  valueRef();
+}
+
+// A generic function used as a value is instantiated there too: `mk` is `wrap<Cell>`, while
+// the only call of `wrap` is with `i64`.
+class Cell {
+  n: i64 = 0;
+}
+
+function wrap<T>(out: T[]): (v: T) => void {
+  return (v: T) => {
+    out.push(v);
+  };
+}
+
+function valueRef() {
+  const nums: i64[] = [];
+  const other = wrap<i64>(nums);
+  other(1);
+  const kept: Cell[] = [];
+  const mk: (o: Cell[]) => (v: Cell) => void = wrap;
+  const h = { cb: mk(kept) };
+  const m = shared(new Mutex<Cell>(new Cell()));
+  m.with(h.cb);
+  console.log(kept.length);
 }
