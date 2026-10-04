@@ -110,7 +110,8 @@ const NOTHING: &[&str] = &[
 const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
     ("docs/", &["velt_doc"], &["docs"]),
     ("README.md", &[], &["docs"]),
-    ("bench/", &["velt_sema"], &[]),
+    // velt_sema's scaling test reads bench/compile; `bench_programs` compiles every program.
+    ("bench/", &["velt_sema"], &["bench_programs"]),
     ("fuzz/", &["velt_fmt"], &[]),
     // The `tsc` oracle's samples and configuration: velt_tscompat's tests read them (and skip
     // the `tsc` run without its Node packages), `veltc`'s check that the samples are valid Velt.
