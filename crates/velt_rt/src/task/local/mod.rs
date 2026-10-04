@@ -12,10 +12,13 @@
 //! Directly awaited calls never get here: `await f()` embeds `f`'s state in the caller's (no
 //! allocation), and `spawn(f())` gives `f` its own task.
 
+mod losers;
 mod node;
 mod set;
 mod timers;
 
+pub(crate) use losers::give_up;
+pub use losers::velt_rt_fut_detach;
 pub(crate) use timers::TimerLeaf;
 
 use std::cell::Cell;
@@ -39,6 +42,12 @@ struct TaskCx {
     id: *mut u64,
     /// The task's timers (none until its first `sleep`; timers.rs).
     timers: *mut Option<Arc<Timers>>,
+    /// Which poll of the task this is ([`next_turn`]): a promise created during this same poll
+    /// can only have been woken by the poll's own code, never by a timer or another event.
+    turn: u32,
+    /// Something yielded during this poll (`yieldNow()`): it must not run again before the
+    /// task's next poll (losers.rs).
+    yielded: Cell<bool>,
 }
 
 thread_local! {
@@ -53,6 +62,32 @@ fn current_set() -> *mut LocalSet {
     }
     // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
     unsafe { *(*tcx).set }
+}
+
+/// The turn of the task being polled (0 outside a task).
+fn current_turn() -> u32 {
+    let tcx = CURRENT.with(Cell::get);
+    // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
+    unsafe { tcx.as_ref() }.map_or(0, |t| t.turn)
+}
+
+/// `yieldNow()` in the task being polled: what yielded waits for the task's next poll, so no
+/// promise of this poll runs early (losers.rs).
+pub(crate) fn note_yield() {
+    let tcx = CURRENT.with(Cell::get);
+    // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
+    if let Some(t) = unsafe { tcx.as_ref() } {
+        t.yielded.set(true);
+    }
+}
+
+/// The turn after `turn`: turns count task polls in `1..node::TURNS` (0 means none).
+fn next_turn(turn: u32) -> u32 {
+    if turn + 1 >= node::TURNS {
+        1
+    } else {
+        turn + 1
+    }
 }
 
 /// Run `f` with the timers of the task being polled, created on first use; `None` outside a task.
@@ -83,14 +118,14 @@ impl Drop for Enter {
     }
 }
 
-/// Owned pointer to a task's local set (null = none yet), its id and its timers.
-struct SetPtr(*mut LocalSet, u64, Option<Arc<Timers>>);
+/// Owned pointer to a task's local set (null = none yet), its id, its timers and its turn.
+struct SetPtr(*mut LocalSet, u64, Option<Arc<Timers>>, u32);
 
 // SAFETY: the set moves with its task between workers and is only used by that task's polls.
 unsafe impl Send for SetPtr {}
 
 impl SetPtr {
-    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0, None);
+    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0, None, 0);
 
     /// Poll with this set current: drain its woken promises (resuming the task's root with
     /// `root` when a promise it awaits finishes), then poll the root once more if a promise ran
@@ -99,11 +134,14 @@ impl SetPtr {
     /// # Safety
     /// `waker` must stay valid during the call.
     unsafe fn enter(&mut self, waker: *const Waker, root: &mut dyn FnMut()) {
+        self.3 = next_turn(self.3);
         let tcx = TaskCx {
             set: &mut self.0,
             waker,
             id: &mut self.1,
             timers: &mut self.2,
+            turn: self.3,
+            yielded: Cell::new(false),
         };
         let _enter = Enter::new(&tcx);
         let timers = self.2.as_deref();
@@ -234,7 +272,7 @@ pub unsafe extern "C" fn velt_rt_fut_box(
     if state_align > 16 {
         crate::panic::fatal("velt_rt_fut_box: state alignment above 16");
     }
-    node::alloc_node(poll, drop, state_ptr, state_size)
+    node::alloc_node(poll, drop, state_ptr, state_size, current_turn())
 }
 
 /// Start the promise `f` now (a stored promise, `const p = f()`): run its state until its first
@@ -281,33 +319,6 @@ pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: ResultD
         return;
     }
     node::set_transfer(f, transfer);
-}
-
-/// The owner gives up promise `f` without cancelling it (the pending siblings of an early
-/// `Promise.all` rejection). A lazy compiled future, which its owner may have polled already,
-/// joins the current task's started promises without being polled now: it is queued, so it runs
-/// at the task's next poll, after the owner's continuation (in JS the rejection handler runs
-/// before other woken promises). A started promise keeps running. Either way its outcome is
-/// handled: `quiet_drop` disposes of its result (null if nothing to drop). Anything else (a
-/// runtime leaf, a join handle) is dropped as by `velt_rt_fut_drop`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_detach(f: *mut VeltFut, quiet_drop: Option<ResultDropFn>) {
-    let tcx = CURRENT.with(Cell::get);
-    if node::is_lazy(f) && !tcx.is_null() {
-        let tcx = &*tcx;
-        if (*tcx.set).is_null() {
-            *tcx.set = Box::into_raw(LocalSet::new(&*tcx.waker));
-        }
-        let set = *tcx.set;
-        node::mark_started(f, &(*set).shared, quiet_drop);
-        node::count_set(f);
-        set::add_member(set, f);
-        // Its leaves hold its owner's waker: one poll from the set makes them wake the node.
-        node::queue(f);
-    }
-    node::mark_handled(f, quiet_drop);
-    crate::task::spawn::mark_join_handled(f, quiet_drop);
-    crate::task::velt_rt_fut_drop(f);
 }
 
 /// What `console.log` shows of promise `f`, which its owner holds: 1 when its result is in the

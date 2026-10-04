@@ -1,0 +1,32 @@
+failer throws 0
+loser resumed 0
+literal caught 0
+failer throws 1
+loser resumed 1
+literal caught 1
+failer throws 0
+loser resumed 0
+array caught 0
+failer throws 1
+loser resumed 1
+array caught 1
+winner returns 0
+loser resumed 0
+won 100
+winner returns 1
+loser resumed 1
+won 101
+winner returns 0
+loser resumed 0
+any 100
+winner returns 1
+loser resumed 1
+any 101
+failer throws 0
+timer caught 0
+failer throws 1
+timer caught 1
+loop done
+rounds whose loser had not finished: 0 of 1000
+slept 0
+slept 1

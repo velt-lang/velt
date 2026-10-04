@@ -1,7 +1,8 @@
 //! `velt_rt_race` / `velt_rt_race_ok`: `Promise.race` and `Promise.any` over a runtime-sized
 //! array of heap futures. Each poll polls every child (single-threaded, like `velt_rt_all`); the
-//! winner moves its result into the race's result slot and the others are dropped (a started
-//! promise keeps running, JS-like). `race_ok` skips rejected children (`Result<T, E>` slots, tag
+//! winner moves its result into the race's result slot and the others are given up in array
+//! order (a started promise keeps running, JS-like, and runs now if it is ready: local.rs
+//! `give_up`). `race_ok` skips rejected children (`Result<T, E>` slots, tag
 //! byte 0 = fulfilled) until only the last one is left: see velt_rt's task/race.rs.
 //!
 //! Allocation layout (align 16): `[Tail, padded to 16][VeltFut header (16)][result]`: the result
@@ -48,7 +49,8 @@ unsafe extern "C" fn race_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
             continue;
         }
         let src = (c as *mut u8).add(FUT_RESULT_OFFSET);
-        t.children.swap_remove(i);
+        // `remove`, not `swap_remove`: the losers keep their array order.
+        t.children.remove(i);
         if let (Some(drop_fn), true) = (t.first_ok, *src != 0 && !t.children.is_empty()) {
             if let Some(d) = drop_fn {
                 d(src);
@@ -59,7 +61,7 @@ unsafe extern "C" fn race_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
         std::ptr::copy_nonoverlapping(src, dst, t.result_size as usize);
         ((*c).drop.0)(c);
         for c in std::mem::take(&mut t.children) {
-            ((*c).drop.0)(c);
+            super::local::give_up(c);
         }
         t.done = true;
         return READY;

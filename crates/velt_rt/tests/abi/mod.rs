@@ -14,6 +14,7 @@ mod json_union;
 mod json_value;
 mod json_value_edit;
 mod local;
+mod losers;
 mod net;
 mod perf;
 mod strings;

@@ -68,6 +68,12 @@ const OWNER_DONE: u32 = 1;
 /// `owner` bit of a started node: the owner's poll returned READY (the result is claimed).
 const OWNER_DELIVERED: u32 = 2;
 
+/// `owner` bits above the flags: the turn of the task poll that created the node
+/// ([`created_in`]). Turns count in `1..TURNS`, so the stamp fits; 0 means outside a task.
+const TURN_SHIFT: u32 = 2;
+/// Turns wrap below this.
+pub(super) const TURNS: u32 = 1 << (32 - TURN_SHIFT);
+
 /// `member` value of a node that is not in a set's member list.
 pub(super) const NO_MEMBER: u32 = u32::MAX;
 
@@ -85,7 +91,8 @@ pub(super) struct Head {
     pub refs: AtomicUsize,
     /// Index in the driving set's member list, or [`NO_MEMBER`] (driving task only).
     pub member: AtomicU32,
-    /// `OWNER_*` bits, touched only by whoever holds the handle.
+    /// `OWNER_*` bits, touched only by whoever holds the handle, and the creation turn above
+    /// them until the result is claimed.
     owner: Cell<u32>,
     /// The driving set (null while lazy; a counted reference once `SET_REF` is set).
     pub set: *const Shared,
@@ -127,12 +134,14 @@ pub(super) unsafe fn state(f: *mut VeltFut) -> *mut u8 {
     (f as *mut u8).add(std::mem::size_of::<VeltFut>())
 }
 
-/// A lazy node holding a copy of the `state_size` bytes at `src`.
+/// A lazy node holding a copy of the `state_size` bytes at `src`, created during task turn
+/// `turn` (0: outside a task).
 pub(super) unsafe fn alloc_node(
     poll: PollFn,
     drop: DropFn,
     src: *const u8,
     state_size: u64,
+    turn: u32,
 ) -> *mut VeltFut {
     let Ok(state_size) = u32::try_from(state_size) else {
         crate::panic::fatal("async state larger than 4 GiB");
@@ -150,7 +159,7 @@ pub(super) unsafe fn alloc_node(
         flags: AtomicU32::new(0),
         refs: AtomicUsize::new(1),
         member: AtomicU32::new(NO_MEMBER),
-        owner: Cell::new(0),
+        owner: Cell::new(turn << TURN_SHIFT),
         set: std::ptr::null(),
         next: AtomicPtr::new(std::ptr::null_mut()),
         awaiter: AtomicWaker::new(),
@@ -341,8 +350,27 @@ pub(super) unsafe fn peek(f: *mut VeltFut) -> bool {
     h.flags.load(Ordering::Acquire) & DONE != 0 && h.owner.get() & OWNER_DELIVERED == 0
 }
 
+/// Was node `f` created during task turn `turn` (and is its result unclaimed)?
+pub(super) unsafe fn created_in(f: *mut VeltFut, turn: u32) -> bool {
+    turn != 0 && head(f).owner.get() >> TURN_SHIFT == turn
+}
+
+/// Is started node `f` an unfinished member of the set `shared` (so it holds a reference of
+/// the set's)?
+pub(super) unsafe fn running_in(f: *mut VeltFut, shared: &Arc<Shared>) -> bool {
+    let h = head(f);
+    std::ptr::eq(h.set, Arc::as_ptr(shared))
+        && h.member.load(Ordering::Relaxed) != NO_MEMBER
+        && h.flags.load(Ordering::Acquire) & (DONE | CANCELLED) == 0
+}
+
+/// Is started node `f` in its set's ready queue?
+pub(super) unsafe fn is_queued(f: *mut VeltFut) -> bool {
+    head(f).flags.load(Ordering::Acquire) & QUEUED != 0
+}
+
 /// Is `f` a started node (`velt_rt_fut_start` succeeded on it)?
-unsafe fn is_started(f: *mut VeltFut) -> bool {
+pub(super) unsafe fn is_started(f: *mut VeltFut) -> bool {
     std::ptr::fn_addr_eq(
         (*f).poll,
         started_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32,

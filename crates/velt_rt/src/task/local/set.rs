@@ -103,6 +103,15 @@ pub(crate) struct LocalSet {
     members: Vec<SendPtr<VeltFut>>,
     /// Woken nodes taken from the ready queue, not run yet (each holds the queue's reference).
     pending: VecDeque<SendPtr<VeltFut>>,
+    /// The nodes being polled right now, innermost first ([`polling`]): a node never runs
+    /// again from inside its own poll.
+    running: *const Running,
+}
+
+/// A node being polled, linked to the one whose poll led to it (on the stack of [`polling`]).
+struct Running {
+    f: *mut VeltFut,
+    prev: *const Running,
 }
 
 impl LocalSet {
@@ -111,6 +120,7 @@ impl LocalSet {
             shared: Arc::new(Shared::new(waker)),
             members: Vec::new(),
             pending: VecDeque::new(),
+            running: std::ptr::null(),
         })
     }
 
@@ -152,11 +162,60 @@ pub(super) struct Driver<'a> {
     pub timers: Option<&'a Timers>,
 }
 
+/// Run `poll` (a poll of member `f`) with `f` marked as running.
+pub(super) unsafe fn polling<R>(
+    set: *mut LocalSet,
+    f: *mut VeltFut,
+    poll: impl FnOnce() -> R,
+) -> R {
+    let frame = Running {
+        f,
+        prev: (*set).running,
+    };
+    (*set).running = &frame;
+    let r = poll();
+    (*set).running = frame.prev;
+    r
+}
+
+/// Is node `f` being polled (somewhere up the stack)?
+unsafe fn is_running(set: *mut LocalSet, f: *mut VeltFut) -> bool {
+    let mut p = (*set).running;
+    while let Some(r) = p.as_ref() {
+        if std::ptr::eq(r.f, f) {
+            return true;
+        }
+        p = r.prev;
+    }
+    false
+}
+
+/// Run member `f` now, from inside a poll of the task's root or of another node (a loser of a
+/// combinator that just settled, local/mod.rs `give_up`): like [`run`], except that the root,
+/// which is being polled, is woken instead of polled when `f` resumes it. A node that is being
+/// polled already is queued instead.
+pub(super) unsafe fn run_now(set: *mut LocalSet, task: &Waker, f: *mut VeltFut) {
+    if is_running(set, f) {
+        node::queue(f);
+        return;
+    }
+    let mut root = || task.wake_by_ref();
+    run(
+        &mut Driver {
+            set,
+            task,
+            root: &mut root,
+            timers: None,
+        },
+        f,
+    );
+}
+
 /// Poll the state of started node `f` once. When it finishes, whoever awaits it resumes right
 /// away, before other woken promises run (a JS microtask): another promise of this set is run
 /// now, the task's root is polled now; any other awaiter is woken.
 pub(super) unsafe fn run(d: &mut Driver<'_>, f: *mut VeltFut) {
-    if !node::poll_state(f) {
+    if !polling(d.set, f, || node::poll_state(f)) {
         return;
     }
     remove_member(d.set, f);

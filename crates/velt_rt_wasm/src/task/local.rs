@@ -24,6 +24,8 @@ pub struct Started {
     delivered: bool,
     waiter: Option<Waker>,
     result_drop: Option<ResultDropFn>,
+    /// The id of the task driving it.
+    task: usize,
 }
 
 unsafe fn shared<'a>(f: *mut VeltFut) -> &'a RefCell<Started> {
@@ -72,9 +74,11 @@ pub unsafe extern "C" fn velt_rt_fut_transfer(f: *mut VeltFut, transfer: ResultD
 }
 
 /// The owner gives up promise `f` without cancelling it: a lazy one becomes a started promise
-/// whose task runs at the executor's next turn (not now: the owner's continuation comes first,
-/// like JS's rejection handler), a started one keeps running, and either way its outcome is
-/// handled with `quiet_drop`; anything else is dropped (rt_abi_async.md §1).
+/// with a task of its own, a started one keeps running, and either way its outcome is handled
+/// with `quiet_drop`; anything else is dropped (rt_abi_async.md §1). The promise runs before the
+/// owner's continuation if it was created during this turn, else at its place in the ready queue
+/// after it (like JS's rejection handler, which comes before the timers that woke it): see
+/// [`give_up`].
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fut_detach(f: *mut VeltFut, quiet_drop: Option<ResultDropFn>) {
     if boxed::is_lazy(f) && executor::running() {
@@ -82,7 +86,34 @@ pub unsafe extern "C" fn velt_rt_fut_detach(f: *mut VeltFut, quiet_drop: Option<
     }
     let one = [Wide(f)];
     velt_rt_futs_handled(one.as_ptr(), 1, quiet_drop);
+    give_up(f);
+}
+
+/// A combinator that settled gives up loser `f` (as `velt_rt_fut_drop`: a started promise keeps
+/// running). A started promise created during this turn whose task is queued (woken by this
+/// turn's own code, by a promise it settled, say) runs now, before the combinator's awaiter,
+/// like its JS microtask; anything else runs at its place in the ready queue, as does every
+/// loser when something yielded during this turn (velt_rt's `local::give_up`, #150).
+pub(super) unsafe fn give_up(f: *mut VeltFut) {
+    let turn = executor::turn();
+    let task = (is_started(f) && !executor::yielded(turn))
+        .then(|| {
+            let s = shared(f).borrow();
+            (!s.done && (*trailer(f)).turn == turn).then_some(s.task)
+        })
+        .flatten();
+    // An unfinished started promise stays allocated until its task finishes it.
     super::velt_rt_fut_drop(f);
+    if let Some(id) = task {
+        executor::run_now(id, turn);
+    }
+}
+
+unsafe fn is_started(f: *mut VeltFut) -> bool {
+    std::ptr::fn_addr_eq(
+        (*f).poll.0,
+        started_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32,
+    )
 }
 
 /// Make lazy `f` a started promise with a task of its own (scheduled, not polled yet).
@@ -96,11 +127,13 @@ unsafe fn adopt(
         delivered: false,
         waiter: None,
         result_drop,
+        task: 0,
     }));
     (*trailer(f)).started = Rc::into_raw(st.clone());
     *f = VeltFut::new(started_poll, started_drop);
     executor::count_local(true);
     let id = executor::spawn(new_leaf(driver(f, st.clone())), 0, None);
+    st.borrow_mut().task = id;
     (id, st)
 }
 
@@ -310,6 +343,44 @@ mod tests {
         log("owner goes on");
         *(s as *mut i64) = 0;
         READY
+    }
+
+    /// `{ result, tag, wait }`: awaits the future `wait`, logs, returns 0.
+    unsafe extern "C" fn waiter_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+        let st = s as *mut i64;
+        let wait = *st.add(2) as *mut VeltFut;
+        if velt_rt_fut_poll(wait, cx) == PENDING {
+            return PENDING;
+        }
+        velt_rt_fut_drop(wait);
+        log("waiter end");
+        *st = 0;
+        READY
+    }
+
+    /// `{ result, tag }`: polls a lazy waiter once, settles what it waits for and gives it up (a
+    /// sibling of an early `Promise.all` rejection that resolved its promise first, #150).
+    unsafe extern "C" fn ready_detach_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+        use crate::task::latch::{velt_rt_latch_free, velt_rt_latch_new, velt_rt_latch_open};
+        let latch = velt_rt_latch_new();
+        let init = [0, 0, crate::task::latch::velt_rt_latch_wait(latch) as i64];
+        let f = velt_rt_fut_box(waiter_poll, no_drop, init.as_ptr() as *const u8, 24, 8);
+        assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
+        velt_rt_latch_open(latch);
+        velt_rt_fut_detach(f, None);
+        log("owner goes on");
+        velt_rt_latch_free(latch);
+        *(s as *mut i64) = 0;
+        READY
+    }
+
+    #[test]
+    fn a_detached_promise_that_is_ready_runs_before_its_owner_goes_on() {
+        LOG.with(|l| l.borrow_mut().clear());
+        let mut st = [0i64; 2];
+        unsafe { velt_rt_block_on(ready_detach_poll, st.as_mut_ptr() as *mut u8) };
+        let log = LOG.with(|l| l.borrow().clone());
+        assert_eq!(log, ["waiter end", "owner goes on"]);
     }
 
     /// Fake transfer glue: logs and adds 100 to an `i64` result.
