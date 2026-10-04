@@ -435,7 +435,8 @@ impl Reader {
     #[cold]
     #[inline(never)]
     fn decoded_wtf8(&self, v: &[u8]) -> VeltStr {
-        VeltStr::from_wtf8_units(v, self.sc.units)
+        // SAFETY: the scanner counted the units of the token it read last, which `v` is.
+        unsafe { VeltStr::from_wtf8_units(v, self.sc.units) }
     }
 
     /// A string token as an owned `VeltStr`.
@@ -458,6 +459,7 @@ impl Reader {
         // are a slice of it between two quotes, and decoding turns every escape into a scalar
         // value (a lone surrogate escape becomes U+FFFD), so the text is UTF-8.
         let text = unsafe { std::str::from_utf8_unchecked(v) };
-        VeltStr::from_text_counted(text, self.sc.units)
+        // SAFETY: the scanner counted the units of the token it read last, which `v` is.
+        unsafe { VeltStr::from_text_counted(text, self.sc.units) }
     }
 }
