@@ -34,6 +34,7 @@
 //! - **Ternary** → `ExprKind::If`. Statement `if` without braces is a one-statement block.
 
 mod assigned;
+mod closure_assigned;
 mod const_borrow;
 mod consume;
 mod ctor;
@@ -130,6 +131,9 @@ pub(crate) struct Scope {
     pub members: Vec<(LocalId, Vec<u32>)>,
     /// Class (or interface) locals known by `instanceof` to hold this subclass inside this scope.
     pub classes: Vec<(LocalId, TyId)>,
+    /// Facts not assumed inside this scope: their locals are assigned by closures
+    /// (`closure_assigned`).
+    pub refused: Vec<(LocalId, closure_assigned::Refused)>,
     /// Source offset where the scope ends (its locals' visibility, for `crate::ide`).
     pub hi: u32,
 }
@@ -207,6 +211,9 @@ pub(crate) struct Frame {
     /// is not `readonly`), and the reads of them since (`field_narrow`, for error notes).
     pub mutable_tests: Vec<LocalId>,
     pub unnarrowed_reads: Vec<Span>,
+    /// Names of the variables that closures created in this function's body assign, with
+    /// where (`closure_assigned`): they are not narrowed.
+    pub closure_assigned: HashMap<String, Span>,
 }
 
 impl Frame {
@@ -243,6 +250,7 @@ impl Frame {
             const_refs: Default::default(),
             mutable_tests: vec![],
             unnarrowed_reads: vec![],
+            closure_assigned: HashMap::new(),
         }
     }
 }
@@ -276,6 +284,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The call about to be checked is `new Map(...)` / `new Set(...)`: an iterable argument
     /// for its array parameter is collected into an array (`consume.rs`).
     pub collect_iterable_args: bool,
+    /// Reads of locals with a refused fact (`closure_assigned`), for notes on errors there.
+    pub refused_reads: Vec<(Span, closure_assigned::Refused)>,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -295,6 +305,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             std_callback: false,
             detached: false,
             collect_iterable_args: false,
+            refused_reads: vec![],
         }
     }
 
