@@ -212,6 +212,31 @@ extend<T> Array<T> {
     return out;
   }
 
+  // Removes and returns the first element, or null when the array is empty (JS: undefined).
+  // O(length): the other elements move down by one, as V8 does for large arrays. A queue that
+  // takes from the front belongs in a `Deque` (velt:collections/deque), which does it in O(1).
+  shift(): T | null {
+    if (this.length == 0) {
+      return null;
+    }
+    return __intrinsic_array_remove(this, 0);
+  }
+
+  // Inserts `items` at the front, in order, and returns the new length, like JS. O(length +
+  // items): the items are pushed, then rotated to the front by three reversals.
+  unshift(...items: T[]): i64 {
+    if (items.length > 0) {
+      const old = this.length;
+      for (const x of items) {
+        this.push(__intrinsic_share(x));
+      }
+      reverseRange(this, 0, this.length);
+      reverseRange(this, 0, items.length);
+      reverseRange(this, items.length, items.length + old);
+    }
+    return this.length as i64;
+  }
+
   // Shortens the array to `length` elements, dropping the rest (JS `xs.length = n`); a longer
   // `length` leaves it unchanged. Panics on a negative `length`, like JS's RangeError.
   truncate(length: i64) {
