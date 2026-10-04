@@ -162,7 +162,14 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_json(
     top: u8,
 ) {
     match h.as_ref() {
-        Some(v) => (*buf).push_with(|b| inspect_into(b, v, top != 0)),
+        Some(v) => {
+            let start = (*buf).len();
+            (*buf).push_with(|b| inspect_into(b, v, top != 0));
+            // A top-level value is broken across lines like the glue's (a raw string is not).
+            if top != 0 && matches!(v, Value::Array(_) | Value::Object(_)) {
+                crate::inspect_layout::velt_rt_strbuf_inspect_layout(buf, start as u64);
+            }
+        }
         None => push_ascii(buf, b"null"),
     }
 }

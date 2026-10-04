@@ -131,7 +131,8 @@ console.log(text, m.cents); // {"cents":250} 250
   - `stringify()` (keys in insertion order); `clone()` is O(1)
   - `console.log(v)` prints the value the way node prints the parsed object
     (`{ a: 1, b: [ 2, 'x' ], c: null }`; a string prints raw as a `console.log` argument and
-    quoted inside other values), on one line at any depth like Velt's other values
+    quoted inside other values), broken across lines like node when it is long, as Velt's
+    other values are
   - a template string prints a `JsonValue` exactly as `console.log` does, not as JSON:
     `` `v = ${v}` `` is `v = { a: 1, b: [ 2, 'x' ], c: null }`, and a JSON string `"hi"`
     shows as `hi`. Call `stringify()` for the JSON text (`{"a":1,"b":[2,"x"],"c":null}`)

@@ -454,6 +454,21 @@ impl VeltStr {
         *self = s;
     }
 
+    /// Replace the text from byte offset `at` to the end with `bytes` (rare: `console.log`'s
+    /// line breaking), moving the text to a new string.
+    ///
+    /// # Safety
+    /// As for [`Self::insert_bytes`].
+    pub unsafe fn replace_tail(&mut self, at: usize, bytes: &[u8]) {
+        let old = self.as_bytes();
+        let mut text = Vec::with_capacity(at + bytes.len());
+        text.extend_from_slice(&old[..at]);
+        text.extend_from_slice(bytes);
+        let s = VeltStr::from_bytes(&text);
+        self.release();
+        *self = s;
+    }
+
     /// Run `f` on a byte vector that is appended to `self` (formatting helpers write into a Vec).
     ///
     /// # Safety
