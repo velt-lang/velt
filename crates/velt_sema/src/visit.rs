@@ -100,6 +100,7 @@ pub(crate) fn expr<V: VisitMut + ?Sized>(e: &mut Expr, v: &mut V) {
         | E::UnwrapSome(x, _)
         | E::UnwrapVariant { expr: x, .. }
         | E::Upcast(x)
+        | E::Downcast(x)
         | E::ToDyn { expr: x, .. }
         | E::Throw(x)
         | E::Field { base: x, .. } => expr(x, v),
@@ -160,7 +161,7 @@ pub(crate) fn pat<V: VisitMut + ?Sized>(p: &mut Pat, v: &mut V) {
         }
         PatKind::Adt { fields } => fields.iter_mut().for_each(|(_, x)| pat(x, v)),
         PatKind::Some(x) => pat(x, v),
-        PatKind::Wildcard | PatKind::Lit(_) | PatKind::None => {}
+        PatKind::Wildcard | PatKind::Lit(_) | PatKind::None | PatKind::InstanceOf(_) => {}
     }
 }
 

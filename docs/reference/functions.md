@@ -9,8 +9,8 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
 ```
 
 - `function name(p: T, q: U = default): R { … }`, optionally with a `throws E` clause after the
-  return type ([Errors](errors.md)). Parameter types are required; a missing return type
-  means `void`.
+  return type ([Errors](errors.md)). Parameter types are required; a missing return type is
+  inferred from the body ([Return types](#return-types)).
 - Default values work on functions, methods, constructors and interface methods; calls through
   an interface use the interface's defaults.
 - An optional parameter `q?: T` is `q: T | null = null`.
@@ -23,6 +23,88 @@ function scale(xs: f64[], k: f64 = 2.0): f64[] {
 - **Nested functions** may be declared inside blocks but cannot capture locals
   (``` `x` cannot be captured by a nested function```); use an arrow function.
 
+## Return types
+
+As in TypeScript, a function or method without a return type returns the type of its `return`
+expressions (exported ones too):
+
+- one type when they agree, or the one the others convert to: `return 1` and `return 0.5` give
+  `f64`, a class and its base class give the base;
+- otherwise their union (`return "positive"` and `return n` give `string | i64`), made
+  nullable by a `return null`;
+- `void` when no `return` has a value, `never` when every returned value never completes
+  (`return fail()`);
+- `Promise<T>` for an `async` function, `T` from its returns.
+
+Integers inferred this way are JavaScript numbers, as in TypeScript: `(await half())/2` and
+a narrowed `T | null` result divide like `number`s, and a method returning integers that a
+subclass overrides returns `number` (`f64`), so an override may return `2.5`.
+
+```ts
+function describe(n: i64) {
+  if (n > 0) {
+    return "positive";
+  }
+  return n; // describe returns string | i64
+}
+
+async function double(n: i64) {
+  return n * 2; // Promise<i64>
+}
+
+function main() {
+  console.log(describe(3), describe(-1)); // positive -1
+}
+```
+
+An unannotated method that overrides a base class method or implements an interface method
+returns that method's type, and its `return`s are checked against it. Arrow functions follow
+the same rules when no function type is expected; where one is, its result type applies.
+Generic arrow functions (`const id = <T>(x: T) => x`) follow them too.
+
+A `return;` next to `return value;` is an error: TypeScript would return `undefined`, which
+Velt doesn't have. Return `null` and give the function a `T | null` type instead.
+
+A function may use itself (or other functions whose return types are being inferred) anywhere
+outside its `return` expressions, as in TypeScript: `count` below returns `i64`. Only when its
+`return` expressions depend on the function itself, directly, through a local (`const m = f(x);
+return m;`) or through other functions whose `return` expressions use it in turn (`isEven`
+returning `isOdd(n - 1)`, which returns `isEven(n - 1)`), it needs an annotation, as
+TypeScript's "implicitly has return type 'any'" does:
+
+```ts
+class TreeNode {
+  kids: TreeNode[] = [];
+}
+
+function count(n: TreeNode) {
+  let total = 1;
+  for (const c of n.kids) {
+    total += count(c); // fine: not in a `return` expression
+  }
+  return total;
+}
+
+function main() {
+  console.log(count(new TreeNode())); // 1
+}
+```
+
+```ts error
+function fib(n: i64) {
+  // error: function `fib` needs a return type annotation
+  if (n < 2) {
+    return n;
+  }
+  return fib(n - 1) + fib(n - 2);
+}
+```
+
+Write the type: `function fib(n: i64): i64`. A function without a `return` value is `void`
+before its body is checked, so it may call itself freely (a recursive `walk(child);`). A body
+that uses itself outside its `return`s is checked twice: once to find the return type, then
+against it.
+
 ## Generic functions
 
 `function f<T, U extends Bound>(…)` is monomorphized: every instantiation is compiled
@@ -33,7 +115,11 @@ inferred or given explicitly (`f<f64>(2)`). Bounds are interfaces
 Type arguments are inferred from the arguments first and, as in TypeScript, from the expected
 type of the call (an annotated variable, a return statement, a typed parameter) second. The
 expected type types the arguments of type parameters it fixes, before an untyped number
-literal falls back to `i64`; where an argument's own type disagrees, the argument decides:
+literal falls back to `i64`; where an argument's own type disagrees, the argument decides,
+unless the result would then not convert to the expected type: a type parameter the arguments
+fixed to a type that converts to the expected one takes the expected one, and the arguments
+convert to it (`const ns: Named[] = wrap(new C())` calls `wrap<Named>`;
+`const ps: (i64 | null)[] = pair(1, 2)` calls `pair<i64 | null>`):
 
 ```ts
 import { Set } from "velt:collections/set";
@@ -48,6 +134,21 @@ function main() {
   const s: Set<u8> = new Set([1, 2]); // T = u8
   const c: Map<string, u16> = new Map([["a", 1]]);
   console.log(y, z, s.size, c.get("a"));
+}
+```
+
+An arrow function argument is checked against its parameter type with the type parameters the
+expected type fixed, so its parameters need no annotations there either:
+
+```ts
+function id<T>(x: T): T {
+  return x;
+}
+
+function main() {
+  const inc: (x: i32) => i32 = id((x) => x + 1); // x: i32
+  const lengths: ((s: string) => usize)[] = id([(s) => s.length]);
+  console.log(inc(1), lengths[0]("abc")); // 2 3
 }
 ```
 
@@ -306,14 +407,26 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   `xs.map((x) => x * 2)` where `map` passes `(x, i)`, and `xs.map(double)` with a one-parameter
   `double`. An arrow may also take more, when the extra ones have defaults.
 - **Generic arrow functions** are written as in `.ts` files, `<T>(x: T): T => x` (the `.tsx`
-  spelling `<T,>` works too, and JSX is allowed alongside). One must be a module-level `const`
-  with typed parameters and a return type; it is then a generic function:
+  spelling `<T,>` works too, and JSX is allowed alongside). One must be the value of a `const`
+  with typed parameters; it is then a generic function. Without a return type it returns the
+  type of its body or its `return`s, by the rules of [Return types](#return-types)
+  (`const id = <T>(x: T) => x` returns `T`; an `async` one returns `Promise<T>`). At module
+  level it is an ordinary generic function; in a function body it is a generic function nested
+  there, so each call instantiates it, and like any [nested function](#declarations) it cannot
+  use the local variables around it (nor `this` in a method). A function value has one type, so using one as a value needs
+  a function type to instantiate it at (`const f: (x: i64) => i64 = id;`), and a generic arrow
+  anywhere else (an argument, a `let`) is an error:
 
   ```ts
   const firstOr = <T>(xs: T[], fallback: T): T => (xs.length > 0 ? xs[0].clone() : fallback);
 
   function main() {
     console.log(firstOr([3, 4], 0), firstOr([], "none"));
+    const pair = <A, B>(a: A, b: B) => `${a}:${b}`; // returns string
+    console.log(pair(1, true), pair("x", 2.5)); // 1:true x:2.5
+    const id = <T>(x: T) => x;
+    const n: i64 = id(41) + 1;
+    console.log(n); // 42
   }
   ```
 

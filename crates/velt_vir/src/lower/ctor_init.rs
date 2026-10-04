@@ -4,8 +4,9 @@
 //! constructor body.
 //!
 //! Each constructor runs the initializers of its class and of the classes between it and the
-//! class declaring the base constructor it calls: right after `super(...)` returns, or on entry
-//! when no ancestor has a constructor. `new C()` calls C's constructor (possibly inherited)
+//! class declaring the base constructor it calls: right after `super(...)` returns. When no
+//! ancestor has a constructor, a derived class's constructor runs all of them right after its
+//! `super();` statement (statements before it run first), a base class's on entry. `new C()` calls C's constructor (possibly inherited)
 //! and then runs the initializers of the classes below the one declaring it.
 //!
 //! Those run inline at the `new`, unless the `new` is itself inside the inlined initializers of
@@ -53,14 +54,40 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// On entry to a constructor whose class has no ancestor with a constructor: every field
-    /// initializer of the class.
+    /// On entry to the constructor of a class without a base class: every field initializer of
+    /// the class.
     pub(super) fn ctor_entry_inits(&mut self) {
         let Some(ty) = self.ctor_self else { return };
-        if self.base_ctor(ty).is_none() {
+        if self.cx.bases_of(ty).is_empty() {
             let this = self.local_place(LocalId(0));
             self.init_fields(&this, ty, 0, true);
         }
+    }
+
+    /// In the constructor of a derived class none of whose ancestors has a constructor: the
+    /// index of its root-level `super();` statement (sema makes it `Lit(Unit)`), after which
+    /// every field initializer runs. Statements before it (which cannot use `this`) run first,
+    /// as in JavaScript.
+    pub(super) fn unit_super_at(&mut self, f: &hir::FnDef) -> Option<usize> {
+        let ty = self.ctor_self?;
+        if self.cx.bases_of(ty).is_empty() || self.base_ctor(ty).is_some() {
+            return None;
+        }
+        f.body.block.stmts.iter().position(|s| {
+            matches!(&s.kind, hir::StmtKind::Expr(e) if matches!(e.kind, hir::ExprKind::Lit(hir::Lit::Unit)))
+        })
+    }
+
+    /// After the `super();` of `unit_super_at`: every field initializer of the class (nothing
+    /// has used the object yet).
+    pub(super) fn unit_super_inits(&mut self) {
+        let Some(ty) = self.ctor_self.filter(|_| !self.dead()) else {
+            return;
+        };
+        let this = self.local_place(LocalId(0));
+        self.push_scope(ScopeKind::Temps);
+        self.init_fields(&this, ty, 0, true);
+        self.pop_scope();
     }
 
     /// After a call of `def`: when it is the `super(...)` call of the constructor being

@@ -10,10 +10,10 @@ use velt_common::{Diagnostic, Span};
 
 impl FnCx<'_, '_> {
     /// `super(args)`: the base class constructor on `this`, a root-level statement of a
-    /// constructor.
+    /// constructor (`body::ctor`). A base class without a constructor makes it `Lit(Unit)`.
     pub(super) fn super_ctor_call(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
         let base = self.this_base();
-        // Taken: a `super(...)` among the arguments is not the first statement.
+        // Taken: a `super(...)` among the arguments is not a statement of its own.
         let ok = std::mem::take(&mut self.f.super_ok);
         let Some(base) = base.filter(|_| ok) else {
             self.misplaced_super(base.is_some(), span);
@@ -38,7 +38,7 @@ impl FnCx<'_, '_> {
             TyKind::Adt(_, a) => a.clone(),
             _ => bargs,
         };
-        let c = self.fn_callable(ctor, "the base class constructor".into());
+        let c = self.fn_callable(ctor, "the base class constructor".into(), span);
         let slots = ctor_args.iter().map(|t| Some(*t)).collect();
         let ck = self.check_call(&c, slots, args, None, span);
         // The arguments run before the base constructor: `this` is usable after it.
@@ -89,6 +89,8 @@ impl FnCx<'_, '_> {
         if self.f.kind == FnKind::Ctor {
             self.f.super_called = true;
             self.f.before_super = false;
+        } else if let Some(ctor) = self.outer.iter_mut().rev().find(|f| f.kind == FnKind::Ctor) {
+            ctor.super_called = true;
         }
     }
 

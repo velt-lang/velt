@@ -211,6 +211,41 @@ fn generic_components_infer_their_type_arguments_from_props() {
 }
 
 #[test]
+fn explicit_type_arguments_on_tags() {
+    let list = "function List<T>(props: { items: T[]; show: (x: T) => string }): JSX.Element { return <ul></ul>; }";
+    let p = ok(&format!(
+        "{GENERIC}{list}
+        function main() {{ const e = <List<string> items={{[]}} show={{(s) => s}} />; }}"
+    ));
+    assert_eq!(runtime_calls(&p, "main", "jsxComponent").len(), 1);
+    let r = err(&format!(
+        "{GENERIC}{list}
+        function main() {{ const e = <List<string, i64> items={{[]}} show={{(s) => s}} />; const d = <div<i64>></div>; }}"
+    ));
+    assert_eq!(
+        r.matches("expected 1 type argument(s), found 2").count(),
+        1,
+        "{r}"
+    );
+    assert!(r.contains("<div> is an intrinsic element"), "{r}");
+    let r = err(&format!(
+        "{GENERIC}{list}
+        function main() {{ const e = <List<string> items={{[1]}} show={{(s) => s}} />; }}"
+    ));
+    assert!(r.contains("mismatched types"), "{r}");
+}
+
+#[test]
+fn type_arguments_are_inferred_from_children() {
+    let p = ok(&format!(
+        "{GENERIC}function One<T>(props: {{ children: T; show: (x: T) => string }}): JSX.Element {{ return <ul></ul>; }}
+        function Many<T>(props: {{ children: T[] }}): JSX.Element {{ return <ul></ul>; }}
+        function main() {{ const a = <One show={{(x) => `${{x + 1}}`}}>{{1}}</One>; const b = <Many>{{1}}{{2}}</Many>; }}"
+    ));
+    assert_eq!(runtime_calls(&p, "main", "jsxComponent").len(), 2);
+}
+
+#[test]
 fn props_that_cannot_be_copied_are_an_error() {
     let r = err(&format!(
         "{GENERIC}function W(props: {{ p: Promise<i64> }}): JSX.Element {{ const p = props.p; return <p></p>; }}
@@ -297,11 +332,23 @@ fn module_level_generic_arrows_are_generic_functions() {
 }
 
 #[test]
+fn local_generic_arrows_are_nested_generic_functions() {
+    let p = ok("function main() { const id = <T,>(x: T): T => x; console.log(id(1), id(\"a\")); }");
+    assert_eq!(func(&p, "main::id").generics, 1);
+}
+
+#[test]
 fn other_generic_arrows_are_reported() {
-    let r = err("function main() { const id = <T,>(x: T): T => x; console.log(1); }");
+    let r = err("function main() { const f = [<T,>(x: T): T => x]; console.log(1); }");
     assert!(
-        r.contains("a generic arrow function must be a module-level constant"),
+        r.contains("a generic arrow function must be the value of a `const`"),
         "{r}"
     );
     assert!(!r.contains("unknown type"), "{r}");
+    let r =
+        err("function main() { const k = 1; const f = <T,>(x: T): i64 => k; console.log(f(1)); }");
+    assert!(
+        r.contains("`k` cannot be captured by a generic arrow function"),
+        "{r}"
+    );
 }

@@ -92,7 +92,7 @@ impl FnCx<'_, '_> {
                 self.def_method_call(recv, def, slots, recv_ty, type_args, args, exp, span)
             }
             Resolved::Virtual { def, slot, slots } => {
-                let c = self.fn_callable(def, format!("method `{}`", prop.name));
+                let c = self.fn_callable(def, format!("method `{}`", prop.name), span);
                 let ck = self.check_call(&c, slots, args, exp, span);
                 let recv = self.receiver(recv, None, self.this_mode(def), self.is_async_fn(def));
                 let mut all = vec![recv];
@@ -144,7 +144,7 @@ impl FnCx<'_, '_> {
             .next()
             .unwrap_or("")
             .to_string();
-        let c = self.fn_callable(def, format!("method `{name}`"));
+        let c = self.fn_callable(def, format!("method `{name}`"), span);
         let mut slots = slots;
         let own = slots.iter().filter(|s| s.is_none()).count();
         self.explicit_type_args(&mut slots, own, type_args, span);
@@ -180,7 +180,7 @@ impl FnCx<'_, '_> {
             _ => recv,
         };
         let target = match &mut recv.kind {
-            H::Upcast(inner) => &mut **inner,
+            H::Upcast(inner) | H::Downcast(inner) => &mut **inner,
             _ => &mut recv,
         };
         match mode {
@@ -229,6 +229,8 @@ impl FnCx<'_, '_> {
                 "TypeScript allows this (`throw(e)` throws `e` at the generator's paused `yield`); Velt doesn't because what a generator throws is checked from its body, and an error thrown in from outside could not be; write `return()` to close the generator (its `finally` blocks run), and throw the error where you call it",
             );
         } else if let Some(note) = self.narrowing_note(recv.ty) {
+            d = d.with_note(note);
+        } else if let Some(note) = self.unnarrowed_note(recv.span) {
             d = d.with_note(note);
         } else if matches!(self.cx.ty.kind(recv.ty), TyKind::Promise(..))
             && matches!(prop.name.as_str(), "then" | "catch" | "finally")

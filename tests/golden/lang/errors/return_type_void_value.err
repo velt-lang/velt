@@ -1,0 +1,4 @@
+return_type_void_value.vlt:11:10: error: mismatched types
+  = note: expected null, found void
+return_type_void_value.vlt:18:10: error: mismatched types
+  = note: expected i64, found void

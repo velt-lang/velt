@@ -296,14 +296,14 @@ fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_synt
     args.extend((0..own_m as u32).map(|k| cx.ty.param(nd as u32 + k)));
     let bp: Vec<TyId> = bp.into_iter().map(|t| cx.ty.subst(t, &args)).collect();
     let br = cx.ty.subst(br, &args);
-    if mp != bp || mr != br || mg != bg {
-        cx.err(
-            format!(
-                "method `{}` does not have the same signature as the base class method it overrides",
-                name.name
-            ),
-            name.span,
-        );
+    let message = format!(
+        "method `{}` does not have the same signature as the base class method it overrides",
+        name.name
+    );
+    let at = (name.span, message.clone());
+    let ret_ok = super::ret_infer::override_ret(cx, (m.def, base.def()), &args, (mr, br), at);
+    if mp != bp || !ret_ok || mg != bg {
+        cx.err(message, name.span);
     }
 }
 

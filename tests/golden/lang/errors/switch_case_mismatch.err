@@ -1,0 +1,4 @@
+switch_case_mismatch.vlt:3:10: error: mismatched types
+expected string, found f64
+switch_case_mismatch.vlt:5:10: error: mismatched types
+expected string, found f64 | null

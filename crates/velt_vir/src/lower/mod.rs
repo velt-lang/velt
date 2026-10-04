@@ -31,6 +31,7 @@ mod call;
 mod callee;
 mod cells;
 mod cfg;
+mod class_test;
 mod closure;
 mod console;
 mod ctor_init;

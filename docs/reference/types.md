@@ -17,8 +17,9 @@
 | `(x: T) => U` | function values: closures and named functions ([Functions](functions.md)) |
 | `Promise<T>`, `shared<T>`, `Mutex<T>` | async results and thread-safe shared values ([Async](async.md)) |
 
-Types are required on function parameters, and on return types other than `void` (a missing
-return type means `void`). Everything else is inferred. `type Name = …` declares an alias; an
+Types are required on function parameters. A missing return type is inferred from the
+function's `return`s ([Return types](functions.md#return-types)), and everything else is
+inferred too. `type Name = …` declares an alias; an
 alias cannot refer to itself, and it is checked even where nothing uses it. There is no `any`
 or `unknown`: dynamic JSON is `JsonValue` ([`velt:json`](../std/json.md)).
 
@@ -143,14 +144,35 @@ console.log(label("tea", 3), "a,b".split(","), "  x ".trim().padStart(3, "*"));
 
 ## Equality and comparison
 
-- `==` and `===` are the same operator, as are `!=` and `!==`: there is no coercion, and both
-  operands must have the same type (`1 == "1"` is a compile error; an `i64` compared with an
-  `i32` needs a cast).
+- `==` and `===` are the same operator, as are `!=` and `!==`: there is no coercion, and the
+  operands' types must overlap, as in TypeScript (`1 == "1"` is a compile error; an `i64`
+  compared with an `i32` needs a cast). An interface value compares with a value of a class or
+  struct that implements it, and a base class value with a subclass value.
 - Numbers, bools and strings compare by value. Objects (class instances, arrays, maps,
   structs, object literals, interface and function values) compare by **identity**, like JS:
   `[1] == [1]` is `false`, and `a == b` is `true` when `b` refers to the same object as `a`.
   `T | null`, unions and tuples compare their parts that way. A `T | null` compares with a
   `T` (in either order) as if both were `T | null`: `null` equals no value.
+- An interface value compares the object behind it: two `Shape` values of one class instance
+  are equal. A function value is equal to its copies, and a named function to itself; each
+  evaluation of an arrow or function expression is a new function, as in JS, also when it
+  captures nothing (so `emitter.off(h)` finds the `h` given to `emitter.on(h)`, and two arrows
+  made by one loop differ). `indexOf`, `includes` and `Map` keys agree with `==`. Comparing
+  costs only the programs that do it: there, an arrow without captures gets an empty
+  environment of its own when it is created, and a struct converted to an interface value
+  that is compared is counted, so the interface value refers to it rather than to a copy.
+
+  ```ts
+  function main() {
+    const h = () => console.log("h");
+    const handlers = [h];
+    const fresh: (() => void)[] = [];
+    for (let i = 0; i < 2; i++) {
+      fresh.push(() => console.log("h"));
+    }
+    console.log(handlers.indexOf(h), h === h, fresh[0] === fresh[1]); // 0 true false
+  }
+  ```
 - Content comparison: `deepEqual(a, b)` ([prelude](../std/prelude.md)) compares arrays,
   structs and object literals by their contents, recursively; maps and records by their keys
   and values, in any key order; other class instances by identity. `assertEq` uses it.
@@ -250,8 +272,9 @@ the nullable type; `void` cannot be a member.
   - `typeof x === "string" | "number" | "boolean" | "object" | "function"` (and `!==`): all
     number types are `"number"`; classes, structs, arrays, maps and `null` are `"object"`;
     closures are `"function"`. An impossible tag is an error.
-  - `x instanceof C` matches members whose class is `C` or a subclass. A downcast (testing a
-    base-class value for a subclass) is an error: use a union of the subclasses.
+  - `x instanceof C` matches members whose class is `C` or a subclass. A member of a base
+    class of `C`, or an interface value, is tested at run time and narrows to `C`
+    ([downcasts](classes.md#instanceof-downcasts)).
   - `x == literal` / `x != literal` selects the literal's member.
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
@@ -389,11 +412,49 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
 ```
 
 - **Spread**: `{ ...a, b: 1 }` builds a merged object at compile time (later keys win);
-  `[x, ...xs]` builds a new array (integer elements spread into a `number[]` convert). Spread
+  `[x, ...xs]` builds a new array, converting each element to the expected element type
+  (integer elements spread into a `number[]`, `const ns: Named[] = [...cs]`). Spread
   arguments, `f(...xs)`, fill a rest parameter ([Functions](functions.md)). Whatever `for...of`
   takes can be spread into an array or a rest parameter too: `[..."héllo"]` (characters),
   `[...map]` (entries), `[...gen()]`, `Math.max(...set)`
   ([Consuming an iterable](control-flow.md#consuming-an-iterable)).
+- **Wider element types**: an array, object type or generic class converts to the same type
+  with wider elements (`C[]` to `Named[]` for a class `C implements Named`, `i64[]` to
+  `(i64 | null)[]`, `Box<C>` to `Box<Named>`) only when the value is **fresh**: a literal, a
+  `new` expression, or the result of a call of a function that returns a new value on every
+  path (a literal, `new`, such a call, or a local it builds and returns without storing or
+  passing it anywhere, as `map` and `filter` do). The conversion builds a new value with each
+  element converted. A call that may return a value something else still holds (a getter
+  returning a field) is an error with the same fix as below, and so is a conversion in a field
+  initializer or a default value for now. TypeScript also converts an existing array, which
+  is unsound: storing a `Named` that is not a `C` through the `Named[]` would put it into the
+  `C[]`. Velt reports that and
+  suggests a copy, `[...cs]` or `cs.map((x): Named => x)`. A generic class converts only when
+  it has no base class, no subclasses and no `[Symbol.dispose]()`; the new object shares the
+  old one's field values.
+
+  ```ts
+  interface Named {
+    name(): string;
+  }
+
+  class C implements Named {
+    name(): string {
+      return "c";
+    }
+  }
+
+  function make(): C[] {
+    return [new C()];
+  }
+
+  function main() {
+    const ns: Named[] = make(); // a fresh C[]: converted
+    const cs = make();
+    const copy: Named[] = [...cs]; // `const ns2: Named[] = cs;` is an error
+    console.log(ns.length, copy.length); // 1 1
+  }
+  ```
 - **Destructuring**: `const [a, b] = pair;`, `const [head, ...rest] = xs;`,
   `const { a, b } = obj;`, and `for (const [k, v] of map)`. Array destructuring checks the
   length like indexing: a shorter array panics with the same `index out of bounds` message.
@@ -428,7 +489,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   `get(k): V | null` (the stored value itself, as in JS), `has`, `delete`, `size`, `keys()`,
   `values()`, `entries()`, `for (const [k, v] of m)`, plus single-lookup updates: `upsert(k, init, (v) => v + 1)`,
   `update(k, (v) => { v.push(x); }): bool` (the callback gets the stored value itself) and
-  `getOrInsert(k, () => v)`. Keys: numbers, `bool`, `string`, class instances (by identity),
+  `getOrInsert(k, () => v)`. Keys: numbers, `bool`, `string`, class instances, interface and
+  function values (by identity, as `==` compares them),
   and structs, object types, tuples, arrays, maps and records, which compare by content (in JS
   two equal object literals are two different keys). Float keys compare like JS's
   (SameValueZero: `0` and `-0` are one key, `NaN` finds itself), and a content key changed
@@ -456,8 +518,8 @@ console.log(apply({ id: s.id, name: s.name }, { email: "a@x" }).email); // a@x
   in TypeScript: an object literal or object type (`Object.keys({ a: 1, b: "x" })` is `["a",
   "b"]`), a struct, or a class instance, whose fields it lists in declaration order (base class
   fields first, `private` ones too; not static fields or methods). A struct's optional field is
-  listed only when it is not `null`. A class with subclasses is an error, because the value may
-  be a subclass instance with more fields. `console.log` and `JSON` treat a record as an object. A class
+  listed only when it is not `null`. On a class with subclasses it lists the fields of the
+  object's actual class (a `Shape` holding a `Rect` lists the `Rect` fields too). `console.log` and `JSON` treat a record as an object. A class
   cannot `extends` a `Record` (its constructor would leave a closed record without its keys);
   hold one in a field instead. A literal for an enum-keyed record is not supported yet.
 - `JSON.stringify(x)` / `JSON.parse<T>(s)` are generated at compile time for numbers, bools,

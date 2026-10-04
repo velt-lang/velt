@@ -37,6 +37,11 @@ Rendering rules:
   (`"<module path>#<Name>"`) and whose `message` includes the original error formatted like
   `${e}` (the original type does not travel through `Element`); the first failure in document
   order wins.
+- **Generic components** (`function List<T>(props: { items: T[]; render: (x: T) => Child })`)
+  take their type arguments on the opening tag, `<List<number> items={xs} render={(n) => n} />`
+  (the closing tag has none: `</List>`), or infer them like TypeScript from the props and the
+  children (``<Labelled label={(v) => `${v}`}>{41}</Labelled>`` gives `T = number` when
+  `children: T`); arrow function props get their parameter types from what was inferred.
 - Elements render as they are created: a tree without async components is already its HTML
   string, so rendering it is a copy. Static markup is precompiled to constant strings, with
   dynamic text and attributes folded in through template literals (`jsxTemplate`, `jsxEscape`,

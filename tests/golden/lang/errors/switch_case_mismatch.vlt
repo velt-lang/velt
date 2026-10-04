@@ -1,0 +1,13 @@
+function f(s: string, n: number, m: number | null): string {
+  switch (s) {
+    case n:
+      return "n";
+    case m:
+      return "m";
+  }
+  return "";
+}
+
+function main() {
+  console.log(f("a", 1, null));
+}
