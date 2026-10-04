@@ -342,12 +342,16 @@ export function parsePath(p: string, segs: string[], special: bool): string {
     }
     const last = j >= len;
     const dots = dotSegment(p, i, j);
+    // A final `.` or `..` leaves an empty last segment (the path ends in `/`), except for a
+    // `..` that had nothing to remove in a non-special URL: its path stays empty, as Node has
+    // it (`foo://h/..` is `foo://h`, `foo://h/a/..` is `foo://h/`).
+    const emptied = dots == 2 && segs.length == 0;
     if (dots == 2) {
       segs.pop();
     }
     if (dots == 0) {
       segs.push(encodeSet(p.slice(i, j), PATH));
-    } else if (last) {
+    } else if (last && (special || !emptied)) {
       segs.push("");
     }
     if (last) {
@@ -355,7 +359,7 @@ export function parsePath(p: string, segs: string[], special: bool): string {
     }
     i = j + 1;
   }
-  return `/${segs.join("/")}`;
+  return segs.length == 0 ? "" : `/${segs.join("/")}`;
 }
 
 // 1 for a `.` segment, 2 for `..` (also spelled with `%2e`), else 0.
