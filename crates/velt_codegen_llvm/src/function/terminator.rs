@@ -175,7 +175,7 @@ impl Emitter<'_> {
             return None;
         };
         let symbol = &self.program.externs.get(id.0 as usize)?.symbol;
-        let (name, defs) = strings::fast_path(symbol, params, ret)?;
+        let (name, defs) = strings::fast_path(symbol, params, ret, self.wide_pointer_slots)?;
         for d in defs {
             self.intrinsics.need(d);
         }

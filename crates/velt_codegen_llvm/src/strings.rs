@@ -54,14 +54,25 @@ done:
     .into()
 }
 
-/// `velt_rt_str_eq(ptr, ptr) -> u8`.
-fn eq_helper() -> String {
+/// `velt_rt_str_eq(ptr, ptr) -> u8`; `size_t` is `memcmp`'s length type (`i32` on wasm32).
+fn eq_helper(size_t: &str) -> String {
+    let (trunc, n) = if size_t == "i64" {
+        (String::new(), "%a.len")
+    } else {
+        (
+            format!(
+                "  %n = trunc i64 %a.len to {size_t}
+"
+            ),
+            "%n",
+        )
+    };
     format!(
         "define internal zeroext i8 @velt.str_eq(ptr %a, ptr %b) alwaysinline nounwind {{
 {}{}  %same = icmp eq i64 %a.len, %b.len
   br i1 %same, label %bytes, label %no
 bytes:
-  %r = call i32 @memcmp(ptr %a.data, ptr %b.data, i64 %a.len)
+{trunc}  %r = call i32 @memcmp(ptr %a.data, ptr %b.data, {size_t} {n})
   %eq = icmp eq i32 %r, 0
   %out = zext i1 %eq to i8
   ret i8 %out
@@ -112,21 +123,25 @@ call:
 
 /// The helper to call instead of the runtime string function `symbol` (of VIR signature
 /// `params -> ret`), with the module-level definitions it needs; `None` for other functions (or
-/// an unexpected signature, e.g. a user `declare` of the same name).
+/// an unexpected signature, e.g. a user `declare` of the same name). `ptr32`: the target's
+/// pointers and `size_t` are 32 bits (wasm32).
 pub(crate) fn fast_path(
     symbol: &str,
     params: &[Ty],
     ret: Ty,
+    ptr32: bool,
 ) -> Option<(&'static str, Vec<String>)> {
     use Ty::{Ptr, Unit, I64, U8};
+    let size_t = if ptr32 { "i32" } else { "i64" };
     let (name, defs) = match (symbol, params, ret) {
         ("velt_rt_str_drop", [Ptr], Unit) => ("@velt.str_drop", vec![drop_helper()]),
         ("velt_rt_str_eq", [Ptr, Ptr], U8) => (
             "@velt.str_eq",
             vec![
-                eq_helper(),
-                "declare i32 @memcmp(ptr, ptr, i64) nounwind willreturn memory(argmem: read)"
-                    .into(),
+                eq_helper(size_t),
+                format!(
+                    "declare i32 @memcmp(ptr, ptr, {size_t}) nounwind willreturn memory(argmem: read)"
+                ),
             ],
         ),
         ("velt_rt_str_slice", [Ptr, I64, I64, Ptr], Unit) => {
@@ -143,13 +158,30 @@ mod tests {
 
     #[test]
     fn only_the_expected_signatures_take_a_fast_path() {
-        assert!(fast_path("velt_rt_str_drop", &[Ty::Ptr], Ty::Unit).is_some());
-        assert!(fast_path("velt_rt_str_drop", &[Ty::Ptr, Ty::Ptr], Ty::Unit).is_none());
-        assert!(fast_path("velt_rt_str_eq", &[Ty::Ptr, Ty::Ptr], Ty::U8).is_some());
-        assert!(fast_path("velt_rt_str_cmp", &[Ty::Ptr, Ty::Ptr], Ty::I32).is_none());
+        assert!(fast_path("velt_rt_str_drop", &[Ty::Ptr], Ty::Unit, false).is_some());
+        assert!(fast_path("velt_rt_str_drop", &[Ty::Ptr, Ty::Ptr], Ty::Unit, false).is_none());
+        assert!(fast_path("velt_rt_str_eq", &[Ty::Ptr, Ty::Ptr], Ty::U8, false).is_some());
+        assert!(fast_path("velt_rt_str_cmp", &[Ty::Ptr, Ty::Ptr], Ty::I32, false).is_none());
         let slice = [Ty::Ptr, Ty::I64, Ty::I64, Ty::Ptr];
-        assert!(fast_path("velt_rt_str_slice", &slice, Ty::Unit).is_some());
-        assert!(fast_path("velt_rt_str_concat", &[Ty::Ptr, Ty::Ptr, Ty::Ptr], Ty::Unit).is_none());
+        assert!(fast_path("velt_rt_str_slice", &slice, Ty::Unit, false).is_some());
+        assert!(fast_path(
+            "velt_rt_str_concat",
+            &[Ty::Ptr, Ty::Ptr, Ty::Ptr],
+            Ty::Unit,
+            false
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn memcmp_takes_the_targets_size_t() {
+        let eq = |ptr32| fast_path("velt_rt_str_eq", &[Ty::Ptr, Ty::Ptr], Ty::U8, ptr32).unwrap();
+        let (_, defs) = eq(true);
+        assert!(defs[0].contains("@memcmp(ptr %a.data, ptr %b.data, i32 %n)"));
+        assert!(defs[1].contains("@memcmp(ptr, ptr, i32)"));
+        let (_, defs) = eq(false);
+        assert!(defs[0].contains("@memcmp(ptr %a.data, ptr %b.data, i64 %a.len)"));
+        assert!(defs[1].contains("@memcmp(ptr, ptr, i64)"));
     }
 
     #[test]
