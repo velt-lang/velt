@@ -209,14 +209,11 @@ fn ctor_fresh(cx: &Ctx, d: DefId) -> Option<Vec<DefId>> {
     let Some(Some(Def::Fn(f))) = cx.defs.get(ctor.0 as usize) else {
         return None;
     };
-    let Some(this) = f
+    let this = f
         .params
         .first()
         .map(|p| p.local)
-        .filter(|_| f.self_ty.is_some())
-    else {
-        return None;
-    };
+        .filter(|_| f.self_ty.is_some())?;
     let mut body = f.body.block.clone();
     let mut w = ThisUses {
         cx,
@@ -267,12 +264,9 @@ impl VisitMut for ThisUses<'_, '_> {
             } if args.first().is_some_and(|a| self.is_this(a))
                 && self.cx.fn_info(*c).kind == crate::defs::FnKind::Ctor =>
             {
-                match self.cx.fn_info(*c).owner {
-                    Some(owner) => {
-                        self.allowed += 1;
-                        self.bases.push(owner);
-                    }
-                    None => {}
+                if let Some(owner) = self.cx.fn_info(*c).owner {
+                    self.allowed += 1;
+                    self.bases.push(owner);
                 }
             }
             _ => {}
