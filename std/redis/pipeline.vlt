@@ -14,26 +14,28 @@ declare async function velt_rt_redis_pipeline(
   atomic: bool,
 ): Promise<IoResult<RawReply>>;
 
-// Commands to send in one round trip: `client.pipeline()` (independent commands) or
-// `client.multi()` (a `MULTI`/`EXEC` transaction). Queue commands, then `await p.exec()`.
+/**
+ * Commands to send in one round trip: `client.pipeline()` (independent commands) or
+ * `client.multi()` (a `MULTI`/`EXEC` transaction). Queue commands, then `await p.exec()`.
+ */
 export class RedisPipeline {
   private handle: u64;
   private atomic: bool;
   private args: string[] = [];
   private counts: u64[] = [];
 
-  // Use `client.pipeline()` / `client.multi()`.
+  /** Use `client.pipeline()` / `client.multi()`. */
   constructor(handle: u64, atomic: bool) {
     this.handle = handle;
     this.atomic = atomic;
   }
 
-  // Number of queued commands.
+  /** Number of queued commands. */
   get length(): usize {
     return this.counts.length;
   }
 
-  // Queues any command (`args[0]` is its name).
+  /** Queues any command (`args[0]` is its name). */
   call(args: string[]) {
     for (const a of args) {
       this.args.push(a);
@@ -101,9 +103,11 @@ export class RedisPipeline {
     this.add("PUBLISH", [channel, message]);
   }
 
-  // Sends every queued command and returns one reply per command, in order. A command the
-  // server rejects gives an "error" reply (`isError()`), not a throw; connection failures
-  // throw. For `multi()`, a transaction the server aborts (EXECABORT) throws `RedisError`.
+  /**
+   * Sends every queued command and returns one reply per command, in order. A command the
+   * server rejects gives an "error" reply (`isError()`), not a throw; connection failures
+   * throw. For `multi()`, a transaction the server aborts (EXECABORT) throws `RedisError`.
+   */
   async exec(): Promise<RedisReply[]> {
     const r = await velt_rt_redis_pipeline(this.handle, this.args, this.counts, this.atomic);
     return replyItems(checkReply(r));

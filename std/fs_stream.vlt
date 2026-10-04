@@ -29,22 +29,24 @@ declare async function velt_rt_fs_writer_flush(w: u64): Promise<IoStatus>;
 declare async function velt_rt_fs_writer_close(w: u64): Promise<IoStatus>;
 declare function velt_rt_fs_writer_free(w: u64);
 
-// A file open for reading.
+/** A file open for reading. */
 export struct FileReader {
   private handle: u64;
 
-  // The next 1..max bytes; empty at end of file (`max` 0 = up to 64 KiB).
+  /** The next 1..max bytes; empty at end of file (`max` 0 = up to 64 KiB). */
   async read(max: u64 = 0): Promise<u8[]> {
     return unwrapIo(await velt_rt_fs_reader_read(this.handle, max));
   }
 
-  // The next chunk as UTF-8 text ("" at end of file); a character split between chunks is
-  // completed by the next call.
+  /**
+   * The next chunk as UTF-8 text ("" at end of file); a character split between chunks is
+   * completed by the next call.
+   */
   async readString(max: u64 = 0): Promise<string> {
     return unwrapIo(await velt_rt_fs_reader_read_string(this.handle, max));
   }
 
-  // The next line without "\n" / "\r\n", or null at end of file. Don't mix with `readString`.
+  /** The next line without "\n" / "\r\n", or null at end of file. Don't mix with `readString`. */
   async readLine(): Promise<string | null> {
     const r = await velt_rt_fs_reader_read_line(this.handle);
     if (r.eof) {
@@ -53,8 +55,10 @@ export struct FileReader {
     return unwrapIo(r.line);
   }
 
-  // The remaining lines, as `readLine` reads them: `for await (const line of r.lines())`.
-  // Leaving the loop early keeps the reader open at the next line.
+  /**
+   * The remaining lines, as `readLine` reads them: `for await (const line of r.lines())`.
+   * Leaving the loop early keeps the reader open at the next line.
+   */
   async *lines(): AsyncGenerator<string, IoError> {
     while (true) {
       const r = await velt_rt_fs_reader_read_line(this.handle);
@@ -65,13 +69,13 @@ export struct FileReader {
     }
   }
 
-  // Closes the file (reads in flight finish first).
+  /** Closes the file (reads in flight finish first). */
   close() {
     velt_rt_fs_reader_close(this.handle);
   }
 }
 
-// A file open for writing, buffered (64 KiB).
+/** A file open for writing, buffered (64 KiB). */
 export struct FileWriter {
   private handle: u64;
 
@@ -83,12 +87,12 @@ export struct FileWriter {
     checkIo(await velt_rt_fs_writer_write_bytes(this.handle, data));
   }
 
-  // Pushes buffered data to the operating system.
+  /** Pushes buffered data to the operating system. */
   async flush(): Promise<void> {
     checkIo(await velt_rt_fs_writer_flush(this.handle));
   }
 
-  // Flushes and closes the file, then releases the handle; throws if the final flush fails.
+  /** Flushes and closes the file, then releases the handle; throws if the final flush fails. */
   async close(): Promise<void> {
     const s = await velt_rt_fs_writer_close(this.handle);
     velt_rt_fs_writer_free(this.handle);
@@ -97,16 +101,16 @@ export struct FileWriter {
 }
 
 export struct OpenWriteOptions {
-  // Append to the file instead of truncating it.
+  /** Append to the file instead of truncating it. */
   append?: bool;
 }
 
-// Opens `path` for chunked reading.
+/** Opens `path` for chunked reading. */
 export async function openRead(path: string): Promise<FileReader> {
   return FileReader { handle: unwrapIo(await velt_rt_fs_open_read(path)) };
 }
 
-// Creates (or truncates, or with `append` extends) `path` for buffered writing.
+/** Creates (or truncates, or with `append` extends) `path` for buffered writing. */
 export async function openWrite(path: string, opts: OpenWriteOptions = {}): Promise<FileWriter> {
   return FileWriter { handle: unwrapIo(await velt_rt_fs_open_write(path, opts.append ?? false)) };
 }

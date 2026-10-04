@@ -6,22 +6,22 @@
 // Ordered queries (`first`, `last`, `floorKey`, `ceilingKey`, `range`) are O(log n) plus the
 // output. Like `Map`, `set` takes ownership, and `get` / `keys` / `values` / `entries` clone.
 
-// A map ordered by key.
+/** A map ordered by key. */
 export class SortedMap<K extends Comparable<K>, V> {
   private sortedKeys: K[] = [];
   private vals: V[] = [];
 
-  // Number of entries.
+  /** Number of entries. */
   get size(): usize {
     return this.sortedKeys.length;
   }
 
-  // Whether the map is empty.
+  /** Whether the map is empty. */
   isEmpty(): bool {
     return this.sortedKeys.length == 0;
   }
 
-  // Inserts or replaces the value for `key`.
+  /** Inserts or replaces the value for `key`. */
   set(key: K, value: V) {
     const i = this.lowerBound(key);
     if (i < this.sortedKeys.length && !(key < this.sortedKeys[i])) {
@@ -36,7 +36,7 @@ export class SortedMap<K extends Comparable<K>, V> {
     }
   }
 
-  // A clone of the value for `key`, or null.
+  /** A clone of the value for `key`, or null. */
   get(key: K): V | null {
     const i = this.indexOf(key);
     if (i < 0) {
@@ -45,12 +45,12 @@ export class SortedMap<K extends Comparable<K>, V> {
     return this.vals[i as usize].clone();
   }
 
-  // Whether `key` is present.
+  /** Whether `key` is present. */
   has(key: K): bool {
     return this.indexOf(key) >= 0;
   }
 
-  // Removes `key`; returns whether it was present.
+  /** Removes `key`; returns whether it was present. */
   delete(key: K): bool {
     const i = this.indexOf(key);
     if (i < 0) {
@@ -61,35 +61,35 @@ export class SortedMap<K extends Comparable<K>, V> {
     return true;
   }
 
-  // Removes every entry.
+  /** Removes every entry. */
   clear() {
     __intrinsic_array_truncate(this.sortedKeys, 0);
     __intrinsic_array_truncate(this.vals, 0);
   }
 
-  // Clones of the keys, ascending.
+  /** Clones of the keys, ascending. */
   keys(): K[] {
     return this.sortedKeys.clone();
   }
 
-  // Clones of the values, in key order.
+  /** Clones of the values, in key order. */
   values(): V[] {
     return this.vals.clone();
   }
 
-  // Clones of the `[key, value]` pairs, in key order.
+  /** Clones of the `[key, value]` pairs, in key order. */
   entries(): [K, V][] {
     return this.slice(0, this.sortedKeys.length);
   }
 
-  // Visits the entries in key order, borrowing them (JS argument order: value, key).
+  /** Visits the entries in key order, borrowing them (JS argument order: value, key). */
   forEach<E>(f: (value: V, key: K) => void throws E) throws E {
     for (let i: usize = 0; i < this.sortedKeys.length; i++) {
       f(this.vals[i], this.sortedKeys[i]);
     }
   }
 
-  // A clone of the smallest key, or null if empty.
+  /** A clone of the smallest key, or null if empty. */
   first(): K | null {
     if (this.sortedKeys.length == 0) {
       return null;
@@ -97,7 +97,7 @@ export class SortedMap<K extends Comparable<K>, V> {
     return this.sortedKeys[0].clone();
   }
 
-  // A clone of the largest key, or null if empty.
+  /** A clone of the largest key, or null if empty. */
   last(): K | null {
     if (this.sortedKeys.length == 0) {
       return null;
@@ -105,7 +105,7 @@ export class SortedMap<K extends Comparable<K>, V> {
     return this.sortedKeys[this.sortedKeys.length - 1].clone();
   }
 
-  // The largest key <= `key` (a clone), or null.
+  /** The largest key <= `key` (a clone), or null. */
   floorKey(key: K): K | null {
     const i = this.upperBound(key);
     if (i == 0) {
@@ -114,7 +114,7 @@ export class SortedMap<K extends Comparable<K>, V> {
     return this.sortedKeys[i - 1].clone();
   }
 
-  // The smallest key >= `key` (a clone), or null.
+  /** The smallest key >= `key` (a clone), or null. */
   ceilingKey(key: K): K | null {
     const i = this.lowerBound(key);
     if (i == this.sortedKeys.length) {
@@ -123,7 +123,7 @@ export class SortedMap<K extends Comparable<K>, V> {
     return this.sortedKeys[i].clone();
   }
 
-  // Clones of the entries with `from <= key < to`, in key order.
+  /** Clones of the entries with `from <= key < to`, in key order. */
   range(from: K, to: K): [K, V][] {
     const lo = this.lowerBound(from);
     const hi = this.lowerBound(to);

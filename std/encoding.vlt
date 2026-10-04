@@ -22,7 +22,7 @@ const INVALID: u8 = 0xff;
 // `=`
 const PAD: u8 = 61;
 
-// Thrown for malformed Base64, hex or UTF-8 input.
+/** Thrown for malformed Base64, hex or UTF-8 input. */
 export class EncodingError extends Error {
   constructor(message: string) {
     super(message);
@@ -31,32 +31,32 @@ export class EncodingError extends Error {
 
 // ───────────────────────────── Base64 ─────────────────────────────
 
-// Standard Base64 (`+/` alphabet) with `=` padding.
+/** Standard Base64 (`+/` alphabet) with `=` padding. */
 export function base64Encode(data: u8[]): string {
   return encode64(data, BASE64_STD, true);
 }
 
-// Decodes standard Base64; padding is optional. Throws `EncodingError` on any other character.
+/** Decodes standard Base64; padding is optional. Throws `EncodingError` on any other character. */
 export function base64Decode(s: string): u8[] {
   return decode64(s, BASE64_STD);
 }
 
-// URL-safe Base64 (`-_` alphabet, RFC 4648 §5) without padding.
+/** URL-safe Base64 (`-_` alphabet, RFC 4648 §5) without padding. */
 export function base64UrlEncode(data: u8[]): string {
   return encode64(data, BASE64_URL, false);
 }
 
-// Decodes URL-safe Base64; padding is optional. Throws `EncodingError`.
+/** Decodes URL-safe Base64; padding is optional. Throws `EncodingError`. */
 export function base64UrlDecode(s: string): u8[] {
   return decode64(s, BASE64_URL);
 }
 
-// Base64 of the UTF-8 bytes of `s`.
+/** Base64 of the UTF-8 bytes of `s`. */
 export function base64EncodeString(s: string): string {
   return encode64(velt_rt_bytes_from_str(s), BASE64_STD, true);
 }
 
-// Decodes Base64 to bytes and those as UTF-8. Throws `EncodingError` on bad Base64 or UTF-8.
+/** Decodes Base64 to bytes and those as UTF-8. Throws `EncodingError` on bad Base64 or UTF-8. */
 export function base64DecodeString(s: string): string {
   return utf8Decode(decode64(s, BASE64_STD));
 }
@@ -141,7 +141,7 @@ function decodeTable(alphabet: string): u8[] {
 
 // ───────────────────────────── hex ─────────────────────────────
 
-// Lowercase hex, two digits per byte.
+/** Lowercase hex, two digits per byte. */
 export function hexEncode(data: u8[]): string {
   const digits = velt_rt_bytes_from_str(HEX_DIGITS);
   const out: u8[] = __intrinsic_array_with_capacity(data.length * 2);
@@ -153,7 +153,9 @@ export function hexEncode(data: u8[]): string {
   return validToString(out);
 }
 
-// Decodes hex digits (either case). Throws `EncodingError` on odd length or a non-hex character.
+/**
+ * Decodes hex digits (either case). Throws `EncodingError` on odd length or a non-hex character.
+ */
 export function hexDecode(s: string): u8[] {
   const text = velt_rt_bytes_from_str(s);
   if (text.length % 2 != 0) {
@@ -186,13 +188,15 @@ function hexValue(c: u8): u8 {
 
 // ───────────────────────────── UTF-8 ─────────────────────────────
 
-// The UTF-8 bytes of `s` (a copy).
+/** The UTF-8 bytes of `s` (a copy). */
 export function utf8Encode(s: string): u8[] {
   return velt_rt_bytes_from_str(s);
 }
 
-// Decodes UTF-8. Throws `EncodingError` if `data` is not valid UTF-8 (overlong forms,
-// surrogates and code points above U+10FFFF are invalid).
+/**
+ * Decodes UTF-8. Throws `EncodingError` if `data` is not valid UTF-8 (overlong forms,
+ * surrogates and code points above U+10FFFF are invalid).
+ */
 export function utf8Decode(data: u8[]): string {
   const r = velt_rt_bytes_to_str(data);
   if (r.code != 0) {
@@ -201,8 +205,10 @@ export function utf8Decode(data: u8[]): string {
   return r.value;
 }
 
-// Decodes UTF-8, replacing each maximal invalid subsequence with U+FFFD (WHATWG / Unicode
-// "substitution of maximal subparts", as `TextDecoder` and Rust's `from_utf8_lossy` do).
+/**
+ * Decodes UTF-8, replacing each maximal invalid subsequence with U+FFFD (WHATWG / Unicode
+ * "substitution of maximal subparts", as `TextDecoder` and Rust's `from_utf8_lossy` do).
+ */
 export function utf8DecodeLossy(data: u8[]): string {
   const bad = firstInvalid(data);
   if (bad < 0) {
@@ -227,7 +233,7 @@ export function utf8DecodeLossy(data: u8[]): string {
   return validToString(out);
 }
 
-// Whether `data` is valid UTF-8.
+/** Whether `data` is valid UTF-8. */
 export function utf8Valid(data: u8[]): bool {
   return firstInvalid(data) < 0;
 }

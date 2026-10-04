@@ -14,7 +14,7 @@ extend<T> (T | null) {
     return this ?? fallback;
   }
 
-  // The value; panics on null.
+  /** The value; panics on null. */
   unwrap(): T {
     if (this != null) {
       return this;

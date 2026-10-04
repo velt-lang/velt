@@ -16,24 +16,24 @@
 // taken verbatim even if it starts with `-`. Repeated options keep every value (`getAll`).
 // Every parser has `-h, --help`.
 
-// A usage error: unknown option, missing or unexpected value, bad integer.
+/** A usage error: unknown option, missing or unexpected value, bad integer. */
 export class CliError extends Error {}
 
-// Settings of a boolean flag.
+/** Settings of a boolean flag. */
 export struct FlagSpec {
-  // One-character alias (`v` for `-v`).
+  /** One-character alias (`v` for `-v`). */
   short?: string;
   help?: string;
 }
 
-// Settings of an option that takes a value.
+/** Settings of an option that takes a value. */
 export struct OptionSpec {
-  // One-character alias (`o` for `-o`).
+  /** One-character alias (`o` for `-o`). */
   short?: string;
-  // Value when the option is absent.
+  /** Value when the option is absent. */
   default?: string;
   help?: string;
-  // Placeholder shown in `help()` (default `value`).
+  /** Placeholder shown in `help()` (default `value`). */
   valueName?: string;
 }
 
@@ -55,9 +55,9 @@ class ArgSpec {
   }
 }
 
-// The result of `ArgParser.parse` (constructed by it).
+/** The result of `ArgParser.parse` (constructed by it). */
 export class ParsedArgs {
-  // Arguments that are not options, in order (including those after `--`).
+  /** Arguments that are not options, in order (including those after `--`). */
   positionals: string[];
   private flagNames: string[];
   private flagValues: bool[];
@@ -81,7 +81,7 @@ export class ParsedArgs {
     this.positionalNames = positionalNames;
   }
 
-  // Whether flag `name` was given (the last `--name` / `--no-name` wins).
+  /** Whether flag `name` was given (the last `--name` / `--no-name` wins). */
   flag(name: string): bool {
     for (let i = this.flagNames.length; i > 0; i--) {
       if (this.flagNames[i - 1] == name) {
@@ -91,8 +91,10 @@ export class ParsedArgs {
     return false;
   }
 
-  // The last value of option `name`, else its default, else the declared positional of that
-  // name, else null.
+  /**
+   * The last value of option `name`, else its default, else the declared positional of that
+   * name, else null.
+   */
   get(name: string): string | null {
     const all = this.values.get(name);
     if (all != null && all.length > 0) {
@@ -109,23 +111,25 @@ export class ParsedArgs {
     return null;
   }
 
-  // `get(name)`, or `fallback` when it is null.
+  /** `get(name)`, or `fallback` when it is null. */
   getOr(name: string, fallback: string): string {
     return this.get(name) ?? fallback;
   }
 
-  // Every value given for option `name`, in order (the default is not included).
+  /** Every value given for option `name`, in order (the default is not included). */
   getAll(name: string): string[] {
     return this.values.get(name) ?? [];
   }
 
-  // Whether option or flag `name` was given explicitly.
+  /** Whether option or flag `name` was given explicitly. */
   has(name: string): bool {
     return this.values.has(name) || this.flagNames.includes(name);
   }
 
-  // `get(name)` as an integer (decimal digits with an optional sign), or null when absent;
-  // throws `CliError` if the value is not an integer.
+  /**
+   * `get(name)` as an integer (decimal digits with an optional sign), or null when absent;
+   * throws `CliError` if the value is not an integer.
+   */
   getInt(name: string): i64 | null {
     const v = this.get(name);
     if (v == null) {
@@ -180,7 +184,7 @@ class ArgRun {
   }
 }
 
-// A command-line parser declared with `flag`, `option` and `positional` (see the header).
+/** A command-line parser declared with `flag`, `option` and `positional` (see the header). */
 export class ArgParser {
   private program: string;
   private description: string;
@@ -188,20 +192,20 @@ export class ArgParser {
   private positionalNames: string[] = [];
   private positionalHelp: string[] = [];
 
-  // `program` is the name shown in `help()`; `description` is printed under the usage line.
+  /** `program` is the name shown in `help()`; `description` is printed under the usage line. */
   constructor(program: string, description: string = "") {
     this.program = program;
     this.description = description;
     this.specs.push(new ArgSpec("help", "h", "Show this help", false));
   }
 
-  // Declares boolean flag `--name` (also `--no-name`).
+  /** Declares boolean flag `--name` (also `--no-name`). */
   flag(name: string, spec: FlagSpec = {}): ArgParser {
     this.add(new ArgSpec(name, spec.short ?? "", spec.help ?? "", false));
     return this;
   }
 
-  // Declares option `--name <value>`.
+  /** Declares option `--name <value>`. */
   option(name: string, spec: OptionSpec = {}): ArgParser {
     const s = new ArgSpec(name, spec.short ?? "", spec.help ?? "", true);
     const d = spec.default;
@@ -224,16 +228,20 @@ export class ArgParser {
     }
   }
 
-  // Names the next positional argument (for `help()` and `ParsedArgs.get(name)`); positionals
-  // are optional and extra ones are allowed — check `positionals.length` yourself.
+  /**
+   * Names the next positional argument (for `help()` and `ParsedArgs.get(name)`); positionals
+   * are optional and extra ones are allowed — check `positionals.length` yourself.
+   */
   positional(name: string, help: string = ""): ArgParser {
     this.positionalNames.push(name);
     this.positionalHelp.push(help);
     return this;
   }
 
-  // Parses `args` (without the program path). Throws `CliError` on unknown options, missing
-  // option values and values given to flags.
+  /**
+   * Parses `args` (without the program path). Throws `CliError` on unknown options, missing
+   * option values and values given to flags.
+   */
   parse(args: string[]): ParsedArgs {
     const run = new ArgRun();
     let i: usize = 0;
@@ -346,7 +354,7 @@ export class ArgParser {
     return -1;
   }
 
-  // Usage text: the usage line, description, arguments and options with help and defaults.
+  /** Usage text: the usage line, description, arguments and options with help and defaults. */
   help(): string {
     const lines: string[] = [];
     let usage = `Usage: ${this.program} [options]`;

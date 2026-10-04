@@ -8,7 +8,7 @@
 
 import { C0, encodeSet, decodeLenient, bytesOf } from "velt:url/encode";
 
-// The serialized host for `input` (the text between the userinfo and the port), or null.
+/** The serialized host for `input` (the text between the userinfo and the port), or null. */
 export function parseHost(input: string, special: bool): string | null {
   if (input.startsWith("[")) {
     return parseIpv6(input);

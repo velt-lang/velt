@@ -13,8 +13,10 @@ export function isAbsolute(p: string): bool {
   return p.startsWith("/");
 }
 
-// Resolves "." and ".." segments and collapses repeated slashes; keeps a trailing slash.
-// "" becomes "."; ".." above the root of an absolute path is dropped.
+/**
+ * Resolves "." and ".." segments and collapses repeated slashes; keeps a trailing slash.
+ * "" becomes "."; ".." above the root of an absolute path is dropped.
+ */
 export function normalize(p: string): string {
   if (p.length == 0) {
     return ".";
@@ -50,7 +52,7 @@ export function normalize(p: string): string {
   return absolute ? `/${body}` : body;
 }
 
-// Joins the non-empty parts with "/" and normalizes the result ("." if nothing is left).
+/** Joins the non-empty parts with "/" and normalizes the result ("." if nothing is left). */
 export function joinAll(parts: string[]): string {
   const nonEmpty = parts.filter((part) => part.length > 0);
   if (nonEmpty.length == 0) {
@@ -59,12 +61,12 @@ export function joinAll(parts: string[]): string {
   return normalize(nonEmpty.join("/"));
 }
 
-// `join(a, b)`; use `joinAll` for more parts (Velt has no rest parameters).
+/** `join(a, b)`; use `joinAll` for more parts (Velt has no rest parameters). */
 export function join(a: string, b: string): string {
   return joinAll([a, b]);
 }
 
-// Everything before the last segment ("." if there is none; trailing slashes are ignored).
+/** Everything before the last segment ("." if there is none; trailing slashes are ignored). */
 export function dirname(p: string): string {
   if (p.length == 0) {
     return ".";
@@ -91,8 +93,10 @@ export function dirname(p: string): string {
   return p.slice(0, end);
 }
 
-// The last segment (trailing slashes ignored), without `suffix` if it ends with it and is
-// longer than it.
+/**
+ * The last segment (trailing slashes ignored), without `suffix` if it ends with it and is
+ * longer than it.
+ */
 export function basename(p: string, suffix: string = ""): string {
   let end = p.length as i64;
   while (end > 1 && p.charCodeAt(end - 1) == SLASH) {
@@ -106,8 +110,10 @@ export function basename(p: string, suffix: string = ""): string {
   return base;
 }
 
-// The extension of the last segment, from its last "." ("" if there is none, or if the only
-// dot starts the name, as in ".bashrc" or "..").
+/**
+ * The extension of the last segment, from its last "." ("" if there is none, or if the only
+ * dot starts the name, as in ".bashrc" or "..").
+ */
 export function extname(p: string): string {
   const base = basename(p);
   if (base == "..") {

@@ -74,6 +74,8 @@ blockquote { margin: 1em 0; padding: 0 16px; border-left: 3px solid var(--border
 .item h3 { font-size: 16px; }
 .item h2 a, .item h3 a { color: var(--text); text-decoration: none; font-family: var(--mono); }
 .kind { color: var(--muted); font-size: 13px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.04em; }
+.deprecated { color: #b3261e; font-size: 13px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.04em; }
+.item h2 a.deprecated-name, .item h3 a.deprecated-name { text-decoration: line-through; }
 pre.sig { margin: 6px 0; padding: 8px 12px; }
 .field { margin: 4px 0 4px 20px; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
 .field p { margin: 0; color: var(--muted); font-size: 15px; }

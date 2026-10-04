@@ -6,7 +6,7 @@
 // Names are HTML's (`class`, `for`, `tabindex`); `data-*`, `aria-*` and other hyphenated
 // names are not checked against these types (docs/contracts/jsx.md).
 
-// The attributes of elements that have no others (`<div>`, `<span>`, `<p>`, …).
+/** The attributes of elements that have no others (`<div>`, `<span>`, `<p>`, …). */
 export type HtmlAttrs = {
   accesskey?: string;
   autocapitalize?: string;

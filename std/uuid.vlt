@@ -11,7 +11,7 @@ declare function velt_rt_random_bytes(n: u64): u8[];
 declare function velt_rt_bytes_from_str(s: string): u8[];
 declare function velt_rt_bytes_to_str(b: u8[]): IoResult<string>;
 
-// The all-zero UUID (RFC 9562 §5.9).
+/** The all-zero UUID (RFC 9562 §5.9). */
 export const NIL_UUID = "00000000-0000-0000-0000-000000000000";
 
 const HEX_DIGITS = "0123456789abcdef";
@@ -22,14 +22,14 @@ const TEXT_LEN: usize = 36;
 // `-`
 const DASH: u8 = 45;
 
-// Thrown for malformed UUID text or a byte array that is not 16 bytes long.
+/** Thrown for malformed UUID text or a byte array that is not 16 bytes long. */
 export class UuidError extends Error {
   constructor(message: string) {
     super(message);
   }
 }
 
-// A random (version 4) UUID.
+/** A random (version 4) UUID. */
 export function uuidv4(): string {
   const b = velt_rt_random_bytes(16);
   b[6] = (b[6] & 0x0f) | 0x40;
@@ -37,7 +37,7 @@ export function uuidv4(): string {
   return format(b);
 }
 
-// A time-ordered (version 7) UUID: 48-bit Unix milliseconds, then 74 random bits.
+/** A time-ordered (version 7) UUID: 48-bit Unix milliseconds, then 74 random bits. */
 export function uuidv7(): string {
   const b = velt_rt_random_bytes(16);
   const ms = Date.now() as u64;
@@ -49,7 +49,7 @@ export function uuidv7(): string {
   return format(b);
 }
 
-// The 16 bytes of a UUID in text form (either case). Throws `UuidError` if malformed.
+/** The 16 bytes of a UUID in text form (either case). Throws `UuidError` if malformed. */
 export function uuidParse(s: string): u8[] {
   const text = velt_rt_bytes_from_str(s);
   if (text.length != TEXT_LEN) {
@@ -76,7 +76,7 @@ export function uuidParse(s: string): u8[] {
   return out;
 }
 
-// The lowercase text form of 16 UUID bytes. Throws `UuidError` for any other length.
+/** The lowercase text form of 16 UUID bytes. Throws `UuidError` for any other length. */
 export function uuidStringify(bytes: u8[]): string {
   if (bytes.length != 16) {
     throw new UuidError(`Invalid UUID: expected 16 bytes, got ${bytes.length}`);
@@ -84,8 +84,10 @@ export function uuidStringify(bytes: u8[]): string {
   return format(bytes);
 }
 
-// Whether `s` is a UUID in text form with an RFC 9562 version (1-8) and variant, or the
-// nil / max UUID (like the `uuid` npm package's `validate`).
+/**
+ * Whether `s` is a UUID in text form with an RFC 9562 version (1-8) and variant, or the
+ * nil / max UUID (like the `uuid` npm package's `validate`).
+ */
 export function uuidValidate(s: string): bool {
   if (!wellFormed(s)) {
     return false;
@@ -99,8 +101,10 @@ export function uuidValidate(s: string): bool {
   return version >= 1 && version <= 8 && variant >= 8 && variant <= 11;
 }
 
-// The version number (the 13th hex digit) of a well-formed UUID. Throws `UuidError` if `s` is
-// not a UUID in text form.
+/**
+ * The version number (the 13th hex digit) of a well-formed UUID. Throws `UuidError` if `s` is
+ * not a UUID in text form.
+ */
 export function uuidVersion(s: string): i64 {
   if (!wellFormed(s)) {
     throw new UuidError(`Invalid UUID: ${s}`);

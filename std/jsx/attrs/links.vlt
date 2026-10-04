@@ -1,7 +1,7 @@
 // std/jsx/attrs/links: attribute types of hyperlinks, document metadata and scripts
 // (internal; the global attributes are repeated from attrs/global.vlt, see there).
 
-// `<a>`.
+/** `<a>`. */
 export type AnchorAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -45,7 +45,7 @@ export type AnchorAttrs = {
   referrerpolicy?: string;
 };
 
-// `<area>`.
+/** `<area>`. */
 export type AreaAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -90,7 +90,7 @@ export type AreaAttrs = {
   referrerpolicy?: string;
 };
 
-// `<base>`.
+/** `<base>`. */
 export type BaseAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -128,7 +128,7 @@ export type BaseAttrs = {
   target?: string;
 };
 
-// `<link>`.
+/** `<link>`. */
 export type LinkAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -180,7 +180,7 @@ export type LinkAttrs = {
   fetchpriority?: string;
 };
 
-// `<meta>` (`http-equiv` is written as is: hyphenated names are not checked).
+/** `<meta>` (`http-equiv` is written as is: hyphenated names are not checked). */
 export type MetaAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -220,7 +220,7 @@ export type MetaAttrs = {
   media?: string;
 };
 
-// `<script>`.
+/** `<script>`. */
 export type ScriptAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -266,7 +266,7 @@ export type ScriptAttrs = {
   fetchpriority?: string;
 };
 
-// `<style>`.
+/** `<style>`. */
 export type StyleAttrs = {
   accesskey?: string;
   autocapitalize?: string;

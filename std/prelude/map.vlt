@@ -53,22 +53,26 @@ export class Map<K, V> {
   // 64 - log2(slots.length): home slot = p >> shift.
   private shift: u64 = 64;
 
-  // A map holding `entries` (like JS `new Map(entries)`), in order; a later entry with the same
-  // key replaces the value of an earlier one but keeps its position. Leaves `entries` as it is;
-  // the map shares their keys and values, like JS.
+  /**
+   * A map holding `entries` (like JS `new Map(entries)`), in order; a later entry with the same
+   * key replaces the value of an earlier one but keeps its position. Leaves `entries` as it is;
+   * the map shares their keys and values, like JS.
+   */
   constructor(entries: [K, V][] = []) {
     for (const [k, v] of entries) {
       this.set(k, v);
     }
   }
 
-  // Number of entries (like JS `Map.prototype.size`).
+  /** Number of entries (like JS `Map.prototype.size`). */
   get size(): usize {
     return this._size;
   }
 
-  // Inserts or replaces. On replace the new key is dropped and the entry keeps its position
-  // (JS semantics: re-setting a key does not move it to the end).
+  /**
+   * Inserts or replaces. On replace the new key is dropped and the entry keeps its position
+   * (JS semantics: re-setting a key does not move it to the end).
+   */
   set(key: K, value: V) {
     const p = __intrinsic_hash(key) * FIB;
     const e = this.lookup(key, p);
@@ -79,7 +83,7 @@ export class Map<K, V> {
     this.append(key, value, p, e);
   }
 
-  // The value stored for `key` (see header), or null.
+  /** The value stored for `key` (see header), or null. */
   get(key: K): V | null {
     const e = this.lookup(key, __intrinsic_hash(key) * FIB);
     if (e < 0) {
@@ -92,9 +96,11 @@ export class Map<K, V> {
     return this.lookup(key, __intrinsic_hash(key) * FIB) >= 0;
   }
 
-  // If `key` is present, replaces its value with `f(value)` (which borrows the old value);
-  // otherwise inserts `init` (dropped unused when `key` is present). One lookup either way:
-  // `m.upsert(word, 1, (n) => n + 1)` counts words.
+  /**
+   * If `key` is present, replaces its value with `f(value)` (which borrows the old value);
+   * otherwise inserts `init` (dropped unused when `key` is present). One lookup either way:
+   * `m.upsert(word, 1, (n) => n + 1)` counts words.
+   */
   upsert<E>(key: K, init: V, f: (value: V) => V throws E) throws E {
     const p = __intrinsic_hash(key) * FIB;
     const found = this.lookup(key, p);
@@ -107,10 +113,12 @@ export class Map<K, V> {
     this.append(key, init, p, found);
   }
 
-  // Calls `f` with the value stored for `key` (not a copy), so an object value can be changed
-  // in place: `m.update(k, (xs) => { xs.push(x); })`. Copy values (numbers, bool, Copy
-  // structs) arrive by value like any Copy argument: replace them with `upsert` or `set`.
-  // Returns whether `key` was present.
+  /**
+   * Calls `f` with the value stored for `key` (not a copy), so an object value can be changed
+   * in place: `m.update(k, (xs) => { xs.push(x); })`. Copy values (numbers, bool, Copy
+   * structs) arrive by value like any Copy argument: replace them with `upsert` or `set`.
+   * Returns whether `key` was present.
+   */
   update<E>(key: K, f: (value: V) => void throws E): bool throws E {
     const e = this.lookup(key, __intrinsic_hash(key) * FIB);
     if (e < 0) {
@@ -120,7 +128,7 @@ export class Map<K, V> {
     return true;
   }
 
-  // The value stored for `key`, inserting `make()` first if `key` is absent.
+  /** The value stored for `key`, inserting `make()` first if `key` is absent. */
   getOrInsert<E>(key: K, make: () => V throws E): V throws E {
     const p = __intrinsic_hash(key) * FIB;
     const e = this.lookup(key, p);
@@ -131,7 +139,7 @@ export class Map<K, V> {
     return sharedValue(this.entryValues[e as usize]);
   }
 
-  // Removes `key`; returns whether it was present. The value is dropped immediately.
+  /** Removes `key`; returns whether it was present. The value is dropped immediately. */
   delete(key: K): bool {
     const p = __intrinsic_hash(key) * FIB;
     const found = this.lookup(key, p);
@@ -202,7 +210,7 @@ export class Map<K, V> {
     return out;
   }
 
-  // Visits live entries in insertion order, borrowing them (JS argument order: value, key).
+  /** Visits live entries in insertion order, borrowing them (JS argument order: value, key). */
   forEach<E>(f: (value: V, key: K) => void throws E) throws E {
     for (let e: usize = 0; e < this.entryKeys.length; e++) {
       visit(this.entryValues[e], this.entryKeys[e], f);
@@ -211,8 +219,10 @@ export class Map<K, V> {
 
   // ─────────────── internals (not part of the JS surface) ───────────────
 
-  // `deepEqual` (the compiler's equality glue calls it): the same keys, matched as `get`
-  // matches them, each with a deeply equal value, in any order (Node's `isDeepStrictEqual`).
+  /**
+   * `deepEqual` (the compiler's equality glue calls it): the same keys, matched as `get`
+   * matches them, each with a deeply equal value, in any order (Node's `isDeepStrictEqual`).
+   */
   __deepEquals(other: Map<K, V>): bool {
     if (this._size != other._size) {
       return false;
@@ -229,8 +239,10 @@ export class Map<K, V> {
     return true;
   }
 
-  // The hash glue's hash of a map, consistent with `__deepEquals`: its size and its keys, in
-  // any order (a map used as a map key compares by content, like an array key).
+  /**
+   * The hash glue's hash of a map, consistent with `__deepEquals`: its size and its keys, in
+   * any order (a map used as a map key compares by content, like an array key).
+   */
   __deepHash(): u64 {
     let h = this._size as u64;
     for (let e: usize = 0; e < this.entryKeys.length; e++) {

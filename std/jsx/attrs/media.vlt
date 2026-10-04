@@ -1,7 +1,7 @@
 // std/jsx/attrs/media: attribute types of images, audio and video
 // (internal; the global attributes are repeated from attrs/global.vlt, see there).
 
-// `<audio>`.
+/** `<audio>`. */
 export type AudioAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -44,7 +44,7 @@ export type AudioAttrs = {
   controls?: bool;
 };
 
-// `<video>`.
+/** `<video>`. */
 export type VideoAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -93,7 +93,7 @@ export type VideoAttrs = {
   disableremoteplayback?: bool;
 };
 
-// `<img>`.
+/** `<img>`. */
 export type ImgAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -142,7 +142,7 @@ export type ImgAttrs = {
   fetchpriority?: string;
 };
 
-// `<source>`.
+/** `<source>`. */
 export type SourceAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -185,7 +185,7 @@ export type SourceAttrs = {
   height?: string | i64 | f64;
 };
 
-// `<track>`.
+/** `<track>`. */
 export type TrackAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -226,7 +226,7 @@ export type TrackAttrs = {
   srclang?: string;
 };
 
-// `<canvas>`.
+/** `<canvas>`. */
 export type CanvasAttrs = {
   accesskey?: string;
   autocapitalize?: string;

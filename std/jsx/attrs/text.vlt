@@ -1,7 +1,7 @@
 // std/jsx/attrs/text: attribute types of quotations, edits, lists, dates and disclosure widgets
 // (internal; the global attributes are repeated from attrs/global.vlt, see there).
 
-// `<blockquote>` and `<q>`.
+/** `<blockquote>` and `<q>`. */
 export type QuoteAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -38,7 +38,7 @@ export type QuoteAttrs = {
   cite?: string;
 };
 
-// `<del>` and `<ins>`.
+/** `<del>` and `<ins>`. */
 export type EditAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -76,7 +76,7 @@ export type EditAttrs = {
   datetime?: string;
 };
 
-// `<data>`.
+/** `<data>`. */
 export type DataAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -113,7 +113,7 @@ export type DataAttrs = {
   value?: string | i64 | f64;
 };
 
-// `<time>`.
+/** `<time>`. */
 export type TimeAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -150,7 +150,7 @@ export type TimeAttrs = {
   datetime?: string;
 };
 
-// `<li>`.
+/** `<li>`. */
 export type LiAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -187,7 +187,7 @@ export type LiAttrs = {
   value?: string | i64 | f64;
 };
 
-// `<ol>`.
+/** `<ol>`. */
 export type OlAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -226,7 +226,7 @@ export type OlAttrs = {
   type?: string;
 };
 
-// `<details>`.
+/** `<details>`. */
 export type DetailsAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -264,7 +264,7 @@ export type DetailsAttrs = {
   name?: string;
 };
 
-// `<dialog>`.
+/** `<dialog>`. */
 export type DialogAttrs = {
   accesskey?: string;
   autocapitalize?: string;

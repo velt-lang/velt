@@ -1,7 +1,7 @@
 // std/jsx/attrs/embedded: attribute types of embedded content, image maps, slots and templates
 // (internal; the global attributes are repeated from attrs/global.vlt, see there).
 
-// `<iframe>`.
+/** `<iframe>`. */
 export type IframeAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -47,7 +47,7 @@ export type IframeAttrs = {
   loading?: string;
 };
 
-// `<embed>`.
+/** `<embed>`. */
 export type EmbedAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -87,7 +87,7 @@ export type EmbedAttrs = {
   height?: string | i64 | f64;
 };
 
-// `<object>`.
+/** `<object>`. */
 export type ObjectAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -129,7 +129,7 @@ export type ObjectAttrs = {
   height?: string | i64 | f64;
 };
 
-// `<map>`.
+/** `<map>`. */
 export type MapAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -166,7 +166,7 @@ export type MapAttrs = {
   name?: string;
 };
 
-// `<slot>`.
+/** `<slot>`. */
 export type SlotAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -203,7 +203,7 @@ export type SlotAttrs = {
   name?: string;
 };
 
-// `<template>`.
+/** `<template>`. */
 export type TemplateAttrs = {
   accesskey?: string;
   autocapitalize?: string;

@@ -1,7 +1,7 @@
 // std/jsx/attrs/tables: attribute types of table cells and columns
 // (internal; the global attributes are repeated from attrs/global.vlt, see there).
 
-// `<col>` and `<colgroup>`.
+/** `<col>` and `<colgroup>`. */
 export type ColAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -38,7 +38,7 @@ export type ColAttrs = {
   span?: string | i64 | f64;
 };
 
-// `<td>`.
+/** `<td>`. */
 export type TdAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -77,7 +77,7 @@ export type TdAttrs = {
   headers?: string;
 };
 
-// `<th>`.
+/** `<th>`. */
 export type ThAttrs = {
   accesskey?: string;
   autocapitalize?: string;

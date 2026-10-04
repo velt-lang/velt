@@ -1,7 +1,7 @@
 // std/jsx/attrs/controls: attribute types of form controls besides `<input>` and `<button>`
 // (internal; the global attributes are repeated from attrs/global.vlt, see there).
 
-// `<label>`.
+/** `<label>`. */
 export type LabelAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -38,7 +38,7 @@ export type LabelAttrs = {
   for?: string;
 };
 
-// `<meter>`.
+/** `<meter>`. */
 export type MeterAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -80,7 +80,7 @@ export type MeterAttrs = {
   optimum?: string | i64 | f64;
 };
 
-// `<optgroup>`.
+/** `<optgroup>`. */
 export type OptgroupAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -118,7 +118,7 @@ export type OptgroupAttrs = {
   label?: string;
 };
 
-// `<option>`.
+/** `<option>`. */
 export type OptionAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -158,7 +158,7 @@ export type OptionAttrs = {
   value?: string | i64 | f64;
 };
 
-// `<output>`.
+/** `<output>`. */
 export type OutputAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -197,7 +197,7 @@ export type OutputAttrs = {
   name?: string;
 };
 
-// `<progress>`.
+/** `<progress>`. */
 export type ProgressAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -235,7 +235,7 @@ export type ProgressAttrs = {
   max?: string | i64 | f64;
 };
 
-// `<select>`.
+/** `<select>`. */
 export type SelectAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -278,7 +278,7 @@ export type SelectAttrs = {
   size?: string | i64 | f64;
 };
 
-// `<textarea>` (its text is its children).
+/** `<textarea>` (its text is its children). */
 export type TextareaAttrs = {
   accesskey?: string;
   autocapitalize?: string;

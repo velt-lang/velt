@@ -33,19 +33,21 @@ const REM: u32 = 4;
 const SHL: u32 = 5;
 const SHR: u32 = 6;
 
-// A string that is not a valid integer (JS throws `SyntaxError`).
+/** A string that is not a valid integer (JS throws `SyntaxError`). */
 export class BigIntError extends Error {}
 
 export class BigInt {
   private handle: u64;
 
-  // JS `BigInt(n)` / `10n`.
+  /** JS `BigInt(n)` / `10n`. */
   constructor(value: i64 = 0) {
     this.handle = velt_rt_bigint_from_i64(value);
   }
 
-  // JS `BigInt(x)` for a float: the integer part of `x` (panics on NaN and ±Infinity, which JS
-  // rejects with a RangeError).
+  /**
+   * JS `BigInt(x)` for a float: the integer part of `x` (panics on NaN and ±Infinity, which JS
+   * rejects with a RangeError).
+   */
   static fromNumber(x: f64): BigInt {
     if (x != x || x - x != 0.0) {
       panic("RangeError: cannot convert a non-finite number to a BigInt");
@@ -53,7 +55,7 @@ export class BigInt {
     return BigInt.adopt(velt_rt_bigint_from_f64(x));
   }
 
-  // Parses digits in `radix` (2 to 36) with an optional sign; throws `BigIntError`.
+  /** Parses digits in `radix` (2 to 36) with an optional sign; throws `BigIntError`. */
   static parse(s: string, radix: i64 = 10): BigInt {
     const h = velt_rt_bigint_parse(s, radix);
     if (h == 0) {
@@ -102,12 +104,12 @@ export class BigInt {
     return this.binaryInt(k, REM);
   }
 
-  // `this << n` (`n` >= 0).
+  /** `this << n` (`n` >= 0). */
   shl(n: i64): BigInt {
     return this.binaryInt(n, SHL);
   }
 
-  // `this >> n` (`n` >= 0; rounds toward -Infinity, like JS).
+  /** `this >> n` (`n` >= 0; rounds toward -Infinity, like JS). */
   shr(n: i64): BigInt {
     return this.binaryInt(n, SHR);
   }
@@ -162,17 +164,17 @@ export class BigInt {
     this.assignOpInt(n, SHR);
   }
 
-  // Makes this number equal to `other`, reusing this one's buffer.
+  /** Makes this number equal to `other`, reusing this one's buffer. */
   set(other: BigInt) {
     velt_rt_bigint_assign(this.handle, other.handle);
   }
 
-  // -1, 0 or 1 as this is less than, equal to or greater than `other`.
+  /** -1, 0 or 1 as this is less than, equal to or greater than `other`. */
   compareTo(other: BigInt): i64 {
     return velt_rt_bigint_cmp(this.handle, other.handle);
   }
 
-  // -1, 0 or 1 as this is less than, equal to or greater than `k`.
+  /** -1, 0 or 1 as this is less than, equal to or greater than `k`. */
   compareToInt(k: i64): i64 {
     return velt_rt_bigint_cmp_i64(this.handle, k);
   }
@@ -181,27 +183,27 @@ export class BigInt {
     return this.compareTo(other) == 0;
   }
 
-  // The nearest number (JS `Number(big)`).
+  /** The nearest number (JS `Number(big)`). */
   toNumber(): f64 {
     return velt_rt_bigint_to_f64(this.handle);
   }
 
-  // The low 64 bits as a signed integer (JS `BigInt.asIntN(64, big)`).
+  /** The low 64 bits as a signed integer (JS `BigInt.asIntN(64, big)`). */
   toI64(): i64 {
     return velt_rt_bigint_to_i64(this.handle);
   }
 
-  // Digits in `radix` (2 to 36), lowercase, with a leading `-` when negative.
+  /** Digits in `radix` (2 to 36), lowercase, with a leading `-` when negative. */
   toString(radix: i64 = 10): string {
     return velt_rt_bigint_to_string(this.handle, radix);
   }
 
-  // An independent copy.
+  /** An independent copy. */
   clone(): BigInt {
     return BigInt.adopt(velt_rt_bigint_clone(this.handle));
   }
 
-  // Drop hook: frees the number.
+  /** Drop hook: frees the number. */
   [Symbol.dispose]() {
     if (this.handle != 0) {
       velt_rt_bigint_free(this.handle);

@@ -13,10 +13,12 @@
 // `velt_rt_err_code_name(i32 code, VeltStr* out)`: a static Node-style name (nothing to free).
 declare function velt_rt_err_code_name(code: i32): string;
 
-// A failed I/O operation (`Error` is the prelude base class). `code` is the Node-style name:
-// "ENOENT", "EACCES", "EEXIST", "EINVAL", "EILSEQ", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET",
-// "EADDRINUSE", "EPIPE", "EOF", "ENOTSUP", "ENOTDIR", "ENOTEMPTY", "EISDIR", "EBADF" (a closed
-// socket, file stream, child process or WebSocket handle) or "UNKNOWN".
+/**
+ * A failed I/O operation (`Error` is the prelude base class). `code` is the Node-style name:
+ * "ENOENT", "EACCES", "EEXIST", "EINVAL", "EILSEQ", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET",
+ * "EADDRINUSE", "EPIPE", "EOF", "ENOTSUP", "ENOTDIR", "ENOTEMPTY", "EISDIR", "EBADF" (a closed
+ * socket, file stream, child process or WebSocket handle) or "UNKNOWN".
+ */
 export class IoError extends Error {
   code: string;
 
@@ -26,25 +28,25 @@ export class IoError extends Error {
   }
 }
 
-// Result slot of a runtime operation producing a `T` (layout documented above).
+/** Result slot of a runtime operation producing a `T` (layout documented above). */
 export struct IoResult<T> {
   code: i32;
   message: string;
   value: T;
 }
 
-// Result slot of a runtime operation producing nothing (`VeltErr`).
+/** Result slot of a runtime operation producing nothing (`VeltErr`). */
 export struct IoStatus {
   code: i32;
   message: string;
 }
 
-// Builds the `IoError` for a failed result; takes ownership of the runtime's message.
+/** Builds the `IoError` for a failed result; takes ownership of the runtime's message. */
 export function ioError(code: i32, message: string): IoError {
   return new IoError(velt_rt_err_code_name(code), message);
 }
 
-// The value of a successful result; throws `IoError` otherwise.
+/** The value of a successful result; throws `IoError` otherwise. */
 export function unwrapIo<T>(r: IoResult<T>): T {
   if (r.code != 0) {
     throw ioError(r.code, r.message);
@@ -52,7 +54,7 @@ export function unwrapIo<T>(r: IoResult<T>): T {
   return r.value;
 }
 
-// Throws `IoError` if the operation failed.
+/** Throws `IoError` if the operation failed. */
 export function checkIo(s: IoStatus) {
   if (s.code != 0) {
     throw ioError(s.code, s.message);

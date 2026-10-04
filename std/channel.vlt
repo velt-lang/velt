@@ -16,45 +16,53 @@ declare function velt_rt_chan_close(ch: u64);
 declare function velt_rt_chan_closed(ch: u64): bool;
 declare function velt_rt_chan_len(ch: u64): u64;
 
-// Thrown by `send` on a closed channel.
+/** Thrown by `send` on a closed channel. */
 export class ChannelClosed extends Error {
   constructor() {
     super("Send on a closed channel");
   }
 }
 
-// A channel of `T` values. `channel<T>()` is unbounded; `channel<T>(capacity)` holds at most
-// `capacity` values (at least 1).
+/**
+ * A channel of `T` values. `channel<T>()` is unbounded; `channel<T>(capacity)` holds at most
+ * `capacity` values (at least 1).
+ */
 export struct Channel<T> implements AsyncIterable<T> {
   private handle: u64;
 
-  // Queues `value`, waiting while a bounded channel is full. Throws `ChannelClosed` (and drops
-  // `value`) if the channel is closed, also while waiting.
+  /**
+   * Queues `value`, waiting while a bounded channel is full. Throws `ChannelClosed` (and drops
+   * `value`) if the channel is closed, also while waiting.
+   */
   async send(value: T): Promise<void> throws ChannelClosed {
     if (!(await __intrinsic_chan_send<T>(this.handle, value))) {
       throw new ChannelClosed();
     }
   }
 
-  // Queues `value` if the channel has room now, without waiting: true if it was queued, false
-  // (and `value` dropped) if a bounded channel is full or the channel is closed. Synchronous, so
-  // it may be called inside `Mutex.with`.
+  /**
+   * Queues `value` if the channel has room now, without waiting: true if it was queued, false
+   * (and `value` dropped) if a bounded channel is full or the channel is closed. Synchronous, so
+   * it may be called inside `Mutex.with`.
+   */
   trySend(value: T): bool {
     return __intrinsic_chan_try_send<T>(this.handle, value);
   }
 
-  // The oldest value, waiting for one; `null` once the channel is closed and empty.
+  /** The oldest value, waiting for one; `null` once the channel is closed and empty. */
   async receive(): Promise<T | null> {
     return await __intrinsic_chan_receive<T>(this.handle);
   }
 
-  // The oldest value if one is queued, else `null` (never waits).
+  /** The oldest value if one is queued, else `null` (never waits). */
   tryReceive(): T | null {
     return __intrinsic_chan_try_receive<T>(this.handle);
   }
 
-  // `for await (const v of ch)`: receives until the channel is closed and drained. Leaving the
-  // loop early does not close the channel (other tasks may receive from it).
+  /**
+   * `for await (const v of ch)`: receives until the channel is closed and drained. Leaving the
+   * loop early does not close the channel (other tasks may receive from it).
+   */
   async *[Symbol.asyncIterator](): AsyncIterator<T> {
     while (true) {
       const v = await __intrinsic_chan_receive<T>(this.handle);
@@ -65,24 +73,26 @@ export struct Channel<T> implements AsyncIterable<T> {
     }
   }
 
-  // Closes the channel (closing twice does nothing). Pending and later sends throw
-  // `ChannelClosed`; receivers drain what is queued, then get `null`.
+  /**
+   * Closes the channel (closing twice does nothing). Pending and later sends throw
+   * `ChannelClosed`; receivers drain what is queued, then get `null`.
+   */
   close() {
     velt_rt_chan_close(this.handle);
   }
 
-  // Whether the channel is closed.
+  /** Whether the channel is closed. */
   get closed(): bool {
     return velt_rt_chan_closed(this.handle);
   }
 
-  // Number of queued values.
+  /** Number of queued values. */
   get length(): i64 {
     return velt_rt_chan_len(this.handle) as i64;
   }
 }
 
-// A new channel of `T` values: unbounded, or holding at most `capacity` values.
+/** A new channel of `T` values: unbounded, or holding at most `capacity` values. */
 export function channel<T>(capacity: i64 = 0): Channel<T> {
   if (capacity < 0) {
     panic(`channel capacity must not be negative, got ${capacity}`);

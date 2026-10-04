@@ -32,6 +32,12 @@ fn repository_site_builds() {
     assert!(index.contains("href=\"book/tour.html\""), "{index}");
     let tour = std::fs::read_to_string(out.path().join("book/tour.html")).expect("tour");
     assert!(tour.contains("href=\"../style.css\""), "{tour}");
+    // std's `/** */` doc comments reach the API pages.
+    let fs = std::fs::read_to_string(out.path().join("std/std.fs.html")).expect("std.fs page");
+    assert!(
+        fs.contains("Reads a UTF-8 text file (<code>EILSEQ</code> if it is not valid UTF-8)."),
+        "readFile's doc comment"
+    );
     let search = std::fs::read_to_string(out.path().join("search-index.js")).expect("search");
     assert!(
         search.contains("\"readFile\",\"function\",\"std/fs\""),

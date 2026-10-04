@@ -13,37 +13,43 @@ declare async function velt_rt_http_resp_stream_flush(w: u64): Promise<bool>;
 declare async function velt_rt_http_resp_stream_close(w: u64): Promise<bool>;
 declare function velt_rt_http_resp_stream_abort(w: u64);
 
-// The body of a streamed response. A Copy handle (like std/fs_stream's `FileWriter`), so
-// `await w.flush()` can be called repeatedly: async methods take `this` by copy. Writes are
-// buffered; `flush` sends them and waits while the client is behind (backpressure). Once the
-// client has gone away, or the stream ended, `write` and `flush` return false and discard
-// their data, so a long producer should stop when they do.
+/**
+ * The body of a streamed response. A Copy handle (like std/fs_stream's `FileWriter`), so
+ * `await w.flush()` can be called repeatedly: async methods take `this` by copy. Writes are
+ * buffered; `flush` sends them and waits while the client is behind (backpressure). Once the
+ * client has gone away, or the stream ended, `write` and `flush` return false and discard
+ * their data, so a long producer should stop when they do.
+ */
 export struct ResponseWriter {
   private handle: u64;
 
-  // Buffers a copy of `text`; false once the client has gone away or the stream ended.
+  /** Buffers a copy of `text`; false once the client has gone away or the stream ended. */
   write(text: string): bool {
     return velt_rt_http_resp_stream_write(this.handle, text);
   }
 
-  // `write` for bytes.
+  /** `write` for bytes. */
   writeBytes(data: u8[]): bool {
     return velt_rt_http_resp_stream_write_bytes(this.handle, data);
   }
 
-  // Sends what was written so far as one chunk; false once the client has gone away.
+  /** Sends what was written so far as one chunk; false once the client has gone away. */
   async flush(): Promise<bool> {
     return await velt_rt_http_resp_stream_flush(this.handle);
   }
 
-  // Sends the rest and ends the response (later writes return false). `Response.stream` closes
-  // the writer when the producer returns, so calling it is only needed to end early.
+  /**
+   * Sends the rest and ends the response (later writes return false). `Response.stream` closes
+   * the writer when the producer returns, so calling it is only needed to end early.
+   */
   async close(): Promise<bool> {
     return await velt_rt_http_resp_stream_close(this.handle);
   }
 
-  // Ends the response with an error: the connection is cut, so the client sees a truncated
-  // response rather than a complete one.
+  /**
+   * Ends the response with an error: the connection is cut, so the client sees a truncated
+   * response rather than a complete one.
+   */
   abort() {
     velt_rt_http_resp_stream_abort(this.handle);
   }
@@ -65,8 +71,10 @@ async function produce<E>(
   await w.close();
 }
 
-// Makes runtime response `r`'s body a stream (default `content-type: text/plain;
-// charset=utf-8`) and starts `body` writing it.
+/**
+ * Makes runtime response `r`'s body a stream (default `content-type: text/plain;
+ * charset=utf-8`) and starts `body` writing it.
+ */
 export function openStream<E>(r: u64, body: (w: ResponseWriter) => Promise<void, E>) {
   const w = ResponseWriter { handle: velt_rt_http_resp_stream_open(r) };
   const running = produce(body, w);

@@ -20,7 +20,7 @@ export class Math {
     return __intrinsic_ceil(x);
   }
 
-  // JS rounding: halves go toward +Infinity (`Math.round(-2.5)` is -2).
+  /** JS rounding: halves go toward +Infinity (`Math.round(-2.5)` is -2). */
   static round(x: f64): f64 {
     return __intrinsic_round(x);
   }
@@ -33,7 +33,7 @@ export class Math {
     return __intrinsic_f_abs(x);
   }
 
-  // -1, 0 or 1 with the sign of `x`; keeps -0 and NaN as they are, like JS.
+  /** -1, 0 or 1 with the sign of `x`; keeps -0 and NaN as they are, like JS. */
   static sign(x: f64): f64 {
     if (x > 0.0) {
       return 1.0;
@@ -44,8 +44,10 @@ export class Math {
     return x;
   }
 
-  // Any number of values, like JS (`Math.max()` is -Infinity). The two-value call passes an
-  // empty rest array, which costs no allocation.
+  /**
+   * Any number of values, like JS (`Math.max()` is -Infinity). The two-value call passes an
+   * empty rest array, which costs no allocation.
+   */
   static max(a: f64 = -Infinity, b: f64 = -Infinity, ...rest: f64[]): f64 {
     let m = max2(a, b);
     for (const x of rest) {
@@ -62,8 +64,10 @@ export class Math {
     return m;
   }
 
-  // Uniform in [0, 1), like JS: the per-thread generator of `velt:random` (not for secrets; use
-  // `velt:crypto`).
+  /**
+   * Uniform in [0, 1), like JS: the per-thread generator of `velt:random` (not for secrets; use
+   * `velt:crypto`).
+   */
   static random(): f64 {
     return velt_rt_prng_f64();
   }
@@ -72,10 +76,12 @@ export class Math {
     return base ** exponent;
   }
 
-  // sqrt(a² + b² + c² + …) without overflow or underflow: operands far from 1 are scaled by an
-  // exact power of two (2^±600) first, so ordinary inputs stay correctly rounded. Any number of
-  // values, like JS; past four they are scaled by the largest one. Infinity wins over NaN, like
-  // JS.
+  /**
+   * sqrt(a² + b² + c² + …) without overflow or underflow: operands far from 1 are scaled by an
+   * exact power of two (2^±600) first, so ordinary inputs stay correctly rounded. Any number of
+   * values, like JS; past four they are scaled by the largest one. Infinity wins over NaN, like
+   * JS.
+   */
   static hypot(a: f64 = 0.0, b: f64 = 0.0, c: f64 = 0.0, d: f64 = 0.0, ...rest: f64[]): f64 {
     if (rest.length > 0) {
       return hypotMany([a, b, c, d, ...rest]);
@@ -98,8 +104,10 @@ export class Math {
     return hypotScaled(x, y, z, w, 1.0);
   }
 
-  // High 64 bits of the 128-bit product `a * b`, for 64-bit limb arithmetic (the low bits are
-  // `a * b`, which wraps). Not in JS; like C#'s `Math.BigMul` / Rust's widening multiply.
+  /**
+   * High 64 bits of the 128-bit product `a * b`, for 64-bit limb arithmetic (the low bits are
+   * `a * b`, which wraps). Not in JS; like C#'s `Math.BigMul` / Rust's widening multiply.
+   */
   static umulh(a: u64, b: u64): u64 {
     return velt_rt_math_umulh(a, b);
   }
@@ -170,9 +178,11 @@ function hypotScaled(x: f64, y: f64, z: f64, w: f64, scale: f64): f64 {
   return __intrinsic_sqrt(sx * sx + sy * sy + sz * sz + sw * sw);
 }
 
-// JS `ToInt32`: what a bitwise operator does to a float operand (`x | 0`, `f >> 1`; the compiler
-// inserts the call, `sema` `numbers.rs`). Truncates, wraps modulo 2^32 into the signed 32-bit
-// range; NaN and ±Infinity give 0.
+/**
+ * JS `ToInt32`: what a bitwise operator does to a float operand (`x | 0`, `f >> 1`; the compiler
+ * inserts the call, `sema` `numbers.rs`). Truncates, wraps modulo 2^32 into the signed 32-bit
+ * range; NaN and ±Infinity give 0.
+ */
 export function __toInt32(x: f64): i64 {
   // `x - x` is 0 for every finite `x`, NaN for NaN and ±Infinity.
   if (x - x != 0.0) {
@@ -188,9 +198,11 @@ export function __toInt32(x: f64): i64 {
   return m as i64;
 }
 
-// `xs[i]` with a float `i` (a JS number; the compiler inserts the call, `sema` `numbers.rs`): a
-// whole number indexes as usual. Anything else would read `undefined` in JS; here it panics like
-// an index out of bounds.
+/**
+ * `xs[i]` with a float `i` (a JS number; the compiler inserts the call, `sema` `numbers.rs`): a
+ * whole number indexes as usual. Anything else would read `undefined` in JS; here it panics like
+ * an index out of bounds.
+ */
 export function __floatIndex(x: f64): usize {
   if (x >= 0.0 && __intrinsic_trunc(x) == x && x < 18446744073709551616.0) {
     return x as usize;

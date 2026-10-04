@@ -167,7 +167,7 @@ velt init [--template <t>] [--name <name>] [--force]
 | `cli` | a command-line tool: `velt:cli` argument parsing, subcommands, `--help`, exit codes, tests |
 | `api` | a JSON HTTP API: routes, validation, typed errors as status codes, tests with `fetch` against a live server |
 | `websocket` | a WebSocket chat server and terminal client, with an end-to-end test |
-| `lib` | a library: exports with `///` docs for `velt doc`, tests, ready for `velt publish` |
+| `lib` | a library: exports with `/** */` doc comments for `velt doc`, tests, ready for `velt publish` |
 
 Every template builds, passes `velt test` and is formatted. `velt init` writes the same files
 into the current directory; it never overwrites files without `--force`, always keeps an
@@ -179,8 +179,10 @@ existing `README.md`, and names the package after the directory unless `--name` 
 velt doc [<file|dir>...] [--std] [-o <dir>]
 ```
 
-Generates HTML documentation for exported items: their signatures and the `///` comment block
-right above each declaration (a comment block at the top of a file documents the module).
+Generates HTML documentation for exported items: their signatures and the doc comment right
+above each declaration, a JSDoc `/** … */` comment or a block of `///` lines (a comment block at
+the top of a file, followed by a blank line, documents the module). Plain `//` comments are not
+documentation.
 Without paths, it documents the package's `src/` (`.vlt`, `.ts` and `.tsx` files) into
 `<package>/target/doc`; `--std` documents
 the standard library. The output has one page per module and a client-side search.
@@ -198,6 +200,11 @@ the standard library. The output has one page per module and a client-side searc
   declare or list itself, each with a link to where it is declared. A re-export from a module
   that isn't documented alongside (another package; std when documenting a package) is listed
   as one line. Names in a local `export { a, b as c };` list are documented too.
+- **Tags** in doc comments are rendered as sections: `@param name - text` as a parameter list
+  (a `{type}` is ignored, as the signature shows the type), `@returns` (`@return`), `@throws`,
+  `@example` (code, shown in a code block), `@deprecated [text]` (the item is also marked
+  deprecated) and `@see`. Inline `{@link name}` shows `name` as code; `{@link name text}` shows
+  the text; a URL target becomes a link. Other tags stay in the text as written.
 
 ## `velt doctor`
 

@@ -9,7 +9,7 @@
 import { escapeHtml } from "velt:html";
 import type { AttrValue } from "velt:jsx/node";
 
-// `s` with `&`, `<` and `>` replaced by `&amp;`, `&lt;` and `&gt;` (quotes are kept).
+/** `s` with `&`, `<` and `>` replaced by `&amp;`, `&lt;` and `&gt;` (quotes are kept). */
 export function escapeText(s: string): string {
   if (!s.includes("<") && !s.includes("&") && !s.includes(">")) {
     return s;
@@ -23,8 +23,10 @@ export function escapeText(s: string): string {
   return escaped.replaceAll("&quot;", "\"").replaceAll("&#39;", "'");
 }
 
-// One attribute as it appears in a start tag: ` name="escaped value"`, ` name` for `true`, and
-// nothing for `false` and `null`.
+/**
+ * One attribute as it appears in a start tag: ` name="escaped value"`, ` name` for `true`, and
+ * nothing for `false` and `null`.
+ */
 export function renderAttr(name: string, value: AttrValue): string {
   if (value == null) {
     return "";

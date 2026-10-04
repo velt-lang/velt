@@ -6,14 +6,16 @@
 declare function velt_rt_write_str(stream: u32, s: string);
 declare function velt_rt_env_get(name: string, out: string): bool;
 
-// Writes `s` to standard output (`stream` 1) or standard error (2), without a newline, ordered
-// with `console.log` / `console.error`. Returns `true`, like Node's `write`.
+/**
+ * Writes `s` to standard output (`stream` 1) or standard error (2), without a newline, ordered
+ * with `console.log` / `console.error`. Returns `true`, like Node's `write`.
+ */
 export function __processWrite(stream: u32, s: string): bool {
   velt_rt_write_str(stream, s);
   return true;
 }
 
-// The value of environment variable `name`, or null if it is unset.
+/** The value of environment variable `name`, or null if it is unset. */
 export function __processEnv(name: string): string | null {
   let out = "";
   if (velt_rt_env_get(name, out)) {
@@ -25,8 +27,10 @@ export function __processEnv(name: string): string | null {
 declare function velt_rt_memory_rss(): i64;
 declare function velt_rt_memory_heap(): i64;
 
-// What `process.memoryUsage()` returns, in bytes (Node's field names): `rss` is the resident set
-// size the OS reports, `heapUsed` the memory the allocator has committed for the heap.
+/**
+ * What `process.memoryUsage()` returns, in bytes (Node's field names): `rss` is the resident set
+ * size the OS reports, `heapUsed` the memory the allocator has committed for the heap.
+ */
 export type MemoryUsage = { rss: i64; heapUsed: i64 };
 
 export function processMemoryUsage(): MemoryUsage {
@@ -35,8 +39,10 @@ export function processMemoryUsage(): MemoryUsage {
 
 declare function velt_rt_process_node_argv(): string[];
 
-// Node's `process.argv`: `[runtime, script, ...args]` (the running executable, the script under
-// `velt run` / `velt dev` or the executable again, then the arguments).
+/**
+ * Node's `process.argv`: `[runtime, script, ...args]` (the running executable, the script under
+ * `velt run` / `velt dev` or the executable again, then the arguments).
+ */
 export function __processArgv(): string[] {
   return velt_rt_process_node_argv();
 }

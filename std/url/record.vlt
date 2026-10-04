@@ -19,9 +19,11 @@ import {
 } from "velt:url/encode";
 import { parseHost } from "velt:url/host";
 
-// A parsed URL. `path` is serialized (it starts with "/" unless it is empty or `opaque`, e.g.
-// `mailto:` paths); `port` is "" when absent or the scheme's default. Optional components are
-// a flag plus a string (not `string | null`) so they can be read without cloning.
+/**
+ * A parsed URL. `path` is serialized (it starts with "/" unless it is empty or `opaque`, e.g.
+ * `mailto:` paths); `port` is "" when absent or the scheme's default. Optional components are
+ * a flag plus a string (not `string | null`) so they can be read without cloning.
+ */
 export class UrlRecord {
   scheme: string = "";
   username: string = "";
@@ -43,7 +45,7 @@ const BACKSLASH: i64 = 92;
 const QUESTION: i64 = 63;
 const HASH: i64 = 35;
 
-// Whether `scheme` is one of WHATWG's special schemes.
+/** Whether `scheme` is one of WHATWG's special schemes. */
 export function isSpecial(scheme: string): bool {
   return scheme == "http" ||
     scheme == "https" ||
@@ -53,7 +55,7 @@ export function isSpecial(scheme: string): bool {
     scheme == "file";
 }
 
-// The default port of a special scheme as a string, or "".
+/** The default port of a special scheme as a string, or "". */
 export function defaultPort(scheme: string): string {
   if (scheme == "http" || scheme == "ws") {
     return "80";
@@ -64,7 +66,7 @@ export function defaultPort(scheme: string): string {
   return scheme == "ftp" ? "21" : "";
 }
 
-// Parses `input` (absolute, or relative to `base`); null if it is not a valid URL.
+/** Parses `input` (absolute, or relative to `base`); null if it is not a valid URL. */
 export function parseUrl(input: string, base: UrlRecord | null): UrlRecord | null {
   const s = cleanInput(input);
   const colon = schemeEnd(s);
@@ -93,8 +95,10 @@ function cleanInput(input: string): string {
   return removeTabNewline(input.slice(start as i64, end as i64));
 }
 
-// `s` without ASCII tabs and newlines, which the WHATWG parser drops everywhere (the constructor
-// and every setter that runs it).
+/**
+ * `s` without ASCII tabs and newlines, which the WHATWG parser drops everywhere (the constructor
+ * and every setter that runs it).
+ */
 export function removeTabNewline(s: string): string {
   if (s.indexOf("\t") < 0 && s.indexOf("\n") < 0 && s.indexOf("\r") < 0) {
     return s;
@@ -224,8 +228,10 @@ function parseAuthority(r: UrlRecord, auth: string): bool {
   return parsePort(r, hostPort.slice(colon + 1));
 }
 
-// A `file:` URL's authority is only a host (no credentials or port: `@` and `:` are forbidden
-// host code points); `localhost` means the empty host. False if `text` is not a valid host.
+/**
+ * A `file:` URL's authority is only a host (no credentials or port: `@` and `:` are forbidden
+ * host code points); `localhost` means the empty host. False if `text` is not a valid host.
+ */
 export function setFileHost(r: UrlRecord, text: string): bool {
   let host = "";
   if (text.length > 0) {
@@ -328,7 +334,7 @@ function applyQueryFragment(r: UrlRecord, s: string, from: i64) {
   }
 }
 
-// Serializes path `p` (after `segs`), percent-encoding segments and resolving `.` and `..`.
+/** Serializes path `p` (after `segs`), percent-encoding segments and resolving `.` and `..`. */
 export function parsePath(p: string, segs: string[], special: bool): string {
   const len = p.length as i64;
   if (len == 0 && segs.length == 0) {
@@ -375,7 +381,7 @@ function dotSegment(p: string, from: i64, to: i64): i64 {
   return seg == ".." || seg == ".%2e" || seg == "%2e." || seg == "%2e%2e" ? 2 : 0;
 }
 
-// The serialized URL (WHATWG "URL serializer").
+/** The serialized URL (WHATWG "URL serializer"). */
 export function serialize(r: UrlRecord): string {
   let out = `${r.scheme}:`;
   if (r.hasHost) {
@@ -393,7 +399,7 @@ export function serialize(r: UrlRecord): string {
   return out;
 }
 
-// `user:pass@`, `user@` or "".
+/** `user:pass@`, `user@` or "". */
 export function userinfo(r: UrlRecord): string {
   if (r.username.length == 0 && r.password.length == 0) {
     return "";

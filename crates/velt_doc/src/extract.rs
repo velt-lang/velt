@@ -1,13 +1,16 @@
 //! What gets documented: the exported items of a module (and `extend` blocks, which add
 //! methods to types everywhere; names listed in `export { … }`), their public members, their
-//! signatures in canonical form ([`crate::sig`]), and the comment block right above each
-//! declaration (`///` or `//` lines; a blank line ends it). A comment block at the top of the
-//! file, followed by a blank line, documents the module. Re-exports (`export { x } from`,
+//! signatures in canonical form ([`crate::sig`]), and the doc comment right above each
+//! declaration (`/** … */` or `///` lines; see [`crate::comment`]). A comment block at the top
+//! of the file, followed by a blank line, documents the module. Re-exports (`export { x } from`,
 //! `export * from`) are recorded here and resolved across modules by [`crate::resolve`].
+
+use std::ops::Range;
 
 use velt_common::FileId;
 use velt_syntax::ast::{self, Item, ItemKind};
 
+use crate::comment::{self, DocComment};
 use crate::sig::Printer;
 
 /// The kind of a documented declaration.
@@ -71,8 +74,10 @@ pub struct DocItem {
     pub name: String,
     /// The declaration in canonical form (bodies left out; see [`crate::sig`]).
     pub signature: String,
-    /// The doc comment's Markdown (empty if none).
+    /// The doc comment's Markdown (empty if none; [`DocComment::render_markdown`]).
     pub doc: String,
+    /// `@deprecated`: `Some` (with its text, possibly empty) when deprecated.
+    pub deprecated: Option<String>,
     /// Public members (types and extensions only).
     pub members: Vec<DocItem>,
     /// Its generic parameters' names (they are never links to types of the same name).
@@ -132,7 +137,10 @@ pub struct ReExport {
 /// whatever the parser recovered is documented. Re-exports are recorded, not yet resolved.
 pub fn extract(name: &str, source: &str) -> DocModule {
     let (module, _) = velt_syntax::parse_file(FileId(0), source);
-    let text = Source(Printer { src: source });
+    let text = Source {
+        printer: Printer { src: source },
+        comments: velt_syntax::comment_ranges(source),
+    };
     let mut imports = vec![];
     for item in &module.items {
         if let ItemKind::Import(i) = &item.kind {
@@ -233,34 +241,23 @@ fn generic_names(generics: &[ast::GenericParam]) -> Vec<String> {
 }
 
 /// The source text with the helpers that slice and print it.
-struct Source<'a>(Printer<'a>);
+struct Source<'a> {
+    printer: Printer<'a>,
+    /// Where the comments are ([`velt_syntax::comment_ranges`]).
+    comments: Vec<Range<u32>>,
+}
 
 impl Source<'_> {
-    /// The comment block ending on the line before byte `lo`.
-    fn doc_before(&self, lo: u32) -> String {
-        let before = self.0.src.get(..lo as usize).unwrap_or("");
-        let start_of_line = before.rfind('\n').map_or(0, |i| i + 1);
-        if !before[start_of_line..].trim().is_empty() {
-            return String::new(); // something else precedes the item on its own line
-        }
-        let mut lines: Vec<&str> = before[..start_of_line]
-            .lines()
-            .rev()
-            .map(str::trim)
-            .take_while(|l| l.starts_with("//"))
-            .collect();
-        lines.reverse();
-        strip_comments(&lines)
+    /// The doc comment of the declaration starting at byte `lo`.
+    fn doc_before(&self, lo: u32) -> DocComment {
+        comment::doc_before_in(self.printer.src, &self.comments, lo).unwrap_or_default()
     }
 
     /// The first comment block of the file, when a blank line separates it from what follows.
     fn module_doc(&self) -> String {
-        let lines: Vec<&str> = self.0.src.lines().map(str::trim).collect();
-        let n = lines.iter().take_while(|l| l.starts_with("//")).count();
-        if n == 0 || lines.get(n).is_some_and(|l| !l.is_empty()) {
-            return String::new();
-        }
-        strip_comments(&lines[..n])
+        comment::module_doc(self.printer.src, &self.comments)
+            .map(|d| d.render_markdown())
+            .unwrap_or_default()
     }
 
     /// The documentation of a top-level item: exported ones and extensions, or any
@@ -270,7 +267,7 @@ impl Source<'_> {
             return None;
         }
         let doc = self.doc_before(item.span.lo);
-        let p = &self.0;
+        let p = &self.printer;
         Some(match &item.kind {
             ItemKind::Function(f) => {
                 let asyncness = if f.sig.is_async { "async " } else { "" };
@@ -305,7 +302,7 @@ impl Source<'_> {
         })
     }
 
-    fn type_decl(&self, kind: Kind, t: &ast::TypeDecl, doc: String) -> DocItem {
+    fn type_decl(&self, kind: Kind, t: &ast::TypeDecl, doc: DocComment) -> DocItem {
         let mut members: Vec<DocItem> = t
             .fields
             .iter()
@@ -327,7 +324,7 @@ impl Source<'_> {
             "class"
         };
         DocItem {
-            signature: self.0.type_header(
+            signature: self.printer.type_header(
                 keyword,
                 &t.name.name,
                 &t.generics,
@@ -347,7 +344,7 @@ impl Source<'_> {
             .collect()
     }
 
-    fn interface(&self, i: &ast::InterfaceDecl, doc: String) -> DocItem {
+    fn interface(&self, i: &ast::InterfaceDecl, doc: DocComment) -> DocItem {
         let mut members: Vec<DocItem> = i.fields.iter().map(|f| self.field(f)).collect();
         members.extend(
             i.methods
@@ -355,20 +352,24 @@ impl Source<'_> {
                 .map(|m| self.member_fn(Kind::Method, &m.sig)),
         );
         DocItem {
-            signature: self
-                .0
-                .type_header("interface", &i.name.name, &i.generics, &i.extends, &[]),
+            signature: self.printer.type_header(
+                "interface",
+                &i.name.name,
+                &i.generics,
+                &i.extends,
+                &[],
+            ),
             members,
             ..leaf(Kind::Interface, &i.name.name, &i.generics, doc)
         }
     }
 
-    fn enumeration(&self, e: &ast::EnumDecl, doc: String) -> DocItem {
+    fn enumeration(&self, e: &ast::EnumDecl, doc: DocComment) -> DocItem {
         let members = e
             .variants
             .iter()
             .map(|v| DocItem {
-                signature: self.0.flat(v.span).trim_end_matches(',').to_string(),
+                signature: self.printer.flat(v.span).trim_end_matches(',').to_string(),
                 ..leaf(Kind::Variant, &v.name.name, &[], self.doc_before(v.span.lo))
             })
             .collect();
@@ -381,17 +382,17 @@ impl Source<'_> {
 
     /// `const NAME: T = init` (the initializer only when the whole fits in 80 characters, or
     /// there is no type to show instead).
-    fn constant(&self, v: &ast::VarDecl, doc: String) -> Option<DocItem> {
+    fn constant(&self, v: &ast::VarDecl, doc: DocComment) -> Option<DocItem> {
         let ast::PatternKind::Ident(name) = &v.pattern.kind else {
             return None;
         };
         let mut signature = format!("{} {}", v.kind.keyword(), name.name);
         if let Some(ty) = &v.ty {
             signature.push_str(": ");
-            signature.push_str(&self.0.ty(ty));
+            signature.push_str(&self.printer.ty(ty));
         }
         if let Some(init) = &v.init {
-            let full = format!("{signature} = {}", self.0.flat(init.span));
+            let full = format!("{signature} = {}", self.printer.flat(init.span));
             if full.len() <= 80 || v.ty.is_none() {
                 signature = full;
             }
@@ -404,7 +405,7 @@ impl Source<'_> {
 
     fn field(&self, f: &ast::Field) -> DocItem {
         DocItem {
-            signature: self.0.field(f),
+            signature: self.printer.field(f),
             ..leaf(Kind::Field, &f.name.name, &[], self.doc_before(f.span.lo))
         }
     }
@@ -413,7 +414,7 @@ impl Source<'_> {
     /// `mut`, …), then the signature.
     fn member_fn(&self, kind: Kind, sig: &ast::FnSig) -> DocItem {
         let mods: String = self
-            .0
+            .printer
             .src
             .get(sig.span.lo as usize..sig.name.span.lo.max(sig.span.lo) as usize)
             .unwrap_or("")
@@ -422,7 +423,7 @@ impl Source<'_> {
             .map(|w| format!("{w} "))
             .collect();
         DocItem {
-            signature: format!("{mods}{}", self.0.fn_sig(sig)),
+            signature: format!("{mods}{}", self.printer.fn_sig(sig)),
             ..leaf(
                 kind,
                 &sig.name.name,
@@ -434,38 +435,24 @@ impl Source<'_> {
 }
 
 /// An item without members, signature or origin (filled in by the caller).
-fn leaf(kind: Kind, name: &str, generics: &[ast::GenericParam], doc: String) -> DocItem {
+fn leaf(kind: Kind, name: &str, generics: &[ast::GenericParam], doc: DocComment) -> DocItem {
     DocItem {
         kind,
         name: name.to_string(),
         signature: String::new(),
-        doc,
+        doc: doc.render_markdown(),
+        deprecated: doc.deprecated,
         members: vec![],
         generics: generic_names(generics),
         origin: None,
     }
 }
 
-/// Comment lines → Markdown: drop `///` or `//` and one following space.
-fn strip_comments(lines: &[&str]) -> String {
-    let body: Vec<&str> = lines
-        .iter()
-        .map(|l| {
-            let l = l
-                .strip_prefix("///")
-                .or_else(|| l.strip_prefix("//"))
-                .unwrap_or(l);
-            l.strip_prefix(' ').unwrap_or(l)
-        })
-        .collect();
-    body.join("\n").trim().to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const SRC: &str = "// Module docs.\n// Second line.\n\nimport { x } from \"velt:io\";\n\n/// Adds.\n/// Twice.\nexport function add(a: i64, b: i64): i64 {\n  return a + b;\n}\n\nfunction hidden() {}\n\n// A point.\nexport class Point {\n  // X coordinate.\n  x: f64;\n  private secret: i64 = 0;\n\n  constructor(x: f64) {\n    this.x = x;\n  }\n\n  // Length.\n  len(): f64 {\n    return this.x;\n  }\n}\n\nexport enum Color {\n  Red,\n  Green = 5,\n}\n\nexport const LIMIT: i64 = 10;\n\nexport async function wait(ms: i64) {}\n";
+    const SRC: &str = "// Module docs.\n// Second line.\n\nimport { x } from \"velt:io\";\n\n/// Adds.\n/// Twice.\nexport function add(a: i64, b: i64): i64 {\n  return a + b;\n}\n\nfunction hidden() {}\n\n/** A point. */\nexport class Point {\n  /** X coordinate. */\n  x: f64;\n  private secret: i64 = 0;\n\n  constructor(x: f64) {\n    this.x = x;\n  }\n\n  /**\n   * Length.\n   */\n  len(): f64 {\n    return this.x;\n  }\n}\n\nexport enum Color {\n  Red,\n  Green = 5,\n}\n\nexport const LIMIT: i64 = 10;\n\nexport async function wait(ms: i64) {}\n";
 
     #[test]
     fn exported_items_with_docs() {
@@ -497,6 +484,29 @@ mod tests {
         assert_eq!(m.items[2].members.len(), 2);
         assert_eq!(m.items[3].signature, "const LIMIT: i64 = 10");
         assert_eq!(m.items[4].signature, "async function wait(ms: i64)");
+    }
+
+    #[test]
+    fn tags_and_deprecation() {
+        let src = "/**\n * Old.\n * @param a - the value\n * @deprecated Use `g`.\n */\nexport function f(a: i64) {}\n\nexport enum E {\n  /** @deprecated */\n  A,\n  // Plain.\n  B,\n}\n";
+        let m = extract("demo", src);
+        let f = &m.items[0];
+        assert_eq!(
+            f.doc,
+            "Old.\n\n**Parameters**\n\n- `a`: the value\n\n**Deprecated:** Use `g`."
+        );
+        assert_eq!(f.deprecated.as_deref(), Some("Use `g`."));
+        let e = &m.items[1].members;
+        assert_eq!(e[0].deprecated.as_deref(), Some(""));
+        assert_eq!((e[1].doc.as_str(), e[1].deprecated.as_ref()), ("", None));
+    }
+
+    #[test]
+    fn plain_comments_and_template_text_are_not_docs() {
+        let src = "// Module.\n\n// Not a doc.\nexport function f() {}\n\nconst t = `\n/// inside a template\n`;\nexport function g() {}\n";
+        let m = extract("demo", src);
+        assert_eq!(m.doc, "Module.");
+        assert_eq!((m.items[0].doc.as_str(), m.items[1].doc.as_str()), ("", ""));
     }
 
     #[test]

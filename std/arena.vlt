@@ -9,17 +9,17 @@
 export class Arena<T> {
   private items: T[];
 
-  // `capacity` values fit before the pool first grows.
+  /** `capacity` values fit before the pool first grows. */
   constructor(capacity: usize = 0) {
     this.items = __intrinsic_array_with_capacity(capacity);
   }
 
-  // Number of values allocated since the last `reset()`.
+  /** Number of values allocated since the last `reset()`. */
   get length(): usize {
     return this.items.length;
   }
 
-  // Stores `value`; returns its index.
+  /** Stores `value`; returns its index. */
   alloc(value: T): u32 {
     if (this.items.length >= 4294967295) {
       panic("Arena: too many values");
@@ -29,17 +29,17 @@ export class Arena<T> {
     return index;
   }
 
-  // The value at `index` (a copy for Copy types, else a clone).
+  /** The value at `index` (a copy for Copy types, else a clone). */
   get(index: u32): T {
     return this.items[index as usize].clone();
   }
 
-  // Replaces the value at `index`.
+  /** Replaces the value at `index`. */
   set(index: u32, value: T) {
     this.items[index as usize] = value;
   }
 
-  // Drops every value but keeps the memory: the next allocations reuse it.
+  /** Drops every value but keeps the memory: the next allocations reuse it. */
   reset() {
     __intrinsic_array_truncate(this.items, 0);
   }

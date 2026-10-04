@@ -45,7 +45,7 @@ extend<T> Array<T> {
     return acc;
   }
 
-  // First element matching `pred` (see header), or null.
+  /** First element matching `pred` (see header), or null. */
   find<E>(pred: (x: T, i: i64) => bool throws E): T | null throws E {
     for (let i: usize = 0; i < this.length; i++) {
       if (pred(this[i], i as i64)) {
@@ -55,7 +55,7 @@ extend<T> Array<T> {
     return null;
   }
 
-  // Index of the first element matching `pred`, or -1.
+  /** Index of the first element matching `pred`, or -1. */
   findIndex<E>(pred: (x: T, i: i64) => bool throws E): i64 throws E {
     for (let i: usize = 0; i < this.length; i++) {
       if (pred(this[i], i as i64)) {
@@ -65,13 +65,13 @@ extend<T> Array<T> {
     return -1;
   }
 
-  // Last element matching `pred` (see header), or null.
+  /** Last element matching `pred` (see header), or null. */
   findLast<E>(pred: (x: T, i: i64) => bool throws E): T | null throws E {
     const i = this.findLastIndex(pred);
     return i < 0 ? null : __intrinsic_share(this[i as usize]);
   }
 
-  // Index of the last element matching `pred`, or -1.
+  /** Index of the last element matching `pred`, or -1. */
   findLastIndex<E>(pred: (x: T, i: i64) => bool throws E): i64 throws E {
     let i = this.length;
     while (i > 0) {
@@ -83,8 +83,10 @@ extend<T> Array<T> {
     return -1;
   }
 
-  // The element at `index` (negative counts from the end; see header), or null when
-  // out of range.
+  /**
+   * The element at `index` (negative counts from the end; see header), or null when
+   * out of range.
+   */
   at(index: i64): T | null {
     const i = index < 0 ? index + (this.length as i64) : index;
     if (i < 0 || i >= (this.length as i64)) {
@@ -93,10 +95,12 @@ extend<T> Array<T> {
     return __intrinsic_share(this[i as usize]);
   }
 
-  // Sets the elements in [start, end) to `value` (positions as in `slice`). JS also returns
-  // the array; here the result is `void`, like `reverse` and `sort`: returning the array would
-  // share it, which makes every array of its type reference counted in the whole program.
-  // `new Array<T>(n).fill(v)` still works (the compiler builds the array in one step).
+  /**
+   * Sets the elements in [start, end) to `value` (positions as in `slice`). JS also returns
+   * the array; here the result is `void`, like `reverse` and `sort`: returning the array would
+   * share it, which makes every array of its type reference counted in the whole program.
+   * `new Array<T>(n).fill(v)` still works (the compiler builds the array in one step).
+   */
   fill(value: T, start: i64 = 0, end: i64 = 9223372036854775807) {
     const hi = clampPosition(end, this.length);
     for (let i = clampPosition(start, this.length); i < hi; i++) {
@@ -122,7 +126,7 @@ extend<T> Array<T> {
     return true;
   }
 
-  // Structural equality (`==`), so `NaN` is never found (JS `indexOf` semantics).
+  /** Structural equality (`==`), so `NaN` is never found (JS `indexOf` semantics). */
   indexOf(x: T): i64 {
     for (let i: usize = 0; i < this.length; i++) {
       if (this[i] == x) {
@@ -147,8 +151,10 @@ extend<T> Array<T> {
     return this.indexOf(x) >= 0;
   }
 
-  // Clones of the elements in [start, end). JS semantics: negative positions count from the
-  // end, out-of-range positions are clamped, and `end` defaults to the length.
+  /**
+   * Clones of the elements in [start, end). JS semantics: negative positions count from the
+   * end, out-of-range positions are clamped, and `end` defaults to the length.
+   */
   slice(start: i64 = 0, end: i64 = 9223372036854775807): T[] {
     const lo = clampPosition(start, this.length);
     const hi = clampPosition(end, this.length);
@@ -162,7 +168,7 @@ extend<T> Array<T> {
     return out;
   }
 
-  // New array with this array's elements followed by `other`'s.
+  /** New array with this array's elements followed by `other`'s. */
   concat(other: T[]): T[] {
     const out: T[] = __intrinsic_array_with_capacity(this.length + other.length);
     for (let i: usize = 0; i < this.length; i++) {
@@ -174,13 +180,15 @@ extend<T> Array<T> {
     return out;
   }
 
-  // Reverses in place (JS also returns the array; here the result is `void`, see `fill`).
+  /** Reverses in place (JS also returns the array; here the result is `void`, see `fill`). */
   reverse() {
     reverseRange(this, 0, this.length);
   }
 
-  // Removes `deleteCount` elements from `start` (positions as in `slice`; omitted: the rest),
-  // inserts `items` there, and returns the removed elements, like JS. O(length).
+  /**
+   * Removes `deleteCount` elements from `start` (positions as in `slice`; omitted: the rest),
+   * inserts `items` there, and returns the removed elements, like JS. O(length).
+   */
   splice(start: i64, deleteCount: i64 = 9223372036854775807, ...items: T[]): T[] {
     const len = this.length;
     const lo = clampPosition(start, len);
@@ -212,9 +220,11 @@ extend<T> Array<T> {
     return out;
   }
 
-  // Removes and returns the first element, or null when the array is empty (JS: undefined).
-  // O(length): the other elements move down by one, as V8 does for large arrays. A queue that
-  // takes from the front belongs in a `Deque` (velt:collections/deque), which does it in O(1).
+  /**
+   * Removes and returns the first element, or null when the array is empty (JS: undefined).
+   * O(length): the other elements move down by one, as V8 does for large arrays. A queue that
+   * takes from the front belongs in a `Deque` (velt:collections/deque), which does it in O(1).
+   */
   shift(): T | null {
     if (this.length == 0) {
       return null;
@@ -222,8 +232,10 @@ extend<T> Array<T> {
     return __intrinsic_array_remove(this, 0);
   }
 
-  // Inserts `items` at the front, in order, and returns the new length, like JS. O(length +
-  // items): the items are pushed, then rotated to the front by three reversals.
+  /**
+   * Inserts `items` at the front, in order, and returns the new length, like JS. O(length +
+   * items): the items are pushed, then rotated to the front by three reversals.
+   */
   unshift(...items: T[]): i64 {
     if (items.length > 0) {
       const old = this.length;
@@ -237,8 +249,10 @@ extend<T> Array<T> {
     return this.length as i64;
   }
 
-  // Shortens the array to `length` elements, dropping the rest (JS `xs.length = n`); a longer
-  // `length` leaves it unchanged. Panics on a negative `length`, like JS's RangeError.
+  /**
+   * Shortens the array to `length` elements, dropping the rest (JS `xs.length = n`); a longer
+   * `length` leaves it unchanged. Panics on a negative `length`, like JS's RangeError.
+   */
   truncate(length: i64) {
     if (length < 0) {
       panic(`RangeError: Invalid array length: ${length}`);
@@ -252,7 +266,7 @@ extend<T> Array<T> {
   // array, the receiver unchanged. Like `slice`, the new array holds the same elements (objects
   // are shared, as in JS); the arrays themselves are independent.
 
-  // The elements in reverse order.
+  /** The elements in reverse order. */
   toReversed(): T[] {
     const out: T[] = __intrinsic_array_with_capacity(this.length);
     let i = this.length;
@@ -263,8 +277,10 @@ extend<T> Array<T> {
     return out;
   }
 
-  // `splice(start, deleteCount, ...items)` on a copy: the array with the elements removed and
-  // `items` inserted.
+  /**
+   * `splice(start, deleteCount, ...items)` on a copy: the array with the elements removed and
+   * `items` inserted.
+   */
   toSpliced(start: i64, deleteCount: i64 = 9223372036854775807, ...items: T[]): T[] {
     const len = this.length;
     const lo = clampPosition(start, len);
@@ -283,8 +299,10 @@ extend<T> Array<T> {
     return out;
   }
 
-  // A copy with `value` at `index` (negative counts from the end). Panics like JS's RangeError
-  // when `index` is out of range.
+  /**
+   * A copy with `value` at `index` (negative counts from the end). Panics like JS's RangeError
+   * when `index` is out of range.
+   */
   with(index: i64, value: T): T[] {
     const i = index < 0 ? index + (this.length as i64) : index;
     if (i < 0 || i >= (this.length as i64)) {
@@ -299,8 +317,10 @@ extend<T> Array<T> {
     return this.length == 0;
   }
 
-  // `[index, element]` pairs (see header). JS returns an iterator; an array
-  // serves the same `for (const [i, x] of xs.entries())` loops.
+  /**
+   * `[index, element]` pairs (see header). JS returns an iterator; an array
+   * serves the same `for (const [i, x] of xs.entries())` loops.
+   */
   entries(): [usize, T][] {
     const out: [usize, T][] = __intrinsic_array_with_capacity(this.length);
     for (let i: usize = 0; i < this.length; i++) {
@@ -309,10 +329,12 @@ extend<T> Array<T> {
     return out;
   }
 
-  // `join` for element types without their own (string enums, literal unions, objects): each
-  // element as a template literal shows it (`${x}`; for objects that is the `console.log`
-  // form, where JS writes `[object Object]`). Strings, numbers and bools have exact ones below;
-  // arrays of arrays and of nullable elements have JS's (one level deep) in array_nested.vlt.
+  /**
+   * `join` for element types without their own (string enums, literal unions, objects): each
+   * element as a template literal shows it (`${x}`; for objects that is the `console.log`
+   * form, where JS writes `[object Object]`). Strings, numbers and bools have exact ones below;
+   * arrays of arrays and of nullable elements have JS's (one level deep) in array_nested.vlt.
+   */
   join(sep: string = ","): string {
     let s = "";
     for (let i: usize = 0; i < this.length; i++) {
@@ -328,16 +350,20 @@ extend<T> Array<T> {
 declare function velt_rt_str_join(parts: string[], sep: string): string;
 
 extend Array<string> {
-  // Joins with `sep`: the runtime sums the lengths, then copies every piece once into a string
-  // of exactly that size.
+  /**
+   * Joins with `sep`: the runtime sums the lengths, then copies every piece once into a string
+   * of exactly that size.
+   */
   join(sep: string = ","): string {
     return velt_rt_str_join(this, sep);
   }
 }
 
-// `join` on numbers and booleans: each element is converted like `String(x)` (the same text
-// `console.log` prints), then joined as strings. One `extend` per element type, since a generic
-// `T` has no `toString`.
+/**
+ * `join` on numbers and booleans: each element is converted like `String(x)` (the same text
+ * `console.log` prints), then joined as strings. One `extend` per element type, since a generic
+ * `T` has no `toString`.
+ */
 extend Array<i8> {
   join(sep: string = ","): string {
     return this.map((x) => x.toString()).join(sep);
@@ -426,8 +452,10 @@ function clampPosition(pos: i64, len: usize): usize {
   return pos > n ? len : pos as usize;
 }
 
-// `new Array<T>(n).fill(v)` (the compiler rewrites it to this, `sema` `array_ctor`): `n` copies
-// of `v` in one allocation.
+/**
+ * `new Array<T>(n).fill(v)` (the compiler rewrites it to this, `sema` `array_ctor`): `n` copies
+ * of `v` in one allocation.
+ */
 export function __arrayFilled<T>(n: i64, v: T): T[] {
   const len: usize = n > 0 ? n as usize : 0;
   const out: T[] = __intrinsic_array_with_capacity(len);
@@ -437,7 +465,7 @@ export function __arrayFilled<T>(n: i64, v: T): T[] {
   return out;
 }
 
-// `Array.from({ length: n }, (_, i) => f(i))` (rewritten to this): `f(i)` for each index.
+/** `Array.from({ length: n }, (_, i) => f(i))` (rewritten to this): `f(i)` for each index. */
 export function __arrayFromLength<U>(n: i64, f: (i: i64) => U): U[] {
   const out: U[] = __intrinsic_array_with_capacity(n > 0 ? n as usize : 0);
   for (let i = 0; i < n; i++) {

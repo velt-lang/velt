@@ -6,19 +6,21 @@
 // so elements may be anything a map key may be: ints, bool, string, Copy structs. `add` takes
 // ownership of the element; `values()` and the algebra results hold clones; `forEach` borrows.
 
-// An insertion-ordered set of unique values.
+/** An insertion-ordered set of unique values. */
 export class Set<T> implements Iterable<T> {
   private items: Map<T, bool> = new Map<T, bool>();
 
-  // A set holding each distinct element of `values` (like JS `new Set(values)`), in
-  // first-occurrence order. Leaves `values` as it is; the set shares the elements, like JS.
+  /**
+   * A set holding each distinct element of `values` (like JS `new Set(values)`), in
+   * first-occurrence order. Leaves `values` as it is; the set shares the elements, like JS.
+   */
   constructor(values: T[] = []) {
     for (const v of values) {
       this.items.set(v, true);
     }
   }
 
-  // A set holding each distinct element of `xs` (clones), in first-occurrence order.
+  /** A set holding each distinct element of `xs` (clones), in first-occurrence order. */
   static from(xs: T[]): Set<T> {
     const s = new Set<T>();
     for (let i: usize = 0; i < xs.length; i++) {
@@ -27,54 +29,54 @@ export class Set<T> implements Iterable<T> {
     return s;
   }
 
-  // Number of elements.
+  /** Number of elements. */
   get size(): usize {
     return this.items.size;
   }
 
-  // Inserts `value`; a value already present keeps its position (the new copy is dropped).
+  /** Inserts `value`; a value already present keeps its position (the new copy is dropped). */
   add(value: T) {
     this.items.set(value, true);
   }
 
-  // Whether `value` is in the set.
+  /** Whether `value` is in the set. */
   has(value: T): bool {
     return this.items.has(value);
   }
 
-  // Removes `value`; returns whether it was present.
+  /** Removes `value`; returns whether it was present. */
   delete(value: T): bool {
     return this.items.delete(value);
   }
 
-  // Removes every element.
+  /** Removes every element. */
   clear() {
     this.items.clear();
   }
 
-  // Whether the set has no elements.
+  /** Whether the set has no elements. */
   isEmpty(): bool {
     return this.items.size == 0;
   }
 
-  // Clones of the elements in insertion order (`for (const x of s.values())`).
+  /** Clones of the elements in insertion order (`for (const x of s.values())`). */
   values(): T[] {
     return this.items.keys();
   }
 
-  // An iterator over the elements when it is made (`values()`), in insertion order.
+  /** An iterator over the elements when it is made (`values()`), in insertion order. */
   [Symbol.iterator](): Iterator<T> {
     return new ArrayIterator<T>(this.values());
   }
 
-  // Visits the elements in insertion order, borrowing them.
+  /** Visits the elements in insertion order, borrowing them. */
   forEach<E>(f: (value: T) => void throws E) throws E {
     this.items.forEach((_present, key) => {
       f(key);
     });
   }
 
-  // Elements of this set, then those of `other` not in it.
+  /** Elements of this set, then those of `other` not in it. */
   union(other: Set<T>): Set<T> {
     const out = this.clone();
     other.forEach((x) => {
@@ -85,7 +87,7 @@ export class Set<T> implements Iterable<T> {
     return out;
   }
 
-  // Elements of this set that are also in `other` (in this set's order).
+  /** Elements of this set that are also in `other` (in this set's order). */
   intersection(other: Set<T>): Set<T> {
     const out = new Set<T>();
     this.forEach((x) => {
@@ -96,7 +98,7 @@ export class Set<T> implements Iterable<T> {
     return out;
   }
 
-  // Elements of this set that are not in `other`.
+  /** Elements of this set that are not in `other`. */
   difference(other: Set<T>): Set<T> {
     const out = new Set<T>();
     this.forEach((x) => {
@@ -107,7 +109,7 @@ export class Set<T> implements Iterable<T> {
     return out;
   }
 
-  // Elements in exactly one of the two sets (this set's first, then `other`'s).
+  /** Elements in exactly one of the two sets (this set's first, then `other`'s). */
   symmetricDifference(other: Set<T>): Set<T> {
     const out = this.difference(other);
     other.forEach((x) => {
@@ -118,7 +120,7 @@ export class Set<T> implements Iterable<T> {
     return out;
   }
 
-  // Whether every element of this set is in `other`.
+  /** Whether every element of this set is in `other`. */
   isSubsetOf(other: Set<T>): bool {
     if (this.size > other.size) {
       return false;
@@ -130,12 +132,12 @@ export class Set<T> implements Iterable<T> {
     return all;
   }
 
-  // Whether every element of `other` is in this set.
+  /** Whether every element of `other` is in this set. */
   isSupersetOf(other: Set<T>): bool {
     return other.isSubsetOf(this);
   }
 
-  // Whether the sets share no element.
+  /** Whether the sets share no element. */
   isDisjointFrom(other: Set<T>): bool {
     let none = true;
     this.forEach((x) => {

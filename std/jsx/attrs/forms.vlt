@@ -1,7 +1,7 @@
 // std/jsx/attrs/forms: attribute types of forms, buttons and inputs
 // (internal; the global attributes are repeated from attrs/global.vlt, see there).
 
-// `<button>`.
+/** `<button>`. */
 export type ButtonAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -51,7 +51,7 @@ export type ButtonAttrs = {
   value?: string | i64 | f64;
 };
 
-// `<fieldset>`.
+/** `<fieldset>`. */
 export type FieldsetAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -90,7 +90,7 @@ export type FieldsetAttrs = {
   name?: string;
 };
 
-// `<form>` (`accept-charset` is written as is: hyphenated names are not checked).
+/** `<form>` (`accept-charset` is written as is: hyphenated names are not checked). */
 export type FormAttrs = {
   accesskey?: string;
   autocapitalize?: string;
@@ -134,7 +134,7 @@ export type FormAttrs = {
   target?: string;
 };
 
-// `<input>`.
+/** `<input>`. */
 export type InputAttrs = {
   accesskey?: string;
   autocapitalize?: string;

@@ -4,7 +4,7 @@ A Velt library: text helpers (`slugify`, `truncate`, `WordCounter`).
 
 ```sh
 velt test                # run tests/*.test.vlt
-velt doc                 # HTML API docs from the /// comments -> target/doc/index.html
+velt doc                 # HTML API docs from the /** */ comments -> target/doc/index.html
 velt fmt
 velt publish             # to the registry ($VELT_REGISTRY, default ~/.velt/registry)
 ```

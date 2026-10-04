@@ -10,8 +10,10 @@ import type { AttrValue, Child, Text } from "velt:jsx/node";
 import { escapeText, renderAttr } from "velt:jsx/escape";
 import { isVoidElement } from "velt:jsx/void_elements";
 
-// An intrinsic element `<tag names[i]=values[i]…>children</tag>`. `names` are compile-time
-// attribute names; children of a void element (`<br>`) are dropped. `key` is not rendered.
+/**
+ * An intrinsic element `<tag names[i]=values[i]…>children</tag>`. `names` are compile-time
+ * attribute names; children of a void element (`<br>`) are dropped. `key` is not rendered.
+ */
 export function jsx(
   tag: string,
   names: string[],
@@ -37,7 +39,7 @@ export function jsx(
   return node;
 }
 
-// `<>children</>`: the children's markup, nothing around it.
+/** `<>children</>`: the children's markup, nothing around it. */
 export function Fragment(children: Child[], key: string | null): Element {
   const inner = childrenHtml(children);
   if (inner != null) {
@@ -48,10 +50,12 @@ export function Fragment(children: Child[], key: string | null): Element {
   return node;
 }
 
-// `<Card …/>`: std/jsx has no context to set up, so it calls the component at once. What the
-// component throws does not propagate from here: the node then fails when it is rendered, with
-// a `RenderError` naming the component, like an async component's rejection. `name`
-// (`"<module path>#<Name>"`) is for providers that emit hydration markers; std/jsx renders none.
+/**
+ * `<Card …/>`: std/jsx has no context to set up, so it calls the component at once. What the
+ * component throws does not propagate from here: the node then fails when it is rendered, with
+ * a `RenderError` naming the component, like an async component's rejection. `name`
+ * (`"<module path>#<Name>"`) is for providers that emit hydration markers; std/jsx renders none.
+ */
 export function jsxComponent<P, E>(
   component: (props: P) => Element throws E,
   props: P,
@@ -69,9 +73,11 @@ export function jsxComponent<P, E>(
   }
 }
 
-// `<Posts …/>` for an async component: calls it now, so siblings load concurrently, and keeps
-// its promise in the node; rendering awaits it in document order, and a rejection surfaces then
-// as a `RenderError` naming the component.
+/**
+ * `<Posts …/>` for an async component: calls it now, so siblings load concurrently, and keeps
+ * its promise in the node; rendering awaits it in document order, and a rejection surfaces then
+ * as a `RenderError` naming the component.
+ */
 export function jsxAsyncComponent<P, E>(
   component: (props: P) => Promise<Element, E>,
   props: P,
@@ -95,8 +101,10 @@ async function settle<E>(p: Promise<Element, E>, name: string): Promise<Element,
   }
 }
 
-// A precompiled subtree: `strings[0] slots[0] strings[1] … strings[n]`. `strings` are the
-// compiler's markup, text and attributes already folded in (one more than `slots`).
+/**
+ * A precompiled subtree: `strings[0] slots[0] strings[1] … strings[n]`. `strings` are the
+ * compiler's markup, text and attributes already folded in (one more than `slots`).
+ */
 export function jsxTemplate(strings: string[], slots: Element[]): Element {
   if (slots.length == 0) {
     // The common case (a subtree without components or fragments): one string, one node.
@@ -156,8 +164,10 @@ function templateWithParts(strings: string[], slots: Element[]): Element {
   return node;
 }
 
-// A dynamic text child of a template, escaped: numbers render like `${n}`, `true`, `false` and
-// `null` render nothing. The compiler folds the result into the template's strings.
+/**
+ * A dynamic text child of a template, escaped: numbers render like `${n}`, `true`, `false` and
+ * `null` render nothing. The compiler folds the result into the template's strings.
+ */
 export function jsxEscape(value: Text): string {
   if (value == null || typeof value === "boolean") {
     return "";
@@ -168,14 +178,18 @@ export function jsxEscape(value: Text): string {
   return formatNumber(value);
 }
 
-// A dynamic attribute of a template: ` name="value"`, ` name` or nothing (folded into the
-// template's strings like `jsxEscape`).
+/**
+ * A dynamic attribute of a template: ` name="value"`, ` name` or nothing (folded into the
+ * template's strings like `jsxEscape`).
+ */
 export function jsxAttr(name: string, value: AttrValue): string {
   return renderAttr(name, value);
 }
 
-// `html` inserted as it is, without escaping: the only way to emit markup from a string. Never
-// pass it text from users.
+/**
+ * `html` inserted as it is, without escaping: the only way to emit markup from a string. Never
+ * pass it text from users.
+ */
 export function raw(html: string): Element {
   return new Element(html);
 }
