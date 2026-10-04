@@ -109,7 +109,9 @@ impl<M: Module> Translator<'_, '_, M> {
         }
         let inline = match self.int32_extern(callee, &params, ret) {
             // ToInt32(x); the slow path calls the runtime with the same arguments.
-            Some("velt_rt_math_to_int32") => Some(self.inline_to_int32(callee, values[0], &values)?),
+            Some("velt_rt_math_to_int32") => {
+                Some(self.inline_to_int32(callee, values[0], &values)?)
+            }
             // ToInt32(a + x), always through the double sum (`velt_rt_math_add_int32`).
             Some("velt_rt_math_add_int32") => {
                 let af = self.builder.ins().fcvt_from_sint(ir::types::F64, values[0]);
@@ -189,16 +191,14 @@ impl<M: Module> Translator<'_, '_, M> {
         }
         let x = args[0];
         let ins = self.builder.ins();
-        Some(
-            match symbol {
-                "velt_rt_math_sqrt" => ins.sqrt(x),
-                "velt_rt_math_floor" => ins.floor(x),
-                "velt_rt_math_ceil" => ins.ceil(x),
-                "velt_rt_math_trunc" => ins.trunc(x),
-                "velt_rt_math_fabs" => ins.fabs(x),
-                _ => return None,
-            },
-        )
+        Some(match symbol {
+            "velt_rt_math_sqrt" => ins.sqrt(x),
+            "velt_rt_math_floor" => ins.floor(x),
+            "velt_rt_math_ceil" => ins.ceil(x),
+            "velt_rt_math_trunc" => ins.trunc(x),
+            "velt_rt_math_fabs" => ins.fabs(x),
+            _ => return None,
+        })
     }
 
     /// JS ToInt32 of `x` (`velt_rt_math_to_int32`): for |x| < 2^63 a conversion to `i64` and a

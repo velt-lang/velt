@@ -163,7 +163,10 @@ fn narrow(func: &mut Function) -> bool {
         rewrite_stmts(func, bi, |s, out| match s {
             Stmt::Assign(p, rv) if p.proj.is_empty() && map[p.local.0 as usize].is_some() => {
                 let to = map[p.local.0 as usize].unwrap_or(p.local);
-                out.push(Stmt::Assign(Place::local(to), narrowed_def(&rv, &map, &tys)));
+                out.push(Stmt::Assign(
+                    Place::local(to),
+                    narrowed_def(&rv, &map, &tys),
+                ));
             }
             mut s => {
                 stmt_operands_mut(&mut s, &mut |op| {
@@ -182,7 +185,8 @@ fn narrow(func: &mut Function) -> bool {
         }
         func.blocks[bi].term = term;
     }
-    func.locals.extend(temps.into_iter().map(|ty| LocalDecl { ty, name: None }));
+    func.locals
+        .extend(temps.into_iter().map(|ty| LocalDecl { ty, name: None }));
     true
 }
 
@@ -250,7 +254,13 @@ fn int32_sums(externs: &[ExternFn], func: &mut Function) -> bool {
     changed
 }
 
-type Sum = (BinOp, Operand, Operand, Option<Place>, velt_vir::vir::BlockId);
+type Sum = (
+    BinOp,
+    Operand,
+    Operand,
+    Option<Place>,
+    velt_vir::vir::BlockId,
+);
 
 fn int32_sum(externs: &[ExternFn], func: &Function, bi: usize) -> Option<Sum> {
     let block = &func.blocks[bi];
@@ -289,10 +299,14 @@ fn last_def<'s>(stmts: &'s [Stmt], p: &Place, end: usize) -> Option<(usize, &'s 
     if !p.proj.is_empty() {
         return None;
     }
-    stmts[..end].iter().enumerate().rev().find_map(|(i, s)| match s {
-        Stmt::Assign(d, rv) if d.local == p.local => d.proj.is_empty().then_some((i, rv)),
-        _ => None,
-    })
+    stmts[..end]
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(i, s)| match s {
+            Stmt::Assign(d, rv) if d.local == p.local => d.proj.is_empty().then_some((i, rv)),
+            _ => None,
+        })
 }
 
 fn assigned(stmts: &[Stmt], l: Local) -> bool {
@@ -305,7 +319,9 @@ fn assigned(stmts: &[Stmt], l: Local) -> bool {
 /// constant, or a local last set (before `at`, in this block) by converting an `i32`.
 fn int32_operand(func: &Function, stmts: &[Stmt], x: &Operand, at: usize) -> Option<Operand> {
     match x {
-        Operand::Const(c, ty) => int32_const(c, *ty).map(|v| Operand::Const(Const::Int(v), Ty::I32)),
+        Operand::Const(c, ty) => {
+            int32_const(c, *ty).map(|v| Operand::Const(Const::Int(v), Ty::I32))
+        }
         Operand::Copy(p) => {
             let (j, rv) = last_def(stmts, p, at)?;
             let Rvalue::Cast(src @ Operand::Copy(z), Ty::F64) = rv else {
@@ -345,7 +361,10 @@ fn converted_sums(externs: &[ExternFn], func: &mut Function) -> bool {
             new_local(func, Ty::I32),
         );
         let call = std::mem::replace(&mut func.blocks[bi].term, Terminator::Unreachable);
-        let mut fast_stmts = vec![Stmt::Assign(Place::local(c32), Rvalue::Cast(c.clone(), Ty::I32))];
+        let mut fast_stmts = vec![Stmt::Assign(
+            Place::local(c32),
+            Rvalue::Cast(c.clone(), Ty::I32),
+        )];
         if let Some(d) = dest {
             fast_stmts.push(Stmt::Assign(
                 d,

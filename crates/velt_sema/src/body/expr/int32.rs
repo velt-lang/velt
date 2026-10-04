@@ -296,7 +296,8 @@ impl FnCx<'_, '_> {
     fn int_sum_to_int32(&mut self, h: hir::Expr) -> hir::Expr {
         let (f64_, i64_, i32_, span) = (self.cx.ty.f64, self.cx.ty.i64, self.cx.ty.i32, h.span);
         let sub = matches!(h.kind, H::Binary { op: BinOp::Sub, .. });
-        let int_left = matches!(&h.kind, H::Binary { lhs, .. } if self.converted_int(lhs).is_some());
+        let int_left =
+            matches!(&h.kind, H::Binary { lhs, .. } if self.converted_int(lhs).is_some());
         let (l, r) = self.split_binary(h);
         let (int_side, float_side) = if int_left { (l, r) } else { (r, l) };
         let H::Cast(a) = int_side.kind else {
@@ -341,9 +342,7 @@ impl FnCx<'_, '_> {
             return false;
         }
         match &h.kind {
-            H::Binary {
-                op: BinOp::Mul, ..
-            } => true,
+            H::Binary { op: BinOp::Mul, .. } => true,
             H::Binary {
                 op: BinOp::Add | BinOp::Sub,
                 lhs,

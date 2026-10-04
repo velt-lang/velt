@@ -41,7 +41,9 @@ impl Ctx<'_> {
         let found = match self.prelude.get(name) {
             Some(it) => Some(*it),
             None => (0..self.modules.len())
-                .filter(|&m| self.scopes[m].is_std && self.modules[m].path.starts_with("std/prelude/"))
+                .filter(|&m| {
+                    self.scopes[m].is_std && self.modules[m].path.starts_with("std/prelude/")
+                })
                 .find_map(|m| self.scopes[m].items.get(name).copied()),
         };
         match found {

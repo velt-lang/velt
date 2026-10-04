@@ -47,7 +47,8 @@ slow:
 /// JS `(a * b) | 0` on int32 numbers (`velt_rt_math_mul_int32`): the exact `i64` product; within
 /// 2^53 its low 32 bits, past it converted to a double and back first, which rounds it exactly
 /// like the double multiply (|p| < 2^62, so the conversions are in range).
-const MUL_INT32: &str = "define internal i32 @velt.mul_int32(i32 %a, i32 %b) alwaysinline nounwind {
+const MUL_INT32: &str =
+    "define internal i32 @velt.mul_int32(i32 %a, i32 %b) alwaysinline nounwind {
   %x = sext i32 %a to i64
   %y = sext i32 %b to i64
   %p = mul nsw i64 %x, %y
@@ -67,7 +68,8 @@ round:
 /// JS `(a + x) | 0` for an int32 `a` and a double `x` (`velt_rt_math_add_int32`): when `x` is a
 /// whole number of at most 2^52 the double sum is exact, so it is the 32-bit sum of `a` and `x`'s
 /// low bits; otherwise the doubles are added and converted (`@velt.to_int32`).
-const ADD_INT32: &str = "define internal i32 @velt.add_int32(i32 %a, double %x) alwaysinline nounwind {
+const ADD_INT32: &str =
+    "define internal i32 @velt.add_int32(i32 %a, double %x) alwaysinline nounwind {
   %ax = call double @llvm.fabs.f64(double %x)
   %in = fcmp ole double %ax, 0x4330000000000000
   br i1 %in, label %conv, label %slow, !prof !{!\"branch_weights\", i32 2000, i32 1}
@@ -103,7 +105,12 @@ define internal i32 @velt.clz32(i32 %x) alwaysinline nounwind {
 pub(crate) fn inline_helper(symbol: &str) -> Option<InlineHelper> {
     Some(match symbol {
         "velt_rt_math_to_int32" => ("@velt.to_int32", &[TO_INT32], &[Ty::F64], Ty::I32),
-        "velt_rt_math_mul_int32" => ("@velt.mul_int32", &[MUL_INT32], &[Ty::I32, Ty::I32], Ty::I32),
+        "velt_rt_math_mul_int32" => (
+            "@velt.mul_int32",
+            &[MUL_INT32],
+            &[Ty::I32, Ty::I32],
+            Ty::I32,
+        ),
         "velt_rt_math_add_int32" => (
             "@velt.add_int32",
             &[FABS, ADD_INT32, TO_INT32],
@@ -132,12 +139,18 @@ pub(crate) enum Effects {
 /// Memory effects of the runtime function `symbol`.
 pub(crate) fn effects(symbol: &str) -> Effects {
     match symbol {
-        "velt_rt_math_sqrt" | "velt_rt_math_floor" | "velt_rt_math_ceil" | "velt_rt_math_round"
-        | "velt_rt_math_trunc" | "velt_rt_math_fabs" | "velt_rt_pow_f64" | "velt_rt_pow_i64"
-        | "velt_rt_math_to_int32" | "velt_rt_math_clz32" | "velt_rt_math_mul_int32"
-        | "velt_rt_math_add_int32" => {
-            Effects::None
-        }
+        "velt_rt_math_sqrt"
+        | "velt_rt_math_floor"
+        | "velt_rt_math_ceil"
+        | "velt_rt_math_round"
+        | "velt_rt_math_trunc"
+        | "velt_rt_math_fabs"
+        | "velt_rt_pow_f64"
+        | "velt_rt_pow_i64"
+        | "velt_rt_math_to_int32"
+        | "velt_rt_math_clz32"
+        | "velt_rt_math_mul_int32"
+        | "velt_rt_math_add_int32" => Effects::None,
         "velt_rt_str_cmp"
         | "velt_rt_str_eq"
         | "velt_rt_str_hash"

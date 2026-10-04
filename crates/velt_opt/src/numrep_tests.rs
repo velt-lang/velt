@@ -41,10 +41,18 @@ fn hash_program() -> Program {
     );
     let (out, a32) = (fb.local(Ty::F64), fb.local(Ty::I32));
     let (entry, head, body) = (fb.block(), fb.block(), fb.block());
-    fb.assign(entry, s32, bin(BinOp::Add, copy_local(seed), int(1, Ty::I32)));
+    fb.assign(
+        entry,
+        s32,
+        bin(BinOp::Add, copy_local(seed), int(1, Ty::I32)),
+    );
     fb.assign(entry, w64, Rvalue::Cast(copy_local(s32), Ty::I64));
     fb.assign(entry, wf, Rvalue::Cast(copy_local(w64), Ty::F64));
-    fb.assign(entry, state, bin(BinOp::Add, float(0.0, Ty::F64), copy_local(wf)));
+    fb.assign(
+        entry,
+        state,
+        bin(BinOp::Add, float(0.0, Ty::F64), copy_local(wf)),
+    );
     fb.assign(entry, acc, Rvalue::Use(float(0.0, Ty::F64)));
     fb.assign(entry, i, Rvalue::Use(int(0, Ty::I64)));
     fb.goto(entry, head);
@@ -52,18 +60,40 @@ fn hash_program() -> Program {
     let exit = fb.block();
     fb.branch(head, c, body, exit);
     // state = ToInt32(state + acc + 7)
-    fb.assign(body, sum, bin(BinOp::Add, copy_local(state), copy_local(acc)));
-    fb.assign(body, sum, bin(BinOp::Add, copy_local(sum), float(7.0, Ty::F64)));
-    let b2 = fb.call(body, Callee::Extern(to_int32), vec![copy_local(sum)], Some(r32));
+    fb.assign(
+        body,
+        sum,
+        bin(BinOp::Add, copy_local(state), copy_local(acc)),
+    );
+    fb.assign(
+        body,
+        sum,
+        bin(BinOp::Add, copy_local(sum), float(7.0, Ty::F64)),
+    );
+    let b2 = fb.call(
+        body,
+        Callee::Extern(to_int32),
+        vec![copy_local(sum)],
+        Some(r32),
+    );
     fb.assign(b2, rw, Rvalue::Cast(copy_local(r32), Ty::F64));
     fb.assign(b2, state, Rvalue::Use(copy_local(rw)));
     // acc = ToInt32(acc + state)
     fb.assign(b2, sum, bin(BinOp::Add, copy_local(acc), copy_local(state)));
-    let b3 = fb.call(b2, Callee::Extern(to_int32), vec![copy_local(sum)], Some(a32));
+    let b3 = fb.call(
+        b2,
+        Callee::Extern(to_int32),
+        vec![copy_local(sum)],
+        Some(a32),
+    );
     fb.assign(b3, acc, Rvalue::Cast(copy_local(a32), Ty::F64));
     fb.assign(b3, i, bin(BinOp::Add, copy_local(i), int(1, Ty::I64)));
     fb.goto(b3, head);
-    fb.assign(exit, out, bin(BinOp::Add, copy_local(acc), copy_local(state)));
+    fb.assign(
+        exit,
+        out,
+        bin(BinOp::Add, copy_local(acc), copy_local(state)),
+    );
     fb.ret(exit, copy_local(out));
     pb.add(fb.finish());
     pb.finish()
@@ -103,7 +133,12 @@ fn int32_locals_become_i32_with_the_same_results() {
             .any(|s| matches!(s, Stmt::Assign(d, _) if d.local.0 as usize == l));
         assert!(!assigned, "local {l} is still assigned");
     }
-    for (n, seed) in [(0u64, 5u64), (1, 7), (50, 0x7fff_fffe), (1000, (-3i32) as u32 as u64)] {
+    for (n, seed) in [
+        (0u64, 5u64),
+        (1, 7),
+        (50, 0x7fff_fffe),
+        (1000, (-3i32) as u32 as u64),
+    ] {
         assert_eq!(call(&p, &[n, seed]), call(&q, &[n, seed]), "f({n}, {seed})");
     }
 }
@@ -139,7 +174,10 @@ fn negative_zero_and_fractions_are_not_int32_constants() {
     assert_eq!(int32_const(&Const::Float(-0.0), Ty::F64), None);
     assert_eq!(int32_const(&Const::Float(0.5), Ty::F64), None);
     assert_eq!(int32_const(&Const::Float(2147483648.0), Ty::F64), None);
-    assert_eq!(int32_const(&Const::Float(-2147483648.0), Ty::F64), Some(-2147483648));
+    assert_eq!(
+        int32_const(&Const::Float(-2147483648.0), Ty::F64),
+        Some(-2147483648)
+    );
     assert_eq!(int32_const(&Const::Int(1 << 40), Ty::I64), None);
 }
 
@@ -152,7 +190,12 @@ fn converted_sum_program() -> Program {
     let (x, r) = (fb.local(Ty::F64), fb.local(Ty::I32));
     let b = fb.block();
     fb.assign(b, x, Rvalue::Cast(copy_local(c), Ty::F64));
-    let next = fb.call(b, Callee::Extern(add), vec![copy_local(a), copy_local(x)], Some(r));
+    let next = fb.call(
+        b,
+        Callee::Extern(add),
+        vec![copy_local(a), copy_local(x)],
+        Some(r),
+    );
     fb.ret(next, copy_local(r));
     pb.add(fb.finish());
     pb.finish()
@@ -166,7 +209,11 @@ impl Host for AddHost {
         assert_eq!(ext.symbol, ADD_INT32);
         self.0 += 1;
         let s = args[0] as u32 as i32 as f64 + f64::from_bits(args[1]);
-        let v = if s.is_finite() && s.abs() < 9.2e18 { s as i64 as i32 } else { 0 };
+        let v = if s.is_finite() && s.abs() < 9.2e18 {
+            s as i64 as i32
+        } else {
+            0
+        };
         Ok(v as u32 as u64)
     }
 }
@@ -209,7 +256,12 @@ fn counters_converted_in_another_block_add_as_integers() {
     let (b0, b1) = (fb.block(), fb.block());
     fb.assign(b0, x, Rvalue::Cast(copy_local(c), Ty::F64));
     fb.goto(b0, b1);
-    let next = fb.call(b1, Callee::Extern(add), vec![copy_local(a), copy_local(x)], Some(r));
+    let next = fb.call(
+        b1,
+        Callee::Extern(add),
+        vec![copy_local(a), copy_local(x)],
+        Some(r),
+    );
     fb.ret(next, copy_local(r));
     pb.add(fb.finish());
     let p = pb.finish();
@@ -218,9 +270,15 @@ fn counters_converted_in_another_block_add_as_integers() {
     assert_valid(&q);
     for (a, c) in [(5i32, 7i64), (-9, 1 << 45), (2, (1 << 62) + 3)] {
         let args = [a as u32 as u64, c as u64];
-        let want = Interp::new(&p, AddHost(0)).call_symbol("g", &args).expect("runs");
+        let want = Interp::new(&p, AddHost(0))
+            .call_symbol("g", &args)
+            .expect("runs");
         let mut got = Interp::new(&q, AddHost(0));
-        assert_eq!(got.call_symbol("g", &args).expect("runs"), want, "g({a}, {c})");
+        assert_eq!(
+            got.call_symbol("g", &args).expect("runs"),
+            want,
+            "g({a}, {c})"
+        );
         assert_eq!(got.host.0, u32::from(c > 1 << 52));
     }
 }
