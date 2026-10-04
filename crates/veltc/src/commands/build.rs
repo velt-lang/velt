@@ -10,6 +10,10 @@ use crate::driver::{self, Artifact, BuildError, BuildOptions, Session};
 
 use super::project::Project;
 
+/// Node's `process.argv[1]`: the script `velt run` / `velt test` runs, passed in this
+/// environment variable, which the runtime reads (and removes) once at start-up.
+pub(crate) const SCRIPT_VAR: &str = "VELT_SCRIPT";
+
 /// `velt build`.
 pub fn build_command(args: &BuildArgs) -> ExitCode {
     match build(args) {
@@ -41,8 +45,7 @@ pub fn run_command(args: &BuildArgs, prog_args: &[std::ffi::OsString]) -> ExitCo
         None => {
             let mut cmd = std::process::Command::new(&exe);
             cmd.args(prog_args);
-            // Node's `process.argv[1]`: the script, which the runtime reads once at start-up.
-            cmd.env("VELT_SCRIPT", &script);
+            cmd.env(SCRIPT_VAR, &script);
             Ok(cmd)
         }
     };
