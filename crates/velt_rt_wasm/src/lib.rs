@@ -66,5 +66,7 @@ pub mod str_ops;
 #[path = "../../velt_rt/src/strbuf.rs"]
 pub mod strbuf;
 pub mod task;
+#[path = "../../velt_rt/src/transfer_map.rs"]
+pub mod transfer_map;
 
 pub use crate::str::VeltStr;

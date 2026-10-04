@@ -149,7 +149,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.switch_to(shared);
         let cp = self.operand_place(cell.clone(), Ty::Ptr);
         let value = proj(&cp, Proj::Deref(vt));
-        let new = self.shared_copy(cell.clone(), ty, |lw, _| {
+        let new = self.shared_copy(cell.clone(), ty, false, |lw, _| {
             let fresh = lw.counted_alloc(vt);
             let fp = lw.operand_place(fresh.clone(), Ty::Ptr);
             let copy = lw.thread_copy(Operand::Copy(value.clone()), ty);

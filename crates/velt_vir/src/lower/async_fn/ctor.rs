@@ -150,7 +150,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             // leaves this thread (glue/transfer.rs), so the generators of one closure may share
             // them.
             PassMode::Owned if f.is_generator => self.share_value(Operand::Copy(slot), ty),
-            PassMode::Owned => self.clone_value(Operand::Copy(slot), ty),
+            PassMode::Owned => self.clone_keeping_identity(Operand::Copy(slot), ty),
         })
     }
 
