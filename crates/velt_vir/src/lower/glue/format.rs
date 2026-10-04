@@ -184,6 +184,7 @@ impl FnLower<'_, '_> {
             TyKind::FnPtr { .. } | TyKind::Closure(_) => {
                 self.push_text(buf, "[Function (anonymous)]")
             }
+            TyKind::Promise(..) => self.format_promise(buf, place, ty),
             TyKind::Dyn(..) => {
                 let vt = Operand::Copy(proj(place, Proj::Field(1)));
                 let f = self.dispatch(vt, SLOT_FORMAT);

@@ -160,6 +160,24 @@ pub unsafe extern "C" fn velt_rt_futs_handled(
     }
 }
 
+/// What `console.log` shows of promise `f`: 1 when its result is in the slot, 0 while it is
+/// pending (also for futures that only run when awaited), as in velt_rt.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
+    if boxed::is_lazy(f) {
+        return ((*trailer(f)).live == 0) as u8;
+    }
+    let started = std::ptr::fn_addr_eq(
+        (*f).poll.0,
+        started_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32,
+    );
+    if !started {
+        return 0;
+    }
+    let s = shared(f).borrow();
+    (s.done && !s.delivered) as u8
+}
+
 unsafe extern "C" fn started_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     let mut s = shared(f).borrow_mut();
     if s.done {
