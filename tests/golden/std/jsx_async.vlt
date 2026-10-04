@@ -3,34 +3,54 @@
 // renderer awaits them in document order, components nest (an async component returning a tree
 // with async components), and a rejection or a sync component's throw surfaces from rendering as
 // a `RenderError` naming the component.
+//
+// The order in which components finish is decided by channels, not timers: a post waits for
+// `wait` (when given) before finishing and then sends its id to `notify`. A later sibling that
+// finishes first is one the earlier sibling waits for, so rendering in document order still
+// works only because siblings run concurrently.
 import { jsx, Fragment, jsxAsyncComponent, jsxComponent, jsxTemplate } from "velt:jsx/jsx-runtime";
 import { Element, renderToString, renderToStringSync } from "velt:jsx";
+import { channel, Channel } from "velt:channel";
 
 class NotFound extends Error {}
 
-type PostProps = { id: i64; delay: i64 };
+type PostProps = { id: i64; wait: Channel<i64> | null; notify: Channel<i64> | null };
 
 async function Post(props: PostProps): Promise<Element> throws NotFound {
   console.log(`start post ${props.id}`);
-  await sleep(props.delay);
+  const wait = props.wait;
+  if (wait != null) {
+    await wait.receive();
+    wait.close();
+  } else {
+    await sleep(1);
+  }
   console.log(`end post ${props.id}`);
+  const notify = props.notify;
+  if (notify != null) {
+    notify.trySend(props.id);
+  }
   if (props.id < 0) {
     throw new NotFound(`no post ${props.id}`);
   }
   return jsx("article", ["id"], [`post-${props.id}`], [`Post #${props.id}`], null);
 }
 
-// An async component whose output contains more async components (the later ones load faster).
+function post(id: i64, wait: Channel<i64> | null, notify: Channel<i64> | null): Element {
+  return jsxAsyncComponent(
+    (p: PostProps) => Post(p),
+    { id: id, wait: wait, notify: notify },
+    null,
+    "jsx_async#Post",
+  );
+}
+
+// An async component whose output contains more async components (the later one finishes
+// first: the first waits for it).
 async function Feed(props: { ids: i64[] }): Promise<Element> {
   await sleep(5);
-  const posts = props.ids.map(
-    (id) => jsxAsyncComponent(
-      (p: PostProps) => Post(p),
-      { id: id, delay: (5 - id) * 20 },
-      `${id}`,
-      "jsx_async#Post",
-    ),
-  );
+  const second = channel<i64>();
+  const posts = [post(props.ids[0], second, null), post(props.ids[1], null, second)];
   return jsx("section", [], [], [posts], null);
 }
 
@@ -43,32 +63,14 @@ function Layout(props: { title: string }): Element {
   return jsx("h1", [], [], [props.title], null);
 }
 
-function page(): Element {
-  // The slow post comes first in the document but finishes last.
+// `go` lets the second post finish; the first waits for the second.
+function page(go: Channel<i64>): Element {
+  // The first post in the document finishes last.
+  const second = channel<i64>();
   return Fragment(
     [
       jsxComponent(Layout, { title: "Posts" }, null, "jsx_async#Layout"),
-      jsx(
-        "div",
-        [],
-        [],
-        [
-          jsxAsyncComponent(
-            (p: PostProps) => Post(p),
-            { id: 1, delay: 60 },
-            null,
-            "jsx_async#Post",
-          ),
-          " | ",
-          jsxAsyncComponent(
-            (p: PostProps) => Post(p),
-            { id: 2, delay: 10 },
-            null,
-            "jsx_async#Post",
-          ),
-        ],
-        null,
-      ),
+      jsx("div", [], [], [post(1, second, null), " | ", post(2, go, second)], null),
       jsx("footer", [], [], ["end"], null),
     ],
     null,
@@ -76,8 +78,10 @@ function page(): Element {
 }
 
 async function main() {
-  const el = page();
+  const go = channel<i64>();
+  const el = page(go);
   console.log("tree built");
+  go.trySend(0);
   console.log(await renderToString(el));
   console.log(
     await renderToString(
@@ -88,19 +92,13 @@ async function main() {
   // as a `Fragment([v], null)` slot.
   const items = [
     jsx("li", [], [], ["a"], null),
-    jsxAsyncComponent((p: PostProps) => Post(p), { id: 6, delay: 1 }, null, "jsx_async#Post"),
+    post(6, null, null),
     jsx("li", [], [], ["b"], null),
   ];
   const list = jsxTemplate(["<ol>", "</ol>"], [Fragment([items], null)]);
   console.log(await renderToString(list));
   try {
-    const broken = jsx(
-      "p",
-      [],
-      [],
-      [jsxAsyncComponent((p: PostProps) => Post(p), { id: -1, delay: 1 }, null, "jsx_async#Post")],
-      null,
-    );
+    const broken = jsx("p", [], [], [post(-1, null, null)], null);
     console.log(await renderToString(broken));
   } catch (e) {
     console.log("RenderError:", e.component, "|", e.message);
@@ -117,16 +115,18 @@ async function main() {
   } catch (e) {
     console.log("RenderError:", e.component, "|", e.message);
   }
+  // Post 5 finishes only when released, after everything else, and `main` waits for it.
+  const release5 = channel<i64>();
+  const done5 = channel<i64>();
   try {
-    console.log(
-      renderToStringSync(
-        jsxAsyncComponent((p: PostProps) => Post(p), { id: 5, delay: 1 }, null, "jsx_async#Post"),
-      ),
-    );
+    console.log(renderToStringSync(post(5, release5, done5)));
   } catch (e) {
     console.log("sync:", e.message);
   }
   // A tree without async components renders the same either way.
   const plain = jsx("p", [], [], ["sync"], null);
   console.log(renderToStringSync(plain), await renderToString(plain));
+  release5.trySend(0);
+  await done5.receive();
+  done5.close();
 }

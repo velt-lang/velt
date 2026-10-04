@@ -1,85 +1,22 @@
-// std/timers: one-shot timers that run a promise later (`setTimeout`, `setImmediate`) and a
-// pull-based interval (`Ticker`, like Go's `time.Ticker` / tokio's `interval`).
-//
-// A timer takes a callback returning the promise to run, like JS: `setTimeout(() => save(doc),
-// 100)` or `setTimeout(async () => { ... }, 10)` (a promise can't be passed: promises start
-// when created). The callback owns what it captures, so it outlives the frame that scheduled
-// it. The task runs as its own spawned task on the multi-threaded runtime; an error it throws is
-// uncaught (the process exits like on an unhandled rejection), so catch inside it.
-// Timers are ordinary compiled Velt tasks built on `sleep`: no code pointer is cached anywhere,
-// so `velt dev` hot reload needs no special handling.
-//
-// An interval can't re-create its promise every tick without a stored closure, so it is pulled:
+// std/timers: timers that run a promise later (`setTimeout`, `setInterval` and their `clear`
+// functions, which are also globals: std/prelude/timers.vlt; `setImmediate`) and a pull-based,
+// drift-free interval (`Ticker`, like Go's `time.Ticker` / tokio's `interval`):
 // `const t = new Ticker(100); while (await t.tick()) { ... }`, or `for await (const n of t)`.
 
 import { AbortController, AbortSignal } from "velt:task";
 
-// Timer state in the shared flag.
-const PENDING: i64 = 0;
-const CLEARED: i64 = 1;
-const STARTED: i64 = 2;
-
-// Handle of a pending `setTimeout` / `setImmediate` task.
-export class Timer {
-  private state: shared<i64>;
-
-  // Wraps the task's state flag (use `setTimeout` to create timers).
-  constructor(state: shared<i64>) {
-    this.state = state;
-  }
-
-  // Cancels the task if it has not started yet (a no-op afterwards, like JS `clearTimeout`).
-  // Dropping the handle does not cancel.
-  clear() {
-    if (this.state.get() == PENDING) {
-      this.state.set(CLEARED);
-    }
-  }
-
-  // Whether `clear()` cancelled the task before it started.
-  get cleared(): bool {
-    return this.state.get() == CLEARED;
-  }
-
-  // Whether the task has started (its delay elapsed and it was not cleared).
-  get started(): bool {
-    return this.state.get() == STARTED;
-  }
-}
-
-// Calls `task` after at least `ms` milliseconds unless the returned timer is cleared first.
-export function setTimeout(task: () => Promise<void>, ms: i64): Timer {
-  const state = shared(PENDING);
-  spawn(fire(ms, task, state.clone()));
-  return new Timer(state);
-}
+// `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval` and `Timer` are globals (the
+// prelude's), also importable from here.
+export { Timer, setTimeout, clearTimeout, setInterval, clearInterval } from "velt:prelude/timers";
 
 // Calls `task` as soon as possible on its own task (after the current task yields).
 export function setImmediate(task: () => Promise<void>): Timer {
   return setTimeout(task, 0);
 }
 
-// Cancels `t` if its task has not started (same as `t.clear()`).
-export function clearTimeout(t: Timer) {
-  t.clear();
-}
-
 // Resolves after `ms` milliseconds (same as the built-in `sleep`).
 export async function delay(ms: i64): Promise<void> {
   await sleep(ms);
-}
-
-async function fire(ms: i64, task: () => Promise<void>, state: shared<i64>): Promise<void> {
-  if (ms > 0) {
-    await sleep(ms);
-  } else {
-    await yieldNow();
-  }
-  if (state.get() != PENDING) {
-    return;
-  }
-  state.set(STARTED);
-  await task();
 }
 
 // Stops a `Ticker` from any task: `const stop = t.stopper(); spawn(later(stop));`.

@@ -1,0 +1,54 @@
+// setTimeout, clearTimeout, setInterval and clearInterval are globals, as in TypeScript: no
+// import. An interval runs until it is cleared (each run here waits for `main` to answer, so
+// the clear comes before the next run is due); clearInterval also cancels a timeout, and
+// clearTimeout an interval, like Node. Events are ordered by channels, not by time.
+
+import { channel, Channel } from "velt:channel";
+
+async function tick(runs: shared<i64>, out: Channel<i64>, ack: Channel<bool>): Promise<void> {
+  runs.add(1);
+  try {
+    await out.send(runs.get());
+    await ack.receive();
+  } catch (e) {
+    console.log("tick failed");
+  }
+}
+
+async function say(out: Channel<i64>, n: i64): Promise<void> {
+  try {
+    await out.send(n);
+  } catch (e) {
+    console.log("say failed");
+  }
+}
+
+async function main() {
+  const out = channel<i64>();
+  const ack = channel<bool>();
+  const runs = shared(0);
+  const counter = runs.clone();
+  const sender = out.clone();
+  const answers = ack.clone();
+  const interval = setInterval(() => tick(counter, sender, answers), 1);
+  for (let i = 1; i <= 3; i++) {
+    const n = await out.receive();
+    if (n == 3) {
+      clearInterval(interval);
+    }
+    await ack.send(true);
+    console.log("interval run", n);
+  }
+  const never = setTimeout(() => say(out, -1), 60000);
+  clearTimeout(never);
+  const alsoNever = setTimeout(() => say(out, -2), 60000);
+  clearInterval(alsoNever);
+  const stopped = setInterval(() => say(out, -3), 60000);
+  clearTimeout(stopped);
+  setTimeout(() => say(out, 100), 0);
+  console.log("timeout sent", await out.receive());
+  await sleep(50);
+  console.log("runs after clearInterval:", runs.get());
+  console.log("cleared:", interval.cleared, never.cleared, alsoNever.cleared, stopped.cleared);
+  console.log("started:", interval.started, never.started);
+}

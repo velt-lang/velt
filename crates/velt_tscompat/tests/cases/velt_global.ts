@@ -32,3 +32,17 @@ export function attempted(s: string): boolean {
   const r = attempt(() => mayThrow(s)); //~ velt-global
   return r instanceof Error;
 }
+
+async function save(): Promise<void> {}
+
+// The timer functions are TypeScript's (the DOM's); the handle's type and members are Velt's.
+export function later(): void {
+  const t = setTimeout(() => save(), 10);
+  clearTimeout(t);
+  const i = setInterval(() => save(), 10);
+  clearInterval(i);
+}
+
+export function cancel(t: Timer): void { //~ velt-global
+  t.clear(); //~ velt-member
+}

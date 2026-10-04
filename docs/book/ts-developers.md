@@ -221,8 +221,10 @@ surprise ([Error handling](errors.md)).
 - Promises have no `then`, `catch` or `finally`: `await` them, inside `try`/`catch`/`finally`
   to handle their errors. *Why*: one way to sequence async code, and errors stay typed.
 - `new Promise((resolve, reject) => …)` and `Promise.withResolvers()` work as in JS; `resolve`
-  and `reject` may be kept and called later from any task. No global `setTimeout` (use
-  `sleep(ms)` or [`velt:timers`](../std/timers.md)).
+  and `reject` may be kept and called later from any task. `setTimeout`, `setInterval` and
+  their `clear` functions are globals; the callback returns the promise to run
+  (`setTimeout(() => save(doc), 100)` or `async () => { … }`), and a pending timer does not
+  keep the process alive ([`velt:timers`](../std/timers.md)). To wait, `await sleep(ms)`.
 - A promise has one owner (for now; shared promises are planned in #212). `const q = p` moves
   it, so using `p` afterwards is an error, and a promise can't be copied out of a collection:
   `arr[i]` moved or bound (`const p = arr[0]`), `[...arr]`, `const [a, b] = arr`, `m.get(k)`,
