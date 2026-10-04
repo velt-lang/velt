@@ -64,8 +64,7 @@ pub fn node_argv() -> Vec<String> {
 
 fn build_node_argv() -> Vec<String> {
     let args = all_args();
-    let exe = std::env::current_exe()
-        .ok()
+    let exe = executable()
         .map(|p| p.to_string_lossy().into_owned())
         .or_else(|| args.first().cloned())
         .unwrap_or_default();
@@ -77,6 +76,29 @@ fn build_node_argv() -> Vec<String> {
     let mut out = vec![exe, script];
     out.extend(args.into_iter().skip(1));
     out
+}
+
+/// The running executable's resolved path, as Node's `process.execPath`: on macOS
+/// `current_exe` may be the symlink the program was started through, and on Linux it ends in
+/// ` (deleted)` once the file was replaced or removed while running. Windows paths stay as they
+/// are (canonicalizing would turn them into `\?\` paths).
+fn executable() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    #[cfg(target_os = "linux")]
+    let exe = without_deleted_suffix(exe);
+    #[cfg(not(windows))]
+    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+    Some(exe)
+}
+
+/// `/proc/self/exe` of a replaced binary: `/path/prog (deleted)` becomes `/path/prog`, the path
+/// the program was started as.
+#[cfg(any(target_os = "linux", test))]
+fn without_deleted_suffix(exe: std::path::PathBuf) -> std::path::PathBuf {
+    match exe.to_str().and_then(|s| s.strip_suffix(" (deleted)")) {
+        Some(stripped) if !exe.exists() => std::path::PathBuf::from(stripped),
+        _ => exe,
+    }
 }
 
 /// Fix the `performance.now()` time origin (process start). Idempotent.
@@ -230,5 +252,20 @@ mod tests {
         let mut s = unsafe { cwd.value.assume_init() };
         assert!(!s.is_empty());
         unsafe { crate::str::velt_rt_str_drop(&mut s) };
+    }
+
+    #[test]
+    fn executable_paths_are_resolved() {
+        let exe = executable().expect("the test executable");
+        assert!(exe.is_absolute() && exe.exists(), "{}", exe.display());
+        // A replaced binary's `/proc/self/exe` loses its ` (deleted)` marker.
+        let gone = std::env::temp_dir().join("velt-no-such-program (deleted)");
+        assert_eq!(
+            without_deleted_suffix(gone.clone()),
+            std::env::temp_dir().join("velt-no-such-program")
+        );
+        // Other paths stay as they are.
+        let real = std::env::current_exe().unwrap();
+        assert_eq!(without_deleted_suffix(real.clone()), real);
     }
 }

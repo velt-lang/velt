@@ -7,7 +7,9 @@ use super::{BuildArgs, Emit};
 use crate::backend::Backend;
 
 /// Parse the build options of `velt <cmd>` (`build`, `run` or `dev`); for the commands that run
-/// the program, everything after `--` is returned as program args.
+/// the program, everything after `--` is returned as program args. `velt run` also passes
+/// everything after the file to the program, as `node file.js a b` does: options before the
+/// file are Velt's, the ones after it the program's (a `--` right after the file is optional).
 pub(super) fn parse_build(
     args: Vec<OsString>,
     cmd: &str,
@@ -15,10 +17,14 @@ pub(super) fn parse_build(
     let is_run = cmd != "build";
     let mut b = BuildArgs::default();
     let mut prog_args = vec![];
-    let mut it = args.into_iter();
+    let mut it = args.into_iter().peekable();
     while let Some(arg) = it.next() {
         let Some(s) = arg.to_str() else {
             set_input(&mut b.input, PathBuf::from(arg))?;
+            if cmd == "run" {
+                take_program_args(&mut it, &mut prog_args);
+                break;
+            }
             continue;
         };
         // `--flag=value` form.
@@ -56,10 +62,42 @@ pub(super) fn parse_build(
             _ if s.starts_with('-') && s.len() > 1 => {
                 return Err(super::unknown_option(cmd, s));
             }
-            _ => set_input(&mut b.input, PathBuf::from(s))?,
+            _ => {
+                set_input(&mut b.input, PathBuf::from(s))?;
+                if cmd == "run" {
+                    take_program_args(&mut it, &mut prog_args);
+                    break;
+                }
+            }
         }
     }
     Ok((b, prog_args))
+}
+
+/// `velt run <file> ...`: the rest belongs to the program, without a leading `--`.
+fn take_program_args(
+    it: &mut std::iter::Peekable<impl Iterator<Item = OsString>>,
+    prog_args: &mut Vec<OsString>,
+) {
+    if it.peek().is_some_and(|a| a == "--") {
+        it.next();
+    }
+    prog_args.extend(it);
+}
+
+/// The arguments of `velt run` that are Velt's: those before the file (or before `--`).
+pub(super) fn run_options(args: &[OsString]) -> &[OsString] {
+    let mut i = 0;
+    while let Some(arg) = args.get(i) {
+        match arg.to_str() {
+            Some("--") => break,
+            // An option that takes its value from the next argument.
+            Some("--target" | "--backend") => i += 2,
+            Some(s) if s.starts_with('-') && s.len() > 1 => i += 1,
+            _ => break,
+        }
+    }
+    &args[..i.min(args.len())]
 }
 
 fn parse_emit(kind: &str) -> Result<Emit, String> {
@@ -154,7 +192,7 @@ mod tests {
         assert_eq!((b.emit, b.backend), (Emit::Llvm, Some(Backend::Cranelift)));
         let b = build(&["build", "a.vlt", "--timings"]);
         assert!(b.timings && b.verbose, "--timings implies -v");
-        match p(&["run", "a.vlt", "--target", "wasm32-wasip1"]).unwrap() {
+        match p(&["run", "--target", "wasm32-wasip1", "a.vlt"]).unwrap() {
             Command::Run { build, .. } => {
                 assert_eq!(build.target.as_deref(), Some("wasm32-wasip1"))
             }
@@ -192,6 +230,32 @@ mod tests {
         }
     }
 
+    /// As `node file.js a b`: what follows the file is the program's, `--` or not.
+    #[test]
+    fn run_passes_what_follows_the_file() {
+        let run = |args: &[&str]| match p(args).unwrap() {
+            Command::Run { build, args } => (build, args),
+            other => panic!("{other:?}"),
+        };
+        let (b, args) = run(&["run", "--release", "a.vlt", "x", "--release", "-h"]);
+        assert!(b.release);
+        assert_eq!(b.input, Some(PathBuf::from("a.vlt")));
+        assert_eq!(args, ["x", "--release", "-h"].map(OsString::from));
+        let (b, args) = run(&["run", "a.vlt", "-v"]);
+        assert!(!b.verbose, "`-v` after the file is the program's");
+        assert_eq!(args, ["-v"].map(OsString::from));
+        // A `--` right after the file separates as before; a later one is the program's.
+        let (_, args) = run(&["run", "a.vlt", "--", "a", "--", "b"]);
+        assert_eq!(args, ["a", "--", "b"].map(OsString::from));
+        // Without a file (a package), program arguments still need `--`.
+        let (b, args) = run(&["run", "--", "a.vlt"]);
+        assert_eq!((b.input, args), (None, vec![OsString::from("a.vlt")]));
+        assert_eq!(
+            run_options(&["--backend", "llvm", "-h", "a.vlt", "--help"].map(OsString::from)),
+            ["--backend", "llvm", "-h"].map(OsString::from)
+        );
+    }
+
     #[test]
     fn errors() {
         assert!(p(&["build", "a.vlt", "b.vlt"])
@@ -209,10 +273,14 @@ mod tests {
         assert!(p(&["build", "a.vlt", "--bogus"])
             .unwrap_err()
             .contains("unknown option"));
-        assert!(p(&["run", "a.vlt", "-o", "x"])
+        assert!(
+            p(&["run", "a.vlt", "-o", "x"]).is_ok(),
+            "the program's options"
+        );
+        assert!(p(&["run", "-o", "x", "a.vlt"])
             .unwrap_err()
             .contains("unknown option"));
-        assert!(p(&["run", "a.vlt", "extra"])
+        assert!(p(&["build", "a.vlt", "extra"])
             .unwrap_err()
             .contains("after `--`"));
     }

@@ -390,6 +390,9 @@ struct FnLower<'c, 'h> {
     transfer_call: bool,
     /// Building `Glue::Same`: objects inside the compared values compare by identity (same.rs).
     same_mode: bool,
+    /// Comparing as keys (`Intrinsic::Eq`: `Map` keys, `deepEqual`; `Glue::KeyEq`): floats
+    /// compare with JS's SameValueZero, as `Intrinsic::Hash` hashes them (glue/eq.rs).
+    key_mode: bool,
     /// While lowering a class's constructor: the (concrete) class type, whose field
     /// initializers the constructor runs (ctor_init.rs).
     ctor_self: Option<TyId>,

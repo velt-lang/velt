@@ -1,0 +1,26 @@
+// Float map keys compare by SameValueZero, like JS (#335): `0` and `-0` are one key, `NaN`
+// finds itself, and the hash agrees with the comparison. `==` is unchanged (IEEE).
+
+function main() {
+  const m = new Map<number, string>();
+  m.set(0, "zero");
+  m.set(-0, "minus zero");
+  console.log(m.size, m.get(0), m.get(-0), m.has(-0));
+  m.set(NaN, "nan");
+  m.set(0 / 0, "nan again");
+  console.log(m.size, m.get(NaN), m.has(Math.sqrt(-1)));
+  console.log(m.delete(NaN), m.size, m.has(NaN));
+  for (let i = 0; i < 100; i++) {
+    m.set(i / 4, `${i}`);
+  }
+  m.set(-0, "zero again");
+  console.log(m.size, m.get(0), m.get(24.75));
+  console.log([...m.keys()].slice(0, 3));
+
+  const n = 0;
+  const negative = -n;
+  const nan = NaN;
+  console.log(negative == n, nan == nan, nan != nan);
+  const maybe: number | null = NaN;
+  console.log(maybe == maybe);
+}

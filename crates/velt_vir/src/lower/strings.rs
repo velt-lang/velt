@@ -24,7 +24,7 @@ impl FnLower<'_, '_> {
     }
 
     /// `mask ? a : b` for a mask of all ones / all zeros.
-    fn select(&mut self, mask: Operand, a: Operand, b: Operand) -> Operand {
+    pub(super) fn select(&mut self, mask: Operand, a: Operand, b: Operand) -> Operand {
         let not = self.rvalue_temp(Ty::U64, Rvalue::Unary(UnOp::BitNot, mask.clone()));
         let a = self.u64_op(BinOp::BitAnd, a, mask);
         let b = self.u64_op(BinOp::BitAnd, b, not);

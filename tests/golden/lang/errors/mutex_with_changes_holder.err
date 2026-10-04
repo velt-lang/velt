@@ -1,0 +1,2 @@
+mutex_with_changes_holder.vlt:7:5: error: cannot use `this.m` here: this call may modify `this` through another argument
+`this` is modified by this closure

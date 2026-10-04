@@ -62,7 +62,14 @@ impl FnLower<'_, '_> {
                     }
                 });
             }
-            _ => self.format_nested(buf, place, ty),
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Unit | TyKind::Never => {
+                self.format_nested(buf, place, ty)
+            }
+            _ => {
+                // Node numbers the `<ref *N>` of cycles once per top-level value.
+                self.call_rt(Rt::StrbufInspectBegin, vec![], None);
+                self.format_nested(buf, place, ty)
+            }
         }
     }
 
@@ -177,6 +184,7 @@ impl FnLower<'_, '_> {
             TyKind::FnPtr { .. } | TyKind::Closure(_) => {
                 self.push_text(buf, "[Function (anonymous)]")
             }
+            TyKind::Promise(..) => self.format_promise(buf, place, ty),
             TyKind::Dyn(..) => {
                 let vt = Operand::Copy(proj(place, Proj::Field(1)));
                 let f = self.dispatch(vt, SLOT_FORMAT);

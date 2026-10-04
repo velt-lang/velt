@@ -77,13 +77,12 @@ Byte arrays are plain `u8[]` with faster versions of `indexOf`, `lastIndexOf`, `
 instances (compared by identity), and structs, object types, tuples, arrays, maps and records
 (compared by content, as `deepEqual` compares them).
 
-Two differences from JavaScript's keys (SameValueZero):
+Float keys compare like JavaScript's (SameValueZero): `0` and `-0` are one key, and `NaN` is a
+key that finds itself (`m.get(NaN)`). Floats inside content keys (arrays, tuples, object types)
+compare the same way. `==` keeps IEEE comparison (`NaN == NaN` is `false`).
 
-- **Float keys** are matched as `get` matches them: hashed by their bits, then compared with
-  `==`. A `NaN` key never matches, not even itself (each `set` of `NaN` adds an entry that
-  `get` cannot find), and `0` and `-0` hash differently, so they are normally two keys
-  (JavaScript treats both as one key). Use integer keys, or normalize floats before using them
-  as keys.
+One difference from JavaScript's keys:
+
 - **Content keys are hashed when they are inserted.** Changing an array, object, `Map` or
   `Record` after using it as a key leaves its entry unreachable: `get` finds it neither by the
   new content nor by the old (it still counts in `size` and shows up when iterating). Don't
@@ -197,9 +196,9 @@ nest 128 levels deep unless `options.maxDepth` says otherwise.
   their contents recursively. A `Map` or `Record` equals another with the same keys, each with
   a deeply equal value, in any order (a key is matched as `get` matches it). Other class
   instances compare by identity; `==` compares every object by identity. This is Node's
-  `util.isDeepStrictEqual` except for floats, which compare with `==` as map keys do:
-  `deepEqual([NaN], [NaN])` is `false` (Node says `true`) and `deepEqual([0.0], [-0.0])` is
-  `true` (Node says `false`).
+  `util.isDeepStrictEqual` except for `-0`: floats compare as map keys do (SameValueZero), so
+  `deepEqual([NaN], [NaN])` is `true` like Node, and `deepEqual([0], [-0])` is `true` (Node
+  says `false`).
 
 ```ts
 const a: Record<string, i64[]> = { x: [1], y: [2] };

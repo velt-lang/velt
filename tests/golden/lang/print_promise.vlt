@@ -1,0 +1,63 @@
+// console.log of a promise prints its state like Node (#413): `Promise { <pending> }`,
+// `Promise { value }` or `Promise { <rejected> reason }`. Printing peeks: it neither awaits
+// the promise nor takes its result, so it can still be awaited afterwards.
+
+class Oops {
+  code: number;
+  constructor(code: number) {
+    this.code = code;
+  }
+}
+
+async function double(n: number): Promise<number> {
+  return n * 2;
+}
+
+async function greet(name: string): Promise<string> {
+  return `hi ${name}`;
+}
+
+async function nothing(): Promise<void> {}
+
+async function check(ok: boolean): Promise<void> {
+  if (!ok) {
+    throw new Oops(0);
+  }
+}
+
+async function fail(code: number): Promise<number> {
+  if (code > 0) {
+    throw new Oops(code);
+  }
+  return code;
+}
+
+async function main() {
+  const a = double(21);
+  console.log(a);
+  console.log(await a);
+  const { promise, resolve } = Promise.withResolvers<number>();
+  console.log(promise);
+  resolve(5);
+  console.log(await promise);
+  const c = fail(7);
+  console.log(c);
+  try {
+    await c;
+  } catch (e) {
+    console.log("caught", e);
+  }
+  const d = fail(0);
+  console.log(d);
+  console.log(await d);
+  console.log(greet("velt"), nothing());
+  const fine = check(true);
+  console.log(fine);
+  await fine;
+  const ps = [double(1), double(2)];
+  console.log(ps);
+  console.log({ first: greet("a") });
+  const q = new Promise<number>((resolve) => resolve(3));
+  console.log(q);
+  console.log(await q);
+}
