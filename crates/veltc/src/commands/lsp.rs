@@ -1,12 +1,14 @@
 //! `velt lsp`: runs the language server (`velt_lsp`) on stdio with the CLI's module loader, so the
-//! editor resolves imports (relative, `std/`, packages) exactly like `velt build`.
+//! editor resolves imports (relative, `std/`, packages) exactly like `velt build`, and lists the
+//! modules it can import (the std root's public modules, the package's dependencies) for import
+//! completion.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use velt_common::{Diagnostics, SourceMap};
-use velt_lsp::{LoadedProgram, ProgramLoader};
+use velt_lsp::{LoadedProgram, ModuleEntry, ProgramLoader};
 use vpm::{InstallOptions, PackageGraph};
 
 use crate::loader::{self, LoadOptions};
@@ -21,9 +23,20 @@ pub fn lsp_command() -> Result<(), String> {
 /// dependencies needs no server restart).
 #[derive(Default)]
 pub struct CliLoader {
-    /// Package root → the manifest it was installed from and its graph (`None`: not installable,
-    /// package imports fail).
-    graphs: Mutex<HashMap<PathBuf, (ManifestStamp, Option<PackageGraph>)>>,
+    /// Package root → what was installed for it.
+    packages: Mutex<HashMap<PathBuf, Installed>>,
+    /// The std root's public modules, listed once.
+    std_modules: Mutex<Option<(PathBuf, Vec<ModuleEntry>)>>,
+}
+
+/// A package as installed from one state of its manifest.
+struct Installed {
+    /// The manifest it was installed from.
+    stamp: ManifestStamp,
+    /// Its graph (`None`: not installable, package imports fail).
+    graph: Option<Arc<PackageGraph>>,
+    /// The modules of its dependencies, listed on first use.
+    dependency_modules: Option<Arc<Vec<ModuleEntry>>>,
 }
 
 /// When `package.vlt` was last written, and its size: what tells a saved change apart.
@@ -35,26 +48,81 @@ fn manifest_stamp(root: &Path) -> ManifestStamp {
 }
 
 impl CliLoader {
-    fn graph(&self, file: &Path) -> Option<PackageGraph> {
+    /// `f` of the installed package containing `file` (installed again when its manifest
+    /// changed); `None` outside a package.
+    fn with_package<T>(&self, file: &Path, f: impl FnOnce(&mut Installed) -> T) -> Option<T> {
         let root = vpm::manifest::find_package_root(file.parent()?)?;
         let stamp = manifest_stamp(&root);
-        let mut graphs = self.graphs.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((installed_from, graph)) = graphs.get(&root) {
-            if *installed_from == stamp {
-                return graph.clone();
+        let mut packages = self.packages.lock().unwrap_or_else(|e| e.into_inner());
+        let fresh = packages.get(&root).is_some_and(|p| p.stamp == stamp);
+        if !fresh {
+            let opts = InstallOptions {
+                locked: false,
+                update: false,
+                target: Some(velt_codegen_cl::host_triple()),
+            };
+            let graph = super::project::Project::open(&root, opts)
+                .map_err(|e| eprintln!("velt-lsp: cannot install `{}`: {e}", root.display()))
+                .ok()
+                .map(|p| Arc::new(p.graph));
+            let installed = Installed {
+                stamp,
+                graph,
+                dependency_modules: None,
+            };
+            packages.insert(root.clone(), installed);
+        }
+        packages.get_mut(&root).map(f)
+    }
+
+    /// An already installed graph with a package containing `file` (none is installed).
+    fn installed_graph(&self, file: &Path) -> Option<Arc<PackageGraph>> {
+        let packages = self.packages.lock().unwrap_or_else(|e| e.into_inner());
+        packages
+            .values()
+            .filter_map(|p| p.graph.clone())
+            .find(|g| g.package_of(file).is_some())
+    }
+
+    fn graph(&self, file: &Path) -> Option<Arc<PackageGraph>> {
+        self.with_package(file, |p| p.graph.clone()).flatten()
+    }
+
+    /// The modules of the dependencies of the package containing `file`, as package specifiers
+    /// resolve them (listed once per installed manifest).
+    fn dependency_modules(&self, file: &Path) -> Arc<Vec<ModuleEntry>> {
+        let listed = self.with_package(file, |p| {
+            let graph = p.graph.clone();
+            p.dependency_modules
+                .get_or_insert_with(|| Arc::new(list_dependencies(graph.as_deref(), file)))
+                .clone()
+        });
+        listed.unwrap_or_default()
+    }
+
+    /// The public modules of the std root (listed on first use), as `velt:` specifiers resolve
+    /// them.
+    fn std_modules(&self) -> Vec<ModuleEntry> {
+        let Some(root) = loader::std_root() else {
+            return vec![];
+        };
+        let mut cached = self.std_modules.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((listed, entries)) = cached.as_ref() {
+            if *listed == root {
+                return entries.clone();
             }
         }
-        let opts = InstallOptions {
-            locked: false,
-            update: false,
-            target: Some(velt_codegen_cl::host_triple()),
-        };
-        let graph = super::project::Project::open(&root, opts)
-            .map_err(|e| eprintln!("velt-lsp: cannot install `{}`: {e}", root.display()))
-            .ok()
-            .map(|p| p.graph);
-        graphs.insert(root, (stamp, graph.clone()));
-        graph
+        let entries: Vec<ModuleEntry> = velt_lsp::std_module_entries(&root)
+            .into_iter()
+            .filter(|e| {
+                matches!(
+                    loader::resolve_spec(&e.spec, &root),
+                    Ok(loader::ModuleRef::Std { .. })
+                )
+            })
+            .collect();
+        *cached = Some((root, entries.clone()));
+        entries
     }
 }
 
@@ -69,7 +137,7 @@ impl ProgramLoader for CliLoader {
         let graph = self.graph(root);
         let opts = LoadOptions {
             std_root: loader::std_root(),
-            packages: graph.as_ref().map(|g| g as &dyn loader::PackageResolver),
+            packages: graph.as_deref().map(|g| g as &dyn loader::PackageResolver),
             root_source: None,
             overlay: Some(overlay),
         };
@@ -79,6 +147,54 @@ impl ProgramLoader for CliLoader {
             root: loaded.root,
         })
     }
+
+    fn module_index(&self, from: &Path) -> Vec<ModuleEntry> {
+        let mut out = self.std_modules();
+        out.extend(self.dependency_modules(from).iter().cloned());
+        out
+    }
+
+    fn resolve_module(&self, spec: &str, from: &Path) -> Option<PathBuf> {
+        // Only bare specifiers (dependencies, `paths` aliases) need a package graph: the one
+        // already installed for a document that contains `from` (its own package or one of its
+        // dependencies), as `load` resolves a dependency's imports. Nothing is installed here: a
+        // dependency is never installed as a project of its own.
+        let bare =
+            !spec.starts_with("./") && !spec.starts_with("../") && !spec.starts_with("velt:");
+        let graph = if bare {
+            self.installed_graph(from)
+        } else {
+            None
+        };
+        let packages = graph.as_deref().map(|g| g as &dyn loader::PackageResolver);
+        loader::resolve_module(spec, from, loader::std_root().as_deref(), packages)
+    }
+
+    fn resolves_modules(&self) -> bool {
+        true
+    }
+}
+
+/// The modules of the dependencies of the package containing `file`, in `graph`.
+fn list_dependencies(graph: Option<&PackageGraph>, file: &Path) -> Vec<ModuleEntry> {
+    let Some(package) = graph.and_then(|g| g.package_of(file)) else {
+        return vec![];
+    };
+    let dir = file.parent().unwrap_or(Path::new(""));
+    let mut out = vec![];
+    for (name, root) in &package.dependencies {
+        out.extend(
+            velt_lsp::package_module_entries(name, root)
+                .into_iter()
+                .filter(|e| {
+                    matches!(
+                        loader::resolve_spec(&e.spec, dir),
+                        Ok(loader::ModuleRef::Package { .. })
+                    )
+                }),
+        );
+    }
+    out
 }
 
 #[cfg(test)]
@@ -148,6 +264,178 @@ mod tests {
         .unwrap();
         let graph = loader.graph(&main).expect("the app installs again");
         assert!(graph.dependency_root(&main, "util").is_ok());
+    }
+
+    /// The module index: std's public modules (no prelude, no internal modules) and the
+    /// modules of the package's dependencies.
+    #[test]
+    fn module_index_lists_std_and_dependencies() {
+        let dir = tempfile::tempdir().unwrap();
+        let (app, util) = (dir.path().join("app"), dir.path().join("util"));
+        for (root, name) in [(&app, "app"), (&util, "util")] {
+            std::fs::create_dir_all(root.join("src")).unwrap();
+            let manifest =
+                format!("export const pkg: Package = {{ name: \"{name}\", version: \"0.1.0\" }};");
+            std::fs::write(root.join(vpm::manifest::MANIFEST_FILE), manifest).unwrap();
+        }
+        std::fs::write(util.join("src/lib.vlt"), "export const X: i64 = 1;\n").unwrap();
+        std::fs::write(util.join("src/extra.vlt"), "export const Y: i64 = 1;\n").unwrap();
+        let spec = vpm::edit::DependencySpec {
+            version: None,
+            path: Some("../util".into()),
+        };
+        vpm::edit::add_dependency(&app, "util", &spec).unwrap();
+        let main = app.join("src/main.vlt");
+        std::fs::write(&main, "function main() {}\n").unwrap();
+
+        let specs: Vec<String> = CliLoader::default()
+            .module_index(&main)
+            .into_iter()
+            .map(|e| e.spec)
+            .collect();
+        for want in [
+            "velt:fs",
+            "velt:collections/set",
+            "velt:jsx",
+            "velt:package",
+            "util",
+            "util/extra",
+        ] {
+            assert!(specs.iter().any(|s| s == want), "{want} in {specs:?}");
+        }
+        for internal in [
+            "velt:prelude/array",
+            "velt:url/encode",
+            "velt:net_bytes",
+            "velt:redis/args",
+        ] {
+            assert!(
+                !specs.iter().any(|s| s == internal),
+                "{internal} in {specs:?}"
+            );
+        }
+    }
+
+    /// Import help against the real std: specifiers after `from "velt:`, the exports of a std
+    /// module inside the braces, and auto-import of a std function.
+    #[test]
+    fn import_help_uses_the_std_modules() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main.vlt");
+        std::fs::write(&main, "function main() {}\n").unwrap();
+        let main_uri = lsp_types::Url::from_file_path(&main).unwrap();
+        let (server_conn, conn) = Connection::memory();
+        let server =
+            std::thread::spawn(move || velt_lsp::serve(server_conn, &CliLoader::default()));
+        request(&conn, 1, "initialize", json!({ "capabilities": {} }));
+        notify(&conn, "initialized", json!({}));
+        let text = "import { readFile,  } from \"velt:fs\";\nimport { x } from \"velt:co\";\n\nfunction main() {\n  normali\n}\n";
+        let doc = json!({ "uri": main_uri, "languageId": "velt", "version": 1, "text": text });
+        notify(
+            &conn,
+            "textDocument/didOpen",
+            json!({ "textDocument": doc }),
+        );
+        let mut id = 1;
+        let mut labels = |line: u32, character: u32| {
+            id += 1;
+            let at = json!({ "textDocument": { "uri": main_uri }, "position": { "line": line, "character": character } });
+            let items = request(&conn, id, "textDocument/completion", at);
+            let items = items.get("items").cloned().unwrap_or(items);
+            items
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|i| {
+                    let from = i["labelDetails"]["description"].as_str().unwrap_or("");
+                    format!("{} {from}", i["label"].as_str().unwrap())
+                })
+                .collect::<Vec<String>>()
+        };
+        let names = labels(0, 19);
+        assert!(names.contains(&"writeFile ".to_string()), "{names:?}");
+        assert!(!names.contains(&"readFile ".to_string()), "{names:?}");
+        let specs = labels(1, 26);
+        assert!(
+            specs.contains(&"velt:collections/set ".to_string()),
+            "{specs:?}"
+        );
+        let auto = labels(4, 9);
+        assert!(
+            auto.contains(&"normalize velt:path".to_string()),
+            "{auto:?}"
+        );
+        request(&conn, 99, "shutdown", Value::Null);
+        notify(&conn, "exit", Value::Null);
+        server.join().unwrap().unwrap();
+    }
+
+    /// Auto-import follows a dependency's re-export of another package (`export * from "dep2"`)
+    /// through the document's installed graph: dep2's names are offered, and the dependency is
+    /// never installed as a project of its own (no lock file appears in it, and the loader
+    /// installed the document's package only).
+    #[test]
+    fn re_exports_of_dependencies_resolve_without_installing_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let (app, dep, dep2) = (root.join("app"), root.join("dep"), root.join("dep2"));
+        for (pkg, name) in [(&app, "app"), (&dep, "dep"), (&dep2, "dep2")] {
+            std::fs::create_dir_all(pkg.join("src")).unwrap();
+            let manifest =
+                format!("export const pkg: Package = {{ name: \"{name}\", version: \"0.1.0\" }};");
+            std::fs::write(pkg.join(vpm::manifest::MANIFEST_FILE), manifest).unwrap();
+        }
+        std::fs::write(dep.join("src/lib.vlt"), "export * from \"dep2\";\n").unwrap();
+        let lib2 = "export function fromDepTwo(): i64 {\n  return 2;\n}\n";
+        std::fs::write(dep2.join("src/lib.vlt"), lib2).unwrap();
+        let path_dep = |path: &str| vpm::edit::DependencySpec {
+            version: None,
+            path: Some(path.into()),
+        };
+        vpm::edit::add_dependency(&app, "dep", &path_dep("../dep")).unwrap();
+        vpm::edit::add_dependency(&dep, "dep2", &path_dep("../dep2")).unwrap();
+        let main = app.join("src/main.vlt");
+        let text = "function main() {\n  fromDep\n}\n";
+        std::fs::write(&main, text).unwrap();
+        let main_uri = lsp_types::Url::from_file_path(&main).unwrap();
+
+        let (server_conn, conn) = Connection::memory();
+        let loader = Arc::new(CliLoader::default());
+        let serving = loader.clone();
+        let server = std::thread::spawn(move || velt_lsp::serve(server_conn, &*serving));
+        request(&conn, 1, "initialize", json!({ "capabilities": {} }));
+        notify(&conn, "initialized", json!({}));
+        let doc = json!({ "uri": main_uri, "languageId": "velt", "version": 1, "text": text });
+        notify(
+            &conn,
+            "textDocument/didOpen",
+            json!({ "textDocument": doc }),
+        );
+        let at = json!({ "textDocument": { "uri": main_uri }, "position": { "line": 1, "character": 9 } });
+        let items = request(&conn, 2, "textDocument/completion", at);
+        let items = items.get("items").cloned().unwrap_or(items);
+        let offered = items.as_array().unwrap().iter().any(|i| {
+            i["label"] == json!("fromDepTwo") && i["labelDetails"]["description"] == json!("dep")
+        });
+        assert!(offered, "{items:#}");
+        for pkg in [&dep, &dep2] {
+            assert!(
+                !pkg.join(vpm::lockfile::LOCK_FILE).exists(),
+                "{}",
+                pkg.display()
+            );
+        }
+        request(&conn, 3, "shutdown", Value::Null);
+        notify(&conn, "exit", Value::Null);
+        server.join().unwrap().unwrap();
+        // Only the document's package was installed (compared canonically: on Windows the
+        // loader's keys have no `\\?\` prefix, `canonicalize` adds one).
+        let installed: Vec<PathBuf> = loader.packages.lock().unwrap().keys().cloned().collect();
+        let installed: Vec<PathBuf> = installed
+            .iter()
+            .map(|p| p.canonicalize().unwrap())
+            .collect();
+        assert_eq!(installed, [app]);
     }
 
     /// The real loader behind the server: unsaved buffers win over the disk, and imports of

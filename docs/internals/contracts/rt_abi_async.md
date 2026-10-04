@@ -172,7 +172,8 @@ sender still shares is deep-copied). No code pointers are stored, except the `it
 Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task.vlt and
 released once, at the cell's last reference; no handle is public. Aborting sets a flag, stores
 the reason and wakes the waiters; it never cancels anything itself. No code pointers are
-stored: `AbortSignal.timeout` is a runtime timer task holding a weak reference. A signal made
+stored: `AbortSignal.timeout` is a runtime timer task holding a weak reference, aborted (freed with
+its timer) when the signal is dropped. A signal made
 by `any` holds strong references to its sources until it is aborted (they hold weak ones back).
 
 | Symbol | Signature | Notes |
