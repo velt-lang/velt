@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 mod no_window;
+mod runtime_support;
 mod test_dir;
 
 struct Sandbox {
@@ -14,6 +15,8 @@ struct Sandbox {
 }
 
 fn sandbox() -> Sandbox {
+    // `velt build` / `run` / `test` link programs against the runtime libraries.
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path().to_path_buf();
     Sandbox { _tmp: tmp, dir }

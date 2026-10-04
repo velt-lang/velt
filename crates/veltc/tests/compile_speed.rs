@@ -6,6 +6,7 @@ use std::path::Path;
 use std::process::Output;
 
 mod no_window;
+mod runtime_support;
 mod test_dir;
 
 fn velt(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
@@ -135,6 +136,8 @@ fn check_accepts_library_modules_without_main() {
 
 /// The `link` stage of `velt build -v --timings`, and whether it was skipped.
 fn build(dir: &Path, env: &[(&str, &str)]) -> (bool, String) {
+    // Links against the runtime libraries: current ones.
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     let o = velt(dir, &["build", "hello.vlt", "--timings"], env);
     let err = text(&o.stderr);
     assert!(o.status.success(), "{err}");
@@ -187,6 +190,7 @@ fn run_copy(exe: &Path, tag: &str) -> Output {
 
 /// Whether the shared runtime sits next to the `velt` under test (debug links then use it).
 fn shared_runtime_built() -> bool {
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     let built = Path::new(env!("CARGO_BIN_EXE_velt")).parent().unwrap();
     built
         .join(velt_link::shared_runtime_lib_name(

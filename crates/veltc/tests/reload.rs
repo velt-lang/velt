@@ -22,6 +22,7 @@
 
 mod no_window;
 mod reload_support;
+mod runtime_support;
 mod test_dir;
 
 use std::collections::HashMap;
