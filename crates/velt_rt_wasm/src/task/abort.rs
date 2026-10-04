@@ -1,7 +1,8 @@
 //! `velt_rt_signal_*` on the current-thread executor: `AbortController` / `AbortSignal` (see
 //! velt_rt's task/abort.rs). One thread, so a `RefCell` and one waker slot per pending wait
 //! (waiters.rs); `AbortSignal.timeout` is a timer task (spawned tasks don't keep the program
-//! alive). A derived signal holds its sources until it is aborted, as natively.
+//! alive), cancelled when its signal is dropped. A derived signal holds its sources until it is
+//! aborted, as natively.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -28,6 +29,16 @@ pub struct Signal {
     waiters: Waiters,
     children: RefCell<Vec<Weak<Signal>>>,
     sources: RefCell<Vec<Rc<Signal>>>,
+    /// The timer task of an `AbortSignal.timeout` signal, cancelled when the signal is dropped.
+    timer: Cell<Option<usize>>,
+}
+
+impl Drop for Signal {
+    fn drop(&mut self) {
+        if let Some(id) = self.timer.take() {
+            executor::cancel(id);
+        }
+    }
 }
 
 impl Signal {
@@ -160,11 +171,13 @@ pub unsafe extern "C" fn velt_rt_signal_timeout(ms: i64, reason: *const VeltStr)
             return Poll::Pending;
         }
         if let Some(s) = weak.upgrade() {
+            // Done: dropping the signal now must not cancel the task that is running.
+            s.timer.set(None);
             s.abort(&reason);
         }
         Poll::Ready(())
     });
-    executor::spawn(timer, 0, None);
+    s.timer.set(Some(executor::spawn(timer, 0, None)));
     handle(s)
 }
 
@@ -188,4 +201,27 @@ pub unsafe extern "C" fn velt_rt_signal_any(signals: *const U64Array) -> Handle<
         }
     }
     handle(child)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dropped_timeout_signal_cancels_its_timer_task() {
+        let reason = VeltStr::from_vec(b"late".to_vec());
+        let before = executor::live_tasks();
+        for _ in 0..1000 {
+            // SAFETY: a fresh handle, freed at once (its last reference).
+            unsafe { velt_rt_signal_free(velt_rt_signal_timeout(600_000, &reason)) };
+        }
+        assert_eq!(executor::live_tasks(), before, "timer tasks of dropped signals");
+        // A held one keeps its timer.
+        // SAFETY: as above, freed below.
+        let held = unsafe { velt_rt_signal_timeout(600_000, &reason) };
+        assert_eq!(executor::live_tasks(), before + 1);
+        // SAFETY: the last reference.
+        unsafe { velt_rt_signal_free(held) };
+        assert_eq!(executor::live_tasks(), before);
+    }
 }

@@ -192,6 +192,29 @@ pub fn spawn(fut: *mut VeltFut, result_size: usize, join: Option<Rc<RefCell<Join
     id
 }
 
+/// Tasks that have not finished (or been cancelled).
+#[cfg(test)]
+pub fn live_tasks() -> usize {
+    with_exec(|e| e.tasks.iter().filter(|t| t.is_some()).count())
+}
+
+/// Cancel task `id` (not the one running): its future is dropped and its slot freed. A timer
+/// that still holds its waker wakes nothing, or the slot's next task spuriously.
+pub fn cancel(id: usize) {
+    let task = with_exec(|e| {
+        if e.queued.remove(&id) {
+            e.ready.retain(|&q| q != id);
+        }
+        let task = e.tasks.get_mut(id - 1)?.take()?;
+        e.free.push(id - 1);
+        Some(task)
+    });
+    if let Some(task) = task {
+        // SAFETY: the task's own future, not being polled (see above); it is freed once.
+        unsafe { ((*task.fut).drop.0)(task.fut) };
+    }
+}
+
 /// Poll task `id` once; finish it if it is ready.
 unsafe fn run_task(id: usize) {
     let Some(fut) = with_exec(|e| e.tasks[id - 1].as_ref().map(|t| t.fut)) else {
