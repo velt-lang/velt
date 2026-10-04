@@ -4,8 +4,9 @@
 //!
 //! Per call (`Call`, `New`), each argument's [`uses`] are compared pairwise:
 //! - a place passed `BorrowMut` (an argument or receiver the callee is inferred to modify, a
-//!   variable a closure argument modifies, the receiver of `Mutex.with`) must not overlap any
-//!   place another argument borrows, mutably borrows, moves or captures;
+//!   variable a closure argument modifies, the receiver of `Mutex.with` unless it is a
+//!   `shared` handle) must not overlap any place another argument borrows, mutably borrows,
+//!   moves or captures;
 //! - a place passed `Borrow` must not overlap a place another argument moves;
 //! - no argument may mutate or move (while being evaluated) a place another argument passes by
 //!   reference.
@@ -30,7 +31,7 @@ use crate::defs::BodyState;
 use crate::defs::FnKind;
 use crate::hir::{
     Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalDef, LocalId, Pat, PatKind,
-    Stmt, StmtKind as S, UseMode,
+    Stmt, StmtKind as S, TyKind, UseMode,
 };
 use crate::ownership::validate::place_text;
 use crate::visit::{self, VisitMut};
@@ -152,8 +153,12 @@ impl Checker<'_, '_> {
             col.direct(a, &mut direct, &mut nested);
             uses.push((direct, nested));
         }
-        // `m.with(f)`: the callback gets the lock, i.e. mutable access to `m`'s value.
-        if mutex_with {
+        // `m.with(f)`: the callback gets the lock, i.e. mutable access to `m`'s value. Behind a
+        // `shared` handle that value is not part of `m`'s place: a closure that only reads what
+        // it captured (`this.step` next to `this.m`) reaches it only through the lock again,
+        // and one that may change or move the handle still conflicts with the borrow (#459).
+        let behind_shared = matches!(self.cx.ty.kind(args[0].ty), TyKind::Shared(_));
+        if mutex_with && !behind_shared {
             for u in &mut uses[0].0 {
                 u.access = Access::Unique;
             }

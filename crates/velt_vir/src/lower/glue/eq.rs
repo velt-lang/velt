@@ -7,6 +7,12 @@
 //! `Map.__deepHash` (std/prelude/map.vlt); a record compares its map. Hashes combine parts
 //! FxHash-style: `h = (rotl(h, 5) ^ part) * 0x517cc1b727220a95`; strings hash their bytes with
 //! `velt_rt_str_hash`.
+//!
+//! `Intrinsic::Eq` (the `Map` key comparison and `deepEqual`) compares floats with JS's
+//! SameValueZero, as JS compares `Map` keys: `NaN` equals itself and `0` equals `-0`. The hash
+//! agrees: it hashes `-0` as `0` and every `NaN` alike. `==` keeps IEEE comparison, so the glue
+//! a key comparison calls (`Glue::KeyEq`, built in `key_mode`) is separate from `==`'s
+//! (`Glue::Eq`).
 
 use velt_sema::hir::{TyId, TyKind};
 
@@ -19,6 +25,38 @@ use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, T
 const FX_K: i128 = 0x517c_c1b7_2722_0a95;
 
 impl FnLower<'_, '_> {
+    /// `Intrinsic::Eq` of the values of concrete type `ty` at two places: `eq_values` with
+    /// floats compared by SameValueZero (Bool operand).
+    pub(in crate::lower) fn key_eq_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        let outer = std::mem::replace(&mut self.key_mode, true);
+        let r = self.eq_values(a, b, ty);
+        self.key_mode = outer;
+        r
+    }
+
+    pub(super) fn key_eq_body(&mut self, pa: vir::Local, pb: vir::Local, ty: TyId) {
+        self.key_mode = true;
+        self.eq_body(pa, pb, ty);
+    }
+
+    /// The equality glue for the current mode.
+    fn eq_glue(&self) -> Glue {
+        if self.key_mode {
+            Glue::KeyEq
+        } else {
+            Glue::Eq
+        }
+    }
+
+    /// SameValueZero of two floats: `x == y || (x != x && y != y)`.
+    fn same_value_zero(&mut self, x: Operand, y: Operand) -> Operand {
+        let eq = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x.clone(), y.clone()));
+        let nx = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, x.clone(), x));
+        let ny = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, y.clone(), y));
+        let nans = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, nx, ny));
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, eq, nans))
+    }
+
     /// `a == b` for values of concrete type `ty` at two places (Bool operand).
     pub(in crate::lower) fn eq_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         if self.same_mode && self.cx.is_object(ty) {
@@ -32,7 +70,8 @@ impl FnLower<'_, '_> {
             }
             _ if self.dictionary_content(ty) => {
                 let (pa, pb) = (self.addr(a.clone()), self.addr(b.clone()));
-                self.call_glue(Glue::Eq, ty, vec![pa, pb])
+                let g = self.eq_glue();
+                self.call_glue(g, ty, vec![pa, pb])
             }
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => {
                 Operand::Const(Const::Bool(true), Ty::Bool)
@@ -40,13 +79,18 @@ impl FnLower<'_, '_> {
             TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Dyn(..) => {
                 self.ref_identity(a, b, ty)
             }
+            _ if self.key_mode && vt.is_float() => {
+                let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
+                self.same_value_zero(x, y)
+            }
             _ if vt.is_scalar() && !self.boxed_content(ty) => {
                 let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
                 self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
             }
             _ => {
                 let (pa, pb) = (self.addr(a.clone()), self.addr(b.clone()));
-                self.call_glue(Glue::Eq, ty, vec![pa, pb])
+                let g = self.eq_glue();
+                self.call_glue(g, ty, vec![pa, pb])
             }
         }
     }
@@ -82,7 +126,7 @@ impl FnLower<'_, '_> {
                 self.fx_combine(h, env)
             }
             _ if vt.is_float() => {
-                let x = self.float_bits(Operand::Copy(place.clone()), vt);
+                let x = self.key_float_bits(Operand::Copy(place.clone()), vt);
                 self.fx_combine(cint(0, Ty::U64), x)
             }
             _ if vt.is_scalar() && !self.boxed_content(ty) => {
@@ -152,6 +196,30 @@ impl FnLower<'_, '_> {
             Ty::U64,
             Rvalue::Binary(BinOp::Mul, mix, cint(FX_K as u64 as i128, Ty::U64)),
         )
+    }
+
+    /// Bits of a float as a key (SameValueZero): `0` for `-0` and one pattern for every `NaN`.
+    fn key_float_bits(&mut self, v: Operand, vt: Ty) -> Operand {
+        let bits = self.float_bits(v.clone(), vt);
+        let zero = Operand::Const(Const::Float(0.0), vt);
+        let is_zero = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, v.clone(), zero));
+        let mask = self.bool_mask(is_zero);
+        let bits = self.select(mask, cint(0, Ty::U64), bits);
+        let is_nan = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, v.clone(), v));
+        let mask = self.bool_mask(is_nan);
+        self.select(mask, cint(0x7ff8_0000_0000_0000, Ty::U64), bits)
+    }
+
+    /// All ones for `true`, all zeros for `false` (a `select` mask).
+    fn bool_mask(&mut self, b: Operand) -> Operand {
+        let one = self.cast_to(b, Ty::Bool, Ty::U64);
+        let top = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Shl, one, cint(63, Ty::U64)));
+        let signed = self.rvalue_temp(Ty::I64, Rvalue::Cast(top, Ty::I64));
+        let fill = self.rvalue_temp(
+            Ty::I64,
+            Rvalue::Binary(BinOp::Shr, signed, cint(63, Ty::I64)),
+        );
+        self.rvalue_temp(Ty::U64, Rvalue::Cast(fill, Ty::U64))
     }
 
     /// Raw bits of a float (through memory: VIR casts are numeric conversions).

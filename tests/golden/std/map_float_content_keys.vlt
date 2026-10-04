@@ -1,0 +1,38 @@
+// Floats inside content keys (arrays, tuples, object types) and `deepEqual` compare by
+// SameValueZero too (#335): the same rule as a float key, with a hash that agrees. (JS compares
+// array keys by identity; Velt compares them by content, docs/std/prelude.md.)
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+function main() {
+  const byArray = new Map<number[], string>();
+  byArray.set([0, NaN], "a");
+  byArray.set([-0, 0 / 0], "b");
+  console.log(byArray.size, byArray.get([0, NaN]), byArray.has([-0, NaN]));
+
+  const byTuple = new Map<[number, string], i64>();
+  byTuple.set([NaN, "x"], 1);
+  console.log(byTuple.get([NaN, "x"]), byTuple.get([NaN, "y"]));
+
+  const byPoint = new Map<Point, string>();
+  byPoint.set({ x: -0, y: NaN }, "p");
+  console.log(byPoint.get({ x: 0, y: NaN }), byPoint.size);
+
+  const nested = new Map<Map<number, number>, string>();
+  const k = new Map<number, number>();
+  k.set(NaN, -0);
+  nested.set(k, "map");
+  const k2 = new Map<number, number>();
+  k2.set(NaN, 0);
+  console.log(nested.get(k2));
+
+  console.log(deepEqual([NaN], [NaN]), deepEqual([0], [-0]), deepEqual([1, NaN], [NaN, 1]));
+  const p: Point = { x: NaN, y: 1 };
+  const q: Point = { x: NaN, y: 1 };
+  console.log(deepEqual(p, q), p == q);
+  assertEq([NaN, -0], [NaN, 0]);
+  console.log("assertEq ok");
+}

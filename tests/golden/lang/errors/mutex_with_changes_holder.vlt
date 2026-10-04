@@ -1,0 +1,17 @@
+// A `with` callback may read the fields next to a `shared` mutex (#459), but one that changes
+// the object holding the mutex could replace the handle while the lock is held: an error.
+class Counter {
+  m: shared<Mutex<{ n: i64 }>> = shared(new Mutex({ n: 0 }));
+
+  reset() {
+    this.m.with((v) => {
+      v.n = 0;
+      this.m = shared(new Mutex({ n: 5 }));
+    });
+  }
+}
+
+function main() {
+  const c = new Counter();
+  c.reset();
+}

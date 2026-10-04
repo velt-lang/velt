@@ -45,6 +45,7 @@ pub(super) enum Rt {
     // M3: futures and tasks (rt_abi_async.md §1, §2, §8, §9)
     FutPoll,
     FutDrop,
+    FutPeek,
     FutBox,
     FutStart,
     FutDetach,
@@ -81,6 +82,7 @@ pub(super) enum Rt {
     StrbufPushBytes,
     StrbufPushI64,
     StrbufPushU64,
+    StrbufInspectBegin,
     StrbufInspectEnter,
     StrbufInspectLeave,
     JsonEnter,
@@ -169,6 +171,7 @@ impl Rt {
         match self {
             Rt::FutPoll => f("velt_rt_fut_poll", vec![Ptr, Ptr], U32),
             Rt::FutDrop => f("velt_rt_fut_drop", vec![Ptr], Unit),
+            Rt::FutPeek => f("velt_rt_fut_peek", vec![Ptr], U8),
             Rt::FutBox => f("velt_rt_fut_box", vec![Ptr, Ptr, Ptr, U64, U64], Ptr),
             Rt::FutStart => f("velt_rt_fut_start", vec![Ptr, Ptr], Unit),
             Rt::FutDetach => f("velt_rt_fut_detach", vec![Ptr, Ptr], Unit),
@@ -221,6 +224,7 @@ impl Rt {
             Rt::StrbufPushBytes => f("velt_rt_strbuf_push_bytes", vec![Ptr, Ptr, U64], Unit),
             Rt::StrbufPushI64 => f("velt_rt_strbuf_push_i64", vec![Ptr, I64], Unit),
             Rt::StrbufPushU64 => f("velt_rt_strbuf_push_u64", vec![Ptr, U64], Unit),
+            Rt::StrbufInspectBegin => f("velt_rt_strbuf_inspect_begin", vec![], Unit),
             Rt::StrbufInspectEnter => f("velt_rt_strbuf_inspect_enter", vec![Ptr, Ptr], U8),
             Rt::StrbufInspectLeave => f("velt_rt_strbuf_inspect_leave", vec![Ptr], Unit),
             Rt::JsonEnter => f("velt_rt_json_enter", vec![Ptr], U8),
