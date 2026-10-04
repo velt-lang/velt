@@ -9,7 +9,8 @@
 //! from a closure to its enclosing function) until it meets a concrete type, which is checked at
 //! that call site. A method dispatched dynamically (through an interface or a base class) has
 //! no call with type arguments: its requirements are instantiated wherever its class type is
-//! mentioned ([`crate::dispatch`]).
+//! mentioned ([`crate::dispatch`]). The fixed point revisits only the functions whose callees'
+//! requirements grew ([`crate::dispatch::Rounds`]).
 
 use std::collections::{HashMap, HashSet};
 
@@ -18,7 +19,7 @@ use velt_syntax::ast;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::dispatch::{instantiate, Dispatch};
+use crate::dispatch::{add_work, instantiate, Dispatch, Pass, Rounds};
 use crate::hir::{AdtKind, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
 use crate::types::children;
 use crate::visit;
@@ -37,68 +38,92 @@ struct Uses {
     /// Every type the body mentions (expressions and type arguments of calls), with its first
     /// span: the methods of class types among them may be dispatched dynamically.
     types: Vec<(TyId, Span)>,
+    /// Those methods, with their class type's arguments and the span of the type.
+    dyn_calls: Vec<(DefId, Vec<TyId>, Span)>,
+}
+
+impl Uses {
+    /// The defs whose requirements this function's requirements are made of.
+    fn reads(&self) -> impl Iterator<Item = DefId> + '_ {
+        let calls = self.calls.iter().map(|(d, _, _)| *d);
+        let dyn_calls = self.dyn_calls.iter().map(|(d, _, _)| *d);
+        calls.chain(self.closures.iter().copied()).chain(dyn_calls)
+    }
+
+    /// The work of one visit, for [`crate::dispatch::instantiation_work`].
+    fn size(&self) -> u64 {
+        (self.direct.len() + self.calls.len() + self.closures.len() + self.dyn_calls.len()) as u64
+    }
 }
 
 /// Types (and whether `JSON.parse` decodes them) a function needs to have a JSON form.
 type Needs = HashMap<DefId, Vec<(TyId, bool)>>;
 
 pub(crate) fn check_json_types(cx: &mut Ctx) {
-    let uses = collect(cx);
-    let mut needs: Needs = HashMap::new();
+    let mut uses = collect(cx);
     let mut dispatch = Dispatch::default();
+    for (_, u) in &mut uses {
+        for (t, span) in &u.types {
+            for (m, args) in dispatch.targets(cx, *t) {
+                u.dyn_calls.push((m, args, *span));
+            }
+        }
+    }
+    let reads = uses
+        .iter()
+        .enumerate()
+        .flat_map(|(i, (_, u))| u.reads().map(move |d| (i, d)));
+    let mut rounds = Rounds::new(uses.len(), reads);
+    let mut work = dispatch.work + uses.iter().map(|(_, u)| u.types.len() as u64).sum::<u64>();
+    let mut needs: Needs = HashMap::new();
     let mut checked: HashSet<(TyId, Span, bool)> = HashSet::new();
     // A type without a JSON form is reported once per place, whether it is parsed, written or
     // both (`JSON.stringify(JSON.parse<T>(s))`).
     let mut reported: HashSet<(TyId, Span)> = HashSet::new();
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for (f, u) in &uses {
-            let mut reqs: Vec<(TyId, Span, bool)> = u.direct.clone();
-            for (d, targs, span) in &u.calls {
-                for (t, parse) in needs.get(d).cloned().unwrap_or_default() {
-                    reqs.push((cx.ty.subst(t, targs), *span, parse));
+    while let Some(i) = rounds.pop() {
+        let (f, u) = &uses[i];
+        work += u.size();
+        let mut grew = false;
+        for (t, span, parse) in requirements(cx, u, &needs) {
+            if has_param(cx, t) {
+                let n = needs.entry(*f).or_default();
+                if !n.contains(&(t, parse)) {
+                    n.push((t, parse));
+                    grew = true;
                 }
-            }
-            for c in &u.closures {
-                for (t, parse) in needs.get(c).cloned().unwrap_or_default() {
-                    reqs.push((t, cx.def_spans[c.0 as usize], parse));
-                }
-            }
-            reqs.extend(dispatched(cx, u, &needs, &mut dispatch));
-            for (t, span, parse) in reqs {
-                if has_param(cx, t) {
-                    let n = needs.entry(*f).or_default();
-                    if !n.contains(&(t, parse)) {
-                        n.push((t, parse));
-                        changed = true;
-                    }
-                } else if !reported.contains(&(t, span))
-                    && checked.insert((t, span, parse))
-                    && check(cx, t, span, parse)
-                {
-                    reported.insert((t, span));
-                }
+            } else if !reported.contains(&(t, span))
+                && checked.insert((t, span, parse))
+                && check(cx, t, span, parse)
+            {
+                reported.insert((t, span));
             }
         }
+        if grew {
+            rounds.changed(*f);
+        }
     }
+    add_work(Pass::Json, work);
 }
 
-/// The types the methods that the class types `u` mentions dispatch dynamically to need,
-/// instantiated with those types' arguments.
-fn dispatched(
-    cx: &mut Ctx,
-    u: &Uses,
-    needs: &Needs,
-    dispatch: &mut Dispatch,
-) -> Vec<(TyId, Span, bool)> {
-    let mut reqs = vec![];
-    for (t, span) in &u.types {
-        for (m, args) in dispatch.targets(cx, *t) {
-            for (need, parse) in needs.get(&m).cloned().unwrap_or_default() {
-                if let Some(need) = instantiate(cx, need, &args) {
-                    reqs.push((need, *span, parse));
-                }
+/// The types a function needs: those it gives the JSON intrinsics, those of the generic
+/// functions it calls (substituted), closures it creates and methods the class types it
+/// mentions dispatch dynamically to (instantiated with those types' arguments).
+fn requirements(cx: &mut Ctx, u: &Uses, needs: &Needs) -> Vec<(TyId, Span, bool)> {
+    let mut reqs: Vec<(TyId, Span, bool)> = u.direct.clone();
+    for (d, targs, span) in &u.calls {
+        for (t, parse) in needs.get(d).into_iter().flatten() {
+            reqs.push((cx.ty.subst(*t, targs), *span, *parse));
+        }
+    }
+    for c in &u.closures {
+        for (t, parse) in needs.get(c).into_iter().flatten() {
+            reqs.push((*t, cx.def_spans[c.0 as usize], *parse));
+        }
+    }
+    for (m, args, span) in &u.dyn_calls {
+        for (need, parse) in needs.get(m).into_iter().flatten() {
+            if let Some(need) = instantiate(cx, *need, args) {
+                reqs.push((need, *span, *parse));
             }
         }
     }
