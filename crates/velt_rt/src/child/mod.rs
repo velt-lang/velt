@@ -59,7 +59,7 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
 /// Prefixes spawn errors with the program, like Node's `spawn x ENOENT`.
 fn spawn_error(program: &VeltStr, e: &std::io::Error) -> VeltErr {
     // SAFETY: `program` is a valid string borrowed from the caller.
-    let name = String::from_utf8_lossy(unsafe { program.as_bytes() });
+    let name = unsafe { program.text_lossy() };
     let mut err = VeltErr::from_io(e);
     let message = format!("spawn {name}: {e}");
     // SAFETY: `err.message` is an owned string created just above.

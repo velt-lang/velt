@@ -73,8 +73,11 @@ fn velt_greet__slow(n: u64) -> Result<u64, Error> {
   `velt_`, so an export can never stand in for one.
 - Parameters are lent for the call only, so references take no lifetime (`&str`, not
   `&'static str`).
-- Parameters: `bool`, integers, `f32`/`f64`, `&str`/`String` (a Velt `string`), `&[u8]`/
-  `Vec<u8>` (a `u8[]`). `blocking` functions take owned values (`String`, `Vec<u8>`).
+- Parameters: `bool`, integers, `f32`/`f64`, `&str`/`Cow<str>`/`String` (a Velt `string`),
+  `&[u8]`/`Vec<u8>` (a `u8[]`). `blocking` functions take owned values (`String`, `Vec<u8>`).
+  A Velt string is UTF-16 text and may hold a lone surrogate, which Rust text can't: such a
+  string arrives with one U+FFFD in place of each (a copy; well-formed text is borrowed, and a
+  `Cow<str>` parameter tells which).
 - Results: the same scalars, `()`, `String`, `Vec<u8>`, or `Result<T, velt_native::Error>`
   (an `IoResult<T>` in Velt; `Result<(), Error>` is an `IoStatus`).
 - A panic becomes an error result (`native panic: …`) where the result can carry one.

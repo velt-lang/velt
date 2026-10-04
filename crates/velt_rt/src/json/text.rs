@@ -12,7 +12,7 @@ use std::sync::Arc;
 /// How a text form writes the parts of a tree.
 trait Style {
     /// A string value inside a container (or at the top level, for JSON).
-    fn string(out: &mut Vec<u8>, s: &str);
+    fn string(out: &mut Vec<u8>, s: &[u8]);
     /// The opening of a container with members (`[`, `{` / `[ `, `{ `).
     const OPEN: [&'static [u8]; 2];
     /// Between two members.
@@ -20,21 +20,21 @@ trait Style {
     /// The closing of a container with members.
     const CLOSE: [&'static [u8]; 2];
     /// An object key with what separates it from its value.
-    fn key(out: &mut Vec<u8>, k: &str);
+    fn key(out: &mut Vec<u8>, k: &[u8]);
 }
 
 /// `JSON.stringify`: no whitespace, numbers JS-formatted (non-finite → `null`).
 struct Json;
 
 impl Style for Json {
-    fn string(out: &mut Vec<u8>, s: &str) {
-        push_json_string(out, s.as_bytes());
+    fn string(out: &mut Vec<u8>, s: &[u8]) {
+        push_json_string(out, s);
     }
     const OPEN: [&'static [u8]; 2] = [b"[", b"{"];
     const SEP: &'static [u8] = b",";
     const CLOSE: [&'static [u8]; 2] = [b"]", b"}"];
-    fn key(out: &mut Vec<u8>, k: &str) {
-        push_json_string(out, k.as_bytes());
+    fn key(out: &mut Vec<u8>, k: &[u8]) {
+        push_json_string(out, k);
         out.push(b':');
     }
 }
@@ -43,14 +43,14 @@ impl Style for Json {
 struct Inspect;
 
 impl Style for Inspect {
-    fn string(out: &mut Vec<u8>, s: &str) {
-        push_inspect_string(out, s.as_bytes());
+    fn string(out: &mut Vec<u8>, s: &[u8]) {
+        push_inspect_string(out, s);
     }
     const OPEN: [&'static [u8]; 2] = [b"[ ", b"{ "];
     const SEP: &'static [u8] = b", ";
     const CLOSE: [&'static [u8]; 2] = [b" ]", b" }"];
-    fn key(out: &mut Vec<u8>, k: &str) {
-        push_inspect_key(out, k.as_bytes());
+    fn key(out: &mut Vec<u8>, k: &[u8]) {
+        push_inspect_key(out, k);
         out.extend_from_slice(b": ");
     }
 }
@@ -64,7 +64,7 @@ pub fn stringify_into(out: &mut Vec<u8>, v: &Value) {
 /// inside containers and when not `top` (a member of another printed value).
 pub fn inspect_into(out: &mut Vec<u8>, v: &Value, top: bool) {
     match v {
-        Value::String(s) if top => out.extend_from_slice(s.as_bytes()),
+        Value::String(s) if top => out.extend_from_slice(s),
         _ => write_tree::<Inspect>(out, v),
     }
 }

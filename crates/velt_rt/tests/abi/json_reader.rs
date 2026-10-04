@@ -483,3 +483,46 @@ fn options_reject_unknown_keys_and_limit_depth() {
         velt_rt_json_reader_free(r);
     }
 }
+
+#[test]
+fn a_source_with_lone_surrogates_gives_strings_that_know_it() {
+    // `{"k\uD83D": ["\uDE00x", "a\\nb\uD83D"]}` with raw lone surrogates (WTF-8) in the text.
+    let (hi, lo) = ([0xED, 0xA0, 0xBD], [0xED, 0xB8, 0x80]);
+    let src_bytes = [
+        &b"{\"k"[..],
+        &hi,
+        b"\": [\"",
+        &lo,
+        b"x\", \"a\\nb",
+        &hi,
+        b"\"]}",
+    ]
+    .concat();
+    let src = VeltStr::from_bytes(&src_bytes);
+    assert!(!unsafe { src.is_well_formed() });
+    unsafe {
+        let r = velt_rt_json_reader_new(&src);
+        assert_eq!(velt_rt_json_reader_expect_object_start(r), 1);
+        let mut key = MaybeUninit::uninit();
+        assert_eq!(velt_rt_json_reader_next_key(r, key.as_mut_ptr()), 1);
+        let key = key.assume_init();
+        assert_eq!(key.as_bytes(), [&b"k"[..], &hi].concat());
+        assert!(!key.is_well_formed());
+        assert_eq!(velt_rt_json_reader_expect_array_start(r), 1);
+        let mut items = vec![];
+        while velt_rt_json_reader_array_next(r) == 1 {
+            let mut s = MaybeUninit::uninit();
+            assert_eq!(velt_rt_json_reader_read_string(r, s.as_mut_ptr()), 1);
+            let s = s.assume_init();
+            // The escaped one is decoded into a heap or inline string: its lone count is kept.
+            assert!(!s.is_well_formed());
+            assert_eq!(s.units(), s.as_bytes().len() - 2);
+            items.push(s.as_bytes().to_vec());
+        }
+        assert_eq!(
+            items,
+            [[&lo[..], b"x"].concat(), [&b"a\nb"[..], &hi].concat()]
+        );
+        velt_rt_json_reader_free(r);
+    }
+}

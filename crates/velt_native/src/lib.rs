@@ -29,6 +29,7 @@
 //! each function's signature (a `velt_sig_<name>` symbol) that `velt native build` reads, and
 //! that `velt` checks every `declare` against.
 
+use std::borrow::Cow;
 use std::ffi::c_void;
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicPtr, Ordering};
@@ -265,9 +266,14 @@ fn new_bytes(b: &[u8]) -> VeltBytes {
     out
 }
 
+/// The text of a Velt string: borrowed when it is UTF-8 (well-formed, the usual case), else a
+/// converted copy. A Velt string is UTF-16 text stored as WTF-8 (native_abi.md "Strings"): a
+/// lone surrogate (`ED A0..BF xx`) becomes one U+FFFD, the same length, as at every other
+/// output of a program.
+///
 /// # Safety
 /// `s` must point to a live Velt string; the result borrows it.
-unsafe fn str_of<'a>(s: *const VeltStr) -> &'a str {
+unsafe fn str_of<'a>(s: *const VeltStr) -> Cow<'a, str> {
     let mut len = 0usize;
     let p = (api().str_bytes)(s, &mut len);
     let bytes = if len == 0 {
@@ -276,8 +282,48 @@ unsafe fn str_of<'a>(s: *const VeltStr) -> &'a str {
         std::slice::from_raw_parts(p, len)
     };
     match std::str::from_utf8(bytes) {
+        Ok(s) => Cow::Borrowed(s),
+        Err(_) => Cow::Owned(wtf8_to_utf8_lossy(bytes)),
+    }
+}
+
+/// WTF-8 as UTF-8: each lone surrogate (`ED A0..BF xx`) becomes one U+FFFD (3 bytes, as the
+/// surrogate); anything else that is not UTF-8 (never in a runtime's string) by the WHATWG rule.
+fn wtf8_to_utf8_lossy(bytes: &[u8]) -> String {
+    let mut v = bytes.to_vec();
+    let mut i = 0;
+    while i + 2 < v.len() {
+        if v[i] == 0xED && v[i + 1] >= 0xA0 {
+            v[i..i + 3].copy_from_slice("\u{FFFD}".as_bytes());
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    match String::from_utf8(v) {
         Ok(s) => s,
-        Err(_) => fatal("a Velt string passed to native code is not UTF-8"),
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    }
+}
+
+/// Owner of the text converted for `&str` arguments of one call (see [`__from_raw_scoped`]):
+/// an argument with a lone surrogate is converted into a copy that lives here until the
+/// generated wrapper returns.
+#[doc(hidden)]
+#[derive(Default)]
+pub struct __Scope {
+    texts: std::cell::RefCell<Vec<Box<str>>>,
+}
+
+impl __Scope {
+    /// Keep `text` until the scope ends and borrow it.
+    fn keep(&self, text: String) -> &str {
+        let text = text.into_boxed_str();
+        let p: *const str = &*text;
+        self.texts.borrow_mut().push(text);
+        // SAFETY: the box is never removed or dropped before `self`, and moving a box into the
+        // vector does not move its heap text.
+        unsafe { &*p }
     }
 }
 
@@ -304,6 +350,17 @@ pub trait Param<'a>: Sized {
     /// # Safety
     /// `raw` must be a valid argument per native_abi.md.
     unsafe fn from_raw(raw: Self::Raw) -> Self;
+
+    /// [`Self::from_raw`] in an exported function's wrapper, where `scope` can own a converted
+    /// copy for the duration of the call (a `&str` of a string with a lone surrogate).
+    ///
+    /// # Safety
+    /// As for [`Self::from_raw`].
+    #[doc(hidden)]
+    unsafe fn from_raw_in(raw: Self::Raw, scope: &'a __Scope) -> Self {
+        let _ = scope;
+        Self::from_raw(raw)
+    }
 }
 
 /// Converts an argument of an exported function, borrowed no longer than `scope` (a local of the
@@ -333,8 +390,8 @@ pub trait Param<'a>: Sized {
 /// # Safety
 /// `raw` must be a valid argument per native_abi.md that lives at least as long as `scope`.
 #[doc(hidden)]
-pub unsafe fn __from_raw_scoped<'a, T: Param<'a>>(_scope: &'a (), raw: T::Raw) -> T {
-    T::from_raw(raw)
+pub unsafe fn __from_raw_scoped<'a, T: Param<'a>>(scope: &'a __Scope, raw: T::Raw) -> T {
+    T::from_raw_in(raw, scope)
 }
 
 /// A parameter type of a `blocking` export: owned, so it can move to the blocking pool.
@@ -360,10 +417,33 @@ scalar_params!(
     i8 => "i8", i16 => "i16", i32 => "i32", i64 => "i64", f32 => "f32", f64 => "f64"
 );
 
+/// A string argument as `&str`: borrowed when well-formed. In an exported function a string
+/// with a lone surrogate arrives converted (one U+FFFD each); outside one ([`Param::from_raw`]
+/// called directly) there is nowhere to keep the copy, so that is a fatal error, as it was for
+/// every ill-formed string before the SDK converted them.
 impl<'a> Param<'a> for &'a str {
     type Raw = *const VeltStr;
     const SIG: &'static str = "string";
     unsafe fn from_raw(raw: *const VeltStr) -> &'a str {
+        match str_of(raw) {
+            Cow::Borrowed(s) => s,
+            Cow::Owned(_) => fatal("a Velt string with a lone surrogate needs a `Cow<str>` here"),
+        }
+    }
+    unsafe fn from_raw_in(raw: *const VeltStr, scope: &'a __Scope) -> &'a str {
+        match str_of(raw) {
+            Cow::Borrowed(s) => s,
+            Cow::Owned(s) => scope.keep(s),
+        }
+    }
+}
+
+/// A string argument as `Cow<str>`: borrowed when well-formed, else converted (one U+FFFD per
+/// lone surrogate).
+impl<'a> Param<'a> for Cow<'a, str> {
+    type Raw = *const VeltStr;
+    const SIG: &'static str = "string";
+    unsafe fn from_raw(raw: *const VeltStr) -> Cow<'a, str> {
         str_of(raw)
     }
 }
@@ -372,7 +452,7 @@ impl<'a> Param<'a> for String {
     type Raw = *const VeltStr;
     const SIG: &'static str = "string";
     unsafe fn from_raw(raw: *const VeltStr) -> String {
-        str_of(raw).to_string()
+        str_of(raw).into_owned()
     }
 }
 impl OwnedParam for String {}

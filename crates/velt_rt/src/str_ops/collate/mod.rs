@@ -15,7 +15,7 @@
 
 mod table;
 
-use super::text;
+use super::text_lossy;
 use crate::str::VeltStr;
 use std::cmp::Ordering;
 
@@ -99,7 +99,7 @@ pub fn collate(a: &str, b: &str) -> Ordering {
 /// `s` and `t` must be valid `VeltStr`s.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_str_locale_compare(s: *const VeltStr, t: *const VeltStr) -> i64 {
-    match collate(text(s), text(t)) {
+    match collate(&text_lossy(s), &text_lossy(t)) {
         Ordering::Less => -1,
         Ordering::Equal => 0,
         Ordering::Greater => 1,

@@ -2,6 +2,7 @@
 //! records `velt native build` reads.
 
 use super::*;
+use std::borrow::Cow;
 use std::sync::Once;
 
 // Mock strings: words[0] = pointer to a leaked `Vec<u8>`, words[1] = length.
@@ -127,6 +128,11 @@ fn demo_greet(name: &str, excited: bool) -> String {
 }
 
 #[export]
+fn demo_borrowed(text: Cow<str>) -> u64 {
+    matches!(text, Cow::Borrowed(_)) as u64 * 1000 + text.len() as u64
+}
+
+#[export]
 fn demo_parse(text: String) -> Result<i64, Error> {
     text.trim()
         .parse()
@@ -155,6 +161,7 @@ fn signature_records() {
     assert_eq!(sig(&__VELT_SIG_demo_add), "(u64,i32)->u64");
     assert_eq!(sig(&__VELT_SIG_demo_greet), "(string,bool)->string");
     assert_eq!(sig(&__VELT_SIG_demo_parse), "(string)->IoResult<i64>");
+    assert_eq!(sig(&__VELT_SIG_demo_borrowed), "(string)->u64");
     assert_eq!(sig(&__VELT_SIG_demo_boom), "(u8[])->IoStatus");
     assert_eq!(sig(&__VELT_SIG_demo_nothing), "()->void");
     assert_eq!(sig(&__VELT_SIG_demo_slow), "async (u8[])->IoResult<u8[]>");
@@ -181,6 +188,34 @@ fn sync_exports() {
         assert_eq!(r.err.code, code::INVALID_INPUT);
         assert!(rust_str(&r.err.message).contains("invalid digit"));
     }
+}
+
+/// A Velt string with a lone surrogate (the runtime stores it as WTF-8).
+fn lone_str() -> VeltStr {
+    let bytes = [b"a".as_slice(), &[0xED, 0xA0, 0xBD], b"b"].concat();
+    let mut out = VeltStr::empty();
+    unsafe { str_new(bytes.as_ptr(), bytes.len(), &mut out) };
+    out
+}
+
+#[test]
+fn lone_surrogates_arrive_as_one_replacement_character() {
+    init();
+    unsafe {
+        let mut out = VeltStr::empty();
+        demo_greet(&lone_str(), false, &mut out);
+        assert_eq!(rust_str(&out), "hello, a\u{FFFD}b");
+        let mut r = MaybeUninit::<IoResultSlot<i64>>::uninit();
+        demo_parse(&lone_str(), r.as_mut_ptr());
+        assert!(rust_str(&r.assume_init().err.message).contains("invalid digit"));
+        // Borrowed when well-formed, a copy of the same length otherwise.
+        assert_eq!(demo_borrowed(&velt_str("héllo")), 1006);
+        assert_eq!(demo_borrowed(&lone_str()), 5);
+    }
+    assert_eq!(
+        wtf8_to_utf8_lossy(&[0xED, 0xB0, 0x80, b'x', 0xED, 0x9F, 0xBF]),
+        "\u{FFFD}x\u{D7FF}"
+    );
 }
 
 #[test]

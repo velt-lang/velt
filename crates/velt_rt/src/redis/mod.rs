@@ -22,19 +22,24 @@ pub mod resp;
 pub mod url;
 
 use crate::str_array::VeltStrArray;
+use std::borrow::Cow;
 
-/// The elements of a Velt `string[]`, borrowed for the duration of the ABI call (encode or copy
-/// them before returning).
+/// The elements of a Velt `string[]` as UTF-8, borrowed for the duration of the ABI call
+/// (encode or copy them before returning); a string with lone surrogates is converted (one
+/// U+FFFD each, #377).
 ///
 /// # Safety
 /// `a` must point to a valid `VeltStrArray` that outlives the returned slices.
-pub(crate) unsafe fn str_args<'a>(a: *const VeltStrArray) -> Vec<&'a [u8]> {
+pub(crate) unsafe fn str_args<'a>(a: *const VeltStrArray) -> Vec<Cow<'a, [u8]>> {
     let a = &*a;
     if a.len == 0 {
         return vec![];
     }
     std::slice::from_raw_parts(a.ptr, a.len as usize)
         .iter()
-        .map(|s| s.as_bytes())
+        .map(|s| match s.text_lossy() {
+            Cow::Borrowed(t) => Cow::Borrowed(t.as_bytes()),
+            Cow::Owned(t) => Cow::Owned(t.into_bytes()),
+        })
         .collect()
 }
