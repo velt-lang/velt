@@ -82,5 +82,8 @@ Std code is monomorphized and inlined like user code, so write plain index loops
 - Reserve capacity (`__intrinsic_array_with_capacity`) when the final length is known.
 - Never clone to read: pass `xs[i]` straight to callbacks and comparisons (they borrow).
 - Rearrange arrays with `__intrinsic_array_swap` / `__intrinsic_array_truncate`; moving an
-  element out of an index is not allowed, and a swap avoids clones.
+  element out of an index is not allowed, and a swap avoids clones. Algorithms that need a
+  buffer (the stable sort, std/sort/stable.vlt) move raw elements with
+  `__intrinsic_array_move` into an array sized with `__intrinsic_array_set_len`, keeping every
+  element owned exactly once themselves, and set its length back to 0 before it is dropped.
 - Keep algorithms allocation-free where possible (both sorts are in place).

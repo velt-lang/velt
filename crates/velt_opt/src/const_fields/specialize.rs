@@ -70,19 +70,21 @@ impl Specializations {
     ) -> bool {
         let mut changed = false;
         for bi in 0..program.funcs[caller.0 as usize].blocks.len() {
-            let Some((callee, param, known)) =
-                specializable(&program.funcs[caller.0 as usize].blocks[bi].term, ro, facts)
-            else {
-                continue;
-            };
-            let Some(clone) = self.clone_for(program, callee, param, known, pending) else {
-                continue;
-            };
-            if clone != callee {
-                let term = &mut program.funcs[caller.0 as usize].blocks[bi].term;
-                if let Terminator::Call { callee, .. } = term {
-                    *callee = Callee::Func(clone);
-                    changed = true;
+            let term = &program.funcs[caller.0 as usize].blocks[bi].term;
+            let (mut callee, candidates) = specializable(term, ro, facts);
+            // Every known closure argument in turn (`sort(cmp, neg)` passes two): each clone
+            // specializes one more param of the previous one.
+            for (param, known) in candidates {
+                let Some(clone) = self.clone_for(program, callee, param, known, pending) else {
+                    continue;
+                };
+                if clone != callee {
+                    callee = clone;
+                    let term = &mut program.funcs[caller.0 as usize].blocks[bi].term;
+                    if let Terminator::Call { callee, .. } = term {
+                        *callee = Callee::Func(clone);
+                        changed = true;
+                    }
                 }
             }
         }
@@ -146,28 +148,30 @@ impl Specializations {
     }
 }
 
-/// A direct call passing a known-code pointer to a read-only param: (callee, param, fields).
-fn specializable(
-    term: &Terminator,
-    ro: &ReadOnly,
-    facts: &Facts,
-) -> Option<(FuncId, usize, Known)> {
+/// A direct call's callee and its arguments that pass a known-code pointer to a read-only
+/// param: (param, fields), in argument order. No candidates for anything else.
+fn specializable(term: &Terminator, ro: &ReadOnly, facts: &Facts) -> (FuncId, Vec<(usize, Known)>) {
     let Terminator::Call {
         callee: Callee::Func(id),
         args,
         ..
     } = term
     else {
-        return None;
+        return (FuncId(0), Vec::new());
     };
-    args.iter().enumerate().find_map(|(i, a)| {
-        let Operand::Copy(place) = a else {
-            return None;
-        };
-        let known = facts
-            .pointers
-            .get(&place.local)
-            .filter(|_| is_bare(a, place.local))?;
-        (known.has_code() && ro.get(id.0 as usize, i)).then(|| (*id, i, known.clone()))
-    })
+    let candidates = args
+        .iter()
+        .enumerate()
+        .filter_map(|(i, a)| {
+            let Operand::Copy(place) = a else {
+                return None;
+            };
+            let known = facts
+                .pointers
+                .get(&place.local)
+                .filter(|_| is_bare(a, place.local))?;
+            (known.has_code() && ro.get(id.0 as usize, i)).then(|| (i, known.clone()))
+        })
+        .collect();
+    (*id, candidates)
 }

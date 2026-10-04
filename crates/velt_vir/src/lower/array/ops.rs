@@ -1,5 +1,5 @@
 //! Array intrinsics: `length`, `push` (amortized growth), `pop`, and the `std/` helpers
-//! `__intrinsic_array_with_capacity/swap/remove/truncate`.
+//! `__intrinsic_array_with_capacity/swap/remove/truncate/move/set_len`.
 
 use velt_sema::hir::{self, TyId};
 
@@ -20,6 +20,9 @@ impl FnLower<'_, '_> {
             let cty = self.vty(args[0].ty);
             let cap = self.cast_to(cap, cty, Ty::U64);
             return self.with_capacity(cap, ty);
+        }
+        if i == I::ArrayMove {
+            return self.array_move(args);
         }
         let aty = self.sub(args[0].ty);
         let av = self.expr(&args[0]);
@@ -49,11 +52,106 @@ impl FnLower<'_, '_> {
                 self.truncate(&arr, elem, nv);
                 unit()
             }
+            (I::ArraySetLen, [n]) => {
+                let (nv, nt) = (self.expr(n), self.vty(n.ty));
+                let nv = self.cast_to(nv, nt, Ty::U64);
+                self.set_len(&arr, nv);
+                unit()
+            }
             _ => ice(format_args!(
                 "intrinsic {i:?} called with {} arguments",
                 args.len()
             )),
         }
+    }
+
+    /// `__intrinsic_array_move(dst, d, src, s, n)`: `dst[d..d + n)` = the bits of
+    /// `src[s..s + n)`, both ranges bounds-checked; no drop of what `dst` held, no share of
+    /// what `src` holds. A literal `n` of 1 is one element copy, anything else one memcpy.
+    fn array_move(&mut self, args: &[hir::Expr]) -> Operand {
+        let [dst, d, src, s, n] = args else {
+            ice(format_args!(
+                "ArrayMove called with {} arguments",
+                args.len()
+            ))
+        };
+        let (dty, sty) = (self.sub(dst.ty), self.sub(src.ty));
+        let elem = self.elem_ty(dty);
+        let dv = self.expr(dst);
+        let darr = self.place_of(dv, dty);
+        let darr = self.content(&darr, dty);
+        let (id, td) = (self.expr(d), self.vty(d.ty));
+        let id = self.freeze(id, d.ty);
+        let sv = self.expr(src);
+        let sarr = self.place_of(sv, sty);
+        let sarr = self.content(&sarr, sty);
+        let (is, ts) = (self.expr(s), self.vty(s.ty));
+        let is = self.freeze(is, s.ty);
+        let (nv, nt) = (self.expr(n), self.vty(n.ty));
+        if matches!(nv, Operand::Const(vir::Const::Int(1), _)) {
+            let pd = self.elem_place_checked(&darr, dty, id, td);
+            let ps = self.elem_place_checked(&sarr, sty, is, ts);
+            self.assign(pd, Rvalue::Use(Operand::Copy(ps)));
+            return unit();
+        }
+        let count = self.cast_to(nv, nt, Ty::U64);
+        let count = self.rvalue_temp(Ty::U64, Rvalue::Use(count));
+        let id = self.cast_to(id, td, Ty::U64);
+        let id = self.rvalue_temp(Ty::U64, Rvalue::Use(id));
+        let is = self.cast_to(is, ts, Ty::U64);
+        let is = self.rvalue_temp(Ty::U64, Rvalue::Use(is));
+        let some = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Ne, count.clone(), cint(0, Ty::U64)),
+        );
+        let (copy_bb, join) = (self.new_block(), self.new_block());
+        self.branch(some, copy_bb, join);
+        self.switch_to(copy_bb);
+        // The last element of each range is in bounds, so all of it is.
+        let back = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Sub, count.clone(), cint(1, Ty::U64)),
+        );
+        let last_d = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Add, id.clone(), back.clone()),
+        );
+        let last_s = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Add, is.clone(), back));
+        self.elem_place_checked(&darr, dty, last_d, Ty::U64);
+        self.elem_place_checked(&sarr, sty, last_s, Ty::U64);
+        let pd = self.elem_place(&darr, id, elem);
+        let ps = self.elem_place(&sarr, is, elem);
+        let (stride, _) = self.stride(elem);
+        let bytes = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Mul, count, cint(stride as i128, Ty::U64)),
+        );
+        let (pd, ps) = (self.addr(pd), self.addr(ps));
+        self.mem_copy_dyn(pd, ps, bytes, false);
+        self.goto(join);
+        self.switch_to(join);
+        unit()
+    }
+
+    /// `len = n` without drops or initialization; a panic when `n` exceeds the capacity.
+    fn set_len(&mut self, arr: &Place, n: Operand) {
+        let n = self.rvalue_temp(Ty::U64, Rvalue::Use(n));
+        let fits = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Le, n.clone(), Self::arr_field(arr, 2)),
+        );
+        let (ok, over) = (self.new_block(), self.new_block());
+        self.branch(fits, ok, over);
+        self.switch_to(over);
+        let msg = format!(
+            "ICE: array length set past its capacity{}",
+            self.panic_suffix()
+        );
+        let msg = self.str_lit(&msg);
+        let a = self.operand_addr(msg, Ty::Agg(vir::STR_AGG));
+        self.call_rt(crate::lower::rt::Rt::Panic, vec![a], None);
+        self.switch_to(ok);
+        self.assign(proj(arr, Proj::Field(1)), Rvalue::Use(n));
     }
 
     fn with_capacity(&mut self, cap: Operand, ty: TyId) -> Operand {

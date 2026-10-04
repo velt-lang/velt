@@ -35,6 +35,17 @@ pub enum Intrinsic {
     ArrayRemove,
     /// `(xs (modified), len: usize)` drop elements past `len`
     ArrayTruncate,
+    /// std only: `(dst (modified), d: usize, src: borrow T[], s: usize, n: usize)` — the
+    /// bits of `src[s..s + n)` written to `dst[d..d + n)` (both ranges bounds-checked; `dst`
+    /// and `src` are different arrays): what `dst` held there is not dropped, nothing is
+    /// shared, and `src` keeps stale copies. A raw move for algorithms that keep every element
+    /// owned exactly once themselves (the stable sort's scratch buffer, std/sort/stable.vlt).
+    ArrayMove,
+    /// std only: `(xs (modified), len: usize)` set the length to `len` (at most the capacity,
+    /// else a panic) without dropping or initializing any element: slots past the old length
+    /// must be written (`ArrayMove`) before they are read, and slots that are not owned any
+    /// more must be cut off with it before the array is dropped.
+    ArraySetLen,
     /// `(x: borrow T) -> u64` compiler-generated hash (ints, bool, string, Copy structs, enums)
     Hash,
     /// `(a: borrow T, b: borrow T) -> bool` structural (deep) equality: `__intrinsic_eq`, `Map`

@@ -9,18 +9,23 @@
 //   total order, so the algorithm's invariants hold).
 // - `sort(cmp)` for any element type (and on numbers and strings too): **stable** like JS
 //   `Array.prototype.sort(cmp)`.
-//   Insertion-sorted blocks merged with SymMerge (in place, rotation based, O(n log^2 n)
-//   swaps, no allocation); runs that are already in order are not merged.
-//   `cmp(a, b)` returns < 0 when `a` goes first, > 0 when `b` goes first, 0 when equivalent.
-// Elements are only ever swapped, never copied or cloned (there is no generic move out of an
-// array), so every algorithm here works for any `T`.
+//   The shape of Rust's driftsort through a scratch buffer of the array's length: natural
+//   runs, stable quicksort between them, merges (std/sort/stable.vlt). O(n log n), O(n) on
+//   sorted or reversed input.
+//   `cmp(a, b)` returns < 0 when `a` goes first, > 0 when `b` goes first, 0 when equivalent
+//   (on `f64[]` a NaN result counts as 0). Any comparator, even an inconsistent one, gives
+//   some permutation of the elements.
+// Elements are never copied or cloned: pdqsort swaps them, the stable sort moves them between
+// the array and its buffer, so every algorithm here works for any `T`.
 // There is no generic ordering bound yet, so `sort()` is provided per element type. The
 // comparator returns `i64` (like `compareTo`), except on `f64[]`, where it returns `f64`.
+
+import { stableSort } from "velt:sort/stable";
 
 extend Array<i64> {
   sort(cmp: ((x: i64, y: i64) => i64) | null = null) {
     if (cmp != null) {
-      stableSort(this, cmp);
+      stableSort(this, cmp, (c) => c < 0);
       return;
     }
     pdqsort(this, (a, b) => a < b);
@@ -37,7 +42,7 @@ extend Array<i64> {
 extend Array<i32> {
   sort(cmp: ((x: i32, y: i32) => i64) | null = null) {
     if (cmp != null) {
-      stableSort(this, cmp);
+      stableSort(this, cmp, (c) => c < 0);
       return;
     }
     pdqsort(this, (a, b) => a < b);
@@ -54,7 +59,7 @@ extend Array<i32> {
 extend Array<u64> {
   sort(cmp: ((x: u64, y: u64) => i64) | null = null) {
     if (cmp != null) {
-      stableSort(this, cmp);
+      stableSort(this, cmp, (c) => c < 0);
       return;
     }
     pdqsort(this, (a, b) => a < b);
@@ -71,7 +76,7 @@ extend Array<u64> {
 extend Array<usize> {
   sort(cmp: ((x: usize, y: usize) => i64) | null = null) {
     if (cmp != null) {
-      stableSort(this, cmp);
+      stableSort(this, cmp, (c) => c < 0);
       return;
     }
     pdqsort(this, (a, b) => a < b);
@@ -89,7 +94,7 @@ extend Array<f64> {
   // The comparator returns a float, so `(a, b) => a - b` works; a NaN result counts as 0.
   sort(cmp: ((x: f64, y: f64) => f64) | null = null) {
     if (cmp != null) {
-      stableSortFloat(this, cmp);
+      stableSort(this, cmp, (c) => c < 0.0);
       return;
     }
     pdqsort(this, (a, b) => a < b || (b != b && a == a));
@@ -106,7 +111,7 @@ extend Array<f64> {
 extend Array<string> {
   sort(cmp: ((x: string, y: string) => i64) | null = null) {
     if (cmp != null) {
-      stableSort(this, cmp);
+      stableSort(this, cmp, (c) => c < 0);
       return;
     }
     pdqsort(this, (a, b) => a < b);
@@ -123,7 +128,7 @@ extend Array<string> {
 extend<T> Array<T> {
   // Stable sort by `cmp` (JS `sort(compareFn)`; there is no default order for arbitrary `T`).
   sort(cmp: (x: T, y: T) => i64) {
-    stableSort(this, cmp);
+    stableSort(this, cmp, (c) => c < 0);
   }
 
   // A copy sorted by `cmp` (ES2023); the receiver is unchanged.
@@ -132,14 +137,6 @@ extend<T> Array<T> {
     out.sort(cmp);
     return out;
   }
-}
-
-// `stableSort` with a float comparator (the sign of its result; NaN counts as 0).
-function stableSortFloat(xs: f64[], cmp: (x: f64, y: f64) => f64) {
-  stableSort(xs, (x, y) => {
-    const c = cmp(x, y);
-    return c < 0.0 ? -1 : c > 0.0 ? 1 : 0;
-  });
 }
 
 // ───────────────────────── pdqsort (unstable) ─────────────────────────
@@ -407,133 +404,5 @@ function siftDown<T>(xs: T[], base: usize, root: usize, n: usize, less: (x: T, y
     }
     __intrinsic_array_swap(xs, base + root, base + child);
     root = child;
-  }
-}
-
-// ───────────────────────── stable sort (SymMerge) ─────────────────────────
-// Algorithm from Kim & Kutzner, "Stable Minimum Storage Merging by Symmetric Comparisons"
-// (the same scheme as Go's `sort.Stable`).
-
-// Width of the insertion-sorted blocks that the merge passes start from.
-const STABLE_BLOCK: usize = 20;
-
-function stableSort<T>(xs: T[], cmp: (x: T, y: T) => i64) {
-  const n = xs.length;
-  let block = STABLE_BLOCK;
-  let a: usize = 0;
-  while (a + block <= n) {
-    stableInsertion(xs, a, a + block, cmp);
-    a += block;
-  }
-  stableInsertion(xs, a, n, cmp);
-  while (block < n) {
-    a = 0;
-    while (a + block < n) {
-      const m = a + block;
-      const b = m + block < n ? m + block : n;
-      // Runs already in order (common for partly sorted input) need no merge.
-      if (cmp(xs[m], xs[m - 1]) < 0) {
-        symMerge(xs, a, m, b, cmp);
-      }
-      a = b;
-    }
-    block *= 2;
-  }
-}
-
-function stableInsertion<T>(xs: T[], lo: usize, hi: usize, cmp: (x: T, y: T) => i64) {
-  for (let i = lo + 1; i < hi; i++) {
-    let j = i;
-    while (j > lo && cmp(xs[j], xs[j - 1]) < 0) {
-      __intrinsic_array_swap(xs, j, j - 1);
-      j--;
-    }
-  }
-}
-
-// Merges the sorted runs xs[a..m) and xs[m..b) in place (requires a < m < b).
-function symMerge<T>(xs: T[], a: usize, m: usize, b: usize, cmp: (x: T, y: T) => i64) {
-  if (m - a == 1) {
-    // Single element on the left: binary-search its slot in the right run, rotate it there.
-    let i = m;
-    let j = b;
-    while (i < j) {
-      const h = i + (j - i) / 2;
-      if (cmp(xs[h], xs[a]) < 0) {
-        i = h + 1;
-      } else {
-        j = h;
-      }
-    }
-    for (let k = a; k + 1 < i; k++) {
-      __intrinsic_array_swap(xs, k, k + 1);
-    }
-    return;
-  }
-  if (b - m == 1) {
-    // Single element on the right: binary-search its slot in the left run.
-    let i = a;
-    let j = m;
-    while (i < j) {
-      const h = i + (j - i) / 2;
-      if (cmp(xs[m], xs[h]) >= 0) {
-        i = h + 1;
-      } else {
-        j = h;
-      }
-    }
-    for (let k = m; k > i; k--) {
-      __intrinsic_array_swap(xs, k, k - 1);
-    }
-    return;
-  }
-  const mid = a + (b - a) / 2;
-  const n = mid + m;
-  let start: usize = a;
-  let r = m;
-  if (m > mid) {
-    start = n - b;
-    r = mid;
-  }
-  const p = n - 1;
-  while (start < r) {
-    const c = start + (r - start) / 2;
-    if (cmp(xs[p - c], xs[c]) >= 0) {
-      start = c + 1;
-    } else {
-      r = c;
-    }
-  }
-  const end = n - start;
-  if (start < m && m < end) {
-    rotate(xs, start, m, end);
-  }
-  if (a < start && start < mid) {
-    symMerge(xs, a, start, mid, cmp);
-  }
-  if (mid < end && end < b) {
-    symMerge(xs, mid, end, b, cmp);
-  }
-}
-
-// Rotates xs[a..b) so that xs[m..b) comes before xs[a..m), using block swaps.
-function rotate<T>(xs: T[], a: usize, m: usize, b: usize) {
-  let i = m - a;
-  let j = b - m;
-  while (i != j) {
-    if (i > j) {
-      swapRange(xs, m - i, m, j);
-      i -= j;
-    } else {
-      swapRange(xs, m - i, m + j - i, i);
-      j -= i;
-    }
-  }
-  swapRange(xs, m - i, m, i);
-}
-
-function swapRange<T>(xs: T[], a: usize, b: usize, n: usize) {
-  for (let k: usize = 0; k < n; k++) {
-    __intrinsic_array_swap(xs, a + k, b + k);
   }
 }
