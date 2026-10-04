@@ -36,8 +36,14 @@ impl Client {
 
     /// Start a server and complete the handshake with `initialize` params `init`.
     pub fn start_with(init: Value) -> Client {
+        Client::start_on(init, TestLoader)
+    }
+
+    /// Start a server loading programs with `loader` and complete the handshake with
+    /// `initialize` params `init`.
+    pub fn start_on(init: Value, loader: impl crate::ProgramLoader + 'static) -> Client {
         let (server_conn, conn) = Connection::memory();
-        let server = std::thread::spawn(move || crate::serve(server_conn, &TestLoader));
+        let server = std::thread::spawn(move || crate::serve(server_conn, &loader));
         let mut client = Client {
             conn,
             server: Some(server),
