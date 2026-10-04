@@ -13,7 +13,7 @@ pub enum Ty {
     Float,
     /// `bool`.
     Bool,
-    /// ASCII `string` (byte length == UTF-16 length).
+    /// `string`, ASCII or not (lengths and positions are UTF-16 code units on both sides).
     Str,
     /// `i64[]`.
     IntArr,
