@@ -428,8 +428,13 @@ mod tests {
         request(&conn, 3, "shutdown", Value::Null);
         notify(&conn, "exit", Value::Null);
         server.join().unwrap().unwrap();
-        // Only the document's package was installed.
+        // Only the document's package was installed (compared canonically: on Windows the
+        // loader's keys have no `\\?\` prefix, `canonicalize` adds one).
         let installed: Vec<PathBuf> = loader.packages.lock().unwrap().keys().cloned().collect();
+        let installed: Vec<PathBuf> = installed
+            .iter()
+            .map(|p| p.canonicalize().unwrap())
+            .collect();
         assert_eq!(installed, [app]);
     }
 
