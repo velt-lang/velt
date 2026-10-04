@@ -232,6 +232,17 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         FnSource::Default(_, b) => b,
     };
     frame.scopes[0].hi = body.span.hi;
+    let defaults = match src {
+        FnSource::Decl(d) => d
+            .sig
+            .params
+            .iter()
+            .filter_map(|p| p.default.as_ref())
+            .collect(),
+        FnSource::Default(..) => vec![],
+    };
+    let assigned = super::assigned::assigned_by_closures(&body.stmts, defaults);
+    frame.closure_assigned = super::closure_assigned::owned(assigned);
     let mut fcx = FnCx::new(cx, f.module, env, frame);
     fcx.bounds = f.generics.bounds.clone();
     fcx.fn_name = f.name.clone();
@@ -243,6 +254,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     if let (FnKind::Ctor, FnSource::Decl(d)) = (f.kind, src) {
         fcx.ctor_begin(&f, d);
     }
+    let diags_before = fcx.cx.diags.len();
     fcx.stmts_into(&body.stmts, &mut stmts);
     let mut block = hir::Block {
         stmts,
@@ -259,6 +271,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     fcx.check_returns(&f.name, frame_ret, f.name_span, &block);
     fcx.rec_frame_scopes();
     fcx.finish_using_shares();
+    fcx.note_refused_facts(diags_before);
     let frame = std::mem::replace(&mut fcx.f, Frame::new(f.kind, None));
     let info = cx.fn_info_mut(def);
     info.local_kinds = frame.kinds;

@@ -444,7 +444,8 @@ type.
   it), one settled on the promise's own task is the same object, as for `new Promise`.
 - A promise whose `resolve` and `reject` are all dropped without settling never settles, like in
   JS: it can lose a `Promise.race`, and awaiting it otherwise waits forever. A pending promise
-  keeps the process alive (#147).
+  keeps the process alive (#147) after `main` returns, but not after it fails (an uncaught
+  error or a nonzero exit code ends the process at once, like an uncaught exception in Node).
 
 A one-shot reply to a request handled on another task, without a channel per request:
 

@@ -1,0 +1,22 @@
+// A variable that a closure assigns is not narrowed by a null check, or by assigning it a value:
+// a call between the check and the use may run the closure (#435). Narrowed, `g.m()` would call
+// a method on `null`.
+class Foo {
+  m(): string {
+    return "m";
+  }
+}
+
+function main() {
+  let g: Foo | null = null;
+  const clear = () => {
+    g = null;
+  };
+  if (g !== null) {
+    clear();
+    console.log(g.m());
+  }
+  g = new Foo();
+  clear();
+  console.log(g.m());
+}

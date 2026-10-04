@@ -177,7 +177,8 @@ sender still shares is deep-copied). No code pointers are stored, except the `it
 Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task.vlt and
 released once, at the cell's last reference; no handle is public. Aborting sets a flag, stores
 the reason and wakes the waiters; it never cancels anything itself. No code pointers are
-stored: `AbortSignal.timeout` is a runtime timer task holding a weak reference. A signal made
+stored: `AbortSignal.timeout` is a runtime timer task holding a weak reference, aborted (freed with
+its timer) when the signal is dropped. A signal made
 by `any` holds strong references to its sources until it is aborted (they hold weak ones back).
 
 | Symbol | Signature | Notes |
@@ -525,12 +526,14 @@ an uncounted copy or a static-form view of it): it is copied out before the buff
 | `velt_rt_strbuf_push_byte` | `(VeltStrBuf* b, u8 c)` | punctuation in generated glue |
 | `velt_rt_strbuf_push_json_str` | `(VeltStrBuf* b, const VeltStr* s)` | quoted + escaped exactly like `JSON.stringify(s)`: `\"` `\\` `\b \f \n \r \t`, other controls < U+0020 as lowercase 6-char `\u00xx`; everything else verbatim |
 | `velt_rt_strbuf_push_json_value` | `(VeltStrBuf* b, const void* v)` | `JSON.stringify(v)` of a `json.Value` field (null handle ⇒ `null`); emitted by the compiler, which passes the handle's address as a pointer (VIR `ptr`), unlike the `u64` handles of §3.2 |
-| `velt_rt_strbuf_push_inspect_json` | `(VeltStrBuf* b, const void* v, u8 top)` | what `console.log` prints for a `json.Value` (node `util.inspect` of the parsed value: `{ a: 1, b: [ 2, 'x' ] }`, `[]`, `{}`, strings quoted like `push_inspect_str`, keys like `push_inspect_key`); a string is raw when `top != 0`, and an array or object is then broken across lines like `inspect_layout`; null handle ⇒ `null`. The handle is passed like `push_json_value`'s (additive) |
+| `velt_rt_strbuf_push_inspect_json` | `(VeltStrBuf* b, const void* v, u8 top, u32 depth)` | what `console.log` prints for a `json.Value` (node `util.inspect` of the parsed value: `{ a: 1, b: [ 2, 'x' ] }`, `[]`, `{}`, strings quoted like `push_inspect_str`, keys like `push_inspect_key`); a string is raw when `top != 0`, and an array or object is then broken across lines like `inspect_layout`; null handle ⇒ `null`. `depth` is node's depth of the value (0 for a `console.log` argument): a non-empty array or object nested deeper than 2 prints as `[Array]` / `[Object]`, and an array shows its first 100 elements, then `... n more items` (node's `depth` and `maxArrayLength`). The handle is passed like `push_json_value`'s (additive; `depth` added by #497) |
 | `velt_rt_strbuf_inspect_begin` | `()` | start of a top-level value printed by `console.log`, `${x}` or `String(x)`: the `<ref *N>` numbering of cycles starts over (node numbers per argument), unless an object is being printed (additive) |
 | `velt_rt_strbuf_inspect_enter` | `(VeltStrBuf* b, const void* p) -> u8` | start printing the object at `p` (class instance or recursive object): `1`, or, when `p` is already being printed (a cycle), append `[Circular *N]` and return `0` (the caller skips it); `N` is the object's number for the whole top-level value (additive) |
 | `velt_rt_strbuf_inspect_leave` | `(VeltStrBuf* b)` | done with the innermost entered object; an object with a number gets the `<ref *N> ` prefix at the start of its text (additive) |
+| `velt_rt_strbuf_inspect_circular` | `(VeltStrBuf* b, const void* p) -> u8` | for an object past node's depth limit: when `p` is being printed, append `[Circular *N]` (numbered like `inspect_enter`) and return `1`; else `0` (the caller prints `[Name]`). The object is not entered (additive) |
+| `velt_rt_strbuf_inspect_more` | `(VeltStrBuf* b, u64 remaining)` | append node's `, ... n more items` (`, ... 1 more item`) after the first 100 entries of an array, `Map` or `Set` (additive) |
 | `velt_rt_strbuf_len` | `(const VeltStrBuf* b) -> u64` | byte length: where the next value's text starts (for `inspect_layout`) |
-| `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines (`breakLength` 80, 2-space indentation, arrays of more than six short entries in columns, long strings split at line breaks); a value of at most 71 bytes with fewer than six commas is left alone without being parsed. Emitted after each top-level `console.log` / `${}` value that can hold containers |
+| `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines (`breakLength` 80, 2-space indentation, arrays of more than six short entries in columns (an array's `... n more items` entry on its own line after them), long strings split at line breaks); a value of at most 71 bytes with fewer than six commas is left alone without being parsed. Emitted after each top-level `console.log` / `${}` value that can hold containers |
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |
 | `velt_rt_strbuf_drop` | `(VeltStrBuf* b)` | abandon an unfinished builder (exception path); zeroes it |
 

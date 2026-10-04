@@ -94,7 +94,13 @@ fn operations_follow_vir_semantics() {
         "trunc i64",
         "and i32 %t",
         "icmp eq i32 -1, -1",
-        "frem double 0x4016000000000000, 0x4000000000000000",
+        // `%` on f64: the whole-number fast path, `frem` (C `fmod`) for the rest.
+        "call double @\"velt.frem.f64\"(double 0x4016000000000000, double 0x4000000000000000)",
+        "define internal double @\"velt.frem.f64\"(double %x, double %y) noinline",
+        "%ri = srem i64 %xi, %yi",
+        "%s = frem double %x, %y",
+        "call double @\"velt.frem.f64.slow\"(double %x, double %y)",
+        "declare double @llvm.copysign.f64(double, double)",
         "call void @llvm.memcpy.p0.p0.i64(ptr align 8 %l",
         "call zeroext i8 @\"helper\"(i8 signext -1, i16 zeroext -1)",
         "i32 -1, label %bb",
@@ -146,10 +152,15 @@ fn debug_metadata_follows_source_locations() {
     ] {
         assert!(ir.contains(needle), "missing `{needle}` in\n{ir}");
     }
-    // Every instruction line inside a function carries a location.
-    let body_lines = ir
-        .lines()
-        .filter(|l| l.starts_with("  ") && !l.trim_end().ends_with(':'));
+    // Every instruction line inside a function compiled from VIR carries a location (the
+    // backend's own helpers, such as `velt.frem.f64`, have no source and no debug info).
+    let mut in_helper = false;
+    let body_lines = ir.lines().filter(|l| {
+        if l.starts_with("define ") {
+            in_helper = l.contains("@\"velt.");
+        }
+        !in_helper && l.starts_with("  ") && !l.trim_end().ends_with(':')
+    });
     for line in body_lines {
         assert!(line.contains("!dbg"), "no location on `{line}`");
     }
