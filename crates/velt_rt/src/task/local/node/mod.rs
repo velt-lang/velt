@@ -68,7 +68,7 @@ const OWNER_DONE: u32 = 1;
 /// `owner` bit of a started node: the owner's poll returned READY (the result is claimed).
 const OWNER_DELIVERED: u32 = 2;
 
-/// `owner` bits above the flags: the turn of the task poll that created the node
+/// `owner` bits above the flags: the turn of the task poll in which the node started running
 /// ([`created_in`]). Turns count in `1..TURNS`, so the stamp fits; 0 means outside a task.
 const TURN_SHIFT: u32 = 2;
 /// Turns wrap below this.
@@ -91,8 +91,8 @@ pub(super) struct Head {
     pub refs: AtomicUsize,
     /// Index in the driving set's member list, or [`NO_MEMBER`] (driving task only).
     pub member: AtomicU32,
-    /// `OWNER_*` bits, touched only by whoever holds the handle, and the creation turn above
-    /// them until the result is claimed.
+    /// `OWNER_*` bits, touched only by whoever holds the handle, and the turn the node started
+    /// running in above them until the result is claimed ([`stamp`]).
     owner: Cell<u32>,
     /// The driving set (null while lazy; a counted reference once `SET_REF` is set).
     pub set: *const Shared,
@@ -134,14 +134,12 @@ pub(super) unsafe fn state(f: *mut VeltFut) -> *mut u8 {
     (f as *mut u8).add(std::mem::size_of::<VeltFut>())
 }
 
-/// A lazy node holding a copy of the `state_size` bytes at `src`, created during task turn
-/// `turn` (0: outside a task).
+/// A lazy node holding a copy of the `state_size` bytes at `src`.
 pub(super) unsafe fn alloc_node(
     poll: PollFn,
     drop: DropFn,
     src: *const u8,
     state_size: u64,
-    turn: u32,
 ) -> *mut VeltFut {
     let Ok(state_size) = u32::try_from(state_size) else {
         crate::panic::fatal("async state larger than 4 GiB");
@@ -159,7 +157,7 @@ pub(super) unsafe fn alloc_node(
         flags: AtomicU32::new(0),
         refs: AtomicUsize::new(1),
         member: AtomicU32::new(NO_MEMBER),
-        owner: Cell::new(turn << TURN_SHIFT),
+        owner: Cell::new(0),
         set: std::ptr::null(),
         next: AtomicPtr::new(std::ptr::null_mut()),
         awaiter: AtomicWaker::new(),
@@ -213,8 +211,13 @@ pub(super) unsafe fn is_lazy(f: *mut VeltFut) -> bool {
 
 unsafe extern "C" fn lazy_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     let h = head(f);
-    if h.owner.get() & OWNER_DONE != 0 {
+    let owner = h.owner.get();
+    if owner & OWNER_DONE != 0 {
         return READY;
+    }
+    if owner == 0 {
+        // Its first poll in a task: the turn [`created_in`] compares with.
+        stamp(f, super::current_turn());
     }
     let r = (h.poll)(state(f), cx);
     if r == READY {
@@ -350,7 +353,14 @@ pub(super) unsafe fn peek(f: *mut VeltFut) -> bool {
     h.flags.load(Ordering::Acquire) & DONE != 0 && h.owner.get() & OWNER_DELIVERED == 0
 }
 
-/// Was node `f` created during task turn `turn` (and is its result unclaimed)?
+/// Record that node `f` started running (its first poll, or its start) during task turn `turn`.
+pub(super) unsafe fn stamp(f: *mut VeltFut, turn: u32) {
+    head(f).owner.set(turn << TURN_SHIFT);
+}
+
+/// Did node `f` start running during task turn `turn` (and is its result unclaimed)? Lazy
+/// nodes are stamped by their first poll, started ones when they start: that is when they are
+/// created, for the promises a combinator gives up.
 pub(super) unsafe fn created_in(f: *mut VeltFut, turn: u32) -> bool {
     turn != 0 && head(f).owner.get() >> TURN_SHIFT == turn
 }

@@ -272,7 +272,7 @@ pub unsafe extern "C" fn velt_rt_fut_box(
     if state_align > 16 {
         crate::panic::fatal("velt_rt_fut_box: state alignment above 16");
     }
-    node::alloc_node(poll, drop, state_ptr, state_size, current_turn())
+    node::alloc_node(poll, drop, state_ptr, state_size)
 }
 
 /// Start the promise `f` now (a stored promise, `const p = f()`): run its state until its first
@@ -295,6 +295,7 @@ pub unsafe extern "C" fn velt_rt_fut_start(f: *mut VeltFut, result_drop: Option<
         *tcx.set = Box::into_raw(LocalSet::new(&*tcx.waker));
     }
     let set = *tcx.set;
+    node::stamp(f, tcx.turn);
     node::mark_started(f, &(*set).shared, result_drop);
     if node::poll_first(f) {
         // Finished before its first suspension: nobody awaits it yet, nothing to resume.
