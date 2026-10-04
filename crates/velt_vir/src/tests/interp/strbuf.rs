@@ -105,6 +105,13 @@ impl Interp<'_> {
             // no cyclic graphs, so every object is printed.
             "velt_rt_strbuf_inspect_enter" => return Some(1),
             "velt_rt_strbuf_inspect_begin" | "velt_rt_strbuf_inspect_leave" => {}
+            "velt_rt_strbuf_inspect_circular" => return Some(0),
+            // Node's `maxArrayLength` (velt_rt's `inspect::push_more_items`).
+            "velt_rt_strbuf_inspect_more" => {
+                let s = if a[1] == 1 { "" } else { "s" };
+                let text = format!(", ... {} more item{s}", a[1]);
+                self.buf_push(a[0], text.as_bytes());
+            }
             // Line breaking (velt_rt's inspect_layout): the programs run here print short values.
             "velt_rt_strbuf_len" => return Some(self.str_bytes(a[0]).len() as u64),
             "velt_rt_strbuf_inspect_layout" => {}

@@ -148,6 +148,13 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_key(buf: *mut VeltStrBuf, s
     (*buf).push_with(|b| crate::inspect::push_inspect_key(b, (*s).as_bytes()));
 }
 
+/// Append node's `, ... n more items` after the first entries of an array, `Map` or `Set` of
+/// which `remaining` more are not shown (`maxArrayLength`).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_strbuf_inspect_more(buf: *mut VeltStrBuf, remaining: u64) {
+    (*buf).push_with_ascii(|b| crate::inspect::push_more_items(b, remaining));
+}
+
 /// Append `JSON.stringify(value)` for a `json.Value` handle (a null handle appends `null`).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_json_value(buf: *mut VeltStrBuf, h: *const Value) {
@@ -159,17 +166,19 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_json_value(buf: *mut VeltStrBuf, h:
 
 /// Append what `console.log` prints for a `json.Value` handle: node's `util.inspect` of the
 /// parsed value (`{ a: 1, b: [ 2, 'x' ] }`); a string is raw when `top != 0` (a `console.log`
-/// argument) and quoted otherwise. A null handle appends `null`.
+/// argument) and quoted otherwise. `depth` is node's depth of the value (0 at the top level):
+/// containers nested deeper than 2 print as `[Array]` / `[Object]`. A null handle appends `null`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_json(
     buf: *mut VeltStrBuf,
     h: *const Value,
     top: u8,
+    depth: u32,
 ) {
     match h.as_ref() {
         Some(v) => {
             let start = (*buf).len();
-            (*buf).push_with(|b| inspect_into(b, v, top != 0));
+            (*buf).push_with(|b| inspect_into(b, v, top != 0, depth));
             // A top-level value is broken across lines like the glue's (a raw string is not).
             if top != 0 && matches!(v, Value::Array(_) | Value::Object(_)) {
                 crate::inspect_layout::velt_rt_strbuf_inspect_layout(buf, start as u64);
@@ -284,140 +293,5 @@ mod tests {
             velt_rt_strbuf_drop(&mut d);
         }
         assert!(d.is_static() && d.is_empty());
-    }
-}
-
-/// Objects being printed (`console.log`), innermost last.
-struct Printing {
-    /// (address, where its text starts in the builder, its `<ref *N>` number once something
-    /// refers back to it, else 0).
-    stack: Vec<(usize, usize, u32)>,
-    /// The `<ref *N>` number of every object given one while printing the current top-level
-    /// value: node numbers once per `console.log` argument, so an object keeps its number and
-    /// the next cycle gets the next one, also between the elements of an array or object.
-    numbered: Vec<(usize, u32)>,
-}
-
-thread_local! {
-    static PRINTING: std::cell::RefCell<Printing> = const {
-        std::cell::RefCell::new(Printing { stack: Vec::new(), numbered: Vec::new() })
-    };
-}
-
-/// Start printing a top-level value (a `console.log` argument, a `${x}` or `String(x)`): the
-/// `<ref *N>` numbering starts over at 1.
-#[no_mangle]
-pub extern "C" fn velt_rt_strbuf_inspect_begin() {
-    PRINTING.with(|s| {
-        let p = &mut *s.borrow_mut();
-        // Not while an object is being printed: a value formatted from inside one (none today)
-        // continues its numbering.
-        if p.stack.is_empty() {
-            p.numbered.clear();
-        }
-    })
-}
-
-/// Start printing the object at `p` (a class instance or a recursive object): 1, or, if it is
-/// already being printed (the graph has a cycle), append `[Circular *N]` as node does and
-/// return 0 (the caller skips the object).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_strbuf_inspect_enter(buf: *mut VeltStrBuf, p: *const u8) -> u8 {
-    PRINTING.with(|s| {
-        let Printing { stack, numbered } = &mut *s.borrow_mut();
-        let addr = p as usize;
-        if stack.iter().any(|e| e.0 == addr) {
-            let n = match numbered.iter().find(|e| e.0 == addr) {
-                Some(e) => e.1,
-                None => {
-                    let n = numbered.len() as u32 + 1;
-                    numbered.push((addr, n));
-                    n
-                }
-            };
-            (*buf).push_wtf8(format!("[Circular *{n}]").as_bytes(), None);
-            return 0;
-        }
-        stack.push((addr, (*buf).len(), 0));
-        1
-    })
-}
-
-/// Done printing the innermost object started with `velt_rt_strbuf_inspect_enter`: if it has
-/// a `<ref *N>` number (something refers back to it), its text gets node's `<ref *N> ` prefix.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_strbuf_inspect_leave(buf: *mut VeltStrBuf) {
-    let done = PRINTING.with(|s| {
-        let Printing { stack, numbered } = &mut *s.borrow_mut();
-        let (addr, start, _) = stack.pop()?;
-        numbered.iter().find(|e| e.0 == addr).map(|e| (start, e.1))
-    });
-    if let Some((start, n)) = done {
-        (*buf).insert_bytes(start, format!("<ref *{n}> ").as_bytes());
-    }
-}
-
-#[cfg(test)]
-mod inspect_cycle_tests {
-    use super::*;
-
-    unsafe fn text(b: &VeltStrBuf) -> String {
-        String::from_utf8(b.as_bytes().to_vec()).unwrap()
-    }
-
-    #[test]
-    fn a_reference_back_prints_circular_and_marks_the_target() {
-        unsafe {
-            let mut b = VeltStr::with_capacity(0);
-            let (outer, inner) = (1u8, 2u8);
-            velt_rt_strbuf_inspect_begin();
-            b.push_wtf8(b"x: ", None);
-            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &outer), 1);
-            b.push_wtf8(b"A { b: ", None);
-            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &inner), 1);
-            b.push_wtf8(b"B { a: ", None);
-            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &outer), 0);
-            b.push_wtf8(b" }", None);
-            velt_rt_strbuf_inspect_leave(&mut b);
-            b.push_wtf8(b" }", None);
-            velt_rt_strbuf_inspect_leave(&mut b);
-            assert_eq!(text(&b), "x: <ref *1> A { b: B { a: [Circular *1] } }");
-            // Numbering starts over for the next value printed.
-            velt_rt_strbuf_inspect_begin();
-            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &inner), 1);
-            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &inner), 0);
-            velt_rt_strbuf_inspect_leave(&mut b);
-            assert!(text(&b).ends_with("<ref *1> [Circular *1]"));
-            b.release();
-        }
-    }
-
-    /// Siblings inside one value (`[c, d]`, `[c, c]`) share one numbering, as in node.
-    #[test]
-    fn siblings_keep_one_numbering() {
-        unsafe fn cyclic(b: &mut VeltStrBuf, p: &u8) {
-            assert_eq!(velt_rt_strbuf_inspect_enter(b, p), 1);
-            b.push_wtf8(b"C { next: ", None);
-            assert_eq!(velt_rt_strbuf_inspect_enter(b, p), 0);
-            b.push_wtf8(b" }", None);
-            velt_rt_strbuf_inspect_leave(b);
-        }
-        unsafe {
-            let mut b = VeltStr::with_capacity(0);
-            let (c, d) = (1u8, 2u8);
-            velt_rt_strbuf_inspect_begin();
-            for p in [&c, &d, &c] {
-                cyclic(&mut b, p);
-                b.push_wtf8(b", ", None);
-            }
-            assert_eq!(
-                text(&b),
-                concat!(
-                    "<ref *1> C { next: [Circular *1] }, <ref *2> C { next: [Circular *2] }, ",
-                    "<ref *1> C { next: [Circular *1] }, "
-                )
-            );
-            b.release();
-        }
     }
 }

@@ -1,0 +1,34 @@
+// A variable that a closure assigns is not narrowed by `instanceof`: a call between the test and
+// the use may run the closure (#435). Narrowed, `x.tail = 99` would write past a `Base` object;
+// TypeScript keeps the narrowing and JavaScript adds a property to the `Base`. Likewise for a
+// `readonly` field path of such a variable.
+class Base {
+  b = 1;
+}
+
+class Sub extends Base {
+  tail = 0;
+}
+
+class Holder {
+  constructor(readonly ro: Base) {}
+}
+
+function main() {
+  let x: Base = new Sub();
+  const reset = () => {
+    x = new Base();
+  };
+  if (x instanceof Sub) {
+    reset();
+    x.tail = 99;
+  }
+  let k = new Holder(new Sub());
+  const swap = () => {
+    k = new Holder(new Base());
+  };
+  if (k.ro instanceof Sub) {
+    swap();
+    console.log(k.ro.tail);
+  }
+}

@@ -5,6 +5,7 @@
 //! idle, and at every newline when stdout is an interactive terminal. stderr is unbuffered: each
 //! call formats into a small local buffer and writes it in one go.
 
+pub mod stats;
 mod stdout;
 
 use crate::bytes::VeltBytes;

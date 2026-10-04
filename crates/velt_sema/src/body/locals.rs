@@ -248,6 +248,9 @@ impl FnCx<'_, '_> {
 
     /// Assume `fact` in the innermost scope (member sets intersect with what is known).
     pub fn narrow(&mut self, fact: &Fact) {
+        if self.refuse_fact(fact) {
+            return;
+        }
         match fact {
             Fact::NonNull(l) => self.innermost_scope().narrowed.push(*l),
             Fact::Members(l, vs) => {
@@ -337,7 +340,9 @@ impl FnCx<'_, '_> {
     }
 
     /// Assigning local `l` at `span`: an error when `l` is a capture that starts narrowed (the
-    /// closure may run again with the new value, which the narrowing would not allow).
+    /// closure may run again with the new value, which the narrowing would not allow). Variables
+    /// closures assign are not narrowed (`closure_assigned`), so this is a backstop for an
+    /// assignment that analysis would miss.
     pub fn check_capture_assign(&mut self, l: LocalId, span: Span) {
         if !self.f.captures.iter().any(|c| c.inner == l && c.narrowed) {
             return;

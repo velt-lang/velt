@@ -59,14 +59,53 @@ fn narrowing_applies_to_captures() {
            if (u != null) { return [1].map((x) => u.length); } return []; }
          function main() { console.log(keep(true, [true]), f(\"a\")); }",
     );
-    let r = err_src(
+    // A closure that assigns the variable: the check does not narrow it (#435).
+    ok_src(
         "function f(u: string | null) {
            if (u != null) { [1].forEach((x) => { u = null; }); } }
          function main() { f(\"a\"); }",
     );
+}
+
+#[test]
+fn variables_closures_assign_are_not_narrowed() {
+    let r = err_src(
+        "function f(u: string | null): usize {
+           const clear = () => { u = null; };
+           if (u != null) { clear(); return u.length; } return 0; }
+         function main() { console.log(f(\"a\")); }",
+    );
     assert!(
-        r.contains("it is narrowed where the closure is created"),
+        r.contains("`u` is assigned in a closure, so it is not narrowed to `string` here"),
         "{r}"
+    );
+    assert!(
+        r.contains("`const current = u; if (current !== null)"),
+        "{r}"
+    );
+    // Inside a closure too, for a variable another closure assigns.
+    let r = err_src(
+        "class A {} class B extends A { x: i64 = 1; }
+         function main() {
+           let a: A = new B();
+           const reset = () => { a = new A(); };
+           const read = (): i64 => { if (a instanceof B) { reset(); return a.x; } return 0; };
+           console.log(read()); }",
+    );
+    assert!(r.contains("no field `x` on type `A`"), "{r}");
+    assert!(r.contains("`const b = a; if (b instanceof B)"), "{r}");
+    // A `const` copy, a closure's own variable, and one only read by closures still narrow.
+    ok_src(
+        "class A {} class B extends A { x: i64 = 1; }
+         function main() {
+           let a: A = new B();
+           const reset = () => { a = new A(); };
+           const b = a;
+           if (b instanceof B) { reset(); console.log(b.x); }
+           const own = (): i64 => { let c: A = new B(); if (c instanceof B) { c.x = 2; return c.x; } return 0; };
+           let d: A = new B();
+           const read = (): bool => d instanceof B;
+           if (d instanceof B) { console.log(read(), d.x, own()); } }",
     );
 }
 

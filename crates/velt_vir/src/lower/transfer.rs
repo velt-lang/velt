@@ -13,6 +13,12 @@
 //! (a value still used after the boundary, velt_sema `ownership/boundary.rs`) and the transfer
 //! glue panics on the rest instead of releasing the resource twice.
 //!
+//! One transfer copies an object it reaches several times once, keeping `p.x === p.y` and
+//! copying a cycle as a cycle (velt_rt `transfer_map`, the `TransferRoot` glue): the clone and
+//! transfer glue of counted objects look up and record copies while a transfer is under way;
+//! only counted types a transfer can reach (boxing/transfers.rs) get the lookup in their clone
+//! glue.
+//!
 //! A spawned call through a function value, vtable or interface passes its arguments with the
 //! borrow ABI and the callee shares the ones it keeps, so the caller passes a copy instead and
 //! releases it before the task starts ([`transfer_copy`](FnLower::transfer_copy),
@@ -219,6 +225,9 @@ impl FnLower<'_, '_> {
             self.panic_uncopyable(ty);
             return v;
         }
+        // One transfer: an object reached twice is copied once (velt_rt `transfer_map`).
+        self.cx.note_transfer(ty);
+        self.call_rt(Rt::XferBegin, vec![], None);
         let copy = match self.cx.kind(ty) {
             // Another reference to the env (always counted), which the transfer then copies
             // knowing its captures' types: a resource without `clone()` among them panics.
@@ -227,13 +236,29 @@ impl FnLower<'_, '_> {
         };
         let vt = self.cx.ty(ty);
         if vt == Ty::Unit {
+            self.call_rt(Rt::XferEnd, vec![], None);
             return copy;
         }
         // A copied closure still shares its captured variables' cells: transferring the fresh
         // copy gives it cells of its own.
         let t = Place::local(self.copy_to_temp(copy, vt));
         self.transfer_in_place(t.clone(), ty);
+        self.call_rt(Rt::XferEnd, vec![], None);
         Operand::Copy(t)
+    }
+
+    /// A deep copy of `v` (type `ty`) that copies an object it reaches twice once, and a cycle
+    /// as a cycle, like a transfer (velt_rt `transfer_map`): an async closure's captures, which
+    /// each call (maybe on another task) gets a copy of.
+    pub(super) fn clone_keeping_identity(&mut self, v: Operand, ty: TyId) -> Operand {
+        if !self.cx.holds_counted(ty) {
+            return self.clone_value(v, ty);
+        }
+        self.cx.note_transfer(ty);
+        self.call_rt(Rt::XferBegin, vec![], None);
+        let copy = self.clone_value(v, ty);
+        self.call_rt(Rt::XferEnd, vec![], None);
+        copy
     }
 
     /// Panic: a value of `ty` that the program still shares would have to be copied for
@@ -287,7 +312,9 @@ impl FnLower<'_, '_> {
         }
         let vt = self.cx.ty(ty);
         let t = Place::local(self.copy_to_temp(v, vt));
-        self.transfer_in_place(t.clone(), ty);
+        let a = self.addr(t.clone());
+        let f = self.cx.func(Work::Glue(Glue::TransferRoot, ty));
+        self.call(vir::Callee::Func(f), vec![a], None, false);
         Operand::Copy(t)
     }
 

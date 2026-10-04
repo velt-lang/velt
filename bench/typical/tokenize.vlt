@@ -1,0 +1,50 @@
+// A hand-written tokenizer: character access with s[i] / charCodeAt, slices for tokens,
+// keyword lookup, as in parsers and template engines written in TypeScript.
+function isDigit(c: string): boolean {
+  return c >= "0" && c <= "9";
+}
+
+function isAlpha(c: string): boolean {
+  return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_";
+}
+
+function tokenize(src: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === " " || c === "\n") {
+      i++;
+    } else if (isDigit(c)) {
+      const start = i;
+      while (i < src.length && isDigit(src[i])) i++;
+      out.push(src.slice(start, i));
+    } else if (isAlpha(c)) {
+      const start = i;
+      while (i < src.length && (isAlpha(src[i]) || isDigit(src[i]))) i++;
+      out.push(src.slice(start, i));
+    } else {
+      out.push(c);
+      i++;
+    }
+  }
+  return out;
+}
+
+function main() {
+  const parts: string[] = [];
+  for (let i = 0; i < 20000; i++) {
+    parts.push(`let x${i} = foo(${i}, bar_${i % 10}) + ${i * 3};\nif (x${i} > 10) { y = x${i}; }\n`);
+  }
+  const src = parts.join("");
+  let count = 0;
+  let idents = 0;
+  for (let round = 0; round < 5; round++) {
+    const toks = tokenize(src);
+    count += toks.length;
+    for (const t of toks) if (t === "let" || t === "if") idents++;
+  }
+  let codes = 0;
+  for (let i = 0; i < src.length; i++) codes += src.charCodeAt(i);
+  console.log(src.length, count, idents, codes);
+}
