@@ -36,9 +36,12 @@ struct Value {
     inferred_int: bool,
 }
 
-/// Bodies checked inside one another to infer a result type, at most (each level takes stack
-/// space; a deeper chain of unannotated functions is reported instead of overflowing it).
-const MAX_NESTING: usize = 2000;
+/// Has inferring result types used up its stack budget (`Ctx::stack_budget`)? Each body checked
+/// inside another to infer its result takes stack space, as much as its nesting needs; a deeper
+/// chain of unannotated functions is reported instead of overflowing the stack.
+fn stack_exhausted(cx: &Ctx) -> bool {
+    cx.stack_base.saturating_sub(crate::stack_address()) > cx.stack_budget
+}
 
 /// The result type of function `d` (used at `at`), inferring it from the body if needed.
 pub(crate) fn ret_of(cx: &mut Ctx, d: DefId, at: Span) -> TyId {
@@ -49,7 +52,7 @@ pub(crate) fn ret_of(cx: &mut Ctx, d: DefId, at: Span) -> TyId {
             super::recursion::placeholder(cx, d, at);
             cx.ty.error
         }
-        RetSource::Body if f.state == BodyState::Unchecked && cx.checking.len() >= MAX_NESTING => {
+        RetSource::Body if f.state == BodyState::Unchecked && stack_exhausted(cx) => {
             report_too_deep(cx, d, at);
             cx.ty.error
         }
@@ -78,8 +81,9 @@ fn report_too_deep(cx: &mut Ctx, d: DefId, at: Span) {
             at,
         )
         .with_note(format!(
-            "more than {MAX_NESTING} functions without a return type wait for each other here; \
-             write the return type of `{name}`"
+            "{} functions without a return type wait for each other here, too many to check \
+             one inside another; write the return type of `{name}`",
+            cx.checking.len()
         )),
     );
 }

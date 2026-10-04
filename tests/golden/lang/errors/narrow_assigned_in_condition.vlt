@@ -1,0 +1,48 @@
+// A variable assigned on the right of `&&` / `||` no longer holds what the left side tested:
+// the narrowing from the left side ends there, for `instanceof`, `null` and union tests alike.
+class Base {
+  b = 1;
+}
+
+class D extends Base {
+  arr: number[] = [1, 2, 3];
+}
+
+class A {
+  a: number[] = [1, 2, 3];
+}
+
+class B {
+  b = 1;
+}
+
+function t(x: A | B): boolean {
+  return true;
+}
+
+function subclass() {
+  let x: Base = new D();
+  if (x instanceof D && (x = new Base()).b > 0 && x.arr.length > 0) {
+    console.log(x.arr.length);
+  }
+}
+
+function nullable() {
+  let x: D | null = new D();
+  if (x !== null && (x = null) === null && x.arr.length > 0) {
+    console.log("bad");
+  }
+}
+
+function union() {
+  let u: A | B = new A();
+  if (u instanceof A && t(u = new B()) && u.a.length > 0) {
+    console.log(u.a.length);
+  }
+}
+
+function main() {
+  subclass();
+  nullable();
+  union();
+}

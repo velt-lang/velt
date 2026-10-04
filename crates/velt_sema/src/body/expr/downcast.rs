@@ -136,18 +136,31 @@ impl FnCx<'_, '_> {
     /// A generic class whose type arguments `t` does not determine.
     fn undetermined_args(&mut self, t: TyId, class: DefId, span: Span) {
         let (cn, tn) = (self.class_def_name(class), self.cx.display(t));
-        let base = match self.cx.class_of(t) {
-            Some((d, _)) => self.class_def_name(d),
-            None => tn.clone(),
+        // The base class or interface `t` names, how `class` relates to it, and whether it has
+        // type parameters to pass on.
+        let (base, relation, generic) = match (self.cx.class_of(t), self.cx.ty.kind(t)) {
+            (Some((d, args)), _) => (self.class_def_name(d), "extends", !args.is_empty()),
+            (None, TyKind::Dyn(_, args)) => {
+                let name = tn.split('<').next().unwrap_or(&tn).to_string();
+                (name, "implements", !args.is_empty())
+            }
+            _ => (tn.clone(), "extends", false),
+        };
+        let fix = if generic {
+            format!(
+                "test for a class that is not generic, or give `{cn}` exactly the type parameters it passes to `{base}` (`class {cn}<T> {relation} {base}<T>`)"
+            )
+        } else {
+            format!(
+                "`{base}` has no type parameters to determine those of `{cn}`; test for a class that is not generic, such as a non-generic subclass of `{cn}`"
+            )
         };
         self.cx.error(
             Diagnostic::error(
                 format!("`instanceof {cn}` cannot narrow a `{tn}`: the type arguments of `{cn}` do not follow from it"),
                 span,
             )
-            .with_note(format!(
-                "test for a class that is not generic, or give `{cn}` exactly the type parameters it passes to `{base}` (`class {cn}<T> extends {base}<T>`)"
-            )),
+            .with_note(fix),
         );
     }
 

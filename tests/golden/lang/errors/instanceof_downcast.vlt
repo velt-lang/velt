@@ -47,4 +47,34 @@ function mutableField(k: Kennel): string {
   return "";
 }
 
+// A generic class under an interface or a non-generic base: nothing determines its `T`.
+class Tagged<T> implements Named {
+  name(): string {
+    return "tagged";
+  }
+}
+class Litter<T> extends Animal {}
+
+function genericUnderInterface(n: Named): bool {
+  return n instanceof Tagged;
+}
+
+function genericUnderPlainBase(a: Animal): bool {
+  return a instanceof Litter;
+}
+
+interface Holder<T> {
+  get(): T;
+}
+class Cell<T, U> implements Holder<T> {
+  constructor(public v: T) {}
+  get(): T {
+    return this.v;
+  }
+}
+
+function genericUnderGenericInterface(h: Holder<i64>): bool {
+  return h instanceof Cell;
+}
+
 function main() {}

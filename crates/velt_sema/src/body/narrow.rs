@@ -48,7 +48,9 @@ impl FnCx<'_, '_> {
             } => {
                 let (mut t, _) = self.narrowing(lhs);
                 // `n instanceof Add && n.left instanceof Num`: the right side is read as narrowed
-                // by the left one.
+                // by the left one. A variable the right side assigns no longer holds what the
+                // left side tested (`x instanceof D && (x = b) && …`).
+                self.drop_assigned_facts(&mut t, rhs);
                 let rhs_t = self.narrowing_under(&t, rhs).0;
                 t.extend(rhs_t);
                 (t, vec![])
@@ -59,6 +61,7 @@ impl FnCx<'_, '_> {
                 rhs,
             } => {
                 let (_, mut f) = self.narrowing(lhs);
+                self.drop_assigned_facts(&mut f, rhs);
                 let rhs_f = self.narrowing_under(&f, rhs).1;
                 f.extend(rhs_f);
                 (vec![], f)
@@ -93,6 +96,34 @@ impl FnCx<'_, '_> {
             | ast::ExprKind::Assign { op: None, .. } => (self.truthy_facts(cond), vec![]),
             _ => (vec![], vec![]),
         }
+    }
+
+    /// Drops from `facts` those about a variable `e` assigns, or about a field path of one.
+    fn drop_assigned_facts(&mut self, facts: &mut Vec<Fact>, e: &ast::Expr) {
+        let mut names = HashSet::new();
+        super::assigned::assigned_in_expr(e, &mut names);
+        if names.is_empty() {
+            return;
+        }
+        let mut gone = vec![];
+        for name in names {
+            let found = self
+                .f
+                .scopes
+                .iter()
+                .rev()
+                .find_map(|s| s.names.get(name).copied());
+            if let Some(l) = found {
+                gone.push(l);
+                gone.extend(self.field_tokens_of(l));
+            }
+        }
+        facts.retain(|f| {
+            let l = match f {
+                Fact::NonNull(l) | Fact::Members(l, _) | Fact::Class(l, _) => l,
+            };
+            !gone.contains(l)
+        });
     }
 
     /// [`narrowing`](Self::narrowing) of `cond` with `facts` assumed.

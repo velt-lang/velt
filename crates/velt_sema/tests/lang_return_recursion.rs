@@ -60,3 +60,38 @@ fn self_use_in_returns_needs_an_annotation() {
         assert_eq!(r.matches("needs a return type annotation").count(), 1, "{r}");
     }
 }
+
+/// A chain of unannotated functions, each needing the next one's result inside nested `if`s
+/// and parentheses: inferring it nests every body in the one before, which is reported once the
+/// stack budget is used up rather than overflowing the checking thread's stack.
+fn deep_chain(n: usize, depth: usize) -> String {
+    let mut out = String::new();
+    for i in 0..n {
+        let mut body = String::new();
+        if i + 1 < n {
+            let call = format!("g{}(n - 1)", i + 1);
+            let mut inner = format!(
+                "const v = {}{call} + 1{};\n",
+                "(".repeat(depth),
+                ")".repeat(depth)
+            );
+            for d in 0..depth {
+                inner = format!("if (n > {d}) {{\n{inner}}}\n");
+            }
+            body = inner;
+        }
+        out.push_str(&format!(
+            "function g{i}(n: number) {{\n{body}  return n + 1;\n}}\n"
+        ));
+    }
+    out.push_str("function main() {\n  console.log(g0(3));\n}\n");
+    out
+}
+
+#[test]
+fn deep_chains_of_inferred_functions_are_reported_not_overflowed() {
+    let r = err_src(&deep_chain(3000, 10));
+    assert!(r.contains("nests too many functions"), "{r}");
+    // A short chain is inferred.
+    ok_src(&deep_chain(50, 10));
+}

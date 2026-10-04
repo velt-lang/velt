@@ -1,0 +1,5 @@
+narrow_assigned_in_condition.vlt:25:53: error: no field `arr` on type `Base`
+narrow_assigned_in_condition.vlt:26:19: error: no field `arr` on type `Base`
+narrow_assigned_in_condition.vlt:32:44: error: value of type `D | null` may be null
+narrow_assigned_in_condition.vlt:39:45: error: no field `a` on type `A | B`
+narrow_assigned_in_condition.vlt:40:19: error: no field `a` on type `A | B`

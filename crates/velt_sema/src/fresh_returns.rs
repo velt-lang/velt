@@ -36,7 +36,9 @@ pub(crate) fn fresh_callees(h: &Expr) -> Option<Vec<DefId>> {
             Callee::Intrinsic(i) => fresh_intrinsic(*i).then(Vec::new),
             _ => None,
         },
-        E::New { .. } | E::ArrayLit(_) | E::AdtLit { .. } => Some(vec![]),
+        // A new object is fresh when its constructor keeps `this` to itself (`ctor_fresh`).
+        E::New { def, .. } => Some(vec![*def]),
+        E::ArrayLit(_) | E::AdtLit { .. } => Some(vec![]),
         E::Await(x) => fresh_callees(x),
         E::Block(b) => b.value.as_deref().and_then(fresh_callees),
         _ => None,
@@ -63,7 +65,10 @@ pub(crate) fn check(cx: &mut Ctx) {
 }
 
 fn report(cx: &mut Ctx, d: DefId, c: &FreshCheck) {
-    let name = cx.fn_info(d).name.clone();
+    let name = match cx.adt(d) {
+        Some(a) => format!("new {}", a.name),
+        None => cx.fn_info(d).name.clone(),
+    };
     let name = name.rsplit("::").next().unwrap_or(&name).to_string();
     let (from, to) = (cx.display(c.from), cx.display(c.to));
     let fix = match cx.ty.array_elem(c.to) {
@@ -127,6 +132,9 @@ fn fresh_functions(cx: &Ctx, roots: impl Iterator<Item = DefId>) -> HashSet<DefI
 /// `Some(callees)` when every value function `d` returns is fresh provided `callees` return
 /// fresh values.
 fn own_fresh(cx: &Ctx, d: DefId) -> Option<Vec<DefId>> {
+    if cx.adt(d).is_some() {
+        return ctor_fresh(cx, d);
+    }
     let Some(Some(Def::Fn(f))) = cx.defs.get(d.0 as usize) else {
         return None;
     };
@@ -187,6 +195,89 @@ fn captured(cx: &Ctx, l: LocalId, uses: &Uses) -> bool {
             Some(Some(Def::Fn(cf))) => cf.captures.iter().any(|cap| cap.outer == l),
             _ => true,
         })
+}
+
+/// `Some(base classes)` when `new` of class `d` gives an object nothing else references,
+/// provided the base classes' constructors do too: its constructor uses `this` only as the base
+/// of field reads and writes, and as the receiver of `super(...)` (field initializers cannot use
+/// `this`). Passing `this` on, storing it, calling a method on it or capturing it lets it escape
+/// (`all.push(this)`).
+fn ctor_fresh(cx: &Ctx, d: DefId) -> Option<Vec<DefId>> {
+    let Some(ctor) = cx.adt(d)?.ctor else {
+        return Some(vec![]);
+    };
+    let Some(Some(Def::Fn(f))) = cx.defs.get(ctor.0 as usize) else {
+        return None;
+    };
+    let Some(this) = f
+        .params
+        .first()
+        .map(|p| p.local)
+        .filter(|_| f.self_ty.is_some())
+    else {
+        return None;
+    };
+    let mut body = f.body.block.clone();
+    let mut w = ThisUses {
+        cx,
+        this,
+        total: 0,
+        allowed: 0,
+        bases: vec![],
+        closures: vec![],
+    };
+    visit::block(&mut body, &mut w);
+    let uses = Uses {
+        closures: std::mem::take(&mut w.closures),
+        ..Uses::default()
+    };
+    (w.total == w.allowed && !captured(cx, this, &uses)).then_some(w.bases)
+}
+
+/// How a constructor body uses its `this` (`ctor_fresh`).
+struct ThisUses<'c, 'm> {
+    cx: &'c Ctx<'m>,
+    this: LocalId,
+    total: u32,
+    allowed: u32,
+    /// Classes whose constructors `super(...)` runs on `this`.
+    bases: Vec<DefId>,
+    closures: Vec<DefId>,
+}
+
+impl ThisUses<'_, '_> {
+    fn is_this(&self, e: &Expr) -> bool {
+        match &e.kind {
+            E::Local(l, _) => *l == self.this,
+            E::Upcast(x) => self.is_this(x),
+            _ => false,
+        }
+    }
+}
+
+impl VisitMut for ThisUses<'_, '_> {
+    fn expr(&mut self, e: &mut Expr) {
+        match &e.kind {
+            E::Local(l, _) if *l == self.this => self.total += 1,
+            E::Closure(c) => self.closures.push(*c),
+            E::Field { base, .. } if self.is_this(base) => self.allowed += 1,
+            E::Call {
+                callee: Callee::Def(c, _),
+                args,
+            } if args.first().is_some_and(|a| self.is_this(a))
+                && self.cx.fn_info(*c).kind == crate::defs::FnKind::Ctor =>
+            {
+                match self.cx.fn_info(*c).owner {
+                    Some(owner) => {
+                        self.allowed += 1;
+                        self.bases.push(owner);
+                    }
+                    None => {}
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// The returned values of one function, checked for freshness.

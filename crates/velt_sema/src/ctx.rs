@@ -134,6 +134,10 @@ pub(crate) struct Ctx<'m> {
     /// Methods some subclass overrides (`collect::ret_infer`): a result inferred from JS-number
     /// integers is a `number` (`f64`) there, which an override may return a fraction in.
     pub overridden: HashSet<DefId>,
+    /// The address of a local near the bottom of the checking thread's stack, and how much of
+    /// the stack inferring return types may use above it (`body::returns::ret_of`).
+    pub stack_base: usize,
+    pub stack_budget: usize,
     /// Widened call results whose callees must return fresh values (`crate::fresh_returns`).
     pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
@@ -199,6 +203,8 @@ impl<'m> Ctx<'m> {
             ret_checks: vec![],
             rec: Default::default(),
             overridden: HashSet::new(),
+            stack_base: crate::stack_address(),
+            stack_budget: crate::SEMA_STACK_BUDGET,
             fresh_checks: vec![],
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],

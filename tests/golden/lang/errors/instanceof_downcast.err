@@ -7,3 +7,8 @@ test for a class that is not generic, or give `Pair` exactly the type parameters
 instanceof_downcast.vlt:40:10: error: `instanceof` needs a class instance, an interface value or a union with class members, found `i64`
 instanceof_downcast.vlt:45:23: error: no method named `bark` found for type `Animal`
 `instanceof` does not narrow this field: it is not `readonly`, so it could change between the test and this read; copy it into a local and test the local
+instanceof_downcast.vlt:59:10: error: `instanceof Tagged` cannot narrow a `Named`: the type arguments of `Tagged` do not follow from it
+`Named` has no type parameters to determine those of `Tagged`; test for a class that is not generic, such as a non-generic subclass of `Tagged`
+instanceof_downcast.vlt:63:10: error: `instanceof Litter` cannot narrow a `Animal`: the type arguments of `Litter` do not follow from it
+instanceof_downcast.vlt:77:10: error: `instanceof Cell` cannot narrow a `Holder<i64>`: the type arguments of `Cell` do not follow from it
+test for a class that is not generic, or give `Cell` exactly the type parameters it passes to `Holder` (`class Cell<T> implements Holder<T>`)
