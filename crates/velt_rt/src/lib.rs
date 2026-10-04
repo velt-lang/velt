@@ -30,6 +30,7 @@ pub mod hash;
 pub mod html;
 pub mod http;
 pub mod inspect;
+mod inspect_cycles;
 mod inspect_layout;
 pub mod io;
 pub mod json;
