@@ -1,0 +1,204 @@
+// check: no leaks
+// `instanceof` on base class values: error hierarchies in `catch` chains, AST-style node
+// downcasts (also through `readonly` fields), narrowing in `else`, after an early return, in
+// `&&` / `||` / `!` / ternaries and loops, generic subclasses, nullable values and union members.
+
+class AppError extends Error {}
+
+class NotFound extends AppError {
+  constructor(readonly id: string) {
+    super(`no item ${id}`);
+  }
+}
+
+class Timeout extends AppError {
+  constructor(readonly ms: i64) {
+    super(`timed out after ${ms}ms`);
+  }
+}
+
+class SlowTimeout extends Timeout {}
+
+class Fatal extends Error {}
+
+function fetchItem(i: i64): string throws AppError {
+  if (i == 0) {
+    throw new NotFound("a");
+  } else if (i == 1) {
+    throw new Timeout(30);
+  } else if (i == 2) {
+    throw new SlowTimeout(90);
+  } else if (i == 3) {
+    throw new AppError("generic");
+  }
+  return `item ${i}`;
+}
+
+function check(i: i64): void throws Fatal {
+  if (i == 5) {
+    throw new Fatal("fatal");
+  }
+}
+
+function describe(i: i64): string {
+  try {
+    check(i);
+    return fetchItem(i);
+  } catch (e) {
+    if (e instanceof NotFound) {
+      return `missing ${e.id}`;
+    } else if (e instanceof SlowTimeout) {
+      return `slow ${e.ms}`;
+    } else if (e instanceof Timeout) {
+      return `timeout ${e.ms}`;
+    } else if (e instanceof Fatal) {
+      return `fatal: ${e.message}`;
+    }
+    return `other: ${e.message}`;
+  }
+}
+
+class Expr {}
+
+class Num extends Expr {
+  constructor(readonly value: i64) {
+    super();
+  }
+}
+
+class Add extends Expr {
+  constructor(readonly left: Expr, readonly right: Expr) {
+    super();
+  }
+}
+
+class Neg extends Expr {
+  constructor(readonly inner: Expr) {
+    super();
+  }
+}
+
+function evaluate(e: Expr): i64 {
+  if (e instanceof Num) {
+    return e.value;
+  }
+  if (e instanceof Neg) {
+    return -evaluate(e.inner);
+  }
+  if (!(e instanceof Add)) {
+    return 0;
+  }
+  return evaluate(e.left) + evaluate(e.right);
+}
+
+function show(e: Expr): string {
+  if (e instanceof Add && e.left instanceof Num && e.right instanceof Num) {
+    return `${e.left.value}+${e.right.value}`;
+  }
+  if (e instanceof Add) {
+    return `(${show(e.left)} + ${show(e.right)})`;
+  }
+  if (e instanceof Neg && e.inner instanceof Neg) {
+    return show(e.inner.inner);
+  }
+  return e instanceof Num ? `${e.value}` : e instanceof Neg ? `-${show(e.inner)}` : "?";
+}
+
+function isLeaf(e: Expr): bool {
+  return e instanceof Num || (e instanceof Neg && e.inner instanceof Num);
+}
+
+class Counter {
+  count: i64 = 0;
+}
+
+class Loud extends Counter {
+  label: string = "loud";
+
+  shout(): string {
+    this.count += 10;
+    return this.label.toUpperCase();
+  }
+}
+
+class Box<T> {
+  constructor(readonly value: T) {}
+}
+
+class Labeled<T> extends Box<T> {
+  constructor(value: T, readonly label: string) {
+    super(value);
+  }
+}
+
+class Animal {
+  constructor(readonly sound: string) {}
+}
+
+class Cat extends Animal {
+  lives: i64 = 9;
+}
+
+function animalOrText(v: Animal | string): string {
+  if (v instanceof Cat) {
+    return `cat with ${v.lives} lives says ${v.sound}`;
+  } else if (v instanceof Animal) {
+    return `animal says ${v.sound}`;
+  }
+  return `text ${v}`;
+}
+
+function keep(l: Loud): Loud {
+  return l;
+}
+
+function main() {
+  for (let i = 0; i < 6; i++) {
+    console.log(describe(i));
+  }
+  const tree = new Add(new Num(1), new Neg(new Add(new Num(2), new Num(3))));
+  console.log(evaluate(tree), show(tree), show(new Neg(new Neg(new Num(7)))));
+  console.log(isLeaf(new Num(1)), isLeaf(new Neg(new Num(1))), isLeaf(tree));
+
+  let c: Counter = new Loud();
+  if (c instanceof Loud) {
+    console.log(c.shout(), c.count);
+    const k = keep(c);
+    c = new Counter();
+    console.log(k.label, c instanceof Loud, c.count);
+  }
+
+  let maybe: Counter | null = null;
+  console.log(maybe instanceof Loud);
+  maybe = new Loud();
+  if (maybe instanceof Loud) {
+    console.log("loud", maybe.label);
+  }
+
+  const b: Box<i64> = new Labeled(5, "five");
+  if (b instanceof Labeled) {
+    console.log(b.label, b.value + 1);
+  }
+
+  const counters: Counter[] = [new Counter(), new Loud(), new Loud()];
+  let labels = "";
+  for (const it of counters) {
+    if (!(it instanceof Loud)) {
+      continue;
+    }
+    labels += it.label;
+  }
+  console.log(labels, counters.filter((x) => x instanceof Loud).length);
+
+  console.log(
+    animalOrText(new Cat("purr")),
+    "/",
+    animalOrText(new Animal("moo")),
+    "/",
+    animalOrText("hi"),
+  );
+
+  const pet: Animal = new Cat("purr");
+  const lives = () => (pet instanceof Cat ? pet.lives : 0);
+  console.log(lives());
+}

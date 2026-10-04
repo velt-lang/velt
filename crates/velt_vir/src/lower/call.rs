@@ -348,6 +348,9 @@ impl FnLower<'_, '_> {
 
 /// A place moved into the call (the caller drops it after the call).
 pub(super) fn is_moved(a: &hir::Expr) -> bool {
+    if let hir::ExprKind::Downcast(x) = &a.kind {
+        return is_moved(x);
+    }
     matches!(
         a.kind,
         hir::ExprKind::Local(_, UseMode::Move)
@@ -365,6 +368,9 @@ pub(super) fn is_moved(a: &hir::Expr) -> bool {
 
 /// A Copy value read out of a place (passed by pointer, it would still point into the place).
 fn is_copy_read(a: &hir::Expr) -> bool {
+    if let hir::ExprKind::Downcast(x) = &a.kind {
+        return is_copy_read(x);
+    }
     matches!(
         a.kind,
         hir::ExprKind::Local(_, UseMode::Copy)

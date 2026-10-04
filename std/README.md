@@ -53,7 +53,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `sqlite.vlt` | `std/sqlite`: embedded SQLite (`open`, `Database`, `Statement`, `Transaction`, `SqliteError`), synchronous, better-sqlite3-like. |
 | `postgres.vlt` | `std/postgres`: PostgreSQL client (`connect`, `createPool`, `Client`, `Pool`, `Transaction`, `PgError`), async, node-postgres-like. |
 | `redis.vlt` | `std/redis`: Redis client (`connect`, `RedisClient`, pipelines, `subscribe`) (`redis/*.vlt`: internal). |
-| `timers.vlt` | `std/timers`: `setTimeout setImmediate clearTimeout delay`, `Timer`, `Ticker`. |
+| `timers.vlt` | `std/timers`: `setTimeout clearTimeout setInterval clearInterval` and `Timer` (re-exported from the prelude, where they are globals), `setImmediate delay`, `Ticker`. |
 
 ## Runtime bindings
 std binds `velt_rt_*` symbols (docs/internals/contracts/rt_abi_async.md) with `declare function` /

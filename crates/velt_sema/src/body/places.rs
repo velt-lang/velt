@@ -13,7 +13,7 @@ pub(crate) fn is_place(e: &hir::Expr) -> bool {
             | H::UnwrapSome(..)
             | H::UnwrapVariant { .. }
             | H::Global(_)
-    )
+    ) || matches!(&e.kind, H::Downcast(x) if is_place(x))
 }
 
 /// The local a place is rooted at (through projections), if any.
@@ -23,7 +23,8 @@ pub(crate) fn place_root(e: &hir::Expr) -> Option<LocalId> {
         H::Field { base, .. }
         | H::Index { base, .. }
         | H::UnwrapSome(base, _)
-        | H::UnwrapVariant { expr: base, .. } => place_root(base),
+        | H::UnwrapVariant { expr: base, .. }
+        | H::Downcast(base) => place_root(base),
         _ => None,
     }
 }
@@ -49,6 +50,8 @@ pub(crate) fn set_place_mode(e: &mut hir::Expr, m: UseMode) {
             *mode = m;
             set_place_mode(base, base_mode);
         }
+        // The same object (or the object of an interface value): the mode of the whole.
+        H::Downcast(x) => set_place_mode(x, m),
         _ => {}
     }
 }

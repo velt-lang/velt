@@ -37,6 +37,7 @@ mod discriminants;
 mod dispatch;
 mod finalize;
 mod flow;
+mod fresh_returns;
 mod generic_arrows;
 pub mod ide;
 mod infer;
@@ -66,6 +67,8 @@ use velt_syntax::ast;
 use crate::ctx::Item;
 use crate::defs::{DefInfo, FnKind};
 
+pub use dispatch::{instantiation_work, InstantiationWork};
+
 /// One parsed module handed to sema by the driver.
 pub struct SourceModule {
     /// Canonical module path: `"main"` for the root file, `"std/fs"`, `"./util"` resolved to a
@@ -89,6 +92,22 @@ pub struct SourceModule {
 /// Stack for the checking thread: the passes recurse over the AST/HIR (bounded by the parser's
 /// nesting limit), which can exceed the 1 MB main-thread stack on Windows.
 pub(crate) const SEMA_STACK_BYTES: usize = 64 << 20;
+
+/// How much of the checking thread's stack inferring return types may use: the rest is left for
+/// checking the deepest body (`body::returns::ret_of`).
+pub(crate) const SEMA_STACK_BUDGET: usize = 48 << 20;
+
+/// The budget when the checking thread could not be spawned and the caller's stack (of unknown
+/// size, at least the 1 MB of a Windows main thread) is used instead.
+pub(crate) const FALLBACK_STACK_BUDGET: usize = 512 << 10;
+
+/// The address of a local of the caller's frame: how deep the stack is here (it grows down on
+/// every supported target).
+#[inline(never)]
+pub(crate) fn stack_address() -> usize {
+    let marker = 0u8;
+    std::hint::black_box(&marker) as *const u8 as usize
+}
 
 /// CONTRACT: check a whole program. `modules[root]` must define `main`.
 /// Returns `Some(program)` iff there are no errors; warnings may accompany either outcome.
@@ -121,12 +140,14 @@ pub fn check_with(
         let spawned = std::thread::Builder::new()
             .name("velt-sema".into())
             .stack_size(SEMA_STACK_BYTES)
-            .spawn_scoped(s, || check_on_current_thread(modules, root, opts));
+            .spawn_scoped(s, || {
+                check_on_current_thread(modules, root, opts, SEMA_STACK_BUDGET)
+            });
         match spawned {
             Ok(handle) => handle
                 .join()
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(_) => check_on_current_thread(modules, root, opts),
+            Err(_) => check_on_current_thread(modules, root, opts, FALLBACK_STACK_BUDGET),
         }
     })
 }
@@ -135,14 +156,20 @@ fn check_on_current_thread(
     modules: &[SourceModule],
     root: usize,
     opts: CheckOptions,
+    stack_budget: usize,
 ) -> (Option<hir::Program>, Diagnostics) {
     let lifted = generic_arrows::lift(modules);
-    let modules = lifted.as_deref().unwrap_or(modules);
+    let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return (None, vec![d]);
     };
     let mut cx = ctx::Ctx::new(modules, root);
+    cx.stack_budget = stack_budget;
+    if let Some(l) = &lifted {
+        cx.generic_arrow_fns = l.local_fns.clone();
+        cx.generic_arrow_all = l.all_fns.clone();
+    }
     analyze(&mut cx);
     let entry = check_main(&mut cx, root, root_mod, opts.require_main);
     check_imported_scripts(&mut cx, root, modules);
@@ -177,6 +204,7 @@ fn check_on_current_thread(
 fn analyze(cx: &mut ctx::Ctx) {
     collect::collect(cx);
     body::check_bodies(cx);
+    fresh_returns::check(cx);
     // Growing generic recursion has infinitely many instantiations: the passes below propagate
     // requirements per instantiation and would never finish.
     if instantiation_cycles::check(cx) {

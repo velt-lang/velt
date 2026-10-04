@@ -1,0 +1,115 @@
+// check: no leaks
+// A fresh container converts to a wider element type (#268): the expected type instantiates
+// generics (`wrap(new C())` with `Named[]` expected is `wrap<Named>`), and a call result,
+// `new` expression or literal of `C[]` / `Box<C>` / `i64[]` becomes a new `Named[]` /
+// `Box<Named>` / `(i64 | null)[]` (each element converted). Output as in Node.
+interface Named {
+  name(): string;
+}
+
+class C implements Named {
+  n: string;
+  constructor(n: string) {
+    this.n = n;
+  }
+  name(): string {
+    return this.n;
+  }
+}
+
+class Box<T> {
+  value: T;
+  constructor(value: T) {
+    this.value = value;
+  }
+}
+
+function wrap<T>(x: T): T[] {
+  return [x];
+}
+
+function pair<T>(a: T, b: T): T[] {
+  return [a, b];
+}
+
+function make(): C[] {
+  return [new C("a"), new C("b")];
+}
+
+function grid(): C[][] {
+  return [[new C("x")], [new C("y"), new C("z")]];
+}
+
+function nums(): i64[] {
+  return [1, 2];
+}
+
+function boxOf(c: C): Box<C> {
+  return new Box(c);
+}
+
+function maybe(): C | null {
+  return new C("m");
+}
+
+function names(xs: Named[]): string {
+  return xs.map((x) => x.name()).join(",");
+}
+
+function widened(): Named[] {
+  return make();
+}
+
+async function later(): Promise<C[]> {
+  return make();
+}
+
+// Fresh too: a local built here and returned, a recursive function, std's `filter`.
+function built(n: number): C[] {
+  const out: C[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push(new C(`#${i}`));
+  }
+  return out;
+}
+
+function countdown(n: number): C[] {
+  if (n === 0) {
+    return built(1);
+  }
+  return countdown(n - 1);
+}
+
+async function main() {
+  // The expected type instantiates the type parameter.
+  const ns: Named[] = wrap(new C("w"));
+  const b: Box<Named> = new Box(new C("box"));
+  const ps: (i64 | null)[] = pair(1, 2);
+  ps.push(null);
+  console.log(names(ns), b.value.name(), ps);
+
+  // Fresh values convert: call results (also returned or passed on), awaited ones.
+  const made: Named[] = make();
+  made.push(new C("c"));
+  console.log(names(made), names(make()), names(widened()));
+  const rows: Named[][] = grid();
+  console.log(rows.map((r) => names(r)).join("|"));
+  const opt: (i64 | null)[] = nums();
+  opt.push(null);
+  const boxed: Box<Named> = boxOf(new C("boxed"));
+  const n: Named | null = maybe();
+  console.log(opt, boxed.value.name(), n?.name());
+  const awaited: Named[] = await later();
+  console.log(names(awaited));
+  const local: Named[] = built(2);
+  const recursive: Named[] = countdown(3);
+  const kept: Named[] = make().filter((c) => c.n === "b");
+  console.log(names(local), names(recursive), names(kept));
+
+  // A copy of an existing array: the elements are the same objects.
+  const cs = make();
+  const spread: Named[] = [...cs];
+  const mapped: Named[] = cs.map((x): Named => x);
+  cs[0].n = "changed";
+  console.log(names(spread), names(mapped), cs.length);
+}

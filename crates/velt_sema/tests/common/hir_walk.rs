@@ -126,6 +126,7 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>, ps: &mut Vec<&'a Pat>) {
         | E::UnwrapSome(x, _)
         | E::UnwrapVariant { expr: x, .. }
         | E::Upcast(x)
+        | E::Downcast(x)
         | E::ToDyn { expr: x, .. }
         | E::Throw(x)
         | E::Field { base: x, .. } => sub(x, out, ps),

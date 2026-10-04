@@ -1,0 +1,8 @@
+name,id,sides 3
+name,id,sides,width,height 5
+name,id,sides,width,height,locked 6
+name,id,sides,base 4
+[ 'name', 'id', 'sides', 'width', 'height', 'locked' ]
+[ 'name', 'id', 'sides', 'width', 'height', 'locked' ]
+[ 'value', 'tag' ] [ 'value' ]
+[ 'name', 'id', 'sides', 'base' ]

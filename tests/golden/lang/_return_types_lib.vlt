@@ -1,0 +1,22 @@
+// Helper module for `return_type_inference.vlt`: exported functions without return types.
+
+export function greet(name: string) {
+  return `hello, ${name}`;
+}
+
+export function parsePort(s: string) {
+  const n = parseInt(s);
+  if (Number.isNaN(n)) {
+    return null;
+  }
+  return n;
+}
+
+export class Counter {
+  private n = 0;
+
+  next() {
+    this.n += 1;
+    return this.n;
+  }
+}

@@ -7,10 +7,12 @@
 //!   class instance or a projected place is copied from (Copy fields) or cloned (the others);
 //!   any other value is bound to a temporary first. Fields private to another type are skipped.
 //! - **Array spread** `[a, ...xs, b]` →
-//!   `{ let out = with_capacity(len); out.push(a); for (e of xs) out.push(e.clone()); ...; out }`
-//!   (Copy elements are copied instead of cloned). A string or a `Map` is the array of its
-//!   characters or entries (bound to a temporary, as above). A source that is an iterable
-//!   (`[...gen()]`) is a `for...of` pushing its values at its position (`body/consume.rs`).
+//!   `{ let out = with_capacity(len); out.push(a); for (e of xs) out.push(<share of e>); ...; out }`
+//!   (Copy elements are copied), each element converted to the literal's element type
+//!   (`const ns: Named[] = [...cs]` makes interface values of the `C`s). A string or a `Map` is
+//!   the array of its characters or entries (bound to a temporary, as above). A source that is an
+//!   iterable (`[...gen()]`) is a `for...of` pushing its values at its position
+//!   (`body/consume.rs`).
 //!
 //! Spread sources are evaluated before the other elements of the literal.
 
@@ -308,8 +310,11 @@ impl FnCx<'_, '_> {
                 None => continue,
             };
             // Integers spread into a float array are numbers too (`[...[1, 2]]` as `number[]`,
-            // `Math.max(...ints())`).
-            let fits = et == elem || (self.cx.ty.is_int(et) && self.cx.ty.is_float(elem));
+            // `Math.max(...ints())`). An array's elements convert like any other value of the
+            // literal, fresh ones too (#268).
+            let fits = et == elem
+                || (self.cx.ty.is_int(et) && self.cx.ty.is_float(elem))
+                || (is_array && (self.converts_to(et, elem) || self.widens(et, elem)));
             if !fits && !self.cx.ty.has_error(et) {
                 let (from, to) = (self.cx.display(et), self.cx.display(elem));
                 self.cx.err(
@@ -442,8 +447,9 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `for (const e of src) out.push(e / e.clone());`, converting integer elements of a source
-    /// to the float `elem` of the result.
+    /// `for (const e of src) out.push(e / share of e);`, each element converted from the
+    /// source's element type to the literal's `elem` (integers to a float `elem`, `C`s to
+    /// interface values in `const ns: Named[] = [...cs]`).
     fn push_all(
         &mut self,
         out: hir::LocalId,
@@ -462,8 +468,9 @@ impl FnCx<'_, '_> {
         } else if copy {
             read
         } else {
-            self.intrinsic(Intrinsic::Share, vec![read], elem, span)
+            self.intrinsic(Intrinsic::Share, vec![read], src_elem, span)
         };
+        let value = self.coerce(value, elem);
         let push = self.push_stmt(out, arr_ty, value);
         let binding = Pat {
             kind: PatKind::Binding(e, mode),

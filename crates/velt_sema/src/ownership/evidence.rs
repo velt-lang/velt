@@ -140,9 +140,10 @@ impl Collector<'_, '_> {
 pub(super) fn in_root_memory(e: &Expr) -> bool {
     match &e.kind {
         E::Local(..) => true,
-        E::Field { base, .. } | E::UnwrapSome(base, _) | E::UnwrapVariant { expr: base, .. } => {
-            in_root_memory(base)
-        }
+        E::Field { base, .. }
+        | E::UnwrapSome(base, _)
+        | E::UnwrapVariant { expr: base, .. }
+        | E::Downcast(base) => in_root_memory(base),
         _ => false,
     }
 }

@@ -1,0 +1,73 @@
+// check: no leaks
+// `instanceof` on interface values: classes with and without subclasses, a subclass stored
+// through its base's `implements`, narrowed values moved into typed arrays and returned.
+
+interface Shape {
+  area(): f64;
+}
+
+class Circle implements Shape {
+  constructor(readonly r: f64) {}
+
+  area(): f64 {
+    return 3.0 * this.r * this.r;
+  }
+}
+
+class Square implements Shape {
+  constructor(readonly side: f64) {}
+
+  area(): f64 {
+    return this.side * this.side;
+  }
+}
+
+class Ring extends Circle {
+  constructor(r: f64, readonly hole: f64) {
+    super(r);
+  }
+
+  override area(): f64 {
+    return super.area() - 3.0 * this.hole * this.hole;
+  }
+}
+
+function describe(s: Shape): string {
+  if (s instanceof Ring) {
+    return `ring ${s.r}/${s.hole}`;
+  }
+  if (!(s instanceof Circle)) {
+    return s instanceof Square ? `square ${s.side}` : "unknown";
+  }
+  return `circle ${s.r}`;
+}
+
+function asCircle(s: Shape): Circle | null {
+  if (s instanceof Circle) {
+    return s;
+  }
+  return null;
+}
+
+function main() {
+  const shapes: Shape[] = [new Circle(1.0), new Square(2.0), new Ring(2.0, 1.0)];
+  for (const s of shapes) {
+    console.log(describe(s), s.area());
+  }
+  const circles: Circle[] = [];
+  for (const s of shapes) {
+    if (s instanceof Circle) {
+      circles.push(s);
+    }
+  }
+  console.log(circles.length, circles[1].r);
+  const one: Shape = new Ring(3.0, 1.0);
+  const c = asCircle(one);
+  console.log(c?.r, c instanceof Ring, asCircle(new Square(1.0)) == null);
+  const sq: Shape = new Square(4.0);
+  if (sq instanceof Square) {
+    const owned: Square = sq;
+    console.log(owned.side);
+  }
+  console.log(shapes.map((s) => (s instanceof Square ? s.side : 0.0)));
+}

@@ -40,7 +40,7 @@ impl FnLower<'_, '_> {
         use hir::ExprKind as K;
         let base = match &e.kind {
             K::Field { base, .. } | K::Index { base, .. } => base,
-            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } => {
+            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
                 return self.through_counted(base, value)
             }
             _ => return false,

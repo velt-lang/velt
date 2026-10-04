@@ -238,7 +238,9 @@ console.log(start.toISOString(), end.getUTCMonth(), start < end); // 2024-01-31T
 `sleep(ms)`, `yieldNow()`, `spawn(p)`, `Promise.all`, `Promise.race`, `Promise.allSettled`
 (with `PromiseSettledResult<T, E>`), `Promise.any`, `Promise.withResolvers` (with
 `PromiseWithResolvers<T, E>`), `shared(x)`, `Mutex<T>`,
-`performance.now()` and `Date.now()` ([Async](../reference/async.md)).
+`performance.now()` and `Date.now()` ([Async](../reference/async.md)), and the timer
+functions `setTimeout`, `clearTimeout`, `setInterval` and `clearInterval` with their `Timer`
+handle ([velt:timers](timers.md)).
 
 ```ts
 const words = "the cat and the hat".split(" ");

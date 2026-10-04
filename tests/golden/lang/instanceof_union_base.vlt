@@ -1,0 +1,48 @@
+// check: no leaks
+// `instanceof` on a union holding a class and its subclasses (a `catch` of several error
+// classes, `Error | MyErr | null`) narrows the value to the tested class: each member is it or
+// is downcast to it (#56). Output as in Node.
+class MyErr extends Error {
+  code = 7;
+  constructor(m: string) {
+    super(m);
+  }
+}
+
+class SubErr extends MyErr {
+  detail = "deep";
+}
+
+function thrower(i: number): void {
+  if (i === 1) {
+    throw new MyErr("my");
+  }
+  if (i === 2) {
+    throw new SubErr("sub");
+  }
+  throw new Error("plain");
+}
+
+function describe(e: Error | MyErr | null): string {
+  if (e instanceof MyErr) {
+    return `my ${e.code}`;
+  }
+  return e === null ? "none" : `plain ${e.message}`;
+}
+
+function main() {
+  for (let i = 0; i < 3; i++) {
+    try {
+      thrower(i);
+    } catch (e) {
+      if (e instanceof SubErr) {
+        console.log("SubErr", e.message, e.code, e.detail);
+      } else if (e instanceof MyErr) {
+        console.log("MyErr", e.message, e.code);
+      } else {
+        console.log("other", e.message);
+      }
+    }
+  }
+  console.log(describe(new MyErr("x")), describe(new Error("y")), describe(null));
+}
