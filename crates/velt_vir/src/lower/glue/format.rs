@@ -9,6 +9,8 @@
 //! (`format_top`) strings are raw, and options and unions are `null` / their payload / member in
 //! top-level style. The prelude `Map` prints like node's (format_map.rs), a `JsonValue` like
 //! node prints the parsed value (`{ a: 1, b: [ 2, 'x' ] }`, a string raw at the top level).
+//! A top-level value is written on one line and then broken across lines like node's when it
+//! is too long (velt_rt's `inspect_layout`).
 
 use velt_sema::hir::{AdtKind, TyId, TyKind};
 
@@ -62,14 +64,37 @@ impl FnLower<'_, '_> {
                     }
                 });
             }
-            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Unit | TyKind::Never => {
-                self.format_nested(buf, place, ty)
-            }
+            _ if self.prints_scalar(ty) => self.format_nested(buf, place, ty),
             _ => {
-                // Node numbers the `<ref *N>` of cycles once per top-level value.
+                // Node numbers the `<ref *N>` of cycles once per top-level value; the value is
+                // printed on one line, then broken across lines like node if too long.
                 self.call_rt(Rt::StrbufInspectBegin, vec![], None);
-                self.format_nested(buf, place, ty)
+                let start = self.temp(Ty::U64);
+                let len = Some(Place::local(start));
+                self.call_rt(Rt::StrbufLen, vec![buf.clone()], len);
+                self.format_nested(buf, place, ty);
+                let start = Operand::Copy(Place::local(start));
+                self.call_rt(Rt::StrbufInspectLayout, vec![buf.clone(), start], None);
             }
+        }
+    }
+
+    /// Types whose text has no containers (numbers, strings, enums), so it never breaks.
+    fn prints_scalar(&self, ty: TyId) -> bool {
+        match self.cx.kind(ty) {
+            TyKind::Int(_)
+            | TyKind::Float(_)
+            | TyKind::Bool
+            | TyKind::Str
+            | TyKind::Unit
+            | TyKind::Never
+            | TyKind::Literal(_)
+            | TyKind::FnPtr { .. }
+            | TyKind::Closure(_) => true,
+            TyKind::Adt(d, _) => {
+                !self.cx.is_class(ty) && self.is_enum(ty) && self.cx.is_c_like_enum(d)
+            }
+            _ => false,
         }
     }
 

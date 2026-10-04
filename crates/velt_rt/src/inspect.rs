@@ -49,6 +49,42 @@ pub fn push_inspect_string(out: &mut Vec<u8>, s: &[u8]) {
     out.push(quote);
 }
 
+/// The text of a string quoted by [`push_inspect_string`] (`quoted` includes the quotes).
+pub fn unescape_inspect_string(quoted: &[u8]) -> Vec<u8> {
+    let inner = &quoted[1..quoted.len().saturating_sub(1).max(1)];
+    let mut out = Vec::with_capacity(inner.len());
+    let mut i = 0;
+    while i < inner.len() {
+        let (c, next) = (inner[i], inner.get(i + 1).copied());
+        if c != b'\\' || next.is_none() {
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        i += 2;
+        match next.unwrap_or_default() {
+            b'n' => out.push(b'\n'),
+            b't' => out.push(b'\t'),
+            b'b' => out.push(8),
+            b'f' => out.push(12),
+            b'r' => out.push(b'\r'),
+            b'x' => {
+                let hex = inner
+                    .get(i..i + 2)
+                    .and_then(|h| std::str::from_utf8(h).ok());
+                let code = hex.and_then(|h| u32::from_str_radix(h, 16).ok());
+                if let Some(ch) = code.and_then(char::from_u32) {
+                    let mut buf = [0u8; 4];
+                    out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+                    i += 2;
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// Node's choice of quote for `text`.
 fn pick_quote(text: &[u8]) -> u8 {
     let has = |c: u8| text.contains(&c);
@@ -113,6 +149,24 @@ mod tests {
         let mut out = vec![];
         push_inspect_key(&mut out, s.as_bytes());
         String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn unescape_reverses_quoting() {
+        let texts = [
+            "plain",
+            "tab\there",
+            "a\nb\n",
+            "single'q",
+            "both'\"q",
+            "all'\"`",
+        ];
+        for s in texts.into_iter().chain(["\u{1}\u{85}é\\x"]) {
+            assert_eq!(
+                super::unescape_inspect_string(q(s).as_bytes()),
+                s.as_bytes()
+            );
+        }
     }
 
     #[test]

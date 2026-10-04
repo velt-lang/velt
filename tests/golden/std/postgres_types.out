@@ -1,9 +1,45 @@
-Numbers { small: 7, big: 9007199254740993, real: 0.30000000000000004, exact: '12345678901234567890.0100', flag: true, nothing: null }
-[ '0.00012', '-5.100', '0', '100000000', 'NaN', '0.00000000000000000001' ]
-Texts { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', day: '2024-02-29', at: '2024-02-29T11:45:00.500Z', local: '1999-12-31T23:59:59', clock: '08:30:00.123456', mood: 'ok', code: 'x  ', label: '-0.500' }
+Numbers {
+  small: 7,
+  big: 9007199254740993,
+  real: 0.30000000000000004,
+  exact: '12345678901234567890.0100',
+  flag: true,
+  nothing: null
+}
+[
+  '0.00012',
+  '-5.100',
+  '0',
+  '100000000',
+  'NaN',
+  '0.00000000000000000001'
+]
+Texts {
+  id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+  day: '2024-02-29',
+  at: '2024-02-29T11:45:00.500Z',
+  local: '1999-12-31T23:59:59',
+  clock: '08:30:00.123456',
+  mood: 'ok',
+  code: 'x  ',
+  label: '-0.500'
+}
 tri 3 3 1
-Lists { ints: [ 1, 2, 3 ], names: [ 'a', null, 'c' ], grid: [ [ 1, 2 ], [ 3, 4 ] ], data: [ 0, 255, 16 ], empty: [] }
-Echo { i: 42, f: 2.5, n: '0.2', t: '5', b: true, u: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' }
+Lists {
+  ints: [ 1, 2, 3 ],
+  names: [ 'a', null, 'c' ],
+  grid: [ [ 1, 2 ], [ 3, 4 ] ],
+  data: [ 0, 255, 16 ],
+  empty: []
+}
+Echo {
+  i: 42,
+  f: 2.5,
+  n: '0.2',
+  t: '5',
+  b: true,
+  u: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+}
 [ 5, 6 ] [ 1, 2, 3 ]
 Point { x: 3, y: 6 }
 happy

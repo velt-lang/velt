@@ -9,7 +9,11 @@ EDITOR vi
 [ 'HOME', 'PATH', 'EDITOR', 'X' ]
 { a: [ 1 ], 'b c': [], _x: [ 2 ] } {} { cpu: 1, 'mem limit': 2 }
 [ { a: [ 1 ], 'b c': [], _x: [ 2 ] } ]
-{ env: { HOME: '/h', 'A B': 'x' }, limits: { mem: 512, cpu: 2 }, prices: { pro: 9.5, free: 0 } }
+{
+  env: { HOME: '/h', 'A B': 'x' },
+  limits: { mem: 512, cpu: 2 },
+  prices: { pro: 9.5, free: 0 }
+}
 {"env":{"HOME":"/h","A B":"x"},"limits":{"mem":512,"cpu":2},"prices":{"pro":9.5,"free":0}}
 expected field "mem" at $.limits
 expected string at $.env.a
