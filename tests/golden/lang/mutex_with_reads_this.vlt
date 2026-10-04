@@ -1,0 +1,36 @@
+// check: no leaks
+// A class wrapping a `shared` mutex: the `with` callback may read other fields of `this`
+// (#459). The callback gets the locked value, not `this.m` itself, so reading `this.step`
+// does not alias the lock.
+class Counter {
+  m: shared<Mutex<{ n: i64 }>> = shared(new Mutex({ n: 0 }));
+  step = 1;
+  label = "count";
+
+  bump() {
+    this.m.with((v) => {
+      v.n += this.step;
+    });
+  }
+
+  bumpBy(times: i64) {
+    for (let i = 0; i < times; i++) {
+      this.m.with((v) => {
+        v.n += this.step * 10;
+      });
+    }
+  }
+
+  show(): string {
+    return this.m.with((v) => `${this.label}: ${v.n}`);
+  }
+}
+
+function main() {
+  const c = new Counter();
+  c.bump();
+  c.step = 2;
+  c.bump();
+  c.bumpBy(3);
+  console.log(c.show());
+}
