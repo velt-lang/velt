@@ -1,0 +1,26 @@
+// An array passed as an `Iterable<i64>` value: per loop, the array converts to an interface
+// value and `[Symbol.iterator]()` makes one `ArrayIterator`; each step is a `next()` call
+// through the interface that re-reads the array's length (JS's live view) and returns an
+// `IteratorResult`. Compare with array_loop.vlt (`for...of` over the array itself).
+function total(start: i64, src: Iterable<i64>): i64 {
+  let sum = start;
+  for (const x of src) {
+    sum += x;
+    if (sum >= 1000000007) {
+      sum -= 1000000007;
+    }
+  }
+  return sum;
+}
+
+function main(): void {
+  const xs: i64[] = [];
+  for (let i = 0; i < 3000000; i++) {
+    xs.push(i);
+  }
+  let sum = 0;
+  for (let round = 0; round < 200; round++) {
+    sum = total(sum, xs);
+  }
+  console.log(sum);
+}

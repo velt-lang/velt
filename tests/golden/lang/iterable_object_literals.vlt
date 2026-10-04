@@ -1,0 +1,63 @@
+// check: no leaks
+// Iterable object literals (#424): an object literal whose member is `*[Symbol.iterator]()`
+// (or `[Symbol.iterator]()` returning an iterator, or `async *[Symbol.asyncIterator]()`) is an
+// `Iterable<T>`: `for...of`, spread, destructuring and `Iterable<T>` parameters take it, and
+// each loop calls the method again. The method sees the variables around it.
+class Countdown implements Iterator<i64> {
+  constructor(private n: i64) {}
+
+  next(): IteratorResult<i64> {
+    if (this.n == 0) {
+      return { done: true };
+    }
+    this.n--;
+    return { value: this.n, done: false };
+  }
+}
+
+function total(xs: Iterable<i64>): i64 {
+  let t = 0;
+  for (const x of xs) {
+    t += x;
+  }
+  return t;
+}
+
+async function tick(): Promise<void> {}
+
+function range(from: i64, to: i64): Iterable<i64> {
+  return {
+    *[Symbol.iterator](): Generator<i64> {
+      for (let v = from; v <= to; v++) {
+        yield v;
+      }
+    },
+  };
+}
+
+async function main() {
+  const r = range(1, 4);
+  console.log([...r], total(r));
+  for (const v of r) {
+    console.log("loop:", v);
+  }
+  const [a, b] = r;
+  console.log("destructured:", a, b);
+  const down = {
+    [Symbol.iterator](): Iterator<i64> {
+      return new Countdown(3);
+    },
+  };
+  console.log(Array.from(down), [...down], total(down));
+  const stream = {
+    async *[Symbol.asyncIterator](): AsyncGenerator<string> {
+      await tick();
+      yield "x";
+      await tick();
+      yield "y";
+    },
+  };
+  for await (const s of stream) {
+    console.log("async:", s);
+  }
+}

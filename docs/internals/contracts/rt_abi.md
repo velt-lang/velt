@@ -21,33 +21,74 @@ package with a native library:
 | `velt_rt_native_api` | `() -> const VeltRtApi*` | the function table handed to `velt_native_init_<pkg>` |
 | `velt_rt_native_check` | `(int32_t rc, const VeltStr* package)` | `rc != 0`: prints that the package's native library failed to start, exits 1 |
 
-## Strings [M1; representation: semantics stage 1]
+## Strings [M1; representation: semantics stage 1; UTF-16 counts: #377 phase 1]
 Strings are immutable values (docs/internals/design/semantics.md): copying one never copies its bytes.
 ```c
 typedef struct { uint64_t w0, w1, w2; } VeltStr;   // size 24, align 8 (vir::STR_AGG); little-endian
 ```
+The bytes are **canonical WTF-8**: UTF-8 that may also hold a lone surrogate as a 3-byte sequence
+(`ED A0..BF xx`), where a surrogate pair is always stored as its 4-byte code point (so byte
+equality is code-unit equality). Every value also carries its **UTF-16 length** (code units,
+[design/strings.md](../design/strings.md)); a string is ASCII exactly when its unit count equals
+its byte count. `length` and every position still count bytes until #377 phase 2.
+
 Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 
 | Form | Test | Layout | Copy / drop |
 |---|---|---|---|
-| static / borrowed | byte 23 < 0x80 and `w2 == 0` | `{ptr, len, 0}` | bitwise copy / nothing |
-| inline (≤ 23 bytes) | byte 23 ≥ 0x80 | bytes 0..len hold the text, byte 23 = `0x80 \| len` | bitwise copy / nothing |
-| heap | byte 23 < 0x80 and `w2 != 0` | `{ptr, len, cap}`; `ptr` points into a refcounted buffer | count +1 / count −1, free at 0 |
+| static / borrowed | byte 23 < 0x80 and `w2 == 0` | `{ptr, units << 32 \| len, 0}` | bitwise copy / nothing |
+| inline, ASCII (≤ 23 bytes) | byte 23 ≥ 0x80, bit 0x40 clear | bytes 0..len hold the text, byte 23 = `0x80 \| len` (units = len) | bitwise copy / nothing |
+| inline, non-ASCII (≤ 22 bytes) | byte 23 ≥ 0x80, bit 0x40 set | bytes 0..len hold the text, byte 22 = units, byte 23 = `0xC0 \| len`, plus `0x20` when it may hold lone surrogates | bitwise copy / nothing |
+| heap | byte 23 < 0x80 and `w2 != 0` | `{ptr, units << 32 \| len, cap}`; `ptr` points into a refcounted buffer | count +1 / count −1, free at 0 |
 
+- `w1` of the static and heap forms packs the unit count in its high 32 bits and the byte length
+  in its low 32 bits. A string is shorter than 2 GiB (at most `i32::MAX` bytes): allocating a
+  larger buffer is a fatal `string too long` (checked once, where the runtime computes a buffer's
+  layout), and so is a borrowed view that long.
 - The all-zero value is the empty static string. Literals are built by lowering as
-  `{ &static_bytes, len, 0 }`. Sub-ranges of static strings may borrow them (same lifetime).
-- Heap buffers: `[count: u64 (atomic)][cap bytes]` from the Rust global allocator (align 8);
-  `ptr` is the address after the count. Only runtime functions allocate, share or free them.
+  `{ &static_bytes, units << 32 | len, 0 }` (units counted from the literal's text). Sub-ranges of
+  static strings may borrow them (same lifetime).
+- Heap buffers come from the Rust global allocator (align 8); `ptr` is the address of the first
+  byte, and the count is always the 8 bytes before it:
+  - ASCII strings (units == len): `[count: u64 (atomic)][cap bytes]`;
+  - non-ASCII strings: `[crumbs: pointer (atomic)][lone: u64][count: u64 (atomic)][cap bytes]`.
+    `lone` is the number of lone surrogates in the text, or all ones when unknown (the buffer
+    absorbed text from a static string, which has no room to record its count; whoever needs the
+    number counts then); `crumbs` is reserved for the breadcrumb
+    table of #377 phase 2 and is null.
+
+  Which layout a buffer has follows from the value (units != len), so retaining needs nothing but
+  `ptr`, and release, growth and free derive the header from the value. An inline string has
+  no room for a lone count; its `0x20` bit is clear when it has none (set conservatively after
+  a join, and for text from a static string, which can't tell without a scan). An ASCII buffer
+  that receives its first non-ASCII byte moves the text behind a header at that append (the
+  allocation is grown in place when the allocator can, and the text shifted),
+  even when it is unique and has room. Only runtime functions allocate, share or free buffers.
   Counts are **atomic** (any string may cross threads: `spawn`, HTTP handlers, `shared`). The
   common case pays no atomic read-modify-write: dropping the only reference (count 1) frees
   after a plain load; an increment happens only when a string is copied while its source stays
   alive (the compiler moves instead when the source is dead).
 - A buffer with count > 1 is never written. The builder (§12.1 of rt_abi_async.md) appends in
-  place only to an inline string with room or a heap buffer with count 1.
-- Generated code reads the length inline (branch-free: `byte23 ≥ 0x80 ? byte23 & 0x7f : w1`)
-  and passes strings to the runtime by pointer for everything else. Test a form through byte 23:
-  inline appends write single bytes into `w2`, and reading `w2` as a word right after would stall
-  on store forwarding.
+  place only to an inline string with room or a heap buffer with count 1 (of the right layout).
+- Bytes enter a string through one runtime function (`VeltStr::push_wtf8`; every append, including
+  `velt_rt_str_append` and the builder's pushes, ends there), which keeps the unit count, the lone
+  count and the form in step in O(1) per append (geometric growth), and joins a high surrogate ending the string with a
+  low one starting the appended text into the pair's 4-byte code point (only when both sides have
+  lone surrogates: units are unchanged, bytes and lone count shrink by 2). Code outside the
+  runtime's string module never writes `w1`/`w2`.
+- Generated code reads the length inline, branch-free:
+  `byte23 ≥ 0x80 ? byte23 & 0x1f : (int64_t)(w1 << 32) >> 32` (the low half sign-extended,
+  exact because strings are below 2 GiB; a zero-extending read lets LLVM vectorize index loops
+  badly) — bytes until #377 phase 2, then units (`byte23 & 0x40 ? byte22 : byte23 & 0x1f` and
+  `w1 >> 32`) — and passes strings to the runtime by
+  pointer for everything else. Test a form through byte 23: inline appends write single bytes
+  into `w2`, and reading `w2` as a word right after would stall on store forwarding.
+- Invariants, checked by a **debug** runtime on every append (each appended piece is canonical
+  WTF-8 with the unit and lone counts it is given, and the seam is canonical: O(piece), never a
+  recount of the whole string) and in full after every operation by the runtime's own tests: the
+  bytes are canonical WTF-8; the stored unit count is the text's; a non-ASCII heap buffer's
+  `lone`, unless unknown, is its number of lone surrogates; an inline string fits its form, and has no lone
+  surrogates when its `0x20` bit is clear.
 - `VELT_RC_STATS=1` with a **debug** runtime prints `rc stats: retain=… release=… alloc=… free=…`
   to stderr at exit (retain = increments, release = decrements of shared buffers, alloc/free =
   heap buffers). Release runtimes compile the counters out; to count optimized code, link a

@@ -41,6 +41,35 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
     for c in checks {
         observed(cx, &c);
     }
+    for (d, what) in std::mem::take(&mut cx.iface_generators) {
+        iface_generator(cx, d, &what);
+    }
+}
+
+/// Generator method `d` implements interface method `what` with an inferred error type: the
+/// interface fixed its iterator's `E` as `never` (the result as written), so the body must not
+/// throw.
+fn iface_generator(cx: &mut Ctx, d: DefId, what: &str) {
+    let own = own_final(cx, d);
+    let Some(m) = cx.error_outside(None, own) else {
+        return;
+    };
+    let (name_span, ret) = (cx.fn_info(d).name_span, cx.fn_info(d).ret);
+    let at = site_of(cx, d, m);
+    let en = cx.display(m);
+    let want = cx.with_generator_error(ret, m);
+    let wn = cx.display(want);
+    let iface = what.split('.').next().unwrap_or(what);
+    cx.error(
+        Diagnostic::error(
+            format!("this generator throws `{en}`, which its result type does not declare"),
+            at,
+        )
+        .with_label(name_span, format!("implements `{what}` here"))
+        .with_note(format!(
+            "the error type of an interface's iterator is part of its type, which is fixed before bodies are checked; declare it in the result: `{wn}` (and as the error type of the `{iface}` it implements), or catch the error in the generator"
+        )),
+    );
 }
 
 /// Where in `d`'s body the error `m` comes from.

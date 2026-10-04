@@ -69,7 +69,8 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
                         Some(err) => errors.push(err),
                         // An async closure may run on several threads at once (an http
                         // handler) and counts are not atomic: it copies what it captured.
-                        None if v.f.is_async && v.captured(e) => {
+                        // (An async generator stays on its thread and shares, like JS.)
+                        None if v.f.is_async && !v.f.is_generator && v.captured(e) => {
                             deep_copies.push((e.span, e.ty));
                             soft::make_deep_copy(e)
                         }
@@ -223,9 +224,19 @@ impl Validator<'_, '_, '_> {
         let mut cur = base;
         loop {
             if self.cx.class_of(cur.ty).is_some() {
+                let promise = matches!(self.cx.ty.kind(e.ty), crate::hir::TyKind::Promise(..));
+                let note = if promise {
+                    format!(
+                        "{}: await the promise before storing it in the object, or keep it \
+                         outside the object (in an array, taken out with `pop()`)",
+                        crate::promise_copies::WHY
+                    )
+                } else {
+                    "use `.clone()` to copy the field's value".to_string()
+                };
                 return errors.push(
                     Diagnostic::error("cannot move a field out of a class instance", e.span)
-                        .with_note("use `.clone()` to copy the field's value"),
+                        .with_note(note),
                 );
             }
             match &cur.kind {

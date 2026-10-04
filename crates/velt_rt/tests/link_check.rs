@@ -34,7 +34,8 @@ void velt_rt_panic(const VeltStr*);
 void velt_rt_exit(int32_t);
 int64_t velt_rt_pow_i64(int64_t, int64_t);
 double velt_rt_pow_f64(double, double);
-#define LIT(s) { (uint8_t*)(s), sizeof(s) - 1, 0 }
+// An ASCII literal: `w1` packs the UTF-16 length (high half) and the byte length (low half).
+#define LIT(s) { (uint8_t*)(s), ((uint64_t)(sizeof(s) - 1) << 32) | (sizeof(s) - 1), 0 }
 typedef struct VeltFut { uint32_t (*poll)(struct VeltFut*, void*); void (*drop)(struct VeltFut*); } VeltFut;
 typedef uint32_t (*PollFn)(void*, void*);
 typedef void (*DropFn)(void*);

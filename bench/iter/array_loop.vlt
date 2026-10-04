@@ -1,0 +1,24 @@
+// `for...of` over an array: the baseline for array_iterable.vlt (the same sum over the same
+// array, without the `Iterable<i64>` interface).
+function total(start: i64, src: i64[]): i64 {
+  let sum = start;
+  for (const x of src) {
+    sum += x;
+    if (sum >= 1000000007) {
+      sum -= 1000000007;
+    }
+  }
+  return sum;
+}
+
+function main(): void {
+  const xs: i64[] = [];
+  for (let i = 0; i < 3000000; i++) {
+    xs.push(i);
+  }
+  let sum = 0;
+  for (let round = 0; round < 200; round++) {
+    sum = total(sum, xs);
+  }
+  console.log(sum);
+}

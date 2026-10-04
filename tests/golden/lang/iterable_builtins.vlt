@@ -1,0 +1,96 @@
+// check: no leaks
+// Arrays, strings, `Map`s and `Set`s are `Iterable<T>`: code written against `Iterable<T>`
+// takes them (as an interface value, or as a type argument bounded by `Iterable<T>`). An array
+// literal written where an `Iterable<T>` is expected holds `T`s. `Map.keys()`, `values()` and
+// `entries()` are arrays, so they are iterable too.
+import { Set } from "velt:collections/set";
+
+function sum(xs: Iterable<number>): number {
+  let total = 0.0;
+  for (const x of xs) {
+    total += x;
+  }
+  return total;
+}
+
+function count<T>(xs: Iterable<T>): i64 {
+  let n = 0;
+  for (const _ of xs) {
+    n++;
+  }
+  return n;
+}
+
+function joined<T>(xs: Iterable<T>): string {
+  let out = "";
+  for (const x of xs) {
+    out += `${x};`;
+  }
+  return out;
+}
+
+function describe(entries: Iterable<[string, number]>): string {
+  let out = "";
+  for (const [k, v] of entries) {
+    out += `${k}=${v} `;
+  }
+  return out;
+}
+
+// A type argument bounded by `Iterable<T>`: called directly, no interface value.
+function firstOf<I extends Iterable<string>>(xs: I): string {
+  for (const x of xs) {
+    return x;
+  }
+  return "(empty)";
+}
+
+class Point {
+  x: i64;
+  y: i64;
+  constructor(x: i64, y: i64) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+const nums: number[] = [1, 2, 3];
+console.log(sum(nums));
+console.log(sum([4, 5.5]));
+console.log(nums.length);
+
+const ages = new Map<string, number>();
+ages.set("ada", 36);
+ages.set("alan", 41);
+console.log(sum(ages.values()));
+console.log(joined(ages.keys()));
+console.log(count(ages));
+console.log(describe(ages));
+console.log(count(ages.entries()));
+
+const tags = new Set<string>(["b", "a", "b", "c"]);
+console.log(count(tags), joined(tags));
+for (const t of tags) {
+  console.log("tag", t);
+}
+
+console.log(count("héllo wörld"));
+console.log(joined("a€😀"));
+
+const points = [new Point(1, 2), new Point(3, 4)];
+console.log(count(points));
+let sx = 0;
+for (const p of points) {
+  sx += p.x;
+}
+console.log(sx, points[1].y);
+
+const none: string[] = [];
+console.log(firstOf(["x", "y"]), firstOf("zeta"), firstOf(ages.keys()), firstOf(none));
+
+const words: Iterable<string> = ["one", "two"];
+console.log(joined(words), joined(words));
+const letters: Iterable<string> = "ab";
+console.log(count(letters));
+const empty: string[] = [];
+console.log(count(empty), joined(new Map<string, i64>()));

@@ -1,0 +1,43 @@
+// check: no leaks
+// A generator expression that captures a variable assigned after the capture holds that
+// variable's shared cell. Dropping the generator before its first `next()` releases the cell
+// (not the value inside it), like dropping it after it started.
+class Box {
+  v: number;
+
+  constructor(v: number) {
+    this.v = v;
+  }
+}
+
+async function main() {
+  const b = new Box(3);
+  const g = function* (): Generator<number> {
+    yield b.v;
+  };
+  g();
+  g();
+  b.v = 4;
+  console.log("box", b.v);
+
+  let n: number = 1;
+  const h = function* (): Generator<number> {
+    yield n;
+  };
+  const unstarted = h();
+  n = 10;
+  const started = h();
+  console.log("started", [...started], "n", n);
+
+  const c = new Box(5);
+  const ag = async function* (): AsyncGenerator<number> {
+    yield c.v;
+  };
+  ag();
+  ag();
+  c.v = 6;
+  for await (const v of ag()) {
+    console.log("async", v);
+  }
+  console.log("unstarted is still a generator:", typeof unstarted);
+}

@@ -195,6 +195,7 @@ pub(super) fn breaks_itself(e: &Expr) -> bool {
     use velt_syntax::ast::ExprKind::*;
     match &e.kind {
         Call { .. } | New { .. } | Object(_) | StructLit { .. } | Array(_) | Arrow { .. } => true,
+        Function(_) => true,
         Template { .. } => true,
         Await(inner) | Paren(inner) => breaks_itself(inner),
         _ => false,

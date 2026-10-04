@@ -1,0 +1,14 @@
+module level: [ 0, 2, 4, 6 ]
+captures: [ 10, 11, 12 ] [ 10 ]
+loop: 10
+loop: 11
+labels closed
+first: item0
+argument: [ '#', '##', '###' ]
+value: a
+caught: empty string
+async: 0
+async: 10
+async: 20
+next: 10 11 true
+method: [ 'X', 'Y' ]

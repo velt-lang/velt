@@ -167,7 +167,7 @@ impl<'h> Cx<'h> {
         }
         let text = self.static_bytes(bytes, 1);
         let mut object = vec![0u8; 24];
-        object[8..16].copy_from_slice(&(s.len() as u64).to_le_bytes());
+        object[8..16].copy_from_slice(&super::strings::str_w1(s).to_le_bytes());
         let id = StaticId(self.statics.len() as u32);
         self.statics.push(StaticData {
             bytes: object,

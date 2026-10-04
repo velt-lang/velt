@@ -1,0 +1,87 @@
+// check: no leaks
+// Every consumer of an iterable (#424) takes what `for...of` takes: spread into an array
+// literal or a rest argument, `Array.from`, array destructuring, `new Map(...)` /
+// `new Set(...)` and `yield*` over strings (their characters), `Map`s (their entries), `Set`s,
+// `Iterable<T>` values and generators. Strings and maps go through the array of their
+// characters or entries, as `for...of` does; the others through `[Symbol.iterator]()`.
+import { Set } from "velt:collections/set";
+
+function* upTo(n: number): Generator<number> {
+  for (let i = 0; i < n; i++) {
+    yield i;
+  }
+}
+
+function* letters(s: string, m: Map<string, number>): Generator<string> {
+  yield* s;
+  for (const k of m.keys()) {
+    yield k;
+  }
+}
+
+function* entriesOf(m: Map<string, number>): Generator<[string, number]> {
+  yield* m;
+}
+
+// Velt's `for...of` iterates a class with `entries()` (not JS): so do the consumers.
+class Pairs {
+  names: string[] = ["p", "q"];
+
+  entries(): [i64, string][] {
+    return [
+      [0, this.names[0]],
+      [1, this.names[1]],
+    ];
+  }
+}
+
+function total(xs: Iterable<number>): number {
+  let t: number = 0;
+  for (const x of xs) {
+    t += x;
+  }
+  return t;
+}
+
+function main() {
+  // Strings: characters (code points), as `for...of`.
+  console.log([..."héllo"], [..."a😀b"].length);
+  console.log(["<", ..."xy", ">"], Array.from("ab"));
+  const [x, y] = "xyz";
+  const [first, ...rest] = "abc";
+  console.log(x, y, first, rest);
+  const [c0, c1 = "?"] = "q";
+  console.log(c0, c1);
+  for (const [a, b] of ["ab", "cd"]) {
+    console.log(a + b);
+  }
+
+  // Maps: entries; `keys()` and `values()`.
+  const m = new Map<string, number>();
+  m.set("a", 1);
+  m.set("b", 2);
+  console.log([...m], [...m.keys()], [...m.values()]);
+  const [e1, e2] = m;
+  console.log(e1, e2);
+  const copy = new Map<string, number>(m);
+  copy.set("c", 3);
+  console.log(copy.size, m.size, Array.from(copy, (e: [string, number]) => `${e[0]}=${e[1]}`));
+
+  // Sets, generators and `Iterable<T>` values.
+  const s = new Set<number>([...upTo(3), 7]);
+  console.log(Math.max(...s), [...s], total(s));
+  console.log(Array.from(new Set<number>([3, 1, 3, 2])));
+  const chars = new Set<string>("hello");
+  console.log(chars.size, [...chars]);
+  const it: Iterable<number> = [4, 5, 6];
+  console.log([...it], Math.min(...it), Array.from(it, (v: number) => v * 2));
+  const [i0, ...iRest] = it;
+  console.log(i0, iRest, total([...upTo(4), ...[10, 20]]));
+
+  // `yield*` over a string and a map.
+  console.log([...letters("pq", m)], [...entriesOf(m)]);
+
+  const pairs = new Pairs();
+  const [[n0, s0]] = pairs;
+  console.log([...pairs], Array.from(pairs).length, n0, s0);
+}

@@ -166,7 +166,8 @@ contents.
 
 ## Functions
 
-- No `function` expressions (use arrows), no `this` rebinding, no `arguments`.
+- No `function` expressions except generators (`const g = function* () { … }`; otherwise use
+  arrows), no `this` rebinding, no `arguments`.
 - No overloads. Optional and default parameters work, on arrows too; rest parameters
   (`...xs: T[]`) take spread arguments (`f(...xs)`) at their position. Callbacks may take fewer
   parameters than they are passed (`xs.map((x) => …)` gets `(x, i)`).
@@ -174,7 +175,8 @@ contents.
 - Generics are compiled per instantiation (monomorphized), so generic code is as fast as
   hand-written code. Bounds are interfaces.
 - Generators (`function*`, `*name()` methods, `yield`, `yield*`) work as in JS, lazily, with
-  their return type written (`Generator<T>`, `Iterable<T>` or `Iterator<T>`). A `for...of` over
+  their return type written (`Generator<T>`, `Iterable<T>`, `Iterator<T>`,
+  `IterableIterator<T>` or `IteratorObject<T>`). A `for...of` over
   a generator call allocates nothing and runs like a hand-written loop. There is no `return
   value`, `next(value)` or `throw()`, and a `finally` block in a generator cannot `yield`,
   throw, or `break` out of it ([Generators](../reference/functions.md#generators)).
@@ -212,6 +214,14 @@ surprise ([Error handling](errors.md)).
 - `new Promise((resolve, reject) => …)` and `Promise.withResolvers()` work as in JS; `resolve`
   and `reject` may be kept and called later from any task. No global `setTimeout` (use
   `sleep(ms)` or [`velt:timers`](../std/timers.md)).
+- A promise has one owner (for now; shared promises are planned in #212). `const q = p` moves
+  it, so using `p` afterwards is an error, and a promise can't be copied out of a collection:
+  `arr[i]` moved or bound (`const p = arr[0]`), `[...arr]`, `const [a, b] = arr`, `m.get(k)`,
+  `Object.values(r)` and generic code that copies its elements report an error that says
+  TypeScript allows it and names the alternative. Take promises out with `pop()` or
+  `splice(i, 1)`, await them together with `Promise.all(arr)`, or store the awaited results.
+  Replacing one in place (`arr[i] = p`) works, and so does reading a class instance that holds
+  one (`m.get(k)` of a `Map<string, Job>`). Printing a promise is not supported yet (#413).
 - Std streams are async iterables: `for await` over a [channel](../std/channel.md), a file's
   `lines()`, standard input's `lines()`, a WebSocket, a Redis subscriber or a `Ticker`. Unlike
   a Node stream, whose iterator destroys the stream when the loop is left early, leaving the
@@ -263,6 +273,7 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | structural typing everywhere | object types and interfaces with only fields structural but exact; interfaces with methods nominal | — |
 | `any`, `unknown`, type assertions | none; `as` converts numbers; `JsonValue` for dynamic data | — |
 | `catch (e: unknown)` | `e` is the exact union of what the `try` can throw | — |
+| `const p = promises[0]`, `m.get(k)` on promises (several holders of one promise) | a promise has one owner: `pop()`, `splice`, `Promise.all(arr)`; shared promises are planned (#212) | `promises.pop()` |
 | `Promise<T>` rejects with anything | `Promise<T, E>` carries its rejection type | — |
 | floating promises lose errors | a floating promise is a compile error | — |
 | an unhandled rejection prints the source line and a stack, and is reported when no handler is attached by the end of the turn | prints `Uncaught <Type>: <message> at file:line:col` and exits with code 1, reported only once nothing can await the promise any more: `const h = spawn(f()); await sleep(100); await h;` handles `h`'s rejection | — |
@@ -282,6 +293,11 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)); components can't take `chil
 | `export default` | named exports only | — |
 | `for...of` over any `Iterable`; `IteratorResult` has `value: undefined` when done | the same protocol (`[Symbol.iterator]()`, `next()`, `return()` on early exit, returning `{ done: true }`); a done result has no `value` (unnarrowed, `r.value` is `T \| null`, so `g().next().value` works); `Iterator<T, E>` carries the error type `next()` throws; `for await` over `AsyncIterable`s, and over arrays of promises | — |
 | generators: `function*`, `yield`, `yield*`, `Generator<T, TReturn, TNext>` | the same, lazy, `Generator<T, E>` (`E`: what the body throws); TS's `Generator<T, void, unknown>` spelling means `Generator<T>`, and a real `TReturn` is an error; no `return value`, `next(value)` (so `yield` has no value) or `throw()`, each an error that says so; a `for...of` over a call allocates nothing; async generators (`AsyncGenerator<T, E>`) likewise, and `yield p` there awaits a promise `p` as in JS | — |
+| arrays, strings, `Map`s and `Set`s are `Iterable`; `a[Symbol.iterator]()` | the same: they convert to `Iterable<T>` values and satisfy `Iterable<T>` bounds (`sum(xs: Iterable<number>)` takes `[1, 2, 3]`); `x[Symbol.iterator]()` returns an `Iterator<T>`, live for arrays as in JS; map and set iterators see the entries as of the call (JS's are live), and `m.keys()` / `values()` / `entries()` are arrays | — |
+| `IterableIterator<T>`, `IteratorObject<T>`, `AsyncIterableIterator<T>`, `IteratorResult<T, TReturn>` | the same interfaces (`[Symbol.iterator]()` returns `Iterator<T>`: no covariant returns); generators implement them, and such a value converts to an `Iterable<T>`. `IteratorResult<T, void>` is `IteratorResult<T>`; a real `TReturn` is an error | an `IterableIterator<T>` value converting to `Iterator<T>` (interface values don't convert to the interfaces they extend) |
+| spread, `Array.from`, array destructuring, `new Map` / `new Set` of any iterable (strings, `Map`s, `Set`s, generators) | the same: an iterable is iterated where it stands, destructuring takes only the values it needs and then closes the iterator, and over a direct generator call only the result is allocated | an array-typed spread source is evaluated before the literal's other elements (`[f(), ...g()]` with `g(): T[]` calls `g` first; the elements are still read in place); a nested pattern takes its values after the outer one has taken all of its own |
+| function expressions: `function* () {}`, `async function* () {}`, `function () {}` | generator expressions work, sharing the variables they use as in JS (no recursion through the expression's name); other function expressions are arrows | — |
+| object literals with methods: `{ *[Symbol.iterator]() { ... } }`, `{ m() { ... } }` | an object literal whose one member is an iterator method is an `Iterable<T>` (no `this`); other methods are errors | — |
 | an unreachable generator is never closed: its `finally` blocks never run | dropping the last reference to a suspended generator closes it: its `finally` blocks run and its `using` values are disposed then (there is no garbage collector to wait for) | — |
 | `next()` on a generator from inside its own body throws a catchable `TypeError` | it panics (`generator is already running`) | — |
 | `return` / `yield`, a line break, then an expression: automatic semicolon insertion ends the statement after `return` / `yield` | no automatic semicolon insertion: the expression on the next line is returned / yielded | — |

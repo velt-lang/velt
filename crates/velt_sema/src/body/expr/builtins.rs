@@ -51,7 +51,9 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
             _ => {
-                if !self.unknown_namespace_member(name, id.span) {
+                if !self.unknown_namespace_member(name, id.span)
+                    && !self.fn_expr_self_ref(name, id.span)
+                {
                     self.cx
                         .err(format!("cannot find `{name}` in this scope"), id.span);
                 }

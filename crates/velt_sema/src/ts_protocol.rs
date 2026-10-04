@@ -1,31 +1,36 @@
 //! TypeScript's spellings of the iteration protocol types (docs/book/ts-developers.md).
 //!
-//! TypeScript's `Generator<T, TReturn, TNext>` (and `Iterator`, `Iterable` and their async
-//! twins) take the return type second and the type `next(value)` takes third; Velt's take the
-//! error type second (`Generator<T, E>`), since its generators return no value and take none
-//! from `next()`. So that TypeScript code keeps compiling, a second argument TypeScript writes
+//! TypeScript's `Generator<T, TReturn, TNext>` (and `Iterator`, `Iterable`, `IterableIterator`,
+//! `IteratorObject` and their async twins) take the return type second and the type
+//! `next(value)` takes third; Velt's take the error type second (`Generator<T, E>`), since its
+//! generators return no value and take none from `next()`. So that TypeScript code keeps compiling, a second argument TypeScript writes
 //! for "returns nothing" (`void`, `undefined`, `unknown`, `any`) and a third argument are
 //! dropped: `Generator<number, void, unknown>` is `Generator<number>`. Any other second argument
 //! must be an error type (a class extending `Error`, a union of them, an interface or a type
 //! parameter); anything else (`Generator<number, string>`) can only be TypeScript's return type,
 //! and is reported at the user's annotation. Classes' base classes are known once
 //! `collect::shapes` ran, so earlier checks wait until then ([`Ctx::check_deferred_ts_returns`]).
+//! `IteratorResult<T, TReturn>` has no error slot: a "returns nothing" `TReturn` is dropped and
+//! any other one is an error ([`Ctx::iterator_result_args`]).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use crate::ctx::Ctx;
+use crate::ctx::{Ctx, Item};
 use crate::hir::{DefId, TyId, TyKind};
 use crate::resolve::TyEnv;
 
 /// The prelude's protocol types whose second argument TypeScript reads as `TReturn`.
-const PROTOCOL_TYPES: [&str; 6] = [
+const PROTOCOL_TYPES: [&str; 9] = [
     "Generator",
     "AsyncGenerator",
     "Iterator",
     "AsyncIterator",
     "Iterable",
     "AsyncIterable",
+    "IterableIterator",
+    "AsyncIterableIterator",
+    "IteratorObject",
 ];
 
 /// A second argument checked once base classes are known: (type name, `T`, the argument, its
@@ -91,6 +96,40 @@ impl Ctx<'_> {
             self.deferred_ts_returns.push(check);
         }
         Some(vec![t, second])
+    }
+
+    /// Is `item` the prelude's `IteratorResult<T>` alias?
+    pub(crate) fn is_iterator_result_alias(&self, item: Item) -> bool {
+        matches!((item, self.prelude.get("IteratorResult")), (Item::Alias(a), Some(Item::Alias(b))) if a == *b)
+    }
+
+    /// TypeScript's `IteratorResult<T, TReturn>`: a `TReturn` that says "returns nothing" is
+    /// dropped (`IteratorResult<number, void>` is `IteratorResult<number>`); any other one is
+    /// reported, since a finished result carries no value. `None`: reported.
+    pub(crate) fn iterator_result_args(
+        &mut self,
+        args: &[ast::TypeExpr],
+        env: &TyEnv,
+    ) -> Option<Vec<TyId>> {
+        let t = self.resolve_type(&args[0], env);
+        if no_return_spelling(&args[1]) {
+            return Some(vec![t]);
+        }
+        let second = self.resolve_type(&args[1], env);
+        if second == self.ty.unit || second == self.ty.error {
+            return Some(vec![t]);
+        }
+        let (tn, rn) = (self.display(t), self.display(second));
+        self.error(
+            Diagnostic::error(
+                format!("`IteratorResult` takes no return type: `{rn}` is TypeScript's `TReturn`"),
+                args[1].span,
+            )
+            .with_note(format!(
+                "TypeScript allows this (`IteratorResult<T, TReturn>`, whose finished result carries a `{rn}` value); Velt doesn't because generators and iterators return no value: a finished result is `{{ done: true }}`; write `IteratorResult<{tn}>`, and deliver a final value some other way (yield it, or store it where the caller can read it)"
+            )),
+        );
+        None
     }
 
     /// The second-argument checks made before base classes were known.

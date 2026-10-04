@@ -106,13 +106,19 @@ pub unsafe extern "C" fn velt_rt_native_check(rc: i32, package: *const VeltStr) 
     std::process::exit(1)
 }
 
+/// `str_new`: a string of the library's bytes, decoded as UTF-8 from outside the program: an
+/// invalid sequence, and that includes a surrogate encoded on its own (`ED A0..BF xx`), becomes
+/// U+FFFD (the WHATWG rule `String::from_utf8_lossy` follows), so the result is canonical and
+/// two halves of a pair never join.
 unsafe extern "C" fn str_new(ptr: *const u8, len: usize, out: *mut VeltStr) {
     let bytes = if len == 0 {
         &[][..]
     } else {
         std::slice::from_raw_parts(ptr, len)
     };
-    out.write(VeltStr::from_bytes(bytes));
+    out.write(VeltStr::from_bytes(
+        String::from_utf8_lossy(bytes).as_bytes(),
+    ));
 }
 
 unsafe extern "C" fn str_bytes(s: *const VeltStr, len: *mut usize) -> *const u8 {
@@ -527,6 +533,28 @@ mod tests {
             size_of::<RtResStr>(),
             size_of::<sdk::IoResultSlot<sdk::VeltStr>>()
         );
+    }
+
+    #[test]
+    fn str_new_decodes_lossily_and_never_joins_halves() {
+        let api = unsafe { &*velt_rt_native_api() };
+        let cases: [(&[u8], &str); 5] = [
+            ("héllo 😀".as_bytes(), "héllo 😀"),
+            (b"a\xffb", "a\u{FFFD}b"),
+            (
+                b"\xed\xa0\xbd\xed\xb8\x80",
+                "\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}",
+            ),
+            (b"x\xe2\x82", "x\u{FFFD}"),
+            (b"\xf0\x9f\x98", "\u{FFFD}"),
+        ];
+        for (input, want) in cases {
+            let mut s = VeltStr::empty();
+            unsafe { (api.str_new)(input.as_ptr(), input.len(), &mut s) };
+            assert_eq!(unsafe { s.as_bytes() }, want.as_bytes(), "{input:?}");
+            assert_eq!(s.units(), want.encode_utf16().count());
+            unsafe { (api.str_drop)(&mut s) };
+        }
     }
 
     #[test]
