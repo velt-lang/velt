@@ -104,7 +104,7 @@ impl FnLower<'_, '_> {
             (I::Eq, [a, b]) => {
                 let t = self.sub(a.ty);
                 let (pa, pb) = self.two_places(a, b);
-                self.eq_values(&pa, &pb, t)
+                self.key_eq_values(&pa, &pb, t)
             }
             (I::Same, [a, b]) => {
                 let t = self.sub(a.ty);

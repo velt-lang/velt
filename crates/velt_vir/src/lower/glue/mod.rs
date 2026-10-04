@@ -9,6 +9,7 @@
 //! | Format    | `(buf: ptr, p: ptr)`               | append console.log text (nested style)   |
 //! | Eq        | `(a: ptr, b: ptr) -> bool`         | structural equality                      |
 //! | Same      | `(a: ptr, b: ptr) -> bool`         | JS `===`: objects inside by identity (same.rs) |
+//! | KeyEq     | `(a: ptr, b: ptr) -> bool`         | Eq with floats compared by SameValueZero (eq.rs) |
 //! | Hash      | `(p: ptr) -> u64`                  | FxHash-style combine                     |
 //! | ObjDrop   | `(obj: ptr)`                       | drop a class object's fields and free it |
 //! | ObjClone  | `(obj: ptr) -> ptr`                | deep copy of a class object              |
@@ -57,6 +58,7 @@ pub(crate) enum Glue {
     Format,
     Eq,
     Same,
+    KeyEq,
     Hash,
     ObjDrop,
     ObjClone,
@@ -94,6 +96,7 @@ impl Glue {
             Glue::Format => "format",
             Glue::Eq => "eq",
             Glue::Same => "same",
+            Glue::KeyEq => "keyeq",
             Glue::Hash => "hash",
             Glue::ObjDrop => "objdrop",
             Glue::ObjClone => "objclone",
@@ -126,7 +129,7 @@ impl Glue {
             | Glue::ObjTransfer
             | Glue::DynTransfer => (vec![Ptr], Ptr),
             Glue::Format | Glue::ObjFormat | Glue::DynFormat => (vec![Ptr, Ptr], Unit),
-            Glue::Eq | Glue::Same => (vec![Ptr, Ptr], Bool),
+            Glue::Eq | Glue::Same | Glue::KeyEq => (vec![Ptr, Ptr], Bool),
             Glue::Hash => (vec![Ptr], U64),
             Glue::JsonWrite => (vec![Ptr, Ptr], Unit),
             Glue::JsonRead => (vec![Ptr, Ptr, Ptr], Bool),
@@ -148,6 +151,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::Format => lw.format_body(a(0), args[1], ty),
             Glue::Eq => lw.eq_body(args[0], args[1], ty),
             Glue::Same => lw.same_body(args[0], args[1], ty),
+            Glue::KeyEq => lw.key_eq_body(args[0], args[1], ty),
             Glue::Hash => lw.hash_body(args[0], ty),
             Glue::ObjDrop => lw.obj_drop_body(args[0], ty),
             Glue::ObjClone => lw.obj_clone_body(args[0], ty),
