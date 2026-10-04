@@ -89,6 +89,14 @@ typedef struct VeltRtApi {
   encoded on its own (`ED A0..BF xx`), so `ED A0 BD ED B8 80` gives six U+FFFD and two halves of
   a pair are never joined. The result is a canonical string (rt_abi.md "Strings") with its UTF-16
   length counted.
+- `str_bytes` lends a string's bytes as they are stored: UTF-8 when the string is well-formed,
+  else WTF-8 with lone surrogates (`ED A0..BF xx`, #377). The SDK's `str_of` gives a
+  `Cow<str>`: borrowed when the bytes are UTF-8, else a copy with one U+FFFD per lone surrogate
+  (the rule of every other output, so the length is unchanged). A `&str` parameter of an
+  exported function borrows such a copy from the generated wrapper for the call; `String` and
+  `Cow<str>` parameters take it as they are. The table and its version are unchanged: a library
+  built with an older SDK stops the program (`fatal`) when it is given an ill-formed string, as
+  it always did.
 - The library never links a `velt_rt_*` symbol: it gets this table (every entry is the runtime
   function or helper named in its comment). A library is `dlopen`ed into `velt dev`'s host,
   whose runtime symbols are not exported, and a DLL cannot import from an executable.

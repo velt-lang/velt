@@ -65,7 +65,8 @@ fn explicit_lifetime(ty: &Type) -> Option<&syn::TypeReference> {
     }
 }
 
-/// `ty` with every reference lifetime made `'static` (for naming `Param<'static>::Raw`).
+/// `ty` with every reference lifetime, and the elided lifetime of a `Cow<str>`, made `'static`
+/// (for naming `Param<'static>::Raw`).
 fn staticize(ty: &Type) -> Type {
     match ty {
         Type::Reference(r) => {
@@ -73,6 +74,22 @@ fn staticize(ty: &Type) -> Type {
             r.lifetime = Some(syn::Lifetime::new("'static", Span::call_site()));
             r.elem = Box::new(staticize(&r.elem));
             Type::Reference(r)
+        }
+        Type::Path(p) => {
+            let mut p = p.clone();
+            if let Some(last) = p.path.segments.last_mut() {
+                if let syn::PathArguments::AngleBracketed(args) = &mut last.arguments {
+                    let elided = !args
+                        .args
+                        .iter()
+                        .any(|a| matches!(a, syn::GenericArgument::Lifetime(_)));
+                    if last.ident == "Cow" && elided {
+                        let lt = syn::Lifetime::new("'static", Span::call_site());
+                        args.args.insert(0, syn::GenericArgument::Lifetime(lt));
+                    }
+                }
+            }
+            Type::Path(p)
         }
         other => other.clone(),
     }
@@ -166,7 +183,7 @@ fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
                     #[no_mangle]
                     pub unsafe extern "C" fn #name(#(#raw_params),*) -> #ret_ty {
                         #inner_fn
-                        let __scope = ();
+                        let __scope = ::velt_native::__Scope::default();
                         #body
                     }
                 },
@@ -187,7 +204,7 @@ fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
                         __out: *mut <#ret_ty as ::velt_native::OutRet>::Slot,
                     ) {
                         #inner_fn
-                        let __scope = ();
+                        let __scope = ::velt_native::__Scope::default();
                         let __r: #ret_ty = #body;
                         ::velt_native::OutRet::write(__r, __out)
                     }
@@ -230,7 +247,7 @@ fn expand(mode: Mode, func: ItemFn) -> syn::Result<Tokens> {
                     #[no_mangle]
                     pub unsafe extern "C" fn #name(#(#raw_params),*) -> *mut ::std::ffi::c_void {
                         #inner_fn
-                        let __scope = ();
+                        let __scope = ::velt_native::__Scope::default();
                         let __f: #ret_ty = #body;
                         ::velt_native::FutureRet::__into_raw(__f)
                     }
