@@ -10,7 +10,7 @@ msg join {"kind":"join","user":"u","room":"r"}
 msg error: expected "leave" at $.kind
 msg error: expected "join" at $.kind
 shape {"r":2}
-lone a�b� 8 "�"
+lone a�b� 4 "\udfff"
 pair 😀
 u64 9223372036854775807
 u64 error: expected u64 at $
