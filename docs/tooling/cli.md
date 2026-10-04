@@ -66,8 +66,11 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelif
 - `--emit vir` / `--emit llvm` print the intermediate representation and stop; `--emit obj`
   writes only the object file.
 - `-v` prints per-stage timings; `--timings` adds each optimizer pass and code generation step.
-- `run` exits with the program's exit code and passes arguments after `--` to the program.
-  Compile errors exit with 1 and run nothing.
+- `run` exits with the program's exit code. As with `node file.js a b`, the arguments after the
+  file go to the program (`velt run app.vlt --port 8080`), so options for Velt come before
+  the file. Without a file (the package's entry) program arguments follow `--`
+  (`velt run -- --port 8080`); a `--` right after a file is accepted too. Compile errors exit
+  with 1 and run nothing.
 
 ## `velt check`
 

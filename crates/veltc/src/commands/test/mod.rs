@@ -216,11 +216,15 @@ impl Run {
             }
         };
         report(&sess, false);
-        self.execute(&exe, tests)
+        self.execute(&exe, file, tests)
     }
 
-    fn execute(&mut self, exe: &Path, tests: Vec<String>) -> Vec<String> {
-        let output = match std::process::Command::new(exe).output() {
+    fn execute(&mut self, exe: &Path, file: &Path, tests: Vec<String>) -> Vec<String> {
+        // `process.argv[1]` is the test file, as with `node --test`.
+        let output = match std::process::Command::new(exe)
+            .env(super::build::SCRIPT_VAR, vpm::relpath::absolute(file))
+            .output()
+        {
             Ok(o) => o,
             Err(e) => {
                 crate::style::error(&format!("cannot run `{}`: {e}", exe.display()));
