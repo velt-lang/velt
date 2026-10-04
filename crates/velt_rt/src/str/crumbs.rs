@@ -25,9 +25,9 @@
 //! (chained from the new one, freed with the buffer) because another thread may still read it.
 //! Capacities double, so the chain holds at most as many entries as the last table.
 //!
-//! Nothing in the runtime translates positions yet: #377 phase 2b moves `length`, the positions
-//! of `slice`, `indexOf` & co. and `charCodeAt` to code units through this API. Until then the
-//! runtime's tests use it (against the reference model in tests/abi/utf16_model.rs).
+//! The string methods (`str_ops`), `charCodeAt` on non-ASCII strings and the regex offsets
+//! translate their code-unit positions through this API (#377 phase 2b), checked against the
+//! reference model in tests/abi/utf16_model.rs.
 
 use std::alloc::{self, Layout};
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -282,6 +282,22 @@ impl VeltStr {
         }
     }
 
+    /// The byte positions of units `a` and `b` (`a <= b`; both clamped as by
+    /// [`Self::unit_to_byte`]): the second is found by a forward scan from the first when it is
+    /// near (a short slice of a long string costs one translation).
+    ///
+    /// # Safety
+    /// `self` must be valid.
+    pub unsafe fn unit_range_to_bytes(&self, a: usize, b: usize) -> (BytePos, BytePos) {
+        let pa = self.unit_to_byte(a);
+        let b = b.min(self.units());
+        if self.is_ascii() || b <= a || b - a >= STRIDE {
+            return (pa, self.unit_to_byte(b));
+        }
+        let first = a - pa.low_half as usize;
+        (pa, scan_forward(self.as_bytes(), pa.byte, first, b))
+    }
+
     /// The index of the first UTF-16 unit of the code point at byte `byte` (a code point
     /// boundary, at most [`Self::len`]; larger is clamped).
     ///
@@ -376,10 +392,7 @@ impl VeltStr {
 /// against that lone high surrogate) it compares the second units, where the end of a string is
 /// below every unit. In canonical form a lone high surrogate is never followed by a low one, so
 /// that one extra comparison decides.
-///
-/// Not yet used by `velt_rt_str_cmp` (`<`, `sort`): switching changes the order of well-formed
-/// text (U+E000–U+FFFF against supplementary characters), which #377 phase 2b does with the rest
-/// of the visible change.
+/// `velt_rt_str_cmp` (`<`, `sort()`) uses it for every pair of strings that are not both ASCII.
 pub fn cmp_utf16(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
     let n = a.len().min(b.len());
     let Some(i) = mismatch(&a[..n], &b[..n]) else {

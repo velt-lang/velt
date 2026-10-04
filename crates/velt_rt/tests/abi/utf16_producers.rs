@@ -74,3 +74,63 @@ fn formatting_producers_count_what_they_write() {
         Ok(())
     });
 }
+
+/// A JSON string literal of the units `s`, as source code units: each unit raw or as a `\uXXXX`
+/// escape at random (quotes, backslashes and controls always escaped). Raw halves next to each
+/// other become a pair when the source is encoded, as in a Velt string.
+fn json_literal(rng: &mut Rng, s: &[u16]) -> Vec<u16> {
+    let mut out = vec![b'"' as u16];
+    for &u in s {
+        if u < 0x20 || u == b'"' as u16 || u == b'\\' as u16 || rng.chance(40) {
+            out.extend(format!("\\u{u:04x}").encode_utf16());
+        } else {
+            out.push(u);
+        }
+    }
+    out.push(b'"' as u16);
+    out
+}
+
+#[test]
+fn json_strings_decode_to_their_code_units() {
+    use crate::json::reader_abi::*;
+    use crate::json::value_abi::*;
+    use std::mem::MaybeUninit;
+    run("JSON string decoding", ALL_ALPHABETS, 4_000, |rng| {
+        let s = gen_string(rng, ALL_ALPHABETS);
+        let src = json_literal(rng, &s);
+        let rsrc = to_rt(rng, &src);
+        unsafe {
+            // The pull reader (`JSON.parse<string>`).
+            let r = velt_rt_json_reader_new(&rsrc.0);
+            let mut out = MaybeUninit::<VeltStr>::uninit();
+            let ok = velt_rt_json_reader_read_string(r, out.as_mut_ptr()) == 1;
+            velt_rt_json_reader_free(r);
+            if !ok {
+                return Err(format!("reader refused {}", show(&src)));
+            }
+            let got = units(&Rt(out.assume_init_read()).0);
+            if got != s {
+                return Err(format!("reader: {} gave {}", show(&src), show(&got)));
+            }
+            // The tree (`JSON.parseValue`).
+            let (mut h, mut err) = (MaybeUninit::uninit(), MaybeUninit::<VeltStr>::uninit());
+            if velt_rt_json_parse_value(&rsrc.0, h.as_mut_ptr(), err.as_mut_ptr()) != 1 {
+                return Err(format!("parseValue refused {}", show(&src)));
+            }
+            let h = h.assume_init();
+            let ok = velt_rt_json_value_as_str(h, out.as_mut_ptr()) == 1;
+            let len = velt_rt_json_value_len(h);
+            velt_rt_json_value_free(h);
+            let got = units(&Rt(out.assume_init()).0);
+            if !ok || got != s || len != s.len() as u64 {
+                return Err(format!(
+                    "parseValue: {} gave {} ({len})",
+                    show(&src),
+                    show(&got)
+                ));
+            }
+        }
+        Ok(())
+    });
+}

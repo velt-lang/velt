@@ -3,14 +3,11 @@
 //! with lengths around the inline limit (22, 23 bytes) and the breadcrumb stride (64, 128 units),
 //! and random operations on them.
 //!
-//! The runtime counts UTF-8 bytes until phase 2b of #377, where only ASCII agrees with the model,
-//! so the runtime's positions are checked on [`RUNTIME_ALPHABETS`]. Phase 2b adds the other
-//! alphabets; the model checks below already run on all of them. Every runtime string the checks
-//! touch must also carry its model length as its unit count and be canonical WTF-8 (phase 1), on
-//! every alphabet, lone surrogates included (phase 2a); the operations whose result doesn't depend
-//! on positions (concatenation, builders, `repeat`, equality, hashing), the position translation
-//! of phase 2b ([`VeltStr::unit_to_byte`], [`VeltStr::byte_to_unit`]) and the code-unit order
-//! ([`cmp_utf16`]) already agree with the model on every alphabet.
+//! Since phase 2b of #377 every operation counts code units, so the runtime agrees with the model
+//! on every alphabet: ASCII, BMP, supplementary characters and lone surrogates. Every runtime
+//! string the checks touch must also carry its model length as its unit count and be canonical
+//! WTF-8, and the position translation ([`VeltStr::unit_to_byte`], [`VeltStr::byte_to_unit`]) and
+//! the code-unit order ([`cmp_utf16`]) are checked on their own too.
 //!
 //! `VELT_UTF16_SEED` replays a failing run (the failure message prints the seed);
 //! `VELT_UTF16_CASES` changes the number of operations.
@@ -48,9 +45,8 @@ pub(super) const ALL_ALPHABETS: &[Alphabet] = &[
     Alphabet::Lone,
 ];
 
-/// The alphabets on which the runtime agrees with the model. Phase 2 of #377 makes this
-/// `ALL_ALPHABETS`.
-const RUNTIME_ALPHABETS: &[Alphabet] = &[Alphabet::Ascii];
+/// The alphabets on which the runtime agrees with the model: all of them since phase 2b of #377.
+const RUNTIME_ALPHABETS: &[Alphabet] = ALL_ALPHABETS;
 
 /// Lengths in code units around the inline limit and the breadcrumb stride; other lengths are
 /// random up to 200.
@@ -213,9 +209,9 @@ pub(super) fn units(s: &VeltStr) -> Vec<u16> {
     u
 }
 
-/// `s.length` as compiled code reads it. Bytes until phase 2 of #377, then code units.
+/// `s.length` as compiled code reads it: code units (velt_vir/src/lower/strings.rs).
 fn rt_length(s: &VeltStr) -> usize {
-    s.len()
+    s.units()
 }
 
 fn out_str(f: impl FnOnce(*mut VeltStr)) -> Vec<u16> {
@@ -492,14 +488,9 @@ fn runtime_matches_model() {
 }
 
 #[test]
-fn every_string_carries_its_unit_count() {
-    run("unit counts", ALL_ALPHABETS, 20_000, |rng| {
-        // Off ASCII the results differ from the model until phase 2b (byte positions); what is
-        // checked here is that every input and result, also from lone surrogates, is canonical
-        // and decodes to as many units as it stores (`units` and `to_rt` panic otherwise).
-        let _ = check_one(rng, ALL_ALPHABETS);
-        let _ = check_text_ops(rng, ALL_ALPHABETS);
-        Ok(())
+fn text_ops_match_the_model() {
+    run("text ops", ALL_ALPHABETS, 20_000, |rng| {
+        check_text_ops(rng, ALL_ALPHABETS)
     });
 }
 

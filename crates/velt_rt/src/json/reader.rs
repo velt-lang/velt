@@ -429,9 +429,8 @@ impl Reader {
         self.decoded(v)
     }
 
-    /// [`Self::decoded`] of a source with lone surrogates (out of line: rare): its raw lone
-    /// surrogates are counted (escapes decode to code points, a lone surrogate escape still to
-    /// U+FFFD before #377 phase 2b, so nothing joins).
+    /// [`Self::decoded`] of a string that may hold lone surrogates (out of line: rare): the
+    /// source had some, or the token decoded a lone surrogate escape. They are counted.
     #[cold]
     #[inline(never)]
     fn decoded_wtf8(&self, v: &[u8]) -> VeltStr {
@@ -452,12 +451,12 @@ impl Reader {
     /// `VeltStr`.
     #[inline]
     fn decoded(&self, v: &[u8]) -> VeltStr {
-        if !self.lone_free {
+        if !self.lone_free || self.sc.lone {
             return self.decoded_wtf8(v);
         }
         // SAFETY: the source has no lone surrogates, so it is UTF-8 (`scan.rs`): raw contents
-        // are a slice of it between two quotes, and decoding turns every escape into a scalar
-        // value (a lone surrogate escape becomes U+FFFD), so the text is UTF-8.
+        // are a slice of it between two quotes, and the token decoded no lone surrogate escape,
+        // so the text is UTF-8.
         let text = unsafe { std::str::from_utf8_unchecked(v) };
         // SAFETY: the scanner counted the units of the token it read last, which `v` is.
         unsafe { VeltStr::from_text_counted(text, self.sc.units) }

@@ -477,10 +477,10 @@ fn producers_join_halves_at_their_seams() {
         velt_rt_str_repeat(&s("LxH"), 3, o);
     });
     assert_eq!(bytes(&r.0), w(&format!("Lx{pair}x{pair}xH")));
-    // padStart / padEnd: fill against fill and fill against the string.
-    let r = out(|o| unsafe { velt_rt_str_pad_start(&s("Lz"), 16, &s("LH"), o) });
+    // padStart / padEnd: fill against fill and fill against the string (lengths in units).
+    let r = out(|o| unsafe { velt_rt_str_pad_start(&s("Lz"), 6, &s("LH"), o) });
     assert_eq!(bytes(&r.0), w(&format!("L{pair}{pair}z")));
-    let r = out(|o| unsafe { velt_rt_str_pad_end(&s("zH"), 16, &s("LH"), o) });
+    let r = out(|o| unsafe { velt_rt_str_pad_end(&s("zH"), 6, &s("LH"), o) });
     assert_eq!(bytes(&r.0), w(&format!("z{pair}{pair}H")));
 }
 
@@ -499,14 +499,14 @@ fn ill_formed_text_through_the_string_methods() {
     // Trimming stops at a lone surrogate.
     let r = out(|o| unsafe { velt_rt_str_trim(&s(" \u{3000}H \u{FEFF}"), o) });
     assert_eq!(bytes(&r.0), w("H"));
-    // Byte search on WTF-8.
+    // Positions in code units; a lone surrogate also matches half of a pair (as in JS).
     unsafe {
-        assert_eq!(velt_rt_str_index_of(&s("aHbH"), &s("H"), 2), 5);
-        assert_eq!(velt_rt_str_last_index_of(&s("aHbH"), &s("H"), i64::MAX), 5);
+        assert_eq!(velt_rt_str_index_of(&s("aHbH"), &s("H"), 2), 3);
+        assert_eq!(velt_rt_str_last_index_of(&s("aHbH"), &s("H"), i64::MAX), 3);
         assert_eq!(velt_rt_str_includes(&s("aHb"), &s("Hb")), 1);
         assert_eq!(
             velt_rt_str_includes(&VeltStr::from_static("😀".as_bytes()), &s("L")),
-            0
+            1
         );
     }
     // split("") gives a lone surrogate as one piece.

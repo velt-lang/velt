@@ -189,12 +189,12 @@ fn replacement_joins_halves_of_a_pair_and_matching_skips_lone_surrogates() {
         [&hi[..], b"-", &lo, b"-"].concat()
     );
     // `.` and `[^…]` don't match a lone surrogate yet (#377 phase 5), and an empty match steps
-    // over one as a whole.
+    // over one as a whole. Offsets are code units.
     let dot = new(".", "g").expect("valid pattern");
     let mut out = MaybeUninit::uninit();
     unsafe { velt_rt_regex_exec_all(dot, &wtf(&[b"a", &hi, b"b"]), out.as_mut_ptr()) };
     let found = unsafe { out.assume_init() };
-    assert_eq!(unsafe { found.as_slice() }, [0, 1, 4, 5]);
+    assert_eq!(unsafe { found.as_slice() }, [0, 1, 2, 3]);
     unsafe {
         velt_rt_regex_free(re);
         velt_rt_regex_free(dot);

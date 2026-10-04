@@ -2,11 +2,12 @@
 //! (linear-time matching, no backtracking blowups).
 //!
 //! A compiled regex is an opaque `Arc` handle (`VeltRegex*`), so clones are cheap and a handle
-//! can be shared by concurrent tasks. Matching runs on the WTF-8 bytes of the subject, so every
-//! offset is a byte offset on a code point boundary — the same indexing model as Velt strings
-//! (`slice`, `indexOf`). In Unicode mode the engine never matches the bytes of a lone surrogate
-//! (#377: `.` and negated classes accepting them is phase 5), and its empty-match stepping skips
-//! one as a whole 3-byte sequence. The `g`/`y` flags are iteration modes that std/regex
+//! can be shared by concurrent tasks. Matching runs on the WTF-8 bytes of the subject; the
+//! offsets the functions take and return are UTF-16 code units, like every Velt string position
+//! (#377 phase 2b), translated at entry and exit ([`Positions`]). In Unicode mode the engine
+//! never matches the bytes of a lone surrogate (#377: `.` and negated classes accepting them is
+//! phase 5), and its empty-match stepping skips one as a whole 3-byte sequence and a pair as a
+//! whole (JavaScript's non-`u` stepping is #401). The `g`/`y` flags are iteration modes that std/regex
 //! implements; the runtime only needs the others.
 
 mod matches;
@@ -59,6 +60,83 @@ unsafe fn text<'a>(s: *const VeltStr) -> &'a [u8] {
     (*s).as_bytes()
 }
 
+/// The search start for code unit `from` of `s`, as a byte offset: a position inside a pair moves
+/// to the pair's end (the engine matches code points, never half of one).
+///
+/// # Safety
+/// `s` must be valid.
+unsafe fn start_byte(s: &VeltStr, from: u64) -> usize {
+    let pos = s.unit_to_byte(usize::try_from(from).unwrap_or(usize::MAX));
+    pos.byte + if pos.low_half { 4 } else { 0 }
+}
+
+/// Byte offsets of matches in `s` as code units: offsets inside a match are counted from its
+/// start, and each match start from the previous one (matches come in order), so translating
+/// every match of a string scans it once.
+struct Positions<'a> {
+    s: &'a VeltStr,
+    byte: usize,
+    unit: usize,
+}
+
+impl<'a> Positions<'a> {
+    fn new(s: &'a VeltStr) -> Positions<'a> {
+        Positions {
+            s,
+            byte: 0,
+            unit: 0,
+        }
+    }
+
+    /// The code unit of the start of a match at byte `b` (not before the previous match start).
+    ///
+    /// # Safety
+    /// `self.s` must be valid and `b` a code point boundary.
+    unsafe fn start(&mut self, b: usize) -> i64 {
+        self.unit = self.at(b);
+        self.byte = b;
+        self.unit as i64
+    }
+
+    /// The code unit of byte `b` of the current match (or -1 for a group that did not take part).
+    ///
+    /// # Safety
+    /// As for [`Self::start`].
+    unsafe fn at(&self, b: usize) -> usize {
+        if self.s.is_ascii() {
+            b
+        } else if b >= self.byte {
+            self.unit + crate::str::wtf8::count_units(&self.s.as_bytes()[self.byte..b])
+        } else {
+            self.s.byte_to_unit(b)
+        }
+    }
+
+    /// The group offsets of a match (`start, end` per group, -1 for one that did not take part),
+    /// group 0 first.
+    ///
+    /// # Safety
+    /// As for [`Self::start`].
+    unsafe fn push(
+        &mut self,
+        groups: impl Iterator<Item = Option<(usize, usize)>>,
+        out: &mut Vec<i64>,
+    ) {
+        let mut first = true;
+        for g in groups {
+            match g {
+                Some((a, b)) if first => {
+                    let a = self.start(a);
+                    out.extend([a, self.at(b) as i64]);
+                }
+                Some((a, b)) => out.extend([self.at(a) as i64, self.at(b) as i64]),
+                None => out.extend([-1, -1]),
+            }
+            first = false;
+        }
+    }
+}
+
 /// `new RegExp(pattern, flags)` → `IoResult<VeltRegex*>`; a bad pattern or flag is `EINVAL`
 /// with a JS-style message.
 #[no_mangle]
@@ -100,27 +178,16 @@ pub unsafe extern "C" fn velt_rt_regex_group_names(re: RegexHandle, out: *mut Ve
     out.write(VeltStrArray::from_strings(names));
 }
 
-/// Whether the subject has a match starting at or after byte `from`.
+/// Whether the subject has a match starting at or after code unit `from`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_regex_test(re: RegexHandle, s: *const VeltStr, from: u64) -> u8 {
-    let s = text(s);
-    let from = (from as usize).min(s.len());
-    re.obj().re.find_at(s, from).is_some() as u8
+    let from = start_byte(&*s, from);
+    re.obj().re.find_at(text(s), from).is_some() as u8
 }
 
-/// Group offsets of one match as `start, end` pairs (`-1, -1` for groups that did not take part).
-fn push_offsets(caps: &regex::bytes::Captures<'_>, out: &mut Vec<i64>) {
-    for g in caps.iter() {
-        match g {
-            Some(m) => out.extend([m.start() as i64, m.end() as i64]),
-            None => out.extend([-1, -1]),
-        }
-    }
-}
-
-/// First match starting at or after byte `from`: returns 1 and writes `2 * group_count` offsets
-/// (`i64[]`: start/end per group, `-1` for unmatched groups); 0 if there is none (`out`
-/// untouched).
+/// First match starting at or after code unit `from`: returns 1 and writes `2 * group_count`
+/// offsets in code units (`i64[]`: start/end per group, `-1` for unmatched groups); 0 if there is
+/// none (`out` untouched).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_regex_exec(
     re: RegexHandle,
@@ -128,19 +195,19 @@ pub unsafe extern "C" fn velt_rt_regex_exec(
     from: u64,
     out: *mut VeltArray<i64>,
 ) -> u8 {
-    let s = text(s);
-    let from = (from as usize).min(s.len());
-    let Some(caps) = re.obj().re.captures_at(s, from) else {
+    let st = &*s;
+    let Some(caps) = re.obj().re.captures_at(text(s), start_byte(st, from)) else {
         return 0;
     };
     let mut v = Vec::with_capacity(2 * caps.len());
-    push_offsets(&caps, &mut v);
+    let groups = caps.iter().map(|g| g.map(|m| (m.start(), m.end())));
+    Positions::new(st).push(groups, &mut v);
     out.write(VeltArray::from_vec(v));
     1
 }
 
 /// Every non-overlapping match (JS `matchAll`: an empty match advances by one character), as
-/// consecutive groups of `2 * group_count` offsets.
+/// consecutive groups of `2 * group_count` offsets in code units.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_regex_exec_all(
     re: RegexHandle,
@@ -148,21 +215,16 @@ pub unsafe extern "C" fn velt_rt_regex_exec_all(
     out: *mut VeltArray<i64>,
 ) {
     let re = &re.obj().re;
-    let s = text(s);
+    let mut pos = Positions::new(&*s);
     let mut v = Vec::new();
     if re.captures_len() == 1 {
-        matches::each_find(re, s, |start, end| {
-            v.extend([start as i64, end as i64]);
+        matches::each_find(re, text(s), |start, end| {
+            pos.push(std::iter::once(Some((start, end))), &mut v);
             true
         });
     } else {
-        matches::each_captures(re, s, |locs| {
-            for g in 0..locs.len() {
-                match locs.get(g) {
-                    Some((a, b)) => v.extend([a as i64, b as i64]),
-                    None => v.extend([-1, -1]),
-                }
-            }
+        matches::each_captures(re, text(s), |locs| {
+            pos.push((0..locs.len()).map(|g| locs.get(g)), &mut v);
             true
         });
     }
