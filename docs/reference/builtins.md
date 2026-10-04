@@ -24,6 +24,7 @@ the standard library's prelude ([prelude reference](../std/prelude.md)).
 | `Comparable<T>` | ordering interface ([Comparable](classes.md#comparable)) |
 | `Map<K, V>` | insertion-ordered hash map ([Types](types.md#objects-arrays-tuples-and-maps)) |
 | `sleep(ms)`, `yieldNow()`, `spawn(p)`, `Promise.all/race/allSettled/any/withResolvers` | async ([Async](async.md)) |
+| `setTimeout(task, ms)`, `clearTimeout(t)`, `setInterval(task, ms)`, `clearInterval(t)`, `Timer` | timers, as in TypeScript; the callback returns the promise to run (`() => save(doc)`, `async () => { … }`) ([velt:timers](../std/timers.md)) |
 | `shared(x)`, `shared<T>`, `Mutex<T>` | thread-safe shared state ([Async](async.md#thread-safety)) |
 | `performance.now(): f64`, `Date.now(): i64` | monotonic and wall-clock milliseconds |
 | `Date` | JavaScript's dates ([prelude](../std/prelude.md#date)) |
