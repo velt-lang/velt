@@ -1,0 +1,5 @@
+narrow_closure_instanceof.vlt:24:7: error: no field `tail` on type `Base`
+narrow_closure_instanceof.vlt:20:5: assigned in a closure here
+`x` is assigned in a closure, so it is not narrowed to `Sub` here: a call may run the closure between the check and this use; test a `const` copy instead: `const sub = x; if (sub instanceof Sub) { … }`
+narrow_closure_instanceof.vlt:32:22: error: no field `tail` on type `Base`
+`k` is assigned in a closure, so `k.ro` is not narrowed to `Sub` here: a call may run the closure between the check and this use; test a `const` copy instead: `const sub = k.ro; if (sub instanceof Sub) { … }`
