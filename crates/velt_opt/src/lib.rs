@@ -12,6 +12,8 @@
 //! - `constfold`: sparse conditional constant propagation + folding, branch folding,
 //!   devirtualization of calls through constant function pointers.
 //! - `addr_forward`: places through a pointer that always holds `&a…` name `a…` directly.
+//! - `heap_sroa`: heap objects that never escape the function (`new` of a small class whose
+//!   methods were inlined) live in aggregate locals instead; no allocation, no free.
 //! - `sroa`: splits aggregate locals whose address is never taken into per-field locals.
 //! - `copyprop`: forwards `a = b` copies of register-like scalar locals.
 //! - `dce`: removes stores to never-read locals, then the locals themselves.
@@ -43,6 +45,7 @@ mod dce;
 mod dead_funcs;
 mod divisions;
 mod frame_slots;
+mod heap_sroa;
 mod inline;
 mod locals;
 mod noalias;
@@ -132,10 +135,14 @@ fn speed_round(
     let mut changed = t.time("inline", || inline::run(program, budget));
     changed |= t.time("const_fields", || const_fields::run(program, specs));
     let signatures = t.time("signatures", || callgraph::signatures(program));
+    let allocator = heap_sroa::Allocator::find(program);
     for func in &mut program.funcs {
         changed |= t.time("constfold", || constfold::run(&signatures, func));
         changed |= t.time("copyprop", || copyprop::run(func));
         changed |= t.time("addr_forward", || addr_forward::run(&program.aggs, func));
+        changed |= t.time("heap_sroa", || {
+            heap_sroa::run(&program.aggs, allocator, func)
+        });
         changed |= t.time("sroa", || sroa::run(&program.aggs, func));
         changed |= t.time("dce", || dce::run(&program.aggs, func));
         changed |= t.time("simplify_cfg", || simplify_cfg::run(func));
