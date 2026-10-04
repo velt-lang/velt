@@ -215,14 +215,15 @@ unsafe extern "C" fn lazy_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     if owner & OWNER_DONE != 0 {
         return READY;
     }
-    if owner == 0 {
-        // Its first poll in a task: the turn [`created_in`] compares with.
-        stamp(f, super::current_turn());
-    }
     let r = (h.poll)(state(f), cx);
     if r == READY {
         run_transfer(f);
         h.owner.set(OWNER_DONE);
+    } else if owner == 0 {
+        // It suspended for the first time in a task: the turn [`created_in`] compares with. Only
+        // here: most lazy nodes (a recursive call's frame) finish in their first poll, which
+        // then pays nothing for the stamp.
+        stamp(f, super::current_turn());
     }
     r
 }
