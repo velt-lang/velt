@@ -172,30 +172,32 @@ pub(super) fn report_same_path(sess: &mut Session, groups: &[Vec<PathBuf>], inpu
 }
 
 /// The root module of the package at `root` and whether it must define `main`: its runnable
-/// entry (`package.entry`, default `src/main.vlt`; `main` required), or `src/lib.vlt` for a
-/// library package (one without a configured entry and without `src/main.vlt`). A configured
-/// entry that is missing is an error, as for `velt build`.
+/// entry (`package.entry`, default `src/main.vlt`, `.ts` or `.tsx`; `main` required), or
+/// `src/lib.vlt` (`.ts`, `.tsx`) for a library package (one without a configured entry and
+/// without a default one). A configured entry that is missing is an error, as for `velt build`.
 fn package_root_module(root: &Path) -> Result<(PathBuf, bool), String> {
     let manifest = vpm::Manifest::from_dir(root)?;
-    let entry = root.join(&manifest.package.entry);
-    let lib = root.join(vpm::manifest::LIB_ENTRY);
-    let default_entry = manifest.package.entry == vpm::manifest::DEFAULT_ENTRY;
-    if entry.is_file() {
-        Ok((entry, true))
-    } else if !default_entry {
-        Err(format!(
-            "package `{}` has no `{}` to check",
-            manifest.package.name, manifest.package.entry
-        ))
-    } else if lib.is_file() {
-        Ok((lib, false))
-    } else {
-        Err(format!(
-            "package `{}` has neither `{}` nor `{}` to check",
+    let entry = &manifest.package.entry;
+    if entry != vpm::manifest::DEFAULT_ENTRY {
+        let file = root.join(entry);
+        return match file.is_file() {
+            true => Ok((file, true)),
+            false => Err(format!(
+                "package `{}` has no `{entry}` to check",
+                manifest.package.name
+            )),
+        };
+    }
+    if let Some(file) = vpm::sources::default_module(root, entry)? {
+        return Ok((file, true));
+    }
+    match vpm::sources::default_module(root, vpm::manifest::LIB_ENTRY)? {
+        Some(file) => Ok((file, false)),
+        None => Err(format!(
+            "package `{}` has neither `{entry}` nor `{}` to check",
             manifest.package.name,
-            manifest.package.entry,
             vpm::manifest::LIB_ENTRY
-        ))
+        )),
     }
 }
 

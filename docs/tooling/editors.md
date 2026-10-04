@@ -65,8 +65,10 @@ The server answers even when the program has errors, and a failing request never
 server down.
 
 `.ts` and `.tsx` modules ([TypeScript files](../reference/modules.md#typescript-files-ts-and-tsx))
-are part of the programs the server analyzes and of the workspace symbol index, and it asks the
-editor to report changes to them. Whether the editor sends it `.ts` and `.tsx` documents to
+are part of the programs the server analyzes, and it asks the editor to report changes to them.
+The workspace symbol index takes `.vlt` files anywhere in the workspace folders, but `.ts` and
+`.tsx` files only in a package's `src/` and `tests/` (and open documents), so the TypeScript
+frontend of a monorepo is not indexed as Velt. Whether the editor sends it `.ts` and `.tsx` documents to
 analyze is up to the client: the VS Code extension leaves them to VS Code's TypeScript support.
 
 ## Code shared with TypeScript

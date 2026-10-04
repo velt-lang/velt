@@ -1,4 +1,5 @@
-//! The symbols of the source files (`.vlt`, `.ts`, `.tsx`) under the workspace folders, for
+//! The symbols of the source files under the workspace folders (`.vlt` files, and `.ts` and
+//! `.tsx` files in a package's `src/` and `tests/`: [`collect_files`]), for
 //! workspace symbol queries: each file is parsed once and its symbols kept with its modification
 //! time. When the client reports file changes (`workspace/didChangeWatchedFiles`, registered at
 //! startup when the client supports it), the index follows the events and a query reads nothing
@@ -12,7 +13,7 @@ use std::time::SystemTime;
 use lsp_types::WorkspaceSymbol;
 
 use crate::manifest::is_manifest;
-use crate::workspace_symbols::{collect_files, disk_file_symbols, Search, SKIPPED_DIRS};
+use crate::workspace_symbols::{collect_files, disk_file_symbols, indexes, Search, SKIPPED_DIRS};
 
 /// One indexed file.
 struct Indexed {
@@ -86,7 +87,7 @@ impl DiskIndex {
                 let modified = modified(&p);
                 self.files.insert(p.clone(), index_file(&p, modified));
             }
-        } else if vpm::sources::is_source_file(path) && !is_manifest(path) {
+        } else if vpm::sources::is_source_file(path) && !is_manifest(path) && indexes(path) {
             self.files
                 .insert(path.to_path_buf(), index_file(path, modified(path)));
         }
