@@ -215,7 +215,11 @@ mod tests {
             // SAFETY: a fresh handle, freed at once (its last reference).
             unsafe { velt_rt_signal_free(velt_rt_signal_timeout(600_000, &reason)) };
         }
-        assert_eq!(executor::live_tasks(), before, "timer tasks of dropped signals");
+        assert_eq!(
+            executor::live_tasks(),
+            before,
+            "timer tasks of dropped signals"
+        );
         // A held one keeps its timer.
         // SAFETY: as above, freed below.
         let held = unsafe { velt_rt_signal_timeout(600_000, &reason) };
