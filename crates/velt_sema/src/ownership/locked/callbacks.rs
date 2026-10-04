@@ -2,7 +2,7 @@
 //! (`super::values`: a literal, a local bound only to closure literals, a conditional, a
 //! captured variable, what a function returns: `m.with(makeCb(out))`), and, through a
 //! function parameter that reaches `with`, the closures passed for it (to a fixpoint). Any other function value is *opaque*: its body is
-//! not visible, and only its type is checked.
+//! not visible, so its type and the functions it may be are checked (`super::opaque`).
 
 use std::collections::HashSet;
 
