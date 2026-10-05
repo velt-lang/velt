@@ -38,6 +38,7 @@ pub(super) fn intrinsic_named(name: &str) -> Option<Intrinsic> {
         "transfer" => I::Transfer,
         "needs_transfer" => I::NeedsTransfer,
         "needs_drop" => I::NeedsDrop,
+        "fn_captures_nothing" => I::FnCapturesNothing,
         "sqrt" => I::Sqrt,
         "floor" => I::Floor,
         "ceil" => I::Ceil,
@@ -143,7 +144,7 @@ impl FnCx<'_, '_> {
             I::Eq | I::Same => (vec![(t, B), (t, B)], bool_, true),
             I::Clone | I::Share => (vec![(t, B)], t, true),
             I::Transfer => (vec![(t, O)], t, true),
-            I::NeedsTransfer | I::NeedsDrop => (vec![(t, B)], bool_, true),
+            I::NeedsTransfer | I::NeedsDrop | I::FnCapturesNothing => (vec![(t, B)], bool_, true),
             I::ToString => (vec![(t, B)], str_, true),
             I::SharedNew => {
                 let s = ty.intern(TyKind::Shared(t));

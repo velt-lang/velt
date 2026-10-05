@@ -400,6 +400,13 @@ Maintainer-owned, like hir.rs.
   whether a value of that type owns anything dropping it releases (lowering's drop glue). A bit
   copy of a type that needs no drop is an independent value, so the stable sort copies such
   elements instead of moving them.
+  `Intrinsic::FnCapturesNothing(f)` (std only, `f` a function value, borrowed): a `bool`, lowered
+  to `f.env == null`. Only closures without captures and named functions have a null env (a
+  program that compares function values gives every closure one), so true means `f` reaches no
+  variable of its caller. velt_opt folds it where the function value is known (const_fields
+  propagates the env constant into specialized callees); elsewhere it is tested at run time.
+  The stable sort sorts a short array of elements that need no drop in place when its
+  comparator captures nothing, and through a copy otherwise.
 - Lowering's representation (counted objects, boxed arrays/objects, stabilized borrows) is its
   own business (docs/internals/design/semantics-stage2.md §3); it may turn a move out of a part of a
   counted value into a share.

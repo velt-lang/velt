@@ -542,3 +542,113 @@ fn every_closure_argument_is_specialized_down_the_recursion() {
         assert_eq!(run_main(&original, n), run_main(&full, n));
     }
 }
+
+// ───── `__intrinsic_fn_captures_nothing`: `f.env == null` ─────
+
+/// Comparisons of a closure's env with null (`__intrinsic_fn_captures_nothing` lowered).
+fn env_null_tests(p: &Program) -> usize {
+    let null = Operand::Const(Const::Int(0), Ty::Ptr);
+    p.funcs
+        .iter()
+        .flat_map(|f| f.blocks.iter().flat_map(|b| &b.stmts))
+        .filter(|s| matches!(s, Stmt::Assign(_, Rvalue::Binary(BinOp::Eq, _, b)) if *b == null))
+        .count()
+}
+
+/// `probe(f, x)`: `f(x)`, plus 1000 when `f` captures nothing (`(*f).1 == null`).
+fn probe_func(pb: &mut ProgramBuilder, clo: AggId, export: bool) -> FuncId {
+    let params = [Ty::Ptr, Ty::I64];
+    let mut fb = match export {
+        true => FuncBuilder::export("probe", &params, Ty::I64),
+        false => FuncBuilder::internal("probe", &params, Ty::I64),
+    };
+    let (f, x) = (fb.param(0), fb.param(1));
+    let (env, c, s) = (fb.local(Ty::Ptr), fb.local(Ty::Bool), fb.local(Ty::I64));
+    let b0 = fb.block();
+    let (b1, y) = call_closure(&mut fb, b0, f, clo, copy_local(x));
+    fb.assign(b1, env, Rvalue::Use(copy_place(through(f, clo, 1))));
+    let null = Operand::Const(Const::Int(0), Ty::Ptr);
+    fb.assign(b1, c, bin(BinOp::Eq, copy_local(env), null));
+    let (yes, no) = (fb.block(), fb.block());
+    fb.branch(b1, c, yes, no);
+    fb.assign(yes, s, bin(BinOp::Add, copy_local(y), int(1000, Ty::I64)));
+    fb.ret(yes, copy_local(s));
+    fb.ret(no, copy_local(y));
+    pb.add(fb.finish())
+}
+
+/// `main(n) = probe(&f, n)` with `f` = `{ inc, null }` (no captures) or `{ add_env, &100 }`.
+fn probe_program(captures: bool) -> Program {
+    let mut pb = ProgramBuilder::new();
+    let clo = pb.agg("closure", 16, 8, &[(Ty::Ptr, 0), (Ty::Ptr, 8)]);
+    let add = env_op(&mut pb, "add_env", BinOp::Add);
+    let mut fb = FuncBuilder::internal("inc", &[Ty::Ptr, Ty::I64], Ty::I64);
+    let (r, b) = (fb.local(Ty::I64), fb.block());
+    fb.assign(
+        b,
+        r,
+        bin(BinOp::Add, copy_local(fb.param(1)), int(1, Ty::I64)),
+    );
+    fb.ret(b, copy_local(r));
+    let inc = pb.add(fb.finish());
+    let probe = probe_func(&mut pb, clo, false);
+    let mut fb = FuncBuilder::export("main", &[Ty::I64], Ty::I64);
+    let n = fb.param(0);
+    let (p, r) = (fb.local(Ty::Ptr), fb.local(Ty::I64));
+    let b = fb.block();
+    let f = if captures {
+        make_closure(&mut fb, b, clo, add, 100)
+    } else {
+        let f = fb.local(Ty::Agg(clo));
+        let code = Operand::Const(Const::Func(inc), Ty::Ptr);
+        let null = Operand::Const(Const::Int(0), Ty::Ptr);
+        fb.assign(b, f, Rvalue::Aggregate(clo, vec![code, null]));
+        f
+    };
+    fb.assign(b, p, Rvalue::AddrOf(Place::local(f)));
+    let b1 = fb.call(
+        b,
+        Callee::Func(probe),
+        vec![copy_local(p), copy_local(n)],
+        Some(r),
+    );
+    fb.ret(b1, copy_local(r));
+    pb.add(fb.finish());
+    pb.finish()
+}
+
+#[test]
+fn captures_nothing_folds_true_for_a_known_closure_without_captures() {
+    let original = probe_program(false);
+    let mut p = original.clone();
+    crate::optimize(&mut p, crate::OptLevel::Speed);
+    assert_valid(&p);
+    assert_eq!(env_null_tests(&p), 0, "folded: {p}");
+    for n in [0, 5] {
+        assert_eq!(run_main(&p, n), n + 1 + 1000);
+        assert_eq!(run_main(&original, n), run_main(&p, n));
+    }
+}
+
+#[test]
+fn captures_nothing_is_false_for_a_capturing_closure() {
+    let original = probe_program(true);
+    let mut p = original.clone();
+    crate::optimize(&mut p, crate::OptLevel::Speed);
+    assert_valid(&p);
+    for n in [0, 5] {
+        assert_eq!(run_main(&p, n), n + 100);
+        assert_eq!(run_main(&original, n), run_main(&p, n));
+    }
+}
+
+#[test]
+fn captures_nothing_stays_a_runtime_test_for_an_unknown_closure() {
+    let mut pb = ProgramBuilder::new();
+    let clo = pb.agg("closure", 16, 8, &[(Ty::Ptr, 0), (Ty::Ptr, 8)]);
+    probe_func(&mut pb, clo, true);
+    let mut p = pb.finish();
+    crate::optimize(&mut p, crate::OptLevel::Speed);
+    assert_valid(&p);
+    assert_eq!(env_null_tests(&p), 1, "not folded: {p}");
+}

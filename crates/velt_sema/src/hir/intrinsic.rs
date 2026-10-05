@@ -77,6 +77,13 @@ pub enum Intrinsic {
     /// objects, closures with a heap environment)? A bit copy of a `T` that does not is an
     /// independent value. The value itself is not evaluated.
     NeedsDrop,
+    /// std only (std/sort/stable.vlt): `__intrinsic_fn_captures_nothing<F>(f: borrow F) ->
+    /// bool` for a function value: true when its environment is null, which only closures
+    /// without captures and named functions have (a program that compares function values
+    /// gives every closure an environment, so it is false there). Such a function reaches no
+    /// variable of its caller. Lowered to `f.env == null`, which velt_opt folds to a constant
+    /// where the function value is known (const_fields after specialization).
+    FnCapturesNothing,
     /// f64 math: `Math.sqrt/floor/ceil/round/trunc/abs` (round = JS: half toward +inf)
     Sqrt,
     Floor,

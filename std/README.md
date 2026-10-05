@@ -89,6 +89,7 @@ Std code is monomorphized and inlined like user code, so write plain index loops
   element owned exactly once themselves, and set its length back to 0 before it is dropped.
   A callback may reach the caller's array through an alias, so while it runs that array must
   hold only elements it owns: the stable sort copies elements that need no drop
-  (`__intrinsic_needs_drop`) and moves the others out, leaving the array empty.
+  (`__intrinsic_needs_drop`; short arrays in place when `__intrinsic_fn_captures_nothing(cmp)`)
+  and moves the others out, leaving the array empty.
 - Keep algorithms allocation-free where possible (`sort()` is in place; `sort(cmp)` needs
   two buffers as long as the array).

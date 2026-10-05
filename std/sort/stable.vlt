@@ -24,7 +24,10 @@
 // holding it), so the sort works on buffers of its own:
 // - Elements that need no drop (numbers, booleans, plain structs) are copied into them and the
 //   sorted result is written back over the array at the end, as JavaScript does: the
-//   comparator sees the array unchanged, and what it stores into it is overwritten.
+//   comparator sees the array unchanged, and what it stores into it is overwritten. A
+//   comparator that captures nothing reaches no array (there is no mutable module-level
+//   state, and such elements hold no references), so then a short array is sorted in place,
+//   without a buffer (for long ones the copy costs nothing measurable).
 // - Other elements (strings, arrays, objects) are moved, and the array stays empty until the
 //   sort is done: a store, `pop` or `truncate` through the alias must not drop or take an
 //   element whose bits the buffers hold. Reading it is out of bounds; what the comparator
@@ -43,23 +46,34 @@ const PSEUDO_MEDIAN_MIN: usize = 64;
 // that both stay known closures that the optimizer specializes and inlines.)
 export function stableSort<T, C>(xs: T[], cmp: (x: T, y: T) => C, neg: (c: C) => bool) {
   const n = xs.length;
-  if (n < 2) {
-    return;
-  }
   // `xs[0]` only names the element type: it is not evaluated.
-  if (!__intrinsic_needs_drop(xs[0])) {
-    sortCopy(xs, cmp, neg);
-    return;
-  }
-  if (n <= SMALL_SORT) {
+  const plain = !__intrinsic_needs_drop(xs[0]);
+  // In place: insertion sort only swaps (every element stays owned by `xs`), and a comparator
+  // that captures nothing reaches no array.
+  if (n <= SMALL_SORT && (!plain || __intrinsic_fn_captures_nothing(cmp))) {
     insertionTail(xs, 0, 1, n, cmp, neg);
     return;
   }
+  if (n < 2) {
+    return;
+  }
+  // One path for the rest, so that `xs` itself is never passed to a call the optimizer keeps.
   const work: T[] = __intrinsic_array_with_capacity(n);
   __intrinsic_array_set_len(work, n);
   __intrinsic_array_move(work, 0, xs, 0, n);
-  __intrinsic_array_set_len(xs, 0);
+  if (!plain) {
+    __intrinsic_array_set_len(xs, 0);
+  }
   driftsort(work, cmp, neg);
+  if (plain) {
+    // Written back over the first n slots (the array grows back to n if the comparator
+    // shortened it; what it pushed stays after them).
+    if (xs.length < n) {
+      __intrinsic_array_set_len(xs, n);
+    }
+    __intrinsic_array_move(xs, 0, work, 0, n);
+    return;
+  }
   // Elements the comparator added to `xs` meanwhile go after the sorted ones.
   const added = xs.length;
   if (added > 0) {
@@ -73,29 +87,13 @@ export function stableSort<T, C>(xs: T[], cmp: (x: T, y: T) => C, neg: (c: C) =>
   __intrinsic_array_set_len(work, 0);
 }
 
-// `stableSort` of elements that need no drop: a copy is sorted and written back over the first
-// n slots (the array grows back to n if the comparator shortened it; what it pushed stays
-// after them).
-function sortCopy<T, C>(xs: T[], cmp: (x: T, y: T) => C, neg: (c: C) => bool) {
-  const n = xs.length;
-  const work: T[] = __intrinsic_array_with_capacity(n);
-  __intrinsic_array_set_len(work, n);
-  __intrinsic_array_move(work, 0, xs, 0, n);
-  if (n <= SMALL_SORT) {
-    insertionTail(work, 0, 1, n, cmp, neg);
-  } else {
-    driftsort(work, cmp, neg);
-  }
-  if (xs.length < n) {
-    __intrinsic_array_set_len(xs, n);
-  }
-  __intrinsic_array_move(xs, 0, work, 0, n);
-}
-
-// The sort itself, on an array no comparator can reach (`stableSort`'s buffer), longer than
-// SMALL_SORT.
+// The sort itself, on an array no comparator can reach (`stableSort`'s buffer).
 function driftsort<T, C>(xs: T[], cmp: (x: T, y: T) => C, neg: (c: C) => bool) {
   const n = xs.length;
+  if (n <= SMALL_SORT) {
+    insertionTail(xs, 0, 1, n, cmp, neg);
+    return;
+  }
   // Runs shorter than this are not worth finding: their stretch is quicksorted instead.
   let minRun = isqrt(n);
   if (n <= 4096) {
