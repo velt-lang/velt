@@ -1,0 +1,93 @@
+// Object-heavy TypeScript: class instances in arrays, property access, method calls, and
+// calls through an interface.
+interface Shape {
+  area(): number;
+  scale(k: number): void;
+}
+
+class Circle implements Shape {
+  r: number;
+  constructor(r: number) {
+    this.r = r;
+  }
+  area(): number {
+    return 3.14159 * this.r * this.r;
+  }
+  scale(k: number): void {
+    this.r *= k;
+  }
+}
+
+class Rect implements Shape {
+  w: number;
+  h: number;
+  constructor(w: number, h: number) {
+    this.w = w;
+    this.h = h;
+  }
+  area(): number {
+    return this.w * this.h;
+  }
+  scale(k: number): void {
+    this.w *= k;
+    this.h *= k;
+  }
+}
+
+class Particle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  constructor(x: number, y: number, vx: number, vy: number) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+  }
+  step(dt: number): void {
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    if (this.x < 0 || this.x > 100) this.vx = -this.vx;
+    if (this.y < 0 || this.y > 100) this.vy = -this.vy;
+  }
+  energy(): number {
+    return 0.5 * (this.vx * this.vx + this.vy * this.vy);
+  }
+}
+
+function main() {
+  const particles: Particle[] = [];
+  for (let i = 0; i < 200000; i++) {
+    particles.push(new Particle(i % 100, (i * 7) % 100, (i % 13) - 6, (i % 7) - 3));
+  }
+  let e = 0.0;
+  for (let t = 0; t < 100; t++) {
+    for (const p of particles) {
+      p.step(0.01);
+    }
+    for (let i = 0; i < particles.length; i++) {
+      e += particles[i].energy();
+    }
+  }
+  console.log(e.toFixed(3));
+
+  const shapes: Shape[] = [];
+  for (let i = 0; i < 500000; i++) {
+    if (i % 2 === 0) {
+      shapes.push(new Circle((i % 10) + 1));
+    } else {
+      shapes.push(new Rect((i % 5) + 1, (i % 3) + 1));
+    }
+  }
+  let total = 0.0;
+  for (let round = 0; round < 40; round++) {
+    for (const s of shapes) {
+      total += s.area();
+    }
+    if (round % 10 === 0) {
+      for (const s of shapes) s.scale(1.0001);
+    }
+  }
+  console.log(total.toFixed(1));
+}

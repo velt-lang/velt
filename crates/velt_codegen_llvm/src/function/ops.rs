@@ -36,6 +36,64 @@ fn float_predicate(op: BinOp) -> Option<&'static str> {
     })
 }
 
+/// The `f64` remainder helper every `%` on `f64` calls.
+const FREM_F64: &str = "@\"velt.frem.f64\"";
+
+/// `x % y` on `f64` with `frem` (C `fmod`) semantics. `frem` is a libm call (about 10 ns on
+/// x86-64 Windows), while JS-style code mostly takes remainders of whole numbers held in
+/// `number`s (`(i + n) % n`). When both operands are whole numbers with `1 <= |y|` and both
+/// magnitudes at most 2^53, the integer remainder of the converted values is the exact result:
+/// it has the dividend's sign like `fmod`, and `copysign` restores `-0` for a negative (or
+/// negative-zero) dividend that divides evenly. The integer divisor is never 0 and the
+/// dividend never `i64::MIN`, so `srem` is defined. Everything else (fractions, NaN, ±Infinity,
+/// larger magnitudes) takes `frem`.
+///
+/// The helper stays a call (`noinline`) that is `speculatable` and `memory(none)`, so the
+/// optimizer treats it like the `frem` instruction it replaces: a loop-invariant `%` and the
+/// index checks that depend on it are hoisted out of inner loops, and equal ones are merged.
+/// Inlined, its branches kept LLVM from doing that, and without `speculatable` a call is only
+/// hoisted where it is sure to execute (a Game of Life on `number` coordinates got 2× slower
+/// either way). The helper never traps, never writes memory and always returns, as
+/// `speculatable` requires.
+const FREM_F64_DEFINITION: &str = "define internal double @\"velt.frem.f64\"(double %x, double %y) noinline nounwind willreturn memory(none) speculatable {
+entry:
+  %ax = call double @llvm.fabs.f64(double %x)
+  %ay = call double @llvm.fabs.f64(double %y)
+  %xsmall = fcmp ole double %ax, 0x4340000000000000
+  %ysmall = fcmp ole double %ay, 0x4340000000000000
+  %yone = fcmp oge double %ay, 1.0
+  %small = and i1 %xsmall, %ysmall
+  %inrange = and i1 %small, %yone
+  br i1 %inrange, label %convert, label %slow
+convert:
+  %xi = fptosi double %x to i64
+  %yi = fptosi double %y to i64
+  %xb = sitofp i64 %xi to double
+  %yb = sitofp i64 %yi to double
+  %xwhole = fcmp oeq double %xb, %x
+  %ywhole = fcmp oeq double %yb, %y
+  %whole = and i1 %xwhole, %ywhole
+  br i1 %whole, label %fast, label %slow
+fast:
+  %ri = srem i64 %xi, %yi
+  %rf = sitofp i64 %ri to double
+  %r = call double @llvm.copysign.f64(double %rf, double %x)
+  ret double %r
+slow:
+  %s = call double @\"velt.frem.f64.slow\"(double %x, double %y)
+  ret double %s
+}";
+
+/// The slow path of [`FREM_F64_DEFINITION`], out of line: LLVM treats `frem` as cheap and safe
+/// to speculate, so in the helper's body it would be executed on the fast path too (both
+/// computed, then a `select`). A call to a function that is not `speculatable` stays behind
+/// the branch.
+const FREM_F64_SLOW_DEFINITION: &str = "define internal double @\"velt.frem.f64.slow\"(double %x, double %y) noinline nounwind willreturn memory(none) {
+entry:
+  %s = frem double %x, %y
+  ret double %s
+}";
+
 impl Emitter<'_> {
     pub(super) fn unary(&mut self, op: UnOp, a: &Operand) -> CodegenResult<String> {
         let (v, ty) = self.scalar(a)?;
@@ -110,6 +168,15 @@ impl Emitter<'_> {
             BinOp::Sub => "fsub",
             BinOp::Mul => "fmul",
             BinOp::Div => "fdiv",
+            BinOp::Rem if ty == Ty::F64 => {
+                self.intrinsics.need(FREM_F64_DEFINITION.to_string());
+                self.intrinsics.need(FREM_F64_SLOW_DEFINITION.to_string());
+                self.intrinsics
+                    .need("declare double @llvm.fabs.f64(double)".to_string());
+                self.intrinsics
+                    .need("declare double @llvm.copysign.f64(double, double)".to_string());
+                return Ok(self.inst(format!("call double {FREM_F64}(double {x}, double {y})")));
+            }
             // `frem` has C `fmod` semantics (LLVM lowers it to a libm call).
             BinOp::Rem => "frem",
             _ => bail!("binary {op:?} is not defined on {ty:?}"),

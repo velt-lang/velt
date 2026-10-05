@@ -89,6 +89,26 @@ fn goldens_split_into_codegen_units() {
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
 
+/// `%` on `f64` through the LLVM backend's whole-number fast path and its `fmod` fallback (the
+/// helper is defined in every codegen unit that uses it), against Node's output.
+#[test]
+fn float_remainder_with_llvm() {
+    if !velt_codegen_llvm::available() {
+        eprintln!("note: clang not available; skipping the float remainder golden");
+        return;
+    }
+    let root = root();
+    runtime_support::build_native_runtime(&root);
+    let work = root.join("target/golden-work-llvm-frem");
+    std::fs::create_dir_all(&work).expect("work dir");
+    let f = root.join("tests/golden/lang/float_remainder.vlt");
+    let failures: Vec<String> = [None, Some(2)]
+        .into_iter()
+        .filter_map(|units| run_golden(&f, &work, units))
+        .collect();
+    assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
+}
+
 /// Runs one golden in a release build through LLVM (with `units` codegen units when given);
 /// returns the mismatch report, if any.
 fn run_golden(f: &Path, work: &Path, units: Option<usize>) -> Option<String> {

@@ -1,0 +1,3 @@
+narrow_closure_union.vlt:10:19: error: no field `length` on type `string | f64`
+narrow_closure_union.vlt:6:5: assigned in a closure here
+`u` is assigned in a closure, so it is not narrowed to `string` here: a call may run the closure between the check and this use; test a `const` copy instead: `const current = u;`, then test `current`

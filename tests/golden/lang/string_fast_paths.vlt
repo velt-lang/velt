@@ -1,0 +1,148 @@
+// One-character strings and comparisons with string literals are compiled inline (#531):
+// `s[i]` / `charAt` / `slice(i, i + 1)` of an ASCII string, `===` / `!==` / `switch` against
+// literals, ordering against a literal of at most one ASCII character, and dropping strings.
+// Every form of string (static, inline, heap) and the fallbacks (non-ASCII text, lone
+// surrogates, out-of-range positions, longer literals) print what Node prints.
+
+function isDigit(c: string): boolean {
+  return c >= "0" && c <= "9";
+}
+
+function isAlpha(c: string): boolean {
+  return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_";
+}
+
+function kind(c: string): string {
+  switch (c) {
+    case " ":
+      return "space";
+    case "(":
+    case ")":
+      return "paren";
+    case "==":
+      return "eq";
+    case "a very long literal of more than sixteen bytes":
+      return "long";
+    case "é":
+      return "e-acute";
+    case "":
+      return "empty";
+    default:
+      return isDigit(c) ? "digit" : isAlpha(c) ? "alpha" : "other";
+  }
+}
+
+function tokens(src: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === " ") {
+      i++;
+    } else if (isDigit(c)) {
+      let j = i;
+      while (j < src.length && isDigit(src[j])) j++;
+      out.push(`num:${src.slice(i, j)}`);
+      i = j;
+    } else if (isAlpha(c)) {
+      let j = i;
+      while (j < src.length && (isAlpha(src[j]) || isDigit(src[j]))) j++;
+      out.push(`id:${src.slice(i, j)}`);
+      i = j;
+    } else {
+      out.push(`op:${c}`);
+      i++;
+    }
+  }
+  return out;
+}
+
+function compare(label: string, s: string) {
+  const parts = [
+    s === "" ? "=''" : "",
+    s === "a" ? "=a" : "",
+    s === "abcdefg" ? "=7" : "",
+    s === "abcdefgh" ? "=8" : "",
+    s === "abcdefghi" ? "=9" : "",
+    s === "abcdefghijklmnop" ? "=16" : "",
+    s === "abcdefghijklmnopq" ? "=17" : "",
+    s !== "abcdefghijklmnopqrstuvwxyz" ? "" : "=26",
+    "abcdefgh" === s ? "8=" : "",
+    s < "" ? "<''" : "",
+    s <= "" ? "<=''" : "",
+    s > "" ? ">''" : "",
+    s >= "" ? ">=''" : "",
+    s < "a" ? "<a" : "",
+    s <= "a" ? "<=a" : "",
+    s > "a" ? ">a" : "",
+    s >= "a" ? ">=a" : "",
+    "a" < s ? "a<" : "",
+    "a" >= s ? "a>=" : "",
+    s < "ab" ? "<ab" : "",
+    s > "ab" ? ">ab" : "",
+    s < "é" ? "<é" : "",
+    s > "é" ? ">é" : "",
+    s === "é" ? "=é" : "",
+  ];
+  console.log(label, parts.filter((p) => p !== "").join(" "));
+}
+
+function main() {
+  console.log(tokens("let x1 = (foo_bar + 42) * 7;"));
+  console.log(tokens("a==b"));
+
+  // s[i], charAt and slice(i, i + 1) of static, inline and heap strings.
+  const stat = "hello, world";
+  const inl = "x" + stat.slice(0, 4);
+  const heap = stat.repeat(3);
+  for (const s of [stat, inl, heap]) {
+    const picked: string[] = [];
+    for (let i = -1; i <= s.length; i++) {
+      picked.push(`${s.charAt(i)}|${s.slice(i, i + 1)}|${s.substring(i, i + 1)}`);
+    }
+    console.log(s.length, s[0], s[s.length - 1], picked.join(","));
+  }
+
+  // Non-ASCII strings take the runtime path: the characters before the first non-ASCII one,
+  // and that one, agree with JavaScript.
+  const accents = "ab€cd";
+  console.log(accents[0], accents[1], accents[2], accents.charAt(2), accents.slice(0, 1));
+  const lone = JSON.parse<string>('"x\\ud800y"');
+  console.log(lone[0], lone.slice(0, 1), lone === "x", lone.length > 1, lone > "x", lone < "y");
+  console.log(kind(accents[2]), kind("é"), kind(accents[0]));
+
+  // Equality and ordering against literals, for strings of every form.
+  compare("empty", "");
+  compare("static", "a");
+  compare("inline", inl.slice(1, 2));
+  compare("seven", "abcdefg");
+  compare("eight", ["abcd", "efgh"].join(""));
+  compare("nine", "abcdefgh" + "i");
+  compare("sixteen", "abcdefghijklmnop");
+  compare("seventeen", "abcdefghijklmnop" + "q");
+  compare("long", "abcdefghijklm" + "nopqrstuvwxyz");
+  compare("last-differs", "abcdefgX");
+  compare("first-differs", "Xbcdefgh");
+  compare("upper", "B");
+  compare("space", " ");
+  compare("accent", "é");
+  compare("accent-tail", "é!");
+  compare("emoji", "😀");
+  compare("lone", lone);
+
+  const kinds: string[] = [];
+  for (const c of ["", " ", "(", ")", "==", "=", "7", "q", "_", "é", "a very long literal of more than sixteen bytes", "Z!"]) {
+    kinds.push(kind(c));
+  }
+  console.log(kinds.join(" "));
+
+  // Many short-lived heap and inline strings: drops free what they must.
+  let total = 0;
+  for (let i = 0; i < 2000; i++) {
+    const h = `${heap}${i}`;
+    const c = h[i % h.length];
+    if (c === "o" || c >= "w") total++;
+    total += h.length;
+  }
+  console.log(total);
+}

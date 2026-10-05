@@ -1,0 +1,26 @@
+// String keys built per lookup (`${x},${y}`), a Set of visited keys, and string concatenation.
+function main() {
+  const grid = new Map<string, number>();
+  for (let y = 0; y < 300; y++) {
+    for (let x = 0; x < 300; x++) {
+      grid.set(`${x},${y}`, (x * y) % 10);
+    }
+  }
+  let sum = 0.0;
+  for (let round = 0; round < 10; round++) {
+    for (let y = 1; y < 299; y++) {
+      for (let x = 1; x < 299; x++) {
+        const k = `${x + (round % 2)},${y}`;
+        sum += grid.get(k) ?? 0;
+      }
+    }
+  }
+  const seen = new Map<string, boolean>();
+  let dup = 0;
+  for (let i = 0; i < 500000; i++) {
+    const k = `id-${(i * 7919) % 200000}`;
+    if (seen.has(k)) dup++;
+    else seen.set(k, true);
+  }
+  console.log(sum, seen.size, dup);
+}

@@ -55,8 +55,12 @@ impl Cx<'_> {
             return s;
         }
         let (entries, id) = match key {
-            VtableKey::Class(cls) => (self.class_entries(cls), self.class_id_word(cls, false)),
+            VtableKey::Class(cls) => {
+                self.note_vtable_type(cls);
+                (self.class_entries(cls), self.class_id_word(cls, false))
+            }
             VtableKey::Impl(index, ty) => {
+                self.note_vtable_type(ty);
                 (self.impl_entries(index, ty), self.class_id_word(ty, true))
             }
         };
