@@ -97,6 +97,9 @@ impl FnLower<'_, '_> {
                 let t = self.sub(a.ty);
                 Operand::Const(crate::vir::Const::Bool(self.cx.holds_counted(t)), Ty::Bool)
             }
+            (I::NeedsDrop, [a]) => {
+                Operand::Const(crate::vir::Const::Bool(self.needs_drop(a.ty)), Ty::Bool)
+            }
             (I::Share, [a]) => {
                 let v = self.expr(a);
                 let t = self.sub(a.ty);

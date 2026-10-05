@@ -72,6 +72,11 @@ pub enum Intrinsic {
     /// bool`, a constant: can a `T` reach a counted object, so that `Transfer` has work to do
     /// (the value itself is not read)?
     NeedsTransfer,
+    /// std only (std/sort/stable.vlt): `__intrinsic_needs_drop<T>(value: borrow T) -> bool`,
+    /// a constant: does a `T` own anything that dropping it releases (strings, arrays,
+    /// objects, closures with a heap environment)? A bit copy of a `T` that does not is an
+    /// independent value. The value itself is not evaluated.
+    NeedsDrop,
     /// f64 math: `Math.sqrt/floor/ceil/round/trunc/abs` (round = JS: half toward +inf)
     Sqrt,
     Floor,

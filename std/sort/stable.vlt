@@ -20,11 +20,16 @@
 // inconsistent comparator (NaN results, random answers) gives some permutation: never a
 // crash, a lost or duplicated element, or a loop.
 //
-// The sort works on buffers of its own and leaves the array empty until it is done: a
-// comparator can still reach the array through an alias (`const ys = xs`, or a shared object
-// holding it), and a store, `pop` or `truncate` there must not drop or take an element whose
-// bits the buffers hold. Such a comparator sees an empty array; what it pushes onto it ends
-// up after the sorted elements, as in JavaScript.
+// A comparator can still reach the array through an alias (`const ys = xs`, or a shared object
+// holding it), so the sort works on buffers of its own:
+// - Elements that need no drop (numbers, booleans, plain structs) are copied into them and the
+//   sorted result is written back over the array at the end, as JavaScript does: the
+//   comparator sees the array unchanged, and what it stores into it is overwritten.
+// - Other elements (strings, arrays, objects) are moved, and the array stays empty until the
+//   sort is done: a store, `pop` or `truncate` through the alias must not drop or take an
+//   element whose bits the buffers hold. Reading it is out of bounds; what the comparator
+//   pushes ends up after the sorted elements. Short arrays of them are insertion sorted in
+//   place (swaps only, so every element stays owned by the array).
 
 import { insertionTail, reverseRange, moveRange, mergeRuns, mergeSortRange } from "velt:sort/merge";
 
@@ -38,8 +43,15 @@ const PSEUDO_MEDIAN_MIN: usize = 64;
 // that both stay known closures that the optimizer specializes and inlines.)
 export function stableSort<T, C>(xs: T[], cmp: (x: T, y: T) => C, neg: (c: C) => bool) {
   const n = xs.length;
+  if (n < 2) {
+    return;
+  }
+  // `xs[0]` only names the element type: it is not evaluated.
+  if (!__intrinsic_needs_drop(xs[0])) {
+    sortCopy(xs, cmp, neg);
+    return;
+  }
   if (n <= SMALL_SORT) {
-    // Swaps only: every element stays owned by `xs`, whatever the comparator does to it.
     insertionTail(xs, 0, 1, n, cmp, neg);
     return;
   }
@@ -59,6 +71,25 @@ export function stableSort<T, C>(xs: T[], cmp: (x: T, y: T) => C, neg: (c: C) =>
   __intrinsic_array_set_len(xs, total);
   __intrinsic_array_move(xs, 0, work, 0, total);
   __intrinsic_array_set_len(work, 0);
+}
+
+// `stableSort` of elements that need no drop: a copy is sorted and written back over the first
+// n slots (the array grows back to n if the comparator shortened it; what it pushed stays
+// after them).
+function sortCopy<T, C>(xs: T[], cmp: (x: T, y: T) => C, neg: (c: C) => bool) {
+  const n = xs.length;
+  const work: T[] = __intrinsic_array_with_capacity(n);
+  __intrinsic_array_set_len(work, n);
+  __intrinsic_array_move(work, 0, xs, 0, n);
+  if (n <= SMALL_SORT) {
+    insertionTail(work, 0, 1, n, cmp, neg);
+  } else {
+    driftsort(work, cmp, neg);
+  }
+  if (xs.length < n) {
+    __intrinsic_array_set_len(xs, n);
+  }
+  __intrinsic_array_move(xs, 0, work, 0, n);
 }
 
 // The sort itself, on an array no comparator can reach (`stableSort`'s buffer), longer than

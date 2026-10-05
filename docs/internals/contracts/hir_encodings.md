@@ -396,6 +396,10 @@ Maintainer-owned, like hir.rs.
   ownership: the std code keeps every element owned by exactly one array, cuts stale copies off
   before an array is dropped, and keeps the elements out of any array a callback could reach
   through an alias while it runs.
+  `Intrinsic::NeedsDrop(value)` (std only, value borrowed and not evaluated): a constant `bool`,
+  whether a value of that type owns anything dropping it releases (lowering's drop glue). A bit
+  copy of a type that needs no drop is an independent value, so the stable sort copies such
+  elements instead of moving them.
 - Lowering's representation (counted objects, boxed arrays/objects, stabilized borrows) is its
   own business (docs/internals/design/semantics-stage2.md §3); it may turn a move out of a part of a
   counted value into a share.

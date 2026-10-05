@@ -1108,5 +1108,8 @@ program): 1M numbers 410 → 57 ms, 300k objects 210 → 79 ms, 100k by score 64
   closure arguments down the recursion: before, `quicksort(…, cmp, neg)` recursed into a clone
   that knew `neg` but called `cmp` indirectly. Same std without that fix: objects by name 447M
   (2.2M mispredictions), by score 185M; the number rows are the same either way.
-- The sort moves the elements into a buffer of its own while the comparator runs and back at the
-  end (a comparator can reach the array through an alias): at most 1M instructions on any row.
+- The sort works on a buffer of its own while the comparator runs (a comparator can reach the
+  array through an alias): elements that need no drop are copied into it and written back, the
+  others moved out and back. At most 1M instructions on any row above. Short arrays pay for it:
+  100k sorts of 10 numbers take 32.6M instructions against 20.8M when they were insertion
+  sorted in place (about 120 instructions per sort, the buffer's allocation and the two copies).
