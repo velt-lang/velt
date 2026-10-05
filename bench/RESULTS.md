@@ -1070,3 +1070,40 @@ best of 8–12 interleaved runs in ms (Windows, i9-12900HK, with other builds ru
 `bench/int32` (both variants, whole process, best of 5 interleaved, busy machine): Rust 2763 ms,
 Velt LLVM 3732, Velt Cranelift release 6395, Node 7360.
 
+## Typical TypeScript workloads (`bench/typical`, 2026-10-04)
+
+`bench/typical/run.sh 7`: 15 programs written the way TypeScript code is written (`number`
+parameters, classes, closures, `Map<string, number>`, comparator sorts, string building). Each
+`.vlt` file is also the TypeScript program Node runs (the harness appends the `main();` call),
+and `rust/<name>.rs` is an idiomatic Rust port that allocates where JavaScript does (`Box` per
+class instance, `Box<dyn Fn>` for stored closures); `vec2.rs` uses a `Copy` struct, what a Rust
+programmer writes there. All three print the same output. Best of 7 interleaved runs, wall ms;
+Windows 11, i9-12900HK shared with other builds, clang 22.1.8, rustc 1.99 `-O`, Node 22.22.
+
+| benchmark | Velt (LLVM release) | Rust -O | Node | Velt / Rust | Velt / Node |
+|---|---:|---:|---:|---:|---:|
+| grid | 499 | 131 | 856 | 3.81 | 0.58 |
+| vec2 | 382 | 104 | 950 | 3.67 | 0.40 |
+| tokenize | 848 | 328 | 477 | 2.59 | 1.78 |
+| sortcmp | 1097 | 473 | 2807 | 2.32 | 0.39 |
+| record | 322 | 198 | 622 | 1.63 | 0.52 |
+| errors | 217 | 175 | 851 | 1.24 | 0.25 |
+| graph | 340 | 302 | 903 | 1.13 | 0.38 |
+| fib | 120 | 107 | 377 | 1.12 | 0.32 |
+| numloop | 267 | 249 | 893 | 1.07 | 0.30 |
+| wordcount | 542 | 514 | 1386 | 1.05 | 0.39 |
+| chains | 333 | 329 | 2732 | 1.01 | 0.12 |
+| callbacks | 168 | 203 | 1108 | 0.83 | 0.15 |
+| strings | 1583 | 2072 | 9439 | 0.76 | 0.17 |
+| objects | 307 | 545 | 1738 | 0.56 | 0.18 |
+| keys | 262 | 611 | 833 | 0.43 | 0.31 |
+
+The four large gaps have one cause each (survey #529 has the evidence and the proposed fixes;
+the table is from `main` at 8949f2c7):
+- **grid**: `%` on `number` is a libm `fmod` call, about 10 ns (`n: number` in the Game of Life;
+  with `n: i64` it is 5.7× faster). #532.
+- **vec2**: every `new Vec2(…)` of the loop-carried value is a heap allocation and a free. #533.
+- **tokenize**: `src[i]`, `c >= "0"` and `c === " "` are runtime calls on one-character
+  strings (the same loop with `charCodeAt` is 5× faster); `record`'s `includes` / `indexOf` on
+  `string[]` pay a `velt_rt_str_eq` call per element. #531.
+- **sortcmp**: `sort(cmp)` merges in place with SymMerge, O(n log² n) swaps. #530.

@@ -41,8 +41,6 @@ pub(super) struct Boxing {
     recursive: HashSet<DefId>,
     /// Counted types a transfer to another thread can copy (transfers.rs).
     transferred: HashSet<TyId>,
-    /// A transferred value reaches a function or interface value: any counted type.
-    transfer_any: bool,
 }
 
 impl Boxing {
@@ -116,6 +114,11 @@ pub(super) struct Facts {
     transfers: HashSet<TyId>,
     /// Function values are compared (or hashed) somewhere.
     fn_compared: bool,
+    /// Capture types of the closure environments built (transfers.rs).
+    captures: HashSet<TyId>,
+    /// Concrete types a vtable was built for: interface implementors and classes in a
+    /// hierarchy (transfers.rs).
+    vtable_types: HashSet<TyId>,
     /// A share was lowered as a placeholder because its type was not counted yet: the output
     /// of this pass must not be used.
     pub(super) unmet: bool,

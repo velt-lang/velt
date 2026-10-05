@@ -1,0 +1,65 @@
+// 2D arrays: number[][] matrix multiply and a Game of Life on boolean[][].
+function matmul(a: number[][], b: number[][], n: number): number[][] {
+  const c: number[][] = [];
+  for (let i = 0; i < n; i++) {
+    const row: number[] = [];
+    for (let j = 0; j < n; j++) {
+      let s = 0.0;
+      for (let k = 0; k < n; k++) s += a[i][k] * b[k][j];
+      row.push(s);
+    }
+    c.push(row);
+  }
+  return c;
+}
+
+function life(g: boolean[][], n: number): boolean[][] {
+  const out: boolean[][] = [];
+  for (let y = 0; y < n; y++) {
+    const row: boolean[] = [];
+    for (let x = 0; x < n; x++) {
+      let c = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const yy = (y + dy + n) % n;
+          const xx = (x + dx + n) % n;
+          if (g[yy][xx]) c++;
+        }
+      }
+      row.push(g[y][x] ? c === 2 || c === 3 : c === 3);
+    }
+    out.push(row);
+  }
+  return out;
+}
+
+function main() {
+  const n = 300;
+  const a: number[][] = [];
+  const b: number[][] = [];
+  for (let i = 0; i < n; i++) {
+    const ra: number[] = [];
+    const rb: number[] = [];
+    for (let j = 0; j < n; j++) {
+      ra.push(((i * j) % 7) - 3);
+      rb.push(((i + j) % 5) - 2);
+    }
+    a.push(ra);
+    b.push(rb);
+  }
+  const c = matmul(a, b, n);
+  let tr = 0.0;
+  for (let i = 0; i < n; i++) tr += c[i][i];
+  let g: boolean[][] = [];
+  const m = 256;
+  for (let y = 0; y < m; y++) {
+    const row: boolean[] = [];
+    for (let x = 0; x < m; x++) row.push((x * 7 + y * 13) % 5 === 0);
+    g.push(row);
+  }
+  for (let gen = 0; gen < 100; gen++) g = life(g, m);
+  let alive = 0;
+  for (const row of g) for (const cell of row) if (cell) alive++;
+  console.log(tr, alive);
+}
