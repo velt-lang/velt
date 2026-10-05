@@ -1,0 +1,72 @@
+// check: no leaks
+// Identity and class tests on objects that never leave their function: `===` must tell two
+// objects with equal fields apart and `instanceof` must see the class of the object a variable
+// holds, in release builds too (heap scalar replacement keeps such objects on the heap, #533).
+class Pt {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  moved(dx: number): Pt {
+    return new Pt(this.x + dx, this.y);
+  }
+}
+
+class Point {
+  x: number;
+  constructor(x: number) {
+    this.x = x;
+  }
+}
+
+class Point3 extends Point {
+  z: number;
+  constructor(x: number, z: number) {
+    super(x);
+    this.z = z;
+  }
+}
+
+// Objects only borrowed, compared by identity: equal fields are not the same object.
+function compared(n: number): string {
+  let same = 0;
+  let different = 0;
+  let p = new Pt(0, 0);
+  for (let i = 0; i < n; i++) {
+    const q = new Pt(p.x, p.y);
+    if (q === p) {
+      same++;
+    }
+    if (q !== p) {
+      different++;
+    }
+    if (p === p) {
+      same++;
+    }
+    p = p.moved(i % 2 == 0 ? 0.0 : 1.0);
+  }
+  return `${same} ${different} ${p.x}`;
+}
+
+// A variable that holds either class.
+function kinds(n: number): string {
+  let points = 0;
+  let threes = 0.0;
+  for (let i = 0; i < n; i++) {
+    const p: Point = i % 3 == 0 ? new Point3(i, i) : new Point(i);
+    if (p instanceof Point) {
+      points++;
+    }
+    if (p instanceof Point3) {
+      threes += p.z;
+    }
+  }
+  return `${points} ${threes}`;
+}
+
+function main() {
+  console.log(compared(6));
+  console.log(kinds(10));
+}
