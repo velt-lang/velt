@@ -319,7 +319,7 @@ pub fn live_tasks() -> usize {
 /// that still holds its waker wakes nothing, or the slot's next task spuriously.
 pub fn cancel(id: usize) {
     let task = with_exec(|e| {
-        if e.queued.remove(&id) {
+        if e.queued.remove(&id).is_some() {
             e.ready.retain(|&q| q != id);
         }
         let task = e.tasks.get_mut(id - 1)?.take()?;
@@ -428,7 +428,8 @@ fn wake_last(w: Waker) {
     }
     let id = w.data() as usize;
     with_exec(|e| {
-        if !e.queued.insert(id) {
+        // Turn 0: a timer's wake-up is no turn's microtask, so `run_now` leaves it in its place.
+        if e.queued.insert(id, 0).is_some() {
             e.ready.retain(|&q| q != id);
         }
         e.ready.push_back(id);
