@@ -27,28 +27,38 @@ It builds a release `velt`, builds each part with `--release --backend cranelift
 `--release --backend llvm` (`n/a` when a build fails), and prints the best wall-clock time per
 part. Needs cargo, node, python3, and clang for the LLVM column.
 
-**Outputs differ from Node until #377 phase 2 lands.** The programs are plain TypeScript with
-JavaScript's meaning; today Velt counts and indexes UTF-8 bytes and sorts bytewise, so every
-length, hash and sort order involving non-ASCII text differs. The last column reports this
-(`yes`/`no`) and is not a failure; once strings are UTF-16 code units, every row must say `yes`.
-With every non-ASCII character replaced by an ASCII letter, Velt and Node print the same output
-today.
+**Outputs match Node** since #377 phase 2b: the programs are plain TypeScript with JavaScript's
+meaning, and Velt strings now count and index UTF-16 code units and sort by them. The last
+column reports it and must say `yes` for every part.
 
 ## Results
 
-`bench/strings_utf16/run.sh 3` on a shared 4-core cloud container (Intel Xeon @ 2.80GHz), Node
-v22.22, with the runtime of `main` at b80571c (before #377 phase 1). Best of 3, milliseconds including process start; the machine is noisy,
-so compare ratios.
+`bench/strings_utf16/run.sh 3` on a shared 4-core cloud container (Intel Xeon @ 2.80GHz, Linux
+x86_64), Node v22.22. Best of 3, milliseconds including process start; the machine is noisy, so
+compare ratios.
+
+After #377 phase 2b (UTF-16 semantics; the outputs match Node):
 
 | part | Velt cranelift release | Velt LLVM release | Node | output matches Node |
 |---|---:|---:|---:|---|
-| append | 8269 | 8285 | 160 | no |
-| char_code_at | 155 | 137 | 329 | no |
-| csv | 67 | 107 | 284 | no |
-| json | 107 | 106 | 290 | no |
-| sort | 85 | 68 | 344 | no |
+| append | 89 | 78 | 158 | yes |
+| char_code_at | 291 | 256 | 320 | yes |
+| csv | 117 | 64 | 287 | yes |
+| json | 139 | 105 | 282 | yes |
+| sort | 104 | 81 | 349 | yes |
 
-- `append` is quadratic in Velt: every `s += piece` copies the string (#381); Node appends to a
-  rope.
-- The other parts do byte work in Velt today; with UTF-16 semantics, `char_code_at` and `sort`
-  pay for code-unit indexing and comparison, which is what these numbers are the baseline for.
+The same runs of `main` just before phase 2b (2586621, byte semantics, outputs differ):
+
+| part | Velt cranelift release | Velt LLVM release | Node | output matches Node |
+|---|---:|---:|---:|---|
+| append | 67 | 53 | 160 | no |
+| char_code_at | 154 | 135 | 330 | no |
+| csv | 67 | 62 | 296 | no |
+| json | 111 | 111 | 292 | no |
+| sort | 90 | 66 | 348 | no |
+
+- `char_code_at` now indexes code units: non-ASCII text calls the runtime, which steps from the
+  thread's last position in the same string (`str/recent.rs`); with breadcrumbs alone the part
+  takes about 3.2 s. Strength reduction (phase 3) removes the call.
+- `sort` compares by code units; `append` and `csv` pay for code-unit `charCodeAt`, `slice`
+  and `split` translations on non-ASCII text.

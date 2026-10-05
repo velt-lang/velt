@@ -91,7 +91,10 @@ Differences between the languages that a program must avoid (the generator does 
   than 6 short elements in columns, as Node's `util.inspect` does, so both print with Node's
   defaults. Keep nesting shallow (Node shows `[Object]` past depth 2) and arrays under 100
   elements (Node elides the rest).
-- **Strings.** ASCII only (`length` is bytes in Velt, UTF-16 units in JS).
+- **Strings.** Any text: lengths and positions count UTF-16 code units in both (#377 phase 2b),
+  and a lone surrogate (half of a pair cut by `slice` or `padStart`) prints as U+FFFD at the top
+  level and as `\udxxx` inside containers in both. `charCodeAt` out of range is `-1` in Velt
+  (JS: `NaN`): keep its index in range.
 - **Ownership.** `let b = a`, storing, pushing and returning move non-Copy values in Velt but
   alias in JS: move only fresh values (`` `${s}` ``, `xs.slice(0)`, `new K(...)`). `slice`,
   `filter`, `concat` clone elements in Velt but share them in JS: don't mutate objects reachable
@@ -107,7 +110,9 @@ Differences between the languages that a program must avoid (the generator does 
   declaration order (JSON output follows insertion order in JS). Known bugs to steer around:
   string methods on literal unions (`l.length`), a narrowed literal used as its union type
   (VIR verification failure), `x.acc++` on an `f64` accessor.
-- **Std modules.** Regex subjects must be ASCII (offsets are bytes) without `\r`; patterns that
+- **Std modules.** Regex subjects may be non-ASCII (offsets are code units) but must avoid
+  supplementary characters, which JavaScript's `.` and negated classes split without the `u`
+  flag (#401), and `\r`; patterns that
   can match the empty string differ after a non-empty match; JS returns `undefined` for a
   `split` group that didn't participate (Velt `""`). Floats from `Math.pow` and `Math.hypot`
   aren't correctly rounded everywhere: print them only when exact.

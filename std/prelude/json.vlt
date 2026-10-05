@@ -237,7 +237,7 @@ export class JsonValue {
     return JsonValue.wrap(velt_rt_json_value_at(this.handle, i as u64));
   }
 
-  // Array length, object member count, string byte length; 0 otherwise.
+  // Array length, object member count, string length (UTF-16 code units); 0 otherwise.
   len(): i64 {
     return velt_rt_json_value_len(this.handle) as i64;
   }

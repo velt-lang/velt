@@ -18,7 +18,7 @@ string: [plain] 5
 string: plain
 empty string: [] 0
 empty string: 
-unicode: [héllo wörld ✓ 日本 🎉] 29
+unicode: [héllo wörld ✓ 日本 🎉] 19
 unicode: héllo wörld ✓ 日本 🎉
 null option: [null] 4
 null option: null

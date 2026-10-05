@@ -539,16 +539,17 @@ an uncounted copy or a static-form view of it): it is copied out before the buff
 
 ### 12.2 String methods
 
-**POC indexing model:** indexes and lengths are **byte offsets** (they agree with `s.length`). An
-offset that falls inside a multi-byte character is moved back to that character's first byte
-(`slice`) so results are always canonical WTF-8. Where JS works per UTF-16 code unit
-(`split("")`, `replaceAll("", x)`), these work per code point. For ASCII text everything matches
-JS exactly; #377 phase 2b moves positions to code units. A string may hold lone surrogates
-(rt_abi.md "Strings"): searching, slicing, splitting, replacing, padding and repeating work on the
-WTF-8 bytes (a lone surrogate is one 3-byte code point, and the pieces of a built result join a
-high surrogate meeting a low one into the pair); case mapping keeps lone surrogates; number
-parsing and `localeCompare` read each as U+FFFD. "Omitted" JS arguments are passed as the value
-given in Notes.
+**Indexing model** (#377 phase 2b, design/strings.md): indexes and lengths are **UTF-16 code
+units**, as in JavaScript (they agree with `s.length`). An ASCII string works on its bytes, whose
+offsets are its positions; another string works on its WTF-8 bytes and translates positions at
+entry and exit (rt_abi.md "Breadcrumbs"). A position may fall between the two halves of a pair:
+`slice` there re-encodes the half as a lone surrogate (`"😀".slice(0, 1)` is `"\uD83D"`), and a
+needle that starts with a lone low surrogate or ends with a lone high one also matches half of a
+pair (`"😀".indexOf("\uDE00")` is 1), searched in code units. `split("")` and
+`replaceAll("", x)` work per code unit, splitting pairs. A string may hold lone surrogates
+(rt_abi.md "Strings"): the pieces of a built result join a high surrogate meeting a low one into
+the pair; case mapping keeps lone surrogates; number parsing and `localeCompare` read each as
+U+FFFD. "Omitted" JS arguments are passed as the value given in Notes.
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -559,15 +560,17 @@ given in Notes.
 | `velt_rt_str_starts_with` / `_ends_with` | `(const VeltStr* s, const VeltStr* affix) -> u8` | |
 | `velt_rt_str_eq` | `(const VeltStr* a, const VeltStr* b) -> u8` | `==` fast path: length check + one memcmp |
 | `velt_rt_str_join` | `(const VeltStrArray* parts, const VeltStr* sep, VeltStr* out)` | `parts.join(sep)`: sums the pieces' lengths and unit counts, then writes the result once (inline, or a heap buffer of exactly its size) |
-| `velt_rt_str_split` | `(const VeltStr* s, const VeltStr* sep, VeltStrArray* out)` | JS semantics: `"a,b,".split(",")` = `["a","b",""]`, `"".split(",")` = `[""]`, `"".split("")` = `[]`, `split("")` = characters. Drop with `velt_rt_str_array_drop` (§4). |
+| `velt_rt_str_split` | `(const VeltStr* s, const VeltStr* sep, VeltStrArray* out)` | JS semantics: `"a,b,".split(",")` = `["a","b",""]`, `"".split(",")` = `[""]`, `"".split("")` = `[]`, `split("")` = code units (a pair gives its two halves). Drop with `velt_rt_str_array_drop` (§4). |
+| `velt_rt_str_code_points` | `(const VeltStr* s, VeltStrArray* out)` | the characters (code points; a pair is one, a lone surrogate one): what `for (const c of s)` and `[...s]` iterate (the prelude's `__codePoints`) |
+| `velt_rt_str_is_well_formed` | `(const VeltStr* s) -> u8` | 1 when `s` has no lone surrogates (std's `encodeURIComponent`) |
 | `velt_rt_str_trim` / `_trim_start` / `_trim_end` | `(const VeltStr* s, VeltStr* out)` | JS WhiteSpace + LineTerminator set (includes U+FEFF, U+00A0, U+2028/9, Zs; not U+0085) |
 | `velt_rt_str_to_upper` / `_to_lower` | `(const VeltStr* s, VeltStr* out)` | full Unicode default case mapping (`ß` → `SS`, final sigma), like JS; ASCII fast path |
 | `velt_rt_str_replace` | `(const VeltStr* s, const VeltStr* from, const VeltStr* to, VeltStr* out)` | first occurrence; `to` expands JS patterns `$$`, `$&`, `` $` ``, `$'` (others literal) |
 | `velt_rt_str_replace_all` | same | all non-overlapping occurrences; empty `from` inserts at every character boundary |
 | `velt_rt_str_repeat` | `(const VeltStr* s, i64 n, VeltStr* out) -> u8` | 1 = ok; 0 = JS `RangeError` (n < 0 or result too large), `*out` empty — the compiler throws/panics |
-| `velt_rt_str_pad_start` / `_pad_end` | `(const VeltStr* s, i64 target, const VeltStr* fill, VeltStr* out)` | lengths in bytes; the last partial `fill` is cut at a character boundary (non-ASCII fill may end up to 3 bytes short); omitted `fill` = `" "` |
-| `velt_rt_str_char_code_at` | `(const VeltStr* s, i64 i) -> i64` | the **byte** at `i` (POC); -1 if out of range (JS: NaN) |
-| `velt_rt_str_from_char_code` | `(i64 code, VeltStr* out)` | JS `ToUint16(code)`, UTF-8 encoded; lone surrogates → U+FFFD; ASCII results are static (no allocation) |
+| `velt_rt_str_pad_start` / `_pad_end` | `(const VeltStr* s, i64 target, const VeltStr* fill, VeltStr* out)` | lengths in code units; the last partial `fill` is cut to the units missing, between the halves of a pair if need be (as JS); omitted `fill` = `" "` |
+| `velt_rt_str_char_code_at` | `(const VeltStr* s, i64 i) -> i64` | the UTF-16 code unit at `i`; -1 if out of range (JS: NaN). Generated code reads ASCII strings inline (rt_abi.md) |
+| `velt_rt_str_from_char_code` | `(i64 code, VeltStr* out)` | JS `ToUint16(code)`; a surrogate gives a lone surrogate, as JS; ASCII results are static (no allocation) |
 | `velt_rt_parse_int` | `(const VeltStr* s, i64 radix) -> f64` | exact JS `parseInt`: leading JS whitespace, sign, `0x` prefix (radix 0/16), radix `ToInt32`, 0 = omitted, outside 2..36 ⇒ NaN, longest digit prefix, none ⇒ NaN, `-0` kept. Correctly rounded for radix 10 and powers of two; other radixes exact below 2^128 (V8 is not correctly rounded there either). |
 | `velt_rt_parse_float` | `(const VeltStr* s) -> f64` | exact JS `parseFloat`: leading whitespace, longest `StrDecimalLiteral` prefix (incl. `Infinity`), else NaN |
 | `velt_rt_str_to_number` | `(const VeltStr* s) -> f64` | exact JS `Number(s)`: trimmed; `""` ⇒ 0; `0x`/`0o`/`0b` (unsigned); `±Infinity`; whole string must be a decimal literal, else NaN |
@@ -591,10 +594,10 @@ typedef struct VeltJsonReader VeltJsonReader;   // opaque
 | `velt_rt_json_reader_free` | `(VeltJsonReader* r)` | null ok |
 | `velt_rt_json_reader_peek` | `(VeltJsonReader* r) -> u32` | next token kind, skipping whitespace: 0 EOF, 1 `null`, 2 `true`, 3 `false`, 4 number, 5 string, 6 `[`, 7 `]`, 8 `{`, 9 `}`, 10 error (bad byte, or the reader already failed). Classifies by first byte only; the `read_*` call validates. |
 | `velt_rt_json_reader_expect_object_start` | `(r) -> u8` | consume `{` |
-| `velt_rt_json_reader_next_key` | `(r, VeltStr* out) -> u8` | **1** = `*out` is the next key and its `:` is consumed (read the value next); **0** = `}` consumed (end of object); **2** = error. Handles the commas. The key **borrows** the source (static form) unless it had escapes — compare it, don't keep it (`velt_rt_str_own` makes a copy to keep: `velt_rt_str_clone` keeps the borrow); dropping it is always allowed. |
+| `velt_rt_json_reader_next_key` | `(r, VeltStr* out) -> u8` | **1** = `*out` is the next key and its `:` is consumed (read the value next); **0** = `}` consumed (end of object); **2** = error. Handles the commas. The key **borrows** the source (static form) unless it had escapes or is a non-ASCII key of more than 64 UTF-16 units (copied: threads remember positions in long static strings, `str/recent.rs`, which is sound only for bytes never freed) — compare it, don't keep it (`velt_rt_str_own` makes a copy to keep: `velt_rt_str_clone` keeps the borrow); dropping it is always allowed. |
 | `velt_rt_json_reader_expect_array_start` | `(r) -> u8` | consume `[` |
 | `velt_rt_json_reader_array_next` | `(r) -> u8` | **1** = another element follows (read it next), **0** = `]` consumed, **2** = error |
-| `velt_rt_json_reader_read_string` | `(r, VeltStr* out) -> u8` | owned, decoded (`\u` escapes incl. surrogate pairs; a lone surrogate → U+FFFD since UTF-8 cannot hold it) |
+| `velt_rt_json_reader_read_string` | `(r, VeltStr* out) -> u8` | owned, decoded (`\u` escapes are code units: an escaped pair is one character, a lone surrogate stays lone and joins a raw half next to it) |
 | `velt_rt_json_reader_read_f64` | `(r, f64* out) -> u8` | correctly rounded like `JSON.parse` (`-0` kept, `1e400` → Infinity) |
 | `velt_rt_json_reader_read_i64` | `(r, i64* out) -> u8` | the number must be an exact integer in i64 range (`3`, `3.0`, `3e2` ok; `2.5`, `1e400`, `9223372036854775808` fail as mismatch). Digit strings are converted exactly (beyond 2^53). |
 | `velt_rt_json_reader_read_bool` | `(r, u8* out) -> u8` | |
@@ -649,7 +652,9 @@ puts the key in the path), and nesting past `max_depth` is
 `<detail>` is one of `unexpected end of input`, `unexpected character 'c'` (control characters as
 `U+XXXX`), `expected ':'`, `expected ',' or '}'`, `expected ',' or ']'`, `expected string key`,
 `invalid number`, `invalid escape`, `invalid \u escape`, `control character in string`,
-`unexpected trailing characters`. `<offset>` is the byte offset in the source. Path syntax
+`unexpected trailing characters`. `<offset>` is the byte offset in the source's UTF-8 (not a
+string position: it locates the error in the input text as an editor or a byte-level tool sees
+it; for ASCII input the two agree). Path syntax
 (`$`, `$.a.b`, `$.tags[1]`) is the compiler's choice; the runtime inserts it, shortened when it
 has more than 20 segments (each starting at `.` or `[`) to the first and last 10 with `…`
 between (`$[0][0]…[0].name`).
@@ -674,7 +679,7 @@ objects with more than 16 keys get a hash index for `get`.
 | `velt_rt_json_value_get` | `(VeltJson v, const VeltStr* key) -> VeltJson` | member, or null (not an object / missing) |
 | `velt_rt_json_value_at` | `(VeltJson v, u64 i) -> VeltJson` | array element, or the i-th member value of an object; null if out of range (including an `i` beyond `usize` on 32-bit targets) |
 | `velt_rt_json_value_key_at` | `(VeltJson v, u64 i, VeltStr* out) -> u8` | i-th object key (owned); 0 if not an object / out of range (as for `at`) |
-| `velt_rt_json_value_len` | `(VeltJson v) -> u64` | array length, object member count, string byte length; else 0 |
+| `velt_rt_json_value_len` | `(VeltJson v) -> u64` | array length, object member count, string length (UTF-16 code units); else 0 |
 | `velt_rt_json_value_as_f64` | `(VeltJson v) -> f64` | NaN if not a number |
 | `velt_rt_json_value_as_bool` | `(VeltJson v) -> u8` | 1 only for `true` (use `kind` to tell `false` from non-bools) |
 | `velt_rt_json_value_as_str` | `(VeltJson v, VeltStr* out) -> u8` | owned copy; 0 if not a string |
@@ -804,8 +809,10 @@ of a Copy element type, built from a Rust `Vec<T>` (same allocator), like `VeltS
 ### 14.2 Regular expressions (`velt:regex`)
 
 `VeltRegex` is an `Arc` of a compiled Rust `regex::bytes::Regex`; a JS pattern is rewritten
-first (ASCII `\d \w \b`, JS class literals; `crates/velt_rt/src/regex/syntax.rs`). Offsets are
-byte offsets on character boundaries.
+first (ASCII `\d \w \b`, JS class literals; `crates/velt_rt/src/regex/syntax.rs`). Matching runs
+on the subject's WTF-8 bytes; the offsets taken (`from`) and returned are UTF-16 code units, like
+every string position (#377 phase 2b): a `from` between the halves of a pair starts after the
+pair, and the offsets of a match are translated once per match.
 
 | Symbol | Signature | Notes |
 |---|---|---|

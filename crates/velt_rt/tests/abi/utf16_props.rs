@@ -3,14 +3,11 @@
 //! with lengths around the inline limit (22, 23 bytes) and the breadcrumb stride (64, 128 units),
 //! and random operations on them.
 //!
-//! The runtime counts UTF-8 bytes until phase 2b of #377, where only ASCII agrees with the model,
-//! so the runtime's positions are checked on [`RUNTIME_ALPHABETS`]. Phase 2b adds the other
-//! alphabets; the model checks below already run on all of them. Every runtime string the checks
-//! touch must also carry its model length as its unit count and be canonical WTF-8 (phase 1), on
-//! every alphabet, lone surrogates included (phase 2a); the operations whose result doesn't depend
-//! on positions (concatenation, builders, `repeat`, equality, hashing), the position translation
-//! of phase 2b ([`VeltStr::unit_to_byte`], [`VeltStr::byte_to_unit`]) and the code-unit order
-//! ([`cmp_utf16`]) already agree with the model on every alphabet.
+//! Since phase 2b of #377 every operation counts code units, so the runtime agrees with the model
+//! on every alphabet: ASCII, BMP, supplementary characters and lone surrogates. Every runtime
+//! string the checks touch must also carry its model length as its unit count and be canonical
+//! WTF-8, and the position translation ([`VeltStr::unit_to_byte`], [`VeltStr::byte_to_unit`]) and
+//! the code-unit order ([`cmp_utf16`]) are checked on their own too.
 //!
 //! `VELT_UTF16_SEED` replays a failing run (the failure message prints the seed);
 //! `VELT_UTF16_CASES` changes the number of operations.
@@ -29,7 +26,7 @@ use crate::strbuf::{velt_rt_strbuf_new, velt_rt_strbuf_push_str};
 use std::mem::MaybeUninit;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Alphabet {
+pub(super) enum Alphabet {
     /// Printable ASCII and a few controls.
     Ascii,
     /// Two- and three-byte code points, including U+E000–U+FFFF (where byte order and code-unit
@@ -41,23 +38,22 @@ enum Alphabet {
     Lone,
 }
 
-const ALL_ALPHABETS: &[Alphabet] = &[
+pub(super) const ALL_ALPHABETS: &[Alphabet] = &[
     Alphabet::Ascii,
     Alphabet::Bmp,
     Alphabet::Astral,
     Alphabet::Lone,
 ];
 
-/// The alphabets on which the runtime agrees with the model. Phase 2 of #377 makes this
-/// `ALL_ALPHABETS`.
-const RUNTIME_ALPHABETS: &[Alphabet] = &[Alphabet::Ascii];
+/// The alphabets on which the runtime agrees with the model: all of them since phase 2b of #377.
+const RUNTIME_ALPHABETS: &[Alphabet] = ALL_ALPHABETS;
 
 /// Lengths in code units around the inline limit and the breadcrumb stride; other lengths are
 /// random up to 200.
 const LENGTHS: &[usize] = &[0, 1, 2, 3, 21, 22, 23, 24, 63, 64, 65, 127, 128, 129];
 
 /// xorshift64*: small, deterministic and good enough to pick test inputs.
-struct Rng(u64);
+pub(super) struct Rng(pub(super) u64);
 
 impl Rng {
     fn next(&mut self) -> u64 {
@@ -67,7 +63,7 @@ impl Rng {
         self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 
-    fn below(&mut self, n: usize) -> usize {
+    pub(super) fn below(&mut self, n: usize) -> usize {
         (self.next() % n as u64) as usize
     }
 
@@ -75,7 +71,7 @@ impl Rng {
         &xs[self.below(xs.len())]
     }
 
-    fn chance(&mut self, percent: u64) -> bool {
+    pub(super) fn chance(&mut self, percent: u64) -> bool {
         self.next() % 100 < percent
     }
 }
@@ -107,7 +103,7 @@ fn push_any(rng: &mut Rng, alphabets: &[Alphabet], s: &mut Vec<u16>) {
 }
 
 /// A random string over `alphabets`: usually mostly the first one, sometimes an even mix.
-fn gen_string(rng: &mut Rng, alphabets: &[Alphabet]) -> Vec<u16> {
+pub(super) fn gen_string(rng: &mut Rng, alphabets: &[Alphabet]) -> Vec<u16> {
     let len = if rng.chance(70) {
         *rng.pick(LENGTHS)
     } else {
@@ -158,7 +154,7 @@ fn gen_pos(rng: &mut Rng, len: usize) -> i64 {
 }
 
 /// A runtime string that is dropped at the end of its scope.
-struct Rt(VeltStr);
+pub(super) struct Rt(pub(super) VeltStr);
 
 impl Drop for Rt {
     fn drop(&mut self) {
@@ -167,7 +163,7 @@ impl Drop for Rt {
 }
 
 /// The model string `s` as a runtime string, in a random form.
-fn to_rt(rng: &mut Rng, s: &[u16]) -> Rt {
+pub(super) fn to_rt(rng: &mut Rng, s: &[u16]) -> Rt {
     let bytes = wtf8_encode(s);
     let r = Rt(match rng.below(3) {
         // A literal or a borrowed sub-range (static form). Leaked: tests only.
@@ -187,7 +183,7 @@ fn to_rt(rng: &mut Rng, s: &[u16]) -> Rt {
 
 /// The code units of a runtime string; panics unless its bytes are canonical WTF-8, the unit
 /// count stored in the value is their number and the string knows whether it is well-formed.
-fn units(s: &VeltStr) -> Vec<u16> {
+pub(super) fn units(s: &VeltStr) -> Vec<u16> {
     let bytes = unsafe { s.as_bytes() };
     if let Err(e) = wtf8::check_canonical(bytes) {
         panic!("{s:?} is not canonical WTF-8: {e}");
@@ -213,9 +209,9 @@ fn units(s: &VeltStr) -> Vec<u16> {
     u
 }
 
-/// `s.length` as compiled code reads it. Bytes until phase 2 of #377, then code units.
+/// `s.length` as compiled code reads it: code units (velt_vir/src/lower/strings.rs).
 fn rt_length(s: &VeltStr) -> usize {
-    s.len()
+    s.units()
 }
 
 fn out_str(f: impl FnOnce(*mut VeltStr)) -> Vec<u16> {
@@ -468,7 +464,7 @@ fn mutate(rng: &mut Rng, s: &[u16], alphabets: &[Alphabet]) -> Vec<u16> {
     t
 }
 
-fn run(
+pub(super) fn run(
     name: &str,
     alphabets: &[Alphabet],
     default_cases: u64,
@@ -492,14 +488,9 @@ fn runtime_matches_model() {
 }
 
 #[test]
-fn every_string_carries_its_unit_count() {
-    run("unit counts", ALL_ALPHABETS, 20_000, |rng| {
-        // Off ASCII the results differ from the model until phase 2b (byte positions); what is
-        // checked here is that every input and result, also from lone surrogates, is canonical
-        // and decodes to as many units as it stores (`units` and `to_rt` panic otherwise).
-        let _ = check_one(rng, ALL_ALPHABETS);
-        let _ = check_text_ops(rng, ALL_ALPHABETS);
-        Ok(())
+fn text_ops_match_the_model() {
+    run("text ops", ALL_ALPHABETS, 20_000, |rng| {
+        check_text_ops(rng, ALL_ALPHABETS)
     });
 }
 

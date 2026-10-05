@@ -1,0 +1,62 @@
+// check: no leaks
+// The standard library on non-ASCII text (#377 phase 2b): regex offsets, `Buffer.byteLength`,
+// CSV fields and URI encoding count UTF-16 code units like the string methods. Expected output
+// checked against node 22 (bench/strings_utf16 and tests/difftest cover more).
+import { RegExp } from "velt:regex";
+import { parseCsv } from "velt:csv";
+import { URL, encodeURIComponent, decodeURIComponent, UrlError } from "velt:url";
+
+function regexOffsets() {
+  const word = new RegExp("[a-zé]+", "g");
+  const text = "😀 café, naïve 日本 ok";
+  for (const m of word.matchAll(text)) {
+    console.log(m.index, m.end, m.value, text.slice(m.index as i64, m.end as i64) == m.value);
+  }
+  const digits = new RegExp("(\\d+)-(\\d+)");
+  const m = digits.exec("日本 12-34 😀 56-78", 6);
+  if (m != null) {
+    console.log(m.index, m.end, m.value, m.captures);
+  }
+  const rest = digits.exec("日本 12-34 😀 56-78", 9);
+  console.log(rest == null ? "none" : `${rest.index} ${rest.value}`);
+  console.log(new RegExp("o").test("😀 no", 3), new RegExp("😀").exec("a😀b")?.end ?? 0);
+  console.log(new RegExp("é", "g").replace("été", "e"), new RegExp(",").split("日,本,😀", 0));
+}
+
+function byteLength() {
+  console.log(Buffer.byteLength("héllo"), "héllo".length, Buffer.byteLength("😀"), "😀".length);
+  console.log(Buffer.byteLength("héllo", "utf16le"), Buffer.byteLength("héllo", "latin1"));
+  console.log(Buffer.byteLength("aGVsbG8=", "base64"), Buffer.byteLength("abcd", "hex"));
+  console.log(Buffer.byteLength(String.fromCharCode(0xd800)), Buffer.byteLength("x", "UTF-8"));
+}
+
+function csv() {
+  const rows = parseCsv("﻿namn,stad\nÅsa,\"Göte,borg\"\n日本,😀\n");
+  console.log(JSON.stringify(rows));
+  const tsv = parseCsv("ü\tö\n😀😀\t\"x\"", { delimiter: "\t" });
+  console.log(JSON.stringify(tsv));
+}
+
+function uri() {
+  // Leading and trailing blanks are stripped by position (regression: byte positions sliced a
+  // string by code units).
+  console.log(new URL(" \thttps://ex.com/é?q=日本 \n").href);
+  console.log(encodeURIComponent("é 😀/"), decodeURIComponent("%C3%A9%20%F0%9F%98%80"));
+  for (const s of [String.fromCharCode(0xd800), "a" + String.fromCharCode(0xdc00)]) {
+    try {
+      console.log(encodeURIComponent(s));
+    } catch (e) {
+      console.log(e instanceof UrlError ? `URIError: ${e.message}` : "other");
+    }
+  }
+  try {
+    console.log(decodeURIComponent("%ED%A0%BD"));
+  } catch (e) {
+    console.log(e instanceof UrlError ? `URIError: ${e.message}` : "other");
+  }
+}
+
+regexOffsets();
+byteLength();
+csv();
+uri();

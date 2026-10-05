@@ -1,0 +1,20 @@
+5 2 3 4 4
+false 3
+97 8364 55357 56832 122
+[ '€', '\ud83d', '\ude00' ] z true
+true true true
+[ '\ud83d', '\ude00y', '\ude00\ud83d' ]
+éll éll 本語
+true 2 true
+2 11 14 16 -1
+1 0 1 true
+true true false true
+[ 'a', '\ud83d', '\ude00', 'b' ] [ '日本', '語' ] [ 'a\ud83d', 'b' ]
+�X -�-�- a_b
+[ '\ud83dX' ]
+😀�x é--| [ 'a😀\ud83d' ] 語語語日本
+a b z é 日 😀 ～ false true true
+1 [ '\ud83d' ] 😀 [ '\udfff' ]
+[ 'a', '😀', 'é' ] 4
+3 [ 'a\ud800b' ] "a\ud800b" true
+[ 'É😀' ] 1
