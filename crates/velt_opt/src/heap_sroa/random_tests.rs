@@ -1,5 +1,6 @@
 //! Property test for `heap_sroa`: random programs moving a few objects between pointer locals
-//! (copies, fresh objects, field writes and reads, in loops and diamonds) must compute the same
+//! (copies, fresh objects, field writes and reads, drops with their null tests, in loops and
+//! diamonds) must compute the same
 //! result after the pass, and after the whole speed pipeline, as with every object on the heap.
 //! This checks the value-semantics analysis (`flow`) against the interpreter's references.
 
@@ -26,7 +27,8 @@ impl Rng {
     }
 }
 
-/// A heap that never frees (the programs leak their objects) and records `keep` calls.
+/// A heap that never reuses memory (a program may read an object it freed while another local
+/// still holds it; both runs then read the same bytes) and records `keep` calls.
 #[derive(Default)]
 struct Host {
     allocs: u64,
@@ -40,6 +42,7 @@ impl crate::interp::Host for Host {
                 self.allocs += 1;
                 mem.alloc_heap(args[0], args[1])
             }
+            "velt_rt_free" => Ok(0),
             _ => {
                 self.kept.push(args[1]);
                 Ok(0)
@@ -62,6 +65,7 @@ struct Gen {
     rng: Rng,
     fb: FuncBuilder,
     alloc: ExternId,
+    free: ExternId,
     keep: Option<ExternId>,
     obj: AggId,
     ptrs: Vec<Local>,
@@ -115,10 +119,25 @@ impl Gen {
         b
     }
 
+    /// The drop of `w` as lowering emits it: `t = w; if (w != null) free(t)`; returns the
+    /// continuation.
+    fn drop_obj(&mut self, b: BlockId, w: Local) -> BlockId {
+        let (t, c) = (self.fb.local(Ptr), self.fb.local(Bool));
+        self.fb.assign(b, t, Rvalue::Use(copy_local(w)));
+        self.fb
+            .assign(b, c, bin(BinOp::Ne, copy_local(w), int(0, Ptr)));
+        let (free, next) = (self.fb.block(), self.fb.block());
+        self.fb.branch(b, c, free, next);
+        let args = vec![copy_local(t), int(16, U64), int(8, U64)];
+        let after = self.fb.call(free, Callee::Extern(self.free), args, None);
+        self.fb.goto(after, next);
+        next
+    }
+
     /// One random operation at the end of `b`; returns the continuation.
     fn op(&mut self, b: BlockId) -> BlockId {
         let w = self.any_ptr();
-        match self.rng.below(10) {
+        match self.rng.below(12) {
             0 | 1 => self.new_obj(b, w),
             2..=4 => {
                 let src = self.any_ptr();
@@ -139,6 +158,21 @@ impl Gen {
                     .assign(b, t, bin(BinOp::Mul, copy_local(acc), int(31, I64)));
                 self.fb
                     .assign(b, acc, bin(BinOp::Add, copy_local(t), copy_local(v)));
+                b
+            }
+            9 => {
+                let b = self.drop_obj(b, w);
+                self.new_obj(b, w)
+            }
+            10 => {
+                let (nonnull, bit) = (self.fb.local(Bool), self.fb.local(I64));
+                let acc = self.acc;
+                self.fb
+                    .assign(b, nonnull, bin(BinOp::Ne, copy_local(w), int(0, Ptr)));
+                self.fb
+                    .assign(b, bit, Rvalue::Cast(copy_local(nonnull), I64));
+                self.fb
+                    .assign(b, acc, bin(BinOp::Add, copy_local(acc), copy_local(bit)));
                 b
             }
             _ => match self.keep {
@@ -178,7 +212,7 @@ impl Gen {
 fn random_program(seed: u64, escapes: bool) -> Program {
     let mut pb = ProgramBuilder::new();
     let alloc = pb.ext("velt_rt_alloc", &[U64, U64], Ptr, false);
-    pb.ext("velt_rt_free", &[Ptr, U64, U64], Unit, false);
+    let free = pb.ext("velt_rt_free", &[Ptr, U64, U64], Unit, false);
     let keep = pb.ext("keep", &[Ptr, I64], Unit, false);
     let obj = pb.agg("Pair object", 16, 8, &[(I64, 0), (I64, 8)]);
     let mut fb = FuncBuilder::export("main", &[I64], I64);
@@ -188,6 +222,7 @@ fn random_program(seed: u64, escapes: bool) -> Program {
         rng: Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1),
         fb,
         alloc,
+        free,
         keep: escapes.then_some(keep),
         obj,
         ptrs,

@@ -52,7 +52,11 @@ struct Env {
     alloc: ExternId,
     free: ExternId,
     keep: ExternId,
+    /// `make() -> ptr`: an opaque call returning a pointer.
+    make: ExternId,
     obj: AggId,
+    /// Another aggregate of the object's size.
+    other: AggId,
 }
 
 fn env() -> Env {
@@ -60,13 +64,17 @@ fn env() -> Env {
     let alloc = pb.ext("velt_rt_alloc", &[U64, U64], Ptr, false);
     let free = pb.ext("velt_rt_free", &[Ptr, U64, U64], Unit, false);
     let keep = pb.ext("keep", &[Ptr, I64], Unit, false);
+    let make = pb.ext("make", &[], Ptr, false);
     let obj = pb.agg("Pair object", 16, 8, &[(I64, 0), (I64, 8)]);
+    let other = pb.agg("Other object", 16, 8, &[(I64, 0), (I64, 8)]);
     Env {
         pb,
         alloc,
         free,
         keep,
+        make,
         obj,
+        other,
     }
 }
 
@@ -300,4 +308,111 @@ fn objects_seen_as_another_type_keep_the_heap() {
         b
     });
     check(p, &[2], false);
+}
+
+/// `loop_program` with `between` must keep its objects on the heap. The inputs run the loop
+/// body zero times (a few of these programs are not meant to run: an indirect call to an
+/// object), so only the decision and the unchanged program are checked.
+fn stays_on_heap(between: impl Fn(&Env, &mut FuncBuilder, BlockId, Local, Local) -> BlockId) {
+    check(loop_program(between), &[0], false);
+}
+
+#[test]
+fn the_address_of_a_field_keeps_the_heap() {
+    stays_on_heap(|env, fb, b, _, t| {
+        let a = fb.local(Ptr);
+        fb.assign(b, a, Rvalue::AddrOf(env.field(t, 0)));
+        b
+    });
+}
+
+#[test]
+fn an_offset_pointer_keeps_the_heap() {
+    // A reference-counted object's header sits in front of it.
+    stays_on_heap(|_, fb, b, _, t| {
+        let h = fb.local(Ptr);
+        fb.assign(b, h, bin(BinOp::PtrAdd, copy_local(t), int(-8, I64)));
+        b
+    });
+}
+
+#[test]
+fn memory_copies_keep_the_heap() {
+    for into_object in [true, false] {
+        stays_on_heap(|env, fb, b, _, t| {
+            let (buf, q) = (fb.local(Ty::Agg(env.obj)), fb.local(Ptr));
+            fb.assign(b, q, Rvalue::AddrOf(Place::local(buf)));
+            let (dst, src) = if into_object { (t, q) } else { (q, t) };
+            let copy = Stmt::MemCopy {
+                dst: copy_local(dst),
+                src: copy_local(src),
+                size: 16,
+            };
+            fb.push(b, copy);
+            b
+        });
+    }
+}
+
+#[test]
+fn an_indirect_call_through_the_object_keeps_the_heap() {
+    stays_on_heap(|_, fb, b, _, t| {
+        let callee = Callee::Ptr {
+            target: copy_local(t),
+            params: vec![],
+            ret: Unit,
+        };
+        fb.call(b, callee, vec![], None)
+    });
+}
+
+#[test]
+fn other_fills_keep_the_heap() {
+    for (byte, len) in [(1, 16), (0, 8)] {
+        stays_on_heap(|_, fb, b, _, t| {
+            let fill = Stmt::MemSet {
+                dst: copy_local(t),
+                byte: int(byte, U8),
+                len: int(len, U64),
+            };
+            fb.push(b, fill);
+            b
+        });
+    }
+}
+
+#[test]
+fn blocks_of_another_size_keep_the_heap() {
+    // `t` reallocated with a size or alignment that is not the object's.
+    for (size, align) in [(24, 8), (16, 16)] {
+        stays_on_heap(|env, fb, b, _, t| {
+            let args = vec![int(size, U64), int(align, U64)];
+            fb.call(b, Callee::Extern(env.alloc), args, Some(t))
+        });
+    }
+    // `p` freed with a size or alignment that is not the object's.
+    for (size, align) in [(8, 8), (16, 4)] {
+        stays_on_heap(|env, fb, b, p, _| {
+            let args = vec![copy_local(p), int(size, U64), int(align, U64)];
+            fb.call(b, Callee::Extern(env.free), args, None)
+        });
+    }
+}
+
+#[test]
+fn an_access_as_another_aggregate_keeps_the_heap() {
+    stays_on_heap(|env, fb, b, _, t| {
+        let x = fb.local(I64);
+        let place = Place {
+            local: t,
+            proj: vec![Proj::Deref(Ty::Agg(env.other)), Proj::Field(0)],
+        };
+        fb.assign(b, x, Rvalue::Use(copy_place(place)));
+        b
+    });
+}
+
+#[test]
+fn a_pointer_returned_by_a_call_keeps_the_heap() {
+    stays_on_heap(|env, fb, b, _, t| fb.call(b, Callee::Extern(env.make), vec![], Some(t)));
 }
