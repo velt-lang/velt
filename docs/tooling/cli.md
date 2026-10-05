@@ -42,7 +42,7 @@ Every build command works on a single file or on a package:
 
 ```
 velt build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm]
-           [--emit vir|llvm|obj|exe] [--locked] [-v] [--timings]
+           [--emit vir|llvm|obj|exe] [--locked] [-v] [--timings] [--report numbers]
 velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelift|llvm]
            [--locked] [-v] [-- <program args>...]
 ```
@@ -66,6 +66,16 @@ velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--backend cranelif
 - `--emit vir` / `--emit llvm` print the intermediate representation and stop; `--emit obj`
   writes only the object file.
 - `-v` prints per-stage timings; `--timings` adds each optimizer pass and code generation step.
+- `--report numbers` lists, on stderr, the `number` variables assigned inside loops that the
+  optimizer keeps as doubles, with the reason it could not store each one as an integer: it may
+  hold a fraction, may be NaN, may reach ±2^53 (no loop bound or `| 0` limits it), is set from a
+  division, a call or memory, or may be `-0` where a later use could tell. A `number` that is
+  whole and bounded is stored as an integer, with exactly the double's results:
+
+  ```
+  numbers: 1 `number` variable in loops stays doubles
+    grid.vlt:7:7: `s`: it may hold a fraction
+  ```
 - `run` exits with the program's exit code. As with `node file.js a b`, the arguments after the
   file go to the program (`velt run app.vlt --port 8080`), so options for Velt come before
   the file. Without a file (the package's entry) program arguments follow `--`

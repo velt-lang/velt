@@ -9,7 +9,7 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 .vlt ─▶ velt_syntax (lexer, parser) ─▶ AST
       ─▶ velt_sema (resolve, types, ownership and mutation inference, typed errors) ─▶ HIR
       ─▶ velt_vir (monomorphize, layouts, drops, async state machines) ─▶ VIR
-      ─▶ velt_opt (inline, constant folding, SROA, DCE, …)  [release builds]
+      ─▶ velt_opt (inline, constant folding, SROA, DCE, numrep, …)  [all of it in release builds]
       ─▶ velt_codegen_cl (Cranelift: debug builds, JIT) | velt_codegen_llvm (LLVM IR → clang -O3)
       ─▶ object file ─▶ velt_link (system linker) + velt_rt (runtime static library)
 ```
@@ -27,7 +27,10 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    and panic messages. VIR is a typed, MIR-like control-flow graph with a verifier.
 5. **Optimize** (`velt_opt`, release builds): inlining, constant folding, copy propagation,
    scalar replacement of aggregates, closure specialization, dead-code elimination, CFG
-   simplification.
+   simplification, and `numrep`, which stores a `number` (`f64`) as an `i32` or `i64` where its
+   facts (interval, whole, never NaN, `-0` unobservable) prove the integer computes the same
+   values ([design #525](https://github.com/velt-lang/velt/issues/525)). Debug builds run only
+   the cheap part: CFG simplification, the int32 helpers inlined, and `numrep`.
 6. **Generate code**: Cranelift for debug builds and the `velt dev` JIT; textual LLVM IR compiled
    by clang `-O3` for release builds and WebAssembly.
 7. **Link** (`velt_link`): the system linker (MSVC `link.exe`, or `cc`) with the runtime library.

@@ -59,7 +59,10 @@ fn holds(r: Fact, v: f64) -> bool {
     v >= r.lo && v <= r.hi && zero_ok && whole
 }
 
-fn check_binary(op: BinOp, a: Fact, b: Fact, f: fn(f64, f64) -> f64) {
+/// A double operation computed by Rust (IEEE, like JS).
+type F64Op = fn(f64, f64) -> f64;
+
+fn check_binary(op: BinOp, a: Fact, b: Fact, f: F64Op) {
     let r = binary(op, Ty::F64, a, b);
     for x in samples(a) {
         for y in samples(b) {
@@ -95,7 +98,7 @@ fn facts() -> Vec<Fact> {
 
 #[test]
 fn arithmetic_contains_every_result() {
-    let ops: [(BinOp, fn(f64, f64) -> f64); 5] = [
+    let ops: [(BinOp, F64Op); 5] = [
         (BinOp::Add, |x, y| x + y),
         (BinOp::Sub, |x, y| x - y),
         (BinOp::Mul, |x, y| x * y),

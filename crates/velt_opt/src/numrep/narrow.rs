@@ -130,11 +130,14 @@ pub(super) fn plan(env: &Env, flow: &Flow, func: &Function) -> Plan {
         }
         reads.terminator(env, &block.term, (bi, block.stmts.len()));
     }
-    for l in 0..n {
-        if cand[l] && p.reasons[l].is_none() && p.range[l].lo <= p.range[l].hi {
-            let i32_ = p.range[l].fits(Ty::I32) || func.locals[l].ty == Ty::I64;
+    for (l, decl) in func.locals.iter().enumerate() {
+        if !cand[l] || p.reasons[l].is_some() {
+            continue;
+        }
+        if p.range[l].lo <= p.range[l].hi {
+            let i32_ = p.range[l].fits(Ty::I32) || decl.ty == Ty::I64;
             p.to[l] = Some(if i32_ { Ty::I32 } else { Ty::I64 });
-        } else if cand[l] && p.reasons[l].is_none() {
+        } else {
             // Never assigned on a reachable path: nothing to gain.
             p.reasons[l] = Some(Reason::Form);
         }
