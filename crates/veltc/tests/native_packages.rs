@@ -16,6 +16,7 @@
 mod no_window;
 #[allow(dead_code)]
 mod reload_support;
+mod runtime_support;
 mod test_dir;
 
 use std::io::{BufRead, BufReader};
@@ -148,25 +149,8 @@ fn sqlite_package_with_native_code() {
         eprintln!("skipped (VELT_SKIP_NATIVE_E2E): no cargo");
         return;
     }
+    // `velt run` links debug builds against the shared runtime: built and checked here.
     reload_support::build_runtime();
-    // `velt run` links debug builds against the shared runtime when it exists: keep it current.
-    // Not under the gate (`VELT_RT_PREBUILT=1`), which built it with the workspace: rebuilding it
-    // there would replace the import library while tests running in parallel link against it.
-    let prebuilt =
-        cfg!(debug_assertions) && std::env::var_os("VELT_RT_PREBUILT").is_some_and(|v| v == "1");
-    if !cfg!(target_env = "musl") && !prebuilt {
-        let profile: &[&str] = if cfg!(debug_assertions) {
-            &[]
-        } else {
-            &["--release"]
-        };
-        let status = crate::no_window::command(&cargo)
-            .args(["build", "-q", "-p", "velt_rt_shared"])
-            .args(profile)
-            .status()
-            .expect("run cargo");
-        assert!(status.success(), "cargo build -p velt_rt_shared failed");
-    }
     let tmp = test_dir::TestDir::new();
     let host = velt_codegen_cl::host_triple();
 
