@@ -8,6 +8,11 @@
 //!   and inline strings are left as they are (they drop as nothing, zeroed or not).
 //! - `velt_rt_str_eq`: different byte lengths are unequal; equal lengths compare the bytes with
 //!   `memcmp`, which LLVM expands inline when the length is a constant (a literal operand).
+//! - `velt_rt_str_cmp`: one-byte strings compare their bytes directly.
+//! - `velt_rt_str_hash`: short inline strings (up to 8 bytes) hash directly from the first word
+//!   of the value, avoiding a runtime call for common `Map<string, V>` keys.
+//! - `velt_rt_str_char_code_at`: checked byte loads stay in the caller instead of crossing the
+//!   runtime ABI once per character.
 //! - `velt_rt_str_slice(s, i, i + 1)` (`s[i]`, `charAt`, `slice`) of an ASCII string (unit count
 //!   == byte count, so positions mean the same in bytes and code units) with `0 <= i < len`:
 //!   the one-byte inline string `{s[i], 0, (0x80 | 1) << 56}`.
@@ -84,6 +89,34 @@ no:
     )
 }
 
+/// `velt_rt_str_hash(ptr) -> u64` for short inline strings; preserve the runtime hash exactly.
+fn hash_helper() -> String {
+    // These constants and operations match velt_rt::hash::{SEED, K, mix, fmix64}.
+    const SEED: u64 = 0x243f_6a88_85a3_08d3;
+    const K: u64 = 0x9e37_79b9_7f4a_7c15;
+    const C1: u64 = 0xff51_afd7_ed55_8ccd;
+    const C2: u64 = 0xc4ce_b9fe_1a85_ec53;
+    format!(
+        "define internal i64 @velt.str_hash(ptr %s) alwaysinline nounwind {{\n{}  %fast.len = icmp ule i64 %s.len, 8\n  %fast = and i1 %s.inl, %fast.len\n  br i1 %fast, label %inline, label %call\ninline:\n  %word = load i64, ptr %s, align 8\n  %len.k = mul i64 %s.len, {K}\n  %seed = xor i64 {SEED}, %len.k\n  %nonempty = icmp ne i64 %s.len, 0\n  br i1 %nonempty, label %mix, label %finish\nmix:\n  %x = xor i64 %seed, %word\n  %product = mul i64 %x, {K}\n  %left = shl i64 %product, 29\n  %right = lshr i64 %product, 35\n  %mixed = or i64 %left, %right\n  br label %finish\nfinish:\n  %h = phi i64 [ %seed, %inline ], [ %mixed, %mix ]\n  %x33 = lshr i64 %h, 33\n  %a = xor i64 %h, %x33\n  %b = mul i64 %a, {C1}\n  %x33b = lshr i64 %b, 33\n  %c = xor i64 %b, %x33b\n  %d = mul i64 %c, {C2}\n  %x33d = lshr i64 %d, 33\n  %out = xor i64 %d, %x33d\n  ret i64 %out\ncall:\n  %result = call i64 @velt_rt_str_hash(ptr %s)\n  ret i64 %result\n}}",
+        view("s")
+    )
+}
+
+fn cmp_helper() -> String {
+    format!(
+        "define internal i32 @velt.str_cmp(ptr %a, ptr %b) alwaysinline nounwind {{\n{}{}  %a.one = icmp eq i64 %a.len, 1\n  %b.one = icmp eq i64 %b.len, 1\n  %fast = and i1 %a.one, %b.one\n  br i1 %fast, label %byte, label %call\nbyte:\n  %ap = getelementptr inbounds i8, ptr %a.data, i64 0\n  %bp = getelementptr inbounds i8, ptr %b.data, i64 0\n  %av = load i8, ptr %ap, align 1\n  %bv = load i8, ptr %bp, align 1\n  %lt = icmp ult i8 %av, %bv\n  %gt = icmp ugt i8 %av, %bv\n  %less = select i1 %lt, i32 -1, i32 0\n  %out = select i1 %gt, i32 1, i32 %less\n  ret i32 %out\ncall:\n  %result = call i32 @velt_rt_str_cmp(ptr %a, ptr %b)\n  ret i32 %result\n}}",
+        view("a"),
+        view("b")
+    )
+}
+
+fn char_code_at_helper() -> String {
+    format!(
+        "define internal i64 @velt.str_char_code_at(ptr %s, i64 %i) alwaysinline nounwind {{\n{}  %inside = icmp ult i64 %i, %s.len\n  br i1 %inside, label %byte, label %out\nbyte:\n  %p = getelementptr inbounds i8, ptr %s.data, i64 %i\n  %b = load i8, ptr %p, align 1\n  %code = zext i8 %b to i64\n  ret i64 %code\nout:\n  ret i64 -1\n}}",
+        view("s")
+    )
+}
+
 /// `w2` of a one-byte inline ASCII string, `(0x80 | 1) << 56`, as an `i64`.
 const INLINE_ONE_W2: i64 = (0x81u64 << 56) as i64;
 
@@ -144,6 +177,11 @@ pub(crate) fn fast_path(
                 ),
             ],
         ),
+        ("velt_rt_str_cmp", [Ptr, Ptr], Ty::I32) => ("@velt.str_cmp", vec![cmp_helper()]),
+        ("velt_rt_str_hash", [Ptr], Ty::U64) => ("@velt.str_hash", vec![hash_helper()]),
+        ("velt_rt_str_char_code_at", [Ptr, I64], I64) => {
+            ("@velt.str_char_code_at", vec![char_code_at_helper()])
+        }
         ("velt_rt_str_slice", [Ptr, I64, I64, Ptr], Unit) => {
             ("@velt.str_slice", vec![slice_helper()])
         }
