@@ -31,6 +31,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.math_trunc_div(callee, args, span) {
             return h;
         }
+        if let Some(h) = self.math_int32_call(callee, args, span) {
+            return h;
+        }
         if let Some(h) = self.object_helper_call(callee, type_args, args, span) {
             return h;
         }

@@ -82,13 +82,24 @@ other inferred one, so `n -= 5` can go below zero. The rules:
 - `x /= y` on an integer variable is allowed only when it is integer division; otherwise it is
   an error (it would store a float).
 - `%` on integers is the remainder truncated toward zero (sign of the dividend), like JS.
-- A float operand of a bitwise operator converts like JS's ToInt32 (`(a / 13) | 0` truncates;
-  `NaN` and ±Infinity give 0); the result is an inferred integer.
+- **Bitwise operators on numbers are JS's 32-bit operators.** When no operand is a declared
+  integer, `| & ^ << >> ~` take ToInt32 of their operands (truncate, then wrap modulo 2^32 into
+  the signed 32-bit range; `NaN` and ±Infinity give 0) and `>>>` takes ToUint32; shift counts
+  are taken modulo 32, and the result is an inferred integer: `(a / 13) | 0` truncates,
+  `-1 >>> 0` is `4294967295`, `1 << 32` is `1`. A product inside such an operand rounds like
+  JS's double multiply once it is past 2^53, so `(y * 0x2c1b3c6d) | 0` is Node's value;
+  `Math.imul(y, 0x2c1b3c6d)` is the 32-bit wrapping product (one instruction). They compile to
+  32-bit integer instructions. Operands of a declared integer type keep their own width
+  (`n >>> 3` with `n: i64` is a 64-bit shift), and so does a constant of two literals where an
+  integer type is written (`const m: u64 = 1 << 40`; but `let a = 0; a = 1 << 31` stores
+  `-2147483648`, as in JS).
 - `as` converts between number types with Rust semantics: floats truncate and saturate
   (`3.9 as i64` is `3`), integers wrap (`300 as u8` is `44`, `-1 as u8` is `255`).
 - Differences from JS that remain: integers wrap at their width instead of losing precision
-  past 2^53; integer `/ 0` and `% 0` panic (float division gives `Infinity`/`NaN` as in JS);
-  `**` on integers is integer power.
+  past 2^53 (an inferred product like `m * m` stays exact outside bitwise operands, and so
+  does a sum of inferred integers inside one: `(x + 1) | 0` with `x = 2 ** 53` is `1`, not
+  `0`); integer `/ 0` and `% 0` panic (float division gives `Infinity`/`NaN` as in JS); `**` on
+  integers is integer power.
 - Floats print like JS: `10`, `1.5`, `0.30000000000000004`, `1e+21`, `NaN`, `Infinity`; `-0`
   prints `0`.
 
@@ -100,6 +111,8 @@ console.log(n / 2, Math.trunc(a / 2));    // 3 3
 let small: u8 = 250;
 small += 10;                              // wraps: 4
 console.log(small, n as f64 / 2.0, 300 as u8);   // 4 3.5 44
+const h = 0x12345678;
+console.log((h * 0x2c1b3c6d) | 0, Math.imul(h, 0x2c1b3c6d), -1 >>> 0); // -1019940576 -1019940584 4294967295
 ```
 
 ## Strings
