@@ -144,13 +144,13 @@ extend string {
   }
 
   // The code unit at position `i` as a one-unit string (a surrogate pair gives one half), or ""
-  // out of range, as JS's `charAt`.
+  // out of range, as JS's `charAt`. `s[i]` is the same. In range, the one-unit slice is that unit
+  // (a lone half inside a pair), and LLVM builds it inline for an ASCII string (#552).
   charAt(i: i64 = 0): string {
-    const c = __intrinsic_str_char_code_at(this, i);
-    if (c < 0) {
+    if (i < 0 || i >= (this.length as i64)) {
       return "";
     }
-    return velt_rt_str_from_char_code(c);
+    return velt_rt_str_slice(this, i, i + 1);
   }
 
   // Like `charAt`, but a negative `i` counts from the end, and past the end is null (JS:

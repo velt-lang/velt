@@ -138,7 +138,8 @@ usable and no copy method is needed.
   last use. `s.clone()` compiles and is just a copy. Text is stored as UTF-8 (files, sockets and
   HTTP bodies need no conversion), with the code-unit count kept in the value: `length` is a
   load, and indexing ASCII text reads a byte. Indexing other text translates the position: a
-  step from the last position of the same string, so a sequential loop stays linear, or a
+  step from the last position of the same string, so a sequential loop over one or two strings
+  at a time stays linear (each thread remembers its last two long non-ASCII strings), or a
   lookup in a table built for long strings plus a scan of at most 63 units (random access to
   long non-ASCII text is several times slower than in JS engines; in a long non-ASCII literal,
   which has no table, it scans from the closer end).
