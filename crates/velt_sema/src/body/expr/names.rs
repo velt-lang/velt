@@ -13,6 +13,7 @@ use crate::hir::{self, DefId, ExprKind as H, LocalId, TyId, TyKind, UseMode};
 
 impl FnCx<'_, '_> {
     pub(crate) fn local_expr(&mut self, l: LocalId, want: Want, span: Span) -> hir::Expr {
+        self.note_refused_read(l, span);
         let ty = self.local_ty(l);
         if want != Want::BorrowMut && self.narrowed_to_nothing(l) {
             // No member is left (e.g. in the `default` of an exhaustive `switch`): the read

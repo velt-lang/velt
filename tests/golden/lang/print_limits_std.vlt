@@ -1,0 +1,44 @@
+// node's depth and maxArrayLength limits (#497) for std's Set, a prelude Record, a JsonValue
+// and template strings: each line is what node prints for the same JavaScript value
+// (`new Set`, an object, `JSON.parse(text)`), except that a template string prints a value
+// the way console.log does.
+
+import { Set } from "velt:collections/set";
+
+function main() {
+  const empty = new Set<number>();
+  console.log(empty, new Set<number>([1, 2, 3]));
+  const big = new Set<number>();
+  for (let i = 0; i < 102; i++) {
+    big.add(i * 3);
+  }
+  big.delete(0);
+  console.log(big);
+  console.log({ a: { b: { s: new Set<string>(["x"]), e: empty } } });
+
+  const r: Record<string, number> = {};
+  for (let i = 0; i < 120; i++) {
+    r[`k${i}`] = i;
+  }
+  console.log({ r });
+  const nested: Record<string, Record<string, number>> = {};
+  nested["inner"] = { a: 1 };
+  console.log({ a: { b: { nested } } });
+  console.log([{ nested }]);
+
+  const v = JsonValue.parse(
+    '{"a":{"b":{"c":{"d":1},"e":[1],"f":[],"g":{}}},"list":[1,[2,[3,[4]]]]}',
+  );
+  console.log(v);
+  const long: number[] = [];
+  for (let i = 0; i < 101; i++) {
+    long.push(i);
+  }
+  const arr = JsonValue.from(long);
+  console.log(arr);
+  console.log({ wrapped: { json: v } });
+  console.log([[[arr]]]);
+
+  console.log(`${[[[[1]]]]} | ${{ a: { b: { c: { d: 1 } } } }} | ${big.size}`);
+  console.log(`${v}`);
+}

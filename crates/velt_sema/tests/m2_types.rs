@@ -656,6 +656,24 @@ fn reduce_accumulator_follows_the_elements() {
     );
 }
 
+/// A float initial value makes a float accumulator: the callback's integer index (or integer
+/// elements) don't fix it to `i64` (difftest corpus `lang_shapes_switch`).
+#[test]
+fn reduce_with_a_float_initial_value_accumulates_floats() {
+    common::programs::ok_src(
+        "class S { w: f64 = 1.5; }
+         function main() {
+           const ss = [new S(), new S()];
+           const a = ss.reduce((acc, s) => acc + s.w, 0.0);
+           const ns = [1, 2];
+           const b = ns.reduce((acc, n) => acc + 0.5, 0.5);
+           const c: f64 = a + b;
+           const d = ss.reduce((acc, s) => acc + 1, 0);
+           const e: i64 = d;
+           console.log(`${c}`, e); }",
+    );
+}
+
 #[test]
 fn assignment_expressions_have_the_assigned_value() {
     common::programs::ok_src(

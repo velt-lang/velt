@@ -127,6 +127,7 @@ impl ThrowLoc {
 pub extern "C" fn velt_rt_exit(code: i32) -> ! {
     io::flush_stdout();
     crate::str::stats::report();
+    io::stats::report();
     std::process::exit(code)
 }
 

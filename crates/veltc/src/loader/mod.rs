@@ -31,6 +31,7 @@ mod case;
 mod jsx;
 mod locate;
 mod pick;
+mod resolve;
 mod spec;
 mod std_root;
 
@@ -42,6 +43,7 @@ use velt_sema::SourceModule;
 use velt_syntax::ast;
 
 pub use locate::{module_path, Origin, PackageResolver};
+pub use resolve::resolve_module;
 pub use spec::{resolve_spec, ModuleRef};
 pub use std_root::{prelude_files, std_root};
 

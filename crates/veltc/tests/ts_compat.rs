@@ -9,6 +9,7 @@ use std::process::Output;
 use serde_json::Value;
 
 mod no_window;
+mod runtime_support;
 mod test_dir;
 mod ts_compat_node;
 

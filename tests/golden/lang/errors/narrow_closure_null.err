@@ -1,0 +1,4 @@
+narrow_closure_null.vlt:17:19: error: no method named `m` found for type `Foo | null`
+narrow_closure_null.vlt:13:5: assigned in a closure here
+`g` is assigned in a closure, so it is not narrowed to `Foo` here: a call may run the closure between the check and this use; test a `const` copy instead: `const current = g; if (current !== null) { … }`
+narrow_closure_null.vlt:21:17: error: no method named `m` found for type `Foo | null`

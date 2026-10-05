@@ -51,8 +51,13 @@ impl Render<'_> {
             w.ranges.push(start - body..out.len() - body);
         }
         let ranges = &w.ranges[base..];
-        let grouped =
-            c.close == b']' && ranges.len() > 6 && w.columns.plan(&out[body..], ranges, indent);
+        let entries = &self.value.entries[c.entries.clone()];
+        // Node groups an array's entries without its `... n more items`, which follows the rows.
+        let more = c.close == b']' && entries.last().is_some_and(|e| self.is_more(e.clone()));
+        let shown = &ranges[..ranges.len() - more as usize];
+        let grouped = c.close == b']'
+            && ranges.len() > 6
+            && w.columns.plan(&out[body..], shown, ranges.len(), indent);
         if !grouped {
             let start = ranges.len() + indent + c.open_len + 10;
             let text = &out[body..];
@@ -73,12 +78,16 @@ impl Render<'_> {
         };
         newline(out, pad);
         if grouped {
-            let numbers = self.value.entries[c.entries.clone()]
+            let numbers = entries[..shown.len()]
                 .iter()
                 .all(|e| self.is_number(e.clone()));
             let mut separator = b",\n".to_vec();
             separator.resize(separator.len() + pad, b' ');
-            w.columns.write(out, text, ranges, numbers, &separator);
+            w.columns.write(out, text, shown, numbers, &separator);
+            if let Some(r) = ranges.get(shown.len()) {
+                out.extend_from_slice(&separator);
+                out.extend_from_slice(&text[r.clone()]);
+            }
         } else {
             for (i, r) in ranges.iter().enumerate() {
                 if i > 0 {
@@ -92,6 +101,11 @@ impl Render<'_> {
         out.push(c.close);
         w.moved.truncate(moved);
         w.ranges.truncate(base);
+    }
+
+    /// Is the entry node's `... n more items` (the glue's only unquoted text starting so)?
+    fn is_more(&self, segs: Range<usize>) -> bool {
+        matches!(&self.value.segs[segs], [Seg::Text(t)] if self.src[t.clone()].starts_with(b"... "))
     }
 
     /// Is the entry a number (`typeof value[i] === 'number'` for node's column alignment)?

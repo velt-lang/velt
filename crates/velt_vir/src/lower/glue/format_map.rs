@@ -2,20 +2,35 @@
 //! (std/prelude/map.vlt), instead of its private fields: the live entries of the dense
 //! `entryKeys` / `entryValues` arrays in insertion order (a deleted entry's value is null).
 //! A prelude `Record` (std/prelude/record.vlt, a `Map` in field 0) prints like the object it
-//! stands for: `{ a: 1, 'b c': 2 }` (empty: `{}`).
+//! stands for: `{ a: 1, 'b c': 2 }` (empty: `{}`), and std's `Set` (std/collections/set.vlt, a
+//! `Map<T, bool>` in field 0) like node's: `Set(2) { 1, 2 }` (empty: `Set(0) {}`). Past node's
+//! depth limit they print as `[Map]`, `[Object]` and `[Set]`; a `Map` or `Set` shows its first
+//! 100 entries, then `... n more items`, and stops reading there.
 
 use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
+use super::format_array::MAX_ARRAY_LENGTH;
 use crate::lower::glue::literals::inspect_key;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, FnLower};
-use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty};
+use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 /// Field indexes of the prelude `Map`.
 const SIZE: u32 = 0;
 const KEYS: u32 = 1;
 const VALUES: u32 = 2;
+
+/// How the entries of a prelude `Map` print.
+#[derive(Clone, Copy, PartialEq)]
+enum Entries {
+    /// `k => v`, the first 100.
+    Map,
+    /// `k: v`, all of them (an object).
+    Record,
+    /// `k`, the first 100.
+    Set,
+}
 
 impl FnLower<'_, '_> {
     /// `(K, V)` if `ty` is the prelude `Map<K, V>` class.
@@ -60,29 +75,85 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// Append the prelude `Record` object at `obj` as an object; false if `ty` is not one.
-    pub(super) fn format_record(&mut self, buf: &Operand, obj: &Place, ty: TyId) -> bool {
-        let Some((kt, vt)) = self.prelude_record(ty) else {
+    /// `(T, bool)` if `ty` is std's `Set<T>` class (a `Map<T, bool>` in field 0).
+    fn std_set(&mut self, ty: TyId) -> Option<(TyId, TyId)> {
+        let TyKind::Adt(d, _) = self.cx.kind(ty) else {
+            return None;
+        };
+        let hir::Def::Adt(a) = self.cx.hir.def(d) else {
+            return None;
+        };
+        let named = a.name == "Set" || a.name.ends_with("::Set") || a.name.ends_with(".Set");
+        if !named || a.fields.first().map(|f| f.name.as_str()) != Some("items") {
+            return None;
+        }
+        let items = self.cx.adt_field_tys(ty)[0];
+        match self.prelude_map(items) {
+            Some((t, v)) if matches!(self.cx.kind(v), TyKind::Bool) => Some((t, v)),
+            _ => None,
+        }
+    }
+
+    /// Append the prelude `Map`, `Record` or std `Set` object at `obj` (at node's depth
+    /// `depth`) as node prints it; false if `ty` is none of them.
+    pub(super) fn format_collection(
+        &mut self,
+        buf: &Operand,
+        obj: &Place,
+        ty: TyId,
+        depth: &Operand,
+    ) -> bool {
+        // (the `Map` holding the entries, its type, key and value types, how they print)
+        let (map, map_ty, kt, vt, entries) = if let Some((kt, vt)) = self.prelude_map(ty) {
+            (obj.clone(), ty, kt, vt, Entries::Map)
+        } else if let Some((kt, vt)) = self.prelude_record(ty) {
+            let map_ty = self.cx.adt_field_tys(ty)[0];
+            (
+                self.field_place(obj, ty, 0),
+                map_ty,
+                kt,
+                vt,
+                Entries::Record,
+            )
+        } else if let Some((t, vt)) = self.std_set(ty) {
+            let map_ty = self.cx.adt_field_tys(ty)[0];
+            (self.field_place(obj, ty, 0), map_ty, t, vt, Entries::Set)
+        } else {
             return false;
         };
-        let map_ty = self.cx.adt_field_tys(ty)[0];
-        let map = self.field_place(obj, ty, 0);
+        let (name, cut) = match entries {
+            Entries::Map => (Some("Map"), "[Map]"),
+            Entries::Record => (None, "[Object]"),
+            Entries::Set => (Some("Set"), "[Set]"),
+        };
         let mtys = self.cx.adt_field_tys(map_ty);
-        let size = self.field_place(&map, map_ty, SIZE);
-        let size_t = self.cx.ty(mtys[SIZE as usize]);
+        let size_ty = mtys[SIZE as usize];
+        let size = Operand::Copy(self.field_place(&map, map_ty, SIZE));
+        let size_t = self.cx.ty(size_ty);
         let empty = self.rvalue_temp(
             Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, Operand::Copy(size), cint(0, size_t)),
+            Rvalue::Binary(BinOp::Eq, size.clone(), cint(0, size_t)),
         );
         let (empty_bb, full_bb, done) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(empty, empty_bb, full_bb);
         self.switch_to(empty_bb);
-        self.push_text(buf, "{}");
+        self.push_text(buf, &name.map_or("{}".into(), |n| format!("{n}(0) {{}}")));
         self.goto(done);
         self.switch_to(full_bb);
-        self.push_text(buf, "{ ");
-        self.format_map_entries(buf, &map, map_ty, kt, vt, true);
-        self.push_text(buf, " }");
+        let p = Operand::Copy(obj.clone());
+        self.within_depth(buf, depth, cut, Some(p.clone()), |lw, child| {
+            lw.format_once(buf, p, |lw| {
+                if let Some(n) = name {
+                    lw.push_text(buf, &format!("{n}("));
+                    lw.push_scalar(buf, size.clone(), size_ty);
+                    lw.push_text(buf, ") ");
+                }
+                lw.push_text(buf, "{ ");
+                let types = (map_ty, kt, vt);
+                lw.format_map_entries(buf, &map, types, entries, size, &child);
+                lw.push_text(buf, " }");
+            })
+        });
         self.goto(done);
         self.switch_to(done);
         true
@@ -132,43 +203,17 @@ impl FnLower<'_, '_> {
         self.switch_to(join);
     }
 
-    /// Append the prelude `Map` object at `obj` node-style; false if `ty` is not that `Map`.
-    pub(super) fn format_map(&mut self, buf: &Operand, obj: &Place, ty: TyId) -> bool {
-        let Some((kt, vt)) = self.prelude_map(ty) else {
-            return false;
-        };
-        let tys = self.cx.adt_field_tys(ty);
-        let size = self.field_place(obj, ty, SIZE);
-        self.push_text(buf, "Map(");
-        self.push_scalar(buf, Operand::Copy(size.clone()), tys[SIZE as usize]);
-        let size_t = self.cx.ty(tys[SIZE as usize]);
-        let empty = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, Operand::Copy(size), cint(0, size_t)),
-        );
-        let (empty_bb, full_bb, done) = (self.new_block(), self.new_block(), self.new_block());
-        self.branch(empty, empty_bb, full_bb);
-        self.switch_to(empty_bb);
-        self.push_text(buf, ") {}");
-        self.goto(done);
-        self.switch_to(full_bb);
-        self.push_text(buf, ") { ");
-        self.format_map_entries(buf, obj, ty, kt, vt, false);
-        self.push_text(buf, " }");
-        self.goto(done);
-        self.switch_to(done);
-        true
-    }
-
-    /// `k => v` (`record`: `k: v`) for every live entry, comma-separated.
+    /// The live entries of the `Map` at `obj` (of types `(map, key, value)`) with `size` of
+    /// them, comma-separated, each part at node's depth `child`; a `Map` or `Set` stops after
+    /// the first 100 and adds `... n more items`.
     fn format_map_entries(
         &mut self,
         buf: &Operand,
         obj: &Place,
-        ty: TyId,
-        kt: TyId,
-        vt: TyId,
-        record: bool,
+        (ty, kt, vt): (TyId, TyId, TyId),
+        entries: Entries,
+        size: Operand,
+        child: &Operand,
     ) {
         let tys = self.cx.adt_field_tys(ty);
         let keys = self.field_place(obj, ty, KEYS);
@@ -178,38 +223,82 @@ impl FnLower<'_, '_> {
         let TyKind::Array(slot_t) = self.cx.kind(tys[VALUES as usize]) else {
             crate::lower::ice("Map.entryValues is not an array")
         };
-        let first = self.temp(Ty::Bool);
-        let yes = Operand::Const(Const::Bool(true), Ty::Bool);
-        self.assign(Place::local(first), Rvalue::Use(yes));
+        let limited = entries != Entries::Record;
+        // Entries shown so far; the loop ends early (`stop` set to 0) once the limit is reached.
+        let shown = self.temp(Ty::U64);
+        self.assign(Place::local(shown), Rvalue::Use(cint(0, Ty::U64)));
+        let stop = self.temp(Ty::U64);
+        let len = Operand::Copy(proj(&keys, Proj::Field(1)));
+        self.assign(Place::local(stop), Rvalue::Use(len));
         let k = self.temp(Ty::U64);
         self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
-        let len = Operand::Copy(proj(&keys, Proj::Field(1)));
-        self.count_loop(k, len, |lw, i| {
+        let n = Operand::Copy(Place::local(shown));
+        self.count_loop(k, Operand::Copy(Place::local(stop)), |lw, i| {
             let slot = lw.elem_place(&values, i.clone(), slot_t);
             let live = lw.option_is_some(&slot, slot_t);
             let (live_bb, skip) = (lw.new_block(), lw.new_block());
             lw.branch(live, live_bb, skip);
             lw.switch_to(live_bb);
+            if limited {
+                let limit = cint(MAX_ARRAY_LENGTH, Ty::U64);
+                let full = lw.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, n.clone(), limit));
+                let (full_bb, room_bb) = (lw.new_block(), lw.new_block());
+                lw.branch(full, full_bb, room_bb);
+                lw.switch_to(full_bb);
+                lw.assign(Place::local(stop), Rvalue::Use(cint(0, Ty::U64)));
+                lw.goto(skip);
+                lw.switch_to(room_bb);
+            }
+            let first = lw.rvalue_temp(
+                Ty::Bool,
+                Rvalue::Binary(BinOp::Eq, n.clone(), cint(0, Ty::U64)),
+            );
             let (sep_bb, entry_bb) = (lw.new_block(), lw.new_block());
-            lw.branch(Operand::Copy(Place::local(first)), entry_bb, sep_bb);
+            lw.branch(first, entry_bb, sep_bb);
             lw.switch_to(sep_bb);
             lw.push_text(buf, ", ");
             lw.goto(entry_bb);
             lw.switch_to(entry_bb);
-            let no = Operand::Const(Const::Bool(false), Ty::Bool);
-            lw.assign(Place::local(first), Rvalue::Use(no));
+            let next = lw.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Add, n, cint(1, Ty::U64)));
+            lw.assign(Place::local(shown), Rvalue::Use(next));
             let kp = lw.elem_place(&keys, i, kt);
-            if record {
-                lw.format_record_key(buf, &kp, kt);
-                lw.push_text(buf, ": ");
-            } else {
-                lw.format_nested(buf, &kp, kt);
-                lw.push_text(buf, " => ");
+            match entries {
+                Entries::Record => {
+                    lw.format_record_key(buf, &kp, kt);
+                    lw.push_text(buf, ": ");
+                }
+                Entries::Map | Entries::Set => lw.format_nested(buf, &kp, kt, child),
             }
-            let vp = lw.some_payload(&slot, slot_t);
-            lw.format_nested(buf, &vp, vt);
+            if entries != Entries::Set {
+                if entries == Entries::Map {
+                    lw.push_text(buf, " => ");
+                }
+                let vp = lw.some_payload(&slot, slot_t);
+                lw.format_nested(buf, &vp, vt, child);
+            }
             lw.goto(skip);
             lw.switch_to(skip);
         });
+        if limited {
+            self.format_more_entries(buf, size, tys[SIZE as usize]);
+        }
+    }
+
+    /// Node's `... n more items` after the first 100 of `size` entries (of type `size_ty`).
+    fn format_more_entries(&mut self, buf: &Operand, size: Operand, size_ty: TyId) {
+        let from = self.cx.ty(size_ty);
+        let size = self.cast_to(size, from, Ty::U64);
+        let limit = cint(MAX_ARRAY_LENGTH, Ty::U64);
+        let long = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Gt, size.clone(), limit.clone()),
+        );
+        let (more_bb, done) = (self.new_block(), self.new_block());
+        self.branch(long, more_bb, done);
+        self.switch_to(more_bb);
+        let remaining = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, size, limit));
+        self.call_rt(Rt::StrbufInspectMore, vec![buf.clone(), remaining], None);
+        self.goto(done);
+        self.switch_to(done);
     }
 }
