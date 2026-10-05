@@ -1,23 +1,24 @@
 //! Facts (`fact.rs`) for the tracked locals at every block entry: abstract interpretation over
-//! the CFG, refined on branch conditions and widened to thresholds at join blocks.
+//! the CFG, refined on branch conditions and widened to thresholds at loop heads.
 //!
 //! - **Refinement**: on the edges of `a < b` (and `<=`, `>`, `>=`, `==`, `!=`, over doubles or
 //!   integers) both operands are narrowed, and so is the integer an operand was converted from
 //!   in the same block (`(i as f64) < n` bounds `i`). A false float comparison refines nothing
 //!   when an operand may be NaN.
-//! - **Widening**: a join block's entry is widened after `WIDEN_AFTER` arrivals. A bound that
+//! - **Widening**: a loop head's entry is widened after `WIDEN_AFTER` arrivals. A bound that
 //!   still moves jumps to the next of `THRESHOLDS`, so each bound moves a handful of times.
 //!   Induction variables need nothing more: only the moving bound widens, and the exit test
 //!   bounds it on the loop's edges.
 
-use std::collections::VecDeque;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 
 use velt_vir::vir::{BinOp, Callee, Function, Local, Operand, Rvalue, Stmt, Terminator, Ty, UnOp};
 
 use super::fact::{self, Fact, TWO_53};
 use super::Env;
 
-/// Arrivals at a join block before its entry state is widened.
+/// Arrivals at a loop head before its entry state is widened.
 const WIDEN_AFTER: u32 = 2;
 /// Largest tracked-locals × blocks product analysed (bounds memory and time).
 const MAX_CELLS: usize = 1 << 20;
@@ -149,18 +150,14 @@ impl Flow {
     fn solve(&mut self, func: &Function, env: &Env) {
         let n = func.blocks.len();
         self.entry[0] = Some(self.tys.iter().map(|t| Fact::top(*t)).collect());
+        let cfg = Cfg::of(func);
         let mut visits = vec![0u32; n];
-        let mut preds = vec![0u32; n];
-        preds[0] = 1;
-        for b in &func.blocks {
-            for s in crate::visit::successors(&b.term) {
-                preds[s.0 as usize] += 1;
-            }
-        }
+        // Blocks in reverse postorder, so a loop's body settles before what follows it.
         let mut queued = vec![false; n];
-        let mut work = VecDeque::from([0usize]);
+        let mut work = BinaryHeap::from([Reverse(cfg.rank[0])]);
         queued[0] = true;
-        while let Some(b) = work.pop_front() {
+        while let Some(Reverse(r)) = work.pop() {
+            let b = cfg.rpo[r as usize];
             queued[b] = false;
             let Some(mut st) = self.entry[b].clone() else {
                 continue;
@@ -170,10 +167,10 @@ impl Flow {
             }
             for (succ, out) in self.edges(func, env, b, st) {
                 visits[succ] += 1;
-                let widen = preds[succ] > 1 && visits[succ] > WIDEN_AFTER;
+                let widen = cfg.head[succ] && visits[succ] > WIDEN_AFTER;
                 if self.merge(succ, out, widen) && !queued[succ] {
                     queued[succ] = true;
-                    work.push_back(succ);
+                    work.push(Reverse(cfg.rank[succ]));
                 }
             }
         }
@@ -286,6 +283,63 @@ impl Flow {
             }
         }
         true
+    }
+}
+
+/// The order the solver visits blocks in, and where it widens.
+struct Cfg {
+    /// Blocks reachable from the entry, in reverse postorder.
+    rpo: Vec<usize>,
+    /// Per block: its position in `rpo` (unreachable blocks: past the end).
+    rank: Vec<u32>,
+    /// Per block: the target of a retreating edge, i.e. a loop head. Every cycle has one, so
+    /// widening there bounds the iterations.
+    head: Vec<bool>,
+}
+
+impl Cfg {
+    fn of(func: &Function) -> Cfg {
+        let n = func.blocks.len();
+        let succs: Vec<Vec<usize>> = func
+            .blocks
+            .iter()
+            .map(|b| {
+                crate::visit::successors(&b.term)
+                    .iter()
+                    .map(|s| s.0 as usize)
+                    .collect()
+            })
+            .collect();
+        // Iterative depth-first search: 1 = on the stack, 2 = finished.
+        let mut state = vec![0u8; n];
+        let mut head = vec![false; n];
+        let mut post = Vec::with_capacity(n);
+        let mut stack = vec![(0usize, 0usize)];
+        state[0] = 1;
+        while let Some((b, i)) = stack.last_mut() {
+            let b = *b;
+            if let Some(&s) = succs[b].get(*i) {
+                *i += 1;
+                match state[s] {
+                    0 => {
+                        state[s] = 1;
+                        stack.push((s, 0));
+                    }
+                    1 => head[s] = true,
+                    _ => {}
+                }
+            } else {
+                state[b] = 2;
+                post.push(b);
+                stack.pop();
+            }
+        }
+        let rpo: Vec<usize> = post.into_iter().rev().collect();
+        let mut rank = vec![u32::MAX; n];
+        for (i, &b) in rpo.iter().enumerate() {
+            rank[b] = i as u32;
+        }
+        Cfg { rpo, rank, head }
     }
 }
 
