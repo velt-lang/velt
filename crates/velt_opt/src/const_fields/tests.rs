@@ -5,7 +5,8 @@ use crate::interp::{Interp, RecordingHost};
 use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
 use velt_vir::vir::{
-    AggId, BinOp, Callee, Const, Function, Operand, Place, Proj, Rvalue, Stmt, Terminator, Ty,
+    AggId, BinOp, BlockId, Callee, Const, FuncId, Function, Local, Operand, Place, Proj, Rvalue,
+    Stmt, Terminator, Ty,
 };
 
 /// `(*p as agg).n`
@@ -278,5 +279,266 @@ fn constants_follow_whole_copies() {
     );
     for n in [0, 7] {
         assert_eq!(run_main(&original, n), run_main(&p, n));
+    }
+}
+
+// ───── closures in aggregate fields, several closure arguments ─────
+
+/// `name(env, x) = x <op> *env`: the code of a closure capturing one number.
+fn env_op(pb: &mut ProgramBuilder, name: &str, op: BinOp) -> FuncId {
+    let mut fb = FuncBuilder::internal(name, &[Ty::Ptr, Ty::I64], Ty::I64);
+    let (env, x) = (fb.param(0), fb.param(1));
+    let r = fb.local(Ty::I64);
+    let b = fb.block();
+    fb.assign(
+        b,
+        r,
+        bin(op, copy_local(x), copy_place(deref(env, Ty::I64))),
+    );
+    fb.ret(b, copy_local(r));
+    pb.add(fb.finish())
+}
+
+/// Calls the closure `*f` (layout `clo`) with `x` at the end of `b`: (next block, result).
+fn call_closure(
+    fb: &mut FuncBuilder,
+    b: BlockId,
+    f: Local,
+    clo: AggId,
+    x: Operand,
+) -> (BlockId, Local) {
+    let (code, env, r) = (fb.local(Ty::Ptr), fb.local(Ty::Ptr), fb.local(Ty::I64));
+    fb.assign(b, code, Rvalue::Use(copy_place(through(f, clo, 0))));
+    fb.assign(b, env, Rvalue::Use(copy_place(through(f, clo, 1))));
+    let callee = Callee::Ptr {
+        target: copy_local(code),
+        params: vec![Ty::Ptr, Ty::I64],
+        ret: Ty::I64,
+    };
+    (fb.call(b, callee, vec![copy_local(env), x], Some(r)), r)
+}
+
+/// `{ code, &k }` with `k = env`, built in block `b`: the closure local.
+fn make_closure(fb: &mut FuncBuilder, b: BlockId, clo: AggId, code: FuncId, env: i128) -> Local {
+    let (k, kp, c) = (fb.local(Ty::I64), fb.local(Ty::Ptr), fb.local(Ty::Agg(clo)));
+    fb.assign(b, k, Rvalue::Use(int(env, Ty::I64)));
+    fb.assign(b, kp, Rvalue::AddrOf(Place::local(k)));
+    let code = Operand::Const(Const::Func(code), Ty::Ptr);
+    fb.assign(b, c, Rvalue::Aggregate(clo, vec![code, copy_local(kp)]));
+    c
+}
+
+/// Recursive `apply(f1, …, fk, x)`: the sum over i in 1..=x of `fk(…f1(i))`, each closure
+/// called through its code field; the recursion passes every closure on.
+fn apply_func(pb: &mut ProgramBuilder, clo: AggId, closures: u32) -> FuncId {
+    let id = pb.reserve();
+    let mut params = vec![Ty::Ptr; closures as usize];
+    params.push(Ty::I64);
+    let mut fb = FuncBuilder::internal("apply", &params, Ty::I64);
+    let x = fb.param(closures);
+    let (c, xm, rest, s) = (
+        fb.local(Ty::Bool),
+        fb.local(Ty::I64),
+        fb.local(Ty::I64),
+        fb.local(Ty::I64),
+    );
+    let (b0, b1, mut b) = (fb.block(), fb.block(), fb.block());
+    fb.assign(b0, c, bin(BinOp::Le, copy_local(x), int(0, Ty::I64)));
+    fb.branch(b0, c, b1, b);
+    fb.ret(b1, int(0, Ty::I64));
+    let mut y = x;
+    for i in 0..closures {
+        let f = fb.param(i);
+        (b, y) = call_closure(&mut fb, b, f, clo, copy_local(y));
+    }
+    fb.assign(b, xm, bin(BinOp::Sub, copy_local(x), int(1, Ty::I64)));
+    let mut args: Vec<Operand> = (0..closures).map(|i| copy_local(fb.param(i))).collect();
+    args.push(copy_local(xm));
+    let b = fb.call(b, Callee::Func(id), args, Some(rest));
+    fb.assign(b, s, bin(BinOp::Add, copy_local(y), copy_local(rest)));
+    fb.ret(b, copy_local(s));
+    pb.set(id, fb.finish());
+    id
+}
+
+fn main_func(p: &Program) -> &Function {
+    p.funcs.iter().find(|f| f.symbol == "main").expect("main")
+}
+
+/// The first function `f` calls directly.
+fn first_direct_callee(f: &Function) -> Option<FuncId> {
+    f.blocks.iter().find_map(|b| match b.term {
+        Terminator::Call {
+            callee: Callee::Func(id),
+            ..
+        } => Some(id),
+        _ => None,
+    })
+}
+
+/// Statements that read a code pointer as a constant (a rewritten `(*f).0`).
+fn constant_code_reads(f: &Function) -> usize {
+    f.blocks
+        .iter()
+        .flat_map(|b| &b.stmts)
+        .filter(|s| {
+            matches!(
+                s,
+                Stmt::Assign(_, Rvalue::Use(Operand::Const(Const::Func(_), _)))
+            )
+        })
+        .count()
+}
+
+/// The narrowed payload of `f: F | null`: `o = { true, { add_env, &k } }`, redefined on one
+/// path with the same code (or, with `other`, with `mul_env`); then `apply(&o.1, n)` plus a
+/// direct call through `o.1.0`.
+fn optional_closure_program(other: bool) -> Program {
+    let mut pb = ProgramBuilder::new();
+    let clo = pb.agg("closure", 16, 8, &[(Ty::Ptr, 0), (Ty::Ptr, 8)]);
+    let opt = pb.agg("opt", 24, 8, &[(Ty::Bool, 0), (Ty::Agg(clo), 8)]);
+    let add = env_op(&mut pb, "add_env", BinOp::Add);
+    let mul = env_op(&mut pb, "mul_env", BinOp::Mul);
+    let apply = apply_func(&mut pb, clo, 1);
+    let mut fb = FuncBuilder::export("main", &[Ty::I64], Ty::I64);
+    let n = fb.param(0);
+    let (o, c, p, r, s) = (
+        fb.local(Ty::Agg(opt)),
+        fb.local(Ty::Bool),
+        fb.local(Ty::Ptr),
+        fb.local(Ty::I64),
+        fb.local(Ty::I64),
+    );
+    let (b0, b1, b2) = (fb.block(), fb.block(), fb.block());
+    let first = make_closure(&mut fb, b0, clo, add, 100);
+    let some = |c| Rvalue::Aggregate(opt, vec![boolean(true), copy_local(c)]);
+    fb.assign(b0, o, some(first));
+    fb.assign(b0, c, bin(BinOp::Gt, copy_local(n), int(2, Ty::I64)));
+    fb.branch(b0, c, b1, b2);
+    let code = if other { mul } else { add };
+    let second = make_closure(&mut fb, b1, clo, code, 3);
+    fb.assign(b1, o, some(second));
+    fb.goto(b1, b2);
+    fb.assign(b2, p, Rvalue::AddrOf(field(o, 1)));
+    let b3 = fb.call(
+        b2,
+        Callee::Func(apply),
+        vec![copy_local(p), copy_local(n)],
+        Some(r),
+    );
+    // A read along the field path: `o.1.0(o.1.1, n)`.
+    let (code, env, d) = (fb.local(Ty::Ptr), fb.local(Ty::Ptr), fb.local(Ty::I64));
+    let path = |f| Place {
+        local: o,
+        proj: vec![Proj::Field(1), Proj::Field(f)],
+    };
+    fb.assign(b3, code, Rvalue::Use(copy_place(path(0))));
+    fb.assign(b3, env, Rvalue::Use(copy_place(path(1))));
+    let callee = Callee::Ptr {
+        target: copy_local(code),
+        params: vec![Ty::Ptr, Ty::I64],
+        ret: Ty::I64,
+    };
+    let b4 = fb.call(b3, callee, vec![copy_local(env), copy_local(n)], Some(d));
+    fb.assign(b4, s, bin(BinOp::Add, copy_local(r), copy_local(d)));
+    fb.ret(b4, copy_local(s));
+    pb.add(fb.finish());
+    pb.finish()
+}
+
+#[test]
+fn closure_in_an_aggregate_field_is_known_through_a_field_pointer() {
+    let original = optional_closure_program(false);
+    let mut p = original.clone();
+    assert!(run(&mut p, &mut Specializations::default()));
+    assert_valid(&p);
+    // `&o.1` points to a closure with known code: `apply` is cloned for it.
+    let clone = &p.funcs[first_direct_callee(main_func(&p)).expect("call").0 as usize];
+    assert!(clone.symbol.starts_with("apply$spec"), "{p}");
+    assert_eq!(constant_code_reads(clone), 1, "{p}");
+    // `o.1.0` in main is the constant too: both definitions store the same code.
+    assert_eq!(constant_code_reads(main_func(&p)), 1, "{p}");
+    for n in [0, 2, 5] {
+        assert_eq!(run_main(&original, n), run_main(&p, n));
+    }
+    let mut full = original.clone();
+    crate::optimize(&mut full, crate::OptLevel::Speed);
+    assert_valid(&full);
+    assert_eq!(
+        full.funcs.iter().map(indirect_calls).sum::<usize>(),
+        0,
+        "{full}"
+    );
+    for n in [0, 2, 5] {
+        assert_eq!(run_main(&original, n), run_main(&full, n));
+    }
+}
+
+#[test]
+fn closure_fields_with_differing_code_are_not_known() {
+    let original = optional_closure_program(true);
+    let mut p = original.clone();
+    run(&mut p, &mut Specializations::default());
+    assert_valid(&p);
+    let callee = first_direct_callee(main_func(&p)).expect("call");
+    assert_eq!(p.funcs[callee.0 as usize].symbol, "apply", "no clone: {p}");
+    assert_eq!(constant_code_reads(main_func(&p)), 0, "{p}");
+    for n in [0, 2, 5] {
+        assert_eq!(run_main(&original, n), run_main(&p, n));
+    }
+}
+
+/// `main(n) = apply(&{ add_env, &100 }, &{ mul_env, &3 }, n)`.
+fn two_closures_program() -> Program {
+    let mut pb = ProgramBuilder::new();
+    let clo = pb.agg("closure", 16, 8, &[(Ty::Ptr, 0), (Ty::Ptr, 8)]);
+    let add = env_op(&mut pb, "add_env", BinOp::Add);
+    let mul = env_op(&mut pb, "mul_env", BinOp::Mul);
+    let apply = apply_func(&mut pb, clo, 2);
+    let mut fb = FuncBuilder::export("main", &[Ty::I64], Ty::I64);
+    let n = fb.param(0);
+    let (pf, pg, r) = (fb.local(Ty::Ptr), fb.local(Ty::Ptr), fb.local(Ty::I64));
+    let b = fb.block();
+    let f = make_closure(&mut fb, b, clo, add, 100);
+    let g = make_closure(&mut fb, b, clo, mul, 3);
+    fb.assign(b, pf, Rvalue::AddrOf(Place::local(f)));
+    fb.assign(b, pg, Rvalue::AddrOf(Place::local(g)));
+    let b1 = fb.call(
+        b,
+        Callee::Func(apply),
+        vec![copy_local(pf), copy_local(pg), copy_local(n)],
+        Some(r),
+    );
+    fb.ret(b1, copy_local(r));
+    pb.add(fb.finish());
+    pb.finish()
+}
+
+#[test]
+fn every_closure_argument_is_specialized_down_the_recursion() {
+    let original = two_closures_program();
+    let mut p = original.clone();
+    assert!(run(&mut p, &mut Specializations::default()));
+    assert_valid(&p);
+    // main calls a clone that knows both code pointers, and that clone recurses into itself,
+    // not into a clone that knows only one of them.
+    let id = first_direct_callee(main_func(&p)).expect("call");
+    let clone = &p.funcs[id.0 as usize];
+    assert!(clone.symbol.starts_with("apply$spec"), "{p}");
+    assert_eq!(constant_code_reads(clone), 2, "{p}");
+    assert_eq!(first_direct_callee(clone), Some(id), "{p}");
+    for n in [0, 1, 6] {
+        assert_eq!(run_main(&original, n), run_main(&p, n));
+    }
+    let mut full = original.clone();
+    crate::optimize(&mut full, crate::OptLevel::Speed);
+    assert_valid(&full);
+    assert_eq!(
+        full.funcs.iter().map(indirect_calls).sum::<usize>(),
+        0,
+        "{full}"
+    );
+    for n in [0, 1, 6] {
+        assert_eq!(run_main(&original, n), run_main(&full, n));
     }
 }

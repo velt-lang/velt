@@ -55,7 +55,7 @@ impl FnLower<'_, '_> {
             (I::ArraySetLen, [n]) => {
                 let (nv, nt) = (self.expr(n), self.vty(n.ty));
                 let nv = self.cast_to(nv, nt, Ty::U64);
-                self.set_len(&arr, nv);
+                self.set_len(&arr, elem, nv);
                 unit()
             }
             _ => ice(format_args!(
@@ -133,23 +133,29 @@ impl FnLower<'_, '_> {
         unit()
     }
 
-    /// `len = n` without drops or initialization; a panic when `n` exceeds the capacity.
-    fn set_len(&mut self, arr: &Place, n: Operand) {
+    /// `len = n` without drops or initialization, growing the buffer (`ArrayGrow`, doubling)
+    /// until `n` fits.
+    fn set_len(&mut self, arr: &Place, elem: TyId, n: Operand) {
         let n = self.rvalue_temp(Ty::U64, Rvalue::Use(n));
+        let (check, grow, ok) = (self.new_block(), self.new_block(), self.new_block());
+        self.goto(check);
+        self.switch_to(check);
         let fits = self.rvalue_temp(
             Ty::Bool,
             Rvalue::Binary(BinOp::Le, n.clone(), Self::arr_field(arr, 2)),
         );
-        let (ok, over) = (self.new_block(), self.new_block());
-        self.branch(fits, ok, over);
-        self.switch_to(over);
-        let msg = format!(
-            "ICE: array length set past its capacity{}",
-            self.panic_suffix()
-        );
-        let msg = self.str_lit(&msg);
-        let a = self.operand_addr(msg, Ty::Agg(vir::STR_AGG));
-        self.call_rt(crate::lower::rt::Rt::Panic, vec![a], None);
+        self.branch(fits, ok, grow);
+        self.switch_to(grow);
+        let (stride, align) = self.stride(elem);
+        let a = self.addr(arr.clone());
+        let f = self.cx.func(Work::ArrayGrow);
+        let args = vec![
+            a,
+            cint(stride as i128, Ty::U64),
+            cint(align as i128, Ty::U64),
+        ];
+        self.call(vir::Callee::Func(f), args, None, false);
+        self.goto(check);
         self.switch_to(ok);
         self.assign(proj(arr, Proj::Field(1)), Rvalue::Use(n));
     }

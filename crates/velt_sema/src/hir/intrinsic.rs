@@ -41,10 +41,10 @@ pub enum Intrinsic {
     /// shared, and `src` keeps stale copies. A raw move for algorithms that keep every element
     /// owned exactly once themselves (the stable sort's scratch buffer, std/sort/stable.vlt).
     ArrayMove,
-    /// std only: `(xs (modified), len: usize)` set the length to `len` (at most the capacity,
-    /// else a panic) without dropping or initializing any element: slots past the old length
-    /// must be written (`ArrayMove`) before they are read, and slots that are not owned any
-    /// more must be cut off with it before the array is dropped.
+    /// std only: `(xs (modified), len: usize)` set the length to `len` (growing the capacity
+    /// when it is smaller) without dropping or initializing any element: slots past the old
+    /// length must be written (`ArrayMove`) before they are read, and slots that are not owned
+    /// any more must be cut off with it before the array is dropped.
     ArraySetLen,
     /// `(x: borrow T) -> u64` compiler-generated hash (ints, bool, string, Copy structs, enums)
     Hash,

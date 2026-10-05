@@ -1,0 +1,59 @@
+// `sort(cmp)` with a comparator that reaches the array through an alias (#530). The stable sort
+// moves the elements into buffers of its own while the comparator runs, and the array stays
+// empty until it is done: what the comparator pushes ends up after the sorted elements (Node
+// prints the same up to the last line), and a store into the array is an index out of bounds,
+// never a double free of an element the sort is moving (Node writes the sorted elements over
+// it instead).
+
+class Item {
+  key: number;
+  label: string;
+  constructor(key: number) {
+    this.key = key;
+    this.label = `item-${key}-with-a-heap-allocated-label`;
+  }
+}
+
+class Holder {
+  items: Item[] = [];
+}
+
+function keys(items: Item[]): string {
+  return items.map((it) => `${it.key}`).join(",");
+}
+
+// Sorts `n` items whose comparator pushes two more through an alias on its first call.
+function pushWhileSorting(n: number) {
+  const xs: Item[] = [];
+  for (let i = 0; i < n; i++) {
+    xs.push(new Item((i * 17) % 23));
+  }
+  const ys = xs;
+  let calls = 0;
+  xs.sort((a, b) => {
+    calls++;
+    if (calls === 1) {
+      ys.push(new Item(100));
+      ys.push(new Item(99));
+    }
+    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+  });
+  console.log(xs.length, keys(xs));
+}
+
+function main() {
+  // Insertion sort in place (short arrays) and the buffered sort.
+  pushWhileSorting(10);
+  pushWhileSorting(40);
+  const h = new Holder();
+  for (let i = 0; i < 40; i++) {
+    h.items.push(new Item((i * 7) % 13));
+  }
+  const alias = h;
+  console.log("store through an alias");
+  h.items.sort((a, b) => {
+    alias.items[3] = new Item(-1);
+    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+  });
+  console.log("not reached", keys(h.items));
+}
