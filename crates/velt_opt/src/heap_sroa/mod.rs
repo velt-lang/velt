@@ -86,4 +86,6 @@ pub(crate) fn run(aggs: &[AggLayout], allocator: Option<Allocator>, func: &mut F
 }
 
 #[cfg(test)]
+mod random_tests;
+#[cfg(test)]
 mod tests;

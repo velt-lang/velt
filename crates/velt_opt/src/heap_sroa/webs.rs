@@ -277,7 +277,7 @@ impl Scanner {
         let mut web_of = vec![None; n];
         let mut objs = Vec::new();
         let mut root_web: Vec<Option<u32>> = vec![None; n];
-        for l in 0..n {
+        for (l, slot) in web_of.iter_mut().enumerate() {
             if !self.cand[l] {
                 continue;
             }
@@ -289,7 +289,7 @@ impl Scanner {
                 objs.push(Some(obj));
                 objs.len() as u32 - 1
             });
-            web_of[l] = Some(web);
+            *slot = Some(web);
         }
         (!objs.is_empty()).then_some(Webs { web_of, objs })
     }
