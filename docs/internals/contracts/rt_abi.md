@@ -138,6 +138,9 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   to stderr at exit (retain = increments, release = decrements of shared buffers, alloc/free =
   heap buffers). Release runtimes compile the counters out; to count optimized code, link a
   release-built program against the debug runtime (`VELT_RT_LIB=<target>/debug/velt_rt.lib`).
+- `VELT_STDOUT_STATS=1` with a **debug** runtime prints `stdout stats: writes=<n>` to stderr at
+  exit: how many times buffered stdout was written to the OS. Tests check buffering with it
+  (piped output goes out in blocks: far fewer writes than lines) instead of timing a program.
 
 | Symbol | Signature | Notes |
 |---|---|---|

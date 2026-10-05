@@ -211,7 +211,8 @@ console.log(new Square(2.0).name);                                              
 `x instanceof C` on a value of a base class of `C` tests the object's actual class: it is true
 for a `C` and for instances of `C`'s subclasses. Where it holds, `x` reads as a `C`, with the
 same narrowing rules as for unions (`if`/`else`, early returns, `&&`, `||`, `!`, ternaries,
-until `x` is reassigned). The same works on an interface value (a `Shape` holding a `Circle`),
+until `x` is reassigned; a variable that a closure assigns is not narrowed, as
+[for `null`](types.md#null)). The same works on an interface value (a `Shape` holding a `Circle`),
 on `C | null` (true means not `null`) and on a union member whose class is a base of `C`, so
 `catch (e)` chains can tell error subclasses apart. A path of `readonly` fields
 (`node.left instanceof Num`) narrows too; a mutable field could change before it is read, so

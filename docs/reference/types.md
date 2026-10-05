@@ -222,8 +222,25 @@ has type `T | null`, stored without an extra allocation where possible.
 - Narrowing applies to locals and to field paths of locals (`this.x`, `node.left`), like
   TypeScript; assigning a non-null value narrows too. A narrowed field is re-checked when read,
   so a call that set it to `null` in between panics instead of reading `null`. Inside a
-  closure, a variable narrowed where the closure is created stays narrowed (the closure may not
-  assign it).
+  closure, a variable narrowed where the closure is created stays narrowed.
+- A variable that a closure assigns is not narrowed (by any check: `!= null`, `typeof`,
+  `instanceof`, …), where TypeScript keeps the narrowing: a call between the check and the use
+  may run the closure, and then the variable no longer holds what was checked. Test a `const`
+  copy instead, which nothing can reassign; the error at such a use says so:
+
+  ```ts
+  class Conn {
+    send(msg: string): string { return `sent ${msg}`; }
+  }
+
+  let conn: Conn | null = new Conn();
+  const close = () => { conn = null; };
+  const c = conn;                 // `if (conn !== null) { conn.send(…) }` is an error here
+  if (c !== null) {
+    close();
+    console.log(c.send("bye"));   // sent bye
+  }
+  ```
 - `const x = node.left` / `const row = grid[i]` refers to the same object as the field or
   element (objects are references, [Memory model](memory.md#values-and-references)); when the
   rest of the block replaces `node.left`, `x` keeps referring to the old object, as in JS.
@@ -294,6 +311,7 @@ the nullable type; `void` cannot be a member.
   - `x == literal` / `x != literal` selects the literal's member.
   - Conditions of `if`, `while`, `&&`, `||`, `!`, ternaries and early exits narrow a local
     until it is reassigned; `switch` narrows each case ([`switch`](control-flow.md#switch)).
+    A local that a closure assigns is not narrowed ([Null](#null)).
 - Printing and template literals show the active member's value. `JSON.stringify` works on
   unions; `JSON.parse` decodes them when the JSON value tells the members apart (discriminated
   unions by their discriminant; see [`velt:json`](../std/json.md)).
