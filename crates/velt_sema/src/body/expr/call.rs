@@ -502,7 +502,10 @@ fn map_add_pattern<'a>(
     (prop.name == "get"
         && args.len() == 1
         && same_simple_expr(unparen(get_receiver), unparen(receiver))
-        && same_simple_expr(unparen(&args[0]), unparen(key)))
+        && same_simple_expr(unparen(&args[0]), unparen(key))
+        && repeatable(key)
+        && repeatable(initial)
+        && repeatable(delta))
     .then_some((initial, delta))
 }
 
@@ -525,5 +528,62 @@ fn same_simple_expr(a: &ast::Expr, b: &ast::Expr) -> bool {
         (ast::ExprKind::Ident(a), ast::ExprKind::Ident(b)) => a.name == b.name,
         (ast::ExprKind::Lit(a), ast::ExprKind::Lit(b)) => a == b,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod map_add_tests {
+    use super::*;
+    use velt_common::FileId;
+
+    #[derive(Default)]
+    struct Calls(Vec<String>);
+
+    impl<'a> velt_syntax::visit::Visit<'a> for Calls {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            let ast::ExprKind::Call { callee, args, .. } = &e.kind else {
+                return;
+            };
+            let ast::ExprKind::Member { object, prop, .. } = &callee.kind else {
+                return;
+            };
+            if prop.name != "set" || args.len() != 2 {
+                return;
+            }
+            self.0
+                .push(if map_add_pattern(object, &args[0], &args[1]).is_some() {
+                    "matched".into()
+                } else {
+                    "missed".into()
+                });
+        }
+    }
+
+    fn matches(source: &str) -> bool {
+        let (module, diagnostics) = velt_syntax::parse_file(FileId(0), source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let mut calls = Calls::default();
+        velt_syntax::visit::walk_module(&module, &mut calls);
+        assert_eq!(calls.0.len(), 1, "expected one set call: {source}");
+        calls.0[0] == "matched"
+    }
+
+    #[test]
+    fn recognizes_only_same_map_and_key_nullish_add_patterns() {
+        assert!(matches("function f() { m.set(k, (m.get(k) ?? 0) + 1); }"));
+        assert!(matches(
+            "function f() { m.set(k, ((m.get(k)) ?? (0)) + (1)); }"
+        ));
+        for source in [
+            "function f() { m.set(k, (m.get(other) ?? 0) + 1); }",
+            "function f() { m.set(k, (other.get(k) ?? 0) + 1); }",
+            "function f() { m.set(k, (m?.get(k) ?? 0) + 1); }",
+            "function f() { m.set(k, (m.get(k) || 0) + 1); }",
+            "function f() { m.set(k, (m.get(key()) ?? 0) + 1); }",
+            "function f() { m.set(k, (m.get(k) ?? initial()) + 1); }",
+            "function f() { m.set(k, (m.get(k) ?? 0) + delta()); }",
+        ] {
+            assert!(!matches(source), "unexpected match: {source}");
+        }
     }
 }

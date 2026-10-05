@@ -46,6 +46,22 @@ fn m1_goldens_with_llvm() {
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
 
+/// Focused M2+ goldens whose native LLVM codegen paths need to execute in release mode.
+#[test]
+fn map_add_upsert_with_llvm() {
+    if !velt_codegen_llvm::available() {
+        eprintln!("note: clang not available; skipping the LLVM goldens");
+        return;
+    }
+    let root = root();
+    runtime_support::build_native_runtime(&root);
+    let work = root.join("target/golden-work-llvm-map-add");
+    std::fs::create_dir_all(&work).expect("work dir");
+    let f = root.join("tests/golden/lang/map_add_upsert.vlt");
+    let failure = run_golden(&f, &work, None);
+    assert!(failure.is_none(), "{}", failure.unwrap_or_default());
+}
+
 /// Goldens that depend on symbols shared between codegen units, forced into three units: a
 /// static's address compared across units (the JSON writer's vtable checks), interface and
 /// override dispatch through vtables, escaping closures with shared captured variables, and a

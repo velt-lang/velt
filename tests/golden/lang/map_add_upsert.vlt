@@ -1,0 +1,36 @@
+// The compiler folds a numeric Map get/add/set into a single upsert, while preserving the
+// behavior for first-time keys, integer and fractional values, and keys built by other paths.
+function main() {
+  const counts = new Map<string, i64>();
+  counts.set("alpha", (counts.get("alpha") ?? 0) + 1);
+  counts.set("alpha", (counts.get("alpha") ?? 0) + 2);
+  const sliceKey = "xxbeta".slice(2);
+  counts.set(sliceKey, (counts.get(sliceKey) ?? 0) + 4);
+  const joined = "gam" + "ma";
+  counts.set(joined, (counts.get(joined) ?? 0) + 8);
+  const fromJson = JSON.parse<Map<string, i64>>("{\"delta\":16}");
+  fromJson.set("delta", (fromJson.get("delta") ?? 0) + 16);
+
+  const cross = new Map<string, i64>();
+  const templateKey = `eps${"ilon"}`;
+  cross.set(templateKey, 1);
+  const upperKey = "zeta".toUpperCase();
+  cross.set(upperKey, 2);
+  cross.set(String.fromCharCode(65), 3);
+
+  const totals = new Map<string, f64>();
+  const fraction = 0.5;
+  totals.set("part", (totals.get("part") ?? 0) + fraction);
+  totals.set("part", (totals.get("part") ?? 0) + 1.25);
+
+  console.log(
+    counts.get("alpha") ?? 0,
+    counts.get("beta") ?? 0,
+    counts.get("gamma") ?? 0,
+    fromJson.get("delta") ?? 0,
+    cross.get("epsilon") ?? 0,
+    cross.get("ZETA") ?? 0,
+    cross.get("A") ?? 0,
+    totals.get("part") ?? 0,
+  );
+}

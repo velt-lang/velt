@@ -48,6 +48,9 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 - The all-zero value is the empty static string. Literals are built by lowering as
   `{ &static_bytes, units << 32 | len, 0 }` (units counted from the literal's text). Sub-ranges of
   static strings may borrow them (same lifetime).
+- For inline strings, payload bytes after `len` through byte 7 are zero. The short-string LLVM
+  hash reads the first word directly, so every producer must preserve this padding; the runtime
+  tests check it across constructors and string operations.
 - Heap buffers come from the Rust global allocator (align 8); `ptr` is the address of the first
   byte, and the count is always the 8 bytes before it:
   - ASCII strings (units == len): `[count: u64 (atomic)][cap bytes]`;
