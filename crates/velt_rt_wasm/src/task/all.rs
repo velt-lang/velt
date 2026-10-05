@@ -46,7 +46,7 @@ impl Join {
             *slot = None;
             if self.reject_early && *self.results.add(i * self.size) != 0 {
                 self.reject_into_first(i);
-                // The other children are dropped with the join (started promises keep running).
+                self.give_up_pending();
                 return Poll::Ready(());
             }
         }
@@ -55,6 +55,20 @@ impl Join {
         }
         self.complete = true;
         Poll::Ready(())
+    }
+
+    /// After a rejection: drop the other finished results and give up the unfinished children in
+    /// array order (started promises keep running, and run now if they are ready: local.rs
+    /// `give_up`). Nothing is left for `Drop` but slot 0, which belongs to the awaiter.
+    unsafe fn give_up_pending(&mut self) {
+        for i in 0..self.children.len() {
+            match (self.children[i].take(), self.result_drop) {
+                (Some(f), _) => super::local::give_up(f),
+                (None, Some(drop)) if !self.keeps(i) => drop(self.results.add(i * self.size)),
+                (None, _) => {}
+            }
+        }
+        self.complete = true;
     }
 
     /// Child `i` rejected: move its result to slot 0, dropping slot 0's own finished result.
