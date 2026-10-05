@@ -68,17 +68,25 @@ fn runtime_libs() -> Vec<PathBuf> {
 
 /// Fails (with what to run) when a runtime library is older than one of its sources.
 fn check_fresh() -> Result<(), String> {
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    for lib in runtime_libs() {
+    check_libs(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+        &runtime_libs(),
+    )
+}
+
+/// [`check_fresh`] for `libs`, whose sources are in `repo`.
+fn check_libs(repo: &Path, libs: &[PathBuf]) -> Result<(), String> {
+    for lib in libs {
+        // Cargo writes the dep-info next to the library: `velt_rt.d`, `libvelt_rt_shared.d`.
         let Ok(dep_info) = std::fs::read_to_string(lib.with_extension("d")) else {
             continue;
         };
-        if let Some(src) = newer_source(&repo, &dep_info, modified(&lib)) {
+        if let Some(src) = newer_source(repo, &dep_info, modified(lib)) {
             return Err(format!(
                 "{} is older than {}: programs would run against a stale runtime. Build it \
                  first: `cargo build --workspace` (or `cargo build -p velt_rt -p velt_rt_shared`)",
                 lib.display(),
-                src.display()
+                src.strip_prefix(repo).unwrap_or(&src).display()
             ));
         }
     }
@@ -159,5 +167,49 @@ mod tests {
                 PathBuf::from("crates/velt_rt/src/b c.rs")
             ]
         );
+    }
+
+    /// A library is stale once one of its sources (in this checkout, whatever checkout the
+    /// dep-info names) is newer, and current again once rebuilt.
+    #[test]
+    fn a_touched_source_makes_the_library_stale() {
+        use std::time::Duration;
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let repo = tmp.path().join("repo");
+        let src = repo.join("crates/velt_rt/src/lib.rs");
+        std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+        std::fs::write(&src, "").unwrap();
+        let out = tmp.path().join("target/debug");
+        std::fs::create_dir_all(&out).unwrap();
+        let lib = out.join(if cfg!(windows) { "velt_rt.lib" } else { "libvelt_rt.a" });
+        std::fs::write(&lib, "").unwrap();
+        std::fs::write(
+            lib.with_extension("d"),
+            format!(
+                "{}: /elsewhere/crates/velt_rt/src/lib.rs /elsewhere/crates/velt_rt/src/gone.rs
+",
+                lib.display()
+            ),
+        )
+        .unwrap();
+        let set = |p: &Path, t: SystemTime| {
+            std::fs::File::options()
+                .write(true)
+                .open(p)
+                .unwrap()
+                .set_modified(t)
+                .unwrap()
+        };
+        let now = SystemTime::now();
+        set(&src, now - Duration::from_secs(60));
+        set(&lib, now - Duration::from_secs(30));
+        let libs = [lib.clone(), out.join("missing.dll")];
+        assert_eq!(check_libs(&repo, &libs), Ok(()));
+        set(&src, now);
+        let err = check_libs(&repo, &libs).expect_err("stale");
+        assert!(err.contains("stale runtime"), "{err}");
+        assert!(err.contains("lib.rs"), "{err}");
+        set(&lib, now + Duration::from_secs(1));
+        assert_eq!(check_libs(&repo, &libs), Ok(()));
     }
 }
