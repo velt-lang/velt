@@ -91,12 +91,15 @@ other inferred one, so `n -= 5` can go below zero. The rules:
   `Math.imul(y, 0x2c1b3c6d)` is the 32-bit wrapping product (one instruction). They compile to
   32-bit integer instructions. Operands of a declared integer type keep their own width
   (`n >>> 3` with `n: i64` is a 64-bit shift), and so does a constant of two literals where an
-  integer type is expected (`const m: u64 = 1 << 40`).
+  integer type is written (`const m: u64 = 1 << 40`; but `let a = 0; a = 1 << 31` stores
+  `-2147483648`, as in JS).
 - `as` converts between number types with Rust semantics: floats truncate and saturate
   (`3.9 as i64` is `3`), integers wrap (`300 as u8` is `44`, `-1 as u8` is `255`).
 - Differences from JS that remain: integers wrap at their width instead of losing precision
-  past 2^53 (outside bitwise operands, an inferred product like `m * m` stays exact); integer `/ 0` and `% 0` panic (float division gives `Infinity`/`NaN` as in JS);
-  `**` on integers is integer power.
+  past 2^53 (an inferred product like `m * m` stays exact outside bitwise operands, and so
+  does a sum of inferred integers inside one: `(x + 1) | 0` with `x = 2 ** 53` is `1`, not
+  `0`); integer `/ 0` and `% 0` panic (float division gives `Infinity`/`NaN` as in JS); `**` on
+  integers is integer power.
 - Floats print like JS: `10`, `1.5`, `0.30000000000000004`, `1e+21`, `NaN`, `Infinity`; `-0`
   prints `0`.
 

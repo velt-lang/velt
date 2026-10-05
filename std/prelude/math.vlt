@@ -210,23 +210,6 @@ export function __intAddToInt32(a: i64, x: f64): i32 {
   return velt_rt_math_to_int32((a as f64) + x);
 }
 
-// The JS value of the product `a * b` inside a bitwise operand (`(a * b + c) | 0`): exact within
-// 2^53, rounded like a double past it.
-export function __mulJs(a: i64, b: i64): i64 {
-  if ((a as i32) as i64 == a && (b as i32) as i64 == b) {
-    return __roundJs(a * b);
-  }
-  return ((a as f64) * (b as f64)) as i64;
-}
-
-// `x` rounded to a double, like the JS sum it stands for (`__mulJs`).
-export function __roundJs(x: i64): i64 {
-  if (x >= -9007199254740992 && x <= 9007199254740992) {
-    return x;
-  }
-  return (x as f64) as i64;
-}
-
 // `xs[i]` with a float `i` (a JS number; the compiler inserts the call, `sema` `numbers.rs`): a
 // whole number indexes as usual. Anything else would read `undefined` in JS; here it panics like
 // an index out of bounds.

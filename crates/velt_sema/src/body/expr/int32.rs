@@ -6,8 +6,9 @@
 //! - an integer operand contributes its low 32 bits (`as i32`), which is ToInt32 of its value;
 //! - a float operand goes through the runtime's ToInt32 (`velt_rt_math_to_int32`), which the
 //!   backends emit inline (one conversion on the common path);
-//! - a product inside an operand (`(y * k) | 0`) is rounded first, the way JS's double multiply
-//!   rounds it past 2^53 (the prelude's `__mulToInt32`, `__mulJs` and `__roundJs`);
+//! - a product inside an operand is rounded the way JS's double multiply rounds it past 2^53:
+//!   `(y * k) | 0` through the prelude's `__mulToInt32`, and an operand with a product among
+//!   other operations (`(a * b - 1) | 0`) is computed as doubles;
 //! - shift counts are taken modulo 32, and the result is an inferred `i64`: sign-extended, or
 //!   zero-extended for `>>>`.
 //!
@@ -19,17 +20,15 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::numbers::IntOrigin;
-use crate::body::{FnCx, Want};
-use crate::hir::{self, BinOp, ExprKind as H, IntTy, TyId, TyKind, UnOp};
+use crate::body::{FnCx, LocalKind, Want};
+use crate::hir::{self, BinOp, ExprKind as H, IntTy, TyId, TyKind, UnOp, UseMode};
 
 /// Prelude functions whose integer result is a JS number (`numbers.rs` `int_origin`).
-pub(crate) const INT32_HELPERS: [&str; 6] = [
+pub(crate) const INT32_HELPERS: [&str; 4] = [
     "velt_rt_math_to_int32",
     "velt_rt_math_clz32",
     "__mulToInt32",
     "__intAddToInt32",
-    "__mulJs",
-    "__roundJs",
 ];
 
 fn bitwise_op(op: ast::BinaryOp) -> Option<BinOp> {
@@ -43,6 +42,19 @@ fn bitwise_op(op: ast::BinaryOp) -> Option<BinOp> {
         B::UShr => BinOp::UShr,
         _ => return None,
     })
+}
+
+/// Is `e` (in parentheses or not) a bitwise operation: `a | b`, `a >>> b`, `~a` and the like?
+fn is_bitwise_expr(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Paren(inner) => is_bitwise_expr(inner),
+        ast::ExprKind::Binary { op, .. } => bitwise_op(*op).is_some(),
+        ast::ExprKind::Unary {
+            op: ast::UnaryOp::BitNot,
+            ..
+        } => true,
+        _ => false,
+    }
 }
 
 impl FnCx<'_, '_> {
@@ -140,6 +152,59 @@ impl FnCx<'_, '_> {
         } else {
             self.int_as(v, lty)
         }
+    }
+
+    /// The expected type of the value assigned to `place`: its type, except that a bitwise
+    /// expression assigned to a JS number held as an integer (`let a = 0; a = 1 << 31`) is
+    /// checked without one, so two literals take JS's 32-bit semantics rather than a typed
+    /// constant's (an integer type written in the source keeps them).
+    pub(super) fn value_hint(&self, place: &hir::Expr, value: &ast::Expr) -> Option<TyId> {
+        let inferred_int = self.cx.ty.is_int(place.ty) && self.js_number(place);
+        (!(inferred_int && is_bitwise_expr(value))).then_some(place.ty)
+    }
+
+    /// Binds each index of `place` that is not a literal (`xs[next()]`) to a temporary (appended
+    /// to `stmts` as `let`s), so that a read-modify-write of the place evaluates it once.
+    pub(super) fn hoist_indices(&mut self, place: &mut hir::Expr, stmts: &mut Vec<hir::Stmt>) {
+        match &mut place.kind {
+            H::Field { base, .. } => self.hoist_indices(base, stmts),
+            H::Index { base, index, .. } => {
+                self.hoist_indices(base, stmts);
+                if matches!(index.kind, H::Lit(_)) {
+                    return;
+                }
+                let (ty, span) = (index.ty, index.span);
+                let tmp = self.new_local("<index>", ty, false, span, LocalKind::Temp);
+                let init = std::mem::replace(
+                    &mut **index,
+                    self.mk(H::Local(tmp, UseMode::Copy), ty, span),
+                );
+                let kind = hir::StmtKind::Let {
+                    local: tmp,
+                    init: Some(init),
+                };
+                stmts.push(hir::Stmt { kind, span });
+            }
+            _ => {}
+        }
+    }
+
+    /// `e` after the statements `stmts` (as a block when there are any).
+    pub(super) fn with_temps(&mut self, mut stmts: Vec<hir::Stmt>, e: hir::Expr) -> hir::Expr {
+        if stmts.is_empty() {
+            return e;
+        }
+        let (ty, span) = (e.ty, e.span);
+        stmts.push(hir::Stmt {
+            kind: hir::StmtKind::Expr(e),
+            span,
+        });
+        let block = hir::Block {
+            stmts,
+            value: None,
+            span,
+        };
+        self.mk(H::Block(block), ty, span)
     }
 
     /// `Math.imul(a, b)` and `Math.clz32(x)` on the prelude's `Math`: one 32-bit multiply or
@@ -251,24 +316,42 @@ impl FnCx<'_, '_> {
             } else {
                 self.mk(H::Cast(Box::new(h)), f64_, span)
             };
-            return match self.helper_call("velt_rt_math_to_int32", vec![x], i32_, span) {
-                Some(call) => call,
-                None => self.error_expr(span),
-            };
+            return self.f64_to_int32(x);
         }
         if h.ty == i32_ {
             return h;
         }
         if let Some(p) = self.js_product(&h) {
             let (a, b) = self.split_binary(h);
-            let (a, b) = (self.js_value(a), self.js_value(b));
-            if let Some(call) = self.helper_call("__mulToInt32", vec![a, b], i32_, p) {
-                return call;
+            if !self.has_js_product(&a) && !self.has_js_product(&b) {
+                return match self.helper_call("__mulToInt32", vec![a, b], i32_, p) {
+                    Some(call) => call,
+                    None => self.error_expr(p),
+                };
             }
-            return self.error_expr(p);
+            let kind = H::Binary {
+                op: BinOp::Mul,
+                lhs: Box::new(a),
+                rhs: Box::new(b),
+            };
+            let h = self.mk(kind, self.cx.ty.i64, p);
+            let x = self.js_f64(h);
+            return self.f64_to_int32(x);
         }
-        let v = self.js_value(h);
-        self.int_as(v, i32_)
+        if self.has_js_product(&h) {
+            let x = self.js_f64(h);
+            return self.f64_to_int32(x);
+        }
+        self.int_as(h, i32_)
+    }
+
+    /// ToInt32 of the float `x` (`velt_rt_math_to_int32`).
+    fn f64_to_int32(&mut self, x: hir::Expr) -> hir::Expr {
+        let (i32_, span) = (self.cx.ty.i32, x.span);
+        match self.helper_call("velt_rt_math_to_int32", vec![x], i32_, span) {
+            Some(call) => call,
+            None => self.error_expr(span),
+        }
     }
 
     /// Is `h` the sum or difference of an inferred integer (converted to `f64` next to a float,
@@ -317,7 +400,23 @@ impl FnCx<'_, '_> {
                 sp,
             )
         };
-        let a = self.js_value(*a);
+        if self.has_js_product(&a) {
+            let a = self.js_f64(*a);
+            let (lhs, rhs) = if int_left {
+                (a, float_side)
+            } else {
+                (float_side, a)
+            };
+            let op = if sub { BinOp::Sub } else { BinOp::Add };
+            let kind = H::Binary {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
+            let x = self.mk(kind, f64_, span);
+            return self.f64_to_int32(x);
+        }
+        let a = *a;
         let (a, x) = match (sub, int_left) {
             (true, true) => (a, neg(self, float_side, f64_)),
             (true, false) => (neg(self, a, i64_), float_side),
@@ -359,44 +458,27 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// The inferred integer `h` with its products (and the sums over them) rounded like JS's
-    /// doubles: exact while the values stay within 2^53, as before, and JS's value past it.
-    fn js_value(&mut self, h: hir::Expr) -> hir::Expr {
+    /// The JS value of the inferred-integer arithmetic `h` as a double: its sums, differences
+    /// and products computed as doubles, the way JS rounds them (and never saturating), from
+    /// its other parts converted.
+    fn js_f64(&mut self, h: hir::Expr) -> hir::Expr {
+        let (f64_, span) = (self.cx.ty.f64, h.span);
         if !self.has_js_product(&h) {
-            return h;
+            return self.mk(H::Cast(Box::new(h)), f64_, span);
         }
-        let (i64_, span) = (self.cx.ty.i64, h.span);
-        if matches!(&h.kind, H::Unary { .. }) {
-            let H::Unary { op, expr } = h.kind else {
-                return h;
-            };
-            let v = self.js_value(*expr);
-            let kind = H::Unary {
+        let kind = match h.kind {
+            H::Unary { op, expr } => H::Unary {
                 op,
-                expr: Box::new(v),
-            };
-            return self.mk(kind, i64_, span);
-        }
-        let op = match &h.kind {
-            H::Binary { op, .. } => *op,
-            _ => return h,
-        };
-        let (a, b) = self.split_binary(h);
-        let (a, b) = (self.js_value(a), self.js_value(b));
-        let (helper, args) = if op == BinOp::Mul {
-            ("__mulJs", vec![a, b])
-        } else {
-            let kind = H::Binary {
+                expr: Box::new(self.js_f64(*expr)),
+            },
+            H::Binary { op, lhs, rhs } => H::Binary {
                 op,
-                lhs: Box::new(a),
-                rhs: Box::new(b),
-            };
-            ("__roundJs", vec![self.mk(kind, i64_, span)])
+                lhs: Box::new(self.js_f64(*lhs)),
+                rhs: Box::new(self.js_f64(*rhs)),
+            },
+            _ => panic!("ICE: js_f64 on a leaf with a product"),
         };
-        match self.helper_call(helper, args, i64_, span) {
-            Some(call) => call,
-            None => self.error_expr(span),
-        }
+        self.mk(kind, f64_, span)
     }
 
     /// The operands of the binary expression `h` (an ICE otherwise; callers matched it).

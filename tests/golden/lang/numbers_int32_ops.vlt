@@ -97,7 +97,65 @@ function hashes() {
   console.log(s2, acc2);
 }
 
+// `place op= v` evaluates the place (and its index) once, before `v`.
+function placesOnce() {
+  const xs: number[] = [4.5, 8, 16];
+  let i = 0;
+  const next = () => {
+    i++;
+    return i - 1;
+  };
+  xs[next()] |= 1;
+  console.log(i, xs[0], xs[1]);
+  xs[next()] ^= 3;
+  console.log(i, xs[1]);
+  const ys: number[] = [1, 2, 3];
+  let j = 0;
+  ys[j++] <<= 4;
+  ys[j++] += 1 << 31;
+  console.log(j, ys[0], ys[1]);
+}
+
+class Bits {
+  n = 0;
+}
+
+// Two literals assigned to a number held as an integer still take the 32-bit operators.
+function literalAssignments() {
+  let a = 0;
+  a = 1 << 31;
+  console.log(a);
+  a = 1 << 40;
+  console.log(a);
+  let u = 0;
+  u = 0xffffffff | 0;
+  console.log(u);
+  u = ~0xffffffff;
+  console.log(u);
+  u = 0xffffffff >>> 0;
+  console.log(u);
+  u += 1 << 31;
+  console.log(u);
+  const b = new Bits();
+  b.n = 1 << 31;
+  console.log(b.n);
+  b.n = ~0xffffffff;
+  console.log(b.n);
+}
+
+// Products of factors past 32 bits among other operations round like doubles (no saturation).
+function nestedProducts() {
+  const c = 3037000500;
+  console.log((c * c - 1) | 0, (c * c) | 0);
+  console.log((c * c + c) | 0, -(c * c) | 0, (c * 3 * c) | 0);
+  const d = 123456789;
+  console.log((d * d + 7) | 0, (d * 2 * d) | 0, (d * d - 0.5) | 0);
+}
+
 floats();
 integers();
 products();
 hashes();
+placesOnce();
+literalAssignments();
+nestedProducts();

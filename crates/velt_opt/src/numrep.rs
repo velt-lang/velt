@@ -125,6 +125,17 @@ fn candidates(func: &Function) -> Vec<bool> {
 }
 
 fn narrow(func: &mut Function) -> bool {
+    let keep = int32_locals(func);
+    if !keep.iter().any(|&k| k) {
+        return false;
+    }
+    let map = narrowed_locals(func, &keep);
+    rewrite_narrowed(func, &map);
+    true
+}
+
+/// The candidates (`candidates`) whose every definition is int32-valued.
+fn int32_locals(func: &Function) -> Vec<bool> {
     let mut n = Narrowing {
         func,
         keep: candidates(func),
@@ -144,10 +155,11 @@ fn narrow(func: &mut Function) -> bool {
             break;
         }
     }
-    let keep = n.keep;
-    if !keep.iter().any(|&k| k) {
-        return false;
-    }
+    n.keep
+}
+
+/// A new `i32` local for each kept local, by the old local's index.
+fn narrowed_locals(func: &mut Function, keep: &[bool]) -> Vec<Option<Local>> {
     let mut map: Vec<Option<Local>> = vec![None; func.locals.len()];
     for (i, &k) in keep.iter().enumerate() {
         if k {
@@ -156,6 +168,11 @@ fn narrow(func: &mut Function) -> bool {
             func.locals.push(LocalDecl { ty: Ty::I32, name });
         }
     }
+    map
+}
+
+/// Definitions of the narrowed locals (`map`) store `i32` values; reads convert them back.
+fn rewrite_narrowed(func: &mut Function, map: &[Option<Local>]) {
     let tys: Vec<Ty> = func.locals.iter().map(|l| l.ty).collect();
     let mut temps: Vec<Ty> = vec![];
     let base = func.locals.len();
@@ -163,14 +180,11 @@ fn narrow(func: &mut Function) -> bool {
         rewrite_stmts(func, bi, |s, out| match s {
             Stmt::Assign(p, rv) if p.proj.is_empty() && map[p.local.0 as usize].is_some() => {
                 let to = map[p.local.0 as usize].unwrap_or(p.local);
-                out.push(Stmt::Assign(
-                    Place::local(to),
-                    narrowed_def(&rv, &map, &tys),
-                ));
+                out.push(Stmt::Assign(Place::local(to), narrowed_def(&rv, map, &tys)));
             }
             mut s => {
                 stmt_operands_mut(&mut s, &mut |op| {
-                    widen_read(op, &map, &tys, base, &mut temps, out)
+                    widen_read(op, map, &tys, base, &mut temps, out)
                 });
                 out.push(s);
             }
@@ -178,7 +192,7 @@ fn narrow(func: &mut Function) -> bool {
         let mut term = std::mem::replace(&mut func.blocks[bi].term, Terminator::Unreachable);
         let mut casts = vec![];
         term_operands_mut(&mut term, &mut |op| {
-            widen_read(op, &map, &tys, base, &mut temps, &mut casts)
+            widen_read(op, map, &tys, base, &mut temps, &mut casts)
         });
         for c in casts {
             push_stmt(func, bi, c, None);
@@ -187,7 +201,6 @@ fn narrow(func: &mut Function) -> bool {
     }
     func.locals
         .extend(temps.into_iter().map(|ty| LocalDecl { ty, name: None }));
-    true
 }
 
 /// The `i32` rvalue of a narrowed local's definition (`Narrowing::def_source` held for it).
@@ -344,69 +357,68 @@ fn converted_sums(externs: &[ExternFn], func: &mut Function) -> bool {
             continue;
         };
         let c = converted_operand(func, conv);
-        let Terminator::Call {
-            args, dest, next, ..
-        } = &func.blocks[bi].term
-        else {
-            continue;
-        };
-        let (a, dest, next) = (args[0].clone(), dest.clone(), *next);
-        let new_local = |func: &mut Function, ty: Ty| {
-            func.locals.push(LocalDecl { ty, name: None });
-            Local(func.locals.len() as u32 - 1)
-        };
-        let (shifted, ok, c32) = (
-            new_local(func, Ty::I64),
-            new_local(func, Ty::Bool),
-            new_local(func, Ty::I32),
-        );
-        let call = std::mem::replace(&mut func.blocks[bi].term, Terminator::Unreachable);
-        let mut fast_stmts = vec![Stmt::Assign(
-            Place::local(c32),
-            Rvalue::Cast(c.clone(), Ty::I32),
-        )];
-        if let Some(d) = dest {
-            fast_stmts.push(Stmt::Assign(
-                d,
-                Rvalue::Binary(BinOp::Add, a, Operand::Copy(Place::local(c32))),
-            ));
-        }
-        let fast = add_block(func, fast_stmts, Terminator::Goto(next));
-        let slow = add_block(func, vec![], call);
-        // |c| <= 2^52  ⇔  (c + 2^52) as u64 <= 2^53.
-        let shift = Rvalue::Binary(BinOp::Add, c, Operand::Const(Const::Int(1 << 52), Ty::I64));
-        push_stmt(func, bi, Stmt::Assign(Place::local(shifted), shift), None);
-        let u = new_local(func, Ty::U64);
-        push_stmt(
-            func,
-            bi,
-            Stmt::Assign(
-                Place::local(u),
-                Rvalue::Cast(Operand::Copy(Place::local(shifted)), Ty::U64),
-            ),
-            None,
-        );
-        push_stmt(
-            func,
-            bi,
-            Stmt::Assign(
-                Place::local(ok),
-                Rvalue::Binary(
-                    BinOp::Le,
-                    Operand::Copy(Place::local(u)),
-                    Operand::Const(Const::Int(1 << 53), Ty::U64),
-                ),
-            ),
-            None,
-        );
-        func.blocks[bi].term = Terminator::Branch {
-            cond: Operand::Copy(Place::local(ok)),
-            then: fast,
-            els: slow,
-        };
-        changed = true;
+        changed |= split_converted_sum(func, bi, c);
     }
     changed
+}
+
+fn new_temp(func: &mut Function, ty: Ty) -> Local {
+    func.locals.push(LocalDecl { ty, name: None });
+    Local(func.locals.len() as u32 - 1)
+}
+
+/// Block `bi` ends in the call `velt_rt_math_add_int32(a, x)` with `x` converted from `c`:
+/// branch on |c| <= 2^52 to a block with the integer sum, and to one with the call.
+fn split_converted_sum(func: &mut Function, bi: usize, c: Operand) -> bool {
+    let Terminator::Call {
+        args, dest, next, ..
+    } = &func.blocks[bi].term
+    else {
+        return false;
+    };
+    let (a, dest, next) = (args[0].clone(), dest.clone(), *next);
+    let c32 = new_temp(func, Ty::I32);
+    let call = std::mem::replace(&mut func.blocks[bi].term, Terminator::Unreachable);
+    let mut fast_stmts = vec![Stmt::Assign(
+        Place::local(c32),
+        Rvalue::Cast(c.clone(), Ty::I32),
+    )];
+    if let Some(d) = dest {
+        fast_stmts.push(Stmt::Assign(
+            d,
+            Rvalue::Binary(BinOp::Add, a, Operand::Copy(Place::local(c32))),
+        ));
+    }
+    let fast = add_block(func, fast_stmts, Terminator::Goto(next));
+    let slow = add_block(func, vec![], call);
+    let ok = push_within_2_52(func, bi, c);
+    func.blocks[bi].term = Terminator::Branch {
+        cond: Operand::Copy(Place::local(ok)),
+        then: fast,
+        els: slow,
+    };
+    true
+}
+
+/// Appends to block `bi` the test |c| <= 2^52 of the `i64` `c`, as
+/// `(c + 2^52) as u64 <= 2^53`; returns the `bool` local holding it.
+fn push_within_2_52(func: &mut Function, bi: usize, c: Operand) -> Local {
+    let (shifted, u, ok) = (
+        new_temp(func, Ty::I64),
+        new_temp(func, Ty::U64),
+        new_temp(func, Ty::Bool),
+    );
+    let shift = Rvalue::Binary(BinOp::Add, c, Operand::Const(Const::Int(1 << 52), Ty::I64));
+    let to_u64 = Rvalue::Cast(Operand::Copy(Place::local(shifted)), Ty::U64);
+    let test = Rvalue::Binary(
+        BinOp::Le,
+        Operand::Copy(Place::local(u)),
+        Operand::Const(Const::Int(1 << 53), Ty::U64),
+    );
+    for (l, rv) in [(shifted, shift), (u, to_u64), (ok, test)] {
+        push_stmt(func, bi, Stmt::Assign(Place::local(l), rv), None);
+    }
+    ok
 }
 
 /// A new block (without source locations) at the end of `func`.
