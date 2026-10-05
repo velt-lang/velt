@@ -87,7 +87,8 @@ other inferred one, so `n -= 5` can go below zero. The rules:
   the signed 32-bit range; `NaN` and ±Infinity give 0) and `>>>` takes ToUint32; shift counts
   are taken modulo 32, and the result is an inferred integer: `(a / 13) | 0` truncates,
   `-1 >>> 0` is `4294967295`, `1 << 32` is `1`. A product inside such an operand rounds like
-  JS's double multiply once it is past 2^53, so `(y * 0x2c1b3c6d) | 0` is Node's value;
+  JS's double multiply once it is past 2^53, so `(y * 0x2c1b3c6d) | 0` is Node's value, and
+  a sum rounds like JS's double add (`(x + 1) | 0` with `x = 2 ** 53` is `0`);
   `Math.imul(y, 0x2c1b3c6d)` is the 32-bit wrapping product (one instruction). They compile to
   32-bit integer instructions. Operands of a declared integer type keep their own width
   (`n >>> 3` with `n: i64` is a 64-bit shift), and so does a constant of two literals where an
@@ -96,9 +97,8 @@ other inferred one, so `n -= 5` can go below zero. The rules:
 - `as` converts between number types with Rust semantics: floats truncate and saturate
   (`3.9 as i64` is `3`), integers wrap (`300 as u8` is `44`, `-1 as u8` is `255`).
 - Differences from JS that remain: integers wrap at their width instead of losing precision
-  past 2^53 (an inferred product like `m * m` stays exact outside bitwise operands, and so
-  does a sum of inferred integers inside one: `(x + 1) | 0` with `x = 2 ** 53` is `1`, not
-  `0`); integer `/ 0` and `% 0` panic (float division gives `Infinity`/`NaN` as in JS); `**` on
+  past 2^53 (an inferred product like `m * m` stays exact outside bitwise operands); integer
+  `/ 0` and `% 0` panic (float division gives `Infinity`/`NaN` as in JS); `**` on
   integers is integer power.
 - Floats print like JS: `10`, `1.5`, `0.30000000000000004`, `1e+21`, `NaN`, `Infinity`; `-0`
   prints `0`.

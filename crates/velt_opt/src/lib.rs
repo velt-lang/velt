@@ -20,9 +20,10 @@
 //! - `noalias`: once the rounds are done, scalar fields behind `noalias` params (modified arrays
 //!   and structs) are kept in locals (loaded once, stored back around calls that receive the
 //!   param), followed by one scalar cleanup round.
-//! - `numrep`: after the rounds, `f64`/`i64` locals that only ever hold 32-bit integers (the
-//!   results of `x | 0` and friends) become `i32` locals, and ToInt32 of a sum of two of them
-//!   becomes a 32-bit add (design #525, step 1).
+//! - `numrep`: after the rounds (and in debug builds), `f64` locals whose values are provably
+//!   whole numbers within ±2^53 (intervals, integrality, NaN and `-0` facts, branch refinement,
+//!   widening) become `i32`/`i64` locals computed with integer operations, and `i64` locals that
+//!   only hold 32-bit values become `i32` (design #525, steps 1 and 2).
 //! - `divisions`: after the rounds, signed divisions / remainders by constants whose dividend
 //!   is provably non-negative or a multiple of the divisor become shifts, masks or unsigned ops.
 //! - `frame_slots`: at the same point, scalar fields of an async frame that a poll function
@@ -57,7 +58,20 @@ mod sroa;
 mod timings;
 mod visit;
 
+pub use numrep::Unnarrowed;
 pub use timings::PassTimings;
+
+/// The `number` variables inside loops of the (optimized) `program` that stay doubles, with
+/// why, per function symbol (`velt build --report numbers`).
+pub fn number_report(program: &vir::Program) -> Vec<(String, Vec<Unnarrowed>)> {
+    let env = numrep::Env::of(&program.externs, &program.funcs);
+    program
+        .funcs
+        .iter()
+        .map(|f| (f.symbol.clone(), numrep::unnarrowed(&env, f)))
+        .filter(|(_, u)| !u.is_empty())
+        .collect()
+}
 
 #[cfg(any(test, feature = "interp"))]
 pub mod interp;
@@ -69,7 +83,8 @@ mod testkit;
 /// How hard to optimize.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OptLevel {
-    /// Debug builds: only cheap cleanups (CFG simplification, unused function removal).
+    /// Debug builds: only cheap passes (CFG simplification, the int32 helpers inlined,
+    /// `numrep`, unused function removal).
     None,
     /// Release builds: the full pass pipeline.
     Speed,
@@ -88,8 +103,17 @@ pub fn optimize(program: &mut vir::Program, level: OptLevel) {
 pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassTimings) {
     match level {
         OptLevel::None => {
+            let helpers = numrep::int32_helpers(&program.funcs);
+            if helpers.contains(&true) {
+                t.time("inline", || inline::run_helpers(program, &helpers));
+            }
+            let env = numrep::Env::of(&program.externs, &program.funcs);
             for func in &mut program.funcs {
                 t.time("simplify_cfg", || simplify_cfg::run(func));
+                if t.time("numrep", || numrep::run(&env, func)) {
+                    t.time("copyprop", || copyprop::run(func));
+                    t.time("dce", || dce::run(&program.aggs, func));
+                }
             }
         }
         OptLevel::Speed => {
@@ -101,8 +125,9 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                     break;
                 }
             }
+            let env = numrep::Env::of(&program.externs, &program.funcs);
             for func in &mut program.funcs {
-                if t.time("numrep", || numrep::run(&program.externs, func)) {
+                if t.time("numrep", || numrep::run(&env, func)) {
                     t.time("copyprop", || copyprop::run(func));
                     t.time("dce", || dce::run(&program.aggs, func));
                 }
