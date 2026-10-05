@@ -139,9 +139,18 @@ export class StringIterator implements IterableIterator<string>, IteratorObject<
     if (this.pos >= (this.text.length as i64)) {
       return { done: true };
     }
-    const c = this.text.charAt(this.pos);
-    this.pos += c.length as i64;
-    return { value: c, done: false };
+    // A high surrogate followed by a low one is one character.
+    let n: i64 = 1;
+    const c = this.text.charCodeAt(this.pos);
+    if (c >= 0xd800 && c < 0xdc00) {
+      const d = this.text.charCodeAt(this.pos + 1);
+      if (d >= 0xdc00 && d < 0xe000) {
+        n = 2;
+      }
+    }
+    const value = this.text.slice(this.pos, this.pos + n);
+    this.pos += n;
+    return { value: value, done: false };
   }
 
   [Symbol.iterator](): Iterator<string> {

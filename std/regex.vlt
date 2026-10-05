@@ -2,10 +2,11 @@
 // (rt_abi_async.md §14). Matching is linear-time (no catastrophic backtracking); in exchange
 // lookaround and backreferences are not supported (compiling them throws `RegExpError`).
 //
-// Offsets are byte offsets, like every Velt string index (`slice`, `indexOf`). `\d \w \b` are
-// ASCII-only as in JS; `i m s` flags work as in JS; `g` makes `replace` replace every match and
-// `y` (sticky) makes `test`/`exec` match only at `from`. There is no hidden `lastIndex` state:
-// `exec(s, from)` takes the start offset explicitly, and `matchAll` returns every match.
+// Offsets are UTF-16 code units, like every Velt string position (`slice`, `indexOf`).
+// `\d \w \b` are ASCII-only as in JS; `i m s` flags work as in JS; `g` makes `replace` replace
+// every match and `y` (sticky) makes `test`/`exec` match only at `from`. There is no hidden
+// `lastIndex` state: `exec(s, from)` takes the start offset explicitly, and `matchAll` returns
+// every match.
 //
 // A `RegExp` owns a runtime handle (released by `[Symbol.dispose]()`); the compiled program is
 // immutable and can be used from any task.
@@ -33,9 +34,9 @@ export class RegExpError extends Error {
 
 // One match: the matched text, where it is, and its capture groups.
 export class RegExpMatch {
-  // Byte offset of the match in the subject.
+  // Position of the match in the subject (code units).
   index: usize;
-  // Byte offset just past the match.
+  // Position just past the match.
   end: usize;
   // The matched text (JS `m[0]`).
   value: string;
@@ -107,7 +108,7 @@ export class RegExp {
     this.names = velt_rt_regex_group_names(this.handle);
   }
 
-  // Whether `s` matches (anywhere at or after byte `from`; exactly at `from` when sticky).
+  // Whether `s` matches (anywhere at or after position `from`; exactly at `from` when sticky).
   test(s: string, from: usize = 0): bool {
     if (this.sticky) {
       return this.exec(s, from) != null;
@@ -115,7 +116,7 @@ export class RegExp {
     return velt_rt_regex_test(this.handle, s, from as u64);
   }
 
-  // The first match at or after byte `from` (exactly at `from` when sticky), or null.
+  // The first match at or after position `from` (exactly at `from` when sticky), or null.
   exec(s: string, from: usize = 0): RegExpMatch | null {
     let offsets: i64[] = [];
     if (!velt_rt_regex_exec(this.handle, s, from as u64, offsets)) {

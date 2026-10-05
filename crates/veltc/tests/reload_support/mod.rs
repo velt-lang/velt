@@ -19,24 +19,12 @@ mod job;
 /// first `--exe` build took over 30 s there.
 const TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Build the runtime staticlib `velt --exe` links (as the golden harness does), in this test's
-/// profile: `velt` looks for it next to itself.
+/// Build the runtime libraries `velt` links, in this test's profile, and check they are current
+/// (`tests/runtime_support/mod.rs`).
 pub fn build_runtime() {
-    // Already built by the gate (see `tests/runtime_support/mod.rs`).
-    if cfg!(debug_assertions) && std::env::var_os("VELT_RT_PREBUILT").is_some_and(|v| v == "1") {
-        return;
-    }
-    let profile: &[&str] = if cfg!(debug_assertions) {
-        &[]
-    } else {
-        &["--release"]
-    };
-    let status = crate::no_window::command(env!("CARGO"))
-        .args(["build", "-q", "-p", "velt_rt"])
-        .args(profile)
-        .status()
-        .expect("run cargo");
-    assert!(status.success(), "cargo build -p velt_rt failed");
+    crate::runtime_support::build_native_runtime(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+    );
 }
 
 /// Captured lines of both output streams, with the time each arrived.

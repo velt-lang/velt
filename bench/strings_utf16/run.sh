@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Non-ASCII string benchmark (issue #377): builds every bench/strings_utf16/*.vlt with Velt's two
 # release backends, runs the Node equivalent, and prints a Markdown table of the best wall-clock
-# time (ms) over RUNS runs. "output matches Node" is informational: until #377 phase 2 gives Velt
-# strings JavaScript's UTF-16 semantics, lengths, indexes and sort order differ on non-ASCII text.
+# time (ms) over RUNS runs. "output matches Node" must say yes for every part since #377 phase 2b
+# gave Velt strings JavaScript's UTF-16 semantics.
 #
 #   bench/strings_utf16/run.sh [runs] [only-part]
 #

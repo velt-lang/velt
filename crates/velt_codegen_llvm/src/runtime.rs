@@ -30,6 +30,10 @@ pub(crate) enum Effects {
     Any,
     /// Reads memory, writes none (string comparison, hashing).
     ReadOnly,
+    /// Reads memory and writes only state of its own that compiled code never reads: a string's
+    /// position-translation table and lone-surrogate count, built on first use (#377 phase 2b:
+    /// `charCodeAt` on non-ASCII text, `indexOf`).
+    ReadCaching,
     /// Touches no memory (arithmetic).
     None,
 }
@@ -44,12 +48,12 @@ pub(crate) fn effects(symbol: &str) -> Effects {
         "velt_rt_str_cmp"
         | "velt_rt_str_eq"
         | "velt_rt_str_hash"
-        | "velt_rt_str_char_code_at"
-        | "velt_rt_str_index_of"
-        | "velt_rt_str_last_index_of"
-        | "velt_rt_str_includes"
         | "velt_rt_str_starts_with"
         | "velt_rt_str_ends_with" => Effects::ReadOnly,
+        "velt_rt_str_char_code_at"
+        | "velt_rt_str_index_of"
+        | "velt_rt_str_last_index_of"
+        | "velt_rt_str_includes" => Effects::ReadCaching,
         _ => Effects::Any,
     }
 }
@@ -135,6 +139,7 @@ mod tests {
         assert_eq!(math_intrinsic("velt_rt_math_round"), None);
         assert_eq!(effects("velt_rt_math_round"), Effects::None);
         assert_eq!(effects("velt_rt_str_cmp"), Effects::ReadOnly);
+        assert_eq!(effects("velt_rt_str_index_of"), Effects::ReadCaching);
         assert_eq!(effects("velt_rt_write_i64"), Effects::Any);
         assert_eq!(
             Allocator::of("velt_rt_alloc", &[Ty::U64, Ty::U64], Ty::Ptr),

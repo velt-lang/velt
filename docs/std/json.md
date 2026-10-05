@@ -98,12 +98,15 @@ console.log(text, m.cents); // {"cents":250} 250
   union discriminant with two different values always fails (`{"kind":"leave",...,
   "kind":"join"}` with `expected "leave" at $.kind`: the first occurrence picks the member,
   whose literal the second one does not match).
-- String escapes `\uXXXX` decode surrogate pairs to one character. A lone surrogate (a high
-  one without a low one after it, or a low one alone) cannot be stored in UTF-8, so it becomes
-  U+FFFD (`�`), in `JSON.parse` and `JSON.parseValue` alike; JavaScript keeps it as a lone
-  UTF-16 unit.
+- String escapes `\uXXXX` decode to UTF-16 code units, as in JavaScript: an escaped pair is one
+  character, and a lone surrogate (a high one without a low one after it, or a low one alone)
+  stays a lone surrogate, in `JSON.parse` and `JSON.parseValue` alike
+  (`JSON.parse<string>('"\\ud800"').length` is 1). `JSON.stringify` writes it back as `\ud800`;
+  printing or writing the string elsewhere gives U+FFFD (`�`).
 - Syntax errors read the same from `JSON.parse<T>` and `JSON.parseValue`:
-  `invalid JSON at $.items[2]: unexpected character '}' (byte 41)`.
+  `invalid JSON at $.items[2]: unexpected character '}' (byte 41)`. The offset counts bytes of
+  the input's UTF-8, which is where an editor or `Buffer`-level tool finds it (not a string
+  position: for ASCII input the two agree).
   In every message, a path of more than 20 segments keeps its first and last 10 with `…` between
   (`expected string at $.kids[0].kids[0].kids[0].kids[0].kids[0]…[0].kids[0].kids[0].kids[0].kids[0].name`);
   the byte offset still points at the exact place.

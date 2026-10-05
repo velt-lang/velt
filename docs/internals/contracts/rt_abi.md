@@ -21,7 +21,7 @@ package with a native library:
 | `velt_rt_native_api` | `() -> const VeltRtApi*` | the function table handed to `velt_native_init_<pkg>` |
 | `velt_rt_native_check` | `(int32_t rc, const VeltStr* package)` | `rc != 0`: prints that the package's native library failed to start, exits 1 |
 
-## Strings [M1; representation: semantics stage 1; UTF-16 counts: #377 phase 1; boundaries: phase 2a]
+## Strings [M1; representation: semantics stage 1; UTF-16 counts: #377 phase 1; boundaries: phase 2a; code-unit semantics: phase 2b]
 Strings are immutable values (docs/internals/design/semantics.md): copying one never copies its bytes.
 ```c
 typedef struct { uint64_t w0, w1, w2; } VeltStr;   // size 24, align 8 (vir::STR_AGG); little-endian
@@ -30,7 +30,7 @@ The bytes are **canonical WTF-8**: UTF-8 that may also hold a lone surrogate as 
 (`ED A0..BF xx`), where a surrogate pair is always stored as its 4-byte code point (so byte
 equality is code-unit equality). Every value also carries its **UTF-16 length** (code units,
 [design/strings.md](../design/strings.md)); a string is ASCII exactly when its unit count equals
-its byte count. `length` and every position still count bytes until #377 phase 2b.
+its byte count. `length` and every position count code units (#377 phase 2b).
 
 Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 
@@ -77,12 +77,14 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   low one starting the appended text into the pair's 4-byte code point (only when both sides have
   lone surrogates: units are unchanged, bytes and lone count shrink by 2). Code outside the
   runtime's string module never writes `w1`/`w2`.
-- Generated code reads the length inline, branch-free:
-  `byte23 ≥ 0x80 ? byte23 & 0x1f : (int64_t)(w1 << 32) >> 32` (the low half sign-extended,
-  exact because strings are below 2 GiB; a zero-extending read lets LLVM vectorize index loops
-  badly) — bytes until #377 phase 2, then units (`byte23 & 0x40 ? byte22 : byte23 & 0x1f` and
-  `w1 >> 32`) — and passes strings to the runtime by
-  pointer for everything else. Test a form through byte 23: inline appends write single bytes
+- Generated code reads the length (code units) inline:
+  `byte23 ≥ 0x80 ? (byte23 & 0x40 ? byte22 : byte23 & 0x1f) : (int64_t)w1 >> 32` (the high
+  half by an arithmetic shift, exact because strings are below 2 GiB; a zero-extending read
+  lets LLVM vectorize index loops badly). `charCodeAt(i)` tests the form: an inline string with
+  bit 0x40 of byte 23 clear, or a static/heap string whose halves of `w1` are equal, is ASCII,
+  and the byte at `i` is loaded inline (bounds-checked against the length); any other string
+  calls `velt_rt_str_char_code_at`. Strings are passed to the runtime by pointer for everything
+  else. Test a form through byte 23: inline appends write single bytes
   into `w2`, and reading `w2` as a word right after would stall on store forwarding.
 - Invariants, checked by a **debug** runtime on every append (each appended piece is canonical
   WTF-8 with the unit and lone counts it is given, and the seam is canonical: O(piece), never a
@@ -109,15 +111,29 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   HTTP, stdin, child output, databases, `u8[]` decoding, native `str_new`, OS arguments,
   environment, paths and directory entries) is decoded as UTF-8, where a surrogate's encoding
   (`ED A0..BF xx`) is invalid: strict decoding refuses it, lossy decoding replaces it (WHATWG:
-  one U+FFFD per invalid byte), and nothing from outside ever makes a lone surrogate.
+  one U+FFFD per maximal invalid subsequence, so a surrogate's three bytes give three U+FFFD),
+  and nothing from outside ever makes a lone surrogate. On Windows the OS strings (arguments,
+  environment, paths, directory entries) are UTF-16: they decode with one U+FFFD per unpaired
+  surrogate.
 - **Breadcrumbs** (`crumbs`, #377): for translating a code-unit index to a byte offset and back
   in a non-ASCII heap string of more than 64 units, the runtime builds on first use a table of
   `u32` byte offsets, one per 64th unit (top bit: that unit is the low half of the 4-byte
   sequence at the offset), publishes it in the header with a compare-and-swap and frees it with
-  the buffer. A unique buffer that is appended to keeps its table (the prefix never changes) and
-  extends it when needed; a shared one publishes a longer copy and keeps the old table alive
-  until the buffer is freed. ASCII strings translate in O(1), other strings (short, inline,
-  static) by a scan. Phase 2b's code-unit positions use it; nothing does yet.
+  the buffer. A buffer that is appended to keeps its table (the prefix never changes), and a
+  translation extends it when needed without trusting the count (a count-1 string may be read by
+  two threads at once without a retain): entries are atomics written before the table's length
+  covers them, and a table without room is replaced by a published copy twice its size, the old
+  one kept alive until the buffer is freed. ASCII strings translate in O(1), other strings
+  (short, inline, static) by a scan. Every code-unit position the runtime takes or returns goes
+  through it. Each thread also remembers its last two translations of non-ASCII strings of more
+  than 64 units, heap (with a table) or static (address, `w1`, form, position); a translation
+  near one steps from it, so sequential index loops decode one character per step (in a static
+  string, any forward step unless the end is closer). Freeing or growing a buffer that has a
+  table first bumps a global epoch, which forgets every remembered position in a heap string (a
+  new string at the same address is never taken for the old one). Positions in static strings
+  never expire: a static non-ASCII string of more than 64 units points at a literal (the JSON
+  reader copies such a key instead of borrowing it, rt_abi_async.md §12.3), and so must any
+  other producer of borrowed views.
 - `VELT_RC_STATS=1` with a **debug** runtime prints `rc stats: retain=… release=… alloc=… free=…`
   to stderr at exit (retain = increments, release = decrements of shared buffers, alloc/free =
   heap buffers). Release runtimes compile the counters out; to count optimized code, link a
@@ -137,7 +153,9 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 | `velt_rt_str_clone` | `(const VeltStr* s, VeltStr* out)` | a copy: bitwise, plus count +1 for heap strings (never a deep copy) |
 | `velt_rt_str_own` | `(const VeltStr* s, VeltStr* out)` | like `str_clone`, but a static-form string (which may borrow memory, e.g. a JSON key pointing into the parsed text) is copied into an inline or heap string |
 | `velt_rt_str_drop` | `(VeltStr* s)` | count −1 for heap strings (frees at 0), then zeroes `*s` |
-| `velt_rt_str_cmp` | `(const VeltStr* a, const VeltStr* b) -> int32_t` | bytewise: -1 / 0 / 1 |
+| `velt_rt_str_cmp` | `(const VeltStr* a, const VeltStr* b) -> int32_t` | -1 / 0 / 1 in UTF-16 code-unit order (`<`, `sort()`; #377 phase 2b): `memcmp` for two ASCII strings, else byte order corrected where it differs from code-unit order (design/strings.md "The ordering rule") |
+| `velt_rt_str_char_code_at` | `(const VeltStr* s, int64_t i) -> int64_t` | the UTF-16 code unit at `i` (a supplementary character gives its high or low surrogate), -1 out of range; generated code calls it for non-ASCII strings only |
+| `velt_rt_str_byte_length` | `(const VeltStr* s) -> uint64_t` | the UTF-8 length (`Buffer.byteLength(s)`): the stored byte length, O(1) |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> uint64_t` | hash of the bytes (`Map`/`Set` keys; fixed seed) |
 
 ## Counted objects [semantics stage 2]

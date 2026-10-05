@@ -116,10 +116,10 @@ fn typed_findings_come_live() {
     client.change(
         &doc,
         3,
-        "export function size(s: string): number {\n  return s.length;\n}\n",
+        "export type U = { nick?: string };\nexport function label(u: U): string {\n  return `${u.nick}`;\n}\n",
     );
     let diags = published(&mut client, &doc);
-    assert_eq!(sources(&diags), [ts_compat("string-offsets")]);
+    assert_eq!(sources(&diags), [ts_compat("nullable-in-template")]);
     assert_eq!(diags[0]["severity"], json!(2));
     client.shutdown();
 }

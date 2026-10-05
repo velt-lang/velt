@@ -333,7 +333,16 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
             ("clone", "copy with `[...xs]` or `xs.slice()`"),
         ],
     ),
-    ("Buffer", &[("alloc", "pass bytes in instead")]),
+    (
+        "Buffer",
+        &[
+            ("alloc", "pass bytes in instead"),
+            (
+                "byteLength",
+                "keep byte counting out of shared code (`TextEncoder` is planned, #377 phase 4)",
+            ),
+        ],
+    ),
     (
         "Comparable",
         &[("compareTo", "pass a comparator function instead")],

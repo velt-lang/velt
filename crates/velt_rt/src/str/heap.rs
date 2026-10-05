@@ -101,6 +101,11 @@ pub(super) fn alloc(cap: usize, header: bool) -> *mut u8 {
 /// # Safety
 /// `data` must come from [`alloc`] with capacity `cap` and the same `header`, and have count 1.
 pub(super) unsafe fn grow(data: *mut u8, cap: usize, new_cap: usize, header: bool) -> *mut u8 {
+    if header && !crumbs(data).load(Ordering::Relaxed).is_null() {
+        // The buffer may move: positions remembered for it must not apply to a new string at
+        // this address (`recent.rs`).
+        super::recent::buffer_gone();
+    }
     let new = layout(new_cap, header);
     let p = prefix(header);
     let base = alloc::realloc(data.sub(p), layout(cap, header), new.size());
@@ -202,6 +207,11 @@ pub(super) unsafe fn release(data: *mut u8, cap: usize, header: bool) {
 #[inline(never)]
 unsafe fn free_with_header(data: *mut u8, cap: usize) {
     // The last reference: nobody reads the table any more.
-    super::crumbs::free(crumbs(data).load(Ordering::Acquire));
+    let table = crumbs(data).load(Ordering::Acquire);
+    if !table.is_null() {
+        // Positions remembered for this string must not apply to a new one at this address.
+        super::recent::buffer_gone();
+    }
+    super::crumbs::free(table);
     alloc::dealloc(data.sub(HEADER), layout(cap, true));
 }
