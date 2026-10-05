@@ -181,7 +181,11 @@ mod tests {
         std::fs::write(&src, "").unwrap();
         let out = tmp.path().join("target/debug");
         std::fs::create_dir_all(&out).unwrap();
-        let lib = out.join(if cfg!(windows) { "velt_rt.lib" } else { "libvelt_rt.a" });
+        let lib = out.join(if cfg!(windows) {
+            "velt_rt.lib"
+        } else {
+            "libvelt_rt.a"
+        });
         std::fs::write(&lib, "").unwrap();
         std::fs::write(
             lib.with_extension("d"),
