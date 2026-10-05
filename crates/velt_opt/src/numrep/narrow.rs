@@ -88,6 +88,7 @@ pub(super) fn plan(env: &Env, flow: &Flow, func: &Function) -> Plan {
     };
     let mut may_neg_zero = vec![false; n];
     let mut arith = vec![false; n];
+    let mut wide = vec![false; n];
     let mut sources: Vec<(Local, Operand)> = vec![];
     let mut reads = Reads {
         cand: &cand,
@@ -104,6 +105,7 @@ pub(super) fn plan(env: &Env, flow: &Flow, func: &Function) -> Plan {
                 if d.proj.is_empty() && cand[d.local.0 as usize] {
                     let l = d.local;
                     arith[l.0 as usize] |= matches!(rv, Rvalue::Binary(..) | Rvalue::Unary(..));
+                    wide[l.0 as usize] |= converts_wide(func, rv);
                     let r = flow.rvalue(&st, func, rv, func.locals[l.0 as usize].ty);
                     p.range[l.0 as usize] = p.range[l.0 as usize].join(r);
                     may_neg_zero[l.0 as usize] |= r.neg_zero;
@@ -135,7 +137,9 @@ pub(super) fn plan(env: &Env, flow: &Flow, func: &Function) -> Plan {
             continue;
         }
         if p.range[l].lo <= p.range[l].hi {
-            let i32_ = p.range[l].fits(Ty::I32) || decl.ty == Ty::I64;
+            // A conversion of a 64-bit integer stays 64 bits: no truncation, and comparisons
+            // with the original need no conversion.
+            let i32_ = (p.range[l].fits(Ty::I32) && !wide[l]) || decl.ty == Ty::I64;
             p.to[l] = Some(if i32_ { Ty::I32 } else { Ty::I64 });
         } else {
             // Never assigned on a reachable path: nothing to gain.
@@ -204,6 +208,14 @@ impl Rules {
             }
         }
         changed
+    }
+}
+
+/// Does `rv` copy or convert a 64-bit integer?
+fn converts_wide(func: &Function, rv: &Rvalue) -> bool {
+    match rv {
+        Rvalue::Use(op) | Rvalue::Cast(op, _) => matches!(operand_ty(func, op), Ty::I64 | Ty::U64),
+        _ => false,
     }
 }
 

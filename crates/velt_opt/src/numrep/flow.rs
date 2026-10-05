@@ -21,7 +21,7 @@ use super::Env;
 /// Arrivals at a loop head before its entry state is widened.
 const WIDEN_AFTER: u32 = 2;
 /// Largest tracked-locals × blocks product analysed (bounds memory and time).
-const MAX_CELLS: usize = 1 << 20;
+const MAX_CELLS: usize = 1 << 19;
 /// Bounds a widened interval jumps to: 0, the int32/uint32 limits, ±2^53 and ±∞.
 const THRESHOLDS: [f64; 8] = [
     f64::NEG_INFINITY,
