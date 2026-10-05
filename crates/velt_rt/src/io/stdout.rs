@@ -69,6 +69,7 @@ fn os_write(bytes: &[u8]) {
     if bytes.is_empty() {
         return;
     }
+    super::stats::write();
     // Errors (full disk) are ignored, like console.log in JS, except a closed pipe.
     let mut out = std::io::stdout().lock();
     let r = out.write_all(bytes).and_then(|()| out.flush());

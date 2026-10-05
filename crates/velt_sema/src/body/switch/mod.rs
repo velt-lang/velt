@@ -362,11 +362,11 @@ impl FnCx<'_, '_> {
 
 /// Does one of `stmts` assign the local named `name`?
 fn assigns(stmts: &[ast::Stmt], name: &str) -> bool {
-    let mut names = std::collections::HashSet::new();
+    let mut names = super::assigned::Assigned::new();
     for st in stmts {
         super::assigned::assigned_in_stmt(st, &mut names);
     }
-    names.contains(name)
+    names.contains_key(name)
 }
 
 /// Groups of cases sharing a body (`(first, last)` indices): empty bodies fall into the next

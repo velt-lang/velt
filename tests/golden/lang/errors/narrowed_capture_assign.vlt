@@ -1,5 +1,5 @@
-// A closure that starts from a narrowing made outside it may not assign the variable: it could
-// run again (here in `forEach`) with the value it assigned, which the narrowing does not allow.
+// A variable that a closure assigns is not narrowed, also not inside the closure: it could run
+// again (here in `forEach`) with the value it assigned, which the check does not allow (#435).
 function f(u: string | null): usize {
   let n: usize = 0;
   if (u != null) {

@@ -50,9 +50,15 @@ pub(crate) fn die_of_broken_pipe() -> ! {
 pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
     init();
     let code = velt_main();
-    crate::task::runtime::wait_for_keep_alive();
+    // Servers and pending promises keep a program alive after `main` returns, but not after it
+    // failed (an uncaught error, or an exit code): like Node, which exits on an uncaught
+    // exception whatever is still listening.
+    if code == 0 {
+        crate::task::runtime::wait_for_keep_alive();
+    }
     crate::io::flush_stdout();
     crate::str::stats::report();
+    crate::io::stats::report();
     code
 }
 

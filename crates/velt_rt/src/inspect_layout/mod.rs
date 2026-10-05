@@ -5,8 +5,8 @@
 //!
 //! The print glue writes a value on one line; [`velt_rt_strbuf_inspect_layout`] then re-reads
 //! that text (`parse`) and lays it out again only when it may need breaking, so a short value
-//! costs one length check. Node's other limits (`depth`, `maxArrayLength`) are not applied: Velt
-//! prints whole values.
+//! costs one length check. Node's `depth` and `maxArrayLength` limits are applied by the glue
+//! as it writes the value; an array's `... n more items` entry stays out of its columns here.
 
 mod group;
 mod parse;

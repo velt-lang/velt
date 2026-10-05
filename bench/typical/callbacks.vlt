@@ -1,0 +1,43 @@
+// Callbacks: an array of handler closures (an event emitter), a generic pipeline of
+// functions, and a function over Iterable<number>.
+class Emitter {
+  handlers: ((x: number) => number)[] = [];
+  on(h: (x: number) => number): void {
+    this.handlers.push(h);
+  }
+  emit(x: number): number {
+    let s = 0.0;
+    for (const h of this.handlers) s += h(x);
+    return s;
+  }
+}
+
+function compose(fs: ((x: number) => number)[]): (x: number) => number {
+  return (x) => {
+    let v = x;
+    for (const f of fs) v = f(v);
+    return v;
+  };
+}
+
+function sum(xs: Iterable<number>): number {
+  let s = 0.0;
+  for (const x of xs) s += x;
+  return s;
+}
+
+function main() {
+  const em = new Emitter();
+  for (let k = 1; k <= 8; k++) {
+    const kk: number = k;
+    em.on((x) => x * kk);
+  }
+  let total = 0.0;
+  for (let i = 0; i < 2000000; i++) total += em.emit(i % 100);
+  const pipe = compose([(x) => x + 1, (x) => x * 2, (x) => x - 3, (x) => x / 2]);
+  for (let i = 0; i < 10000000; i++) total += pipe(i % 1000);
+  const xs: number[] = [];
+  for (let i = 0; i < 1000000; i++) xs.push(i % 7);
+  for (let r = 0; r < 20; r++) total += sum(xs);
+  console.log(total);
+}

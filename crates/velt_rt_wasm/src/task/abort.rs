@@ -164,10 +164,9 @@ pub unsafe extern "C" fn velt_rt_signal_timeout(ms: i64, reason: *const VeltStr)
         text: (*reason).to_string_lossy(),
         timeout_ms: Some(ms),
     };
-    let deadline = crate::platform::monotonic_ms() + ms.max(0) as f64;
-    let seq = executor::timer_seq();
+    let deadline = executor::new_timer(crate::platform::monotonic_ms() + ms.max(0) as f64);
     let timer = new_leaf(move |cx: &mut Context<'_>| {
-        if executor::poll_timer(deadline, seq, cx).is_pending() {
+        if executor::poll_timer(&deadline, cx).is_pending() {
             return Poll::Pending;
         }
         if let Some(s) = weak.upgrade() {
