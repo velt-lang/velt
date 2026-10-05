@@ -49,7 +49,7 @@ unsafe fn drive_adopted(set: *mut LocalSet, f: *mut VeltFut, cx: *mut c_void, fl
     if fl & ADOPTED == 0 {
         h.flags.fetch_or(ADOPTED, Ordering::Relaxed);
     }
-    if (h.poll)(state(f), cx) != READY {
+    if super::super::set::polling(set, f, || (h.poll)(state(f), cx)) != READY {
         return false;
     }
     super::super::set::finish_adopted(set, f);

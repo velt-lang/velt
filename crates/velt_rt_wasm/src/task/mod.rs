@@ -97,6 +97,7 @@ pub unsafe extern "C" fn velt_rt_fut_drop(f: *mut VeltFut) {
 /// ready tasks.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_yield_now(cx: *mut c_void) {
+    executor::note_yield();
     context(cx).waker().wake_by_ref();
 }
 
@@ -109,6 +110,7 @@ pub extern "C" fn velt_rt_yield_now_fut() -> *mut VeltFut {
             return std::task::Poll::Ready(());
         }
         yielded = true;
+        executor::note_yield();
         cx.waker().wake_by_ref();
         std::task::Poll::Pending
     })
