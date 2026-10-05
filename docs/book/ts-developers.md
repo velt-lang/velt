@@ -12,8 +12,10 @@ The differences come from three rules:
 2. **Drop the JavaScript behavior that causes bugs**, even when it means ported code must
    change. The compiler then says exactly what to write instead, and editors offer it as a
    quick fix.
-3. **Add something only where TypeScript can't express it at native speed**: integer types,
-   `shared` state across threads, `extend`.
+3. **Add what makes native code faster.** Velt compiles to machine code, not to JavaScript, so
+   it isn't limited to what TypeScript can express. Integer types, `shared` state across threads
+   and `extend` are opt-ins to reach for when you want more speed; code without them still runs
+   as TypeScript would.
 
 ## Programs are compiled
 
