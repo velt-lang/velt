@@ -125,3 +125,55 @@ fn folded_call(env: &Env, callee: &Callee, a: &Operand, f: Fact) -> Option<Rvalu
         _ => None,
     }
 }
+
+/// Integer comparisons of a local with itself (`x == x` once a NaN test like `__floatIndex`'s
+/// `trunc(x) == x` compares integers) become constants, and branches on them jumps.
+pub(crate) fn self_comparisons(func: &mut Function) -> bool {
+    let mut changed = false;
+    for bi in 0..func.blocks.len() {
+        for si in 0..func.blocks[bi].stmts.len() {
+            let Stmt::Assign(d, Rvalue::Binary(op, Operand::Copy(a), Operand::Copy(b))) =
+                &func.blocks[bi].stmts[si]
+            else {
+                continue;
+            };
+            let int = a.proj.is_empty() && func.locals[a.local.0 as usize].ty.is_int();
+            if !(int && a == b && is_comparison(*op)) {
+                continue;
+            }
+            let v = matches!(
+                op,
+                velt_vir::vir::BinOp::Eq | velt_vir::vir::BinOp::Le | velt_vir::vir::BinOp::Ge
+            );
+            let d = d.clone();
+            func.blocks[bi].stmts[si] =
+                Stmt::Assign(d, Rvalue::Use(Operand::Const(Const::Bool(v), Ty::Bool)));
+            changed = true;
+        }
+        changed |= constant_branch(func, bi);
+    }
+    changed
+}
+
+/// A branch on a local last set to a constant in its block becomes a jump.
+fn constant_branch(func: &mut Function, bi: usize) -> bool {
+    let block = &func.blocks[bi];
+    let Terminator::Branch {
+        cond: Operand::Copy(c),
+        then,
+        els,
+    } = &block.term
+    else {
+        return false;
+    };
+    let last = block.stmts.iter().rev().find_map(|s| match s {
+        Stmt::Assign(d, rv) if d.local == c.local => Some((d.proj.is_empty(), rv)),
+        _ => None,
+    });
+    let Some((true, Rvalue::Use(Operand::Const(Const::Bool(v), _)))) = last else {
+        return false;
+    };
+    let target = if *v { *then } else { *els };
+    func.blocks[bi].term = Terminator::Goto(target);
+    true
+}

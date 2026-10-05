@@ -17,7 +17,8 @@ use std::collections::HashMap;
 use velt_vir::vir::{BinOp, Function, Local, Operand, Rvalue, Stmt, Terminator, Ty, UnOp};
 
 use super::fact::Fact;
-use super::flow::{is_comparison, operand_ty, Flow, State};
+use super::flow::{operand_ty, Flow, State};
+use super::reads::{IntUse, Read, Reads};
 use super::Env;
 use crate::locals::Usage;
 
@@ -36,6 +37,8 @@ pub(super) enum Reason {
     NegZero(usize, usize),
     /// An `i64` local set from a value that is not a 32-bit integer.
     Wide,
+    /// Only converted from an integer and read as a double: an integer would add conversions.
+    NoGain,
 }
 
 /// The narrowing decisions for one function.
@@ -48,16 +51,6 @@ pub(super) struct Plan {
     pub operands: HashMap<(usize, usize), Vec<Fact>>,
     /// Per candidate that stays: why.
     pub reasons: Vec<Option<Reason>>,
-}
-
-/// Where a candidate is read, and whether that read can see `-0`.
-struct Read {
-    local: Local,
-    at: (usize, usize),
-    /// The read cannot tell `-0` from 0 whatever happens.
-    blind: bool,
-    /// ... or it cannot when this local is narrowed (the read is an operand of its definition).
-    into: Option<Local>,
 }
 
 /// The locals `numrep` may narrow: non-param register `f64` locals, and `i64` ones assigned a
@@ -94,8 +87,12 @@ pub(super) fn plan(env: &Env, flow: &Flow, func: &Function) -> Plan {
         reasons: vec![None; n],
     };
     let mut may_neg_zero = vec![false; n];
+    let mut arith = vec![false; n];
     let mut sources: Vec<(Local, Operand)> = vec![];
-    let mut reads: Vec<Read> = vec![];
+    let mut reads = Reads {
+        cand: &cand,
+        list: vec![],
+    };
     for (bi, block) in func.blocks.iter().enumerate() {
         let Some(entry) = flow.entry(bi) else {
             continue;
@@ -103,9 +100,10 @@ pub(super) fn plan(env: &Env, flow: &Flow, func: &Function) -> Plan {
         let mut st: State = entry.clone();
         for (si, s) in block.stmts.iter().enumerate() {
             if let Stmt::Assign(d, rv) = s {
-                collect_reads(flow, func, &st, &cand, rv, d, (bi, si), &mut reads);
+                reads.assignment(flow, func, &st, rv, d, (bi, si));
                 if d.proj.is_empty() && cand[d.local.0 as usize] {
                     let l = d.local;
+                    arith[l.0 as usize] |= matches!(rv, Rvalue::Binary(..) | Rvalue::Unary(..));
                     let r = flow.rvalue(&st, func, rv, func.locals[l.0 as usize].ty);
                     p.range[l.0 as usize] = p.range[l.0 as usize].join(r);
                     may_neg_zero[l.0 as usize] |= r.neg_zero;
@@ -126,11 +124,11 @@ pub(super) fn plan(env: &Env, flow: &Flow, func: &Function) -> Plan {
                     p.operands.insert((bi, si), ops);
                 }
             } else {
-                collect_stmt_reads(&cand, s, (bi, si), &mut reads);
+                reads.statement(s, (bi, si));
             }
             flow.transfer(&mut st, func, s);
         }
-        collect_term_reads(env, &cand, &block.term, (bi, block.stmts.len()), &mut reads);
+        reads.terminator(env, &block.term, (bi, block.stmts.len()));
     }
     for l in 0..n {
         if cand[l] && p.reasons[l].is_none() && p.range[l].lo <= p.range[l].hi {
@@ -141,40 +139,68 @@ pub(super) fn plan(env: &Env, flow: &Flow, func: &Function) -> Plan {
             p.reasons[l] = Some(Reason::Form);
         }
     }
-    settle(&mut p, &may_neg_zero, &sources, &reads);
+    let rules = Rules {
+        may_neg_zero,
+        arith,
+        sources,
+        reads: reads.list,
+        f64_locals: func.locals.iter().map(|l| l.ty == Ty::F64).collect(),
+    };
+    while rules.apply(&mut p) {}
     p
 }
 
-/// Drop narrowed locals until every rule holds (greatest fixpoint).
-fn settle(p: &mut Plan, may_neg_zero: &[bool], sources: &[(Local, Operand)], reads: &[Read]) {
-    loop {
+/// What `settle` checks.
+struct Rules {
+    may_neg_zero: Vec<bool>,
+    /// Per local: some definition is arithmetic (not a copy or conversion).
+    arith: Vec<bool>,
+    /// `i64` candidates and the locals they copy, which must become `i32` too.
+    sources: Vec<(Local, Operand)>,
+    reads: Vec<Read>,
+    f64_locals: Vec<bool>,
+}
+
+impl Rules {
+    /// Drop the narrowed locals that break a rule; returns whether any was dropped (the rules
+    /// are applied until none is: a greatest fixpoint).
+    fn apply(&self, p: &mut Plan) -> bool {
         let mut changed = false;
-        for (l, src) in sources {
+        let mut drop = |p: &mut Plan, l: usize, why: Reason| {
+            if p.to[l].is_some() {
+                p.to[l] = None;
+                p.reasons[l] = Some(why);
+                changed = true;
+            }
+        };
+        for (l, src) in &self.sources {
             let ok = match src {
                 Operand::Copy(q) => p.to[q.local.0 as usize] == Some(Ty::I32),
                 Operand::Const(..) => true,
             };
-            if !ok && p.to[l.0 as usize].is_some() {
-                p.to[l.0 as usize] = None;
-                p.reasons[l.0 as usize] = Some(Reason::Wide);
-                changed = true;
+            if !ok {
+                drop(p, l.0 as usize, Reason::Wide);
             }
         }
-        for r in reads {
+        let mut gains = self.arith.clone();
+        for r in &self.reads {
             let i = r.local.0 as usize;
-            if p.to[i].is_none() || !may_neg_zero[i] || r.blind {
-                continue;
+            gains[i] |= match r.int_use {
+                IntUse::Yes => true,
+                IntUse::With(m) => p.to[m.0 as usize].is_some(),
+                IntUse::No => false,
+            };
+            let seen = !r.blind && !r.into.is_some_and(|d| p.to[d.0 as usize].is_some());
+            if self.may_neg_zero[i] && seen {
+                drop(p, i, Reason::NegZero(r.at.0, r.at.1));
             }
-            if r.into.is_some_and(|d| p.to[d.0 as usize].is_some()) {
-                continue;
+        }
+        for (i, g) in gains.iter().enumerate() {
+            if self.f64_locals[i] && !g {
+                drop(p, i, Reason::NoGain);
             }
-            p.to[i] = None;
-            p.reasons[i] = Some(Reason::NegZero(r.at.0, r.at.1));
-            changed = true;
         }
-        if !changed {
-            return;
-        }
+        changed
     }
 }
 
@@ -233,94 +259,4 @@ fn i64_source(func: &Function, rv: &Rvalue, ops: &[Fact]) -> Result<Option<Opera
         Operand::Copy(_) => Err(Reason::Wide),
         Operand::Const(..) => Ok(None),
     }
-}
-
-/// Record the reads of candidates in `rv`, assigned to `d`.
-#[allow(clippy::too_many_arguments)] // one call site; the facts at the point are all needed
-fn collect_reads(
-    flow: &Flow,
-    func: &Function,
-    st: &State,
-    cand: &[bool],
-    rv: &Rvalue,
-    d: &velt_vir::vir::Place,
-    at: (usize, usize),
-    reads: &mut Vec<Read>,
-) {
-    let fact = |op: &Operand| flow.operand(st, func, op).unwrap_or(Fact::top(Ty::F64));
-    let into = (d.proj.is_empty() && cand[d.local.0 as usize]).then_some(d.local);
-    let mut push = |op: &Operand, blind: bool| {
-        if let Operand::Copy(p) = op {
-            if p.proj.is_empty() && cand[p.local.0 as usize] {
-                reads.push(Read {
-                    local: p.local,
-                    at,
-                    blind,
-                    into,
-                });
-            }
-        }
-    };
-    match rv {
-        Rvalue::Binary(op, a, b) if is_comparison(*op) => {
-            push(a, true);
-            push(b, true);
-        }
-        Rvalue::Cast(a, to) if to.is_int() => push(a, true),
-        Rvalue::Binary(BinOp::Rem, a, b) => {
-            push(a, false);
-            push(b, true);
-        }
-        Rvalue::Binary(BinOp::Add, a, b) => {
-            push(a, !fact(b).neg_zero);
-            push(b, !fact(a).neg_zero);
-        }
-        Rvalue::Binary(BinOp::Sub, a, b) => {
-            push(a, !fact(b).may_be_zero());
-            push(b, !fact(a).neg_zero);
-        }
-        _ => crate::visit::rvalue_operands(rv, &mut |op| push(op, false)),
-    }
-}
-
-/// Reads in a statement other than an assignment can all see `-0` (`MemSet`, copies).
-fn collect_stmt_reads(cand: &[bool], s: &Stmt, at: (usize, usize), reads: &mut Vec<Read>) {
-    crate::visit::stmt_operands(s, &mut |op| {
-        if let Operand::Copy(p) = op {
-            if p.proj.is_empty() && cand[p.local.0 as usize] {
-                reads.push(Read {
-                    local: p.local,
-                    at,
-                    blind: false,
-                    into: None,
-                });
-            }
-        }
-    });
-}
-
-/// Reads in a terminator: ToInt32 and `__floatIndex` cannot see `-0`; calls and returns can.
-fn collect_term_reads(
-    env: &Env,
-    cand: &[bool],
-    t: &Terminator,
-    at: (usize, usize),
-    reads: &mut Vec<Read>,
-) {
-    let blind = match t {
-        Terminator::Call { callee, .. } => env.is_to_int32(callee) || env.is_float_index(callee),
-        _ => false,
-    };
-    crate::visit::term_operands(t, &mut |op| {
-        if let Operand::Copy(p) = op {
-            if p.proj.is_empty() && cand[p.local.0 as usize] {
-                reads.push(Read {
-                    local: p.local,
-                    at,
-                    blind,
-                    into: None,
-                });
-            }
-        }
-    });
 }

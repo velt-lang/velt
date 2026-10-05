@@ -23,6 +23,7 @@ mod fact;
 mod flow;
 mod int32;
 mod narrow;
+mod reads;
 mod refine;
 mod report;
 mod rewrite;
@@ -37,6 +38,7 @@ use crate::visit::rvalue_operands;
 use flow::Flow;
 
 pub use report::Unnarrowed;
+pub(crate) use simplify::self_comparisons;
 
 /// The runtime's ToInt32 (`velt_rt_math_to_int32(f64) -> i32`).
 const TO_INT32: &str = "velt_rt_math_to_int32";

@@ -111,8 +111,7 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
             for func in &mut program.funcs {
                 t.time("simplify_cfg", || simplify_cfg::run(func));
                 if t.time("numrep", || numrep::run(&env, func)) {
-                    t.time("copyprop", || copyprop::run(func));
-                    t.time("dce", || dce::run(&program.aggs, func));
+                    numrep_cleanup(&program.aggs, func, t);
                 }
             }
         }
@@ -128,8 +127,7 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
             let env = numrep::Env::of(&program.externs, &program.funcs);
             for func in &mut program.funcs {
                 if t.time("numrep", || numrep::run(&env, func)) {
-                    t.time("copyprop", || copyprop::run(func));
-                    t.time("dce", || dce::run(&program.aggs, func));
+                    numrep_cleanup(&program.aggs, func, t);
                 }
                 t.time("divisions", || divisions::run(func));
             }
@@ -137,6 +135,16 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
         }
     }
     t.time("dead_funcs", || dead_funcs::run(program));
+}
+
+/// After `numrep` changed `func`: forward the copies it made, fold what that exposed (an
+/// integer compared with itself), and drop what became dead.
+fn numrep_cleanup(aggs: &[vir::AggLayout], func: &mut vir::Function, t: &mut PassTimings) {
+    t.time("copyprop", || copyprop::run(func));
+    if t.time("numrep", || numrep::self_comparisons(func)) {
+        t.time("simplify_cfg", || simplify_cfg::run(func));
+    }
+    t.time("dce", || dce::run(aggs, func));
 }
 
 /// Promote `noalias` pointees and async frame slots (after inlining settled which bodies they

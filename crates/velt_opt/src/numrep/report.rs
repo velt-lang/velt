@@ -45,7 +45,8 @@ pub(super) fn unnarrowed(env: &Env, flow: &Flow, func: &Function) -> Vec<Unnarro
             let Some(name) = decl.name.as_ref() else {
                 continue;
             };
-            if !d.proj.is_empty() || decl.ty != Ty::F64 || plan.to[i].is_some() || seen[i] {
+            let free = plan.reasons[i] == Some(Reason::NoGain);
+            if !d.proj.is_empty() || decl.ty != Ty::F64 || plan.to[i].is_some() || seen[i] || free {
                 continue;
             }
             seen[i] = true;
@@ -76,5 +77,6 @@ fn describe(r: Reason, func: &Function) -> String {
             None => "it may be -0, and a use can tell -0 from 0".into(),
         },
         Reason::Wide => "it is set from a value that is not a 32-bit integer".into(),
+        Reason::NoGain => "it is only converted from an integer and used as a double".into(),
     }
 }
