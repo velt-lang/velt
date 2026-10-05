@@ -1,9 +1,9 @@
 # Nightly: the full gate on Linux with real PostgreSQL and Redis, so the database goldens run
 # (they are skipped without their URLs) and then the differential tests against Node
 # (tests/difftest), the Cranelift compile-memory stress run (bench/compile/stress.sh,
-# stress.ps1) on Linux and Windows, and the `tsc` oracle for `velt check --ts-compat`
-# (tests/tscompat-oracle). A manual run can pick one of them:
-# `gh workflow run nightly -f only=stress`.
+# stress.ps1) on Linux and Windows, the `tsc` oracle for `velt check --ts-compat`
+# (tests/tscompat-oracle), and the benchmarks' instruction counts against the last accepted ones
+# (bench/nightly.sh). A manual run can pick one of them: `gh workflow run nightly -f only=stress`.
 name: nightly
 
 on:
@@ -14,8 +14,15 @@ on:
       only:
         description: Run only one job (scheduled runs run all of them).
         type: choice
-        options: [all, gate, stress, oracle]
+        options: [all, gate, stress, oracle, bench]
         default: all
+      bench_baseline:
+        description: >-
+          bench: `accept` stores this run's counts as the baseline without comparing (after an
+          intended slowdown).
+        type: choice
+        options: [compare, accept]
+        default: compare
 
 env:
   CARGO_INCREMENTAL: "0"
@@ -23,7 +30,7 @@ env:
 
 jobs:
   gate-with-services:
-    if: inputs.only != 'stress' && inputs.only != 'oracle'
+    if: (inputs.only || 'all') == 'all' || inputs.only == 'gate'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     services:
@@ -73,7 +80,7 @@ jobs:
   # A debug build (Cranelift) of long_main_16000 must stay under 2 GB of peak memory and print the
   # right result (#42, #189). The script prints the stage times and the peak; the summary shows them.
   compile-stress:
-    if: inputs.only != 'gate' && inputs.only != 'oracle'
+    if: (inputs.only || 'all') == 'all' || inputs.only == 'stress'
     name: compile-stress (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -117,7 +124,7 @@ jobs:
   # (crates/veltc/tests/ts_compat_node). The pull request gate skips the parts that need the
   # Node packages or a Node that strips types; VELT_TSC_ORACLE=1 makes them fail here.
   tsc-oracle:
-    if: inputs.only != 'gate' && inputs.only != 'stress'
+    if: (inputs.only || 'all') == 'all' || inputs.only == 'oracle'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -136,3 +143,69 @@ jobs:
         run: cargo test -p velt_tscompat --test oracle -- --nocapture
       - name: behaviour samples under Node
         run: cargo test -p veltc --test ts_compat behaviour_samples -- --nocapture
+
+  # Instructions per benchmark (bench/nightly.sh: valgrind, so the counts don't depend on how busy
+  # the runner is) against the counts of the last run that passed, kept in the Actions cache. More
+  # than 3% more instructions in any benchmark fails the job and opens (or comments on) the issue
+  # "nightly benchmarks regressed"; the baseline then stays put, so the job keeps failing until the
+  # slowdown is fixed or accepted (`gh workflow run nightly -f only=bench -f bench_baseline=accept`).
+  bench:
+    if: (inputs.only || 'all') == 'all' || inputs.only == 'bench'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: "false"
+      - name: valgrind
+        run: sudo apt-get update -q && sudo apt-get install -y -q valgrind
+      - name: restore the baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: bench-baseline.tsv
+          key: bench-baseline-${{ github.run_id }}
+          restore-keys: bench-baseline-
+      - name: bench/nightly.sh
+        id: bench
+        env:
+          ACCEPT: ${{ inputs.bench_baseline == 'accept' }}
+        run: |
+          set -o pipefail
+          args=()
+          if [ -f bench-baseline.tsv ] && [ "$ACCEPT" != true ]; then
+            args=(--baseline bench-baseline.tsv)
+          fi
+          bench/nightly.sh "${args[@]}" --out "$RUNNER_TEMP/counts.tsv" | tee "$RUNNER_TEMP/bench.md"
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### benchmarks (instructions, valgrind)"
+            cat "$RUNNER_TEMP/bench.md" 2>/dev/null || echo "no results (the run stopped before the benchmarks)"
+          } >> "$GITHUB_STEP_SUMMARY"
+      # Only counts that passed (or were accepted) become the baseline.
+      - name: keep the counts as the baseline
+        run: cp "$RUNNER_TEMP/counts.tsv" bench-baseline.tsv
+      - uses: actions/cache/save@v4
+        with:
+          path: bench-baseline.tsv
+          key: bench-baseline-${{ github.run_id }}
+      - name: report the regression
+        if: failure() && steps.bench.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = 'nightly benchmarks regressed';
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = `A benchmark executes more than 3% more instructions than the baseline after ${context.sha.slice(0, 7)}: ${run} (the job summary has the table). Fix it, or accept the new counts with \`gh workflow run nightly -f only=bench -f bench_baseline=accept\`.`;
+            const open = await github.rest.issues.listForRepo({ ...context.repo, state: 'open', per_page: 100 });
+            const existing = open.data.find(i => i.title === title && !i.pull_request);
+            if (existing) {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body });
+            } else {
+              await github.rest.issues.create({ ...context.repo, title, body });
+            }

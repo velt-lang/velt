@@ -17,7 +17,22 @@ use crate::lower::rt::Rt;
 use crate::lower::{cfunc, cint, unit, FnLower, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
+/// What velt_rt's `velt_rt_xfer_find` returns outside a transfer.
+const NO_TRANSFER: i128 = 1;
+
 impl<'c, 'h> FnLower<'c, 'h> {
+    /// A whole value's transfer (a `spawn` argument, a channel message, a task's result): one
+    /// transfer for velt_rt's `transfer_map`, so an object reached twice is copied once and a
+    /// cycle is copied as a cycle.
+    pub(super) fn transfer_root_body(&mut self, p: vir::Local, ty: TyId) {
+        self.cx.note_transfer(ty);
+        self.call_rt(Rt::XferBegin, vec![], None);
+        let place = self.deref_param(p, ty);
+        self.transfer_in_place(place, ty);
+        self.call_rt(Rt::XferEnd, vec![], None);
+        self.terminate(Terminator::Return(unit()));
+    }
+
     pub(super) fn transfer_body(&mut self, p: vir::Local, ty: TyId) {
         let place = self.deref_param(p, ty);
         self.transfer_expand(&place, ty);
@@ -110,7 +125,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let one = self.count_is_one(o.clone());
             self.branch(one, unique, shared);
             self.switch_to(shared);
-            let new = self.shared_copy(o.clone(), ty, |lw, v| {
+            self.find_copy(o.clone(), |lw, copy| {
+                lw.defer_release(o.clone(), ty);
+                lw.assign(Place::local(out), Rvalue::Use(copy));
+                lw.goto(done);
+            });
+            let new = self.shared_copy(o.clone(), ty, true, |lw, v| {
                 lw.call_glue(Glue::ObjClone, ty, vec![v])
             });
             let new = self.settle_copy(new, ty);
@@ -161,7 +181,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let one = self.count_is_one(p.clone());
         self.branch(one, unique, shared);
         self.switch_to(shared);
-        let new = self.shared_copy(p.clone(), ty, |lw, v| {
+        self.find_copy(p.clone(), |lw, copy| {
+            lw.defer_release(p.clone(), ty);
+            lw.assign(place.clone(), Rvalue::Use(copy));
+            lw.goto(done);
+        });
+        let new = self.shared_copy(p.clone(), ty, true, |lw, v| {
             let c = lw.clone_value(v, ty);
             lw.rvalue_temp(Ty::Ptr, Rvalue::Use(c))
         });
@@ -189,11 +214,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// The still-shared counted value `v` (a pointer) of type `ty`: a deep copy made by `copy`
     /// (a fresh, unique graph), after which the sender's reference is released (the count is
-    /// above 1: only decremented). A resource without `clone()` panics instead.
+    /// above 1: only decremented). With `defer` (`v` is a `ty`, not a cell holding one), a
+    /// transfer under way releases it when it ends instead (`defer_release`). A resource
+    /// without `clone()` panics instead.
     pub(super) fn shared_copy(
         &mut self,
         v: Operand,
         ty: TyId,
+        defer: bool,
         copy: impl FnOnce(&mut Self, Operand) -> Operand,
     ) -> Operand {
         if self.cx.uncopyable(ty) {
@@ -201,13 +229,72 @@ impl<'c, 'h> FnLower<'c, 'h> {
             return v;
         }
         let new = copy(self, v.clone());
+        let (now, done) = (self.new_block(), self.new_block());
+        if defer {
+            let deferred = self.defer_release(v.clone(), ty);
+            self.branch(deferred, done, now);
+        } else {
+            self.goto(now);
+        }
+        self.switch_to(now);
         let c = self.count_place(v);
         let n = self.rvalue_temp(
             Ty::U64,
             Rvalue::Binary(BinOp::Sub, Operand::Copy(c.clone()), cint(1, Ty::U64)),
         );
         self.assign(c, Rvalue::Use(n));
+        self.goto(done);
+        self.switch_to(done);
         new
+    }
+
+    /// Hand the reference to the counted `ty` object `v`, which the transfer under way replaced
+    /// by a copy, to velt_rt's `transfer_map`: it is released when the transfer ends, so the
+    /// object stays alive (and keeps its count) while copies are looked up by address. True if
+    /// so; outside a transfer the caller releases it.
+    fn defer_release(&mut self, v: Operand, ty: TyId) -> Operand {
+        let drop = cfunc(self.cx.func(Work::Glue(Glue::Drop, ty)));
+        self.rt_u8(Rt::XferDefer, vec![v, drop])
+    }
+
+    /// During a transfer (velt_rt `transfer_map`), the copy already made of the counted object
+    /// `p` (non-null) if it is referenced more than once: `hit` runs with that copy (retained)
+    /// and must leave the block. Returns what the lookup found, for `record_copy`.
+    pub(in crate::lower) fn find_copy(
+        &mut self,
+        p: Operand,
+        hit: impl FnOnce(&mut Self, Operand),
+    ) -> Operand {
+        let found = Place::local(self.temp(Ty::Ptr));
+        self.assign(found.clone(), Rvalue::Use(cint(NO_TRANSFER, Ty::Ptr)));
+        let (look, hit_bb, go) = (self.new_block(), self.new_block(), self.new_block());
+        let one = self.count_is_one(p.clone());
+        self.branch(one, go, look);
+        self.switch_to(look);
+        self.call_rt(Rt::XferFind, vec![p], Some(found.clone()));
+        let f = Operand::Copy(found);
+        let n = self.cast_to(f.clone(), Ty::Ptr, Ty::U64);
+        let is_copy = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Gt, n, cint(NO_TRANSFER, Ty::U64)),
+        );
+        self.branch(is_copy, hit_bb, go);
+        self.switch_to(hit_bb);
+        self.retain(f.clone());
+        hit(self, f.clone());
+        self.switch_to(go);
+        f
+    }
+
+    /// Record `new` as the copy of `p` if `find_copy` (which returned `found`) looked during a
+    /// transfer and found none.
+    pub(in crate::lower) fn record_copy(&mut self, found: Operand, p: Operand, new: Operand) {
+        let skip = self.new_block();
+        let none = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, found, cint(0, Ty::Ptr)));
+        self.when(none, skip);
+        self.call_rt(Rt::XferRecord, vec![p, new], None);
+        self.goto(skip);
+        self.switch_to(skip);
     }
 
     /// The fresh copy `new` (a counted pointer of type `ty`) made safe for the other thread
@@ -303,7 +390,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.when(nn, done);
         let unclaimed = self.unclaimed_drop_fn(ty);
         self.call_rt(Rt::FutStart, vec![f.clone(), unclaimed], None);
-        let g = cfunc(self.cx.func(Work::Glue(Glue::Transfer, slot)));
+        let g = cfunc(self.cx.func(Work::Glue(Glue::TransferRoot, slot)));
         self.call_rt(Rt::FutTransfer, vec![f, g], None);
         self.goto(done);
         self.switch_to(done);

@@ -76,7 +76,10 @@ impl FnCx<'_, '_> {
                 self.f.unnarrowed_reads.push(h.span);
                 h
             }
-            Some(t) => self.downcast_narrowed(t, h),
+            Some(t) => {
+                self.note_refused_read(t, h.span);
+                self.downcast_narrowed(t, h)
+            }
             None => h,
         }
     }
@@ -166,6 +169,14 @@ impl FnCx<'_, '_> {
     pub(crate) fn field_tokens_of(&self, l: LocalId) -> Vec<LocalId> {
         let tokens = self.f.field_tokens.iter();
         tokens.filter(|t| t.root == l).map(|t| t.token).collect()
+    }
+
+    /// The root local and field names of field token `token`.
+    pub(crate) fn token_path(&self, token: LocalId) -> Option<(LocalId, &[String])> {
+        let mut tokens = self.f.field_tokens.iter();
+        tokens
+            .find(|t| t.token == token)
+            .map(|t| (t.root, t.path.as_slice()))
     }
 
     fn find_token(&self, root: LocalId, path: &[String]) -> Option<LocalId> {

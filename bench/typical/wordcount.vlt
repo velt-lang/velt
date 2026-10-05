@@ -1,0 +1,26 @@
+// Map<string, number> counting: generated text split into words, counted, then the top words.
+function main() {
+  const vocab: string[] = [];
+  for (let i = 0; i < 5000; i++) {
+    vocab.push(`w${(i * 7919) % 100003}`);
+  }
+  const parts: string[] = [];
+  let x = 1;
+  for (let i = 0; i < 1000000; i++) {
+    x = (x * 48271) % 2147483647;
+    parts.push(vocab[x % 5000]);
+  }
+  const text = parts.join(" ");
+  const counts = new Map<string, number>();
+  for (let round = 0; round < 3; round++) {
+    for (const w of text.split(" ")) {
+      counts.set(w, (counts.get(w) ?? 0) + 1);
+    }
+  }
+  const entries: [string, number][] = [];
+  for (const [k, v] of counts) {
+    entries.push([k, v]);
+  }
+  entries.sort((a, b) => (b[1] > a[1] ? 1 : b[1] < a[1] ? -1 : a[0] < b[0] ? -1 : 1));
+  console.log(counts.size, entries[0][0], entries[0][1], entries[4999][0], entries[4999][1]);
+}
