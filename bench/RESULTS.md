@@ -1107,3 +1107,24 @@ the table is from `main` at 8949f2c7):
   strings (the same loop with `charCodeAt` is 5× faster); `record`'s `includes` / `indexOf` on
   `string[]` pay a `velt_rt_str_eq` call per element. #531.
 - **sortcmp**: `sort(cmp)` merges in place with SymMerge, O(n log² n) swaps. #530.
+
+## Callback arguments of arrays other references reach (#564, 2026-10-06)
+
+A call argument borrowed from an element of a boxed array (or one reached through a counted
+object or a cell) is now a share of the element whenever the array's count says another
+reference exists, so a callback that pushes onto the array or pops it cannot leave it dangling.
+Wall clock, Windows 11, i9-12900HK shared with other builds, LLVM release, best of 11: 20,000
+rounds of `forEach` plus `map` over 1,000 elements (40M callback calls); before is `main`'s
+lowering and std.
+
+| elements | before | after |
+|---|---:|---:|
+| `number[]` | 82 ms | 87 ms |
+| objects (`P[]`) | 81 ms | 58 ms |
+| `string[]`, type counted (an alias exists elsewhere), this array unaliased | 109 ms | 83 ms |
+| `string[]` with a live alias (`const alias = shared`) | 116 ms | 739 ms |
+| `string[]` in a program without aliases | 49 ms | 47 ms |
+
+Only the last-but-one row pays: one string share and drop per call (about 15 ns, two atomic
+count updates). The others are within noise: an unshared type keeps its code, and an array of a
+counted type checks its count (a load and a branch) before borrowing in place.
