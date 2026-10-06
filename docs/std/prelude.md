@@ -54,7 +54,11 @@ Conversions: `String.fromCharCode(code)` (one code unit; a surrogate gives a lon
 ## Arrays
 
 `T[]` is a growable array ([Types](../reference/types.md#objects-arrays-tuples-and-maps)).
-Callback methods rethrow what their callback throws.
+Callback methods rethrow what their callback throws. A callback may change the array through
+another reference to it (`const ys = xs`, or an object holding it): as in JS, the methods read
+the length once at the start, so elements pushed meanwhile are not visited and elements removed
+meanwhile are skipped (`map`'s result is then shorter, where JS leaves holes), and the element a
+callback received stays valid however the array changes.
 
 | Method | Notes |
 |---|---|

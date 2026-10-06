@@ -196,7 +196,7 @@ impl FnLower<'_, '_> {
                 }
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
                     let v = match user_code {
-                        true => self.stable_borrow(a),
+                        true => self.stable_borrow(a, *mode == PassMode::BorrowMut),
                         false => self.borrowed_arg(a),
                     };
                     argv.push(self.operand_addr(v, t));
@@ -211,7 +211,7 @@ impl FnLower<'_, '_> {
                     let v = match m {
                         PassMode::Owned => self.consume(a),
                         PassMode::Borrow | PassMode::BorrowMut if user_code => {
-                            self.stable_borrow(a)
+                            self.stable_borrow(a, *m == PassMode::BorrowMut)
                         }
                         _ => self.expr(a),
                     };
@@ -250,7 +250,7 @@ impl FnLower<'_, '_> {
                 let ty = self.sub(a.ty);
                 self.own_value(v, ty)
             } else {
-                self.stable_borrow(a)
+                self.stable_borrow(a, mode == Some(PassMode::BorrowMut))
             };
             let v = match transfer {
                 true => self.transfer_copy(v, a.ty),

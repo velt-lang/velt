@@ -16,14 +16,24 @@ use super::FnLower;
 use crate::vir::{Operand, Place, Ty};
 
 impl FnLower<'_, '_> {
-    /// A borrowed argument (or receiver) of a call that may run user code (see the module docs).
-    pub(super) fn stable_borrow(&mut self, a: &hir::Expr) -> Operand {
+    /// A borrowed argument (or receiver) of a call that may run user code (see the module docs);
+    /// `mutable`: the callee may change it in place.
+    pub(super) fn stable_borrow(&mut self, a: &hir::Expr, mutable: bool) -> Operand {
         let ty = self.sub(a.ty);
         let by_value = self.cx.ty(ty).is_scalar() && self.cx.share_kind(ty) == ShareKind::Plain;
         if by_value || !(self.through_counted(a, ty) || self.in_shared_cell(a)) {
             return self.borrowed_arg(a);
         }
         if self.cx.counted(ty) {
+            let v = self.expr(a);
+            let s = self.share_value(v, ty);
+            return self.own_value(s, ty);
+        }
+        if !mutable && self.in_array_buffer(a) && self.cx.share_kind(ty) != ShareKind::Promise {
+            // Retaining the containers does not keep an element in place: a push through
+            // another reference to the array moves its buffer, and `pop`, `truncate` or a store
+            // drops the element. The callee gets a share of it instead (a copy for elements
+            // that own nothing), as JavaScript passes the value.
             let v = self.expr(a);
             let s = self.share_value(v, ty);
             return self.own_value(s, ty);
@@ -69,6 +79,24 @@ impl FnLower<'_, '_> {
             K::Field { base, .. } | K::Index { base, .. } => self.in_shared_cell(base),
             K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } => {
                 self.in_shared_cell(base)
+            }
+            _ => false,
+        }
+    }
+
+    /// Does the place `e` lie in an array's buffer, not behind a counted object inside an
+    /// element (which retaining keeps in place)? Called only for places `through_counted` or
+    /// `in_shared_cell` accepted, so the array is one other references may reach.
+    fn in_array_buffer(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Index { .. } => true,
+            K::Field { base, .. } => {
+                let bty = self.sub(base.ty);
+                !self.cx.counted(bty) && self.in_array_buffer(base)
+            }
+            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
+                self.in_array_buffer(base)
             }
             _ => false,
         }

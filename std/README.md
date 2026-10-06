@@ -80,7 +80,9 @@ handles are `u64`. Handle-owning classes release them in their `[Symbol.dispose]
 ## Performance notes
 Std code is monomorphized and inlined like user code, so write plain index loops.
 - Reserve capacity (`__intrinsic_array_with_capacity`) when the final length is known.
-- Never clone to read: pass `xs[i]` straight to callbacks and comparisons (they borrow).
+- Never clone to read: pass `xs[i]` straight to callbacks and comparisons (they borrow; when
+  other references may reach the array, lowering passes a share of the element instead, so a
+  callback that pushes onto the array or pops it cannot leave its argument dangling).
 - Rearrange arrays with `__intrinsic_array_swap` / `__intrinsic_array_truncate`; moving an
   element out of an index is not allowed, and a swap avoids clones.
 - Keep algorithms allocation-free where possible (both sorts are in place).

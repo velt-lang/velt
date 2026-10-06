@@ -5,6 +5,11 @@
 //   iterating never copies non-Copy elements. Like JS, they also get the element's index (a
 //   callback may take fewer parameters: `xs.map((x) => …)`). A callback may throw: the method throws what its
 //   callback throws (`E`, inferred per call; `never` when the callback cannot throw).
+// - A callback may change the array through another reference (an alias, or an object holding
+//   it). The methods visit the indices below the length they started with that still exist,
+//   as JS does; lowering passes a share of the element instead of a borrow when the array is
+//   one other references may reach (velt_vir stabilize.rs), so the argument stays valid when a
+//   push moves the buffer or a `pop` drops the element.
 // - Methods that return elements *out of* the array (`find`, `filter`, `slice`, `concat`) return
 //   the elements themselves, like JS: objects are shared (another reference to the same object,
 //   a count increment), numbers, bool and strings are copied.
@@ -14,14 +19,16 @@
 
 extend<T> Array<T> {
   forEach<E>(f: (x: T, i: i64) => void throws E) throws E {
-    for (let i: usize = 0; i < this.length; i++) {
+    const n = this.length;
+    for (let i: usize = 0; i < n && i < this.length; i++) {
       f(this[i], i as i64);
     }
   }
 
   map<U, E>(f: (x: T, i: i64) => U throws E): U[] throws E {
     const out: U[] = __intrinsic_array_with_capacity(this.length);
-    for (let i: usize = 0; i < this.length; i++) {
+    const n = this.length;
+    for (let i: usize = 0; i < n && i < this.length; i++) {
       out.push(f(this[i], i as i64));
     }
     return out;
@@ -29,7 +36,8 @@ extend<T> Array<T> {
 
   filter<E>(keep: (x: T, i: i64) => bool throws E): T[] throws E {
     const out: T[] = [];
-    for (let i: usize = 0; i < this.length; i++) {
+    const n = this.length;
+    for (let i: usize = 0; i < n && i < this.length; i++) {
       if (keep(this[i], i as i64)) {
         out.push(__intrinsic_share(this[i]));
       }
@@ -39,7 +47,8 @@ extend<T> Array<T> {
 
   reduce<A, E>(f: (acc: A, x: T, i: i64) => A throws E, init: A): A throws E {
     let acc = init;
-    for (let i: usize = 0; i < this.length; i++) {
+    const n = this.length;
+    for (let i: usize = 0; i < n && i < this.length; i++) {
       acc = f(acc, this[i], i as i64);
     }
     return acc;
@@ -47,7 +56,8 @@ extend<T> Array<T> {
 
   // First element matching `pred` (see header), or null.
   find<E>(pred: (x: T, i: i64) => bool throws E): T | null throws E {
-    for (let i: usize = 0; i < this.length; i++) {
+    const n = this.length;
+    for (let i: usize = 0; i < n && i < this.length; i++) {
       if (pred(this[i], i as i64)) {
         return __intrinsic_share(this[i]);
       }
@@ -57,7 +67,8 @@ extend<T> Array<T> {
 
   // Index of the first element matching `pred`, or -1.
   findIndex<E>(pred: (x: T, i: i64) => bool throws E): i64 throws E {
-    for (let i: usize = 0; i < this.length; i++) {
+    const n = this.length;
+    for (let i: usize = 0; i < n && i < this.length; i++) {
       if (pred(this[i], i as i64)) {
         return i as i64;
       }
@@ -76,7 +87,7 @@ extend<T> Array<T> {
     let i = this.length;
     while (i > 0) {
       i--;
-      if (pred(this[i], i as i64)) {
+      if (i < this.length && pred(this[i], i as i64)) {
         return i as i64;
       }
     }
@@ -105,7 +116,8 @@ extend<T> Array<T> {
   }
 
   some<E>(pred: (x: T, i: i64) => bool throws E): bool throws E {
-    for (let i: usize = 0; i < this.length; i++) {
+    const n = this.length;
+    for (let i: usize = 0; i < n && i < this.length; i++) {
       if (pred(this[i], i as i64)) {
         return true;
       }
@@ -114,7 +126,8 @@ extend<T> Array<T> {
   }
 
   every<E>(pred: (x: T, i: i64) => bool throws E): bool throws E {
-    for (let i: usize = 0; i < this.length; i++) {
+    const n = this.length;
+    for (let i: usize = 0; i < n && i < this.length; i++) {
       if (!pred(this[i], i as i64)) {
         return false;
       }
