@@ -3,47 +3,6 @@ type Shape =
   | { kind: "rect"; w: f64; h: f64 }
   | { kind: "tri"; b: f64; h: f64 };
 
-type Dir = "up" | "down" | "left";
-
-enum Color {
-  Red,
-  Green,
-  Blue,
-}
-
-function missingKinds(s: Shape): f64 {
-  switch (s.kind) {
-    case "circle":
-      return s.r;
-  }
-  return 0.0;
-}
-
-function missingLiterals(d: Dir): i64 {
-  switch (d) {
-    case "up":
-      return 1;
-  }
-  return 0;
-}
-
-function missingEnum(c: Color): i64 {
-  switch (c) {
-    case Color.Red:
-    case Color.Blue:
-      return 1;
-  }
-  return 0;
-}
-
-function missingTypeof(v: i64 | string | null): i64 {
-  switch (typeof v) {
-    case "number":
-      return 1;
-  }
-  return 0;
-}
-
 function wrongCase(s: Shape): i64 {
   switch (s.kind) {
     case "square":
@@ -51,16 +10,6 @@ function wrongCase(s: Shape): i64 {
     default:
       return 0;
   }
-}
-
-function duplicate(n: i64): i64 {
-  switch (n) {
-    case 1:
-      return 1;
-    case 1:
-      return 2;
-  }
-  return 0;
 }
 
 function wrongType(n: i64): i64 {

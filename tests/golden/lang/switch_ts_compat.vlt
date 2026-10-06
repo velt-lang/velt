@@ -1,0 +1,201 @@
+// TypeScript accepts a switch that does not cover every member (the rest skip it and are
+// narrowed after it), case values that are not literals on a discriminant or `typeof`, and
+// duplicate cases (the first one wins). Expected output: Node's.
+type Shape =
+  | { kind: "circle"; r: number }
+  | { kind: "square"; s: number }
+  | { kind: "tri"; b: number };
+type Color = "red" | "green" | "blue";
+
+enum Dir {
+  Up,
+  Down,
+  Left,
+}
+
+function area(s: Shape): number {
+  switch (s.kind) {
+    case "circle":
+      return s.r * s.r * 3;
+    case "square":
+      return s.s * s.s;
+  }
+  return -1;
+}
+
+function colorName(c: Color): string {
+  let out = "?";
+  switch (c) {
+    case "red":
+      out = "R";
+      break;
+  }
+  return out;
+}
+
+function dirName(d: Dir): string {
+  switch (d) {
+    case Dir.Up:
+      return "up";
+  }
+  return "other";
+}
+
+function kindOf(x: number | string | boolean): string {
+  switch (typeof x) {
+    case "number":
+      return "num";
+  }
+  return "not num";
+}
+
+function dynCase(s: Shape, k: string): string {
+  switch (s.kind) {
+    case k:
+      return "matched " + k;
+    case "tri":
+      return "tri";
+  }
+  return "no match";
+}
+
+function dynTypeof(x: number | string, t: string): string {
+  switch (typeof x) {
+    case t:
+      return "same " + t;
+    default:
+      return "differs";
+  }
+}
+
+function dup(n: number): string {
+  switch (n) {
+    case 1:
+      return "one";
+    case 1:
+      return "one again";
+    case 2:
+    case 2:
+      return "two";
+  }
+  return "many";
+}
+
+function dupColor(c: Color): string {
+  switch (c) {
+    case "red":
+      return "first red";
+    case "green":
+    case "red":
+      return "green or second red";
+    default:
+      return "blue";
+  }
+}
+
+function dupKind(s: Shape): string {
+  switch (s.kind) {
+    case "circle":
+      return "c1";
+    case "circle":
+      return "c2";
+    default:
+      return "other";
+  }
+}
+
+function dupFall(c: Color): string {
+  let out = "";
+  switch (c) {
+    case "red":
+      out += "a";
+    case "red":
+      out += "b";
+    case "blue":
+      out += "c";
+      break;
+  }
+  return out;
+}
+
+function main() {
+  afterSwitch();
+  console.log(
+    area({ kind: "circle", r: 2 }),
+    area({ kind: "square", s: 3 }),
+    area({ kind: "tri", b: 1 }),
+  );
+  console.log(colorName("red"), colorName("blue"));
+  console.log(dirName(Dir.Up), dirName(Dir.Left));
+  console.log(kindOf(1), kindOf("a"), kindOf(true));
+  console.log(
+    dynCase({ kind: "square", s: 1 }, "square"),
+    dynCase({ kind: "tri", b: 1 }, "circle"),
+    dynCase({ kind: "circle", r: 1 }, "x"),
+  );
+  console.log(dynTypeof(1, "number"), dynTypeof("a", "number"), dynTypeof("a", "string"));
+  console.log(dup(1), dup(2), dup(3));
+  console.log(dupColor("red"), dupColor("green"), dupColor("blue"));
+  console.log(dupKind({ kind: "circle", r: 1 }), dupKind({ kind: "tri", b: 1 }));
+  console.log(dupFall("red"), dupFall("green"), dupFall("blue"));
+}
+
+function rest(s: Shape): number {
+  switch (s.kind) {
+    case "circle":
+      return s.r;
+    case "square":
+      return s.s;
+  }
+  return s.b;
+}
+
+function nullable(x: string | null): string {
+  switch (x) {
+    case null:
+      return "none";
+  }
+  return x.toUpperCase();
+}
+
+function brk(s: Shape): string {
+  let out = "";
+  switch (s.kind) {
+    case "circle":
+      out = "c";
+      break;
+    case "square":
+      return "sq";
+  }
+  return out + s.kind;
+}
+
+function narrowedFirst(s: Shape, k: string): string {
+  if (s.kind === "tri") {
+    return "tri early";
+  }
+  switch (s.kind) {
+    case k:
+      return "dyn " + k;
+  }
+  return "none " + s.kind;
+}
+
+function afterSwitch() {
+  console.log(
+    rest({ kind: "circle", r: 1 }),
+    rest({ kind: "square", s: 2 }),
+    rest({ kind: "tri", b: 3 }),
+  );
+  console.log(nullable(null), nullable("a"));
+  console.log(
+    brk({ kind: "circle", r: 1 }),
+    brk({ kind: "square", s: 2 }),
+    brk({ kind: "tri", b: 3 }),
+  );
+  console.log(
+    narrowedFirst({ kind: "square", s: 1 }, "square"),
+    narrowedFirst({ kind: "circle", r: 1 }, "x"),
+    narrowedFirst({ kind: "tri", b: 1 }, "tri"),
+  );
+}
