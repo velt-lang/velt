@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 mod no_window;
 mod runtime_support;
+mod work_dir;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -96,7 +97,7 @@ fn panics_report_their_source_location() {
         // Run from the repo root with a relative path: messages show the path as given.
         let file = format!("tests/golden/lang/{name}.vlt");
         for mode in &modes {
-            let out = root.join("target/golden-work-panics").join(mode.join("_"));
+            let out = work_dir::work_dir(&root, "golden-work-panics").join(mode.join("_"));
             let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
                 .arg("build")
                 .args(*mode)
