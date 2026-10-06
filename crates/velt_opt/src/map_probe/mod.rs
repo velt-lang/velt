@@ -19,6 +19,8 @@
 //! arithmetic.
 
 mod equiv;
+mod facts;
+mod memory;
 mod region;
 #[cfg(test)]
 mod tests;
@@ -31,11 +33,15 @@ use velt_vir::vir::{
 };
 
 use crate::srclocs::push_stmt;
-use equiv::Cx;
+use facts::Cx;
 use region::Point;
 
 /// Prefix of the mangled symbol of every `Map<K, V>.lookup` instance (and its clones).
 const LOOKUP_PREFIX: &str = "_V3stdP7preludeP3mapN3MapM6lookup_";
+
+/// How many of the nearest earlier probes a probe is compared with. The search also stops at
+/// the first one with a write in between, which every farther one has too.
+const CANDIDATES: usize = 4;
 
 /// Runtime functions that only read memory: the probes, and the string comparisons a `lookup`
 /// inlined into the caller would make.
@@ -133,8 +139,13 @@ pub(crate) fn run(aggs: &[AggLayout], probes: &Probes, func: &mut Function) -> b
         calls
             .iter()
             .filter_map(|&p| {
-                let q = calls.iter().find(|&&q| q != p && cx.reusable_for(q, p))?;
-                Some((p, cx.result_of(*q)?))
+                let q = cx
+                    .earlier_probes(p, &calls)
+                    .into_iter()
+                    .take(CANDIDATES)
+                    .take_while(|&q| cx.quiet_between(q, p))
+                    .find(|&q| cx.reusable_for(q, p))?;
+                Some((p, cx.result_of(q)?))
             })
             .collect::<Vec<_>>()
     };
