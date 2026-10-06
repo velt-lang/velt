@@ -11,6 +11,7 @@
 //! by `,`).
 
 mod no_window;
+mod work_dir;
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -171,7 +172,7 @@ fn goldens_under_wasmtime() {
     build_runtime(&root, "wasm32-wasip1");
     let dirs = ["m1", "m2", "m3", "m4", "lang"];
     let files = programs(&root, &dirs, UNSUPPORTED);
-    let work = root.join("target/golden-work-wasi");
+    let work = work_dir::work_dir(&root, "golden-work-wasi");
     let failures = run_all(&files, "wasm32-wasip1", &[None, Some("--release")], &work);
     let _ = std::fs::remove_dir_all(&work);
     println!(
@@ -192,7 +193,7 @@ fn goldens_in_the_browser_glue() {
     build_runtime(&root, "wasm32-unknown-unknown");
     let skip: Vec<&str> = UNSUPPORTED.iter().chain(NEEDS_FS).copied().collect();
     let files = programs(&root, &["m1", "m2"], &skip);
-    let work = root.join("target/golden-work-web");
+    let work = work_dir::work_dir(&root, "golden-work-web");
     let failures = run_all(&files, "wasm32-unknown-unknown", &[None], &work);
     let _ = std::fs::remove_dir_all(&work);
     println!(
