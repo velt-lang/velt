@@ -79,7 +79,7 @@ function numbersThroughAlias(n: number) {
 function main() {
   numbersThroughAlias(10);
   numbersThroughAlias(40);
-  // Objects: insertion sort in place (short arrays) and the buffered sort.
+  // Objects: a short array (insertion sorted) and a long one, both moved into the buffer.
   pushWhileSorting(10);
   pushWhileSorting(40);
   const h = new Holder();

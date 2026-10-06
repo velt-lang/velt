@@ -1144,7 +1144,14 @@ program): 1M numbers 410 → 57 ms, 300k objects 210 → 79 ms, 100k by score 64
 - The sort works on a buffer of its own while the comparator runs (a comparator can reach the
   array through an alias): elements that need no drop are copied into it and written back, the
   others moved out and back. At most 1M instructions on any row above. A short array (at most
-  20 elements) is insertion sorted in place when its elements need a drop or the comparator
+  20 elements) of elements that need no drop is insertion sorted in place when the comparator
   captures nothing (`__intrinsic_fn_captures_nothing`, folded by velt_opt): 100k sorts of 10
   numbers by `(a, b) => a - b` take 20.8M instructions (32.6M when they were copied), and of
   8–12 numbers 40.4M (57.2M copied).
+- Short arrays of elements that need a drop are moved out like long ones (#548 review: sorted
+  in place, a comparator that pushes onto the array through an alias, or through an element
+  that holds it, left its arguments pointing into the freed buffer). Wall clock of 1M sorts of
+  a 10-element copy (`slice()` included, best of 15, LLVM release): strings by `<` 323 → 360
+  ms, objects by a number field 53 → 78 ms, so about 35 and 25 ns per sort. The 1M-number sort
+  of the table measured in the same session: Velt 93 ms, Rust `sort_by` 69 ms, Node 1216 ms
+  (the machine was busier than for the numbers above).

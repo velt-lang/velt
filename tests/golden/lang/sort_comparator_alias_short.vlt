@@ -1,0 +1,74 @@
+// `sort(cmp)` on short arrays (at most 20 elements, which the stable sort insertion sorts) of
+// elements that need a drop, with a comparator that pushes onto the array while it runs (#548
+// review). The comparator's arguments borrow elements; a push reallocates the array, so those
+// elements must not live in it while the comparator runs. The sort moves them into a buffer of
+// its own at every length, whether or not the comparator captures anything: here it reaches
+// the array once through a captured alias and once through an element that holds it. Node
+// prints the same.
+
+class Holder {
+  items: [string, Holder][] = [];
+}
+
+function name(i: number): string {
+  return `element-${(i * 7) % 11}-with-a-label-long-enough-to-live-on-the-heap`;
+}
+
+// Strings, the comparator reaching the array through a captured alias.
+function throughCapturedAlias(n: number) {
+  const xs: string[] = [];
+  for (let i = 0; i < n; i++) {
+    xs.push(name(i));
+  }
+  const ys = xs;
+  let calls = 0;
+  let bad = 0;
+  xs.sort((a, b) => {
+    calls++;
+    if (calls === 3) {
+      for (let i = 0; i < 1000; i++) {
+        ys.push(`pushed-${i}`);
+      }
+    }
+    if (!a.startsWith("element-") || !b.startsWith("element-") || a.length < 40 || b.length < 40) {
+      bad++;
+    }
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+  console.log(n, xs.length, bad, xs.slice(0, n).map((s) => s.slice(8, 10)).join(","), xs[n], xs[xs.length - 1]);
+}
+
+// Tuples whose holder owns the array; the comparator captures nothing and pushes through its
+// first argument.
+function throughElement(n: number) {
+  const h = new Holder();
+  for (let i = 0; i < n; i++) {
+    h.items.push([name(i), h]);
+  }
+  let bad = 0;
+  h.items.sort((a, b) => {
+    if (a[1].items.length < 1000) {
+      for (let i = 0; i < 1000; i++) {
+        a[1].items.push([`pushed-${i}`, a[1]]);
+      }
+    }
+    return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
+  });
+  for (let i = 0; i < n; i++) {
+    if (!h.items[i][0].startsWith("element-")) {
+      bad++;
+    }
+  }
+  console.log(n, h.items.length, bad, h.items.slice(0, n).map((e) => e[0].slice(8, 10)).join(","), h.items[n][0]);
+  // The holder and its elements reference each other: cut the cycle.
+  h.items = [];
+}
+
+function main() {
+  throughCapturedAlias(10);
+  throughCapturedAlias(20);
+  throughCapturedAlias(30);
+  throughElement(10);
+  throughElement(20);
+  throughElement(30);
+}
