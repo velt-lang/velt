@@ -124,6 +124,11 @@ console.log(m.get(key), m.get([1]), m.size); // null null 1
 | `[Symbol.iterator](): Iterator<[K, V]>` | a map is an `Iterable<[K, V]>`; the iterator visits the entries as of the call, like `for...of` over the map (JS's is a live view) |
 | `for (const [k, v] of map)` | |
 
+A callback of `forEach`, `upsert`, `update` or `getOrInsert` may change the map through another
+reference to it: `forEach` then visits entries added meanwhile and skips deleted ones, as in JS,
+and `upsert` and `getOrInsert` store their result under the key even when the callback deleted
+or added entries.
+
 ## Record
 
 `Record<K, V>` is a dictionary written with TypeScript object syntax: `r[k]`, `r.name`,

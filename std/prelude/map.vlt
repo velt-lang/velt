@@ -52,6 +52,12 @@ export class Map<K, V> {
   private slots: u64[] = [];
   // 64 - log2(slots.length): home slot = p >> shift.
   private shift: u64 = 64;
+  // Counts insertions, deletions and clears: a lookup's result (a slot or an entry position)
+  // stays valid while it is unchanged, which a callback changing the map through another
+  // reference (`upsert`, `getOrInsert`) does not guarantee.
+  private edits: u64 = 0;
+  // Running `forEach` calls: tombstones are not compacted away while one runs.
+  private iterating: u32 = 0;
 
   // A map holding `entries` (like JS `new Map(entries)`), in order; a later entry with the same
   // key replaces the value of an earlier one but keeps its position. Leaves `entries` as it is;
@@ -100,8 +106,19 @@ export class Map<K, V> {
     const found = this.lookup(key, p);
     if (found >= 0) {
       const e = found as usize;
+      const edits = this.edits;
       const next = applyTo(this.entryValues[e], f);
-      this.entryValues[e] = next;
+      if (this.edits == edits) {
+        this.entryValues[e] = next;
+        return;
+      }
+      // `f` changed the map through another reference: find the key again.
+      const again = this.lookup(key, p);
+      if (again >= 0) {
+        this.entryValues[again as usize] = next;
+      } else if (next != null) {
+        this.append(key, next, p, again);
+      }
       return;
     }
     this.append(key, init, p, found);
@@ -123,9 +140,19 @@ export class Map<K, V> {
   // The value stored for `key`, inserting `make()` first if `key` is absent.
   getOrInsert<E>(key: K, make: () => V throws E): V throws E {
     const p = __intrinsic_hash(key) * FIB;
-    const e = this.lookup(key, p);
+    let e = this.lookup(key, p);
     if (e < 0) {
-      this.append(key, make(), p, e);
+      const edits = this.edits;
+      const v = make();
+      if (this.edits != edits) {
+        // `make` changed the map through another reference: find the key again.
+        e = this.lookup(key, p);
+        if (e >= 0) {
+          this.entryValues[e as usize] = v;
+          return sharedValue(this.entryValues[e as usize]);
+        }
+      }
+      this.append(key, v, p, e);
       return sharedValue(this.entryValues[this.entryValues.length - 1]);
     }
     return sharedValue(this.entryValues[e as usize]);
@@ -139,6 +166,7 @@ export class Map<K, V> {
       return false;
     }
     const e = found as usize;
+    this.edits++;
     this.removeSlot(this.slotOf(p, e));
     this._size--;
     if (this._size == 0) {
@@ -154,7 +182,7 @@ export class Map<K, V> {
     }
     this.entryValues[e] = null;
     this.dead++;
-    if (this.dead > COMPACT_MIN_DEAD && this.dead > this._size) {
+    if (this.dead > COMPACT_MIN_DEAD && this.dead > this._size && this.iterating == 0) {
       // Compacting renumbers every slot, so shrink an index that has become mostly empty
       // first: that keeps repeated compactions of a draining map proportional to its size.
       let fit = INITIAL_SLOTS;
@@ -171,6 +199,7 @@ export class Map<K, V> {
   }
 
   clear() {
+    this.edits++;
     this.dropEntries();
     this.slots = [];
     this.shift = 64;
@@ -203,9 +232,16 @@ export class Map<K, V> {
   }
 
   // Visits live entries in insertion order, borrowing them (JS argument order: value, key).
+  // Entries `f` adds through another reference are visited and deleted ones skipped, as in JS:
+  // positions stay put meanwhile (no compaction while a `forEach` runs).
   forEach<E>(f: (value: V, key: K) => void throws E) throws E {
-    for (let e: usize = 0; e < this.entryKeys.length; e++) {
-      visit(this.entryValues[e], this.entryKeys[e], f);
+    this.iterating++;
+    try {
+      for (let e: usize = 0; e < this.entryKeys.length; e++) {
+        visit(this.entryValues[e], this.entryKeys[e], f);
+      }
+    } finally {
+      this.iterating--;
     }
   }
 
@@ -283,6 +319,7 @@ export class Map<K, V> {
 
   // Appends a new entry; `s` is `lookup`'s miss result for `key`.
   private append(key: K, value: V, p: u64, s: i64) {
+    this.edits++;
     if ((this._size + 1) * 4 > this.slots.length * 3) {
       this.resize(this.slots.length == 0 ? INITIAL_SLOTS : this.slots.length * 2);
       s = this.lookup(key, p);
@@ -316,7 +353,7 @@ export class Map<K, V> {
   // The old slot words are re-placed as they are: their tags hold the homes, so no key is
   // rehashed.
   private resize(capacity: usize) {
-    if (this.dead > 0) {
+    if (this.dead > 0 && this.iterating == 0) {
       this.compact();
     }
     const slots: u64[] = __intrinsic_array_with_capacity(capacity);

@@ -1,0 +1,33 @@
+// Map methods whose callback changes the map through another reference (#564): the value the
+// callback gets stays valid, and `getOrInsert` / `upsert` find the key again afterwards instead
+// of writing to a slot or entry position that changed meanwhile.
+function main() {
+  const m = new Map<string, string>();
+  for (let i = 0; i < 4; i++) {
+    m.set(`k${i}`, `value-${i}-with-a-label-long-enough-to-live-on-the-heap`);
+  }
+  const alias = m;
+  const v = m.getOrInsert("x", () => {
+    for (let i = 0; i < 100; i++) {
+      alias.set(`n${i}`, `new-${i}`);
+    }
+    return "made";
+  });
+  console.log(v, m.size, m.get("x"), m.get("n50"), m.has("k3"));
+  m.upsert("k1", "init", (old) => {
+    alias.delete("k1");
+    for (let i = 0; i < 100; i++) {
+      alias.set(`q${i}`, `new-${i}`);
+    }
+    return old.slice(0, 7);
+  });
+  console.log(m.size, m.get("k1"), m.get("q5"));
+  m.update("k2", (old) => {
+    alias.delete("k2");
+    for (let i = 0; i < 1000; i++) {
+      alias.set(`u${i}`, `new-${i}`);
+    }
+    console.log(old.length, old.slice(0, 7));
+  });
+  console.log(m.size, m.has("k2"));
+}
