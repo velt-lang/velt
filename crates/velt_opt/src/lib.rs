@@ -12,6 +12,8 @@
 //! - `constfold`: sparse conditional constant propagation + folding, branch folding,
 //!   devirtualization of calls through constant function pointers.
 //! - `addr_forward`: places through a pointer that always holds `&a…` name `a…` directly.
+//! - `heap_sroa`: heap objects that never escape the function (`new` of a small class whose
+//!   methods were inlined) live in aggregate locals instead; no allocation, no free.
 //! - `sroa`: splits aggregate locals whose address is never taken into per-field locals.
 //! - `copyprop`: forwards `a = b` copies of register-like scalar locals.
 //! - `dce`: removes stores to never-read locals, then the locals themselves.
@@ -20,6 +22,9 @@
 //! - `noalias`: once the rounds are done, scalar fields behind `noalias` params (modified arrays
 //!   and structs) are kept in locals (loaded once, stored back around calls that receive the
 //!   param), followed by one scalar cleanup round.
+//! - `numrep`: after the rounds, `f64`/`i64` locals that only ever hold 32-bit integers (the
+//!   results of `x | 0` and friends) become `i32` locals, and ToInt32 of a sum of two of them
+//!   becomes a 32-bit add (design #525, step 1).
 //! - `divisions`: after the rounds, signed divisions / remainders by constants whose dividend
 //!   is provably non-negative or a multiple of the divisor become shifts, masks or unsigned ops.
 //! - `frame_slots`: at the same point, scalar fields of an async frame that a poll function
@@ -43,9 +48,11 @@ mod dce;
 mod dead_funcs;
 mod divisions;
 mod frame_slots;
+mod heap_sroa;
 mod inline;
 mod locals;
 mod noalias;
+mod numrep;
 mod scc;
 mod simplify_cfg;
 mod srclocs;
@@ -98,6 +105,10 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 }
             }
             for func in &mut program.funcs {
+                if t.time("numrep", || numrep::run(&program.externs, func)) {
+                    t.time("copyprop", || copyprop::run(func));
+                    t.time("dce", || dce::run(&program.aggs, func));
+                }
                 t.time("divisions", || divisions::run(func));
             }
             promote_memory(program, t);
@@ -132,10 +143,14 @@ fn speed_round(
     let mut changed = t.time("inline", || inline::run(program, budget));
     changed |= t.time("const_fields", || const_fields::run(program, specs));
     let signatures = t.time("signatures", || callgraph::signatures(program));
+    let allocator = heap_sroa::Allocator::find(program);
     for func in &mut program.funcs {
         changed |= t.time("constfold", || constfold::run(&signatures, func));
         changed |= t.time("copyprop", || copyprop::run(func));
         changed |= t.time("addr_forward", || addr_forward::run(&program.aggs, func));
+        changed |= t.time("heap_sroa", || {
+            heap_sroa::run(&program.aggs, allocator, func)
+        });
         changed |= t.time("sroa", || sroa::run(&program.aggs, func));
         changed |= t.time("dce", || dce::run(&program.aggs, func));
         changed |= t.time("simplify_cfg", || simplify_cfg::run(func));

@@ -373,18 +373,14 @@ impl FnCx<'_, '_> {
         owned && !self.cx.ty.is_bottom(elem) && !self.cx.is_copy(elem)
     }
 
-    /// `for (const c of s)` over a string iterates its characters, `s.split("")`, as in JS.
+    /// `for (const c of s)` over a string iterates its characters (code points: a surrogate pair
+    /// is one), as JS's string iterator: the prelude's `s.__codePoints()`.
     pub(super) fn chars_of(&mut self, s: hir::Expr, span: Span) -> hir::Expr {
         let prop = ast::Ident {
-            name: "split".into(),
+            name: "__codePoints".into(),
             span,
         };
-        let empty = ast::Expr {
-            id: ast::NodeId(u32::MAX),
-            kind: ast::ExprKind::Lit(ast::Lit::Str(String::new())),
-            span,
-        };
-        self.method_call_on(s, &prop, &[], &[empty], None, span)
+        self.method_call_on(s, &prop, &[], &[], None, span)
     }
 
     /// `for (const [k, v] of m)` over a class value iterates `m.entries()`.

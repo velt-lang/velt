@@ -20,6 +20,10 @@ M1 kernels:
 - **fib**: recursive `fib(35)`.
 - **loops**: the longest Collatz chain for starts below 1M, plus a 4000×4000 multiply/modulo loop.
 - **floats**: a 600×400 Mandelbrot (200 iterations max) plus 20M-step midpoint integration of 4/(1+x²).
+- **int32**: the 32-bit hash loop of issue #521 on numbers, 2×50M steps as written (`(y * k) | 0`,
+  which JS rounds through a double) and 2×50M with `Math.imul(y, k)`. Rust computes the same
+  values (`bench/rust/int32.rs`: the rounding by an `i64`→`f64`→`i64` round trip, then
+  `wrapping_mul`). See "JS int32 operators" below.
 
 M2 programs (the Rust and Node versions are the same algorithm, written idiomatically):
 - **nbody**: the Benchmarks Game n-body, 5M steps; Copy structs `Vec3` / `Body` in an array,
@@ -1036,6 +1040,35 @@ release, interleaved, best of 21, Apple M4 shared with other builds, `VELT_THREA
   ~2 ns per value is the generator step (section "Async generators" above).
 - Every bench/async and bench/iter program compiles to a byte-identical object file before and
   after this phase (it changes std sources and sema only), so their timings are unchanged.
+
+## JS int32 operators (#521, 2026-10-04)
+
+Bitwise operators on numbers now follow JS: ToInt32 and ToUint32 of their operands, and products
+inside them rounded like doubles. Before, `(y * k) | 0` computed `Math.imul`'s value and `x >>> 15`
+shifted 64 bits. ToInt32 of a float was a `trunc` call plus an `fmod` call (`__toInt32`); it is now
+one guarded `cvttsd2si`. `numrep` (velt_opt) keeps `number` locals that only hold int32 values in
+`i32` registers.
+
+The issue's repro, `velt_perf_repro`, ran 20M iterations × 1 sample per run. Each cell is the
+best of 8–12 interleaved runs in ms (Windows, i9-12900HK, with other builds running, so ±30%):
+
+| | Velt release before | Velt release after | `velt run` before → after | Rust -O | Node |
+|---|---|---|---|---|---|
+| as written: `(y * k) \| 0` | 2122–2331 | 279–370 | 3800 → 946 | 95–114 | 228–372 |
+| with `Math.imul(y, k)` | n/a (no `Math.imul`) | 115–133 | | 95–114 (same instructions) | |
+
+- **Checksums.** For 100M × 5, Velt now prints Node's `-566856265`; before, it printed
+  `-420279296`. With `Math.imul`, Velt prints Rust's `2105069163`, as Node does for that program.
+- **The loop as written.** It is about 3× Rust, and in the noise of Node's time.
+  - The rest of the gap is the rounding JS requires: an `i64` product, `cvtsi2sd` and `cvttsd2si`
+    on the dependency chain of each multiply, about 16 cycles. V8 emits `vcvtlsi2sd`, `vmulsd` and
+    `vcvttsd2siq` for it, which has the same latency.
+  - Node was 6.5× Rust in the issue author's measurement but 2.4× Rust on this machine. On a
+    machine where Node is slower, Velt is faster.
+- **The `Math.imul` loop** compiles to the instructions Rust emits: LLVM even unrolls it by two.
+
+`bench/int32` (both variants, whole process, best of 5 interleaved, busy machine): Rust 2763 ms,
+Velt LLVM 3732, Velt Cranelift release 6395, Node 7360.
 
 ## Typical TypeScript workloads (`bench/typical`, 2026-10-04)
 

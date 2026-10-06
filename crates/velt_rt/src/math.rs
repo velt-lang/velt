@@ -67,6 +67,52 @@ pub extern "C" fn velt_rt_math_umulh(a: u64, b: u64) -> u64 {
     ((a as u128 * b as u128) >> 64) as u64
 }
 
+/// JavaScript's ToInt32: `x` truncated toward zero, modulo 2^32, in the signed 32-bit range; NaN
+/// and ±Infinity give 0. Backends emit the common case inline (|x| < 2^63: one conversion and a
+/// truncation) and call this only for the rest.
+#[no_mangle]
+pub extern "C" fn velt_rt_math_to_int32(x: f64) -> i32 {
+    if !x.is_finite() {
+        return 0;
+    }
+    if x.abs() < 9_223_372_036_854_775_808.0 {
+        return x as i64 as i32;
+    }
+    // |x| >= 2^63 is an integer: its mantissa times 2^shift, with shift >= 11.
+    let bits = x.to_bits();
+    let shift = ((bits >> 52) & 0x7ff) as i64 - 1075;
+    let mantissa = (bits & ((1 << 52) - 1)) | (1 << 52);
+    let low = if shift >= 32 {
+        0
+    } else {
+        (mantissa << shift) as u32
+    };
+    let low = if x < 0.0 { low.wrapping_neg() } else { low };
+    low as i32
+}
+
+/// JS's `(a * b) | 0` for two int32 numbers: the exact product (it fits an `i64`) rounded to a
+/// double the way the double multiply rounds it, then its low 32 bits. Backends emit it inline.
+#[no_mangle]
+pub extern "C" fn velt_rt_math_mul_int32(a: i32, b: i32) -> i32 {
+    let p = a as i64 * b as i64;
+    (p as f64) as i64 as i32
+}
+
+/// JS's `(a + x) | 0` for an int32 number `a` and any number `x`: the double sum, then ToInt32.
+/// Backends emit it inline, adding as integers when `x` is a whole number of at most 2^52.
+#[no_mangle]
+pub extern "C" fn velt_rt_math_add_int32(a: i32, x: f64) -> i32 {
+    velt_rt_math_to_int32(a as f64 + x)
+}
+
+/// `Math.clz32` of a value already converted with ToInt32: the number of leading zero bits of
+/// its 32-bit pattern (32 for 0). Backends emit it as one instruction.
+#[no_mangle]
+pub extern "C" fn velt_rt_math_clz32(x: i32) -> i32 {
+    x.leading_zeros() as i32
+}
+
 /// Wrapping integer power; a negative exponent yields 0, except `1 ** negative == 1`.
 #[no_mangle]
 pub extern "C" fn velt_rt_pow_i64(a: i64, b: i64) -> i64 {
@@ -98,6 +144,44 @@ mod tests {
         assert!(velt_rt_pow_f64(1.0, f64::NAN).is_nan());
         assert!(velt_rt_pow_f64(-1.0, f64::INFINITY).is_nan());
         assert_eq!(velt_rt_pow_f64(f64::NAN, 0.0), 1.0);
+    }
+
+    #[test]
+    fn to_int32_matches_js() {
+        // Expected values are Node's `x | 0`.
+        let cases: [(f64, i32); 17] = [
+            (0.0, 0),
+            (-0.0, 0),
+            (-1.5, -1),
+            (2147483648.0, -2147483648),
+            (4294967297.0, 1),
+            (-4294967297.0, -1),
+            (3000000000.7, -1294967296),
+            (9007199254740994.0, 2),
+            (9223372036854775808.0, 0),
+            (9223372036854777856.0, 2048),
+            (-9223372036854777856.0, -2048),
+            (1e21, -559939584),
+            (-1e21, 559939584),
+            (f64::MAX, 0),
+            (f64::NAN, 0),
+            (f64::INFINITY, 0),
+            (f64::NEG_INFINITY, 0),
+        ];
+        for (x, want) in cases {
+            assert_eq!(velt_rt_math_to_int32(x), want, "ToInt32({x})");
+        }
+        // Node: (0x7fffffff * 0x2c1b3c6d) | 0, (-2147483648 * -2147483648) | 0, (3 + 2.5) | 0.
+        assert_eq!(velt_rt_math_mul_int32(0x7fff_ffff, 0x2c1b_3c6d), 1407501312);
+        assert_eq!(velt_rt_math_mul_int32(i32::MIN, i32::MIN), 0);
+        assert_eq!(velt_rt_math_mul_int32(-7, 6), -42);
+        assert_eq!(velt_rt_math_add_int32(3, 2.5), 5);
+        assert_eq!(velt_rt_math_add_int32(1, -1.5), 0);
+        assert_eq!(velt_rt_math_add_int32(i32::MAX, 1.0), i32::MIN);
+        assert_eq!(velt_rt_math_add_int32(5, f64::NAN), 0);
+        assert_eq!(velt_rt_math_clz32(0), 32);
+        assert_eq!(velt_rt_math_clz32(-1), 0);
+        assert_eq!(velt_rt_math_clz32(1), 31);
     }
 
     #[test]

@@ -351,7 +351,13 @@ impl FnCx<'_, '_> {
         let unit = self.cx.ty.unit;
         let lty = place.ty;
         let Some(op) = op else {
-            let v = self.expr_coerce(value, lty, Want::Move);
+            let v = match self.value_hint(&place, value) {
+                Some(t) => self.expr_coerce(value, t, Want::Move),
+                None => {
+                    let v = self.expr(value, None, Want::Move);
+                    self.coerce(v, lty)
+                }
+            };
             self.unnarrow_fields(target);
             if let H::Local(l, _) = place.kind {
                 self.check_capture_assign(l, target.span);
@@ -383,7 +389,26 @@ impl FnCx<'_, '_> {
             };
             return self.mk(kind, unit, span);
         }
-        let v = self.expr(value, Some(lty), Want::Borrow);
+        let hint = self.value_hint(&place, value);
+        let v = self.expr(value, hint, Want::Borrow);
+        // `x |= v` and the other bitwise assignments on numbers: `x = x | v` (`int32.rs`).
+        let v = match self.js_bitwise_operands(op, &place, v) {
+            Ok(v) => {
+                // The index of `xs[next()] |= 1` is evaluated once, before the value.
+                let mut place = place;
+                let mut stmts = Vec::new();
+                self.hoist_indices(&mut place, &mut stmts);
+                let cur = self.place_read(&place, Want::Borrow);
+                let value = self.js_bitwise_assign(op, &place, cur, v, span);
+                let kind = H::Assign {
+                    place: Box::new(place),
+                    value: Box::new(value),
+                };
+                let assign = self.mk(kind, unit, span);
+                return self.with_temps(stmts, assign);
+            }
+            Err(v) => v,
+        };
         let v = self.compound_operand(&place, v);
         if self.check_operands(op, lty, &v, span).is_none() {
             return self.error_expr(span);

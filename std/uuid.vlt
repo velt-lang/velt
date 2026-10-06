@@ -51,10 +51,12 @@ export function uuidv7(): string {
 
 // The 16 bytes of a UUID in text form (either case). Throws `UuidError` if malformed.
 export function uuidParse(s: string): u8[] {
-  const text = velt_rt_bytes_from_str(s);
-  if (text.length != TEXT_LEN) {
-    throw new UuidError(`Invalid UUID: expected ${TEXT_LEN} characters, got ${text.length}`);
+  if (s.length != TEXT_LEN) {
+    throw new UuidError(`Invalid UUID: expected ${TEXT_LEN} characters, got ${s.length}`);
   }
+  // A non-ASCII character makes the bytes longer, but it fails as a bad digit or dash first, at
+  // its own position (everything before it is ASCII, so byte and code-unit offsets agree).
+  const text = velt_rt_bytes_from_str(s);
   const out: u8[] = __intrinsic_array_with_capacity(16);
   let i: usize = 0;
   while (i < TEXT_LEN) {

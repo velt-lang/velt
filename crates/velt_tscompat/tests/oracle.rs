@@ -73,7 +73,6 @@ const CLAIMS: &[(&str, Claim)] = &[
     ("nullable-in-template", Claim::Behaviour),
     ("default-sort", Claim::Behaviour),
     ("json-map", Claim::Behaviour),
-    ("string-offsets", Claim::Behaviour),
     ("unsigned-arith", Claim::Behaviour),
     ("null-default", Claim::Behaviour),
     ("map-iter-as-array", Claim::Rejected),

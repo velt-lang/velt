@@ -1,0 +1,36 @@
+// check: no leaks
+// `using` on small objects that never leave their function: disposal still runs at the end of
+// each block, in reverse order, with the object's current fields (heap scalar replacement, #533).
+class Res {
+  id: number;
+  uses: number;
+  constructor(id: number) {
+    this.id = id;
+    this.uses = 0;
+  }
+  use(): number {
+    this.uses = this.uses + 1;
+    return this.id * 10 + this.uses;
+  }
+  [Symbol.dispose]() {
+    console.log(`dispose ${this.id} after ${this.uses}`);
+  }
+}
+
+function run(n: number): number {
+  let sum = 0.0;
+  for (let i = 0; i < n; i++) {
+    using a = new Res(i);
+    using b = new Res(i + 100);
+    sum += a.use() + b.use() + a.use();
+    if (i == 1) {
+      continue;
+    }
+    sum += b.use();
+  }
+  return sum;
+}
+
+function main() {
+  console.log(run(3));
+}

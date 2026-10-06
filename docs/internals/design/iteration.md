@@ -499,7 +499,7 @@ result as written, before bodies are checked; a throwing one is an error asking 
 | Type | `[Symbol.iterator]()` returns | Iterates |
 |---|---|---|
 | `T[]` | `new ArrayIterator<T>(this)` | a live view: the iterator holds the array (a share, not a copy) and reads the length at each step; once done it stays done (JS) |
-| `string` | `new StringIterator(this)` | characters (code points) as strings, by byte offset (`charAt`) |
+| `string` | `new StringIterator(this)` | characters (code points) as strings, by code-unit position (a surrogate pair is one) |
 | `Map<K, V>` | `new ArrayIterator(this.entries())` | the entries as of the call |
 | `Set<T>` (std/collections/set.vlt) | `new ArrayIterator(this.values())` | the elements as of the call (a class method: `Set` declares `implements Iterable<T>`) |
 

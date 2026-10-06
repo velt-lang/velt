@@ -117,8 +117,10 @@ contract document in the same change.
 ## Proposing a language change
 
 Velt's rules (see [the Reference](docs/reference/README.md#the-velt-reference)): adopt
-TypeScript's best parts and never JavaScript's bug sources; one way of doing things; add
-something that is not TypeScript only where TypeScript can't express it at native speed.
+TypeScript's best parts and never JavaScript's bug sources; one way of doing things; valid
+TypeScript runs as it does in Node, and Velt adds its own opt-in features wherever they make
+programs faster. Velt is a native backend language, not a way to compile to JavaScript, so a
+proposal for a Velt-only feature is welcome when it shows the speed it buys.
 
 1. **Open an issue** describing the problem, with real code that is awkward or impossible today.
 2. **Write a design note** for anything beyond a small fix, in the style of

@@ -1,0 +1,101 @@
+// The losers of a combinator keep running, like in JS, and one that is ready to go on when the
+// combinator settles runs before the awaiting code continues: in JS its continuation is a
+// microtask queued before the combinator's own (#150). Here a sibling resolves the loser's
+// promise and then throws or returns, so the loser is ready; Node prints the same. A loser waiting
+// for a timer still runs only when its timer fires, after the loop, also like Node. A loop whose
+// combinators settle without suspending therefore finishes its ready losers as it goes instead
+// of piling them up.
+class Failed extends Error {
+  constructor() {
+    super("failed");
+  }
+}
+
+class Counter {
+  n: i64 = 0;
+}
+
+async function loser(i: i64, p: Promise<i64>): Promise<i64> throws Failed {
+  await p;
+  console.log("loser resumed", i);
+  return i;
+}
+
+async function failer(i: i64, resolve: (v: i64) => void): Promise<i64> throws Failed {
+  resolve(i);
+  console.log("failer throws", i);
+  throw new Failed();
+}
+
+async function winner(i: i64, resolve: (v: i64) => void): Promise<i64> throws Failed {
+  resolve(i);
+  console.log("winner returns", i);
+  return 100 + i;
+}
+
+async function slept(i: i64): Promise<i64> throws Failed {
+  await sleep(5);
+  console.log("slept", i);
+  return i;
+}
+
+async function counted(done: Counter, p: Promise<i64>): Promise<i64> throws Failed {
+  await p;
+  done.n += 1;
+  return done.n;
+}
+
+async function failsAfter(resolve: (v: i64) => void): Promise<i64> throws Failed {
+  resolve(0);
+  throw new Failed();
+}
+
+async function main() {
+  for (let i = 0; i < 2; i++) {
+    const { promise, resolve } = Promise.withResolvers<i64>();
+    try {
+      await Promise.all([loser(i, promise), failer(i, resolve)]);
+    } catch (e) {
+      console.log("literal caught", i);
+    }
+  }
+  for (let i = 0; i < 2; i++) {
+    const { promise, resolve } = Promise.withResolvers<i64>();
+    const ps = [loser(i, promise), failer(i, resolve)];
+    try {
+      await Promise.all(ps);
+    } catch (e) {
+      console.log("array caught", i);
+    }
+  }
+  for (let i = 0; i < 2; i++) {
+    const { promise, resolve } = Promise.withResolvers<i64>();
+    console.log("won", await Promise.race([loser(i, promise), winner(i, resolve)]));
+  }
+  for (let i = 0; i < 2; i++) {
+    const { promise, resolve } = Promise.withResolvers<i64>();
+    console.log("any", await Promise.any([loser(i, promise), winner(i, resolve)]));
+  }
+  for (let i = 0; i < 2; i++) {
+    try {
+      await Promise.all([slept(i), failer(i, (v: i64) => {})]);
+    } catch (e) {
+      console.log("timer caught", i);
+    }
+  }
+  console.log("loop done");
+
+  // Each round's loser has finished when the next round starts.
+  const done = new Counter();
+  let behind = 0;
+  for (let i = 0; i < 1000; i++) {
+    const { promise, resolve } = Promise.withResolvers<i64>();
+    try {
+      await Promise.all([counted(done, promise), failsAfter(resolve)]);
+    } catch (e) {}
+    if (done.n != i + 1) {
+      behind += 1;
+    }
+  }
+  console.log("rounds whose loser had not finished:", behind, "of 1000");
+}

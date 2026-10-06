@@ -7,16 +7,7 @@
 // like RFC 3986 §5.2 with WHATWG's special-scheme rules (`\` is a separator, empty hosts are
 // invalid, default ports are dropped). Parsers return null where the URL is invalid.
 
-import {
-  FRAGMENT,
-  QUERY,
-  SPECIAL_QUERY,
-  PATH,
-  USERINFO,
-  C0,
-  encodeSet,
-  bytesOf,
-} from "velt:url/encode";
+import { FRAGMENT, QUERY, SPECIAL_QUERY, PATH, USERINFO, C0, encodeSet } from "velt:url/encode";
 import { parseHost } from "velt:url/host";
 
 // A parsed URL. `path` is serialized (it starts with "/" unless it is empty or `opaque`, e.g.
@@ -81,16 +72,15 @@ export function parseUrl(input: string, base: UrlRecord | null): UrlRecord | nul
 
 // Strips leading/trailing C0 controls and spaces, and removes tabs and newlines (WHATWG).
 function cleanInput(input: string): string {
-  const b = bytesOf(input);
-  let start: usize = 0;
-  let end = b.length;
-  while (start < end && (b[start] as i64) <= 32) {
+  let start: i64 = 0;
+  let end = input.length as i64;
+  while (start < end && input.charCodeAt(start) <= 32) {
     start++;
   }
-  while (end > start && (b[end - 1] as i64) <= 32) {
+  while (end > start && input.charCodeAt(end - 1) <= 32) {
     end--;
   }
-  return removeTabNewline(input.slice(start as i64, end as i64));
+  return removeTabNewline(input.slice(start, end));
 }
 
 // `s` without ASCII tabs and newlines, which the WHATWG parser drops everywhere (the constructor

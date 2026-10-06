@@ -1,8 +1,11 @@
 # velt:regex
 
 `import { RegExp } from "velt:regex"`. JavaScript-flavoured regular expressions on Rust's `regex`
-engine. Matching is linear-time. Offsets are byte offsets. There is no hidden `lastIndex`:
-`exec(s, from)` takes the start offset explicitly.
+engine. Matching is linear-time. Offsets (`index`, `end`, `from`) are UTF-16 code units, like
+every string position, so `s.slice(m.index, m.end)` is the match. There is no hidden
+`lastIndex`: `exec(s, from)` takes the start offset explicitly. A lone surrogate is not matched
+by `.` or a negated class yet (#377 phase 5), and an empty match steps over a whole surrogate
+pair (JavaScript without the `u` flag stops between its halves; #401).
 
 - `new RegExp(pattern, flags = "")`: flags `g i m s y`. Throws `RegExpError`.
   Fields: `source`, `flags`, `global`, `sticky`, `groupCount`.

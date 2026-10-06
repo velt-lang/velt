@@ -82,13 +82,24 @@ other inferred one, so `n -= 5` can go below zero. The rules:
 - `x /= y` on an integer variable is allowed only when it is integer division; otherwise it is
   an error (it would store a float).
 - `%` on integers is the remainder truncated toward zero (sign of the dividend), like JS.
-- A float operand of a bitwise operator converts like JS's ToInt32 (`(a / 13) | 0` truncates;
-  `NaN` and ±Infinity give 0); the result is an inferred integer.
+- **Bitwise operators on numbers are JS's 32-bit operators.** When no operand is a declared
+  integer, `| & ^ << >> ~` take ToInt32 of their operands (truncate, then wrap modulo 2^32 into
+  the signed 32-bit range; `NaN` and ±Infinity give 0) and `>>>` takes ToUint32; shift counts
+  are taken modulo 32, and the result is an inferred integer: `(a / 13) | 0` truncates,
+  `-1 >>> 0` is `4294967295`, `1 << 32` is `1`. A product inside such an operand rounds like
+  JS's double multiply once it is past 2^53, so `(y * 0x2c1b3c6d) | 0` is Node's value;
+  `Math.imul(y, 0x2c1b3c6d)` is the 32-bit wrapping product (one instruction). They compile to
+  32-bit integer instructions. Operands of a declared integer type keep their own width
+  (`n >>> 3` with `n: i64` is a 64-bit shift), and so does a constant of two literals where an
+  integer type is written (`const m: u64 = 1 << 40`; but `let a = 0; a = 1 << 31` stores
+  `-2147483648`, as in JS).
 - `as` converts between number types with Rust semantics: floats truncate and saturate
   (`3.9 as i64` is `3`), integers wrap (`300 as u8` is `44`, `-1 as u8` is `255`).
 - Differences from JS that remain: integers wrap at their width instead of losing precision
-  past 2^53; integer `/ 0` and `% 0` panic (float division gives `Infinity`/`NaN` as in JS);
-  `**` on integers is integer power.
+  past 2^53 (an inferred product like `m * m` stays exact outside bitwise operands, and so
+  does a sum of inferred integers inside one: `(x + 1) | 0` with `x = 2 ** 53` is `1`, not
+  `0`); integer `/ 0` and `% 0` panic (float division gives `Infinity`/`NaN` as in JS); `**` on
+  integers is integer power.
 - Floats print like JS: `10`, `1.5`, `0.30000000000000004`, `1e+21`, `NaN`, `Infinity`; `-0`
   prints `0`.
 
@@ -100,6 +111,8 @@ console.log(n / 2, Math.trunc(a / 2));    // 3 3
 let small: u8 = 250;
 small += 10;                              // wraps: 4
 console.log(small, n as f64 / 2.0, 300 as u8);   // 4 3.5 44
+const h = 0x12345678;
+console.log((h * 0x2c1b3c6d) | 0, Math.imul(h, 0x2c1b3c6d), -1 >>> 0); // -1019940576 -1019940584 4294967295
 ```
 
 ## Strings
@@ -115,20 +128,34 @@ usable and no copy method is needed.
 - **No implicit conversion**: `"Total: " + 5` and `"a" + true` are compile errors. Build text
   with a template literal (`` `Total: ${n}` ``), which formats any value the way `console.log`
   does.
-- `s.length` is the **byte** length; positions (`slice`, `indexOf`, regex offsets, `s[i]`) are
-  byte offsets. For ASCII text that is JS's answer; for other text it differs
-  (`"Zoë".length` is 4, where JS says 3).
-- `s[i]` is `s.charAt(i)`: the character starting at position `i`, or `""` past the end (JS:
-  `undefined`). `for (const c of s)` iterates the characters (`s.split("")`), emoji included.
+- A string is a sequence of **UTF-16 code units**, as in JavaScript: `s.length` counts them, and
+  every position (`slice`, `indexOf`, `charCodeAt`, `padStart`, regex offsets, `s[i]`) is a
+  code-unit index. A character outside the Basic Multilingual Plane, such as an emoji, is two
+  units (a surrogate pair): `"Zoë".length` is 3 and `"😀".length` is 2. A position may fall
+  between the two halves of a pair; slicing there keeps the half as a lone surrogate
+  (`"😀".slice(0, 1)` is `"\uD83D"`), and gluing the halves back together gives the pair again.
+  Output writes a lone surrogate as U+FFFD. The byte size of a string in UTF-8 is
+  `Buffer.byteLength(s)`.
+- `s[i]` is `s.charAt(i)`: the code unit at `i` as a one-unit string, or `""` past the end (JS:
+  `undefined`). `for (const c of s)` and `[...s]` iterate the characters (code points: a pair is
+  one element), as JS's string iterator does; `s.split("")` gives code units.
 - Methods: `slice substring indexOf lastIndexOf includes startsWith endsWith split trim
   trimStart trimEnd toUpperCase toLowerCase replace replaceAll repeat padStart padEnd charAt at
   charCodeAt`, plus `String.fromCharCode`, `parseInt`, `parseFloat` and `Number(s)`
   ([prelude](../std/prelude.md#strings)).
-- `<` and `>` compare bytewise; `==` compares content.
+- `<`, `>` and `sort()` without a comparator compare by code units, as JS (`"～" < "😀"` is
+  `false`); `==` compares content.
 - Cost model: strings of up to 23 bytes (22 when they are not ASCII) are stored inline (no heap
   allocation); longer ones live in a reference-counted immutable buffer. A copy is 24 bytes
   plus, for a heap string, one count increment, and the compiler moves instead of copying at a
-  last use. `s.clone()` compiles and is just a copy.
+  last use. `s.clone()` compiles and is just a copy. Text is stored as UTF-8 (files, sockets and
+  HTTP bodies need no conversion), with the code-unit count kept in the value: `length` is a
+  load, and indexing ASCII text reads a byte. Indexing other text translates the position: a
+  step from the last position of the same string, so a sequential loop over one or two strings
+  at a time stays linear (each thread remembers its last two long non-ASCII strings), or a
+  lookup in a table built for long strings plus a scan of at most 63 units (random access to
+  long non-ASCII text is several times slower than in JS engines; in a long non-ASCII literal,
+  which has no table, it scans from the closer end).
 - A string holds less than 2 GiB of text (more than JS engines allow). Making a longer one stops
   the program with `string too long` (`repeat` panics with JS's `RangeError` message instead).
 
@@ -136,10 +163,13 @@ usable and no copy method is needed.
 function label(name: string, count: i64): string {
   let s = name;                   // a copy: `name` stays usable
   s += ":";
-  return `${s} ${count} (${name.length} bytes)`;
+  return `${s} ${count} (${name.length} units, ${Buffer.byteLength(name)} bytes)`;
 }
 
 console.log(label("tea", 3), "a,b".split(","), "  x ".trim().padStart(3, "*"));
+// tea: 3 (3 units, 3 bytes) [ 'a', 'b' ] **x
+console.log(label("Zoë", 1), label("😀", 2));
+// Zoë: 1 (3 units, 4 bytes) 😀: 2 (2 units, 4 bytes)
 ```
 
 ## Equality and comparison

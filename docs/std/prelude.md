@@ -6,27 +6,34 @@ lives in `std/prelude/*.vlt`; some of it (arrays' `push`/`pop`, `length`, `clone
 
 ## Strings
 
-`string` is an immutable UTF-8 value ([Types](../reference/types.md#strings)). Positions are
-byte offsets; a negative position counts from the end, as in JS.
+`string` is an immutable sequence of UTF-16 code units, as in JS
+([Types](../reference/types.md#strings)): lengths and positions count code units (an emoji is
+two), and a negative position counts from the end. `Buffer.byteLength(s)` is the size in UTF-8.
 
 | Method | Notes |
 |---|---|
-| `length` | byte length |
-| `charAt(i = 0)`, `s[i]` | the character starting at `i`, or `""` |
+| `length` | code units |
+| `charAt(i = 0)`, `s[i]` | the code unit at `i` as a string, or `""` |
 | `at(i): string \| null` | like `charAt`; a negative `i` counts from the end, `null` past the end |
 | `slice(start = 0, end?)`, `substring(start, end?)` | |
 | `indexOf(s, from = 0)`, `lastIndexOf(s, from?)`, `includes(s)` | `-1` when absent |
 | `startsWith(s)`, `endsWith(s)` | |
-| `split(sep): string[]` | |
+| `split(sep): string[]` | `split("")` gives the code units (a pair splits into two halves); `for (const c of s)` and `[...s]` give characters |
 | `trim()`, `trimStart()`, `trimEnd()` | |
 | `toUpperCase()`, `toLowerCase()` | |
 | `replace(from, to)`, `replaceAll(from, to)` | plain text; for patterns use [`velt:regex`](regex.md) |
-| `repeat(n)`, `padStart(n, fill = " ")`, `padEnd(n, fill = " ")` | |
-| `charCodeAt(i = 0)` | the byte at `i` |
+| `repeat(n)`, `padStart(n, fill = " ")`, `padEnd(n, fill = " ")` | `n` in code units |
+| `charCodeAt(i = 0)` | the code unit at `i` (one half of a pair for an emoji); `-1` out of range (JS: `NaN`) |
 | `localeCompare(t): i64` | -1, 0 or 1 in the CLDR root collation, like `new Intl.Collator("und").compare(s, t)` (`"a" < "A" < "b"`, `"e" < "é" < "f"`; Node's own `localeCompare` uses the host's locale). Exact for strings made of U+0020..U+024F, U+0370..U+04FF, U+1E00..U+1EFF, U+2000..U+206F and U+20A0..U+20CF (Latin with Vietnamese, Greek, Cyrillic, general punctuation, currency signs), except a few characters that stand for three or more (`¼`, `½`, `¾`, `ϗ`); approximate for everything else. No locale or options arguments |
 
-Conversions: `String.fromCharCode(code)`, `parseInt(s, radix = 0)` and `parseFloat(s)` (both
-return `f64`, `NaN` on failure), `Number(s)`.
+`<`, `>` and `sort()` order strings by code units, as JS. A position between the two halves of
+a pair is allowed everywhere: `"😀".slice(0, 1)` is a lone surrogate, which output writes as
+U+FFFD, and the searches can match half of a pair (`"😀".indexOf(lo)` is 1 when `lo` is the low
+half).
+
+Conversions: `String.fromCharCode(code)` (one code unit; a surrogate gives a lone surrogate),
+`parseInt(s, radix = 0)` and `parseFloat(s)` (both return `f64`, `NaN` on failure),
+`Number(s)`.
 
 ## Numbers
 
@@ -39,7 +46,9 @@ return `f64`, `NaN` on failure), `Number(s)`.
 - `x.toFixed(digits = 0)` on `f64`, rounded like JS.
 - `Math`: `PI`, `E`, `sqrt floor ceil round trunc abs sign pow`, `max`, `min` and `hypot` (any
   number of values, spreads included: `Math.max(...xs)`), and `random()` (uniform in `[0, 1)`,
-  not for secrets). On integer operands, `Math.trunc(a / b)` is integer division.
+  not for secrets). On integer operands, `Math.trunc(a / b)` is integer division. `imul` (the
+  32-bit wrapping product, one multiply instruction) and `clz32` (leading zero bits) take the low
+  32 bits of their operands like JS.
 - Every number type implements `Comparable` ([Comparable](../reference/classes.md#comparable)).
 
 ## Arrays
@@ -69,7 +78,10 @@ Callback methods rethrow what their callback throws.
 
 Byte arrays are plain `u8[]` with faster versions of `indexOf`, `lastIndexOf`, `includes`,
 `fill`, plus `set(src, offset)` and `copyWithin(target, start, end)` like Node's `Buffer`.
-`Buffer.alloc(n)` creates `n` zero bytes.
+`Buffer.alloc(n)` creates `n` zero bytes. `Buffer.byteLength(s, encoding = "utf8")` is the
+number of bytes `s` takes, as in Node: UTF-8 by default (O(1); a lone surrogate counts the 3
+bytes of U+FFFD), two per code unit for `utf16le`/`ucs2`, one for `latin1`/`binary`/`ascii`,
+the decoded size for `base64`/`base64url` and `hex`.
 
 ## Map
 
