@@ -125,9 +125,9 @@ console.log(m.get(key), m.get([1]), m.size); // null null 1
 | `for (const [k, v] of map)` | |
 
 A callback of `forEach`, `upsert`, `update` or `getOrInsert` may change the map through another
-reference to it: `forEach` then visits entries added meanwhile and skips deleted ones, as in JS,
-and `upsert` and `getOrInsert` store their result under the key even when the callback deleted
-or added entries.
+reference to it: the value the callback gets stays valid, `forEach` visits entries added
+meanwhile, and `upsert` and `getOrInsert` store their result under the key even when the
+callback deleted or added entries.
 
 ## Record
 
