@@ -102,47 +102,6 @@ fn inline_limits() {
 }
 
 #[test]
-fn inline_hash_word_padding_is_zero_for_runtime_producers() {
-    fn check(s: &VeltStr) {
-        if s.is_inline() && s.len() <= 8 {
-            assert!(raw(s)[s.len()..8].iter().all(|&byte| byte == 0), "{s:?}");
-        }
-    }
-
-    let mut values = vec![
-        Owned(VeltStr::empty()),
-        Owned(VeltStr::from_bytes(b"abc")),
-        Owned(VeltStr::from_bytes(b"12345678")),
-    ];
-
-    let mut appended = Owned(VeltStr::empty());
-    unsafe {
-        appended.0.push_wtf8(b"ab", None);
-        appended.0.push_wtf8(b"cd", None);
-    }
-    values.push(appended);
-
-    let base = VeltStr::from_bytes(b"abcdef");
-    values.push(Owned(unsafe { base.substring(1, 5) }));
-    values.push(out(|o| unsafe {
-        velt_rt_str_concat(&VeltStr::from_bytes(b"ab"), &VeltStr::from_bytes(b"cd"), o)
-    }));
-    values.push(out(|o| unsafe {
-        crate::str_ops::slice::velt_rt_str_repeat(&VeltStr::from_bytes(b"xy"), 2, o);
-    }));
-    values.push(out(|o| unsafe {
-        crate::str_ops::case::velt_rt_str_to_upper(&VeltStr::from_bytes(b"abc"), o)
-    }));
-    values.push(out(|o| unsafe {
-        crate::str_ops::slice::velt_rt_str_from_char_code(b'A' as i64, o)
-    }));
-
-    for value in &values {
-        check(&value.0);
-    }
-}
-
-#[test]
 fn inline_appends_switch_form() {
     let mut s = Owned(VeltStr::from_static(b"ab"));
     unsafe { s.0.push_wtf8("é".as_bytes(), None) };

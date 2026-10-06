@@ -1,0 +1,71 @@
+// Map<string, V> keys of every length up to past the inline limit, made by different string
+// operations (literal, concatenation, slice, template, case conversion, fromCharCode, repeat,
+// split, join, JSON keys), are the same key: a value set through one is found through all the
+// others. The LLVM backend hashes short inline strings without a runtime call; static and heap
+// strings take the runtime's hash, and both must agree.
+const TEXT = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+function made(n: number): string[] {
+  const lit = TEXT.slice(0, n);
+  const upper = lit.toUpperCase();
+  let coded = "";
+  for (let i = 0; i < n; i++) {
+    coded = coded + String.fromCharCode(lit.charCodeAt(i));
+  }
+  let built = "";
+  for (let i = 0; i < n; i++) {
+    built = built + lit[i];
+  }
+  return [
+    lit,
+    ("x" + lit + "y").slice(1, n + 1),
+    `${lit.slice(0, n >> 1)}${lit.slice(n >> 1)}`,
+    upper.toLowerCase(),
+    coded,
+    built,
+    lit.split("").join(""),
+    ("-" + lit).substring(1),
+  ];
+}
+
+function main() {
+  const lengths: number[] = [0, 1, 2, 3, 7, 8, 9, 15, 16, 22, 23, 24, 30];
+  let found = 0;
+  let missed = 0;
+  for (const n of lengths) {
+    const keys = made(n);
+    for (let i = 0; i < keys.length; i++) {
+      const m = new Map<string, number>();
+      m.set(keys[i], n);
+      for (let j = 0; j < keys.length; j++) {
+        if ((m.get(keys[j]) ?? -1) == n) {
+          found++;
+        } else {
+          missed++;
+        }
+      }
+      m.set(keys[(i + 1) % keys.length], (m.get(keys[i]) ?? 0) + 1);
+      if (m.size != 1 || m.get(keys[i]) != n + 1) {
+        console.log("bad update", n, i);
+      }
+    }
+  }
+  console.log(found, missed);
+
+  // Keys from a JSON document and from a literal meet in one map.
+  const doc = JSON.parse<Record<string, number>>(
+    '{"": 1, "a": 2, "abcdefgh": 3, "abcdefghi": 4, "é": 5}',
+  );
+  const counts = new Map<string, number>();
+  for (const k of Object.keys(doc)) {
+    counts.set(k, doc[k] ?? 0);
+  }
+  for (const k of ["", "a", "abcdefgh", "abcdefghi", "é"]) {
+    counts.set(k, (counts.get(k) ?? 0) * 10);
+  }
+  const shown: string[] = [];
+  for (const [k, v] of counts) {
+    shown.push(`${k}=${v}`);
+  }
+  console.log(shown.join(" "), counts.size);
+}

@@ -8,8 +8,11 @@
 //!   and inline strings are left as they are (they drop as nothing, zeroed or not).
 //! - `velt_rt_str_eq`: different byte lengths are unequal; equal lengths compare the bytes with
 //!   `memcmp`, which LLVM expands inline when the length is a constant (a literal operand).
-//! - `velt_rt_str_hash`: short inline strings (up to 8 bytes) hash directly from the first word
-//!   of the value, avoiding a runtime call for common `Map<string, V>` keys.
+//! - `velt_rt_str_hash`: an inline string of at most 8 bytes (most `Map<string, V>` keys) hashes
+//!   from the first word of the value, masked to its length.
+//! - `velt_rt_str_cmp` against a one-byte literal (`c >= "0"`): the first byte decides; the
+//!   guard is `llvm.is.constant` of the literal's length, so comparisons of two variable strings
+//!   (`sort()`) stay a plain call.
 //! - `velt_rt_str_slice(s, i, i + 1)` (`s[i]`, `charAt`, `slice`) of an ASCII string (unit count
 //!   == byte count, so positions mean the same in bytes and code units) with `0 <= i < len`:
 //!   the one-byte inline string `{s[i], 0, (0x80 | 1) << 56}`.
@@ -86,16 +89,104 @@ no:
     )
 }
 
-/// `velt_rt_str_hash(ptr) -> u64` for short inline strings; preserve the runtime hash exactly.
+/// `velt_rt_str_hash(ptr) -> u64` for inline strings of at most 8 bytes, bit for bit
+/// `velt_rt::hash::hash` (one word: the bytes zero-extended little-endian, `mix`, `fmix64`). The
+/// word is masked to the string's length, so whatever an inline string holds after its text
+/// does not matter.
 fn hash_helper() -> String {
-    // These constants and operations match velt_rt::hash::{SEED, K, mix, fmix64}.
+    // velt_rt::hash::{SEED, K} and murmur3's fmix64 constants.
     const SEED: u64 = 0x243f_6a88_85a3_08d3;
     const K: u64 = 0x9e37_79b9_7f4a_7c15;
     const C1: u64 = 0xff51_afd7_ed55_8ccd;
     const C2: u64 = 0xc4ce_b9fe_1a85_ec53;
     format!(
-        "define internal i64 @velt.str_hash(ptr %s) alwaysinline nounwind {{\n{}  %fast.len = icmp ule i64 %s.len, 8\n  %fast = and i1 %s.inl, %fast.len\n  br i1 %fast, label %inline, label %call\ninline:\n  %word = load i64, ptr %s, align 8\n  %len.k = mul i64 %s.len, {K}\n  %seed = xor i64 {SEED}, %len.k\n  %nonempty = icmp ne i64 %s.len, 0\n  br i1 %nonempty, label %mix, label %finish\nmix:\n  %x = xor i64 %seed, %word\n  %product = mul i64 %x, {K}\n  %left = shl i64 %product, 29\n  %right = lshr i64 %product, 35\n  %mixed = or i64 %left, %right\n  br label %finish\nfinish:\n  %h = phi i64 [ %seed, %inline ], [ %mixed, %mix ]\n  %x33 = lshr i64 %h, 33\n  %a = xor i64 %h, %x33\n  %b = mul i64 %a, {C1}\n  %x33b = lshr i64 %b, 33\n  %c = xor i64 %b, %x33b\n  %d = mul i64 %c, {C2}\n  %x33d = lshr i64 %d, 33\n  %out = xor i64 %d, %x33d\n  ret i64 %out\ncall:\n  %result = call i64 @velt_rt_str_hash(ptr %s)\n  ret i64 %result\n}}",
+        "define internal i64 @velt.str_hash(ptr %s) alwaysinline nounwind {{
+{}  %fits = icmp ule i64 %s.len, 8
+  %fast = and i1 %s.inl, %fits
+  br i1 %fast, label %inline, label %call
+inline:
+  %len.k = mul i64 %s.len, {K}
+  %seed = xor i64 {SEED}, %len.k
+  %nonempty = icmp ne i64 %s.len, 0
+  br i1 %nonempty, label %mix, label %finish
+mix:
+  %word = load i64, ptr %s, align 8
+  %bits = shl i64 %s.len, 3
+  %unused = sub i64 64, %bits
+  %mask = lshr i64 -1, %unused
+  %text = and i64 %word, %mask
+  %x = xor i64 %seed, %text
+  %product = mul i64 %x, {K}
+  %left = shl i64 %product, 29
+  %right = lshr i64 %product, 35
+  %mixed = or i64 %left, %right
+  br label %finish
+finish:
+  %h = phi i64 [ %seed, %inline ], [ %mixed, %mix ]
+  %h.33 = lshr i64 %h, 33
+  %a = xor i64 %h, %h.33
+  %b = mul i64 %a, {C1}
+  %b.33 = lshr i64 %b, 33
+  %c = xor i64 %b, %b.33
+  %d = mul i64 %c, {C2}
+  %d.33 = lshr i64 %d, 33
+  %out = xor i64 %d, %d.33
+  ret i64 %out
+call:
+  %result = call i64 @velt_rt_str_hash(ptr %s)
+  ret i64 %result
+}}",
         view("s")
+    )
+}
+
+/// `velt_rt_str_cmp(ptr, ptr) -> i32` (-1, 0, 1 in UTF-16 code unit order) when one operand is
+/// a one-byte string whose length LLVM knows after inlining (a literal such as `"0"` in
+/// `c >= "0"`); other comparisons call the runtime and, since `llvm.is.constant` folds to false
+/// for them, carry no extra code. A one-byte string is ASCII, so its byte is its code unit; the
+/// other string's first byte decides unless equal (a lead byte of a longer UTF-8 sequence is
+/// above every ASCII byte, as its code unit is), then the longer string is greater.
+fn cmp_helper() -> String {
+    // `x` against the one-byte `y`, into `%{x}{y}.r`.
+    let against = |x: &str, y: &str| {
+        let n = format!("{x}{y}");
+        format!(
+            "{x}.vs.{y}:
+  %{n}.empty = icmp eq i64 %{x}.len, 0
+  %{n}.x = load i8, ptr %{x}.data, align 1
+  %{n}.y = load i8, ptr %{y}.data, align 1
+  %{n}.lt = icmp ult i8 %{n}.x, %{n}.y
+  %{n}.ne = icmp ne i8 %{n}.x, %{n}.y
+  %{n}.ord = select i1 %{n}.lt, i32 -1, i32 1
+  %{n}.more = icmp ugt i64 %{x}.len, 1
+  %{n}.tail = zext i1 %{n}.more to i32
+  %{n}.first = select i1 %{n}.ne, i32 %{n}.ord, i32 %{n}.tail
+  %{n}.r = select i1 %{n}.empty, i32 -1, i32 %{n}.first
+"
+        )
+    };
+    format!(
+        "define internal i32 @velt.str_cmp(ptr %a, ptr %b) alwaysinline nounwind {{
+{}{}  %a.known = call i1 @llvm.is.constant.i64(i64 %a.len)
+  %b.known = call i1 @llvm.is.constant.i64(i64 %b.len)
+  %a.one = icmp eq i64 %a.len, 1
+  %b.one = icmp eq i64 %b.len, 1
+  %b.lit = and i1 %b.known, %b.one
+  %a.lit = and i1 %a.known, %a.one
+  br i1 %b.lit, label %a.vs.b, label %left
+left:
+  br i1 %a.lit, label %b.vs.a, label %call
+{}  ret i32 %ab.r
+{}  %ba.neg = sub i32 0, %ba.r
+  ret i32 %ba.neg
+call:
+  %r = call i32 @velt_rt_str_cmp(ptr %a, ptr %b)
+  ret i32 %r
+}}",
+        view("a"),
+        view("b"),
+        against("a", "b"),
+        against("b", "a"),
     )
 }
 
@@ -146,7 +237,7 @@ pub(crate) fn fast_path(
     ret: Ty,
     ptr32: bool,
 ) -> Option<(&'static str, Vec<String>)> {
-    use Ty::{Ptr, Unit, I64, U8};
+    use Ty::{Ptr, Unit, I32, I64, U64, U8};
     let size_t = if ptr32 { "i32" } else { "i64" };
     let (name, defs) = match (symbol, params, ret) {
         ("velt_rt_str_drop", [Ptr], Unit) => ("@velt.str_drop", vec![drop_helper()]),
@@ -159,7 +250,14 @@ pub(crate) fn fast_path(
                 ),
             ],
         ),
-        ("velt_rt_str_hash", [Ptr], Ty::U64) => ("@velt.str_hash", vec![hash_helper()]),
+        ("velt_rt_str_hash", [Ptr], U64) => ("@velt.str_hash", vec![hash_helper()]),
+        ("velt_rt_str_cmp", [Ptr, Ptr], I32) => (
+            "@velt.str_cmp",
+            vec![
+                cmp_helper(),
+                "declare i1 @llvm.is.constant.i64(i64) nounwind willreturn memory(none)".into(),
+            ],
+        ),
         ("velt_rt_str_slice", [Ptr, I64, I64, Ptr], Unit) => {
             ("@velt.str_slice", vec![slice_helper()])
         }
@@ -177,7 +275,8 @@ mod tests {
         assert!(fast_path("velt_rt_str_drop", &[Ty::Ptr], Ty::Unit, false).is_some());
         assert!(fast_path("velt_rt_str_drop", &[Ty::Ptr, Ty::Ptr], Ty::Unit, false).is_none());
         assert!(fast_path("velt_rt_str_eq", &[Ty::Ptr, Ty::Ptr], Ty::U8, false).is_some());
-        assert!(fast_path("velt_rt_str_cmp", &[Ty::Ptr, Ty::Ptr], Ty::I32, false).is_none());
+        assert!(fast_path("velt_rt_str_hash", &[Ty::Ptr], Ty::U64, false).is_some());
+        assert!(fast_path("velt_rt_str_hash", &[Ty::Ptr], Ty::I64, false).is_none());
         let slice = [Ty::Ptr, Ty::I64, Ty::I64, Ty::Ptr];
         assert!(fast_path("velt_rt_str_slice", &slice, Ty::Unit, false).is_some());
         assert!(fast_path(
@@ -190,18 +289,60 @@ mod tests {
     }
 
     #[test]
-    fn hash_reads_inline_payload() {
-        let (_, hash) = fast_path("velt_rt_str_hash", &[Ty::Ptr], Ty::U64, false).unwrap();
-        assert!(hash[0].contains("%x = xor i64 %seed, %word"));
-        assert!(hash[0].contains("call i64 @velt_rt_str_hash(ptr %s)"));
+    fn hash_masks_the_inline_word_to_the_length() {
+        let (name, defs) = fast_path("velt_rt_str_hash", &[Ty::Ptr], Ty::U64, false).unwrap();
+        assert_eq!(name, "@velt.str_hash");
+        let ir = &defs[0];
+        // Only inline strings of at most 8 bytes; everything else calls the runtime.
+        assert!(ir.contains("%fits = icmp ule i64 %s.len, 8"), "{ir}");
+        assert!(ir.contains("%fast = and i1 %s.inl, %fits"), "{ir}");
+        assert!(ir.contains("call i64 @velt_rt_str_hash(ptr %s)"), "{ir}");
+        // The word is read only for a non-empty string and masked to its bytes.
+        let mix = &ir[ir.find("\nmix:").expect("mix block")..];
+        assert!(mix.contains("%mask = lshr i64 -1, %unused"), "{ir}");
+        assert!(mix.contains("%x = xor i64 %seed, %text"), "{ir}");
+        // velt_rt::hash's seed, multiplier and rotation.
+        assert!(
+            ir.contains(&format!("xor i64 {}", 0x243f_6a88_85a3_08d3u64)),
+            "{ir}"
+        );
+        assert!(
+            ir.contains(&format!("mul i64 %x, {}", 0x9e37_79b9_7f4a_7c15u64)),
+            "{ir}"
+        );
+        assert!(ir.contains("shl i64 %product, 29") && ir.contains("lshr i64 %product, 35"));
+        // The empty string hashes the seed alone.
+        assert!(
+            ir.contains("%h = phi i64 [ %seed, %inline ], [ %mixed, %mix ]"),
+            "{ir}"
+        );
+    }
 
-        assert!(fast_path(
-            "velt_rt_str_char_code_at",
-            &[Ty::Ptr, Ty::I64],
-            Ty::I64,
-            false
-        )
-        .is_none());
+    #[test]
+    fn char_code_at_stays_a_runtime_call() {
+        let code_at = [Ty::Ptr, Ty::I64];
+        assert!(fast_path("velt_rt_str_char_code_at", &code_at, Ty::I64, false).is_none());
+    }
+
+    #[test]
+    fn compare_is_inline_only_against_a_known_one_byte_string() {
+        let (name, defs) =
+            fast_path("velt_rt_str_cmp", &[Ty::Ptr, Ty::Ptr], Ty::I32, false).unwrap();
+        assert_eq!(name, "@velt.str_cmp");
+        let ir = &defs[0];
+        assert!(ir.contains("%b.lit = and i1 %b.known, %b.one"), "{ir}");
+        assert!(
+            ir.contains("call i1 @llvm.is.constant.i64(i64 %b.len)"),
+            "{ir}"
+        );
+        assert!(
+            ir.contains("call i32 @velt_rt_str_cmp(ptr %a, ptr %b)"),
+            "{ir}"
+        );
+        // A literal on the left: the mirrored comparison, negated.
+        assert!(ir.contains("%ba.neg = sub i32 0, %ba.r"), "{ir}");
+        assert!(defs[1].starts_with("declare i1 @llvm.is.constant.i64(i64)"));
+        assert!(fast_path("velt_rt_str_cmp", &[Ty::Ptr, Ty::Ptr], Ty::I64, false).is_none());
     }
 
     #[test]

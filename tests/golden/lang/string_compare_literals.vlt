@@ -1,0 +1,40 @@
+// String comparisons against one-character literals, in both operand orders, with empty,
+// longer and non-ASCII strings, compared with Node.
+function rank(c: string): string {
+  const parts: string[] = [];
+  parts.push(c >= "0" ? "ge0" : "lt0");
+  parts.push(c <= "9" ? "le9" : "gt9");
+  parts.push(c < "a" ? "lta" : "gea");
+  parts.push(c > "z" ? "gtz" : "lez");
+  parts.push("m" < c ? "m<" : "m>=");
+  parts.push("m" >= c ? "m>=" : "m<");
+  parts.push(c == "m" ? "eqm" : "nem");
+  return parts.join(" ");
+}
+
+function main() {
+  for (const c of [
+    "",
+    "0",
+    "5",
+    "9",
+    ":",
+    "a",
+    "m",
+    "ma",
+    "m\u0000",
+    "z",
+    "{",
+    "é",
+    "😀",
+    "~",
+    "/",
+    "00",
+    "9z",
+  ]) {
+    console.log(JSON.stringify(c), rank(c));
+  }
+  const words = ["b", "a", "", "ab", "é", "B", "aa", "😀", "z"];
+  words.sort();
+  console.log(words.join(","));
+}
