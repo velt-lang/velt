@@ -1,0 +1,241 @@
+// `sort(cmp)` is a stable natural merge sort through a scratch buffer (#530): every input
+// shape it special-cases (ascending and descending runs, short runs extended by insertion
+// sort, odd run counts, results ending in the buffer) checked for order and stability against
+// a reference insertion sort, on numbers, strings and class instances; inconsistent
+// comparators give a permutation. Also valid TypeScript: Node prints the same.
+
+// Deterministic LCG.
+class Rng {
+  state: number = 12345;
+
+  // Next value in [0, bound).
+  next(bound: number): number {
+    this.state = (this.state * 1103515245 + 12345) % 2147483648;
+    return this.state % bound;
+  }
+}
+
+class Item {
+  key: number;
+  id: number;
+  label: string;
+  constructor(key: number, id: number) {
+    this.key = key;
+    this.id = id;
+    this.label = `item-${key}-${id}-with-a-heap-allocated-label`;
+  }
+}
+
+function byKey(a: Item, b: Item) {
+  return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+}
+
+// Keys for one input shape of length n.
+function shape(kind: string, n: number, rng: Rng): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (kind === "random") {
+      out.push(rng.next(1000000));
+    } else if (kind === "dups") {
+      out.push(rng.next(4));
+    } else if (kind === "sorted") {
+      out.push(i);
+    } else if (kind === "reversed") {
+      out.push(n - i);
+    } else if (kind === "reversed-dups") {
+      out.push(n - i - (i % 3));
+    } else if (kind === "sawtooth") {
+      out.push(i % 37);
+    } else if (kind === "pipe") {
+      out.push(i < n / 2 ? i : n - i);
+    } else if (kind === "equal") {
+      out.push(7);
+    } else {
+      // Sorted with a few random elements appended: one long run and short ones.
+      out.push(i < n - 5 ? i : rng.next(n));
+    }
+  }
+  return out;
+}
+
+// Stable reference: insertion sort by key.
+function reference(items: Item[]): Item[] {
+  const out: Item[] = [];
+  for (const it of items) {
+    let j = out.length;
+    out.push(it);
+    while (j > 0 && out[j - 1].key > it.key) {
+      out[j] = out[j - 1];
+      j--;
+    }
+    out[j] = it;
+  }
+  return out;
+}
+
+function sameOrder(a: Item[], b: Item[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id || a[i].key !== b[i].key || a[i].label !== b[i].label) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function checkShapes(rng: Rng) {
+  const kinds = [
+    "random",
+    "dups",
+    "sorted",
+    "reversed",
+    "reversed-dups",
+    "sawtooth",
+    "pipe",
+    "equal",
+    "tail",
+  ];
+  const sizes: number[] = [0, 1, 2, 3, 15, 16, 17, 31, 32, 33, 47, 64, 100, 257, 1000, 3000];
+  for (const kind of kinds) {
+    let bad = 0;
+    for (const n of sizes) {
+      const keys = shape(kind, n, rng);
+      const items: Item[] = [];
+      const nums: number[] = [];
+      const strs: string[] = [];
+      for (let i = 0; i < keys.length; i++) {
+        items.push(new Item(keys[i], i));
+        nums.push(keys[i]);
+        strs.push(`s${(keys[i] % 1000) + 1000}:${i}:padding-to-leave-the-inline-size`);
+      }
+      const expected = reference(items);
+      items.sort(byKey);
+      if (!sameOrder(items, expected)) {
+        bad++;
+      }
+      // Numbers by comparator agree with the default numeric sort.
+      const plain = nums.slice();
+      plain.sort((a, b) => a - b);
+      const desc = nums.slice();
+      desc.sort((a, b) => b - a);
+      for (let i = 0; i < nums.length; i++) {
+        if (plain[i] !== expected[i].key || desc[nums.length - 1 - i] !== expected[i].key) {
+          bad++;
+          break;
+        }
+      }
+      // Strings by their 5-character prefix: stable, so equal prefixes stay in input order.
+      const before = strs.slice();
+      strs.sort(
+        (a, b) => (a.slice(0, 5) < b.slice(0, 5) ? -1 : a.slice(0, 5) > b.slice(0, 5) ? 1 : 0),
+      );
+      for (let i = 1; i < strs.length && n <= 1000; i++) {
+        const p = strs[i - 1].slice(0, 5);
+        const q = strs[i].slice(0, 5);
+        if (p > q || (p === q && before.indexOf(strs[i - 1]) > before.indexOf(strs[i]))) {
+          bad++;
+          break;
+        }
+      }
+    }
+    console.log(kind, bad === 0 ? "ok" : `${bad} failures`);
+  }
+}
+
+// Sorted copy of the ids, to compare multisets.
+function idsSorted(items: Item[]): number[] {
+  const ids: number[] = [];
+  for (const it of items) {
+    ids.push(it.id);
+  }
+  ids.sort((a, b) => a - b);
+  return ids;
+}
+
+function isPermutation(items: Item[]): boolean {
+  const ids = idsSorted(items);
+  for (let i = 0; i < ids.length; i++) {
+    if (ids[i] !== i) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function checkInconsistent(rng: Rng) {
+  for (const n of [5, 20, 100, 1000]) {
+    const items: Item[] = [];
+    for (let i = 0; i < n; i++) {
+      items.push(new Item(rng.next(10), i));
+    }
+    const coin = new Rng();
+    items.sort((a, b) => (coin.next(2) < 1 ? -1 : 1));
+    const a = isPermutation(items);
+    items.sort((x, y) => -1);
+    const b = isPermutation(items);
+    items.sort((x, y) => 1);
+    const c = isPermutation(items);
+    // A comparator that is not antisymmetric: every pair compares "less".
+    items.sort((x, y) => (x.key <= y.key ? -1 : 1));
+    const d = isPermutation(items);
+    console.log("inconsistent", n, a && b && c && d);
+  }
+  // Always 0: everything is equivalent, the order is unchanged.
+  const same: Item[] = [];
+  for (let i = 0; i < 50; i++) {
+    same.push(new Item(rng.next(5), i));
+  }
+  same.sort((x, y) => 0);
+  let unchanged = true;
+  for (let i = 0; i < same.length; i++) {
+    if (same[i].id !== i) {
+      unchanged = false;
+    }
+  }
+  console.log("always 0 keeps the order", unchanged);
+}
+
+function checkNaN() {
+  // NaN results count as 0; NaN elements make the comparator inconsistent: some permutation.
+  const xs: number[] = [];
+  for (let i = 0; i < 200; i++) {
+    xs.push(i % 5 === 0 ? NaN : (i * 7919) % 101);
+  }
+  xs.sort((a, b) => a - b);
+  let nans = 0;
+  let total = 0.0;
+  for (const x of xs) {
+    if (x !== x) {
+      nans++;
+    } else {
+      total += x;
+    }
+  }
+  console.log("NaN elements", xs.length, nans, total);
+  const ys: number[] = [3, 1, 2, 5, 4];
+  ys.sort((a, b) => NaN);
+  console.log("NaN results keep the order", ys.join(","));
+}
+
+function main() {
+  const rng = new Rng();
+  checkShapes(rng);
+  checkInconsistent(rng);
+  checkNaN();
+  const big: Item[] = [];
+  for (let i = 0; i < 100000; i++) {
+    big.push(new Item(rng.next(1000), i));
+  }
+  const sorted = big.toSorted(byKey);
+  let ok = sorted.length === big.length && isPermutation(sorted) && big[0].id === 0;
+  for (let i = 1; i < sorted.length; i++) {
+    const p = sorted[i - 1];
+    const q = sorted[i];
+    if (p.key > q.key || (p.key === q.key && p.id > q.id)) {
+      ok = false;
+    }
+  }
+  console.log("100000 items, stable and sorted:", ok, sorted[0].key, sorted[99999].key);
+}

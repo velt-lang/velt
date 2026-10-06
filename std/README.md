@@ -9,6 +9,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `prelude/array.vlt` | `T[]` methods: `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat reverse fill splice truncate toReversed toSpliced with isEmpty entries join`. Callback methods rethrow their callback's errors (generic `E`). |
 | `prelude/array_nested.vlt` | `flat` and `join` on `T[][]`, `join` on `(T \| null)[]`. |
 | `prelude/sort.vlt` | `sort()` on `i64 i32 u64 usize f64 string` arrays (pdqsort), stable `sort(cmp)` on any array, and the copying `toSorted`. |
+| `sort/stable.vlt`, `sort/merge.vlt` | Internal: the stable sort behind `sort(cmp)` and `toSorted(cmp)` (natural runs, stable quicksort, merges through a scratch buffer). |
 | `prelude/map.vlt` | `Map<K, V>`: insertion-ordered hash map (dense entries + linear-probing index). |
 | `prelude/math.vlt` | `Math` static methods (f64). |
 | `prelude/nullable.vlt` | `isNull unwrap unwrapOr map` on `T \| null`. |
@@ -82,5 +83,13 @@ Std code is monomorphized and inlined like user code, so write plain index loops
 - Reserve capacity (`__intrinsic_array_with_capacity`) when the final length is known.
 - Never clone to read: pass `xs[i]` straight to callbacks and comparisons (they borrow).
 - Rearrange arrays with `__intrinsic_array_swap` / `__intrinsic_array_truncate`; moving an
-  element out of an index is not allowed, and a swap avoids clones.
-- Keep algorithms allocation-free where possible (both sorts are in place).
+  element out of an index is not allowed, and a swap avoids clones. Algorithms that need a
+  buffer (the stable sort, std/sort/stable.vlt) move raw elements with
+  `__intrinsic_array_move` into an array sized with `__intrinsic_array_set_len`, keeping every
+  element owned exactly once themselves, and set its length back to 0 before it is dropped.
+  A callback may reach the caller's array through an alias, so while it runs that array must
+  hold only elements it owns: the stable sort copies elements that need no drop
+  (`__intrinsic_needs_drop`; short arrays in place when `__intrinsic_fn_captures_nothing(cmp)`)
+  and moves the others out at any length, leaving the array empty.
+- Keep algorithms allocation-free where possible (`sort()` is in place; `sort(cmp)` needs
+  two buffers as long as the array).
