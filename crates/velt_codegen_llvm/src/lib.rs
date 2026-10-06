@@ -38,6 +38,7 @@ mod llc;
 mod module;
 mod runtime;
 mod statics;
+mod string_compare;
 mod strings;
 mod target;
 mod types;

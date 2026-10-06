@@ -7,6 +7,7 @@ use velt_vir::vir::{BlockId, Callee, Operand, Place, Terminator, Ty};
 
 use super::{Emitter, Val};
 use crate::runtime;
+use crate::string_compare;
 use crate::strings;
 use crate::types::{abi_ret, abi_type, as_int, global_name, int_bits, int_literal, scalar_type};
 use crate::CodegenResult;
@@ -113,7 +114,7 @@ impl Emitter<'_> {
         }
         let target = match self.math_intrinsic(callee, &params, ret) {
             Some(name) => name,
-            None => match self.string_fast_path(callee, &params, ret) {
+            None => match self.string_fast_path(callee, &params, ret, args) {
                 Some(name) => name,
                 None => self.call_target(callee)?,
             },
@@ -181,11 +182,23 @@ impl Emitter<'_> {
 
     /// The inline helper (`strings.rs`) to call instead of a runtime string function with a
     /// fast path, defining it in the module.
-    fn string_fast_path(&mut self, callee: &Callee, params: &[Ty], ret: Ty) -> Option<String> {
+    fn string_fast_path(
+        &mut self,
+        callee: &Callee,
+        params: &[Ty],
+        ret: Ty,
+        args: &[Operand],
+    ) -> Option<String> {
         let Callee::Extern(id) = callee else {
             return None;
         };
         let symbol = &self.program.externs.get(id.0 as usize)?.symbol;
+        if let Some((name, def)) =
+            string_compare::literal_compare(self.function, symbol, params, ret, args)
+        {
+            self.intrinsics.need(def);
+            return Some(name.to_string());
+        }
         let (name, defs) = strings::fast_path(symbol, params, ret, self.wide_pointer_slots)?;
         for d in defs {
             self.intrinsics.need(d);

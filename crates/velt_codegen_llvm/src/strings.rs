@@ -10,9 +10,7 @@
 //!   `memcmp`, which LLVM expands inline when the length is a constant (a literal operand).
 //! - `velt_rt_str_hash`: an inline string of at most 8 bytes (most `Map<string, V>` keys) hashes
 //!   from the first word of the value, masked to its length.
-//! - `velt_rt_str_cmp` against a one-byte literal (`c >= "0"`): the first byte decides; the
-//!   guard is `llvm.is.constant` of the literal's length, so comparisons of two variable strings
-//!   (`sort()`) stay a plain call.
+//! - `velt_rt_str_cmp` against a one-byte literal: see `string_compare`.
 //! - `velt_rt_str_slice(s, i, i + 1)` (`s[i]`, `charAt`, `slice`) of an ASCII string (unit count
 //!   == byte count, so positions mean the same in bytes and code units) with `0 <= i < len`:
 //!   the one-byte inline string `{s[i], 0, (0x80 | 1) << 56}`.
@@ -25,7 +23,7 @@ use velt_vir::vir::Ty;
 
 /// Length and data address of the string at `%{p}`, as `%{p}.len` / `%{p}.data`, plus its words
 /// `%{p}.w1`, `%{p}.w2` and the inline flag `%{p}.inl`.
-fn view(p: &str) -> String {
+pub(crate) fn view(p: &str) -> String {
     format!(
         "  %{p}.w1p = getelementptr inbounds i8, ptr %{p}, i64 8
   %{p}.w1 = load i64, ptr %{p}.w1p, align 8
@@ -140,56 +138,6 @@ call:
     )
 }
 
-/// `velt_rt_str_cmp(ptr, ptr) -> i32` (-1, 0, 1 in UTF-16 code unit order) when one operand is
-/// a one-byte string whose length LLVM knows after inlining (a literal such as `"0"` in
-/// `c >= "0"`); other comparisons call the runtime and, since `llvm.is.constant` folds to false
-/// for them, carry no extra code. A one-byte string is ASCII, so its byte is its code unit; the
-/// other string's first byte decides unless equal (a lead byte of a longer UTF-8 sequence is
-/// above every ASCII byte, as its code unit is), then the longer string is greater.
-fn cmp_helper() -> String {
-    // `x` against the one-byte `y`, into `%{x}{y}.r`.
-    let against = |x: &str, y: &str| {
-        let n = format!("{x}{y}");
-        format!(
-            "{x}.vs.{y}:
-  %{n}.empty = icmp eq i64 %{x}.len, 0
-  %{n}.x = load i8, ptr %{x}.data, align 1
-  %{n}.y = load i8, ptr %{y}.data, align 1
-  %{n}.lt = icmp ult i8 %{n}.x, %{n}.y
-  %{n}.ne = icmp ne i8 %{n}.x, %{n}.y
-  %{n}.ord = select i1 %{n}.lt, i32 -1, i32 1
-  %{n}.more = icmp ugt i64 %{x}.len, 1
-  %{n}.tail = zext i1 %{n}.more to i32
-  %{n}.first = select i1 %{n}.ne, i32 %{n}.ord, i32 %{n}.tail
-  %{n}.r = select i1 %{n}.empty, i32 -1, i32 %{n}.first
-"
-        )
-    };
-    format!(
-        "define internal i32 @velt.str_cmp(ptr %a, ptr %b) alwaysinline nounwind {{
-{}{}  %a.known = call i1 @llvm.is.constant.i64(i64 %a.len)
-  %b.known = call i1 @llvm.is.constant.i64(i64 %b.len)
-  %a.one = icmp eq i64 %a.len, 1
-  %b.one = icmp eq i64 %b.len, 1
-  %b.lit = and i1 %b.known, %b.one
-  %a.lit = and i1 %a.known, %a.one
-  br i1 %b.lit, label %a.vs.b, label %left
-left:
-  br i1 %a.lit, label %b.vs.a, label %call
-{}  ret i32 %ab.r
-{}  %ba.neg = sub i32 0, %ba.r
-  ret i32 %ba.neg
-call:
-  %r = call i32 @velt_rt_str_cmp(ptr %a, ptr %b)
-  ret i32 %r
-}}",
-        view("a"),
-        view("b"),
-        against("a", "b"),
-        against("b", "a"),
-    )
-}
-
 /// `w2` of a one-byte inline ASCII string, `(0x80 | 1) << 56`, as an `i64`.
 const INLINE_ONE_W2: i64 = (0x81u64 << 56) as i64;
 
@@ -237,7 +185,7 @@ pub(crate) fn fast_path(
     ret: Ty,
     ptr32: bool,
 ) -> Option<(&'static str, Vec<String>)> {
-    use Ty::{Ptr, Unit, I32, I64, U64, U8};
+    use Ty::{Ptr, Unit, I64, U64, U8};
     let size_t = if ptr32 { "i32" } else { "i64" };
     let (name, defs) = match (symbol, params, ret) {
         ("velt_rt_str_drop", [Ptr], Unit) => ("@velt.str_drop", vec![drop_helper()]),
@@ -251,13 +199,6 @@ pub(crate) fn fast_path(
             ],
         ),
         ("velt_rt_str_hash", [Ptr], U64) => ("@velt.str_hash", vec![hash_helper()]),
-        ("velt_rt_str_cmp", [Ptr, Ptr], I32) => (
-            "@velt.str_cmp",
-            vec![
-                cmp_helper(),
-                "declare i1 @llvm.is.constant.i64(i64) nounwind willreturn memory(none)".into(),
-            ],
-        ),
         ("velt_rt_str_slice", [Ptr, I64, I64, Ptr], Unit) => {
             ("@velt.str_slice", vec![slice_helper()])
         }
@@ -322,27 +263,6 @@ mod tests {
     fn char_code_at_stays_a_runtime_call() {
         let code_at = [Ty::Ptr, Ty::I64];
         assert!(fast_path("velt_rt_str_char_code_at", &code_at, Ty::I64, false).is_none());
-    }
-
-    #[test]
-    fn compare_is_inline_only_against_a_known_one_byte_string() {
-        let (name, defs) =
-            fast_path("velt_rt_str_cmp", &[Ty::Ptr, Ty::Ptr], Ty::I32, false).unwrap();
-        assert_eq!(name, "@velt.str_cmp");
-        let ir = &defs[0];
-        assert!(ir.contains("%b.lit = and i1 %b.known, %b.one"), "{ir}");
-        assert!(
-            ir.contains("call i1 @llvm.is.constant.i64(i64 %b.len)"),
-            "{ir}"
-        );
-        assert!(
-            ir.contains("call i32 @velt_rt_str_cmp(ptr %a, ptr %b)"),
-            "{ir}"
-        );
-        // A literal on the left: the mirrored comparison, negated.
-        assert!(ir.contains("%ba.neg = sub i32 0, %ba.r"), "{ir}");
-        assert!(defs[1].starts_with("declare i1 @llvm.is.constant.i64(i64)"));
-        assert!(fast_path("velt_rt_str_cmp", &[Ty::Ptr, Ty::Ptr], Ty::I64, false).is_none());
     }
 
     #[test]
