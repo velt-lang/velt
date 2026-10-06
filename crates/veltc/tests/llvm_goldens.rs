@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 mod no_window;
 mod runtime_support;
+mod work_dir;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -35,7 +36,7 @@ fn m1_goldens_with_llvm() {
     }
     let root = root();
     runtime_support::build_native_runtime(&root);
-    let work = root.join("target/golden-work-llvm");
+    let work = work_dir::work_dir(&root, "golden-work-llvm");
     std::fs::create_dir_all(&work).expect("work dir");
     let files = m1_programs(&root);
     assert!(!files.is_empty(), "no M1 goldens found");
@@ -59,7 +60,7 @@ fn goldens_split_into_codegen_units() {
     }
     let root = root();
     runtime_support::build_native_runtime(&root);
-    let work = root.join("target/golden-work-llvm-units");
+    let work = work_dir::work_dir(&root, "golden-work-llvm-units");
     std::fs::create_dir_all(&work).expect("work dir");
     let failures: Vec<String> = [
         "lang/json_dynamic_generic",
@@ -101,7 +102,7 @@ fn inline_helpers_with_llvm() {
     }
     let root = root();
     runtime_support::build_native_runtime(&root);
-    let work = root.join("target/golden-work-llvm-helpers");
+    let work = work_dir::work_dir(&root, "golden-work-llvm-helpers");
     std::fs::create_dir_all(&work).expect("work dir");
     let failures: Vec<String> = ["lang/float_remainder", "lang/numbers_int32_ops"]
         .iter()
