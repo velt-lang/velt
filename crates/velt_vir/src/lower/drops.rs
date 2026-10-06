@@ -90,7 +90,9 @@ impl FnLower<'_, '_> {
     /// Register a temporary at `place` that owns a value only when `flag` is true.
     pub(super) fn own_flagged(&mut self, place: Place, ty: TyId, flag: crate::vir::Local) {
         if !self.dead() && self.cx.needs_drop(ty) {
-            self.innermost().drops.push(DropEntry::Flagged(place, ty, flag));
+            self.innermost()
+                .drops
+                .push(DropEntry::Flagged(place, ty, flag));
         }
     }
 

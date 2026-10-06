@@ -12,9 +12,9 @@
 use velt_sema::hir::{self, TyId};
 
 use super::boxing::ShareKind;
-use super::FnLower;
 use super::cint;
 use super::operand::proj;
+use super::FnLower;
 use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
@@ -139,7 +139,10 @@ impl FnLower<'_, '_> {
         self.branch(unique, in_place, shared);
         self.switch_to(in_place);
         self.assign(Place::local(ptr), Rvalue::AddrOf(elem.clone()));
-        self.assign(Place::local(shared_flag), Rvalue::Use(Operand::Const(Const::Bool(false), Ty::Bool)));
+        self.assign(
+            Place::local(shared_flag),
+            Rvalue::Use(Operand::Const(Const::Bool(false), Ty::Bool)),
+        );
         self.goto(join);
         self.switch_to(shared);
         self.cx.note_share(ty);
