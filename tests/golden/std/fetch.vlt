@@ -126,5 +126,5 @@ async function handle(req: ServerRequest): Promise<ServerResponse> {
 async function main() {
   const server = await serve({ port: 0 }, handle);
   await client(`http://127.0.0.1:${server.port}`);
-  server.close();
+  await server.shutdown();
 }

@@ -94,10 +94,10 @@ pub(super) fn parse_url(url: &str) -> Result<Url, VeltErr> {
 /// (`accept`, `user-agent`).
 pub(super) fn header_map(flat: &[&[u8]]) -> Result<HeaderMap, VeltErr> {
     let mut map = HeaderMap::with_capacity(flat.len() / 2 + 2);
-    for pair in flat.chunks_exact(2) {
-        let name = HeaderName::from_bytes(pair[0])
-            .map_err(|_| invalid(&format!("invalid header name {:?}", lossy(pair[0]))))?;
-        let value = HeaderValue::from_bytes(pair[1])
+    for [name, value] in flat.as_chunks::<2>().0 {
+        let name = HeaderName::from_bytes(name)
+            .map_err(|_| invalid(&format!("invalid header name {:?}", lossy(name))))?;
+        let value = HeaderValue::from_bytes(value)
             .map_err(|_| invalid(&format!("invalid value of header {name}")))?;
         map.append(name, value);
     }

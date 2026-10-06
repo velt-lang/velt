@@ -32,12 +32,15 @@ async function main() {
   });
   const base = `http://127.0.0.1:${server.port}`;
   const res = await fetch(`${base}/list?3`);
+  // `fetch` resolves with the headers, before the body is complete: read the body first, so
+  // the server's lines come before the client's.
+  const body = await res.text();
   console.log(res.status);
   console.log(res.headers.get("content-type"));
   console.log(res.headers.get("x-stream"));
   console.log(res.headers.get("content-length") ?? "no content-length");
   console.log(res.headers.get("transfer-encoding"));
-  console.log(await res.text());
+  console.log(body);
   try {
     const broken = await fetch(`${base}/broken?1`);
     console.log("unexpected:", await broken.text());

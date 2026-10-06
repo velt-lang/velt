@@ -19,5 +19,5 @@ async function main() {
   const headers = await headersOf(`http://127.0.0.1:${server.port}/`);
   console.log("response released");
   console.log(headers.get("x-kind"), headers.get("content-type"));
-  server.close();
+  await server.shutdown();
 }
