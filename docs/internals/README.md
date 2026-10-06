@@ -39,6 +39,12 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    - `dead_fills`, for the objects that stay on the heap, drops the zero fill of `new` when the
      code right after the allocation writes every field (padding aside) before anything can
      read the object: before a branch, and before the pointer is passed, stored or compared.
+   - `vtable_loads` makes virtual calls on objects of a known class direct: it forwards the
+     vtable pointer a new object's header gets to the loads of it that follow (while the
+     object is still private to the function), and folds loads of method slots from vtables,
+     which are read-only statics. `constfold` then calls the method directly, the next round
+     inlines it, and `heap_sroa` can keep the object in locals. Both passes share `fresh`, the
+     walk of the code right after an allocation.
 6. **Generate code**: Cranelift for debug builds and the `velt dev` JIT; textual LLVM IR compiled
    by clang `-O3` for release builds and WebAssembly.
 7. **Link** (`velt_link`): the system linker (MSVC `link.exe`, or `cc`) with the runtime library.

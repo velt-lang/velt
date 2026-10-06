@@ -7,7 +7,10 @@ use crate::interp::{Interp, Memory, Trap};
 use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
 use velt_vir::vir::Ty::*;
-use velt_vir::vir::{AggId, BlockId, ExternFn, ExternId, Program, Proj, Ty};
+use velt_vir::vir::{
+    AggId, BinOp, BlockId, Callee, ExternFn, ExternId, Local, Operand, Place, Program, Proj,
+    Rvalue, Stmt, Ty,
+};
 
 /// A heap whose new blocks are filled with `0xA5`; other extern calls return 0.
 #[derive(Default)]
