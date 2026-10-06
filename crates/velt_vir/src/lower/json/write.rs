@@ -192,7 +192,8 @@ impl FnLower<'_, '_> {
         self.push_text(buf, "]");
     }
 
-    /// `{"a":…,"b":…}` in field order; optional fields that are null are omitted.
+    /// `{"a":…,"b":…}` in field order; optional fields (`a?: T`) that are null are omitted, as
+    /// JavaScript omits absent ones.
     fn json_write_object(&mut self, buf: &Operand, place: &Place, ty: TyId) {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
             ice("object of a non-ADT type")
@@ -202,7 +203,7 @@ impl FnLower<'_, '_> {
             .adt_def(d)
             .fields
             .iter()
-            .map(|f| (f.name.clone(), is_optional(f)))
+            .map(|f| (f.name.clone(), f.optional))
             .collect();
         let tys = self.cx.adt_field_tys(ty);
         // A recursive object type can contain itself (`n.next = n`): report the cycle as
@@ -292,17 +293,6 @@ impl FnLower<'_, '_> {
             }
         }
     }
-}
-
-/// `x?: T` fields: an option-typed field whose default is `null`.
-pub(super) fn is_optional(f: &hir::FieldDef) -> bool {
-    matches!(
-        f.default,
-        Some(hir::Expr {
-            kind: hir::ExprKind::Lit(hir::Lit::Null),
-            ..
-        })
-    )
 }
 
 /// `"name":` with the name escaped like `JSON.stringify` does.

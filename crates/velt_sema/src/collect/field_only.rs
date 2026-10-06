@@ -137,10 +137,15 @@ pub(super) fn fill(cx: &mut Ctx) {
     for (_, adt) in pairs {
         let a = cx.adt(adt).expect("ICE: adt");
         let module = a.module;
-        let fields: Vec<(String, crate::hir::TyId, bool)> = a
+        let fields: Vec<crate::anon::ShapeField> = a
             .fields
             .iter()
-            .map(|f| (f.name.clone(), f.ty, f.readonly))
+            .map(|f| crate::anon::ShapeField {
+                name: f.name.clone(),
+                ty: f.ty,
+                readonly: f.readonly,
+                optional: f.optional,
+            })
             .collect();
         let (anon, template) = cx.anon_def_with(&fields, module);
         let (twin, template) = match cx.readonly_twins.get(&anon) {

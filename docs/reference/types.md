@@ -228,10 +228,12 @@ has type `T | null`, stored without an extra allocation where possible.
 - `x!` is `x` known not to be `null` (TS's non-null assertion). TypeScript trusts it; Velt
   checks it: a `null` panics with `non-null assertion failed`.
 - `a?: T` is `T | null` everywhere: an optional parameter `b?: T` is `b: T | null = null`
-  (callers may leave it out or pass `null`; it cannot also have a default), an optional class
-  or interface field starts as `null` (and is omitted by `JSON.stringify` when null), and an
-  object literal may leave out any `T | null` field of an object type
-  (`{ port: i64; host?: string }` accepts `{ port: 80 }`).
+  (callers may leave it out or pass `null`; it cannot also have a default), an optional field
+  of a class, interface or object type starts as `null` (and `JSON.stringify` leaves it out
+  while it is `null`, as JavaScript leaves out an absent property, but writes a `b: T | null`
+  field), and an object literal may leave out any `T | null` field of an object type
+  (`{ port: i64; host?: string }` accepts `{ port: 80 }`). As in TypeScript, `{ a?: T }` and
+  `{ a: T | null }` are different object types: a value of one is not a value of the other.
 - `JSON.parse<T>` treats an absent key like an explicit `null` (a `T | null` field may be
   missing); only a `JsonValue` tells them apart: `v.has("a")` vs `v.get("a")?.isNull()`.
 - `x?.a.b` short-circuits the rest of the chain like TypeScript (null when `x` is null; `.b` is
