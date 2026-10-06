@@ -36,6 +36,7 @@ mod debug;
 mod function;
 mod llc;
 mod module;
+mod rounding;
 mod runtime;
 mod statics;
 mod strings;

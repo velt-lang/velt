@@ -2,6 +2,7 @@
 //! signatures:
 //! - the `velt_rt_math_*` primitives whose semantics are exactly an LLVM intrinsic are emitted
 //!   as that intrinsic (one instruction instead of an opaque call that clobbers memory);
+//!   `Math.round`, and on x86-64 `Math.floor`/`ceil`/`trunc`, are inline code (`rounding.rs`);
 //! - JS's ToInt32 and `Math.clz32` are emitted through small `alwaysinline` helpers defined in
 //!   the module (`inline_helper`): a guarded conversion with the runtime call only on a cold
 //!   path, and one `ctlz`;
@@ -13,8 +14,8 @@
 use velt_vir::vir::Ty;
 
 /// LLVM intrinsic computing exactly what the runtime function `symbol` of type
-/// `(f64) -> f64` computes. `Math.round` is not here: JS rounds ties toward +Infinity, unlike
-/// `llvm.round`.
+/// `(f64) -> f64` computes, where `rounding::helper` has no inline code for it. `Math.round` is
+/// not here: JS rounds ties toward +Infinity, unlike `llvm.round`.
 pub(crate) fn math_intrinsic(symbol: &str) -> Option<&'static str> {
     Some(match symbol {
         "velt_rt_math_sqrt" => "llvm.sqrt.f64",
