@@ -1,5 +1,7 @@
 // `super(...)` must run exactly once on every path, before `this` is used: as a statement of its
-// own in a derived constructor (not inside `if`, a loop, a ternary or a closure), with arguments
+// own in a derived constructor, or one in each branch of an `if` / `else` (not in an `if` without
+// `else`, a loop, a ternary or a closure; not in branches with parameter properties, or with field
+// initializers when no base class has a constructor), with arguments
 // that do not use `this` or `super.m()`. Statements before it may not use `this` or return
 // (TypeScript's rules); they may come first also in a class with initialized fields or parameter
 // properties (`super_statements.vlt`).
@@ -111,6 +113,42 @@ class Fine extends A {
   constructor(c: bool) {
     super(c ? 1 : 2);
     this.x += 1;
+  }
+}
+
+// The branches run before `this` is usable too.
+class ThisInBranch extends A {
+  constructor(c: bool) {
+    if (c) {
+      console.log(this.x);
+      super(1);
+    } else {
+      super(2);
+    }
+  }
+}
+
+class PropInBranches extends A {
+  constructor(public tag: string, c: bool) {
+    if (c) {
+      super(1);
+    } else {
+      super(2);
+    }
+  }
+}
+
+class Init {
+  v: i64 = 3;
+}
+
+class InitInBranches extends Init {
+  constructor(c: bool) {
+    if (c) {
+      super();
+    } else {
+      super();
+    }
   }
 }
 

@@ -1,0 +1,22 @@
+after b1:yes
+after b2:no
+b1:yes b2:no
+big
+2 1 0
+3 1 null
+before
+Base x
+then init
+after x init
+before
+Base y
+after y init!
+before
+Base y
+after y init!
+deeper 2 init!
+5 1 null 2 4 2.5
+r 3
+w,h 2
+w,h,label 2
+a,b 0
