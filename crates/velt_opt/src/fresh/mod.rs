@@ -1,12 +1,12 @@
 //! Walking the code right after an allocation, while the new block is still private to the
 //! function: what `dead_fills` (#560) and `vtable_loads` (#559) learn about new objects.
 //!
-//! From `p = velt_rt_alloc(..)`, the walk follows the one path the program takes next (gotos,
-//! the continuations of calls and branches on a null test of the new pointer, which is never
-//! null; up to any other branch, a return or a switch), tracking the locals that point into the
-//! block (`q = p`, `q = p + c`) with their offsets. Nothing else can reach the block until one
-//! of those pointers escapes, so their mentions are all there is to see; an [`Observer`] is
-//! told about each:
+//! From `p = velt_rt_alloc(..)`, the walk follows the one path the program takes next into
+//! blocks no other path enters (gotos, the continuations of calls and branches on a null test
+//! of the new pointer, which is never null; up to any other branch, a join, a return or a
+//! switch), tracking the locals that point into the block (`q = p`, `q = p + c`) with their
+//! offsets. Nothing else can reach the block until one of those pointers escapes, so their
+//! mentions are all there is to see; an [`Observer`] is told about each:
 //! - `memset q, b, n` with constant `b` and `n`;
 //! - a store through a tracked pointer (with the stored operand, for a plain one);
 //! - a read through one (a store through a pointer *stored* in the block reads it too).
@@ -21,7 +21,7 @@ use velt_vir::vir::{
     AggLayout, BinOp, Const, Function, Local, Operand, Place, Rvalue, Stmt, Terminator, Ty,
 };
 
-use crate::visit::{rvalue_operands, stmt_operands, term_operands};
+use crate::visit::{rvalue_operands, stmt_operands, successors, term_operands};
 use access::{Access, Touch};
 
 /// Statements (and terminators) one walk looks at before giving up.
@@ -40,10 +40,12 @@ pub(crate) trait Observer {
     fn read(&mut self, at: Pos, p: &Place, a: &Access) -> bool;
 }
 
-/// Walk from the start of block `from`, where `ptr` points at the new block.
+/// Walk from the start of block `from`, where `ptr` points at the new block; `single` is
+/// [`single_predecessors`] of `func`.
 pub(crate) fn walk(
     aggs: &[AggLayout],
     func: &Function,
+    single: &[bool],
     ptr: Local,
     from: usize,
     obs: &mut impl Observer,
@@ -58,7 +60,7 @@ pub(crate) fn walk(
     let mut budget = BUDGET;
     let mut b = from;
     loop {
-        if std::mem::replace(&mut visited[b], true) {
+        if !single[b] || std::mem::replace(&mut visited[b], true) {
             return;
         }
         let block = &func.blocks[b];
@@ -74,6 +76,22 @@ pub(crate) fn walk(
             _ => return,
         }
     }
+}
+
+/// Per block: whether exactly one edge enters it (the entry block is also entered by the call).
+/// The walk enters only those: a block that another path also reaches runs its statements for
+/// objects the walk knows nothing about, so what the walk learned does not hold there.
+pub(crate) fn single_predecessors(func: &Function) -> Vec<bool> {
+    let mut preds = vec![0u32; func.blocks.len()];
+    if let Some(entry) = preds.first_mut() {
+        *entry = 1;
+    }
+    for block in &func.blocks {
+        for s in successors(&block.term) {
+            preds[s.0 as usize] += 1;
+        }
+    }
+    preds.into_iter().map(|n| n == 1).collect()
 }
 
 /// The state of one walk.

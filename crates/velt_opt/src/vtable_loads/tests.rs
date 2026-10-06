@@ -234,3 +234,39 @@ fn a_slot_varying_by_path_or_without_a_relocation_is_kept() {
         assert!(!run(&aggs, &statics, None, &mut p.funcs[main]), "{p}");
     }
 }
+
+#[test]
+fn a_header_seen_where_two_allocations_meet_is_not_forwarded() {
+    // `p = n < 3 ? new Sq(n) : new Other(n)` (the same layout, another vtable), then
+    // `p.area()` where both paths meet: the call must not go to `Sq.area`.
+    let mut env = env();
+    let mut fb = FuncBuilder::internal("other_area", &[Ptr], I64);
+    let (this, r) = (fb.param(0), fb.local(I64));
+    let b = fb.block();
+    let side = copy_place(field(this, env.sq, 1));
+    fb.assign(b, r, bin(BinOp::Add, side, int(100, I64)));
+    fb.ret(b, copy_local(r));
+    let other_area = env.pb.add(fb.finish());
+    let other = env
+        .pb
+        .stat_with(&[0; 16], 8, vec![(8, Const::Func(other_area))]);
+    let mut fb = FuncBuilder::export("main", &[I64], I64);
+    let (p, c) = (fb.local(Ptr), fb.local(Bool));
+    let b = fb.block();
+    let n = copy_local(fb.param(0));
+    fb.assign(b, c, bin(BinOp::Lt, n.clone(), int(3, I64)));
+    let (left, right, join) = (fb.block(), fb.block(), fb.block());
+    fb.branch(b, c, left, right);
+    let l = env.new_sq(&mut fb, left, p, n.clone());
+    fb.goto(l, join);
+    let r = env.new_sq(&mut fb, right, p, n);
+    let header = Operand::Const(Const::Static(other), Ptr);
+    fb.push(r, Stmt::Assign(field(p, env.sq, 0), Rvalue::Use(header)));
+    fb.goto(r, join);
+    let (b, res) = env.virtual_area(&mut fb, join, p);
+    fb.ret(b, copy_local(res));
+    env.pb.add(fb.finish());
+    let p = env.pb.finish();
+    assert!(!devirtualized(&p));
+    assert_eq!(run_main(&p, 5), 105);
+}

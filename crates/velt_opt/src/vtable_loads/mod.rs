@@ -22,7 +22,7 @@ use velt_vir::vir::{
 mod addrs;
 
 use crate::fresh::access::{self, size, Access, Touch};
-use crate::fresh::{walk, Observer, Pos};
+use crate::fresh::{single_predecessors, walk, Observer, Pos};
 use crate::heap_sroa::Allocator;
 use crate::visit::{stmt_operands, stmt_operands_mut, term_operands, term_operands_mut};
 use addrs::Addrs;
@@ -53,6 +53,7 @@ type Load = (Pos, Place, Const);
 /// Loads of constant pointers stored in new objects (headers) before they escape.
 fn header_loads(aggs: &[AggLayout], allocator: Allocator, func: &Function) -> Vec<Load> {
     let mut out = Vec::new();
+    let single = single_predecessors(func);
     for block in &func.blocks {
         let Terminator::Call {
             callee: Callee::Extern(e),
@@ -69,7 +70,7 @@ fn header_loads(aggs: &[AggLayout], allocator: Allocator, func: &Function) -> Ve
                 known: Vec::new(),
                 loads: Vec::new(),
             };
-            walk(aggs, func, d.local, next.0 as usize, &mut slots);
+            walk(aggs, func, &single, d.local, next.0 as usize, &mut slots);
             out.extend(slots.loads);
         }
     }

@@ -283,3 +283,52 @@ fn padding_needs_no_zeros_unless_seen_as_bytes() {
         check(env.finish(fb, b, w, padded), !as_bytes);
     }
 }
+
+#[test]
+fn a_fill_in_a_block_another_path_reaches_is_kept() {
+    // `k = new(7, 8); w = alloc; q = n < 3 ? k : w;` then, where both paths meet:
+    // `memset w; w.0 = 1; x = q.1; w.1 = 2; return x`. From the left allocation the stores
+    // cover the fill, but on the right path `q` is `w`, and `x` must read the zero.
+    let mut env = env();
+    let mut fb = FuncBuilder::export("main", &[I64], I64);
+    let (k, w, q, c, x) = (
+        fb.local(Ptr),
+        fb.local(Ptr),
+        fb.local(Ptr),
+        fb.local(Bool),
+        fb.local(I64),
+    );
+    let b = fb.block();
+    let b = env.alloc(&mut fb, b, k, 16);
+    store(&mut fb, b, field(k, env.pair, 0), int(7, I64));
+    store(&mut fb, b, field(k, env.pair, 1), int(8, I64));
+    let n = copy_local(fb.param(0));
+    fb.assign(b, c, bin(BinOp::Lt, n, int(3, I64)));
+    let (left, right, join) = (fb.block(), fb.block(), fb.block());
+    fb.branch(b, c, left, right);
+    let args = vec![int(16, U64), int(8, U64)];
+    let l = fb.call(left, Callee::Extern(env.alloc), args.clone(), Some(w));
+    fb.assign(l, q, Rvalue::Use(copy_local(k)));
+    fb.goto(l, join);
+    let r = fb.call(right, Callee::Extern(env.alloc), args, Some(w));
+    fb.assign(r, q, Rvalue::Use(copy_local(w)));
+    fb.goto(r, join);
+    fill(&mut fb, join, w, 16);
+    store(&mut fb, join, field(w, env.pair, 0), int(1, I64));
+    fb.assign(join, x, Rvalue::Use(copy_place(field(q, env.pair, 1))));
+    store(&mut fb, join, field(w, env.pair, 1), int(2, I64));
+    fb.ret(join, copy_local(x));
+    env.pb.add(fb.finish());
+    let p = env.pb.finish();
+    let mut opt = p.clone();
+    let aggs = opt.aggs.clone();
+    let allocator = Allocator::find(&opt);
+    run(&aggs, allocator, &mut opt.funcs[0]);
+    let fill_at_join = |p: &Program| {
+        let stmts = &p.funcs[0].blocks[join.0 as usize].stmts;
+        stmts.iter().any(|s| matches!(s, Stmt::MemSet { .. }))
+    };
+    assert!(fill_at_join(&opt), "{opt}");
+    assert_eq!(run_main(&p, 5), 0);
+    assert_eq!(run_main(&opt, 5), 0);
+}
