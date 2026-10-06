@@ -4,3 +4,6 @@ switch_errors.vlt:17:10: error: mismatched types: this literal can never equal a
 switch_errors.vlt:27:9: error: `continue` cannot target a `switch`
 switch_errors.vlt:35:10: error: mismatched types
 expected string, found i64
+switch_errors.vlt:60:14: error: mismatched types
+expected f64 | null, found f64
+switch_errors.vlt:80:14: error: mismatched types

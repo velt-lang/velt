@@ -39,3 +39,43 @@ function wrongValueType(s: string, n: i64): i64 {
 }
 
 function main() {}
+
+// A fact undone before a `break` and restored after it does not hold after the `switch`.
+type AB = { kind: "a" } | { kind: "b" };
+
+function breakMidBody(s: AB, c: bool, init: f64 | null): f64 {
+  let x: f64 | null = init;
+  if (x === null) {
+    return 0.0;
+  }
+  switch (s.kind) {
+    case "a":
+      x = null;
+      if (c) {
+        break;
+      }
+      x = 5.0;
+      break;
+  }
+  return x + 1.0;
+}
+
+function labelledBreak(s: AB, c: bool, init: f64 | null): f64 {
+  let x: f64 | null = init;
+  if (x === null) {
+    return 0.0;
+  }
+  out: switch (s.kind) {
+    case "a": {
+      x = null;
+      {
+        if (c) {
+          break out;
+        }
+      }
+      x = 5.0;
+      break;
+    }
+  }
+  return x + 1.0;
+}

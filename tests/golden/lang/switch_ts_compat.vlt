@@ -181,7 +181,39 @@ function narrowedFirst(s: Shape, k: string): string {
   return "none " + s.kind;
 }
 
+type Three = { kind: "a"; n: number } | { kind: "b"; n: number } | { kind: "c"; m: number };
+
+// A body falling into the next one: that one sees both members; the rest skip the switch.
+function fallInto(t: Three, log: string[]): number {
+  switch (t.kind) {
+    case "a":
+      log.push("a");
+    case "b":
+      log.push("b");
+      return t.n;
+  }
+  return t.m;
+}
+
+// Falling out of the last case: any member may follow.
+function fallOut(t: Three, log: string[]): string {
+  switch (t.kind) {
+    case "a":
+      log.push("a");
+    case "b":
+      log.push("b");
+  }
+  return t.kind;
+}
+
 function afterSwitch() {
+  const log: string[] = [];
+  console.log(
+    fallInto({ kind: "a", n: 1 }, log),
+    fallInto({ kind: "b", n: 2 }, log),
+    fallInto({ kind: "c", m: 3 }, log),
+  );
+  console.log(fallOut({ kind: "a", n: 1 }, log), fallOut({ kind: "c", m: 3 }, log), log.join(""));
   console.log(
     rest({ kind: "circle", r: 1 }),
     rest({ kind: "square", s: 2 }),
