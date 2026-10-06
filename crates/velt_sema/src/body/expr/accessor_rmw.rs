@@ -21,12 +21,20 @@ use velt_syntax::ast;
 
 use super::setters::{side_effect_free, synth};
 use crate::body::places::set_place_mode;
-use crate::body::{FnCx, LocalKind};
+use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, ExprKind as H, LocalId, UseMode};
 
 const RECEIVER: &str = "<receiver>";
 const OLD: &str = "<old>";
 const NEW: &str = "<new>";
+
+/// A logical assignment used as a value: the operator, when the setter runs, and the old value.
+struct LogicalValue {
+    op: ast::BinaryOp,
+    cond: hir::Expr,
+    old: LocalId,
+    old_ty: hir::TyId,
+}
 
 /// What the new value is computed from the old one with.
 pub(super) enum Rmw<'a> {
@@ -50,19 +58,6 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> hir::Expr {
-        if as_value {
-            if let Rmw::Logical(op, _) = rmw {
-                let op = super::ops::op_str(op);
-                self.cx.err(
-                    format!(
-                        "`{op}=` on the accessor `{}` cannot be used as a value",
-                        prop.name
-                    ),
-                    span,
-                );
-                return self.error_expr(span);
-            }
-        }
         let mut stmts = vec![];
         self.push_scope();
         let recv = self.receiver_once(obj, object, &mut stmts);
@@ -122,10 +117,20 @@ impl FnCx<'_, '_> {
             {
                 return self.error_expr(span);
             }
+            Rmw::Logical(op, v) if as_value => {
+                let cond = self.decides(op, old_ref(), span);
+                let lv = LogicalValue {
+                    op,
+                    cond,
+                    old,
+                    old_ty,
+                };
+                return self.logical_value(recv, prop, v, lv, span, stmts);
+            }
             Rmw::Logical(op, v) => (v.clone(), Some(self.decides(op, old_ref(), span))),
         };
         let mut set = vec![];
-        let new_val = self.expr(&value, Some(old_ty), crate::body::Want::Move);
+        let new_val = self.expr(&value, Some(old_ty), Want::Move);
         let new = self.bind_temp(NEW, new_val, &mut set);
         let call = self.setter_call(recv, prop, &new_ref, span);
         set.push(stmt(hir::StmtKind::Expr(call), span));
@@ -153,6 +158,100 @@ impl FnCx<'_, '_> {
         let ty = value.as_ref().map_or(unit, |v| v.ty);
         let b = block(std::mem::take(stmts), value, span);
         self.mk(H::Block(b), ty, span)
+    }
+
+    /// `(x.p ??= v)` (also `||=`, `&&=`) used as a value: `if (<cond>) { <new> = v; x.p = <new>;
+    /// <new> } else { <old> }`. For `??=` and `||=` on a nullable accessor the old value is
+    /// non-null where it decides, so the value is non-null when `v` is (TypeScript's type).
+    fn logical_value(
+        &mut self,
+        recv: hir::Expr,
+        prop: &ast::Ident,
+        v: &ast::Expr,
+        lv: LogicalValue,
+        span: Span,
+        stmts: &mut Vec<hir::Stmt>,
+    ) -> hir::Expr {
+        let LogicalValue {
+            op,
+            cond,
+            old,
+            old_ty,
+        } = lv;
+        let inner = self.cx.ty.opt_payload(old_ty);
+        let strips_null = inner.is_some() && op != ast::BinaryOp::And;
+        let mut set = vec![];
+        let new_val = match inner.filter(|_| strips_null) {
+            Some(t) => {
+                let h = self.expr(v, Some(t), Want::Move);
+                self.try_coerce(h, t)
+                    .unwrap_or_else(|h| self.coerce(h, old_ty))
+            }
+            None => self.expr_coerce(v, old_ty, Want::Move),
+        };
+        let ty = new_val.ty;
+        let new = self.bind_temp(NEW, new_val, &mut set);
+        let new_ref = synth(
+            ast::ExprKind::Ident(ast::Ident {
+                name: NEW.into(),
+                span,
+            }),
+            span,
+        );
+        let call = self.setter_call(recv, prop, &new_ref, span);
+        set.push(stmt(hir::StmtKind::Expr(call), span));
+        let then_val = self.read_temp(new, ty, span);
+        let then = self.mk(H::Block(block(set, Some(then_val), span)), ty, span);
+        // Where the old value decides, it is the result (non-null when `ty` is).
+        let old_val = if ty == old_ty {
+            self.read_temp(old, old_ty, span)
+        } else {
+            let base = self.mk(H::Local(old, UseMode::Borrow), old_ty, span);
+            let mode = self.use_mode(ty, Want::Move);
+            self.mk(H::UnwrapSome(Box::new(base), mode), ty, span)
+        };
+        let els = self.mk(H::Block(block(vec![], Some(old_val), span)), ty, span);
+        let kind = H::If {
+            cond: Box::new(cond),
+            then: Box::new(then),
+            els: Box::new(els),
+        };
+        let pick = self.mk(kind, ty, span);
+        let b = block(std::mem::take(stmts), Some(pick), span);
+        self.mk(H::Block(b), ty, span)
+    }
+
+    /// `(x.p = v)` used as a value, `p` a setter: `v` converted to the setter's parameter type,
+    /// as in JavaScript (the getter is not read again). The receiver is evaluated first.
+    pub(super) fn accessor_assign_value(
+        &mut self,
+        obj: hir::Expr,
+        object: &ast::Expr,
+        prop: &ast::Ident,
+        value: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let mut stmts = vec![];
+        self.push_scope();
+        let recv = self.receiver_once(obj, object, &mut stmts);
+        let v = match self.setter_param_ty(recv.ty, &prop.name) {
+            Some(t) => self.expr_coerce(value, t, Want::Move),
+            None => self.expr(value, None, Want::Move),
+        };
+        let ty = v.ty;
+        let new = self.bind_temp(NEW, v, &mut stmts);
+        let new_ref = synth(
+            ast::ExprKind::Ident(ast::Ident {
+                name: NEW.into(),
+                span,
+            }),
+            span,
+        );
+        let call = self.setter_call(recv, prop, &new_ref, span);
+        stmts.push(stmt(hir::StmtKind::Expr(call), span));
+        let value = self.read_temp(new, ty, span);
+        self.pop_scope();
+        self.mk(H::Block(block(stmts, Some(value), span)), ty, span)
     }
 
     /// The receiver to read and write through: `obj` itself when evaluating it again has no

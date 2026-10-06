@@ -323,9 +323,8 @@ impl FnCx<'_, '_> {
         let e = match self.assign_target(target, span) {
             Some(AssignTarget::Place(place)) => self.place_assign(place, op, target, value, span),
             Some(AssignTarget::Setter(obj)) => {
-                let valued = as_value && op.is_some();
-                let e = self.setter_assign(obj, op, target, value, valued, span);
-                return (e, valued);
+                let e = self.setter_assign(obj, op, target, value, as_value, span);
+                return (e, as_value);
             }
             Some(AssignTarget::Record(obj)) => {
                 let (object, key) = super::record::record_parts(target);
