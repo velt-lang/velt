@@ -1,0 +1,20 @@
+// Node's web globals (`fetch`, `Request`, `Response`, `Headers`, `AbortController`,
+// `AbortSignal`, `URL`, `URLSearchParams`) need no import; a module's own declarations and
+// imports of the same names win, as in TypeScript.
+import { Response as Reply } from "velt:http";
+
+class Request {
+  path: string = "/local";
+}
+
+function main() {
+  const u = new URL("https://example.com/a/b?x=1#top");
+  console.log(u.pathname, u.searchParams.get("x"), new URLSearchParams("a=1&b=2").get("b"));
+  const h = new Headers({ "X-Id": "7" });
+  console.log(h.get("x-id"), new Request().path);
+  const ac = new AbortController();
+  ac.abort("stop");
+  console.log(ac.signal.aborted, ac.signal.reason, new Response("x").status);
+  const r: Reply = Reply.text("server reply");
+  console.log(typeof r);
+}

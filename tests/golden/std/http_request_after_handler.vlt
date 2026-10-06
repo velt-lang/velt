@@ -1,7 +1,7 @@
 // A streamed body that reads the `Request` after its handler returned: the request is already
 // released, so this is a clear runtime error (exit 101), never a read of freed memory. Copy the
 // properties the body needs before returning (tests/golden/std/http_stream.vlt).
-import { serve, fetch, Request, Response, ResponseWriter } from "velt:http";
+import { serve, Request, Response, ResponseWriter } from "velt:http";
 
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {

@@ -1,6 +1,5 @@
 // demo.vlt on the SQLite store (golden: demo_sqlite.out): the same HTTP session, then a restart
 // on the same database file to show the data persisted, and a look at the database itself.
-import { fetch } from "velt:http";
 import { removeSync, existsSync } from "velt:fs";
 import { open } from "velt:sqlite";
 import { startServer } from "./src/server";

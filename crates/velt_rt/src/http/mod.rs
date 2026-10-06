@@ -1,7 +1,7 @@
 //! `std/http` on hyper 1.x: a server whose per-request handler is a compiled async function
 //! (`server.rs`, descriptor in `handler.rs`), request accessors (`request.rs`), a response builder
 //! (`response.rs`, constant header values interned by `interned.rs`) whose body is complete or
-//! streamed (`body.rs`, `stream.rs`) and a minimal `fetch` client (`client.rs`).
+//! streamed (`body.rs`, `stream.rs`) and the `fetch` client (`client/`).
 //!
 //! Connections are served with hyper-util's auto builder: HTTP/1.1 with keep-alive and upgrades
 //! (`upgrade.rs`), and HTTP/2 (prior knowledge, h2c, or ALPN when serving TLS) on the same port.

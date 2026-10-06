@@ -6,6 +6,7 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | Path | Role |
 |---|---|
 | `prelude/*.vlt` | Implicitly imported into every module. |
+| `prelude/global/*.vlt` | Globals loaded on demand: only re-exports, loaded (and then part of the prelude) when a non-std module mentions one of the names (`fetch.vlt`: `fetch Headers Request Response AbortController AbortSignal`; `url.vlt`: `URL URLSearchParams`). std modules import what they use. |
 | `prelude/array.vlt` | `T[]` methods: `forEach map filter reduce find findIndex some every indexOf lastIndexOf includes slice concat reverse fill splice truncate toReversed toSpliced with isEmpty entries join`. Callback methods rethrow their callback's errors (generic `E`). |
 | `prelude/array_nested.vlt` | `flat` and `join` on `T[][]`, `join` on `(T \| null)[]`. |
 | `prelude/sort.vlt` | `sort()` on `i64 i32 u64 usize f64 string` arrays (pdqsort), stable `sort(cmp)` on any array, and the copying `toSorted`. |
@@ -23,7 +24,8 @@ Written in Velt. The compiler resolves `import { x } from "velt:<path>"` to `std
 | `fs.vlt` | `std/fs`: async + `*Sync` file system API. |
 | `fs_stream.vlt` | `std/fs_stream`: chunked/line `FileReader` (`openRead`) and buffered `FileWriter` (`openWrite`). |
 | `net.vlt` | `std/net`: `listen`/`connect`, `TcpListener`, `TcpStream` (`net_bytes.vlt`: internal). |
-| `http.vlt` | `std/http`: `serve` (HTTP/1.1, HTTP/2, HTTPS), `fetch` (http/https), `Request`, `Response` (incl. streamed bodies, `ResponseWriter`: `http/stream.vlt`, internal), `Server`, `FetchResponse`. |
+| `http.vlt` | `std/http`: `serve` (HTTP/1.1, HTTP/2, HTTPS), the server's `Request`, `Response` (incl. streamed bodies, `ResponseWriter`: `http/stream.vlt`, internal), `Server`. |
+| `fetch.vlt` | `std/fetch`: the global `fetch`, `Request`, `Response` (`fetch/request.vlt`, `fetch/response.vlt`), `Headers` (`fetch/headers.vlt`, also the server's request headers) and `BodyInit` (`fetch/body.vlt`). |
 | `websocket.vlt` | `std/websocket`: server upgrades (`upgradeWebSocket`) and clients (`connectWebSocket`), `WebSocket`. |
 | `json.vlt` | `std/json`: `Value` (= prelude `JsonValue`). |
 | `process.vlt` | `std/process`: `argv args env setEnv removeEnv cwd chdir exit`. |
@@ -63,7 +65,7 @@ ordinary param that std always passes as a fresh local (`let out = "";` / a zero
 the runtime overwrites): sema cannot see foreign writes, so an out-parameter must never be a
 param, field or element of the calling function. Opaque runtime
 handles are `u64`. Handle-owning classes release them in their `[Symbol.dispose]()` drop hook (http
-`Server`/`Response`/`FetchResponse`, `JsonValue`); the Copy handle structs of std/net
+`Server`/`Response`, fetch's `Response`, `JsonValue`); the Copy handle structs of std/net
 (`TcpListener`, `TcpStream`) are released by an explicit `close()` (see net.vlt).
 
 ## Rules for std code

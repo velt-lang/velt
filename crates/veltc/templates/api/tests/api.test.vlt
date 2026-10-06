@@ -1,5 +1,4 @@
 // The API over real HTTP: a server on port 0 (any free port) and `fetch` requests against it.
-import { fetch } from "velt:http";
 import { startServer } from "../src/server";
 
 // `METHOD path` with an optional JSON body, as `<status> <body>`.

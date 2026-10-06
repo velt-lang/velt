@@ -1,0 +1,4 @@
+fetch_json_untyped.vlt:5:22: error: cannot infer type parameter `T` of method `json`
+= note: Velt has no `any`: name the type the JSON must have (the data is checked against it): `await res.json<User[]>()`, or annotate the variable: `const users: User[] = await res.json()`
+fetch_json_untyped.vlt:6:17: error: cannot infer type parameter `T` of `JSON.parse`
+= note: Velt has no `any`: name the type the JSON must have (the data is checked against it): `JSON.parse<User[]>(text)`, or annotate the variable: `const users: User[] = JSON.parse(text)`

@@ -41,18 +41,20 @@ fn std_async_functions_own_their_params() {
 
 #[test]
 fn std_handles_release_in_drop_hooks() {
-    let p = ok_src("import { serve } from \"velt:http\";\nfunction main() {}");
+    let p = ok_src(
+        "import { serve } from \"velt:http\";\nimport { fetch } from \"velt:fetch\";\nfunction main() {}",
+    );
     for class in [
         "std/http::Server",
         "std/http::Response",
-        "std/http::FetchResponse",
+        "std/fetch/response::Response",
     ] {
         assert!(
             adt(&p, class).dispose.is_some(),
             "{class} has no dispose hook"
         );
     }
-    let text = func(&p, "std/http::FetchResponse.text");
+    let text = func(&p, "std/fetch/response::Response.text");
     assert!(text.is_async);
     assert_eq!(
         text.params[0].mode,

@@ -3,7 +3,7 @@
 // returned, with awaited sleeps between flushes; the client gets the headers that were set
 // before returning, no content-length (chunked transfer), and every chunk in order. A producer
 // that throws cuts the response off, so the client sees a failed body, not a complete one.
-import { serve, fetch, Request, Response, ResponseWriter } from "velt:http";
+import { serve, Request, Response, ResponseWriter } from "velt:http";
 
 class RenderError extends Error {}
 
