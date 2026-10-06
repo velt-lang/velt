@@ -54,6 +54,8 @@ struct Env {
     keep: ExternId,
     /// `make() -> ptr`: an opaque call returning a pointer.
     make: ExternId,
+    /// `num() -> i64`: an opaque call returning a number.
+    num: ExternId,
     obj: AggId,
     /// Another aggregate of the object's size.
     other: AggId,
@@ -65,6 +67,7 @@ fn env() -> Env {
     let free = pb.ext("velt_rt_free", &[Ptr, U64, U64], Unit, false);
     let keep = pb.ext("keep", &[Ptr, I64], Unit, false);
     let make = pb.ext("make", &[], Ptr, false);
+    let num = pb.ext("num", &[], I64, false);
     let obj = pb.agg("Pair object", 16, 8, &[(I64, 0), (I64, 8)]);
     let other = pb.agg("Other object", 16, 8, &[(I64, 0), (I64, 8)]);
     Env {
@@ -73,6 +76,7 @@ fn env() -> Env {
         free,
         keep,
         make,
+        num,
         obj,
         other,
     }
@@ -226,8 +230,9 @@ fn a_borrowing_alias_that_only_reads_is_fine() {
 }
 
 #[test]
-fn a_write_seen_through_another_local_keeps_the_heap() {
-    // `this = t; this.0 = 100;` then `t` is read: the write must be visible through `t`.
+fn a_write_through_a_second_name_is_copied_to_the_first() {
+    // `this = t; this.0 = 100;` then `t` is read: the write must be visible through `t`, which
+    // holds the same object on every path (#558).
     let p = loop_program(|env, fb, b, _, t| {
         let this = fb.local(Ptr);
         fb.assign(b, this, Rvalue::Use(copy_local(t)));
@@ -237,7 +242,7 @@ fn a_write_seen_through_another_local_keeps_the_heap() {
         );
         b
     });
-    check(p, &[0, 3], false);
+    check(p, &[0, 3], true);
 }
 
 #[test]
@@ -415,4 +420,67 @@ fn an_access_as_another_aggregate_keeps_the_heap() {
 #[test]
 fn a_pointer_returned_by_a_call_keeps_the_heap() {
     stays_on_heap(|env, fb, b, _, t| fb.call(b, Callee::Extern(env.make), vec![], Some(t)));
+}
+
+#[test]
+fn a_write_seen_through_a_partial_alias_keeps_the_heap() {
+    // `q = t.0 is odd ? p : t; t.0 = 100;` then `q` is read: `q` holds `t`'s object on one
+    // path only, so no copy after the write is right on both.
+    let p = loop_program(|env, fb, b, p, t| {
+        let (bit, cond, q) = (fb.local(I64), fb.local(Bool), fb.local(Ptr));
+        let low = bin(BinOp::BitAnd, copy_place(env.field(t, 0)), int(1, I64));
+        fb.assign(b, bit, low);
+        fb.assign(b, cond, bin(BinOp::Ne, copy_local(bit), int(0, I64)));
+        let (left, right, join) = (fb.block(), fb.block(), fb.block());
+        fb.branch(b, cond, left, right);
+        fb.assign(left, q, Rvalue::Use(copy_local(p)));
+        fb.goto(left, join);
+        fb.assign(right, q, Rvalue::Use(copy_local(t)));
+        fb.goto(right, join);
+        let write = Stmt::Assign(env.field(t, 0), Rvalue::Use(int(100, I64)));
+        fb.push(join, write);
+        let r = env.sum(fb, join, q);
+        let args = vec![int(0, Ptr), copy_local(r)];
+        fb.call(join, Callee::Extern(env.keep), args, None)
+    });
+    check(p, &[0, 1, 4], false);
+}
+
+#[test]
+fn a_call_result_written_while_an_alias_is_read_keeps_the_heap() {
+    // `this = t; this.0 = num();` then `t` is read: the copy would have to follow the call.
+    stays_on_heap(|env, fb, b, _, t| {
+        let this = fb.local(Ptr);
+        fb.assign(b, this, Rvalue::Use(copy_local(t)));
+        let next = fb.block();
+        let call = Terminator::Call {
+            callee: Callee::Extern(env.num),
+            args: vec![],
+            dest: Some(env.field(this, 0)),
+            next,
+        };
+        fb.term(b, call);
+        next
+    });
+}
+
+#[test]
+fn a_write_through_a_name_skipped_by_an_earlier_write_sees_that_write() {
+    // `w = new(n, 2); j = w; m = w; m.0 = 5; w.1 = 7; return j.0 + j.1` (12): `w.1 = 7` keeps
+    // the field `m.0 = 5` wrote, so that write must reach `w` too before `w` is copied to `j`.
+    let mut env = env();
+    let mut fb = FuncBuilder::export("main", &[I64], I64);
+    let (w, j, m) = (fb.local(Ptr), fb.local(Ptr), fb.local(Ptr));
+    let b = fb.block();
+    let n = copy_local(fb.param(0));
+    let b = env.new_obj(&mut fb, b, w, n, int(2, I64));
+    fb.assign(b, j, Rvalue::Use(copy_local(w)));
+    fb.assign(b, m, Rvalue::Use(copy_local(w)));
+    fb.push(b, Stmt::Assign(env.field(m, 0), Rvalue::Use(int(5, I64))));
+    fb.push(b, Stmt::Assign(env.field(w, 1), Rvalue::Use(int(7, I64))));
+    let r = env.sum(&mut fb, b, j);
+    let b = env.drop_obj(&mut fb, b, j);
+    fb.ret(b, copy_local(r));
+    env.pb.add(fb.finish());
+    check(env.pb.finish(), &[1, 40], true);
 }

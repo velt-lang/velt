@@ -27,7 +27,15 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    and panic messages. VIR is a typed, MIR-like control-flow graph with a verifier.
 5. **Optimize** (`velt_opt`, release builds): inlining, constant folding, copy propagation,
    scalar replacement of aggregates, closure specialization, dead-code elimination, CFG
-   simplification.
+   simplification. The passes and their order are listed in `crates/velt_opt/src/lib.rs`. Two
+   that change how objects are represented:
+   - `heap_sroa` keeps a class instance that never escapes its function (after inlining) in
+     locals instead of on the heap: no allocation, zero fill or free. Each name of the object
+     gets its own copy; a write through one name is copied to the other names that hold the
+     same object on every path and are read later (a variable and an inlined method's
+     `this`). When another name may hold the object on some paths only, it stays on the heap.
+   - `sroa` then splits those aggregate locals, and others whose address is never taken, into
+     one local per field.
 6. **Generate code**: Cranelift for debug builds and the `velt dev` JIT; textual LLVM IR compiled
    by clang `-O3` for release builds and WebAssembly.
 7. **Link** (`velt_link`): the system linker (MSVC `link.exe`, or `cc`) with the runtime library.
