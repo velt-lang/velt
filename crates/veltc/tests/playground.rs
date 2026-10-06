@@ -4,6 +4,7 @@
 //! opt/llc or the `wasm32-unknown-unknown` Rust target.
 
 mod no_window;
+mod work_dir;
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -83,7 +84,7 @@ fn examples_compile_and_run() {
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success());
-    let work = root.join("target/golden-work-playground");
+    let work = work_dir::work_dir(&root, "golden-work-playground");
     std::fs::create_dir_all(&work).expect("work dir");
     let glue = work.join("velt_web.mjs");
     std::fs::copy(root.join("crates/velt_rt_wasm/js/velt_web.mjs"), &glue).expect("glue");

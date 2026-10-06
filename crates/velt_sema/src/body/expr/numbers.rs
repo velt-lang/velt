@@ -218,11 +218,27 @@ impl FnCx<'_, '_> {
     }
 
     /// The inferred integer `h` as a value of float type `t` (a literal becomes a float literal).
+    /// A negated literal stays a negated float literal, so `-0` keeps its sign (#562): casting
+    /// the integer `-0`, which is `0`, would give `+0`.
     pub(crate) fn int_to_float(&mut self, h: hir::Expr, t: TyId) -> hir::Expr {
         let span = h.span;
         match h.kind {
             H::Lit(hir::Lit::Int(n)) => self.mk(H::Lit(hir::Lit::Float(n as f64)), t, span),
-            _ => self.mk(H::Cast(Box::new(h)), t, span),
+            H::Unary {
+                op: hir::UnOp::Neg,
+                expr,
+            } if matches!(expr.kind, H::Lit(hir::Lit::Int(_))) => {
+                let inner = self.int_to_float(*expr, t);
+                let kind = H::Unary {
+                    op: hir::UnOp::Neg,
+                    expr: Box::new(inner),
+                };
+                self.mk(kind, t, span)
+            }
+            kind => {
+                let h = hir::Expr { kind, ..h };
+                self.mk(H::Cast(Box::new(h)), t, span)
+            }
         }
     }
 
