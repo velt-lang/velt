@@ -36,6 +36,9 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
      `this`). When another name may hold the object on some paths only, it stays on the heap.
    - `sroa` then splits those aggregate locals, and others whose address is never taken, into
      one local per field.
+   - `dead_fills`, for the objects that stay on the heap, drops the zero fill of `new` when the
+     code right after the allocation writes every field (padding aside) before anything can
+     read the object: before a branch, and before the pointer is passed, stored or compared.
 6. **Generate code**: Cranelift for debug builds and the `velt dev` JIT; textual LLVM IR compiled
    by clang `-O3` for release builds and WebAssembly.
 7. **Link** (`velt_link`): the system linker (MSVC `link.exe`, or `cc`) with the runtime library.

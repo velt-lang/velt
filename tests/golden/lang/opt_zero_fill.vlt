@@ -1,0 +1,85 @@
+// check: no leaks
+// New objects that escape skip their zero fill in release builds when the constructor writes
+// every field first (#560). Fields the constructor leaves to their initializers, reads of a
+// field before it is written, a throw half-way, calls between the stores and a bool next to a
+// number (padding) must all behave as with the fill.
+class Item {
+  id: number;
+  ok: boolean;
+  weight: number;
+  constructor(id: number, weight: number) {
+    this.id = id;
+    this.ok = id % 2 == 0;
+    this.weight = weight;
+  }
+}
+
+class Tally {
+  count = 0;
+  label: string;
+  last: number;
+  constructor(label: string) {
+    this.label = label;
+    this.last = this.count + 1;
+  }
+}
+
+class Checked {
+  a: number;
+  b: number;
+  constructor(a: number, b: number) {
+    this.a = a;
+    if (b < 0) {
+      throw new Error(`negative ${b}`);
+    }
+    this.b = b;
+  }
+}
+
+function noted(x: number): number {
+  console.log("noted", x);
+  return x * 10;
+}
+
+class Pair {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = noted(x);
+    this.y = noted(y) + this.x;
+  }
+}
+
+function build(n: number): Item[] {
+  const out: Item[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push(new Item(i, i * 1.5));
+  }
+  return out;
+}
+
+function main() {
+  let sum = 0.0;
+  let oks = 0;
+  for (const it of build(9)) {
+    sum += it.id + it.weight;
+    if (it.ok) {
+      oks += 1;
+    }
+  }
+  console.log(sum, oks);
+  const tallies = [new Tally("a"), new Tally("b")];
+  console.log(tallies[0].label, tallies[1].count, tallies[1].last);
+  const kept: Checked[] = [];
+  const bs: number[] = [2, -1, 3];
+  for (const b of bs) {
+    try {
+      kept.push(new Checked(1, b));
+    } catch (e) {
+      console.log(e.message);
+    }
+  }
+  console.log(kept.length, kept[1].a + kept[1].b);
+  const pairs = [new Pair(1, 2), new Pair(3, 4)];
+  console.log(pairs[0].y, pairs[1].x, pairs[1].y);
+}

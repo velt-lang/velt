@@ -29,6 +29,8 @@
 //!   is provably non-negative or a multiple of the divisor become shifts, masks or unsigned ops.
 //! - `frame_slots`: at the same point, scalar fields of an async frame that a poll function
 //!   uses inside a loop are kept in locals (loaded on entry, stored back at every suspension).
+//! - `dead_fills`: at the same point, the zero fill of a new object is dropped when every
+//!   field is written after it before anything can read the object.
 //!
 //! Every pass keeps `Function::locs` aligned with the statements it edits (`srclocs`).
 //!
@@ -45,6 +47,7 @@ mod const_fields;
 mod constfold;
 mod copyprop;
 mod dce;
+mod dead_fills;
 mod dead_funcs;
 mod divisions;
 mod frame_slots;
@@ -104,12 +107,16 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                     break;
                 }
             }
+            let allocator = heap_sroa::Allocator::find(program);
             for func in &mut program.funcs {
                 if t.time("numrep", || numrep::run(&program.externs, func)) {
                     t.time("copyprop", || copyprop::run(func));
                     t.time("dce", || dce::run(&program.aggs, func));
                 }
                 t.time("divisions", || divisions::run(func));
+                t.time("dead_fills", || {
+                    dead_fills::run(&program.aggs, allocator, func)
+                });
             }
             promote_memory(program, t);
         }
