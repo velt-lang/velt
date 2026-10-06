@@ -1,0 +1,74 @@
+// check: no leaks
+// Non-Copy values as the value of an accessor assignment: one object, shared as in JavaScript,
+// freed once (#471). Expected output: Node's.
+class Item {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+class Res {
+  id: number;
+  log: string[];
+  constructor(id: number, log: string[]) {
+    this.id = id;
+    this.log = log;
+  }
+  [Symbol.dispose](): void {
+    this.log.push(`dispose ${this.id}`);
+  }
+}
+
+class Holder {
+  _item: Item = new Item("none");
+  _list: number[] = [];
+  _maybe: Item | null = null;
+  _res: Res | null = null;
+  get item(): Item {
+    return this._item;
+  }
+  set item(v: Item) {
+    this._item = v;
+  }
+  get list(): number[] {
+    return this._list;
+  }
+  set list(v: number[]) {
+    this._list = v;
+  }
+  get maybe(): Item | null {
+    return this._maybe;
+  }
+  set maybe(v: Item | null) {
+    this._maybe = v;
+  }
+  get res(): Res | null {
+    return this._res;
+  }
+  set res(v: Res | null) {
+    this._res = v;
+  }
+}
+
+function main() {
+  const h = new Holder();
+  const e = (h.item = new Item("a"));
+  e.name = "b";
+  console.log(e.name, h.item.name, e === h.item);
+  const xs = (h.list = [1, 2]);
+  xs.push(3);
+  h.list.push(4);
+  console.log(xs.join(","), h.list.join(","), xs === h.list);
+  const m = (h.maybe ??= new Item("m"));
+  const m2 = (h.maybe ??= new Item("n"));
+  m.name = "mm";
+  console.log(m.name, m2.name, h.maybe?.name, m === m2);
+  const log: string[] = [];
+  const r = (h.res = new Res(1, log));
+  console.log(r.id, h.res?.id, r === h.res);
+  const s = (h.res ??= new Res(2, log));
+  console.log(s.id, log.join(","));
+  const cleared = (h.maybe = null);
+  console.log(cleared === null, h.maybe === null);
+}

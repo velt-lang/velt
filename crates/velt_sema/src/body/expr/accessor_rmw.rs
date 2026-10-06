@@ -181,13 +181,9 @@ impl FnCx<'_, '_> {
         let inner = self.cx.ty.opt_payload(old_ty);
         let strips_null = inner.is_some() && op != ast::BinaryOp::And;
         let mut set = vec![];
-        let new_val = match inner.filter(|_| strips_null) {
-            Some(t) => {
-                let h = self.expr(v, Some(t), Want::Move);
-                self.try_coerce(h, t)
-                    .unwrap_or_else(|h| self.coerce(h, old_ty))
-            }
-            None => self.expr_coerce(v, old_ty, Want::Move),
+        let new_val = match strips_null {
+            true => self.value_for(v, old_ty),
+            false => self.expr_coerce(v, old_ty, Want::Move),
         };
         let ty = new_val.ty;
         let new = self.bind_temp(NEW, new_val, &mut set);
@@ -235,7 +231,7 @@ impl FnCx<'_, '_> {
         self.push_scope();
         let recv = self.receiver_once(obj, object, &mut stmts);
         let v = match self.setter_param_ty(recv.ty, &prop.name) {
-            Some(t) => self.expr_coerce(value, t, Want::Move),
+            Some(t) => self.value_for(value, t),
             None => self.expr(value, None, Want::Move),
         };
         let ty = v.ty;
@@ -252,6 +248,16 @@ impl FnCx<'_, '_> {
         let value = self.read_temp(new, ty, span);
         self.pop_scope();
         self.mk(H::Block(block(stmts, Some(value), span)), ty, span)
+    }
+
+    /// `v` converted to `ty`, except that for a nullable `ty` a value that is never null keeps
+    /// its non-null type (TypeScript's type of the expression; the setter call wraps it).
+    fn value_for(&mut self, v: &ast::Expr, ty: hir::TyId) -> hir::Expr {
+        let h = self.expr_coerce(v, ty, Want::Move);
+        match h.kind {
+            H::WrapSome(inner) => *inner,
+            kind => hir::Expr { kind, ..h },
+        }
     }
 
     /// The receiver to read and write through: `obj` itself when evaluating it again has no
