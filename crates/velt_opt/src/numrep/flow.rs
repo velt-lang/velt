@@ -277,7 +277,8 @@ impl Flow {
         for (op, f) in [(&c.lhs, nx), (&c.rhs, ny)] {
             self.set(st, op, f);
             if let Some((src, cast)) = super::refine::converted_from(func, b, op) {
-                if !cast || f.magnitude() <= TWO_53 {
+                // Strictly within ±2^53 the conversion was exact: `2^53 + 1` converts to 2^53.
+                if !cast || f.magnitude() < TWO_53 {
                     self.set(st, &src, f);
                 }
             }

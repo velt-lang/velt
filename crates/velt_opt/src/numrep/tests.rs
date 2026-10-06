@@ -273,3 +273,103 @@ fn report_lists_unnarrowed_named_locals_in_loops() {
     assert_eq!(r[0].name, "s");
     assert!(r[0].reason.contains("2^53"), "{}", r[0].reason);
 }
+
+/// `f(a: i64)`: 1.0 when `a < below && a <= at_most`, 2.0 when only `a < below`, else `a` as a
+/// double (which makes `a` a tracked value).
+fn strict_below_program(below: i64, at_most: i64) -> Program {
+    let mut pb = ProgramBuilder::new();
+    let mut fb = FuncBuilder::export("f", &[Ty::I64], Ty::F64);
+    let a = fb.param(0);
+    let (af, c, d) = (fb.local(Ty::F64), fb.local(Ty::Bool), fb.local(Ty::Bool));
+    let (entry, inner, one, two, out) =
+        (fb.block(), fb.block(), fb.block(), fb.block(), fb.block());
+    fb.assign(entry, af, Rvalue::Cast(copy_local(a), Ty::F64));
+    fb.assign(
+        entry,
+        c,
+        bin(BinOp::Lt, copy_local(a), int(below as i128, Ty::I64)),
+    );
+    fb.branch(entry, c, inner, out);
+    fb.assign(
+        inner,
+        d,
+        bin(BinOp::Le, copy_local(a), int(at_most as i128, Ty::I64)),
+    );
+    fb.branch(inner, d, one, two);
+    fb.ret(one, float(1.0, Ty::F64));
+    fb.ret(two, float(2.0, Ty::F64));
+    fb.ret(out, copy_local(af));
+    pb.add(fb.finish());
+    pb.finish()
+}
+
+#[test]
+fn strict_integer_comparisons_past_2_53_keep_the_integers_in_between() {
+    // `a < 2^60` allows `a = 2^60 - 1`, above the double just below 2^60 (2^60 - 128); and
+    // `a < -2^53` allows `-2^53 - 1`, above the double just below -2^53 (-2^53 - 2).
+    let two_60 = 1i64 << 60;
+    let two_53 = 1i64 << 53;
+    for (below, at_most, a) in [
+        (two_60, two_60 - 128, two_60 - 1),
+        (-two_53, -two_53 - 2, -two_53 - 1),
+    ] {
+        let p = strict_below_program(below, at_most);
+        let q = narrowed(&p);
+        let args = [a as u64];
+        assert_eq!(call(&p, &args), Ok(2.0f64.to_bits()), "f({a}) before");
+        assert_eq!(call(&q, &args), Ok(2.0f64.to_bits()), "f({a}) after");
+    }
+}
+
+#[test]
+fn a_conversion_bounded_by_2_53_does_not_bound_the_integer() {
+    // `a >= 0 && (a as f64) <= 2^53 && a <= 2^53`: `2^53 + 1` converts to 2^53, so the last
+    // test is not implied.
+    let two_53 = 1i128 << 53;
+    let mut pb = ProgramBuilder::new();
+    let mut fb = FuncBuilder::export("f", &[Ty::I64], Ty::F64);
+    let a = fb.param(0);
+    let (c0, x, c1, d) = (
+        fb.local(Ty::Bool),
+        fb.local(Ty::F64),
+        fb.local(Ty::Bool),
+        fb.local(Ty::Bool),
+    );
+    let (entry, mid, inner, one, two, out) = (
+        fb.block(),
+        fb.block(),
+        fb.block(),
+        fb.block(),
+        fb.block(),
+        fb.block(),
+    );
+    fb.assign(entry, c0, bin(BinOp::Ge, copy_local(a), int(0, Ty::I64)));
+    fb.branch(entry, c0, mid, out);
+    fb.assign(mid, x, Rvalue::Cast(copy_local(a), Ty::F64));
+    fb.assign(
+        mid,
+        c1,
+        bin(BinOp::Le, copy_local(x), float(two_53 as f64, Ty::F64)),
+    );
+    fb.branch(mid, c1, inner, out);
+    fb.assign(
+        inner,
+        d,
+        bin(BinOp::Le, copy_local(a), int(two_53, Ty::I64)),
+    );
+    fb.branch(inner, d, one, two);
+    fb.ret(one, float(1.0, Ty::F64));
+    fb.ret(two, float(2.0, Ty::F64));
+    fb.ret(out, float(0.0, Ty::F64));
+    pb.add(fb.finish());
+    let p = pb.finish();
+    let q = narrowed(&p);
+    for a in [two_53 as i64 - 1, two_53 as i64, two_53 as i64 + 1] {
+        let args = [a as u64];
+        assert_eq!(call(&p, &args), call(&q, &args), "f({a})");
+    }
+    assert_eq!(
+        call(&q, &[(two_53 as i64 + 1) as u64]),
+        Ok(2.0f64.to_bits())
+    );
+}

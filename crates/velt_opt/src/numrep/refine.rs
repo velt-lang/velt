@@ -3,7 +3,7 @@
 
 use velt_vir::vir::{BinOp, Function, Local, Operand, Rvalue, Stmt, Terminator, Ty, UnOp};
 
-use super::fact::Fact;
+use super::fact::{Fact, TWO_53};
 use super::flow::is_comparison;
 
 /// The comparison `lhs op rhs` deciding a branch; `negated` when the branch tests its negation.
@@ -132,8 +132,8 @@ pub(super) fn refine(op: BinOp, holds: bool, x: Fact, y: Fact) -> Option<(Fact, 
     let (mut x, mut y) = (Fact { nan: false, ..x }, Fact { nan: false, ..y });
     match rel {
         BinOp::Lt => {
-            x.hi = x.hi.min(y.hi.next_down());
-            y.lo = y.lo.max(x.lo.next_up());
+            x.hi = x.hi.min(below(y.hi));
+            y.lo = y.lo.max(above(x.lo));
         }
         BinOp::Le => {
             x.hi = x.hi.min(y.hi);
@@ -157,6 +157,23 @@ pub(super) fn refine(op: BinOp, holds: bool, x: Fact, y: Fact) -> Option<(Fact, 
     }
     let (x, y) = (normalized(x), normalized(y));
     (!x.is_empty() && !y.is_empty()).then_some((x, y))
+}
+
+/// A bound for the values (doubles, or integers of an integer type) smaller than `v`: the next
+/// double down where doubles are at most 1 apart, `v` itself beyond. Past ±2^53 an integer
+/// below `v` may lie between `v` and the next double down (`2^60 - 1 < 2^60`, or
+/// `-2^53 - 1 < -2^53`).
+fn below(v: f64) -> f64 {
+    if v > -TWO_53 && v <= TWO_53 {
+        v.next_down()
+    } else {
+        v
+    }
+}
+
+/// The mirror of [`below`]: a bound for the values greater than `v`.
+fn above(v: f64) -> f64 {
+    -below(-v)
 }
 
 /// Whole bounds for whole values, and no `-0` once 0 is ruled out.
