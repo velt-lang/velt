@@ -235,24 +235,45 @@ fn case_values_compare_like_strict_equality() {
 }
 
 #[test]
-fn non_exhaustive_switch_lists_missing_cases() {
+fn switch_need_not_cover_every_member() {
+    // As in TypeScript: the members no case takes skip the `switch`, and the code after it sees
+    // the value narrowed to them.
+    ok_src(
+        "type S = { kind: \"a\"; n: i64 } | { kind: \"b\"; m: i64 } | { kind: \"c\" };
+         function f(s: S): i64 { switch (s.kind) { case \"a\": return s.n; case \"c\": return 0; } return s.m; }
+         function main() {}",
+    );
+    ok_src(
+        "enum E { A, B } function f(e: E): i64 { switch (e) { case E.A: return 1; } return 0; } function main() {}",
+    );
+    // Without code after it, a `switch` that may not return is a missing return (TS2366).
     let r = err_src(
         "type S = { kind: \"a\"; n: i64 } | { kind: \"b\" } | { kind: \"c\" };
          function f(s: S): i64 { switch (s.kind) { case \"a\": return s.n; } } function main() {}",
     );
-    assert!(r.contains("non-exhaustive switch on `s.kind`"), "{r}");
-    assert!(r.contains("missing cases: \"b\", \"c\""), "{r}");
-    let r = err_src(
-        "function f(x: \"a\" | \"b\" | null): i64 { switch (x) { case \"a\": case \"b\": return 0; } } function main() {}",
+    assert!(
+        r.contains("must return a value of type `i64` on every path"),
+        "{r}"
     );
-    assert!(r.contains("missing cases: null"), "{r}");
-    let r = err_src(
-        "enum E { A, B } function f(e: E): i64 { switch (e) { case E.A: return 1; } } function main() {}",
-    );
-    assert!(r.contains("missing cases: E.B"), "{r}");
-    // Numbers, strings and bools need no `default`.
+    // One that covers every member needs no code after it.
     ok_src(
-        "function f(n: i64): i64 { switch (n) { case 1: return 1; } return 0; } function main() {}",
+        "function f(x: \"a\" | \"b\" | null): i64 { switch (x) { case \"a\": case \"b\": return 0; case null: return 1; } } function main() {}",
+    );
+}
+
+#[test]
+fn switch_accepts_duplicate_and_computed_cases() {
+    // The first matching case wins; a value that is not a literal compares with `===` also on
+    // a discriminant and on `typeof`.
+    ok_src(
+        "type S = { kind: \"a\" } | { kind: \"b\" };
+         function f(s: S, k: string, n: i64): i64 {
+           switch (n) { case 1: return 1; case 1: return 2; }
+           switch (s.kind) { case \"a\": return 3; case \"a\": return 4; case k: return 5; }
+           switch (typeof n) { case k: return 6; }
+           return 0;
+         }
+         function main() {}",
     );
 }
 
