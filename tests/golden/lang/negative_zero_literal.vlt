@@ -1,0 +1,30 @@
+// A `-0` literal keeps its sign wherever a number is expected or inferred (#562): field
+// initializers, annotated and inferred bindings, object and array literals, arguments,
+// assignments. `1 / x` shows the sign, which `console.log` doesn't.
+class F {
+  a: number = -0;
+  b: number = -0.0;
+  c: number = -(0);
+}
+
+function inverse(n: number): number {
+  return 1 / n;
+}
+
+function main(): void {
+  const f = new F();
+  console.log(1 / f.a, 1 / f.b, 1 / f.c);
+  const typed: number = -0;
+  let inferred = -0;
+  console.log(1 / typed, 1 / inferred);
+  const o = { p: -0 };
+  console.log(1 / o.p);
+  const xs: number[] = [-0, 0];
+  console.log(1 / xs[0], 1 / xs[1]);
+  console.log(inverse(-0), 1 / -0);
+  let z: number = 5;
+  z = -0;
+  console.log(1 / z, z === 0);
+  inferred = -1;
+  console.log(inferred - 1);
+}
