@@ -311,6 +311,8 @@ enum DropEntry {
     /// initializers its fields drop and it is freed, but its `[Symbol.dispose]()` does not run.
     /// Becomes a `Temp` once constructed.
     HalfBuilt(Place, TyId),
+    /// Owned temporary value that holds something only when the `Bool` local is true.
+    Flagged(Place, TyId, vir::Local),
     /// An owned value from which a pattern moved some parts: drop everything else.
     Rest(Place, TyId, Rc<hir::Pat>),
     /// An array consumed by `for…of`: elements `next..len` (of type `elem`) are still owned,

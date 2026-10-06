@@ -17,3 +17,4 @@ element map 1003 54 10
 Map forEach 103 103 k0=value-0-,k1=replaced,k3=value-3-,n0=new-0,n1=new-1
 Map forEach deleting 250 300 204950
 own loop 3 element-0-:54,element-1-:54,element-2-:54
+unaliased 324

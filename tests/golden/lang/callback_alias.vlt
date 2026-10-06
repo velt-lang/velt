@@ -245,6 +245,16 @@ function userLoop() {
     seen.push(`${short(x)}:${x.length}`);
   });
   console.log("own loop", xs.length, seen.join(","));
+  // An array of the same type that nothing else references: borrowed in place.
+  const solo = words(3);
+  let chars = 0;
+  solo.forEach((x) => {
+    chars += x.length;
+  });
+  each(solo, (x) => {
+    chars += x.length;
+  });
+  console.log("unaliased", chars);
 }
 
 function main() {

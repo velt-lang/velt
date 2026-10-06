@@ -13,7 +13,9 @@ use velt_sema::hir::{self, TyId};
 
 use super::boxing::ShareKind;
 use super::FnLower;
-use crate::vir::{Operand, Place, Ty};
+use super::cint;
+use super::operand::proj;
+use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
     /// A borrowed argument (or receiver) of a call that may run user code (see the module docs);
@@ -34,6 +36,9 @@ impl FnLower<'_, '_> {
             // another reference to the array moves its buffer, and `pop`, `truncate` or a store
             // drops the element. The callee gets a share of it instead (a copy for elements
             // that own nothing), as JavaScript passes the value.
+            if let Some(v) = self.unique_array_elem(a, ty) {
+                return v;
+            }
             let v = self.expr(a);
             let s = self.share_value(v, ty);
             return self.own_value(s, ty);
@@ -100,6 +105,52 @@ impl FnLower<'_, '_> {
             }
             _ => false,
         }
+    }
+
+    /// An element `xs[i]` of a boxed array held by a local (or param) that no cell holds:
+    /// when the array's count is 1 nothing else reaches it (borrows through counted objects
+    /// and cells share it for the call), so the element is borrowed in place; otherwise it is
+    /// shared into a temporary, dropped after the call only then. The common case, an array no
+    /// alias exists for, costs a load and a branch.
+    fn unique_array_elem(&mut self, a: &hir::Expr, ty: TyId) -> Option<Operand> {
+        let hir::ExprKind::Index { base, .. } = &a.kind else {
+            return None;
+        };
+        let hir::ExprKind::Local(l, _) = base.kind else {
+            return None;
+        };
+        let aty = self.sub(base.ty);
+        if !self.cx.boxed(aty) || self.info[l.0 as usize].in_cell {
+            return None;
+        }
+        let bp = self.expr(base);
+        let count = self.count_place(bp);
+        let unique = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, Operand::Copy(count), cint(1, Ty::U64)),
+        );
+        let v = self.expr(a);
+        let vt = self.cx.ty(ty);
+        let elem = self.operand_place(v, vt);
+        let tmp = self.temp(vt);
+        let shared_flag = self.temp(Ty::Bool);
+        let ptr = self.temp(Ty::Ptr);
+        let (in_place, shared, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(unique, in_place, shared);
+        self.switch_to(in_place);
+        self.assign(Place::local(ptr), Rvalue::AddrOf(elem.clone()));
+        self.assign(Place::local(shared_flag), Rvalue::Use(Operand::Const(Const::Bool(false), Ty::Bool)));
+        self.goto(join);
+        self.switch_to(shared);
+        self.cx.note_share(ty);
+        self.share_into(elem, Place::local(tmp), ty);
+        let tmp_addr = self.addr(Place::local(tmp));
+        self.assign(Place::local(ptr), Rvalue::Use(tmp_addr));
+        self.assign(Place::local(shared_flag), Rvalue::Use(Self::ctrue()));
+        self.goto(join);
+        self.switch_to(join);
+        self.own_flagged(Place::local(tmp), ty, shared_flag);
+        Some(Operand::Copy(proj(&Place::local(ptr), Proj::Deref(vt))))
     }
 
     /// Is the value of `e` (a place) counted itself or a part of a counted value? Moving out of
