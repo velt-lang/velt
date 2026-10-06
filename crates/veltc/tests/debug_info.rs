@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 mod no_window;
 mod runtime_support;
+mod work_dir;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -67,7 +68,7 @@ fn g_release_binary_maps_addresses_to_velt_lines() {
     let symbolizer = clang.with_file_name(exe_name);
     let root = root();
     runtime_support::build_native_runtime(&root);
-    let out = root.join("target/golden-work-debuginfo/panic_div");
+    let out = work_dir::work_dir(&root, "golden-work-debuginfo").join("panic_div");
     let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["build", "--release", "-g", "--backend", "llvm", "-o"])
         .arg(&out)
