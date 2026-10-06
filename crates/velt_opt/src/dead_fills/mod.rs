@@ -7,10 +7,11 @@
 //! anything reads one. LLVM keeps it when the stores come after calls or in other blocks.
 //!
 //! **The scan.** From each `p = velt_rt_alloc(..)`, the pass follows the one path the program
-//! takes next (gotos and the continuations of calls, up to the first branch, return or
-//! switch), tracking the locals that point into the new block (`q = p`, `q = p + c`) with their
-//! offsets. The block is fresh: nothing else can reach it until one of those pointers escapes,
-//! so the pass only has to look at their mentions:
+//! takes next (gotos and the continuations of calls into blocks no other path enters, up to
+//! the first branch, return, switch or join), tracking the locals that point into the new
+//! block (`q = p`, `q = p + c`) with their offsets. Every statement it visits runs only after
+//! the ones before it on the walk. The block is fresh: nothing else can reach it until one of
+//! those pointers escapes, so the pass only has to look at their mentions:
 //! - `memset q, 0, n` (the first one) is the fill;
 //! - a store through a tracked pointer writes its bytes;
 //! - a read through one must only read bytes written since the fill (or outside it);
@@ -31,7 +32,7 @@ use velt_vir::vir::{
 
 use crate::heap_sroa::Allocator;
 use crate::srclocs::retain_stmts;
-use crate::visit::{rvalue_operands, stmt_operands, term_operands};
+use crate::visit::{rvalue_operands, stmt_operands, successors, term_operands};
 use access::{Access, Fill, Touch};
 
 /// Fills longer than this (bytes) are kept: objects are small, and the bitmap is per byte.
@@ -45,6 +46,7 @@ pub(crate) fn run(aggs: &[AggLayout], allocator: Option<Allocator>, func: &mut F
     let Some(allocator) = allocator else {
         return false;
     };
+    let single = single_predecessors(func);
     let mut dead = Vec::new();
     for block in &func.blocks {
         let Terminator::Call {
@@ -58,7 +60,7 @@ pub(crate) fn run(aggs: &[AggLayout], allocator: Option<Allocator>, func: &mut F
         };
         if *e == allocator.alloc && d.proj.is_empty() {
             let mut scan = Scan::new(aggs, d.local);
-            if let Some(at) = scan.from(func, next.0 as usize) {
+            if let Some(at) = scan.from(func, &single, next.0 as usize) {
                 dead.push(at);
             }
         }
@@ -75,6 +77,20 @@ pub(crate) fn run(aggs: &[AggLayout], allocator: Option<Allocator>, func: &mut F
         });
     }
     !dead.is_empty()
+}
+
+/// Per block: whether exactly one edge enters it (the entry block is also entered by the call).
+fn single_predecessors(func: &Function) -> Vec<bool> {
+    let mut preds = vec![0u32; func.blocks.len()];
+    if let Some(entry) = preds.first_mut() {
+        *entry = 1;
+    }
+    for block in &func.blocks {
+        for s in successors(&block.term) {
+            preds[s.0 as usize] += 1;
+        }
+    }
+    preds.into_iter().map(|n| n == 1).collect()
 }
 
 /// What the scan does after one statement.
@@ -114,10 +130,12 @@ impl<'a> Scan<'a> {
     }
 
     /// Scan from the start of block `b`; the fill to drop (block, statement), if any.
-    fn from(&mut self, func: &Function, mut b: usize) -> Option<(usize, usize)> {
+    /// Only blocks with one predecessor are entered: a block that another path also reaches
+    /// would run the fill (or reads of it) for objects the walk knows nothing about.
+    fn from(&mut self, func: &Function, single: &[bool], mut b: usize) -> Option<(usize, usize)> {
         let mut visited = vec![false; func.blocks.len()];
         loop {
-            if std::mem::replace(&mut visited[b], true) {
+            if !single[b] || std::mem::replace(&mut visited[b], true) {
                 return None;
             }
             let block = &func.blocks[b];
