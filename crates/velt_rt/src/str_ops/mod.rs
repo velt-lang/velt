@@ -1,11 +1,14 @@
 //! JS string methods over `VeltStr` (rt_abi_async.md §12.2): searching, comparing, slicing,
 //! splitting, trimming, case mapping, replacing, padding and number parsing.
 //!
-//! POC indexing model: indexes and lengths are **byte offsets** (so they agree with `s.length`).
-//! An offset that falls inside a multi-byte character is moved to a character boundary, so every
-//! result stays canonical WTF-8. Where JS works per UTF-16 code unit (`split("")`,
-//! `replaceAll("")`) these functions work per code point (#377 phase 2b moves all of this to code
-//! units).
+//! Positions and lengths count UTF-16 code units, as in JavaScript (#377 phase 2b,
+//! docs/internals/design/strings.md). An ASCII string (units == bytes, decided by the value) works
+//! on its bytes, whose offsets are its positions, as before; another string works on its WTF-8
+//! bytes and translates positions at entry and exit (`VeltStr::unit_to_byte`, `byte_to_unit`:
+//! breadcrumbs for long heap strings, a scan otherwise). The places where a code unit is half of
+//! a pair stored as one 4-byte sequence (slicing between the halves, a needle that starts with a
+//! lone low surrogate or ends with a lone high one, `split("")`, `replaceAll("", x)`) go through
+//! `units.rs`.
 //!
 //! A string may hold lone surrogates (#377): [`text`] gives a `&str` only for well-formed text.
 //! Searching, slicing, splitting, replacing, padding and repeating work on the WTF-8 bytes
@@ -25,6 +28,7 @@ pub mod replace;
 pub mod search;
 pub mod slice;
 pub mod split;
+mod units;
 
 use crate::str::{VeltStr, Wtf8};
 use std::borrow::Cow;
@@ -112,7 +116,8 @@ fn is_js_whitespace_cp(cp: u32) -> bool {
     char::from_u32(cp).is_some_and(is_js_whitespace)
 }
 
-/// JS relative index (`slice`): negative counts from the end; result clamped to `0..=len`.
+/// JS relative index (`slice`): negative counts from the end; result clamped to `0..=len` (a
+/// length in code units, or in bytes for an ASCII string).
 fn relative_index(i: i64, len: usize) -> usize {
     if i < 0 {
         (len as i64).saturating_add(i).max(0) as usize

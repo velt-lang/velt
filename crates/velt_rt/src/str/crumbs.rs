@@ -11,25 +11,38 @@
 //!   first translation, published in the buffer header's `crumbs` field with a compare-and-swap
 //!   (strings cross threads) and freed with the buffer; then a lookup is one table load plus a
 //!   forward scan of fewer than [`STRIDE`] units.
+//! - Either way, a translation in a string of more than [`STRIDE`] units near the thread's last
+//!   one of the same string steps from it instead (`recent.rs`, static strings included): a
+//!   sequential index loop decodes one character per step.
 //!
 //! A uniquely owned buffer that is appended to keeps its table: the bytes of the prefix never
 //! change (a join rewrites only the high surrogate that ends the old text into the start of the
 //! pair, at the same offset, and no entry lies past the old text). A table that no longer covers
-//! the string is extended when a translation needs it: in place while the buffer is unique, else
-//! by publishing a longer copy that keeps the old table alive (chained from the new one, freed with
-//! the buffer) because another thread may still be reading it.
+//! the string is extended when a translation needs it, and translating takes only `&self`: a
+//! string whose count is 1 may still be read by two threads at once without a retain (a field of
+//! a `shared` object passed by pointer to a runtime call), so a reference count says nothing about
+//! who else reads the table. Hence entries are atomics and only ever appended: an extension that
+//! fits the table's capacity writes the entries past `len` (concurrent extenders write the same
+//! values, the text being immutable while readable) and then publishes the new `len`; one that
+//! doesn't publishes a copy twice the size with a compare-and-swap, keeping the old table alive
+//! (chained from the new one, freed with the buffer) because another thread may still read it.
+//! Capacities double, so the chain holds at most as many entries as the last table.
 //!
-//! Nothing in the runtime translates positions yet: #377 phase 2b moves `length`, the positions
-//! of `slice`, `indexOf` & co. and `charCodeAt` to code units through this API. Until then the
-//! runtime's tests use it (against the reference model in tests/abi/utf16_model.rs).
+//! The string methods (`str_ops`), `charCodeAt` on non-ASCII strings and the regex offsets
+//! translate their code-unit positions through this API (#377 phase 2b), checked against the
+//! reference model in tests/abi/utf16_model.rs.
 
 use std::alloc::{self, Layout};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
-use super::{heap, wtf8, VeltStr};
+use super::{heap, recent, work, wtf8, VeltStr};
 
 /// Units between two breadcrumbs, and the longest string translated by a scan alone.
 pub const STRIDE: usize = 64;
+
+/// How far before the last translated unit a translation steps back from it (a loop running
+/// backward), rather than starting from a breadcrumb.
+const BACK_STEPS: usize = 8;
 
 /// The top bit of an entry: the unit the entry stands for is the second half (low surrogate) of
 /// the 4-byte sequence at the entry's offset, whose first half is the unit before. Offsets are
@@ -49,10 +62,12 @@ pub struct BytePos {
 
 /// A breadcrumb table: `entries[k]` is the byte offset of unit `k * STRIDE` (with [`LOW_HALF`]),
 /// for every `k * STRIDE` below the string's unit count when it was built or last extended.
+/// Entries below `len` never change; entries are written before `len` covers them (release) and
+/// read after it does (acquire).
 #[repr(C)]
 struct Table {
     /// Entries in use.
-    len: usize,
+    len: AtomicUsize,
     /// Entries the allocation holds.
     cap: usize,
     /// A table this one replaced while another thread might still read it (freed with this one).
@@ -66,20 +81,28 @@ impl Table {
             .unwrap_or_else(|_| crate::panic::fatal("string too long"))
     }
 
-    /// The entries of the table at `t`.
+    /// The entries of the table at `t` that are in use.
     ///
     /// # Safety
     /// `t` must be a live table.
-    unsafe fn entries<'a>(t: *mut Table) -> &'a [u32] {
-        std::slice::from_raw_parts(Table::data(t), (*t).len)
+    unsafe fn entries<'a>(t: *mut Table) -> &'a [AtomicU32] {
+        std::slice::from_raw_parts(Table::data(t), (*t).len.load(Ordering::Acquire))
     }
 
-    unsafe fn data(t: *mut Table) -> *mut u32 {
-        (t as *mut u8).add(std::mem::size_of::<Table>()) as *mut u32
+    unsafe fn data(t: *mut Table) -> *const AtomicU32 {
+        (t as *mut u8).add(std::mem::size_of::<Table>()) as *const AtomicU32
+    }
+
+    /// Entry `k` (below `len`).
+    ///
+    /// # Safety
+    /// `t` must be a live table with more than `k` entries in use.
+    unsafe fn entry(t: *mut Table, k: usize) -> u32 {
+        (*Table::data(t).add(k)).load(Ordering::Relaxed)
     }
 
     /// A new table with room for `cap` entries holding `old`'s entries.
-    fn alloc(cap: usize, old: &[u32]) -> *mut Table {
+    fn alloc(cap: usize, old: &[AtomicU32]) -> *mut Table {
         let l = Table::layout(cap);
         // SAFETY: the layout has a non-zero size (the header).
         let t = unsafe { alloc::alloc(l) } as *mut Table;
@@ -89,17 +112,22 @@ impl Table {
         // SAFETY: fresh allocation with room for the header and `cap >= old.len()` entries.
         unsafe {
             t.write(Table {
-                len: old.len(),
+                len: AtomicUsize::new(old.len()),
                 cap,
                 prev: std::ptr::null_mut(),
             });
-            std::ptr::copy_nonoverlapping(old.as_ptr(), Table::data(t), old.len());
+            let data = Table::data(t) as *mut AtomicU32;
+            for (k, e) in old.iter().enumerate() {
+                data.add(k).write(AtomicU32::new(e.load(Ordering::Relaxed)));
+            }
         }
         t
     }
 
     /// Append the entries of `bytes` (WTF-8 with `units` code units) after the last one, up to
-    /// every multiple of [`STRIDE`] below `units`.
+    /// every multiple of [`STRIDE`] below `units`, and publish them. Another thread may extend
+    /// the same table at the same time: both write the same values (the text is immutable while
+    /// two threads can read it), and `len` only grows.
     ///
     /// # Safety
     /// `t` must be a live table with room for them, built for a prefix of `bytes`.
@@ -107,24 +135,27 @@ impl Table {
         let want = units.div_ceil(STRIDE);
         debug_assert!(want <= (*t).cap);
         let data = Table::data(t);
-        let mut len = (*t).len;
+        let mut len = (*t).len.load(Ordering::Acquire);
+        if len >= want {
+            return;
+        }
         // Start at the last entry (or the start of the text).
         let (mut byte, mut unit) = match len {
             0 => (0, 0),
-            _ => start_of(*data.add(len - 1), len - 1),
+            _ => start_of(Table::entry(t, len - 1), len - 1),
         };
         if len == 0 {
-            data.write(0);
+            (*data).store(0, Ordering::Relaxed);
             len = 1;
         }
         while len < want {
             let target = len * STRIDE;
             let pos = scan_forward(bytes, byte, unit, target);
-            data.add(len).write(encode(pos));
+            (*data.add(len)).store(encode(pos), Ordering::Relaxed);
             (byte, unit) = start_of(encode(pos), len);
             len += 1;
         }
-        (*t).len = len;
+        (*t).len.fetch_max(len, Ordering::Release);
     }
 }
 
@@ -160,6 +191,7 @@ fn seq_units(lead: u8) -> usize {
 /// From the code point at `byte`, whose first unit is `unit`, forward to unit `target`
 /// (`target >= unit`, at most the string's length).
 fn scan_forward(bytes: &[u8], mut byte: usize, mut unit: usize, target: usize) -> BytePos {
+    work::scanned(target - unit);
     while unit < target {
         let lead = bytes[byte];
         if lead < 0x80 {
@@ -189,9 +221,10 @@ fn scan_forward(bytes: &[u8], mut byte: usize, mut unit: usize, target: usize) -
     }
 }
 
-/// From the end of the string (`bytes.len()`, `units`) backward to unit `target`.
-fn scan_backward(bytes: &[u8], units: usize, target: usize) -> BytePos {
-    let (mut byte, mut unit) = (bytes.len(), units);
+/// From the code point boundary at `byte`, whose first unit is `unit` (the end of the string:
+/// `bytes.len()` and the unit count), backward to unit `target` (`target <= unit`).
+fn scan_backward(bytes: &[u8], mut byte: usize, mut unit: usize, target: usize) -> BytePos {
+    work::scanned(unit - target);
     while unit > target {
         let start = wtf8::start_before(bytes, byte);
         let w = seq_units(bytes[start]);
@@ -207,6 +240,26 @@ fn scan_backward(bytes: &[u8], units: usize, target: usize) -> BytePos {
     BytePos {
         byte,
         low_half: false,
+    }
+}
+
+/// Unit `unit` of a string without breadcrumbs (`units` long, `unit` below it): a scan from
+/// whichever end is closer.
+fn scan_from_nearer_end(bytes: &[u8], units: usize, unit: usize) -> BytePos {
+    if unit <= units / 2 {
+        scan_forward(bytes, 0, 0, unit)
+    } else {
+        scan_backward(bytes, bytes.len(), units, unit)
+    }
+}
+
+/// The unit at the code point boundary `byte` of a string without breadcrumbs (`units` long):
+/// a count from whichever end is closer.
+fn count_from_nearer_end(bytes: &[u8], units: usize, byte: usize) -> usize {
+    if byte <= bytes.len() / 2 {
+        wtf8::count_units(&bytes[..byte])
+    } else {
+        units - wtf8::count_units(&bytes[byte..])
     }
 }
 
@@ -246,17 +299,53 @@ impl VeltStr {
             };
         }
         let bytes = self.as_bytes();
-        if units > STRIDE && self.is_heap() {
-            let entries = Table::entries(self.crumbs(unit / STRIDE));
-            let k = unit / STRIDE;
-            let (byte, from) = start_of(entries[k], k);
-            return scan_forward(bytes, byte, from, unit);
+        if units <= STRIDE {
+            return scan_from_nearer_end(bytes, units, unit);
         }
-        if unit <= units / 2 {
-            scan_forward(bytes, 0, 0, unit)
-        } else {
-            scan_backward(bytes, units, unit)
+        // A long string: heap with breadcrumbs, or static (`recent.rs` says why remembering a
+        // static one is sound).
+        let pos = match recent::find(self) {
+            // Near the last translation: step from it. A static string has no breadcrumbs, so
+            // any forward step is cheaper than a scan from the start, and taken unless the end
+            // is closer (a forward loop with gaps stays linear).
+            Some(e)
+                if unit >= e.unit && unit - e.unit <= self.forward_reach(STRIDE, units - unit) =>
+            {
+                scan_forward(bytes, e.pos.byte, e.unit - e.pos.low_half as usize, unit)
+            }
+            Some(e) if unit < e.unit && e.unit - unit <= BACK_STEPS => {
+                // From the boundary after the remembered unit's code point.
+                let (byte, from) = match e.pos.low_half {
+                    true => (e.pos.byte + 4, e.unit + 1),
+                    false => (e.pos.byte, e.unit),
+                };
+                scan_backward(bytes, byte, from, unit)
+            }
+            _ if self.is_heap() => {
+                let k = unit / STRIDE;
+                let (byte, from) = start_of(Table::entry(self.crumbs(k), k), k);
+                scan_forward(bytes, byte, from, unit)
+            }
+            _ => scan_from_nearer_end(bytes, units, unit),
+        };
+        recent::remember(self, unit, pos);
+        pos
+    }
+
+    /// The byte positions of units `a` and `b` (`a <= b`; both clamped as by
+    /// [`Self::unit_to_byte`]): the second is found by a forward scan from the first when it is
+    /// near (a short slice of a long string costs one translation).
+    ///
+    /// # Safety
+    /// `self` must be valid.
+    pub unsafe fn unit_range_to_bytes(&self, a: usize, b: usize) -> (BytePos, BytePos) {
+        let pa = self.unit_to_byte(a);
+        let b = b.min(self.units());
+        if self.is_ascii() || b <= a || b - a >= STRIDE {
+            return (pa, self.unit_to_byte(b));
         }
+        let first = a - pa.low_half as usize;
+        (pa, scan_forward(self.as_bytes(), pa.byte, first, b))
     }
 
     /// The index of the first UTF-16 unit of the code point at byte `byte` (a code point
@@ -271,17 +360,46 @@ impl VeltStr {
         }
         let bytes = self.as_bytes();
         let units = self.units();
-        if units > STRIDE && self.is_heap() {
-            let entries = Table::entries(self.crumbs(units.div_ceil(STRIDE) - 1));
-            // The last entry at or before `byte`; entry 0 is offset 0.
-            let k = entries.partition_point(|&e| (e & !LOW_HALF) as usize <= byte) - 1;
-            let (from, unit) = start_of(entries[k], k);
-            return unit + wtf8::count_units(&bytes[from..byte]);
+        if units <= STRIDE {
+            return count_from_nearer_end(bytes, units, byte);
         }
-        if byte <= bytes.len() / 2 {
-            wtf8::count_units(&bytes[..byte])
+        let unit = match recent::find(self) {
+            Some(e)
+                if byte >= e.pos.byte
+                    && byte - e.pos.byte <= self.forward_reach(4 * STRIDE, bytes.len() - byte) =>
+            {
+                let first = e.unit - e.pos.low_half as usize;
+                first + wtf8::count_units(&bytes[e.pos.byte..byte])
+            }
+            _ if self.is_heap() => {
+                let entries = Table::entries(self.crumbs(units.div_ceil(STRIDE) - 1));
+                // The last entry at or before `byte`; entry 0 is offset 0.
+                let k = entries
+                    .partition_point(|e| (e.load(Ordering::Relaxed) & !LOW_HALF) as usize <= byte)
+                    - 1;
+                let (from, unit) = start_of(entries[k].load(Ordering::Relaxed), k);
+                unit + wtf8::count_units(&bytes[from..byte])
+            }
+            _ => count_from_nearer_end(bytes, units, byte),
+        };
+        let pos = BytePos {
+            byte,
+            low_half: false,
+        };
+        recent::remember(self, unit, pos);
+        unit
+    }
+
+    /// How far a translation steps forward from a remembered one, when the target is `to_end`
+    /// from the end: `near` in a heap string, whose breadcrumbs are never further back; up to
+    /// the distance from the end in a static one, which otherwise scans from an end. Units for
+    /// `unit_to_byte`, bytes for `byte_to_unit`.
+    #[inline]
+    fn forward_reach(&self, near: usize, to_end: usize) -> usize {
+        if self.is_heap() {
+            near
         } else {
-            units - wtf8::count_units(&bytes[byte..])
+            to_end.max(near)
         }
     }
 
@@ -294,49 +412,32 @@ impl VeltStr {
     unsafe fn crumbs(&self, k: usize) -> *mut Table {
         let field = heap::crumbs(self.ptr());
         let current = field.load(Ordering::Acquire) as *mut Table;
-        if !current.is_null() && k < (*current).len {
+        if !current.is_null() && k < (*current).len.load(Ordering::Acquire) {
             return current;
         }
         self.build_crumbs(current)
     }
 
-    /// [`Self::crumbs`] when the table is missing or too short.
+    /// [`Self::crumbs`] when the table is missing or too short: extended in place when it has
+    /// room, else replaced by a copy twice its size, published with a compare-and-swap. Never
+    /// relies on the buffer's count (see the module docs).
     #[cold]
     #[inline(never)]
     unsafe fn build_crumbs(&self, mut current: *mut Table) -> *mut Table {
         let field = heap::crumbs(self.ptr());
         let (bytes, units) = (self.as_bytes(), self.units());
         let want = units.div_ceil(STRIDE);
-        if heap::is_unique(self.ptr()) {
-            // Nobody else can read the table: build or extend it in place.
-            let t = if current.is_null() {
-                Table::alloc(want, &[])
-            } else if (*current).cap < want {
-                let cap = want.max((*current).cap * 2);
-                let grown = alloc::realloc(
-                    current as *mut u8,
-                    Table::layout((*current).cap),
-                    Table::layout(cap).size(),
-                ) as *mut Table;
-                if grown.is_null() {
-                    alloc::handle_alloc_error(Table::layout(cap));
-                }
-                (*grown).cap = cap;
-                grown
-            } else {
-                current
-            };
-            Table::fill(t, bytes, units);
-            field.store(t as *mut u8, Ordering::Release);
-            return t;
-        }
         loop {
-            let old = if current.is_null() {
-                &[][..]
+            if !current.is_null() && (*current).cap >= want {
+                Table::fill(current, bytes, units);
+                return current;
+            }
+            let (old, cap) = if current.is_null() {
+                (&[][..], want)
             } else {
-                Table::entries(current)
+                (Table::entries(current), want.max((*current).cap * 2))
             };
-            let t = Table::alloc(want, old);
+            let t = Table::alloc(cap, old);
             Table::fill(t, bytes, units);
             (*t).prev = current;
             match field.compare_exchange(
@@ -348,87 +449,12 @@ impl VeltStr {
                 Ok(_) => return t,
                 Err(won) => {
                     // Another thread published first: drop ours (not its `prev`, which stays
-                    // with the published table) and use theirs if it is long enough.
+                    // with the published table) and extend theirs.
                     (*t).prev = std::ptr::null_mut();
                     free_chain(t);
                     current = won as *mut Table;
-                    if (*current).len >= want {
-                        return current;
-                    }
                 }
             }
         }
-    }
-}
-
-/// The order of two strings by UTF-16 code units (JavaScript's `<` and default `sort`), from
-/// their canonical WTF-8 (design note "The ordering rule"). Byte order is code point order,
-/// which differs from code-unit order between U+E000–U+FFFF and supplementary characters and
-/// between lone surrogates and supplementary characters, so: the first differing byte is found
-/// (a `memcmp`), the comparison steps back to the start of the code point there (the same offset
-/// in both strings, the prefix being shared), and compares the first code unit of each side;
-/// when those are equal (a supplementary character against one with the same high surrogate, or
-/// against that lone high surrogate) it compares the second units, where the end of a string is
-/// below every unit. In canonical form a lone high surrogate is never followed by a low one, so
-/// that one extra comparison decides.
-///
-/// Not yet used by `velt_rt_str_cmp` (`<`, `sort`): switching changes the order of well-formed
-/// text (U+E000–U+FFFF against supplementary characters), which #377 phase 2b does with the rest
-/// of the visible change.
-pub fn cmp_utf16(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
-    let n = a.len().min(b.len());
-    let Some(i) = mismatch(&a[..n], &b[..n]) else {
-        return a.len().cmp(&b.len());
-    };
-    if a[i] < 0x80 && b[i] < 0x80 {
-        return a[i].cmp(&b[i]);
-    }
-    let mut k = i;
-    while k > 0 && wtf8::is_continuation(a[k]) {
-        k -= 1;
-    }
-    let (ca, la) = wtf8::decode_at(a, k);
-    let (cb, lb) = wtf8::decode_at(b, k);
-    first_unit(ca)
-        .cmp(&first_unit(cb))
-        .then_with(|| second_unit(a, k, ca, la).cmp(&second_unit(b, k, cb, lb)))
-}
-
-/// The first byte where `a` and `b` (of equal length) differ, a word at a time.
-#[inline]
-fn mismatch(a: &[u8], b: &[u8]) -> Option<usize> {
-    let mut i = 0;
-    while i + 8 <= a.len() {
-        let x = u64::from_le_bytes(a[i..i + 8].try_into().unwrap_or([0; 8]));
-        let y = u64::from_le_bytes(b[i..i + 8].try_into().unwrap_or([0; 8]));
-        if x != y {
-            return Some(i + ((x ^ y).trailing_zeros() / 8) as usize);
-        }
-        i += 8;
-    }
-    (i..a.len()).find(|&j| a[j] != b[j])
-}
-
-/// The first UTF-16 unit of a code point (or lone surrogate).
-#[inline]
-fn first_unit(cp: u32) -> u32 {
-    if cp < 0x10000 {
-        cp
-    } else {
-        0xD800 + ((cp - 0x10000) >> 10)
-    }
-}
-
-/// The unit after the first one of the code point `cp` (`len` bytes at `k` of `s`): its low
-/// surrogate, else the first unit of the next code point, else 0 for the end of the string
-/// (below every unit, so the shorter string is less).
-#[inline]
-fn second_unit(s: &[u8], k: usize, cp: u32, len: usize) -> u32 {
-    if cp >= 0x10000 {
-        0xDC00 + ((cp - 0x10000) & 0x3FF) + 1
-    } else if k + len < s.len() {
-        first_unit(wtf8::decode_at(s, k + len).0) + 1
-    } else {
-        0
     }
 }

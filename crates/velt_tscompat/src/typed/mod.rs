@@ -8,7 +8,7 @@
 //! - [`slots`] for `null-into-optional` and `undefined-into-null` in arguments and fields;
 //! - [`defaults`] for `null-default`;
 //! - [`templates`] for `object-in-template`, `nullable-in-template`, `json-map`;
-//! - [`strings`] for `string-offsets`, `map-iter-as-array`;
+//! - [`strings`] for `map-iter-as-array`;
 //! - [`globals`] for `velt-global`, `velt-member`, with the prelude's classification in
 //!   [`prelude`];
 //! - [`catch`] for `catch-unknown`.
@@ -296,7 +296,7 @@ impl<'a> Visit<'a> for Walk<'a> {
             }
             E::New { class, args } => slots::new(class, args, t),
             E::Member { object, prop, .. } => {
-                strings::member(e, object, prop, t);
+                strings::member(object, t);
                 globals::member(e, object, prop, t);
                 catch::member(object, t);
             }

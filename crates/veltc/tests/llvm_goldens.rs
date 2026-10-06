@@ -105,24 +105,36 @@ fn goldens_split_into_codegen_units() {
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
 
-/// `%` on `f64` through the LLVM backend's whole-number fast path and its `fmod` fallback (the
-/// helper is defined in every codegen unit that uses it), against Node's output.
+/// The LLVM backend's inline helpers, against Node's output: `%` on `f64` (its whole-number fast
+/// path and `fmod` fallback) and the int32 operators (`@velt.to_int32`, `mul_int32`, `add_int32`,
+/// `clz32`). Each helper is defined in every codegen unit that uses it, so each golden also runs
+/// split into two units.
 #[test]
-fn float_remainder_with_llvm() {
+fn inline_helpers_with_llvm() {
     if !velt_codegen_llvm::available() {
-        eprintln!("note: clang not available; skipping the float remainder golden");
+        eprintln!("note: clang not available; skipping the inline-helper goldens");
         return;
     }
     let root = root();
     runtime_support::build_native_runtime(&root);
-    let work = root.join("target/golden-work-llvm-frem");
+    let work = root.join("target/golden-work-llvm-helpers");
     std::fs::create_dir_all(&work).expect("work dir");
-    let f = root.join("tests/golden/lang/float_remainder.vlt");
-    let failures: Vec<String> = [None, Some(2)]
-        .into_iter()
-        .filter_map(|units| run_golden(&f, &work, units))
+    let failures: Vec<String> = ["lang/float_remainder", "lang/numbers_int32_ops"]
+        .iter()
+        .map(|name| root.join("tests/golden").join(format!("{name}.vlt")))
+        .flat_map(|f| [None, Some(2)].map(|units| (f.clone(), units)))
+        .filter_map(|(f, units)| run_golden(&f, &work, units))
         .collect();
-    assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
+    assert!(
+        failures.is_empty(),
+        "
+{}",
+        failures.join(
+            "
+
+"
+        )
+    );
 }
 
 /// Runs one golden in a release build through LLVM (with `units` codegen units when given);

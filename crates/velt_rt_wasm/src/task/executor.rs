@@ -7,7 +7,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::cmp::{Ordering, Reverse};
-use std::collections::{BinaryHeap, HashSet, VecDeque};
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::rc::Rc;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
@@ -95,13 +95,23 @@ struct Executor {
     tasks: Vec<Option<Task>>,
     free: Vec<usize>,
     ready: VecDeque<usize>,
-    queued: HashSet<usize>,
+    /// The tasks in `ready`, with the turn that queued them.
+    queued: HashMap<usize, u32>,
     timers: BinaryHeap<Reverse<Timer>>,
     timer_seq: u64,
     /// Inside `block_on` (promises can only be started while tasks run).
     running: bool,
     /// Started promises that have not finished (`block_on` waits for them, like JS).
     locals: usize,
+    /// The poll being run: a promise created during it ([`super::boxed`] stamps it) can only
+    /// have been woken by that poll's own code, never by a timer (velt_rt's turns, #150).
+    turn: u32,
+    /// The last turn number handed out.
+    turns: u32,
+    /// The tasks being polled, innermost last, with the turn each interrupted.
+    polling: Vec<(usize, u32)>,
+    /// The last turn in which something yielded (`yieldNow()`).
+    yielded: u32,
     /// Keep-alive references (ref'd timers): `block_on` also waits while any is held.
     keep_alive: usize,
 }
@@ -140,7 +150,8 @@ pub fn waker(id: usize) -> Waker {
 /// Queue task `id` (once) to be polled.
 fn schedule(id: usize) {
     with_exec(|e| {
-        if e.queued.insert(id) {
+        if let std::collections::hash_map::Entry::Vacant(v) = e.queued.entry(id) {
+            v.insert(e.turn);
             e.ready.push_back(id);
         }
     });
@@ -155,7 +166,7 @@ pub fn wake_next(w: Waker) {
     }
     let id = w.data() as usize;
     with_exec(|e| {
-        if !e.queued.insert(id) {
+        if e.queued.insert(id, e.turn).is_some() {
             e.ready.retain(|&q| q != id);
         }
         e.ready.push_front(id);
@@ -168,6 +179,82 @@ fn next_ready() -> Option<usize> {
         e.queued.remove(&id);
         Some(id)
     })
+}
+
+/// The current turn (see [`Executor::turn`]).
+pub fn turn() -> u32 {
+    with_exec(|e| e.turn)
+}
+
+/// `yieldNow()` during the current turn: what yielded waits for its place in the ready queue,
+/// so nothing of this turn runs early ([`yielded`]).
+pub fn note_yield() {
+    with_exec(|e| e.yielded = e.turn);
+}
+
+/// Did something yield during turn `turn`?
+pub fn yielded(turn: u32) -> bool {
+    with_exec(|e| e.yielded == turn)
+}
+
+/// A new turn for a poll of task `id`, until [`end_poll`].
+fn begin_poll(id: usize) {
+    with_exec(|e| {
+        e.turns = e.turns.wrapping_add(1).max(1);
+        e.polling.push((id, e.turn));
+        e.turn = e.turns;
+    });
+}
+
+/// Back to the turn the poll interrupted.
+fn end_poll() {
+    with_exec(|e| {
+        if let Some((_, turn)) = e.polling.pop() {
+            e.turn = turn;
+        }
+    });
+}
+
+/// Queued task `id` is not one the current turn woke ([`run_now`] leaves it in its place).
+pub fn queued_earlier(id: usize) {
+    with_exec(|e| {
+        if let Some(t) = e.queued.get_mut(&id) {
+            *t = 0;
+        }
+    });
+}
+
+/// From inside the poll of turn `turn`: run the tasks that poll queued (woken by its own code,
+/// like JS microtasks) in queue order, then task `id` if it is queued by then. How a
+/// combinator's loser that is ready to go on runs before the combinator's awaiter (local.rs
+/// `give_up`); the root and the tasks being polled wait for their turn.
+pub fn run_now(id: usize, turn: u32) {
+    loop {
+        let next = with_exec(|e| {
+            let i = e.ready.iter().position(|q| {
+                *q != ROOT
+                    && e.queued.get(q) == Some(&turn)
+                    && !e.polling.iter().any(|(p, _)| p == q)
+            })?;
+            let q = e.ready.remove(i)?;
+            e.queued.remove(&q);
+            Some(q)
+        });
+        let Some(q) = next else { break };
+        // SAFETY: a task of this executor, polled from the executor's own thread.
+        unsafe { run_task(q) };
+    }
+    let queued = with_exec(|e| {
+        let free = !e.polling.iter().any(|(p, _)| *p == id);
+        free && e.queued.remove(&id).is_some() && {
+            e.ready.retain(|&q| q != id);
+            true
+        }
+    });
+    if queued {
+        // SAFETY: as above.
+        unsafe { run_task(id) };
+    }
 }
 
 /// Is `block_on` running (so a started promise will be driven)?
@@ -232,7 +319,7 @@ pub fn live_tasks() -> usize {
 /// that still holds its waker wakes nothing, or the slot's next task spuriously.
 pub fn cancel(id: usize) {
     let task = with_exec(|e| {
-        if e.queued.remove(&id) {
+        if e.queued.remove(&id).is_some() {
             e.ready.retain(|&q| q != id);
         }
         let task = e.tasks.get_mut(id - 1)?.take()?;
@@ -252,7 +339,10 @@ unsafe fn run_task(id: usize) {
     };
     let w = waker(id);
     let mut cx = Context::from_waker(&w);
-    if ((*fut).poll.0)(fut, raw_cx(&mut cx)) != READY {
+    begin_poll(id);
+    let r = ((*fut).poll.0)(fut, raw_cx(&mut cx));
+    end_poll();
+    if r != READY {
         return;
     }
     let task = with_exec(|e| {
@@ -338,7 +428,8 @@ fn wake_last(w: Waker) {
     }
     let id = w.data() as usize;
     with_exec(|e| {
-        if !e.queued.insert(id) {
+        // Turn 0: a timer's wake-up is no turn's microtask, so `run_now` leaves it in its place.
+        if e.queued.insert(id, 0).is_some() {
             e.ready.retain(|&q| q != id);
         }
         e.ready.push_back(id);
@@ -395,7 +486,9 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
         }
         let w = waker(ROOT);
         let mut cx = Context::from_waker(&w);
+        begin_poll(ROOT);
         root_done = poll(state, raw_cx(&mut cx)) == READY;
+        end_poll();
     }
 }
 

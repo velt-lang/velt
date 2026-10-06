@@ -264,8 +264,8 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
     (
         "Math",
         &[
-            "E", "PI", "abs", "ceil", "floor", "hypot", "max", "min", "pow", "random", "round",
-            "sign", "sqrt", "trunc",
+            "E", "PI", "abs", "ceil", "clz32", "floor", "hypot", "imul", "max", "min", "pow",
+            "random", "round", "sign", "sqrt", "trunc",
         ],
     ),
     (
@@ -333,7 +333,16 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
             ("clone", "copy with `[...xs]` or `xs.slice()`"),
         ],
     ),
-    ("Buffer", &[("alloc", "pass bytes in instead")]),
+    (
+        "Buffer",
+        &[
+            ("alloc", "pass bytes in instead"),
+            (
+                "byteLength",
+                "keep byte counting out of shared code (`TextEncoder` is planned, #377 phase 4)",
+            ),
+        ],
+    ),
     (
         "Comparable",
         &[("compareTo", "pass a comparator function instead")],

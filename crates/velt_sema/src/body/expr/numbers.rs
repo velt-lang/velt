@@ -66,11 +66,13 @@ impl FnCx<'_, '_> {
             H::Binary { op, lhs, rhs } if arithmetic(*op) => {
                 self.int_origin(lhs).join(self.int_origin(rhs))
             }
-            // A float converted for a bitwise operator is still a JS number (`bitwise_int32`).
+            // A number converted for a bitwise operator is still a JS number (`int32.rs`).
             H::Call {
                 callee: hir::Callee::Def(d, _),
                 ..
-            } if self.cx.fn_info(*d).name == "__toInt32" => IntOrigin::Inferred,
+            } if super::int32::INT32_HELPERS.contains(&self.cx.fn_info(*d).name.as_str()) => {
+                IntOrigin::Inferred
+            }
             // A call of a function whose result type is inferred from such integers.
             H::Call {
                 callee: hir::Callee::Def(d, _),
@@ -242,9 +244,9 @@ impl FnCx<'_, '_> {
 }
 
 impl FnCx<'_, '_> {
-    /// Operands of a bitwise operator: a float one is converted like JS's `ToInt32`
-    /// (`(a / 13) | 0`, the JS truncation idiom), through the prelude's `__toInt32`, and is then an
-    /// inferred `i64`. Integer operands are left alone.
+    /// Operands of a bitwise operator next to a declared integer: a float one is converted
+    /// like JS's `ToInt32` (`n & (a / 13)`) and is then an inferred `i64`. Integer operands are
+    /// left alone. Operators on two numbers are `int32.rs`.
     pub(super) fn bitwise_int32(
         &mut self,
         op: ast::BinaryOp,
@@ -291,23 +293,7 @@ impl FnCx<'_, '_> {
         if !self.cx.ty.is_float(h.ty) {
             return h;
         }
-        let Some(crate::ctx::Item::Def(d)) = self.cx.prelude.get("__toInt32").copied() else {
-            return h;
-        };
-        let span = h.span;
-        let (f64_, i64_) = (self.cx.ty.f64, self.cx.ty.i64);
-        let arg = if h.ty == f64_ {
-            h
-        } else {
-            self.mk(H::Cast(Box::new(h)), f64_, span)
-        };
-        self.mk(
-            H::Call {
-                callee: hir::Callee::Def(d, vec![]),
-                args: vec![arg],
-            },
-            i64_,
-            span,
-        )
+        let v = self.int32_of(h);
+        self.widen32(v)
     }
 }

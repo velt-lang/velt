@@ -93,6 +93,7 @@ pub unsafe extern "C" fn velt_rt_fut_drop(f: *mut VeltFut) {
 /// `PENDING`; the task is re-polled after other ready tasks had a turn. Allocation-free.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_yield_now(cx: *mut c_void) {
+    local::note_yield();
     context(cx).waker().wake_by_ref();
 }
 
@@ -100,5 +101,8 @@ pub unsafe extern "C" fn velt_rt_yield_now(cx: *mut c_void) {
 /// instead of awaited directly). Result: none.
 #[no_mangle]
 pub extern "C" fn velt_rt_yield_now_fut() -> *mut VeltFut {
-    leaf::new_leaf(tokio::task::yield_now())
+    leaf::new_leaf(async {
+        local::note_yield();
+        tokio::task::yield_now().await
+    })
 }

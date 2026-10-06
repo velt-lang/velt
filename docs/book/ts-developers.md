@@ -12,8 +12,10 @@ The differences come from three rules:
 2. **Drop the JavaScript behavior that causes bugs**, even when it means ported code must
    change. The compiler then says exactly what to write instead, and editors offer it as a
    quick fix.
-3. **Add something only where TypeScript can't express it at native speed**: integer types,
-   `shared` state across threads, `extend`.
+3. **Add what makes native code faster.** Velt compiles to machine code, not to JavaScript, so
+   it isn't limited to what TypeScript can express. Integer types, `shared` state across threads
+   and `extend` are opt-ins to reach for when you want more speed; code without them still runs
+   as TypeScript would.
 
 ## Programs are compiled
 
@@ -70,10 +72,10 @@ accept; compiler messages and editors print `boolean` either way
 - **No implicit conversion**: `"Total: " + 5` and `"a" + true` are compile errors; use a
   template literal, `` `Total: ${n}` ``. *Why*: `"5" + 1 === "51"` and
   `"Total: " + a + b` bugs can't happen.
-- **Lengths and positions are in bytes** of UTF-8, not UTF-16 code units: `"héllo".length` is
-  6. `slice`, `indexOf`, `s[i]` and regex offsets are byte offsets; for ASCII text they agree
-  with JS. `s[i]` is `s.charAt(i)` (`""` past the end), and `for (const c of s)` iterates the
-  characters. *Why*: strings are UTF-8 throughout, so no conversion is ever needed.
+- Lengths and positions count UTF-16 code units, as in JS (`"😀".length` is 2), and `<` orders
+  by code units. `s[i]` is `s.charAt(i)`, but `""` past the end where JS gives `undefined`, and
+  `charCodeAt` out of range is `-1` where JS gives `NaN`. Text is stored as UTF-8, so files,
+  sockets and HTTP bodies need no conversion; `Buffer.byteLength(s)` is the UTF-8 size.
 - Strings are immutable values, as in JS, and cheap to copy.
 
 ## `null`, not `undefined`
@@ -312,6 +314,5 @@ server-side rendering ([`velt:jsx`](../std/jsx.md)).
 | an unreachable generator is never closed: its `finally` blocks never run | dropping the last reference to a suspended generator closes it: its `finally` blocks run and its `using` values are disposed then (there is no garbage collector to wait for) | — |
 | `next()` on a generator from inside its own body throws a catchable `TypeError` | it panics (`generator is already running`) | — |
 | `return` / `yield`, a line break, then an expression: automatic semicolon insertion ends the statement after `return` / `yield` | no automatic semicolon insertion: the expression on the next line is returned / yielded | — |
-| string length in UTF-16 units | length and offsets in UTF-8 bytes | — |
 | (no equivalent) | `extend` adds members to any type | module-scoped extensions, retroactive `implements` |
 | JSX | server-side rendering through a `jsxImportSource` provider ([`velt:jsx`](../std/jsx.md)) | no client-side DOM; see [TSX](../internals/design/tsx.md) for what is planned |
