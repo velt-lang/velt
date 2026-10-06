@@ -1,0 +1,68 @@
+// check: no leaks
+// The "fetch safely" pattern (#137): check the status, decode into a type (no schema step:
+// `json<T>()` checks the data), time out with a signal, and catch every failure by type.
+import { serve, Request as ServerRequest, Response as ServerResponse } from "velt:http";
+import { IoError } from "velt:io";
+import { AbortError, TimeoutError } from "velt:task";
+
+type User = { id: number; name: string };
+
+class HttpError extends Error {
+  status: number;
+
+  constructor(status: number, text: string) {
+    super(`HTTP ${status} ${text}`);
+    this.status = status;
+  }
+}
+
+async function getUser(url: string): Promise<User> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(200) });
+  if (!res.ok) {
+    throw new HttpError(res.status, res.statusText);
+  }
+  return await res.json<User>();
+}
+
+async function show(url: string) {
+  try {
+    const u = await getUser(url);
+    console.log("user", u.id, u.name);
+  } catch (e) {
+    if (e instanceof HttpError) {
+      console.log("status", e.status, e.message);
+    } else if (e instanceof JsonError) {
+      console.log("bad body:", e.message);
+    } else if (e instanceof TimeoutError) {
+      console.log("timed out");
+    } else if (e instanceof AbortError) {
+      console.log("aborted");
+    } else if (e instanceof IoError) {
+      console.log("failed", e.code);
+    }
+  }
+}
+
+async function main() {
+  const release = new AbortController();
+  const server = await serve({ port: 0 }, async (req: ServerRequest): Promise<ServerResponse> => {
+    if (req.path == "/ok") {
+      return ServerResponse.json({ id: 1, name: "Ada" });
+    }
+    if (req.path == "/bad") {
+      return ServerResponse.json({ id: "one" });
+    }
+    if (req.path == "/slow") {
+      await release.signal.whenAborted();
+      return ServerResponse.text("late");
+    }
+    return ServerResponse.text("no such user", 404);
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  await show(`${base}/ok`);
+  await show(`${base}/missing`);
+  await show(`${base}/bad`);
+  await show(`${base}/slow`);
+  release.abort();
+  await server.shutdown();
+}
