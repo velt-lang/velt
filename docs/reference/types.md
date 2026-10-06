@@ -63,6 +63,9 @@ other inferred one, so `n -= 5` can go below zero. The rules:
 - **`/` yields `f64` unless both operands are declared integers**: `const a = 7; a / 2` is
   `3.5`, `7 / 2` is `3.5`, `xs.length / 2` is `1.5` for three elements, and
   `const h: i64 = 7 / 2` is `3`.
+- **`-0` is a float** unless an integer type is expected (an integer has no negative zero), so
+  it keeps its sign as in JS: `let z = -0; 1 / z` is `-Infinity`, and so is a field declared
+  `a: number = -0`.
 - **Integer division is explicit**: `Math.trunc(a / b)` with integer operands is one integer
   division instruction (truncating toward zero, exactly JS's `Math.trunc` of the quotient).
 - Next to a float, or where a float is expected, an inferred integer converts: `a + 0.5`,

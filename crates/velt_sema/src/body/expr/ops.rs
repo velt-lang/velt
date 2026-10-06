@@ -117,7 +117,20 @@ impl FnCx<'_, '_> {
             ast::UnaryOp::TypeOf => return self.typeof_value(operand, span),
             ast::UnaryOp::Delete => return self.delete_expr(operand, span),
             ast::UnaryOp::Neg => {
+                let int_exp = num_exp.is_some_and(|t| self.cx.ty.is_int(t));
                 let inner = match &operand.kind {
+                    // `-0` is a number unless an integer is expected: an integer has no `-0`,
+                    // and JavaScript keeps its sign (`1 / -0` is `-Infinity`, #562).
+                    ast::ExprKind::Lit(ast::Lit::Int {
+                        value: 0,
+                        suffix: None,
+                    }) if !int_exp => {
+                        let zero = ast::Lit::Float {
+                            value: 0.0,
+                            suffix: None,
+                        };
+                        self.lit(&zero, num_exp, operand.span, true)
+                    }
                     ast::ExprKind::Lit(l @ ast::Lit::Int { .. }) => {
                         self.lit(l, num_exp, operand.span, true)
                     }

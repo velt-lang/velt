@@ -389,6 +389,24 @@ Maintainer-owned, like hir.rs.
   velt_sema ownership/locked).
   `Intrinsic::NeedsTransfer(value)` (std only, value borrowed and not read): a constant `bool`,
   whether `Transfer` of a value of that type has anything to do (it can reach a counted object).
+- `Intrinsic::ArrayMove(dst, d, src, s, n)` and `Intrinsic::ArraySetLen(xs, len)` (std only,
+  std/sort/stable.vlt): the bits of `src[s..s + n)` copied into `dst[d..d + n)` of a different
+  array (both ranges bounds-checked; nothing dropped, nothing shared), and a length change that
+  neither drops nor initializes (growing the capacity when it is smaller). They bypass
+  ownership: the std code keeps every element owned by exactly one array, cuts stale copies off
+  before an array is dropped, and keeps the elements out of any array a callback could reach
+  through an alias while it runs.
+  `Intrinsic::NeedsDrop(value)` (std only, value borrowed and not evaluated): a constant `bool`,
+  whether a value of that type owns anything dropping it releases (lowering's drop glue). A bit
+  copy of a type that needs no drop is an independent value, so the stable sort copies such
+  elements instead of moving them.
+  `Intrinsic::FnCapturesNothing(f)` (std only, `f` a function value, borrowed): a `bool`, lowered
+  to `f.env == null`. Only closures without captures and named functions have a null env (a
+  program that compares function values gives every closure one), so true means `f` reaches no
+  variable of its caller. velt_opt folds it where the function value is known (const_fields
+  propagates the env constant into specialized callees); elsewhere it is tested at run time.
+  The stable sort sorts a short array of elements that need no drop in place when its
+  comparator captures nothing, and through a copy otherwise.
 - Lowering's representation (counted objects, boxed arrays/objects, stabilized borrows) is its
   own business (docs/internals/design/semantics-stage2.md §3); it may turn a move out of a part of a
   counted value into a share.
