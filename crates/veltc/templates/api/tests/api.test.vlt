@@ -6,7 +6,7 @@ async function call(
   base: string,
   method: string,
   path: string,
-  body: string = "",
+  body: string | null = null,
 ): Promise<string> {
   const res = await fetch(`${base}${path}`, { method, body });
   return `${res.status} ${await res.text()}`;
