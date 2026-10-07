@@ -1,5 +1,5 @@
-json_handles_http.vlt:7:10: error: cannot convert to or from JSON: `Response` has a private field `raw`, so it has no JSON form
+json_handles_http.vlt:7:10: error: cannot convert to or from JSON: `Response` has a private field `#raw`, so it has no JSON form
 json_handles_http.vlt:7:30: error: cannot convert to or from JSON: `ResponseWriter` has a private field `handle`, so it has no JSON form
-json_handles_http.vlt:11:13: error: cannot convert to or from JSON: `Server` has a private field `handle`, so it has no JSON form
-json_handles_http.vlt:12:13: error: cannot convert to or from JSON: `Response` has a private field `code`, so it has no JSON form
-json_handles_http.vlt:13:14: error: cannot convert to or from JSON: `WebSocket` has a private field `handle`, so it has no JSON form
+json_handles_http.vlt:11:13: error: cannot convert to or from JSON: `Server` has a private field `#handle`, which decoding cannot set
+json_handles_http.vlt:12:13: error: cannot convert to or from JSON: `Response` has a private field `#code`, which decoding cannot set
+json_handles_http.vlt:13:14: error: cannot convert to or from JSON: `WebSocket` has a private field `handle`, which decoding cannot set

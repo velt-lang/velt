@@ -9,7 +9,7 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 .vlt ─▶ velt_syntax (lexer, parser) ─▶ AST
       ─▶ velt_sema (resolve, types, ownership and mutation inference, typed errors) ─▶ HIR
       ─▶ velt_vir (monomorphize, layouts, drops, async state machines) ─▶ VIR
-      ─▶ velt_opt (inline, constant folding, SROA, DCE, …)  [release builds]
+      ─▶ velt_opt (inline, constant folding, SROA, DCE, numrep, …)  [all of it in release builds]
       ─▶ velt_codegen_cl (Cranelift: debug builds, JIT) | velt_codegen_llvm (LLVM IR → clang -O3)
       ─▶ object file ─▶ velt_link (system linker) + velt_rt (runtime static library)
 ```
@@ -27,9 +27,10 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    and panic messages. VIR is a typed, MIR-like control-flow graph with a verifier.
 5. **Optimize** (`velt_opt`, release builds): inlining, constant folding, copy propagation,
    scalar replacement of aggregates, closure specialization, dead-code elimination, CFG
-   simplification, Map probe reuse (a `get` and `set` of the same key probe once). The passes
-   and their order are listed in `crates/velt_opt/src/lib.rs`. Three that change how objects
-   are represented:
+   simplification, Map probe reuse (a `get` and `set` of the same key probe once), and `numrep`.
+   The passes and their order are listed in `crates/velt_opt/src/lib.rs`: the inlining rounds
+   run `heap_sroa` and `sroa` on every function, then `map_probe`, `numrep`, `divisions` and
+   `dead_fills` run once each. Four change how values are represented:
    - `heap_sroa` keeps a class instance that never escapes its function (after inlining) in
      locals instead of on the heap: no allocation, zero fill or free. Each name of the object
      gets its own copy; a write through one name is copied to the other names that hold the
@@ -37,9 +38,16 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
      `this`). When another name may hold the object on some paths only, it stays on the heap.
    - `sroa` then splits those aggregate locals, and others whose address is never taken, into
      one local per field.
+   - `numrep` stores a `number` (`f64`) as an `i32` or `i64` where its facts (interval, whole,
+     never NaN, `-0` unobservable) prove the integer computes the same values
+     ([design #525](https://github.com/velt-lang/velt/issues/525)). It runs after the two
+     above, so the fields they turned into locals can become integers too.
    - `dead_fills`, for the objects that stay on the heap, drops the zero fill of `new` when the
      code right after the allocation writes every field (padding aside) before anything can
      read the object: before a branch, and before the pointer is passed, stored or compared.
+
+   Debug builds run only the cheap part: CFG simplification, the int32 helpers inlined, and
+   `numrep`.
 6. **Generate code**: Cranelift for debug builds and the `velt dev` JIT; textual LLVM IR compiled
    by clang `-O3` for release builds and WebAssembly.
 7. **Link** (`velt_link`): the system linker (MSVC `link.exe`, or `cc`) with the runtime library.

@@ -36,7 +36,15 @@ The header comment of `vtable.rs` says VIR statics have no relocations; they do 
 Velt `classes` already beats Rust only because Rust's version allocates a `Box` per shape; the
 dispatch loop itself does twice the calls of Rust's `call [vtable + 8*k]`.
 
-## 2. Non-escaping closures with only Copy captures get a heap environment (lowering)
+## 2. ~~Non-escaping closures with only Copy captures get a heap environment (lowering)~~ (done)
+
+Done: closure literals passed directly as a borrowed argument get a frame env when they own no
+capture, and closures only ever called in the function creating them (immediately called, or
+held in a local used only as a callee) get one whatever they capture
+(`lower/frame_envs.rs`, #34): Copy captures are values in the env, owned captures are dropped
+with the closure value by a frame drop function (`_Genv_drop_frame_*`), and no copy or
+transfer glue is built. What follows is the original finding.
+
 
 Owner: `lower/closure.rs` (`closure_env_is_heap`). Affects `closures` (every `map` / `filter`
 callback that captures a number).

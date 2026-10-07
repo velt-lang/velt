@@ -70,6 +70,14 @@ impl<'a> Parser<'a> {
             }
             Tok::LBrace => ExprKind::Object(self.parse_object_props()?),
             t if Self::is_ident_like(t) => self.parse_ident_or_struct_lit()?,
+            Tok::PrivateName => {
+                self.error(
+                    "private names are only allowed in class bodies and may only be used as part of a class member declaration, property access, or on the left-hand side of an `in` expression",
+                    span,
+                );
+                self.bump();
+                return Err(Fail);
+            }
             _ => {
                 self.error_expected("expression");
                 return Err(Fail);
@@ -222,6 +230,11 @@ impl<'a> Parser<'a> {
                 key
             }
             t if Self::is_name(t) => self.take_ident(),
+            Tok::PrivateName => {
+                let span = self.cur_span();
+                self.error("private names are only allowed in class bodies", span);
+                return Err(Fail);
+            }
             _ => {
                 self.error_expected("property name");
                 return Err(Fail);
@@ -259,6 +272,7 @@ impl<'a> Parser<'a> {
             self.bump();
         }
         let name = self.parse_member_name()?;
+        self.reject_private_name(&name);
         let mut sig = self.parse_sig_rest(lo, name, is_async)?;
         sig.is_generator = is_generator;
         let body = self.parse_block()?;
