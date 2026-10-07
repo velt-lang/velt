@@ -1,3 +1,2 @@
-non_exhaustive.vlt:4:11
-non-exhaustive switch on `s.kind`
-missing cases: "empty"
+non_exhaustive.vlt:3:10
+function `area` must return a value of type `f64` on every path

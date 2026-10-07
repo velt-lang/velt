@@ -98,6 +98,35 @@ impl Signal {
     }
 }
 
+impl Signal {
+    /// Completes once the signal is aborted (never, if it never is): what runtime operations
+    /// that take a signal (`fetch`) race their work against.
+    pub(crate) async fn aborted(&self) {
+        loop {
+            let notified = self.notify.notified();
+            if self.is_aborted() {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+/// Abort `s` with no reason (tests of the operations that take a signal).
+#[cfg(test)]
+pub(crate) fn abort_for_test(s: &Signal) {
+    s.abort(&Reason::default());
+}
+
+/// The signal behind handle bits `h` (0 = none), as a new reference.
+///
+/// # Safety
+/// A nonzero `h` must be a live signal handle.
+pub(crate) unsafe fn signal_of(h: u64) -> Option<Arc<Signal>> {
+    let h = Handle::<Signal>::from_ptr(h as usize as *const Signal);
+    (!h.is_null()).then(|| h.clone_arc())
+}
+
 /// A new signal that is not aborted.
 #[no_mangle]
 pub extern "C" fn velt_rt_signal_new() -> Handle<Signal> {

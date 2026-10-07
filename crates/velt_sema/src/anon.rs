@@ -1,8 +1,10 @@
 //! Anonymous object types (`{ a: 1 }` literals, `{ kind: "circle"; readonly r: f64 }` written
-//! types): one synthesized `AdtKind::Anon` def per shape (field names, types and `readonly` flags,
-//! in order), generic over the type parameters its fields mention (renumbered by first
-//! occurrence). Shapes that differ only in `readonly` convert to each other
-//! ([`Ctx::same_layout`]).
+//! types): one synthesized `AdtKind::Anon` def per shape (field names, types, `readonly` and
+//! optional flags, in order), generic over the type parameters its fields mention (renumbered by
+//! first occurrence). Shapes that differ only in `readonly` convert to each other
+//! ([`Ctx::same_layout`]). An optional field (`a?: T`) and a `a: T | null` one hold the same
+//! values, but are different shapes, as in TypeScript: `JSON.stringify` leaves out the first
+//! while it is `null` (JavaScript's absent property) and writes the second.
 
 use std::collections::HashMap;
 
@@ -12,15 +14,37 @@ use crate::ctx::Ctx;
 use crate::defs::{AdtInfo, DefInfo, FieldInfo, Generics};
 use crate::hir::{AdtKind, DefId, TyId, TyKind};
 
+/// One field of an anonymous object type's shape.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ShapeField {
+    pub name: String,
+    pub ty: TyId,
+    pub readonly: bool,
+    /// Declared `name?: T` (its type is `T | null`).
+    pub optional: bool,
+}
+
+impl ShapeField {
+    /// A field neither readonly nor optional.
+    pub fn plain(name: &str, ty: TyId) -> ShapeField {
+        ShapeField {
+            name: name.to_string(),
+            ty,
+            readonly: false,
+            optional: false,
+        }
+    }
+}
+
 impl Ctx<'_> {
-    /// The anonymous object type with these fields (none readonly).
+    /// The anonymous object type with these fields (none readonly or optional).
     pub fn anon_type(&mut self, fields: &[(String, TyId)], module: usize) -> TyId {
         let (d, args) = self.anon_def(fields, module);
         self.ty.intern(TyKind::Adt(d, args))
     }
 
-    /// The anonymous object type with these fields and `readonly` flags.
-    pub fn anon_type_with(&mut self, fields: &[(String, TyId, bool)], module: usize) -> TyId {
+    /// The anonymous object type with these fields (and their flags).
+    pub fn anon_type_with(&mut self, fields: &[ShapeField], module: usize) -> TyId {
         let (d, args) = self.anon_def_with(fields, module);
         self.ty.intern(TyKind::Adt(d, args))
     }
@@ -62,36 +86,35 @@ impl Ctx<'_> {
         }
     }
 
-    /// The anonymous object def of this shape (no field readonly) and its type arguments.
+    /// The anonymous object def of this shape (no field readonly or optional) and its type
+    /// arguments.
     pub fn anon_def(&mut self, fields: &[(String, TyId)], module: usize) -> (DefId, Vec<TyId>) {
-        let fields: Vec<(String, TyId, bool)> =
-            fields.iter().map(|(n, t)| (n.clone(), *t, false)).collect();
+        let fields: Vec<ShapeField> = fields
+            .iter()
+            .map(|(n, t)| ShapeField::plain(n, *t))
+            .collect();
         self.anon_def_with(&fields, module)
     }
 
-    /// The anonymous object def of this shape (with `readonly` flags) and its type arguments.
-    pub fn anon_def_with(
-        &mut self,
-        fields: &[(String, TyId, bool)],
-        module: usize,
-    ) -> (DefId, Vec<TyId>) {
+    /// The anonymous object def of this shape (with its flags) and its type arguments.
+    pub fn anon_def_with(&mut self, fields: &[ShapeField], module: usize) -> (DefId, Vec<TyId>) {
         let mut params: Vec<u32> = vec![];
-        for (_, t, _) in fields {
-            crate::types::collect_params(&self.ty, *t, &mut params);
+        for f in fields {
+            crate::types::collect_params(&self.ty, f.ty, &mut params);
         }
         let new_tys: HashMap<u32, TyId> = params
             .iter()
             .enumerate()
             .map(|(i, p)| (*p, self.ty.param(i as u32)))
             .collect();
-        let norm: Vec<(String, TyId, bool)> = fields
+        let norm: Vec<ShapeField> = fields
             .iter()
-            .map(|(n, t, readonly)| {
-                let t = self.ty.map(*t, &mut |k| match k {
+            .map(|f| {
+                let ty = self.ty.map(f.ty, &mut |k| match k {
                     TyKind::Param(i) => new_tys.get(i).copied(),
                     _ => None,
                 });
-                (n.clone(), t, *readonly)
+                ShapeField { ty, ..f.clone() }
             })
             .collect();
         let params: Vec<TyId> = params.iter().map(|p| self.ty.param(*p)).collect();
@@ -100,10 +123,13 @@ impl Ctx<'_> {
         }
         let d = self.new_anon_def(&norm, params.len(), module);
         self.anon.insert(norm.clone(), d);
-        if norm.iter().any(|(_, _, readonly)| *readonly) {
-            let plain: Vec<(String, TyId, bool)> = norm
+        if norm.iter().any(|f| f.readonly) {
+            let plain: Vec<ShapeField> = norm
                 .iter()
-                .map(|(n, t, _)| (n.clone(), *t, false))
+                .map(|f| ShapeField {
+                    readonly: false,
+                    ..f.clone()
+                })
                 .collect();
             let (twin, _) = self.anon_def_with(&plain, module);
             self.readonly_twins.insert(d, (twin, None));
@@ -112,13 +138,17 @@ impl Ctx<'_> {
     }
 
     /// A fresh anonymous object def with fields `norm` (over `n` type params).
-    fn new_anon_def(&mut self, norm: &[(String, TyId, bool)], n: usize, module: usize) -> DefId {
+    fn new_anon_def(&mut self, norm: &[ShapeField], n: usize, module: usize) -> DefId {
         let name = {
             let parts: Vec<String> = norm
                 .iter()
-                .map(|(n, t, readonly)| {
-                    let readonly = if *readonly { "readonly " } else { "" };
-                    format!("{readonly}{n}: {}", self.display(*t))
+                .map(|f| {
+                    let readonly = if f.readonly { "readonly " } else { "" };
+                    let (mark, shown) = match self.ty.opt_payload(f.ty).filter(|_| f.optional) {
+                        Some(payload) => ("?", payload),
+                        None => ("", f.ty),
+                    };
+                    format!("{readonly}{}{mark}: {}", f.name, self.display(shown))
                 })
                 .collect();
             format!("{{ {} }}", parts.join(", "))
@@ -150,12 +180,12 @@ impl Ctx<'_> {
         let d = self.alloc_def(Span::DUMMY, DefInfo::Adt(Box::new(info)));
         let fields = norm
             .iter()
-            .map(|(n, t, readonly)| FieldInfo {
-                name: n.clone(),
-                ty: *t,
+            .map(|f| FieldInfo {
+                name: f.name.clone(),
+                ty: f.ty,
                 span: Span::DUMMY,
-                readonly: *readonly,
-                optional: false,
+                readonly: f.readonly,
+                optional: f.optional,
                 has_default: false,
                 default: None,
                 default_throws: vec![],

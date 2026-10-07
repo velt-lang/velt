@@ -1,7 +1,7 @@
 aborted: user cancelled
 stopped: This operation was aborted
 before: false true
-after: true timed out after 1000 ms
+after: true timed out after 50 ms
 any: true first
 any of a timeout: true timed out after 20 ms
 throwIfAborted: timed out after 20 ms

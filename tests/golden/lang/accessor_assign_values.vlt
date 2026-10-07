@@ -1,0 +1,152 @@
+// The value of an assignment to an accessor is the right-hand side (the getter is not read
+// again), and `??=` / `||=` / `&&=` on an accessor can be used as values (#471). Expected
+// output: Node's.
+class C {
+  _p: number = 0;
+  get p(): number {
+    return this._p;
+  }
+  set p(v: number) {
+    this._p = v * 10;
+  }
+}
+
+class N {
+  _q: number | null = null;
+  _b: boolean = false;
+  log: string[] = [];
+  get q(): number | null {
+    this.log.push("get");
+    return this._q;
+  }
+  set q(v: number | null) {
+    this.log.push(`set ${v}`);
+    this._q = v;
+  }
+  get b(): boolean {
+    return this._b;
+  }
+  set b(v: boolean) {
+    this._b = v;
+  }
+}
+
+function seven(n: N): number {
+  n.log.push("rhs");
+  return 7;
+}
+
+function basics() {
+  const c = new C();
+  const r = (c.p = 2);
+  console.log(r, c.p);
+  const n = new N();
+  const a: number = (n.q ??= seven(n));
+  const b: number = (n.q ??= seven(n));
+  console.log(a, b, n.log.join(","));
+  const t = (n.b ||= true);
+  const u = (n.b &&= false);
+  const w = (n.b ||= false);
+  console.log(t, u, w, n.b);
+  let s = "";
+  s = `${(c.p = 3)}!`;
+  console.log(s, c.p);
+}
+
+class Log {
+  lines: string[] = [];
+}
+
+class W {
+  _v: number = 0;
+  log: Log;
+  constructor(log: Log) {
+    this.log = log;
+  }
+  set only(v: number) {
+    this.log.lines.push(`only ${v}`);
+    this._v = v + 1;
+  }
+  get name(): string | null {
+    return this._v > 5 ? `n${this._v}` : null;
+  }
+  set name(v: string | null) {
+    this.log.lines.push(`name ${v}`);
+    this._v = 0;
+    if (v !== null) {
+      this._v = 10;
+    }
+  }
+}
+
+class Box<T> {
+  _x: T;
+  constructor(x: T) {
+    this._x = x;
+  }
+  get x(): T {
+    return this._x;
+  }
+  set x(v: T) {
+    this._x = v;
+  }
+}
+
+function pick(ws: W[], log: Log): W {
+  log.lines.push("pick");
+  return ws[0];
+}
+
+function rhs(log: Log, v: number): number {
+  log.lines.push("rhs");
+  return v;
+}
+
+function receivers() {
+  const log = new Log();
+  const w = new W(log);
+  const ws = [w];
+  const a = (pick(ws, log).only = rhs(log, 4));
+  console.log(a, w._v, log.lines.join(","));
+  const b = (w.name ??= "abc");
+  const maybe: string | null = null;
+  const c = (w.name ??= maybe);
+  console.log(b, c, w._v);
+  w._v = 9;
+  const d: string = (w.name ??= "zz");
+  console.log(d);
+  const bx = new Box<string>("s");
+  const e = (bx.x = "t");
+  console.log(e, bx.x);
+  let total: number = 0;
+  for (let i = 0; i < 3; i++) {
+    total += (w.only = i);
+  }
+  console.log(total, log.lines.join(","));
+}
+
+interface HasP {
+  get p(): number;
+  set p(v: number);
+}
+
+class Impl implements HasP {
+  _p: number = 1;
+  get p(): number {
+    return this._p;
+  }
+  set p(v: number) {
+    this._p = v * 2;
+  }
+}
+
+function use(h: HasP): number {
+  const r = (h.p = 5);
+  return r + h.p;
+}
+
+function main() {
+  basics();
+  receivers();
+  console.log(use(new Impl()));
+}

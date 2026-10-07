@@ -10,6 +10,7 @@ mod common;
 mod corpus;
 mod harness;
 mod random;
+mod rounding;
 
 use harness::Subject;
 use velt_opt::{optimize, OptLevel};

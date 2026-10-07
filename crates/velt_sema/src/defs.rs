@@ -400,6 +400,12 @@ pub(crate) fn member_key(name: &str, is_setter: bool) -> String {
     }
 }
 
+/// Method-table key of a static method that shares its name with an instance method of the
+/// same class (`Response.json(data)` and `res.json()`): the instance method keeps the plain key.
+pub(crate) fn static_key(name: &str) -> String {
+    format!("static {name}")
+}
+
 /// Is this method-table key a setter's (see [`member_key`])?
 pub(crate) fn is_setter_key(key: &str) -> bool {
     key.starts_with("set ")

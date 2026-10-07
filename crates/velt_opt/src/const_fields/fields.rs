@@ -9,6 +9,11 @@
 //!
 //! This is what closures need: a function value is `{ code, env }` built once, passed by
 //! pointer, and called through `(*p).0`; knowing `code` lets constfold devirtualize the call.
+//!
+//! Fields that are aggregates themselves are known too when every definition copies the same
+//! known aggregate local into them (`o = { true, closure }`, an optional function value):
+//! reads along a field path (`o.1.0`, `(*p).1.0`) and pointers to a field (`p = &o.1`, the
+//! narrowed payload of `f: F | null`) see the inner aggregate's constants.
 
 use std::collections::{HashMap, HashSet};
 
@@ -27,6 +32,8 @@ pub(crate) struct Known {
     pub agg: AggId,
     /// (field, value, field type).
     pub fields: Vec<(u32, Const, Ty)>,
+    /// Aggregate fields with known fields of their own: (field, what is known about it).
+    pub nested: Vec<(u32, Known)>,
 }
 
 impl Known {
@@ -35,6 +42,19 @@ impl Known {
         self.fields
             .iter()
             .any(|(_, c, _)| matches!(c, Const::Func(_)))
+            || self.nested.iter().any(|(_, k)| k.has_code())
+    }
+
+    fn nested_at(&self, field: u32) -> Option<&Known> {
+        self.nested
+            .iter()
+            .find(|(f, _)| *f == field)
+            .map(|(_, k)| k)
+    }
+
+    /// What is known about the aggregate at the end of the field path `path`.
+    fn at_path(&self, path: &[u32]) -> Option<&Known> {
+        path.iter().try_fold(self, |k, &f| k.nested_at(f))
     }
 
     fn get(&self, field: u32) -> Option<(&Const, Ty)> {
@@ -72,8 +92,9 @@ struct Observed {
     defs: Vec<Def>,
     /// Fields written partially (`None` in the set: something unknown was written).
     dirty: Vec<Option<u32>>,
-    /// Pointer locals assigned `&a`; `None` for any other way the address was taken.
-    pointers: Vec<Option<Local>>,
+    /// Pointer locals assigned `&a` or `&a.f.g…` (with that field path); `None` for any
+    /// other way the address was taken.
+    pointers: Vec<Option<(Local, Vec<u32>)>>,
 }
 
 /// Analyze `func`.
@@ -95,7 +116,7 @@ pub(crate) fn analyze(aggs: &[AggLayout], func: &Function, ro: &ReadOnly) -> Fac
     let usage = Usage::of(func);
     let read_only = read_only_pointers(func, ro, &seen);
     // Locals whose address escapes (or whose fields are rewritten wholesale) are unknown.
-    let mut pointers: HashMap<Local, Vec<Local>> = HashMap::new();
+    let mut pointers: HashMap<Local, Vec<(Local, Vec<u32>)>> = HashMap::new();
     seen.retain(|&a, obs| {
         let keep = !obs.dirty.contains(&None) && !obs.defs.is_empty();
         match safe_pointers(func, &usage, &read_only, obs) {
@@ -109,8 +130,10 @@ pub(crate) fn analyze(aggs: &[AggLayout], func: &Function, ro: &ReadOnly) -> Fac
     let known = solve(aggs, func, &seen);
     let mut facts = Facts::default();
     for (a, k) in known {
-        for &p in &pointers[&a] {
-            facts.pointers.insert(p, k.clone());
+        for (p, path) in &pointers[&a] {
+            if let Some(inner) = k.at_path(path) {
+                facts.pointers.insert(*p, inner.clone());
+            }
         }
         facts.direct.insert(a, k);
     }
@@ -129,10 +152,18 @@ fn solve(
     let mut pending: HashMap<Local, usize> = HashMap::new();
     let mut dependents: HashMap<Local, Vec<Local>> = HashMap::new();
     for (&a, obs) in seen {
-        let deps = obs.defs.iter().filter_map(|d| match d {
-            Def::Copy(b) if seen.contains_key(b) => Some(*b),
-            _ => None,
-        });
+        // Copies of candidates, whole or into a field of an aggregate rvalue; each counted
+        // once. A local copied into itself depends on nothing it does not already know.
+        let deps: HashSet<Local> = obs
+            .defs
+            .iter()
+            .flat_map(|d| match d {
+                Def::Copy(b) => vec![*b],
+                Def::Aggregate(ops) => ops.iter().filter_map(copied_local).collect(),
+                Def::Unknown => vec![],
+            })
+            .filter(|b| seen.contains_key(b))
+            .collect();
         let mut count = 0;
         for b in deps {
             dependents.entry(b).or_default().push(a);
@@ -172,8 +203,16 @@ fn observe_stmt(s: &Stmt, seen: &mut HashMap<Local, Observed>) {
     if let Rvalue::AddrOf(q) = rv {
         if let Some(obs) = seen.get_mut(&q.local) {
             if !derefs(q) {
-                let whole = q.proj.is_empty() && dst.proj.is_empty();
-                obs.pointers.push(whole.then_some(dst.local));
+                let path: Option<Vec<u32>> = q
+                    .proj
+                    .iter()
+                    .map(|p| match p {
+                        Proj::Field(f) => Some(*f),
+                        _ => None,
+                    })
+                    .collect();
+                let path = path.filter(|_| dst.proj.is_empty());
+                obs.pointers.push(path.map(|path| (dst.local, path)));
             }
         }
     }
@@ -208,7 +247,7 @@ fn read_only_pointers(
 ) -> HashSet<Local> {
     let candidates: Vec<Local> = seen
         .values()
-        .flat_map(|obs| obs.pointers.iter().flatten().copied())
+        .flat_map(|obs| obs.pointers.iter().flatten().map(|(p, _)| *p))
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
@@ -226,38 +265,59 @@ fn safe_pointers(
     usage: &Usage,
     read_only: &HashSet<Local>,
     obs: &Observed,
-) -> Option<Vec<Local>> {
+) -> Option<Vec<(Local, Vec<u32>)>> {
     let mut out = Vec::with_capacity(obs.pointers.len());
     for p in &obs.pointers {
-        let p = (*p)?;
+        let (p, path) = p.clone()?;
         let single = usage.is_register(p) && usage.get(p).defs == 1;
         let is_param = (p.0 as usize) < func.params.len();
         if !single || is_param || !read_only.contains(&p) {
             return None;
         }
-        out.push(p);
+        out.push((p, path));
     }
     Some(out)
 }
 
-/// The constant a definition stores into field `f`, if any.
+/// What a definition stores into a field, when it is known.
+#[derive(Clone, PartialEq)]
+enum FieldValue {
+    Scalar(Const, Ty),
+    Agg(Known),
+}
+
+/// The local an operand copies whole, if any.
+fn copied_local(op: &Operand) -> Option<Local> {
+    match op {
+        Operand::Copy(p) if p.proj.is_empty() => Some(p.local),
+        _ => None,
+    }
+}
+
+/// What a definition stores into field `f`, if it is known.
 fn def_field(
     def: &Def,
     f: u32,
     decided: &HashMap<Local, Option<Known>>,
     id: AggId,
-) -> Option<(Const, Ty)> {
+) -> Option<FieldValue> {
     match def {
         Def::Aggregate(ops) => match ops.get(f as usize)? {
-            Operand::Const(c, t) => Some((c.clone(), *t)),
-            Operand::Copy(_) => None,
+            Operand::Const(c, t) => Some(FieldValue::Scalar(c.clone(), *t)),
+            op => {
+                let known = decided.get(&copied_local(op)?)?.as_ref()?;
+                Some(FieldValue::Agg(known.clone()))
+            }
         },
         Def::Copy(b) => {
             let known = decided.get(b)?.as_ref()?;
             if known.agg != id {
                 return None;
             }
-            known.get(f).map(|(c, t)| (c.clone(), t))
+            match known.get(f) {
+                Some((c, t)) => Some(FieldValue::Scalar(c.clone(), t)),
+                None => known.nested_at(f).cloned().map(FieldValue::Agg),
+            }
         }
         Def::Unknown => None,
     }
@@ -277,23 +337,31 @@ fn constant_fields(
     if !arity_ok {
         return None;
     }
-    let mut fields = Vec::new();
+    let (mut fields, mut nested) = (Vec::new(), Vec::new());
     for (f, &(ty, _)) in layout.fields.iter().enumerate() {
         let f = f as u32;
-        if !ty.is_scalar() || obs.dirty.contains(&Some(f)) {
+        if obs.dirty.contains(&Some(f)) {
             continue;
         }
-        let Some((c, t)) = def_field(&obs.defs[0], f, decided, id) else {
+        let Some(v) = def_field(&obs.defs[0], f, decided, id) else {
             continue;
         };
         let same = obs.defs[1..]
             .iter()
-            .all(|d| def_field(d, f, decided, id).is_some_and(|(c2, t2)| c2 == c && t2 == t));
-        if same && t == ty {
-            fields.push((f, c, ty));
+            .all(|d| def_field(d, f, decided, id).as_ref() == Some(&v));
+        match v {
+            FieldValue::Scalar(c, t) if same && ty.is_scalar() && t == ty => {
+                fields.push((f, c, ty))
+            }
+            FieldValue::Agg(k) if same && ty == Ty::Agg(k.agg) => nested.push((f, k)),
+            _ => {}
         }
     }
-    (!fields.is_empty()).then_some(Known { agg: id, fields })
+    (!fields.is_empty() || !nested.is_empty()).then_some(Known {
+        agg: id,
+        fields,
+        nested,
+    })
 }
 
 /// Replace reads of known fields by their constants; returns whether anything changed.
@@ -322,16 +390,24 @@ fn known_read(op: &Operand, facts: &Facts) -> Option<(Const, Ty)> {
     let Operand::Copy(place) = op else {
         return None;
     };
-    let (known, field) = match place.proj.as_slice() {
-        [Proj::Field(f)] => (facts.direct.get(&place.local)?, *f),
-        [Proj::Deref(Ty::Agg(id)), Proj::Field(f)] => {
+    let (known, path) = match place.proj.as_slice() {
+        [Proj::Deref(Ty::Agg(id)), path @ ..] => {
             let known = facts.pointers.get(&place.local)?;
             if known.agg != *id {
                 return None;
             }
-            (known, *f)
+            (known, path)
         }
-        _ => return None,
+        path => (facts.direct.get(&place.local)?, path),
     };
-    known.get(field).map(|(c, t)| (c.clone(), t))
+    // A field path `.f`, `.f.g`, ..., through known aggregate fields to a scalar one.
+    let (Proj::Field(field), outer) = path.split_last()? else {
+        return None;
+    };
+    let mut known = known;
+    for p in outer {
+        let Proj::Field(f) = p else { return None };
+        known = known.nested_at(*f)?;
+    }
+    known.get(*field).map(|(c, t)| (c.clone(), t))
 }
