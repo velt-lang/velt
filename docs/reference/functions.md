@@ -488,10 +488,25 @@ modifies is inferred ([Memory model](memory.md#mutation-is-inferred)).
   in JS; a closure that is the only remaining user (a `makeCounter` returning `() => ++n`) keeps
   a plain copy. A `for (let …)` loop's step runs on a fresh binding per iteration, as in JS. A
   closure passed to `push` is stored, so it is escaping too.
-- Async closures never modify captured variables, because they may run on another thread
-  ([Async](async.md#thread-safety)), and the enclosing code may not assign a variable an async
-  closure captured (``cannot assign to `k` after a stored closure captured it``): the closure
-  keeps its own copy.
+- An async closure that stays on the task that created it captures like any other escaping
+  closure, as in JavaScript: it may change what it captured, the enclosing code may assign the
+  variables it captured, and every call sees the same objects and variables. Each call shares
+  the captured objects with the closure (a count increment, no copy), and a variable that the
+  closure assigns, or that the enclosing code assigns after creating it, lives in a cell. Every
+  call runs as a started promise on the caller's task, so it interleaves with the rest of the
+  task only at `await`s, never in parallel ([Async](async.md#promises)).
+- An async closure that may run on another thread copies what it captured for each call, and
+  may not modify a captured variable or object (``this async closure modifies captured `n`, so
+  it must stay on the task that created it``, with where it leaves its task); nor may the
+  enclosing code assign one it captured (``cannot assign to `k` after a stored closure captured
+  it``). The compiler proves which closures stay: one may leave when it is spawned
+  (`spawn(async () => …)`, `spawn(f())`, an argument of a spawned call), is an HTTP handler, goes
+  into `shared(...)` or a `Mutex`, is sent on a channel or settles a promise; when a parameter it
+  is passed to (a generic one included), a variable holding it, a closure capturing it or a
+  task returning it does; when it is stored in an
+  object, array or map whose type reaches one of those places; and when it is passed directly to
+  a function value or an interface or overridden method, which may keep it. A timer callback
+  (`setTimeout`) runs as a spawned task, so it is one too.
 
 ```ts
 function apply(f: (x: i64) => i64, v: i64): i64 {
@@ -517,4 +532,27 @@ let total = 0;
 const next = makeCounter();
 next();
 console.log(total, next(), apply((x) => x * 10, 5), scale([1.5]));   // 6 2 50 [ 3 ]
+```
+
+```ts
+class Ctx {
+  count: number = 0;
+}
+
+// The closure outlives `methods`, changes `ctx` and keeps `calls` in a cell.
+function methods(ctx: Ctx): (by: number) => Promise<number> {
+  let calls: number = 0;
+  return async (by: number): Promise<number> => {
+    calls += 1;
+    ctx.count += by;
+    await sleep(1);
+    return ctx.count * 100 + calls;
+  };
+}
+
+async function main() {
+  const ctx = new Ctx();
+  const inc = methods(ctx);
+  console.log(await Promise.all([inc(1), inc(2)]), ctx.count);   // [ 302, 302 ] 3
+}
 ```

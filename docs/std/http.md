@@ -10,7 +10,7 @@ servers or not. For a walkthrough, see [Building an HTTP server](../book/http-se
 - `serve<E>(opts: ServeOptions { port; host?; tls?: TlsOptions { cert; key } }, handler: (req:
   Request) => Promise<Response, E>): Promise<Server>`. The default host is 127.0.0.1. With `tls`
   (PEM certificate chain and key) the server speaks HTTPS and offers HTTP/2. Like spawned tasks,
-  handlers must not mutate captured variables (use `shared`). Requests run on several threads
+  handlers (and async closures they reach) must not mutate captured variables (use `shared`). Requests run on several threads
   at once and each gets its own copy of what the handler captured, so a captured resource
   (`[Symbol.dispose]`) needs a `clone()`, or capture it as `shared(new Mutex(…))`
   ([Async](../reference/async.md#thread-safety)). A handler that throws gets a 500

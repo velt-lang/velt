@@ -280,11 +280,14 @@ impl Moves<'_> {
                     self.boxed.insert(c.outer);
                 }
             }
-            // Each generator of a generator closure has its own state: a variable it assigns
-            // lives in a cell so that the closure's generators and this function see one value.
+            // Each generator of a generator closure, and each call of a local async closure,
+            // has its own state: a variable it assigns lives in a cell so that the closure's
+            // generators (or calls) and this function see one value.
             let by_value = matches!(c.mode, PassMode::Owned | PassMode::Copy);
-            if escaping && by_value && self.generators.contains(&d) && writes(&c) {
-                self.generator_writes(c.outer, span);
+            if let (true, true, Some(&generator)) = (escaping, by_value, self.generators.get(&d)) {
+                if writes(&c) {
+                    self.generator_writes(c.outer, span, generator);
+                }
             }
             let soft_share = self.soft.contains(&span) && self.shared[c.outer.0 as usize];
             let (mode, by_closure) = match c.mode {

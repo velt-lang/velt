@@ -67,10 +67,15 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
                         e,
                     ) {
                         Some(err) => errors.push(err),
-                        // An async closure may run on several threads at once (an http
-                        // handler) and counts are not atomic: it copies what it captured.
-                        // (An async generator stays on its thread and shares, like JS.)
-                        None if v.f.is_async && !v.f.is_generator && v.captured(e) => {
+                        // An async closure that may run on several threads at once (an
+                        // http handler) copies what it captured: counts are not atomic. (An
+                        // async generator and a local async closure stay on their task and
+                        // share, like JS.)
+                        None if v.f.is_async
+                            && !v.f.is_generator
+                            && !v.f.shares_captures
+                            && v.captured(e) =>
+                        {
                             deep_copies.push((e.span, e.ty));
                             soft::make_deep_copy(e)
                         }

@@ -114,7 +114,10 @@ Maintainer-owned, like hir.rs.
 - `JsonError` and `JsonValue` are resolved by name in the prelude. Optional fields are `T | null`
   fields with a `null` default.
 - An async closure clones its owned captures into each promise it creates (it may be called many
-  times, e.g. as an HTTP handler); borrowed captures are read from its env.
+  times, e.g. as an HTTP handler); borrowed captures are read from its env. A local async
+  closure (`FnDef::shares_captures`, #208: sema proved it never reaches a thread boundary)
+  instead gives each promise another reference to its owned captures (a share, as a generator
+  closure does), and the cell itself for a `LocalDef::boxed` capture.
 - `__intrinsic_http_handler(closure)`: `Call { Intrinsic(HttpHandler), [closure] }`, type `u64[]`
   (init, poll, drop, state_size, state_align, env).
 - Sema rejects: JSON of maps without `string` keys / functions / interface values, and

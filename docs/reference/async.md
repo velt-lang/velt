@@ -67,9 +67,11 @@ Promises behave like JavaScript's, at Rust's cost:
   values nothing else references (an HTTP handler capturing a disposable resource, say) goes to
   the task as it is. `spawn(async () => …)` and `spawn((async () => …)())` hand the captured
   values themselves to the task, so a captured resource the program no longer uses moves and
-  its `[Symbol.dispose]()` runs once, on the task. Each call of an async closure otherwise gets
-  its own copy of what the closure captured, except a resource without `clone()`, which the
-  call shares with the closure (it is released once, after both). So `spawn(f())` through an
+  its `[Symbol.dispose]()` runs once, on the task. Each call of an async closure that may run
+  on another thread otherwise gets its own copy of what the closure captured, except a resource
+  without `clone()`, which the call shares with the closure (it is released once, after both).
+  An async closure that stays on its task shares what it captured with every call instead, as
+  in JavaScript ([Functions](functions.md#captures)). So `spawn(f())` through an
   async closure value `f` gives the task a copy of `f`, and stops the program
   (``panic: cannot copy …``) when `f` captured such a resource.
 - A value owning a `[Symbol.dispose]` resource is copied by its class's own `clone()` method
@@ -246,8 +248,19 @@ A task the runtime drops is cancelled at its current suspension point: the value
 
 ## Thread safety
 
-Thread safety is checked at compile time: async closures, and HTTP handlers, must not modify
-captured variables; the error mentions "spawned task" and `shared`. Share state with:
+Thread safety is checked at compile time: an async closure that may run on another thread (it
+is spawned, handles HTTP requests, goes into `shared(...)` or a `Mutex`, is sent on a channel or
+settles a promise, directly or through a variable, parameter, capture or object holding it)
+must not modify what it captured. The error names both places:
+
+```text
+error: this async closure modifies captured `count`, so it must stay on the task that created it
+  --> main.vlt:9:9: but it reaches `spawn` here
+```
+
+An async closure that never leaves its task may: its calls run as started promises on that
+task, one at a time between `await`s, so they share what it captured as in JavaScript
+([Functions](functions.md#captures)). Share state between tasks with:
 
 - `shared(x)`, which gives a `shared<T>`: an atomically reference-counted value. Assigning,
   passing or capturing it adds a reference (so does `.clone()`); it is never deep-copied. For

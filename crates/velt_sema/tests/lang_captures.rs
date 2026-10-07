@@ -52,14 +52,21 @@ fn assigning_after_an_escaping_capture_makes_a_cell() {
 
 #[test]
 fn async_closures_keep_their_own_copies() {
+    // One that may run on another thread (spawned) keeps its own copy.
     let r = err_src(
         "async function main() { let k = 1; const f = async (): Promise<i64> => k; k = 5;
-           console.log(await f(), k); }",
+           console.log(await spawn(f()), k); }",
     );
     assert!(
         r.contains("cannot assign to `k` after a stored closure captured it"),
         "{r}"
     );
+    // One that stays on its task shares the variable, in a cell (#208).
+    let p = ok_src(
+        "async function main() { let k = 1; const f = async (): Promise<i64> => k; k = 5;
+           console.log(await f(), k); }",
+    );
+    assert!(boxed(&p, "main", "k"));
 }
 
 #[test]

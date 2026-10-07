@@ -265,6 +265,11 @@ pub struct FnDef {
     pub self_ty: Option<TyId>,
     /// For closures: captured variables become the leading params, in this order.
     pub captures: Vec<Capture>,
+    /// A local async closure (#208, hir_encodings.md "Function values"): it never reaches a
+    /// thread boundary, so each call shares its by-value captures with the closure (another
+    /// reference, or the cell of a `LocalDef::boxed` capture) instead of copying them. False for
+    /// everything else, including async closures that may run on another thread.
+    pub shares_captures: bool,
     pub body: Body,
     /// Thrown error type (a union when several types can be thrown; see hir_encodings.md
     /// "Errors"). May mention type params; `Some(Never)` after substitution means non-throwing.

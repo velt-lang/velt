@@ -61,7 +61,7 @@ The host is **sharded, one shard per core**:
 
 | @sigx/actors | here |
 |---|---|
-| `defineActor({ type, state, methods: (ctx) => ({…}) })` | `new ActorDef<S>(type, init, methodsFactory)`. The factory returns `new Methods<S>().method1<A, R>("name", async (ctx, a) => …)`, built once per activation like sigx's. Methods take `ctx` as a parameter because an async closure cannot change what it captures yet ([#208](https://github.com/velt-lang/velt/issues/208)). |
+| `defineActor({ type, state, methods: (ctx) => ({…}) })` | `new ActorDef<S>(type, init, methodsFactory)`. The factory returns `new Methods<S>().method1<A, R>("name", async (ctx, a) => …)`, built once per activation like sigx's. Methods take `ctx` as a parameter, as written before [#208](https://github.com/velt-lang/velt/issues/208); an async closure that stays on its shard may now change what it captured, so sigx's `methods: (ctx) => ({…})` shape works too (`tests/golden/lang/async_closure_actors.vlt`). |
 | `ctx.state`, `await ctx.save()`, `ctx.deactivate()` | Same names. `save()` persists when the turn ends, before the caller is answered. |
 | `ctx.actor(Def, key).method(…)` | `ctx.call(type, key, method, args)`, which returns JSON. It is untyped until Velt has variadic tuple generics or `Parameters<F>` ([#209](https://github.com/velt-lang/velt/issues/209)). |
 | Turn queue, single activation per id | An array of envelopes per `Slot` and a turn loop per busy actor, in the shard's directory. |
