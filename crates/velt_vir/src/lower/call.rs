@@ -197,7 +197,7 @@ impl FnLower<'_, '_> {
                 }
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
                     let v = match user_code {
-                        true => self.stable_borrow(a),
+                        true => self.stable_borrow(a, &args[i + 1..]),
                         false => self.borrowed_arg(a),
                     };
                     argv.push(self.operand_addr(v, t));
@@ -212,7 +212,7 @@ impl FnLower<'_, '_> {
                     let v = match m {
                         PassMode::Owned => self.consume(a),
                         PassMode::Borrow | PassMode::BorrowMut if user_code => {
-                            self.stable_borrow(a)
+                            self.stable_borrow(a, &args[i + 1..])
                         }
                         _ => self.expr(a),
                     };
@@ -253,7 +253,9 @@ impl FnLower<'_, '_> {
                 let ty = self.sub(a.ty);
                 self.own_value(v, ty)
             } else {
-                let v = self.stable_borrow(a);
+                // A spawned call's borrows are settled right away, before the later arguments.
+                let later = if transfer { &[][..] } else { &args[i + 1..] };
+                let v = self.stable_borrow(a, later);
                 if transfer {
                     // The copy for the task reads the argument now.
                     self.finish_borrows(Vec::new());

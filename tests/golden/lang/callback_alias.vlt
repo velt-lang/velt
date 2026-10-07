@@ -278,6 +278,20 @@ function showBox(x: string, b: Box) {
   console.log("later argument", x.length, x.slice(0, 5));
 }
 
+// The later argument both creates the reference and changes the array through it before the
+// call starts.
+function wrapAndPop(xs: string[]): Box {
+  const b = new Box();
+  b.items = xs;
+  for (let k = 0; k < 1000; k++) {
+    b.items.push("z".repeat(40));
+  }
+  while (b.items.length > 0) {
+    b.items.pop();
+  }
+  return b;
+}
+
 function laterArgument() {
   const xs: string[] = ["a".repeat(40), "b".repeat(40)];
   show(xs[0], new Wrapper(xs));
@@ -285,6 +299,9 @@ function laterArgument() {
   const ys: string[] = ["c".repeat(40), "d".repeat(40)];
   showBox(ys[0], wrap(ys));
   console.log(ys.length);
+  const zs: string[] = ["e".repeat(40), "f".repeat(40)];
+  showBox(zs[0], wrapAndPop(zs));
+  console.log(zs.length);
 }
 
 // Tuple elements a callback changes in place: the change is made to the element itself, also

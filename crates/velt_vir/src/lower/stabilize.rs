@@ -19,7 +19,8 @@ use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
     /// A borrowed argument (or receiver) of a call that may run user code (see the module docs).
-    pub(super) fn stable_borrow(&mut self, a: &hir::Expr) -> Operand {
+    /// `later`: the arguments evaluated after it, before the call.
+    pub(super) fn stable_borrow(&mut self, a: &hir::Expr, later: &[hir::Expr]) -> Operand {
         let ty = self.sub(a.ty);
         let by_value = self.cx.ty(ty).is_scalar() && self.cx.share_kind(ty) == ShareKind::Plain;
         if by_value || !(self.through_counted(a, ty) || self.in_shared_cell(a)) {
@@ -46,8 +47,10 @@ impl FnLower<'_, '_> {
                     self.cx.note_identity_borrow(t);
                 }
             } else {
-                if let Some(v) = self.unique_array_elem(a, ty) {
-                    return v;
+                if later.iter().all(runs_no_code) {
+                    if let Some(v) = self.unique_array_elem(a, ty) {
+                        return v;
+                    }
                 }
                 let v = self.expr(a);
                 let s = self.share_value(v, ty);
@@ -122,10 +125,12 @@ impl FnLower<'_, '_> {
     /// when the array's count is 1 just before the call, nothing else reaches it (borrows
     /// through counted objects and cells share it for the call), so the element is borrowed in
     /// place; otherwise it is shared into a temporary, dropped after the call only then. The
-    /// count is read after every argument is evaluated ([`Self::finish_borrows`]): a later
-    /// argument may create another reference (`show(xs[0], new Holder(xs))`), but none can
-    /// change the array, which this argument borrows. The common case, an array no alias
-    /// exists for, costs a load and a branch.
+    /// count is read after every argument is evaluated ([`Self::finish_borrows`]). Only when no
+    /// later argument runs code ([`runs_no_code`]): one that does may create another reference
+    /// and change the array through it before the call (`show(xs[0], wrapAndPop(xs))`), which
+    /// leaves the element dangling whether the count is read before or after it, so the caller
+    /// shares the element right away instead. The common case, an array no alias exists for,
+    /// costs a load and a branch.
     fn unique_array_elem(&mut self, a: &hir::Expr, ty: TyId) -> Option<Operand> {
         let hir::ExprKind::Index { base, .. } = &a.kind else {
             return None;
@@ -230,6 +235,20 @@ pub(super) struct PendingBorrow {
     /// The pointer the call receives.
     ptr: crate::vir::Local,
     ty: TyId,
+}
+
+/// Does evaluating `e` run no code that could reach an array: a local, a literal, a closure
+/// literal (which only captures), or a plain field, element or numeric cast of one of those?
+fn runs_no_code(e: &hir::Expr) -> bool {
+    use hir::ExprKind as K;
+    match &e.kind {
+        K::Lit(_) | K::Local(..) | K::FnRef(..) | K::Closure(_) => true,
+        K::Field { base, .. } | K::Cast(base) | K::Upcast(base) | K::WrapSome(base) => {
+            runs_no_code(base)
+        }
+        K::Index { base, index, .. } => runs_no_code(base) && runs_no_code(index),
+        _ => false,
+    }
 }
 
 fn cbool(b: bool) -> Operand {
