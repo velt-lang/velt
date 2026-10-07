@@ -91,6 +91,7 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
                 name: f.name.clone(),
                 ty: f.ty,
                 default: None,
+                optional: f.optional,
                 private: false,
             })
             .collect(),
@@ -188,6 +189,7 @@ fn adt_def(
             name: f.name.clone(),
             ty: f.ty,
             default,
+            optional: f.optional,
             private: f.private_to.is_some(),
         })
         .collect();

@@ -63,6 +63,9 @@ other inferred one, so `n -= 5` can go below zero. The rules:
 - **`/` yields `f64` unless both operands are declared integers**: `const a = 7; a / 2` is
   `3.5`, `7 / 2` is `3.5`, `xs.length / 2` is `1.5` for three elements, and
   `const h: i64 = 7 / 2` is `3`.
+- **`-0` is a float** unless an integer type is expected (an integer has no negative zero), so
+  it keeps its sign as in JS: `let z = -0; 1 / z` is `-Infinity`, and so is a field declared
+  `a: number = -0`.
 - **Integer division is explicit**: `Math.trunc(a / b)` with integer operands is one integer
   division instruction (truncating toward zero, exactly JS's `Math.trunc` of the quotient).
 - Next to a float, or where a float is expected, an inferred integer converts: `a + 0.5`,
@@ -225,10 +228,12 @@ has type `T | null`, stored without an extra allocation where possible.
 - `x!` is `x` known not to be `null` (TS's non-null assertion). TypeScript trusts it; Velt
   checks it: a `null` panics with `non-null assertion failed`.
 - `a?: T` is `T | null` everywhere: an optional parameter `b?: T` is `b: T | null = null`
-  (callers may leave it out or pass `null`; it cannot also have a default), an optional class
-  or interface field starts as `null` (and is omitted by `JSON.stringify` when null), and an
-  object literal may leave out any `T | null` field of an object type
-  (`{ port: i64; host?: string }` accepts `{ port: 80 }`).
+  (callers may leave it out or pass `null`; it cannot also have a default), an optional field
+  of a class, interface or object type starts as `null` (and `JSON.stringify` leaves it out
+  while it is `null`, as JavaScript leaves out an absent property, but writes a `b: T | null`
+  field), and an object literal may leave out any `T | null` field of an object type
+  (`{ port: i64; host?: string }` accepts `{ port: 80 }`). As in TypeScript, `{ a?: T }` and
+  `{ a: T | null }` are different object types: a value of one is not a value of the other.
 - `JSON.parse<T>` treats an absent key like an explicit `null` (a `T | null` field may be
   missing); only a `JsonValue` tells them apart: `v.has("a")` vs `v.get("a")?.isNull()`.
 - `x?.a.b` short-circuits the rest of the chain like TypeScript (null when `x` is null; `.b` is

@@ -19,6 +19,7 @@ use velt_vir::vir::{self, Ty};
 
 use crate::debug::{DebugInfo, FnDebug};
 use crate::module::{define_prefix, definition_params, Definition, Intrinsics, FN_ATTRS};
+use crate::target::Target;
 use crate::types::{global_name, scalar_type, size_align};
 use crate::CodegenResult;
 
@@ -73,6 +74,8 @@ struct Emitter<'a> {
     /// `Ptr` values occupy 8-byte `i64` slots in memory although machine pointers are
     /// narrower (`Target::wide_pointer_slots`, wasm32).
     wide_pointer_slots: bool,
+    /// `Math.floor` & co. round through a conversion to `i64` (`Target::rounds_by_conversion`).
+    rounds_by_conversion: bool,
 }
 
 /// Translate `function` into a complete `define ... { ... }` text.
@@ -82,7 +85,7 @@ pub(crate) fn emit_function(
     how: Definition,
     intrinsics: &mut Intrinsics,
     debug: Option<&mut DebugInfo>,
-    wide_pointer_slots: bool,
+    target: &Target,
 ) -> CodegenResult<String> {
     check_shape(function)?;
     let debug = debug.map(|d| {
@@ -100,7 +103,8 @@ pub(crate) fn emit_function(
         next_temp: 0,
         debug,
         dbg_suffix: String::new(),
-        wide_pointer_slots,
+        wide_pointer_slots: target.wide_pointer_slots(),
+        rounds_by_conversion: target.rounds_by_conversion(),
     };
     emitter.set_location(function.first_loc());
     emitter.entry_block()?;

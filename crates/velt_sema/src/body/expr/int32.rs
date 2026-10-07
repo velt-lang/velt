@@ -21,8 +21,8 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::numbers::IntOrigin;
-use crate::body::{FnCx, LocalKind, Want};
-use crate::hir::{self, BinOp, ExprKind as H, IntTy, TyId, TyKind, UnOp, UseMode};
+use crate::body::{FnCx, Want};
+use crate::hir::{self, BinOp, ExprKind as H, IntTy, TyId, TyKind, UnOp};
 
 /// Prelude functions whose integer result is a JS number (`numbers.rs` `int_origin`).
 pub(crate) const INT32_HELPERS: [&str; 4] = [
@@ -162,50 +162,6 @@ impl FnCx<'_, '_> {
     pub(super) fn value_hint(&self, place: &hir::Expr, value: &ast::Expr) -> Option<TyId> {
         let inferred_int = self.cx.ty.is_int(place.ty) && self.js_number(place);
         (!(inferred_int && is_bitwise_expr(value))).then_some(place.ty)
-    }
-
-    /// Binds each index of `place` that is not a literal (`xs[next()]`) to a temporary (appended
-    /// to `stmts` as `let`s), so that a read-modify-write of the place evaluates it once.
-    pub(super) fn hoist_indices(&mut self, place: &mut hir::Expr, stmts: &mut Vec<hir::Stmt>) {
-        match &mut place.kind {
-            H::Field { base, .. } => self.hoist_indices(base, stmts),
-            H::Index { base, index, .. } => {
-                self.hoist_indices(base, stmts);
-                if matches!(index.kind, H::Lit(_)) {
-                    return;
-                }
-                let (ty, span) = (index.ty, index.span);
-                let tmp = self.new_local("<index>", ty, false, span, LocalKind::Temp);
-                let init = std::mem::replace(
-                    &mut **index,
-                    self.mk(H::Local(tmp, UseMode::Copy), ty, span),
-                );
-                let kind = hir::StmtKind::Let {
-                    local: tmp,
-                    init: Some(init),
-                };
-                stmts.push(hir::Stmt { kind, span });
-            }
-            _ => {}
-        }
-    }
-
-    /// `e` after the statements `stmts` (as a block when there are any).
-    pub(super) fn with_temps(&mut self, mut stmts: Vec<hir::Stmt>, e: hir::Expr) -> hir::Expr {
-        if stmts.is_empty() {
-            return e;
-        }
-        let (ty, span) = (e.ty, e.span);
-        stmts.push(hir::Stmt {
-            kind: hir::StmtKind::Expr(e),
-            span,
-        });
-        let block = hir::Block {
-            stmts,
-            value: None,
-            span,
-        };
-        self.mk(H::Block(block), ty, span)
     }
 
     /// `Math.imul(a, b)` and `Math.clz32(x)` on the prelude's `Math`: one 32-bit multiply or

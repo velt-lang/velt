@@ -72,7 +72,7 @@ Callback methods rethrow what their callback throws.
 | `flat()` | on `T[][]`: the inner elements, one level deep |
 | `isEmpty()`, `entries(): [usize, T][]` | the index is a JS number, like `length` |
 | `join(sep = ",")` | any element type: strings, numbers and booleans like JS; one level of inner arrays joined with `","` and `null` elements as empty text, like JS; other values formatted like `${x}` (JS writes `[object Object]`), and so are deeper levels, `null` inside inner arrays and arrays inside nullable elements, which JS joins recursively |
-| `sort()`, `sort(cmp)` | `sort()` on numbers, strings and `Comparable` elements (unstable, pdqsort); `sort(cmp)` is stable on any element type |
+| `sort()`, `sort(cmp)` | `sort()` on numbers, strings and `Comparable` elements (unstable, pdqsort); `sort(cmp)` is stable on any element type; a comparator that reaches the array through an alias (`const ys = xs`) sees it unchanged while it runs when the elements are numbers, booleans or plain structs (as in JS), and empty for strings, arrays and objects |
 | `new Array<T>(n).fill(v)`, `Array.from({ length: n }, (_, i) => f(i))` | `n` elements in one allocation |
 | `Array.from(src)`, `Array.from(src, (v, i) => f(v, i))` | the values of anything `for...of` takes (an array, a string's characters, a map's entries, a generator, an iterable), mapped as they arrive |
 
