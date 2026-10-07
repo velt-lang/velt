@@ -508,7 +508,10 @@ fn a_name_that_holds_the_object_on_loop_entry_only_keeps_the_heap() {
     let x = fb.local(I64);
     let bumped = bin(BinOp::Add, copy_place(env.field(t, 0)), int(10, I64));
     fb.assign(body, x, bumped);
-    fb.push(body, Stmt::Assign(env.field(t, 0), Rvalue::Use(copy_local(x))));
+    fb.push(
+        body,
+        Stmt::Assign(env.field(t, 0), Rvalue::Use(copy_local(x))),
+    );
     let r = env.sum(&mut fb, body, q);
     fb.assign(body, s, bin(BinOp::Add, copy_local(s), copy_local(r)));
     fb.assign(body, q, Rvalue::Use(copy_local(p)));
