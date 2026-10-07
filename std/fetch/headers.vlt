@@ -10,7 +10,27 @@
 // As in the standard, `get` joins repeated headers with ", " and iteration yields the names in
 // sorted order with repeats joined, except `set-cookie`, whose values are yielded one by one
 // (`getSetCookie()` returns them as an array). Unlike JavaScript, an invalid name or value is
-// not rejected here: `fetch` rejects it with `IoError` "EINVAL" when it sends the request.
+// not rejected here: `fetch` rejects it with `IoError` "EINVAL" when it sends the request. A
+// fetched response's headers are immutable, as in JS: changing them stops the program
+// (`TypeError: immutable`), a programming error like an index out of bounds.
+
+// HTTP whitespace (tab, LF, CR, space) around `v` removed; other spaces (U+00A0, …) stay.
+function trimHttp(v: string): string {
+  const n = v.length as i64;
+  let start: i64 = 0;
+  let end: i64 = n;
+  while (start < end && isHttpSpace(v.charCodeAt(start))) {
+    start++;
+  }
+  while (end > start && isHttpSpace(v.charCodeAt(end - 1))) {
+    end--;
+  }
+  return start == 0 && end == n ? v : v.slice(start, end);
+}
+
+function isHttpSpace(c: i64): bool {
+  return c == 9 || c == 10 || c == 13 || c == 32;
+}
 
 // `Headers` or an object literal (`{ "content-type": "text/plain" }`).
 export type HeadersInit = Headers | Record<string, string>;
@@ -18,6 +38,8 @@ export type HeadersInit = Headers | Record<string, string>;
 export class Headers {
   // `[name, value, …]`: lowercase names, trimmed values.
   private list: string[] = [];
+  // A fetched response's headers (std sets it): changing them is an error.
+  private frozen: bool = false;
 
   constructor(init: HeadersInit | null = null) {
     if (init == null) {
@@ -46,20 +68,23 @@ export class Headers {
 
   // Adds a value; a header that already has one gets another.
   append(name: string, value: string) {
+    this.change();
     this.list.push(name.toLowerCase());
-    this.list.push(value.trim());
+    this.list.push(trimHttp(value));
   }
 
   // Replaces every value of `name` with `value`.
   set(name: string, value: string) {
+    this.change();
     const key = name.toLowerCase();
     this.remove(key);
     this.list.push(key);
-    this.list.push(value.trim());
+    this.list.push(trimHttp(value));
   }
 
   // Removes every value of `name`.
   delete(name: string) {
+    this.change();
     this.remove(name.toLowerCase());
   }
 
@@ -149,6 +174,12 @@ export class Headers {
   *[Symbol.iterator](): IterableIterator<[string, string]> {
     for (const e of this.sorted()) {
       yield e;
+    }
+  }
+
+  private change() {
+    if (this.frozen) {
+      panic("TypeError: immutable");
     }
   }
 

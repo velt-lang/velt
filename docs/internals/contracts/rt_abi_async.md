@@ -393,11 +393,16 @@ arrived; the body is received by `resp_text` / `resp_bytes`. Redirects are follo
 standard says (at most 20; 303, and 301/302 after a POST, become GET without a body; credentials
 are dropped on a cross-origin hop). An abort signal (§2.3) drops the request, or the body being
 received, as soon as it is aborted; the operation then fails with `OTHER` and std throws the
-signal's `AbortError` / `TimeoutError`. Connecting times out after 10 s (`ETIMEDOUT`).
+signal's `AbortError` / `TimeoutError`. Connecting times out after 10 s (`ETIMEDOUT`). A body
+with `content-encoding` `gzip` / `x-gzip`, `deflate` (zlib or raw) or `br`, or a list of up to
+five of them (undone last first), is decoded frame by frame for every body read, at most 64 KiB
+per chunk; a list naming another coding is passed through; a response to HEAD or CONNECT, or
+with status 101, 204, 205 or 304, is never decoded; a body that does not decode (or is cut off)
+fails with `INVALID_DATA`.
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_http_fetch_send` | `(const VeltStr* method, const VeltStr* url, const VeltStrArray* headers, u32 kind, VeltStr* text, VeltBytes* bytes, u32 redirect, u64 signal, const VeltStr* ca_pem) -> VeltFut*` | result `IoResult<VeltFetchResp>`; `headers` = flat `[name, value, …]` (copied; `accept: */*` and `user-agent: velt` added when missing); body = `text` (`kind` 1, moved out: the argument is left empty), `bytes` (`kind` 2, copied), or none (`kind` 0); `redirect` 0 follow, 1 error, 2 manual; `signal` = abort signal handle or 0 (borrowed: the runtime takes its own reference); `ca_pem` = extra trusted PEM CAs (`""` = none; clients pooled per CA text); an invalid URL, method, header name or value fails with `EINVAL` before connecting |
+| `velt_rt_http_fetch_send` | `(const VeltStr* method, const VeltStr* url, const VeltStrArray* headers, u32 kind, VeltStr* text, VeltBytes* bytes, u32 redirect, u64 signal, const VeltStr* ca_pem) -> VeltFut*` | result `IoResult<VeltFetchResp>`; `headers` = flat `[name, value, …]` (copied; `accept: */*`, `user-agent: velt` and `accept-encoding: gzip, deflate` (`br, gzip, deflate` for `https://`) added when missing); body = `text` (`kind` 1, moved out: the argument is left empty), `bytes` (`kind` 2, copied), or none (`kind` 0); `redirect` 0 follow, 1 error, 2 manual; `signal` = abort signal handle or 0 (borrowed: the runtime takes its own reference); `ca_pem` = extra trusted PEM CAs (`""` = none; clients pooled per CA text); an invalid URL, method, header name or value fails with `EINVAL` before connecting |
 | `velt_rt_http_fetch_resp_status` | `(VeltFetchResp r) -> u32` | |
 | `velt_rt_http_fetch_resp_status_text` | `(VeltFetchResp r, VeltStr* out)` | the server's reason phrase, else the standard one, else `""` |
 | `velt_rt_http_fetch_resp_url` | `(VeltFetchResp r, VeltStr* out)` | final URL, after redirects, without fragment |
@@ -405,6 +410,7 @@ signal's `AbortError` / `TimeoutError`. Connecting times out after 10 s (`ETIMED
 | `velt_rt_http_fetch_resp_headers` | `(VeltFetchResp r, VeltStrArray* out)` | flat `[name, value, …]` (lowercase, received order, lossy UTF-8); the first call takes them, later ones return `[]` |
 | `velt_rt_http_fetch_resp_text` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltStr>`: the whole body, invalid UTF-8 as U+FFFD; a second body read fails `EINVAL` |
 | `velt_rt_http_fetch_resp_bytes` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltBytes>`: the received buffer (sized from `content-length`, not copied again) |
+| `velt_rt_http_fetch_resp_chunk` | `(VeltFetchResp r) -> VeltFut*` | result `IoResult<VeltBytes>`: the next decoded chunk (at most 64 KiB), never empty; `[]` once the body is complete (or taken by another read) |
 | `velt_rt_http_fetch_resp_drop` | `(VeltFetchResp r)` | an unread body is dropped (its connection closes); a body read in flight keeps the response alive until it completes |
 
 ## 8. Process

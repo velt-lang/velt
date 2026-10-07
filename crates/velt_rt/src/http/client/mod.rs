@@ -6,11 +6,13 @@
 //! connection.
 //!
 //! `velt_rt_http_fetch_send` completes once the status and headers have arrived, like JS's
-//! `fetch`; the body is received when `text()` or `bytes()` asks for it (`body.rs`). A response is
+//! `fetch`; the body is received when `text()` or `bytes()` asks for it, or chunk by chunk
+//! (`res.body`; `body.rs`), decoded as its `content-encoding` says (`decode.rs`). A response is
 //! a key into a registry (`crate::registry`): using it after it was released (or a forged key) is
 //! a clear runtime error, never a read of freed memory.
 
 mod body;
+mod decode;
 mod send;
 #[cfg(test)]
 mod tests;
@@ -25,8 +27,7 @@ use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use bytes::Bytes;
 use futures_util::future::Either;
-use hyper::body::Incoming;
-use hyper::header::{HeaderMap, CONTENT_LENGTH};
+use hyper::header::{HeaderMap, CONTENT_ENCODING, CONTENT_LENGTH};
 use hyper::Method;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -64,8 +65,8 @@ pub struct FetchResp {
     len: Option<u64>,
     /// Taken by the first `velt_rt_http_fetch_resp_headers`.
     headers: Mutex<HeaderMap>,
-    /// Taken by the first body read.
-    body: Mutex<Option<Incoming>>,
+    /// Taken by a body read (`text()`, `bytes()` until the end; a chunk read until it returns).
+    body: Mutex<Option<body::Reader>>,
     /// The request's signal: aborting it also stops receiving the body.
     signal: Option<Arc<Signal>>,
 }
@@ -110,12 +111,12 @@ async fn abortable<T>(
 }
 
 /// Copy the flat header list `[name, value, …]` out of a Velt `string[]`.
-unsafe fn header_list(headers: *const VeltStrArray) -> Result<HeaderMap, VeltErr> {
+unsafe fn header_list(headers: *const VeltStrArray, https: bool) -> Result<HeaderMap, VeltErr> {
     let a = &*headers;
     let items: Vec<&[u8]> = (0..a.len as usize)
         .map(|i| (*a.ptr.add(i)).as_bytes())
         .collect();
-    send::header_map(&items)
+    send::header_map(&items, https)
 }
 
 async fn run(
@@ -125,7 +126,10 @@ async fn run(
     signal: Option<Arc<Signal>>,
 ) -> Result<FetchResp, VeltErr> {
     let client = send::client(&ca)?;
-    let r = abortable(signal.as_deref(), send::send(&client, o?, mode)).await?;
+    let o = o?;
+    // A redirect keeps HEAD a HEAD (and nothing becomes one).
+    let head = o.method == Method::HEAD || o.method == Method::CONNECT;
+    let r = abortable(signal.as_deref(), send::send(&client, o, mode)).await?;
     let (parts, body) = r.response.into_parts();
     let status_text = parts
         .extensions
@@ -138,6 +142,18 @@ async fn run(
         .get(CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse().ok());
+    // A response without a body has nothing to decode, whatever it says (undici too).
+    let bodiless = head || matches!(parts.status.as_u16(), 101 | 204 | 205 | 304);
+    let encoding = (!bodiless)
+        .then(|| parts.headers.get(CONTENT_ENCODING))
+        .flatten()
+        .and_then(|v| v.to_str().ok());
+    let reader = body::Reader {
+        incoming: body,
+        decoder: decode::Decoder::for_encoding(encoding),
+        done: false,
+        rest: Bytes::new(),
+    };
     Ok(FetchResp {
         len,
         status: parts.status.as_u16(),
@@ -145,7 +161,7 @@ async fn run(
         url: r.url.into(),
         redirected: r.redirected,
         headers: Mutex::new(parts.headers),
-        body: Mutex::new(Some(body)),
+        body: Mutex::new(Some(reader)),
         signal,
     })
 }
@@ -181,7 +197,7 @@ pub unsafe extern "C" fn velt_rt_http_fetch_send(
         let method = Method::from_bytes((*method).as_bytes())
             .map_err(|_| send::invalid("invalid HTTP method"))?;
         let url = send::parse_url(&(*url).text_lossy())?;
-        let headers = header_list(headers)?;
+        let headers = header_list(headers, url.scheme() == "https")?;
         Ok(Outgoing {
             method,
             url,
@@ -256,13 +272,13 @@ pub unsafe extern "C" fn velt_rt_http_fetch_resp_headers(
 
 /// Receive the whole body (each response's body is received once: a second read is `EINVAL`).
 async fn receive(r: Arc<FetchResp>) -> Result<body::Whole, VeltErr> {
-    let Some(incoming) = lock(&r.body).take() else {
+    let Some(reader) = lock(&r.body).take() else {
         return Err(VeltErr::new(
             code::INVALID_INPUT,
             "Body is unusable: Body has already been read",
         ));
     };
-    abortable(r.signal.as_deref(), body::read_all(incoming, r.len)).await
+    abortable(r.signal.as_deref(), reader.read_all(r.len)).await
 }
 
 /// `await res.text()` → result slot `IoResult<VeltStr>`: the body as UTF-8, invalid bytes
@@ -272,7 +288,12 @@ pub extern "C" fn velt_rt_http_fetch_resp_text(r: FetchRespHandle) -> *mut VeltF
     let r = obj(r);
     new_leaf(async move {
         match receive(r).await {
-            Ok(w) => IoResult::ok(VeltStr::from_text(&String::from_utf8_lossy(w.as_slice()))),
+            Ok(w) => {
+                let bytes = w.as_slice();
+                // A leading byte order mark is not text (JS's UTF-8 decode drops it too).
+                let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+                IoResult::ok(VeltStr::from_text(&String::from_utf8_lossy(bytes)))
+            }
             Err(e) => IoResult::<VeltStr>::err(e),
         }
     })
@@ -286,6 +307,27 @@ pub extern "C" fn velt_rt_http_fetch_resp_bytes(r: FetchRespHandle) -> *mut Velt
     new_leaf(async move {
         match receive(r).await {
             Ok(w) => IoResult::ok(VeltBytes::from_vec(w.into_vec())),
+            Err(e) => IoResult::<VeltBytes>::err(e),
+        }
+    })
+}
+
+/// `res.body`'s next chunk → result slot `IoResult<VeltBytes>`: the next decoded bytes, never
+/// empty; an empty array once the body is complete (and on every read after that).
+#[no_mangle]
+pub extern "C" fn velt_rt_http_fetch_resp_chunk(r: FetchRespHandle) -> *mut VeltFut {
+    let r = obj(r);
+    new_leaf(async move {
+        let Some(mut reader) = lock(&r.body).take() else {
+            return IoResult::ok(VeltBytes::from_vec(vec![]));
+        };
+        match abortable(r.signal.as_deref(), reader.next()).await {
+            Ok(chunk) => {
+                if !reader.done {
+                    *lock(&r.body) = Some(reader);
+                }
+                IoResult::ok(VeltBytes::from_vec(chunk.unwrap_or_default()))
+            }
             Err(e) => IoResult::<VeltBytes>::err(e),
         }
     })

@@ -165,7 +165,7 @@ fn reexports(src: &str) -> Vec<String> {
 
 /// Whether `src` contains `name` as a whole identifier.
 fn mentions(src: &str, name: &str) -> bool {
-    let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
     src.match_indices(name).any(|(at, _)| {
         !src[..at].chars().next_back().is_some_and(ident)
             && !src[at + name.len()..].chars().next().is_some_and(ident)

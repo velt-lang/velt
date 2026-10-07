@@ -46,7 +46,8 @@ export class Request {
   #body: BodyParts = { kind: 0, text: "", bytes: [], contentType: null };
   #used: bool = false;
 
-  // Throws `IoError` "EINVAL" for a GET or HEAD request with a body (JS: `TypeError`).
+  // Throws `IoError` "EINVAL" (JS: `TypeError`) for a GET or HEAD request with a body, and
+  // for a `Request` input whose body was already used.
   constructor(input: string | URL | Request, init: RequestInit = {}) throws IoError {
     if (typeof input == "string") {
       this.#target = input;
@@ -59,8 +60,16 @@ export class Request {
       this.#abort = input.#abort;
       this.#trust = input.#trust;
       this.headers = new Headers(input.headers);
-      this.#body = input.#body;
-      input.#used = true;
+      if (input.#body.kind != 0) {
+        if (input.#used) {
+          throw new IoError(
+            "EINVAL",
+            "Cannot construct a Request with a Request object that has already been used.",
+          );
+        }
+        this.#body = input.#body;
+        input.#used = true;
+      }
     }
     const method = init.method;
     if (method != null) {
@@ -147,6 +156,9 @@ export class Request {
   }
 
   private claim() throws IoError {
+    if (this.#body.kind == 0) {
+      return;
+    }
     if (this.#used) {
       throw new IoError("EINVAL", "Body is unusable: Body has already been read");
     }

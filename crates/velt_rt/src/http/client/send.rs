@@ -91,9 +91,10 @@ pub(super) fn parse_url(url: &str) -> Result<Url, VeltErr> {
 }
 
 /// The header list `[name, value, …]` as a header map; what Node adds when it is missing
-/// (`accept`, `user-agent`).
-pub(super) fn header_map(flat: &[&[u8]]) -> Result<HeaderMap, VeltErr> {
-    let mut map = HeaderMap::with_capacity(flat.len() / 2 + 2);
+/// (`accept`, `user-agent`, and `accept-encoding` with the codings `https` can decode). The map
+/// has room for all three defaults, so adding them never grows it.
+pub(super) fn header_map(flat: &[&[u8]], https: bool) -> Result<HeaderMap, VeltErr> {
+    let mut map = HeaderMap::with_capacity(flat.len() / 2 + 3);
     for [name, value] in flat.as_chunks::<2>().0 {
         let name = HeaderName::from_bytes(name)
             .map_err(|_| invalid(&format!("invalid header name {:?}", lossy(name))))?;
@@ -106,6 +107,10 @@ pub(super) fn header_map(flat: &[&[u8]]) -> Result<HeaderMap, VeltErr> {
     }
     if !map.contains_key(header::USER_AGENT) {
         map.insert(header::USER_AGENT, HeaderValue::from_static("velt"));
+    }
+    if !map.contains_key(header::ACCEPT_ENCODING) {
+        let codings = HeaderValue::from_static(super::decode::accept_encoding(https));
+        map.insert(header::ACCEPT_ENCODING, codings);
     }
     Ok(map)
 }
@@ -201,6 +206,7 @@ fn follow(o: &mut Outgoing, status: StatusCode, mut next: Url) -> Result<(), Vel
             header::AUTHORIZATION,
             header::COOKIE,
             header::PROXY_AUTHORIZATION,
+            header::HOST,
         ] {
             o.headers.remove(h);
         }

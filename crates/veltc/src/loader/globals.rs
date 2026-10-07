@@ -60,9 +60,10 @@ fn reexported_names(src: &str) -> Vec<String> {
     names
 }
 
-/// Whether `src` contains `name` as a whole identifier (not as part of a longer one).
+/// Whether `src` contains `name` as a whole identifier (not as part of a longer one; identifier
+/// characters are ASCII letters, digits, `_` and `$`, as the lexer reads them).
 pub(super) fn mentions(src: &str, name: &str) -> bool {
-    let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
     src.match_indices(name).any(|(at, _)| {
         let before = src[..at].chars().next_back();
         let after = src[at + name.len()..].chars().next();
@@ -83,7 +84,9 @@ mod tests {
             "fetch"
         ));
         assert!(mentions("prefetch(); fetch()", "fetch"));
-        assert!(!mentions("const é = Responseé;", "Response"));
+        // Identifiers are ASCII (as the lexer reads them): any other character ends one.
+        assert!(mentions("Responseé", "Response"));
+        assert!(!mentions("Response_x", "Response"));
     }
 
     #[test]
