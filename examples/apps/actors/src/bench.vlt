@@ -2,6 +2,7 @@
 // @sigx/actors: closed loops of C callers, each issuing its next call as soon as the last one
 // answered, against the `Tiny` actor (no storage on the call path).
 import { Value } from "velt:json";
+import { channel, Channel } from "velt:channel";
 import { Host, Router } from "./runtime";
 
 struct LoopResult {
@@ -9,18 +10,19 @@ struct LoopResult {
   samples: f64[];
 }
 
-// One caller: calls `Tiny/<keys[i % keys.length]>.noop()` until `until`.
+// One caller: calls `Tiny/<keys[i % keys.length]>.noop()` until the deadline `start` sends.
 async function caller(
   router: Router,
   keys: string[],
   offset: usize,
-  until: f64,
+  start: Channel<f64>,
   sample: bool,
 ): Promise<LoopResult> {
   const args: Value[] = [];
   for (const k of keys) {
     args.push(JsonValue.from([k]));
   }
+  const until = (await start.receive()) ?? 0.0;
   let ops: i64 = 0;
   const samples: f64[] = [];
   let i = offset;
@@ -50,11 +52,18 @@ async function closedLoop(
   ms: f64,
   sample: bool,
 ): Promise<LoopResult> {
-  const until = performance.now() + ms;
+  // The clock starts once every caller is spawned: on a busy machine the OS can stall the
+  // spawning thread for longer than a whole pass, which used to report 0 ops/s.
+  const start = channel<f64>();
   const tasks: Promise<LoopResult>[] = [];
   for (let i = 0; i < c; i++) {
-    tasks.push(spawn(caller(router, keys, i as usize, until, sample)));
+    tasks.push(spawn(caller(router, keys, i as usize, start, sample)));
   }
+  const until = performance.now() + ms;
+  for (let i = 0; i < c; i++) {
+    start.trySend(until);
+  }
+  start.close();
   const results = await Promise.all(tasks);
   let ops: i64 = 0;
   const samples: f64[] = [];
