@@ -119,10 +119,17 @@ impl FnLower<'_, '_> {
             return Operand::Copy(Place::local(tmp));
         }
         let held = match self.cx.shares_as_counted(cty) {
-            true => self.share_value(op, cty),
-            false => self.clone_value(op, cty),
+            true => self.share_value(op.clone(), cty),
+            false => self.clone_value(op.clone(), cty),
         };
-        self.own_value(held, cty)
+        match &held {
+            // The fresh temporary the share or copy was written to: registered where it is.
+            Operand::Copy(h) if h.proj.is_empty() && held != op => {
+                self.own_temp(h.local, cty);
+                held
+            }
+            _ => self.own_value(held, cty),
+        }
     }
 
     /// Can what `p` holds be changed by operands that do `later`? A temporary of the lowering
