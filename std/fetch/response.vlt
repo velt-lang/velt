@@ -37,25 +37,25 @@ const RUNTIME: i64 = 3;
 
 export class Response {
   headers: Headers = new Headers();
-  private code: i64 = 200;
-  private reason: string = "";
-  private where: string = "";
-  private hops: bool = false;
-  private kind: string = "default";
-  private used: bool = false;
-  private source: i64 = 0;
-  private str: string = "";
-  private data: u8[] = [];
-  private handle: u64 = 0;
-  private signal: AbortSignal | null = null;
+  #code: i64 = 200;
+  #reason: string = "";
+  #where: string = "";
+  #hops: bool = false;
+  #kind: string = "default";
+  #used: bool = false;
+  #source: i64 = 0;
+  #str: string = "";
+  #data: u8[] = [];
+  #handle: u64 = 0;
+  #signal: AbortSignal | null = null;
 
   constructor(body: BodyInit | null = null, init: ResponseInit = {}) {
     const parts = bodyParts(body);
-    this.source = parts.kind as i64;
-    this.str = parts.text;
-    this.data = parts.bytes;
-    this.code = init.status ?? 200;
-    this.reason = init.statusText ?? "";
+    this.#source = parts.kind as i64;
+    this.#str = parts.text;
+    this.#data = parts.bytes;
+    this.#code = init.status ?? 200;
+    this.#reason = init.statusText ?? "";
     this.headers = new Headers(init.headers);
     const ct = parts.contentType;
     if (ct != null && !this.headers.has("content-type")) {
@@ -66,15 +66,15 @@ export class Response {
   // The response behind runtime key `handle`, whose body aborts with `signal` (std only).
   private static adopt(handle: u64, signal: AbortSignal | null): Response {
     const r = new Response();
-    r.code = velt_rt_http_fetch_resp_status(handle) as i64;
-    r.reason = velt_rt_http_fetch_resp_status_text(handle);
-    r.where = velt_rt_http_fetch_resp_url(handle);
-    r.hops = velt_rt_http_fetch_resp_redirected(handle);
+    r.#code = velt_rt_http_fetch_resp_status(handle) as i64;
+    r.#reason = velt_rt_http_fetch_resp_status_text(handle);
+    r.#where = velt_rt_http_fetch_resp_url(handle);
+    r.#hops = velt_rt_http_fetch_resp_redirected(handle);
     r.headers = Headers.adopt(velt_rt_http_fetch_resp_headers(handle));
-    r.kind = "basic";
-    r.source = RUNTIME;
-    r.handle = handle;
-    r.signal = signal;
+    r.#kind = "basic";
+    r.#source = RUNTIME;
+    r.#handle = handle;
+    r.#signal = signal;
     return r;
   }
 
@@ -93,7 +93,7 @@ export class Response {
   // A network error: status 0, type "error".
   static error(): Response {
     const r = new Response(null, { status: 0 });
-    r.kind = "error";
+    r.#kind = "error";
     return r;
   }
 
@@ -105,51 +105,51 @@ export class Response {
   }
 
   get status(): i64 {
-    return this.code;
+    return this.#code;
   }
 
   // Whether the status is 200–299.
   get ok(): bool {
-    return this.code >= 200 && this.code <= 299;
+    return this.#code >= 200 && this.#code <= 299;
   }
 
   // The server's status message (`OK`, `Not Found`), "" if it sent none.
   get statusText(): string {
-    return this.reason;
+    return this.#reason;
   }
 
   // The URL the response came from, after redirects ("" for a constructed response).
   get url(): string {
-    return this.where;
+    return this.#where;
   }
 
   // Whether `fetch` followed a redirect to get it.
   get redirected(): bool {
-    return this.hops;
+    return this.#hops;
   }
 
   // "basic" (fetched), "default" (constructed) or "error" (`Response.error()`).
   get type(): string {
-    return this.kind;
+    return this.#kind;
   }
 
   // Whether the body has been read.
   get bodyUsed(): bool {
-    return this.used;
+    return this.#used;
   }
 
   // The body as text (invalid UTF-8 becomes U+FFFD, as in JS).
   async text(): Promise<string, IoError | AbortError> {
     this.claim();
-    if (this.source == RUNTIME) {
-      const r = await velt_rt_http_fetch_resp_text(this.handle);
+    if (this.#source == RUNTIME) {
+      const r = await velt_rt_http_fetch_resp_text(this.#handle);
       this.check(r.code);
       return unwrapIo(r);
     }
-    if (this.source == BYTES) {
-      return utf8DecodeLossy(this.data);
+    if (this.#source == BYTES) {
+      return utf8DecodeLossy(this.#data);
     }
-    return this.str;
+    return this.#str;
   }
 
   // `JSON.parse<T>` of the body: the JSON is checked against `T` (`JsonError` if it doesn't
@@ -161,15 +161,15 @@ export class Response {
 
   async bytes(): Promise<u8[], IoError | AbortError> {
     this.claim();
-    if (this.source == RUNTIME) {
-      const r = await velt_rt_http_fetch_resp_bytes(this.handle);
+    if (this.#source == RUNTIME) {
+      const r = await velt_rt_http_fetch_resp_bytes(this.#handle);
       this.check(r.code);
       return unwrapIo(r);
     }
-    if (this.source == TEXT) {
-      return utf8Encode(this.str);
+    if (this.#source == TEXT) {
+      return utf8Encode(this.#str);
     }
-    return this.data;
+    return this.#data;
   }
 
   // The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`).
@@ -179,15 +179,15 @@ export class Response {
 
   // Marks the body read; throws if it was already.
   private claim() throws IoError {
-    if (this.used) {
+    if (this.#used) {
       throw new IoError("EINVAL", "Body is unusable: Body has already been read");
     }
-    this.used = true;
+    this.#used = true;
   }
 
   // After a failed body read: the signal's `AbortError` if it was aborted.
   private check(code: i32) throws AbortError {
-    const s = this.signal;
+    const s = this.#signal;
     if (code != 0 && s != null) {
       s.throwIfAborted();
     }
@@ -195,9 +195,9 @@ export class Response {
 
   // Drop hook: releases the runtime response.
   [Symbol.dispose]() {
-    if (this.handle != 0) {
-      velt_rt_http_fetch_resp_drop(this.handle);
-      this.handle = 0;
+    if (this.#handle != 0) {
+      velt_rt_http_fetch_resp_drop(this.#handle);
+      this.#handle = 0;
     }
   }
 }

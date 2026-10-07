@@ -428,6 +428,12 @@ impl<'a> Parser<'a> {
         if Self::is_name(self.peek()) {
             return Ok(self.take_ident());
         }
+        if self.at(Tok::PrivateName) {
+            // TS18016; taken, so the rest of the declaration parses.
+            let span = self.cur_span();
+            self.error("private names are only allowed in class bodies", span);
+            return Ok(self.take_ident());
+        }
         self.error_expected("identifier");
         Err(Fail)
     }

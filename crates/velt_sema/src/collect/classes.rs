@@ -6,6 +6,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use velt_common::Diagnostic;
+use velt_syntax::ast;
 
 use super::forwarders::{synth_method, Host, Target};
 use super::lookup::{lookup_method, Found};
@@ -51,7 +52,12 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> Overridden {
     let mut out = BTreeSet::new();
     for &d in adts {
         let decl = cx.adt(d).and_then(|a| a.decl).expect("ICE: class decl");
-        for m in decl.methods.iter().filter(|m| m.is_override) {
+        // `override #m` is reported by `own_methods`: private names are never inherited.
+        for m in decl
+            .methods
+            .iter()
+            .filter(|m| m.is_override && !m.decl.sig.name.is_private_name())
+        {
             let name = &m.decl.sig.name;
             let key = member_key(&name.name, m.is_setter);
             match introducer(cx, d, &key) {
@@ -184,6 +190,22 @@ fn own_methods(cx: &mut Ctx, d: DefId, overridden: &Overridden, vt: &mut Vtable)
         let Some(mref) = cx.adt(d).and_then(|a| a.methods.get(&key)).copied() else {
             continue;
         };
+        if name.name.starts_with(ast::PRIVATE_NAME_PREFIX) {
+            // `#m` is never inherited, so it overrides nothing and has no vtable slot.
+            if m.is_override {
+                cx.error(
+                    Diagnostic::error(
+                        format!(
+                            "`override` on `{}`: private names are never inherited",
+                            name.name
+                        ),
+                        name.span,
+                    )
+                    .with_note("remove `override`"),
+                );
+            }
+            continue;
+        }
         let inherited = base_ty
             .and_then(|b| cx.class_of(b))
             .and_then(|(b, bargs)| lookup_method(cx, b, &bargs, &key))
