@@ -57,7 +57,8 @@ async function main() {
     console.log("caught", e.message);
   }
 
-  const ps: Promise<i64, Oops>[] = [failing(50), double(3)];
+  // `double` is created first and is due first, so it wins however long the creation takes.
+  const ps: Promise<i64, Oops>[] = [double(3), failing(50)];
   console.log(await Promise.race(ps));
   const mixed: Promise<i64, Oops>[] = [double(4), failing(1)];
   const settled = await Promise.allSettled(mixed);

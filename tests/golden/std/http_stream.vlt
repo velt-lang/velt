@@ -18,6 +18,8 @@ async function main() {
         w.write(`<li>${i}</li>`);
         await w.flush();
         console.log(`server: flushed ${i}`);
+        // The task publishes its output when it suspends here, before the next chunk (or the
+        // end of the body) goes out, so the client's lines come after every `server:` line.
         await sleep(20);
       }
       if (broken) {

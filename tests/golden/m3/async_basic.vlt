@@ -11,6 +11,12 @@ async function sumAll(xs: i64[]): Promise<i64> {
   return total;
 }
 
+// Three 200 ms sleeps awaited together; 1.
+async function threeSleeps(): Promise<i64> {
+  await Promise.all([sleep(200), sleep(200), sleep(200)]);
+  return 1;
+}
+
 async function main() {
   const a = await delayed(10, 1);
   console.log("a", a);
@@ -19,11 +25,12 @@ async function main() {
   const [x, y] = await Promise.all([delayed(30, 2), delayed(10, 3)]);
   console.log(x, y);
 
+  // Concurrent: the three sleeps end together, before a 450 ms timer created after them (timers
+  // of one task fire by deadline, however late the task runs); one after the other they would
+  // end at 600 ms. Sleeps never end early.
   const start = performance.now();
-  // Concurrent: ~200 ms total; sequential would be 600 ms. Wide margins for loaded machines.
-  await Promise.all([sleep(200), sleep(200), sleep(200)]);
-  const elapsed = performance.now() - start;
-  console.log(elapsed >= 190.0, elapsed < 450.0);
+  const first = await Promise.race([threeSleeps(), delayed(450, 0)]);
+  console.log(first, performance.now() - start >= 199.0);
 
   const h = spawn(delayed(5, 42));
   console.log(await h);

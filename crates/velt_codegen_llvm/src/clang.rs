@@ -199,7 +199,12 @@ pub(crate) fn run_piped(mut cmd: Command, input: &[u8], name: &str) -> CodegenRe
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("codegen: cannot run `{}`: {e}", Path::new(&program).display()))?;
+        .map_err(|e| {
+            format!(
+                "codegen: cannot run `{}`: {e}",
+                Path::new(&program).display()
+            )
+        })?;
     let mut stdin = child.stdin.take().expect("ICE: stdin is piped");
     // Feed the input from another thread while the output is read here: a tool may write
     // before it has read everything, and both pipes have small buffers.
@@ -210,11 +215,15 @@ pub(crate) fn run_piped(mut cmd: Command, input: &[u8], name: &str) -> CodegenRe
         let _ = feeder.join();
         out
     })
-    .map_err(|e| format!("codegen: cannot run `{}`: {e}", Path::new(&program).display()))?;
+    .map_err(|e| {
+        format!(
+            "codegen: cannot run `{}`: {e}",
+            Path::new(&program).display()
+        )
+    })?;
     if !out.status.success() {
         bail!(
-            "codegen: {name} failed on the generated IR (this is a compiler bug):
-{}",
+            "codegen: {name} failed on the generated IR (this is a compiler bug):\n{}",
             String::from_utf8_lossy(&out.stderr)
         );
     }

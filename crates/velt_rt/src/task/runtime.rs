@@ -97,6 +97,13 @@ pub fn runtime() -> &'static Runtime {
     RUNTIME.get_or_init(build)
 }
 
+/// How many tasks are alive (spawned and not finished); 0 if the runtime never started.
+pub(crate) fn alive_tasks() -> usize {
+    RUNTIME
+        .get()
+        .map_or(0, |rt| rt.handle().metrics().num_alive_tasks())
+}
+
 /// Handle of the global runtime.
 pub fn handle() -> &'static Handle {
     runtime().handle()

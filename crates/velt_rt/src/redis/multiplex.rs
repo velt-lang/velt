@@ -328,7 +328,10 @@ mod tests {
     async fn lost(conn: &Conn, n: u64) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         while conn.connections_lost() < n {
-            assert!(std::time::Instant::now() < deadline, "the connection never ended");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the connection never ended"
+            );
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
     }
