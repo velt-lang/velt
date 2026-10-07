@@ -1,0 +1,51 @@
+// Closures that capture `this` inside constructors and methods and are only called where they
+// are created, plus `const me = this`: one object per iteration, so the cost of a reference
+// count on the class shows (#444).
+class Particle {
+  x: number;
+  v: number;
+  hits: number = 0;
+
+  constructor(x: number, v: number) {
+    this.x = x;
+    this.v = v;
+    const wrap = () => {
+      if (this.x > 1000) {
+        this.x -= 1000;
+        this.hits += 1;
+      }
+    };
+    wrap();
+  }
+
+  step(k: number): number {
+    const move = (d: number) => {
+      this.x += this.v * d;
+      if (this.x > 1000) {
+        this.x -= 1000;
+        this.hits += 1;
+      }
+    };
+    move(k);
+    move(k + 1);
+    const me = this;
+    return me.x + me.hits;
+  }
+}
+
+function main() {
+  let total: number = 0;
+  const keep: Particle[] = [];
+  for (let i: number = 0; i < 5000000; i++) {
+    const p = new Particle(i % 1500, (i % 7) + 1);
+    total = (total + p.step(i % 3)) % 1000003;
+    if (i % 100000 == 0) {
+      keep.push(p);
+    }
+  }
+  let hits: number = 0;
+  for (const p of keep) {
+    hits += p.hits;
+  }
+  console.log(total, keep.length, hits);
+}
