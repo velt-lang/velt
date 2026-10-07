@@ -332,3 +332,28 @@ fn a_fill_in_a_block_another_path_reaches_is_kept() {
     assert_eq!(run_main(&p, 5), 0);
     assert_eq!(run_main(&opt, 5), 0);
 }
+
+#[test]
+fn locals_whose_address_is_taken_are_not_tracked() {
+    // `r = &q` before the allocation, then `q = w` (or `q` is `w` itself); `*r = &d` repoints
+    // `q` unseen, so the stores through `q` write `d` and the object's fill must stay.
+    for copy in [true, false] {
+        let env = env();
+        let mut fb = FuncBuilder::export("main", &[I64], I64);
+        let w = fb.local(Ptr);
+        let q = if copy { fb.local(Ptr) } else { w };
+        let (r, d, dp) = (fb.local(Ptr), fb.local(Ty::Agg(env.pair)), fb.local(Ptr));
+        let b = fb.block();
+        fb.assign(b, r, Rvalue::AddrOf(Place::local(q)));
+        fb.assign(b, dp, Rvalue::AddrOf(Place::local(d)));
+        let b = env.alloc(&mut fb, b, w, 16);
+        if copy {
+            fb.assign(b, q, Rvalue::Use(copy_local(w)));
+        }
+        store(&mut fb, b, deref(r, Ptr), copy_local(dp));
+        store(&mut fb, b, field(q, env.pair, 0), int(5, I64));
+        store(&mut fb, b, field(q, env.pair, 1), int(2, I64));
+        let pair = env.pair;
+        check(env.finish(fb, b, w, pair), false);
+    }
+}

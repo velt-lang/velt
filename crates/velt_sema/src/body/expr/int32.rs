@@ -7,8 +7,9 @@
 //! - a float operand goes through the runtime's ToInt32 (`velt_rt_math_to_int32`), which the
 //!   backends emit inline (one conversion on the common path);
 //! - a product inside an operand is rounded the way JS's double multiply rounds it past 2^53:
-//!   `(y * k) | 0` through the prelude's `__mulToInt32`, and an operand with a product among
-//!   other operations (`(a * b - 1) | 0`) is computed as doubles;
+//!   `(y * k) | 0` through the prelude's `__mulToInt32`, and other arithmetic in an operand
+//!   (`(a * b - 1) | 0`, `(x + 1) | 0`) is computed as doubles, which `velt_opt`'s `numrep`
+//!   turns back into integer operations where it proves them exact;
 //! - shift counts are taken modulo 32, and the result is an inferred `i64`: sign-extended, or
 //!   zero-extended for `>>>`.
 //!
@@ -279,7 +280,7 @@ impl FnCx<'_, '_> {
         }
         if let Some(p) = self.js_product(&h) {
             let (a, b) = self.split_binary(h);
-            if !self.has_js_product(&a) && !self.has_js_product(&b) {
+            if !self.has_js_arith(&a) && !self.has_js_arith(&b) {
                 return match self.helper_call("__mulToInt32", vec![a, b], i32_, p) {
                     Some(call) => call,
                     None => self.error_expr(p),
@@ -294,7 +295,7 @@ impl FnCx<'_, '_> {
             let x = self.js_f64(h);
             return self.f64_to_int32(x);
         }
-        if self.has_js_product(&h) {
+        if self.has_js_arith(&h) {
             let x = self.js_f64(h);
             return self.f64_to_int32(x);
         }
@@ -356,7 +357,7 @@ impl FnCx<'_, '_> {
                 sp,
             )
         };
-        if self.has_js_product(&a) {
+        if self.has_js_arith(&a) {
             let a = self.js_f64(*a);
             let (lhs, rhs) = if int_left {
                 (a, float_side)
@@ -394,32 +395,32 @@ impl FnCx<'_, '_> {
         h.ty == self.cx.ty.i64 && self.int_origin(h) != IntOrigin::Declared
     }
 
-    /// Does the inferred-integer arithmetic `h` contain a product (that may need rounding)?
-    fn has_js_product(&self, h: &hir::Expr) -> bool {
+    /// Is `h` inferred-integer arithmetic (a sum, difference or product, or a negation of one)
+    /// that JS computes with doubles, rounding results past 2^53?
+    fn has_js_arith(&self, h: &hir::Expr) -> bool {
         if !self.js_i64(h) {
             return false;
         }
         match &h.kind {
-            H::Binary { op: BinOp::Mul, .. } => true,
             H::Binary {
-                op: BinOp::Add | BinOp::Sub,
-                lhs,
-                rhs,
-            } => self.has_js_product(lhs) || self.has_js_product(rhs),
+                op: BinOp::Add | BinOp::Sub | BinOp::Mul,
+                ..
+            } => true,
             H::Unary {
                 op: UnOp::Neg,
                 expr,
-            } => self.has_js_product(expr),
+            } => self.has_js_arith(expr),
             _ => false,
         }
     }
 
     /// The JS value of the inferred-integer arithmetic `h` as a double: its sums, differences
     /// and products computed as doubles, the way JS rounds them (and never saturating), from
-    /// its other parts converted.
+    /// its other parts converted. `numrep` turns the operations it proves exact back into
+    /// integer ones (#561: `(x + 1) | 0` with `x = 2^53` adds as doubles).
     fn js_f64(&mut self, h: hir::Expr) -> hir::Expr {
         let (f64_, span) = (self.cx.ty.f64, h.span);
-        if !self.has_js_product(&h) {
+        if !self.has_js_arith(&h) {
             return self.mk(H::Cast(Box::new(h)), f64_, span);
         }
         let kind = match h.kind {
@@ -432,7 +433,7 @@ impl FnCx<'_, '_> {
                 lhs: Box::new(self.js_f64(*lhs)),
                 rhs: Box::new(self.js_f64(*rhs)),
             },
-            _ => panic!("ICE: js_f64 on a leaf with a product"),
+            _ => panic!("ICE: js_f64 on a leaf with arithmetic"),
         };
         self.mk(kind, f64_, span)
     }

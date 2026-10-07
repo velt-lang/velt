@@ -455,7 +455,9 @@ fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
     let start = all.len();
     let own = std::mem::take(&mut cx.adt_mut(d).fields);
     for f in own {
-        if all.iter().any(|g: &FieldInfo| g.name == f.name) {
+        // A subclass's `#x` is a field of its own next to the base class's (ES private names).
+        let private_name = f.name.starts_with(ast::PRIVATE_NAME_PREFIX);
+        if !private_name && all.iter().any(|g: &FieldInfo| g.name == f.name) {
             cx.err(
                 format!("field `{}` is already declared in a base class", f.name),
                 f.span,

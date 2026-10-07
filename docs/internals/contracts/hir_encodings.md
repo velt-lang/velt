@@ -423,9 +423,15 @@ Maintainer-owned, like hir.rs.
   `T | null`), in a class, an object type or an interface. `JSON.stringify` leaves it out while it
   is `null`, as JavaScript leaves out an absent property; a `T | null` field that is not optional
   is written as `null`.
-- `AdtDef::private_fields` (additive): some field, own or inherited, is `private`. Such a type has
-  no JSON form: sema rejects it for `JSON.parse`/`JSON.stringify`, and lowering never writes a
-  value of it dynamically (a subclass with private fields is written as its static class).
+- `AdtDef::private_fields` (additive): some field, own or inherited, is `private` (or `#x`).
+  `JSON.parse` cannot build such a type (sema rejects it; lowering's reader treats one as an
+  internal error).
+- `AdtDef::opaque` (additive): some private field, own or inherited, is declared by a std type
+  (a runtime handle or other internal state: `BigInt`, `RegExp`, sockets, database clients).
+  Such a type has no JSON form at all: sema rejects writing it, lowering's writer treats one as
+  an internal error, and a base class value whose dynamic class is opaque (or holds an opaque
+  value) is written as its static class (`json/dynamic.rs`). Other `private` fields are
+  written, as in Node.
 - Modifying through a pattern / `for...of` / by-reference `const` binding is allowed (JS):
   mutation inference counts it against the place the binding points into.
 - `==` / `!=` on non-primitive types are `Intrinsic::Same` (JS `===`: objects — class instances,
@@ -433,3 +439,19 @@ Maintainer-owned, like hir.rs.
   unions and tuples part by part; `!=` wraps it in `Not`). `Intrinsic::Eq` is structural
   (`__intrinsic_eq`, `deepEqual`, `assertEq`, `Map` keys). Structs are never Copy
   (`AdtDef::is_copy` is false for every struct and object type).
+
+## ES private names
+
+A class member declared `#x` keeps the `#` in its name: `FieldDef::name` is `"#x"` (and
+`FieldDef::private` is set), a method's name ends in `.#m`. No identifier starts with `#`, so
+`#x` and `x` are different members, and a class and its subclass may each have a field `#x`
+(two slots with the same name; sema picks the one the code's class declares). Readers act on
+the prefix: `console.log` (`glue/format_object.rs`), `JSON.stringify` (`json/write.rs`,
+`json/dynamic.rs`), `Object.keys` and spread leave `#` fields out. `#m` methods never get a
+vtable slot. `#x in o` reaches HIR as the class test of `o instanceof C` (`PatKind::InstanceOf`).
+`AdtDef::private_fields` covers `#` fields too: `JSON.parse` cannot build such a type. std's
+exported handle classes (`BigInt`, `RegExp`, `JsonValue`, `Request`, `Response`, `Server`,
+`Statement`, generators, `AbortSignal`, `AbortController`, `TaskScope`, `RedisPipeline`) keep
+their state in `#` fields. Handle types that are structs (sockets, files, database clients,
+`Mutex`) and classes internal to a std module keep `private` fields. `AdtDef::opaque` keeps
+every std type with private state, `private` or `#`, out of JSON.
