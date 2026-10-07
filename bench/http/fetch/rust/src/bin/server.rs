@@ -1,5 +1,6 @@
 // Server for the fetch client benchmark (bench/http/fetch/README.md): /small (13 bytes),
-// /big (100 MB), /json (a 1 MB JSON array of users). Usage: server [port] (default 18080).
+// /big (100 MB), /json (a 1 MB JSON array of users), /json-gzip (the same, gzip-compressed).
+// Usage: server [port] (default 18080).
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{server::conn::http1, service::service_fn, Request, Response};
@@ -23,6 +24,17 @@ fn json_body() -> Bytes {
     }).clone()
 }
 
+fn json_gzip() -> Bytes {
+    static B: OnceLock<Bytes> = OnceLock::new();
+    B.get_or_init(|| {
+        use std::io::Write;
+        let mut e = flate2::write::GzEncoder::new(vec![], flate2::Compression::default());
+        e.write_all(&json_body()).unwrap();
+        Bytes::from(e.finish().unwrap())
+    })
+    .clone()
+}
+
 fn big() -> Bytes {
     static B: OnceLock<Bytes> = OnceLock::new();
     B.get_or_init(|| Bytes::from(vec![b'x'; 100 * 1024 * 1024])).clone()
@@ -32,6 +44,12 @@ async fn handle(req: Request<hyper::body::Incoming>) -> Result<Response<Full<Byt
     let (body, ct) = match req.uri().path() {
         "/big" => (big(), "application/octet-stream"),
         "/json" => (json_body(), "application/json"),
+        "/json-gzip" => {
+            let r = Response::builder()
+                .header("content-type", "application/json")
+                .header("content-encoding", "gzip");
+            return Ok(r.body(Full::new(json_gzip())).unwrap());
+        }
         _ => (Bytes::from_static(b"Hello, World!"), "text/plain"),
     };
     Ok(Response::builder().header("content-type", ct).body(Full::new(body)).unwrap())
@@ -41,7 +59,7 @@ async fn handle(req: Request<hyper::body::Incoming>) -> Result<Response<Full<Byt
 async fn main() {
     let port: u16 = std::env::args().nth(1).map(|p| p.parse().unwrap()).unwrap_or(18080);
     let l = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
-    json_body(); big();
+    json_body(); json_gzip(); big();
     println!("listening {port}");
     loop {
         let (s, _) = l.accept().await.unwrap();

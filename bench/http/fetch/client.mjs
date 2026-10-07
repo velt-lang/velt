@@ -40,3 +40,14 @@ if (which === "all" || which === "json") {
   const s = (performance.now() - t) / 1000;
   console.log(`json: 20 x 1MB ${s.toFixed(3)}s ${(s * 1000 / 20).toFixed(1)} ms each (${n} users)`);
 }
+if (which === "all" || which === "gzip") {
+  const t = performance.now();
+  let n = 0;
+  for (let i = 0; i < 20; i++) {
+    const r = await fetch(`${base}/json-gzip`);
+    const users = await r.json();
+    n += users.length;
+  }
+  const s = (performance.now() - t) / 1000;
+  console.log(`gzip: 20 x 1MB ${s.toFixed(3)}s ${(s * 1000 / 20).toFixed(1)} ms each (${n} users)`);
+}

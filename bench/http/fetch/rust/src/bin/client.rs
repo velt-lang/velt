@@ -1,5 +1,5 @@
 // The reqwest baseline: the same four scenarios as client.vlt and client.mjs.
-// Usage: client <base url> [seq|conc|big|json|all].
+// Usage: client <base url> [seq|conc|big|json|gzip|all].
 use std::time::Instant;
 
 #[derive(serde::Deserialize)]
@@ -40,5 +40,12 @@ async fn main() {
         for _ in 0..20 { let v: Vec<User> = c.get(format!("{base}/json")).send().await.unwrap().json().await.unwrap(); n += v.len(); }
         let s = t.elapsed().as_secs_f64();
         println!("json: 20 x 1MB {:.3}s {:.1} ms each ({n} users)", s, s * 1000.0 / 20.0);
+    }
+    if which == "all" || which == "gzip" {
+        let t = Instant::now();
+        let mut n = 0;
+        for _ in 0..20 { let v: Vec<User> = c.get(format!("{base}/json-gzip")).send().await.unwrap().json().await.unwrap(); n += v.len(); }
+        let s = t.elapsed().as_secs_f64();
+        println!("gzip: 20 x 1MB {:.3}s {:.1} ms each ({n} users)", s, s * 1000.0 / 20.0);
     }
 }

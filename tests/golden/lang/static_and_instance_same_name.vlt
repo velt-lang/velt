@@ -38,8 +38,21 @@ class Sensor extends Reading {
   }
 }
 
+// A class below can still override the instance method, past the static in between; calls
+// through the base class reach the override.
+class Gauge extends Sensor {
+  override label(): string {
+    return `gauge (${Sensor.label()})`;
+  }
+}
+
+function describe(r: Reading): string {
+  return r.label();
+}
+
 function main() {
   const t = Temp.from("21.5");
   console.log(t.from(), t.describe(), Temp.describe());
   console.log(new Sensor().label(), Sensor.label());
+  console.log(new Gauge().label(), describe(new Gauge()), describe(new Sensor()));
 }

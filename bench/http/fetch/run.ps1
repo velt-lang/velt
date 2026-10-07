@@ -1,11 +1,11 @@
 # The fetch client benchmark on Windows (bench/http/fetch/README.md): Velt's global `fetch`
 # against Node's (undici) and Rust's reqwest, all calling the same local hyper server.
-# Usage: pwsh bench/http/fetch/run.ps1 [-Scenarios seq,conc,big,json] [-Runs 3]
+# Usage: pwsh bench/http/fetch/run.ps1 [-Scenarios seq,conc,big,json,gzip] [-Runs 3]
 #        [-Clients velt,node,reqwest] [-Velt <path to a release velt>]
 # Prints one line per run: the client's own result, then CPU seconds (user + system) and peak
 # working set, sampled while it runs. Only stops the server it started.
 param(
-  [string[]]$Scenarios = @("seq", "conc", "big", "json"),
+  [string[]]$Scenarios = @("seq", "conc", "big", "json", "gzip"),
   [int]$Runs = 3,
   [string[]]$Clients = @("velt", "node", "reqwest"),
   [string]$Velt = "velt"
