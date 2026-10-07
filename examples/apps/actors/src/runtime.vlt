@@ -25,7 +25,6 @@
 import { Value } from "velt:json";
 import { channel, Channel, ChannelClosed } from "velt:channel";
 import { Ticker } from "velt:timers";
-import { Deque } from "velt:collections/deque";
 import { fnv1a64 } from "velt:hash";
 
 // ---------------------------------------------------------------------------------------------
@@ -410,9 +409,8 @@ class Slot {
   key: string;
   act: Activation | null = null;
   etag: string | null = null;
-  // Calls waiting for their turn. (A `Deque`, not an array with a head index: an async call on
-  // a local copied out of an array element sends ownership inference into a loop — B5.)
-  queue: Deque<Envelope> = new Deque<Envelope>();
+  // Calls waiting for their turn, oldest first.
+  queue: Envelope[] = [];
   running: bool = false;
   lastActivity: f64 = 0.0;
 
@@ -507,7 +505,7 @@ function accept(shard: Shard, env: Envelope): Reply | null {
   if (shard.opts.maxQueued > 0 && slot.queue.length >= shard.opts.maxQueued) {
     return errorReply(429, "overloaded", `${id}: ${shard.opts.maxQueued} calls queued`);
   }
-  slot.queue.pushBack(env);
+  slot.queue.push(env);
   if (!slot.running) {
     slot.running = true;
     // Started, not awaited: the loop runs on the shard's task, interleaved with other actors'.
@@ -537,7 +535,7 @@ async function runTurns(shard: Shard, slot: Slot): Promise<void> {
       if (failure != null) {
         // Every queued caller fails; the next call tries again.
         while (true) {
-          const env = slot.queue.popFront();
+          const env = slot.queue.shift();
           if (env == null) {
             break;
           }
@@ -546,7 +544,7 @@ async function runTurns(shard: Shard, slot: Slot): Promise<void> {
         break;
       }
     }
-    const env = slot.queue.popFront();
+    const env = slot.queue.shift();
     if (env == null) {
       break;
     }
