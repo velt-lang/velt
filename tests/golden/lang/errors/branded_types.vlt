@@ -1,0 +1,12 @@
+// A plain primitive is not a branded type: brand a value with `as`, and only a value of the
+// brand's primitive can be branded.
+type UserId = string & { __brand: "UserId" };
+type OrderId = string & { __brand: "OrderId" };
+
+function main() {
+  const plain: UserId = "u-1";
+  const wrong = 5 as UserId;
+  const user = "u-2" as UserId;
+  const order: OrderId = user;
+  console.log(plain, wrong, order);
+}

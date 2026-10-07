@@ -1,0 +1,13 @@
+{ name: 'Ada', age: 36 }
+{"name":"Ada","age":36}
+Ada (36)
+Grace (45)
+{ id: 'e1', createdAt: 1700 }
+dark 12
+{"pos":{"x":1,"y":2},"label":"p"} 3
+2
+{ x: 3, meta: 'm' }
+{"name":"x","tags":["a","b"]}
+43 answer
+Ada, Grace
+Linus id 7

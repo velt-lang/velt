@@ -312,9 +312,7 @@ impl<'a> Walker<'a> {
             }
             ast::TypeExprKind::Tuple(tys)
             | ast::TypeExprKind::Union(tys)
-            | ast::TypeExprKind::Intersection(tys) => {
-                tys.iter().for_each(|t| self.ty(t))
-            }
+            | ast::TypeExprKind::Intersection(tys) => tys.iter().for_each(|t| self.ty(t)),
             ast::TypeExprKind::Function {
                 params,
                 ret,

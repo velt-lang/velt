@@ -52,7 +52,10 @@ impl Ctx<'_> {
             _ => None,
         };
         let parts: Vec<&ast::TypeExpr> = match brand {
-            Some(_) => parts.iter().filter(|p| !operands_has_base(p, &bases, parts)).collect(),
+            Some(_) => parts
+                .iter()
+                .filter(|p| !operands_has_base(p, &bases, parts))
+                .collect(),
             None => parts.iter().collect(),
         };
         for (&(ty, span), p) in operands.iter().zip(&parts) {
@@ -72,9 +75,7 @@ impl Ctx<'_> {
                             format!("no value has type `{}`: {why}", shown.join(" & ")),
                             t.span,
                         )
-                        .with_note(
-                            "a value of an intersection has every part's fields at once",
-                        ),
+                        .with_note("a value of an intersection has every part's fields at once"),
                     );
                     return self.ty.error;
                 }
@@ -93,7 +94,9 @@ impl Ctx<'_> {
             return self.intersectable(p, span, None);
         }
         if let Some(members) = self.union_members(t) {
-            return members.into_iter().all(|m| self.intersectable(m, span, None));
+            return members
+                .into_iter()
+                .all(|m| self.intersectable(m, span, None));
         }
         if self.is_object_type(t) {
             return true;
@@ -104,37 +107,37 @@ impl Ctx<'_> {
             TyKind::Adt(d, _) => match self.adt(d).map(|a| a.kind) {
                 Some(AdtKind::Class) => (
                     format!("`&` combines object types; `{shown}` is a class"),
-                    "use `Pick<C, …>` for its fields, or a field-only interface",
+                    format!("Velt classes are nominal: use `Pick<{shown}, …>` for its fields, or a field-only interface"),
                 ),
                 Some(AdtKind::Struct) => (
                     format!("`&` combines object types; `{shown}` is a struct"),
-                    "use `Pick<S, …>` for its fields, or an object type",
+                    format!("use `Pick<{shown}, …>` for its fields, or an object type"),
                 ),
                 _ => (
                     format!("`&` combines object types; found `{shown}`"),
-                    object,
+                    object.into(),
                 ),
             },
             TyKind::Dyn(..) => (
                 format!("`&` combines object types; `{shown}` is an interface with methods"),
-                "as a bound, `T extends A & B` combines interfaces",
+                "as a bound, `T extends A & B` combines interfaces".into(),
             ),
             TyKind::Array(_) | TyKind::Tuple(_) => (
                 format!("`&` combines object types; `{shown}` is an array"),
-                object,
+                object.into(),
             ),
             TyKind::FnPtr { .. } | TyKind::Closure(_) => (
                 "intersections of function types (overloads) are not supported".to_string(),
-                "declare one function type with the parameter types every call needs",
+                "declare one function type with the parameter types every call needs".into(),
             ),
             TyKind::Param(_) if self.checking_unused_aliases => return false,
             TyKind::Param(_) => (
                 format!("`&` needs concrete object types; `{shown}` is a type parameter"),
-                "intersections on type parameters are not supported yet (#350)",
+                "intersections on type parameters are not supported yet (#350); write the concrete object types".into(),
             ),
             _ => (
                 format!("`&` combines object types; `{shown}` is not one"),
-                object,
+                object.into(),
             ),
         };
         self.error(Diagnostic::error(msg, span).with_note(note));
@@ -282,7 +285,5 @@ fn written_name(t: &ast::TypeExpr) -> Option<&str> {
 
 /// Is `p` the operand at the one index of `bases` (the primitive of a branded type)?
 fn operands_has_base(p: &ast::TypeExpr, bases: &[usize], parts: &[ast::TypeExpr]) -> bool {
-    bases
-        .first()
-        .is_some_and(|&i| std::ptr::eq(p, &parts[i]))
+    bases.first().is_some_and(|&i| std::ptr::eq(p, &parts[i]))
 }

@@ -406,6 +406,7 @@ impl Ctx<'_> {
     /// A type without a name of its own (a union or an anonymous object type).
     fn is_structural(&self, t: TyId) -> bool {
         self.union_def(t).is_some()
+            || self.brand_base(t).is_some()
             || matches!(self.ty.kind(t), TyKind::Adt(d, _)
                 if self.adt(*d).is_some_and(|a| a.kind == crate::hir::AdtKind::Anon))
     }

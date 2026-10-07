@@ -26,6 +26,25 @@ impl FnCx<'_, '_> {
 
     /// Like [`coerce`](Self::coerce) without reporting; `Err` gives the expression back.
     pub fn try_coerce(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+        if self.cx.brand_base(h.ty).is_none() {
+            return self.try_coerce_value(h, exp);
+        }
+        // A branded value converts as itself (`UserId` to `UserId | null`), else like its
+        // primitive (a primitive never converts to a brand).
+        match self.try_coerce_value(h, exp) {
+            Ok(h) => Ok(h),
+            Err(h) => {
+                let brand = h.ty;
+                let h = self.unbrand(h);
+                self.try_coerce(h, exp).map_err(|mut h| {
+                    h.ty = brand;
+                    h
+                })
+            }
+        }
+    }
+
+    fn try_coerce_value(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
         let t = &self.cx.ty;
         if h.ty == exp
             || t.is_bottom(h.ty)
@@ -33,11 +52,6 @@ impl FnCx<'_, '_> {
             || (t.has_error(exp) && self.loosely_equal(exp, h.ty))
         {
             return Ok(h);
-        }
-        // A branded value converts like its primitive (a primitive never converts to a brand).
-        if self.cx.brand_base(h.ty).is_some() {
-            let h = self.unbrand(h);
-            return self.try_coerce(h, exp);
         }
         if self.widens_promise(h.ty, exp) {
             let span = h.span;
@@ -230,8 +244,12 @@ impl FnCx<'_, '_> {
         }
         if let Some(base) = self.cx.brand_base(expected) {
             let b = self.cx.display(base);
+            let from = match self.cx.brand_base(found.ty) {
+                Some(_) => format!("`{}`, another brand,", self.cx.display(found.ty)),
+                None => format!("a plain `{b}`"),
+            };
             d = d.with_note(format!(
-                "`{e}` is a branded `{b}`: a plain `{b}` does not convert to it; brand a value with `x as {e}`"
+                "`{e}` is a branded `{b}`: {from} does not convert to it; brand a value with `x as {e}`"
             ));
         }
         if let Some(note) = self.wider_object_note(expected, found) {
@@ -286,7 +304,7 @@ impl FnCx<'_, '_> {
             _ => "value".into(),
         };
         Some(format!(
-            "`{f}` has fields `{e}` does not ({}), and object types don't convert by dropping fields: copy the ones it needs with `{{ ...{src} }}` where a `{e}` is expected, or take a generic parameter `<T extends I>` with `I` a field-only interface",
+            "`{f}` has fields `{e}` does not ({}), and object types don't convert by dropping fields; copy the fields `{e}` has with `{{ ...{src} }}`, or make the function generic over a field-only interface (`<T extends I>(x: T)`), which takes either type",
             extra.join(", ")
         ))
     }

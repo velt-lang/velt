@@ -281,8 +281,10 @@ impl Ctx<'_> {
                 continue;
             }
             let shown = self.display(t);
-            let mut d =
-                Diagnostic::error(format!("`{shown}` has no field `{key}` ({})", in_op(op)), span);
+            let mut d = Diagnostic::error(
+                format!("`{shown}` has no field `{key}` ({})", in_op(op)),
+                span,
+            );
             if op == "Omit" {
                 d.severity = velt_common::Severity::Warning;
                 d = d.with_note("there is nothing to omit; TypeScript accepts this too");

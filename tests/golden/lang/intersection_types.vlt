@@ -1,0 +1,76 @@
+// Intersection types of object types (`A & B`, #384): an object type with every part's fields,
+// in TypeScript's order (the first part's fields, then the new ones of the next), so
+// `console.log` and `JSON.stringify` print what Node prints.
+
+type Named = { name: string };
+type Aged = { age: number };
+type Person = Named & Aged;
+
+// An interface `&` an object type.
+interface HasId {
+  id: string;
+}
+
+type Entity = HasId & { createdAt: number };
+
+// A field in both parts: optional in one and required in the other is required; nested
+// object types merge; `readonly` stays only when every part says so.
+type Settings = { theme?: string; size?: number } & { theme: string };
+type Nested = { pos: { x: number } } & { pos: { y: number }; label: string };
+type Mutable = { readonly count: number } & { count: number };
+
+// Intersections in generics: a generic alias, and a generic function returning one.
+type WithMeta<T> = T & { meta: string };
+type Pair<A, B> = A & B;
+
+function tagged<T>(value: T, tag: string): { value: T } & { tag: string } {
+  return { value, tag };
+}
+
+function describe(p: Person): string {
+  return `${p.name} (${p.age})`;
+}
+
+// Indexed access on an intersection.
+type PersonName = Person["name"];
+type EntityField = Entity["id" | "createdAt"];
+
+function main() {
+  const ada: Person = { name: "Ada", age: 36 };
+  console.log(ada);
+  console.log(JSON.stringify(ada));
+  console.log(describe(ada));
+
+  // Spread builds one from the parts.
+  const named: Named = { name: "Grace" };
+  const aged: Aged = { age: 45 };
+  const grace: Named & Aged = { ...named, ...aged };
+  console.log(describe(grace));
+
+  const e: Entity = { id: "e1", createdAt: 1700 };
+  console.log(e);
+
+  const s: Settings = { theme: "dark" };
+  console.log(s.theme, s.size ?? 12);
+
+  const n: Nested = { pos: { x: 1, y: 2 }, label: "p" };
+  console.log(JSON.stringify(n), n.pos.x + n.pos.y);
+
+  const m: Mutable = { count: 1 };
+  m.count += 1;
+  console.log(m.count);
+
+  const w: WithMeta<{ x: number }> = { x: 3, meta: "m" };
+  console.log(w);
+  const pair: Pair<Named, { tags: string[] }> = { name: "x", tags: ["a", "b"] };
+  console.log(JSON.stringify(pair));
+  const t = tagged(42, "answer");
+  console.log(t.value + 1, t.tag);
+  const people: (Named & Aged)[] = [ada, grace];
+  console.log(people.map((p) => p.name).join(", "));
+
+  const pn: PersonName = "Linus";
+  const f1: EntityField = "id";
+  const f2: EntityField = 7;
+  console.log(pn, f1, f2);
+}

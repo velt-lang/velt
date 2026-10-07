@@ -137,6 +137,7 @@ impl FnCx<'_, '_> {
                     }
                     _ => self.expr(operand, num_exp, Want::Borrow),
                 };
+                let inner = self.unbrand(inner);
                 let t = inner.ty;
                 let ok = self.cx.ty.is_bottom(t)
                     || self.cx.ty.is_float(t)
@@ -148,6 +149,7 @@ impl FnCx<'_, '_> {
             }
             ast::UnaryOp::Plus => {
                 let mut inner = self.expr(operand, num_exp, Want::Borrow);
+                inner = self.unbrand(inner);
                 if !self.cx.ty.is_numeric(inner.ty) && !self.cx.ty.is_bottom(inner.ty) {
                     return self.unary_error("+", inner.ty, span);
                 }
@@ -158,6 +160,7 @@ impl FnCx<'_, '_> {
             ast::UnaryOp::BitNot => {
                 let int_exp = exp.filter(|t| self.cx.ty.is_int(*t));
                 let inner = self.expr(operand, int_exp, Want::Borrow);
+                let inner = self.unbrand(inner);
                 // `~x` on a number is JS's: ToInt32, then a 32-bit not (`int32.rs`).
                 if self.js_bitnot_applies(&inner, int_exp) {
                     return self.js_bitnot(inner, span);

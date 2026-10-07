@@ -1,0 +1,33 @@
+// The `style` attribute's object form in std/jsx, rendered with React's rules (checked against
+// react-dom/server 19): camelCase names in kebab-case, `px` after numbers except 0 and unitless
+// properties, vendor prefixes (`WebkitX`, `msX`), custom properties as written, values trimmed,
+// empty strings left out, and the string form unchanged.
+
+import { renderToStringSync } from "velt:jsx";
+
+function main() {
+  const accent = "red";
+  console.log(renderToStringSync(<div style={{ fontSize: 14, color: "teal", lineHeight: 1.5 }} />));
+  console.log(
+    renderToStringSync(
+      <p
+        style={{
+          marginTop: 0,
+          padding: " 4px ",
+          width: "",
+          WebkitTransition: "none",
+          msTransition: "x",
+          "--accent": accent,
+          zIndex: 3,
+          opacity: 0.5,
+          flexGrow: 2,
+          borderWidth: 1.5,
+        }}
+      >
+        styled
+      </p>,
+    ),
+  );
+  console.log(renderToStringSync(<span style="color: blue">plain</span>));
+  console.log(renderToStringSync(<b style={{ content: '"<x>"' }}>escaped</b>));
+}
