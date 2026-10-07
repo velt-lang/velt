@@ -1,0 +1,54 @@
+// Mutable value objects: per-row statistics accumulated in place by methods, merged into a
+// new object right after it is created, and read after a branch (one object under two names
+// in the optimizer, #558).
+class Stats {
+  n: number;
+  sum: number;
+  sq: number;
+  constructor() {
+    this.n = 0;
+    this.sum = 0;
+    this.sq = 0;
+  }
+  add(x: number) {
+    this.n += 1;
+    this.sum += x;
+    this.sq += x * x;
+  }
+  merge(o: Stats) {
+    this.n += o.n;
+    this.sum += o.sum;
+    this.sq += o.sq;
+  }
+  mean(): number {
+    return this.sum / this.n;
+  }
+}
+
+function summarize(rows: number): number {
+  let out = 0.0;
+  for (let r = 0; r < rows; r++) {
+    const even = new Stats();
+    const odd = new Stats();
+    for (let k = 0; k < 16; k++) {
+      const x = (r * 31 + k * 7) % 101;
+      if (k % 2 == 0) {
+        even.add(x);
+      } else {
+        odd.add(x);
+      }
+    }
+    const all = new Stats();
+    all.merge(even);
+    all.merge(odd);
+    if (all.n > 0) {
+      out += all.mean() + all.sq / all.n;
+    }
+    out -= even.mean();
+  }
+  return out;
+}
+
+function main() {
+  console.log(summarize(2000000).toFixed(3));
+}
