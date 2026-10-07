@@ -23,20 +23,24 @@
 //! only through those (counted objects are reached through an offset pointer anyway).
 //!
 //! **Value semantics.** After the rewrite each local of a web carries its own copy of the
-//! object (`w_obj`), and `a = b` copies it. That equals the reference semantics as long as a
-//! write through one local is never observed through another local holding the same object.
-//! `flow` checks exactly that: at every write through `w`, every other local that may hold
-//! `w`'s object (a forward may-alias analysis over the copies) is dead for reads through it
-//! (a backward liveness in which a copy `a = b` keeps `b` alive while `a` is). A borrowed
-//! `this = p` of an inlined method that only reads, `p = new …` in a loop whose old value is
-//! read before it is freed, and constructors writing a fresh object all pass; a method that
-//! writes `this` while the caller still reads `p` afterwards does not (yet).
+//! object (`w_obj`), and `a = b` copies it. That equals the reference semantics as long as
+//! every write through one local is seen by the other locals that still read the same object.
+//! `flow` checks that, and says where to copy: at every write through `w`, each other local
+//! that may hold `w`'s object (a forward may-alias analysis over the copies) and is still read
+//! through (a backward liveness in which a copy `a = b` keeps `b` alive while `a` is) must hold
+//! it on every path (a forward must-alias analysis); the rewrite then copies `w_obj` to it
+//! right after the write. One object under two names (the constructor's temporary and the
+//! variable, a variable and an inlined method's `this`) is a must-alias, so a method writing
+//! `this` while the caller reads the variable afterwards is replaced. A local that holds the
+//! object only on some paths (`q = cond ? a : b`, then a write through `a` and a read of `q`)
+//! keeps the web on the heap: no copy is right on every path.
 //!
 //! Statement order, and with it the order of every call and drop, is unchanged; only the
 //! allocator calls disappear, in pairs (an object of a replaced web is freed, if at all, only
 //! through the web). Debug builds do not run `velt_opt`, so the checking allocator still sees
 //! every object there.
 
+mod aliases;
 mod flow;
 mod rewrite;
 mod webs;
@@ -77,11 +81,11 @@ pub(crate) fn run(aggs: &[AggLayout], allocator: Option<Allocator>, func: &mut F
     let Some(mut webs) = webs::scan(aggs, allocator, func) else {
         return false;
     };
-    flow::check(allocator, func, &mut webs);
+    let updates = flow::check(allocator, func, &mut webs);
     if !webs.any() {
         return false;
     }
-    rewrite::apply(aggs, allocator, func, &webs);
+    rewrite::apply(aggs, allocator, func, &webs, &updates);
     true
 }
 

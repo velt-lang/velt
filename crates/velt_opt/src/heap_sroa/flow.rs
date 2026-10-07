@@ -1,18 +1,23 @@
 //! The value-semantics check of `heap_sroa` (module docs there): a write through a web local
-//! must not be observable through another local that may hold the same object.
+//! must be seen by every other local that may still read the same object.
 //!
-//! Two dataflow analyses over the locals of the remaining webs, at the granularity of
+//! Three dataflow analyses over the locals of the remaining webs, at the granularity of
 //! *events* (what a statement does to them, in execution order):
-//! - **reads** (backward): a local is *live* where its current object may still be read
-//!   through it, directly or through a local it is copied to later;
-//! - **aliases** (forward, may): which other locals may hold the same object, created by
-//!   copies and cleared by any other assignment.
+//! - **reads** (backward): a local is *live* where its current object may still be read or
+//!   written through it (a write keeps the other fields), directly or through a local it is
+//!   copied to later;
+//! - **may-aliases** and **must-aliases** (forward, `aliases`): which other locals may hold the
+//!   same object on some path, and which hold it on every path.
 //!
-//! At every write through `w`, every alias of `w` must be dead; otherwise `w`'s web stays on
-//! the heap.
+//! At every write through `w`, every live alias of `w` must be a must-alias: the rewrite then
+//! copies `w`'s object to those after the write ([`Update`]), so they see it as they would
+//! through the heap. A live alias that holds the object only on some paths cannot be updated
+//! (on the other paths it holds another object), so `w`'s web stays on the heap; so does a web
+//! written by a call's result with a live alias (the copy would have to go after the call).
 
 use velt_vir::vir::{Callee, Function, Local, Operand, Place, Proj, Rvalue, Stmt, Terminator};
 
+use super::aliases::{self, bits, Aliases};
 use super::webs::Webs;
 use super::Allocator;
 use crate::visit::{rvalue_operands, stmt_operands, successors, term_operands};
@@ -23,7 +28,7 @@ const BATCH: usize = 64;
 
 /// What a statement does to one web local (by its dense index).
 #[derive(Clone, Copy)]
-enum Event {
+pub(super) enum Event {
     /// Reads the object (a field, or a pointer stored in it).
     Read(usize),
     /// Writes the object.
@@ -49,13 +54,32 @@ impl Event {
     }
 }
 
-/// Disqualify the webs whose value semantics would differ from reference semantics.
-pub(super) fn check(allocator: Allocator, func: &Function, webs: &mut Webs) {
+/// After statement `stmt` of block `block` (a write through `src`), `dst` gets a copy of
+/// `src`'s object: both hold the same object there, and `dst` is read later.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Update {
+    pub block: usize,
+    pub stmt: usize,
+    pub dst: Local,
+    pub src: Local,
+}
+
+/// The events of one block, with the statement each comes from (`stmts.len()` for the
+/// terminator).
+#[derive(Default)]
+struct BlockEvents {
+    events: Vec<Event>,
+    at: Vec<usize>,
+}
+
+/// Disqualify the webs whose value semantics would differ from reference semantics, and
+/// return the updates that keep the others equal to it, in program order.
+pub(super) fn check(allocator: Allocator, func: &Function, webs: &mut Webs) -> Vec<Update> {
     let index = Index::new(func, webs);
     if index.locals.is_empty() {
-        return;
+        return Vec::new();
     }
-    let events: Vec<Vec<Event>> = func
+    let blocks: Vec<BlockEvents> = func
         .blocks
         .iter()
         .map(|b| index.block_events(allocator, &b.stmts, &b.term))
@@ -65,23 +89,49 @@ pub(super) fn check(allocator: Allocator, func: &Function, webs: &mut Webs) {
         .iter()
         .map(|b| successors(&b.term).iter().map(|s| s.0 as usize).collect())
         .collect();
+    let mut updates = Vec::new();
     for batch in batches(&index, webs) {
         let mut slot = vec![None; index.locals.len()];
         for (k, &i) in batch.iter().enumerate() {
             slot[i] = Some(k);
         }
-        let events: Vec<Vec<Event>> = events
+        let (events, at): (Vec<Vec<Event>>, Vec<Vec<usize>>) = blocks
             .iter()
-            .map(|evs| evs.iter().filter_map(|ev| ev.renumber(&slot)).collect())
-            .collect();
+            .map(|b| {
+                let renumbered = b.events.iter().zip(&b.at);
+                renumbered
+                    .filter_map(|(ev, &at)| Some((ev.renumber(&slot)?, at)))
+                    .unzip()
+            })
+            .unzip();
         let live_out = liveness(&events, &succs);
-        let alias_in = aliases(&events, &succs, batch.len());
+        let may_in = aliases::may(&events, &succs, batch.len());
+        let must_in = aliases::must(&events, &succs, batch.len());
+        let mut found = Vec::new();
         for (b, evs) in events.iter().enumerate() {
-            for k in conflicts(evs, live_out[b], &alias_in[b]) {
+            let rows = Rows {
+                may: may_in[b].clone(),
+                must: must_in[b].clone(),
+            };
+            let term = func.blocks[b].stmts.len();
+            let mut add = |at: usize, dst: usize, src: usize| {
+                let (dst, src) = (index.locals[batch[dst]], index.locals[batch[src]]);
+                found.push(Update {
+                    block: b,
+                    stmt: at,
+                    dst,
+                    src,
+                });
+            };
+            for k in conflicts(evs, &at[b], term, live_out[b], rows, &mut add) {
                 webs.disqualify(index.locals[batch[k]]);
             }
         }
+        updates.extend(found);
     }
+    updates.retain(|u| webs.obj(u.src).is_some());
+    updates.sort_by_key(|u| (u.block, u.stmt));
+    updates
 }
 
 /// The dense indices of the webs' locals, packed web by web into batches of at most
@@ -141,12 +191,14 @@ impl Index {
         }
     }
 
-    fn block_events(&self, allocator: Allocator, stmts: &[Stmt], term: &Terminator) -> Vec<Event> {
-        let mut out = Vec::new();
-        for s in stmts {
-            self.stmt_events(s, &mut out);
+    fn block_events(&self, allocator: Allocator, stmts: &[Stmt], term: &Terminator) -> BlockEvents {
+        let mut out = BlockEvents::default();
+        for (i, s) in stmts.iter().enumerate() {
+            self.stmt_events(s, &mut out.events);
+            out.at.resize(out.events.len(), i);
         }
-        self.term_events(allocator, term, &mut out);
+        self.term_events(allocator, term, &mut out.events);
+        out.at.resize(out.events.len(), stmts.len());
         out
     }
 
@@ -220,11 +272,13 @@ impl Index {
     }
 }
 
-/// Backward transfer of one event over the live set (bit `i` = batch local `i`).
+/// Backward transfer of one event over the live set (bit `i` = batch local `i`). A write
+/// reads the rest of the object: the rewrite keeps the other fields of `w.obj` and may copy
+/// all of it to the aliases, so `w.obj` must be current, not left stale by an earlier write
+/// through an alias that skipped `w` because `w` was dead.
 fn live_step(live: &mut u64, ev: Event) {
     match ev {
-        Event::Read(i) => *live |= 1 << i,
-        Event::Write(_) => {}
+        Event::Read(i) | Event::Write(i) => *live |= 1 << i,
         Event::Kill(i) => *live &= !(1 << i),
         Event::Copy { dst, src } if dst != src => {
             let alive = *live & (1 << dst) != 0;
@@ -258,91 +312,44 @@ fn liveness(events: &[Vec<Event>], succs: &[Vec<usize>]) -> Vec<u64> {
     live_out
 }
 
-/// May-alias rows: bit `j` of `rows[i]` says local `j` may hold `i`'s object.
-#[derive(Clone, PartialEq)]
-struct Aliases(Vec<u64>);
-
-impl Aliases {
-    fn forget(&mut self, i: usize) {
-        let row = std::mem::take(&mut self.0[i]);
-        for j in bits(row) {
-            self.0[j] &= !(1 << i);
-        }
-    }
-
-    fn step(&mut self, ev: Event) {
-        match ev {
-            Event::Kill(i) => self.forget(i),
-            Event::Copy { dst, src } if dst != src => {
-                self.forget(dst);
-                let row = self.0[src];
-                for j in bits(row) {
-                    self.0[j] |= 1 << dst;
-                }
-                self.0[src] |= 1 << dst;
-                self.0[dst] = row | (1 << src);
-            }
-            _ => {}
-        }
-    }
-
-    fn union_with(&mut self, other: &Aliases) -> bool {
-        let mut changed = false;
-        for (a, b) in self.0.iter_mut().zip(&other.0) {
-            changed |= *b & !*a != 0;
-            *a |= b;
-        }
-        changed
-    }
+/// The may- and must-alias rows at one point.
+struct Rows {
+    may: Aliases,
+    must: Aliases,
 }
 
-/// The indices of the set bits.
-fn bits(mut set: u64) -> impl Iterator<Item = usize> {
-    std::iter::from_fn(move || {
-        (set != 0).then(|| {
-            let i = set.trailing_zeros() as usize;
-            set &= set - 1;
-            i
-        })
-    })
-}
-
-/// Alias rows at the start of every block.
-fn aliases(events: &[Vec<Event>], succs: &[Vec<usize>], n: usize) -> Vec<Aliases> {
-    let mut alias_in = vec![Aliases(vec![0; n]); events.len()];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for (b, evs) in events.iter().enumerate() {
-            let mut rows = alias_in[b].clone();
-            for &ev in evs {
-                rows.step(ev);
-            }
-            for &s in &succs[b] {
-                changed |= alias_in[s].union_with(&rows);
-            }
-        }
-    }
-    alias_in
-}
-
-/// Locals of one block written while an alias is live.
-fn conflicts(events: &[Event], live_out: u64, alias_in: &Aliases) -> Vec<usize> {
+/// Locals of one block written while an alias that cannot be updated is live; the updates of
+/// the others go to `update(stmt, dst, src)`. `at[k]` is the statement of event `k`, `term`
+/// the terminator's position.
+fn conflicts(
+    events: &[Event],
+    at: &[usize],
+    term: usize,
+    live_out: u64,
+    mut rows: Rows,
+    update: &mut impl FnMut(usize, usize, usize),
+) -> Vec<usize> {
     let mut live_after = vec![0u64; events.len()];
     let mut live = live_out;
     for (k, &ev) in events.iter().enumerate().rev() {
         live_after[k] = live;
         live_step(&mut live, ev);
     }
-    let mut rows = alias_in.clone();
     let mut out = Vec::new();
     for (k, &ev) in events.iter().enumerate() {
         if let Event::Write(w) = ev {
-            if rows.0[w] & live_after[k] & !(1 << w) != 0 {
+            let seen = rows.may.0[w] & live_after[k] & !(1 << w);
+            let updatable = if at[k] == term { 0 } else { rows.must.0[w] };
+            if seen & !updatable != 0 {
                 out.push(w);
+            } else {
+                for j in bits(seen) {
+                    update(at[k], j, w);
+                }
             }
         }
-        rows.step(ev);
+        rows.may.step(ev);
+        rows.must.step(ev);
     }
     out
 }
