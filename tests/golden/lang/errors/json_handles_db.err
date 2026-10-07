@@ -7,4 +7,4 @@ json_handles_db.vlt:15:13: error: cannot convert to or from JSON: `CopyWriter` h
 json_handles_db.vlt:16:14: error: cannot convert to or from JSON: `Statement` has a private field `#handle`, which decoding cannot set
 json_handles_db.vlt:17:14: error: cannot convert to or from JSON: `RedisClient` has a private field `handle`, which decoding cannot set
 json_handles_db.vlt:18:14: error: cannot convert to or from JSON: `RedisSubscriber` has a private field `handle`, which decoding cannot set
-json_handles_db.vlt:19:14: error: cannot convert to or from JSON: `RedisPipeline` has a private field `handle`, which decoding cannot set
+json_handles_db.vlt:19:14: error: cannot convert to or from JSON: `RedisPipeline` has a private field `#handle`, which decoding cannot set
