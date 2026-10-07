@@ -145,7 +145,9 @@ impl FnCx<'_, '_> {
             I::Eq | I::Same => (vec![(t, B), (t, B)], bool_, true),
             I::Clone | I::Share => (vec![(t, B)], t, true),
             I::Transfer => (vec![(t, O)], t, true),
-            I::NeedsTransfer | I::NeedsDrop | I::MayAlias | I::FnCapturesNothing => (vec![(t, B)], bool_, true),
+            I::NeedsTransfer | I::NeedsDrop | I::MayAlias | I::FnCapturesNothing => {
+                (vec![(t, B)], bool_, true)
+            }
             I::ToString => (vec![(t, B)], str_, true),
             I::SharedNew => {
                 let s = ty.intern(TyKind::Shared(t));
