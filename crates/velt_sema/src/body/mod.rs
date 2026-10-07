@@ -198,6 +198,12 @@ pub(crate) struct Frame {
     /// itself, before any other `super(...)` (`stmt` sets it; the call takes it).
     pub super_ok: bool,
     pub super_called: bool,
+    /// The `super(...);` statements of a derived constructor that may call the base
+    /// constructor: root-level ones, and those in `if` / `else` branches that each call it
+    /// once (`ctor::super_sites`).
+    pub super_sites: Vec<Span>,
+    /// `super(...);` statements in branches already reported as one error (`ctor`).
+    pub super_silent: Vec<Span>,
     /// A derived class's constructor before its `super(...)` call: `this` and `super.x` are
     /// errors, as is `return` (`driver` sets it; the call clears it).
     pub before_super: bool,
@@ -244,6 +250,8 @@ impl Frame {
             uncaught: vec![],
             super_ok: false,
             super_called: false,
+            super_sites: vec![],
+            super_silent: vec![],
             before_super: false,
             stmt_depth: 0,
             field_tokens: vec![],

@@ -51,6 +51,9 @@ impl<'a> Parser<'a> {
         };
         self.parse_members(|p| {
             let member = p.parse_member()?;
+            if !is_class {
+                p.reject_private_name(member_name(&member));
+            }
             p.add_type_member(&mut decl, member);
             Ok(())
         })?;
@@ -103,6 +106,14 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// TS18016: an ES private name outside a class body (a struct, an interface, an `extend`
+    /// block, an object literal).
+    pub(super) fn reject_private_name(&mut self, name: &Ident) {
+        if name.is_private_name() {
+            self.error("private names are only allowed in class bodies", name.span);
+        }
+    }
+
     /// `A, B<T>, C` (no unions).
     fn parse_type_list(&mut self) -> PResult<Vec<TypeExpr>> {
         let mut out = vec![self.parse_type_no_union()?];
@@ -146,6 +157,7 @@ impl<'a> Parser<'a> {
         self.parse_members(|p| {
             let span = match p.parse_member()? {
                 Member::Method(m) => {
+                    p.reject_private_name(&m.decl.sig.name);
                     methods.push(m);
                     return Ok(());
                 }
@@ -205,5 +217,14 @@ impl<'a> Parser<'a> {
             discriminant,
             span,
         })
+    }
+}
+
+/// The name a member declares (a constructor's is `constructor`).
+fn member_name(m: &Member) -> &Ident {
+    match m {
+        Member::Field(f) => &f.name,
+        Member::Method(m) => &m.decl.sig.name,
+        Member::Constructor(c, _, _) => &c.sig.name,
     }
 }

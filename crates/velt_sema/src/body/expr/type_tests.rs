@@ -104,6 +104,68 @@ impl FnCx<'_, '_> {
         self.negated(test.expr, negate, span)
     }
 
+    /// `#x in o` (an ES brand check): `o instanceof C`, `C` the class whose body declares `#x`
+    /// (and this code is in). In JavaScript the two differ only through prototype changes and
+    /// constructors returning another object, which Velt has neither of.
+    pub(crate) fn private_in(&mut self, lhs: &ast::Expr, rhs: &ast::Expr, span: Span) -> hir::Expr {
+        let class = self.brand_class(lhs, true);
+        let s = self.expr(rhs, None, Want::Borrow);
+        let Some(class) = class.filter(|_| !self.cx.ty.is_bottom(s.ty)) else {
+            return self.error_expr(span);
+        };
+        if !self.testable_instance(s.ty) {
+            let tn = self.cx.display(s.ty);
+            self.cx.err(
+                format!("the right operand of `in` must be an object: a class instance, an interface value or a union with class members, found `{tn}`"),
+                rhs.span,
+            );
+            return self.error_expr(span);
+        }
+        self.class_test(s, class, span)
+            .unwrap_or_else(|| self.error_expr(span))
+    }
+
+    /// The class `#x in …` tests for: the class whose body this is, which must declare `#x`
+    /// (a field, method or accessor). `report`: errors for anything else.
+    pub(crate) fn brand_class(&mut self, lhs: &ast::Expr, report: bool) -> Option<DefId> {
+        let ast::ExprKind::Ident(id) = &lhs.kind else {
+            return None;
+        };
+        let Some(owner) = self.owner.filter(|_| id.is_private_name()) else {
+            if report {
+                self.cx
+                    .err("private names are only allowed in class bodies", id.span);
+            }
+            return None;
+        };
+        let a = self.cx.adt(owner)?;
+        let declared = a
+            .fields
+            .iter()
+            .any(|f| f.name == id.name && f.private_to == Some(owner))
+            || a.methods.contains_key(&id.name)
+            || a.methods
+                .contains_key(&crate::defs::member_key(&id.name, true));
+        if !declared && report {
+            let cn = a.name.clone();
+            self.cx.err(
+                format!("property `{}` does not exist on class `{cn}`", id.name),
+                id.span,
+            );
+        }
+        declared.then_some(owner)
+    }
+
+    /// Can a value of type `t` be tested with `instanceof` (a class, an interface value or a
+    /// union with class members)?
+    fn testable_instance(&mut self, t: TyId) -> bool {
+        let inner = self.cx.ty.opt_payload(t).unwrap_or(t);
+        let candidates = self.cx.union_members(inner).unwrap_or_else(|| vec![inner]);
+        candidates.iter().any(|t| {
+            self.cx.class_of(*t).is_some() || matches!(self.cx.ty.kind(*t), TyKind::Dyn(..))
+        })
+    }
+
     /// `e instanceof C`.
     pub(crate) fn instanceof(
         &mut self,

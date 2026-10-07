@@ -1,0 +1,203 @@
+// std/fetch/response: the WHATWG `Response` (docs/std/fetch.md): what `fetch` resolves to, or a
+// response built with `new Response(body, init)` / `Response.json(data)`.
+//
+// A fetched response holds a runtime response (`VeltFetchResp`, a registry key) whose head has
+// arrived; its body is received by the first `text()`, `json()`, `bytes()` or `arrayBuffer()`
+// (a second read throws, as in JS). The handle is released when the response is dropped,
+// which closes the connection of a body nobody read. The status, URL and headers are copied
+// out when the response is adopted, so they stay readable after the body was read.
+
+import { IoError, IoResult, unwrapIo } from "velt:io";
+import { AbortError, AbortSignal } from "velt:task";
+import { utf8DecodeLossy, utf8Encode } from "velt:encoding";
+import { BodyInit, bodyParts } from "velt:fetch/body";
+import { Headers, HeadersInit } from "velt:fetch/headers";
+
+declare function velt_rt_http_fetch_resp_status(r: u64): u32;
+declare function velt_rt_http_fetch_resp_status_text(r: u64): string;
+declare function velt_rt_http_fetch_resp_url(r: u64): string;
+declare function velt_rt_http_fetch_resp_redirected(r: u64): bool;
+declare function velt_rt_http_fetch_resp_headers(r: u64): string[];
+declare async function velt_rt_http_fetch_resp_text(r: u64): Promise<IoResult<string>>;
+declare async function velt_rt_http_fetch_resp_bytes(r: u64): Promise<IoResult<u8[]>>;
+declare function velt_rt_http_fetch_resp_drop(r: u64);
+
+// `new Response(body, init)` and `Response.json(data, init)`: default status 200.
+export struct ResponseInit {
+  status?: i64;
+  statusText?: string;
+  headers?: HeadersInit;
+}
+
+// Where a response's body is (`Response.source`).
+const NONE: i64 = 0;
+const TEXT: i64 = 1;
+const BYTES: i64 = 2;
+const RUNTIME: i64 = 3;
+
+export class Response {
+  headers: Headers = new Headers();
+  #code: i64 = 200;
+  #reason: string = "";
+  #where: string = "";
+  #hops: bool = false;
+  #kind: string = "default";
+  #used: bool = false;
+  #source: i64 = 0;
+  #str: string = "";
+  #data: u8[] = [];
+  #handle: u64 = 0;
+  #signal: AbortSignal | null = null;
+
+  constructor(body: BodyInit | null = null, init: ResponseInit = {}) {
+    const parts = bodyParts(body);
+    this.#source = parts.kind as i64;
+    this.#str = parts.text;
+    this.#data = parts.bytes;
+    this.#code = init.status ?? 200;
+    this.#reason = init.statusText ?? "";
+    this.headers = new Headers(init.headers);
+    const ct = parts.contentType;
+    if (ct != null && !this.headers.has("content-type")) {
+      this.headers.set("content-type", ct);
+    }
+  }
+
+  // The response behind runtime key `handle`, whose body aborts with `signal` (std only).
+  private static adopt(handle: u64, signal: AbortSignal | null): Response {
+    const r = new Response();
+    r.#code = velt_rt_http_fetch_resp_status(handle) as i64;
+    r.#reason = velt_rt_http_fetch_resp_status_text(handle);
+    r.#where = velt_rt_http_fetch_resp_url(handle);
+    r.#hops = velt_rt_http_fetch_resp_redirected(handle);
+    r.headers = Headers.adopt(velt_rt_http_fetch_resp_headers(handle));
+    r.#kind = "basic";
+    r.#source = RUNTIME;
+    r.#handle = handle;
+    r.#signal = signal;
+    return r;
+  }
+
+  // A response whose body is `JSON.stringify(data)`, with `content-type: application/json`.
+  static json<T>(data: T, init: ResponseInit = {}): Response {
+    // The caller's own `content-type` wins; the string body's default does not.
+    const own = init.headers;
+    const typed = own != null && new Headers(own).has("content-type");
+    const r = new Response(JSON.stringify(data), init);
+    if (!typed) {
+      r.headers.set("content-type", "application/json");
+    }
+    return r;
+  }
+
+  // A network error: status 0, type "error".
+  static error(): Response {
+    const r = new Response(null, { status: 0 });
+    r.#kind = "error";
+    return r;
+  }
+
+  // A redirect to `url` (`status` 301, 302, 303, 307 or 308).
+  static redirect(url: string, status: i64 = 302): Response {
+    const r = new Response(null, { status: status });
+    r.headers.set("location", url);
+    return r;
+  }
+
+  get status(): i64 {
+    return this.#code;
+  }
+
+  // Whether the status is 200–299.
+  get ok(): bool {
+    return this.#code >= 200 && this.#code <= 299;
+  }
+
+  // The server's status message (`OK`, `Not Found`), "" if it sent none.
+  get statusText(): string {
+    return this.#reason;
+  }
+
+  // The URL the response came from, after redirects ("" for a constructed response).
+  get url(): string {
+    return this.#where;
+  }
+
+  // Whether `fetch` followed a redirect to get it.
+  get redirected(): bool {
+    return this.#hops;
+  }
+
+  // "basic" (fetched), "default" (constructed) or "error" (`Response.error()`).
+  get type(): string {
+    return this.#kind;
+  }
+
+  // Whether the body has been read.
+  get bodyUsed(): bool {
+    return this.#used;
+  }
+
+  // The body as text (invalid UTF-8 becomes U+FFFD, as in JS).
+  async text(): Promise<string, IoError | AbortError> {
+    this.claim();
+    if (this.#source == RUNTIME) {
+      const r = await velt_rt_http_fetch_resp_text(this.#handle);
+      this.check(r.code);
+      return unwrapIo(r);
+    }
+    if (this.#source == BYTES) {
+      return utf8DecodeLossy(this.#data);
+    }
+    return this.#str;
+  }
+
+  // `JSON.parse<T>` of the body: the JSON is checked against `T` (`JsonError` if it doesn't
+  // match). Velt has no `any`: name the type, `await res.json<User[]>()`, or annotate the
+  // variable that receives it.
+  async json<T>(): Promise<T, IoError | AbortError | JsonError> {
+    return JSON.parse<T>(await this.text());
+  }
+
+  async bytes(): Promise<u8[], IoError | AbortError> {
+    this.claim();
+    if (this.#source == RUNTIME) {
+      const r = await velt_rt_http_fetch_resp_bytes(this.#handle);
+      this.check(r.code);
+      return unwrapIo(r);
+    }
+    if (this.#source == TEXT) {
+      return utf8Encode(this.#str);
+    }
+    return this.#data;
+  }
+
+  // The body's bytes (JS returns an `ArrayBuffer`; Velt's byte buffer is `u8[]`).
+  async arrayBuffer(): Promise<u8[], IoError | AbortError> {
+    return await this.bytes();
+  }
+
+  // Marks the body read; throws if it was already.
+  private claim() throws IoError {
+    if (this.#used) {
+      throw new IoError("EINVAL", "Body is unusable: Body has already been read");
+    }
+    this.#used = true;
+  }
+
+  // After a failed body read: the signal's `AbortError` if it was aborted.
+  private check(code: i32) throws AbortError {
+    const s = this.#signal;
+    if (code != 0 && s != null) {
+      s.throwIfAborted();
+    }
+  }
+
+  // Drop hook: releases the runtime response.
+  [Symbol.dispose]() {
+    if (this.#handle != 0) {
+      velt_rt_http_fetch_resp_drop(this.#handle);
+      this.#handle = 0;
+    }
+  }
+}

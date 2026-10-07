@@ -115,7 +115,12 @@ impl FnCx<'_, '_> {
     }
 
     /// A fresh temporary initialized with `init` (appended to `lets`), read as `Local(Borrow)`.
-    fn temp(&mut self, name: &str, init: hir::Expr, lets: &mut Vec<hir::Stmt>) -> hir::Expr {
+    pub(super) fn temp(
+        &mut self,
+        name: &str,
+        init: hir::Expr,
+        lets: &mut Vec<hir::Stmt>,
+    ) -> hir::Expr {
         let (ty, span) = (init.ty, init.span);
         let l = self.new_local(name, ty, false, span, LocalKind::Temp);
         lets.push(hir::Stmt {
@@ -158,7 +163,10 @@ impl FnCx<'_, '_> {
         let fields = self.cx.adt(d).map(|a| a.fields.clone()).unwrap_or_default();
         let mut out = vec![];
         for (i, f) in fields.iter().enumerate() {
-            if f.private_to.is_some_and(|o| !self.private_allowed(o)) {
+            // ES private fields (`#x`) are never copied, as in JavaScript.
+            if f.name.starts_with(ast::PRIVATE_NAME_PREFIX)
+                || f.private_to.is_some_and(|o| !self.private_allowed(o))
+            {
                 continue;
             }
             let fty = self.cx.ty.subst(f.ty, &args);
@@ -313,7 +321,7 @@ impl FnCx<'_, '_> {
             // `Math.max(...ints())`). An array's elements convert like any other value of the
             // literal, fresh ones too (#268).
             let fits = et == elem
-                || (self.cx.ty.is_int(et) && self.cx.ty.is_float(elem))
+                || (self.cx.ty.is_int(et) && self.float_elem(elem).is_some())
                 || (is_array && (self.converts_to(et, elem) || self.widens(et, elem)));
             if !fits && !self.cx.ty.has_error(et) {
                 let (from, to) = (self.cx.display(et), self.cx.display(elem));
@@ -321,10 +329,8 @@ impl FnCx<'_, '_> {
                     format!("cannot spread `{from}` elements into an array of `{to}`"),
                     e.span,
                 );
-                if !is_array {
-                    // Reported: its loop is not built.
-                    *src = None;
-                }
+                // Reported: its loop is not built (nor its conversion reported again).
+                *src = None;
             }
         }
         let arr_ty = self.cx.ty.array(elem);
@@ -365,9 +371,9 @@ impl FnCx<'_, '_> {
                 (Some(Src::Iter(c)), _) => {
                     let syn = syn.as_ref().expect("ICE: spread names");
                     let mut v = syn.name(&syn.value);
-                    if c.elem != elem && self.cx.ty.is_float(elem) {
+                    if let Some(f) = self.float_elem(elem).filter(|_| c.elem != elem) {
                         // An integer into a float array: `<value#N> as f64`.
-                        let ty = self.cx.display(elem);
+                        let ty = self.cx.display(f);
                         v = syn.expr(ast::ExprKind::Cast {
                             expr: Box::new(v),
                             ty: syn.named_type(&ty),
@@ -450,6 +456,13 @@ impl FnCx<'_, '_> {
     /// `for (const e of src) out.push(e / share of e);`, each element converted from the
     /// source's element type to the literal's `elem` (integers to a float `elem`, `C`s to
     /// interface values in `const ns: Named[] = [...cs]`).
+    /// The float type of an array element type `number` or `number | null` (integers spread
+    /// into it convert, as JS numbers).
+    fn float_elem(&self, elem: TyId) -> Option<TyId> {
+        let inner = self.cx.ty.opt_payload(elem).unwrap_or(elem);
+        self.cx.ty.is_float(inner).then_some(inner)
+    }
+
     fn push_all(
         &mut self,
         out: hir::LocalId,
@@ -463,8 +476,12 @@ impl FnCx<'_, '_> {
         let mode = if copy { UseMode::Copy } else { UseMode::Borrow };
         let e = self.new_local("<elem>", src_elem, false, span, LocalKind::Elem);
         let read = self.mk(H::Local(e, mode), src_elem, span);
-        let value = if src_elem != elem && self.cx.ty.is_float(elem) {
-            self.mk(H::Cast(Box::new(read)), elem, span)
+        let float = self
+            .float_elem(elem)
+            .filter(|_| self.cx.ty.is_int(src_elem));
+        let value = if let Some(f) = float {
+            // Into `number[]` or `(number | null)[]`: the number, then wrapped.
+            self.mk(H::Cast(Box::new(read)), f, span)
         } else if copy {
             read
         } else {

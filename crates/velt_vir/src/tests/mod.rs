@@ -10,6 +10,7 @@ mod control;
 mod drop_chain;
 mod drops;
 mod for_of_consume;
+mod frame_envs;
 mod goldens;
 mod hybrid;
 mod interp;

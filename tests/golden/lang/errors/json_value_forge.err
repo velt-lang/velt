@@ -1,4 +1,4 @@
 json_value_forge.vlt:4:17: error: the constructor of `JsonValue` is private: only the body of `JsonValue` can call `new JsonValue(...)`
-json_value_forge.vlt:6:5: error: `handle` is private
+json_value_forge.vlt:6:5: error: no field `handle` on type `JsonValue`
 json_value_forge.vlt:7:17: error: the constructor of `JsonValue` is private: only the body of `JsonValue` can call `new JsonValue(...)`
 json_value_forge.vlt:11:22: error: cannot extend `JsonValue`: its constructor is private

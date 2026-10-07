@@ -1,0 +1,168 @@
+// std/fetch/headers: the WHATWG `Headers` class of `fetch` (docs/std/fetch.md), also the type
+// of a server request's `headers` (std/http.vlt).
+//
+// One flat list, `[name, value, name, value, …]`, in insertion order: names are lowercased when
+// they are added (header names are case-insensitive), values have surrounding whitespace
+// removed. The list is the runtime's format too, so a fetched response's headers arrive as one
+// array without being copied again. Lookups scan the list: a message has a handful of headers,
+// for which a scan beats hashing.
+//
+// As in the standard, `get` joins repeated headers with ", " and iteration yields the names in
+// sorted order with repeats joined, except `set-cookie`, whose values are yielded one by one
+// (`getSetCookie()` returns them as an array). Unlike JavaScript, an invalid name or value is
+// not rejected here: `fetch` rejects it with `IoError` "EINVAL" when it sends the request.
+
+// `Headers` or an object literal (`{ "content-type": "text/plain" }`).
+export type HeadersInit = Headers | Record<string, string>;
+
+export class Headers {
+  // `[name, value, …]`: lowercase names, trimmed values.
+  private list: string[] = [];
+
+  constructor(init: HeadersInit | null = null) {
+    if (init == null) {
+      return;
+    }
+    if (init instanceof Headers) {
+      this.list = init.list.clone();
+      return;
+    }
+    for (const [name, value] of Object.entries(init)) {
+      this.append(name, value);
+    }
+  }
+
+  // Headers from a runtime list, taken as is (std only).
+  private static adopt(list: string[]): Headers {
+    const h = new Headers();
+    h.list = list;
+    return h;
+  }
+
+  // The flat list (std only: what `fetch` and the server hand to the runtime).
+  private raw(): string[] {
+    return this.list;
+  }
+
+  // Adds a value; a header that already has one gets another.
+  append(name: string, value: string) {
+    this.list.push(name.toLowerCase());
+    this.list.push(value.trim());
+  }
+
+  // Replaces every value of `name` with `value`.
+  set(name: string, value: string) {
+    const key = name.toLowerCase();
+    this.remove(key);
+    this.list.push(key);
+    this.list.push(value.trim());
+  }
+
+  // Removes every value of `name`.
+  delete(name: string) {
+    this.remove(name.toLowerCase());
+  }
+
+  // The values of `name` joined with ", ", or null when there is none.
+  get(name: string): string | null {
+    const key = name.toLowerCase();
+    let out: string | null = null;
+    for (let i: usize = 0; i < this.list.length; i += 2) {
+      if (this.list[i] == key) {
+        const v = this.list[i + 1].clone();
+        out = out == null ? v : `${out}, ${v}`;
+      }
+    }
+    return out;
+  }
+
+  // Every `set-cookie` value, in order (they can't be joined with commas).
+  getSetCookie(): string[] {
+    const out: string[] = [];
+    for (let i: usize = 0; i < this.list.length; i += 2) {
+      if (this.list[i] == "set-cookie") {
+        out.push(this.list[i + 1].clone());
+      }
+    }
+    return out;
+  }
+
+  has(name: string): bool {
+    const key = name.toLowerCase();
+    for (let i: usize = 0; i < this.list.length; i += 2) {
+      if (this.list[i] == key) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // `[name, value]` pairs as iteration yields them: sorted by name, repeats joined.
+  private sorted(): [string, string][] {
+    const names: string[] = [];
+    for (let i: usize = 0; i < this.list.length; i += 2) {
+      const n = this.list[i];
+      if (n == "set-cookie" || !names.includes(n)) {
+        names.push(n.clone());
+      }
+    }
+    names.sort();
+    const out: [string, string][] = [];
+    let cookie: usize = 0;
+    const cookies = this.getSetCookie();
+    for (const n of names) {
+      if (n == "set-cookie") {
+        out.push([n, cookies[cookie].clone()]);
+        cookie++;
+      } else {
+        out.push([n.clone(), this.get(n) ?? ""]);
+      }
+    }
+    return out;
+  }
+
+  // Calls `f(value, name)` for each entry, in iteration order.
+  forEach(f: (value: string, name: string) => void) {
+    for (const [name, value] of this.sorted()) {
+      f(value, name);
+    }
+  }
+
+  *entries(): IterableIterator<[string, string]> {
+    for (const e of this.sorted()) {
+      yield e;
+    }
+  }
+
+  *keys(): IterableIterator<string> {
+    for (const [name, _] of this.sorted()) {
+      yield name;
+    }
+  }
+
+  *values(): IterableIterator<string> {
+    for (const [_, value] of this.sorted()) {
+      yield value;
+    }
+  }
+
+  *[Symbol.iterator](): IterableIterator<[string, string]> {
+    for (const e of this.sorted()) {
+      yield e;
+    }
+  }
+
+  // Removes the entries named `key` (lowercase), keeping the order of the others.
+  private remove(key: string) {
+    let w: usize = 0;
+    for (let i: usize = 0; i < this.list.length; i += 2) {
+      if (this.list[i] == key) {
+        continue;
+      }
+      __intrinsic_array_swap(this.list, w, i);
+      __intrinsic_array_swap(this.list, w + 1, i + 1);
+      w += 2;
+    }
+    __intrinsic_array_truncate(this.list, w);
+  }
+}

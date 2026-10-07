@@ -1,4 +1,5 @@
 action: swap
 get /: v2
+jit get /release: released
 jit await /slow: slow v1
 jit get /slow: slow v2
